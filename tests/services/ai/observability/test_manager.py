@@ -32,7 +32,6 @@ def _row(**overrides):
         "environment": None,
         "release": None,
         "timeout_seconds": 5,
-        "trace_url_template": None,
     }
     row.update(overrides)
     return row
@@ -711,3 +710,110 @@ async def test_rebuild_closes_every_replaced_client(monkeypatch):
     assert second is not first
     assert _wait_until(lambda: captured.get("shutdown") == 1), "旧 client 未被关闭"
     assert captured.get("flush") == 1, "关闭前应尽力 flush，避免丢最后一批 span"
+
+
+# ------------------------------------------------- 导出 exporter 与自检放行
+
+
+def test_build_client_passes_observable_span_exporter(monkeypatch):
+    """client 必须注入可观测 exporter，否则导出健康度永远为空。"""
+    captured = {}
+    _install_fake_client(monkeypatch, captured)
+    snapshot = obs_settings.LangfuseSnapshot(
+        enabled=True,
+        host="http://lf:3000",
+        public_key="pk-lf",
+        secret_key="sk-lf",
+        timeout_seconds=5,
+        status=obs_settings.STATUS_ENABLED,
+    )
+
+    from app.services.ai.observability import exporter
+
+    manager._build_client(snapshot)
+
+    kwargs = captured["init_kwargs"][-1]
+    assert isinstance(kwargs["span_exporter"], exporter.ObservableSpanExporter)
+
+
+async def test_should_export_span_allows_selfcheck_even_when_sample_rate_is_zero(monkeypatch):
+    """自检必须绕过采样：否则 sample_rate=0 时自检会「假失败」。"""
+    from app.services.ai.observability import selfcheck as selfcheck_module
+
+    await _refresh(monkeypatch, sample_rate=0.0)
+    hook = manager.make_should_export_span()
+
+    selfcheck_span = _fake_span(
+        scope="nanzi.llm",
+        attributes={selfcheck_module.SELFCHECK_MARKER_ATTRIBUTE: True},
+    )
+    ordinary_span = _fake_span(
+        scope="nanzi.llm", attributes={"langfuse.trace.name": "chat.turn"}
+    )
+
+    assert hook(selfcheck_span) is True
+    assert hook(ordinary_span) is False
+
+
+# ------------------------------------------------- 层 2：反查 trace 是否可查询
+
+
+class _FakeTraceApi:
+    def __init__(self, outcome="found"):
+        self.outcome = outcome
+        self.calls = []
+
+    async def get(self, trace_id):
+        self.calls.append(trace_id)
+        if self.outcome == "found":
+            return {"id": trace_id}
+        if self.outcome == "not_found":
+            from langfuse.api import NotFoundError
+
+            raise NotFoundError(body={"message": "not found"})
+        raise RuntimeError("鉴权失败")
+
+
+class _FakeApiNamespace:
+    def __init__(self, trace_api):
+        self.trace = trace_api
+
+
+class _FakeClientWithApi:
+    def __init__(self, outcome="found"):
+        self.trace_api = _FakeTraceApi(outcome)
+        self.async_api = _FakeApiNamespace(self.trace_api)
+
+
+async def test_query_trace_exists_found(monkeypatch):
+    client = _FakeClientWithApi("found")
+    monkeypatch.setattr(manager, "current_client", lambda: client)
+    found, message = await manager.query_trace_exists("a" * 32)
+    assert found is True
+    assert client.trace_api.calls == ["a" * 32]
+    assert "已到达" in message
+
+
+async def test_query_trace_exists_not_found_yet(monkeypatch):
+    """NotFoundError 是正常中间态（摄取未完成），不能当成查询失败。"""
+    client = _FakeClientWithApi("not_found")
+    monkeypatch.setattr(manager, "current_client", lambda: client)
+    found, message = await manager.query_trace_exists("b" * 32)
+    assert found is False
+    assert "尚未" in message
+
+
+async def test_query_trace_exists_error_is_distinguished(monkeypatch):
+    """查询失败必须与「未查到」区分，否则会一直傻等。"""
+    client = _FakeClientWithApi("error")
+    monkeypatch.setattr(manager, "current_client", lambda: client)
+    found, message = await manager.query_trace_exists("c" * 32)
+    assert found is False
+    assert "查询失败" in message
+
+
+async def test_query_trace_exists_without_client():
+    manager.reset_for_tests()
+    found, message = await manager.query_trace_exists("d" * 32)
+    assert found is False
+    assert "未启用" in message

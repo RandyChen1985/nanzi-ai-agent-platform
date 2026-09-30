@@ -40,7 +40,6 @@ class LangfuseSnapshot:
     environment: Optional[str] = None
     release: Optional[str] = None
     timeout_seconds: int = 5
-    trace_url_template: Optional[str] = None
     status: str = STATUS_DISABLED
     client_fingerprint: Optional[str] = None
     last_error: Optional[str] = None
@@ -84,7 +83,6 @@ def _build_snapshot(config: Dict[str, Any]) -> LangfuseSnapshot:
         environment=config.get("environment"),
         release=config.get("release"),
         timeout_seconds=timeout_seconds,
-        trace_url_template=config.get("trace_url_template"),
     )
 
     if not snapshot.enabled:

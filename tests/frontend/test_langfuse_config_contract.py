@@ -80,7 +80,6 @@ def test_component_covers_all_config_fields(component_source):
         "environment",
         "release",
         "timeout_seconds",
-        "trace_url_template",
     ):
         assert field in component_source, f"组件缺少字段 {field}"
 

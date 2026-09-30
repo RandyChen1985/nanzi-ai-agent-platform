@@ -8,13 +8,20 @@
 """
 
 import logging
+import re
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.dependencies import require_permission
-from app.services.ai.observability import config_store, manager, settings
+from app.services.ai.observability import (
+    config_store,
+    export_health,
+    manager,
+    selfcheck,
+    settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +37,9 @@ _STATUS_LABELS = {
     settings.STATUS_DEGRADED: "异常（降级为不追踪）",
 }
 
+# Langfuse 的 trace id 是 32 位十六进制；用它做格式校验，避免任意字符串被拼进外部请求。
+_TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+
 
 class LangfuseConfigUpdateRequest(BaseModel):
     """所有字段可选：只提交需要变更的项，未提交的字段保持原值。"""
@@ -43,7 +53,6 @@ class LangfuseConfigUpdateRequest(BaseModel):
     environment: Any = None
     release: Any = None
     timeout_seconds: Any = None
-    trace_url_template: Any = None
 
 
 class LangfuseProbeRequest(BaseModel):
@@ -75,12 +84,26 @@ def _runtime_status() -> Dict[str, Any]:
     }
 
 
+def _export_health_view() -> Dict[str, Any]:
+    """导出健康度的公开视图（进程内状态，多实例各自独立）。"""
+    snap = export_health.snapshot()
+    return {
+        "last_success_at": snap.last_success_at.isoformat() if snap.last_success_at else None,
+        "last_failure_at": snap.last_failure_at.isoformat() if snap.last_failure_at else None,
+        "last_error": snap.last_error,
+        "success_count": snap.success_count,
+        "failure_count": snap.failure_count,
+        "consecutive_failures": snap.consecutive_failures,
+    }
+
+
 async def _build_response() -> Dict[str, Any]:
     """配置公开视图 + 运行态（不含密钥明文）。"""
     config = await config_store.load_config()
     payload = config_store.to_public_view(config)
     payload["updated_by"] = config.get("updated_by")
     payload.update(_runtime_status())
+    payload["export_health"] = _export_health_view()
     return payload
 
 
@@ -146,3 +169,48 @@ async def test_langfuse_connection(
         logger.warning("Langfuse 连通性探测异常: %s", exc)
         return {"success": False, "message": f"探测失败: {type(exc).__name__}: {exc}"}
     return {"success": success, "message": message}
+
+
+@router.post("/selfcheck")
+async def run_langfuse_selfcheck(
+    user: Dict = Depends(require_permission(*WRITE_PERMISSION)),
+):
+    """发出一条走真实 OTel 管线的自检 trace，并返回层 1（导出是否被接收）结论。
+
+    会等一次 ``flush``（成功时通常数百毫秒；导出失败时最坏一个 timeout），
+    因此耗时可能达数秒——这是刻意的：只有等到导出结果才算真正验证。
+    """
+    del user
+    try:
+        result = await selfcheck.run_selfcheck()
+    except Exception as exc:
+        logger.warning("Langfuse 自检执行异常: %s", exc)
+        return {
+            "ok": False,
+            "trace_id": None,
+            "export_confirmed": False,
+            "message": f"自检执行失败：{type(exc).__name__}: {exc}",
+        }
+    return {
+        "ok": result.ok,
+        "trace_id": result.trace_id,
+        "export_confirmed": result.export_confirmed,
+        "message": result.message,
+    }
+
+
+@router.get("/selfcheck/{trace_id}")
+async def lookup_langfuse_selfcheck(
+    trace_id: str,
+    user: Dict = Depends(require_permission(*WRITE_PERMISSION)),
+):
+    """层 2：反查自检 trace 是否已在 Langfuse 可查询（摄取有延迟，需轮询）。"""
+    del user
+    if not _TRACE_ID_PATTERN.match(trace_id):
+        raise HTTPException(status_code=400, detail="trace_id 必须是 32 位十六进制字符串")
+    try:
+        found, message = await manager.query_trace_exists(trace_id)
+    except Exception as exc:
+        logger.warning("Langfuse trace 反查异常: %s", exc)
+        return {"found": False, "message": f"查询失败：{type(exc).__name__}: {exc}"}
+    return {"found": found, "message": message}

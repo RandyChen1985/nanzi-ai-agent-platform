@@ -5,7 +5,7 @@
  * 独立于「参数配置」的键值表格：连接参数强类型、密钥加密存储且不回显明文，
  * 保存后立即生效（服务端会刷新进程内快照并重建 client）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import axios from '@/utils/axios'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
@@ -13,9 +13,59 @@ import { ArrowTopRightOnSquareIcon } from '@heroicons/vue/24/outline'
 
 const ENDPOINT = '/api/portal/system/langfuse'
 
+/** 层 2 反查：Langfuse 摄取是异步的（典型 15~30s），因此带截止时间轮询。 */
+const POLL_INTERVAL_MS = 3_000
+const POLL_TIMEOUT_MS = 60_000
+
+const selfChecking = ref(false)
+const selfCheckResult = ref<{ ok: boolean; message: string } | null>(null)
+const pollState = ref<'idle' | 'waiting' | 'found' | 'timeout' | 'error'>('idle')
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+let pollDeadline = 0
+
+const health = ref<ExportHealthView>({
+  last_success_at: null,
+  last_failure_at: null,
+  last_error: null,
+  success_count: 0,
+  failure_count: 0,
+  consecutive_failures: 0,
+})
+
+const healthTone = computed(() => {
+  if (health.value.consecutive_failures > 0) return 'text-red-600'
+  if (health.value.success_count > 0) return 'text-green-600'
+  return 'text-gray-500'
+})
+
+const formatTime = (value: string | null) => {
+  if (!value) return '—'
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return value
+  }
+}
+
+const stopPolling = () => {
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
 const { showToast } = useToast()
 const { hasPermission } = useUser()
 const canSave = hasPermission('element:system:langfuse_save')
+
+interface ExportHealthView {
+  last_success_at: string | null
+  last_failure_at: string | null
+  last_error: string | null
+  success_count: number
+  failure_count: number
+  consecutive_failures: number
+}
 
 interface LangfuseConfigView {
   enabled: boolean
@@ -27,12 +77,12 @@ interface LangfuseConfigView {
   environment: string | null
   release: string | null
   timeout_seconds: number
-  trace_url_template: string | null
   updated_by: string | null
   status: string
   status_label: string
   status_detail: string | null
   client_active: boolean
+  export_health: ExportHealthView
 }
 
 const loading = ref(false)
@@ -52,7 +102,6 @@ const form = ref({
   environment: '',
   release: '',
   timeout_seconds: 5,
-  trace_url_template: '',
 })
 
 const meta = ref<{
@@ -94,7 +143,6 @@ const applyView = (data: LangfuseConfigView) => {
     environment: data.environment || '',
     release: data.release || '',
     timeout_seconds: Number(data.timeout_seconds ?? 5),
-    trace_url_template: data.trace_url_template || '',
   }
   meta.value = {
     has_secret_key: Boolean(data.has_secret_key),
@@ -105,6 +153,7 @@ const applyView = (data: LangfuseConfigView) => {
     client_active: Boolean(data.client_active),
   }
   secretKeyInput.value = ''
+  health.value = data.export_health || health.value
 }
 
 const fetchConfig = async () => {
@@ -150,7 +199,6 @@ const buildPayload = () => {
     environment: form.value.environment.trim(),
     release: form.value.release.trim(),
     timeout_seconds: form.value.timeout_seconds,
-    trace_url_template: form.value.trace_url_template.trim(),
   }
   // 只有用户真的输入了新密钥才提交；留空 = 不改动（空字符串语义是「清空」）。
   const typedSecret = secretKeyInput.value.trim()
@@ -198,6 +246,60 @@ const testConnection = async () => {
     testing.value = false
   }
 }
+
+const pollSelfCheck = async (traceId: string) => {
+  if (Date.now() > pollDeadline) {
+    pollState.value = 'timeout'
+    stopPolling()
+    return
+  }
+  try {
+    const response = await axios.get(`${ENDPOINT}/selfcheck/${traceId}`)
+    const body = response.data as { found: boolean; message: string }
+    if (body.found) {
+      pollState.value = 'found'
+      stopPolling()
+      return
+    }
+    if (body.message?.includes('查询失败')) {
+      pollState.value = 'error'
+      selfCheckResult.value = { ok: false, message: body.message }
+      stopPolling()
+      return
+    }
+  } catch {
+    // 单次轮询失败不终止整体等待，交给截止时间兜底
+  }
+  pollTimer = setTimeout(() => pollSelfCheck(traceId), POLL_INTERVAL_MS)
+}
+
+const sendSelfCheck = async () => {
+  selfChecking.value = true
+  selfCheckResult.value = null
+  pollState.value = 'idle'
+  stopPolling()
+  try {
+    const response = await axios.post(`${ENDPOINT}/selfcheck`)
+    const body = response.data as { ok: boolean; trace_id: string | null; message: string }
+    selfCheckResult.value = { ok: body.ok, message: body.message }
+    showToast({ type: body.ok ? 'success' : 'error', message: body.message })
+    if (body.trace_id) {
+      pollState.value = 'waiting'
+      pollDeadline = Date.now() + POLL_TIMEOUT_MS
+      const traceId = body.trace_id
+      pollTimer = setTimeout(() => pollSelfCheck(traceId), POLL_INTERVAL_MS)
+    }
+    await fetchConfig()
+  } catch (error: any) {
+    const message = error?.response?.data?.message || '自检请求失败'
+    selfCheckResult.value = { ok: false, message }
+    showToast({ type: 'error', message })
+  } finally {
+    selfChecking.value = false
+  }
+}
+
+onUnmounted(stopPolling)
 
 const clearSecret = async () => {
   saving.value = true
@@ -259,6 +361,29 @@ onMounted(fetchConfig)
       <p v-if="meta.status_detail" class="mt-2 text-xs text-red-600">
         最近错误：{{ meta.status_detail }}
       </p>
+
+      <div class="mt-3 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 space-y-1">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span class="font-medium text-gray-700">导出健康度</span>
+          <span class="text-gray-400">（进程内状态，仅代表当前实例）</span>
+          <span :class="healthTone">连续失败 {{ health.consecutive_failures }} 次</span>
+          <span class="text-gray-500">
+            成功 {{ health.success_count }} / 失败 {{ health.failure_count }}
+          </span>
+        </div>
+        <p class="text-xs text-gray-500">
+          最近成功导出：{{ formatTime(health.last_success_at) }}
+        </p>
+        <p v-if="health.last_error" class="text-xs text-red-600">
+          最近一次导出错误：{{ health.last_error }}
+        </p>
+        <p
+          v-if="health.success_count === 0 && health.failure_count === 0"
+          class="text-xs text-gray-400"
+        >
+          尚未观察到任何导出。
+        </p>
+      </div>
     </div>
 
     <div class="bg-white rounded-lg border border-gray-200 p-6 space-y-5">
@@ -384,7 +509,7 @@ onMounted(fetchConfig)
         </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700">发布版本</label>
           <input
@@ -395,17 +520,6 @@ onMounted(fetchConfig)
             :disabled="!canSave"
           />
           <p class="mt-1 text-xs text-gray-400">便于在 Langfuse 里按版本对比指标</p>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700">跳转链接模板</label>
-          <input
-            v-model="form.trace_url_template"
-            type="text"
-            placeholder="http://langfuse:3000/trace/{trace_id}"
-            class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            :disabled="!canSave"
-          />
-          <p class="mt-1 text-xs text-gray-400">用 {trace_id} 占位，供对话日志跳转</p>
         </div>
       </div>
 
@@ -451,6 +565,15 @@ onMounted(fetchConfig)
           {{ testing ? '探测中...' : '测试连接' }}
         </button>
         <button
+          v-if="form.enabled && canSave"
+          type="button"
+          class="px-4 py-2 border border-gray-300 text-sm rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+          :disabled="selfChecking"
+          @click="sendSelfCheck"
+        >
+          {{ selfChecking ? '自检中...' : '发送测试 trace' }}
+        </button>
+        <button
           type="button"
           class="px-4 py-2 text-sm rounded-md text-gray-600 hover:bg-gray-50 transition-colors"
           :disabled="loading"
@@ -460,6 +583,15 @@ onMounted(fetchConfig)
         </button>
         <span v-if="form.enabled" class="text-xs text-gray-400">
           测试连接使用当前表单值，未保存的修改也会生效
+        </span>
+        <span v-if="pollState === 'waiting'" class="text-xs text-gray-400">
+          已导出，正在等待 Langfuse 摄取…
+        </span>
+        <span v-else-if="pollState === 'found'" class="text-xs text-green-600">
+          已到达 Langfuse，可打开控制台查看
+        </span>
+        <span v-else-if="pollState === 'timeout'" class="text-xs text-amber-600">
+          已导出成功，但 Langfuse 尚未可查（摄取延迟），可稍后重新加载
         </span>
         <span v-if="!canSave" class="text-xs text-amber-600">
           当前账号没有保存权限（element:system:langfuse_save）
@@ -479,6 +611,7 @@ onMounted(fetchConfig)
       <p>· 配置保存后立即生效，无需重启服务。</p>
       <p>· 密钥使用平台统一的加密方式存储，任何接口都不会返回密钥明文。</p>
       <p>· 追踪是旁路能力：Langfuse 不可用时只影响追踪数据，不影响对话本身。</p>
+      <p>· 自检会向 Langfuse 发出一条名为 nanzi.selfcheck 的测试 trace，便于人工核对。</p>
     </div>
   </div>
 </template>

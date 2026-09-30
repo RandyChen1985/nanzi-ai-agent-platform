@@ -18,7 +18,6 @@ def _row(**overrides):
         "environment": None,
         "release": None,
         "timeout_seconds": 5,
-        "trace_url_template": None,
     }
     row.update(overrides)
     return row
@@ -61,7 +60,6 @@ async def test_refresh_populates_snapshot(monkeypatch):
             environment="prod",
             release="2026.09",
             timeout_seconds=9,
-            trace_url_template="http://lf:3000/trace/{trace_id}",
         ),
     )
     await obs_settings.refresh_snapshot()
@@ -74,7 +72,6 @@ async def test_refresh_populates_snapshot(monkeypatch):
     assert snapshot.environment == "prod"
     assert snapshot.release == "2026.09"
     assert snapshot.timeout_seconds == 9
-    assert snapshot.trace_url_template == "http://lf:3000/trace/{trace_id}"
     assert snapshot.last_error is None
     assert snapshot.client_fingerprint
 

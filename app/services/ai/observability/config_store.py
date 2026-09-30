@@ -36,7 +36,6 @@ DEFAULTS: Dict[str, Any] = {
     "environment": None,
     "release": None,
     "timeout_seconds": 5,
-    "trace_url_template": None,
 }
 
 _BOOL_FIELDS = ("enabled", "capture_content")
@@ -47,7 +46,6 @@ _STR_MAX_LENGTH = {
     "public_key": 255,
     "environment": 64,
     "release": 64,
-    "trace_url_template": 512,
 }
 _STR_FIELDS = tuple(_STR_MAX_LENGTH.keys())
 
@@ -66,7 +64,6 @@ LANGFUSE_CONFIG_TABLE = Table(
     Column("environment", String(64)),
     Column("release", String(64)),
     Column("timeout_seconds", Integer),
-    Column("trace_url_template", String(512)),
     Column("updated_by", String(64)),
 )
 
@@ -80,7 +77,6 @@ _SELECT_COLUMNS = (
     LANGFUSE_CONFIG_TABLE.c.environment,
     LANGFUSE_CONFIG_TABLE.c.release,
     LANGFUSE_CONFIG_TABLE.c.timeout_seconds,
-    LANGFUSE_CONFIG_TABLE.c.trace_url_template,
     LANGFUSE_CONFIG_TABLE.c.updated_by,
 )
 _SELECT_NAMES = (
@@ -93,7 +89,6 @@ _SELECT_NAMES = (
     "environment",
     "release",
     "timeout_seconds",
-    "trace_url_template",
     "updated_by",
 )
 

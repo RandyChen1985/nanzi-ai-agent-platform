@@ -41,7 +41,6 @@ def _stub_load(monkeypatch, **overrides):
         "environment": "prod",
         "release": "2026.09",
         "timeout_seconds": 9,
-        "trace_url_template": "http://lf:3000/trace/{trace_id}",
         "updated_by": "tester",
     }
     row.update(overrides)
@@ -74,7 +73,6 @@ async def test_get_returns_config_without_secret(client: AsyncClient, admin_api_
     assert data["capture_content"] is False
     assert data["environment"] == "prod"
     assert data["timeout_seconds"] == 9
-    assert data["trace_url_template"] == "http://lf:3000/trace/{trace_id}"
     assert data["updated_by"] == "tester"
     # 密钥绝不回传明文
     assert "secret_key" not in data
@@ -146,7 +144,6 @@ async def test_put_saves_and_returns_public_view(client: AsyncClient, admin_api_
             "environment": None,
             "release": None,
             "timeout_seconds": 5,
-            "trace_url_template": None,
             "updated_by": changed_by,
         }
 
@@ -177,7 +174,7 @@ async def test_put_refreshes_runtime_snapshot(client: AsyncClient, admin_api_key
         return {
             "enabled": False, "host": None, "public_key": None, "secret_key": None,
             "sample_rate": 1.0, "capture_content": True, "environment": None,
-            "release": None, "timeout_seconds": 5, "trace_url_template": None,
+            "release": None, "timeout_seconds": 5,
             "updated_by": changed_by,
         }
 

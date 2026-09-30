@@ -156,7 +156,6 @@ async def test_snapshot_restore_roundtrip_preserves_saved_config():
             "environment": "staging",
             "release": "v9",
             "timeout_seconds": 12,
-            "trace_url_template": "http://keep-me:3000/trace/{trace_id}",
         },
         changed_by="real_user",
     )
@@ -177,5 +176,4 @@ async def test_snapshot_restore_roundtrip_preserves_saved_config():
     assert restored["environment"] == "staging"
     assert restored["release"] == "v9"
     assert restored["timeout_seconds"] == 12
-    assert restored["trace_url_template"] == "http://keep-me:3000/trace/{trace_id}"
     assert restored["updated_by"] == "real_user"

@@ -19,7 +19,6 @@ def test_normalize_applies_defaults_for_missing_values():
     assert row["secret_key"] is None
     assert row["environment"] is None
     assert row["release"] is None
-    assert row["trace_url_template"] is None
 
 
 def test_normalize_coerces_types_and_trims_strings():
@@ -74,7 +73,6 @@ def test_empty_string_becomes_none_for_optional_fields():
         {"release": "x" * 65},
         {"public_key": "x" * 256},
         {"host": "http://" + "x" * 512},
-        {"trace_url_template": "x" * 513},
     ],
 )
 def test_normalize_rejects_invalid_values(payload):
@@ -111,7 +109,6 @@ def test_public_view_hides_secret_and_reports_presence():
             "environment": None,
             "release": None,
             "timeout_seconds": 5,
-            "trace_url_template": None,
         }
     )
     assert "secret_key" not in view

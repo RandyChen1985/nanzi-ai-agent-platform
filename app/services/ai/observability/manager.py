@@ -107,6 +107,11 @@ def make_should_export_span() -> Callable[[Any], bool]:
             attributes = _span_attributes(span)
             if not _is_allowed_scope(_span_scope_name(span), attributes):
                 return False
+            # 自检 trace 必须绕过采样，否则 sample_rate<1 时自检会「假失败」。
+            from app.services.ai.observability import selfcheck
+
+            if attributes.get(selfcheck.SELFCHECK_MARKER_ATTRIBUTE):
+                return True
             return gate.is_sampled(_span_trace_id_hex(span), snapshot.sample_rate)
         except Exception as exc:  # 钩子抛异常会导致整批丢弃，必须自兜底
             logger.warning("Langfuse should_export_span 判定异常，已丢弃该 span: %s", exc)
@@ -152,6 +157,8 @@ def make_mask_otel_spans() -> Callable[..., Optional[Any]]:
 def _build_client(snapshot: "settings.LangfuseSnapshot") -> Any:
     from langfuse import Langfuse
 
+    from app.services.ai.observability import exporter
+
     return Langfuse(
         host=snapshot.host,
         public_key=snapshot.public_key,
@@ -161,6 +168,8 @@ def _build_client(snapshot: "settings.LangfuseSnapshot") -> Any:
         release=snapshot.release,
         should_export_span=make_should_export_span(),
         mask_otel_spans=make_mask_otel_spans(),
+        # 注入自己的 exporter 以观测每次导出结果（构造参数与 SDK 默认一致）。
+        span_exporter=exporter.build_span_exporter(snapshot),
     )
 
 
@@ -386,6 +395,42 @@ async def test_connection(overrides: Optional[Dict[str, Any]] = None) -> Tuple[b
         return (False, "鉴权通过但未返回任何项目，请确认密钥所属项目")
 
     return (True, f"连接成功，Langfuse 可访问：{url}")
+
+
+# --------------------------------------------------------------------------- 层 2 反查
+
+
+async def _fetch_trace(client: Any, trace_id: str) -> Any:
+    """调用 Langfuse 查询 API；优先用异步变体，避免阻塞事件循环。"""
+    async_api = getattr(client, "async_api", None)
+    if async_api is not None:
+        return await async_api.trace.get(trace_id)
+    # 回退：SDK 未提供异步变体时，把同步调用丢到线程里。
+    return await asyncio.to_thread(client.api.trace.get, trace_id)
+
+
+async def query_trace_exists(trace_id: str) -> Tuple[bool, str]:
+    """反查 trace 是否已在 Langfuse 可查询。
+
+    摄取是异步的（SDK 文档：典型 15~30 秒，负载高时更久），因此「未查到」是正常的
+    中间态，调用方应带截止时间轮询。**必须把「未查到」与「查询失败」区分开**，
+    否则鉴权/网络问题会被误当成「再等等就好」。
+    """
+    client = current_client()
+    if client is None:
+        return (False, "追踪未启用或 client 尚未就绪")
+
+    try:
+        await _fetch_trace(client, trace_id)
+    except Exception as exc:
+        from langfuse.api import NotFoundError
+
+        if isinstance(exc, NotFoundError):
+            return (False, "尚未查到，Langfuse 可能仍在处理（摄取有延迟）")
+        logger.warning("Langfuse trace 反查失败: %s", exc)
+        return (False, f"查询失败：{type(exc).__name__}: {exc}")
+
+    return (True, "已到达 Langfuse，可以打开控制台查看")
 
 
 # --------------------------------------------------------------------------- 测试辅助
