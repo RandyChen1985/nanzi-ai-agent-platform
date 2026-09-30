@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -37,7 +38,11 @@ def test_dashboard_exposes_light_dark_sidebar_switcher():
     assert "toggleTheme" in source
     assert "border-gray-700 bg-gray-900 text-blue-300" not in source
     assert "inline-flex h-9 w-9 items-center justify-center rounded-lg border transition-colors" not in source
-    assert "relative p-2 rounded-lg text-gray-500 hover:bg-gray-100" in source
+    # 只放宽 padding：侧边栏紧凑化把主题按钮从 p-2 收到 p-1.5，
+    # 其余（相对定位 + 圆角 + 中性色 + hover 底色）仍是契约要求。
+    assert re.search(
+        r"\brelative p-(?:1\.5|2) rounded-lg text-gray-500 hover:bg-gray-100\b", source
+    ), "主题切换按钮必须保持 relative + rounded-lg + 中性色 + hover 底色的图标按钮样式"
     assert '<svg v-else class="h-4 w-4" fill="none" stroke="currentColor"' in source
     assert "<!-- Theme Switcher -->" not in source
     assert source.index("<!-- Top Header -->") < source.index('aria-label="切换界面主题"')
