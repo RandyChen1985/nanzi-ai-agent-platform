@@ -21,6 +21,7 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,25 @@ class EmailDeliveryService:
             if addr not in result:
                 result.append(addr)
         return result
+
+    @classmethod
+    async def resolve_self_email(
+        cls, user_id: Optional[int], db: Optional[AsyncSession]
+    ) -> Optional[str]:
+        """取用户本人邮箱——「抄送自己」的唯一取数入口。
+
+        必须每次现查库，不能用 require_api_key 注入的 user dict：那份缓存在 Redis 里
+        （TTL 1 小时），用户改完邮箱后通知会一直发往旧地址。
+        收敛到一处也让调用方（尤其是连通性测试）能以替换该入口的方式测试，
+        不必去改共享库里真实用户的邮箱。
+        """
+        if user_id is None or db is None:
+            return None
+        from app.models.user import User
+
+        value = (await db.execute(select(User.email).where(User.id == user_id))).scalar()
+        text = str(value).strip() if value is not None else ""
+        return text or None
 
     # ---------------- 分层 ---------------- #
 

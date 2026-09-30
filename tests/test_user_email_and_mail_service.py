@@ -1213,6 +1213,9 @@ async def test_email_test_global_source_uses_global_settings(
     async def _global_settings():
         return settings
 
+    async def _self_email(user_id, db):
+        return "self@corp.example.com"
+
     def _send(smtp, to, subject, body, **kwargs):
         captured["host"] = smtp.host
         captured["to"] = list(to)
@@ -1221,18 +1224,64 @@ async def test_email_test_global_source_uses_global_settings(
     monkeypatch.setattr(
         edmod.EmailDeliveryService, "load_global_smtp_settings", _global_settings
     )
+    monkeypatch.setattr(edmod.EmailDeliveryService, "resolve_self_email", _self_email)
     monkeypatch.setattr(edmod.EmailDeliveryService, "send_mail", staticmethod(_send))
 
     resp = await client.post(
         "/api/portal/notifications/test",
-        # 显式给收件人：全局模式下不回退给发件账号（那是静默的错误投递），
-        # 而 fixture 用户本身没有邮箱，不给收件人这条用例只会测到「没有收件人」。
-        json=_email_test_payload("global", recipients="probe@corp.example.com"),
+        json=_email_test_payload("global"),
         headers={"X-API-Key": valid_api_key},
     )
     assert resp.status_code == 200, resp.json()
     assert captured["host"] == "global.smtp.example.com"
-    assert captured["to"] == ["probe@corp.example.com"]
+    assert captured["to"] == ["self@corp.example.com"]
+
+
+async def test_email_test_only_sends_to_self_even_if_recipients_configured(
+    client, valid_api_key, monkeypatch
+):
+    """连通性测试**只能发给自己**，即使配置里写了其他收件人。
+
+    这是「借平台全局 SMTP 向任意地址发信」的守卫：本接口只要求登录、没有频控，
+    若收件人可由请求体/配置决定，任意登录用户就能把平台当成对外发信中继。
+    """
+    from app.services import email_delivery_service as edmod
+
+    settings = edmod.SmtpSettings(
+        host="global.smtp.example.com", port=465, user="g@a.cn", password="pw",
+        security="ssl", from_address="g@a.cn", sender_name="平台",
+    )
+    captured = {}
+
+    async def _global_settings():
+        return settings
+
+    async def _self_email(user_id, db):
+        return "self@corp.example.com"
+
+    def _send(smtp, to, subject, body, **kwargs):
+        captured["to"] = list(to)
+        return True, ""
+
+    monkeypatch.setattr(
+        edmod.EmailDeliveryService, "load_global_smtp_settings", _global_settings
+    )
+    monkeypatch.setattr(edmod.EmailDeliveryService, "resolve_self_email", _self_email)
+    monkeypatch.setattr(edmod.EmailDeliveryService, "send_mail", staticmethod(_send))
+
+    resp = await client.post(
+        "/api/portal/notifications/test",
+        json=_email_test_payload(
+            "global",
+            recipients="victim@external.example.com, another@external.example.com",
+        ),
+        headers={"X-API-Key": valid_api_key},
+    )
+    assert resp.status_code == 200, resp.json()
+    assert captured["to"] == ["self@corp.example.com"], (
+        "配置里的其他收件人必须被忽略，测试只能发给自己"
+    )
+    assert "victim@external.example.com" not in captured["to"]
 
 
 async def test_email_test_custom_source_uses_form_settings(
@@ -1288,10 +1337,10 @@ async def test_email_test_custom_source_without_host_is_rejected(
 async def test_email_test_global_source_without_any_recipient_says_so(
     client, valid_api_key, monkeypatch
 ):
-    """全局模式下没有收件人时要明确报错，绝不回退发给发件账号。
+    """本人没有邮箱时要明确报错，绝不回退发给平台/发件账号。
 
-    用 include_self=False + 空收件人来构造「没有收件人」，而不是去改用户邮箱：
-    改共享库里 fixture 用户的邮箱既可能破坏真实数据，也让用例依赖库的当前状态。
+    用 monkeypatch 把「自己邮箱」打成 None，而不是去改共享库里 fixture 用户的邮箱：
+    改真实数据既可能破坏它，也让用例依赖库的当前状态。
     """
     from app.services import email_delivery_service as edmod
 
@@ -1303,6 +1352,9 @@ async def test_email_test_global_source_without_any_recipient_says_so(
     async def _global_settings():
         return settings
 
+    async def _no_self_email(user_id, db):
+        return None
+
     def _send(*a, **k):
         # 这正是要守住的点：不能因为「发件账号有地址」就偷偷发给自己，
         # 否则用户看到「测试通过」却永远收不到真实通知。
@@ -1311,11 +1363,13 @@ async def test_email_test_global_source_without_any_recipient_says_so(
     monkeypatch.setattr(
         edmod.EmailDeliveryService, "load_global_smtp_settings", _global_settings
     )
+    monkeypatch.setattr(edmod.EmailDeliveryService, "resolve_self_email", _no_self_email)
     monkeypatch.setattr(edmod.EmailDeliveryService, "send_mail", staticmethod(_send))
 
     resp = await client.post(
         "/api/portal/notifications/test",
-        json=_email_test_payload("global", include_self=False, recipients=""),
+        # 即便配置里写了收件人也必须拒绝：测试只发给自己，而本人没有邮箱
+        json=_email_test_payload("global", recipients="other@x.com"),
         headers={"X-API-Key": valid_api_key},
     )
     assert resp.status_code == 400

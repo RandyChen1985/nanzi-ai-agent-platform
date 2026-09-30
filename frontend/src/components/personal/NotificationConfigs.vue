@@ -464,7 +464,10 @@
             </div>
           </div>
 
-          <div class="flex items-center justify-end space-x-3 pt-2">
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2">
+            <p class="text-[11px] text-gray-400">
+              连通性测试只发到「我的邮箱」，不会发给上面的其他收件人。
+            </p>
             <button 
               @click="testConfig('email')"
               :disabled="testingChannel['email'] || savingChannel['email']"

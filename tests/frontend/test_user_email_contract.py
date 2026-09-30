@@ -238,6 +238,20 @@ def _notification_configs_src():
     return _read("frontend/src/components/personal/NotificationConfigs.vue")
 
 
+def test_email_test_only_self_hint_is_shown_next_to_button():
+    """「测试只发给自己」必须在界面上说清楚。
+
+    后端已把连通性测试的收件人收敛为调用者本人（防止借平台全局 SMTP 向任意地址
+    发信），若界面不说，用户会以为测试能验证「其他收件人」是否配对了。
+    断言必须锚定在按钮附近，全文任意位置出现不算——否则别处写一句同样的话就能蒙混。
+    """
+    src = _notification_configs_src()
+    hint = src.find("连通性测试只发到「我的邮箱」")
+    assert hint != -1, "邮件渠道「测试连通性」旁必须说明只发给自己"
+    button = src.find("testConfig('email')", hint)
+    assert button != -1 and button - hint < 600, "该提示必须紧邻邮件渠道的测试按钮"
+
+
 def test_email_test_result_is_shown_in_card_not_only_toast():
     src = _notification_configs_src()
     assert "emailTestResult" in src, "邮件测试结果必须持久留在卡片内"

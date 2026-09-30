@@ -388,7 +388,6 @@ class NotificationService:
         `except: pass` 静默降级，会让 587 端口可能明文发送凭据。
         """
         from app.services.email_delivery_service import EmailDeliveryService
-        from app.models.user import User
 
         config = config or {}
         source = EmailDeliveryService.resolve_smtp_source(config)
@@ -409,30 +408,22 @@ class NotificationService:
                 # host 是唯一必填项；账号与授权码要么都填、要么都不填（内网中继免认证）
                 return False, "SMTP 服务地址不能为空；账号与授权码要么都填、要么都不填"
 
-        # 收件人：默认抄送自己的真实邮箱，其次才是配置里的其它收件人。
-        # 全局模式下没有「自己的账号」可当收件人，所以这里必须查库取用户邮箱。
+        # 收件人**只能是调用者本人**。这是连通性测试，不是发信功能：
+        # 若收件人由请求体/配置决定，任何登录用户都能借**平台全局 SMTP** 向任意外部
+        # 地址发信（本接口仅需登录、也没有频控），等于把平台当成开放中继。
+        # 因此这里刻意忽略配置里的「其他收件人」，只发给自己。
         to: List[str] = []
-        if user_id is not None and db is not None and config.get("include_self", True):
-            self_email = (
-                await db.execute(select(User.email).where(User.id == user_id))
-            ).scalar()
-            to = EmailDeliveryService.compose_recipients(
-                self_email=self_email,
-                include_self=True,
-                extra=config.get("recipients"),
-            )
-        if not to:
-            to = EmailDeliveryService.parse_recipients(config.get("recipients"))
-        if not to and source == "custom":
-            # 与 send_email 同一规则：仅自定义 SMTP 保留「回退发给发件账号」的既有行为。
-            # 全局模式下不回退——发给平台自己属于静默的错误投递，用户会看到「测试通过」
-            # 却实际收不到任何通知，所以宁可明确报错让他去填邮箱。
+        self_email = await EmailDeliveryService.resolve_self_email(user_id, db)
+        if self_email:
+            to = [self_email]
+        elif source == "custom":
+            # 自定义 SMTP 且本人未填邮箱时，回退发给发件账号本人——那仍是「发给自己」
+            # 的账号，且保留了历史行为。全局模式不回退：发给平台自己属于静默的错误
+            # 投递，用户会看到「测试通过」却实际收不到任何通知。
             fallback = settings.effective_from()
             to = [fallback] if fallback else []
         if not to:
-            return False, (
-                "没有收件人：请先在「账号基本信息」中填写邮箱，或在此配置其他收件人"
-            )
+            return False, "没有收件人：请先在「账号基本信息」中填写邮箱后再测试"
 
         subject = "AI 智能体平台 - 邮件通知连通性测试"
         body = build_test_message_plain("email", actor)
@@ -584,7 +575,6 @@ class NotificationService:
     @classmethod
     async def send_email(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
         """按用户选择的来源（全局/自定义）发信，收件人默认包含用户自己的邮箱。"""
-        from app.models.user import User
         from app.services.email_delivery_service import EmailDeliveryService
 
         record = await cls.get_config_by_type_raw(db, user_id, "email")
@@ -602,11 +592,9 @@ class NotificationService:
         if settings is None:
             return False, "邮件服务未配置（当前来源无可用的 SMTP 设置）"
 
-        # 用户自己的邮箱每次都现读：include_self 存的是标志而非邮箱快照，
-        # 用户改邮箱后收件人必须自动跟随。
-        self_email = (
-            await db.execute(select(User.email).where(User.id == user_id))
-        ).scalar()
+        # 用户自己的邮箱每次都现读（统一走 resolve_self_email）：include_self 存的是
+        # 标志而非邮箱快照，用户改邮箱后收件人必须自动跟随。
+        self_email = await EmailDeliveryService.resolve_self_email(user_id, db)
 
         include_self = config.get("include_self", True)   # 缺失默认 True，新老用户一致
         recipients = EmailDeliveryService.compose_recipients(
