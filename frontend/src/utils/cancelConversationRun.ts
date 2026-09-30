@@ -7,14 +7,17 @@ export interface CancelConversationRunOptions {
 
 /**
  * Cancel the current conversation generation on the backend, then the caller
- * should abort the SSE fetch. Failures are logged only.
+ * should abort the SSE fetch.
+ *
+ * 返回服务端是否确认取消，便于调用方给出「已终止」等可见反馈；
+ * 不抛异常，避免终止动作本身再打断界面。
  */
 export async function cancelConversationRun(
   conversationId: string,
   options?: CancelConversationRunOptions
-): Promise<void> {
+): Promise<boolean> {
   const cid = (conversationId || '').trim()
-  if (!cid) return
+  if (!cid) return false
 
   try {
     await axios.post(
@@ -25,7 +28,9 @@ export async function cancelConversationRun(
       },
       options?.headers ? { headers: options.headers } : undefined
     )
+    return true
   } catch (e) {
     console.warn('[Chat] cancel conversation run failed', cid, e)
+    return false
   }
 }

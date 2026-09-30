@@ -118,6 +118,14 @@ CHROMIUM_LAUNCH_ARGS = [
 ]
 
 MANUAL_CLICK_LOAD_TIMEOUT_MS = 1500
+# 滑块拟人拖拽参数：行为风控校验的是"事件密度 + 时间-位移曲线"。
+# 稀疏的点配极短耗时（例如 100px 只发 10 个事件、0.2 秒完成）是典型机器特征。
+SLIDER_MIN_SEGMENTS = 40
+SLIDER_MAX_SEGMENTS = 90
+SLIDER_SEGMENT_PX = 2.4
+SLIDER_DURATION_BASE_SECONDS = 0.55
+SLIDER_DURATION_PER_PX = 0.008
+SLIDER_MAX_DURATION_SECONDS = 1.8
 SNAPSHOT_NODE_SELECTOR = "body *"
 SNAPSHOT_MAX_ELEMENTS = 120
 # 抓取帧内交互候选元素；CSS 选择器默认穿透 open shadow DOM，因此对 Shadow DOM 元素同样生效。
@@ -977,21 +985,32 @@ class BrowserWorker:
                     """
                     () => {
                       const bodyText = (document.body?.innerText || '').toLowerCase();
-                      const textMarkers = [
+                      // 只有真正展开的验证挑战才出现的文案；
+                      // “点击按钮进行验证”这类触发按钮文案不在此列。
+                      const challengeTextMarkers = [
                         '验证码', '安全验证', '人机验证', '滑块验证',
+                        '拖动滑块', '按住滑块', '向右滑动', '请依次点击', '滑动验证',
                         'captcha', 'verify-human'
                       ];
-                      const hasTextMarker = textMarkers.some((marker) => bodyText.includes(marker));
+                      const hasChallengeText = challengeTextMarkers.some((marker) => bodyText.includes(marker));
+                      // 挑战容器：必须是已展开的挑战本体。极验初始的“点击按钮进行验证”
+                      // 按钮同样带 geetest_ 前缀（geetest_btn / geetest_holder），
+                      // 必须排除，否则挑战出现前页面就被判为验证码，AI 会被冻结到
+                      // 连这个触发按钮都点不了。
+                      const challengeNodePattern = /captcha|geetest_(?:panel|popup|window|slider|widget|wrap|mask|cover|box_)|nc_1|slider-verify|verify-slider|verify-move-block|slider-btn|slide-verify/;
                       const hasChallengeNode = Array.from(document.querySelectorAll('[id], [class]')).some((node) => {
                         const value = `${node.id || ''} ${typeof node.className === 'string' ? node.className : ''}`.toLowerCase();
-                        return /captcha|geetest|nc_1|slider-verify|verify-slider/.test(value);
+                        return challengeNodePattern.test(value);
                       });
                       const hasChallengeFrame = Array.from(document.querySelectorAll('iframe')).some((frame) =>
                         /captcha|geetest|nc_1|slider-verify|verify-slider/.test((frame.getAttribute('src') || '').toLowerCase())
                       );
+                      const matched = hasChallengeText || hasChallengeNode || hasChallengeFrame;
                       return {
-                        matched: hasTextMarker || hasChallengeNode || hasChallengeFrame,
-                        reason: hasTextMarker ? '页面要求人工完成安全验证' : '页面出现验证码控件'
+                        matched: matched,
+                        reason: hasChallengeText
+                          ? '页面要求人工完成安全验证'
+                          : (hasChallengeNode || hasChallengeFrame ? '页面出现验证码控件' : null)
                       };
                     }
                     """
@@ -1583,30 +1602,53 @@ class BrowserWorker:
     ) -> list[tuple[float, float, float]]:
         """生成拟人滑块拖拽轨迹点 ``(x, y, 段间延时秒)``。
 
-        * 分段数随距离增长但封顶；
+        * 事件密度接近真实鼠标采样：约每 2~3px 一个事件，40~90 点封顶；
+        * 总时长按距离缩放到人手区间（0.55~1.8 秒），避免"10 个事件 0.2 秒"
+          这类一眼机器的特征被行为风控拦截；
         * 水平位移采用 smoothstep 缓入缓出（起速慢、中段快、末端回落），叠加
-          轻微 y 抖动，模拟人手拖动时先慢后快再减速收尾的自然物理特征；
+          连续的正弦 y 抖动（末端收敛回起点 y），模拟人手拖动的自然物理特征；
         * 距离较大时末尾加入一次小的过冲回弹，模拟人手惯性后略微回位。
         """
         distance = float(abs(travel_px))
-        segments = int(min(6 + distance / 40.0, 22))
+        segments = int(
+            min(
+                max(SLIDER_MIN_SEGMENTS, distance / SLIDER_SEGMENT_PX),
+                SLIDER_MAX_SEGMENTS,
+            )
+        )
         if segments < 1:
             segments = 1
-        base_delay = random.uniform(0.012, 0.026)
+
+        total_duration = min(
+            SLIDER_DURATION_BASE_SECONDS + distance * SLIDER_DURATION_PER_PX,
+            SLIDER_MAX_DURATION_SECONDS,
+        )
+        # 先按速度曲线算权重，再把总时长按权重分摊，保证总耗时可控而非随段数膨胀。
+        # 必须 max(..., 0.0)：浮点下 sin(π) 可能落到 -1e-16，负数开 1.5 次方会变成复数，
+        # 得到的延时无法用于 sleep（长距离拖动必崩）。
+        weights = [
+            1.0 / (0.35 + max(math.sin(math.pi * (i + 1) / segments), 0.0) ** 1.5)
+            for i in range(segments)
+        ]
+        weight_sum = sum(weights) or 1.0
+        jitter_phase = random.uniform(0, math.pi * 2)
+
         points: list[tuple[float, float, float]] = []
         for i in range(segments):
             t = (i + 1) / segments
             # smoothstep（三次 Hermite）：0→0 起、0.5→中、1→终，缓入缓出。
             ease = t * t * (3.0 - 2.0 * t)
-            speed = math.sin(math.pi * t) ** 1.5
             x = start_x + travel_px * ease
-            jitter = math.sin(i * 1.7 + random.uniform(0, 0.6)) * random.uniform(0.6, 1.6)
-            delay = base_delay * random.uniform(0.7, 1.5) / (0.5 + speed)
+            # 连续正弦抖动，末端振幅收敛到 0：避免每步独立随机造成的锯齿状 y 轨迹
+            jitter = math.sin(t * math.pi * 2.4 + jitter_phase) * math.sin(math.pi * t) * 1.6
+            delay = total_duration * weights[i] / weight_sum * random.uniform(0.85, 1.18)
             points.append((x, start_y + jitter, delay))
         if distance > 40:
             overshoot_target = start_x + travel_px * 1.012
-            points.append((overshoot_target, start_y + random.uniform(-1, 1), base_delay * 1.2))
-            points.append((start_x + travel_px, start_y, base_delay * 0.8))
+            points.append(
+                (overshoot_target, start_y + random.uniform(-1, 1), random.uniform(0.06, 0.12))
+            )
+            points.append((start_x + travel_px, start_y, random.uniform(0.04, 0.09)))
         return points
 
     async def upload(

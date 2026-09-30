@@ -787,6 +787,7 @@
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 dark-mode
+                @stop="stopGeneration({ notifySuccess: true })"
               />
               <ToolPermissionCard
                 v-if="msg.pendingPermission"
@@ -3412,8 +3413,11 @@ const attachBrowserSession = async (
   } catch (error: any) {
     if (openingGeneration !== undefined && openingGeneration !== browserOpenGeneration) return false;
     const detail = String(error?.response?.data?.detail || "");
+    // 只有后端显式标记"环境未就绪"（或详情里明确是 Playwright/Chromium 缺失）才展示安装引导：
+    // 普通 503（启动失败、人工接管冲突等）必须按真实原因提示，不能一律甩安装步骤
     const isEnvironmentFailure =
-      error?.response?.status === 503 || /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
+      String(error?.response?.headers?.['x-browser-error'] || '') === 'environment_not_ready' ||
+      /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
     if (isEnvironmentFailure) {
       browserEnvironmentError.value = detail || "服务端浏览器环境未就绪，请检查 Playwright/Chromium 安装状态";
       browserPanelVisible.value = true;
@@ -3423,6 +3427,12 @@ const attachBrowserSession = async (
     return false;
   }
 };
+
+// 409（AI 正在自动解算验证码）属于「几秒后自愈」的忙碌冲突：自动重开面板，不必让用户
+// 手动再点一次。重试上限用尽后清零计数，保证用户下次手动点击仍能获得完整重试机会。
+const BROWSER_OPEN_CONFLICT_MAX_RETRIES = 2;
+const BROWSER_OPEN_CONFLICT_RETRY_DELAY_MS = 3000;
+let browserOpenConflictRetries = 0;
 
 const openBrowserPanel = async () => {
   if (browserPanelOpening.value) return;
@@ -3447,13 +3457,35 @@ const openBrowserPanel = async () => {
     if (generation !== browserOpenGeneration) return;
     const session = sessionResponse.data;
     browserEnvironmentError.value = null;
+    browserOpenConflictRetries = 0;
     const attached = await attachBrowserSession(session.id, session.approval_mode, generation);
     if (!attached && generation === browserOpenGeneration) browserPanelVisible.value = false;
   } catch (error: any) {
     if (generation !== browserOpenGeneration) return;
     const detail = String(error?.response?.data?.detail || "");
+    const status = Number(error?.response?.status || 0);
+    // 409 = AI 正在解算验证码、其他操作短暂让行（唯一来源，见后端注释）。它属于
+    // 「几秒后自愈」的忙碌冲突，且此时面板没打开、用户也没有可点的释放按钮，
+    // 所以自动等几秒重开；超过重试上限才按普通失败提示。
+    if (status === 409 && browserOpenConflictRetries < BROWSER_OPEN_CONFLICT_MAX_RETRIES) {
+      browserOpenConflictRetries += 1;
+      browserPanelOpening.value = false;
+      showToast(
+        detail || `AI 正在识别验证码，${BROWSER_OPEN_CONFLICT_RETRY_DELAY_MS / 1000} 秒后自动重试…`,
+        "warning",
+      );
+      window.setTimeout(() => {
+        void openBrowserPanel();
+      }, BROWSER_OPEN_CONFLICT_RETRY_DELAY_MS);
+      return;
+    }
+    // 重试用尽：清零计数，保证用户下次手动打开仍有完整的自动重试机会
+    browserOpenConflictRetries = 0;
+    // 只有后端显式标记"环境未就绪"（或详情里明确是 Playwright/Chromium 缺失）才展示安装引导：
+    // 普通 503（启动失败、人工接管冲突等）必须按真实原因提示，不能一律甩安装步骤
     const isEnvironmentFailure =
-      error?.response?.status === 503 || /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
+      String(error?.response?.headers?.['x-browser-error'] || '') === 'environment_not_ready' ||
+      /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
     if (isEnvironmentFailure) {
       browserEnvironmentError.value = detail || "服务端浏览器环境未就绪，请检查 Playwright/Chromium 安装状态";
       browserPanelVisible.value = true;
@@ -7827,7 +7859,17 @@ const openModelCallStats = async (msg: any) => {
   }
 };
 
-const stopGeneration = () => {
+type StopGenerationOptions = {
+  /**
+   * 成功终止时是否需要 toast。
+   * 排队场景（时间线里的「终止」）原本毫无反馈，需要提示；输入框的停止生成已有
+   * 「[用户终止生成]」标记与按钮消失，再弹 toast 反而吵。
+   */
+  notifySuccess?: boolean;
+};
+
+const stopGeneration = (options?: StopGenerationOptions) => {
+  const notifySuccess = options?.notifySuccess ?? false;
   // 用户主动叫停：此时排队中的快捷提问必须一并作废。否则取消完成后会话锁释放，
   // watch 会把刚才排队的提问发出去——用户明明按了停止，系统却反向发出一条新提问。
   dropPendingQuickSend();
@@ -7837,9 +7879,18 @@ const stopGeneration = () => {
     void cancelConversationRun(conversationId.value, {
       traceId: lastMsg?.trace_id,
       headers: embedAuthHeaders(),
-    }).finally(() => {
-      void refreshCurrentRunStatus();
-    });
+    })
+      .then((cancelled) => {
+        if (cancelled) {
+          if (notifySuccess) showToast("已终止当前运行并释放会话锁", "success");
+          return;
+        }
+        // 未确认释放始终要提醒：否则用户以为已释放，实际会话锁可能还占着
+        showToast("已停止本地生成，但服务端未确认释放结果", "warning");
+      })
+      .finally(() => {
+        void refreshCurrentRunStatus();
+      });
   }
   if (abortController) {
     abortController.abort();

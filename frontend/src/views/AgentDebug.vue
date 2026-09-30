@@ -3095,14 +3095,33 @@ const handleFeedback = async (msg: Message, type: "up" | "down") => {
 };
 
 
-const stopGeneration = () => {
+type StopGenerationOptions = {
+  /**
+   * 成功终止时是否需要 toast。
+   * 排队场景（时间线里的「终止」）原本毫无反馈，需要提示；输入框的停止生成已有
+   * 「[用户终止生成]」标记与按钮消失，再弹 toast 反而吵。
+   */
+  notifySuccess?: boolean;
+};
+
+const stopGeneration = (options?: StopGenerationOptions) => {
+  const notifySuccess = options?.notifySuccess ?? false;
   const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : null;
   if (conversationId.value) {
     void cancelConversationRun(conversationId.value, {
       traceId: lastMsg?.trace_id,
-    }).finally(() => {
-      void refreshCurrentRunStatus();
-    });
+    })
+      .then((cancelled) => {
+        if (cancelled) {
+          if (notifySuccess) showToast("已终止当前运行并释放会话锁", "success");
+          return;
+        }
+        // 未确认释放始终要提醒：否则用户以为已释放，实际会话锁可能还占着
+        showToast("已停止本地生成，但服务端未确认释放结果", "warning");
+      })
+      .finally(() => {
+        void refreshCurrentRunStatus();
+      });
   }
   if (abortController) {
     abortController.abort();
@@ -4659,6 +4678,7 @@ onUnmounted(() => {
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 bordered
+                @stop="stopGeneration({ notifySuccess: true })"
               />
 
               <ToolPermissionCard

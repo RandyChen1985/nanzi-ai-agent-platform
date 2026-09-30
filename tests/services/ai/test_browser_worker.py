@@ -1737,3 +1737,44 @@ async def test_worker_wait_for_accepts_target_ref_and_snapshot(tmp_path):
     assert "秒内页面等待未满足" in str(exc_info.value)
 
 
+
+
+def _slider_points(travel_px: int, *, start_x: float = 100.0, start_y: float = 200.0):
+    worker = BrowserWorker(url_validator=lambda url: url)
+    return worker._slider_trajectory(start_x, start_y, travel_px)
+
+
+def test_slider_trajectory_is_dense_and_slow_enough_for_geetest():
+    """极验按行为风控校验轨迹：100px 只发 10 个事件、0.2 秒完成会被直接判定为机器。"""
+    points = _slider_points(100)
+
+    assert len(points) >= 40, "事件密度必须接近真实鼠标采样"
+
+    total_seconds = sum(delay for _x, _y, delay in points)
+    assert 0.8 <= total_seconds <= 1.8, f"总时长必须落在人手拖动区间，当前 {total_seconds:.2f}s"
+
+
+def test_slider_trajectory_ends_exactly_on_target_without_y_drift():
+    """终点必须精确落在目标 x，且 y 收敛回起点：否则 mouseup 会落在按钮之外。"""
+    points = _slider_points(100)
+
+    assert abs(points[-1][0] - 200.0) <= 1.5
+    assert abs(points[-1][1] - 200.0) <= 0.5
+
+
+def test_slider_trajectory_accelerates_then_decelerates():
+    """起手必须明显慢于中段（缓入缓出），否则加速度曲线一眼是机器。"""
+    points = _slider_points(200)
+    xs = [100.0] + [point[0] for point in points]
+
+    first_gap = xs[1] - xs[0]
+    mid_gap = xs[len(xs) // 2] - xs[len(xs) // 2 - 1]
+
+    assert first_gap < mid_gap
+
+
+def test_slider_trajectory_never_yields_complex_delays():
+    """长距离末段 sin(π) 浮点可能为负：延时必须是实数，否则 asyncio.sleep 直接崩。"""
+    points = _slider_points(320)
+
+    assert all(isinstance(delay, float) for _x, _y, delay in points)

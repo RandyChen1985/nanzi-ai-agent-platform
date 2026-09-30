@@ -28,7 +28,10 @@ from app.schemas.browser import (
 )
 from app.services.ai.browser import BrowserEnvironmentError
 from app.services.ai.browser.browser_policy import BrowserUrlBlocked
-from app.services.ai.browser.browser_runtime import BrowserControlConflict
+from app.services.ai.browser.browser_runtime import (
+    BrowserControlConflict,
+    BrowserHumanControlRequired,
+)
 from app.services.ai.browser.browser_runtime import browser_runtime
 from app.services.ai.browser.browser_profile_service import (
     BrowserProfileAccessDenied,
@@ -177,9 +180,26 @@ async def open_browser_session(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except BrowserProfileAccessDenied as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except BrowserHumanControlRequired as exc:
+        # 忙碌冲突不是环境故障：必须回 409，否则前端会误报"运行环境未就绪"。
+        # 该异常当前只有一个来源——AI 正在自动解算验证码、其他操作让行超时（人工接管
+        # 超时会自动释放控制权，不会走到这里），所以提示要引导"稍等"，而不是去点「交还 AI」。
+        logger.info("Browser session is busy while solving captcha: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            # 异常消息本身已含完整引导（"…请稍等几秒后重试"），此处不再追加同类文案，
+            # 否则用户会连续读到两遍"请稍等几秒"。
+            detail=str(exc),
+        ) from exc
     except BrowserEnvironmentError as exc:
         logger.warning("Browser environment missing: %s", exc)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        # 带上可判定的标记：前端据此展示"安装 Playwright/Chromium"引导，
+        # 而不是把任何 503 都当成环境问题（启动失败、人工接管冲突另有语义）
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            headers={"X-Browser-Error": "environment_not_ready"},
+        ) from exc
     except Exception as exc:
         logger.exception("Failed to open browser session")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="浏览器启动失败，请稍后重试") from exc
@@ -350,7 +370,7 @@ async def get_browser_screenshot(
             else:
                 if not browser_runtime.has_session(session.id):
                     await browser_runtime.open_session(db, session)
-                snapshot = await browser_runtime.snapshot(session.id)
+                snapshot = await _viewer_snapshot(session.id)
                 await db.commit()
         except BrowserAccessDenied as exc:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
@@ -368,6 +388,44 @@ def _viewer_snapshot_payload(session_id: str, snapshot) -> dict[str, Any]:
     if snapshot.screenshot_ref:
         payload["screenshot_ref"] = f"/api/v1/chat/browser/sessions/{session_id}/screenshot"
     return payload
+
+
+# Viewer 路径的验证码自动解算后台任务（按 session 去重）
+_captcha_auto_solve_tasks: dict[str, asyncio.Task] = {}
+
+
+def _schedule_captcha_auto_solve(session_id: str) -> None:
+    """Viewer 路径：后台完成一轮验证码自动解算，不阻塞人工操作。"""
+    task = _captcha_auto_solve_tasks.get(session_id)
+    if task is not None and not task.done():
+        return
+    _captcha_auto_solve_tasks[session_id] = asyncio.create_task(
+        _captcha_auto_solve_worker(session_id)
+    )
+
+
+async def _captcha_auto_solve_worker(session_id: str) -> None:
+    try:
+        snapshot = await browser_runtime.auto_solve_captcha(session_id)
+        await browser_runtime.broadcast_event(
+            session_id,
+            {"type": "snapshot", "snapshot": _viewer_snapshot_payload(session_id, snapshot)},
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("浏览器验证码自动解算后台任务失败", exc_info=True)
+    finally:
+        if _captcha_auto_solve_tasks.get(session_id) is asyncio.current_task():
+            _captcha_auto_solve_tasks.pop(session_id, None)
+
+
+async def _viewer_snapshot(session_id: str) -> Any:
+    """Viewer 取快照：先返回画面，验证码解算交给后台任务，避免阻塞人工操作。"""
+    snapshot = await browser_runtime.snapshot(session_id, auto_solve=False)
+    if snapshot.page_state == "captcha":
+        _schedule_captcha_auto_solve(session_id)
+    return snapshot
 
 
 def _viewer_token_from_websocket(websocket: WebSocket) -> tuple[str | None, str | None]:
@@ -518,7 +576,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
             forward_task = asyncio.create_task(_forward_runtime_events(websocket, event_queue))
             if not browser_runtime.has_session(session.id):
                 await browser_runtime.open_session(db, session)
-            snapshot = await browser_runtime.snapshot(session.id)
+            snapshot = await _viewer_snapshot(session.id)
             await db.commit()
             await websocket.send_json({"type": "snapshot", "snapshot": _viewer_snapshot_payload(session_id, snapshot)})
             await _send_viewer_control_state(websocket, session.id, snapshot)
@@ -543,7 +601,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                 event = str(message.get("type", ""))
                 try:
                     if event == "snapshot":
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event in {"mouse_click", "mouse_down", "mouse_move", "mouse_up", "key", "text", "scroll"}:
                         info = await browser_runtime.manual_input(
                             session.id,
@@ -561,13 +619,13 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                             continue
                         if event == "mouse_click":
                             await websocket.send_json({"type": "focus", "focused_input": info.focused_input})
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "release_control":
                         await browser_runtime.release_human_control(
                             session.id,
                             owner_id=viewer_connection_id,
                         )
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "navigate":
                         info = await browser_runtime.navigate(
                             session.id,
@@ -578,7 +636,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event in {"go_back", "go_forward", "reload"}:
                         if event == "go_back":
                             result = await browser_runtime.go_back(session.id, owner_id=viewer_connection_id)
@@ -590,7 +648,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.page_title = result.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "switch_tab":
                         tab_id = str(message.get("tab_id", ""))
                         info = await browser_runtime.switch_tab(session.id, tab_id, owner_id=viewer_connection_id)
@@ -598,7 +656,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "close_tab":
                         tab_id = str(message.get("tab_id", ""))
                         info = await browser_runtime.close_tab(session.id, tab_id, owner_id=viewer_connection_id)
@@ -606,7 +664,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "close_other_tabs":
                         tab_id = str(message.get("tab_id", ""))
                         info = await browser_runtime.close_other_tabs(session.id, tab_id, owner_id=viewer_connection_id)
@@ -614,7 +672,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "close_tabs_to_right":
                         tab_id = str(message.get("tab_id", ""))
                         info = await browser_runtime.close_tabs_to_right(session.id, tab_id, owner_id=viewer_connection_id)
@@ -622,14 +680,14 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "close_all_tabs":
                         info = await browser_runtime.close_all_tabs(session.id, owner_id=viewer_connection_id)
                         session.current_url = info.url
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "new_tab":
                         target_url = str(message.get("url", "https://www.baidu.com"))
                         info = await browser_runtime.new_tab(session.id, target_url, owner_id=viewer_connection_id)
@@ -637,7 +695,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.page_title = info.title
                         session.last_seen_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "semantic_click":
                         result = await browser_runtime.click(
                             session.id,
@@ -651,7 +709,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.last_seen_at = datetime.now()
                         session.updated_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     elif event == "semantic_fill":
                         result = await browser_runtime.fill(
                             session.id,
@@ -665,7 +723,7 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
                         session.last_seen_at = datetime.now()
                         session.updated_at = datetime.now()
                         await db.commit()
-                        snapshot = await browser_runtime.snapshot(session.id)
+                        snapshot = await _viewer_snapshot(session.id)
                     else:
                         await websocket.send_json({"type": "error", "message": "不支持的浏览器输入事件"})
                         continue

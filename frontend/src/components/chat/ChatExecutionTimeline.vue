@@ -329,7 +329,7 @@
               :aria-expanded="isTimelineItemExpanded(item)"
               @click="toggleTimelineItem(item)"
             >
-              <span v-if="item.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
+              <span v-if="item.status === 'pending' && !isQueueWaitStopped(item)" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
               <WrenchScrewdriverIcon
                 v-if="isToolTimelineItem(item)"
                 class="h-3.5 w-3.5 shrink-0"
@@ -356,6 +356,19 @@
                   :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
                 >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
               </div>
+              <button
+                v-if="isQueueWaitItem(item)"
+                type="button"
+                class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                :class="isQueueWaitStopped(item)
+                  ? 'border-gray-200 bg-gray-100 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                  : 'border-red-200 bg-white/90 text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/40'"
+                :disabled="isQueueWaitStopped(item)"
+                :title="isQueueWaitStopped(item) ? '已终止，正在等待会话锁释放' : '终止当前运行并释放会话锁，不再排队等待'"
+                @click.stop="handleQueueWaitStop(item)"
+              >
+                {{ isQueueWaitStopped(item) ? '已终止' : '终止' }}
+              </button>
               <span
                 v-if="isPreparationParent(item)"
                 class="shrink-0 text-[10px] font-medium"
@@ -682,6 +695,25 @@ const props = withDefaults(defineProps<{
 
 const expanded = defineModel<boolean>("expanded", { default: false });
 const routeGroupExpanded = ref(true);
+
+const emit = defineEmits<{ (e: "stop"): void }>();
+
+// 会话运行锁的排队等待条目（id 由后端 preflight 下发）：这里提供直接终止入口，
+// 否则用户只能干等上一轮任务结束或等待窗口超时。
+const QUEUE_WAIT_STEP_ID = "session:queue_wait";
+const isQueueWaitItem = (item: ProcessTimelineItem): boolean =>
+  item.kind === "log" && String(item.id) === QUEUE_WAIT_STEP_ID && item.status === "pending";
+
+// 用户点击终止后本地立即置为「已终止」：后端不会再为该条目推送状态，
+// 不做本地标记的话按钮仍可点、进行中动效也继续转，看起来像没生效。
+const stoppedQueueWaitKeys = ref<Set<string>>(new Set());
+const isQueueWaitStopped = (item: ProcessTimelineItem): boolean =>
+  item.kind === "log" && stoppedQueueWaitKeys.value.has(String(item.id));
+const handleQueueWaitStop = (item: ProcessTimelineItem) => {
+  if (isQueueWaitStopped(item)) return;
+  stoppedQueueWaitKeys.value = new Set(stoppedQueueWaitKeys.value).add(String(item.id));
+  emit("stop");
+};
 
 function suppressPermissionLogs(items: ProcessTimelineLogItem[]): ProcessTimelineLogItem[];
 function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[];
