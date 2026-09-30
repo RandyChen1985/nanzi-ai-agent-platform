@@ -137,6 +137,11 @@ def _mock_delegation_runtime_config():
     ), patch(
         "app.services.ai.tools.agent_delegate_tool._resolve_delegation_result_max_chars",
         AsyncMock(return_value=8000),
+    ), patch(
+        # 就绪性判定（evaluate_agent_readiness）会去查发布版本与主类型所需资源，
+        # 单测不铺这套数据，这里直接放行，聚焦委派逻辑本身。
+        "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
+        AsyncMock(side_effect=lambda session, agents, **kwargs: list(agents)),
     ):
         yield
 

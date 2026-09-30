@@ -28,10 +28,11 @@ def test_read_write_file():
     res_write = write_file.invoke({"path": test_file, "content": test_content})
     assert "物理写入成功" in res_write
 
-    # 分页读取测试
-    res_read = read_file.invoke({"path": test_file, "offset": 0, "limit": 10})
+    # 分页读取测试（limit 以字节计，取 20 字节才够覆盖 "Hello NanZi"）
+    res_read = read_file.invoke({"path": test_file, "offset": 0, "limit": 20})
     assert "[分页读取成功" in res_read
-    assert "Hello Yuns" in res_read
+    # 断言内容需与上方写入的 test_content 一致（曾遗留旧品牌名 "Hello Yuns"）
+    assert "Hello NanZi" in res_read
 
     # Tail 读取测试
     res_tail = read_file.invoke({"path": test_file, "tail": True, "limit": 20})
@@ -55,7 +56,7 @@ async def test_exec_command():
     # 测试高危命令拦截
     res_forbidden = await exec_command.ainvoke({"command": "rm -rf /"})
     assert "安全拦截" in res_forbidden
-    assert "禁止删除根目录" in res_forbidden
+    assert "禁止删除受保护的系统或工作区目录" in res_forbidden
 
     res_forbidden2 = await exec_command.ainvoke({"command": "rm /"})
     assert "安全拦截" in res_forbidden2

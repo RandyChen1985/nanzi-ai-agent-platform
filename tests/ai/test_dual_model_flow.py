@@ -37,6 +37,10 @@ async def test_agentscope_native_tool_execution_flow():
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 

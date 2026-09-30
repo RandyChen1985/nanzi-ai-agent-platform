@@ -62,6 +62,12 @@ async def test_preflight_prewarms_workspace_when_conversation_id_provided(monkey
         "app.services.ai.runtime.agentscope.workspace.get_local_workspace",
         fake_get_local_workspace,
     )
+    # 预热的按需拉起策略取自系统配置：本地环境常为 docker，会让预热直接跳过。
+    # 这里显式固定为 local，让用例只验证「并发预热」本身。
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value="local"),
+    )
     service = AgentService()
     # 其余预取协程加速，避免真实 I/O
     monkeypatch.setattr(service, "_inject_skills", AsyncMock(return_value=[]))
@@ -165,6 +171,12 @@ async def test_preflight_workspace_prewarm_handles_none_user_info(monkeypatch):
     monkeypatch.setattr(
         "app.services.ai.runtime.agentscope.workspace.get_local_workspace",
         fake_get_local_workspace,
+    )
+    # 预热的按需拉起策略取自系统配置：本地环境常为 docker，会让预热直接跳过。
+    # 这里显式固定为 local，让用例只验证「并发预热」本身。
+    monkeypatch.setattr(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(return_value="local"),
     )
     service = AgentService()
     monkeypatch.setattr(service, "_inject_skills", AsyncMock(return_value=[]))
