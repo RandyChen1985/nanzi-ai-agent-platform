@@ -432,6 +432,7 @@ async def _test_model_connection(
             context_size=context_size,
             max_output_tokens=max_output_tokens,
             temperature=temperature,
+            source="model.test",
         )
         
         if not llm:

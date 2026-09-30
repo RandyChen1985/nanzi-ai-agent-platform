@@ -133,7 +133,7 @@ async def analyze_saved_report_result(
         from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
         from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 
-        llm = await get_llm_async(streaming=False, temperature=0.1)
+        llm = await get_llm_async(streaming=False, temperature=0.1, source="report.analysis")
         if llm is None:
             raise RuntimeError("LLM unavailable")
         try:

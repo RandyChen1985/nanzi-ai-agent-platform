@@ -741,6 +741,7 @@ thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额�
                     temperature=0.0,
                     max_output_tokens=ROUTER_MAX_OUTPUT_TOKENS,
                     ignore_session_reasoning_overrides=True,
+                    source="router",
                 )  # Use deterministic output
                 chat_client = chat_client_from_handle(llm)
                 attempt_messages = messages

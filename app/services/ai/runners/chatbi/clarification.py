@@ -108,6 +108,7 @@ async def generate_clarification_content(
             llm = await AgentConfigProvider.get_configured_llm(
                 streaming=False,
                 config=runner.config,
+                source="chatbi.clarification",
             )
             chat_client = chat_client_from_handle(llm)
             raw_lead = await chat_client.generate_text(
@@ -198,6 +199,7 @@ async def generate_non_data_response(
             llm = await AgentConfigProvider.get_configured_llm(
                 streaming=False,
                 config=runner.config,
+                source="chatbi.clarification",
             )
             chat_client = chat_client_from_handle(llm)
             raw_lead = await chat_client.generate_text(
@@ -276,7 +278,9 @@ async def yield_local_help(
     }
     agent_display_name = _resolve_agent_display_name(runner)
     try:
-        llm = await AgentConfigProvider.get_configured_llm(streaming=False, config=runner.config)
+        llm = await AgentConfigProvider.get_configured_llm(
+            streaming=False, config=runner.config, source="chatbi.clarification"
+        )
         chat_client = chat_client_from_handle(llm)
         content = await chat_client.generate_text(
             system_user_prompt_messages(

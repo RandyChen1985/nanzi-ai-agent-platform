@@ -1315,6 +1315,7 @@ async def test_route_query_uses_bounded_output_and_compact_router_prompt(mock_ag
         temperature=0.0,
         max_output_tokens=512,
         ignore_session_reasoning_overrides=True,
+        source="router",
     )
     prompt = mock_chat.generate_structured_dict.call_args.args[0][0].content[0].text
     assert len(prompt) < len(RouterService.DEFAULT_SYSTEM_PROMPT)

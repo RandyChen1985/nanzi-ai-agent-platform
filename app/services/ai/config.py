@@ -195,7 +195,8 @@ class AgentConfigProvider:
         streaming: bool = True, 
         config: Optional[ChatConfig] = None,
         model_override: Optional[str] = None,
-        temp_override: Optional[float] = None
+        temp_override: Optional[float] = None,
+        source: Optional[str] = None,
     ):
         """
         Instantiates an AgentScope LLM based on system config, agent-specific overrides, or runtime overrides.
@@ -260,6 +261,9 @@ class AgentConfigProvider:
         llm_kwargs["read_timeout"] = parse_llm_request_read_timeout(
             get_val(LLM_REQUEST_READ_TIMEOUT_KEY, None)
         )
+        # 供 Langfuse 直调 span 标注来源；为 None 时不下传，保持原行为。
+        if source is not None:
+            llm_kwargs["source"] = source
 
         return get_llm(**llm_kwargs)
 
