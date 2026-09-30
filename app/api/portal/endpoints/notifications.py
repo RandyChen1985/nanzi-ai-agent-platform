@@ -70,7 +70,8 @@ async def test_notifications_config(
             "real_name": user_info.get("real_name", ""),
         }
         success, err_msg = await NotificationService.test_connection(
-            req.channel_type, resolved, actor
+            # user_id / db 供邮件渠道解析 smtp_source 分层并推导收件人
+            req.channel_type, resolved, actor, user_id=user_id, db=db
         )
         if success:
             return {"status": "success", "message": "测试连通成功"}

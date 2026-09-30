@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request
 import logging
 import re
-from typing import Optional
+from typing import Dict, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
@@ -105,6 +105,7 @@ REMARK_MAX_LENGTH = 255
 
 REGISTER_SUCCESS_MESSAGE = "注册申请已提交，请等待管理员审核"
 DUPLICATE_USER_NAME_MESSAGE = "该账号名已被占用，请更换后重试"
+DUPLICATE_USER_EMAIL_MESSAGE = "该邮箱已被其他账号使用"
 USER_NAME_FORMAT_MESSAGE = "账号名需为 3–32 位、以字母开头，仅可包含字母、数字、下划线、中划线与点"
 USER_NAME_AVAILABLE_MESSAGE = "该账号名可以使用"
 
@@ -112,6 +113,7 @@ USER_NAME_AVAILABLE_MESSAGE = "该账号名可以使用"
 class RegisterRequest(BaseModel):
     user_name: str = Field(..., description="账号名（3–32 位，字母开头）")
     real_name: str = Field(..., description="用户姓名")
+    email: Optional[str] = Field(None, description="邮箱，选填；填写后全局唯一")
     password: str = Field(..., description="登录密码（须符合等保复杂度要求）")
     remark: Optional[str] = Field(None, description="备注（可选，最多 255 字）")
 
@@ -212,6 +214,14 @@ async def register(
     real_name = (request.real_name or "").strip()
     remark = (request.remark or "").strip() or None
 
+    # 邮箱选填。strict=True 让格式错误明确 400，而不是被静默丢弃——
+    # 用户填了邮箱却因为格式问题没存上，会以为以后能收到通知。
+    raw_email = (getattr(request, "email", None) or "").strip()
+    try:
+        email = AuthService.normalize_email(raw_email, strict=True) if raw_email else None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
     # 2. 限流：先于格式校验，避免绕过计数。
     #    来源维度只在「能确信该地址标识真实来源」时生效（见 resolve_rate_limit_source）：
     #    反代在异机/异 Pod 时 client.host 是反代自身，若照用会让全平台共用一个计数器，
@@ -270,6 +280,13 @@ async def register(
             detail=DUPLICATE_USER_NAME_MESSAGE,
         )
 
+    # 6.1 邮箱唯一性：与账号名同口径（任意状态都算占用，大小写不敏感）
+    if email and await AuthService.is_user_email_taken(email, db=db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=DUPLICATE_USER_EMAIL_MESSAGE,
+        )
+
     # 6. 落库：待审核 + 预签发 API Key（审核通过后密码登录依赖它下发会话）
     try:
         await AuthService.generate_api_key(
@@ -278,15 +295,20 @@ async def register(
             remark=remark,
             role="user",
             status=USER_STATUS_PENDING_REVIEW,
+            email=email,
             db=db,
         )
-    except IntegrityError:
-        # 并发下两个请求同时通过第 5 步检查时由唯一索引兜底，转成同样的 400
+    except IntegrityError as exc:
+        # 并发下两个请求同时通过唯一性检查时由唯一索引兜底。
+        # 必须先判断是哪个索引冲突：注册接口同时受账号名与邮箱两个唯一键约束，
+        # 一律报「账号名已被占用」会让用户改错字段、反复试不通。
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=DUPLICATE_USER_NAME_MESSAGE,
+        detail = (
+            DUPLICATE_USER_EMAIL_MESSAGE
+            if AuthService.is_email_unique_violation(exc)
+            else DUPLICATE_USER_NAME_MESSAGE
         )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
     user_id = (
         await db.execute(select(User.id).where(User.user_name == user_name))
@@ -639,13 +661,21 @@ async def get_current_user_info(
             days_until_next_change = password_expire_days - days_since_last_change
             is_expired = days_until_next_change <= 0
 
+    # 邮箱必须优先取实时查库的 user_obj，而不是 require_api_key 注入的 user dict：
+    # 后者缓存在 Redis（auth:api_key:*，TTL 3600s），刚上线时老会话命中缓存会拿到
+    # 不含 email 的旧 dict，个人中心会误显示「未设置」。
+    # 同理顶层与 data 内各放一份：本特性的验收用例断言顶层 key，而前端读 data.email。
+    current_email = (user_obj.email if user_obj else None) or user.get("email", "") or ""
+
     return {
         "status": "success",
+        "email": current_email,
         "data": {
             "id": user.get("user_id"),
             "user_id": user.get("user_id"),
             "user_name": user.get("user_name"),
             "real_name": user.get("real_name") or user.get("user_name"),
+            "email": current_email,
             "role": user.get("role"),
             "dept_code": user.get("dept_code"),
             "org_path": user.get("org_path"),
@@ -671,6 +701,69 @@ async def get_current_user_info(
             }
         }
     }
+
+
+class ProfileUpdateRequest(BaseModel):
+    """个人中心自助资料更新。刻意只有一个字段——最小权限。
+
+    设计上不允许用户自助修改 real_name / role / status / remark：
+    前三个是管理属性，改 remark 没有提出需求。用独立模型而不是复用管理员那套，
+    是为了让「哪些字段能自助改」这件事在类型层面就是显式的。
+    """
+    email: Optional[str] = None
+
+
+@router.patch("/me/profile", summary="更新我的资料")
+async def update_my_profile(
+    request: ProfileUpdateRequest,
+    user: Dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """只允许改邮箱。
+
+    不要求输入当前密码（已决策）：邮箱不是登录因子，改了也能再改；
+    而要求密码确认会让纯 API Key 登录的账号无法自助修改。
+    变更只打结构化日志——平台没有通用的用户变更审计表，合规审计需另立设计。
+
+    注意：`auth.router` 是唯一没有整组挂 `require_api_key` 的 router，
+    所以这里的 `Depends(require_api_key)` 是**显式且必需**的，漏掉就是公开接口。
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.user import User
+
+    raw_email = (request.email or "").strip()
+    try:
+        email = AuthService.normalize_email(raw_email, strict=True) if raw_email else None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    user_id = int(user.get("id") or user.get("user_id"))
+    if email and await AuthService.is_user_email_taken(email, exclude_user_id=user_id, db=db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=DUPLICATE_USER_EMAIL_MESSAGE
+        )
+
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+
+    old_email = target.email
+    target.email = email
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # 并发下两人同时抢同一邮箱：唯一索引兜底
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=DUPLICATE_USER_EMAIL_MESSAGE
+        ) from exc
+
+    logger.info(
+        "用户自助修改邮箱: user_name=%s old=%s new=%s",
+        user.get("user_name"), old_email, email,
+    )
+    return {"status": "success", "email": email or ""}
 
 class EnableTwoFactorRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6, description="Google 身份验证器 6 位动态验证码")

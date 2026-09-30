@@ -18,6 +18,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_name = Column(String(50), unique=True, nullable=False, index=True)
     real_name = Column(String(50), nullable=True)
+    email = Column(String(254), nullable=True, index=True, comment='邮箱（小写归一化存储，全局唯一；NULL=未填写）')
     role = Column(String(20), default="user") # admin, user
     dept_code = Column(String(50), nullable=True, comment='部门代码')
     org_path = Column(String(255), nullable=True, comment='组织结构全路径 (例如: yovole/sh/dc1)')

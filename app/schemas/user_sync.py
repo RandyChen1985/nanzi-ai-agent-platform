@@ -15,6 +15,7 @@ class ThirdPartyUserSyncFieldMap(BaseModel):
     user_name: str = Field(..., description="第三方用户名列（作为两边系统映射主键）")
     real_name: Optional[str] = None
     remark: Optional[str] = None
+    email: Optional[str] = None
 
 
 class ThirdPartyUserSyncConfig(BaseModel):

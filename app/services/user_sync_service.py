@@ -149,6 +149,7 @@ class UserSyncService:
             "user_name": field_map.user_name,
             "real_name": field_map.real_name,
             "remark": field_map.remark,
+            "email": field_map.email,
         }
         for alias, source_col in mapping.items():
             if source_col:
@@ -282,6 +283,7 @@ class UserSyncService:
             "user_name": username,
             "real_name": (str(row.get("real_name")).strip() if row.get("real_name") is not None else None),
             "remark": (str(row.get("remark")).strip() if row.get("remark") is not None else None),
+            "email": (str(row.get("email")).strip() if row.get("email") is not None else None),
             "extra_data": UserSyncService._build_extra_data_json(row, extra_data_mappings or []),
         }
 
@@ -341,15 +343,55 @@ class UserSyncService:
         return items
 
     @staticmethod
+    async def _resolve_sync_email(
+        ext_user: Dict[str, Any],
+        existing: Optional[User],
+        db: AsyncSession,
+    ) -> Optional[str]:
+        """归一化第三方来源的邮箱，返回可安全落库的值或 None。
+
+        返回 None 的三种情况：第三方未提供该字段、格式非法、已被其他用户占用。
+        调用方据此「不写入」，从而既不把用户手工填的邮箱抹掉，也不会因为单个
+        用户的邮箱冲突而让整批同步失败。
+        """
+        raw = ext_user.get("email")
+        if not raw:
+            return None
+        normalized = AuthService.normalize_email(raw)   # 小写 + 格式兜底；非法→None
+        if not normalized:
+            logger.warning(
+                "第三方同步：用户 %s 的邮箱 %r 格式非法，跳过邮箱写入",
+                ext_user.get("user_name"), raw,
+            )
+            return None
+        taken = await AuthService.is_user_email_taken(
+            normalized,
+            exclude_user_id=(existing.id if existing is not None else None),
+            db=db,
+        )
+        if taken:
+            logger.warning(
+                "第三方同步：用户 %s 的邮箱 %s 已被其他用户占用，跳过邮箱写入",
+                ext_user.get("user_name"), normalized,
+            )
+            return None
+        return normalized
+
+    @staticmethod
     async def _apply_external_user_to_local(
         db: AsyncSession,
         ext_user: Dict[str, Any],
         existing: Optional[User],
     ) -> str:
         remark = UserSyncService._format_sync_remark(ext_user.get("remark"))
+        # 邮箱：第三方未提供 / 非法 / 被占用都返回 None，此时保持用户现有邮箱不动。
+        email = await UserSyncService._resolve_sync_email(ext_user, existing, db)
+
         if existing:
             if ext_user.get("real_name"):
                 existing.real_name = ext_user["real_name"]
+            if email:
+                existing.email = email
             existing.remark = remark
             if ext_user.get("extra_data") is not None:
                 existing.extra_data = ext_user["extra_data"]
@@ -362,6 +404,7 @@ class UserSyncService:
             role="user",
             remark=remark,
             extra_data=ext_user.get("extra_data"),
+            email=email,
             db=db,
         )
         return "created"

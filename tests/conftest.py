@@ -6,7 +6,7 @@ import time
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.core import database, redis
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from app.models.user import User
 from app.core.orm import AsyncSessionLocal
 from app.services.audit_service import AuditService
@@ -177,6 +177,89 @@ def valid_api_key() -> str:
 @pytest.fixture
 def admin_api_key() -> str:
     return "TestAdmin_4wMogHLKDhTDmdwaYFs2ubNDVLXq6Fp4egn0uQ"
+
+
+# --------------------------------------------------------------------------- #
+# 注册开关与测试账号清理
+#
+# 原先定义在 tests/test_user_registration.py 模块内。加邮箱字段时出现了第二个
+# 需要它们的测试文件，而 tests/ 不是 package（没有 __init__.py），测试模块之间
+# 无法 import 彼此的辅助代码——所以上移到 conftest，由 pytest 自动发现。
+# --------------------------------------------------------------------------- #
+
+async def clear_register_limits() -> None:
+    """清空注册相关的限流计数（账号名、来源地址与预检三套键共用同一前缀）。"""
+    redis_client = await redis.get_redis()
+    if not redis_client:
+        return
+    keys = []
+    async for key in redis_client.scan_iter(match="auth:register:*"):
+        keys.append(key)
+    if keys:
+        await redis_client.delete(*keys)
+
+
+async def _toggle_registration(value: str) -> None:
+    from app.services.config_service import (
+        USER_REGISTRATION_ENABLED_KEY,
+        ConfigService,
+    )
+    await ConfigService.set_config(
+        USER_REGISTRATION_ENABLED_KEY, value, category="general", changed_by="pytest"
+    )
+
+
+async def _current_registration() -> str:
+    from app.services.config_service import (
+        USER_REGISTRATION_ENABLED_KEY,
+        ConfigService,
+    )
+    return await ConfigService.get(USER_REGISTRATION_ENABLED_KEY) or "false"
+
+
+@pytest.fixture
+async def registration_on():
+    """开启注册开关，并在用例结束后还原、清理限流计数。"""
+    # 必须在改之前捕获原值：teardown 时再读拿到的已经是被改过的值，
+    # 那样「还原」会变成永远写回 false，污染后续用例。
+    previous = await _current_registration()
+    await _toggle_registration("true")
+    await clear_register_limits()
+    yield
+    await _toggle_registration(previous)
+    await clear_register_limits()
+
+
+@pytest.fixture
+async def registration_off():
+    """显式关闭注册开关，并在用例结束后还原。"""
+    previous = await _current_registration()
+    await _toggle_registration("false")
+    await clear_register_limits()
+    yield
+    await _toggle_registration(previous)
+    await clear_register_limits()
+
+
+@pytest.fixture
+async def cleanup_registered():
+    """收集并清理本用例创建的账号（含角色关联）。用例把账号名 append 进来即可。"""
+    from app.models.permission import UserRoleRelation
+
+    names: list[str] = []
+    yield names
+    if not names:
+        return
+    async with AsyncSessionLocal() as session:
+        ids = (
+            await session.execute(select(User.id).where(User.user_name.in_(names)))
+        ).scalars().all()
+        if ids:
+            await session.execute(
+                delete(UserRoleRelation).where(UserRoleRelation.user_id.in_(ids))
+            )
+        await session.execute(delete(User).where(User.user_name.in_(names)))
+        await session.commit()
 
 
 @pytest.fixture

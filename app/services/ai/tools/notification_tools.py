@@ -104,79 +104,61 @@ class send_email(BaseTool):
     args_schema: Type[BaseModel] = EmailInput
 
     async def _arun(self, to_email: str, subject: str, content: str) -> str:
-        """Use the tool asynchronously."""
-        import smtplib
-        import asyncio
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-        from email.utils import formataddr
+        """Use the tool asynchronously.
 
-        smtp_host = None
-        smtp_port = 465
-        smtp_user = None
-        smtp_password = None
-        sender_name = "AI Agent"
-        
-        # Directly retrieve from user's personal notification config
+        发送统一走 EmailDeliveryService.send_mail：它显式处理 ssl/starttls/none，
+        starttls 失败即报错。旧实现自己拼 SMTP 并在 starttls 失败时静默跳过，
+        587 端口可能明文发送凭据——两处实现漂移正是要消除的问题。
+        """
+        import asyncio
+
         from app.core.context import get_current_agent_context
         from app.core.orm import AsyncSessionLocal
+        from app.services.email_delivery_service import EmailDeliveryService
         from app.services.notification_service import NotificationService
-        
+
         agent_ctx = get_current_agent_context()
-        if agent_ctx and agent_ctx.user_id:
-            try:
-                async with AsyncSessionLocal() as db:
-                    db_record = await NotificationService.get_config_by_type_raw(db, agent_ctx.user_id, "email")
-                    if db_record and db_record.config_json:
-                        user_cfg = json.loads(db_record.config_json)
-                        if user_cfg.get("is_enabled"):
-                            smtp_host = user_cfg.get("smtp_host")
-                            smtp_port = int(user_cfg.get("smtp_port") or 465)
-                            smtp_user = user_cfg.get("smtp_user")
-                            smtp_password = user_cfg.get("smtp_password")
-                            sender_name = user_cfg.get("sender_name") or "AI Agent"
-                        else:
-                            return "Error: Email notification is disabled. Please enable it in Personal Center -> Message Notifications."
-            except Exception as e:
-                logger.error(f"Failed to load user personal email config: {e}", exc_info=True)
-
-        if not smtp_host or not smtp_user or not smtp_password:
-            return "Error: SMTP configuration (host, user, password) is missing. Please configure it in Personal Center -> Message Notifications."
-
-
-
-        def send_sync():
-            try:
-                msg = MIMEMultipart()
-                msg['From'] = formataddr((sender_name, smtp_user))
-                msg['To'] = to_email
-                msg['Subject'] = subject
-                msg.attach(MIMEText(content, 'plain', 'utf-8')) # Could upgrade to HTML later
-
-                # Auto-detect SSL/TLS based on port
-                if smtp_port == 465:
-                    server = smtplib.SMTP_SSL(smtp_host, smtp_port)
-                else:
-                    server = smtplib.SMTP(smtp_host, smtp_port)
-                    # Try StartTLS if not SSL port, but catch error if server doesn't support it
-                    try:
-                        server.starttls()
-                    except:
-                        pass
-
-                server.login(smtp_user, smtp_password)
-                server.sendmail(smtp_user, [to_email], msg.as_string())
-                server.quit()
-                return f"Successfully sent email to {to_email}"
-            except Exception as e:
-                logger.error(f"SMTP Error: {e}", exc_info=True)
-                raise e
+        if not (agent_ctx and agent_ctx.user_id):
+            return "Error: No user context available for email notification."
 
         try:
-            # Run blocking SMTP in thread pool
-            return await asyncio.to_thread(send_sync)
+            async with AsyncSessionLocal() as db:
+                db_record = await NotificationService.get_config_by_type_raw(
+                    db, agent_ctx.user_id, "email"
+                )
+                user_cfg: Dict[str, Any] = {}
+                if db_record and db_record.config_json:
+                    try:
+                        user_cfg = json.loads(db_record.config_json)
+                    except Exception:
+                        user_cfg = {}
+                if not user_cfg.get("is_enabled"):
+                    return "Error: Email notification is disabled. Please enable it in Personal Center -> Message Notifications."
+
+                # 分层解析：用户选了 global 就用平台统一配置，选了 custom 才用个人 SMTP。
+                # 现读一次，避免与 send_email 各维护一套设置装载逻辑。
+                settings = await EmailDeliveryService.resolve_smtp_settings(
+                    agent_ctx.user_id, scope="user", db=db
+                )
         except Exception as e:
-            return f"Error sending email: {str(e)}"
+            logger.error(f"Failed to load user personal email config: {e}", exc_info=True)
+            return f"Error: Failed to load email configuration: {e}"
+
+        if settings is None:
+            return "Error: SMTP configuration is missing or incomplete. Please configure it in Personal Center -> Message Notifications."
+
+        try:
+            # send_mail 是同步阻塞的，放进线程池，别卡住事件循环。
+            ok, message = await asyncio.to_thread(
+                EmailDeliveryService.send_mail, settings, [to_email], subject, content
+            )
+        except Exception as e:
+            logger.error(f"SMTP Error: {e}", exc_info=True)
+            return f"Error sending email: {e}"
+
+        if ok:
+            return f"Successfully sent email to {to_email}"
+        return f"Error sending email: {message}"
 
     def _run(self, to_email: str, subject: str, content: str) -> str:
         raise NotImplementedError("Use _arun instead")

@@ -41,53 +41,11 @@ VALID_PASSWORD = "Abcd1234!"
 
 # --------------------------------------------------------------------------- #
 # 基础设施辅助
+#
+# registration_on / registration_off / cleanup_registered 与 clear_register_limits
+# 已上移到 tests/conftest.py：加邮箱字段时出现了第二个需要它们的测试文件，
+# 而 tests/ 不是 package，测试模块之间无法 import 彼此的辅助代码。
 # --------------------------------------------------------------------------- #
-
-@pytest.fixture
-async def registration_on():
-    """开启注册开关，并在用例结束后还原为关闭、清理限流计数。"""
-    previous = await ConfigService.get(USER_REGISTRATION_ENABLED_KEY)
-    await ConfigService.set_config(
-        USER_REGISTRATION_ENABLED_KEY, "true", category="general", changed_by="pytest"
-    )
-    await _clear_register_limits()
-    yield
-    await ConfigService.set_config(
-        USER_REGISTRATION_ENABLED_KEY,
-        previous or "false",
-        category="general",
-        changed_by="pytest",
-    )
-    await _clear_register_limits()
-
-
-@pytest.fixture
-async def registration_off():
-    """显式关闭注册开关，并在用例结束后还原。"""
-    previous = await ConfigService.get(USER_REGISTRATION_ENABLED_KEY)
-    await ConfigService.set_config(
-        USER_REGISTRATION_ENABLED_KEY, "false", category="general", changed_by="pytest"
-    )
-    await _clear_register_limits()
-    yield
-    await ConfigService.set_config(
-        USER_REGISTRATION_ENABLED_KEY,
-        previous or "false",
-        category="general",
-        changed_by="pytest",
-    )
-
-
-async def _clear_register_limits() -> None:
-    redis = await get_redis()
-    if not redis:
-        return
-    keys = []
-    async for key in redis.scan_iter(match="auth:register:*"):
-        keys.append(key)
-    if keys:
-        await redis.delete(*keys)
-
 
 async def _cleanup_users(*user_names: str) -> None:
     async with AsyncSessionLocal() as session:
@@ -116,15 +74,6 @@ async def _seed_user(name: str, status: int, real_name: str = "已存在") -> in
         return (
             await session.execute(select(User.id).where(User.user_name == name))
         ).scalar_one()
-
-
-@pytest.fixture
-async def cleanup_registered():
-    """按前缀清理本文件创建的账号。"""
-    names: list[str] = []
-    yield names
-    if names:
-        await _cleanup_users(*names)
 
 
 def _payload(user_name: str, **overrides) -> dict:

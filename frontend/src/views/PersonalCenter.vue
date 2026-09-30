@@ -207,6 +207,67 @@ const fetchUserInfo = async () => {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 邮箱自助编辑（PATCH /api/portal/auth/me/profile）
+//
+// 邮箱用于接收账号审核结果等平台通知，用户可自行增删改。与注册页同一原则：
+// 只做本地基础格式提示，不做「输入即查可用性」——邮箱全局唯一，实时探测
+// 会变成一个公开的用户枚举接口。唯一性与最终格式由后端裁决，
+// 被占用时后端返回 400 且 detail 为「该邮箱已被其他账号使用」。
+// ---------------------------------------------------------------------------
+const EMAIL_MAX_LENGTH = 254
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+const isEditingEmail = ref(false)
+const emailInput = ref('')
+const emailSaving = ref(false)
+const emailError = ref('')
+const emailInputFormatError = computed(() => {
+    const email = emailInput.value.trim()
+    if (!email) return ''
+    if (email.length > EMAIL_MAX_LENGTH || !EMAIL_PATTERN.test(email)) return '邮箱格式不正确，请检查后重试'
+    return ''
+})
+
+const startEditEmail = () => {
+    emailInput.value = userInfo.value.email || ''
+    emailError.value = ''
+    isEditingEmail.value = true
+}
+
+const cancelEditEmail = () => {
+    isEditingEmail.value = false
+    emailInput.value = ''
+    emailError.value = ''
+}
+
+const saveEmail = async () => {
+    emailError.value = ''
+    if (emailInputFormatError.value) {
+        emailError.value = emailInputFormatError.value
+        return
+    }
+    const nextEmail = emailInput.value.trim()
+    emailSaving.value = true
+    try {
+        const response = await axios.patch('/api/portal/auth/me/profile', { email: nextEmail })
+        if (response.data?.status === 'success') {
+            // 先用响应回填，保证 UI 立即一致；再从 /me 拉一次权威数据。
+            userInfo.value = { ...userInfo.value, email: response.data.email || '' }
+            isEditingEmail.value = false
+            emailInput.value = ''
+            showToast(nextEmail ? '邮箱已更新' : '邮箱已清空', 'success')
+            await fetchUserInfo()
+        } else {
+            emailError.value = response.data?.detail || '保存失败，请稍后重试'
+        }
+    } catch (e: any) {
+        const detail = e.response?.data?.detail
+        emailError.value = typeof detail === 'string' ? detail : '保存失败，请稍后重试'
+    } finally {
+        emailSaving.value = false
+    }
+}
+
 const fetchApiKey = async () => {
   if (!userInfo.value.user_id) return
   
@@ -723,6 +784,68 @@ onMounted(() => {
                     <div class="p-3 bg-gray-50/60 border border-gray-100 rounded-xl text-xs sm:text-sm">
                         <label class="block text-gray-400 font-medium uppercase text-[10px] mb-0.5">备注说明</label>
                         <p class="text-gray-700 mt-0.5">{{ userInfo.remark || '暂无备注' }}</p>
+                    </div>
+
+                    <!-- 邮箱：接收账号审核结果等平台通知 -->
+                    <div class="p-3 bg-gray-50/60 border border-gray-100 rounded-xl text-xs sm:text-sm">
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div class="min-w-0">
+                                <label class="block text-gray-400 font-medium uppercase text-[10px] mb-0.5">邮箱</label>
+                                <p v-if="!isEditingEmail" class="mt-0.5 truncate"
+                                    :class="userInfo.email ? 'text-gray-700 font-mono text-xs sm:text-[13px]' : 'text-gray-400'"
+                                >
+                                    {{ userInfo.email || '未设置' }}
+                                </p>
+                                <p v-else class="mt-0.5 text-gray-400">用于接收账号审核结果、系统通知等邮件</p>
+                            </div>
+                            <button
+                                v-if="!isEditingEmail"
+                                type="button"
+                                @click="startEditEmail"
+                                class="self-start sm:self-center px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-all cursor-pointer border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                            >
+                                {{ userInfo.email ? '修改邮箱' : '设置邮箱' }}
+                            </button>
+                        </div>
+
+                        <!-- 行内编辑：不做「输入即查」，只给基础格式提示，唯一性交给后端 -->
+                        <div v-if="isEditingEmail" class="mt-3 space-y-2">
+                            <input
+                                v-model="emailInput"
+                                type="email"
+                                autocomplete="email"
+                                autocapitalize="none"
+                                autocorrect="off"
+                                spellcheck="false"
+                                :maxlength="EMAIL_MAX_LENGTH"
+                                :disabled="emailSaving"
+                                class="w-full bg-white border rounded-lg px-3 py-2 text-base sm:text-sm text-gray-900 outline-none focus:bg-white transition-all disabled:bg-gray-100"
+                                :class="emailError || emailInputFormatError ? 'border-red-400 focus:border-red-500' : 'border-gray-300 focus:border-blue-500'"
+                                placeholder="name@example.com（留空表示清除）"
+                                @keyup.enter="saveEmail"
+                            />
+                            <p v-if="emailError" class="text-red-600">{{ emailError }}</p>
+                            <p v-else-if="emailInputFormatError" class="text-red-600">{{ emailInputFormatError }}</p>
+                            <p v-else class="text-gray-400 text-[11px] leading-relaxed">保存前请确认地址可用，审核结果与系统通知会发送到这里。</p>
+                            <div class="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    :disabled="emailSaving || !!emailInputFormatError"
+                                    @click="saveEmail"
+                                    class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                                >
+                                    {{ emailSaving ? '保存中…' : '保存' }}
+                                </button>
+                                <button
+                                    type="button"
+                                    :disabled="emailSaving"
+                                    @click="cancelEditEmail"
+                                    class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-all disabled:opacity-60"
+                                >
+                                    取消
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- 密码修改周期与到期提醒（用户截图红框位置） -->

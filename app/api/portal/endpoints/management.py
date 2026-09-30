@@ -7,7 +7,12 @@ from sqlalchemy.orm import selectinload
 from app.core.dependencies import require_admin, require_api_key, require_permission, require_permission
 from app.core.orm import get_db_session
 from app.services.auth_service import AuthService
-from app.models.user import User
+from app.models.user import (
+    USER_STATUS_DISABLED,
+    USER_STATUS_ENABLED,
+    USER_STATUS_PENDING_REVIEW,
+    User,
+)
 from app.schemas.permission import UserPermissionsResponse, PermissionUpdate
 from app.services.permission_service import PermissionService
 from app.models.permission import ResourcePermission, UserRoleRelation
@@ -32,6 +37,7 @@ class CreateUserRequest(BaseModel):
     allowed_resources: Optional[list] = []
     role_ids: Optional[List[int]] = [] # Business Roles
     remark: Optional[str] = None
+    email: Optional[str] = None
 
 class SsoSyncRequest(BaseModel):
     usernames: List[str]
@@ -281,6 +287,7 @@ class UpdateUserRequest(BaseModel):
     allowed_resources: Optional[list] = None
     role_ids: Optional[List[int]] = None # Business Roles
     remark: Optional[str] = None
+    email: Optional[str] = None
 
 class UpdateStatusRequest(BaseModel):
     status: int  # 0=disabled, 1=enabled, 2=pending_review
@@ -377,7 +384,11 @@ async def list_users(
     stmt = select(User).order_by(desc(User.created_at))
     
     if search:
-        stmt = stmt.where((User.user_name.like(f"%{search}%")) | (User.real_name.like(f"%{search}%")))
+        stmt = stmt.where(
+            (User.user_name.like(f"%{search}%"))
+            | (User.real_name.like(f"%{search}%"))
+            | (User.email.like(f"%{search}%"))
+        )
     if role and role in ["admin", "user"]:
         stmt = stmt.where(User.role == role)
     if status_filter is not None:
@@ -405,6 +416,7 @@ async def list_users(
             "id": row.id,
             "user_name": row.user_name,
             "real_name": row.real_name,
+            "email": row.email or "",
             "role": row.role,
             "dept_code": row.dept_code,
             "org_path": row.org_path,
@@ -451,7 +463,15 @@ async def create_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already exists"
         )
-    
+
+    raw_email = (getattr(request, "email", None) or "").strip()
+    try:
+        email = AuthService.normalize_email(raw_email, strict=True) if raw_email else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if email and await AuthService.is_user_email_taken(email, db=db):
+        raise HTTPException(status_code=400, detail="该邮箱已被其他账号使用")
+
     try:
         # Generate API key (Delegates to AuthService which uses ORM now)
         api_key = await AuthService.generate_api_key(
@@ -462,6 +482,7 @@ async def create_user(
             dept_code=request.dept_code,
             org_path=request.org_path,
             extra_data=request.extra_data,
+            email=email,
             db=db # Pass session!
         )
         
@@ -534,7 +555,24 @@ async def update_user(
         
     if request.remark is not None:
         user.remark = request.remark
-        
+
+    # 邮箱：用 email_provided 而不是 `if email:` 判定，否则管理员把邮箱清空
+    # （传空串）时会被静默忽略，永远清不掉。语义：null / 字段缺省 = 不修改，
+    # 空串或纯空白 = 清空。
+    email_provided = getattr(request, "email", None) is not None
+    if email_provided:
+        raw_email = (request.email or "").strip()
+        try:
+            email = AuthService.normalize_email(raw_email, strict=True) if raw_email else None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        # 排除自己：否则「不改邮箱直接保存」会被判成与本人重复
+        if email and await AuthService.is_user_email_taken(
+            email, exclude_user_id=user_id, db=db
+        ):
+            raise HTTPException(status_code=400, detail="该邮箱已被其他账号使用")
+        user.email = email
+
     # Update Business Roles
     if request.role_ids is not None:
         service = PermissionService(db)
@@ -578,6 +616,34 @@ async def update_user(
         "updated_at": user.updated_at.isoformat() if user.updated_at else None,
         "allowed_resources": []
     }
+
+
+async def _send_review_result_mail(user: User, approved: bool):
+    """审核结果通知，返回 (sent, error)。
+
+    强制走**全局** SMTP（已决策）：这是系统发给用户的通知，若走用户个人配置，
+    用户把个人 SMTP 关掉或填错就永远收不到审核结果——而这恰恰是他能否登录的前提。
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from app.services.email_delivery_service import (
+        EmailDeliveryService, build_review_mail,
+    )
+
+    if not (user.email or "").strip():
+        return False, "该用户未填写邮箱"
+
+    settings = await EmailDeliveryService.load_global_smtp_settings()
+    if settings is None:
+        return False, "平台邮件服务未启用或配置不完整"
+
+    subject, body = build_review_mail(user.user_name, approved, settings.sender_name)
+    ok, message = await run_in_threadpool(
+        EmailDeliveryService.send_mail, settings, [user.email], subject, body
+    )
+    if not ok:
+        logger.warning("审核结果邮件发送失败: user=%s reason=%s", user.user_name, message)
+    return ok, (None if ok else message)
 
 
 @router.patch("/users/{user_id}/status")
@@ -626,7 +692,12 @@ async def update_user_status(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
+    # 记录审核前的状态：只有「待审核 → 启用/禁用」才是审核动作。
+    # 用它区分审核与日常启停，避免管理员事后启停账号时给用户发骚扰邮件，
+    # 而且不需要额外字段或动作类型参数。
+    was_pending = user.status == USER_STATUS_PENDING_REVIEW
+
     user.status = request.status
     await db.commit()
 
@@ -646,8 +717,47 @@ async def update_user_status(
         await PermissionService(db).invalidate_cached_permissions_for_users([user_id])
     except Exception as e:
         logger.error(f"Failed to clear user cache: {e}")
-    
-    return {"message": "User status updated successfully"}
+
+    # 审核结果通知：尽力而为，绝不影响审核结果本身。
+    # 放在所有可能抛错的动作之后，避免角色分配失败（500）时用户却已收到「已通过」邮件。
+    email_sent = False
+    email_error: Optional[str] = None
+    if was_pending and user.status in (USER_STATUS_ENABLED, USER_STATUS_DISABLED):
+        email_sent, email_error = await _send_review_result_mail(
+            user, approved=(user.status == USER_STATUS_ENABLED)
+        )
+
+    return {
+        "message": "User status updated successfully",
+        "email_sent": email_sent,
+        "email_error": email_error,
+    }
+
+
+class NotifyReviewMailRequest(BaseModel):
+    # 显式传事件而不是从当前状态推断：重发往往发生在用户状态已被改动之后，
+    # 从状态推断会发出与实际审核决定不符的文案。
+    approved: bool
+
+
+@router.post(
+    "/users/{user_id}/notify-review-mail",
+    dependencies=[Depends(require_permission("element", "element:user:edit"))],
+)
+async def notify_review_mail(
+    user_id: int,
+    request: NotifyReviewMailRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """重发审核结果邮件。"""
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target.status == USER_STATUS_PENDING_REVIEW:
+        raise HTTPException(status_code=400, detail="该用户仍在待审核状态，无需重发通知")
+
+    sent, error = await _send_review_result_mail(target, approved=request.approved)
+    return {"ok": sent, "message": "已发送" if sent else (error or "发送失败")}
 
 
 @router.patch("/users/batch-status")

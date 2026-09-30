@@ -5,11 +5,27 @@ export interface User {
   id: number
   user_name: string
   real_name?: string
+  email?: string
   role: string
   dept_code?: string
   org_path?: string
   extra_data?: string | Record<string, unknown> | null
   is_active: boolean
+}
+
+// 个人中心「消息通知」中邮件渠道的配置。
+// smtp_source：global=走平台统一邮件服务（默认），custom=使用个人自定义 SMTP。
+// include_self：是否同时发送到用户自己的邮箱；存标志而非邮箱快照。
+export interface NotificationEmailConfig {
+  is_enabled: boolean
+  smtp_source?: 'global' | 'custom'
+  include_self?: boolean
+  smtp_host?: string
+  smtp_port?: number
+  smtp_user?: string
+  smtp_password?: string
+  sender_name?: string
+  recipients?: string
 }
 
 export interface Role {

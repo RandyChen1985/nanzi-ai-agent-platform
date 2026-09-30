@@ -249,6 +249,7 @@ const registerUserNameError = ref('')
 const registerForm = reactive({
     user_name: '',
     real_name: '',
+    email: '',
     password: '',
     confirmPassword: '',
     remark: '',
@@ -260,6 +261,22 @@ const USER_NAME_FORMAT_HINT = '账号名需为 3–32 位、以字母开头，�
 const PASSWORD_RULE_HINT = '8–32 位，须包含大写字母、小写字母、数字、特殊符号中的至少 3 种，且不能包含账号名'
 const REAL_NAME_MAX_LENGTH = 50
 const REMARK_MAX_LENGTH = 255
+
+// ---------------------------------------------------------------------------
+// 邮箱格式提示（纯本地）
+//
+// 与后端 AuthService._EMAIL_RE / EMAIL_MAX_LENGTH 保持一致，只做「明显写错」的
+// 即时提示。邮箱全局唯一，**不做输入即查的可用性预检**：那等于把「某邮箱是否已注册」
+// 做成公开探测接口，会变成用户枚举面。唯一性与最终格式一律由提交时的后端裁决。
+// ---------------------------------------------------------------------------
+const EMAIL_MAX_LENGTH = 254
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+const registerEmailFormatError = computed(() => {
+    const email = registerForm.email.trim()
+    if (!email) return ''
+    if (email.length > EMAIL_MAX_LENGTH || !EMAIL_PATTERN.test(email)) return '邮箱格式不正确，请检查后重试'
+    return ''
+})
 
 // ---------------------------------------------------------------------------
 // 账号名可用性预检（边输边查）
@@ -379,6 +396,7 @@ const resetRegisterForm = () => {
     resetNameCheck()
     registerForm.user_name = ''
     registerForm.real_name = ''
+    registerForm.email = ''
     registerForm.password = ''
     registerForm.confirmPassword = ''
     registerForm.remark = ''
@@ -421,6 +439,7 @@ const validateRegisterForm = (): string => {
     const realName = registerForm.real_name.trim()
     if (!realName) return '请填写用户姓名'
     if (realName.length > REAL_NAME_MAX_LENGTH) return `用户姓名不超过 ${REAL_NAME_MAX_LENGTH} 字`
+    if (registerEmailFormatError.value) return registerEmailFormatError.value
     if (!registerForm.password) return '请填写密码'
     if (!registerForm.confirmPassword) return '请再次输入密码'
     if (registerForm.password !== registerForm.confirmPassword) return '两次输入的密码不一致'
@@ -440,6 +459,7 @@ const handleRegister = async () => {
         const response = await axios.post('/api/portal/auth/register', {
             user_name: registerForm.user_name.trim(),
             real_name: registerForm.real_name.trim(),
+            email: registerForm.email.trim() || undefined,
             password: registerForm.password,
             remark: registerForm.remark.trim() || null,
         })
@@ -458,6 +478,7 @@ const handleRegister = async () => {
             nameCheckState.value = 'taken'
             nameCheckMessage.value = message
         } else {
+            // 邮箱（格式非法 / 已被其他账号使用）等其余 400 统一走表单级提示
             registerError.value = message
         }
     } finally {
@@ -922,6 +943,24 @@ const handleLogin = async () => {
                             class="w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-base text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all disabled:bg-gray-100 sm:py-2.5 sm:text-sm"
                             placeholder="请输入真实姓名"
                         />
+                    </div>
+
+                    <div class="space-y-1.5">
+                        <label class="text-[11px] font-bold text-slate-400 uppercase tracking-wider ml-1">邮箱（选填，用于接收审核结果通知）</label>
+                        <input
+                            v-model="registerForm.email"
+                            type="email"
+                            autocomplete="email"
+                            autocapitalize="none"
+                            autocorrect="off"
+                            spellcheck="false"
+                            :maxlength="EMAIL_MAX_LENGTH"
+                            class="w-full bg-white border rounded-lg px-4 py-3 text-base text-slate-900 outline-none focus:bg-white transition-all disabled:bg-gray-100 sm:py-2.5 sm:text-sm"
+                            :class="registerEmailFormatError ? 'border-red-400 focus:border-red-500' : 'border-slate-200 focus:border-blue-500'"
+                            placeholder="name@example.com"
+                        />
+                        <p v-if="registerEmailFormatError" class="text-[11px] text-red-600 ml-1">{{ registerEmailFormatError }}</p>
+                        <p v-else class="text-[10px] text-slate-400 ml-1 leading-relaxed">审核结果将通过邮件发送到该地址；不填写则仅站内查看</p>
                     </div>
 
                     <div class="space-y-1.5">

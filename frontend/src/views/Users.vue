@@ -27,7 +27,7 @@
           <input
             v-model="searchQuery"
             type="search"
-            placeholder="搜索用户名或姓名..."
+            placeholder="搜索用户名、姓名或邮箱..."
             class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             @input="debouncedSearch"
           />
@@ -242,6 +242,11 @@
               <p class="mt-2 text-xs text-gray-500 break-words">
                 <span class="text-gray-400">备注：</span>{{ user.remark || "—" }}
               </p>
+              <p class="mt-1 text-xs break-words">
+                <span class="text-gray-400">邮箱：</span>
+                <span v-if="user.email" class="font-mono text-gray-600">{{ user.email }}</span>
+                <span v-else class="text-gray-300">未设置</span>
+              </p>
             </div>
 
             <div v-if="canEditUser" class="flex shrink-0 items-center gap-2">
@@ -260,6 +265,15 @@
                 @click="openRejectDialog(user)"
               >
                 禁用
+              </button>
+              <button
+                v-if="canResendReviewMail(user)"
+                type="button"
+                class="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-amber-700 shadow-sm transition-colors hover:bg-amber-50 disabled:opacity-50"
+                :disabled="resendingMailId === user.id"
+                @click="resendReviewMail(user.id, reviewApprovedFor(user))"
+              >
+                {{ resendingMailId === user.id ? "重发中..." : "重发通知邮件" }}
               </button>
             </div>
             <span v-else class="shrink-0 text-xs text-gray-300">无审核权限</span>
@@ -354,6 +368,7 @@
                   />
                 </th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">用户</th>
+                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">邮箱</th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">身份 / 角色</th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">备注</th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">状态</th>
@@ -401,6 +416,10 @@
                       <span class="font-mono">#{{ user.id }}</span>
                     </div>
                   </div>
+                </td>
+                <td class="px-5 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <span v-if="user.email" class="font-mono text-xs text-gray-600" :title="user.email">{{ user.email }}</span>
+                  <span v-else class="text-gray-300">-</span>
                 </td>
                 <td class="px-5 py-4 whitespace-nowrap text-sm">
                   <div class="flex flex-col gap-1.5 items-start">
@@ -545,6 +564,9 @@
               <p class="text-xs text-gray-500 mt-0.5">
                 {{ user.real_name || "未设置姓名" }} · #{{ user.id }}
               </p>
+              <p class="text-xs mt-0.5 truncate" :class="user.email ? 'text-gray-500' : 'text-gray-300'">
+                {{ user.email || "未设置邮箱" }}
+              </p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <span
@@ -687,6 +709,16 @@
           重置 API Key
         </button>
         <button
+          v-if="canEditUser && canResendReviewMail(openRowMenuUser)"
+          type="button"
+          class="w-full text-left px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 flex items-center gap-2 disabled:opacity-50"
+          :disabled="resendingMailId === openRowMenuUser.id"
+          @click="resendReviewMail(openRowMenuUser.id, reviewApprovedFor(openRowMenuUser)); closeMenus()"
+        >
+          <ArrowPathIcon class="w-4 h-4 text-amber-500" :class="{ 'animate-spin': resendingMailId === openRowMenuUser.id }" />
+          重发通知邮件
+        </button>
+        <button
           v-if="canDeleteUser && openRowMenuUser.user_name !== 'admin'"
           type="button"
           class="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
@@ -808,6 +840,24 @@
                   class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   placeholder="请输入真实姓名"
                 />
+              </div>
+              <div>
+                <label
+                  class="block text-xs font-bold text-gray-400 uppercase mb-1"
+                  >邮箱</label
+                >
+                <input
+                  v-model="formData.email"
+                  type="email"
+                  autocapitalize="none"
+                  autocorrect="off"
+                  spellcheck="false"
+                  class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  placeholder="name@example.com（留空表示不设置）"
+                />
+                <p class="mt-1 text-[10px] text-gray-400 leading-relaxed">
+                  邮箱全局唯一，用于接收账号审核结果等通知。编辑时清空该框即可删除已设置的邮箱。
+                </p>
               </div>
               <div>
                 <label
@@ -2249,6 +2299,64 @@ const reviewRoleIds = ref<number[]>([]);
 const reviewSubmitting = ref(false);
 // 行内按钮的 loading 态；后端没有「单条审核」接口，用 id 标记正在处理的那一条
 const reviewSubmittingId = ref<number | null>(null);
+// 审核结果发信反馈：记录「最近一次发信失败」的用户（userId -> 审核结果 approved），
+// 只有这些用户才显示「重发通知邮件」入口；审核成功且邮件已发出不入表。
+const mailFailedUsers = ref<Record<number, boolean>>({});
+const resendingMailId = ref<number | null>(null);
+
+// 重发时 approved 必须取该用户的实际审核结果：启用=true，禁用=false
+const reviewApprovedFor = (user: any): boolean => {
+  if (!user) return false;
+  const recorded = mailFailedUsers.value[user.id];
+  if (recorded === true || recorded === false) return recorded;
+  return user.status === 1;
+};
+const canResendReviewMail = (user: any): boolean =>
+  Boolean(user) && (user.id in mailFailedUsers.value);
+
+// 审核响应带 email_sent / email_error：不能把「审核成功但邮件没发出去」当成一切正常
+const reportReviewMailResult = (
+  data: any,
+  fallbackMessage: string,
+  failedMessage: string,
+  userId: number,
+  approved: boolean
+) => {
+  const next = { ...mailFailedUsers.value };
+  if (data?.email_sent === true) {
+    delete next[userId];
+    mailFailedUsers.value = next;
+    showToast(`${fallbackMessage}，通知邮件已发送`, "success");
+  } else if (data?.email_sent === false) {
+    next[userId] = approved;
+    mailFailedUsers.value = next;
+    showToast(`${failedMessage}：${data?.email_error || "未知原因"}`, "warning");
+  } else {
+    // 后端未返回发信字段（旧版本）时保持原有提示
+    showToast(fallbackMessage, "success");
+  }
+};
+
+const resendReviewMail = async (userId: number, approved: boolean) => {
+  if (!userId) return;
+  resendingMailId.value = userId;
+  try {
+    const { data } = await axios.post(
+      `/api/portal/management/users/${userId}/notify-review-mail`,
+      { approved }
+    );
+    if (data?.ok) {
+      const next = { ...mailFailedUsers.value };
+      delete next[userId];
+      mailFailedUsers.value = next;
+    }
+    showToast(data?.message || (data?.ok ? "通知邮件已重发" : "重发失败"), data?.ok ? "success" : "error");
+  } catch (e: any) {
+    showToast(`重发失败: ${e.response?.data?.detail || e.message}`, "error");
+  } finally {
+    resendingMailId.value = null;
+  }
+};
 
 const fetchPendingCount = async () => {
   try {
@@ -2307,11 +2415,20 @@ const approveUser = async () => {
   reviewSubmitting.value = true;
   reviewSubmittingId.value = target.id;
   try {
-    await axios.patch(`/api/portal/management/users/${target.id}/status`, {
-      status: 1,
-      role_ids: reviewRoleIds.value,
-    });
-    showToast(`已启用账号 ${target.user_name}`, "success");
+    const { data } = await axios.patch(
+      `/api/portal/management/users/${target.id}/status`,
+      {
+        status: 1,
+        role_ids: reviewRoleIds.value,
+      }
+    );
+    reportReviewMailResult(
+      data,
+      `已启用账号 ${target.user_name}`,
+      `已启用账号 ${target.user_name}，但通知邮件未发送`,
+      target.id,
+      true
+    );
     closeApproveDialog();
     await Promise.all([fetchUsers(), fetchPendingCount()]);
   } catch (e: any) {
@@ -2328,10 +2445,19 @@ const rejectUser = async () => {
   reviewSubmitting.value = true;
   reviewSubmittingId.value = target.id;
   try {
-    await axios.patch(`/api/portal/management/users/${target.id}/status`, {
-      status: 0,
-    });
-    showToast(`已禁用账号 ${target.user_name}`, "success");
+    const { data } = await axios.patch(
+      `/api/portal/management/users/${target.id}/status`,
+      {
+        status: 0,
+      }
+    );
+    reportReviewMailResult(
+      data,
+      `已禁用账号 ${target.user_name}`,
+      `已禁用账号 ${target.user_name}，但通知邮件未发送`,
+      target.id,
+      false
+    );
     closeRejectDialog();
     await Promise.all([fetchUsers(), fetchPendingCount()]);
   } catch (e: any) {
@@ -2536,6 +2662,7 @@ const confirmExecuteSsoSync = async () => {
 const formData = ref({
   user_name: "",
   real_name: "",
+  email: "",
   role: "user",
   dept_code: "",
   org_path: "",
@@ -2949,6 +3076,10 @@ const saveUser = async () => {
     if (showEditDialog.value && editingUserId.value) {
       const updatePayload = {
         real_name: formData.value.real_name,
+        // 后端以「字段是否出现在请求里」判定是否修改邮箱：null / 缺省 = 不修改，
+        // 空串 = 清空。所以这里必须始终带上 email，且清空时传空串，
+        // 否则管理员永远删不掉一个填错的邮箱。
+        email: formData.value.email || "",
         role: formData.value.role,
         dept_code: formData.value.dept_code,
         org_path: formData.value.org_path,
@@ -3032,7 +3163,10 @@ const saveUser = async () => {
       showToast("创建用户成功", "success");
     }
   } catch (e: any) {
-    error.value = e.response?.data?.message || "操作失败";
+    // `error` 没有对应的模板出口，只赋值等于静默失败——管理员看不到
+    // 「该邮箱已被其他账号使用」这类 400 detail，只会以为没反应。
+    error.value = e.response?.data?.detail || e.response?.data?.message || "操作失败";
+    showToast(error.value, "error");
   } finally {
     submitting.value = false;
   }
@@ -3265,6 +3399,7 @@ const openCreateDialog = async () => {
   formData.value = {
     user_name: "",
     real_name: "",
+    email: "",
     role: "user",
     dept_code: "",
     org_path: "",
@@ -3283,6 +3418,7 @@ const editUser = async (user: any) => {
   formData.value = {
     user_name: user.user_name,
     real_name: user.real_name || "",
+    email: user.email || "",
     role: user.role,
     dept_code: user.dept_code || "",
     org_path: user.org_path || "",

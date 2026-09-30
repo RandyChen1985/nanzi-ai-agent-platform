@@ -307,73 +307,168 @@
 
         <!-- Email SMTP Form -->
         <div v-if="configs.email.is_enabled" class="mt-6 border-t border-gray-50 pt-4 space-y-4">
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div class="md:col-span-2">
-              <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">SMTP 服务地址</label>
+          <!-- 邮件服务来源：默认走平台统一配置 -->
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">邮件服务来源</label>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <label
+                class="flex items-start space-x-2.5 p-3 rounded-lg border cursor-pointer transition-colors"
+                :class="configs.email.smtp_source === 'global' ? 'border-orange-400 bg-orange-50/50' : 'border-gray-200 hover:border-gray-300'"
+              >
+                <input
+                  type="radio"
+                  value="global"
+                  v-model="configs.email.smtp_source"
+                  class="mt-0.5 h-4 w-4 text-orange-500 focus:ring-orange-500/30 cursor-pointer"
+                />
+                <span class="flex-1 min-w-0">
+                  <span class="block text-sm font-medium text-gray-800">使用全局邮件服务（推荐）</span>
+                  <span class="block text-[11px] text-gray-400 mt-0.5">由平台统一配置，无需在此填写服务器信息</span>
+                </span>
+              </label>
+              <label
+                class="flex items-start space-x-2.5 p-3 rounded-lg border cursor-pointer transition-colors"
+                :class="configs.email.smtp_source === 'custom' ? 'border-orange-400 bg-orange-50/50' : 'border-gray-200 hover:border-gray-300'"
+              >
+                <input
+                  type="radio"
+                  value="custom"
+                  v-model="configs.email.smtp_source"
+                  class="mt-0.5 h-4 w-4 text-orange-500 focus:ring-orange-500/30 cursor-pointer"
+                />
+                <span class="flex-1 min-w-0">
+                  <span class="block text-sm font-medium text-gray-800">使用自定义 SMTP</span>
+                  <span class="block text-[11px] text-gray-400 mt-0.5">自行填写专属 SMTP 服务器与授权码</span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 全局概览：只展示服务器与发件人，绝不显示密码 -->
+          <div v-if="configs.email.smtp_source !== 'custom'" class="rounded-lg border border-gray-150 bg-gray-50/70 p-3.5 space-y-2">
+            <template v-if="globalEmailOverview">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-gray-500">SMTP 服务器</span>
+                <span class="font-mono text-gray-800">{{ globalEmailOverview.host }}:{{ globalEmailOverview.port }}</span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-gray-500">加密方式</span>
+                <span class="font-mono text-gray-800">{{ globalEmailOverview.security }}</span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-gray-500">发件人</span>
+                <span class="font-mono text-gray-800 truncate ml-3">{{ globalEmailOverview.senderName }} &lt;{{ globalEmailOverview.from }}&gt;</span>
+              </div>
+              <p class="text-[11px] text-gray-400 pt-0.5">以上由平台统一管理，如需调整请联系管理员。</p>
+            </template>
+            <p v-else class="text-xs text-amber-600 leading-relaxed">
+              平台尚未启用邮件服务，请联系管理员配置，或改用自定义 SMTP。
+            </p>
+          </div>
+
+          <!-- 自定义 SMTP 明细 -->
+          <template v-if="configs.email.smtp_source === 'custom'">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div class="md:col-span-2">
+                <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">SMTP 服务地址</label>
+                <input 
+                  type="text" 
+                  v-model="configs.email.smtp_host"
+                  placeholder="smtp.example.com"
+                  class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">端口</label>
+                <input 
+                  type="number" 
+                  v-model="configs.email.smtp_port"
+                  placeholder="465"
+                  class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">发件人账号/邮箱</label>
+                <input 
+                  type="email" 
+                  v-model="configs.email.smtp_user"
+                  placeholder="user@example.com"
+                  class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">授权码/密码</label>
+                <input 
+                  type="password" 
+                  v-model="configs.email.smtp_password"
+                  placeholder="填写您的邮箱授权码或密码"
+                  class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">发件人显示昵称</label>
               <input 
                 type="text" 
-                v-model="configs.email.smtp_host"
-                placeholder="smtp.example.com"
+                v-model="configs.email.sender_name"
+                placeholder="AI Agent"
                 class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
               />
             </div>
+          </template>
+
+          <!-- 收件人区 -->
+          <div class="rounded-lg border border-gray-150 p-3.5 space-y-3">
+            <label class="flex items-start space-x-2.5 cursor-pointer" :class="!canIncludeSelf ? 'opacity-60 cursor-not-allowed' : ''">
+              <input
+                type="checkbox"
+                v-model="configs.email.include_self"
+                :disabled="!canIncludeSelf"
+                class="mt-0.5 h-4 w-4 rounded text-orange-500 focus:ring-orange-500/30 cursor-pointer disabled:cursor-not-allowed"
+              />
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium text-gray-800">同时发送到我的邮箱</span>
+                <span class="block text-[11px] text-gray-400 mt-0.5">
+                  当前邮箱：{{ myEmail || '未设置' }}
+                </span>
+              </span>
+            </label>
+            <p v-if="!canIncludeSelf" class="text-[11px] text-amber-600">请先在「基本信息」中填写邮箱，之后开启此开关即可抄送自己。</p>
+
             <div>
-              <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">端口</label>
+              <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">其他收件人邮箱 (可选)</label>
               <input 
-                type="number" 
-                v-model="configs.email.smtp_port"
-                placeholder="465"
+                type="text" 
+                v-model="configs.email.recipients"
+                placeholder="a@example.com, b@example.com"
                 class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
               />
+              <p class="text-[11px] text-gray-400 mt-1">除「我的邮箱」外额外投递的收件人，多个地址用逗号或分号分隔。</p>
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">发件人账号/邮箱</label>
-              <input 
-                type="email" 
-                v-model="configs.email.smtp_user"
-                placeholder="user@example.com"
-                class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
-              />
+          <!-- 测试结果留在卡片里，不随 toast 消失；失败原因往往就是下一步该做什么 -->
+          <div v-if="emailTestResult" class="pt-2">
+            <div
+              class="rounded-lg border px-3.5 py-2.5 text-xs leading-relaxed flex items-start space-x-2"
+              :class="emailTestResult.ok
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                : 'border-rose-200 bg-rose-50 text-rose-800'"
+            >
+              <span class="shrink-0 font-semibold">{{ emailTestResult.ok ? '测试通过' : '测试失败' }}</span>
+              <span class="min-w-0 break-words">{{ emailTestResult.message }}</span>
             </div>
-            <div>
-              <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">授权码/密码</label>
-              <input 
-                type="password" 
-                v-model="configs.email.smtp_password"
-                placeholder="填写您的邮箱授权码或密码"
-                class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">发件人显示昵称</label>
-            <input 
-              type="text" 
-              v-model="configs.email.sender_name"
-              placeholder="AI Agent"
-              class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
-            />
-          </div>
-
-          <div>
-            <label class="block text-xs font-semibold text-gray-500 uppercase mb-1.5">收件人邮箱 (可选)</label>
-            <input 
-              type="text" 
-              v-model="configs.email.recipients"
-              placeholder="a@example.com, b@example.com"
-              class="w-full text-sm px-3.5 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder-gray-300"
-            />
-            <p class="text-[11px] text-gray-400 mt-1">通知实际投递的收件人，多个地址用逗号或分号分隔；留空则发送给发件人账号自身。</p>
           </div>
 
           <div class="flex items-center justify-end space-x-3 pt-2">
             <button 
               @click="testConfig('email')"
               :disabled="testingChannel['email'] || savingChannel['email']"
+              :title="emailTestUnavailable ? '平台邮件服务可能未启用；若测试失败，提示会留在上方。请联系管理员启用，或改用自定义 SMTP。' : ''"
               class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
             >
               <span v-if="testingChannel['email']" class="inline-flex items-center">
@@ -496,7 +591,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import axios from '../../utils/axios'
 import Modal from '../Modal.vue'
 
@@ -507,11 +602,48 @@ const configs = ref<Record<string, any>>({
   dingtalk: { is_enabled: false, webhook_url: '', secret: '' },
   wechat_work: { is_enabled: false, webhook_url: '' },
   feishu: { is_enabled: false, webhook_url: '', secret: '' },
-  email: { is_enabled: false, smtp_host: '', smtp_port: 465, smtp_user: '', smtp_password: '', sender_name: 'AI Agent', recipients: '' }
+  email: { is_enabled: false, smtp_source: 'global', include_self: true, smtp_host: '', smtp_port: 465, smtp_user: '', smtp_password: '', sender_name: 'AI Agent', recipients: '' }
+})
+
+// 当前登录用户（用于展示/勾选「抄送自己」的邮箱）
+const me = ref<{ email?: string } | null>(null)
+// 全局邮件服务概览（只含服务器与发件人，绝不含密码）
+const globalEmailConfig = ref<Record<string, string>>({})
+
+const myEmail = computed(() => String(me.value?.email || '').trim())
+const canIncludeSelf = computed(() => !!myEmail.value)
+
+const globalEmailOverview = computed(() => {
+  const cfg = globalEmailConfig.value
+  const enabled = ['true', '1', 'yes', 'on'].includes(
+    String(cfg['email_service_enabled'] || 'false').trim().toLowerCase()
+  )
+  const host = String(cfg['email_smtp_host'] || '').trim()
+  if (!enabled || !host) return null
+  const from = String(cfg['email_from_address'] || cfg['email_smtp_user'] || '').trim()
+  return {
+    host,
+    port: String(cfg['email_smtp_port'] || '465'),
+    security: String(cfg['email_smtp_security'] || 'ssl'),
+    senderName: String(cfg['email_sender_name'] || 'AI Agent').trim(),
+    from: from || '未设置',
+  }
 })
 
 const testingChannel = ref<Record<string, boolean>>({})
 const savingChannel = ref<Record<string, boolean>>({})
+
+// 最近一次「测试连通性」的结果，持久留在卡片里。
+// 只靠全局 toast 不够：它 3.5 秒就消失，失败原因（尤其「平台服务未启用」这类需要
+// 管理员动作、或需要用户先去填邮箱的）必须留在原地，用户才看得到该做什么。
+const emailTestResult = ref<{ ok: boolean; message: string } | null>(null)
+
+// 选了「全局」而读不到平台服务配置（未启用，或本人无权查看全局配置）时，给按钮加一句
+// 提示。**刻意不据此置灰按钮**：读不到配置也可能是权限所致，置灰会把本来可用的服务
+// 一起锁死——让用户点下去、以测试结果为准才可靠。
+const emailTestUnavailable = computed(
+  () => configs.value.email?.smtp_source !== 'custom' && !globalEmailOverview.value
+)
 
 const showGuideModal = ref(false)
 const currentGuideChannel = ref<'dingtalk' | 'wechat_work' | 'feishu' | 'email'>('dingtalk')
@@ -627,12 +759,49 @@ const getChannelName = (channel: string) => {
   }
 }
 
+const fetchMe = async () => {
+  try {
+    const res = await axios.get('/api/portal/auth/me')
+    me.value = res.data || null
+  } catch {
+    me.value = null
+  }
+}
+
+const fetchGlobalEmailConfig = async () => {
+  try {
+    const res = await axios.get('/api/portal/system/configs')
+    const items: Array<{ key: string; value: any }> = res.data?.email || []
+    const map: Record<string, string> = {}
+    for (const item of items) map[item.key] = item.value
+    globalEmailConfig.value = map
+  } catch {
+    // 无权限或未配置：概览区退化为「尚未启用」提示，不影响自定义 SMTP 与收件人配置
+    globalEmailConfig.value = {}
+  }
+}
+
 const fetchConfigs = async () => {
   loading.value = true
   try {
     const res = await axios.get('/api/portal/notifications/config')
     if (res.data) {
-      configs.value = res.data
+      const raw = res.data
+      const email = raw.email || {}
+      // 存量兼容：老记录缺 smtp_source/include_self。
+      // smtp_source 的兜底必须**镜像后端** EmailDeliveryService.resolve_smtp_source：
+      // 填过 smtp_host 的存量记录实际按「自定义」发信，若这里硬兜底成 'global'，
+      // 界面会显示「使用全局服务」并藏掉他自己的 SMTP 字段，与实际发信不符；
+      // 而用户下一次保存就会把 'global' 落库，静默改用（默认未启用的）全局服务。
+      // 后端已回填真实来源，这里是防御性兜底，保证旧后端下也不会误导。
+      configs.value = {
+        ...raw,
+        email: {
+          ...email,
+          smtp_source: raw.email?.smtp_source || (email.smtp_host ? 'custom' : 'global'),
+          include_self: raw.email?.include_self !== false,
+        },
+      }
     }
   } catch (error: any) {
     console.error("Failed to load configs", error)
@@ -668,6 +837,7 @@ const onToggleChannel = async (channel: string) => {
 
 const testConfig = async (channel: string) => {
   testingChannel.value[channel] = true
+  if (channel === 'email') emailTestResult.value = null
   try {
     const res = await axios.post('/api/portal/notifications/test', {
       channel_type: channel,
@@ -675,9 +845,15 @@ const testConfig = async (channel: string) => {
     })
     if (res.data && res.data.status === 'success') {
       emit('show-toast', `${getChannelName(channel)}测试连通成功！`, 'success')
+      if (channel === 'email') {
+        emailTestResult.value = { ok: true, message: res.data.message || '测试连通成功' }
+      }
     }
   } catch (error: any) {
-    emit('show-toast', error.response?.data?.detail || '测试连通失败', 'error')
+    const message = error.response?.data?.detail || '测试连通失败'
+    emit('show-toast', message, 'error')
+    // 邮件渠道额外把原因留在卡片里：这条是给用户看的，不能一闪而过
+    if (channel === 'email') emailTestResult.value = { ok: false, message }
   } finally {
     testingChannel.value[channel] = false
   }
@@ -685,5 +861,14 @@ const testConfig = async (channel: string) => {
 
 onMounted(() => {
   fetchConfigs()
+  fetchMe()
+  fetchGlobalEmailConfig()
 })
+
+// 换了来源（全局 ↔ 自定义）之后，上一次的结论已不适用；留着会误导，
+// 比如从「自定义」切到「全局」后仍然显示针对自定义 SMTP 的失败原因。
+watch(
+  () => configs.value.email?.smtp_source,
+  () => { emailTestResult.value = null }
+)
 </script>

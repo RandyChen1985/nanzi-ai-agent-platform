@@ -50,6 +50,7 @@ class AuthService:
         extra_data: str = None,
         user_id: Optional[int] = None,
         status: int = USER_STATUS_ENABLED,
+        email: Optional[str] = None,
         db: Optional[AsyncSession] = None
     ) -> str:
         """
@@ -67,6 +68,7 @@ class AuthService:
             new_user = User(
                 user_name=user_name,
                 real_name=real_name,
+                email=email,
                 api_key_encrypted=encrypted_key,
                 api_key_hash=hashed_key,
                 role=role,
@@ -170,6 +172,7 @@ class AuthService:
             "user_id": str(user.id),
             "user_name": user.user_name,
             "real_name": user.real_name or user.user_name,
+            "email": user.email or "",
             "role": user.role,
             "dept_code": user.dept_code or "",
             "org_path": user.org_path or "",
@@ -546,6 +549,67 @@ class AuthService:
             if is_local:
                 await session.close()
 
+    # 邮箱的格式上限与宽松正则。刻意不做 RFC 5322 全量校验：
+    # 过度严格会误伤合法地址（带引号的本地部分、IDN 域名等），而平台并不真的投递到
+    # 任意合法地址——真正能发现写错的办法只有发信验证，那是已决策不做的事。
+    EMAIL_MAX_LENGTH = 254
+    _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+    @staticmethod
+    def normalize_email(raw: Optional[str], strict: bool = False) -> Optional[str]:
+        """归一化邮箱：去空白 → 空串转 None → 小写。
+
+        strict=True 时格式非法抛 ValueError；strict=False（默认）时返回 None，
+        供「用户还在输入」的场景使用，避免为了探测格式而反复抛异常。
+        """
+        text = (raw or "").strip().lower()
+        if not text:
+            return None
+        if (
+            len(text) > AuthService.EMAIL_MAX_LENGTH
+            or not AuthService._EMAIL_RE.match(text)
+        ):
+            if strict:
+                raise ValueError("邮箱格式不正确")
+            return None
+        return text
+
+    @staticmethod
+    async def is_user_email_taken(
+        email: str,
+        exclude_user_id: Optional[int] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> bool:
+        """邮箱是否已被占用（大小写不敏感，任意状态都算占用）。
+
+        与 is_user_name_taken 同构：注册、管理员增改、个人中心自助编辑三处共用，
+        确保判定口径一致。同样显式 lower() 比对——写入时已归一化，但手工 SQL 或
+        第三方同步可能绕过应用层，且两个库的 collation 行为不同。
+
+        exclude_user_id 用于「编辑自己」：不排除会把用户自己判成重复。
+        """
+        normalized = AuthService.normalize_email(email)
+        if not normalized:
+            return False  # 未填写不参与唯一性
+        session, is_local = await AuthService._get_session(db)
+        try:
+            stmt = select(User.id).where(func.lower(User.email) == normalized)
+            if exclude_user_id is not None:
+                stmt = stmt.where(User.id != exclude_user_id)
+            return (await session.execute(stmt)).first() is not None
+        finally:
+            if is_local:
+                await session.close()
+
+    @staticmethod
+    def is_email_unique_violation(exc: Exception) -> bool:
+        """该 IntegrityError 是否由邮箱唯一索引引起。
+
+        注册接口已经有一个捕获 IntegrityError 的分支（用于账号名冲突），
+        不区分就会把邮箱冲突误报成「账号名已被占用」——这是本特性最容易写错的一处。
+        """
+        return "uk_ai_agent_users_email" in str(getattr(exc, "orig", exc))
+
     @staticmethod
     async def is_registration_check_rate_limited(client_ip: str) -> bool:
         """账号名可用性预检是否超限（按 IP 单独计数，与提交计数互不影响）。"""
@@ -706,6 +770,7 @@ class AuthService:
             "user_id": str(user.id),
             "user_name": user.user_name,
             "real_name": user.real_name or user.user_name,
+            "email": user.email or "",
             "role": user.role,
             "dept_code": user.dept_code or "",
             "org_path": user.org_path or "",
@@ -903,6 +968,7 @@ class AuthService:
                          "user_id": str(user.id),
                          "user_name": user.user_name,
                          "real_name": user.real_name or user.user_name,
+                         "email": user.email or "",
                          "role": user.role,
                          "dept_code": user.dept_code or "",
                          "org_path": user.org_path or "",
@@ -1033,6 +1099,7 @@ class AuthService:
                      "user_id": str(user.id),
                      "user_name": user.user_name,
                      "real_name": user.real_name or user.user_name,
+                     "email": user.email or "",
                      "role": user.role,
                      "dept_code": user.dept_code or "",
                      "org_path": user.org_path or "",
@@ -1203,6 +1270,7 @@ class AuthService:
                 "user_id": str(user.id),
                 "user_name": user.user_name,
                 "real_name": user.real_name or user.user_name,
+                "email": user.email or "",
                 "role": user.role,
                 "dept_code": user.dept_code or "",
                 "org_path": user.org_path or "",
