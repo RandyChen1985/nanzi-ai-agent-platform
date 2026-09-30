@@ -394,14 +394,14 @@
                   ⟳ 刷新画面
                 </button>
                 <button
-                  v-if="captchaTrace.length"
+                  v-if="actionTrace.length"
                   type="button"
                   class="rounded border px-1.5 py-0.5 text-[10px] font-semibold"
-                  :class="captchaTraceOpen ? 'border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-200' : 'border-indigo-200 bg-white/80 text-indigo-700 hover:bg-white dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'"
-                  title="查看 AI 识别验证码的每一步（截图 / 识别 / 执行 / 校验 / 重试）"
-                  @click="captchaTraceOpen = !captchaTraceOpen"
+                  :class="actionTraceOpen ? 'border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-200' : 'border-indigo-200 bg-white/80 text-indigo-700 hover:bg-white dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'"
+                  title="查看操作过程（AI 动作 / 人工操作 / 验证码解算）"
+                  @click="actionTraceOpen = !actionTraceOpen"
                 >
-                  🧭 AI 过程 {{ captchaTrace.length }}
+                  🧭 操作过程 {{ actionTrace.length }}
                 </button>
               </template>
             </div>
@@ -822,35 +822,38 @@
                   {{ currentAiAction?.detail || (isSolvingCaptcha ? '正在分析验证码画面…' : '请人工完成验证') }}
                 </div>
               </div>
-              <!-- AI 过程抽屉：把"截图 → 识别 → 执行 → 校验 → 重试"逐步摊开，解算不再黑盒 -->
+              <!-- 操作过程抽屉：AI 动作 / 人工操作 / 验证码解算逐步摊开，AI 行为不再黑盒 -->
               <div
-                v-if="captchaTraceOpen && captchaTrace.length"
+                v-if="actionTraceOpen && actionTrace.length"
                 class="absolute right-3 top-3 z-30 flex max-h-[70%] w-[min(440px,85%)] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white/95 text-[11px] shadow-xl backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
               >
                 <div class="flex items-center justify-between border-b border-slate-100 px-2 py-1 font-bold text-slate-600 dark:border-slate-800 dark:text-slate-200">
-                  <span>🧭 AI 过程（最近 {{ captchaTrace.length }} 步）</span>
+                  <span>🧭 操作过程（最近 {{ actionTrace.length }} 步）</span>
                   <span class="flex items-center gap-1">
                     <button
                       type="button"
                       class="rounded px-1 font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                      @click="captchaTrace = []"
+                      @click="actionTrace = []"
                     >清空</button>
                     <button
                       type="button"
                       class="rounded px-1 font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                      @click="captchaTraceOpen = false"
+                      @click="actionTraceOpen = false"
                     >✕</button>
                   </span>
                 </div>
                 <ol class="flex-1 overflow-auto px-2 py-1">
                   <li
-                    v-for="(entry, index) in captchaTrace"
+                    v-for="(entry, index) in actionTrace"
                     :key="`${entry.at}-${index}`"
                     class="flex gap-2 border-t border-slate-100 py-0.5 first:border-t-0 dark:border-slate-800"
                   >
                     <span class="shrink-0 font-mono text-[10px] text-slate-400">{{ entry.at }}</span>
-                    <span class="shrink-0">{{ CAPTCHA_STAGE_LABELS[entry.phase] || '•' }}</span>
-                    <span class="text-slate-700 dark:text-slate-200">{{ entry.detail }}</span>
+                    <span class="shrink-0" :title="ACTION_SOURCE_META[entry.source].label">{{ ACTION_SOURCE_META[entry.source].icon }}</span>
+                    <span class="shrink-0" :class="ACTION_SOURCE_META[entry.source].className">
+                      {{ entry.source === 'captcha' ? (CAPTCHA_STAGE_LABELS[entry.phase] || '•') : (entry.label || '•') }}
+                    </span>
+                    <span class="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200">{{ entry.detail }}</span>
                   </li>
                 </ol>
               </div>
@@ -1417,26 +1420,80 @@ const isSolvingCaptcha = computed(() => currentAiAction.value?.action === 'solvi
 const captchaFailed = computed(() => currentAiAction.value?.action === 'captcha_human_required');
 const isCaptchaAction = computed(() => isSolvingCaptcha.value || captchaFailed.value);
 
-// --- AI 过程时间线：把「截图 → 识别 → 执行 → 校验 → 重试」摊开，避免解算成为黑盒 ---
-type CaptchaTraceEntry = {
+// --- 操作过程时间线 ---
+// 三类事件收进同一条时间线：AI 浏览器动作 / 人工操作 / 验证码解算步骤。
+// 此前只有验证码解算会记录，ai_action 仅作"当前状态"覆盖式展示、人工操作完全不留痕，
+// 排查「AI 到底点错了哪里、人后来又改了什么」时无据可查。
+type ActionTraceSource = 'ai' | 'human' | 'captcha';
+
+type ActionTraceEntry = {
   at: string;
   phase: string;
   detail: string;
   attempt: number;
   maxAttempts: number;
+  /** 这条记录由谁产生 */
+  source: ActionTraceSource;
+  /** AI 动作与人工操作的主文案；验证码条目留空，改走 CAPTCHA_STAGE_LABELS */
+  label: string;
 };
-const CAPTCHA_TRACE_LIMIT = 60;
-const captchaTrace = ref<CaptchaTraceEntry[]>([]);
-const captchaTraceOpen = ref(false);
-const pushCaptchaTrace = (payload: Record<string, any>) => {
-  const entry: CaptchaTraceEntry = {
-    at: String(payload.at || ''),
-    phase: String(payload.phase || ''),
-    detail: String(payload.detail || ''),
-    attempt: Number(payload.attempt || 0),
-    maxAttempts: Number(payload.max_attempts || 0),
+
+const ACTION_TRACE_LIMIT = 60;
+const actionTrace = ref<ActionTraceEntry[]>([]);
+const actionTraceOpen = ref(false);
+
+// 三种来源各自的图标与配色，让时间线一眼读出"谁做的"
+const ACTION_SOURCE_META: Record<ActionTraceSource, { icon: string; label: string; className: string }> = {
+  ai: { icon: '🤖', label: 'AI', className: 'text-indigo-600 dark:text-indigo-300' },
+  human: { icon: '🙋', label: '人工', className: 'text-emerald-600 dark:text-emerald-300' },
+  captcha: { icon: '🧭', label: '验证码', className: 'text-sky-600 dark:text-sky-300' },
+};
+
+// 后端 ai_action 的 action 取值 → 动作名（detail 已带完整描述，这里只补动作本身）
+const AI_ACTION_LABELS: Record<string, string> = {
+  navigating: '🧭 打开页面',
+  clicking: '🖱️ 点击元素',
+  filling: '⌨️ 填写输入框',
+  scrolling: '📜 滚动页面',
+  pressing: '⌨️ 发送按键',
+  selecting: '📋 选择选项',
+  solving_captcha: '🧩 自动解算验证码',
+  captcha_human_required: '🙋 验证码转人工',
+};
+
+const HUMAN_ACTION_LABELS: Record<string, string> = {
+  click: '🖱️ 点击',
+  drag: '✋ 拖动',
+  key: '⌨️ 按键',
+  text: '⌨️ 输入',
+  navigate: '🧭 导航',
+  scroll: '📜 滚动',
+  tab: '🗂️ 切换标签页',
+};
+
+const localTimeLabel = () => new Date().toLocaleTimeString('zh-CN', { hour12: false });
+
+const pushActionTrace = (entry: {
+  source: ActionTraceSource;
+  label?: string;
+  detail?: string;
+  at?: string;
+  phase?: string;
+  attempt?: number;
+  maxAttempts?: number;
+}) => {
+  const normalized: ActionTraceEntry = {
+    at: String(entry.at || localTimeLabel()),
+    phase: String(entry.phase || ''),
+    detail: String(entry.detail || ''),
+    attempt: Number(entry.attempt || 0),
+    maxAttempts: Number(entry.maxAttempts || 0),
+    source: entry.source,
+    label: String(entry.label || ''),
   };
-  captchaTrace.value = [...captchaTrace.value.slice(-(CAPTCHA_TRACE_LIMIT - 1)), entry];
+  // 跳过空条目：后端用空 action 广播 clear_ai_action，那不是一步操作
+  if (!normalized.label && !normalized.detail && !normalized.phase) return;
+  actionTrace.value = [...actionTrace.value.slice(-(ACTION_TRACE_LIMIT - 1)), normalized];
 };
 const CAPTCHA_STAGE_LABELS: Record<string, string> = {
   screenshot: '📸 正在截图',
@@ -1629,6 +1686,12 @@ const humanActionInfo = computed(() => {
 let humanActionTimer: ReturnType<typeof setTimeout> | null = null;
 const setHumanAction = (action: string, detail: string, keepDuration = 2500) => {
   currentHumanAction.value = { action, detail };
+  // 人工操作同样留痕：与 AI 动作共用一条时间线，便于对照「谁做了什么」
+  pushActionTrace({
+    source: 'human',
+    label: HUMAN_ACTION_LABELS[action] || `🙋 ${action}`,
+    detail,
+  });
   // 用户已经开始人工处理验证：收起"AI 无法完成"的警示卡片，不要一直挡着画面
   if (captchaFailed.value) {
     captchaFailureDismissed.value = true;
@@ -2266,6 +2329,7 @@ const closeSocket = () => {
   }
   stopPolling();
   stopInteractionFinishTimer();
+  stopInteractionSnapshot();
   interactionInProgress.value = false;
   snapshotRequestInFlight.value = false;
   if (socket.value) {
@@ -2337,7 +2401,12 @@ const connect = async () => {
       controlOwner.value = payload.owner === 'human' ? 'human' : 'ai';
       controlReason.value = payload.reason || null;
       if (controlOwner.value === 'human') {
-        stopPolling();
+        // 人工接管空闲期间保持刷新：只要没在操作，画面就该跟随页面变化。
+        // 早先这里直接 stopPolling()，与 finishInteraction 不重启轮询叠加成
+        // 双重封锁，人工双击跳转后画面永远停在旧截图，只能手动点刷新。
+        if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
+          startPolling();
+        }
       } else {
         if (prevOwner === 'human' || remoteFocusMessage.value.includes('交还')) {
           setTemporaryMessage('✅ 已交还 AI 接管控制');
@@ -2351,8 +2420,15 @@ const connect = async () => {
         }
       }
     } else if (payload.type === 'captcha_trace') {
-      // AI 解算过程：前端时间线逐条累积，用户可随时点「🧭 AI 过程」展开查看每一步
-      pushCaptchaTrace(payload);
+      // AI 解算过程：逐条累积，用户可点「🧭 操作过程」展开查看每一步
+      pushActionTrace({
+        source: 'captcha',
+        at: payload.at,
+        phase: payload.phase,
+        detail: payload.detail,
+        attempt: payload.attempt,
+        maxAttempts: payload.max_attempts,
+      });
     } else if (payload.type === 'captcha') {
       captchaDetected.value = Boolean(payload.detected);
       if (captchaDetected.value) {
@@ -2374,11 +2450,10 @@ const connect = async () => {
           }
         }
       } else {
-        // 验证码已消失（人工完成或页面自动通过）：收掉红色提示与 HUD
+        // 验证码已消失（人工完成或页面自动通过）：收掉红色提示与 HUD，
+        // 并恢复自动刷新——此前人工通过后仍保持停轮询，画面就再也不更新了
         clearResolvedCaptchaState();
-        if (controlOwner.value === 'human') {
-          stopPolling();
-        } else if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
+        if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
           startPolling();
         }
       }
@@ -2398,6 +2473,12 @@ const connect = async () => {
           detail: payload.detail || '',
           extra: payload.extra || null,
         };
+        // 追加进操作时间线：只覆盖 currentAiAction 会让历史动作全部丢失
+        pushActionTrace({
+          source: 'ai',
+          label: AI_ACTION_LABELS[String(payload.action)] || `🤖 ${payload.action}`,
+          detail: String(payload.detail || ''),
+        });
       } else {
         currentAiAction.value = null;
       }
@@ -2534,11 +2615,15 @@ const restartCaptchaResultProbe = () => {
 
 onUnmounted(() => {
   stopCaptchaResultProbe();
+  stopInteractionSnapshot();
 });
 
 const startPolling = () => {
   stopPolling();
-  if (controlOwner.value === 'human' || autoRefreshPaused.value || interactionInProgress.value || captchaDetected.value || !connected.value) return;
+  // 刻意不拦 controlOwner === 'human'：人工接管期间也要保持刷新，真正该暂停的
+  // 只是「正在操作的那几秒」（interactionInProgress）。早先这里连同下面
+  // finishInteraction 不重启轮询，导致人工双击跳转后画面永远停在旧截图。
+  if (autoRefreshPaused.value || interactionInProgress.value || captchaDetected.value || !connected.value) return;
   pollTimer = setInterval(requestSnapshot, BROWSER_PANEL_REFRESH_INTERVAL_MS);
 };
 
@@ -2569,12 +2654,37 @@ const pauseForInteraction = () => {
   }
 };
 
+// 人工操作后补一帧：页面跳转/重绘需要一点时间，立刻截图往往还是旧画面。
+// 与验证码的 startCaptchaResultProbe 互补——那个只追验证码结果，这里覆盖所有人工操作。
+const INTERACTION_SNAPSHOT_DELAY_MS = 600;
+let interactionSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+
+const stopInteractionSnapshot = () => {
+  if (interactionSnapshotTimer) {
+    clearTimeout(interactionSnapshotTimer);
+    interactionSnapshotTimer = null;
+  }
+};
+
+const scheduleInteractionSnapshot = () => {
+  stopInteractionSnapshot();
+  interactionSnapshotTimer = setTimeout(() => {
+    interactionSnapshotTimer = null;
+    if (!interactionInProgress.value) requestSnapshot();
+  }, INTERACTION_SNAPSHOT_DELAY_MS);
+};
+
 const finishInteraction = () => {
   stopInteractionFinishTimer();
   if (!interactionInProgress.value) return;
   interactionInProgress.value = false;
   // 人工动作已送达：立刻开始确认验证结果，不必等用户手动点刷新
   restartCaptchaResultProbe();
+  // 恢复自动刷新：pauseForInteraction 停掉了轮询，此前只有「交还 AI」或
+  // 「暂停/继续」能重新启动它，人工操作后画面因此不再更新
+  startPolling();
+  // 跳转、提交表单这类非验证码操作再补一帧，页面变化立刻可见
+  if (!captchaDetected.value) scheduleInteractionSnapshot();
 };
 
 const scheduleInteractionFinish = () => {
@@ -3164,7 +3274,9 @@ watch(() => props.approvalMode,
 
 watch(() => props.refreshSignal, () => {
   if (!props.visible || !connected.value) return;
-  if (controlOwner.value === 'human' || autoRefreshPaused.value || captchaDetected.value) return;
+  // 人工接管空闲时同样要取帧：refreshSignal 表示「远程页面已经变了」，
+  // 与轮询同理，真正该跳过的只是正在操作的那几秒。
+  if (autoRefreshPaused.value || interactionInProgress.value || captchaDetected.value) return;
   requestSnapshot();
 });
 

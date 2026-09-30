@@ -512,14 +512,47 @@ def test_browser_panel_allows_dismissing_captcha_hud():
     assert 'v-if="!captchaAwaitingHuman"' in source
 
 
-def test_browser_panel_renders_captcha_trace_timeline():
-    """解算过程必须在面板里可见：过程时间线 + 随阶段变化的 HUD 文案。"""
+def test_browser_panel_renders_operation_trace_timeline():
+    """过程时间线必须在面板里可见：随阶段变化的 HUD 文案 + 可展开的操作记录。"""
     source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
 
-    assert "captchaTrace" in source
+    assert "actionTrace" in source
     assert "'captcha_trace'" in source
-    assert "AI 过程" in source
+    assert "操作过程" in source
     assert "captchaStageLabel" in source
+
+
+def test_browser_panel_records_ai_actions_into_operation_trace():
+    """AI 的每个浏览器动作都要进入操作时间线。
+
+    回归背景：后端一直在广播 ai_action（navigating / clicking / filling / scrolling …），
+    但前端只把它当「当前状态」覆盖式赋值，历史动作全部丢失，
+    时间线里因此只有验证码解算步骤。
+    """
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    branch = source.split("payload.type === 'ai_action'", 1)[1][:1200]
+    assert "pushActionTrace" in branch, "ai_action 事件必须追加到时间线，而不是只覆盖当前状态"
+    assert "source: 'ai'" in branch
+
+
+def test_browser_panel_records_human_actions_into_operation_trace():
+    """人工操作也要进入同一条时间线，便于对照「AI 做了什么、人做了什么」。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    body = source.split("const setHumanAction", 1)[1][:1200]
+    assert "pushActionTrace" in body, "人工动作必须追加到时间线"
+    assert "source: 'human'" in body
+
+
+def test_browser_panel_operation_trace_marks_all_three_sources():
+    """时间线要能区分来源：AI 动作、人工操作、验证码解算。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "source: 'captcha'" in source
+    assert "source: 'ai'" in source
+    assert "source: 'human'" in source
+    assert "ACTION_SOURCE_META" in source, "三种来源需要有各自的图标与配色，否则时间线读不出谁做的"
 
 
 def test_browser_panel_draws_horizontal_drag_line_not_diagonal_to_target():
@@ -549,3 +582,47 @@ def test_embed_chat_auto_retries_browser_open_on_conflict():
     source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
     assert "browserOpenConflictRetries" in source
     assert "status === 409" in source
+
+
+def test_browser_panel_resumes_auto_refresh_after_human_interaction():
+    """人工操作结束后必须恢复自动刷新。
+
+    回归背景（用户反馈：双击链接跳转后画面不更新，要手动点刷新）：
+    ``pauseForInteraction`` 会 ``stopPolling``，而 ``finishInteraction`` 从不重启它；
+    即便有人调用 ``startPolling``，它又被 ``controlOwner === 'human'`` 拦着；
+    再叠加 ``control_state`` 事件分支里的 ``stopPolling``，形成双重封锁——
+    人工双击跳转后画面永远停在旧截图。
+    """
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    start_polling = source.split("const startPolling = () => {", 1)[1][:400]
+    assert "controlOwner.value === 'human'" not in start_polling, (
+        "人工接管空闲时也应刷新；真正该暂停的只是正在操作的那几秒（interactionInProgress）"
+    )
+
+    finish = source.split("const finishInteraction = () => {", 1)[1][:700]
+    assert "startPolling()" in finish, "操作结束后必须恢复自动刷新，否则只能手动点刷新"
+
+
+def test_browser_panel_refreshes_once_after_non_captcha_interaction():
+    """跳转、提交表单这类非验证码操作，结束后要立刻补一帧，不能干等下一个轮询周期。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "scheduleInteractionSnapshot" in source, "非验证码操作需要一个延迟补帧的调度函数"
+    finish = source.split("const finishInteraction = () => {", 1)[1][:700]
+    assert "scheduleInteractionSnapshot()" in finish
+
+
+def test_browser_panel_honours_external_refresh_signal_during_human_control():
+    """人工接管期间也要响应外部刷新信号。
+
+    refreshSignal 代表「远程页面已经变了」（AI 工具调用完成等），
+    与轮询同理，人工空闲时应照常取帧，只有正在操作的那几秒需要跳过。
+    """
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    block = source.split("watch(() => props.refreshSignal", 1)[1][:320]
+    assert "controlOwner.value === 'human'" not in block, (
+        "外部刷新信号不应因人工接管而被丢弃"
+    )
+    assert "requestSnapshot()" in block
