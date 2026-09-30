@@ -542,6 +542,39 @@ async def test_list_users_filters_pending_review(
     assert items[0]["status"] == USER_STATUS_PENDING_REVIEW
 
 
+async def test_user_list_can_exclude_pending_review(
+    client, admin_api_key, registration_on, cleanup_registered
+):
+    """用户列表可以排除待审核：待审核账号只应出现在「待审核」页签。
+
+    它们在用户列表里的审核/编辑等操作本来就用不了，列出来只会误导管理员。
+    刻意用 exclude_status 参数而不是改接口默认值：Roles.vue、
+    DatasetCapabilityMenu 等选择器复用同一个接口，改默认会让待审核账号
+    从它们的候选列表里一起消失。
+    """
+    name = _new_name()
+    cleanup_registered.append(name)
+    await _cleanup_users(name)
+    await client.post(REGISTER_URL, json=_payload(name))
+
+    # 1) 不排除时仍能查到——保持既有口径，其它调用方依赖它
+    included = await client.get(
+        USERS_URL, params={"search": name}, headers={"X-API-Key": admin_api_key}
+    )
+    assert included.status_code == 200, included.text
+    assert [i["user_name"] for i in included.json()["items"]] == [name]
+
+    # 2) 排除后查不到，且 total 必须同步为 0：
+    #    只过滤 items 而总数仍按未排除的口径算，会让分页数虚高、翻页出现空页
+    excluded = await client.get(
+        USERS_URL, params={"search": name, "exclude_status": USER_STATUS_PENDING_REVIEW},
+        headers={"X-API-Key": admin_api_key},
+    )
+    assert excluded.status_code == 200, excluded.text
+    assert excluded.json()["items"] == []
+    assert excluded.json()["total"] == 0
+
+
 # --------------------------------------------------------------------------- #
 # 来源地址可信度（纯单元，不需要基础设施）
 #

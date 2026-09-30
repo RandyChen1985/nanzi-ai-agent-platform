@@ -183,10 +183,16 @@ def test_users_page_has_review_tab_with_pending_badge():
     assert "pendingCount > 0" in USERS
 
 
-def test_users_review_list_filters_pending_status():
-    assert "statusFilter.value = \"2\"" in USERS
-    # 主列表状态筛选也要能直接筛出待审核
-    assert '<option value="2">待审核</option>' in USERS
+def test_users_review_view_filters_pending_status():
+    """待审核页签仍按 status=2 拉取，切回用户列表时重置筛选。
+
+    注意：用户列表**不再**展示待审核账号（这正是本用例原先第二个断言所主张的行为，
+    已按需求移除，见 test_user_list_tab_excludes_pending_review 与
+    test_status_dropdown_does_not_offer_pending_review），所以这里只钉待审核页签自身。
+    """
+    assert 'statusFilter.value = "2"' in USERS
+    # 切回用户列表必须清空筛选，否则会把 status=2 带进主列表
+    assert 'statusFilter.value = ""' in USERS
 
 
 def test_users_review_list_only_exposes_approve_and_reject():
@@ -223,3 +229,29 @@ def test_users_review_refreshes_badge_after_action():
     assert "fetchPendingCount()" in USERS
     # 审核动作后同时刷新列表与徽章
     assert "await Promise.all([fetchUsers(), fetchPendingCount()]);" in USERS
+
+
+# --------------------------------------------------------------------------- #
+# 用户列表不得混入待审核账号
+# --------------------------------------------------------------------------- #
+
+def test_user_list_tab_excludes_pending_review():
+    """「用户列表」拉取时必须排除待审核（它们只应出现在「待审核」页签）。
+
+    关键是不能写成无条件排除：待审核视图正是靠 status=2 拉数据的，
+    无条件排除会让那一页变成空列表。所以断言两个条件都必须紧邻该参数。
+    """
+    assert "params.exclude_status = 2" in USERS
+    idx = USERS.index("params.exclude_status = 2")
+    guard = USERS[max(0, idx - 400):idx]
+    assert 'activeView.value === "list"' in guard, "排除待审核必须只在用户列表视图生效"
+    assert 'statusFilter.value !== "2"' in guard, "待审核视图按 status=2 拉取，不能被排除掉"
+
+
+def test_status_dropdown_does_not_offer_pending_review():
+    """用户列表的状态筛选不再提供「待审核」。
+
+    那些账号在用户列表里操作按钮都用不了，列出来只会误导管理员；
+    留着这个选项还会让筛选结果为空，看起来像功能坏了。
+    """
+    assert '<option value="2">待审核</option>' not in USERS

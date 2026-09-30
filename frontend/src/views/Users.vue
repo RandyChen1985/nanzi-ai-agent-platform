@@ -54,7 +54,8 @@
             <option value="">状态：全部</option>
             <option value="1">启用</option>
             <option value="0">禁用</option>
-            <option value="2">待审核</option>
+            <!-- 刻意不提供「待审核」：待审核账号只出现在「待审核」页签，
+                 在用户列表里它们的操作按钮都用不了，列出来只会误导 -->
           </select>
         </div>
 
@@ -457,7 +458,10 @@
                         user.status === 1 ? 'text-emerald-600' : 'text-gray-400',
                       ]"
                     >
-                      {{ user.status === 1 ? "已启用" : "已禁用" }}
+                      <!-- 三态写全：待审核账号已不在此列表（见 exclude_status），
+                           但若只剩「非 1 即已禁用」的写法，一旦过滤失效或将来被去掉，
+                           管理员会把待审核账号误读成「已禁用」 -->
+                      {{ user.status === 1 ? "已启用" : user.status === 2 ? "待审核" : "已禁用" }}
                     </span>
                   </div>
                 </td>
@@ -2942,6 +2946,12 @@ const fetchUsers = async () => {
     if (searchQuery.value) params.search = searchQuery.value;
     if (roleFilter.value) params.role = roleFilter.value;
     if (statusFilter.value) params.status = statusFilter.value;
+    // 「用户列表」不显示待审核账号：它们的审核/编辑等操作在列表里本来就用不了，
+    // 只应出现在「待审核」页签。待审核视图自身按 status=2 拉取，不能再排除，
+    // 所以这里连带判断 statusFilter，避免两个条件互斥导致列表空掉。
+    if (activeView.value === "list" && statusFilter.value !== "2") {
+      params.exclude_status = 2;
+    }
     const response = await axios.get("/api/portal/management/users", {
       params,
     });

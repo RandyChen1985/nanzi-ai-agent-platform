@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func, desc
+from sqlalchemy import select, update, delete, func, desc, or_
 from sqlalchemy.orm import selectinload
 from app.core.dependencies import require_admin, require_api_key, require_permission, require_permission
 from app.core.orm import get_db_session
@@ -369,6 +369,12 @@ async def list_users(
     search: Optional[str] = None,
     role: Optional[str] = None,
     status_filter: Optional[int] = Query(None, alias="status"),
+    exclude_status: Optional[int] = Query(
+        None,
+        ge=0,
+        description="排除某个状态的用户。用户列表用它排掉待审核（2），"
+                    "使待审核账号只出现在「待审核」页签里",
+    ),
     exclude_role_id: Optional[int] = Query(
         None,
         ge=1,
@@ -393,6 +399,12 @@ async def list_users(
         stmt = stmt.where(User.role == role)
     if status_filter is not None:
         stmt = stmt.where(User.status == status_filter)
+    if exclude_status is not None:
+        # 显式带上 NULL：status 列可空，而 SQL 里 `status != 2` 对 NULL 求值为 NULL
+        # （不成立），只写 `!=` 会让历史 NULL 行从「全部」里凭空消失。
+        stmt = stmt.where(
+            or_(User.status != exclude_status, User.status.is_(None))
+        )
     if exclude_role_id is not None:
         member_ids = select(UserRoleRelation.user_id).where(
             UserRoleRelation.role_id == exclude_role_id
