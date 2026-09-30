@@ -33,9 +33,11 @@ def test_pg_apply_wrapper_discovers_all_versioned_sql_files_in_order():
     wrapper = (ROOT / "db-prod-pg" / "apply-sql.sh").read_text(encoding="utf-8")
 
     assert 'SQL_FILES=()' in wrapper
-    assert "-name 'V*.sql'" in wrapper
+    # 脚本改用 ls "$DB_DIR"/V*.sql | sort -V 收集迁移脚本，不再是 find -name
+    assert 'ls "$DB_DIR"/V*.sql' in wrapper
     assert "sort -V" in wrapper
-    assert 'for sql_file in "${SQL_FILES[@]}"' in wrapper
+    # 筛选后的最终列表变量名为 FINAL_SQL_FILES
+    assert 'for sql_file in "${FINAL_SQL_FILES[@]}"' in wrapper
 
 
 def test_pg_apply_wrapper_only_bootstraps_admin_when_baseline_is_included():

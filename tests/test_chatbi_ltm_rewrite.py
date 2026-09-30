@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
-from app.services.ai.runtime.agentscope.compat import SystemMessage, AIMessage
+from app.services.ai.runtime.agentscope.compat import AIMessage, HumanMessage
 from app.services.ai.runners.data_agent_runner import DataAgentRunner
 
 @pytest.mark.no_infrastructure
@@ -44,7 +44,8 @@ async def test_chatbi_ltm_rewrite_success():
     # 2. 检查传入 LLM 的 prompt 是否包含 [Memory Profile] 部分，并且不包含多余内容
     call_args = llm.ainvoke.await_args
     sent_message = call_args.args[0][0]
-    assert isinstance(sent_message, SystemMessage)
+    # 改写请求现以 HumanMessage 下发（改写是任务指令而非系统人设）
+    assert isinstance(sent_message, HumanMessage)
     
     # 确认 [Memory Profile] 被正确截取并加入到了 prompt 里
     assert "【用户个性化偏好与记忆】" in sent_message.content

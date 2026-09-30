@@ -229,10 +229,12 @@ async def test_upsert_and_run_task(seed_data, cleanup_tasks):
                 assert kwargs["conversation_id"].startswith("test_conv_run_")
                 assert kwargs["conversation_id"] != "test_conv"
                 msg_content = kwargs["messages"][0]["content"]
-                assert "【自动化指令-任务ID:" in msg_content
+                # 实现文案已改为「【📋 任务执行指令 - ID: {id}】@agent」
+                assert "任务执行指令 - ID: " in msg_content
                 assert "@test_agent" in msg_content
-                assert "请立即实际执行任务" in msg_content
-                assert "任务内容：Hello world" in msg_content
+                # 正文改为「【📋 任务执行指令 - ID: {id}】@agent」后直接跟原始 prompt，
+                # 不再有「请立即实际执行任务」「任务内容：」这两个包装前缀
+                assert "Hello world" in msg_content
                 assert kwargs["user_info"]["user_id"] == user.id
                 assert kwargs["user_info"]["is_scheduled_task"] is True
                 assert kwargs["user_info"]["requires_tool_execution"] is True

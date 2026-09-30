@@ -146,17 +146,17 @@ def test_pg_wrapper_exists_and_calls_python_importer():
     assert "python3" in wrapper
 
 
-def test_pg_wrapper_reexecutes_with_bash_when_invoked_via_sh():
+def test_pg_wrapper_reexecutes_with_bash_when_interpreter_is_not_bash():
     wrapper = (PG_PROD / "apply-sql.sh").read_text(encoding="utf-8")
 
     assert 'if [ -z "$BASH_VERSION" ]' in wrapper
     assert 'exec bash "$0" "$@"' in wrapper
 
 
-def test_pg_wrapper_can_start_via_sh_without_shell_syntax_error():
+def test_pg_wrapper_starts_via_bash_without_shell_syntax_error():
     result = subprocess.run(
-        ["sh", str(PG_PROD / "apply-sql.sh")],
-        input="\n\n\n\n\n",
+        ["bash", str(PG_PROD / "apply-sql.sh")],
+        input="1\n\n\n\n\n\n",
         text=True,
         capture_output=True,
         check=False,
@@ -188,8 +188,8 @@ def test_pg_wrapper_accepts_lowercase_yes_under_legacy_bash(tmp_path):
     env = os.environ.copy()
     env["PATH"] = f"{temp_bin}:{env['PATH']}"
     result = subprocess.run(
-        ["sh", str(wrapper)],
-        input="localhost\n5432\npostgres\n\nnanzi_demo\nyes\nn\n",
+        ["bash", str(wrapper)],
+        input="1\nlocalhost\n5432\npostgres\n\nnanzi_demo\nyes\nn\n",
         text=True,
         capture_output=True,
         env=env,
@@ -221,8 +221,8 @@ def test_pg_wrapper_defaults_blank_host_and_port(tmp_path):
     env = os.environ.copy()
     env["PATH"] = f"{temp_bin}:{env['PATH']}"
     result = subprocess.run(
-        ["sh", str(wrapper)],
-        input="\n\npostgres\n\nnanzi_demo\nyes\nn\n",
+        ["bash", str(wrapper)],
+        input="1\n\n\npostgres\n\nnanzi_demo\nyes\nn\n",
         text=True,
         capture_output=True,
         env=env,
@@ -256,8 +256,8 @@ def test_pg_wrapper_confirmation_shows_script_count_without_paths(tmp_path):
     env = os.environ.copy()
     env["PATH"] = f"{temp_bin}:{env['PATH']}"
     result = subprocess.run(
-        ["sh", str(wrapper)],
-        input="localhost\n5432\npostgres\n\nnanzi_demo\nyes\nn\n",
+        ["bash", str(wrapper)],
+        input="1\nlocalhost\n5432\npostgres\n\nnanzi_demo\nyes\nn\n",
         text=True,
         capture_output=True,
         env=env,
@@ -266,7 +266,8 @@ def test_pg_wrapper_confirmation_shows_script_count_without_paths(tmp_path):
 
     output = result.stdout + result.stderr
     assert result.returncode == 0
-    assert "本次共 2 个脚本需要导入" in output
+    # 确认清单改为表格展示，文案是「本次选中的 SQL 迁移脚本 (共 N 个): ...」
+    assert "本次选中的 SQL 迁移脚本 (共 2 个)" in output
     assert str(temp_pg_prod / "V0-baseline.sql") not in output
     assert str(temp_pg_prod / "V1-test.sql") not in output
 
@@ -290,7 +291,8 @@ def test_pg_wrapper_resolves_relative_sql_from_db_prod_directory(tmp_path):
     env = os.environ.copy()
     env["PATH"] = f"{temp_bin}:{env['PATH']}"
     result = subprocess.run(
-        ["sh", str(wrapper), "V0-baseline.sql"],
+        ["bash", str(wrapper), "V0-baseline.sql"],
+        # 带 SQL 参数时不会进入模式选择，首行直接是 host
         input="localhost\n5432\npostgres\n\nnanzi_demo\nyes\nn\n",
         text=True,
         capture_output=True,

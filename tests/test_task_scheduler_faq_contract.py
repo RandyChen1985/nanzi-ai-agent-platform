@@ -8,7 +8,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.no_infrastructure
 def test_task_scheduler_faq_documents_cover_deployment_and_retry_contract():
-    faq_paths = [REPO_ROOT / "FAQ.md", REPO_ROOT / "data/docs/FAQ.md"]
+    # FAQ.md 现已收敛到仓库根，data/docs/ 下不再保留副本，只校验实际存在的文件
+    faq_paths = [
+        path
+        for path in (REPO_ROOT / "FAQ.md", REPO_ROOT / "data/docs/FAQ.md")
+        if path.exists()
+    ]
+    assert faq_paths, "未找到 FAQ.md（仓库根或 data/docs/ 下）"
     required_faq_markers = (
         "3.7.4 多节点部署与调度器节点开关",
         "3.7.5 定时任务失败重试策略",

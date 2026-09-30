@@ -41,7 +41,6 @@ tests/ai/runners/test_data_agent_runner.py::test_schema_keyword_planner_derives_
 tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_table_in_user_permission_set  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_unqualified_columns_for_single_table_to_avoid_dialect_false_positives  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_blocks_unknown_alias_column_before_execution  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/test_directory_catalog_tool.py::test_agent_prompts_route_platform_docs_through_host_file_tools  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/test_federated_subquery_gates.py::test_validate_federated_subquery_blocks_static_risk_sql  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/test_p1_optimizations.py::test_knowledge_turn_forces_search_before_answer  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/test_request_semantics.py::test_chatbi_state_hint_exposes_semantics_and_evidence_metadata  # A-断言过时: 断言与当前实现漂移，待逐项复核
@@ -53,7 +52,6 @@ tests/ai/tools/test_data_api.py::test_get_dataset_schema_tool_local_falls_back_t
 tests/ai/tools/test_session_status.py::test_session_status_context_usage_estimates_full_history_against_budget  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/portal/test_logs_partitions.py::test_partition_service_prune_expired_logs_partitioned  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/portal/test_scenario_templates.py::test_chatbi_scenario_template_precheck_and_install  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/api/test_metadata_cron_inspection.py::test_scheduled_metadata_inspection_triggers_alert_on_missing_tables  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_chat_artifacts.py::test_list_artifacts_returns_items_and_rotates_token  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_chat_context_usage.py::test_context_usage_endpoint_returns_shared_estimate_and_effective_sandbox_runtime  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/api/v1/test_chat_recommend_table_questions.py::test_recommend_table_questions_api_success  # A-断言过时: 断言与当前实现漂移，待逐项复核
@@ -65,10 +63,6 @@ tests/services/ai/test_router_service.py::test_route_query_retry_placeholder_gen
 tests/services/ai/test_router_service.py::test_should_inherit_data_agent_session_generalized  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/services/mcp/test_platform_config.py::test_platform_mcp_config_has_singleton_fields_and_safe_defaults  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/services/test_quota_service.py::test_resolve_effective_limit_batches_role_policies  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/services/test_scheduler_service.py::test_upsert_and_run_task  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/test_admin_bootstrap_scripts.py::test_pg_apply_wrapper_discovers_all_versioned_sql_files_in_order  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/test_agent_version_toolcall_timeout_migration_contract.py::test_postgres_version_timeout_migration_adds_nullable_long_timeout_column  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/test_chatbi_ltm_rewrite.py::test_chatbi_ltm_rewrite_success  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_dev_sh_daemon_controls.py::test_dev_sh_daemon_start_persists_pid_file  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_dev_sh_python_bootstrap.py::test_dev_sh_bootstraps_uv_python_and_requirements_on_first_run  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_federated_executor.py::test_cross_dataset_schema_enrichment_filters_unauthorized_targets  # A-断言过时: 断言与当前实现漂移，待逐项复核
@@ -83,16 +77,9 @@ tests/test_federated_executor.py::test_federated_executor_repairs_performance_bl
 tests/test_federated_executor.py::test_federated_executor_repairs_subquery_time_range_mismatch_before_execute  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_federated_executor.py::test_federated_executor_security_error_does_not_degrade_secondary_query  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_memory_ebbinghaus_consolidation.py::test_consolidate_user_memories_clustering_and_merging  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/test_memory_my_portal.py::test_delete_my_summary  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_memory_session_summary.py::test_memory_search_uses_context_user_id  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_personal_skills_routes.py::test_platform_skill_list_is_readable_without_management_permission  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/test_pg_prod_apply_sql.py::test_pg_wrapper_accepts_lowercase_yes_under_legacy_bash  # A-断言过时: 迁移 SQL 断言与当前脚本内容不一致
-tests/test_pg_prod_apply_sql.py::test_pg_wrapper_can_start_via_sh_without_shell_syntax_error  # A-断言过时: 迁移 SQL 断言与当前脚本内容不一致
-tests/test_pg_prod_apply_sql.py::test_pg_wrapper_confirmation_shows_script_count_without_paths  # A-断言过时: 迁移 SQL 断言与当前脚本内容不一致
-tests/test_pg_prod_apply_sql.py::test_pg_wrapper_defaults_blank_host_and_port  # A-断言过时: 迁移 SQL 断言与当前脚本内容不一致
-tests/test_pg_prod_apply_sql.py::test_pg_wrapper_resolves_relative_sql_from_db_prod_directory  # A-断言过时: 迁移 SQL 断言与当前脚本内容不一致
 tests/test_sql_routing.py::test_sql_routing_forced_env_local  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/test_task_scheduler_faq_contract.py::test_task_scheduler_faq_documents_cover_deployment_and_retry_contract  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/utils/test_sql_rewriter.py::test_unqualified_all_filter_skips_multi_table_subquery_scope  # A-断言过时: 断言与当前实现漂移，待逐项复核
 
 # --- B-依赖升级适配 ---

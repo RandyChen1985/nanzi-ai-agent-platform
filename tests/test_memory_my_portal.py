@@ -103,7 +103,14 @@ async def test_delete_my_summary():
         )
 
     assert res["status"] == "success"
-    mock_delete.assert_awaited_once_with("7", "conv-123", include_summary=True)
+    # 实现新增了 user_name 与 user_info 两个关键字参数（用于按用户维度清理）
+    mock_delete.assert_awaited_once_with(
+        "7",
+        "conv-123",
+        include_summary=True,
+        user_name="user_7",
+        user_info={"user_id": 7, "user_name": "user_7"},
+    )
 
 
 @pytest.mark.asyncio

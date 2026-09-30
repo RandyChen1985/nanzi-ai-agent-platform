@@ -1098,7 +1098,7 @@ const saveBrandingConfig = async () => {
   brandingSaving.value = true
   try {
     await axios.put('/api/portal/system/branding', { ...brandingConfig.value })
-    const { loadBranding } = await import('../composables/useBranding')
+    const { loadBranding } = await import('@/composables/useBranding')
     await loadBranding(true)
     showToast('品牌配置已保存', 'success')
   } catch (e: any) {

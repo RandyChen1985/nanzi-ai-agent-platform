@@ -40,6 +40,7 @@ export async function loadBranding(force = false): Promise<PublicBranding> {
       branding.value = { ...DEFAULT_BRANDING, ...data }
     } catch {
       branding.value = { ...DEFAULT_BRANDING }
+      loadPromise = null
     }
     applyFavicon(branding.value.icon_url)
     applyDocumentTitle()

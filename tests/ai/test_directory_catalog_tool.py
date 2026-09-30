@@ -288,23 +288,28 @@ def test_agent_prompts_file_anti_guessing_guidelines():
     assert "目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator" in prompt
 
 
-def test_agent_prompts_route_platform_docs_through_host_file_tools():
-    from app.services.ai.agent_prompts import AgentServicePrompts
+def test_platform_docs_are_routed_through_host_file_tools():
+    """平台公共文档只读、且必须经宿主侧文件工具检索（沙箱 Bash 不可见）。
 
-    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
-        "你是一个专业助手。",
-        runtime_tool_names=["Read", "Glob", "Grep", "Bash"],
-    )
+    该守则原先内联在全局 system prompt 里，现已下沉到工具层：由 nudge 策略
+    （tool_nudge_policy）与目录清单工具描述（resource_catalog_tools）承载，
+    因此改为校验实际承载位置，而不是拼接后的全局提示词。
+    """
+    from pathlib import Path as _Path
 
-    assert "检索平台公共文档" in prompt
-    assert "公共文档须用宿主侧绝对路径读取" in prompt
-    assert "优先通过宿主侧" in prompt
-    assert "Grep`/`Glob`/`Read`" in prompt
-    assert "公共文档仅宿主侧可读" in prompt
-    assert "不要因为“是什么意思”等词语改走企业知识库" in prompt
-    assert "platform_help_files" in prompt
-    assert "不得递归扫描 `/app`" in prompt
+    from app.services.ai import tool_nudge_policy
+    from app.services.ai.tools import resource_catalog_tools
 
+    nudge_src = _Path(tool_nudge_policy.__file__).read_text(encoding="utf-8")
+    catalog_src = _Path(resource_catalog_tools.__file__).read_text(encoding="utf-8")
+
+    # nudge 策略：公共文档仅宿主可读、优先宿主文件工具、禁止递归扫描 /app
+    assert "平台公共文档 data/docs/ 仅宿主侧可读" in nudge_src
+    assert "优先通过宿主侧文件工具检索" in nudge_src
+    assert "禁止递归扫描 /app" in nudge_src
+    # 目录清单工具描述：platform_help_files 兜底 + 仅宿主只读访问
+    assert "platform_help_files" in catalog_src
+    assert "宿主 Read/Glob/Grep" in catalog_src
 
 def test_agent_prompts_directory_navigator_does_not_require_unbound_catalog_tool():
     from app.services.ai.agent_prompts import AgentServicePrompts

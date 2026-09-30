@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 
-# 允许用户沿用标准的调用方式：sh apply-sql.sh。
-# 后续逻辑使用 Bash 数组、[[ ]] 等语法，因此被 sh 解释时必须尽早切回 Bash。
+# 必须使用 bash 运行：./apply-sql.sh（推荐）或 bash apply-sql.sh。
+# 后续逻辑使用 Bash 数组、[[ ]]、<(...) 进程替换等专有语法，不支持以 sh 调用——
+# 注意 macOS 的 /bin/sh 本身就是 bash 3.2，但会开启 POSIX 模式并禁用上述语法，
+# 此时下面基于 BASH_VERSION 的判断无法兜底，会直接在 <(...) 处报语法错误。
+# 下面的自举只覆盖「解释器确实不是 bash」的情况（如 Linux 的 dash）。
 if [ -z "$BASH_VERSION" ]; then
     if command -v bash >/dev/null 2>&1; then
         exec bash "$0" "$@"

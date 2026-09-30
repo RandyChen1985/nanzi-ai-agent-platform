@@ -202,9 +202,27 @@ async def test_scheduled_metadata_inspection_triggers_alert_on_missing_tables():
     }
 
     mock_db = AsyncMock()
-    mock_scalar = MagicMock()
-    mock_scalar.scalar_one_or_none.return_value = mock_task
-    mock_db.execute = AsyncMock(return_value=mock_scalar)
+    # 同一 session 上会先后查任务、用户、智能体展示名，必须按查询分辨返回对象。
+    # 若统一返回 task，scheduler_service 里 `user.user_name` 会拿到
+    # AgentScheduledTask（无 user_name 字段）而抛 AttributeError。
+    mock_user = MagicMock()
+    mock_user.id = 1
+    mock_user.user_name = "admin"
+    mock_user.real_name = "管理员"
+    mock_user.role = "admin"
+
+    def _execute_side_effect(stmt, *args, **kwargs):
+        result = MagicMock()
+        sql = str(stmt)
+        if "ai_agent_scheduled_tasks" in sql:
+            result.scalar_one_or_none.return_value = mock_task
+        elif "ai_agents" in sql:
+            result.scalar_one_or_none.return_value = "元数据巡检"
+        else:
+            result.scalar_one_or_none.return_value = mock_user
+        return result
+
+    mock_db.execute = AsyncMock(side_effect=_execute_side_effect)
     mock_db.commit = AsyncMock()
     mock_db.rollback = AsyncMock()
 
