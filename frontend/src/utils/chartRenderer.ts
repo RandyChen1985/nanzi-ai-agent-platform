@@ -237,6 +237,31 @@ function chartParseError(code: ChartParseErrorCode, message: string): ChartParse
   return error;
 }
 
+function isBottomLegend(legendOption: any): boolean {
+  if (legendOption === false) return false;
+  if (legendOption && typeof legendOption === "object") {
+    if (legendOption.show === false) return false;
+    if (legendOption.top != null && legendOption.bottom == null) return false;
+  }
+  return true;
+}
+
+function sanitizeCartesianGrid(gridItem: any, withBottomLegend: boolean): any {
+  if (!gridItem || typeof gridItem !== "object" || Array.isArray(gridItem)) return gridItem;
+  if (!withBottomLegend) return gridItem;
+  // 若配置了 top + height，说明采用绝对高度排版（如多指标组合图），不强制覆盖 bottom
+  if (gridItem.height != null && gridItem.bottom == null) return gridItem;
+
+  const currentBottom = gridItem.bottom;
+  const isTooSmall =
+    currentBottom === undefined ||
+    currentBottom === null ||
+    (typeof currentBottom === "number" && currentBottom < 32) ||
+    (typeof currentBottom === "string" && /^(?:[0-5](?:\.\d+)?%|[0-9]px|[12][0-9]px)$/.test(currentBottom.trim()));
+
+  return isTooSmall ? { ...gridItem, bottom: 36 } : gridItem;
+}
+
 export function mergeChartDefaults(options: Record<string, any>): Record<string, any> {
   if (!options) return {};
 
@@ -245,6 +270,7 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
     Boolean(options.xAxis || options.yAxis) ||
     series.some((item: any) => cartesianSeriesTypes.has(String(item?.type || "")));
   const isPieOnly = series.length > 0 && series.every((item: any) => item?.type === "pie");
+  const hasBottomLegend = isBottomLegend(options.legend);
 
   const defaults: Record<string, any> = {
     color: colors,
@@ -257,15 +283,22 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
       padding: [10, 15],
       extraCssText: "box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border-radius: 8px;",
     },
-    legend: { bottom: 0, icon: "circle", itemWidth: 8, itemHeight: 8 },
+    legend: { bottom: 4, icon: "circle", itemWidth: 8, itemHeight: 8, itemGap: 12 },
   };
 
   if (shouldUseCartesianDefaults) {
-    defaults.grid = { left: "3%", right: "4%", bottom: "3%", top: "15%", containLabel: true, show: false };
+    defaults.grid = {
+      left: "3%",
+      right: "4%",
+      bottom: hasBottomLegend ? 36 : "3%",
+      top: "15%",
+      containLabel: true,
+      show: false,
+    };
     defaults.xAxis = {
       axisLine: { lineStyle: { color: "#d1d5db" } },
       axisTick: { show: false },
-      axisLabel: { fontSize: 11, color: axisLabelReadableColor },
+      axisLabel: { fontSize: 11, color: axisLabelReadableColor, hideOverlap: true },
       splitLine: { show: false },
     };
     defaults.yAxis = {
@@ -296,36 +329,39 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
   };
 
   if (options.title) {
+    const normalizeTitleItem = (item: any) => {
+      const base = typeof item === "string" ? { text: item } : (item && typeof item === "object" ? { ...item } : {});
+      return {
+        ...base,
+        left: base.left === undefined || base.left === "auto" ? "center" : base.left,
+        top: base.top ?? 4,
+        textStyle: {
+          fontSize: 13,
+          fontWeight: 600,
+          ...(base.textStyle || {}),
+          color: normalizeReadableTextColor(base.textStyle?.color, titleReadableColor),
+        },
+      };
+    };
+
     merged.title = Array.isArray(options.title)
-      ? options.title.map((item: any) => ({
-          ...item,
-          textStyle: {
-            fontSize: 13,
-            fontWeight: 600,
-            ...(item?.textStyle || {}),
-            color: normalizeReadableTextColor(item?.textStyle?.color, titleReadableColor),
-          },
-        }))
-      : {
-          ...options.title,
-          textStyle: {
-            fontSize: 13,
-            fontWeight: 600,
-            ...(options.title?.textStyle || {}),
-            color: normalizeReadableTextColor(options.title?.textStyle?.color, titleReadableColor),
-          },
-        };
+      ? options.title.map(normalizeTitleItem)
+      : normalizeTitleItem(options.title);
   }
 
   if (shouldUseCartesianDefaults) {
     // K 线+成交量等常用 grid 数组；不可对数组做 object spread，否则会变成 {0,1,left,...} 导致空白图
     if (Array.isArray(options.grid)) {
-      merged.grid = options.grid.map((item: any) => ({
-        ...defaults.grid,
-        ...(item && typeof item === "object" && !Array.isArray(item) ? item : {}),
-      }));
+      merged.grid = options.grid.map((item: any, index: number, arr: any[]) => {
+        const baseGrid = {
+          ...defaults.grid,
+          ...(item && typeof item === "object" && !Array.isArray(item) ? item : {}),
+        };
+        return index === arr.length - 1 ? sanitizeCartesianGrid(baseGrid, hasBottomLegend) : baseGrid;
+      });
     } else {
-      merged.grid = { ...defaults.grid, ...(options.grid || {}) };
+      const baseGrid = { ...defaults.grid, ...(options.grid || {}) };
+      merged.grid = sanitizeCartesianGrid(baseGrid, hasBottomLegend);
     }
     merged.xAxis = mergeAxisDefaults(defaults.xAxis, options.xAxis);
     merged.yAxis = mergeAxisDefaults(defaults.yAxis, options.yAxis);

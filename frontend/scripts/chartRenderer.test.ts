@@ -283,3 +283,52 @@ assert.deepEqual(parseSse.feed("lo\"}\n\ndata: [DONE]\n"), [
   "[DONE]",
 ]);
 assert.deepEqual(parseSse.flush(), []);
+
+// 防遮挡测试：默认直角坐标系应为底部图例预留安全高度
+const defaultCartesian = mergeChartDefaults({
+  xAxis: { type: "category", data: ["09-27", "09-28", "09-29"] },
+  yAxis: { type: "value" },
+  series: [{ name: "正常数", type: "bar", data: [18, 18, 18] }],
+});
+assert.equal(defaultCartesian.grid.bottom, 36);
+assert.equal(defaultCartesian.xAxis.axisLabel.hideOverlap, true);
+assert.equal(defaultCartesian.legend.bottom, 4);
+
+// 防遮挡测试：模型输出过小的 bottom (如 3%) 需智能抬高到安全距离 36
+const modelTinyGrid = mergeChartDefaults({
+  grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
+  xAxis: { type: "category", data: ["09-27", "09-28"] },
+  yAxis: { type: "value" },
+  series: [{ name: "异常率", type: "line", data: [0, 0] }],
+});
+assert.equal(modelTinyGrid.grid.bottom, 36);
+
+// 图例在顶部或显式关闭时，应保留模型指定的合理布局
+const topLegendChart = mergeChartDefaults({
+  legend: { top: 0 },
+  grid: { bottom: "5%" },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(topLegendChart.grid.bottom, "5%");
+
+// 标题默认居中测试：避免遮挡左轴单位名称（如“台”）
+const centeredTitleChart = mergeChartDefaults({
+  title: { text: "设备巡检正常/异常统计" },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value", name: "台" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(centeredTitleChart.title.left, "center");
+assert.equal(centeredTitleChart.title.top, 4);
+
+// 显式指定 left 的标题应保留原设置
+const customTitleChart = mergeChartDefaults({
+  title: { text: "自定义标题", left: "right" },
+  xAxis: { type: "category", data: ["A"] },
+  yAxis: { type: "value" },
+  series: [{ type: "bar", data: [1] }],
+});
+assert.equal(customTitleChart.title.left, "right");
+

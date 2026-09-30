@@ -546,7 +546,7 @@ const segments = computed<ContentSegment[]>(() => {
         </button>
         <MermaidRenderer :content="segment.content" />
       </div>
-      <div v-else-if="segment.type === 'chart'" class="w-full h-64 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700 p-2 shadow-sm relative group/chart">
+      <div v-else-if="segment.type === 'chart'" class="w-full h-72 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700 p-2 shadow-sm relative group/chart">
         <!-- Chart type switcher buttons overlay -->
         <div class="absolute top-2 right-2 flex items-center space-x-1 bg-white/90 dark:bg-gray-800/90 shadow-sm border border-gray-100 dark:border-gray-700 rounded-lg p-1 z-10 opacity-0 group-hover/chart:opacity-100 transition-opacity">
           <button
