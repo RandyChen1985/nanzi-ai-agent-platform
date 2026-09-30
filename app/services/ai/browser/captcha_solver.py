@@ -144,7 +144,8 @@ class BrowserCaptchaSolver:
         self, image_b64: str, vision_model: str
     ) -> Optional[Dict[str, Any]]:
         """调用 Vision LLM 获取验证码坐标结构化结果。"""
-        from langchain_core.messages import HumanMessage
+        # langchain_core 已随 AgentScope 迁移移除，这里用平台自带的兼容消息类
+        from app.services.ai.runtime.agentscope.compat import HumanMessage
         from app.services.ai.config import AgentConfigProvider
 
         message = HumanMessage(
