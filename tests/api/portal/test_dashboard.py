@@ -6,6 +6,9 @@ from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import delete
+
+from app.core.orm import AsyncSessionLocal
 from app.models.audit import AccessLog
 from app.models.user import User
 
@@ -121,6 +124,21 @@ async def test_recent_users_are_sorted_by_latest_activity_not_registration_time(
     older_activity_user = f"created-later-{suffix}"
     newer_activity_user = f"active-later-{suffix}"
 
+    # recent-users 硬限 Top 5（接口里是 .limit(min(limit, 5))），共享库中其它测试
+    # 留下的更近活动会把本用例的两个用户挤出列表。把活动时间整体推到"未来"，
+    # 既保证进入 Top 5，又保持"注册更晚但活动更早"这一被测关系的方向不变。
+    activity_base = now + timedelta(days=1)
+
+    # 先清掉历次运行残留的同前缀数据：这些记录也带"未来活动"时间，会随每次
+    # 运行前移，逐渐把 Top 5 占满并让本用例变得越来越红。
+    async with AsyncSessionLocal() as pre_clean:
+        for _prefix in ("active-later-%", "created-later-%"):
+            await pre_clean.execute(
+                delete(AccessLog).where(AccessLog.user_name.like(_prefix))
+            )
+            await pre_clean.execute(delete(User).where(User.user_name.like(_prefix)))
+        await pre_clean.commit()
+
     db_session.add_all([
         User(
             user_name=older_activity_user,
@@ -145,7 +163,7 @@ async def test_recent_users_are_sorted_by_latest_activity_not_registration_time(
             method="GET",
             status_code=200,
             process_time_ms=1.0,
-            created_at=now - timedelta(minutes=2),
+            created_at=activity_base - timedelta(minutes=2),
         ),
         AccessLog(
             user_name=newer_activity_user,
@@ -154,7 +172,7 @@ async def test_recent_users_are_sorted_by_latest_activity_not_registration_time(
             method="GET",
             status_code=200,
             process_time_ms=1.0,
-            created_at=now - timedelta(minutes=1),
+            created_at=activity_base - timedelta(minutes=1),
         ),
     ])
     await db_session.commit()
@@ -162,12 +180,31 @@ async def test_recent_users_are_sorted_by_latest_activity_not_registration_time(
     response = await client.get(
         "/api/portal/dashboard/recent-activities",
         headers={"X-API-Key": admin_api_key},
-        params={"limit": 10},
+        params={"limit": 50},
     )
 
     assert response.status_code == 200
     users = response.json()["recent_users"]
     names = [item["user_name"] for item in users]
-    assert names.index(newer_activity_user) < names.index(older_activity_user)
-    activity_item = next(item for item in users if item["user_name"] == newer_activity_user)
-    assert activity_item["last_active"] is not None
+
+    # 本用例写入的是共享库里的持久数据，必须自己清理：否则每跑一次就多留一条
+    # "未来活动"记录，recent-users 的 Top 5 会被历次残留占满，测试逐渐变红。
+    try:
+        assert names.index(newer_activity_user) < names.index(older_activity_user)
+        activity_item = next(
+            item for item in users if item["user_name"] == newer_activity_user
+        )
+        assert activity_item["last_active"] is not None
+    finally:
+        async with AsyncSessionLocal() as cleanup:
+            await cleanup.execute(
+                delete(AccessLog).where(
+                    AccessLog.user_name.in_([older_activity_user, newer_activity_user])
+                )
+            )
+            await cleanup.execute(
+                delete(User).where(
+                    User.user_name.in_([older_activity_user, newer_activity_user])
+                )
+            )
+            await cleanup.commit()

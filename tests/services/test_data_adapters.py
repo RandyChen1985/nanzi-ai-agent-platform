@@ -50,8 +50,8 @@ def test_sql_safety_validation():
 async def test_mysql_adapter():
     adapter = MySQLAdapter(source_id=1)
     
-    # 1. 验证 get_tables 行为
-    mock_rows = [("table1", "BASE TABLE"), ("view1", "VIEW")]
+    # 1. 验证 get_tables 行为（实现查 TABLE_NAME, TABLE_COMMENT, TABLE_TYPE 三列）
+    mock_rows = [("table1", "表1", "BASE TABLE"), ("view1", "视图1", "VIEW")]
     mock_cursor = AsyncMock()
     mock_cursor.fetchall.return_value = mock_rows
     
@@ -68,20 +68,23 @@ async def test_mysql_adapter():
     with patch("app.services.pool_manager.DataSourcePoolManager.get_pool", return_value=mock_pool):
         tables = await adapter.get_tables()
         assert len(tables) == 2
-        assert tables[0] == {"name": "table1", "type": "TABLE"}
-        assert tables[1] == {"name": "view1", "type": "VIEW"}
-        mock_cursor.execute.assert_called_with("SHOW FULL TABLES")
+        assert tables[0] == {"name": "table1", "comment": "表1", "type": "TABLE"}
+        assert tables[1] == {"name": "view1", "comment": "视图1", "type": "VIEW"}
+        assert "information_schema.TABLES" in mock_cursor.execute.call_args[0][0]
         
     # 2. 验证 get_columns 行为 (包含 custom_sql)
-    mock_cursor.description = [("id", 3, None, None, None, None, None), ("name", 253, None, None, None, None, None)]
+    #    table_name 分支读 information_schema.COLUMNS，取 COLUMN_NAME/DATA_TYPE/COLUMN_COMMENT
+    mock_cursor.fetchall.return_value = [("id", "int", "主键"), ("name", "varchar", "")]
     with patch("app.services.pool_manager.DataSourcePoolManager.get_pool", return_value=mock_pool):
         # 表字段获取
         cols = await adapter.get_columns(table_name="users")
         assert len(cols) == 2
-        assert cols[0] == {"name": "id", "type": "String", "comment": ""}
-        mock_cursor.execute.assert_called_with("SELECT * FROM `users` LIMIT 0")
-        
-        # 自定义 SQL 字段获取 (带 Jinja 变量)
+        assert cols[0] == {"name": "id", "type": "int", "comment": "主键"}
+        assert cols[1] == {"name": "name", "type": "varchar", "comment": ""}
+        assert "information_schema.COLUMNS" in mock_cursor.execute.call_args[0][0]
+
+        # 自定义 SQL 字段获取 (带 Jinja 变量)：走 cursor.description 分支，type 固定 String
+        mock_cursor.description = [("id", 3, None, None, None, None, None), ("name", 253, None, None, None, None, None)]
         cols_custom = await adapter.get_columns(custom_sql="SELECT * FROM users WHERE id = {{ user_id }}", params={"user_id": 123})
         assert len(cols_custom) == 2
         assert cols_custom[1] == {"name": "name", "type": "String", "comment": ""}
@@ -112,7 +115,7 @@ async def test_mysql_adapter():
 async def test_clickhouse_adapter():
     adapter = ClickHouseAdapter(source_id=2)
     
-    mock_rows = [("ch_table", "MergeTree"), ("ch_view", "View")]
+    mock_rows = [("ch_table", "表注释", "MergeTree"), ("ch_view", "视图注释", "View")]
     mock_cursor = AsyncMock()
     mock_cursor.fetchall.return_value = mock_rows
     
@@ -130,8 +133,8 @@ async def test_clickhouse_adapter():
         # 1. get_tables
         tables = await adapter.get_tables()
         assert len(tables) == 2
-        assert tables[0] == {"name": "ch_table", "type": "TABLE"}
-        assert tables[1] == {"name": "ch_view", "type": "VIEW"}
+        assert tables[0] == {"name": "ch_table", "comment": "表注释", "type": "TABLE"}
+        assert tables[1] == {"name": "ch_view", "comment": "视图注释", "type": "VIEW"}
         assert "system.tables" in mock_cursor.execute.call_args[0][0]
         
         # 2. get_columns
@@ -152,8 +155,8 @@ async def test_clickhouse_adapter():
 async def test_oracle_adapter():
     adapter = OracleAdapter(source_id=3)
     
-    # 模拟 Oracle 的 cursor 结构
-    mock_rows = [("T_USER", "TABLE"), ("V_USER", "VIEW")]
+    # 模拟 Oracle 的 cursor 结构（实现按 name, table_type, comments 取值）
+    mock_rows = [("T_USER", "TABLE", "用户表"), ("V_USER", "VIEW", "用户视图")]
     mock_cursor = AsyncMock()
     mock_cursor.fetchall.return_value = mock_rows
     mock_cursor.description = [("ID", None, None, None, None, None, None), ("NAME", None, None, None, None, None, None)]
@@ -172,8 +175,8 @@ async def test_oracle_adapter():
         # 1. get_tables
         tables = await adapter.get_tables()
         assert len(tables) == 2
-        assert tables[0] == {"name": "T_USER", "type": "TABLE"}
-        assert tables[1] == {"name": "V_USER", "type": "VIEW"}
+        assert tables[0] == {"name": "T_USER", "comment": "用户表", "type": "TABLE"}
+        assert tables[1] == {"name": "V_USER", "comment": "用户视图", "type": "VIEW"}
         
         # 2. get_columns
         mock_cursor.fetchall.return_value = [("ID", "NUMBER", "Primary Key"), ("NAME", "VARCHAR2", "User Name")]
@@ -193,7 +196,7 @@ async def test_oracle_adapter():
 async def test_sqlserver_adapter():
     adapter = SQLServerAdapter(source_id=4)
 
-    mock_rows = [("dbo_users", "BASE TABLE"), ("dbo_user_view", "VIEW")]
+    mock_rows = [("dbo_users", "用户表", "BASE TABLE"), ("dbo_user_view", "用户视图", "VIEW")]
     mock_cursor = AsyncMock()
     mock_cursor.fetchall.return_value = mock_rows
 
@@ -210,15 +213,19 @@ async def test_sqlserver_adapter():
     with patch("app.services.pool_manager.DataSourcePoolManager.get_pool", return_value=mock_pool):
         tables = await adapter.get_tables()
         assert len(tables) == 2
-        assert tables[0] == {"name": "dbo_users", "type": "TABLE"}
-        assert tables[1] == {"name": "dbo_user_view", "type": "VIEW"}
+        # SQLServer 适配器原样透传 TABLE_TYPE（不归一化为 TABLE/VIEW）
+        assert tables[0] == {"name": "dbo_users", "comment": "用户表", "type": "BASE TABLE"}
+        assert tables[1] == {"name": "dbo_user_view", "comment": "用户视图", "type": "VIEW"}
         assert "INFORMATION_SCHEMA.TABLES" in mock_cursor.execute.call_args[0][0]
 
-        mock_cursor.description = [("id", str), ("name", str)]
+        # table_name 分支读 INFORMATION_SCHEMA.COLUMNS（含扩展属性注释）
+        mock_cursor.fetchall.return_value = [("id", "int", "主键"), ("name", "nvarchar", "")]
         cols = await adapter.get_columns(table_name="dbo_users")
         assert len(cols) == 2
-        assert cols[0] == {"name": "id", "type": "String", "comment": ""}
-        mock_cursor.execute.assert_called_with("SELECT TOP 0 * FROM [dbo_users]")
+        assert cols[0] == {"name": "id", "type": "int", "comment": "主键"}
+        assert "INFORMATION_SCHEMA.COLUMNS" in mock_cursor.execute.call_args[0][0]
+
+        mock_cursor.description = [("id", str), ("name", str)]
 
         cols_custom = await adapter.get_columns(
             custom_sql="SELECT * FROM dbo_users WHERE id = {{ user_id }}",

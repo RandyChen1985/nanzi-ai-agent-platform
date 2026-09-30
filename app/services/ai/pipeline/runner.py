@@ -52,6 +52,31 @@ class PipelineRunner:
         ])
 
     async def run(self, context: PipelineContext) -> AsyncGenerator[Dict[str, Any], None]:
+        """薄包装：为一轮对话建 Langfuse 根 span，步骤编排逻辑在 ``_run_steps``。"""
+        from app.services.ai.observability.turn_span import TurnSpan, start_turn_span
+
+        user_info = getattr(context, "user_info", None) or {}
+        user_id = user_info.get("user_id") or user_info.get("id")
+        try:
+            turn_span = start_turn_span(
+                user_id=user_id,
+                conversation_id=getattr(context, "conversation_id", None),
+                agent_name=getattr(context, "agent_name", None),
+                trace_id=getattr(context, "trace_id", None),
+                extra={"agent_id": getattr(context, "agent_id", None)},
+            )
+        except Exception as exc:
+            # 追踪是旁路能力：建 span 失败绝不能影响对话本身。
+            logger.warning("[PipelineRunner] Langfuse 根 span 创建失败（忽略）: %s", exc)
+            turn_span = TurnSpan()
+
+        try:
+            async for chunk in self._run_steps(context):
+                yield chunk
+        finally:
+            turn_span.end()
+
+    async def _run_steps(self, context: PipelineContext) -> AsyncGenerator[Dict[str, Any], None]:
         """按序驱动流水线步骤，向客户端流式输出 SSE chunks"""
         run_handle = context.run_handle
 

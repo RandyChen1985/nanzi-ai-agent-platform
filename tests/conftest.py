@@ -216,3 +216,67 @@ def wait_for_access_log():
             await asyncio.sleep(0.05)
 
     return _wait
+
+
+# ---------------------------------------------------------------------------
+# 已知失败基线（known failures baseline）
+# ---------------------------------------------------------------------------
+# 目的：把"长期存在的失败"与"本次改动引入的回归"区分开。
+#
+# 命中 tests/known_failures.txt 的用例默认被标记为 xfail —— 全仓因此保持绿色，
+# 而任何**不在**清单中的失败都会照常报红，那才是回归信号。
+#
+#   pytest tests/                          默认：清单内 xfail，清单外报红
+#   pytest tests/ --run-known-failures     照常运行清单内用例（看真实修没修好）
+#   pytest tests/ --strict-known-failures  清单内用例已修好则报错（督促清理清单）
+#
+# 清单格式与维护规则见 tests/known_failures.txt 顶部注释。
+
+import importlib.util as _importlib_util
+import warnings as _warnings
+from pathlib import Path as _Path
+
+_KF_PATH = _Path(__file__).parent / "known_failures.py"
+_kf_spec = _importlib_util.spec_from_file_location("_tests_known_failures", _KF_PATH)
+known_failures = _importlib_util.module_from_spec(_kf_spec)
+_kf_spec.loader.exec_module(known_failures)
+
+
+def pytest_addoption(parser):
+    group = parser.getgroup("known-failures", "已知失败基线")
+    group.addoption(
+        "--run-known-failures",
+        action="store_true",
+        default=False,
+        help="照常运行已知失败用例（默认它们被标记为 xfail，不阻塞运行）",
+    )
+    group.addoption(
+        "--strict-known-failures",
+        action="store_true",
+        default=False,
+        help="要求清单中的用例仍然失败；已修复却未从清单移除时让运行失败",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    known = known_failures.load_known_failures()
+    if not known:
+        return
+
+    gone = known_failures.missing_from_collection(
+        known, {item.nodeid for item in items}
+    )
+    if gone:
+        preview = "、".join(gone[:5]) + (" ..." if len(gone) > 5 else "")
+        _warnings.warn(
+            f"known_failures.txt 中有 {len(gone)} 条找不到对应用例"
+            f"（拼写错误，或测试已改名/删除）：{preview}",
+            pytest.PytestConfigWarning,
+        )
+
+    if config.getoption("--run-known-failures"):
+        return
+
+    known_failures.mark_known_failures(
+        items, known, strict=config.getoption("--strict-known-failures")
+    )

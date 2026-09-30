@@ -123,7 +123,42 @@ def build_runtime_middlewares(
                 prompt_layout_mode=runtime_info.get("prompt_layout_mode"),
             )
         )
+    # Langfuse 追踪放在最内层：AgentScope 官方 TracingMiddleware 负责产出
+    # invoke_agent / chat / execute_tool 层级，LangfuseContextMiddleware 紧接着在
+    # 它建立的 reply span 上补平台身份（user.id / session.id / trace metadata）。
+    # 两者都只在全局 TracerProvider 就绪时才真正工作，未接入时是零开销直通。
+    middlewares.extend(
+        _build_langfuse_middlewares(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+            trace_id=trace_id,
+        )
+    )
     return middlewares
+
+
+def _build_langfuse_middlewares(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    agent_name: str | None,
+    trace_id: str | None,
+) -> list[Any]:
+    """构造追踪用的两个中间件（TracingMiddleware + LangfuseContextMiddleware）。"""
+    from agentscope.middleware import TracingMiddleware
+
+    from app.services.ai.observability.context_middleware import LangfuseContextMiddleware
+
+    return [
+        TracingMiddleware(),
+        LangfuseContextMiddleware(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+            trace_id=trace_id,
+        ),
+    ]
 
 
 async def load_context_config() -> Any:

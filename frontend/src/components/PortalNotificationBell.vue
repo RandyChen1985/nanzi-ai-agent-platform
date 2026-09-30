@@ -306,7 +306,7 @@ defineExpose({ open: openFromExternal, toggle });
     <button
       v-if="!isModalVariant"
       type="button"
-      class="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100"
+      class="relative p-1.5 rounded-lg text-gray-500 hover:bg-gray-100"
       title="站内通知"
       @click="toggle"
     >
@@ -317,7 +317,7 @@ defineExpose({ open: openFromExternal, toggle });
     <!-- Dashboard 铃铛：下拉面板 -->
     <div
       v-if="open && !isModalVariant"
-      class="notification-panel fixed left-3 right-3 top-[4.25rem] z-50 max-h-[min(28rem,calc(100dvh-5rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[22rem] sm:max-w-[min(22rem,calc(100vw-1.5rem))]"
+      class="notification-panel fixed left-3 right-3 top-[3.25rem] z-50 max-h-[min(28rem,calc(100dvh-5rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[22rem] sm:max-w-[min(22rem,calc(100vw-1.5rem))]"
     >
       <div class="border-b border-gray-100">
         <div class="notification-header-main flex items-start justify-between gap-3 px-4 pb-2 pt-3">

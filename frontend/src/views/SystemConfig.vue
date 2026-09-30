@@ -7,6 +7,7 @@ import { useUser } from '../composables/useUser'
 import { modelApi, type AIModel } from '../api/model'
 import ModelRegistry from '../components/system/ModelRegistry.vue'
 import ToolRegistry from '../components/system/ToolRegistry.vue'
+import LangfuseConfig from '../components/system/LangfuseConfig.vue'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import TaskProgressDrawer from '../components/common/TaskProgressDrawer.vue'
@@ -42,7 +43,8 @@ import {
   BoltIcon,
   InformationCircleIcon,
   ExclamationTriangleIcon,
-  DocumentDuplicateIcon
+  DocumentDuplicateIcon,
+  ChartBarSquareIcon
 } from '@heroicons/vue/24/outline'
 
 const router = useRouter()
@@ -50,7 +52,7 @@ const route = useRoute()
 const { hasPermission, userInfo } = useUser()
 const canSave = hasPermission('element:system:config_save')
 
-const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 'branding'>('configs')
+const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 'branding' | 'langfuse'>('configs')
 const diagSubTab = ref<'console' | 'redis'>('console')
 // 「Redis 向量搜索」的检测详情默认收起，避免顶部操作区占用过多高度
 const vectorHealthExpanded = ref(false)
@@ -1061,7 +1063,7 @@ const showSecrets = ref<{ [key: string]: boolean }>({})
 
 const brandingConfig = ref({
   enabled: false,
-  product_name: 'NanZi·智能体平台',
+  product_name: 'NanZi AI Agent',
   login_subtitle: 'Your Intelligent Agent Platform',
   icon_url: '/favicon.svg',
   hide_login_sso: false,
@@ -1078,7 +1080,7 @@ const fetchBrandingConfig = async () => {
     const data = res.data || {}
     brandingConfig.value = {
       enabled: !!data.enabled,
-      product_name: data.product_name || 'NanZi·智能体平台',
+      product_name: data.product_name || 'NanZi AI Agent',
       login_subtitle: data.login_subtitle || 'Your Intelligent Agent Platform',
       icon_url: data.icon_url || '/favicon.svg',
       hide_login_sso: !!data.hide_login_sso,
@@ -3036,6 +3038,15 @@ onUnmounted(() => {
             <CircleStackIcon class="mr-1.5 h-4 w-4 shrink-0" />
             日志管理
           </button>
+          <button
+            type="button"
+            @click="activeTab = 'langfuse'"
+            class="inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium transition-all duration-200 sm:px-4 sm:text-sm"
+            :class="activeTab === 'langfuse' ? 'bg-white text-primary shadow' : 'text-gray-500 hover:text-gray-700'"
+          >
+            <ChartBarSquareIcon class="mr-1.5 h-4 w-4 shrink-0" />
+            链路追踪
+          </button>
         </div>
       </div>
     </div>
@@ -3049,6 +3060,11 @@ onUnmounted(() => {
 
       <div v-else-if="activeTab === 'tools'" class="h-full min-h-0">
           <ToolRegistry />
+      </div>
+
+      <!-- LANGFUSE TAB：独立表 + 独立组件，与「参数配置」的键值表格无关 -->
+      <div v-else-if="activeTab === 'langfuse'" class="h-full min-h-0">
+          <LangfuseConfig />
       </div>
 
         <!-- LOGS TAB -->
@@ -3704,7 +3720,7 @@ onUnmounted(() => {
                 v-model="brandingConfig.product_name"
                 type="text"
                 class="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary focus:ring-primary text-sm"
-                placeholder="NanZi·智能体平台"
+                placeholder="NanZi AI Agent"
               />
               <p class="text-xs text-gray-400 mt-1">影响浏览器标题、左侧菜单栏名称、登录页</p>
             </div>

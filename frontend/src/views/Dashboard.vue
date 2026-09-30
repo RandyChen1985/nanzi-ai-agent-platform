@@ -26,7 +26,13 @@ const dashboardContentRef = ref<HTMLElement | null>(null);
 // 避免拖动窗口时每个 resize 事件都触发侧边栏（20+ 菜单项）重渲染
 const desktopMediaQuery = window.matchMedia("(min-width: 1024px)");
 const isMobile = ref(!desktopMediaQuery.matches);
-const appVersion = import.meta.env.VITE_APP_VERSION || "Dev Build";
+const displayVersion = computed(() => {
+  const raw = (import.meta.env.VITE_APP_VERSION || "").trim();
+  if (!raw || raw.toLowerCase() === "dev build" || raw.toLowerCase() === "dev" || raw.toLowerCase() === "development") {
+    return "dev";
+  }
+  return raw.startsWith("v") || raw.startsWith("V") ? raw : `v${raw}`;
+});
 const dashboardContentSpacing = computed(() => {
   if (route.name === "AIChat") return "p-0";
   if (route.name === "PersonalCenter") return "px-3 sm:px-4";
@@ -503,8 +509,8 @@ const menuGroups: MenuGroup[] = [
     items: [
       { name: '智能体中心', to: '/dashboard/agent-management', icon: 'agent_mgmt', perm: 'menu:agent_management', activeNames: ['AgentManagement'] },
       { name: '技能工作台', to: '/dashboard/skills', icon: 'skills', perm: 'menu:skills_management', activeNames: ['SkillsManagement'] },
-      { name: 'MCP 工具集', to: '/dashboard/mcp', icon: 'mcp', perm: 'menu:mcp_management', activeNames: ['McpManagement'] },
-      { name: 'MCP 服务台', to: '/dashboard/mcp-service', icon: 'mcp', perm: 'menu:mcp_service', activeNames: ['McpServiceDesk'] },
+      { name: 'MCP 工具集', to: '/dashboard/mcp', icon: 'mcp_tools', perm: 'menu:mcp_management', activeNames: ['McpManagement'] },
+      { name: 'MCP 服务台', to: '/dashboard/mcp-service', icon: 'mcp_service', perm: 'menu:mcp_service', activeNames: ['McpServiceDesk'] },
       { name: '记忆工作台', to: '/dashboard/memory', icon: 'memory', perm: 'menu:memory_management', activeNames: ['MemoryManagement'] },
       { name: '提示词工坊', to: '/dashboard/prompts', icon: 'prompts', perm: 'menu:prompts', desktopOnly: true, activeNames: ['PromptStudio'] },
 
@@ -602,56 +608,54 @@ const filteredMenuGroups = computed(() => {
           : 'border-white/[0.06]',
         isMobile ? 'fixed inset-y-0 left-0 h-full' : 'relative',
         isMobile 
-            ? (showMobileSidebar ? 'translate-x-0 w-[226px]' : '-translate-x-full w-[226px]') 
-            : (isCollapsed ? 'w-20' : 'w-[226px]')
+            ? (showMobileSidebar ? 'translate-x-0 w-64' : '-translate-x-full w-64') 
+            : (isCollapsed ? 'w-20' : 'w-[208px]')
       ]"
     >
       <!-- Brand Header -->
       <div
-        class="h-16 flex items-center border-b transition-colors overflow-hidden whitespace-nowrap"
+        class="h-12 flex items-center border-b transition-colors overflow-hidden whitespace-nowrap"
         :class="[
-          isCollapsed ? 'justify-center px-0' : 'px-4',
+          isCollapsed ? 'justify-center px-0' : 'px-2.5',
           theme === 'light' ? 'bg-white border-gray-200/80' : 'bg-sidebar border-white/[0.06]',
         ]"
       >
         <img
           :src="branding.icon_url"
-          class="w-8 h-8 flex-shrink-0 rounded-lg object-cover ring-1 ring-white/10 dark:ring-white/10 shadow-sm"
+          class="w-6 h-6 flex-shrink-0 rounded-md object-cover ring-1 ring-white/10 dark:ring-white/10 shadow-xs"
           alt="Logo"
         />
         <transition name="fade">
-          <div v-if="!isCollapsed" class="ml-2.5 flex flex-col justify-center min-w-0">
+          <div v-if="!isCollapsed" class="ml-2 flex items-center justify-between flex-1 min-w-0">
             <span
-              class="text-[13px] font-semibold leading-tight truncate"
+              class="text-[13px] font-semibold leading-tight truncate tracking-tight antialiased mr-1"
               :class="theme === 'light' ? 'text-gray-900' : 'text-white'"
             >{{ branding.product_name }}</span>
-            <div class="flex items-center gap-1.5 mt-1">
-              <component
-                :is="repoUrl ? 'a' : 'span'"
-                :href="repoUrl || undefined"
-                :target="repoUrl ? '_blank' : undefined"
-                :rel="repoUrl ? 'noopener noreferrer' : undefined"
-                class="group inline-flex items-center text-[10px] font-mono font-medium rounded-full px-1.5 py-0.5 transition-all border leading-none"
-                :class="[
-                  theme === 'light'
-                    ? 'bg-gray-100 text-gray-500 border-gray-200/70 hover:text-gray-900 hover:border-gray-300'
-                    : 'bg-white/[0.04] text-slate-400 border-white/[0.06] hover:text-white hover:bg-white/[0.08] hover:border-white/15',
-                  repoUrl ? 'cursor-pointer' : 'cursor-default'
-                ]"
-                :title="repoUrl ? 'View on GitHub' : undefined"
+            <component
+              :is="repoUrl ? 'a' : 'span'"
+              :href="repoUrl || undefined"
+              :target="repoUrl ? '_blank' : undefined"
+              :rel="repoUrl ? 'noopener noreferrer' : undefined"
+              class="group inline-flex items-center text-[9px] font-mono font-medium rounded-full px-1.5 py-0.5 transition-all border leading-none shrink-0"
+              :class="[
+                theme === 'light'
+                  ? 'bg-gray-100 text-gray-500 border-gray-200/70 hover:text-gray-900 hover:border-gray-300'
+                  : 'bg-white/[0.04] text-slate-400 border-white/[0.06] hover:text-white hover:bg-white/[0.08] hover:border-white/15',
+                repoUrl ? 'cursor-pointer' : 'cursor-default'
+              ]"
+              :title="repoUrl ? 'View on GitHub' : undefined"
+            >
+              <svg
+                v-if="repoUrl"
+                class="w-2.5 h-2.5 mr-0.5 opacity-70 group-hover:opacity-100 transition-opacity shrink-0"
+                fill="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
               >
-                <svg
-                  v-if="repoUrl"
-                  class="w-2.5 h-2.5 mr-1 opacity-70 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
-                </svg>
-                <span>v{{ appVersion }}</span>
-              </component>
-            </div>
+                <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+              </svg>
+              <span>{{ displayVersion }}</span>
+            </component>
           </div>
         </transition>
       </div>
@@ -666,9 +670,11 @@ const filteredMenuGroups = computed(() => {
           <button 
             v-if="!isCollapsed && group.title" 
             type="button"
-            class="py-1.5 flex items-center justify-between gap-1.5 text-left text-[11px] font-medium tracking-wider select-none transition-colors group/header"
+            class="flex items-center justify-between gap-1.5 text-left tracking-wider select-none transition-colors group/header"
             :class="[
-              'w-[calc(100%-1rem)] mx-2 px-2',
+              isMobile 
+                ? 'w-[calc(100%-1rem)] mx-2 px-2.5 py-2.5 text-xs font-semibold' 
+                : 'w-[calc(100%-1rem)] mx-2 px-2 py-1.5 text-[11px] font-medium',
               theme === 'light' ? 'text-gray-400 hover:text-gray-700' : 'text-slate-400 hover:text-slate-200',
             ]"
             :aria-expanded="!isGroupCollapsed(group)"
@@ -677,7 +683,7 @@ const filteredMenuGroups = computed(() => {
           >
             <span class="truncate">{{ group.title }}</span>
             <svg 
-              class="w-3 h-3 flex-shrink-0 opacity-60 group-hover/header:opacity-100 transition-all duration-200"
+              class="w-3.5 h-3.5 flex-shrink-0 opacity-60 group-hover/header:opacity-100 transition-all duration-200"
               :class="isGroupCollapsed(group) ? '-rotate-90' : 'rotate-0'"
               fill="none" 
               stroke="currentColor" 
@@ -704,7 +710,7 @@ const filteredMenuGroups = computed(() => {
                 :key="item.to"
                 :to="item.to"
                 :title="isCollapsed ? item.name : undefined"
-                class="group relative flex items-center text-sm font-medium transition-all duration-150 whitespace-nowrap"
+                class="group relative flex items-center font-medium transition-all duration-150 whitespace-nowrap"
                 :class="[
                   isItemActive(item)
                     ? theme === 'light'
@@ -713,7 +719,9 @@ const filteredMenuGroups = computed(() => {
                     : theme === 'light'
                       ? 'text-gray-500 hover:bg-black/[0.03] hover:text-gray-900 border border-transparent'
                       : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent',
-                  isCollapsed ? 'justify-center p-2.5 mx-auto w-10 h-10 rounded-lg' : 'py-2 px-3 mx-1 rounded-lg',
+                  isCollapsed 
+                    ? 'justify-center p-2.5 mx-auto w-10 h-10 rounded-lg text-sm' 
+                    : (isMobile ? 'py-2.5 px-3.5 mx-1 rounded-xl text-[15px]' : 'py-2 px-3 mx-1 rounded-lg text-sm'),
                 ]"
               >
                 <!-- Icons (Crisp 18px line icons) -->
@@ -790,7 +798,13 @@ const filteredMenuGroups = computed(() => {
                   fill="none" stroke="currentColor" viewBox="0 0 24 24"
                 ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
                 <svg
-                  v-else-if="item.icon === 'mcp'"
+                  v-else-if="item.icon === 'mcp_tools'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M3 13h18M10 13v2a1 1 0 001 1h2a1 1 0 001-1v-2" /></svg>
+                <svg
+                  v-else-if="item.icon === 'mcp_service' || item.icon === 'mcp'"
                   class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
                   :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
                   fill="none" stroke="currentColor" viewBox="0 0 24 24"
@@ -845,7 +859,11 @@ const filteredMenuGroups = computed(() => {
                 ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
 
                 <transition name="fade">
-                  <span v-if="!isCollapsed" class="ml-2.5 truncate leading-tight">{{ item.name }}</span>
+                  <span 
+                    v-if="!isCollapsed" 
+                    class="truncate leading-tight"
+                    :class="isMobile ? 'ml-3 text-[15px]' : 'ml-2.5 text-sm'"
+                  >{{ item.name }}</span>
                 </transition>
               </router-link>
             </div>
@@ -855,29 +873,50 @@ const filteredMenuGroups = computed(() => {
 
       <!-- User Profile (Clickable Card) -->
       <div
-        class="p-2 border-t transition-colors"
-        :class="theme === 'light' ? 'border-gray-200/80 bg-white' : 'border-white/[0.06] bg-sidebar'"
+        class="border-t transition-colors"
+        :class="[
+          isMobile ? 'p-2.5' : 'p-2',
+          theme === 'light' ? 'border-gray-200/80 bg-white' : 'border-white/[0.06] bg-sidebar',
+        ]"
       >
         <button
           @click="openUserInfo"
           class="w-full flex items-center overflow-hidden whitespace-nowrap transition-all rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-primary/40 group/user"
           :class="[
-            isCollapsed ? 'justify-center p-1.5' : 'p-2',
+            isCollapsed ? 'justify-center p-1.5' : (isMobile ? 'p-2.5' : 'p-2'),
             theme === 'light' ? 'hover:bg-gray-100/80' : 'hover:bg-white/[0.06]',
           ]"
           title="查看个人信息"
         >
           <div
-            class="h-7 w-7 rounded-lg bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10 flex flex-shrink-0 items-center justify-center text-xs font-semibold text-white uppercase shadow-sm"
+            class="rounded-lg flex flex-shrink-0 items-center justify-center font-bold uppercase transition-colors"
+            :class="[
+              isMobile ? 'h-8 w-8 text-sm' : 'h-7 w-7 text-xs',
+              theme === 'light'
+                ? 'bg-blue-50 !text-blue-600 border border-blue-200/80 shadow-xs'
+                : 'bg-slate-800 !text-slate-200 border border-white/10 shadow-sm'
+            ]"
           >
-            {{ userInfo.user_name ? userInfo.user_name.substring(0, 2) : "US" }}
+            {{ (userInfo.real_name || userInfo.user_name || "US").substring(0, 2) }}
           </div>
           <transition name="fade">
-            <div v-if="!isCollapsed" class="ml-2.5 flex-1 min-w-0">
-              <p class="text-sm font-medium truncate leading-tight" :class="theme === 'light' ? 'text-gray-900' : 'text-slate-200'">
+            <div v-if="!isCollapsed" class="flex-1 min-w-0" :class="isMobile ? 'ml-3' : 'ml-2.5'">
+              <p 
+                class="font-medium truncate leading-tight" 
+                :class="[
+                  isMobile ? 'text-[15px]' : 'text-sm',
+                  theme === 'light' ? 'text-gray-900' : 'text-slate-200'
+                ]"
+              >
                 {{ userInfo.user_name || "Loading..." }}
               </p>
-              <p class="text-[11px] truncate mt-0.5 leading-none" :class="theme === 'light' ? 'text-gray-400' : 'text-slate-400'">
+              <p 
+                class="truncate mt-0.5 leading-none" 
+                :class="[
+                  isMobile ? 'text-xs' : 'text-[11px]',
+                  theme === 'light' ? 'text-gray-400' : 'text-slate-400'
+                ]"
+              >
                 {{ userInfo.role === "admin" ? "管理员" : "普通用户" }}
               </p>
             </div>
@@ -885,8 +924,11 @@ const filteredMenuGroups = computed(() => {
           <transition name="fade">
             <svg
               v-if="!isCollapsed"
-              class="h-3.5 w-3.5 opacity-40 group-hover/user:opacity-80 transition-opacity ml-1 flex-shrink-0"
-              :class="theme === 'light' ? 'text-gray-400' : 'text-slate-400'"
+              class="opacity-40 group-hover/user:opacity-80 transition-opacity ml-1 flex-shrink-0"
+              :class="[
+                isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5',
+                theme === 'light' ? 'text-gray-400' : 'text-slate-400'
+              ]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -902,7 +944,7 @@ const filteredMenuGroups = computed(() => {
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
       <!-- Top Header -->
       <header
-        class="relative bg-white shadow-sm h-16 flex justify-between items-center px-4 z-30 border-b border-gray-200 flex-shrink-0"
+        class="relative bg-white shadow-sm h-12 flex justify-between items-center px-4 z-30 border-b border-gray-200 flex-shrink-0"
       >
         <div class="flex items-center">
           <!-- Sidebar Toggle Button -->
@@ -915,7 +957,7 @@ const filteredMenuGroups = computed(() => {
             title="切换侧边栏"
           >
             <svg
-              class="h-6 w-6"
+              class="h-5 w-5"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -1001,11 +1043,11 @@ const filteredMenuGroups = computed(() => {
             <button
               type="button"
               aria-label="查看在线用户列表"
-              class="online-users-widget flex items-center px-2 sm:px-3 py-1 bg-green-50 border border-green-100/50 rounded-full transition-all shadow-sm flex-shrink-0 whitespace-nowrap cursor-pointer hover:bg-green-100/80 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
+              class="online-users-widget flex items-center px-2 sm:px-2.5 py-0.5 bg-green-50 border border-green-100/50 rounded-full transition-all shadow-sm flex-shrink-0 whitespace-nowrap cursor-pointer hover:bg-green-100/80 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
               title="点击查看在线用户列表"
               @click="openOnlineUsers"
             >
-              <span class="relative flex h-2 w-2 mr-1 sm:mr-2 flex-shrink-0" aria-hidden="true">
+              <span class="relative flex h-2 w-2 mr-1 sm:mr-1.5 flex-shrink-0" aria-hidden="true">
                 <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                 <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
               </span>
@@ -1013,14 +1055,14 @@ const filteredMenuGroups = computed(() => {
                 {{ onlineUserCount }} <span class="font-medium opacity-80 ml-0.5">在线</span>
               </span>
             </button>
-            <div class="online-users-divider h-6 w-px bg-gray-200 mx-1 sm:mx-2 flex-shrink-0" aria-hidden="true"></div>
+            <div class="online-users-divider h-4 w-px bg-gray-200 mx-1 sm:mx-2 flex-shrink-0" aria-hidden="true"></div>
           </template>
           <PortalNotificationBell />
           <button
             type="button"
             aria-label="切换界面主题"
             :title="theme === 'light' ? '当前亮色，切换到暗色' : '当前暗色，切换到亮色'"
-            class="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors focus:outline-none focus:ring-2 focus:ring-primary"
+            class="relative p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors focus:outline-none focus:ring-2 focus:ring-primary"
             :class="theme === 'light' ? 'text-amber-500' : 'text-gray-500'"
             @click="toggleTheme"
           >
@@ -1036,7 +1078,7 @@ const filteredMenuGroups = computed(() => {
             type="button"
             aria-label="退出登录"
             @click="logout"
-            class="flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 group flex-shrink-0 whitespace-nowrap"
+            class="flex items-center px-2 sm:px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 group flex-shrink-0 whitespace-nowrap"
           >
             <svg
               class="h-4 w-4 mr-1 sm:mr-1.5 transition-transform group-hover:translate-x-0.5"

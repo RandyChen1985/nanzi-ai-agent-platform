@@ -55,6 +55,7 @@ async def test_get_public_branding_enabled_returns_custom():
                 "hide_version_link": True,
                 "contact_markdown": "**技术支持**",
                 "copyright_text": "© 2026 Demo",
+                "default_agent_name": "企业智能体",
             }
         ),
     ):
@@ -65,6 +66,7 @@ async def test_get_public_branding_enabled_returns_custom():
     assert result["hide_login_sso"] is True
     assert result["contact_markdown"] == "**技术支持**"
     assert result["copyright_text"] == "© 2026 Demo"
+    assert result["default_agent_name"] == "企业智能体"
 
 
 @pytest.mark.asyncio
@@ -79,11 +81,13 @@ async def test_update_settings_persists_all_keys():
             hide_version_link=True,
             contact_markdown="hello",
             copyright_text="© Co",
+            default_agent_name="默认智能体",
             changed_by="admin",
         )
 
-    assert mock_set.await_count == 8
+    assert mock_set.await_count == 9
     keys = [call.kwargs.get("key") or call.args[0] for call in mock_set.await_args_list]
     assert BrandingSettingsService.CONFIG_ENABLED in keys
     assert BrandingSettingsService.CONFIG_CONTACT_MARKDOWN in keys
     assert BrandingSettingsService.CONFIG_COPYRIGHT_TEXT in keys
+    assert BrandingSettingsService.CONFIG_DEFAULT_AGENT_NAME in keys

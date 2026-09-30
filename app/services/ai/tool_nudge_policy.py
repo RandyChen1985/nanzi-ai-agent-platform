@@ -280,6 +280,25 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", "", (text or "").lower())
 
 
+# “现在是什么模型”这类模型身份询问由 get_current_model 运行时工具处理，不触发公共
+# docs 强推（见 2bf8de2f）。但它同时会被平台自助判据（subject=模型 + action=是什么）
+# 命中，因此必须在门禁处单独排除：先前用 and 把两个判据串起来虽然挡住了它，却也
+# 让「记录自助配置」与「明确文档查询」这两类互斥诉求的交集恒为空，功能整体失效。
+_MODEL_IDENTITY_ASK_RE = re.compile(
+    r"(?:什么|哪个|哪种|哪款|啥)(?:的)?模型"
+    r"|模型(?:是|叫|为)什么"
+    r"|(?:当前|现在|此刻|本轮)(?:的|用的|使用)?模型"
+)
+
+
+def _looks_like_model_identity_ask(query: str) -> bool:
+    """识别询问本轮模型身份的元问题，避免其触发公共文档强推。"""
+    normalized = _normalize(query)
+    if not normalized:
+        return False
+    return bool(_MODEL_IDENTITY_ASK_RE.search(normalized))
+
+
 def _looks_like_tool_meta_query(query: str) -> bool:
     """识别仅询问工具能力/用法的元问题，不把真实任务误判成元问题。"""
     normalized = _normalize(query)
@@ -1352,9 +1371,18 @@ def resolve_tool_nudge(
     if current_user_profile_nudge is not None:
         return _attach_tool_metadata(current_user_profile_nudge, tools, tool_metadata)
 
+    # 两个判据覆盖互斥的两类诉求，必须是「或」：
+    #   - PLATFORM_SELF_HELP：多智能体开关、技能/工具配置等自助类问题；
+    #   - explicit_platform_docs：明确询问平台使用手册、部署或报错排查。
+    # 用「与」会让二者交集恒为空（自助类措辞不含文档关键词，反之亦然），
+    # 使 _resolve_platform_docs_nudge 成为死代码（2bf8de2f 引入）。
+    # 模型身份询问是唯一例外：它会被自助判据误命中，须单独排除。
     if (
-        request_decision.source == RequestSource.PLATFORM_SELF_HELP
-        and looks_like_explicit_platform_docs_query(query)
+        not _looks_like_model_identity_ask(query)
+        and (
+            request_decision.source == RequestSource.PLATFORM_SELF_HELP
+            or looks_like_explicit_platform_docs_query(query)
+        )
     ):
         platform_docs_nudge = _resolve_platform_docs_nudge(tools)
         if platform_docs_nudge is not None:

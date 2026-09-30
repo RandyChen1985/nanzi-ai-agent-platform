@@ -146,5 +146,6 @@ async def test_intent_service_rebuilds_cached_llm_without_session_reasoning_over
         ignore_session_reasoning_overrides=True,
         # 意图识别是内部链路，不跟随用户的会话采样温度。
         ignore_session_temperature=True,
+        source="intent",
     )
     mock_chat_factory.assert_called_once_with(fresh_llm)

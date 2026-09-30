@@ -340,7 +340,7 @@ async def _default_ai_generator(prompt: str) -> str:
     from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
     from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 
-    llm = await get_llm_async(streaming=False, temperature=0.1)
+    llm = await get_llm_async(streaming=False, temperature=0.1, source="report.digest")
     if llm is None:
         raise RuntimeError("LLM unavailable")
     messages = [

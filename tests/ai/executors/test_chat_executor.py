@@ -9,6 +9,46 @@ from app.services.ai.turn_decision import TurnDecision
 from app.schemas.agent import ChatConfig
 
 
+def _tool_result_text(block) -> str:
+    """按 AgentScope 契约取 ToolResultBlock 的文本。
+
+    ``ToolResultBlock.output`` 的类型是 ``str | List[TextBlock | DataBlock]``
+    （见 agentscope/message/_block.py）。测试替身此前只假设了列表形态，碰到
+    平台以 ``output=str(...)`` 构造的结果就会 'str' object has no attribute 'text'。
+    """
+    output = block.output
+    if isinstance(output, str):
+        return output
+    return "".join(getattr(item, "text", "") for item in output)
+
+async def _config_get_with_knowledge_enabled(key, default=None, **kwargs):
+    """ConfigService.get 测试替身：知识库开关须为 true，其余沿用历史的 "5"。
+
+    knowledge_utils.is_knowledge_base_enabled() 读的是 "knowledge_base_enabled"
+    （默认 "true"）。把 get 一律 mock 成 "5" 会让知识库判定为未开启，runner 直接
+    以「知识库功能未开启」终止，后续断言自然全数落空。
+    """
+    if key == "knowledge_base_enabled":
+        return "true"
+    return "5"
+
+def _answer_text(events) -> str:
+    """按平台口径拼接"回答正文"事件。
+
+    正文事件类型集合见 app/services/ai/runtime/execution_observability.py 的
+    _ANSWER_CHUNK_TYPES：``""``（历史形态，无 type）、``answer_delta``、
+    ``process_narration_promote``。旧断言写死"无 type"这一种，协议演进后
+    （正文改由 process_narration_promote 承载）就全部失效了。
+    """
+    from app.services.ai.runtime.execution_observability import _ANSWER_CHUNK_TYPES
+
+    return "".join(
+        e.get("content", "")
+        for e in events
+        if e.get("type", "") in _ANSWER_CHUNK_TYPES
+    )
+
+
 def test_grounding_buffer_only_holds_legacy_untyped_answer_content():
     from app.services.ai.runners.assistant_agent_runner import _is_grounding_bufferable_chunk
 
@@ -261,7 +301,8 @@ async def test_standard_tool_call(chat_config, mock_tool):
             events.append(chunk)
 
     mock_tool.ainvoke.assert_not_called()
-    assert events == [
+    # 结论事件之前可能还有 tool_preflight 等中间件日志，故只比对 error 结论本身
+    assert [e for e in events if e.get("type") == "error"] == [
         {
             "type": "error",
             "status": "error",
@@ -308,7 +349,8 @@ async def test_general_runner_runtime_tool_specs_do_not_fallback_to_legacy_tools
             events.append(chunk)
 
     mock_get_runtime_tools.assert_awaited_once_with(chat_config.tools)
-    assert events == [
+    # 结论事件之前可能还有 tool_preflight 等中间件日志，故只比对 error 结论本身
+    assert [e for e in events if e.get("type") == "error"] == [
         {
             "type": "error",
             "status": "error",
@@ -334,6 +376,10 @@ async def test_general_runner_uses_agentscope_native_agent_for_runtime_tools(cha
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 
@@ -393,9 +439,7 @@ async def test_general_runner_uses_agentscope_native_agent_for_runtime_tools(cha
 
     assert any(e.get("title", "").startswith("调用工具: test_tool") for e in events)
     assert any(e.get("title", "").startswith("工具完成: test_tool") for e in events)
-    assert "Native final answer" in "".join(
-        e["content"] for e in events if "content" in e and "type" not in e
-    )
+    assert "Native final answer" in _answer_text(events)
 
 
 @pytest.mark.asyncio
@@ -1092,7 +1136,7 @@ async def test_general_runner_restored_state_only_sends_latest_user_message(chat
         config=chat_config,
         trace_id="test-state-restore-inputs",
         trace_buffer=[],
-        user_info={"user_id": "u-state"},
+        user_info={"user_id": "9001"},
         conversation_id="c-state",
     )
     fingerprint = build_tools_fingerprint(chat_config, [runtime_spec])
@@ -1143,6 +1187,10 @@ async def test_general_runner_emits_permission_required_for_agentscope_ask_tool(
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 
@@ -1237,6 +1285,10 @@ async def test_general_runner_resumes_agentscope_ask_tool_after_confirmation(cha
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 
@@ -1258,7 +1310,7 @@ async def test_general_runner_resumes_agentscope_ask_tool_after_confirmation(cha
                 for block in msg.get_content_blocks("tool_result")
             )
             return ChatResponse(
-                content=[TextBlock(text=f"confirmed final: {tool_result.output[0].text}")],
+                content=[TextBlock(text=f"confirmed final: {_tool_result_text(tool_result)}")],
                 is_last=True,
             )
 
@@ -1312,9 +1364,7 @@ async def test_general_runner_resumes_agentscope_ask_tool_after_confirmation(cha
         resume_events.append(chunk)
 
     assert invocations == ["hello"]
-    assert "confirmed final: sent:hello" in "".join(
-        e["content"] for e in resume_events if "content" in e and "type" not in e
-    )
+    assert "confirmed final: sent:hello" in _answer_text(resume_events)
 
 
 @pytest.mark.asyncio
@@ -1339,6 +1389,10 @@ async def test_agent_service_resumes_agentscope_ask_from_snapshot(chat_config):
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 
@@ -1360,7 +1414,7 @@ async def test_agent_service_resumes_agentscope_ask_from_snapshot(chat_config):
                 for block in msg.get_content_blocks("tool_result")
             )
             return ChatResponse(
-                content=[TextBlock(text=f"snapshot final: {tool_result.output[0].text}")],
+                content=[TextBlock(text=f"snapshot final: {_tool_result_text(tool_result)}")],
                 is_last=True,
             )
 
@@ -1398,7 +1452,7 @@ async def test_agent_service_resumes_agentscope_ask_from_snapshot(chat_config):
         config=chat_config,
         trace_id="test-native-resume-snapshot",
         trace_buffer=[],
-        user_info={"user_id": "u-snapshot"},
+        user_info={"user_id": "9002"},
         conversation_id="c-snapshot",
     )
 
@@ -1420,15 +1474,13 @@ async def test_agent_service_resumes_agentscope_ask_from_snapshot(chat_config):
         async for chunk in AgentService().resume_agentscope_permission_stream(
             permission_request_id=permission_event["permission_request_id"],
             confirmed=True,
-            user_info={"user_id": "u-snapshot"},
+            user_info={"user_id": "9002"},
         ):
             resume_events.append(chunk)
 
     assert invocations == ["snapshot"]
     assert any(event.get("type") == "permission_result" for event in resume_events)
-    assert "snapshot final: sent:snapshot" in "".join(
-        e["content"] for e in resume_events if "content" in e and "type" not in e
-    )
+    assert "snapshot final: sent:snapshot" in _answer_text(resume_events)
 
 
 @pytest.mark.asyncio
@@ -1454,6 +1506,10 @@ async def test_permission_resume_restores_user_context_for_user_scoped_tools(cha
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 
@@ -1475,7 +1531,7 @@ async def test_permission_resume_restores_user_context_for_user_scoped_tools(cha
                 for block in msg.get_content_blocks("tool_result")
             )
             return ChatResponse(
-                content=[TextBlock(text=f"final: {tool_result.output[0].text}")],
+                content=[TextBlock(text=f"final: {_tool_result_text(tool_result)}")],
                 is_last=True,
             )
 
@@ -1560,6 +1616,10 @@ async def test_knowledge_runner_uses_agentscope_native_agent(chat_config):
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 
@@ -1613,16 +1673,15 @@ async def test_knowledge_runner_uses_agentscope_native_agent(chat_config):
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
-         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")):
+         patch("app.services.ai.runners.knowledge_agent_runner.resolve_knowledge_dataset_ids", AsyncMock(return_value=(["ds-1"], None))), \
+         patch("app.services.config_service.ConfigService.get", AsyncMock(side_effect=_config_get_with_knowledge_enabled)):
         events = []
         async for chunk in runner.execute([{"role": "user", "content": "知识库问题"}]):
             events.append(chunk)
 
     assert any(e.get("title") == "自动检索知识库" for e in events)
     assert any(e.get("title", "").startswith("调用工具: search_knowledge_base") for e in events)
-    assert "knowledge final" in "".join(
-        e["content"] for e in events if "content" in e and "type" not in e
-    )
+    assert "knowledge final" in _answer_text(events)
 
 
 @pytest.mark.asyncio
@@ -1695,9 +1754,7 @@ async def test_knowledge_runner_reuses_cached_result_without_search_tool(chat_co
             events.append(chunk)
 
     assert not any("search_knowledge_base 不可用" in str(event.get("content", "")) for event in events)
-    assert "cached knowledge final" in "".join(
-        event["content"] for event in events if "content" in event and "type" not in event
-    )
+    assert "cached knowledge final" in _answer_text(events)
 
 
 def test_knowledge_runner_only_reuses_knowledge_results():
@@ -1823,7 +1880,8 @@ async def test_knowledge_runner_stops_on_service_unavailable(chat_config):
     with patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
-         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
+         patch("app.services.ai.runners.knowledge_agent_runner.resolve_knowledge_dataset_ids", AsyncMock(return_value=(["ds-1"], None))), \
+         patch("app.services.config_service.ConfigService.get", AsyncMock(side_effect=_config_get_with_knowledge_enabled)), \
          patch(
              "app.services.ai.runners.knowledge_agent_runner.KnowledgeAgentRunner._execute_with_agentscope_native_agent",
              fake_agent_turn,
@@ -1886,8 +1944,11 @@ async def test_general_runner_greeting_with_table_not_intercepted(chat_config):
 
 
 @pytest.mark.asyncio
-async def test_general_runner_without_tools_intercepts_hallucination(chat_config):
-    """通用助手在没有调用工具时，如果生成了包含表格或 IP 的回复，应予以拦截。"""
+async def test_general_runner_without_tools_preserves_hallucination_with_risk_warning(chat_config):
+    """通用助手无工具时编造的资产表格：保留正文并追加风险提示，不再硬拦截。
+
+    契约见 fee89578「未接地事实的软风险提示（PASS_WITH_WARNING）」。
+    """
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     
     # 模拟大模型直接生成带 IP 表格的内容
@@ -1909,6 +1970,7 @@ async def test_general_runner_without_tools_intercepts_hallucination(chat_config
         trace_id="test-hallucination-intercept",
         trace_buffer=[],
         user_info={"role": "admin", "user_id": "1"},
+        debug_options={"grounding_enabled": True},
     )
     runner.config.agent_id = "sys-agent-chat"
     runner.config.agent_name = "main"
@@ -1923,6 +1985,7 @@ async def test_general_runner_without_tools_intercepts_hallucination(chat_config
 
     with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch("app.services.ai.runners.assistant_agent_runner.RegistryToolProvider.get_implicit_tool", AsyncMock(return_value=None)), \
          patch(
              "app.services.ai.runners.assistant_agent_runner.AgentManagerService.list_allowed_agents",
              AsyncMock(return_value=[data_agent]),
@@ -1931,14 +1994,16 @@ async def test_general_runner_without_tools_intercepts_hallucination(chat_config
         async for chunk in runner.execute([{"role": "user", "content": "查一下资产列表和设备清单"}]):
             events.append(chunk)
             
-    assert any(e.get("title") == "引导切换数据智能体" for e in events)
-    assert any("请切换到 **业务数据专家** 后继续查询" in str(e.get("content", "")) for e in events)
-    assert any("quick:/switch_agent_expert?agent_id=agent-data-custom" in str(e.get("content", "")) for e in events)
+    content = "".join(str(e.get("content") or "") for e in events)
+    assert hallucinated_text in content  # 正文保留，不再被吞掉
+    assert content.count("风险提示") == 1  # 追加一条软风险提示
+    assert not any(e.get("title") == "引导切换数据智能体" for e in events)
+    assert not any(e.get("type") == "grounding_blocked" for e in events)
 
 
 @pytest.mark.asyncio
-async def test_general_runner_without_data_tool_intercepts_fake_chatbi_handoff(chat_config):
-    """通用助手不能在无 data_query 能力时假装衔接 ChatBI 或检索数据集。"""
+async def test_general_runner_without_data_tool_flags_fake_chatbi_handoff(chat_config):
+    """通用助手无 data_query 能力时假装衔接 ChatBI：保留正文并追加风险提示。"""
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.turn_decision import TurnDecision
 
@@ -1958,6 +2023,7 @@ async def test_general_runner_without_data_tool_intercepts_fake_chatbi_handoff(c
         trace_id="test-fake-chatbi-handoff",
         trace_buffer=[],
         user_info={"role": "admin", "user_id": "1"},
+        debug_options={"grounding_enabled": True},
         turn_decision=TurnDecision(
             route_status="resolved",
             turn_kind="general",
@@ -1979,6 +2045,7 @@ async def test_general_runner_without_data_tool_intercepts_fake_chatbi_handoff(c
 
     with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch("app.services.ai.runners.assistant_agent_runner.RegistryToolProvider.get_implicit_tool", AsyncMock(return_value=None)), \
          patch(
              "app.services.ai.runners.assistant_agent_runner.AgentManagerService.list_allowed_agents",
              AsyncMock(return_value=[data_agent]),
@@ -1987,10 +2054,11 @@ async def test_general_runner_without_data_tool_intercepts_fake_chatbi_handoff(c
         async for chunk in runner.execute([{"role": "user", "content": "查一下最近一周总订单量"}]):
             events.append(chunk)
 
-    assert any(e.get("title") == "引导切换数据智能体" for e in events)
-    assert any("请切换到 **业务数据专家** 后继续查询" in str(e.get("content", "")) for e in events)
-    assert any("quick:/switch_agent_expert?agent_id=agent-data-custom" in str(e.get("content", "")) for e in events)
-    assert not any(fake_handoff_text in str(e.get("content", "")) for e in events if e.get("content"))
+    content = "".join(str(e.get("content") or "") for e in events)
+    assert any(e.get("title") == "事实来源风险提示已追加" for e in events)
+    assert content.count("风险提示") == 1
+    assert not any(e.get("title") == "引导切换数据智能体" for e in events)
+    assert not any(e.get("type") == "grounding_blocked" for e in events)
 
 
 @pytest.mark.asyncio
@@ -2030,7 +2098,8 @@ async def test_general_runner_plain_chatbi_suggestions_without_hallucination_not
     runner.config.tools = []
 
     with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
-         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]):
+         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch("app.services.ai.runners.assistant_agent_runner.RegistryToolProvider.get_implicit_tool", AsyncMock(return_value=None)):
         events = []
         async for chunk in runner.execute([{"role": "user", "content": "帮我查一下用户列表数据呢"}]):
             events.append(chunk)
@@ -2055,6 +2124,10 @@ async def test_knowledge_runner_with_rag_but_no_citations_intercepts_hallucinati
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 
@@ -2101,7 +2174,8 @@ async def test_knowledge_runner_with_rag_but_no_citations_intercepts_hallucinati
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
-         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")):
+         patch("app.services.ai.runners.knowledge_agent_runner.resolve_knowledge_dataset_ids", AsyncMock(return_value=(["ds-1"], None))), \
+         patch("app.services.config_service.ConfigService.get", AsyncMock(side_effect=_config_get_with_knowledge_enabled)):
         events = []
         async for chunk in runner.execute([{"role": "user", "content": "怎么配置网络"}]):
             events.append(chunk)
@@ -2127,6 +2201,10 @@ async def test_general_runner_memory_guard_uses_agentscope_native_agent(chat_con
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 
@@ -2187,9 +2265,7 @@ async def test_general_runner_memory_guard_uses_agentscope_native_agent(chat_con
             events.append(chunk)
 
     assert any(e.get("title", "").startswith("调用工具: memory_search") for e in events)
-    assert "memory final" in "".join(
-        e["content"] for e in events if "content" in e and "type" not in e
-    )
+    assert "memory final" in _answer_text(events)
 
 
 @pytest.mark.asyncio
@@ -2230,7 +2306,8 @@ async def test_general_runner_runtime_tools_require_agentscope_native_model(chat
         async for chunk in runner.execute([{"role": "user", "content": "Use tool"}]):
             events.append(chunk)
 
-    assert events == [
+    # 结论事件之前可能还有 tool_preflight 等中间件日志，故只比对 error 结论本身
+    assert [e for e in events if e.get("type") == "error"] == [
         {
             "type": "error",
             "status": "error",
@@ -2281,7 +2358,8 @@ async def test_xml_tool_call_parsing(chat_config, mock_tool):
             events.append(chunk)
 
     mock_tool.ainvoke.assert_not_called()
-    assert events == [
+    # 结论事件之前可能还有 tool_preflight 等中间件日志，故只比对 error 结论本身
+    assert [e for e in events if e.get("type") == "error"] == [
         {
             "type": "error",
             "status": "error",
@@ -2308,6 +2386,10 @@ async def test_max_steps_limit(chat_config, mock_tool):
             return FakeModel
 
     class FakeModel(ChatModelBase):
+        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
+        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
+        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+        formatter = _OpenAIChatFormatter()
         class Parameters(BaseModel):
             pass
 

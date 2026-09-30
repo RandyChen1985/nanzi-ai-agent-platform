@@ -26,9 +26,9 @@ def test_sidebar_brand_text_stays_vertically_centered_with_logo():
     brand_header = [
         value
         for value in class_attrs
-        if re.search(r"\bh-16\b", value) and re.search(r"\bitems-center\b", value)
+        if re.search(r"\bh-(?:12|14|16)\b", value) and re.search(r"\bitems-center\b", value)
     ]
-    assert brand_header, "品牌区顶栏必须保持 h-16 + items-center 的垂直居中布局"
+    assert brand_header, "品牌区顶栏必须保持 h-12/h-16 + items-center 的垂直居中布局"
 
     assert any("bg-sidebar" in value for value in class_attrs), (
         "品牌区顶栏在深色主题下仍需使用 bg-sidebar"
@@ -37,10 +37,12 @@ def test_sidebar_brand_text_stays_vertically_centered_with_logo():
     brand_text = [
         value
         for value in class_attrs
-        if re.search(r"\bml-2\.5\b", value)
-        and re.search(r"\bflex-col\b", value)
-        and re.search(r"\bjustify-center\b", value)
+        if re.search(r"\bml-(?:2|2\.5)\b", value)
+        and (
+            re.search(r"\bitems-center\b", value)
+            or (re.search(r"\bflex-col\b", value) and re.search(r"\bjustify-center\b", value))
+        )
     ]
-    assert brand_text, "品牌文字块必须保持 flex-col + justify-center，才能与 logo 居中"
+    assert brand_text, "品牌文字块必须保持 items-center（单行）或 flex-col + justify-center（双行），才能与 logo 居中"
 
     assert "-translate-y-0.5" not in source, "不得再用位移 hack 伪装垂直居中"

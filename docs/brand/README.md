@@ -109,7 +109,7 @@ SVG 是唯一的可编辑源。后续要调整颜色、节点数量或导出尺�
 - `frontend/public/logo.png`：项目公共 logo 位图，使用主 icon 的 320×320 导出。
 - `frontend/index.html`：同时声明 SVG favicon、PNG fallback 和独立的 Apple touch icon。
 
-`useBranding` 与后端品牌配置仍然保留动态覆盖能力：只有在没有配置自定义 `icon_url` 时，才回退到透明的 `/favicon.svg`；PNG 只承担兼容和 Apple touch icon 场景。浏览器标题文案继续由品牌配置控制，默认值为 `NanZi·智能体平台`，不会把文字标题误当成图标资源。
+`useBranding` 与后端品牌配置仍然保留动态覆盖能力：只有在没有配置自定义 `icon_url` 时，才回退到透明的 `/favicon.svg`；PNG 只承担兼容和 Apple touch icon 场景。浏览器标题文案继续由品牌配置控制，默认值为 `NanZi AI Agent`，不会把文字标题误当成图标资源。
 
 ## 10. 扩展 VI 资源
 
