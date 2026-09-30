@@ -35,6 +35,7 @@
 
         <div class="grid grid-cols-2 gap-2 sm:contents">
           <select
+            v-if="activeView === 'list'"
             v-model="roleFilter"
             class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
             @change="page = 1; fetchUsers()"
@@ -45,6 +46,7 @@
           </select>
 
           <select
+            v-if="activeView === 'list'"
             v-model="statusFilter"
             class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
             @change="page = 1; fetchUsers()"
@@ -52,12 +54,13 @@
             <option value="">状态：全部</option>
             <option value="1">启用</option>
             <option value="0">禁用</option>
+            <option value="2">待审核</option>
           </select>
         </div>
 
         <div class="flex items-center gap-2">
           <button
-            v-if="hasActiveFilters"
+            v-if="hasActiveFilters && activeView === 'list'"
             type="button"
             class="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-800"
             @click="resetFilters"
@@ -118,7 +121,7 @@
           </div>
 
           <button
-            v-if="canEditUser"
+            v-if="canEditUser && activeView === 'list'"
             type="button"
             class="ml-auto flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-dark sm:ml-0 sm:flex-none"
             @click="openCreateDialog"
@@ -129,6 +132,32 @@
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- 视图切换：用户列表 / 待审核申请 -->
+    <div class="flex items-center gap-1 border-b border-gray-200">
+      <button
+        v-for="tab in [
+          { id: 'list', label: '用户列表' },
+          { id: 'review', label: '待审核' },
+        ]"
+        :key="tab.id"
+        type="button"
+        class="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors"
+        :class="
+          activeView === tab.id
+            ? 'border-primary text-primary'
+            : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+        "
+        @click="switchView(tab.id as 'list' | 'review')"
+      >
+        {{ tab.label }}
+        <span
+          v-if="tab.id === 'review' && pendingCount > 0"
+          class="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
+          aria-label="待审核数量"
+        >{{ pendingCount }}</span>
+      </button>
     </div>
 
     <!-- 批量启用 / 禁用操作条 -->
@@ -167,6 +196,104 @@
       </div>
     </div>
 
+    <!-- ===================== 待审核视图 =====================
+         独立轻量卡片列表：待审核账号唯一可做的动作是「通过 / 禁用」，
+         主表格的批量勾选、API Key、角色编辑、2FA 徽标对它全是噪音。 -->
+    <div v-if="activeView === 'review'" class="space-y-3">
+      <div v-if="loading" class="flex flex-col items-center justify-center py-16">
+        <div class="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        <p class="text-sm text-gray-500 mt-4 font-medium">加载待审核申请...</p>
+      </div>
+
+      <div
+        v-else-if="users.length === 0"
+        class="flex flex-col items-center justify-center min-h-[280px] bg-white border border-gray-200 rounded-lg shadow-sm px-6"
+      >
+        <svg class="w-14 h-14 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p class="text-sm text-gray-500 mt-4 font-semibold">暂无待审核申请</p>
+        <p class="text-xs text-gray-400 mt-1">开启「系统配置 › 常规设置 › 账号自主注册申请」后，用户可在登录页自助申请账号</p>
+      </div>
+
+      <template v-else>
+        <div
+          v-for="user in users"
+          :key="user.id"
+          class="bg-white border border-gray-200 rounded-lg shadow-sm p-4"
+        >
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="text-base font-semibold text-gray-900 truncate" :title="user.user_name">
+                  {{ user.user_name }}
+                </span>
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200/80 shrink-0">
+                  待审核
+                </span>
+              </div>
+              <p class="mt-1 text-xs text-gray-500">
+                {{ user.real_name || "未设置姓名" }}
+                <span class="text-gray-300">·</span>
+                <span class="font-mono">#{{ user.id }}</span>
+                <span class="text-gray-300">·</span>
+                申请时间 {{ formatDate(user.created_at) }}
+              </p>
+              <p class="mt-2 text-xs text-gray-500 break-words">
+                <span class="text-gray-400">备注：</span>{{ user.remark || "—" }}
+              </p>
+            </div>
+
+            <div v-if="canEditUser" class="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:opacity-50"
+                :disabled="reviewSubmittingId === user.id"
+                @click="openApproveDialog(user)"
+              >
+                通过并启用
+              </button>
+              <button
+                type="button"
+                class="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-600 shadow-sm transition-colors hover:bg-red-50 disabled:opacity-50"
+                :disabled="reviewSubmittingId === user.id"
+                @click="openRejectDialog(user)"
+              >
+                禁用
+              </button>
+            </div>
+            <span v-else class="shrink-0 text-xs text-gray-300">无审核权限</span>
+          </div>
+        </div>
+
+        <div class="bg-white border border-gray-200 rounded-lg px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div class="text-sm text-gray-700">
+            共 {{ total }} 条，第 {{ page }}/{{ totalPages }} 页
+          </div>
+          <div class="flex gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              class="flex-1 sm:flex-none px-4 py-2 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50 text-sm font-medium"
+              :disabled="page <= 1"
+              @click="page > 1 && (page--, fetchUsers())"
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              class="flex-1 sm:flex-none px-4 py-2 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50 text-sm font-medium"
+              :disabled="page >= totalPages"
+              @click="page < totalPages && (page++, fetchUsers())"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ===================== 用户列表视图 ===================== -->
+    <template v-if="activeView === 'list'">
     <!-- Loading -->
     <div v-if="loading" class="flex flex-col items-center justify-center py-16">
       <div class="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -520,6 +647,7 @@
         </div>
       </div>
     </div>
+    </template>
 
     <!-- 行内「更多」菜单：Teleport 到 body，避免被表格 overflow 裁切 -->
     <Teleport to="body">
@@ -1405,6 +1533,113 @@
       </div>
     </div>
 
+    <!-- 审核通过确认：可选分配业务角色 -->
+    <div
+      v-if="reviewApproveTarget"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990] px-4"
+      @click.self="closeApproveDialog"
+    >
+      <div class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl">
+        <h2 class="text-xl font-bold mb-1 text-gray-900">审核通过并启用</h2>
+        <p class="text-sm text-gray-500 mb-4">
+          将为
+          <strong class="text-gray-900">{{ reviewApproveTarget.user_name }}</strong>
+          （{{ reviewApproveTarget.real_name || "未设置姓名" }}）启用账号，该用户即可使用账号密码登录。
+        </p>
+
+        <div class="mb-5">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-xs font-semibold text-gray-600">业务角色（可选）</label>
+            <span class="text-[11px] text-gray-400">不选则先不分配，稍后可在角色管理中补充</span>
+          </div>
+
+          <div v-if="businessRoles.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs text-gray-500">
+            无可分配的业务角色（需具备角色管理权限），可直接通过审核。
+          </div>
+
+          <div v-else class="max-h-56 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
+            <label
+              v-for="role in businessRoles"
+              :key="role.id"
+              class="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50"
+            >
+              <input
+                type="checkbox"
+                class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-2 focus:ring-primary/30"
+                :value="role.id"
+                v-model="reviewRoleIds"
+              />
+              <span class="min-w-0">
+                <span class="block text-sm text-gray-800 truncate">{{ role.name }}</span>
+                <span v-if="role.code" class="block text-[10px] text-gray-400 font-mono truncate">{{ role.code }}</span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-3">
+          <button
+            type="button"
+            :disabled="reviewSubmitting"
+            class="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+            @click="closeApproveDialog"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            :disabled="reviewSubmitting"
+            class="px-5 py-2 text-white rounded-lg font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+            @click="approveUser"
+          >
+            {{ reviewSubmitting ? "处理中..." : "确认通过并启用" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 审核禁用（拒绝）确认 -->
+    <div
+      v-if="reviewRejectTarget"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990] px-4"
+      @click.self="closeRejectDialog"
+    >
+      <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center">
+        <div class="p-3 rounded-full inline-block mb-4 bg-red-100 text-red-600">
+          <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+          </svg>
+        </div>
+        <h2 class="text-xl font-bold mb-2 text-gray-900">确认禁用该申请</h2>
+        <p class="text-gray-500 mb-2">
+          将对
+          <strong class="text-gray-900">{{ reviewRejectTarget.user_name }}</strong>
+          执行「禁用」。
+        </p>
+        <p class="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-6 text-left">
+          该用户将<strong>无法登录系统</strong>，且账号名<strong>永久占用</strong>——被禁用的账号不会释放账号名，该用户无法用同名账号重新申请。请确认无误后再继续。
+        </p>
+        <div class="flex justify-center gap-3">
+          <button
+            type="button"
+            :disabled="reviewSubmitting"
+            class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+            @click="closeRejectDialog"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            :disabled="reviewSubmitting"
+            class="px-6 py-2 text-white rounded-lg font-medium bg-red-600 hover:bg-red-700 disabled:opacity-50"
+            @click="rejectUser"
+          >
+            {{ reviewSubmitting ? "处理中..." : "确认禁用" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Delete Confirmation -->
     <div
       v-if="showDeleteDialog"
@@ -2002,6 +2237,110 @@ const total = ref(0);
 const page = ref(1);
 const size = ref(15);
 const totalPages = ref(0);
+
+// --- 待审核视图 ---
+// 数据源与主列表同一个接口（GET /users?status=2），只是换成卡片渲染并收起无关操作。
+// 不复用主表格：批量勾选、API Key、角色编辑、2FA 徽标对「待审核」全是噪音。
+const activeView = ref<"list" | "review">("list");
+const pendingCount = ref(0);
+const reviewApproveTarget = ref<any>(null);
+const reviewRejectTarget = ref<any>(null);
+const reviewRoleIds = ref<number[]>([]);
+const reviewSubmitting = ref(false);
+// 行内按钮的 loading 态；后端没有「单条审核」接口，用 id 标记正在处理的那一条
+const reviewSubmittingId = ref<number | null>(null);
+
+const fetchPendingCount = async () => {
+  try {
+    const res = await axios.get("/api/portal/management/users/pending-count");
+    pendingCount.value = Number(res.data?.count || 0);
+  } catch (e) {
+    console.error(e);
+    pendingCount.value = 0;
+  }
+};
+
+const switchView = async (view: "list" | "review") => {
+  if (activeView.value === view) return;
+  activeView.value = view;
+  closeMenus();
+  clearSelection();
+  page.value = 1;
+  if (view === "review") {
+    // 待审核视图固定按 status=2 拉取；离开时还原，避免污染主列表筛选
+    statusFilter.value = "2";
+    await Promise.all([fetchUsers(), fetchPendingCount()]);
+  } else {
+    statusFilter.value = "";
+    await fetchUsers();
+  }
+};
+
+const openApproveDialog = async (user: any) => {
+  reviewRejectTarget.value = null;
+  reviewRoleIds.value = [];
+  reviewApproveTarget.value = user;
+  // 角色列表可能在进入页面时因缺少 menu:system:roles 而没加载到；
+  // 拿不到就降级为「纯通过」，不阻塞审核动作。
+  if (businessRoles.value.length === 0) {
+    await fetchBusinessRoles();
+  }
+};
+
+const closeApproveDialog = () => {
+  reviewApproveTarget.value = null;
+  reviewRoleIds.value = [];
+};
+
+const openRejectDialog = (user: any) => {
+  reviewApproveTarget.value = null;
+  reviewRejectTarget.value = user;
+};
+
+const closeRejectDialog = () => {
+  reviewRejectTarget.value = null;
+};
+
+const approveUser = async () => {
+  const target = reviewApproveTarget.value;
+  if (!target) return;
+  reviewSubmitting.value = true;
+  reviewSubmittingId.value = target.id;
+  try {
+    await axios.patch(`/api/portal/management/users/${target.id}/status`, {
+      status: 1,
+      role_ids: reviewRoleIds.value,
+    });
+    showToast(`已启用账号 ${target.user_name}`, "success");
+    closeApproveDialog();
+    await Promise.all([fetchUsers(), fetchPendingCount()]);
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || "审核失败，请重试", "error");
+  } finally {
+    reviewSubmitting.value = false;
+    reviewSubmittingId.value = null;
+  }
+};
+
+const rejectUser = async () => {
+  const target = reviewRejectTarget.value;
+  if (!target) return;
+  reviewSubmitting.value = true;
+  reviewSubmittingId.value = target.id;
+  try {
+    await axios.patch(`/api/portal/management/users/${target.id}/status`, {
+      status: 0,
+    });
+    showToast(`已禁用账号 ${target.user_name}`, "success");
+    closeRejectDialog();
+    await Promise.all([fetchUsers(), fetchPendingCount()]);
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || "操作失败，请重试", "error");
+  } finally {
+    reviewSubmitting.value = false;
+    reviewSubmittingId.value = null;
+  }
+};
 
 // Filters
 const searchQuery = ref("");
@@ -3047,6 +3386,7 @@ onMounted(() => {
   fetchBusinessRoles();
   fetchPublicConfig();
   fetchAllSystemTools();
+  fetchPendingCount();
 });
 </script>
 

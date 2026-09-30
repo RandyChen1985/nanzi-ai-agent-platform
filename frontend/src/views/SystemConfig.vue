@@ -2376,6 +2376,7 @@ const handleDatasetSelect = (val: string | string[]) => {
 const configShortDescriptions: Record<string, string> = {
   hide_login_apikey: '关闭登录页的 API Key 选项卡。开启后登录页仅展示账号密码或 SSO 登录。',
   password_expire_days: '密码修改有效间隔天数（天）。个人中心将依据此天数提醒用户及时更新密码。默认 30 天。',
+  user_registration_enabled: '账号自主注册申请开关。开启后登录页显示「申请账号」入口，注册申请须管理员审核通过后才能登录。',
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
   download_url_prefix: '生成文件下载链接时使用的公网地址前缀。',
@@ -2469,6 +2470,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     const order = [
       'hide_login_apikey',
       'password_expire_days',
+      'user_registration_enabled',
       'platform_timezone',
       'agentscope_inject_runtime_state',
       'agentscope_inject_time_interval_hours',
@@ -5117,7 +5119,7 @@ onUnmounted(() => {
                                 class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                               >{{ item.description }}</p>
                            </div>
-                           <div v-else-if="['embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'agentscope_inject_runtime_state'].includes(item.key)">
+                           <div v-else-if="['user_registration_enabled', 'embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'agentscope_inject_runtime_state'].includes(item.key)">
                              <div class="flex items-center">
                              <button
                                type="button"

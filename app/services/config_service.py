@@ -44,6 +44,12 @@ SANDBOX_IDLE_TIME_KEY = "sandbox_idle_time"          # 分钟，默认 30：沙�
 SANDBOX_AUTO_WARM_DEFAULT = "true"
 SANDBOX_IDLE_TIME_DEFAULT = "30"
 
+#: 账号自主注册申请开关（默认关闭）。开启后登录页展示「申请账号」入口。
+USER_REGISTRATION_ENABLED_KEY = "user_registration_enabled"
+
+#: 布尔型开关允许的取值字面量（与前端开关写入的 'true'/'false' 对齐，兼容常见写法）
+_BOOLEAN_LITERALS = ("true", "false", "1", "0", "yes", "no", "on", "off")
+
 
 def resolve_effective_sandbox_policy(
     value: Optional[str],
@@ -74,8 +80,12 @@ def validate_config_update(key: str, value: str) -> None:
         set_max_concurrency_limit(limit)
     elif key == SANDBOX_AUTO_WARM_KEY:
         normalized = str(value or "").strip().lower()
-        if normalized not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+        if normalized not in _BOOLEAN_LITERALS:
             raise ValueError("sandbox_auto_warm 仅允许 true/false")
+    elif key == USER_REGISTRATION_ENABLED_KEY:
+        normalized = str(value or "").strip().lower()
+        if normalized not in _BOOLEAN_LITERALS:
+            raise ValueError("user_registration_enabled 仅允许 true/false")
     elif key == SANDBOX_IDLE_TIME_KEY:
         try:
             minutes = float(str(value or "").strip())

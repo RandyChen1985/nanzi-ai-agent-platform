@@ -4,6 +4,14 @@ from datetime import datetime
 from app.core.orm import Base
 from app.models.permission import Role, UserRoleRelation  # noqa: F401
 
+# 用户状态。
+# 2 = 待审核：账号自主注册申请提交后的初始态，管理员审核通过后变为 1、被拒后变为 0。
+# 禁用（0）是永久终态，账号名不释放，同名账号不可重新申请。
+USER_STATUS_DISABLED = 0
+USER_STATUS_ENABLED = 1
+USER_STATUS_PENDING_REVIEW = 2
+
+
 class User(Base):
     __tablename__ = "ai_agent_users"
 
@@ -20,7 +28,7 @@ class User(Base):
     password_updated_at = Column(DateTime, nullable=True, comment='密码最后修改时间')
     last_login_at = Column(DateTime, nullable=True, comment='上次登录时间')
     remark = Column(String(255))
-    status = Column(Integer, default=1) # 1=enabled, 0=disabled
+    status = Column(Integer, default=1)  # 0=disabled, 1=enabled, 2=pending_review
     two_factor_enabled = Column(Boolean, default=False, nullable=False, comment='是否启用两步验证(2FA)')
     two_factor_secret = Column(String(512), nullable=True, comment='两步验证TOTP密钥')
     

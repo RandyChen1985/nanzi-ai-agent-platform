@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request
+import logging
+import re
 from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,6 +8,8 @@ from app.core.config import settings
 from app.core.dependencies import require_api_key, is_secure_request as _is_secure_request
 from app.core.orm import get_db_session
 from app.services.auth_service import AuthService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -89,6 +93,207 @@ class LoginRequest(BaseModel):
 class SSOLoginRequest(BaseModel):
     username: str = Field(..., description="SSO 用户名")
     password: str = Field(..., description="SSO 密码")
+
+
+#: 账号名规则：3–32 位，字母开头，仅允许字母/数字/下划线/中划线/点。
+#: 比管理员「创建用户」更严（那边不做格式校验）；只约束自助注册，不影响存量账号。
+USER_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{2,31}$")
+
+#: 与 ai_agent_users.real_name(50) / remark(255) 的字段长度对齐
+REAL_NAME_MAX_LENGTH = 50
+REMARK_MAX_LENGTH = 255
+
+REGISTER_SUCCESS_MESSAGE = "注册申请已提交，请等待管理员审核"
+DUPLICATE_USER_NAME_MESSAGE = "该账号名已被占用，请更换后重试"
+USER_NAME_FORMAT_MESSAGE = "账号名需为 3–32 位、以字母开头，仅可包含字母、数字、下划线、中划线与点"
+USER_NAME_AVAILABLE_MESSAGE = "该账号名可以使用"
+
+
+class RegisterRequest(BaseModel):
+    user_name: str = Field(..., description="账号名（3–32 位，字母开头）")
+    real_name: str = Field(..., description="用户姓名")
+    password: str = Field(..., description="登录密码（须符合等保复杂度要求）")
+    remark: Optional[str] = Field(None, description="备注（可选，最多 255 字）")
+
+
+async def _registration_enabled() -> bool:
+    """注册功能是否开启。默认关闭：配置缺失即视为关闭。"""
+    from app.services.config_service import (
+        USER_REGISTRATION_ENABLED_KEY,
+        ConfigService,
+    )
+
+    return await ConfigService.get(USER_REGISTRATION_ENABLED_KEY) == "true"
+
+
+@router.get("/register/available", summary="预检注册账号名是否可用")
+async def check_register_user_name(
+    http_request: Request,
+    user_name: str = "",
+    db: AsyncSession = Depends(get_db_session),
+):
+    """账号名可用性预检，供注册表单边输边查。
+
+    **安全取舍**：本接口是「账号名是否存在」的判定器，天然可被用于用户名枚举。
+    三重对冲：① 仅当注册功能开启时才存在（关闭时返回 403，等于接口不存在）；
+    ② 按 IP 走独立且更严的限流（60 次/小时，见 AuthService.REGISTER_CHECK_IP_LIMIT），
+    靠它批量枚举在时间上不可行；③ 不作任何额外信息回显（不透露占用者的姓名、状态）。
+    """
+    if not await _registration_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="系统当前未开放账号注册，请联系管理员开通",
+        )
+
+    client_ip = AuthService.resolve_client_ip(http_request)
+    if await AuthService.is_registration_check_rate_limited(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="账号名校验过于频繁，请稍后再试",
+        )
+
+    normalized = (user_name or "").strip()
+    if not USER_NAME_PATTERN.match(normalized):
+        return {
+            "status": "success",
+            "data": {
+                "available": False,
+                "reason": "invalid",
+                "message": USER_NAME_FORMAT_MESSAGE,
+            },
+        }
+
+    if await AuthService.is_user_name_taken(normalized, db=db):
+        return {
+            "status": "success",
+            "data": {
+                "available": False,
+                "reason": "taken",
+                "message": DUPLICATE_USER_NAME_MESSAGE,
+            },
+        }
+
+    return {
+        "status": "success",
+        "data": {
+            "available": True,
+            "reason": "ok",
+            "message": USER_NAME_AVAILABLE_MESSAGE,
+        },
+    }
+
+
+@router.post("/register", summary="提交账号注册申请")
+async def register(
+    http_request: Request,
+    request: RegisterRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """自助注册：创建待审核账号，不返回任何身份信息。
+
+    校验顺序即错误优先级：开关 → 限流 → 格式 → 等保 → 积压上限 → 重名 → 落库。
+    """
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.user import (
+        USER_STATUS_PENDING_REVIEW,
+        User,
+    )
+
+    # 1. 开关：注册功能默认关闭，关闭时即便直接打接口也必须拒绝
+    if not await _registration_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="系统当前未开放账号注册，请联系管理员开通",
+        )
+
+    user_name = (request.user_name or "").strip()
+    real_name = (request.real_name or "").strip()
+    remark = (request.remark or "").strip() or None
+
+    # 2. 限流：先于格式校验，避免绕过计数。
+    #    来源维度只在「能确信该地址标识真实来源」时生效（见 resolve_rate_limit_source）：
+    #    反代在异机/异 Pod 时 client.host 是反代自身，若照用会让全平台共用一个计数器，
+    #    「5 次/小时」静默退化成「全平台每小时只能注册 5 个」。账号名维度始终生效。
+    client_ip = AuthService.resolve_rate_limit_source(http_request)
+    if await AuthService.is_registration_rate_limited(client_ip, user_name):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="注册申请提交过于频繁，请 1 小时后再试",
+        )
+
+    # 3. 格式
+    if not USER_NAME_PATTERN.match(user_name):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=USER_NAME_FORMAT_MESSAGE,
+        )
+    if not real_name or len(real_name) > REAL_NAME_MAX_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"请填写用户姓名（不超过 {REAL_NAME_MAX_LENGTH} 字）",
+        )
+    if remark is not None and len(remark) > REMARK_MAX_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"备注不超过 {REMARK_MAX_LENGTH} 字",
+        )
+
+    # 4. 密码等保复杂度（与修改密码、管理员设密同一实现）
+    valid, message = AuthService.validate_password_complexity(
+        request.password, username=user_name
+    )
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+
+    # 5. 积压上限：与来源、请求头、部署拓扑都无关的兜底。
+    #    前面的两个限流维度都可能因为来源判定失效而少一层，这一层保证「不管谁在刷，
+    #    待审核队列都不会无限膨胀」——受伤的是管理员的审核负担和库表体积，不是某个用户。
+    pending = await AuthService.count_pending_registrations(db=db)
+    if pending >= AuthService.REGISTER_PENDING_LIMIT:
+        logger.warning(
+            "待审核申请已积压 %s 条（上限 %s），拒绝新注册申请",
+            pending,
+            AuthService.REGISTER_PENDING_LIMIT,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="当前待审核的注册申请过多，请稍后重试或联系管理员先行处理",
+        )
+
+    # 6. 重名：与「账号名预检」共用同一判定，覆盖全部状态
+    #    （禁用/待审核账号同样占用账号名），且大小写不敏感。
+    if await AuthService.is_user_name_taken(user_name, db=db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=DUPLICATE_USER_NAME_MESSAGE,
+        )
+
+    # 6. 落库：待审核 + 预签发 API Key（审核通过后密码登录依赖它下发会话）
+    try:
+        await AuthService.generate_api_key(
+            user_name,
+            real_name=real_name,
+            remark=remark,
+            role="user",
+            status=USER_STATUS_PENDING_REVIEW,
+            db=db,
+        )
+    except IntegrityError:
+        # 并发下两个请求同时通过第 5 步检查时由唯一索引兜底，转成同样的 400
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=DUPLICATE_USER_NAME_MESSAGE,
+        )
+
+    user_id = (
+        await db.execute(select(User.id).where(User.user_name == user_name))
+    ).scalar_one()
+    await AuthService.set_user_password(user_id, request.password, db=db)
+
+    return {"status": "success", "message": REGISTER_SUCCESS_MESSAGE}
 
 @router.post("/sso/login", summary="SSO 用户登录")
 async def sso_login(
@@ -231,6 +436,13 @@ async def login(
         elif result["status"] == "error_no_password":
              raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, 
+                detail=result["message"]
+            )
+        elif result["status"] == "pending_review":
+             # 待审核是正常流程中的中间态，必须给出明确提示，
+             # 否则申请人会误以为账号被拒而反复联系管理员。
+             raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
                 detail=result["message"]
             )
         else:
@@ -757,7 +969,7 @@ async def get_public_config(
     """
     获取不需要登录即可访问的系统配置（如是否启用 SSO）
     """
-    from app.services.config_service import ConfigService
+    from app.services.config_service import ConfigService, USER_REGISTRATION_ENABLED_KEY
     from app.services.platform_timezone import (
         DEFAULT_PLATFORM_TIMEZONE,
         PLATFORM_TIMEZONE_CONFIG_KEY,
@@ -766,12 +978,16 @@ async def get_public_config(
 
     sso_enabled = await ConfigService.get("yovole_sso_enabled") == "true"
     hide_login_apikey = await ConfigService.get("hide_login_apikey") == "true"
+    user_registration_enabled = (
+        await ConfigService.get(USER_REGISTRATION_ENABLED_KEY) == "true"
+    )
     platform_timezone = await get_platform_timezone()
     return {
         "status": "success",
         "data": {
             "yovole_sso_enabled": sso_enabled,
             "hide_login_apikey": hide_login_apikey,
+            "user_registration_enabled": user_registration_enabled,
             "platform_timezone": platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
             PLATFORM_TIMEZONE_CONFIG_KEY: platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
         }

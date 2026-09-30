@@ -283,7 +283,9 @@ class UpdateUserRequest(BaseModel):
     remark: Optional[str] = None
 
 class UpdateStatusRequest(BaseModel):
-    status: int  # 1=enabled, 0=disabled
+    status: int  # 0=disabled, 1=enabled, 2=pending_review
+    # 审核通过时顺带分配业务角色；None = 不触碰角色，[] = 显式清空
+    role_ids: Optional[List[int]] = None
 
 class BatchUpdateStatusRequest(BaseModel):
     user_ids: List[int] = Field(..., description="目标用户 ID 列表")
@@ -291,6 +293,20 @@ class BatchUpdateStatusRequest(BaseModel):
 
 # 单次批量操作的用户数上限，防止误操作与超长事务
 BATCH_STATUS_MAX_USERS = 200
+
+
+@router.get("/users/pending-count")
+async def get_pending_user_count(
+    admin: dict = Depends(require_permission("menu", "menu:system:users")),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """待审核账号数量，供用户管理页的「待审核」页签徽章展示。
+
+    只读计数，权限与用户列表一致（menu:system:users）；审核动作本身仍受 element:user:edit 保护。
+    与注册接口的「积压上限」兜底共用同一计数口径，避免徽章和门禁各算各的。
+    """
+    return {"count": await AuthService.count_pending_registrations(db=db)}
+
 
 @router.get("/users/{user_id}/permissions", response_model=UserPermissionsResponse)
 async def get_user_permissions(
@@ -572,8 +588,14 @@ async def update_user_status(
     db: AsyncSession = Depends(get_db_session)
 ):
     """
-    Enable or disable a user.
+    更新用户状态（启用 / 禁用 / 待审核），并可在审核通过时顺带分配业务角色。
     """
+    if request.status not in (0, 1, 2):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="status must be 0 (disabled), 1 (enabled) or 2 (pending_review)",
+        )
+
     current_user_id = admin.get("user_id")
     try:
         current_user_id = int(current_user_id) if current_user_id else None
@@ -582,18 +604,42 @@ async def update_user_status(
     
     if user_id == current_user_id and request.status == 0:
         raise HTTPException(status_code=403, detail="Cannot disable yourself")
-        
+
+    # 角色存在性必须在改状态之前校验：否则状态已提交、角色写入却因外键失败，
+    # 请求以 500 收场，管理员会看到「审核失败」但实际上账号已经启用。
+    role_ids = request.role_ids
+    if role_ids is not None:
+        from app.models.permission import Role
+
+        requested = list(dict.fromkeys(int(rid) for rid in role_ids))
+        if requested:
+            found = (
+                await db.execute(select(Role.id).where(Role.id.in_(requested)))
+            ).scalars().all()
+            if set(found) != set(requested):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="包含不存在的业务角色，请刷新后重试",
+                )
+        role_ids = requested
+
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
     user.status = request.status
     await db.commit()
+
+    # 审核通过时顺带分配业务角色：role_ids=None 表示不触碰，[] 表示清空
+    if request.status == 1 and role_ids is not None:
+        try:
+            await PermissionService(db).update_user_roles(user_id, role_ids)
+        except Exception as e:
+            logger.error(f"Failed to update roles for user {user_id}: {e}")
+            raise HTTPException(status_code=500, detail="业务角色分配失败，请重试")
     
     # Security: Clear Redis cache to force re-authentication
     try:
-        from app.services.auth_service import AuthService
-        from app.services.permission_service import PermissionService
         await AuthService.invalidate_user_auth_cache(
             user_id, db=db, api_key_hash=user.api_key_hash
         )

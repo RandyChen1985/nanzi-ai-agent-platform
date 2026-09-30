@@ -1,4 +1,5 @@
 import hashlib
+import ipaddress
 import logging
 import re
 import secrets
@@ -7,11 +8,11 @@ import httpx
 from datetime import datetime
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, func
 from app.core.redis import get_redis
 from app.core.orm import AsyncSessionLocal
 from app.core.config import get_settings
-from app.models.user import User
+from app.models.user import User, USER_STATUS_ENABLED, USER_STATUS_PENDING_REVIEW
 from app.utils.encryption import get_api_key_manager
 from passlib.context import CryptContext
 
@@ -48,10 +49,15 @@ class AuthService:
         org_path: str = None,
         extra_data: str = None,
         user_id: Optional[int] = None,
+        status: int = USER_STATUS_ENABLED,
         db: Optional[AsyncSession] = None
     ) -> str:
         """
         生成 API 密钥 (ORM Version)
+
+        status 默认为「启用」，保持既有调用方行为不变；账号自主注册走
+        status=USER_STATUS_PENDING_REVIEW，注册时不放行登录但预先签发 Key，
+        否则审核通过后密码登录会因取不到 API Key 而 500。
         """
         session, is_local = await AuthService._get_session(db)
         try:
@@ -68,7 +74,7 @@ class AuthService:
                 org_path=org_path,
                 extra_data=extra_data,
                 remark=remark,
-                status=1
+                status=status
             )
             if user_id is not None:
                 new_user.id = user_id
@@ -340,6 +346,213 @@ class AuthService:
             await redis.delete(AuthService._login_failure_key(username))
         except Exception as exc:
             logger.warning("清除登录失败次数失败: %s", exc)
+
+    # --- 注册申请限流 ---
+    # 注册是公开接口（无鉴权），防止被脚本刷满待审核列表。三层结构：
+    #   ① 账号名 3 次/小时 —— 拓扑无关，主力；
+    #   ② 来源地址 5 次/小时 —— **仅在能确信该地址标识真实来源时生效**（见下方可信度判定）；
+    #   ③ 待审核积压上限 —— 拓扑无关，兜底。
+    # 与登录限流同策略：Redis 不可用时 fail-open，不能因为限流组件故障而关掉注册功能。
+    REGISTER_IP_LIMIT = 5
+    REGISTER_NAME_LIMIT = 3
+    REGISTER_WINDOW_SECONDS = 3600  # 1 小时
+
+    # 待审核申请积压上限 —— 与来源、请求头、部署拓扑都无关的兜底。
+    # 它防的不是「某个来源刷量」（那是账号名 + 来源两个维度的事），而是「不管谁、
+    # 待审核队列本身被灌爆」。触顶的语义是「管理员先处理一下」，不会误伤某个具体用户，
+    # 也不会因为来源判定失效而静默变成平台级封禁。
+    REGISTER_PENDING_LIMIT = 500
+
+    # 账号名可用性预检的独立限流。
+    # 预检接口本质是「这个账号名存不存在」的判定器，门槛必须比注册提交更高，
+    # 否则它就成了批量用户名枚举的探针；60 次/小时足够正常边输边查，
+    # 但要靠它枚举出可用账号名在时间上不可行。
+    #
+    # 与「提交」的来源限流不同，这一层**不做出处可信度判定、无条件生效**：
+    # 万一来源判定失效导致全平台共用一个桶，这里的退化表现为「边输边查停用」，
+    # 前端会静默退回提交时校验（用户不受阻），属于可接受的降级；
+    # 而提交那一层一旦退化就是「谁都注册不了」，所以必须判可信度。
+    REGISTER_CHECK_IP_LIMIT = 60
+    REGISTER_CHECK_PREFIX = "auth:register:check:ip:"
+
+    @staticmethod
+    def _register_ip_key(client_ip: str) -> str:
+        return f"auth:register:ip:{(client_ip or 'unknown').strip()}"
+
+    # ------------------------------------------------------------------ #
+    # 来源地址可信度
+    #
+    # request.client.host 是 **TCP 对端**，只有在 uvicorn 的 ProxyHeadersMiddleware
+    # 信任该对端时才会被 X-Forwarded-For 改写成真实客户端 IP（uvicorn 默认只信任
+    # FORWARDED_ALLOW_IPS，未设置时取 127.0.0.1）。本仓库任何地方都没有配置该变量，
+    # 于是实际行为取决于部署形态：
+    #
+    #   - 无反代 / 反代与应用同机：client.host 就是真实客户端（同机场景下 uvicorn 会
+    #     从 XFF 里解析出真实客户端，且 nginx 默认是「追加」而非「替换」，所以伪造 XFF 无效）；
+    #   - 反代在异机 / 异 Pod（如 k8s ingress）：client.host 是**反代自己**，且它不在
+    #     XFF 链里。此时若仍按 client.host 限流，全平台会共用同一个计数器，
+    #     「5 次/小时」会静默退化成「全平台每小时只能注册 5 个」。
+    #
+    # 后者是无法从请求里直接观测的，所以判定规则取「宁可不限，也不误伤」：
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _normalize_ip(raw: Optional[str]) -> Optional[str]:
+        """把 `1.2.3.4:5678` / `[::1]:443` / `1.2.3.4` 归一成压缩后的 IP 字面量。"""
+        text = (raw or "").strip()
+        if not text:
+            return None
+        if text.startswith("[") and "]" in text:
+            text = text[1:text.index("]")]
+        elif text.count(":") == 1:
+            text = text.rsplit(":", 1)[0]
+        try:
+            return ipaddress.ip_address(text).compressed
+        except ValueError:
+            return None
+
+    @classmethod
+    def _is_trustworthy_source(cls, client_host: str, forwarded_for: Optional[str]) -> bool:
+        """client_host 是否可信地标识了一个真实外部来源。
+
+        两条必要条件，缺一不可：
+        ① 必须是**公网**地址。回环 / 私网 / 链路本地 / CGNAT / 保留段一定是基础设施
+           （反代、ingress、sidecar），不是终端用户；若反代恰好没设 XFF，这是唯一能
+           拦住「全局共用计数器」的一道网。
+        ② 若请求带 XFF，则 client_host 必须**出现在 XFF 链里**——说明 uvicorn 确实从
+           XFF 解析出了它，它代表真实客户端；不在链里说明它是「不被信任的对端地址」。
+
+        代价（刻意接受）：服务部署在纯内网、用户也都是私网地址时，这一层等于关闭，
+        仅由「账号名维度 + 待审核积压上限」两层兜底。这比误判成全平台封禁安全得多。
+        """
+        normalized = cls._normalize_ip(client_host)
+        if normalized is None:
+            return False  # 非 IP（unix socket、测试替身）一律不信
+        try:
+            if not ipaddress.ip_address(normalized).is_global:
+                return False
+        except ValueError:  # pragma: no cover - _normalize_ip 已保证可解析
+            return False
+
+        header = (forwarded_for or "").strip()
+        if not header:
+            return True  # 没有任何代理痕迹，对端就是来源本身
+        hops = {cls._normalize_ip(hop) for hop in header.split(",")}
+        return normalized in hops
+
+    @staticmethod
+    def resolve_client_ip(request) -> str:
+        """TCP 对端地址（uvicorn 在其被信任时会用 XFF 改写为真实客户端）。"""
+        client = getattr(request, "client", None)
+        host = getattr(client, "host", None) if client else None
+        return host or "unknown"
+
+    @classmethod
+    def resolve_rate_limit_source(cls, request) -> Optional[str]:
+        """返回可用于「按来源限流」的地址；无法确信时返回 None（即不按来源限流）。"""
+        client_host = cls.resolve_client_ip(request)
+        try:
+            forwarded_for = request.headers.get("x-forwarded-for")
+        except Exception:  # pragma: no cover - 非标准 Request 替身
+            forwarded_for = None
+        if not cls._is_trustworthy_source(client_host, forwarded_for):
+            logger.info(
+                "注册来源地址不可信，跳过按来源限流: client_host=%s xff=%s",
+                client_host,
+                forwarded_for,
+            )
+            return None
+        return client_host
+
+    @staticmethod
+    async def count_pending_registrations(db: Optional[AsyncSession] = None) -> int:
+        """待审核账号数量（注册积压兜底与用户管理页徽章共用同一口径）。"""
+        session, is_local = await AuthService._get_session(db)
+        try:
+            total = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(User)
+                    .where(User.status == USER_STATUS_PENDING_REVIEW)
+                )
+            ).scalar()
+            return int(total or 0)
+        finally:
+            if is_local:
+                await session.close()
+
+    @staticmethod
+    def _register_name_key(user_name: str) -> str:
+        # 截断到 64 字符：账号名规则是 3–32 位，但限流在校验之前执行，
+        # 不能因为调用方塞了个超长字符串就在 Redis 里写一个超大 key。
+        return f"auth:register:name:{(user_name or '').strip().lower()[:64]}"
+
+    @staticmethod
+    async def _register_counter_hit(key: str, limit: int) -> bool:
+        """自增计数并返回是否超限。Redis 不可用时返回 False（放行）。"""
+        redis = await AuthService._login_guard_redis()
+        if not redis:
+            return False
+        try:
+            count = int(await redis.incr(key))
+            if count == 1:
+                await redis.expire(key, AuthService.REGISTER_WINDOW_SECONDS)
+            return count > limit
+        except Exception as exc:
+            logger.warning("注册限流计数失败，本次放行: %s", exc)
+            return False
+
+    @staticmethod
+    async def is_registration_rate_limited(
+        client_ip: Optional[str], user_name: str
+    ) -> bool:
+        """IP 或账号名任一维度超限即返回 True。
+
+        client_ip 为 None 表示「无法确信该地址标识真实来源」（见 resolve_rate_limit_source），
+        此时**只按账号名限流**：宁可少一层防护，也不能让全平台共用计数器。
+        账号名维度必须先判定，否则换着账号名刷时它永远从 1 开始。
+        """
+        if await AuthService._register_counter_hit(
+            AuthService._register_name_key(user_name), AuthService.REGISTER_NAME_LIMIT
+        ):
+            return True
+        if not client_ip:
+            return False
+        return await AuthService._register_counter_hit(
+            AuthService._register_ip_key(client_ip), AuthService.REGISTER_IP_LIMIT
+        )
+
+    @staticmethod
+    async def is_user_name_taken(user_name: str, db: Optional[AsyncSession] = None) -> bool:
+        """账号名是否已被占用（大小写不敏感，任意状态都算占用）。
+
+        注册提交与「账号名可用性预检」共用这一入口，确保两侧判定口径完全一致——
+        否则预检说可用、提交却报重名，用户会认为系统在骗人。
+
+        必须显式 lower() 比对：MySQL 侧 ai_agent_users 是 utf8mb4_unicode_ci（大小写不敏感），
+        而 PostgreSQL 默认区分大小写；不归一化会让两个库行为不一致，PG 上会直接撞唯一索引。
+        """
+        session, is_local = await AuthService._get_session(db)
+        try:
+            row = (
+                await session.execute(
+                    select(User.id).where(
+                        func.lower(User.user_name) == (user_name or "").strip().lower()
+                    )
+                )
+            ).first()
+            return row is not None
+        finally:
+            if is_local:
+                await session.close()
+
+    @staticmethod
+    async def is_registration_check_rate_limited(client_ip: str) -> bool:
+        """账号名可用性预检是否超限（按 IP 单独计数，与提交计数互不影响）。"""
+        key = f"{AuthService.REGISTER_CHECK_PREFIX}{(client_ip or 'unknown').strip()}"
+        return await AuthService._register_counter_hit(
+            key, AuthService.REGISTER_CHECK_IP_LIMIT
+        )
 
     @staticmethod
     async def verify_api_key(api_key: str, db: Optional[AsyncSession] = None) -> Optional[Dict]:
@@ -668,8 +881,16 @@ class AuthService:
             
             if not user:
                 return {"status": "fail", "message": "用户名或密码错误"}
-            
-            if user.status != 1:
+
+            # 待审核与「已禁用」必须分开提示：前者是正常流程中的中间态，
+            # 若沿用「账户已被禁用」会让申请人以为账号被拒而反复联系管理员。
+            if user.status == USER_STATUS_PENDING_REVIEW:
+                return {
+                    "status": "pending_review",
+                    "message": "账号正在审核中，请等待管理员审核通过后再登录",
+                }
+
+            if user.status != USER_STATUS_ENABLED:
                  return {"status": "fail", "message": "账户已被禁用"}
 
             if not user.password_hash:
