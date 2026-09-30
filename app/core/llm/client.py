@@ -28,6 +28,8 @@ class AgentScopeLLMHandle:
     streaming: bool
     api_base_url: str | None = None
     tool_schemas: list[dict[str, Any]] | None = None
+    # 业务来源标签（如 "chatbi.sql"），仅用于 Langfuse 排障与聚合，不参与模型调用。
+    source: str | None = None
 
     @property
     def model(self) -> str:
@@ -43,6 +45,7 @@ class AgentScopeLLMHandle:
             streaming=self.streaming,
             api_base_url=self.api_base_url,
             tool_schemas=legacy_tools_to_openai_schemas(tools),
+            source=self.source,
         )
 
     async def ainvoke(self, messages: Any):
@@ -120,6 +123,7 @@ class LLMFactory:
         thinking_capable: bool = False,
         reasoning_effort: str | None = None,
         read_timeout: float | None = None,
+        source: str | None = None,
     ) -> AgentScopeLLMHandle:
         final_api_key = api_key or (settings.LLM_API_KEY if settings.LLM_API_KEY else None)
         final_base_url = base_url or (settings.LLM_BASE_URL if settings.LLM_BASE_URL else None)
@@ -165,6 +169,7 @@ class LLMFactory:
             temperature=float(final_temp),
             streaming=streaming,
             api_base_url=final_base_url,
+            source=source,
         )
 
 
@@ -272,6 +277,7 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         logger.error("LLM API Key is missing for model '%s'. Cannot create LLM instance.", model)
         return None
 
+    source = kwargs.get("source")
     read_timeout = kwargs.get("read_timeout")
     if read_timeout is None:
         read_timeout = parse_llm_request_read_timeout(
@@ -299,5 +305,7 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         factory_kwargs["thinking_capable"] = thinking_capable
     if reasoning_effort is not None:
         factory_kwargs["reasoning_effort"] = reasoning_effort
+    if source is not None:
+        factory_kwargs["source"] = source
 
     return LLMFactory.get_chat_model(**factory_kwargs)

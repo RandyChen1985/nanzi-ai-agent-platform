@@ -84,24 +84,24 @@ def _metadata_attributes(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return attributes
 
 
-def trace_attributes(
+def identity_attributes(
     *,
     user_id: Optional[str] = None,
     conversation_id: Optional[str] = None,
-    agent_name: Optional[str] = None,
     trace_id: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """构造 trace 维度属性（写在一轮对话的根 span 上）。"""
+    """构造身份属性（user / session + metadata），**不含** trace name。
+
+    直调链路的 span 也用它：轮次内的直调若写 ``langfuse.trace.name``，会把整条
+    轮次 trace 改名，因此 trace name 只由「自建 trace」的那个 span 负责。
+    """
     attributes: Dict[str, Any] = {}
 
     if user_id and str(user_id).strip():
         attributes[TRACE_USER_ID] = str(user_id).strip()
     if conversation_id and str(conversation_id).strip():
         attributes[TRACE_SESSION_ID] = str(conversation_id).strip()
-
-    name = (agent_name or "").strip()
-    attributes[TRACE_NAME] = f"{name} 对话" if name else "对话"
 
     metadata: Dict[str, Any] = {}
     if trace_id and str(trace_id).strip():
@@ -111,6 +111,31 @@ def trace_attributes(
             continue
         metadata[key] = value
     attributes.update(_metadata_attributes(metadata))
+
+    return attributes
+
+
+def trace_attributes(
+    *,
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """构造 trace 维度属性（写在一轮对话的根 span 上）。
+
+    属性最终由 OTel 逐个 ``set_attribute`` 落到 span 上，字典插入顺序不影响结果。
+    """
+    attributes = identity_attributes(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        trace_id=trace_id,
+        extra=extra,
+    )
+
+    name = (agent_name or "").strip()
+    attributes[TRACE_NAME] = f"{name} 对话" if name else "对话"
 
     return attributes
 

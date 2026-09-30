@@ -15,6 +15,7 @@ from app.services.ai.runtime.agentscope.compat import (
     SystemMessage,
     ToolMessage,
 )
+from app.services.ai.observability.generation_span import traced_generation
 from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 
 
@@ -161,11 +162,42 @@ def _is_structured_output_error(exc: BaseException) -> bool:
 
 
 class AgentScopeChatClient:
-    def __init__(self, native_model: Any):
+    def __init__(
+        self,
+        native_model: Any,
+        *,
+        model_name: str | None = None,
+        source: str | None = None,
+    ):
         self.native_model = native_model
+        # 供 Langfuse span 记录模型名与业务来源（由 chat_client_from_handle 从 handle 上取）。
+        self.model_name = model_name
+        self.source = source
         self.last_structured_output_status = "unknown"
 
     async def generate_structured_dict(
+        self,
+        messages: list[RuntimeMessage],
+        structured_model: Any,
+    ) -> dict[str, Any] | None:
+        async with traced_generation(
+            model=self.model_name,
+            streaming=False,
+            source=self.source,
+            input_messages=messages,
+        ) as span:
+            try:
+                result = await self._generate_structured_dict_impl(
+                    messages, structured_model
+                )
+            finally:
+                # 本方法是 fail-open 的：失败不抛异常，只能靠状态属性表达。
+                span.record_status(self.last_structured_output_status)
+            if result is not None:
+                span.record_output(json.dumps(result, ensure_ascii=False))
+            return result
+
+    async def _generate_structured_dict_impl(
         self,
         messages: list[RuntimeMessage],
         structured_model: Any,
@@ -218,31 +250,41 @@ class AgentScopeChatClient:
         return None
 
     async def generate_text(self, messages: list[RuntimeMessage], **kwargs: Any) -> str:
-        result = self.native_model(to_agentscope_messages(messages), **kwargs)
-        if inspect.isawaitable(result):
-            result = await result
+        async with traced_generation(
+            model=self.model_name,
+            streaming=False,
+            source=self.source,
+            input_messages=messages,
+        ) as span:
+            result = self.native_model(to_agentscope_messages(messages), **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
 
-        if _safe_getattr(result, "__aiter__"):
-            # AgentScope 基类 ChatModelBase.__call__（_stream/累积器）保证流式返回
-            # 形如“增量块(is_last=False) + 完整终帧(is_last=True)”，末帧 content 是
-            # 整段累积后的完整正文。因此前面这些增量块逐段累加，遇 is_last=True 时
-            # 以完整正文覆盖已累积内容，避免“增量汇总 + 完整末帧”的重复拼接。
-            final_text = ""
-            async for chunk in result:  # type: ignore[union-attr]
-                text = _response_text(chunk)
-                if getattr(chunk, "is_last", False):
-                    final_text = text or final_text
-                else:
-                    final_text += text
-            return final_text
+            if _safe_getattr(result, "__aiter__"):
+                # AgentScope 基类 ChatModelBase.__call__（_stream/累积器）保证流式返回
+                # 形如“增量块(is_last=False) + 完整终帧(is_last=True)”，末帧 content 是
+                # 整段累积后的完整正文。因此前面这些增量块逐段累加，遇 is_last=True 时
+                # 以完整正文覆盖已累积内容，避免“增量汇总 + 完整末帧”的重复拼接。
+                final_text = ""
+                async for chunk in result:  # type: ignore[union-attr]
+                    text = _response_text(chunk)
+                    if getattr(chunk, "is_last", False):
+                        final_text = text or final_text
+                    else:
+                        final_text += text
+                span.record_output(final_text)
+                return final_text
 
-        if isinstance(result, AsyncIterator):
-            final_text = ""
-            async for chunk in result:
-                final_text += _response_text(chunk)
-            return final_text
+            if isinstance(result, AsyncIterator):
+                final_text = ""
+                async for chunk in result:
+                    final_text += _response_text(chunk)
+                span.record_output(final_text)
+                return final_text
 
-        return _response_text(result)
+            text = _response_text(result)
+            span.record_output(text)
+            return text
 
     async def generate_message(
         self,
@@ -251,33 +293,44 @@ class AgentScopeChatClient:
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> AIMessage:
-        result = self.native_model(to_agentscope_messages(messages), tools=tools, **kwargs)
-        if inspect.isawaitable(result):
-            result = await result
-        if _safe_getattr(result, "__aiter__"):
-            # AgentScope 基类 __call__ 流式返回“增量块(is_last=False) + 完整终帧
-            # (is_last=True)”，终帧 content 是整段累积后的完整正文、tool_calls 也
-            # 只在该终帧完整给出。这里直接消费 result（而不是 stream_messages，
-            # 以免对新会话重复发请求），逐块累加文本，遇 is_last=True 时以终帧的
-            # 完整 AIMessage 覆盖累加的增量内容。
-            content_parts: list[str] = []
-            final_message: AIMessage | None = None
-            async for chunk in result:  # type: ignore[union-attr]
-                message = _chat_response_to_message(chunk)
-                if getattr(chunk, "is_last", False):
-                    final_message = message
+        async with traced_generation(
+            model=self.model_name,
+            streaming=False,
+            source=self.source,
+            input_messages=messages,
+        ) as span:
+            result = self.native_model(to_agentscope_messages(messages), tools=tools, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            if _safe_getattr(result, "__aiter__"):
+                # AgentScope 基类 __call__ 流式返回“增量块(is_last=False) + 完整终帧
+                # (is_last=True)”，终帧 content 是整段累积后的完整正文、tool_calls 也
+                # 只在该终帧完整给出。这里直接消费 result（而不是 stream_messages，
+                # 以免对新会话重复发请求），逐块累加文本，遇 is_last=True 时以终帧的
+                # 完整 AIMessage 覆盖累加的增量内容。
+                content_parts: list[str] = []
+                final_message: AIMessage | None = None
+                async for chunk in result:  # type: ignore[union-attr]
+                    message = _chat_response_to_message(chunk)
+                    if getattr(chunk, "is_last", False):
+                        final_message = message
+                    else:
+                        content_parts.append(message.content or "")
+                if final_message is None:
+                    resolved = AIMessage(content="".join(content_parts))
+                elif not final_message.content and content_parts:
+                    # 终帧 content 已是完整文本；仅当其为空（例如纯工具调用终帧）时回退到增量累积
+                    resolved = replace(
+                        final_message,
+                        content="".join(content_parts),
+                    )
                 else:
-                    content_parts.append(message.content or "")
-            if final_message is None:
-                return AIMessage(content="".join(content_parts))
-            # 终帧 content 已是完整文本；仅当其为空（例如纯工具调用终帧）时回退到增量累积
-            if not final_message.content and content_parts:
-                return replace(
-                    final_message,
-                    content="".join(content_parts),
-                )
-            return final_message
-        return _chat_response_to_message(result)
+                    resolved = final_message
+            else:
+                resolved = _chat_response_to_message(result)
+
+            span.record_output(resolved)
+            return resolved
 
     async def stream_messages(
         self,
@@ -286,19 +339,36 @@ class AgentScopeChatClient:
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[AIMessage]:
-        result = self.native_model(to_agentscope_messages(messages), tools=tools, **kwargs)
-        if inspect.isawaitable(result):
-            result = await result
-        if _safe_getattr(result, "__aiter__"):
-            async for chunk in result:
-                yield _chat_response_to_message(chunk)
-            return
-        yield _chat_response_to_message(result)
+        async with traced_generation(
+            model=self.model_name,
+            streaming=True,
+            source=self.source,
+            input_messages=messages,
+        ) as span:
+            result = self.native_model(to_agentscope_messages(messages), tools=tools, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            if _safe_getattr(result, "__aiter__"):
+                async for chunk in result:
+                    # 记录原始 chunk：is_last 终帧标记只在原始 chunk 上，
+                    # 转成 AIMessage 后会丢失，导致文本与用量无法正确累积。
+                    span.record_output(chunk)
+                    yield _chat_response_to_message(chunk)
+                return
+            span.record_output(result)
+            yield _chat_response_to_message(result)
 
 
 def chat_client_from_handle(llm_handle: Any) -> AgentScopeChatClient:
     native_model = getattr(llm_handle, "native_model", llm_handle)
-    return AgentScopeChatClient(native_model)
+    return AgentScopeChatClient(
+        native_model,
+        model_name=(
+            getattr(llm_handle, "model_name", None)
+            or getattr(native_model, "model_name", None)
+        ),
+        source=getattr(llm_handle, "source", None),
+    )
 
 
 def _chat_response_to_message(response: Any) -> AIMessage:

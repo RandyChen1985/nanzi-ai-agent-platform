@@ -121,3 +121,40 @@ def test_generation_attributes_omit_missing_pieces():
 def test_serialize_messages_keeps_unicode_readable():
     text = sa.serialize_payload([{"role": "user", "content": "中文内容"}])
     assert "中文内容" in text
+
+
+def test_identity_attributes_excludes_trace_name():
+    """identity_attributes 只写身份与 metadata，绝不写 trace name。
+
+    直调 span 在轮次内也会调用它；若这里带上 langfuse.trace.name，
+    整条轮次 trace 的名字会被改写。
+    """
+    attrs = sa.identity_attributes(
+        user_id=7,
+        conversation_id="conv-1",
+        extra={"llm_source": "chatbi.sql"},
+    )
+    assert attrs[sa.TRACE_USER_ID] == "7"
+    assert attrs[sa.TRACE_SESSION_ID] == "conv-1"
+    assert attrs["langfuse.trace.metadata.llm_source"] == "chatbi.sql"
+    assert sa.TRACE_NAME not in attrs
+
+
+def test_identity_attributes_keeps_trace_id_in_metadata():
+    attrs = sa.identity_attributes(trace_id="t-9")
+    assert attrs["langfuse.trace.metadata.trace_id"] == "t-9"
+    assert sa.TRACE_NAME not in attrs
+
+
+def test_trace_attributes_still_writes_trace_name():
+    """行为回归：拆分后 trace_attributes 的输出必须与拆分前完全一致。"""
+    attrs = sa.trace_attributes(
+        user_id="u1", conversation_id="c1", agent_name="数据助手", trace_id="t1"
+    )
+    assert attrs[sa.TRACE_USER_ID] == "u1"
+    assert attrs[sa.TRACE_SESSION_ID] == "c1"
+    assert attrs[sa.TRACE_NAME] == "数据助手 对话"
+    assert attrs["langfuse.trace.metadata.trace_id"] == "t1"
+
+    plain = sa.trace_attributes()
+    assert plain[sa.TRACE_NAME] == "对话"
