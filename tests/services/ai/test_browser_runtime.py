@@ -9,6 +9,10 @@ from app.schemas.browser import BrowserSnapshot, BrowserToolResult
 from app.services.ai.browser.browser_runtime import BrowserControlConflict
 from app.services.ai.browser.browser_runtime import BrowserRuntime
 from app.services.ai.browser.browser_worker import BrowserPageInfo
+from app.services.ai.browser.captcha_solver import (
+    CAPTCHA_REASON_NO_VISION_MODEL,
+    CaptchaSolveOutcome,
+)
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -290,6 +294,15 @@ async def test_browser_runtime_releases_unowned_captcha_control_for_viewer():
         )
     )
     runtime = BrowserRuntime(worker=worker)
+    # 本用例只验证控制权归属，显式隔离自动解算，避免依赖真实多模态配置
+    runtime.captcha_solver.solve_captcha_detailed = AsyncMock(
+        return_value=CaptchaSolveOutcome(
+            solved=False,
+            retryable=False,
+            reason_code=CAPTCHA_REASON_NO_VISION_MODEL,
+            message="未配置多模态模型",
+        )
+    )
 
     await runtime.snapshot("session-1")
     await runtime.release_human_control("session-1", owner_id="viewer-1")
@@ -380,6 +393,15 @@ async def test_browser_runtime_clears_captcha_flag_after_human_verification_comp
         ]
     )
     runtime = BrowserRuntime(worker=worker)
+    # 本用例只验证人工完成验证后 captcha 标记被清除，显式隔离自动解算
+    runtime.captcha_solver.solve_captcha_detailed = AsyncMock(
+        return_value=CaptchaSolveOutcome(
+            solved=False,
+            retryable=False,
+            reason_code=CAPTCHA_REASON_NO_VISION_MODEL,
+            message="未配置多模态模型",
+        )
+    )
 
     await runtime.snapshot("session-1")
     assert runtime.control_state("session-1")["captcha"] is True

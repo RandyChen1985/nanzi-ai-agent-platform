@@ -9,6 +9,7 @@ import math
 import os
 import random
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -39,12 +40,54 @@ CAPTCHA_SOLVER_PROMPT = """你是一个专业的网页验证码识别专家。�
   ]
 }
 
-3. 如果是短信验证码、二维码扫码、人脸识别或无法自动识别的复杂验证码：
+3. 如果页面上只有“点击按钮进行验证 / 点击开始验证 / 按住滑块”这类**触发控件**，真正的验证挑战（滑块或点选图片）还没有展开：
+{
+  "type": "trigger",
+  "x": <需要点击的触发按钮中心X像素坐标>,
+  "y": <需要点击的触发按钮中心Y像素坐标>,
+  "reason": "<按钮上的文字，例如 点击按钮进行验证>"
+}
+
+4. 如果是短信验证码、二维码扫码、人脸识别或无法自动识别的复杂验证码：
 {
   "type": "unsupported",
   "reason": "验证码类型无法自动处理或未检测到清晰验证码"
 }
 """
+
+
+CAPTCHA_REASON_NO_VISION_MODEL = "no_vision_model"
+CAPTCHA_REASON_NO_SCREENSHOT = "no_screenshot"
+CAPTCHA_REASON_UNSUPPORTED_TYPE = "unsupported_type"
+CAPTCHA_REASON_RECOGNITION_FAILED = "recognition_failed"
+CAPTCHA_REASON_ACTION_FAILED = "action_failed"
+CAPTCHA_REASON_STILL_CAPTCHA = "still_captcha"
+CAPTCHA_REASON_ERROR = "error"
+
+# 页面上只有“点击按钮进行验证”这类触发控件、真实挑战尚未展开时的动作类型
+CAPTCHA_ACTION_TRIGGER = "trigger"
+# 点击触发按钮后等待挑战动画展开的秒数
+CAPTCHA_TRIGGER_EXPAND_WAIT_SECONDS = 1.5
+
+CAPTCHA_REASON_MESSAGES = {
+    CAPTCHA_REASON_NO_VISION_MODEL: "未配置支持多模态的默认模型，无法自动识别验证码",
+    CAPTCHA_REASON_NO_SCREENSHOT: "无法获取页面截图，无法自动识别验证码",
+    CAPTCHA_REASON_UNSUPPORTED_TYPE: "验证码类型不支持自动识别",
+    CAPTCHA_REASON_RECOGNITION_FAILED: "未能从页面截图中识别出验证码目标",
+    CAPTCHA_REASON_ACTION_FAILED: "验证码目标已识别，但操作执行失败",
+    CAPTCHA_REASON_STILL_CAPTCHA: "已执行拖动/点击，页面仍处于验证状态",
+    CAPTCHA_REASON_ERROR: "自动解算过程发生异常",
+}
+
+
+@dataclass(frozen=True)
+class CaptchaSolveOutcome:
+    """一次验证码自动解算尝试的结果，供上层决定是否重试。"""
+
+    solved: bool
+    retryable: bool
+    reason_code: str = ""
+    message: str = ""
 
 
 def _clean_json_text(text: str) -> str:
@@ -73,31 +116,117 @@ class BrowserCaptchaSolver:
         *,
         model_name: Optional[str] = None,
     ) -> bool:
-        """尝试使用 Vision LLM 自动解算当前页面的验证码。
+        """兼容入口：仅返回是否成功解算并通过验证码。"""
+        outcome = await self.solve_captcha_detailed(session_id, snapshot, model_name=model_name)
+        return outcome.solved
 
-        Returns:
-            bool: 是否成功解算并通过验证码（页面状态转为 ready）
+    async def solve_captcha_detailed(
+        self,
+        session_id: str,
+        snapshot: BrowserSnapshot,
+        *,
+        model_name: Optional[str] = None,
+    ) -> CaptchaSolveOutcome:
+        """执行一次自动解算尝试，返回可判定的结构化结果。
+
+        先解析视觉模型再取截图：未配置多模态模型时不做无用的截图与网络调用，
+        便于上层把它与"识别失败"区分开（前者不消耗重试额度）。
         """
         try:
-            image_b64 = await self._get_screenshot_base64(session_id, snapshot)
-            if not image_b64:
-                logger.info("[CaptchaSolver] 无法获取会话 %s 的截图，放弃自动解算", session_id)
-                return False
-
             vision_model = model_name or await self._resolve_vision_model()
             if not vision_model:
                 logger.info("[CaptchaSolver] 未配置支持多模态（Vision）的大模型，放弃自动解算")
-                return False
+                return CaptchaSolveOutcome(
+                    solved=False,
+                    retryable=False,
+                    reason_code=CAPTCHA_REASON_NO_VISION_MODEL,
+                    message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_NO_VISION_MODEL],
+                )
 
-            parsed_data = await self._query_vision_model(image_b64, vision_model)
-            if not parsed_data:
-                logger.info("[CaptchaSolver] Vision 模型未能返回有效解算数据")
-                return False
+            trigger_used = False
+            while True:
+                image_b64 = await self._get_screenshot_base64(session_id, snapshot)
+                if not image_b64:
+                    logger.info("[CaptchaSolver] 无法获取会话 %s 的截图，放弃自动解算", session_id)
+                    return CaptchaSolveOutcome(
+                        solved=False,
+                        retryable=False,
+                        reason_code=CAPTCHA_REASON_NO_SCREENSHOT,
+                        message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_NO_SCREENSHOT],
+                    )
+
+                parsed_data = await self._query_vision_model(image_b64, vision_model)
+                if not parsed_data:
+                    logger.info("[CaptchaSolver] Vision 模型未能返回有效解算数据")
+                    return CaptchaSolveOutcome(
+                        solved=False,
+                        retryable=True,
+                        reason_code=CAPTCHA_REASON_RECOGNITION_FAILED,
+                        message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_RECOGNITION_FAILED],
+                    )
+
+                action_type = str(parsed_data.get("type") or "")
+
+                if action_type == CAPTCHA_ACTION_TRIGGER:
+                    # “点击按钮进行验证”等触发控件：先点开挑战，再用展开后的新截图重新识别。
+                    # 点击只是展开动作，不计入重试额度；每轮最多点一次，防止模型误判导致反复乱点。
+                    if trigger_used:
+                        logger.info("[CaptchaSolver] 触发按钮已点击过，模型仍返回 trigger，判定为识别失败")
+                        return CaptchaSolveOutcome(
+                            solved=False,
+                            retryable=True,
+                            reason_code=CAPTCHA_REASON_RECOGNITION_FAILED,
+                            message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_RECOGNITION_FAILED],
+                        )
+                    if not await self._execute_captcha_action(session_id, snapshot, parsed_data):
+                        logger.info("[CaptchaSolver] 点击验证触发按钮失败")
+                        return CaptchaSolveOutcome(
+                            solved=False,
+                            retryable=True,
+                            reason_code=CAPTCHA_REASON_ACTION_FAILED,
+                            message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_ACTION_FAILED],
+                        )
+                    trigger_used = True
+                    logger.info(
+                        "[CaptchaSolver] 已点击验证触发按钮（%s），等待挑战展开后重新识别",
+                        parsed_data.get("reason") or "未知按钮",
+                    )
+                    await asyncio.sleep(CAPTCHA_TRIGGER_EXPAND_WAIT_SECONDS)
+                    new_snapshot = await self.worker.snapshot(session_id)
+                    if new_snapshot.page_state != "captcha":
+                        logger.info("[CaptchaSolver] 点击触发按钮后页面已恢复正常状态")
+                        return CaptchaSolveOutcome(
+                            solved=True,
+                            retryable=False,
+                            message="点击验证触发按钮后页面已恢复正常",
+                        )
+                    snapshot = new_snapshot
+                    continue
+
+                if action_type == "unsupported":
+                    detail = str(parsed_data.get("reason") or "").strip()
+                    message = CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_UNSUPPORTED_TYPE]
+                    if detail:
+                        message = f"{message}（{detail}）"
+                    logger.info("[CaptchaSolver] 模型判定该验证码类型不可自动处理: %s", detail)
+                    return CaptchaSolveOutcome(
+                        solved=False,
+                        retryable=False,
+                        reason_code=CAPTCHA_REASON_UNSUPPORTED_TYPE,
+                        message=message,
+                    )
+
+                break
 
             action_success = await self._execute_captcha_action(session_id, snapshot, parsed_data)
             if not action_success:
                 logger.info("[CaptchaSolver] 执行验证码模拟动作失败")
-                return False
+                return CaptchaSolveOutcome(
+                    solved=False,
+                    retryable=True,
+                    reason_code=CAPTCHA_REASON_ACTION_FAILED,
+                    message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_ACTION_FAILED],
+                )
 
             # 等待前端与后端网络响应
             await asyncio.sleep(1.5)
@@ -106,14 +235,24 @@ class BrowserCaptchaSolver:
             new_snapshot = await self.worker.snapshot(session_id)
             if new_snapshot.page_state != "captcha":
                 logger.info("[CaptchaSolver] 验证码自动解算成功！页面已恢复正常状态")
-                return True
-            else:
-                logger.info("[CaptchaSolver] 执行动作后页面仍处于验证码状态")
-                return False
+                return CaptchaSolveOutcome(solved=True, retryable=False, message="验证码自动解算成功")
+
+            logger.info("[CaptchaSolver] 执行动作后页面仍处于验证码状态")
+            return CaptchaSolveOutcome(
+                solved=False,
+                retryable=True,
+                reason_code=CAPTCHA_REASON_STILL_CAPTCHA,
+                message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_STILL_CAPTCHA],
+            )
 
         except Exception as exc:
             logger.warning("[CaptchaSolver] 自动解算验证码发生异常: %s", exc, exc_info=True)
-            return False
+            return CaptchaSolveOutcome(
+                solved=False,
+                retryable=True,
+                reason_code=CAPTCHA_REASON_ERROR,
+                message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_ERROR],
+            )
 
     async def _resolve_vision_model(self) -> Optional[str]:
         from app.services.ai.multimodal_support import resolve_default_multimodal_model_name
@@ -191,6 +330,19 @@ class BrowserCaptchaSolver:
         action_type = result.get("type")
         handle = self.worker._handle(session_id)
         page = handle.page
+
+        if action_type == CAPTCHA_ACTION_TRIGGER:
+            x = result.get("x")
+            y = result.get("y")
+            if x is None or y is None:
+                logger.warning("[CaptchaSolver] 验证触发按钮坐标缺失: %s", result)
+                return False
+            await self.worker._human_smooth_mouse_move(
+                page, float(x), float(y), steps=random.randint(6, 12)
+            )
+            await asyncio.sleep(random.uniform(0.1, 0.2))
+            await page.mouse.click(float(x), float(y))
+            return True
 
         if action_type == "slider":
             distance_px = result.get("distance_px")

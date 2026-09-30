@@ -356,6 +356,15 @@
                   :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
                 >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
               </div>
+              <button
+                v-if="isQueueWaitItem(item)"
+                type="button"
+                class="shrink-0 rounded border border-red-200 bg-white/90 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 transition-colors hover:bg-red-50 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/40"
+                title="终止当前运行并释放会话锁，不再排队等待"
+                @click.stop="emit('stop')"
+              >
+                终止
+              </button>
               <span
                 v-if="isPreparationParent(item)"
                 class="shrink-0 text-[10px] font-medium"
@@ -682,6 +691,14 @@ const props = withDefaults(defineProps<{
 
 const expanded = defineModel<boolean>("expanded", { default: false });
 const routeGroupExpanded = ref(true);
+
+const emit = defineEmits<{ (e: "stop"): void }>();
+
+// 会话运行锁的排队等待条目（id 由后端 preflight 下发）：这里提供直接终止入口，
+// 否则用户只能干等上一轮任务结束或等待窗口超时。
+const QUEUE_WAIT_STEP_ID = "session:queue_wait";
+const isQueueWaitItem = (item: ProcessTimelineItem): boolean =>
+  item.kind === "log" && String(item.id) === QUEUE_WAIT_STEP_ID && item.status === "pending";
 
 function suppressPermissionLogs(items: ProcessTimelineLogItem[]): ProcessTimelineLogItem[];
 function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[];

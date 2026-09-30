@@ -44,6 +44,9 @@ def test_browser_panel_explains_screenshot_surface_and_hides_internal_targets():
     assert "不是网页本体" in source
     assert "点击、滚轮、键盘会转发到远程浏览器" in source
     assert "每 5 秒自动刷新" in source
+    # 人工接管 / 验证码 / 手动暂停等"刷新暂停"状态下必须保留手动拉取一次画面的入口
+    assert "⟳ 刷新画面" in source
+    assert "controlOwner === 'human' || captchaDetected || autoRefreshPaused" in source
     assert 'v-for="element in snapshot.elements"' not in source
     assert 'ref="viewportRef"' in source
     assert "viewportRef.value?.focus" in source

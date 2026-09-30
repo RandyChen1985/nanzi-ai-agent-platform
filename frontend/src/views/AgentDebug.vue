@@ -4659,6 +4659,7 @@ onUnmounted(() => {
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 bordered
+                @stop="stopGeneration"
               />
 
               <ToolPermissionCard

@@ -977,21 +977,32 @@ class BrowserWorker:
                     """
                     () => {
                       const bodyText = (document.body?.innerText || '').toLowerCase();
-                      const textMarkers = [
+                      // 只有真正展开的验证挑战才出现的文案；
+                      // “点击按钮进行验证”这类触发按钮文案不在此列。
+                      const challengeTextMarkers = [
                         '验证码', '安全验证', '人机验证', '滑块验证',
+                        '拖动滑块', '按住滑块', '向右滑动', '请依次点击', '滑动验证',
                         'captcha', 'verify-human'
                       ];
-                      const hasTextMarker = textMarkers.some((marker) => bodyText.includes(marker));
+                      const hasChallengeText = challengeTextMarkers.some((marker) => bodyText.includes(marker));
+                      // 挑战容器：必须是已展开的挑战本体。极验初始的“点击按钮进行验证”
+                      // 按钮同样带 geetest_ 前缀（geetest_btn / geetest_holder），
+                      // 必须排除，否则挑战出现前页面就被判为验证码，AI 会被冻结到
+                      // 连这个触发按钮都点不了。
+                      const challengeNodePattern = /captcha|geetest_(?:panel|popup|window|slider|widget|wrap|mask|cover|box_)|nc_1|slider-verify|verify-slider|verify-move-block|slider-btn|slide-verify/;
                       const hasChallengeNode = Array.from(document.querySelectorAll('[id], [class]')).some((node) => {
                         const value = `${node.id || ''} ${typeof node.className === 'string' ? node.className : ''}`.toLowerCase();
-                        return /captcha|geetest|nc_1|slider-verify|verify-slider/.test(value);
+                        return challengeNodePattern.test(value);
                       });
                       const hasChallengeFrame = Array.from(document.querySelectorAll('iframe')).some((frame) =>
                         /captcha|geetest|nc_1|slider-verify|verify-slider/.test((frame.getAttribute('src') || '').toLowerCase())
                       );
+                      const matched = hasChallengeText || hasChallengeNode || hasChallengeFrame;
                       return {
-                        matched: hasTextMarker || hasChallengeNode || hasChallengeFrame,
-                        reason: hasTextMarker ? '页面要求人工完成安全验证' : '页面出现验证码控件'
+                        matched: matched,
+                        reason: hasChallengeText
+                          ? '页面要求人工完成安全验证'
+                          : (hasChallengeNode || hasChallengeFrame ? '页面出现验证码控件' : null)
                       };
                     }
                     """

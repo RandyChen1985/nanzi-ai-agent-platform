@@ -787,6 +787,7 @@
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 dark-mode
+                @stop="stopGeneration"
               />
               <ToolPermissionCard
                 v-if="msg.pendingPermission"

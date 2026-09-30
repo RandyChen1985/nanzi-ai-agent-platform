@@ -323,7 +323,7 @@
               </button>
               <template v-else>
                 <span class="text-sky-600 dark:text-sky-300">
-                  {{ controlOwner === 'human' ? '人工接管中，刷新已暂停' : captchaDetected ? '验证码中，刷新已暂停' : interactionInProgress ? '操作中…' : autoRefreshPaused ? '自动刷新已暂停' : '每 5 秒自动刷新' }}
+                  {{ controlOwner === 'human' ? '人工接管中，刷新已暂停' : captchaDetected ? (currentAiAction?.action === 'solving_captcha' ? 'AI 正在识别验证码…' : '验证码中，刷新继续') : interactionInProgress ? '操作中…' : autoRefreshPaused ? '自动刷新已暂停' : '每 5 秒自动刷新' }}
                 </span>
                 <button
                   v-if="controlOwner !== 'human' && !captchaDetected && !interactionInProgress"
@@ -332,6 +332,16 @@
                   @click="autoRefreshPaused ? resumeAutoRefresh() : pauseAutoRefresh()"
                 >
                   {{ autoRefreshPaused ? '恢复' : '暂停' }}
+                </button>
+                <button
+                  v-if="controlOwner === 'human' || captchaDetected || autoRefreshPaused"
+                  type="button"
+                  class="rounded border border-sky-200 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 hover:bg-white disabled:opacity-40 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-200"
+                  :disabled="isSyncing"
+                  title="拉取一次最新画面（不恢复自动刷新）"
+                  @click="requestSnapshot"
+                >
+                  ⟳ 刷新画面
                 </button>
               </template>
             </div>
@@ -1797,6 +1807,7 @@ const connect = async () => {
         reason?: string | null;
         captcha?: boolean;
         detected?: boolean;
+        requires_human?: boolean;
         action?: string;
         detail?: string;
       };
@@ -1816,18 +1827,34 @@ const connect = async () => {
         if (prevOwner === 'human' || remoteFocusMessage.value.includes('交还')) {
           setTemporaryMessage('✅ 已交还 AI 接管控制');
         }
+        // 控制权在 AI 时验证码不暂停轮询：AI 自动解算期间画面需要持续更新才能看到进展
         if (payload.captcha) {
           captchaDetected.value = true;
-          stopPolling();
-        } else if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
+        }
+        if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
           startPolling();
         }
       }
     } else if (payload.type === 'captcha') {
       captchaDetected.value = Boolean(payload.detected);
       if (captchaDetected.value) {
-        stopPolling();
-        remoteFocusMessage.value = '检测到安全验证，请人工完成；自动刷新已暂停';
+        if (payload.requires_human && controlOwner.value !== 'human') {
+          // AI 已放弃自动解算：显式切到人工接管态，避免界面继续显示“AI 正在尝试”
+          controlOwner.value = 'human';
+          controlReason.value = 'captcha';
+        }
+        if (controlOwner.value === 'human') {
+          stopPolling();
+          remoteFocusMessage.value = payload.requires_human && payload.reason
+            ? payload.reason
+            : '检测到安全验证，请人工完成；自动刷新已暂停';
+        } else {
+          // AI 自动解算中：保持刷新，让用户看到 AI 的每一步尝试
+          remoteFocusMessage.value = '检测到安全验证，AI 正在尝试自动识别；画面保持刷新';
+          if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
+            startPolling();
+          }
+        }
       } else if (controlOwner.value === 'human') {
         stopPolling();
       } else if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
@@ -1861,7 +1888,10 @@ const connect = async () => {
       address.value = payload.snapshot.url || address.value;
       if (payload.snapshot.page_state === 'captcha') {
         captchaDetected.value = true;
-        stopPolling();
+        // 控制权归人工时才暂停刷新；AI 自动解算期间保持刷新以展示进展
+        if (controlOwner.value === 'human') {
+          stopPolling();
+        }
       }
       if (currentHumanAction.value) {
         currentHumanAction.value.detail = '✅ 操作已生效';
