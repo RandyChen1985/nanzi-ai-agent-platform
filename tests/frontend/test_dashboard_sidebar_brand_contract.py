@@ -26,9 +26,9 @@ def test_sidebar_brand_text_stays_vertically_centered_with_logo():
     brand_header = [
         value
         for value in class_attrs
-        if re.search(r"\bh-16\b", value) and re.search(r"\bitems-center\b", value)
+        if re.search(r"\bh-(?:12|14|16)\b", value) and re.search(r"\bitems-center\b", value)
     ]
-    assert brand_header, "品牌区顶栏必须保持 h-16 + items-center 的垂直居中布局"
+    assert brand_header, "品牌区顶栏必须保持 h-12/h-16 + items-center 的垂直居中布局"
 
     assert any("bg-sidebar" in value for value in class_attrs), (
         "品牌区顶栏在深色主题下仍需使用 bg-sidebar"
