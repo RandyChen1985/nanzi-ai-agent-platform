@@ -169,7 +169,7 @@
             {{
               failedSources.length
                 ? "工作台部分数据暂时不可用"
-                : `欢迎使用 ${branding.product_name || "NanZi·智能体平台"}`
+                : `欢迎使用 ${branding.product_name || "NanZi Agent"}`
             }}
           </h2>
           <p class="mt-1.5 max-w-2xl text-sm text-gray-500 dark:text-gray-400">

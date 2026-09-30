@@ -1,4 +1,4 @@
-export const DEFAULT_PRODUCT_NAME = 'NanZi·智能体平台'
+export const DEFAULT_PRODUCT_NAME = 'NanZi Agent'
 export const DEFAULT_LOGIN_SUBTITLE = 'Your Intelligent Agent Platform'
 export const DEFAULT_ICON_URL = '/favicon.svg'
 export const DEFAULT_REPO_URL = 'https://github.com/RandyChen1985/nanzi-ai-agent-platform'
