@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -33,6 +34,8 @@ CAPTCHA_RETRY_BACKOFF_BASE_SECONDS = 1.5
 CAPTCHA_RETRY_BACKOFF_MAX_SECONDS = 4.0
 CAPTCHA_REASON_ATTEMPTS_EXHAUSTED = "attempts_exhausted"
 
+logger = logging.getLogger(__name__)
+
 
 class BrowserHumanControlRequired(RuntimeError):
     """页面需要人工接管（如验证码）但限时内无人持续操作，AI 应终止并上报。"""
@@ -63,6 +66,9 @@ class BrowserRuntime:
         self.worker = worker or BrowserWorker()
         self.captcha_solver = captcha_solver or BrowserCaptchaSolver(self.worker)
         self._captcha_attempts: dict[str, int] = {}
+        # 已放弃自动解算的会话：额度耗尽降级后不再反复重试与反复弹"AI 无法完成"提示，
+        # 直到用户显式「交还 AI」或页面恢复正常（避免超时释放后立刻又降级刷屏）
+        self._captcha_gave_up: set[str] = set()
         self._captcha_tasks: dict[str, asyncio.Task] = {}
         self._captcha_round_events: dict[str, asyncio.Event] = {}
         self._snapshots: dict[str, BrowserSnapshot] = {}
@@ -123,6 +129,7 @@ class BrowserRuntime:
         for session_id in cleaned:
             self._snapshots.pop(session_id, None)
             self._session_locks.pop(session_id, None)
+            self._captcha_gave_up.discard(session_id)
             state = self._human_controls.pop(session_id, None)
             if state is not None:
                 state.released.set()
@@ -205,10 +212,17 @@ class BrowserRuntime:
             if timeout_s > 0:
                 elapsed_s = time.monotonic() - last_activity
                 if elapsed_s >= timeout_s:
-                    raise BrowserHumanControlRequired(
-                        "页面需要人工接管（原因：{}，人工在 {} 秒内未持续操作）。"
-                        "AI 未能获得控制权，请人工处理或结束任务。".format(reason, int(elapsed_s))
+                    # 人工超过有效期没有任何新操作 = 已放弃接管：主动释放控制权让 AI 恢复，
+                    # 而不是抛错把会话永久锁死（线上表现：重开面板被残留接管状态拦住，
+                    # 请求被打成 503，前端还误报成"运行环境未就绪"）
+                    logger.info(
+                        "[BrowserRuntime] 会话 %s 的人工接管（原因：%s）已 %s 秒无操作，自动释放控制权",
+                        session_id,
+                        reason,
+                        int(elapsed_s),
                     )
+                    await self._release_human_control_state(session_id)
+                    continue
             try:
                 await asyncio.wait_for(
                     released.wait(),
@@ -248,20 +262,40 @@ class BrowserRuntime:
         owner_id: str | None = None,
     ) -> dict[str, Any]:
         async with self._session_lock(session_id):
-            state = self._human_controls.get(session_id)
-            if state is None:
-                return self.control_state(session_id)
-            if owner_id is not None and state.owner_id not in {None, owner_id}:
-                return self.control_state(session_id)
-            self._human_controls.pop(session_id, None)
+            state = self._human_controls.pop(session_id, None)
             if state is not None:
                 state.released.set()
-            # 用户显式交还 AI 即表示希望 AI 继续处理，重置验证码重试额度
+            # 用户显式交还 AI = 希望 AI 继续处理：重置验证码重试额度并解除"已放弃自动解算"，
+            # 让 AI 重新获得完整尝试机会。
+            # 这里刻意不校验 owner_id、也不因"当前没有接管状态"提前返回：
+            # 交还的本质是"放弃控制权"而非"抢占"，且接管状态可能已被超时自动释放
+            # 或重开面板清理——此前这两种情况都会直接 return，用户表现为"点了没反应"
+            # （控制权没释放、额度没重置，AI 也不会重新尝试）。
             self._captcha_attempts.pop(session_id, None)
+            self._captcha_gave_up.discard(session_id)
             return self.control_state(session_id)
 
+    async def _release_human_control_state(self, session_id: str) -> bool:
+        """释放人工接管状态并广播控制权变化（不重置重试额度）。"""
+        async with self._session_lock(session_id):
+            state = self._human_controls.pop(session_id, None)
+            if state is not None:
+                state.released.set()
+        if state is None:
+            return False
+        await self.broadcast_event(
+            session_id,
+            {"type": "control_state", **self.control_state(session_id)},
+        )
+        return True
+
     async def open_session(self, db: AsyncSession, session: BrowserSession) -> BrowserPageInfo:
-        await self._wait_for_ai_control(session.id)
+        # 重新打开/恢复会话意味着用户开始新一轮操作：先清掉上一轮遗留的人工接管标记。
+        # 否则复用同一 Chromium 会话时，残留状态会让 _wait_for_ai_control 判定
+        # "人工在 N 秒内未持续操作"，把打开面板的请求直接打成 503。
+        await self._release_human_control_state(session.id)
+        # 打开会话只需短暂避让正在进行的自动解算，不该让用户等满整个人工接管有效期
+        await self._wait_for_ai_control(session.id, timeout_ms=8000)
         async with self._session_lock(session.id):
             profile = await BrowserProfileService(db).get_owned(
                 user_id=int(session.user_id), profile_id=session.profile_id
@@ -325,6 +359,8 @@ class BrowserRuntime:
             current_map.pop(oldest_key, None)
         if snapshot.page_state != "captcha":
             self._captcha_attempts.pop(session_id, None)
+            # 页面已恢复：解除"已放弃自动解算"，下次再遇到验证码可重新尝试
+            self._captcha_gave_up.discard(session_id)
             state = self._human_controls.get(session_id)
             if state is not None:
                 state.captcha = False
@@ -336,9 +372,12 @@ class BrowserRuntime:
         return min(backoff, CAPTCHA_RETRY_BACKOFF_MAX_SECONDS)
 
     def _human_takeover_active(self, session_id: str) -> bool:
-        """用户是否已通过面板显式接管（此时 AI 不应继续自动解算）。"""
+        """用户是否仍在有效期内接管页面（此时 AI 不应继续自动解算）。"""
         state = self._human_controls.get(session_id)
-        return state is not None and state.owner_id is not None
+        if state is None or state.owner_id is None:
+            return False
+        # 超过人工接管有效期没有新操作 = 已放弃，AI 可以恢复工作
+        return time.monotonic() - state.last_activity < HUMAN_CONTROL_TIMEOUT_SECONDS
 
     async def _enter_captcha_human_control(
         self, session_id: str, *, reason_code: str, message: str
@@ -423,12 +462,18 @@ class BrowserRuntime:
         if snapshot.page_state != "captcha":
             return snapshot
 
+        # 本会话已验证过"AI 搞不定"：不再重复消耗模型调用，也不重复弹人工接手提示
+        if session_id in self._captcha_gave_up:
+            return snapshot
+
         # 用户已显式接管时，不干扰用户操作
         if self._human_takeover_active(session_id):
             return snapshot
 
         attempts_done = self._captcha_attempts.get(session_id, 0)
         if attempts_done >= CAPTCHA_MAX_ATTEMPTS:
+            # 额度已耗尽 = AI 确实搞不定：标记后不再反复重试、也不反复弹人工接手提示
+            self._captcha_gave_up.add(session_id)
             await self._enter_captcha_human_control(
                 session_id,
                 reason_code=CAPTCHA_REASON_ATTEMPTS_EXHAUSTED,
@@ -522,6 +567,8 @@ class BrowserRuntime:
                 )
 
         attempt_count = self._captcha_attempts.get(session_id, 0)
+        # 一轮尝试全部失败 = AI 已尽力：标记为放弃，避免超时释放后又立刻重新降级刷屏
+        self._captcha_gave_up.add(session_id)
         await self._enter_captcha_human_control(
             session_id,
             reason_code=last_reason_code or "unknown",

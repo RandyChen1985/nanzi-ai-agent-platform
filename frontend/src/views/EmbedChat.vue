@@ -3413,8 +3413,11 @@ const attachBrowserSession = async (
   } catch (error: any) {
     if (openingGeneration !== undefined && openingGeneration !== browserOpenGeneration) return false;
     const detail = String(error?.response?.data?.detail || "");
+    // 只有后端显式标记"环境未就绪"（或详情里明确是 Playwright/Chromium 缺失）才展示安装引导：
+    // 普通 503（启动失败、人工接管冲突等）必须按真实原因提示，不能一律甩安装步骤
     const isEnvironmentFailure =
-      error?.response?.status === 503 || /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
+      String(error?.response?.headers?.['x-browser-error'] || '') === 'environment_not_ready' ||
+      /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
     if (isEnvironmentFailure) {
       browserEnvironmentError.value = detail || "服务端浏览器环境未就绪，请检查 Playwright/Chromium 安装状态";
       browserPanelVisible.value = true;
@@ -3453,8 +3456,11 @@ const openBrowserPanel = async () => {
   } catch (error: any) {
     if (generation !== browserOpenGeneration) return;
     const detail = String(error?.response?.data?.detail || "");
+    // 只有后端显式标记"环境未就绪"（或详情里明确是 Playwright/Chromium 缺失）才展示安装引导：
+    // 普通 503（启动失败、人工接管冲突等）必须按真实原因提示，不能一律甩安装步骤
     const isEnvironmentFailure =
-      error?.response?.status === 503 || /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
+      String(error?.response?.headers?.['x-browser-error'] || '') === 'environment_not_ready' ||
+      /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
     if (isEnvironmentFailure) {
       browserEnvironmentError.value = detail || "服务端浏览器环境未就绪，请检查 Playwright/Chromium 安装状态";
       browserPanelVisible.value = true;

@@ -28,7 +28,10 @@ from app.schemas.browser import (
 )
 from app.services.ai.browser import BrowserEnvironmentError
 from app.services.ai.browser.browser_policy import BrowserUrlBlocked
-from app.services.ai.browser.browser_runtime import BrowserControlConflict
+from app.services.ai.browser.browser_runtime import (
+    BrowserControlConflict,
+    BrowserHumanControlRequired,
+)
 from app.services.ai.browser.browser_runtime import browser_runtime
 from app.services.ai.browser.browser_profile_service import (
     BrowserProfileAccessDenied,
@@ -177,9 +180,22 @@ async def open_browser_session(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except BrowserProfileAccessDenied as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except BrowserHumanControlRequired as exc:
+        # 人工接管冲突不是环境故障：必须回 409，否则前端会误报"运行环境未就绪"
+        logger.info("Browser session still under human control: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{exc} 可点「交还 AI」或结束会话后重试",
+        ) from exc
     except BrowserEnvironmentError as exc:
         logger.warning("Browser environment missing: %s", exc)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        # 带上可判定的标记：前端据此展示"安装 Playwright/Chromium"引导，
+        # 而不是把任何 503 都当成环境问题（启动失败、人工接管冲突另有语义）
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            headers={"X-Browser-Error": "environment_not_ready"},
+        ) from exc
     except Exception as exc:
         logger.exception("Failed to open browser session")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="浏览器启动失败，请稍后重试") from exc

@@ -182,7 +182,9 @@ def test_browser_panel_keeps_open_and_exposes_environment_retry_after_open_failu
     assert "browserEnvironmentError" in embed
     assert ":environment-error=\"browserEnvironmentError\"" in embed
     assert '@retry="openBrowserPanel"' in embed
-    assert "error?.response?.status === 503" in embed
+    # 环境未就绪由后端的 X-Browser-Error 标记判定，不再仅凭 503 就展示安装引导
+    assert "environment_not_ready" in embed
+    assert "x-browser-error" in embed
     assert "browserPanelVisible.value = true;" in embed.split("} catch", 1)[1].split("} finally", 1)[0]
 
 
@@ -487,3 +489,24 @@ def test_browser_panel_hides_solving_hud_when_human_takes_over():
 
     assert "用户已接管：立刻收起" in source
     assert "const pauseForInteraction" in source
+
+
+def test_browser_panel_env_notice_requires_backend_flag():
+    """只有后端明确标记"环境未就绪"时才展示安装引导；普通 503 必须按真实错误提示。"""
+    source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "environment_not_ready" in source
+    assert "x-browser-error" in source
+    # 不能再仅凭 503 就把任何错误当成"运行环境未就绪"
+    assert "status === 503 ||" not in source
+
+
+def test_browser_panel_allows_dismissing_captcha_hud():
+    """解算/失败提示会盖在验证码上：必须支持收起，并在用户开始操作时自动收起。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "captchaHudDismissed" in source
+    assert 'aria-label="收起验证码提示"' in source
+    assert '@click.stop="captchaHudDismissed = true"' in source
+    # 人工接管阶段不再重复长文案（原因已由失败卡片给过），避免底部条遮挡
+    assert 'v-if="!captchaAwaitingHuman"' in source

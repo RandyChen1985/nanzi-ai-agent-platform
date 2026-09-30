@@ -767,9 +767,9 @@
                 @pointerup="handleImagePointerUp"
                 @pointercancel="handleImagePointerCancel"
               />
-              <!-- AI 验证码解算 HUD：贴在截图画面上（不拦截操作）；失败时转红并提示人工接手 -->
+              <!-- AI 验证码解算 HUD：贴在截图画面上（不拦截操作，可收起）；失败时转红并提示人工接手 -->
               <div
-                v-if="isCaptchaAction"
+                v-if="isCaptchaAction && !captchaHudDismissed"
                 class="pointer-events-none absolute inset-0 z-20 overflow-hidden rounded"
                 role="status"
                 aria-live="polite"
@@ -795,10 +795,19 @@
                     v-if="isSolvingCaptcha"
                     class="rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] tracking-wide"
                   >已用时 {{ captchaElapsedSeconds }}s</span>
+                  <button
+                    type="button"
+                    class="pointer-events-auto ml-0.5 rounded p-0.5 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+                    title="收起提示（不影响人工操作）"
+                    aria-label="收起验证码提示"
+                    @click.stop="captchaHudDismissed = true"
+                  >✕</button>
                 </div>
+                <!-- 人工接管阶段不再重复长原因（失败卡片已说明过），避免底部条压住验证码 -->
                 <div
+                  v-if="!captchaAwaitingHuman"
                   class="absolute bottom-3 left-1/2 max-w-[85%] -translate-x-1/2 truncate rounded-full px-3 py-1 text-[11px] font-medium text-white shadow-lg backdrop-blur-sm"
-                  :class="isSolvingCaptcha ? 'bg-slate-900/80' : (captchaAwaitingHuman ? 'bg-amber-950/85' : 'bg-rose-950/85')"
+                  :class="isSolvingCaptcha ? 'bg-slate-900/80' : 'bg-rose-950/85'"
                 >
                   {{ currentAiAction?.detail || (isSolvingCaptcha ? '正在分析验证码画面…' : '请人工完成验证') }}
                 </div>
@@ -1471,6 +1480,12 @@ const captchaFailureCardVisible = computed(
 );
 // 用户已开始人工处理：红色警示收起，但保留中性的"请人工完成验证"状态提示
 const captchaAwaitingHuman = computed(() => captchaFailed.value && captchaFailureDismissed.value);
+// HUD 是覆盖在画面上的浮层，人工接管时正好压住验证码：支持手动收起，用户开始操作时也会自动收起
+const captchaHudDismissed = ref(false);
+watch([isSolvingCaptcha, captchaFailed], () => {
+  // 进入新阶段（新一轮解算 / 新一轮失败）时重新显示，避免用户错过状态变化
+  captchaHudDismissed.value = false;
+});
 const captchaFailureReason = computed(
   () => currentAiAction.value?.detail || '请直接在上方画面拖动滑块完成验证'
 );
@@ -1482,6 +1497,7 @@ const captchaFailureReason = computed(
 const clearResolvedCaptchaState = () => {
   captchaDetected.value = false;
   captchaFailureDismissed.value = false;
+  captchaHudDismissed.value = false;
   if (isCaptchaAction.value) {
     currentAiAction.value = null;
   }
@@ -2445,6 +2461,10 @@ const pauseForInteraction = () => {
   stopPolling();
   // 用户已接管：立刻收起「AI 正在识别验证码」的提示，不必等后端把解算停掉再广播；
   // 后端收到人工输入后也会随即中止解算并清空该动作。
+  // 失败态的 HUD 同样收起——它正盖在验证码上，挡着人工操作。
+  if (isCaptchaAction.value) {
+    captchaHudDismissed.value = true;
+  }
   if (isSolvingCaptcha.value) {
     currentAiAction.value = null;
   }
