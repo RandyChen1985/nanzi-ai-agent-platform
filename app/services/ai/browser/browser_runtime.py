@@ -97,8 +97,18 @@ class BrowserRuntime:
     def get_ai_action(self, session_id: str) -> dict[str, Any] | None:
         return self._ai_action_status.get(session_id)
 
-    async def set_ai_action(self, session_id: str, action: str, detail: str) -> None:
-        data = {"action": action, "detail": detail}
+    async def set_ai_action(
+        self,
+        session_id: str,
+        action: str,
+        detail: str,
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """广播 AI 动作；extra 承载结构化过程数据（如验证码目标坐标、需拖动距离与执行轨迹）。"""
+        data: dict[str, Any] = {"action": action, "detail": detail}
+        if extra:
+            data["extra"] = extra
         self._ai_action_status[session_id] = data
         await self.broadcast_event(session_id, {"type": "ai_action", **data})
 
@@ -349,6 +359,54 @@ class BrowserRuntime:
                 "requires_human": True,
             },
         )
+        # 最后广播动作状态：所有降级路径（未配置模型 / 额度用尽 / 重试全败）都经过这里，
+        # 前端据此把解算 HUD 转红并弹出"AI 无法完成，请人工处理"卡片。
+        await self.set_ai_action(
+            session_id,
+            "captcha_human_required",
+            message or "请人工完成验证",
+            extra={
+                "requires_human": True,
+                "reason_code": reason_code,
+                "attempt": self._captcha_attempts.get(session_id, 0),
+                "max_attempts": CAPTCHA_MAX_ATTEMPTS,
+            },
+        )
+
+    async def _broadcast_captcha_progress(
+        self, session_id: str, attempt: int, payload: dict[str, Any]
+    ) -> None:
+        """把解算器"看到了什么、打算怎么动、实际划到哪"随动作一起广播。
+
+        前端据 extra 中的目标坐标/滑块起点/需拖动距离/执行轨迹，在静态截图上绘制
+        AI 的解算计划与轨迹回放；没有这些数据，用户只能看到一行"正在识别"。
+        """
+        await self.set_ai_action(
+            session_id,
+            "solving_captcha",
+            self._captcha_progress_detail(payload, attempt),
+            extra={
+                **payload,
+                "attempt": attempt,
+                "max_attempts": CAPTCHA_MAX_ATTEMPTS,
+            },
+        )
+
+    @staticmethod
+    def _captcha_progress_detail(payload: dict[str, Any], attempt: int) -> str:
+        """把阶段化进度翻译成用户可读的一行文案。"""
+        phase = str(payload.get("phase") or "")
+        if phase == "recognized":
+            distance = payload.get("distance_px")
+            if payload.get("kind") == "slider" and distance:
+                return (
+                    f"已识别缺口（第 {attempt}/{CAPTCHA_MAX_ATTEMPTS} 次），"
+                    f"需拖动 {int(distance)}px，正在执行…"
+                )
+            return f"已识别验证目标（第 {attempt}/{CAPTCHA_MAX_ATTEMPTS} 次），正在执行…"
+        if phase == "dragged":
+            return f"动作已执行（第 {attempt}/{CAPTCHA_MAX_ATTEMPTS} 次），正在校验结果…"
+        return f"AI 正在尝试自动识别（第 {attempt}/{CAPTCHA_MAX_ATTEMPTS} 次）…"
 
     async def try_auto_solve_captcha(
         self, session_id: str, snapshot: BrowserSnapshot
@@ -386,6 +444,11 @@ class BrowserRuntime:
                 session_id,
                 "solving_captcha",
                 f"检测到验证码，AI 正在尝试自动识别（第 {index}/{CAPTCHA_MAX_ATTEMPTS} 次）…",
+                extra={
+                    "phase": "detecting",
+                    "attempt": index,
+                    "max_attempts": CAPTCHA_MAX_ATTEMPTS,
+                },
             )
 
             if index > 1:
@@ -399,7 +462,13 @@ class BrowserRuntime:
                     await self.clear_ai_action(session_id)
                     return snapshot
 
-            outcome = await self.captcha_solver.solve_captcha_detailed(session_id, snapshot)
+            outcome = await self.captcha_solver.solve_captcha_detailed(
+                session_id,
+                snapshot,
+                on_progress=lambda payload, current=index: self._broadcast_captcha_progress(
+                    session_id, current, payload
+                ),
+            )
             if outcome.solved:
                 solved = True
                 break
@@ -446,12 +515,6 @@ class BrowserRuntime:
                 f"AI 已自动尝试 {attempt_count} 次未通过"
                 f"（{last_message or '自动识别未通过'}），请人工完成验证"
             ),
-        )
-        # 保留可见提示，让面板能显示"试过几次、为什么交人"
-        await self.set_ai_action(
-            session_id,
-            "captcha_human_required",
-            last_message or "请人工完成验证",
         )
         return snapshot
 

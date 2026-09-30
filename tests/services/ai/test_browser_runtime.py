@@ -413,3 +413,101 @@ async def test_browser_runtime_clears_captcha_flag_after_human_verification_comp
         "reason": "captcha",
         "captcha": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_broadcasts_captcha_geometry_progress():
+    """解算过程中的几何信息必须广播出去，前端才能在静态截图上画出目标与轨迹。"""
+    worker = ControlProbeWorker()
+    worker.snapshot = AsyncMock(
+        return_value=BrowserSnapshot(
+            session_id="session-1",
+            snapshot_id="captcha-1",
+            url="https://example.com/verify",
+            title="Verify",
+            page_state="captcha",
+        )
+    )
+    runtime = BrowserRuntime(worker=worker)
+
+    async def fake_solve(session_id, snapshot, *, model_name=None, on_progress=None):
+        assert on_progress is not None, "运行时必须向解算器传入进度回调"
+        await on_progress({
+            "phase": "recognized",
+            "kind": "slider",
+            "target_x": 320.0,
+            "target_y": 220.0,
+            "slider_x": 120.0,
+            "slider_y": 220.0,
+            "distance_px": 200,
+        })
+        return CaptchaSolveOutcome(solved=True, retryable=False, message="ok")
+
+    runtime.captcha_solver.solve_captcha_detailed = fake_solve
+
+    events: list[dict] = []
+
+    async def fake_broadcast(session_id, payload):
+        events.append(payload)
+
+    runtime.broadcast_event = fake_broadcast
+
+    await runtime.snapshot("session-1")
+
+    progress_events = [
+        e for e in events
+        if e.get("type") == "ai_action"
+        and e.get("action") == "solving_captcha"
+        and e.get("extra")
+    ]
+    assert progress_events, "未广播带几何信息的解算进度"
+    extra = progress_events[-1]["extra"]
+    assert extra["target_x"] == 320.0
+    assert extra["target_y"] == 220.0
+    assert extra["distance_px"] == 200
+    assert extra["kind"] == "slider"
+    # 次数信息随进度一起下发，前端据此显示「第 N/3 次」
+    assert extra["attempt"] == 1
+    assert extra["max_attempts"] == 3
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_marks_captcha_human_required_with_reason():
+    """降级为人工时必须广播原因，前端才能显示「AI 无法完成，请人工处理」卡片。"""
+    worker = ControlProbeWorker()
+    worker.snapshot = AsyncMock(
+        return_value=BrowserSnapshot(
+            session_id="session-1",
+            snapshot_id="captcha-1",
+            url="https://example.com/verify",
+            title="Verify",
+            page_state="captcha",
+        )
+    )
+    runtime = BrowserRuntime(worker=worker)
+    runtime.captcha_solver.solve_captcha_detailed = AsyncMock(
+        return_value=CaptchaSolveOutcome(
+            solved=False,
+            retryable=False,
+            reason_code=CAPTCHA_REASON_NO_VISION_MODEL,
+            message="未配置多模态模型",
+        )
+    )
+
+    events: list[dict] = []
+
+    async def fake_broadcast(session_id, payload):
+        events.append(payload)
+
+    runtime.broadcast_event = fake_broadcast
+
+    await runtime.snapshot("session-1")
+
+    human_events = [
+        e for e in events
+        if e.get("type") == "ai_action" and e.get("action") == "captcha_human_required"
+    ]
+    assert human_events, "未广播人工接手动作"
+    extra = human_events[-1].get("extra") or {}
+    assert extra.get("reason_code") == CAPTCHA_REASON_NO_VISION_MODEL
+    assert extra.get("requires_human") is True

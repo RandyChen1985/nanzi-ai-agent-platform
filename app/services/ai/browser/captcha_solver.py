@@ -11,7 +11,7 @@ import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from app.schemas.browser import BrowserSnapshot
 
@@ -88,6 +88,27 @@ class CaptchaSolveOutcome:
     retryable: bool
     reason_code: str = ""
     message: str = ""
+    # 过程可视化：解算器"看到了什么、做了什么"，供上层广播给前端在静态截图上绘制
+    captcha_kind: Optional[str] = None
+    target_x: Optional[float] = None
+    target_y: Optional[float] = None
+    slider_x: Optional[float] = None
+    slider_y: Optional[float] = None
+    distance_px: Optional[int] = None
+    trajectory: Optional[List[Dict[str, float]]] = None
+
+
+def _geometry_from(captured: Dict[str, Any]) -> Dict[str, Any]:
+    """把进度回调累积的几何信息映射为 CaptchaSolveOutcome 的字段。"""
+    return {
+        "captcha_kind": captured.get("kind"),
+        "target_x": captured.get("target_x"),
+        "target_y": captured.get("target_y"),
+        "slider_x": captured.get("slider_x"),
+        "slider_y": captured.get("slider_y"),
+        "distance_px": captured.get("distance_px"),
+        "trajectory": captured.get("trajectory"),
+    }
 
 
 def _clean_json_text(text: str) -> str:
@@ -126,12 +147,23 @@ class BrowserCaptchaSolver:
         snapshot: BrowserSnapshot,
         *,
         model_name: Optional[str] = None,
+        on_progress: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> CaptchaSolveOutcome:
         """执行一次自动解算尝试，返回可判定的结构化结果。
 
         先解析视觉模型再取截图：未配置多模态模型时不做无用的截图与网络调用，
         便于上层把它与"识别失败"区分开（前者不消耗重试额度）。
+
+        on_progress 用于把"识别到的缺口位置、需要拖动的距离、实际执行轨迹"实时
+        抛给上层广播，前端据此在静态截图上绘制 AI 的解算计划与轨迹。
         """
+        captured: Dict[str, Any] = {}
+
+        async def _emit(payload: Dict[str, Any]) -> None:
+            captured.update(payload)
+            if on_progress is not None:
+                await on_progress(payload)
+
         try:
             vision_model = model_name or await self._resolve_vision_model()
             if not vision_model:
@@ -178,7 +210,9 @@ class BrowserCaptchaSolver:
                             reason_code=CAPTCHA_REASON_RECOGNITION_FAILED,
                             message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_RECOGNITION_FAILED],
                         )
-                    if not await self._execute_captcha_action(session_id, snapshot, parsed_data):
+                    if not await self._execute_captcha_action(
+                        session_id, snapshot, parsed_data, on_progress=_emit
+                    ):
                         logger.info("[CaptchaSolver] 点击验证触发按钮失败")
                         return CaptchaSolveOutcome(
                             solved=False,
@@ -218,7 +252,9 @@ class BrowserCaptchaSolver:
 
                 break
 
-            action_success = await self._execute_captcha_action(session_id, snapshot, parsed_data)
+            action_success = await self._execute_captcha_action(
+                session_id, snapshot, parsed_data, on_progress=_emit
+            )
             if not action_success:
                 logger.info("[CaptchaSolver] 执行验证码模拟动作失败")
                 return CaptchaSolveOutcome(
@@ -226,6 +262,7 @@ class BrowserCaptchaSolver:
                     retryable=True,
                     reason_code=CAPTCHA_REASON_ACTION_FAILED,
                     message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_ACTION_FAILED],
+                    **_geometry_from(captured),
                 )
 
             # 等待前端与后端网络响应
@@ -235,7 +272,12 @@ class BrowserCaptchaSolver:
             new_snapshot = await self.worker.snapshot(session_id)
             if new_snapshot.page_state != "captcha":
                 logger.info("[CaptchaSolver] 验证码自动解算成功！页面已恢复正常状态")
-                return CaptchaSolveOutcome(solved=True, retryable=False, message="验证码自动解算成功")
+                return CaptchaSolveOutcome(
+                    solved=True,
+                    retryable=False,
+                    message="验证码自动解算成功",
+                    **_geometry_from(captured),
+                )
 
             logger.info("[CaptchaSolver] 执行动作后页面仍处于验证码状态")
             return CaptchaSolveOutcome(
@@ -243,6 +285,7 @@ class BrowserCaptchaSolver:
                 retryable=True,
                 reason_code=CAPTCHA_REASON_STILL_CAPTCHA,
                 message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_STILL_CAPTCHA],
+                **_geometry_from(captured),
             )
 
         except Exception as exc:
@@ -252,6 +295,7 @@ class BrowserCaptchaSolver:
                 retryable=True,
                 reason_code=CAPTCHA_REASON_ERROR,
                 message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_ERROR],
+                **_geometry_from(captured),
             )
 
     async def _resolve_vision_model(self) -> Optional[str]:
@@ -323,8 +367,26 @@ class BrowserCaptchaSolver:
             logger.warning("[CaptchaSolver] 解析 Vision 模型 JSON 失败: %s, 原始输出: %s", exc, content_text)
         return None
 
+    @staticmethod
+    async def _notify_progress(
+        on_progress: Optional[Callable[[Dict[str, Any]], Awaitable[None]]],
+        payload: Dict[str, Any],
+    ) -> None:
+        """上报解算进度；广播失败绝不影响解算本身。"""
+        if on_progress is None:
+            return
+        try:
+            await on_progress(payload)
+        except Exception as exc:
+            logger.warning("[CaptchaSolver] 上报解算进度失败: %s", exc)
+
     async def _execute_captcha_action(
-        self, session_id: str, snapshot: BrowserSnapshot, result: Dict[str, Any]
+        self,
+        session_id: str,
+        snapshot: BrowserSnapshot,
+        result: Dict[str, Any],
+        *,
+        on_progress: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> bool:
         """根据 Vision 模型给出的坐标驱动 Playwright 执行动作。"""
         action_type = result.get("type")
@@ -347,6 +409,7 @@ class BrowserCaptchaSolver:
         if action_type == "slider":
             distance_px = result.get("distance_px")
             target_x = result.get("target_x")
+            target_y = result.get("target_y")
             slider_x = result.get("slider_x")
             slider_y = result.get("slider_y")
 
@@ -361,6 +424,16 @@ class BrowserCaptchaSolver:
             # 寻找滑块起点
             sx, sy = await self._find_slider_start(handle.page, slider_x, slider_y)
 
+            geometry: Dict[str, Any] = {
+                "kind": "slider",
+                "target_x": float(target_x) if target_x is not None else None,
+                "target_y": float(target_y) if target_y is not None else None,
+                "slider_x": float(sx),
+                "slider_y": float(sy),
+                "distance_px": int(distance_px),
+            }
+            await self._notify_progress(on_progress, {"phase": "recognized", **geometry})
+
             # 生成拟人化平滑拖拽轨迹
             trajectory = self.worker._slider_trajectory(sx, sy, int(distance_px))
             await page.mouse.move(sx, sy)
@@ -371,12 +444,33 @@ class BrowserCaptchaSolver:
                 await asyncio.sleep(delay)
             await asyncio.sleep(random.uniform(0.08, 0.15))
             await page.mouse.up()
+            await self._notify_progress(
+                on_progress,
+                {
+                    "phase": "dragged",
+                    **geometry,
+                    "trajectory": [
+                        {"x": float(point[0]), "y": float(point[1])} for point in trajectory
+                    ],
+                },
+            )
             return True
 
         elif action_type == "click_sequence":
             points = result.get("points") or []
             if not isinstance(points, list) or not points:
                 return False
+
+            click_points = [
+                {"x": float(pt["x"]), "y": float(pt["y"])}
+                for pt in points
+                if isinstance(pt, dict) and pt.get("x") is not None and pt.get("y") is not None
+            ]
+            if click_points:
+                await self._notify_progress(
+                    on_progress,
+                    {"phase": "recognized", "kind": "click_sequence", "points": click_points},
+                )
 
             for pt in points:
                 if not isinstance(pt, dict):
@@ -389,6 +483,11 @@ class BrowserCaptchaSolver:
                 await asyncio.sleep(random.uniform(0.08, 0.18))
                 await page.mouse.click(float(x), float(y))
                 await asyncio.sleep(random.uniform(0.2, 0.4))
+            if click_points:
+                await self._notify_progress(
+                    on_progress,
+                    {"phase": "dragged", "kind": "click_sequence", "points": click_points},
+                )
             return True
 
         elif action_type == "unsupported":

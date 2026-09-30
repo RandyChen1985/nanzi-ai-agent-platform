@@ -192,7 +192,7 @@ async def test_runtime_auto_solves_captcha_successfully():
     runtime = BrowserRuntime(worker=worker)
 
     # 首次触发自解算成功，worker 下一次 snapshot 变为 ready
-    async def fake_detailed(session_id, snapshot):
+    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None):
         worker._page_state = "ready"
         return CaptchaSolveOutcome(solved=True, retryable=False, message="验证码自动解算成功")
 
@@ -363,7 +363,7 @@ async def test_runtime_stops_retrying_when_captcha_is_solved(monkeypatch):
     runtime = BrowserRuntime(worker=worker)
     calls: list[int] = []
 
-    async def fake_detailed(session_id, snapshot):
+    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None):
         calls.append(1)
         if len(calls) < 2:
             return _retryable_failure()
@@ -434,7 +434,7 @@ async def test_runtime_aborts_retry_when_human_takes_over(monkeypatch):
     runtime = BrowserRuntime(worker=worker)
     calls: list[int] = []
 
-    async def fake_detailed(session_id, snapshot):
+    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None):
         calls.append(1)
         await runtime.acquire_human_control(session_id, reason="click", owner_id="viewer-1")
         return _retryable_failure()
@@ -488,7 +488,7 @@ async def test_runtime_blocks_ai_action_while_captcha_round_runs(monkeypatch):
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def fake_detailed(session_id, snapshot):
+    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None):
         started.set()
         await release.wait()
         return _retryable_failure()
@@ -614,3 +614,92 @@ def test_detect_captcha_script_separates_trigger_button_from_challenge():
     assert "拖动滑块" in source
     assert "geetest_(?:panel|popup" in source
     assert "触发" in source
+
+
+@pytest.mark.asyncio
+async def test_solver_reports_captcha_geometry_to_progress_callback():
+    """识别成功后必须上报缺口/滑块/距离与轨迹，前端才能在画面上画出目标与距离。"""
+    worker = DummyWorker(page_state="ready")
+    solver = BrowserCaptchaSolver(worker)
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.return_value = SimpleNamespace(
+        content=json.dumps({
+            "type": "slider",
+            "slider_x": 120,
+            "slider_y": 220,
+            "target_x": 320,
+            "target_y": 220,
+            "distance_px": 200,
+        })
+    )
+
+    events: list[dict] = []
+
+    async def on_progress(payload):
+        events.append(payload)
+
+    with patch.object(solver, "_resolve_vision_model", AsyncMock(return_value="mock-vision-model")), \
+         patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=mock_llm)):
+        snapshot = BrowserSnapshot(
+            session_id="s1",
+            snapshot_id="snap-0",
+            url="https://example.com/login",
+            title="Login",
+            page_state="captcha",
+        )
+        outcome = await solver.solve_captcha_detailed("s1", snapshot, on_progress=on_progress)
+
+    recognized = [e for e in events if e.get("phase") == "recognized"]
+    assert recognized, "未上报识别结果"
+    payload = recognized[0]
+    assert payload["kind"] == "slider"
+    assert payload["target_x"] == 320
+    assert payload["target_y"] == 220
+    assert payload["slider_x"] == 120
+    assert payload["distance_px"] == 200
+
+    dragged = [e for e in events if e.get("phase") == "dragged"]
+    assert dragged, "未上报拖动执行结果"
+    trajectory = dragged[0]["trajectory"]
+    assert isinstance(trajectory, list) and len(trajectory) >= 2
+    assert {"x", "y"} <= set(trajectory[0])
+
+    # outcome 同样携带几何信息，便于上层在失败时诊断
+    assert outcome.distance_px == 200
+    assert outcome.target_x == 320
+    assert outcome.slider_x == 120
+    assert outcome.trajectory is not None and len(outcome.trajectory) >= 2
+
+
+@pytest.mark.asyncio
+async def test_solver_progress_callback_is_optional():
+    """未传回调时必须保持原有行为，不能因为缺少回调而失败。"""
+    worker = DummyWorker(page_state="ready")
+    solver = BrowserCaptchaSolver(worker)
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.return_value = SimpleNamespace(
+        content=json.dumps({
+            "type": "slider",
+            "slider_x": 120,
+            "slider_y": 220,
+            "target_x": 320,
+            "target_y": 220,
+            "distance_px": 200,
+        })
+    )
+
+    with patch.object(solver, "_resolve_vision_model", AsyncMock(return_value="mock-vision-model")), \
+         patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=mock_llm)):
+        snapshot = BrowserSnapshot(
+            session_id="s1",
+            snapshot_id="snap-0",
+            url="https://example.com/login",
+            title="Login",
+            page_state="captcha",
+        )
+        outcome = await solver.solve_captcha_detailed("s1", snapshot)
+
+    assert outcome.solved is True
+    assert outcome.distance_px == 200

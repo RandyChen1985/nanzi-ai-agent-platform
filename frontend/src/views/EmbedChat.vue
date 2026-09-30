@@ -787,7 +787,7 @@
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 dark-mode
-                @stop="stopGeneration"
+                @stop="stopGeneration({ notifySuccess: true })"
               />
               <ToolPermissionCard
                 v-if="msg.pendingPermission"
@@ -7828,7 +7828,17 @@ const openModelCallStats = async (msg: any) => {
   }
 };
 
-const stopGeneration = () => {
+type StopGenerationOptions = {
+  /**
+   * 成功终止时是否需要 toast。
+   * 排队场景（时间线里的「终止」）原本毫无反馈，需要提示；输入框的停止生成已有
+   * 「[用户终止生成]」标记与按钮消失，再弹 toast 反而吵。
+   */
+  notifySuccess?: boolean;
+};
+
+const stopGeneration = (options?: StopGenerationOptions) => {
+  const notifySuccess = options?.notifySuccess ?? false;
   // 用户主动叫停：此时排队中的快捷提问必须一并作废。否则取消完成后会话锁释放，
   // watch 会把刚才排队的提问发出去——用户明明按了停止，系统却反向发出一条新提问。
   dropPendingQuickSend();
@@ -7838,9 +7848,18 @@ const stopGeneration = () => {
     void cancelConversationRun(conversationId.value, {
       traceId: lastMsg?.trace_id,
       headers: embedAuthHeaders(),
-    }).finally(() => {
-      void refreshCurrentRunStatus();
-    });
+    })
+      .then((cancelled) => {
+        if (cancelled) {
+          if (notifySuccess) showToast("已终止当前运行并释放会话锁", "success");
+          return;
+        }
+        // 未确认释放始终要提醒：否则用户以为已释放，实际会话锁可能还占着
+        showToast("已停止本地生成，但服务端未确认释放结果", "warning");
+      })
+      .finally(() => {
+        void refreshCurrentRunStatus();
+      });
   }
   if (abortController) {
     abortController.abort();

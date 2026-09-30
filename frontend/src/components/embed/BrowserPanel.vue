@@ -45,8 +45,12 @@
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                  <div id="browser-close-session-title" class="text-sm font-bold text-gray-900 dark:text-gray-100">结束浏览器会话？</div>
-                  <div class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">远程浏览器会关闭，Profile 和 Cookie 会保留，下次可以重新打开。</div>
+                  <div id="browser-close-session-title" class="text-sm font-bold text-gray-900 dark:text-gray-100">{{ closeSessionIntent === 'destroy' ? '结束会话并清除登录数据？' : '结束浏览器会话？' }}</div>
+                  <div class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                    {{ closeSessionIntent === 'destroy'
+                      ? '远程浏览器会关闭，并删除该 Profile 已保存的 Cookie 与登录状态，下次需要重新登录。'
+                      : '远程浏览器会关闭，Profile 和 Cookie 会保留，下次可以重新打开。' }}
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -68,7 +72,10 @@
                 </button>
                 <button
                   type="button"
-                  class="rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/70"
+                  class="rounded-md px-2.5 py-1.5 text-xs font-semibold"
+                  :class="closeSessionIntent === 'destroy'
+                    ? 'bg-red-600 text-white hover:bg-red-700'
+                    : 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/70'"
                   title="关闭浏览器并彻底删除存储的 Cookie 与登录状态"
                   @click="confirmCloseSession(true)"
                 >
@@ -76,7 +83,10 @@
                 </button>
                 <button
                   type="button"
-                  class="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+                  class="rounded-md px-3 py-1.5 text-xs font-semibold"
+                  :class="closeSessionIntent === 'keep'
+                    ? 'bg-red-600 text-white hover:bg-red-700'
+                    : 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/70'"
                   @click="confirmCloseSession(false)"
                 >
                   仅结束会话
@@ -115,15 +125,6 @@
             <div class="flex items-center gap-1.5">
               <span v-if="pinned && !isMobile" class="hidden rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300 sm:inline-flex">已钉住</span>
               <button
-                v-if="sessionId"
-                type="button"
-                class="rounded-md px-1.5 py-1 text-[10px] font-semibold text-gray-500 hover:bg-red-50 hover:text-red-600 dark:text-gray-400 dark:hover:bg-red-950/30 dark:hover:text-red-300"
-                title="结束当前浏览器会话（保留 Profile 和 Cookie）"
-                @click="showCloseSessionConfirm = true"
-              >
-                结束会话
-              </button>
-              <button
                 v-if="!isMobile"
                 type="button"
                 class="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-blue-600 dark:hover:bg-gray-800 dark:hover:text-blue-300"
@@ -148,7 +149,56 @@
                 <option value="guarded">安全确认</option>
                 <option value="autopilot">自动执行</option>
               </select>
-              <button class="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800" title="关闭浏览器" @click="emit('close')">×</button>
+              <!-- 关闭面板 + 二级菜单：销毁类动作收进菜单，避免与"仅关闭"混淆 -->
+              <div class="relative flex items-center">
+                <button
+                  class="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
+                  title="关闭面板（会话继续运行，可随时再打开）"
+                  aria-label="关闭浏览器面板"
+                  @click="closeMenuOpen = false; emit('close')"
+                >
+                  ×
+                </button>
+                <button
+                  v-if="sessionId"
+                  type="button"
+                  class="rounded-md px-0.5 py-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
+                  title="更多关闭选项"
+                  aria-haspopup="menu"
+                  :aria-expanded="closeMenuOpen"
+                  @click="closeMenuOpen = !closeMenuOpen"
+                >
+                  <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                <div v-if="closeMenuOpen" class="fixed inset-0 z-[240]" @click="closeMenuOpen = false" />
+                <div
+                  v-if="closeMenuOpen && sessionId"
+                  role="menu"
+                  class="absolute right-0 top-full z-[250] mt-1 w-60 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-900"
+                >
+                  <p class="px-3 py-1.5 text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">
+                    关闭 × 只是隐藏面板，会话继续运行；下面的操作会真正销毁会话
+                  </p>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                    @click="openCloseSessionConfirm('keep')"
+                  >
+                    <span aria-hidden="true">🚪</span>结束会话（保留登录）
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold text-rose-600 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                    @click="openCloseSessionConfirm('destroy')"
+                  >
+                    <span aria-hidden="true">🗑️</span>结束会话并清除登录数据
+                  </button>
+                </div>
+              </div>
             </div>
           </header>
 
@@ -717,6 +767,111 @@
                 @pointerup="handleImagePointerUp"
                 @pointercancel="handleImagePointerCancel"
               />
+              <!-- AI 验证码解算 HUD：贴在截图画面上（不拦截操作）；失败时转红并提示人工接手 -->
+              <div
+                v-if="isCaptchaAction"
+                class="pointer-events-none absolute inset-0 z-20 overflow-hidden rounded"
+                role="status"
+                aria-live="polite"
+              >
+                <div v-if="isSolvingCaptcha" class="captcha-solve-ring absolute inset-0 rounded" />
+                <div v-else-if="captchaAwaitingHuman" class="absolute inset-0 rounded ring-2 ring-inset ring-amber-400/80" />
+                <div v-else class="absolute inset-0 rounded ring-2 ring-inset ring-rose-500/80" />
+                <div v-if="isSolvingCaptcha" class="captcha-solve-scanline absolute inset-x-0 top-0 h-1/4" />
+                <div
+                  class="absolute left-3 top-3 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-lg backdrop-blur-sm"
+                  :class="isSolvingCaptcha ? 'bg-indigo-600/90' : (captchaAwaitingHuman ? 'bg-amber-600/90' : 'bg-rose-600/90')"
+                >
+                  <span class="relative flex h-2 w-2">
+                    <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/80" />
+                    <span class="relative inline-flex h-2 w-2 rounded-full bg-white" />
+                  </span>
+                  <span>{{ isSolvingCaptcha ? '🛡️ AI 正在识别验证码' : (captchaAwaitingHuman ? '🙋 请人工完成验证' : '⚠️ AI 未能完成验证码') }}</span>
+                  <span
+                    v-if="captchaAttemptLabel"
+                    class="rounded bg-white/25 px-1.5 py-0.5 font-mono text-[10px] tracking-wide"
+                  >尝试 {{ captchaAttemptLabel }}</span>
+                  <span
+                    v-if="isSolvingCaptcha"
+                    class="rounded bg-white/20 px-1.5 py-0.5 font-mono text-[10px] tracking-wide"
+                  >已用时 {{ captchaElapsedSeconds }}s</span>
+                </div>
+                <div
+                  class="absolute bottom-3 left-1/2 max-w-[85%] -translate-x-1/2 truncate rounded-full px-3 py-1 text-[11px] font-medium text-white shadow-lg backdrop-blur-sm"
+                  :class="isSolvingCaptcha ? 'bg-slate-900/80' : (captchaAwaitingHuman ? 'bg-amber-950/85' : 'bg-rose-950/85')"
+                >
+                  {{ currentAiAction?.detail || (isSolvingCaptcha ? '正在分析验证码画面…' : '请人工完成验证') }}
+                </div>
+              </div>
+              <!-- AI 解算计划与轨迹回放：目标准星 + 需拖动距离 + 实际划过的路径 -->
+              <template v-if="captchaPlanVisible">
+                <svg class="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <line
+                    v-if="captchaSliderPct && captchaTargetPct"
+                    :x1="captchaSliderPct.x"
+                    :y1="captchaSliderPct.y"
+                    :x2="captchaTargetPct.x"
+                    :y2="captchaTargetPct.y"
+                    stroke="#f97316"
+                    stroke-width="2"
+                    stroke-dasharray="6 4"
+                    vector-effect="non-scaling-stroke"
+                  />
+                  <polyline
+                    v-if="captchaTrailPath"
+                    :points="captchaTrailPath"
+                    fill="none"
+                    stroke="#a855f7"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    vector-effect="non-scaling-stroke"
+                  />
+                </svg>
+                <span
+                  v-if="captchaSliderPct"
+                  class="pointer-events-none absolute z-20 block h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-orange-500 bg-white/80"
+                  :style="{ left: `${captchaSliderPct.x}%`, top: `${captchaSliderPct.y}%` }"
+                />
+                <div
+                  v-if="captchaTargetPct"
+                  class="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2"
+                  :style="{ left: `${captchaTargetPct.x}%`, top: `${captchaTargetPct.y}%` }"
+                >
+                  <span class="block h-6 w-6 rounded-full border-2 border-rose-500 shadow-[0_0_0_2px_rgba(255,255,255,0.75)]" />
+                  <span class="absolute left-1/2 top-1/2 block h-6 w-px -translate-x-1/2 -translate-y-1/2 bg-rose-500/80" />
+                  <span class="absolute left-1/2 top-1/2 block h-px w-6 -translate-x-1/2 -translate-y-1/2 bg-rose-500/80" />
+                  <span class="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-rose-600 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white shadow">目标</span>
+                </div>
+                <span
+                  v-if="captchaDistancePx && captchaSliderPct && captchaTargetPct"
+                  class="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded bg-orange-600 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white shadow"
+                  :style="{ left: `${(captchaSliderPct.x + captchaTargetPct.x) / 2}%`, top: `${Math.min(captchaSliderPct.y, captchaTargetPct.y) - 4}%` }"
+                >需拖动 {{ captchaDistancePx }}px</span>
+              </template>
+              <!-- AI 失败提示卡片：明确告知需要人工接手，可手动关闭以便继续操作 -->
+              <div
+                v-if="captchaFailureCardVisible"
+                class="pointer-events-auto absolute left-1/2 top-1/2 z-30 w-[min(92%,420px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-rose-300 bg-white/95 p-3.5 shadow-2xl backdrop-blur-sm dark:border-rose-800 dark:bg-slate-900/95"
+                role="alert"
+              >
+                <div class="flex items-start gap-2.5">
+                  <span class="text-lg leading-none">⚠️</span>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs font-bold text-rose-700 dark:text-rose-300">AI 无法完成验证码，请人工处理</p>
+                    <p class="mt-1 text-[11px] leading-relaxed text-gray-600 dark:text-gray-300">{{ captchaFailureReason }}</p>
+                    <p class="mt-1.5 text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">
+                      直接在上方画面拖动滑块即可，拖动时会显示轨迹与位移；松手后会自动确认验证结果，若画面迟迟未更新可点「⟳ 刷新画面」。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-slate-800 dark:hover:text-gray-200"
+                    title="关闭提示"
+                    @click.stop="captchaFailureDismissed = true"
+                  >✕</button>
+                </div>
+              </div>
               <!-- 框选模式选区矩形与尺寸浮标 -->
               <div
                 v-if="activeCropRect"
@@ -740,6 +895,62 @@
                 class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-blue-500 bg-blue-400/40 shadow-sm animate-ping"
                 :style="{ left: `${r.x}%`, top: `${r.y}%`, width: '26px', height: '26px' }"
               />
+              <!-- 人工拖拽可视化：轨迹折线 + 起终点标记 + 实时位移 + 十字辅助线（截图是静态的，本地反馈很关键） -->
+              <svg
+                v-if="dragTrailPath"
+                class="pointer-events-none absolute inset-0 z-20 h-full w-full"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+              >
+                <polyline
+                  :points="dragTrailPath"
+                  fill="none"
+                  stroke="#059669"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  vector-effect="non-scaling-stroke"
+                  :opacity="pointerDragging ? 1 : 0.5"
+                />
+              </svg>
+              <template v-if="dragOverlayVisible">
+                <!-- 十字辅助参考线：滑块多为水平拖动，水平线用于判断是否与缺口齐平 -->
+                <div
+                  v-if="dragFocusPoint"
+                  class="pointer-events-none absolute inset-x-0 z-10 border-t border-dashed border-emerald-600/70"
+                  :style="{ top: `${dragFocusPoint.y}%` }"
+                />
+                <div
+                  v-if="dragFocusPoint"
+                  class="pointer-events-none absolute inset-y-0 z-10 border-l border-dashed border-emerald-600/70"
+                  :style="{ left: `${dragFocusPoint.x}%` }"
+                />
+                <!-- 起点标记 -->
+                <span
+                  v-if="dragStartPoint"
+                  class="pointer-events-none absolute z-20 block h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-600 bg-white/70"
+                  :style="{ left: `${dragStartPoint.x}%`, top: `${dragStartPoint.y}%` }"
+                />
+                <!-- 当前点/终点光标 + 实时位移读数（Δ 为远程页面像素，与滑块位移同尺度） -->
+                <div
+                  v-if="dragFocusPoint"
+                  class="pointer-events-none absolute z-20 -translate-y-1/2"
+                  :style="{ left: `${dragFocusPoint.x}%`, top: `${dragFocusPoint.y}%` }"
+                >
+                  <span class="absolute -ml-[5px] -mt-[5px] block h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-600 shadow" />
+                  <span class="ml-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-emerald-700/80 bg-slate-900/90 px-1.5 py-0.5 font-mono text-[10px] text-emerald-200 shadow-md backdrop-blur-sm">
+                    <span class="font-bold">Δx {{ dragDelta ? (dragDelta.dx >= 0 ? '+' : '') + dragDelta.dx : 0 }}</span>
+                    <span class="text-slate-400">Δy {{ dragDelta ? (dragDelta.dy >= 0 ? '+' : '') + dragDelta.dy : 0 }}</span>
+                    <span class="text-slate-500">|</span>
+                    <span class="text-cyan-300">{{ dragDelta ? dragDelta.distance : 0 }}px</span>
+                  </span>
+                </div>
+                <!-- 底部状态条：拖拽中 / 已发送 + 位移 -->
+                <span class="pointer-events-none absolute bottom-3 left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-emerald-700/70 bg-slate-900/90 px-2 py-0.5 font-mono text-[10px] text-emerald-200 shadow-md backdrop-blur-sm">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  {{ pointerDragging ? '拖拽中' : '已发送拖拽' }} · 位移 {{ dragDelta ? dragDelta.distance : 0 }}px
+                </span>
+              </template>
               <!-- 已选定元素高亮框 (Selected Element: 仅保留轻量选区边框，不遮挡画面) -->
               <div
                 v-if="selectedElement && selectedElementStyle && !cropMode && !pointerDragging"
@@ -1102,6 +1313,15 @@ const emit = defineEmits<{
 
 const showSafetyNotice = ref(props.approvalMode === 'guarded');
 const showCloseSessionConfirm = ref(false);
+// 关闭按钮上的下拉菜单：把"销毁会话"这类破坏性动作收进二级入口
+const closeMenuOpen = ref(false);
+// 确认弹窗的意图：keep = 保留 Profile/Cookie，destroy = 一并清除登录数据
+const closeSessionIntent = ref<'keep' | 'destroy'>('keep');
+const openCloseSessionConfirm = (intent: 'keep' | 'destroy') => {
+  closeSessionIntent.value = intent;
+  closeMenuOpen.value = false;
+  showCloseSessionConfirm.value = true;
+};
 
 const socket = ref<WebSocket | null>(null);
 const connected = ref(false);
@@ -1110,7 +1330,7 @@ const tabs = ref<BrowserTab[]>([]);
 const errorMessage = ref('');
 const address = ref('');
 const manualText = ref('');
-type AiAction = { action: string; detail: string };
+type AiAction = { action: string; detail: string; extra?: Record<string, any> | null };
 const currentAiAction = ref<AiAction | null>(null);
 
 const AI_ACTION_CONFIG: Record<string, { icon: string; label: string; color: string }> = {
@@ -1129,6 +1349,7 @@ const AI_ACTION_CONFIG: Record<string, { icon: string; label: string; color: str
   extracting_table: { icon: '📊', label: 'AI 正在提取表格数据', color: 'text-emerald-600 dark:text-emerald-400' },
   executing_js: { icon: '⚡', label: 'AI 正在执行页面脚本', color: 'text-purple-600 dark:text-purple-400' },
   solving_captcha: { icon: '🛡️', label: 'AI 正在尝试自动识别验证码', color: 'text-indigo-600 dark:text-indigo-400' },
+  captcha_human_required: { icon: '⚠️', label: 'AI 未能完成验证码，请人工处理', color: 'text-rose-600 dark:text-rose-400' },
 };
 
 const aiActionInfo = computed(() => {
@@ -1138,6 +1359,137 @@ const aiActionInfo = computed(() => {
     label: 'AI 正在操作中',
     color: 'text-blue-600 dark:text-blue-400',
   };
+});
+
+// 验证码自动解算期间在截图画面上叠加可见效果，避免"只有顶部一行小字"的弱反馈
+const isSolvingCaptcha = computed(() => currentAiAction.value?.action === 'solving_captcha');
+const captchaFailed = computed(() => currentAiAction.value?.action === 'captcha_human_required');
+const isCaptchaAction = computed(() => isSolvingCaptcha.value || captchaFailed.value);
+
+const captchaAttemptLabel = computed(() => {
+  const extra = currentAiAction.value?.extra as Record<string, any> | undefined | null;
+  if (extra?.attempt && extra?.max_attempts) {
+    return `${extra.attempt}/${extra.max_attempts}`;
+  }
+  const detail = currentAiAction.value?.detail || '';
+  const match = detail.match(/第\s*(\d+)\s*\/\s*(\d+)\s*次/);
+  return match ? `${match[1]}/${match[2]}` : '';
+});
+
+// --- 解算过程可视化：把后端广播的几何信息换算成画面百分比坐标 ---
+const captchaProgress = computed(
+  () => (currentAiAction.value?.extra || null) as Record<string, any> | null
+);
+const captchaViewportSize = computed(() => ({
+  width: snapshot.value?.viewport_width || imageRef.value?.naturalWidth || 1280,
+  height: snapshot.value?.viewport_height || imageRef.value?.naturalHeight || 800,
+}));
+const toCaptchaPct = (x?: number | null, y?: number | null) => {
+  if (x === null || x === undefined || y === null || y === undefined) return null;
+  const { width, height } = captchaViewportSize.value;
+  if (!width || !height) return null;
+  return { x: (Number(x) / width) * 100, y: (Number(y) / height) * 100 };
+};
+const captchaSliderPct = computed(() =>
+  toCaptchaPct(captchaProgress.value?.slider_x, captchaProgress.value?.slider_y)
+);
+const captchaTargetPct = computed(() =>
+  toCaptchaPct(captchaProgress.value?.target_x, captchaProgress.value?.target_y)
+);
+const captchaDistancePx = computed(() => {
+  const value = captchaProgress.value?.distance_px;
+  return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null;
+});
+const captchaTrajectoryPct = computed(() => {
+  const points = captchaProgress.value?.trajectory;
+  if (!Array.isArray(points)) return [] as Array<{ x: number; y: number }>;
+  return points
+    .map((point: any) => toCaptchaPct(point?.x, point?.y))
+    .filter((point): point is { x: number; y: number } => Boolean(point));
+});
+const captchaTrailReveal = ref(0);
+const captchaTrailPath = computed(() =>
+  captchaTrajectoryPct.value
+    .slice(0, captchaTrailReveal.value)
+    .map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+    .join(' ')
+);
+const captchaPlanVisible = computed(
+  () =>
+    isSolvingCaptcha.value &&
+    Boolean(captchaTargetPct.value || captchaSliderPct.value || captchaTrailPath.value)
+);
+
+// 解算计时：卡在"第 1/3 次"不动时，用户能分辨它还在思考还是已经卡死
+const captchaElapsedSeconds = ref(0);
+let captchaElapsedTimer: ReturnType<typeof setInterval> | null = null;
+watch(isSolvingCaptcha, (active) => {
+  if (captchaElapsedTimer) {
+    clearInterval(captchaElapsedTimer);
+    captchaElapsedTimer = null;
+  }
+  captchaElapsedSeconds.value = 0;
+  if (active) {
+    captchaElapsedTimer = setInterval(() => {
+      captchaElapsedSeconds.value += 1;
+    }, 1000);
+  }
+});
+
+// 轨迹回放：拿到完整轨迹后逐点显现，让用户看清 AI 划到哪、停在哪
+let captchaReplayTimer: ReturnType<typeof setInterval> | null = null;
+watch(
+  () => captchaTrajectoryPct.value.length,
+  (length) => {
+    if (captchaReplayTimer) {
+      clearInterval(captchaReplayTimer);
+      captchaReplayTimer = null;
+    }
+    if (!length) {
+      captchaTrailReveal.value = 0;
+      return;
+    }
+    const step = Math.max(1, Math.ceil(length / 24));
+    captchaTrailReveal.value = 0;
+    captchaReplayTimer = setInterval(() => {
+      captchaTrailReveal.value = Math.min(length, captchaTrailReveal.value + step);
+      if (captchaTrailReveal.value >= length && captchaReplayTimer) {
+        clearInterval(captchaReplayTimer);
+        captchaReplayTimer = null;
+      }
+    }, 40);
+  }
+);
+
+// 失败提示卡片：默认弹出，用户可手动关闭以便继续人工操作
+const captchaFailureDismissed = ref(false);
+watch(captchaFailed, (failed) => {
+  if (failed) captchaFailureDismissed.value = false;
+});
+const captchaFailureCardVisible = computed(
+  () => captchaFailed.value && !captchaFailureDismissed.value
+);
+// 用户已开始人工处理：红色警示收起，但保留中性的"请人工完成验证"状态提示
+const captchaAwaitingHuman = computed(() => captchaFailed.value && captchaFailureDismissed.value);
+const captchaFailureReason = computed(
+  () => currentAiAction.value?.detail || '请直接在上方画面拖动滑块完成验证'
+);
+
+/**
+ * 验证码已不再是当前状态（人工完成 / 页面自动通过 / 人工已接管）时收尾：
+ * 清掉红色警示与 HUD，避免"AI 已放弃"的提示一直挂在画面上。
+ */
+const clearResolvedCaptchaState = () => {
+  captchaDetected.value = false;
+  captchaFailureDismissed.value = false;
+  if (isCaptchaAction.value) {
+    currentAiAction.value = null;
+  }
+};
+
+onUnmounted(() => {
+  if (captchaElapsedTimer) clearInterval(captchaElapsedTimer);
+  if (captchaReplayTimer) clearInterval(captchaReplayTimer);
 });
 
 type HumanAction = { action: string; detail: string };
@@ -1165,6 +1517,10 @@ const humanActionInfo = computed(() => {
 let humanActionTimer: ReturnType<typeof setTimeout> | null = null;
 const setHumanAction = (action: string, detail: string, keepDuration = 2500) => {
   currentHumanAction.value = { action, detail };
+  // 用户已经开始人工处理验证：收起"AI 无法完成"的警示卡片，不要一直挡着画面
+  if (captchaFailed.value) {
+    captchaFailureDismissed.value = true;
+  }
   if (humanActionTimer) clearTimeout(humanActionTimer);
   if (keepDuration > 0) {
     humanActionTimer = setTimeout(() => {
@@ -1539,6 +1895,53 @@ const addRipple = (event: MouseEvent | PointerEvent) => {
   }, 600);
 };
 
+// 人工拖拽可视化：截图是静态画面，拖动期间不会有新帧，
+// 缺少本地轨迹/位移反馈时用户只能凭感觉估位置。
+type DragTrailPoint = { x: number; y: number; remoteX: number; remoteY: number };
+const dragTrail = ref<DragTrailPoint[]>([]);
+const dragStartPoint = ref<DragTrailPoint | null>(null);
+const dragCurrentPoint = ref<DragTrailPoint | null>(null);
+const dragFinishedPoint = ref<DragTrailPoint | null>(null);
+let dragTrailTimer: ReturnType<typeof setTimeout> | null = null;
+
+const dragPointFromEvent = (event: MouseEvent | PointerEvent): DragTrailPoint | null => {
+  const image = event.currentTarget as HTMLImageElement;
+  const rect = image?.getBoundingClientRect?.();
+  if (!rect || !rect.width || !rect.height) return null;
+  const x = ((event.clientX - rect.left) / rect.width) * 100;
+  const y = ((event.clientY - rect.top) / rect.height) * 100;
+  const remoteW = image.naturalWidth || 1280;
+  const remoteH = image.naturalHeight || 800;
+  return { x, y, remoteX: (x / 100) * remoteW, remoteY: (y / 100) * remoteH };
+};
+
+const dragTrailPath = computed(() =>
+  dragTrail.value.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')
+);
+const dragFocusPoint = computed(() => dragCurrentPoint.value || dragFinishedPoint.value);
+const dragDelta = computed(() => {
+  const start = dragStartPoint.value;
+  const current = dragFocusPoint.value;
+  if (!start || !current) return null;
+  const dx = Math.round(current.remoteX - start.remoteX);
+  const dy = Math.round(current.remoteY - start.remoteY);
+  return { dx, dy, distance: Math.round(Math.hypot(dx, dy)) };
+});
+const dragOverlayVisible = computed(
+  () => Boolean(dragStartPoint.value) && (dragTrail.value.length > 1 || Boolean(dragFinishedPoint.value))
+);
+
+const clearDragTrail = () => {
+  if (dragTrailTimer) {
+    clearTimeout(dragTrailTimer);
+    dragTrailTimer = null;
+  }
+  dragTrail.value = [];
+  dragStartPoint.value = null;
+  dragCurrentPoint.value = null;
+  dragFinishedPoint.value = null;
+};
+
 const handleImagePointerLeave = () => {
   cursorCoords.value = null;
 };
@@ -1855,10 +2258,14 @@ const connect = async () => {
             startPolling();
           }
         }
-      } else if (controlOwner.value === 'human') {
-        stopPolling();
-      } else if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
-        startPolling();
+      } else {
+        // 验证码已消失（人工完成或页面自动通过）：收掉红色提示与 HUD
+        clearResolvedCaptchaState();
+        if (controlOwner.value === 'human') {
+          stopPolling();
+        } else if (!interactionInProgress.value && !autoRefreshPaused.value && !pollTimer) {
+          startPolling();
+        }
       }
     } else if (payload.type === 'focus') {
       showManualInput.value = Boolean(payload.focused_input);
@@ -1871,12 +2278,19 @@ const connect = async () => {
       }
     } else if (payload.type === 'ai_action') {
       if (payload.action) {
-        currentAiAction.value = { action: payload.action, detail: payload.detail || '' };
+        currentAiAction.value = {
+          action: payload.action,
+          detail: payload.detail || '',
+          extra: payload.extra || null,
+        };
       } else {
         currentAiAction.value = null;
       }
     } else if (payload.type === 'snapshot' && payload.snapshot) {
-      currentAiAction.value = null;
+      // 验证码解算进度与"请人工处理"提示不能被普通快照刷新清掉
+      if (!isCaptchaAction.value) {
+        currentAiAction.value = null;
+      }
       snapshotRequestInFlight.value = false;
       isSyncing.value = false;
       if (syncingTimer) {
@@ -1885,13 +2299,20 @@ const connect = async () => {
       }
       const previousUrl = snapshot.value?.url;
       snapshot.value = payload.snapshot;
+      // 新画面已到达：人工拖拽的本地轨迹覆盖层到此完成使命
+      clearDragTrail();
       address.value = payload.snapshot.url || address.value;
       if (payload.snapshot.page_state === 'captcha') {
         captchaDetected.value = true;
         // 控制权归人工时才暂停刷新；AI 自动解算期间保持刷新以展示进展
         if (controlOwner.value === 'human') {
           stopPolling();
+          // 人工接管中：验证码还在就继续追帧，用户拖完能自动看到结果
+          startCaptchaResultProbe();
         }
+      } else if (captchaDetected.value || isCaptchaAction.value) {
+        // 页面已恢复（例如人工拖动滑块通过了验证）：收掉红色提示与 HUD
+        clearResolvedCaptchaState();
       }
       if (currentHumanAction.value) {
         currentHumanAction.value.detail = '✅ 操作已生效';
@@ -1949,6 +2370,57 @@ const requestSnapshot = () => {
   }
 };
 
+// 人工拖完滑块后，验证码往往还要几百毫秒才完成校验：后端在 mouse_up 后立刻回推的那一帧
+// 通常仍是"未通过"的画面，而人工接管期间轮询是停的，于是用户只能手动点刷新。
+// 这里在人工接管期间自动追几帧结果，验证一通过就由 clearResolvedCaptchaState 收尾。
+const CAPTCHA_RESULT_PROBE_INTERVAL_MS = 1200;
+const CAPTCHA_RESULT_PROBE_MAX_ATTEMPTS = 5;
+let captchaResultProbeTimer: ReturnType<typeof setTimeout> | null = null;
+let captchaResultProbeAttempts = 0;
+
+const stopCaptchaResultProbe = () => {
+  if (captchaResultProbeTimer) {
+    clearTimeout(captchaResultProbeTimer);
+    captchaResultProbeTimer = null;
+  }
+  captchaResultProbeAttempts = 0;
+};
+
+const startCaptchaResultProbe = () => {
+  // 仍在追帧中就不重复启动，避免每来一张快照都把次数重置成"无限追帧"
+  if (captchaResultProbeTimer) return;
+  if (!connected.value || !captchaDetected.value || controlOwner.value !== 'human') return;
+  const tick = () => {
+    captchaResultProbeTimer = null;
+    if (!connected.value || !captchaDetected.value || controlOwner.value !== 'human') {
+      stopCaptchaResultProbe();
+      return;
+    }
+    if (interactionInProgress.value) {
+      // 用户正在操作：让位给实际动作，稍后再确认结果
+      captchaResultProbeTimer = setTimeout(tick, CAPTCHA_RESULT_PROBE_INTERVAL_MS);
+      return;
+    }
+    if (captchaResultProbeAttempts >= CAPTCHA_RESULT_PROBE_MAX_ATTEMPTS) {
+      stopCaptchaResultProbe();
+      return;
+    }
+    captchaResultProbeAttempts += 1;
+    requestSnapshot();
+    captchaResultProbeTimer = setTimeout(tick, CAPTCHA_RESULT_PROBE_INTERVAL_MS);
+  };
+  captchaResultProbeTimer = setTimeout(tick, CAPTCHA_RESULT_PROBE_INTERVAL_MS);
+};
+
+const restartCaptchaResultProbe = () => {
+  stopCaptchaResultProbe();
+  startCaptchaResultProbe();
+};
+
+onUnmounted(() => {
+  stopCaptchaResultProbe();
+});
+
 const startPolling = () => {
   stopPolling();
   if (controlOwner.value === 'human' || autoRefreshPaused.value || interactionInProgress.value || captchaDetected.value || !connected.value) return;
@@ -1977,6 +2449,8 @@ const finishInteraction = () => {
   stopInteractionFinishTimer();
   if (!interactionInProgress.value) return;
   interactionInProgress.value = false;
+  // 人工动作已送达：立刻开始确认验证结果，不必等用户手动点刷新
+  restartCaptchaResultProbe();
 };
 
 const scheduleInteractionFinish = () => {
@@ -2104,6 +2578,13 @@ const handleImagePointerDown = (event: PointerEvent) => {
   lastPointerPoint.value = point;
   pointerDragging.value = false;
   lastPointerMoveAt = 0;
+  clearDragTrail();
+  const trailStart = dragPointFromEvent(event);
+  if (trailStart) {
+    dragStartPoint.value = trailStart;
+    dragCurrentPoint.value = trailStart;
+    dragTrail.value = [trailStart];
+  }
 };
 
 const handleImagePointerMove = (event: PointerEvent) => {
@@ -2157,6 +2638,14 @@ const handleImagePointerMove = (event: PointerEvent) => {
   const now = Date.now();
   if (now - lastPointerMoveAt < 16) return;
   lastPointerMoveAt = now;
+  const trailPoint = dragPointFromEvent(event);
+  if (trailPoint) {
+    dragCurrentPoint.value = trailPoint;
+    // 上限保护：长时间拖拽不至于让轨迹点无限增长
+    if (dragTrail.value.length < 600) {
+      dragTrail.value = [...dragTrail.value, trailPoint];
+    }
+  }
   send({ type: 'mouse_move', ...point });
 };
 
@@ -2205,6 +2694,15 @@ const handleImagePointerUp = (event: PointerEvent) => {
     setHumanAction('drag', `拖拽至 (${Math.round(point.x)}, ${Math.round(point.y)})`);
     send({ type: 'mouse_move', ...point });
     send({ type: 'mouse_up', ...point });
+    // 松手后保留轨迹与位移读数，供用户对照随后返回的新画面
+    const trailEnd = dragPointFromEvent(event);
+    if (trailEnd) {
+      dragCurrentPoint.value = trailEnd;
+      dragFinishedPoint.value = trailEnd;
+      dragTrail.value = [...dragTrail.value, trailEnd];
+    }
+    if (dragTrailTimer) clearTimeout(dragTrailTimer);
+    dragTrailTimer = setTimeout(clearDragTrail, 4000);
     remoteFocusMessage.value = '人工拖拽已发送到远程页面';
     finishInteraction();
   }
@@ -2228,6 +2726,7 @@ const handleImagePointerCancel = (event: PointerEvent) => {
   if (pointerDragging.value) {
     const point = lastPointerPoint.value || pointerDownPoint.value;
     send({ type: 'mouse_up', ...point });
+    dragFinishedPoint.value = dragCurrentPoint.value;
   }
   finishInteraction();
   releasePointerCapture(event);
@@ -2574,5 +3073,46 @@ onUnmounted(() => {
 .fade-capsule-leave-to {
   opacity: 0;
   transform: translateY(4px) scale(0.95);
+}
+
+/* AI 验证码解算：截图画面上的呼吸描边与循环扫描光带 */
+.captcha-solve-ring {
+  box-shadow: inset 0 0 0 2px rgba(99, 102, 241, 0.5);
+  animation: captcha-ring-pulse 1.6s ease-in-out infinite;
+}
+@keyframes captcha-ring-pulse {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 2px rgba(99, 102, 241, 0.4);
+  }
+  50% {
+    box-shadow: inset 0 0 0 3px rgba(99, 102, 241, 0.95);
+  }
+}
+.captcha-solve-scanline {
+  background: linear-gradient(
+    180deg,
+    rgba(99, 102, 241, 0) 0%,
+    rgba(99, 102, 241, 0.16) 45%,
+    rgba(56, 189, 248, 0.3) 55%,
+    rgba(99, 102, 241, 0) 100%
+  );
+  animation: captcha-scan 2.2s linear infinite;
+}
+@keyframes captcha-scan {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(400%);
+    opacity: 0;
+  }
 }
 </style>

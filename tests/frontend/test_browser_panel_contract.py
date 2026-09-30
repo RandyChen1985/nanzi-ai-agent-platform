@@ -52,6 +52,31 @@ def test_browser_panel_explains_screenshot_surface_and_hides_internal_targets():
     assert "viewportRef.value?.focus" in source
 
 
+def test_browser_panel_shows_captcha_solving_hud_on_screenshot():
+    """AI 解算验证码时必须在截图画面上有可见效果，而不只是顶部一行小字。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "isSolvingCaptcha" in source
+    assert "captcha-solve-scanline" in source
+    assert "captcha-solve-ring" in source
+    assert "AI 正在识别验证码" in source
+    assert "@keyframes captcha-scan" in source
+    # 浮层不得拦截用户操作，用户要能随时人工接管
+    assert "pointer-events-none absolute inset-0 z-20" in source
+
+
+def test_browser_panel_shows_local_drag_trail_for_manual_drag():
+    """人工拖拽必须具备本地轨迹与位移反馈：截图是静态的，否则用户只能凭感觉估位置。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "dragTrailPath" in source
+    assert "dragDelta" in source
+    assert "Δx" in source
+    assert "clearDragTrail" in source
+    # 轨迹层同样不得拦截操作
+    assert "pointer-events-none absolute inset-0 z-20 h-full w-full" in source
+
+
 def test_browser_panel_shows_red_notice_on_screenshot_surface():
     source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
     assert "当前为远程静态截图，非实时网页（操作存在延迟）· 严禁用于任何违法违规行为" in source
@@ -383,3 +408,74 @@ def test_browser_panel_auth_credentials_contract():
     assert "!hasValidAuthCredentials()" in chat_source
     assert "browserEnvironmentError.value = detail ||" in chat_source
 
+
+
+def test_browser_panel_renders_captcha_plan_replay_and_failure_notice():
+    """AI 解算过程必须可视化：识别到的目标/距离/轨迹，以及失败后的人工接手提示。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    # AI 的"解算计划"：缺口目标点 + 滑块起点 + 需拖动距离
+    assert "captchaTargetPct" in source
+    assert "captchaSliderPct" in source
+    assert "需拖动" in source
+    # AI 实际轨迹回放
+    assert "captchaTrailReveal" in source
+    assert "captchaTrailPath" in source
+    # 解算计时：避免"卡着不动"时无从判断
+    assert "已用时" in source
+    # 失败后的人工接手提示：卡片 + HUD 转红
+    assert "captchaFailed" in source
+    assert "AI 无法完成验证码" in source
+    assert "captcha_human_required" in source
+    # 解算进度不能被普通快照刷新清掉
+    assert "isCaptchaAction" in source
+
+
+def test_browser_panel_puts_end_session_into_close_menu():
+    """结束会话入口收进 ✕ 下拉菜单，并讲清"关闭面板"与"销毁会话"的区别。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "closeMenuOpen" in source
+    assert "closeSessionIntent" in source
+    assert "openCloseSessionConfirm" in source
+    assert "结束会话（保留登录）" in source
+    assert "结束会话并清除登录数据" in source
+    # 单击 ✕ 依然只是关闭面板
+    assert "emit('close')" in source
+    # 必须明确提示"关闭 ≠ 结束会话"
+    assert "会话继续运行" in source
+
+
+def test_browser_panel_releases_captcha_failure_notice_after_takeover():
+    """红色「AI 无法完成验证码」提示不能在人工接管后一直挂着。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "clearResolvedCaptchaState" in source
+    # 用户一旦开始人工操作即收起警示卡片
+    assert "captchaFailureDismissed.value = true" in source
+
+
+def test_browser_panel_clears_captcha_state_when_page_recovers():
+    """页面恢复正常（page_state 不再是 captcha）时必须清掉验证码状态与红色提示。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "else if (captchaDetected.value || isCaptchaAction.value)" in source
+    assert "clearResolvedCaptchaState();" in source
+
+
+def test_browser_panel_downgrades_captcha_hud_after_human_takeover():
+    """人工接手后 HUD 不应继续是红色警示，而应退化为中性的"请人工完成验证"。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "captchaAwaitingHuman" in source
+    assert "请人工完成验证" in source
+    assert "ring-amber-400/80" in source
+
+
+def test_browser_panel_probes_captcha_result_after_human_action():
+    """人工拖完滑块后应自动追几帧结果，而不是逼用户手动刷新。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "startCaptchaResultProbe" in source
+    assert "stopCaptchaResultProbe" in source
+    assert "CAPTCHA_RESULT_PROBE_MAX_ATTEMPTS" in source
