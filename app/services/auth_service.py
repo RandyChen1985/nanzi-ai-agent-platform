@@ -382,6 +382,51 @@ class AuthService:
     def _register_ip_key(client_ip: str) -> str:
         return f"auth:register:ip:{(client_ip or 'unknown').strip()}"
 
+    # --- 忘记密码（邮件找回）---
+    # 与注册/登录限流同策略：Redis 单条命令异常时 fail-open（限流组件故障不能把
+    # 「找回密码」整体关掉）。Redis **整体**不可用是另一回事：那种情况下根本发不出
+    # 可核销的链接，由端点直接 503（fail-closed）。
+    #
+    # 三个维度：
+    #   ① 同邮箱 60 秒冷却 —— 挡住连点，也让「刚被申请过」无法被用来探测邮箱是否存在；
+    #   ② 同邮箱 3 次/小时 —— 挡住对单个邮箱的邮件轰炸；
+    #   ③ 同来源 5 次/小时 —— 挡住换邮箱刷量（来源可信度判定复用注册那一套）。
+    PWD_RESET_TTL_SECONDS = 1800        # 链接有效期 30 分钟
+    PWD_RESET_COOLDOWN_SECONDS = 60     # 同邮箱冷却
+    PWD_RESET_EMAIL_LIMIT = 3           # 同邮箱每小时
+    PWD_RESET_SOURCE_LIMIT = 5          # 同来源每小时
+    PWD_RESET_WINDOW_SECONDS = 3600
+    PWD_RESET_PREFIX = "auth:pwdreset:"
+
+    @staticmethod
+    def pwd_reset_email_fingerprint(email: str) -> str:
+        """邮箱的定长指纹。
+
+        键名一律用指纹而不是明文邮箱：Redis 键名会出现在监控、慢日志与 KEYS 输出里，
+        用户邮箱不该被写进去。同时先 strip + lower，避免 `A@x.com` 与 `a@x.com`
+        落到两个桶而把每小时的邮件配额翻倍。
+        """
+        text = (email or "").strip().lower().encode("utf-8")
+        return hashlib.sha256(text).hexdigest()
+
+    @staticmethod
+    def pwd_reset_cooldown_key(email: str) -> str:
+        return (
+            f"{AuthService.PWD_RESET_PREFIX}cd:email:"
+            f"{AuthService.pwd_reset_email_fingerprint(email)}"
+        )
+
+    @staticmethod
+    def pwd_reset_email_count_key(email: str) -> str:
+        return (
+            f"{AuthService.PWD_RESET_PREFIX}cnt:email:"
+            f"{AuthService.pwd_reset_email_fingerprint(email)}"
+        )
+
+    @staticmethod
+    def pwd_reset_source_count_key(source: str) -> str:
+        return f"{AuthService.PWD_RESET_PREFIX}cnt:ip:{(source or 'unknown').strip()}"
+
     # ------------------------------------------------------------------ #
     # 来源地址可信度
     #

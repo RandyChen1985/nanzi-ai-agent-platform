@@ -8,6 +8,7 @@ import { renderMarkdown } from '../utils/markdown'
 import { copyToClipboard } from '../utils/clipboard'
 import { generateQRCodeDataUrl } from '../utils/qrcode'
 import { checkPasswordPolicy } from '../utils/passwordPolicy'
+import { clearUserSession } from '../utils/userSession'
 import { MENU_TREE } from '../constants/permissions'
 
 const { branding, loadBranding } = useBranding()
@@ -388,12 +389,16 @@ const handlePasswordChange = async () => {
             password: newPassword.value
         })
         if (response.data && response.data.status === 'success') {
-            showToast('密码修改成功', 'success')
+            // 后端在改密成功后会吊销该用户的**全部**会话（含当前设备）：这是「旧密码
+            // 已泄露 → 改密之后对方仍能用旧会话」这个漏洞的修复。因此这里不是
+            // 「提示一下继续用」，而必须清本地凭据并回登录页重新认证。
+            clearUserSession()
             newPassword.value = ''
             confirmPassword.value = ''
-            await fetchUserInfo()
             // 派发全局用户信息更新事件，通知全局 Top Banner 与其他视图即时刷新
             window.dispatchEvent(new CustomEvent('user-info-updated'))
+            showToast('密码已修改，请重新登录', 'success')
+            router.push('/login')
         } else {
             showToast('修改失败', 'error')
         }

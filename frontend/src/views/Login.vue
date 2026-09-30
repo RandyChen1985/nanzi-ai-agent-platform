@@ -241,6 +241,11 @@ const hideLoginApiKey = ref(false)
 // 重名均由 /api/portal/auth/register 裁决，前端不复制一套权威规则。
 // ---------------------------------------------------------------------------
 const registrationEnabled = ref(false)
+
+// 忘记密码入口。与注册入口同口径：由后端公开配置下发的 password_reset_available 控制，
+// 后端只有在「全局邮件服务可用」且「download_url_prefix 已配置」时才置为 true ——
+// 两者缺一都会让重置邮件里的链接变成点不开的地址，因此宁可整块入口不显示。
+const passwordResetAvailable = ref(false)
 const isRegisterStep = ref(false)
 const registerSuccess = ref(false)
 const registerLoading = ref(false)
@@ -508,6 +513,7 @@ const fetchPublicConfig = async () => {
             ssoEnabled.value = response.data.data?.yovole_sso_enabled === true
             hideLoginApiKey.value = response.data.data?.hide_login_apikey === true
             registrationEnabled.value = response.data.data?.user_registration_enabled === true
+            passwordResetAvailable.value = response.data.data?.password_reset_available === true
             const tz = response.data.data?.platform_timezone
             if (tz) {
                 const { setPlatformTimezone } = await import('@/utils/platformTimezone')
@@ -842,6 +848,17 @@ const handleLogin = async () => {
                     >
                         申请账号
                     </button>
+                </div>
+
+                <!-- 忘记密码入口：仅本地账号密码登录时适用（SSO 的密码不归本平台管），
+                     且由后端下发的 password_reset_available 控制显隐 -->
+                <div v-if="passwordResetAvailable && activeTab === 'password'" class="text-center pt-1">
+                    <router-link
+                        to="/reset-password"
+                        class="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+                    >
+                        忘记密码？
+                    </router-link>
                 </div>
             </form>
 

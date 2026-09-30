@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request, BackgroundTasks
 import logging
 import re
 from typing import Dict, Optional
@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.dependencies import require_api_key, is_secure_request as _is_secure_request
 from app.core.orm import get_db_session
+from app.core.redis import get_redis
 from app.services.auth_service import AuthService
 
 logger = logging.getLogger(__name__)
@@ -572,9 +573,108 @@ async def change_password(
     success = await AuthService.set_user_password(user_id, password, db=db)
     
     if success:
+        # 改密后吊销该用户全部会话：否则「旧密码已泄露 → 改密」之后，对方手里的
+        # 会话依然有效，改密等于没改。当前设备同样会被登出，这是预期行为，前端在
+        # 成功提示后清本地凭据并跳登录页。长时效 API Key 不在会话索引里，不受影响。
+        try:
+            await AuthService.revoke_sessions_for_user(user_id)
+        except Exception as exc:  # noqa: BLE001
+            # 吊销失败不能让「密码已经改成功了」变成 500 —— 密码确实改了
+            logger.warning("改密后吊销会话失败 user_id=%s: %s", user_id, exc)
         return {"status": "success", "message": "密码修改成功"}
     else:
          raise HTTPException(500, "密码修改失败")
+
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(..., description="注册时使用的邮箱")
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str = Field(..., description="重置邮件链接里的 token")
+    password: str = Field(..., min_length=8, max_length=32, description="新密码（须符合等保复杂度要求）")
+
+
+@router.post("/password-reset/request", summary="发起密码找回（发送重置邮件）")
+async def request_password_reset(
+    payload: PasswordResetRequest,
+    background_tasks: BackgroundTasks,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """未登录可用的密码找回入口。
+
+    顺序即错误优先级：可用性（邮件服务 / 对外地址）→ Redis → 限流 → 格式 → 查库 → 发信。
+    除「与提交的邮箱无关」的平台级错误外，**一律返回同一句文案**（防枚举）：
+    邮箱不存在、待审核、已禁用、成功命中、被限流，响应必须逐字节相同。
+    """
+    from app.services.password_reset_service import UNIFIED_MESSAGE, PasswordResetService
+
+    # 1-2. 功能可用性（邮件服务 + 对外地址）。该判定与提交的邮箱无关，
+    #      因此可以明确报错，不构成枚举泄露；两种原因分开是为了让管理员知道该配什么。
+    unavailable = await PasswordResetService.availability()
+    if unavailable:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=unavailable)
+
+    # 3. Redis 必须可用：发信要 fail-closed —— 不能发一封之后根本无法核销的链接
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="密码重置服务暂时不可用，请稍后重试",
+        )
+
+    # 4. 限流（排在格式校验之前，与注册端点「限流先于格式校验」的不变式一致）
+    source = AuthService.resolve_rate_limit_source(http_request)
+    target = await PasswordResetService.request_reset(db, payload.email, source, redis)
+
+    # 5. 格式校验：只取决于输入本身，因此可以明确报错而不泄露任何注册信息
+    if target is None and AuthService.normalize_email(payload.email) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱格式不正确"
+        )
+
+    # 6. token 同步签发（保证链接一定可核销），SMTP 放到响应之后：
+    #    SMTP 是同步阻塞且耗时可观的，若放在响应前，「响应快慢」就成了邮箱是否存在的
+    #    观测点。
+    if target is not None:
+        user_id, email = target
+        link = await PasswordResetService.build_link(user_id, redis)
+        if link:
+            subject, body = PasswordResetService.build_mail(link)
+            background_tasks.add_task(PasswordResetService.deliver, email, subject, body)
+
+    return {"status": "success", "message": UNIFIED_MESSAGE}
+
+
+@router.post("/password-reset/confirm", summary="用邮件链接重置密码")
+async def confirm_password_reset(
+    payload: PasswordResetConfirmRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """核销链接并设置新密码。
+
+    刻意**不做限流**：token 是 32 字节随机 nonce，不可枚举；限流只会给真实用户添堵。
+
+    所有「链接不可用」的原因共用同一句 400 文案（过期 / 已用 / 被新申请覆盖 /
+    账号不可用 / token 被篡改），避免把失败原因变成探测面。密码复杂度错误是个例外：
+    它只取决于用户刚输入的内容，报清楚更有用，且此时链接尚未被核销。
+    """
+    from app.services.password_reset_service import PasswordResetService
+
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="密码重置服务暂时不可用，请稍后重试",
+        )
+
+    ok, message = await PasswordResetService.reset_password(
+        payload.token, payload.password, db, redis
+    )
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+    return {"status": "success", "message": message}
 
 @router.post("/logout", summary="退出登录")
 async def logout(
@@ -1075,12 +1175,24 @@ async def get_public_config(
         await ConfigService.get(USER_REGISTRATION_ENABLED_KEY) == "true"
     )
     platform_timezone = await get_platform_timezone()
+
+    # 密码找回入口是否可见：与 request 端点用**同一个** availability() 判定，
+    # 避免出现「入口显示了但接口 503」这种自相矛盾的状态。
+    password_reset_available = False
+    try:
+        from app.services.password_reset_service import PasswordResetService
+
+        password_reset_available = (await PasswordResetService.availability()) is None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("计算 password_reset_available 失败：%s", exc)
+
     return {
         "status": "success",
         "data": {
             "yovole_sso_enabled": sso_enabled,
             "hide_login_apikey": hide_login_apikey,
             "user_registration_enabled": user_registration_enabled,
+            "password_reset_available": password_reset_available,
             "platform_timezone": platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
             PLATFORM_TIMEZONE_CONFIG_KEY: platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
         }
