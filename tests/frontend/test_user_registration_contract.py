@@ -34,9 +34,24 @@ def test_login_reads_registration_switch_from_public_config():
 
 
 def test_login_shows_register_entry_only_when_enabled():
-    assert 'v-if="registrationEnabled && activeTab === \'password\'"' in LOGIN
+    """注册入口仅在开关开启、且处于本地账号页签时出现。
+
+    注：底部两个辅助入口（申请账号 / 忘记密码）合并为同一行后，原先「开关 + 页签」
+    写在一条 v-if 里的结构没了——页签判定上移到容器、开关留在入口自己身上，因此这里
+    改成分开断言两处判定，而不是继续钉死那条合并写法（断言本意未变）。
+    """
     assert "申请账号" in LOGIN
     assert "openRegister" in LOGIN
+
+    # 入口自身的开关判定。锚在按钮的 @click 上：「申请账号」在右侧面板标题里也出现过，
+    # 用文字做锚会定位到标题而不是入口
+    btn = LOGIN.index('@click="openRegister"')
+    assert 'v-if="registrationEnabled"' in LOGIN[max(0, btn - 300) : btn], "注册入口必须受开关控制"
+
+    # 页签判定在承载两个入口的容器上
+    anchor = LOGIN.index("底部辅助入口")
+    container = LOGIN[anchor : LOGIN.index("</form>", anchor)]
+    assert "activeTab === 'password'" in container
 
 
 def test_login_register_form_has_required_fields():

@@ -32,11 +32,36 @@ def test_login_reads_flag_from_public_config():
 
 
 def test_login_entry_is_gated_by_flag():
-    # 锚在链接本身：「忘记密码」在脚本注释里也出现过，用文字做锚会定位到注释
-    idx = LOGIN.index('to="/reset-password"')
-    window = LOGIN[max(0, idx - 500) : idx]
-    assert 'v-if="passwordResetAvailable' in window
-    assert "activeTab === 'password'" in window, "SSO 登录的密码不归本平台管，入口应只出现在本地账号页签"
+    """入口必须受开关控制，且只出现在本地账号页签。
+
+    断言跟着结构走：两个辅助入口合并到同一行后，「页签」判定上移到容器
+    （链接自身的 v-if 只管开关），因此这里分别锚定容器与链接，而不是继续假设
+    「忘记密码」自己那个 div 上同时挂了两条判定。
+    """
+    link_idx = LOGIN.index('to="/reset-password"')
+    assert 'v-if="passwordResetAvailable"' in LOGIN[max(0, link_idx - 200) : link_idx]
+
+    anchor = LOGIN.index("底部辅助入口")
+    container = LOGIN[anchor : LOGIN.index("</form>", link_idx)]
+    assert "activeTab === 'password'" in container, "SSO 登录的密码不归本平台管，入口应只出现在本地账号页签"
+    assert "registrationEnabled || passwordResetAvailable" in container
+
+
+def test_login_aux_entries_share_one_row_and_degrade_gracefully():
+    """两个入口同排一行且整体居中；分隔符只在两项都在时出现。
+
+    背景：原先两个独立 div 各自 text-center + pt-1，间距与「按钮到第一行」相同，
+    「忘记密码？」看起来像一个脱离出来的独立区块。改为一行后必须保证：
+    ① 只剩一个入口时仍居中（用 justify-center，不能用 justify-between）；
+    ② 不会只剩一根孤立的竖线。
+    """
+    anchor = LOGIN.index("底部辅助入口")
+    container = LOGIN[anchor : LOGIN.index("</form>", anchor)]
+    assert "justify-center" in container
+    assert "justify-between" not in container
+
+    sep = container.index("h-3 w-px bg-slate-200")
+    assert "registrationEnabled && passwordResetAvailable" in container[max(0, sep - 250) : sep]
 
 
 def test_reset_page_has_two_modes():

@@ -838,22 +838,36 @@ const handleLogin = async () => {
                     {{ loading ? '连接中...' : (activeTab === 'sso' ? '统一认证登录' : '进入平台 / LOGIN') }}
                 </button>
 
-                <!-- 账号自主注册入口：由系统配置 user_registration_enabled 控制，默认关闭 -->
-                <div v-if="registrationEnabled && activeTab === 'password'" class="text-center pt-1">
-                    <span class="text-xs text-slate-400">还没有账号？</span>
-                    <button
-                        type="button"
-                        @click="openRegister"
-                        class="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors ml-1"
-                    >
-                        申请账号
-                    </button>
-                </div>
+                <!-- 底部辅助入口：注册申请与忘记密码。
+                     两者各自独立受配置控制（user_registration_enabled / password_reset_available），
+                     可能只出现其中一个；因此用「居中 + 细分隔符」而不是左右分列——
+                     分列在只剩一个入口时会把它贴到边线上。 -->
+                <div
+                    v-if="activeTab === 'password' && (registrationEnabled || passwordResetAvailable)"
+                    class="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 pt-1 text-xs"
+                >
+                    <span v-if="registrationEnabled" class="flex items-center">
+                        <span class="text-slate-400">还没有账号？</span>
+                        <button
+                            type="button"
+                            @click="openRegister"
+                            class="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors ml-1"
+                        >
+                            申请账号
+                        </button>
+                    </span>
 
-                <!-- 忘记密码入口：仅本地账号密码登录时适用（SSO 的密码不归本平台管），
-                     且由后端下发的 password_reset_available 控制显隐 -->
-                <div v-if="passwordResetAvailable && activeTab === 'password'" class="text-center pt-1">
+                    <!-- 分隔符只在两项同时存在时出现，避免出现「孤零零一根竖线」 -->
+                    <span
+                        v-if="registrationEnabled && passwordResetAvailable"
+                        aria-hidden="true"
+                        class="h-3 w-px bg-slate-200"
+                    ></span>
+
+                    <!-- 忘记密码入口：仅本地账号密码登录时适用（SSO 的密码不归本平台管），
+                         且由后端下发的 password_reset_available 控制显隐 -->
                     <router-link
+                        v-if="passwordResetAvailable"
                         to="/reset-password"
                         class="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors"
                     >
