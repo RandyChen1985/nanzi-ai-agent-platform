@@ -14,9 +14,28 @@ import { computed, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { clearUserSession } from '../utils/userSession'
+import { useTypewriter } from '../composables/useTypewriter'
 
 const route = useRoute()
 const router = useRouter()
+
+/**
+ * 卡片顶部的循环文案：卡片顶到标题之间那块留白，原本是整页最"冷"的地方。
+ *
+ * 刻意**不写业务措辞**（"输入邮箱""链接多久有效"）：这行字的作用是让页面有呼吸，
+ * 不是传达指引。真正要用户读到的约束（30 分钟有效期、只能用一次）留在标题下方那行
+ * 静态说明里——绝不能挪进循环动画，否则用户正好错过那一轮就等于没提示过。
+ *
+ * 两句一组、共四句，打完退回再换下一句；顺序即节奏，短句在前更抓得住视线。
+ */
+const AMBIENT_LINES = [
+  '记忆只是暂时离线，重新对齐就好。',
+  '上下文被截断的地方，正是重写的开始。',
+  '每一次遗忘，都是一次重新训练。',
+  '权重会被重置，意图始终清晰。'
+]
+
+const { displayed: ambientText } = useTypewriter(AMBIENT_LINES)
 
 const token = computed(() =>
   typeof route.query.token === 'string' ? route.query.token : ''
@@ -112,6 +131,17 @@ const backToEmailMode = () => {
     class="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 px-4 py-10"
   >
     <div class="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8">
+      <!-- 顶部循环文案。固定一行高度：逐字增减会让行宽不断变化，若不锁高，
+           下面的标题与输入框会跟着上下抖动。aria-hidden 是因为对屏幕阅读器而言，
+           一句不断被删掉重打的话只是噪音，真正的信息都在下方静态说明里。 -->
+      <p
+        aria-hidden="true"
+        class="mb-3 flex min-h-[1.5rem] items-center text-[13px] leading-relaxed tracking-wide text-slate-400"
+      >
+        <span>{{ ambientText }}</span>
+        <span class="ml-0.5 inline-block h-3 w-[2px] shrink-0 animate-pulse rounded-full bg-slate-300"></span>
+      </p>
+
       <div class="mb-6">
         <h1 class="text-xl font-bold text-slate-900">
           {{ hasToken ? '设置新密码' : '找回密码' }}
