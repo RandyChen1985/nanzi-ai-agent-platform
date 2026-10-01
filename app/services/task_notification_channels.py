@@ -31,7 +31,7 @@ CHANNEL_SPECS: Dict[str, tuple[str, str, str]] = {
     "email": (
         "send_email",
         "邮件",
-        "调用 send_email(to_email, subject, content)；SMTP 与收件人来自个人中心→消息通知，勿再索要服务器配置",
+        "调用 send_email(to_email, subject, content)；SMTP 与收件人来自个人中心→消息通知，勿再索要服务器配置。用户未指定收件人时 to_email 留空即可发给其配置的收件人，不要自行编造地址",
     ),
 }
 
