@@ -779,6 +779,12 @@ async def get_current_user_info(
     # 同理顶层与 data 内各放一份：本特性的验收用例断言顶层 key，而前端读 data.email。
     current_email = (user_obj.email if user_obj else None) or user.get("email", "") or ""
 
+    # 个人中心「测试发信」按钮的显示条件之一。放在这个需登录的接口里而不是
+    # /config/public：平台邮件是否配置属于内部状态，不该暴露给未登录访问者。
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    mail_service_available = (await EmailDeliveryService.load_global_smtp_settings()) is not None
+
     return {
         "status": "success",
         "email": current_email,
@@ -788,6 +794,7 @@ async def get_current_user_info(
             "user_name": user.get("user_name"),
             "real_name": user.get("real_name") or user.get("user_name"),
             "email": current_email,
+            "mail_service_available": mail_service_available,
             "role": user.get("role"),
             "dept_code": user.get("dept_code"),
             "org_path": user.get("org_path"),
@@ -823,6 +830,88 @@ class ProfileUpdateRequest(BaseModel):
     是为了让「哪些字段能自助改」这件事在类型层面就是显式的。
     """
     email: Optional[str] = None
+
+
+@router.post("/me/email-test", summary="给自己发一封测试邮件")
+async def send_self_test_email(
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """用**全局**邮件服务给当前用户自己的邮箱发一封测试邮件。
+
+    收件人固定为本人实时查库的邮箱，请求体不接受任何收件人 —— 一旦允许指定收件人，
+    任何登录用户都能借这个按钮给任意地址发信，平台等于垃圾邮件中继。（管理端的
+    POST /configs/email/test 允许任意收件人，是因为它要求系统配置权限。）
+
+    检查顺序：未设邮箱 → 服务未启用 → 冷却。前置检查在前，冷却只在确实要发送时才
+    消耗；但**发送失败也占用冷却**，否则 SMTP 配错时可以被无限猛刷，把一次配置故障
+    放大成持续负载。
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from app.models.user import User
+    from app.services.email_delivery_service import (
+        EmailDeliveryService,
+        build_self_test_mail,
+    )
+
+    user_id = int(user["user_id"])
+
+    # 实时查库，不能用 require_api_key 注入的 user dict：它缓存在 Redis（TTL 1 小时），
+    # 用户改了邮箱之后它仍是旧值，测试信会一直发往旧地址。
+    # （与 /me 里 current_email 的处理同因。）
+    user_obj = await db.get(User, user_id)
+    email = ((user_obj.email if user_obj else None) or "").strip()
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="请先在个人中心设置邮箱"
+        )
+
+    settings = await EmailDeliveryService.load_global_smtp_settings()
+    if settings is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="平台邮件服务未启用或配置不完整",
+        )
+
+    redis_client = await get_redis()
+    if redis_client is not None:
+        key = AuthService.mail_test_cooldown_key(user_id)
+        try:
+            acquired = await redis_client.set(
+                key, "1", ex=AuthService.MAIL_TEST_COOLDOWN_SECONDS, nx=True
+            )
+            if not acquired:
+                ttl = await redis_client.ttl(key)
+                wait = ttl if isinstance(ttl, int) and ttl > 0 else AuthService.MAIL_TEST_COOLDOWN_SECONDS
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"操作过于频繁，请 {wait} 秒后再试",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # Redis 故障不阻断自测：本功能没有防枚举诉求，失败开放最多多花一次 SMTP
+            # 配额，而失败关闭会让「Redis 抖动」表现为按钮点了没反应。
+            logger.warning("自测发信冷却检查失败，已放行: user_id=%s err=%s", user_id, exc)
+
+    subject, body = build_self_test_mail(
+        user_name=user.get("user_name") or "", sender_name=settings.sender_name
+    )
+    try:
+        # send_mail 是同步阻塞的（smtplib），必须丢线程池，否则卡住事件循环
+        ok, message = await run_in_threadpool(
+            EmailDeliveryService.send_mail, settings, [email], subject, body
+        )
+    except Exception as exc:  # noqa: BLE001
+        # 让「点一下按钮」看到可读原因，而不是 500
+        logger.warning("自测发信异常: user_id=%s err=%s", user_id, exc)
+        return {"ok": False, "message": f"发送失败：{exc}"}
+
+    if not ok:
+        logger.warning("自测发信失败: user_id=%s reason=%s", user_id, message)
+        return {"ok": False, "message": message}
+    return {"ok": True, "message": f"测试邮件已发送至 {email}，请查收"}
 
 
 @router.patch("/me/profile", summary="更新我的资料")

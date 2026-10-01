@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import axios from '../utils/axios'
 import Toast from '../components/Toast.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -202,6 +202,10 @@ const fetchUserInfo = async () => {
         const response = await axios.get('/api/portal/auth/me')
         if (response.data && response.data.status === 'success') {
             userInfo.value = response.data.data
+            // 「测试发信」按钮的显示条件之一：平台全局邮件服务是否可用。
+            // 取不到（老后端/字段缺失）时按不可用处理，宁可不显示按钮也不要给一个
+            // 点了必然失败的入口。
+            mailServiceAvailable.value = response.data.data?.mail_service_available === true
         }
     } catch (e) {
         console.error("Failed to fetch user info", e)
@@ -209,6 +213,74 @@ const fetchUserInfo = async () => {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 邮箱可用性自测（POST /api/portal/auth/me/email-test）
+//
+// 收件人固定为本人邮箱，后端不接受指定收件人 —— 所以这里也没有收件人输入框。
+// 按钮仅在「全局邮件服务可用 + 已设邮箱」时出现（未设邮箱时旁边就是「设置邮箱」，
+// 引导更自然，比给一个点了必然失败的按钮好）。
+// ---------------------------------------------------------------------------
+const mailServiceAvailable = ref(false)
+const testEmailSending = ref(false)
+const testEmailCooldown = ref(0)
+// 与后端 AuthService.MAIL_TEST_COOLDOWN_SECONDS 保持一致；后端仍是最终裁决，
+// 前端倒计时只是为了不让用户白点一次。
+const TEST_EMAIL_COOLDOWN_SECONDS = 60
+let testEmailTimer: ReturnType<typeof setInterval> | null = null
+
+const testEmailButtonText = computed(() => {
+  if (testEmailSending.value) return '发送中…'
+  if (testEmailCooldown.value > 0) return `测试发信（${testEmailCooldown.value}s）`
+  return '测试发信'
+})
+
+const startTestEmailCooldown = () => {
+  testEmailCooldown.value = TEST_EMAIL_COOLDOWN_SECONDS
+  if (testEmailTimer) clearInterval(testEmailTimer)
+  testEmailTimer = setInterval(() => {
+    testEmailCooldown.value -= 1
+    if (testEmailCooldown.value <= 0) {
+      testEmailCooldown.value = 0
+      if (testEmailTimer) clearInterval(testEmailTimer)
+      testEmailTimer = null
+    }
+  }, 1000)
+}
+
+const sendTestEmail = async () => {
+  if (testEmailSending.value || testEmailCooldown.value > 0) return
+  testEmailSending.value = true
+  try {
+    const response = await axios.post('/api/portal/auth/me/email-test')
+    if (response.data?.ok) {
+      showToast(response.data.message || '测试邮件已发送，请查收', 'success')
+    } else {
+      // HTTP 通了但发信失败（如 SMTP 认证失败）——把后端的原因原样呈现，
+      // 这正是用户点这个按钮想看的东西
+      showToast(response.data?.message || '发送失败，请稍后重试', 'error')
+    }
+    // 后端在「确实尝试发送」时就消耗了冷却（成功失败都算），前端同步倒计时
+    startTestEmailCooldown()
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail
+    const text = typeof detail === 'string' ? detail : '操作过于频繁，请稍后再试'
+    if (e?.response?.status === 429) {
+      showToast(text, 'warning')
+      startTestEmailCooldown()
+    } else {
+      // 400（未设邮箱）/503（邮件服务未启用）都不消耗后端冷却，因此前端也不倒计时，
+      // 免得用户改完设置还得干等 60 秒
+      showToast(text, 'error')
+    }
+  } finally {
+    testEmailSending.value = false
+  }
+}
+
+onUnmounted(() => {
+  if (testEmailTimer) clearInterval(testEmailTimer)
+})
+
 // 邮箱自助编辑（PATCH /api/portal/auth/me/profile）
 //
 // 邮箱用于接收账号审核结果等平台通知，用户可自行增删改。与注册页同一原则：
@@ -803,14 +875,31 @@ onMounted(() => {
                                 </p>
                                 <p v-else class="mt-0.5 text-gray-400">用于接收账号审核结果、系统通知等邮件</p>
                             </div>
-                            <button
+                            <div
                                 v-if="!isEditingEmail"
-                                type="button"
-                                @click="startEditEmail"
-                                class="self-start sm:self-center px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-all cursor-pointer border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                                class="self-start sm:self-center flex items-center gap-2 shrink-0"
                             >
-                                {{ userInfo.email ? '修改邮箱' : '设置邮箱' }}
-                            </button>
+                                <button
+                                    type="button"
+                                    @click="startEditEmail"
+                                    class="px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-all cursor-pointer border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                                >
+                                    {{ userInfo.email ? '修改邮箱' : '设置邮箱' }}
+                                </button>
+                                <!-- 邮箱可用性自测：仅在「全局邮件服务可用 + 已设邮箱」时出现。
+                                     没设邮箱时按钮直接不显示 —— 没有收件人，无从测试，
+                                     而旁边本就是「设置邮箱」，引导更自然。 -->
+                                <button
+                                    v-if="mailServiceAvailable && userInfo.email"
+                                    type="button"
+                                    :disabled="testEmailSending || testEmailCooldown > 0"
+                                    @click="sendTestEmail"
+                                    title="给自己发一封测试邮件，确认邮箱能否正常收信"
+                                    class="px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-all cursor-pointer border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                                >
+                                    {{ testEmailButtonText }}
+                                </button>
+                            </div>
                         </div>
 
                         <!-- 行内编辑：不做「输入即查」，只给基础格式提示，唯一性交给后端 -->

@@ -598,3 +598,19 @@ def dedupe_recipient_emails(rows: Any) -> List[str]:
         seen.add(key)
         recipients.append(addr)
     return recipients
+
+
+def build_self_test_mail(user_name: str, sender_name: str) -> Tuple[str, str]:
+    """个人中心「测试发信」的邮件文案。返回 (主题, 正文)。
+
+    不写死站点地址（与 build_review_mail 同口径：平台没有「站点基础地址」配置项，
+    硬编码会写死部署形态）。入参不含任何凭据，从来源上保证这封邮件不可能泄露口令。
+    """
+    subject = f"【{sender_name}】邮箱可用性测试"
+    body = (
+        f"您好，{user_name}：\n\n"
+        "这封测试邮件发送到了您在个人中心设置的邮箱。\n"
+        "收到它说明平台邮件服务与您的邮箱均可正常收信。\n\n"
+        "（本邮件由系统自动发送，请勿直接回复）\n"
+    )
+    return subject, body

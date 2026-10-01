@@ -398,6 +398,12 @@ class AuthService:
     PWD_RESET_WINDOW_SECONDS = 3600
     PWD_RESET_PREFIX = "auth:pwdreset:"
 
+    # 个人中心「测试发信」：同一用户 60 秒冷却。
+    # 与邮件找回的冷却不同，这里没有防枚举诉求，只是一个自助按钮 —— 但它会真的占用
+    # SMTP 配额，所以必须挡住连点与脚本试探。
+    MAIL_TEST_COOLDOWN_SECONDS = 60
+    MAIL_TEST_COOLDOWN_PREFIX = "auth:mailtest:cd:"
+
     @staticmethod
     def pwd_reset_email_fingerprint(email: str) -> str:
         """邮箱的定长指纹。
@@ -408,6 +414,15 @@ class AuthService:
         """
         text = (email or "").strip().lower().encode("utf-8")
         return hashlib.sha256(text).hexdigest()
+
+    @staticmethod
+    def mail_test_cooldown_key(user_id) -> str:
+        """自测发信的冷却键。
+
+        键名用 user_id 而不是邮箱：这是「同一个人」的限流，不是「同收件人」的限流；
+        且邮箱会变，用它做键会让用户改邮箱就绕过冷却。
+        """
+        return f"{AuthService.MAIL_TEST_COOLDOWN_PREFIX}{int(user_id)}"
 
     @staticmethod
     def pwd_reset_cooldown_key(email: str) -> str:
