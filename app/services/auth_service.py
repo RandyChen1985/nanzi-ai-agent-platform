@@ -678,6 +678,20 @@ class AuthService:
             key, AuthService.REGISTER_CHECK_IP_LIMIT
         )
 
+    # --- 个人中心「修改邮箱」的实时预检限流 ---
+    # 与注册预检同为「存在性判定器」、同样可能被用来枚举邮箱，但**按用户**计数：
+    # 该接口要求登录，按 IP 会在办公网 NAT 下把同事实一起误伤。
+    EMAIL_CHECK_USER_LIMIT = 60
+    EMAIL_CHECK_PREFIX = "auth:email:check:user:"
+
+    @staticmethod
+    async def is_email_check_rate_limited(user_id: int) -> bool:
+        """邮箱可用性预检是否超限（按用户单独计数，与其它计数互不影响）。"""
+        key = f"{AuthService.EMAIL_CHECK_PREFIX}{int(user_id)}"
+        return await AuthService._register_counter_hit(
+            key, AuthService.EMAIL_CHECK_USER_LIMIT
+        )
+
     @staticmethod
     async def verify_api_key(api_key: str, db: Optional[AsyncSession] = None) -> Optional[Dict]:
         """
