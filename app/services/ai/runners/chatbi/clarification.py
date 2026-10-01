@@ -51,6 +51,12 @@ def _build_user_profile_block(runner: Any) -> str | None:
         dept_code=dept_code,
         org_path=org_path,
         role=role,
+        # 与主链路保持同一组只读字段，避免两条路径画像不一致
+        email=runner.user_info.get("email"),
+        status=runner.user_info.get("status"),
+        created_at=runner.user_info.get("created_at"),
+        extra_data=runner.user_info.get("extra_data"),
+        remark=runner.user_info.get("remark"),
     )
 
 

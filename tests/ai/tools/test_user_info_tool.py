@@ -62,6 +62,7 @@ async def test_get_myinfo_reads_only_context_user_and_filters_secrets():
         id=42,
         user_name="alice",
         real_name="Alice",
+        email="alice@example.com",
         role="user",
         dept_code="DEPT001",
         org_path="yovole/sh/dc1",
@@ -114,6 +115,7 @@ async def test_get_myinfo_reads_only_context_user_and_filters_secrets():
     payload = json.loads(result)
     assert payload["user"]["id"] == 42
     assert payload["user"]["user_name"] == "alice"
+    assert payload["user"]["email"] == "alice@example.com"
     assert payload["user"]["extra_data"] == {"phone": "13800000000", "title": "分析师"}
     assert payload["permissions"]["roles"] == ["user", "analyst"]
     assert payload["permissions"]["permissions"]["datasets"] == ["dataset-1"]

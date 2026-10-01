@@ -899,6 +899,13 @@ class AgentService:
             dept_code=dept_code,
             org_path=org_path,
             role=role,
+            # 扩展只读字段。来源是 API Key 校验（或会话缓存）返回的已验证身份字典，
+            # 与上述身份字段同源；自由文本的单行化与截断在模板层统一处理。
+            email=user_info.get("email"),
+            status=user_info.get("status"),
+            created_at=user_info.get("created_at"),
+            extra_data=user_info.get("extra_data"),
+            remark=user_info.get("remark"),
         )
         return {"role": "system", "content": content}
 
