@@ -279,14 +279,18 @@ const sendTestEmail = async () => {
 
 onUnmounted(() => {
   if (testEmailTimer) clearInterval(testEmailTimer)
+  if (emailCheckTimer) clearTimeout(emailCheckTimer)
 })
 
 // 邮箱自助编辑（PATCH /api/portal/auth/me/profile）
 //
-// 邮箱用于接收账号审核结果等平台通知，用户可自行增删改。与注册页同一原则：
-// 只做本地基础格式提示，不做「输入即查可用性」——邮箱全局唯一，实时探测
-// 会变成一个公开的用户枚举接口。唯一性与最终格式由后端裁决，
-// 被占用时后端返回 400 且 detail 为「该邮箱已被其他账号使用」。
+// 邮箱用于接收账号审核结果等平台通知，用户可自行增删改。
+//
+// **本处曾刻意不做「输入即查」**，理由是邮箱全局唯一、实时探测会变成用户枚举接口，
+// 用户只能在点保存后才知道被占用。现改为边输边查：枚举风险由接口侧的「必须登录 +
+// 按用户 60 次/小时限流 + 不回显占用者信息」承担，前端命中 429 即静默退回保存时校验。
+// 唯一性与最终格式仍由后端裁决（被占用时返回 400，detail 为「该邮箱已被其他账号使用」），
+// 本地预检只负责把结论尽早告诉用户，绝不作为放行依据。
 // ---------------------------------------------------------------------------
 const EMAIL_MAX_LENGTH = 254
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
@@ -301,9 +305,109 @@ const emailInputFormatError = computed(() => {
     return ''
 })
 
+// ---------------------------------------------------------------------------
+// 邮箱可用性预检（边输边查）
+//
+// 后端 GET /api/portal/auth/me/email-available 是权威判定；这里只是把结论尽早告诉
+// 用户，免得填完、点了「保存」才发现邮箱被占用。保存时的后端校验依然保留。
+// 该接口按用户限流（60/小时）：一旦命中 429 就停止本次会话的预检、静默退回「保存时
+// 校验」，绝不因为一个体验优化把用户挡在保存之外；网络异常同样静默。
+// 与 Login.vue 的账号名预检同一套做法（去抖 + 请求序号防止慢响应覆盖新结论）。
+// ---------------------------------------------------------------------------
+type EmailCheckState = 'idle' | 'checking' | 'available' | 'taken' | 'invalid' | 'error'
+const emailCheckState = ref<EmailCheckState>('idle')
+const emailCheckMessage = ref('')
+const emailCheckDisabled = ref(false)
+const EMAIL_CHECK_DEBOUNCE_MS = 450
+let emailCheckTimer: ReturnType<typeof setTimeout> | null = null
+let emailCheckSeq = 0
+
+const EMAIL_CHECK_COLORS: Record<EmailCheckState, string> = {
+    idle: 'text-gray-400',
+    checking: 'text-gray-400',
+    available: 'text-emerald-600',
+    taken: 'text-red-600',
+    invalid: 'text-amber-600',
+    error: 'text-gray-400',
+}
+const emailCheckColorClass = computed(() => EMAIL_CHECK_COLORS[emailCheckState.value])
+
+// 只有**确定**的否定结论才拦住保存（占用/格式非法）。
+// checking 与 error 一律放行——凭一次查不到就禁用保存，会把本来能存的操作锁死。
+const emailCheckBlocksSave = computed(
+    () => emailCheckState.value === 'taken' || emailCheckState.value === 'invalid'
+)
+
+const resetEmailCheck = () => {
+    if (emailCheckTimer) {
+        clearTimeout(emailCheckTimer)
+        emailCheckTimer = null
+    }
+    emailCheckSeq++
+    emailCheckState.value = 'idle'
+    emailCheckMessage.value = ''
+}
+
+const runEmailCheck = async (email: string) => {
+    if (emailCheckDisabled.value) return
+    const seq = ++emailCheckSeq
+    emailCheckState.value = 'checking'
+    emailCheckMessage.value = '正在校验邮箱…'
+    try {
+        const response = await axios.get('/api/portal/auth/me/email-available', {
+            params: { email },
+        })
+        if (seq !== emailCheckSeq) return
+        const data = response.data?.data
+        if (data?.available) {
+            emailCheckState.value = 'available'
+            // reason=unchanged 时后端给「与当前邮箱一致」，比「可以使用」更贴切
+            emailCheckMessage.value = data.message || '该邮箱可以使用'
+        } else {
+            emailCheckState.value = data?.reason === 'invalid' ? 'invalid' : 'taken'
+            emailCheckMessage.value = data?.message || '该邮箱已被其他账号使用'
+        }
+    } catch (e: any) {
+        if (seq !== emailCheckSeq) return
+        if (e.response?.status === 429) {
+            // 预检额度用尽：静默降级，交给保存时的后端校验兜底
+            emailCheckDisabled.value = true
+            emailCheckState.value = 'idle'
+            emailCheckMessage.value = ''
+            return
+        }
+        // 网络异常同样静默：不能因为查不了就阻止用户保存
+        emailCheckState.value = 'error'
+        emailCheckMessage.value = ''
+    }
+}
+
+const onEmailInput = () => {
+    emailError.value = ''
+    if (emailCheckTimer) {
+        clearTimeout(emailCheckTimer)
+        emailCheckTimer = null
+    }
+    const email = emailInput.value.trim()
+    // 留空 = 清除邮箱，后端判为合法，不必发请求
+    if (!email || emailInputFormatError.value) {
+        emailCheckSeq++
+        emailCheckState.value = 'idle'
+        emailCheckMessage.value = ''
+        return
+    }
+    emailCheckTimer = setTimeout(() => {
+        emailCheckTimer = null
+        void runEmailCheck(email)
+    }, EMAIL_CHECK_DEBOUNCE_MS)
+}
+
 const startEditEmail = () => {
     emailInput.value = userInfo.value.email || ''
     emailError.value = ''
+    // 预检配额用尽（429）是一次性的降级决定，不该跨编辑会话一直生效
+    emailCheckDisabled.value = false
+    resetEmailCheck()
     isEditingEmail.value = true
 }
 
@@ -311,6 +415,7 @@ const cancelEditEmail = () => {
     isEditingEmail.value = false
     emailInput.value = ''
     emailError.value = ''
+    resetEmailCheck()
 }
 
 const saveEmail = async () => {
@@ -328,6 +433,7 @@ const saveEmail = async () => {
             userInfo.value = { ...userInfo.value, email: response.data.email || '' }
             isEditingEmail.value = false
             emailInput.value = ''
+            resetEmailCheck()
             showToast(nextEmail ? '邮箱已更新' : '邮箱已清空', 'success')
             await fetchUserInfo()
         } else {
@@ -902,7 +1008,8 @@ onMounted(() => {
                             </div>
                         </div>
 
-                        <!-- 行内编辑：不做「输入即查」，只给基础格式提示，唯一性交给后端 -->
+                        <!-- 行内编辑：本地先给格式提示，再按需向后端做可用性预检（边输边查）；
+                             两种情况都只作提示，保存时后端校验仍是权威判定 -->
                         <div v-if="isEditingEmail" class="mt-3 space-y-2">
                             <input
                                 v-model="emailInput"
@@ -914,17 +1021,19 @@ onMounted(() => {
                                 :maxlength="EMAIL_MAX_LENGTH"
                                 :disabled="emailSaving"
                                 class="w-full bg-white border rounded-lg px-3 py-2 text-base sm:text-sm text-gray-900 outline-none focus:bg-white transition-all disabled:bg-gray-100"
-                                :class="emailError || emailInputFormatError ? 'border-red-400 focus:border-red-500' : 'border-gray-300 focus:border-blue-500'"
+                                :class="emailError || emailInputFormatError || emailCheckBlocksSave ? 'border-red-400 focus:border-red-500' : (emailCheckState === 'available' ? 'border-emerald-300 focus:border-emerald-500' : 'border-gray-300 focus:border-blue-500')"
                                 placeholder="name@example.com（留空表示清除）"
+                                @input="onEmailInput"
                                 @keyup.enter="saveEmail"
                             />
                             <p v-if="emailError" class="text-red-600">{{ emailError }}</p>
                             <p v-else-if="emailInputFormatError" class="text-red-600">{{ emailInputFormatError }}</p>
+                            <p v-else-if="emailCheckMessage" :class="emailCheckColorClass">{{ emailCheckMessage }}</p>
                             <p v-else class="text-gray-400 text-[11px] leading-relaxed">保存前请确认地址可用，审核结果与系统通知会发送到这里。</p>
                             <div class="flex items-center gap-2">
                                 <button
                                     type="button"
-                                    :disabled="emailSaving || !!emailInputFormatError"
+                                    :disabled="emailSaving || !!emailInputFormatError || emailCheckBlocksSave"
                                     @click="saveEmail"
                                     class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                                 >

@@ -1659,3 +1659,105 @@ async def test_admin_edit_blank_email_clears_it(client, admin_api_key):
         assert await _email_of(uid) is None, "空串必须把邮箱清成 NULL"
     finally:
         await _cleanup(await _uid_of(name))
+
+
+# --------------------------------------------------------------------------- #
+# 个人中心「修改邮箱」的实时可用性预检
+#
+# 与注册预检的关键差别：**排除自己**。不改邮箱时提交的正是自己的地址，
+# 不排除会把自己判成「已被占用」，把「没改」误报成「被占」。
+# --------------------------------------------------------------------------- #
+EMAIL_AVAILABLE_URL = "/api/portal/auth/me/email-available"
+
+
+async def test_email_available_endpoint_requires_api_key(client):
+    """必须登录：否则任何人都能拿它枚举「哪个邮箱注册过本平台」。"""
+    resp = await client.get(EMAIL_AVAILABLE_URL, params={"email": "nobody@corp.example.com"})
+    assert resp.status_code == 401
+
+
+async def test_email_available_ok_for_unused_address(client):
+    name = f"zavail_{uuid.uuid4().hex[:8]}"
+    try:
+        key = await _seed_user(name)
+        resp = await client.get(
+            EMAIL_AVAILABLE_URL, params={"email": f"{name}@corp.example.com"},
+            headers={"X-API-Key": key},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["available"] is True and data["reason"] == "ok"
+    finally:
+        await _drop_user(name)
+
+
+async def test_email_available_reports_taken_by_another(client):
+    owner = f"zown_{uuid.uuid4().hex[:8]}"
+    other = f"zoth_{uuid.uuid4().hex[:8]}"
+    taken_email = f"{owner}@corp.example.com"
+    try:
+        await _seed_user(owner, email=taken_email)
+        key = await _seed_user(other)
+        resp = await client.get(
+            EMAIL_AVAILABLE_URL, params={"email": taken_email.upper()},
+            headers={"X-API-Key": key},
+        )
+        data = resp.json()["data"]
+        assert data["available"] is False and data["reason"] == "taken"
+        assert data["message"] == "该邮箱已被其他账号使用"
+        # 不得回显占用者的任何信息（姓名/账号/状态）
+        assert owner not in resp.text
+    finally:
+        await _drop_user(owner)
+        await _drop_user(other)
+
+
+async def test_email_available_excludes_self(client):
+    """本人当前邮箱必须判为可用：否则用户打开编辑框、什么都没改就先看到「已占用」。"""
+    name = f"zself_{uuid.uuid4().hex[:8]}"
+    email = f"{name}@corp.example.com"
+    try:
+        key = await _seed_user(name, email=email)
+        resp = await client.get(
+            EMAIL_AVAILABLE_URL, params={"email": email.upper()},
+            headers={"X-API-Key": key},
+        )
+        data = resp.json()["data"]
+        assert data["available"] is True, "自己的邮箱不能判为被占用"
+        assert data["reason"] == "unchanged"
+    finally:
+        await _drop_user(name)
+
+
+@pytest.mark.parametrize("bad", ["not-an-email", "a@b", "a b@corp.example.com", "x" * 300 + "@corp.example.com"])
+async def test_email_available_rejects_invalid_format(client, bad):
+    name = f"zinv_{uuid.uuid4().hex[:8]}"
+    try:
+        key = await _seed_user(name)
+        resp = await client.get(
+            EMAIL_AVAILABLE_URL, params={"email": bad}, headers={"X-API-Key": key}
+        )
+        data = resp.json()["data"]
+        assert data["available"] is False and data["reason"] == "invalid"
+    finally:
+        await _drop_user(name)
+
+
+async def test_email_available_empty_means_clearing_is_allowed(client):
+    """留空 = 清除邮箱，是个人中心支持的合法操作，不能判成不可用。"""
+    name = f"zemp_{uuid.uuid4().hex[:8]}"
+    try:
+        key = await _seed_user(name, email=f"{name}@corp.example.com")
+        resp = await client.get(EMAIL_AVAILABLE_URL, params={"email": ""}, headers={"X-API-Key": key})
+        data = resp.json()["data"]
+        assert data["available"] is True and data["reason"] == "empty"
+    finally:
+        await _drop_user(name)
+
+
+async def test_email_check_rate_limit_blocks_enumeration():
+    """按用户限流必须真的生效（枚举邮箱的第一道闸）。"""
+    probe_uid = 900000 + (int(uuid.uuid4().hex[:6], 16) % 90000)
+    for _ in range(AuthService.EMAIL_CHECK_USER_LIMIT):
+        assert await AuthService.is_email_check_rate_limited(probe_uid) is False
+    assert await AuthService.is_email_check_rate_limited(probe_uid) is True

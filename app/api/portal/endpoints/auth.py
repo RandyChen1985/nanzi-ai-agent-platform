@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request, BackgroundTasks
 import logging
 import re
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
@@ -109,6 +109,9 @@ DUPLICATE_USER_NAME_MESSAGE = "该账号名已被占用，请更换后重试"
 DUPLICATE_USER_EMAIL_MESSAGE = "该邮箱已被其他账号使用"
 USER_NAME_FORMAT_MESSAGE = "账号名需为 3–32 位、以字母开头，仅可包含字母、数字、下划线、中划线与点"
 USER_NAME_AVAILABLE_MESSAGE = "该账号名可以使用"
+EMAIL_FORMAT_MESSAGE = "邮箱格式不正确，请检查后重试"
+EMAIL_AVAILABLE_MESSAGE = "该邮箱可以使用"
+EMAIL_UNCHANGED_MESSAGE = "与当前邮箱一致"
 
 
 class RegisterRequest(BaseModel):
@@ -912,6 +915,67 @@ async def send_self_test_email(
         logger.warning("自测发信失败: user_id=%s reason=%s", user_id, message)
         return {"ok": False, "message": message}
     return {"ok": True, "message": f"测试邮件已发送至 {email}，请查收"}
+
+
+@router.get("/me/email-available", summary="预检本人待改邮箱是否可用")
+async def check_my_email_available(
+    email: str = "",
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """个人中心「修改邮箱」的实时预检，供输入框边输边查。
+
+    **与注册预检的关键差别**：排除当前用户自己。不改邮箱时提交的正是自己的地址，
+    不排除就会把「没改」误报成「已被占用」。
+
+    **安全取舍**：本接口是「邮箱是否已注册」的判定器，可被用于枚举。三重对冲：
+    ① 必须登录（匿名用户无法探测）；② 按用户限流 60 次/小时，靠它批量枚举在时间上
+    不可行；③ 不回显占用者的任何信息（姓名、账号、状态一概不提）。
+    前端命中 429 时静默降级为「保存时校验」，不因体验优化挡住用户。
+    """
+    user_id = int(user_info["user_id"])
+    if await AuthService.is_email_check_rate_limited(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="邮箱校验过于频繁，请稍后再试",
+        )
+
+    raw = (email or "").strip()
+    # 留空 = 清除邮箱，是个人中心支持的合法操作，不能判成不可用
+    if not raw:
+        return {
+            "status": "success",
+            "data": {"available": True, "reason": "empty", "message": ""},
+        }
+
+    # normalize_email 对「非空但格式非法」返回 None，正好用来区分「留空」与「写错」
+    normalized = AuthService.normalize_email(raw)
+    if normalized is None:
+        return {
+            "status": "success",
+            "data": {"available": False, "reason": "invalid", "message": EMAIL_FORMAT_MESSAGE},
+        }
+
+    if normalized == (AuthService.normalize_email(user_info.get("email") or "") or ""):
+        return {
+            "status": "success",
+            "data": {"available": True, "reason": "unchanged", "message": EMAIL_UNCHANGED_MESSAGE},
+        }
+
+    if await AuthService.is_user_email_taken(normalized, exclude_user_id=user_id, db=db):
+        return {
+            "status": "success",
+            "data": {
+                "available": False,
+                "reason": "taken",
+                "message": DUPLICATE_USER_EMAIL_MESSAGE,
+            },
+        }
+
+    return {
+        "status": "success",
+        "data": {"available": True, "reason": "ok", "message": EMAIL_AVAILABLE_MESSAGE},
+    }
 
 
 @router.patch("/me/profile", summary="更新我的资料")

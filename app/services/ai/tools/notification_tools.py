@@ -90,7 +90,14 @@ class send_dingtalk_message(BaseTool):
         raise NotImplementedError("Use _arun instead")
 
 class EmailInput(BaseModel):
-    to_email: str = Field(description="The recipient email address (e.g. 'user@example.com')")
+    to_email: str = Field(
+        default="",
+        description=(
+            "收件人邮箱，多个地址用逗号或分号分隔。"
+            "**留空即发给用户在「个人中心 -> 消息通知」里配置的收件人**（默认包含用户本人邮箱）。"
+            "用户没有明确给出收件人时一律留空，切勿自行猜测或编造地址。"
+        ),
+    )
     subject: str = Field(description="The subject line of the email")
     content: str = Field(description="The body content of the email (Markdown or Text)")
 
@@ -100,15 +107,25 @@ class send_email(BaseTool):
         "发送邮件通知。Send an email via SMTP. "
         "本工具会自动读取当前用户在个人中心 -> 消息通知里的 SMTP 配置，"
         "无需用户在本轮对话中提供 SMTP 服务器或密码。"
+        "收件人：用户明确说了就填 to_email；用户没说就把 to_email 留空，"
+        "系统会发给用户配置好的收件人，**不要自己猜一个地址填进去**。"
     )
     args_schema: Type[BaseModel] = EmailInput
 
-    async def _arun(self, to_email: str, subject: str, content: str) -> str:
+    async def _arun(self, to_email: str = "", subject: str = "", content: str = "") -> str:
         """Use the tool asynchronously.
 
         发送统一走 EmailDeliveryService.send_mail：它显式处理 ssl/starttls/none，
         starttls 失败即报错。旧实现自己拼 SMTP 并在 starttls 失败时静默跳过，
         587 端口可能明文发送凭据——两处实现漂移正是要消除的问题。
+
+        收件人解析与定时通知（NotificationService.send_email）**同源**：
+        显式给了就用给的；没给就读用户配置（本人邮箱 + 其他收件人）。
+
+        **任何分支都不许凭空造一个收件人**：配置为空就报错让用户去配。
+        特别是**不镜像**定时任务那条「自定义 SMTP 且收件人为空时回退发给 smtp_user」
+        的兼容逻辑——对定时通知那是兼容，对 agent 主动发信却等于「没说发给谁就发到
+        发件账号」，属于错误投递。（那两处实现漂移也正是要避免的。）
         """
         import asyncio
 
@@ -140,6 +157,35 @@ class send_email(BaseTool):
                 settings = await EmailDeliveryService.resolve_smtp_settings(
                     agent_ctx.user_id, scope="user", db=db
                 )
+
+                # 显式给了收件人就照给（多个地址同一套解析规则，含全角分隔符归一）；
+                # 给了但解析不出任何地址（模型写错/编错）直接报错，不拿到 SMTP 层去炸。
+                explicit = EmailDeliveryService.parse_recipients(to_email)
+                if str(to_email or "").strip() and not explicit:
+                    return (
+                        "Error: Invalid recipient address. Ask the user for a valid email "
+                        "address, or leave to_email empty to use their configured recipients."
+                    )
+
+                if explicit:
+                    recipients = explicit
+                else:
+                    # 没给就读用户配置。resolve_self_email 现查库而不用 Redis 里那份
+                    # 缓存的 user dict，否则用户改完邮箱仍会发往旧地址。
+                    self_email = await EmailDeliveryService.resolve_self_email(
+                        agent_ctx.user_id, db
+                    )
+                    recipients = EmailDeliveryService.compose_recipients(
+                        self_email=self_email,
+                        include_self=user_cfg.get("include_self", True),
+                        extra=user_cfg.get("recipients"),
+                    )
+
+                if not recipients:
+                    return (
+                        "Error: No recipient configured. Ask the user to set an email address "
+                        "in Personal Center -> Message Notifications."
+                    )
         except Exception as e:
             logger.error(f"Failed to load user personal email config: {e}", exc_info=True)
             return f"Error: Failed to load email configuration: {e}"
@@ -150,14 +196,14 @@ class send_email(BaseTool):
         try:
             # send_mail 是同步阻塞的，放进线程池，别卡住事件循环。
             ok, message = await asyncio.to_thread(
-                EmailDeliveryService.send_mail, settings, [to_email], subject, content
+                EmailDeliveryService.send_mail, settings, recipients, subject, content
             )
         except Exception as e:
             logger.error(f"SMTP Error: {e}", exc_info=True)
             return f"Error sending email: {e}"
 
         if ok:
-            return f"Successfully sent email to {to_email}"
+            return f"Successfully sent email to {', '.join(recipients)}"
         return f"Error sending email: {message}"
 
     def _run(self, to_email: str, subject: str, content: str) -> str:

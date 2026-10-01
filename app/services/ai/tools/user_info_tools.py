@@ -13,6 +13,7 @@ from app.core.context import get_current_agent_context
 from app.core.orm import AsyncSessionLocal
 from app.models.user import User
 from app.services.ai.tools.tool_compat import BaseTool
+from app.services.ai.user_extra_data import parse_extra_data
 from app.services.permission_service import PermissionService
 
 logger = logging.getLogger(__name__)
@@ -20,48 +21,6 @@ logger = logging.getLogger(__name__)
 
 class _NoArguments(BaseModel):
     """Keep the public tool schema explicitly empty."""
-
-
-_REDACTED_KEY_PARTS = (
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "api_key",
-    "apikey",
-    "authorization",
-    "credential",
-    "private_key",
-)
-
-
-def _is_sensitive_key(key: str) -> bool:
-    normalized = key.casefold().replace("-", "_")
-    return any(part in normalized for part in _REDACTED_KEY_PARTS)
-
-
-def _sanitize_extra_data(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            str(key): "[REDACTED]" if _is_sensitive_key(str(key)) else _sanitize_extra_data(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_sanitize_extra_data(item) for item in value]
-    if isinstance(value, tuple):
-        return [_sanitize_extra_data(item) for item in value]
-    return value
-
-
-def _parse_extra_data(raw_value: Any) -> Any:
-    if raw_value is None or raw_value == "":
-        return {}
-    if isinstance(raw_value, str):
-        try:
-            return _sanitize_extra_data(json.loads(raw_value))
-        except json.JSONDecodeError:
-            return {"_raw": raw_value, "_parse_error": True}
-    return _sanitize_extra_data(raw_value)
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -87,10 +46,11 @@ def _safe_user_payload(user: Any) -> dict[str, Any]:
         "id": getattr(user, "id", None),
         "user_name": getattr(user, "user_name", None),
         "real_name": getattr(user, "real_name", None),
+        "email": getattr(user, "email", None),
         "role": getattr(user, "role", None),
         "dept_code": getattr(user, "dept_code", None),
         "org_path": getattr(user, "org_path", None),
-        "extra_data": _parse_extra_data(getattr(user, "extra_data", None)),
+        "extra_data": parse_extra_data(getattr(user, "extra_data", None)),
         "remark": getattr(user, "remark", None),
         "status": getattr(user, "status", None),
         "created_at": _to_jsonable(getattr(user, "created_at", None)),
@@ -101,7 +61,7 @@ def _safe_user_payload(user: Any) -> dict[str, Any]:
 class CurrentUserInfoTool(BaseTool):
     name = "get_myinfo"
     description = (
-        "读取当前登录用户本人的基本信息、部门、组织路径、扩展信息、角色和权限。"
+        "读取当前登录用户本人的基本信息（含邮箱）、部门、组织路径、扩展信息、角色和权限。"
         "用户 ID 只能从当前认证上下文获取；不接受 userid 或任何其他参数，禁止读取其他用户。"
     )
     args_schema = _NoArguments
