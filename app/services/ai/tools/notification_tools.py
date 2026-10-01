@@ -99,7 +99,13 @@ class EmailInput(BaseModel):
         ),
     )
     subject: str = Field(description="The subject line of the email")
-    content: str = Field(description="The body content of the email (Markdown or Text)")
+    content: str = Field(
+        description=(
+            "邮件正文，**支持 Markdown**（标题、列表、表格、粗体、链接、代码块会被渲染成"
+            "排版后的 HTML 邮件），直接用 Markdown 写即可；纯文本同样可以。"
+            "**不要写 HTML 标签**——正文里的原始 HTML 会被转义成字面文本显示出来。"
+        )
+    )
 
 class send_email(BaseTool):
     name: str = "send_email"
@@ -109,6 +115,7 @@ class send_email(BaseTool):
         "无需用户在本轮对话中提供 SMTP 服务器或密码。"
         "收件人：用户明确说了就填 to_email；用户没说就把 to_email 留空，"
         "系统会发给用户配置好的收件人，**不要自己猜一个地址填进去**。"
+        "正文支持 Markdown 排版（标题、列表、表格等会渲染成 HTML 邮件），不要写 HTML 标签。"
     )
     args_schema: Type[BaseModel] = EmailInput
 
@@ -195,8 +202,15 @@ class send_email(BaseTool):
 
         try:
             # send_mail 是同步阻塞的，放进线程池，别卡住事件循环。
+            # render_markdown=True：这里的正文由模型生成，天然带 Markdown 排版
+            # （标题/列表/表格），纯文本发出去用户看到的是满屏 ** 和 |。
             ok, message = await asyncio.to_thread(
-                EmailDeliveryService.send_mail, settings, recipients, subject, content
+                EmailDeliveryService.send_mail,
+                settings,
+                recipients,
+                subject,
+                content,
+                render_markdown=True,
             )
         except Exception as e:
             logger.error(f"SMTP Error: {e}", exc_info=True)

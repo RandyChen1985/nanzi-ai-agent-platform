@@ -18,10 +18,12 @@ import smtplib
 from dataclasses import dataclass
 from datetime import datetime
 from email.header import Header
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
+from markdown_it import MarkdownIt
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,6 +69,68 @@ class SmtpSettings:
 
     def effective_from(self) -> str:
         return (self.from_address or "").strip() or (self.user or "").strip()
+
+
+# ---------------- 正文渲染：Markdown → HTML ---------------- #
+
+# 渲染器只构建一次复用：MarkdownIt 的构建要装载规则链，而发信是高频路径。
+#
+# 三项配置都是刻意的，删任一项都会出问题：
+# - preset "gfm-like"：带表格、删除线等 GFM 扩展。平台自己生成的简报正文
+#   （chatbi_brief_service / saved_report_digest_service）大量用表格，
+#   CommonMark 基线不含表格，会原样吐出竖线；该 preset 还启用 linkify
+#   （依赖 linkify-it-py，已在 requirements.txt 显式锁定）。
+# - html=False：**正文里的原始 HTML 一律转义**。这段文本来自模型，最终进的是
+#   用户邮箱，绝不能让模型（或提示词注入）往邮件里塞 <script>/<img onerror>。
+#   实测确认 `<script>alert(1)</script>` 会渲染成纯文本转义串；markdown-it 默认的
+#   validateLink 同时拒掉 javascript:/vbscript:/file: 等协议（链接保持字面文本）。
+# - breaks=True：单个换行渲染成 <br>。通知类正文大量「一行一个字段」
+#   （账号名：… / 邮箱：…），CommonMark 默认把段内换行并成空格，等于破坏排版。
+_MAIL_MARKDOWN = MarkdownIt("gfm-like", {"html": False, "breaks": True})
+
+# 邮件客户端对 <style> 标签的剥离程度不一致，样式必须内联到元素上才可靠。
+# 取中性灰阶、不用品牌色：邮件正文不该绑定某一版前端主题。
+_INLINE_STYLES: Tuple[Tuple[str, str], ...] = (
+    ("table", "border-collapse:collapse;margin:10px 0;font-size:13px"),
+    ("th", "border:1px solid #d0d7de;padding:6px 10px;text-align:left;background:#f6f8fa"),
+    ("td", "border:1px solid #d0d7de;padding:6px 10px;text-align:left"),
+    ("pre", "background:#f6f8fa;padding:10px;border-radius:6px;overflow-x:auto"),
+    (
+        "code",
+        "background:#f6f8fa;padding:1px 4px;border-radius:4px;"
+        "font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px",
+    ),
+    ("blockquote", "border-left:3px solid #d0d7de;margin:10px 0;padding:2px 12px;color:#57606a"),
+    ("a", "color:#0969da"),
+)
+
+_BODY_WRAPPER_STYLE = (
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',"
+    "sans-serif;font-size:14px;line-height:1.65;color:#1f2328"
+)
+
+
+def _apply_inline_styles(html: str) -> str:
+    """把样式内联进标签。必须在渲染**之后**做。
+
+    渲染器此时已把正文里的 `<table>` 之类转义成 `&lt;table&gt;`，因此这些正则
+    只会命中所属结构标签，不会误伤用户正文里的同名文字。
+    """
+    for tag, style in _INLINE_STYLES:
+        # 渲染器产出的标签不带属性（code 例外，带 class="language-xxx"），
+        # 因此统一插到标签名后面即可。`<th` 不会误匹配 `<thead`：紧随其后必须是空格或 >。
+        html = re.sub(
+            rf"<{tag}(\s|>)",
+            lambda match, _tag=tag, _style=style: f'<{_tag} style="{_style}"{match.group(1)}',
+            html,
+        )
+    return html
+
+
+def render_markdown_to_html(body: str) -> str:
+    """Markdown 正文 → 可内嵌进邮件的 HTML 片段。"""
+    inner = _apply_inline_styles(_MAIL_MARKDOWN.render(body or ""))
+    return f'<div style="{_BODY_WRAPPER_STYLE}">{inner}</div>'
 
 
 class EmailDeliveryService:
@@ -421,6 +485,47 @@ class EmailDeliveryService:
         return cleaned
 
     @classmethod
+    def build_message(
+        cls,
+        *,
+        settings: SmtpSettings,
+        to: List[str],
+        subject: str,
+        body: str,
+        render_markdown: bool = False,
+    ) -> Any:
+        """构造邮件报文（不含发送），便于单测直接检查 MIME 结构。
+
+        render_markdown=True 时用 multipart/alternative 同时挂两个版本：纯文本版
+        **保留 Markdown 原文**（纯文本客户端、以及 HTML 被过滤时仍可读），HTML 版是
+        渲染结果。两部分的顺序绝不能反——RFC 2046 规定客户端取「最后一个能显示的
+        版本」，HTML 放前面会让纯文本客户端什么都看不到。
+
+        渲染异常时降级为纯文本单部分：邮件承载的是通知本身，不能因为排版渲染出问题
+        就把这条通知丢掉（发信失败与字体难看之间，后者可以忍）。
+        """
+        html: Optional[str] = None
+        if render_markdown:
+            try:
+                html = render_markdown_to_html(body)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("邮件 Markdown 渲染失败，降级为纯文本发送: %s", exc)
+
+        if not html:
+            message: Any = MIMEText(body, "plain", "utf-8")
+        else:
+            message = MIMEMultipart("alternative")
+            message.attach(MIMEText(body, "plain", "utf-8"))
+            message.attach(MIMEText(html, "html", "utf-8"))
+
+        message["Subject"] = Header(subject, "utf-8")
+        message["From"] = formataddr(
+            (str(Header(settings.sender_name, "utf-8")), settings.effective_from())
+        )
+        message["To"] = ", ".join(to)
+        return message
+
+    @classmethod
     def send_mail(
         cls,
         settings: SmtpSettings,
@@ -429,6 +534,7 @@ class EmailDeliveryService:
         body: str,
         *,
         raise_on_transport_error: bool = False,
+        render_markdown: bool = False,
     ) -> Tuple[bool, str]:
         """同步发送。返回 (ok, message)。
 
@@ -441,6 +547,11 @@ class EmailDeliveryService:
         `notification_service._send_with_retries` 的契约是「抛异常 = 瞬时故障，退避重试；
         返回 (False, err) = 业务失败，立即返回」。若把连接超时也吞成 (False, err)，
         邮件渠道的重试就静默失效了（钉钉/企微路径仍抛异常，所以只有邮件会退化）。
+
+        render_markdown=True 时正文以 multipart/alternative 发出：纯文本原文 + 渲染后的
+        HTML。**默认关闭**，且刻意只给「模型产出正文」的两条路径开——工具 send_email 与
+        定时通知邮件。审核、密码重置、测试邮件这些人工编写的文案里成对的标记符号
+        （`*重要*`、`__init__`）会被 Markdown 误解析成斜体/粗体，那些路径继续走纯文本。
         """
         if not settings.is_complete():
             return False, "邮件服务配置不完整（至少需要填写 SMTP 服务器地址）"
@@ -461,10 +572,13 @@ class EmailDeliveryService:
                 f"（仅允许 {'/'.join(cls.ALLOWED_SECURITY)}）"
             )
 
-        message = MIMEText(body, "plain", "utf-8")
-        message["Subject"] = Header(subject, "utf-8")
-        message["From"] = formataddr((str(Header(settings.sender_name, "utf-8")), sender))
-        message["To"] = ", ".join(to)
+        message = cls.build_message(
+            settings=settings,
+            to=to,
+            subject=subject,
+            body=body,
+            render_markdown=render_markdown,
+        )
 
         try:
             if settings.security == "ssl":

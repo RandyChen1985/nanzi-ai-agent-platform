@@ -47,3 +47,12 @@ psutil>=5.9.0
 duckdb>=1.0.0
 psycopg[pool,binary]>=3.2,<4
 kubernetes-asyncio>=30.0.0
+# 邮件正文的 Markdown → HTML 渲染（工具 send_email 与定时任务通知邮件用）。
+# 它原本只是 rich / textual / mdit-py-plugins 带进来的**间接**依赖，上游依赖树一变
+# 就会 ImportError，而邮件渲染直接 import 它，故显式声明并锁定。渲染配置见
+# EmailDeliveryService._MAIL_MARKDOWN：html=False（模型产出的原始 HTML 一律转义）
+# + breaks=True（段内换行不被并成一行）。升级前请重新核对这两项默认值的行为，
+# 并跑 tests/test_mail_markdown_render.py。
+# linkify-it-py 是 gfm-like preset 的硬依赖（裸 URL 自动转链接），一并锁定。
+markdown-it-py==4.2.0
+linkify-it-py==2.1.1

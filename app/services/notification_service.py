@@ -719,8 +719,15 @@ class NotificationService:
             # raise_on_transport_error=True：连接失败/超时这类瞬时故障要抛出去，
             # 好让 _send_with_retries 退避重试；配置不完整、无收件人这类业务失败
             # 仍走返回值立即返回，不浪费重试。
+            # render_markdown=True：任务结果正文由模型生成、带 Markdown 排版，
+            # 与钉钉/企微/飞书三个渠道（msgtype=markdown）保持一致。
             return EmailDeliveryService.send_mail(
-                settings, recipients, title, content, raise_on_transport_error=True
+                settings,
+                recipients,
+                title,
+                content,
+                raise_on_transport_error=True,
+                render_markdown=True,
             )
 
         async def send_once() -> Tuple[bool, str]:
