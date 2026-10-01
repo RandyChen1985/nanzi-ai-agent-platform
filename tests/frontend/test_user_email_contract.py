@@ -296,23 +296,61 @@ def test_email_test_result_cleared_when_source_changes():
     assert "emailTestResult.value = null" in m.group(0)
 
 
-def test_email_test_button_not_disabled_by_unreadable_global_config():
-    """**守住一个刻意的取舍**：不能因为读不到全局配置就置灰测试按钮。
+def test_email_test_button_disabled_when_unconfigured():
+    """配置不全时「测试连通性」必须置灰，并把原因写在按钮旁。
 
-    可用性判据现已改为 /auth/me 的 mail_service_available（全角色可读），权限导致的误判
-    已消除；但本取舍依然成立并保留：只要前端是「单方面推断」，就不该据此置灰按钮，否则
-    一次推断错误会把本来可用的服务锁死（功能性回退）。让用户点下去、以测试结果为准。
+    判据来源已从「权限受限的推断」变为权威值，因此置灰不再有把可用服务锁死的风险：
+    - 自定义来源：镜像后端 SmtpSettings.is_complete()（host 必需；账号/密码同时填或同时空）
+    - 全局来源：仅在**明确**读到未启用（mail_service_available === false）时置灰
+    - /auth/me 读取失败（未知）时**不**置灰：一次瞬时失败不该锁死本来可用的服务
     """
     src = _notification_configs_src()
     import re
-    m = re.search(
-        r":disabled=\"testingChannel\['email'\] \|\| savingChannel\['email'\][^\"]*\"",
-        src,
+
+    m = re.search(r":disabled=\"([^\"]*)\"\n\s*:title=\"([^\"]*)\"", src)
+    assert m, "找不到邮件测试按钮的 disabled/title 表达式"
+    assert "emailTestDisabled" in m.group(1), "按钮置灰必须由 emailTestDisabled 决定"
+    assert "emailTestBlockedReason" in m.group(2), "置灰原因必须通过 title 可见"
+
+
+def test_email_test_disable_mirrors_backend_smtp_completeness():
+    """自定义来源的完整性判定必须镜像后端 is_complete()，否则置灰与实际能否发送脱节。"""
+    src = _notification_configs_src()
+    idx = src.index("customSmtpConfigured")
+    body = src[idx : idx + 700]
+    assert "smtp_host" in body, "host 是后端唯一必需项"
+    assert "smtp_user" in body and "smtp_password" in body, "需检查账号/密码配对"
+    assert "hasUser === hasPassword" in body or "hasUser==hasPassword" in body, (
+        "账号与密码必须同时填或同时空：后端 is_complete() 就是这样判的，"
+        "只填一个属半套凭据，置灰应与之一致"
     )
-    assert m, "找不到邮件测试按钮的 disabled 表达式"
-    assert "emailTestUnavailable" not in m.group(0), (
-        "不得把 emailTestUnavailable 并入 disabled：读不到配置可能只是权限问题"
+
+
+def test_email_test_disable_requires_explicit_false_for_global():
+    """全局来源只在**明确** false 时置灰；未知（读取失败）不得置灰。"""
+    src = _notification_configs_src()
+    # 锚定**声明**：模板里也出现这个名字，按首次出现会取到模板片段
+    idx = src.index("const emailTestBlockedReason = computed")
+    body = src[idx : idx + 900]
+    assert "mailServiceAvailable.value === false" in body, (
+        "只有明确 false 才置灰，未知状态要放行"
     )
+    assert "!mailServiceAvailable.value" not in body, (
+        "不得用取反：未知状态会被误判成未启用而锁死按钮"
+    )
+    assert "null" in src[src.index("const mailServiceAvailable") :][:200], (
+        "未知态必须用 null 表达，与 false 区分"
+    )
+
+
+def test_email_test_blocked_reason_shown_next_to_button():
+    """置灰原因必须写在按钮旁，而不是只塞进 title（移动端/触屏看不到 title）。"""
+    src = _notification_configs_src()
+    idx = src.index("连通性测试只发到")
+    window = src[max(0, idx - 400) : idx + 260]
+    # 必须是**插值渲染**：只在 :class 里提到名字不算把原因展示出来
+    assert "{{ emailTestBlockedReason" in window, "按钮旁必须插值展示置灰原因"
+    assert "连通性测试只发到" in window, "未置灰时仍要显示常规说明"
 
 
 # --------------------------------------------------------------------------- #

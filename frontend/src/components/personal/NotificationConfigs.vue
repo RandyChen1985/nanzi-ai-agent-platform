@@ -347,7 +347,7 @@
           <!-- 全局概览：只展示服务器与发件人，绝不显示密码 -->
           <div v-if="configs.email.smtp_source !== 'custom'" class="rounded-lg border border-gray-150 bg-gray-50/70 p-3.5 space-y-2">
             <!-- 已启用（判据来自 /auth/me，全角色可用） -->
-            <template v-if="mailServiceAvailable">
+            <template v-if="mailServiceAvailable !== false">
               <!-- 明细需系统配置权限；普通用户读不到，只给中性说明，
                    既不说假话，也不把内网 SMTP 中继地址暴露给所有登录用户 -->
               <template v-if="globalEmailDetail">
@@ -365,7 +365,11 @@
                 </div>
               </template>
               <p v-else class="text-xs text-gray-600 leading-relaxed">
-                已由平台统一配置，无需在此填写服务器信息。
+                {{
+                  mailServiceAvailable === true
+                    ? '已由平台统一配置，无需在此填写服务器信息。'
+                    : '暂时无法确认平台邮件服务状态，可先点「测试连通性」验证。'
+                }}
               </p>
               <p class="text-[11px] text-gray-400 pt-0.5">以上由平台统一管理，如需调整请联系管理员。</p>
             </template>
@@ -476,14 +480,17 @@
                按钮组必须整体作为一个 flex 项，否则 justify-between 会把
                「测试连通性」单独均分到行的正中间。 -->
           <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-2">
-            <p class="text-[11px] text-gray-400">
-              连通性测试只发到「我的邮箱」，不会发给上面的其他收件人。
+            <p
+              class="text-[11px]"
+              :class="emailTestBlockedReason ? 'text-amber-600' : 'text-gray-400'"
+            >
+              {{ emailTestBlockedReason || '连通性测试只发到「我的邮箱」，不会发给上面的其他收件人。' }}
             </p>
             <div class="flex items-center space-x-3 ml-auto shrink-0">
               <button 
                 @click="testConfig('email')"
-                :disabled="testingChannel['email'] || savingChannel['email']"
-                :title="emailTestUnavailable ? '平台邮件服务可能未启用；若测试失败，提示会留在上方。请联系管理员启用，或改用自定义 SMTP。' : ''"
+                :disabled="emailTestDisabled"
+                :title="emailTestBlockedReason"
                 class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
               >
                 <span v-if="testingChannel['email']" class="inline-flex items-center">
@@ -632,7 +639,7 @@ const globalEmailConfig = ref<Record<string, string>>({})
 // 普通用户会拿到 403；若拿它判断启用状态，403 就会被误解成「平台未启用」，界面于是
 // 理直气壮地对普通用户说了假话（发信其实一直是好的）。这个 bug 不报错、不影响功能，
 // 只是让 UI 说了假话，所以必须靠 tests/frontend/test_notification_global_mail_contract.py 钉住。
-const mailServiceAvailable = ref(false)
+const mailServiceAvailable = ref<boolean | null>(null)
 
 const myEmail = computed(() => String(me.value?.email || '').trim())
 const canIncludeSelf = computed(() => !!myEmail.value)
@@ -661,10 +668,40 @@ const savingChannel = ref<Record<string, boolean>>({})
 // 管理员动作、或需要用户先去填邮箱的）必须留在原地，用户才看得到该做什么。
 const emailTestResult = ref<{ ok: boolean; message: string } | null>(null)
 
-// 选了「全局」而平台确实没启用邮件服务时，给按钮加一句提示。
-// **刻意不据此置灰按钮**：让用户点下去、以测试结果为准，比前端凭单方面推断锁死更可靠。
-const emailTestUnavailable = computed(
-  () => configs.value.email?.smtp_source !== 'custom' && !mailServiceAvailable.value
+// 配置是否填够、足以发起连通测试 —— 决定「测试连通性」是否置灰。
+//
+// 自定义来源**镜像后端** SmtpSettings.is_complete()：host 是唯一必需项，账号与密码必须
+// 同时填或同时空（免认证的内网中继合法地没有账号密码；只填一个属半套凭据，后端本就会
+// 判为不完整）。判定用**表单当前值**，因为 POST /notifications/test 收到的正是
+// config_data（脱敏密码在后端反解回真值）——这点与管理员页「测试已保存配置」不同。
+const customSmtpConfigured = computed(() => {
+  const cfg = configs.value.email || {}
+  if (!String(cfg.smtp_host || '').trim()) return false
+  const hasUser = !!String(cfg.smtp_user || '').trim()
+  const hasPassword = !!String(cfg.smtp_password || '').trim()
+  return hasUser === hasPassword
+})
+
+// 置灰原因（空串 = 可测）。必须**可见地**展示在按钮旁，否则用户面对一个灰按钮
+// 不知道要做什么——title 在触屏上根本看不到。
+const emailTestBlockedReason = computed(() => {
+  const cfg = configs.value.email || {}
+  if (cfg.smtp_source === 'custom') {
+    return customSmtpConfigured.value
+      ? ''
+      : '请先填写 SMTP 服务地址；发件人账号与授权码需同时填写（免认证内网中继可都留空）。'
+  }
+  // 只有**明确**读到未启用才置灰：状态未知时不锁死按钮，让用户点下去以测试结果为准
+  return mailServiceAvailable.value === false
+    ? '平台尚未启用邮件服务，请联系管理员配置，或改用自定义 SMTP。'
+    : ''
+})
+
+const emailTestDisabled = computed(
+  () =>
+    testingChannel.value['email'] ||
+    savingChannel.value['email'] ||
+    !!emailTestBlockedReason.value
 )
 
 const showGuideModal = ref(false)
@@ -785,12 +822,15 @@ const fetchMe = async () => {
   try {
     const res = await axios.get('/api/portal/auth/me')
     me.value = res.data || null
-    // 严格判 true：字段缺失（未升级的后端）时按「未启用」处理，
-    // 宁可少显示一句明细，也不要再次对用户断言错误的状态。
-    mailServiceAvailable.value = res.data?.data?.mail_service_available === true
+    // 三态：true/false 为后端权威判定；请求失败保持 null（未知），
+    // 未知与「未启用」必须区分——否则一次瞬时失败会被当成未启用，把可用的服务锁死。
+    mailServiceAvailable.value =
+      typeof res.data?.data?.mail_service_available === 'boolean'
+        ? res.data.data.mail_service_available
+        : null
   } catch {
     me.value = null
-    mailServiceAvailable.value = false
+    mailServiceAvailable.value = null
   }
 }
 

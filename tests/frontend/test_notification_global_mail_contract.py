@@ -22,16 +22,14 @@ def test_enabled_flag_comes_from_auth_me():
     断言精确的赋值语句而不是「包含这个字符串」：文件里注释也会提到该字段名，
     按第一次出现匹配会匹配到注释，断言就失去了意义。
     """
-    assignment = "mailServiceAvailable.value = res.data?.data?.mail_service_available === true"
-    assert assignment in COMPONENT, (
-        "应从 /auth/me 响应里严格判定该标志位为 true（缺失时按未启用处理）"
-    )
     me_idx = COMPONENT.index("axios.get('/api/portal/auth/me')")
-    assign_idx = COMPONENT.index(assignment)
-    assert assign_idx > me_idx, "标志位必须在 /auth/me 的响应处理里读取"
-    # 请求失败时必须显式置为不可用，不能沿用上一次的旧值
-    assert COMPONENT.index("mailServiceAvailable.value = false") > assign_idx, (
-        "fetchMe 失败分支必须显式置为不可用"
+    read_idx = COMPONENT.index("res.data?.data?.mail_service_available")
+    assert read_idx > me_idx, "标志位必须在 /auth/me 的响应处理里读取"
+    assert "typeof res.data?.data?.mail_service_available === 'boolean'" in COMPONENT, (
+        "只接受布尔值：字段缺失或后端未升级时按「未知」处理，不得当成未启用"
+    )
+    assert "mailServiceAvailable.value = null" in COMPONENT, (
+        "未知态必须用 null 表达，与明确的 false（未启用）区分开"
     )
 
 
@@ -49,7 +47,8 @@ def test_admin_config_no_longer_decides_enabled():
 
 def test_unavailable_copy_is_gated_by_flag_not_by_permission():
     """「尚未启用」文案只能由标志位为假触发，不能由「读不到配置」触发。"""
-    flag_idx = COMPONENT.index('v-if="mailServiceAvailable"')
+    # 三态：未启用文案只在**明确** false 时出现（未知态另有中性说明）
+    flag_idx = COMPONENT.index('v-if="mailServiceAvailable !== false"')
     copy_idx = COMPONENT.index("平台尚未启用邮件服务")
     assert flag_idx < copy_idx, "未启用文案必须位于标志位分支之后"
     between = COMPONENT[flag_idx:copy_idx]
@@ -66,9 +65,12 @@ def test_smtp_detail_rows_are_gated_by_detail_presence():
 
 def test_test_button_hint_uses_flag():
     """「测试连通性」的未启用提示也必须用同一判据，避免 UI 与自身行为矛盾。"""
-    idx = COMPONENT.index("emailTestUnavailable = computed")
-    window = COMPONENT[idx : idx + 300]
-    assert "mailServiceAvailable" in window, "提示应改用全角色可用的标志位"
+    idx = COMPONENT.index("const emailTestBlockedReason = computed")
+    window = COMPONENT[idx : idx + 800]
+    assert "mailServiceAvailable.value === false" in window, (
+        "全局来源的置灰原因必须以权威标志位为准（且只在明确 false 时）"
+    )
+    assert "customSmtpConfigured" in window, "自定义来源也要给出各自的置灰原因"
     assert "globalEmailOverview" not in window, "不得再依赖旧的、基于管理员配置的推导"
 
 
