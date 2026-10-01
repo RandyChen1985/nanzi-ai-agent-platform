@@ -7,7 +7,7 @@
         <p class="text-sm text-gray-500 mt-1">配置您在平台内的个人消息通知通道，支持钉钉、企微机器人以及 SMTP 邮件发送。</p>
       </div>
       <button 
-        @click="fetchConfigs"
+        @click="refreshAll"
         :disabled="loading"
         class="inline-flex items-center px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 active:bg-blue-200 rounded-lg transition-colors duration-200 disabled:opacity-50"
       >
@@ -57,10 +57,18 @@
               <p class="text-xs text-gray-400 mt-0.5">申请审批、报警等结果推送至钉钉群自定义机器人。</p>
             </div>
           </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="configs.dingtalk.is_enabled" class="sr-only peer" @change="onToggleChannel('dingtalk')">
-            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-          </label>
+          <div class="flex items-center gap-3">
+            <span
+              v-if="configs.dingtalk.is_enabled"
+              class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
+              :class="channelBadge('dingtalk').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
+              :title="channelBadge('dingtalk').reason"
+            >{{ channelBadge('dingtalk').label }}</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="configs.dingtalk.is_enabled" class="sr-only peer" @change="onToggleChannel('dingtalk')">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
         </div>
 
         <!-- DingTalk Form (Transition Expand) -->
@@ -86,29 +94,38 @@
             <p class="text-[11px] text-gray-400 mt-1">若机器人启用了「加签」安全设置，请在此填写 SEC 开头的密钥。</p>
           </div>
           
-          <div class="flex items-center justify-end space-x-3 pt-2">
-            <button 
-              @click="testConfig('dingtalk')"
-              :disabled="testingChannel['dingtalk'] || savingChannel['dingtalk']"
-              class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
+          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-2">
+            <p
+              class="text-[11px]"
+              :class="channelSaveBlockedReason('dingtalk') ? 'text-amber-600' : 'text-gray-400'"
             >
-              <span v-if="testingChannel['dingtalk']" class="inline-flex items-center">
-                <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                正在测试...
-              </span>
-              <span v-else>测试连通性</span>
-            </button>
-            <button 
-              @click="saveConfig('dingtalk')"
-              :disabled="testingChannel['dingtalk'] || savingChannel['dingtalk']"
-              class="px-4 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
-            >
-              <span v-if="savingChannel['dingtalk']" class="inline-flex items-center">
-                <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                保存中...
-              </span>
-              <span v-else>保存配置</span>
-            </button>
+              {{ channelSaveBlockedReason('dingtalk') || '测试连通性会真实发送一条消息到该群，不会影响线上业务。' }}
+            </p>
+            <div class="flex items-center space-x-3 shrink-0">
+              <button 
+                @click="testConfig('dingtalk')"
+                :disabled="channelTestDisabled('dingtalk')"
+                :title="channelTestBlockedReason('dingtalk')"
+                class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
+              >
+                <span v-if="testingChannel['dingtalk']" class="inline-flex items-center">
+                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
+                  正在测试...
+                </span>
+                <span v-else>测试连通性</span>
+              </button>
+              <button 
+                @click="saveConfig('dingtalk')"
+                :disabled="channelSaveDisabled('dingtalk')"
+                class="px-4 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
+              >
+                <span v-if="savingChannel['dingtalk']" class="inline-flex items-center">
+                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
+                  保存中...
+                </span>
+                <span v-else>保存配置</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -141,10 +158,18 @@
               <p class="text-xs text-gray-400 mt-0.5">将平台通知推送至企微群的自定义小助手。</p>
             </div>
           </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="configs.wechat_work.is_enabled" class="sr-only peer" @change="onToggleChannel('wechat_work')">
-            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-          </label>
+          <div class="flex items-center gap-3">
+            <span
+              v-if="configs.wechat_work.is_enabled"
+              class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
+              :class="channelBadge('wechat_work').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
+              :title="channelBadge('wechat_work').reason"
+            >{{ channelBadge('wechat_work').label }}</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="configs.wechat_work.is_enabled" class="sr-only peer" @change="onToggleChannel('wechat_work')">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+            </label>
+          </div>
         </div>
 
         <!-- WeChat Work Form -->
@@ -160,29 +185,38 @@
             <p class="text-[11px] text-gray-400 mt-1">企业微信群聊 &rarr; 添加群机器人 &rarr; 新建机器人 &rarr; 复制 Webhook 地址。</p>
           </div>
 
-          <div class="flex items-center justify-end space-x-3 pt-2">
-            <button 
-              @click="testConfig('wechat_work')"
-              :disabled="testingChannel['wechat_work'] || savingChannel['wechat_work']"
-              class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
+          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-2">
+            <p
+              class="text-[11px]"
+              :class="channelSaveBlockedReason('wechat_work') ? 'text-amber-600' : 'text-gray-400'"
             >
-              <span v-if="testingChannel['wechat_work']" class="inline-flex items-center">
-                <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                正在测试...
-              </span>
-              <span v-else>测试连通性</span>
-            </button>
-            <button 
-              @click="saveConfig('wechat_work')"
-              :disabled="testingChannel['wechat_work'] || savingChannel['wechat_work']"
-              class="px-4 py-2 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
-            >
-              <span v-if="savingChannel['wechat_work']" class="inline-flex items-center">
-                <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                保存中...
-              </span>
-              <span v-else>保存配置</span>
-            </button>
+              {{ channelSaveBlockedReason('wechat_work') || '测试连通性会真实发送一条消息到该群，不会影响线上业务。' }}
+            </p>
+            <div class="flex items-center space-x-3 shrink-0">
+              <button 
+                @click="testConfig('wechat_work')"
+                :disabled="channelTestDisabled('wechat_work')"
+                :title="channelTestBlockedReason('wechat_work')"
+                class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
+              >
+                <span v-if="testingChannel['wechat_work']" class="inline-flex items-center">
+                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
+                  正在测试...
+                </span>
+                <span v-else>测试连通性</span>
+              </button>
+              <button 
+                @click="saveConfig('wechat_work')"
+                :disabled="channelSaveDisabled('wechat_work')"
+                class="px-4 py-2 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
+              >
+                <span v-if="savingChannel['wechat_work']" class="inline-flex items-center">
+                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
+                  保存中...
+                </span>
+                <span v-else>保存配置</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -215,10 +249,18 @@
               <p class="text-xs text-gray-400 mt-0.5">申请审批、任务执行与巡检结果推送至飞书自定义机器人。</p>
             </div>
           </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="configs.feishu.is_enabled" class="sr-only peer" @change="onToggleChannel('feishu')">
-            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600"></div>
-          </label>
+          <div class="flex items-center gap-3">
+            <span
+              v-if="configs.feishu.is_enabled"
+              class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
+              :class="channelBadge('feishu').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
+              :title="channelBadge('feishu').reason"
+            >{{ channelBadge('feishu').label }}</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="configs.feishu.is_enabled" class="sr-only peer" @change="onToggleChannel('feishu')">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600"></div>
+            </label>
+          </div>
         </div>
 
         <!-- Feishu Form -->
@@ -244,29 +286,38 @@
             <p class="text-[11px] text-gray-400 mt-1">若飞书机器人启用了「签名校验」安全设置，请在此填写秘钥。</p>
           </div>
 
-          <div class="flex items-center justify-end space-x-3 pt-2">
-            <button 
-              @click="testConfig('feishu')"
-              :disabled="testingChannel['feishu'] || savingChannel['feishu']"
-              class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
+          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-2">
+            <p
+              class="text-[11px]"
+              :class="channelSaveBlockedReason('feishu') ? 'text-amber-600' : 'text-gray-400'"
             >
-              <span v-if="testingChannel['feishu']" class="inline-flex items-center">
-                <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                正在测试...
-              </span>
-              <span v-else>测试连通性</span>
-            </button>
-            <button 
-              @click="saveConfig('feishu')"
-              :disabled="testingChannel['feishu'] || savingChannel['feishu']"
-              class="px-4 py-2 text-xs font-medium text-white bg-cyan-600 hover:bg-cyan-700 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
-            >
-              <span v-if="savingChannel['feishu']" class="inline-flex items-center">
-                <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                保存中...
-              </span>
-              <span v-else>保存配置</span>
-            </button>
+              {{ channelSaveBlockedReason('feishu') || '测试连通性会真实发送一条消息到该群，不会影响线上业务。' }}
+            </p>
+            <div class="flex items-center space-x-3 shrink-0">
+              <button 
+                @click="testConfig('feishu')"
+                :disabled="channelTestDisabled('feishu')"
+                :title="channelTestBlockedReason('feishu')"
+                class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
+              >
+                <span v-if="testingChannel['feishu']" class="inline-flex items-center">
+                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
+                  正在测试...
+                </span>
+                <span v-else>测试连通性</span>
+              </button>
+              <button 
+                @click="saveConfig('feishu')"
+                :disabled="channelSaveDisabled('feishu')"
+                class="px-4 py-2 text-xs font-medium text-white bg-cyan-600 hover:bg-cyan-700 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
+              >
+                <span v-if="savingChannel['feishu']" class="inline-flex items-center">
+                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
+                  保存中...
+                </span>
+                <span v-else>保存配置</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -299,10 +350,18 @@
               <p class="text-xs text-gray-400 mt-0.5">绑定第三方 SMTP 服务器进行系统报警和申请邮件投递。</p>
             </div>
           </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="configs.email.is_enabled" class="sr-only peer" @change="onToggleChannel('email')">
-            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
-          </label>
+          <div class="flex items-center gap-3">
+            <span
+              v-if="configs.email.is_enabled"
+              class="px-2 py-0.5 text-[10px] font-black rounded-full border whitespace-nowrap"
+              :class="channelBadge('email').tone === 'ok' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-200'"
+              :title="channelBadge('email').reason"
+            >{{ channelBadge('email').label }}</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="configs.email.is_enabled" class="sr-only peer" @change="onToggleChannel('email')">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+            </label>
+          </div>
         </div>
 
         <!-- Email SMTP Form -->
@@ -482,9 +541,9 @@
           <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-2">
             <p
               class="text-[11px]"
-              :class="emailTestBlockedReason ? 'text-amber-600' : 'text-gray-400'"
+              :class="(emailTestBlockedReason || emailSaveBlockedReason) ? 'text-amber-600' : 'text-gray-400'"
             >
-              {{ emailTestBlockedReason || '连通性测试只发到「我的邮箱」，不会发给上面的其他收件人。' }}
+              {{ emailTestBlockedReason || emailSaveBlockedReason || '连通性测试只发到「我的邮箱」，不会发给上面的其他收件人。' }}
             </p>
             <div class="flex items-center space-x-3 ml-auto shrink-0">
               <button 
@@ -501,7 +560,7 @@
               </button>
               <button 
                 @click="saveConfig('email')"
-                :disabled="testingChannel['email'] || savingChannel['email']"
+                :disabled="channelSaveDisabled('email')"
                 class="px-4 py-2 text-xs font-medium text-white bg-orange-500 hover:bg-orange-600 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
               >
                 <span v-if="savingChannel['email']" class="inline-flex items-center">
@@ -878,7 +937,11 @@ const fetchConfigs = async () => {
   }
 }
 
-const saveConfig = async (channel: string, successMessage?: string) => {
+const saveConfig = async (
+  channel: string,
+  successMessage?: string,
+  failurePrefix = ''
+): Promise<boolean> => {
   savingChannel.value[channel] = true
   try {
     const res = await axios.put('/api/portal/notifications/config', {
@@ -888,18 +951,110 @@ const saveConfig = async (channel: string, successMessage?: string) => {
     if (res.data && res.data.status === 'success') {
       emit('show-toast', successMessage || `${getChannelName(channel)}配置保存成功`, 'success')
       await fetchConfigs() // 重新拉取以更新打星号
+      await fetchChannelReadiness() // 可用性随配置变化，徽标必须跟着更新
+      return true
     }
+    emit('show-toast', `${getChannelName(channel)}配置保存失败`, 'error')
+    return false
   } catch (error: any) {
-    emit('show-toast', error.response?.data?.detail || '保存配置失败', 'error')
+    const detail = error.response?.data?.detail || '保存配置失败'
+    emit('show-toast', failurePrefix ? `${failurePrefix}：${detail}` : detail, 'error')
+    return false
   } finally {
     savingChannel.value[channel] = false
   }
 }
 
+// ---------------- 渠道可用性：与发信同源的后端判定 ---------------- //
+// 开关表达的是「启用意图」，能不能发是另一回事——平台全局邮件服务是否启用、
+// webhook 是否填对，都不是一个开关能表达的。两者分开显示，用户才不会看到
+// 一个打开的开关就以为「已经好了」（那正是「任务里勾不上邮件」的困惑来源）。
+const channelReadiness = ref<Record<string, { ready: boolean; reason: string }>>({})
+
+const fetchChannelReadiness = async () => {
+  try {
+    const res = await axios.get('/api/portal/notifications/readiness')
+    channelReadiness.value = res.data?.channels || {}
+  } catch (error) {
+    // 读不到就**不断言**可用性：徽标退化为中性的「已启用」。
+    // 把「未知」渲染成「不可用」会让一次瞬时失败看起来像配置出错。
+    console.warn('Failed to load notification channel readiness', error)
+    channelReadiness.value = {}
+  }
+}
+
+const channelBadge = (channel: string) => {
+  const verdict = channelReadiness.value[channel]
+  if (verdict && !verdict.ready) {
+    return {
+      label: '已启用 · 当前不可用',
+      tone: 'warn' as const,
+      reason: verdict.reason || '该渠道当前不可用',
+    }
+  }
+  if (verdict && verdict.ready) {
+    return {
+      label: '已启用 · 可用',
+      tone: 'ok' as const,
+      // 「可用」= 配置完整且来源可用，不等于实测发得通（例如机器人侧开了加签却没填密钥）。
+      // 措辞要留出这条边界，并指向唯一能给出确定答案的动作。
+      reason: '配置完整且已启用；建议再用「测试连通性」实测一次。',
+    }
+  }
+  return { label: '已启用', tone: 'ok' as const, reason: '正在确认该渠道是否可用' }
+}
+
+// 保存前置校验：必填缺失时置灰「保存配置」并**可见地**给出原因。
+// 只置灰不说话是另一种「界面说谎」——用户只会以为按钮坏了。
+//
+// 刻意不拦开关本身：先开开关、再逐步填配置是正常流程；开关一打开，上面的徽标
+// 就会立刻标出「已启用 · 当前不可用」，不会让人误以为配置已经完成。
+const emailSaveBlockedReason = computed(() => {
+  const cfg = configs.value.email || {}
+  if (String(cfg.smtp_source || '') === 'custom' && !customSmtpConfigured.value) {
+    return '请先填写 SMTP 服务地址；账号与授权码须同时填写或同时留空。'
+  }
+  // 全局来源即使用不了也允许保存：那是管理员侧的事，用户先把「我想用邮件」存下来是合理的
+  return ''
+})
+const channelSaveBlockedReason = (channel: string): string => {
+  if (channel === 'email') return emailSaveBlockedReason.value
+  const cfg = configs.value[channel] || {}
+  if (!String(cfg.webhook_url || '').trim()) return '请先填写 Webhook 地址后再保存。'
+  return ''
+}
+const channelSaveDisabled = (channel: string) =>
+  !!testingChannel.value[channel] ||
+  !!savingChannel.value[channel] ||
+  !!channelSaveBlockedReason(channel)
+
+// 「测试连通性」复用同一套必填前置校验（邮件另用更全的判据，含全局服务是否启用）：
+// webhook 都没填就点测试，只能换来一句必然失败的报错，不如把按钮灰掉并写出原因。
+const channelTestBlockedReason = (channel: string): string =>
+  channel === 'email' ? emailTestBlockedReason.value : channelSaveBlockedReason(channel)
+const channelTestDisabled = (channel: string) =>
+  !!testingChannel.value[channel] ||
+  !!savingChannel.value[channel] ||
+  !!channelTestBlockedReason(channel)
+
+// 「刷新配置」必须把可用性一起刷新：只刷配置会让徽标停留在旧结论上
+const refreshAll = async () => {
+  await Promise.all([fetchConfigs(), fetchChannelReadiness()])
+}
+
 // 开关本身也要持久化：关闭后表单（含保存按钮）会收起，若不在此保存，刷新后状态会回弹
 const onToggleChannel = async (channel: string) => {
-  const enabled = configs.value[channel]?.is_enabled
-  await saveConfig(channel, `${getChannelName(channel)}通知已${enabled ? '开启' : '关闭'}`)
+  const next = Boolean(configs.value[channel]?.is_enabled)
+  const ok = await saveConfig(
+    channel,
+    `${getChannelName(channel)}通知已${next ? '开启' : '关闭'}`,
+    `${getChannelName(channel)}通知未能保存，开关已恢复原状态`
+  )
+  if (!ok) {
+    // 必须把开关拨回去：否则界面显示「已开启」而库里根本没存上，用户下次刷新
+    // 看到开关自己变回关闭，会把「没保存成功」误读成「平台弄丢了我的配置」。
+    configs.value[channel].is_enabled = !next
+  }
 }
 
 const testConfig = async (channel: string) => {
@@ -933,6 +1088,7 @@ const testConfig = async (channel: string) => {
 
 onMounted(() => {
   fetchConfigs()
+  fetchChannelReadiness()
   fetchMe()
   fetchGlobalEmailConfig()
 })

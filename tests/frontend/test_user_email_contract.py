@@ -332,7 +332,12 @@ def test_email_test_button_disabled_when_unconfigured():
     src = _notification_configs_src()
     import re
 
-    m = re.search(r":disabled=\"([^\"]*)\"\n\s*:title=\"([^\"]*)\"", src)
+    # 必须锚定到**邮件**卡片的测试按钮：其它渠道的测试按钮同样带 disabled/title，
+    # 按「第一处 disabled+title」匹配会随别的卡片改动而失配，断言就此失去意义。
+    m = re.search(
+        r"@click=\"testConfig\('email'\)\"\n\s*:disabled=\"([^\"]*)\"\n\s*:title=\"([^\"]*)\"",
+        src,
+    )
     assert m, "找不到邮件测试按钮的 disabled/title 表达式"
     assert "emailTestDisabled" in m.group(1), "按钮置灰必须由 emailTestDisabled 决定"
     assert "emailTestBlockedReason" in m.group(2), "置灰原因必须通过 title 可见"
