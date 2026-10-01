@@ -346,19 +346,27 @@
 
           <!-- 全局概览：只展示服务器与发件人，绝不显示密码 -->
           <div v-if="configs.email.smtp_source !== 'custom'" class="rounded-lg border border-gray-150 bg-gray-50/70 p-3.5 space-y-2">
-            <template v-if="globalEmailOverview">
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-gray-500">SMTP 服务器</span>
-                <span class="font-mono text-gray-800">{{ globalEmailOverview.host }}:{{ globalEmailOverview.port }}</span>
-              </div>
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-gray-500">加密方式</span>
-                <span class="font-mono text-gray-800">{{ globalEmailOverview.security }}</span>
-              </div>
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-gray-500">发件人</span>
-                <span class="font-mono text-gray-800 truncate ml-3">{{ globalEmailOverview.senderName }} &lt;{{ globalEmailOverview.from }}&gt;</span>
-              </div>
+            <!-- 已启用（判据来自 /auth/me，全角色可用） -->
+            <template v-if="mailServiceAvailable">
+              <!-- 明细需系统配置权限；普通用户读不到，只给中性说明，
+                   既不说假话，也不把内网 SMTP 中继地址暴露给所有登录用户 -->
+              <template v-if="globalEmailDetail">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-gray-500">SMTP 服务器</span>
+                  <span class="font-mono text-gray-800">{{ globalEmailDetail.host }}:{{ globalEmailDetail.port }}</span>
+                </div>
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-gray-500">加密方式</span>
+                  <span class="font-mono text-gray-800">{{ globalEmailDetail.security }}</span>
+                </div>
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-gray-500">发件人</span>
+                  <span class="font-mono text-gray-800 truncate ml-3">{{ globalEmailDetail.senderName }} &lt;{{ globalEmailDetail.from }}&gt;</span>
+                </div>
+              </template>
+              <p v-else class="text-xs text-gray-600 leading-relaxed">
+                已由平台统一配置，无需在此填写服务器信息。
+              </p>
               <p class="text-[11px] text-gray-400 pt-0.5">以上由平台统一管理，如需调整请联系管理员。</p>
             </template>
             <p v-else class="text-xs text-amber-600 leading-relaxed">
@@ -618,16 +626,23 @@ const me = ref<{ email?: string } | null>(null)
 // 全局邮件服务概览（只含服务器与发件人，绝不含密码）
 const globalEmailConfig = ref<Record<string, string>>({})
 
+// 平台邮件服务是否已启用 —— 唯一判据，取自 /auth/me 的 mail_service_available。
+//
+// **刻意不用 /system/configs 判断**：那是系统配置接口，要求 menu:system:config 权限，
+// 普通用户会拿到 403；若拿它判断启用状态，403 就会被误解成「平台未启用」，界面于是
+// 理直气壮地对普通用户说了假话（发信其实一直是好的）。这个 bug 不报错、不影响功能，
+// 只是让 UI 说了假话，所以必须靠 tests/frontend/test_notification_global_mail_contract.py 钉住。
+const mailServiceAvailable = ref(false)
+
 const myEmail = computed(() => String(me.value?.email || '').trim())
 const canIncludeSelf = computed(() => !!myEmail.value)
 
-const globalEmailOverview = computed(() => {
+// 明细（主机/端口/发件人）只对能读到系统配置的角色展示：内网 SMTP 中继地址没有必要
+// 暴露给每个登录用户。读不到明细时概览区只说「已由平台统一配置」，而不会声称未启用。
+const globalEmailDetail = computed(() => {
   const cfg = globalEmailConfig.value
-  const enabled = ['true', '1', 'yes', 'on'].includes(
-    String(cfg['email_service_enabled'] || 'false').trim().toLowerCase()
-  )
   const host = String(cfg['email_smtp_host'] || '').trim()
-  if (!enabled || !host) return null
+  if (!host) return null
   const from = String(cfg['email_from_address'] || cfg['email_smtp_user'] || '').trim()
   return {
     host,
@@ -646,11 +661,10 @@ const savingChannel = ref<Record<string, boolean>>({})
 // 管理员动作、或需要用户先去填邮箱的）必须留在原地，用户才看得到该做什么。
 const emailTestResult = ref<{ ok: boolean; message: string } | null>(null)
 
-// 选了「全局」而读不到平台服务配置（未启用，或本人无权查看全局配置）时，给按钮加一句
-// 提示。**刻意不据此置灰按钮**：读不到配置也可能是权限所致，置灰会把本来可用的服务
-// 一起锁死——让用户点下去、以测试结果为准才可靠。
+// 选了「全局」而平台确实没启用邮件服务时，给按钮加一句提示。
+// **刻意不据此置灰按钮**：让用户点下去、以测试结果为准，比前端凭单方面推断锁死更可靠。
 const emailTestUnavailable = computed(
-  () => configs.value.email?.smtp_source !== 'custom' && !globalEmailOverview.value
+  () => configs.value.email?.smtp_source !== 'custom' && !mailServiceAvailable.value
 )
 
 const showGuideModal = ref(false)
@@ -771,8 +785,12 @@ const fetchMe = async () => {
   try {
     const res = await axios.get('/api/portal/auth/me')
     me.value = res.data || null
+    // 严格判 true：字段缺失（未升级的后端）时按「未启用」处理，
+    // 宁可少显示一句明细，也不要再次对用户断言错误的状态。
+    mailServiceAvailable.value = res.data?.data?.mail_service_available === true
   } catch {
     me.value = null
+    mailServiceAvailable.value = false
   }
 }
 
@@ -784,7 +802,8 @@ const fetchGlobalEmailConfig = async () => {
     for (const item of items) map[item.key] = item.value
     globalEmailConfig.value = map
   } catch {
-    // 无权限或未配置：概览区退化为「尚未启用」提示，不影响自定义 SMTP 与收件人配置
+    // 无权限（普通用户）或未配置：明细为空 → 概览区退化为「已由平台统一配置」，
+    // **不再据此断言「尚未启用」** —— 是否启用看 /auth/me 的标志位。
     globalEmailConfig.value = {}
   }
 }

@@ -138,15 +138,27 @@ def test_personal_center_warns_when_global_mail_service_unavailable():
     assert "改用自定义 SMTP" in src, "要给出可执行的下一步"
 
 
-def test_global_overview_requires_both_switch_and_host():
-    """概览判定必须同时要求「开关打开」与「填了主机」，与后端保持一致。
+def test_global_overview_verdict_comes_from_backend_flag():
+    """概览判定必须与后端 load_global_smtp_settings 保持一致。
 
-    只看主机就会在管理员填了地址但忘记打开开关时显示成可用，而后端
-    load_global_smtp_settings 在开关关闭时返回 None —— 界面与行为脱节。
+    本用例原名 test_global_overview_requires_both_switch_and_host，原断言要求组件
+    「读取 email_service_enabled 并判断 !enabled || !host」。意图（界面不能在后端认为
+    不可用时显示成可用）是对的，**但手段是错的**：email_service_enabled 只存在于管理员
+    接口 GET /api/portal/system/configs 的返回里，普通用户调用拿到 403，而组件把这个
+    空结果误解成「平台未启用」，于是界面理直气壮地对普通用户说了假话 —— 发信一直是好的。
+
+    现改为消费后端算好的 mail_service_available（与 load_global_smtp_settings 同一函数
+    推导），界面与后端的一致性是**构造上成立**的，不再靠前端复刻判断条件。这同时消除了
+    原手段担心的一类漂移：host 填了但只填账号没填密码时，后端 is_complete 判不可用，而
+    前端复刻「enabled && host」会显示成可用。详见
+    tests/frontend/test_notification_global_mail_contract.py。
     """
-    src = _read("frontend/src/components/personal/NotificationConfigs.vue")
-    assert "email_service_enabled" in src, "概览必须读取开关状态"
-    assert "!enabled || !host" in src, "开关关闭或未填主机都应显示为不可用"
+    src = _notification_configs_src()
+    assert "mail_service_available" in src, "概览必须使用后端推导的可用性标志位"
+    assert "email_service_enabled" not in src, (
+        "不得复刻开关判断：该字段只在管理员接口里，普通用户读到 403 会被误判为「未启用」"
+    )
+    assert "!host" in src, "明细仍需要求填了主机，避免显示出主机为空的概览"
 
 
 # --------------------------------------------------------------------------- #
@@ -287,9 +299,9 @@ def test_email_test_result_cleared_when_source_changes():
 def test_email_test_button_not_disabled_by_unreadable_global_config():
     """**守住一个刻意的取舍**：不能因为读不到全局配置就置灰测试按钮。
 
-    globalEmailOverview 依赖 GET /api/portal/system/configs；无该权限的用户会拿到空，
-    若据此置灰，本来可用的全局邮件服务也会被锁死测不了（功能性回退）。让用户点下去、
-    以测试结果为准才可靠。
+    可用性判据现已改为 /auth/me 的 mail_service_available（全角色可读），权限导致的误判
+    已消除；但本取舍依然成立并保留：只要前端是「单方面推断」，就不该据此置灰按钮，否则
+    一次推断错误会把本来可用的服务锁死（功能性回退）。让用户点下去、以测试结果为准。
     """
     src = _notification_configs_src()
     import re
