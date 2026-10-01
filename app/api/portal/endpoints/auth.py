@@ -190,6 +190,7 @@ async def check_register_user_name(
 async def register(
     http_request: Request,
     request: RegisterRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db_session),
 ):
     """自助注册：创建待审核账号，不返回任何身份信息。
@@ -315,6 +316,17 @@ async def register(
         await db.execute(select(User.id).where(User.user_name == user_name))
     ).scalar_one()
     await AuthService.set_user_password(user_id, request.password, db=db)
+
+    # 通知管理员：尽力而为，且走后台任务。
+    # ① 必须传 None：绝不能把请求作用域的 session 带进后台任务 —— 响应返回后它已关闭，
+    #    若恰好落在另一个事件循环上还会报 attached to a different loop；
+    # ② 不 await：SMTP 是同步阻塞且有超时的，放响应前会把注册接口一起拖慢；
+    # ③ 响应体保持不变：是否发出通知属于平台内部信息，不能回传给注册者。
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    background_tasks.add_task(
+        EmailDeliveryService.notify_admins_of_pending_registration, user_id, None
+    )
 
     return {"status": "success", "message": REGISTER_SUCCESS_MESSAGE}
 

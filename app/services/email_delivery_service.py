@@ -16,13 +16,16 @@ import logging
 import re
 import smtplib
 from dataclasses import dataclass
+from datetime import datetime
 from email.header import Header
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.platform_timezone import format_platform_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +286,114 @@ class EmailDeliveryService:
                 await session.close()
 
     @classmethod
+    async def resolve_admin_recipients(cls, db: AsyncSession) -> List[str]:
+        """取全部可收信的管理员邮箱（已去重）。
+
+        为什么必须同时判 NULL 与 TRIM<>''：邮箱列可空、且可能残留历史空串。只判
+        IS NOT NULL 会让空串混进收件人列表；SMTP 只要拒绝其中**一个**地址，整封邮件
+        都发不出去 —— 等于把「一个管理员没填好」升级成「所有人都收不到」。
+        """
+        from app.models.user import User
+
+        rows = (
+            await db.execute(
+                select(User.email).where(
+                    User.role == "admin",
+                    User.email.isnot(None),
+                    func.trim(User.email) != "",
+                )
+            )
+        ).scalars().all()
+        return dedupe_recipient_emails(rows)
+
+    @classmethod
+    async def notify_admins_of_pending_registration(
+        cls, user_id: int, db: Optional[AsyncSession] = None
+    ) -> Tuple[bool, Optional[str]]:
+        """向所有填了邮箱的管理员发一封「有待审核的账号申请」。返回 (sent, error)。
+
+        **尽力而为**：任何异常都只记日志。调用方是注册接口的后台任务 —— 它既不该、
+        也无法把失败回传给注册者，因为「是否发出通知」属于平台内部信息。
+
+        session 生命周期：**绝不能**把请求作用域的 session 传进后台任务。响应返回后
+        它已关闭，会抛「session 已关闭」；若恰好落在另一个事件循环上还会报
+        `attached to a different loop`（本仓库已踩过一次同类问题）。因此沿用本模块
+        既有范式（见 load_user_smtp_settings）：没给 session 就自建一个并自行关闭。
+
+        端点传 None → 自建 session → 能读到刚提交的注册记录，因此待审核计数天然包含
+        这条新申请。按 user_id 重查而不是传 ORM 对象，避免 detached instance。
+        """
+        from starlette.concurrency import run_in_threadpool
+
+        from app.models.user import User
+        from app.services.auth_service import AuthService
+
+        own_session = db is None
+        session = db
+        if own_session:
+            from app.core.orm import AsyncSessionLocal
+
+            session = AsyncSessionLocal()
+        try:
+            settings = await cls.load_global_smtp_settings()
+            if settings is None:
+                logger.info("待审核通知未发送：全局邮件服务未启用 user_id=%s", user_id)
+                return False, "平台邮件服务未启用或配置不完整"
+
+            recipients = await cls.resolve_admin_recipients(session)
+            if not recipients:
+                # 邮箱是选填字段，存量管理员很可能都没填 —— 必须留下明确线索，
+                # 否则本功能会静默失效而无人察觉
+                logger.warning(
+                    "待审核通知未发送：没有任何填了邮箱的管理员账号 user_id=%s", user_id
+                )
+                return False, "没有填了邮箱的管理员账号"
+
+            row = (
+                await session.execute(
+                    select(
+                        User.user_name,
+                        User.real_name,
+                        User.email,
+                        User.remark,
+                        User.created_at,
+                    ).where(User.id == user_id)
+                )
+            ).first()
+            if row is None:
+                logger.warning("待审核通知未发送：用户不存在 user_id=%s", user_id)
+                return False, "用户不存在"
+
+            # 与 /users/pending-count 共用同一口径，避免邮件里的数和页面角标各算各的
+            pending_count = await AuthService.count_pending_registrations(db=session)
+            subject, body = build_admin_review_notice(
+                user_name=row.user_name,
+                real_name=row.real_name or "",
+                email=row.email or "",
+                remark=row.remark,
+                registered_at=row.created_at,
+                pending_count=pending_count,
+                sender_name=settings.sender_name,
+            )
+            # send_mail 是同步阻塞的（smtplib），丢线程池，避免卡住事件循环
+            ok, message = await run_in_threadpool(
+                cls.send_mail, settings, recipients, subject, body
+            )
+            if not ok:
+                logger.warning(
+                    "待审核通知发送失败 user_id=%s 收件人数=%s reason=%s",
+                    user_id, len(recipients), message,
+                )
+            return ok, (None if ok else message)
+        except Exception as exc:  # noqa: BLE001
+            # 后台任务的异常不会被响应吃掉，但也无人接收，冒泡只会污染日志
+            logger.warning("待审核通知发送异常 user_id=%s err=%s", user_id, exc)
+            return False, str(exc)
+        finally:
+            if own_session and session is not None:
+                await session.close()
+
+    @classmethod
     async def resolve_smtp_settings(
         cls, user_id: Optional[int], scope: SmtpScope = "user", db: Optional[AsyncSession] = None
     ) -> Optional[SmtpSettings]:
@@ -410,3 +521,80 @@ def build_review_mail(user_name: str, approved: bool, sender_name: str) -> Tuple
             f"（本邮件由系统自动发送，请勿直接回复）\n"
         )
     return subject, body
+
+
+def build_admin_review_notice(
+    *,
+    user_name: str,
+    real_name: str,
+    email: str,
+    remark: Optional[str],
+    registered_at: Optional[datetime],
+    pending_count: int,
+    sender_name: str,
+) -> Tuple[str, str]:
+    """待审核通知邮件文案（发给管理员）。返回 (主题, 正文)。
+
+    刻意的取舍（与 build_review_mail 同口径）：
+
+    - **不放链接**：待审核页无法用 URL 直达 —— 前端 Users.vue 的 activeView 是纯本地
+      ref、不接受 URL 参数，/users?view=review 会落在默认列表页；放个落到列表页的
+      链接反而误导。用户已明确否决「改前端加 query 支持」，故只给文字指引。
+      附带好处：本函数不依赖 download_url_prefix，也就不存在「前缀没配就发不出去」。
+    - **入参不含任何凭据**：签名只接受展示用字段，从来源上保证这封邮件不可能泄露
+      口令或 API Key —— 比在正文里逐个回避敏感词可靠（后者会连正当提示一起禁掉）。
+    """
+    subject = f"【{sender_name}】有待审核的账号申请"
+
+    lines = [
+        "您好，管理员：",
+        "",
+        "平台有一条新的账号注册申请，需要审核：",
+        "",
+        f"账号名：{user_name}",
+        f"用户姓名：{real_name}",
+        # 邮箱是选填字段：留空行会让管理员分不清「注册者没填」和「系统取值失败」
+        f"邮箱：{email.strip() or '未填写'}",
+    ]
+
+    cleaned_remark = (remark or "").strip()
+    if cleaned_remark:
+        # 备注同为选填：为空时整行不渲染，避免出现空的「备注：」。
+        # 上限 255 与 User.remark 列宽、RegisterRequest 的约定一致。
+        lines.append(f"备注：{cleaned_remark[:255]}")
+
+    lines += [
+        f"申请时间：{format_platform_datetime(registered_at)}",
+        f"当前待审核：{pending_count} 条",
+        "",
+        "请到「用户管理 → 待审核」处理。",
+        "",
+        "（本邮件由系统自动发送，请勿直接回复）",
+    ]
+    return subject, "\n".join(lines) + "\n"
+
+
+def dedupe_recipient_emails(rows: Any) -> List[str]:
+    """邮箱收件人去重：大小写不敏感，丢弃 None/空串/纯空白。
+
+    为什么不交给数据库唯一索引（实测结论，见规范 §5）：MySQL 的唯一索引落在 _ci
+    collation 上确实大小写不敏感，但 **PostgreSQL 的唯一索引是大小写敏感的**，且手工
+    SQL 或第三方同步可以绕过应用层的 normalize_email 归一化 —— 那种数据在 PG 上可以
+    并存。这与 AuthService.is_user_email_taken 坚持显式 lower() 比对完全同构
+    （auth_service.py:631：「写入时已归一化，但手工 SQL 或第三方同步可能绕过应用层，
+    且两个库的 collation 行为不同」）。
+
+    保留首次出现的原始写法：大小写不影响投递，但保留原样便于与库中数据对账。
+    """
+    seen = set()
+    recipients: List[str] = []
+    for raw in rows or ():
+        addr = (raw or "").strip()
+        if not addr:
+            continue
+        key = addr.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        recipients.append(addr)
+    return recipients
