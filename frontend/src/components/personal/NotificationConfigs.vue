@@ -464,33 +464,38 @@
             </div>
           </div>
 
-          <div class="flex flex-wrap items-center justify-between gap-2 pt-2">
+          <!-- 提示在左、按钮成组靠右：与钉钉/企微/飞书三张卡片保持同一版式，
+               按钮组必须整体作为一个 flex 项，否则 justify-between 会把
+               「测试连通性」单独均分到行的正中间。 -->
+          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 pt-2">
             <p class="text-[11px] text-gray-400">
               连通性测试只发到「我的邮箱」，不会发给上面的其他收件人。
             </p>
-            <button 
-              @click="testConfig('email')"
-              :disabled="testingChannel['email'] || savingChannel['email']"
-              :title="emailTestUnavailable ? '平台邮件服务可能未启用；若测试失败，提示会留在上方。请联系管理员启用，或改用自定义 SMTP。' : ''"
-              class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
-            >
-              <span v-if="testingChannel['email']" class="inline-flex items-center">
-                <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                正在测试...
-              </span>
-              <span v-else>测试连通性</span>
-            </button>
-            <button 
-              @click="saveConfig('email')"
-              :disabled="testingChannel['email'] || savingChannel['email']"
-              class="px-4 py-2 text-xs font-medium text-white bg-orange-500 hover:bg-orange-600 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
-            >
-              <span v-if="savingChannel['email']" class="inline-flex items-center">
-                <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
-                保存中...
-              </span>
-              <span v-else>保存配置</span>
-            </button>
+            <div class="flex items-center space-x-3 ml-auto shrink-0">
+              <button 
+                @click="testConfig('email')"
+                :disabled="testingChannel['email'] || savingChannel['email']"
+                :title="emailTestUnavailable ? '平台邮件服务可能未启用；若测试失败，提示会留在上方。请联系管理员启用，或改用自定义 SMTP。' : ''"
+                class="px-4 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg active:scale-95 transition-all disabled:opacity-50"
+              >
+                <span v-if="testingChannel['email']" class="inline-flex items-center">
+                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
+                  正在测试...
+                </span>
+                <span v-else>测试连通性</span>
+              </button>
+              <button 
+                @click="saveConfig('email')"
+                :disabled="testingChannel['email'] || savingChannel['email']"
+                class="px-4 py-2 text-xs font-medium text-white bg-orange-500 hover:bg-orange-600 rounded-lg active:scale-95 transition-all disabled:opacity-50 shadow-sm"
+              >
+                <span v-if="savingChannel['email']" class="inline-flex items-center">
+                  <circle class="animate-spin -ml-0.5 mr-1.5 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor"/></circle>
+                  保存中...
+                </span>
+                <span v-else>保存配置</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
