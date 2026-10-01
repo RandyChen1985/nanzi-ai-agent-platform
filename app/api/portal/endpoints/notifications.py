@@ -31,6 +31,27 @@ async def get_notifications_config(
             detail=f"获取消息配置失败: {str(e)}"
         )
 
+@router.get("/readiness", summary="各通知渠道当前是否可投递（前端勾选门禁判据）")
+async def get_notifications_readiness(
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """返回每个渠道 {ready, reason}。
+
+    判定放在后端而不是各前端组件里：渠道可用性取决于「全局邮件服务是否启用」
+    这类前端根本看不到的事实，前端各自推断必然与投递路径漂移（曾把可用渠道
+    锁死）。这里与发信同源，前端只负责展示。
+    """
+    user_id = int(user_info["user_id"])
+    try:
+        channels = await NotificationService.get_channel_readiness(db, user_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取通知渠道状态失败: {str(e)}"
+        )
+    return {"channels": channels}
+
 @router.put("/config", summary="保存当前登录用户的特定通道配置")
 async def save_notifications_config(
     req: SaveConfigReq,

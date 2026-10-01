@@ -573,24 +573,54 @@ class NotificationService:
         return [p for p in parts if p and "@" in p]
 
     @classmethod
-    async def send_email(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
-        """按用户选择的来源（全局/自定义）发信，收件人默认包含用户自己的邮箱。"""
+    async def load_raw_channel_config(
+        cls, db: AsyncSession, user_id: int, channel_type: str
+    ) -> Dict[str, Any]:
+        """读取渠道的**原始** JSON 配置，不与 DEFAULT_CONFIGS 合并。
+
+        「能不能发」必须按库里的事实判定。合并默认值会在字段缺失时凭空造出
+        `is_enabled=False`、`webhook_url=''` 这类默认项，让「压根没配过」与
+        「配了但没启用」在日志与排查里再也分不开。
+        """
+        record = await cls.get_config_by_type_raw(db, user_id, channel_type)
+        if not record or not record.config_json:
+            return {}
+        try:
+            data = json.loads(record.config_json)
+        except Exception as exc:
+            logger.error(
+                "Failed to parse config_json for user %s channel %s: %s",
+                user_id, channel_type, exc,
+            )
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @classmethod
+    async def resolve_email_send_plan(
+        cls, db: AsyncSession, user_id: int
+    ) -> Tuple[Optional[Any], List[str], str]:
+        """邮件渠道「能不能发、发给谁」的唯一判定入口。
+
+        返回 (settings, recipients, reason)：reason 非空即不可投递，且该文本就是
+        给用户看的失败原因；reason 为空时 settings 与 recipients 必定可用。
+
+        send_email 与渠道就绪接口必须共用这一份判定。两边各写一遍正是本类 bug 的
+        温床——界面按旧规则（必须填 smtp_host）锁死渠道，而发信链路早就支持
+        「全局邮件服务」这一来源分层，于是用户被告知「未配置」却什么也做错不了。
+        """
         from app.services.email_delivery_service import EmailDeliveryService
 
-        record = await cls.get_config_by_type_raw(db, user_id, "email")
-        config: Dict[str, Any] = {}
-        if record and record.config_json:
-            try:
-                config = json.loads(record.config_json)
-            except Exception:
-                config = {}
-
+        config = await cls.load_raw_channel_config(db, user_id, "email")
         if not config.get("is_enabled"):
-            return False, "用户未启用邮件通知"
+            return None, [], "用户未启用邮件通知"
 
         settings = await EmailDeliveryService.resolve_smtp_settings(user_id, scope="user", db=db)
         if settings is None:
-            return False, "邮件服务未配置（当前来源无可用的 SMTP 设置）"
+            # 区分两种「不可用」：全局服务没开是平台侧的事，自定义没填全才是用户的事。
+            # 混成一句话会让用户跑到个人中心反复填表，而问题其实在管理员那边。
+            if EmailDeliveryService.resolve_smtp_source(config) == "global":
+                return None, [], "平台尚未启用全局邮件服务，请联系管理员，或改用自定义 SMTP"
+            return None, [], "自定义 SMTP 配置不完整（需填写服务器地址；账号与授权码须同时填写或同时留空）"
 
         # 用户自己的邮箱每次都现读（统一走 resolve_self_email）：include_self 存的是
         # 标志而非邮箱快照，用户改邮箱后收件人必须自动跟随。
@@ -607,7 +637,83 @@ class NotificationService:
                 fallback = settings.effective_from()
                 recipients = [fallback] if fallback else []
         if not recipients:
-            return False, "未配置收件人（未填写邮箱，且未设置其他收件人）"
+            return settings, [], "未配置收件人（未填写邮箱，且未设置其他收件人）"
+
+        return settings, recipients, ""
+
+    # ---------------- 渠道就绪：前端勾选门禁的唯一判据 ---------------- #
+
+    READINESS_CHANNELS = ("portal", "dingtalk", "wechat_work", "feishu", "email")
+
+    @classmethod
+    async def get_channel_readiness(
+        cls, db: AsyncSession, user_id: int
+    ) -> Dict[str, Dict[str, Any]]:
+        """每个通知渠道此刻是否真的发得出去，以及不能发的原因。
+
+        判定与投递路径同源（webhook 非空 / 邮件走 resolve_email_send_plan）。前端
+        在任务编辑里据此禁用复选框，因此这里的**每一条 ready 都必须对应一次真实
+        可成功的投递**：宽一点是「勾了也发不出去」，严一点是「能发却不让勾」，
+        两种都会让用户不再相信界面上的灰按钮。
+
+        单个渠道探测失败只降级该渠道（reason 说明状态未知），不连带锁死其它渠道。
+        """
+        readiness: Dict[str, Dict[str, Any]] = {"portal": {"ready": True, "reason": ""}}
+        for channel in ("dingtalk", "wechat_work", "feishu"):
+            readiness[channel] = await cls._webhook_channel_readiness(db, user_id, channel)
+        readiness["email"] = await cls._email_channel_readiness(db, user_id)
+        return readiness
+
+    @staticmethod
+    async def _rollback_quietly(db: Optional[AsyncSession]) -> None:
+        """探测失败后回滚共享 session。
+
+        读配置抛异常后 session 会停在失败事务里，后续渠道的查询将直接撞上
+        PendingRollbackError —— 一次偶发失败会被放大成「所有渠道都不可用」，
+        而那正是最不该出现的结论。回滚本身失败也无妨，只记 debug。
+        """
+        rollback = getattr(db, "rollback", None)
+        if rollback is None:
+            return
+        try:
+            await rollback()
+        except Exception as exc:
+            logger.debug("渠道就绪探测后回滚失败: %s", exc)
+
+    @classmethod
+    async def _webhook_channel_readiness(
+        cls, db: AsyncSession, user_id: int, channel: str
+    ) -> Dict[str, Any]:
+        try:
+            config = await cls.load_raw_channel_config(db, user_id, channel)
+        except Exception as exc:
+            logger.warning("读取 %s 渠道配置失败: %s", channel, exc, exc_info=True)
+            await cls._rollback_quietly(db)
+            return {"ready": False, "reason": "渠道状态读取失败，请稍后重试"}
+        if not config.get("is_enabled"):
+            return {"ready": False, "reason": "未启用"}
+        if not str(config.get("webhook_url") or "").strip():
+            return {"ready": False, "reason": "未填写 Webhook 地址"}
+        return {"ready": True, "reason": ""}
+
+    @classmethod
+    async def _email_channel_readiness(cls, db: AsyncSession, user_id: int) -> Dict[str, Any]:
+        try:
+            _settings, _recipients, reason = await cls.resolve_email_send_plan(db, user_id)
+        except Exception as exc:
+            logger.warning("读取邮件渠道配置失败: %s", exc, exc_info=True)
+            await cls._rollback_quietly(db)
+            return {"ready": False, "reason": "渠道状态读取失败，请稍后重试"}
+        return {"ready": not reason, "reason": reason}
+
+    @classmethod
+    async def send_email(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
+        """按用户选择的来源（全局/自定义）发信，收件人默认包含用户自己的邮箱。"""
+        settings, recipients, reason = await cls.resolve_email_send_plan(db, user_id)
+        if reason or settings is None:
+            return False, reason or "邮件服务未配置（当前来源无可用的 SMTP 设置）"
+
+        from app.services.email_delivery_service import EmailDeliveryService
 
         def send_sync() -> Tuple[bool, str]:
             # raise_on_transport_error=True：连接失败/超时这类瞬时故障要抛出去，

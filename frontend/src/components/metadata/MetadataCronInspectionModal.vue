@@ -73,22 +73,45 @@ const toggleChannel = (ch: string) => {
   }
 }
 
-// 个人中心消息通知配置（决定外部渠道是否可勾选）
+// 个人中心消息通知配置（就绪接口不可用时的兜底判据）
 const personalNotificationConfigs = ref<Record<string, any>>({})
 const personalNotificationLoading = ref(false)
+// 渠道就绪：后端 /notifications/readiness 的权威判定，与发信路径同源。
+// 前端不再自行推断——「全局邮件服务是否启用」这类事实前端看不到，自行推断
+// 必然与投递路径漂移（曾把选了全局邮件服务的用户锁死在灰按钮上）。
+const notificationReadiness = ref<Record<string, { ready: boolean; reason: string }>>({})
 
-/** 渠道是否已配置且启用：未配置的渠道禁止勾选，避免"勾了也发不出去" */
+/** 邮件渠道的本地兜底判定，仅在就绪接口不可用时使用 */
+const isEmailConfigLocallyReady = (cfg: Record<string, any>) => {
+  const host = String(cfg?.smtp_host || '').trim()
+  const source = String(cfg?.smtp_source || '').trim().toLowerCase() || (host ? 'custom' : 'global')
+  // 全局来源：个人配置里本就没有 host/user，且平台是否启用前端无从得知 → 未知不锁死
+  if (source === 'global') return true
+  if (!host) return false
+  return (
+    Boolean(String(cfg?.smtp_user || '').trim()) ===
+    Boolean(String(cfg?.smtp_password || '').trim())
+  )
+}
+
+/** 渠道当前是否可投递：未就绪的渠道禁止勾选，避免"勾了也发不出去" */
 const isNotificationChannelReady = (channel: string): boolean => {
   if (channel === 'portal') return true
+  const verdict = notificationReadiness.value[channel]
+  if (verdict) return Boolean(verdict.ready)
   const cfg = personalNotificationConfigs.value[channel]
   if (!cfg || !cfg.is_enabled) return false
   if (channel === 'dingtalk' || channel === 'wechat_work' || channel === 'feishu') {
     return Boolean(String(cfg.webhook_url || '').trim())
   }
-  if (channel === 'email') {
-    return Boolean(String(cfg.smtp_host || '').trim() && String(cfg.smtp_user || '').trim())
-  }
+  if (channel === 'email') return isEmailConfigLocallyReady(cfg)
   return false
+}
+
+/** 置灰原因：优先用后端给出的**具体**原因，读不到再退回通用文案 */
+const notificationChannelBlockedTitle = (channel: string, fallback: string): string => {
+  const reason = String(notificationReadiness.value[channel]?.reason || '').trim()
+  return reason ? `${reason}（可在个人中心 → 消息通知中查看或配置）` : fallback
 }
 
 const CHANNEL_OPTIONS = [
@@ -101,8 +124,14 @@ const CHANNEL_OPTIONS = [
 
 const unavailableExternalChannels = computed(() =>
   CHANNEL_OPTIONS.filter((c) => c.value !== 'portal' && !isNotificationChannelReady(c.value)).map(
-    (c) => c.label
+    (c) => ({
+      label: c.label,
+      reason: String(notificationReadiness.value[c.value]?.reason || '').trim() || '尚未配置或未启用',
+    })
   )
+)
+const unavailableExternalChannelsHint = computed(() =>
+  unavailableExternalChannels.value.map((c) => `${c.label}（${c.reason}）`).join('、')
 )
 
 const pruneUnavailableNotificationChannels = () => {
@@ -111,12 +140,21 @@ const pruneUnavailableNotificationChannels = () => {
   )
 }
 
+const fetchNotificationReadiness = async () => {
+  try {
+    const res = await axios.get('/api/portal/notifications/readiness')
+    notificationReadiness.value = res.data?.channels || {}
+  } catch (error) {
+    console.warn('Failed to load notification channel readiness', error)
+    notificationReadiness.value = {}
+  }
+}
+
 const fetchPersonalNotificationConfigs = async () => {
   personalNotificationLoading.value = true
   try {
     const res = await axios.get('/api/portal/notifications/config')
     personalNotificationConfigs.value = res.data || {}
-    pruneUnavailableNotificationChannels()
   } catch (error) {
     console.warn('Failed to load personal notification configs', error)
     personalNotificationConfigs.value = {}
@@ -144,8 +182,9 @@ const fetchConfig = async () => {
     } else {
       notificationChannels.value = ['portal']
     }
-    // 剔除本用户未配置/未启用的外部渠道，避免"勾了也发不出去"
-    pruneUnavailableNotificationChannels()
+    // 剔除本用户未配置/未启用的外部渠道，避免"勾了也发不出去"。
+    // 由 watch 在就绪判定到位后统一裁剪，此处不再自行裁剪：readiness 未到时
+    // 只能按兜底规则判断，会把渠道状态判错。
 
     const isPreset = PRESET_CRON_OPTIONS.some(
       (opt) => opt.value === res.data.cron_expr && opt.value !== 'custom'
@@ -166,10 +205,10 @@ const fetchConfig = async () => {
 
 watch(
   () => isVisible.value,
-  (val) => {
+  async (val) => {
     if (val) {
-      fetchConfig()
-      fetchPersonalNotificationConfigs()
+      await Promise.all([fetchConfig(), fetchPersonalNotificationConfigs(), fetchNotificationReadiness()])
+      pruneUnavailableNotificationChannels()
     }
   },
   { immediate: true }
@@ -490,7 +529,7 @@ const getHealthBadge = (health: string) => {
                 ? (isChannelSelected('dingtalk') ? 'border-primary bg-primary/5 text-primary font-medium cursor-pointer' : 'border-slate-200 hover:border-slate-300 text-slate-700 cursor-pointer')
                 : 'border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed'
             "
-            :title="isNotificationChannelReady('dingtalk') ? '' : '请先在个人中心 → 消息通知中配置并启用钉钉 Webhook'"
+            :title="isNotificationChannelReady('dingtalk') ? '' : notificationChannelBlockedTitle('dingtalk', '请先在个人中心 → 消息通知中配置并启用钉钉 Webhook')"
           >
             <input
               type="checkbox"
@@ -510,7 +549,7 @@ const getHealthBadge = (health: string) => {
                 ? (isChannelSelected('wechat_work') ? 'border-primary bg-primary/5 text-primary font-medium cursor-pointer' : 'border-slate-200 hover:border-slate-300 text-slate-700 cursor-pointer')
                 : 'border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed'
             "
-            :title="isNotificationChannelReady('wechat_work') ? '' : '请先在个人中心 → 消息通知中配置并启用企业微信 Webhook'"
+            :title="isNotificationChannelReady('wechat_work') ? '' : notificationChannelBlockedTitle('wechat_work', '请先在个人中心 → 消息通知中配置并启用企业微信 Webhook')"
           >
             <input
               type="checkbox"
@@ -530,7 +569,7 @@ const getHealthBadge = (health: string) => {
                 ? (isChannelSelected('feishu') ? 'border-primary bg-primary/5 text-primary font-medium cursor-pointer' : 'border-slate-200 hover:border-slate-300 text-slate-700 cursor-pointer')
                 : 'border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed'
             "
-            :title="isNotificationChannelReady('feishu') ? '' : '请先在个人中心 → 消息通知中配置并启用飞书 Webhook'"
+            :title="isNotificationChannelReady('feishu') ? '' : notificationChannelBlockedTitle('feishu', '请先在个人中心 → 消息通知中配置并启用飞书 Webhook')"
           >
             <input
               type="checkbox"
@@ -550,7 +589,7 @@ const getHealthBadge = (health: string) => {
                 ? (isChannelSelected('email') ? 'border-primary bg-primary/5 text-primary font-medium cursor-pointer' : 'border-slate-200 hover:border-slate-300 text-slate-700 cursor-pointer')
                 : 'border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed'
             "
-            :title="isNotificationChannelReady('email') ? '' : '请先在个人中心 → 消息通知中配置并启用 SMTP 邮箱'"
+            :title="isNotificationChannelReady('email') ? '' : notificationChannelBlockedTitle('email', '请先在个人中心 → 消息通知中配置并启用邮件通知')"
           >
             <input
               type="checkbox"
@@ -572,7 +611,7 @@ const getHealthBadge = (health: string) => {
           class="flex items-center justify-between gap-2 py-2 px-3 rounded-lg bg-amber-50 border border-amber-200"
         >
           <p class="text-[11px] leading-relaxed text-amber-700">
-            {{ unavailableExternalChannels.join('、') }} 尚未在个人中心配置或未启用，已禁止勾选。
+            {{ unavailableExternalChannelsHint }}，已禁止勾选。
           </p>
           <button
             type="button"

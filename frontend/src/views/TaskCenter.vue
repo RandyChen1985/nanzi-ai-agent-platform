@@ -372,6 +372,10 @@ const notificationChannelOptions = [
   { value: 'email', label: '邮件' },
 ] as const
 const notificationChannels = ref<string[]>(['portal'])
+// 渠道就绪：后端 /notifications/readiness 的权威判定，与发信路径同源。
+// 前端**不再自己推断**渠道能不能发：渠道可用性取决于「全局邮件服务是否启用」
+// 这类前端根本看不到的事实，自己推断必然与投递路径漂移（曾把可用渠道锁死）。
+const notificationReadiness = ref<Record<string, { ready: boolean; reason: string }>>({})
 const personalNotificationConfigs = ref<Record<string, any>>({})
 const personalNotificationLoading = ref(false)
 const promptOverlapsNotificationChannels = computed(() => {
@@ -388,40 +392,88 @@ const promptOverlapsNotificationChannels = computed(() => {
     (hints[channel] || []).some((term) => prompt.includes(term.toLowerCase()))
   )
 })
+/**
+ * 邮件渠道的**本地兜底**就绪判定，仅在就绪接口不可用（旧后端 / 瞬时失败）时使用。
+ *
+ * 必须认 smtp_source：选「使用全局邮件服务」时个人配置里本就没有
+ * smtp_host/smtp_user，按「必须填 host」判定会把可用渠道锁死——那正是本 bug。
+ */
+const isEmailConfigLocallyReady = (cfg: Record<string, any>) => {
+  const host = String(cfg?.smtp_host || '').trim()
+  const source = String(cfg?.smtp_source || '').trim().toLowerCase() || (host ? 'custom' : 'global')
+  // 平台全局 SMTP 是否启用，前端拿不到权威事实：未知不锁死，允许勾选；
+  // 真发不出去时后端投递会留下失败原因，好过在此对用户说假话。
+  if (source === 'global') return true
+  if (!host) return false
+  // 免认证内网中继允许账号与授权码同时留空；只填一个属半套凭据。
+  return (
+    Boolean(String(cfg?.smtp_user || '').trim()) ===
+    Boolean(String(cfg?.smtp_password || '').trim())
+  )
+}
 const isNotificationChannelReady = (channel: string) => {
   if (channel === 'portal') return true
+  const verdict = notificationReadiness.value[channel]
+  if (verdict) return Boolean(verdict.ready)
+  // 就绪接口不可用时的退化路径：用本地判定，且不因未知把渠道全锁死。
   const cfg = personalNotificationConfigs.value[channel]
   if (!cfg || !cfg.is_enabled) return false
   if (channel === 'dingtalk' || channel === 'wechat_work' || channel === 'feishu') {
     return Boolean(String(cfg.webhook_url || '').trim())
   }
-  if (channel === 'email') {
-    return Boolean(String(cfg.smtp_host || '').trim() && String(cfg.smtp_user || '').trim())
-  }
+  if (channel === 'email') return isEmailConfigLocallyReady(cfg)
   return false
 }
 const unavailableExternalChannels = computed(() =>
   notificationChannelOptions
     .filter((c) => c.value !== 'portal' && !isNotificationChannelReady(c.value))
-    .map((c) => c.label)
+    .map((c) => ({
+      label: c.label,
+      reason: String(notificationReadiness.value[c.value]?.reason || '').trim() || '尚未配置或未启用',
+    }))
 )
+const unavailableExternalChannelsHint = computed(() =>
+  unavailableExternalChannels.value.map((c) => `${c.label}（${c.reason}）`).join('、')
+)
+// 悬浮提示要给出**具体**原因（如「平台尚未启用全局邮件服务」），
+// 否则用户面对灰按钮只能反复去个人中心重填已经填好的表单。
+const notificationChannelBlockedTitle = (channel: string) => {
+  const reason = String(notificationReadiness.value[channel]?.reason || '').trim()
+  return reason
+    ? `${reason}（可在个人中心 → 消息通知中查看或配置）`
+    : '请先在个人中心 → 消息通知中配置并启用该通道'
+}
 const pruneUnavailableNotificationChannels = () => {
   notificationChannels.value = notificationChannels.value.filter((channel) =>
     isNotificationChannelReady(channel)
   )
+}
+const fetchNotificationReadiness = async () => {
+  try {
+    const res = await axios.get('/api/portal/notifications/readiness')
+    notificationReadiness.value = res.data?.channels || {}
+  } catch (error) {
+    console.warn('Failed to load notification channel readiness', error)
+    notificationReadiness.value = {}
+  }
 }
 const fetchPersonalNotificationConfigs = async () => {
   personalNotificationLoading.value = true
   try {
     const res = await axios.get('/api/portal/notifications/config')
     personalNotificationConfigs.value = res.data || {}
-    pruneUnavailableNotificationChannels()
   } catch (error) {
     console.warn('Failed to load personal notification configs', error)
     personalNotificationConfigs.value = {}
   } finally {
     personalNotificationLoading.value = false
   }
+}
+// 就绪判定（权威）与配置明细（兜底）一起取，再统一裁剪掉不可用的已选渠道——
+// 顺序不能反：readiness 未到位就裁剪会按兜底规则误删用户原本选中的渠道。
+const refreshNotificationAvailability = async () => {
+  await Promise.all([fetchNotificationReadiness(), fetchPersonalNotificationConfigs()])
+  pruneUnavailableNotificationChannels()
 }
 const openPersonalNotificationSettings = () => {
   if (props.embedded) return
@@ -769,7 +821,7 @@ const openCreateModal = async () => {
   cronMode.value = 'daily'
   cronConfig.value = { time: '08:00', weekday: 1, day: 1, intervalValue: 30, intervalUnit: 'minutes' }
   showEditModal.value = true
-  await fetchPersonalNotificationConfigs()
+  await refreshNotificationAvailability()
 }
 
 const openEditModal = async (task: AgentTask) => {
@@ -792,7 +844,7 @@ const openEditModal = async (task: AgentTask) => {
   syncAgentTab()
   parseCronToUI(task.cron_expr || '')
   showEditModal.value = true
-  await fetchPersonalNotificationConfigs()
+  await refreshNotificationAvailability()
 }
 
 const getTaskEditTitle = (task: AgentTask) => (
@@ -2471,7 +2523,7 @@ onMounted(async () => {
                   :key="channel.value"
                   class="flex items-center gap-1.5 text-xs font-bold"
                   :class="isNotificationChannelReady(channel.value) ? 'text-gray-600 cursor-pointer' : 'text-gray-300 cursor-not-allowed'"
-                  :title="isNotificationChannelReady(channel.value) ? '' : '请先在个人中心 → 消息通知中配置并启用该通道'"
+                  :title="isNotificationChannelReady(channel.value) ? '' : notificationChannelBlockedTitle(channel.value)"
                 >
                   <input
                     v-model="notificationChannels"
@@ -2487,7 +2539,7 @@ onMounted(async () => {
                 勾选后任务执行完成由调度器统一投递结果；站内消息始终可用。钉钉 / 企业微信 / 邮件需先在个人中心配置并启用对应通道。
               </p>
               <p v-if="unavailableExternalChannels.length" class="text-[10px] text-amber-600 leading-relaxed">
-                {{ unavailableExternalChannels.join('、') }} 尚未在个人中心配置或未启用，已禁止勾选。
+                {{ unavailableExternalChannelsHint }}，已禁止勾选。
                 <button
                   v-if="!embedded"
                   type="button"
