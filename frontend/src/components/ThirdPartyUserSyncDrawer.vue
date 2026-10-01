@@ -529,6 +529,7 @@ interface FieldMap {
   user_name: string
   real_name: string | null
   remark: string | null
+  email: string | null
 }
 
 interface SyncConfig {
@@ -573,6 +574,13 @@ const mappingFields = [
     required: false,
     hint: '本地已存在同名用户时更新',
   },
+  {
+    key: 'email' as const,
+    label: '邮箱',
+    localField: 'email',
+    required: false,
+    hint: '第三方未提供或格式非法时保留用户现有邮箱',
+  },
 ]
 
 const saving = ref(false)
@@ -604,7 +612,7 @@ const defaultConfig = (): SyncConfig => ({
   enabled: false,
   connection_config_id: null,
   table_name: null,
-  field_map: { user_name: '', real_name: null, remark: null },
+  field_map: { user_name: '', real_name: null, remark: null, email: null },
   extra_data_mappings: [],
   schedule: 'off',
 })
@@ -783,6 +791,7 @@ const loadConfig = async () => {
         user_name: data?.field_map?.user_name || '',
         real_name: data?.field_map?.real_name ?? null,
         remark: data?.field_map?.remark ?? null,
+        email: data?.field_map?.email ?? null,
       },
       extra_data_mappings: Array.isArray(data?.extra_data_mappings)
         ? data.extra_data_mappings.map((item: ExtraDataMapping) => ({
@@ -840,7 +849,7 @@ const loadColumns = async () => {
 
 const onDatasourceChange = () => {
   config.value.table_name = null
-  config.value.field_map = { user_name: '', real_name: null, remark: null }
+  config.value.field_map = { user_name: '', real_name: null, remark: null, email: null }
   config.value.extra_data_mappings = []
   tables.value = []
   columns.value = []
@@ -850,7 +859,7 @@ const onDatasourceChange = () => {
 }
 
 const onTableChange = () => {
-  config.value.field_map = { user_name: '', real_name: null, remark: null }
+  config.value.field_map = { user_name: '', real_name: null, remark: null, email: null }
   config.value.extra_data_mappings = []
   previewUsers.value = []
   loadColumns()

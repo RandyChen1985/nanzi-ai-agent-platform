@@ -823,6 +823,46 @@ async def update_system_configs(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class EmailTestRequest(BaseModel):
+    to: Optional[str] = None
+
+
+@router.post("/configs/email/test", summary="测试邮件服务配置")
+async def test_email_service(
+    payload: EmailTestRequest,
+    user: Dict = Depends(require_permission("element", "element:system:config_save")),
+):
+    """用**已保存**的配置发一封测试邮件。
+
+    刻意不接受请求体里的 SMTP 参数：前端拿到的是脱敏后的密码，无法用它发信；
+    因此这里只认库里已保存的值，界面必须提示「请先保存再测试」。
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    settings = await EmailDeliveryService.load_global_smtp_settings()
+    if settings is None:
+        return {"ok": False, "message": "邮件服务未启用，或配置不完整（至少需要 SMTP 服务器地址）"}
+
+    to = EmailDeliveryService.parse_recipients(payload.to)
+    if not to:
+        fallback = settings.effective_from()
+        if not fallback:
+            return {"ok": False, "message": "未指定收件人，且未配置发件人地址可用于自测"}
+        to = [fallback]
+
+    # send_mail 是同步阻塞的（smtplib），必须丢到线程池，否则会卡住事件循环。
+    ok, message = await run_in_threadpool(
+        EmailDeliveryService.send_mail,
+        settings,
+        to,
+        f"【{settings.sender_name}】邮件服务测试",
+        "这是一封测试邮件。收到它说明平台邮件服务配置可用。\n",
+    )
+    return {"ok": ok, "message": message}
+
+
 @router.get("/branding")
 async def get_branding_settings(
     user: Dict = Depends(require_permission("menu", "menu:system:config"))

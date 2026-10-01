@@ -39,7 +39,7 @@ const helpContent = {
   system_config: {
     title: '检查参数配置',
     checks: [
-      { key: 'download_url_prefix', what: '生成文件、报表和工件下载链接的对外地址，不能继续使用 localhost。' },
+      { key: 'download_url_prefix', what: '生成文件、报表和工件下载链接的对外地址；忘记密码的重置邮件链接也用它，不能继续使用 localhost。' },
       { key: 'llm_model_name', what: '平台默认 Chat 模型名称，必须对应模型管理中测试通过的模型。' },
       { key: 'multimodal_model_name', what: '图片识别的视觉模型；使用图片能力时必须配置可用模型。' },
       { key: 'embed_api_url', what: 'Embedding 接口地址，用于元数据、案例和会话记忆向量化。' },

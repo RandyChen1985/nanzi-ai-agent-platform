@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from typing import Optional, Dict, List
 from sqlalchemy import Boolean, Column, MetaData, String, Table, Text, func, select, text, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
@@ -44,6 +45,24 @@ SANDBOX_IDLE_TIME_KEY = "sandbox_idle_time"          # 分钟，默认 30：沙�
 SANDBOX_AUTO_WARM_DEFAULT = "true"
 SANDBOX_IDLE_TIME_DEFAULT = "30"
 
+#: 账号自主注册申请开关（默认关闭）。开启后登录页展示「申请账号」入口。
+USER_REGISTRATION_ENABLED_KEY = "user_registration_enabled"
+
+#: 布尔型开关允许的取值字面量（与前端开关写入的 'true'/'false' 对齐，兼容常见写法）
+_BOOLEAN_LITERALS = ("true", "false", "1", "0", "yes", "no", "on", "off")
+
+#: 全平台邮件服务（阶段 B）。总开关关闭时任何邮件都不发送，也不阻塞主流程。
+EMAIL_SERVICE_ENABLED_KEY = "email_service_enabled"
+EMAIL_SMTP_PORT_KEY = "email_smtp_port"
+EMAIL_SMTP_SECURITY_KEY = "email_smtp_security"
+EMAIL_FROM_ADDRESS_KEY = "email_from_address"
+
+#: SMTP 加密方式允许的取值（none 仅适用于免认证内网中继）
+EMAIL_SMTP_SECURITY_VALUES = ("ssl", "starttls", "none")
+
+#: 发件人地址形状校验：刻意不 import AuthService，避免 config_service 反向依赖 auth_service。
+_EMAIL_SHAPE_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 
 def resolve_effective_sandbox_policy(
     value: Optional[str],
@@ -74,8 +93,12 @@ def validate_config_update(key: str, value: str) -> None:
         set_max_concurrency_limit(limit)
     elif key == SANDBOX_AUTO_WARM_KEY:
         normalized = str(value or "").strip().lower()
-        if normalized not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+        if normalized not in _BOOLEAN_LITERALS:
             raise ValueError("sandbox_auto_warm 仅允许 true/false")
+    elif key == USER_REGISTRATION_ENABLED_KEY:
+        normalized = str(value or "").strip().lower()
+        if normalized not in _BOOLEAN_LITERALS:
+            raise ValueError("user_registration_enabled 仅允许 true/false")
     elif key == SANDBOX_IDLE_TIME_KEY:
         try:
             minutes = float(str(value or "").strip())
@@ -83,6 +106,31 @@ def validate_config_update(key: str, value: str) -> None:
             raise ValueError("sandbox_idle_time 必须为正数（分钟）") from exc
         if minutes <= 0:
             raise ValueError("sandbox_idle_time 必须大于 0（分钟）")
+    elif key == EMAIL_SERVICE_ENABLED_KEY:
+        normalized = str(value or "").strip().lower()
+        if normalized not in _BOOLEAN_LITERALS:
+            raise ValueError("email_service_enabled 仅允许 true/false")
+    elif key == EMAIL_SMTP_PORT_KEY:
+        # 允许空串（尚未填写），非空时必须是合法端口
+        text = str(value or "").strip()
+        if text:
+            try:
+                port = int(text)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("email_smtp_port 必须是整数") from exc
+            if not (1 <= port <= 65535):
+                raise ValueError("email_smtp_port 必须在 1-65535 之间")
+    elif key == EMAIL_SMTP_SECURITY_KEY:
+        normalized = str(value or "").strip().lower()
+        if normalized not in EMAIL_SMTP_SECURITY_VALUES:
+            raise ValueError("email_smtp_security 仅允许 ssl/starttls/none")
+    elif key == EMAIL_FROM_ADDRESS_KEY:
+        # 允许空串（留空则回退到 SMTP 登录账号）；非空时必须是像样的邮箱。
+        # 刻意不校验「开启时必须填全」：管理员常需分步填写，配置不完整时由运行期
+        # 给出明确错误，并由「测试发送」按钮引导补齐。
+        text = str(value or "").strip()
+        if text and not _EMAIL_SHAPE_RE.match(text):
+            raise ValueError("email_from_address 格式不正确")
 
 _SYSTEM_CONFIGS_TABLE = Table(
     "system_configs",

@@ -6,11 +6,7 @@ import hashlib
 import base64
 import urllib.parse
 import httpx
-import smtplib
 import asyncio
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.utils import formataddr
 from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -125,6 +121,9 @@ class NotificationService:
         },
         "email": {
             "is_enabled": False,
+            "smtp_source": "global",   # global=用平台统一配置；custom=用下面这套自定义 SMTP
+            "include_self": True,      # 是否同时发送到用户自己的邮箱（存标志而非邮箱快照，
+                                       # 这样用户改邮箱后收件人自动跟随）
             "smtp_host": "",
             "smtp_port": 465,
             "smtp_user": "",
@@ -163,6 +162,19 @@ class NotificationService:
                 
                 # Merge with default structure to prevent missing keys
                 merged = {**default_val, **data}
+
+                # 存量记录的 config_json 里没有 smtp_source（该键是本次新增的）。
+                # 这里必须回填**解析后的真实来源**，不能让 DEFAULT_CONFIGS 里的
+                # 'global' 直接盖上去：发信路径读的是原始 JSON，并按 smtp_host 是否
+                # 有值自适应（resolve_smtp_source）。若界面显示「全局」而实际按
+                # 「自定义」发信，用户看到的与运行时不一致；更糟的是他下一次保存
+                # 会把 'global' 落库，从此静默改用（默认未启用的）全局服务，邮件
+                # 通知无声失效。回填后界面即真实来源，保存落库的值也是显式正确的。
+                if "smtp_source" not in data and default_val.get("smtp_source"):
+                    from app.services.email_delivery_service import EmailDeliveryService
+
+                    merged["smtp_source"] = EmailDeliveryService.resolve_smtp_source(data)
+
                 # Apply mask to sensitive fields
                 for k in cls.MASKED_KEYS:
                     if merged.get(k):
@@ -230,10 +242,15 @@ class NotificationService:
         channel_type: str,
         config_data: Dict[str, Any],
         actor: Optional[Dict[str, Any]] = None,
+        *,
+        user_id: Optional[int] = None,
+        db: Optional[AsyncSession] = None,
     ) -> Tuple[bool, str]:
         """Test notification channel connectivity using actual config data.
 
         actor 为触发人信息（user_name / real_name），仅用于让测试消息带上可识别的用户标识。
+        user_id / db 只有邮件渠道需要：邮件要按 config_data 里的 smtp_source 决定用平台
+        全局配置还是表单里的自定义 SMTP，并按用户真实邮箱推导收件人。
         """
         if channel_type == "dingtalk":
             return await cls._test_dingtalk(config_data, actor)
@@ -242,7 +259,7 @@ class NotificationService:
         elif channel_type == "feishu":
             return await cls._test_feishu(config_data, actor)
         elif channel_type == "email":
-            return await cls._test_email(config_data, actor)
+            return await cls._test_email(config_data, actor, user_id=user_id, db=db)
         return False, f"Unsupported channel type: {channel_type}"
 
     @classmethod
@@ -354,52 +371,67 @@ class NotificationService:
             return False, str(e)
 
     @classmethod
-    async def _test_email(cls, config: Dict[str, Any], actor: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
-        smtp_host = config.get("smtp_host")
-        smtp_port = config.get("smtp_port") or 465
-        smtp_user = config.get("smtp_user")
-        smtp_password = config.get("smtp_password")
-        sender_name = config.get("sender_name") or "AI Agent"
-        
-        if not smtp_host or not smtp_user or not smtp_password:
-            return False, "SMTP 服务地址、账号和授权码不能为空"
-            
-        try:
-            smtp_port = int(smtp_port)
-        except:
-            return False, "SMTP 端口格式错误"
+    async def _test_email(
+        cls,
+        config: Dict[str, Any],
+        actor: Optional[Dict[str, Any]] = None,
+        *,
+        user_id: Optional[int] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> Tuple[bool, str]:
+        """邮件渠道连通性测试。
 
-        def send_sync():
+        这里**必须**与 send_email 走同一套分层与同一个发送实现。旧实现自成一套、
+        直接读表单里的 host/账号/密码，导致选「全局」（前端不渲染这三个输入框、提交
+        上来是空串）时必然报「SMTP 服务地址、账号和授权码不能为空」，把「管理员没开
+        全局服务」的责任推给用户去填界面根本没显示的字段；它还自带一份 starttls
+        `except: pass` 静默降级，会让 587 端口可能明文发送凭据。
+        """
+        from app.services.email_delivery_service import EmailDeliveryService
+
+        config = config or {}
+        source = EmailDeliveryService.resolve_smtp_source(config)
+
+        if source == "global":
+            settings = await EmailDeliveryService.load_global_smtp_settings()
+            if settings is None:
+                return False, (
+                    "平台邮件服务未启用或配置不完整，请联系管理员在「系统配置 › 参数配置 › "
+                    "邮件服务」中配置；也可在本页改用「自定义 SMTP」"
+                )
+        else:
             try:
-                msg = MIMEMultipart()
-                msg['From'] = formataddr((sender_name, smtp_user))
-                msg['To'] = smtp_user
-                msg['Subject'] = "AI 智能体平台 - 邮件通知连通性测试"
-                
-                content = build_test_message_plain("email", actor)
-                msg.attach(MIMEText(content, 'plain', 'utf-8'))
+                settings = EmailDeliveryService.build_custom_settings(config)
+            except ValueError as exc:
+                return False, str(exc)
+            if not settings.is_complete():
+                # host 是唯一必填项；账号与授权码要么都填、要么都不填（内网中继免认证）
+                return False, "SMTP 服务地址不能为空；账号与授权码要么都填、要么都不填"
 
-                if smtp_port == 465:
-                    server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10.0)
-                else:
-                    server = smtplib.SMTP(smtp_host, smtp_port, timeout=10.0)
-                    try:
-                        server.starttls()
-                    except:
-                        pass
+        # 收件人**只能是调用者本人**。这是连通性测试，不是发信功能：
+        # 若收件人由请求体/配置决定，任何登录用户都能借**平台全局 SMTP** 向任意外部
+        # 地址发信（本接口仅需登录、也没有频控），等于把平台当成开放中继。
+        # 因此这里刻意忽略配置里的「其他收件人」，只发给自己。
+        to: List[str] = []
+        self_email = await EmailDeliveryService.resolve_self_email(user_id, db)
+        if self_email:
+            to = [self_email]
+        elif source == "custom":
+            # 自定义 SMTP 且本人未填邮箱时，回退发给发件账号本人——那仍是「发给自己」
+            # 的账号，且保留了历史行为。全局模式不回退：发给平台自己属于静默的错误
+            # 投递，用户会看到「测试通过」却实际收不到任何通知。
+            fallback = settings.effective_from()
+            to = [fallback] if fallback else []
+        if not to:
+            return False, "没有收件人：请先在「账号基本信息」中填写邮箱后再测试"
 
-                server.login(smtp_user, smtp_password)
-                server.sendmail(smtp_user, [smtp_user], msg.as_string())
-                server.quit()
-                return True, ""
-            except Exception as e:
-                logger.error(f"Test SMTP Connection Error: {e}", exc_info=True)
-                return False, str(e)
-
-        try:
-            return await asyncio.to_thread(send_sync)
-        except Exception as e:
-            return False, str(e)
+        subject = "AI 智能体平台 - 邮件通知连通性测试"
+        body = build_test_message_plain("email", actor)
+        # send_mail 是同步阻塞的，丢线程池，避免一次 SMTP 超时卡住事件循环
+        ok, message = await asyncio.to_thread(
+            EmailDeliveryService.send_mail, settings, to, subject, body
+        )
+        return (True, "") if ok else (False, message)
 
     # Core message sending APIs for user configured channels
     @classmethod
@@ -542,34 +574,50 @@ class NotificationService:
 
     @classmethod
     async def send_email(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
+        """按用户选择的来源（全局/自定义）发信，收件人默认包含用户自己的邮箱。"""
+        from app.services.email_delivery_service import EmailDeliveryService
+
         record = await cls.get_config_by_type_raw(db, user_id, "email")
-        if not record or not record.config_json:
-            return False, "用户未配置邮件通知"
-        config = json.loads(record.config_json)
+        config: Dict[str, Any] = {}
+        if record and record.config_json:
+            try:
+                config = json.loads(record.config_json)
+            except Exception:
+                config = {}
+
         if not config.get("is_enabled"):
             return False, "用户未启用邮件通知"
 
-        def send_sync():
-            host, port = config.get("smtp_host"), int(config.get("smtp_port") or 465)
-            username, password = config.get("smtp_user"), config.get("smtp_password")
-            if not host or not username or not password:
-                raise ValueError("SMTP 配置不完整")
-            # 收件人可配置；未配置时回退给 SMTP 账号自身
-            recipients = cls.parse_email_recipients(config.get("recipients")) or [username]
-            message = MIMEMultipart()
-            message["From"] = formataddr((config.get("sender_name") or "AI Agent", username))
-            message["To"] = ", ".join(recipients)
-            message["Subject"] = title
-            message.attach(MIMEText(content, "plain", "utf-8"))
-            server = smtplib.SMTP_SSL(host, port, timeout=10.0) if port == 465 else smtplib.SMTP(host, port, timeout=10.0)
-            if port != 465:
-                server.starttls()
-            server.login(username, password)
-            server.sendmail(username, recipients, message.as_string())
-            server.quit()
+        settings = await EmailDeliveryService.resolve_smtp_settings(user_id, scope="user", db=db)
+        if settings is None:
+            return False, "邮件服务未配置（当前来源无可用的 SMTP 设置）"
+
+        # 用户自己的邮箱每次都现读（统一走 resolve_self_email）：include_self 存的是
+        # 标志而非邮箱快照，用户改邮箱后收件人必须自动跟随。
+        self_email = await EmailDeliveryService.resolve_self_email(user_id, db)
+
+        include_self = config.get("include_self", True)   # 缺失默认 True，新老用户一致
+        recipients = EmailDeliveryService.compose_recipients(
+            self_email=self_email, include_self=include_self, extra=config.get("recipients")
+        )
+        if not recipients:
+            # 兼容既有行为：自定义 SMTP 下 recipients 为空时原先回退发给 smtp_user。
+            # 全局模式下不回退——发给发件账号自己是静默的错误投递。
+            if EmailDeliveryService.resolve_smtp_source(config) == "custom":
+                fallback = settings.effective_from()
+                recipients = [fallback] if fallback else []
+        if not recipients:
+            return False, "未配置收件人（未填写邮箱，且未设置其他收件人）"
+
+        def send_sync() -> Tuple[bool, str]:
+            # raise_on_transport_error=True：连接失败/超时这类瞬时故障要抛出去，
+            # 好让 _send_with_retries 退避重试；配置不完整、无收件人这类业务失败
+            # 仍走返回值立即返回，不浪费重试。
+            return EmailDeliveryService.send_mail(
+                settings, recipients, title, content, raise_on_transport_error=True
+            )
 
         async def send_once() -> Tuple[bool, str]:
-            await asyncio.to_thread(send_sync)
-            return True, ""
+            return await asyncio.to_thread(send_sync)
 
         return await _send_with_retries(send_once, channel="email")

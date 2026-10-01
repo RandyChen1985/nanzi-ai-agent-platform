@@ -27,6 +27,14 @@ const router = createRouter({
       meta: { title: '登录' }
     },
     {
+      path: '/reset-password',
+      name: 'ResetPassword',
+      component: () => import('../views/ResetPassword.vue'),
+      // public: 重置链接来自邮件，用户此刻必然处于未登录状态；若不加 public，
+      // 守卫会把他重定向到登录页，链接就永远无法使用。
+      meta: { public: true, title: '重置密码' }
+    },
+    {
       path: '/no-permission',
       name: 'NoPermission',
       component: NoPermission,

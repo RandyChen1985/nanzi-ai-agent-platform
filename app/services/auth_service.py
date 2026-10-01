@@ -1,4 +1,5 @@
 import hashlib
+import ipaddress
 import logging
 import re
 import secrets
@@ -7,11 +8,11 @@ import httpx
 from datetime import datetime
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, func
 from app.core.redis import get_redis
 from app.core.orm import AsyncSessionLocal
 from app.core.config import get_settings
-from app.models.user import User
+from app.models.user import User, USER_STATUS_ENABLED, USER_STATUS_PENDING_REVIEW
 from app.utils.encryption import get_api_key_manager
 from passlib.context import CryptContext
 
@@ -48,10 +49,16 @@ class AuthService:
         org_path: str = None,
         extra_data: str = None,
         user_id: Optional[int] = None,
+        status: int = USER_STATUS_ENABLED,
+        email: Optional[str] = None,
         db: Optional[AsyncSession] = None
     ) -> str:
         """
         生成 API 密钥 (ORM Version)
+
+        status 默认为「启用」，保持既有调用方行为不变；账号自主注册走
+        status=USER_STATUS_PENDING_REVIEW，注册时不放行登录但预先签发 Key，
+        否则审核通过后密码登录会因取不到 API Key 而 500。
         """
         session, is_local = await AuthService._get_session(db)
         try:
@@ -61,6 +68,7 @@ class AuthService:
             new_user = User(
                 user_name=user_name,
                 real_name=real_name,
+                email=email,
                 api_key_encrypted=encrypted_key,
                 api_key_hash=hashed_key,
                 role=role,
@@ -68,7 +76,7 @@ class AuthService:
                 org_path=org_path,
                 extra_data=extra_data,
                 remark=remark,
-                status=1
+                status=status
             )
             if user_id is not None:
                 new_user.id = user_id
@@ -164,6 +172,7 @@ class AuthService:
             "user_id": str(user.id),
             "user_name": user.user_name,
             "real_name": user.real_name or user.user_name,
+            "email": user.email or "",
             "role": user.role,
             "dept_code": user.dept_code or "",
             "org_path": user.org_path or "",
@@ -341,6 +350,334 @@ class AuthService:
         except Exception as exc:
             logger.warning("清除登录失败次数失败: %s", exc)
 
+    # --- 注册申请限流 ---
+    # 注册是公开接口（无鉴权），防止被脚本刷满待审核列表。三层结构：
+    #   ① 账号名 3 次/小时 —— 拓扑无关，主力；
+    #   ② 来源地址 5 次/小时 —— **仅在能确信该地址标识真实来源时生效**（见下方可信度判定）；
+    #   ③ 待审核积压上限 —— 拓扑无关，兜底。
+    # 与登录限流同策略：Redis 不可用时 fail-open，不能因为限流组件故障而关掉注册功能。
+    REGISTER_IP_LIMIT = 5
+    REGISTER_NAME_LIMIT = 3
+    REGISTER_WINDOW_SECONDS = 3600  # 1 小时
+
+    # 待审核申请积压上限 —— 与来源、请求头、部署拓扑都无关的兜底。
+    # 它防的不是「某个来源刷量」（那是账号名 + 来源两个维度的事），而是「不管谁、
+    # 待审核队列本身被灌爆」。触顶的语义是「管理员先处理一下」，不会误伤某个具体用户，
+    # 也不会因为来源判定失效而静默变成平台级封禁。
+    REGISTER_PENDING_LIMIT = 500
+
+    # 账号名可用性预检的独立限流。
+    # 预检接口本质是「这个账号名存不存在」的判定器，门槛必须比注册提交更高，
+    # 否则它就成了批量用户名枚举的探针；60 次/小时足够正常边输边查，
+    # 但要靠它枚举出可用账号名在时间上不可行。
+    #
+    # 与「提交」的来源限流不同，这一层**不做出处可信度判定、无条件生效**：
+    # 万一来源判定失效导致全平台共用一个桶，这里的退化表现为「边输边查停用」，
+    # 前端会静默退回提交时校验（用户不受阻），属于可接受的降级；
+    # 而提交那一层一旦退化就是「谁都注册不了」，所以必须判可信度。
+    REGISTER_CHECK_IP_LIMIT = 60
+    REGISTER_CHECK_PREFIX = "auth:register:check:ip:"
+
+    @staticmethod
+    def _register_ip_key(client_ip: str) -> str:
+        return f"auth:register:ip:{(client_ip or 'unknown').strip()}"
+
+    # --- 忘记密码（邮件找回）---
+    # 与注册/登录限流同策略：Redis 单条命令异常时 fail-open（限流组件故障不能把
+    # 「找回密码」整体关掉）。Redis **整体**不可用是另一回事：那种情况下根本发不出
+    # 可核销的链接，由端点直接 503（fail-closed）。
+    #
+    # 三个维度：
+    #   ① 同邮箱 60 秒冷却 —— 挡住连点，也让「刚被申请过」无法被用来探测邮箱是否存在；
+    #   ② 同邮箱 3 次/小时 —— 挡住对单个邮箱的邮件轰炸；
+    #   ③ 同来源 5 次/小时 —— 挡住换邮箱刷量（来源可信度判定复用注册那一套）。
+    PWD_RESET_TTL_SECONDS = 1800        # 链接有效期 30 分钟
+    PWD_RESET_COOLDOWN_SECONDS = 60     # 同邮箱冷却
+    PWD_RESET_EMAIL_LIMIT = 3           # 同邮箱每小时
+    PWD_RESET_SOURCE_LIMIT = 5          # 同来源每小时
+    PWD_RESET_WINDOW_SECONDS = 3600
+    PWD_RESET_PREFIX = "auth:pwdreset:"
+
+    # 个人中心「测试发信」：同一用户 60 秒冷却。
+    # 与邮件找回的冷却不同，这里没有防枚举诉求，只是一个自助按钮 —— 但它会真的占用
+    # SMTP 配额，所以必须挡住连点与脚本试探。
+    MAIL_TEST_COOLDOWN_SECONDS = 60
+    MAIL_TEST_COOLDOWN_PREFIX = "auth:mailtest:cd:"
+
+    @staticmethod
+    def pwd_reset_email_fingerprint(email: str) -> str:
+        """邮箱的定长指纹。
+
+        键名一律用指纹而不是明文邮箱：Redis 键名会出现在监控、慢日志与 KEYS 输出里，
+        用户邮箱不该被写进去。同时先 strip + lower，避免 `A@x.com` 与 `a@x.com`
+        落到两个桶而把每小时的邮件配额翻倍。
+        """
+        text = (email or "").strip().lower().encode("utf-8")
+        return hashlib.sha256(text).hexdigest()
+
+    @staticmethod
+    def mail_test_cooldown_key(user_id) -> str:
+        """自测发信的冷却键。
+
+        键名用 user_id 而不是邮箱：这是「同一个人」的限流，不是「同收件人」的限流；
+        且邮箱会变，用它做键会让用户改邮箱就绕过冷却。
+        """
+        return f"{AuthService.MAIL_TEST_COOLDOWN_PREFIX}{int(user_id)}"
+
+    @staticmethod
+    def pwd_reset_cooldown_key(email: str) -> str:
+        return (
+            f"{AuthService.PWD_RESET_PREFIX}cd:email:"
+            f"{AuthService.pwd_reset_email_fingerprint(email)}"
+        )
+
+    @staticmethod
+    def pwd_reset_email_count_key(email: str) -> str:
+        return (
+            f"{AuthService.PWD_RESET_PREFIX}cnt:email:"
+            f"{AuthService.pwd_reset_email_fingerprint(email)}"
+        )
+
+    @staticmethod
+    def pwd_reset_source_count_key(source: str) -> str:
+        return f"{AuthService.PWD_RESET_PREFIX}cnt:ip:{(source or 'unknown').strip()}"
+
+    # ------------------------------------------------------------------ #
+    # 来源地址可信度
+    #
+    # request.client.host 是 **TCP 对端**，只有在 uvicorn 的 ProxyHeadersMiddleware
+    # 信任该对端时才会被 X-Forwarded-For 改写成真实客户端 IP（uvicorn 默认只信任
+    # FORWARDED_ALLOW_IPS，未设置时取 127.0.0.1）。本仓库任何地方都没有配置该变量，
+    # 于是实际行为取决于部署形态：
+    #
+    #   - 无反代 / 反代与应用同机：client.host 就是真实客户端（同机场景下 uvicorn 会
+    #     从 XFF 里解析出真实客户端，且 nginx 默认是「追加」而非「替换」，所以伪造 XFF 无效）；
+    #   - 反代在异机 / 异 Pod（如 k8s ingress）：client.host 是**反代自己**，且它不在
+    #     XFF 链里。此时若仍按 client.host 限流，全平台会共用同一个计数器，
+    #     「5 次/小时」会静默退化成「全平台每小时只能注册 5 个」。
+    #
+    # 后者是无法从请求里直接观测的，所以判定规则取「宁可不限，也不误伤」：
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _normalize_ip(raw: Optional[str]) -> Optional[str]:
+        """把 `1.2.3.4:5678` / `[::1]:443` / `1.2.3.4` 归一成压缩后的 IP 字面量。"""
+        text = (raw or "").strip()
+        if not text:
+            return None
+        if text.startswith("[") and "]" in text:
+            text = text[1:text.index("]")]
+        elif text.count(":") == 1:
+            text = text.rsplit(":", 1)[0]
+        try:
+            return ipaddress.ip_address(text).compressed
+        except ValueError:
+            return None
+
+    @classmethod
+    def _is_trustworthy_source(cls, client_host: str, forwarded_for: Optional[str]) -> bool:
+        """client_host 是否可信地标识了一个真实外部来源。
+
+        两条必要条件，缺一不可：
+        ① 必须是**公网**地址。回环 / 私网 / 链路本地 / CGNAT / 保留段一定是基础设施
+           （反代、ingress、sidecar），不是终端用户；若反代恰好没设 XFF，这是唯一能
+           拦住「全局共用计数器」的一道网。
+        ② 若请求带 XFF，则 client_host 必须**出现在 XFF 链里**——说明 uvicorn 确实从
+           XFF 解析出了它，它代表真实客户端；不在链里说明它是「不被信任的对端地址」。
+
+        代价（刻意接受）：服务部署在纯内网、用户也都是私网地址时，这一层等于关闭，
+        仅由「账号名维度 + 待审核积压上限」两层兜底。这比误判成全平台封禁安全得多。
+        """
+        normalized = cls._normalize_ip(client_host)
+        if normalized is None:
+            return False  # 非 IP（unix socket、测试替身）一律不信
+        try:
+            if not ipaddress.ip_address(normalized).is_global:
+                return False
+        except ValueError:  # pragma: no cover - _normalize_ip 已保证可解析
+            return False
+
+        header = (forwarded_for or "").strip()
+        if not header:
+            return True  # 没有任何代理痕迹，对端就是来源本身
+        hops = {cls._normalize_ip(hop) for hop in header.split(",")}
+        return normalized in hops
+
+    @staticmethod
+    def resolve_client_ip(request) -> str:
+        """TCP 对端地址（uvicorn 在其被信任时会用 XFF 改写为真实客户端）。"""
+        client = getattr(request, "client", None)
+        host = getattr(client, "host", None) if client else None
+        return host or "unknown"
+
+    @classmethod
+    def resolve_rate_limit_source(cls, request) -> Optional[str]:
+        """返回可用于「按来源限流」的地址；无法确信时返回 None（即不按来源限流）。"""
+        client_host = cls.resolve_client_ip(request)
+        try:
+            forwarded_for = request.headers.get("x-forwarded-for")
+        except Exception:  # pragma: no cover - 非标准 Request 替身
+            forwarded_for = None
+        if not cls._is_trustworthy_source(client_host, forwarded_for):
+            logger.info(
+                "注册来源地址不可信，跳过按来源限流: client_host=%s xff=%s",
+                client_host,
+                forwarded_for,
+            )
+            return None
+        return client_host
+
+    @staticmethod
+    async def count_pending_registrations(db: Optional[AsyncSession] = None) -> int:
+        """待审核账号数量（注册积压兜底与用户管理页徽章共用同一口径）。"""
+        session, is_local = await AuthService._get_session(db)
+        try:
+            total = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(User)
+                    .where(User.status == USER_STATUS_PENDING_REVIEW)
+                )
+            ).scalar()
+            return int(total or 0)
+        finally:
+            if is_local:
+                await session.close()
+
+    @staticmethod
+    def _register_name_key(user_name: str) -> str:
+        # 截断到 64 字符：账号名规则是 3–32 位，但限流在校验之前执行，
+        # 不能因为调用方塞了个超长字符串就在 Redis 里写一个超大 key。
+        return f"auth:register:name:{(user_name or '').strip().lower()[:64]}"
+
+    @staticmethod
+    async def _register_counter_hit(key: str, limit: int) -> bool:
+        """自增计数并返回是否超限。Redis 不可用时返回 False（放行）。"""
+        redis = await AuthService._login_guard_redis()
+        if not redis:
+            return False
+        try:
+            count = int(await redis.incr(key))
+            if count == 1:
+                await redis.expire(key, AuthService.REGISTER_WINDOW_SECONDS)
+            return count > limit
+        except Exception as exc:
+            logger.warning("注册限流计数失败，本次放行: %s", exc)
+            return False
+
+    @staticmethod
+    async def is_registration_rate_limited(
+        client_ip: Optional[str], user_name: str
+    ) -> bool:
+        """IP 或账号名任一维度超限即返回 True。
+
+        client_ip 为 None 表示「无法确信该地址标识真实来源」（见 resolve_rate_limit_source），
+        此时**只按账号名限流**：宁可少一层防护，也不能让全平台共用计数器。
+        账号名维度必须先判定，否则换着账号名刷时它永远从 1 开始。
+        """
+        if await AuthService._register_counter_hit(
+            AuthService._register_name_key(user_name), AuthService.REGISTER_NAME_LIMIT
+        ):
+            return True
+        if not client_ip:
+            return False
+        return await AuthService._register_counter_hit(
+            AuthService._register_ip_key(client_ip), AuthService.REGISTER_IP_LIMIT
+        )
+
+    @staticmethod
+    async def is_user_name_taken(user_name: str, db: Optional[AsyncSession] = None) -> bool:
+        """账号名是否已被占用（大小写不敏感，任意状态都算占用）。
+
+        注册提交与「账号名可用性预检」共用这一入口，确保两侧判定口径完全一致——
+        否则预检说可用、提交却报重名，用户会认为系统在骗人。
+
+        必须显式 lower() 比对：MySQL 侧 ai_agent_users 是 utf8mb4_unicode_ci（大小写不敏感），
+        而 PostgreSQL 默认区分大小写；不归一化会让两个库行为不一致，PG 上会直接撞唯一索引。
+        """
+        session, is_local = await AuthService._get_session(db)
+        try:
+            row = (
+                await session.execute(
+                    select(User.id).where(
+                        func.lower(User.user_name) == (user_name or "").strip().lower()
+                    )
+                )
+            ).first()
+            return row is not None
+        finally:
+            if is_local:
+                await session.close()
+
+    # 邮箱的格式上限与宽松正则。刻意不做 RFC 5322 全量校验：
+    # 过度严格会误伤合法地址（带引号的本地部分、IDN 域名等），而平台并不真的投递到
+    # 任意合法地址——真正能发现写错的办法只有发信验证，那是已决策不做的事。
+    EMAIL_MAX_LENGTH = 254
+    _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+    @staticmethod
+    def normalize_email(raw: Optional[str], strict: bool = False) -> Optional[str]:
+        """归一化邮箱：去空白 → 空串转 None → 小写。
+
+        strict=True 时格式非法抛 ValueError；strict=False（默认）时返回 None，
+        供「用户还在输入」的场景使用，避免为了探测格式而反复抛异常。
+        """
+        text = (raw or "").strip().lower()
+        if not text:
+            return None
+        if (
+            len(text) > AuthService.EMAIL_MAX_LENGTH
+            or not AuthService._EMAIL_RE.match(text)
+        ):
+            if strict:
+                raise ValueError("邮箱格式不正确")
+            return None
+        return text
+
+    @staticmethod
+    async def is_user_email_taken(
+        email: str,
+        exclude_user_id: Optional[int] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> bool:
+        """邮箱是否已被占用（大小写不敏感，任意状态都算占用）。
+
+        与 is_user_name_taken 同构：注册、管理员增改、个人中心自助编辑三处共用，
+        确保判定口径一致。同样显式 lower() 比对——写入时已归一化，但手工 SQL 或
+        第三方同步可能绕过应用层，且两个库的 collation 行为不同。
+
+        exclude_user_id 用于「编辑自己」：不排除会把用户自己判成重复。
+        """
+        normalized = AuthService.normalize_email(email)
+        if not normalized:
+            return False  # 未填写不参与唯一性
+        session, is_local = await AuthService._get_session(db)
+        try:
+            stmt = select(User.id).where(func.lower(User.email) == normalized)
+            if exclude_user_id is not None:
+                stmt = stmt.where(User.id != exclude_user_id)
+            return (await session.execute(stmt)).first() is not None
+        finally:
+            if is_local:
+                await session.close()
+
+    @staticmethod
+    def is_email_unique_violation(exc: Exception) -> bool:
+        """该 IntegrityError 是否由邮箱唯一索引引起。
+
+        注册接口已经有一个捕获 IntegrityError 的分支（用于账号名冲突），
+        不区分就会把邮箱冲突误报成「账号名已被占用」——这是本特性最容易写错的一处。
+        """
+        return "uk_ai_agent_users_email" in str(getattr(exc, "orig", exc))
+
+    @staticmethod
+    async def is_registration_check_rate_limited(client_ip: str) -> bool:
+        """账号名可用性预检是否超限（按 IP 单独计数，与提交计数互不影响）。"""
+        key = f"{AuthService.REGISTER_CHECK_PREFIX}{(client_ip or 'unknown').strip()}"
+        return await AuthService._register_counter_hit(
+            key, AuthService.REGISTER_CHECK_IP_LIMIT
+        )
+
     @staticmethod
     async def verify_api_key(api_key: str, db: Optional[AsyncSession] = None) -> Optional[Dict]:
         """
@@ -493,6 +830,7 @@ class AuthService:
             "user_id": str(user.id),
             "user_name": user.user_name,
             "real_name": user.real_name or user.user_name,
+            "email": user.email or "",
             "role": user.role,
             "dept_code": user.dept_code or "",
             "org_path": user.org_path or "",
@@ -668,8 +1006,16 @@ class AuthService:
             
             if not user:
                 return {"status": "fail", "message": "用户名或密码错误"}
-            
-            if user.status != 1:
+
+            # 待审核与「已禁用」必须分开提示：前者是正常流程中的中间态，
+            # 若沿用「账户已被禁用」会让申请人以为账号被拒而反复联系管理员。
+            if user.status == USER_STATUS_PENDING_REVIEW:
+                return {
+                    "status": "pending_review",
+                    "message": "账号正在审核中，请等待管理员审核通过后再登录",
+                }
+
+            if user.status != USER_STATUS_ENABLED:
                  return {"status": "fail", "message": "账户已被禁用"}
 
             if not user.password_hash:
@@ -682,6 +1028,7 @@ class AuthService:
                          "user_id": str(user.id),
                          "user_name": user.user_name,
                          "real_name": user.real_name or user.user_name,
+                         "email": user.email or "",
                          "role": user.role,
                          "dept_code": user.dept_code or "",
                          "org_path": user.org_path or "",
@@ -812,6 +1159,7 @@ class AuthService:
                      "user_id": str(user.id),
                      "user_name": user.user_name,
                      "real_name": user.real_name or user.user_name,
+                     "email": user.email or "",
                      "role": user.role,
                      "dept_code": user.dept_code or "",
                      "org_path": user.org_path or "",
@@ -982,6 +1330,7 @@ class AuthService:
                 "user_id": str(user.id),
                 "user_name": user.user_name,
                 "real_name": user.real_name or user.user_name,
+                "email": user.email or "",
                 "role": user.role,
                 "dept_code": user.dept_code or "",
                 "org_path": user.org_path or "",

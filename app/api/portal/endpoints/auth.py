@@ -1,11 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request
-from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request, BackgroundTasks
+import logging
+import re
+from typing import Dict, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.dependencies import require_api_key, is_secure_request as _is_secure_request
 from app.core.orm import get_db_session
+from app.core.redis import get_redis
 from app.services.auth_service import AuthService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -89,6 +94,241 @@ class LoginRequest(BaseModel):
 class SSOLoginRequest(BaseModel):
     username: str = Field(..., description="SSO 用户名")
     password: str = Field(..., description="SSO 密码")
+
+
+#: 账号名规则：3–32 位，字母开头，仅允许字母/数字/下划线/中划线/点。
+#: 比管理员「创建用户」更严（那边不做格式校验）；只约束自助注册，不影响存量账号。
+USER_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{2,31}$")
+
+#: 与 ai_agent_users.real_name(50) / remark(255) 的字段长度对齐
+REAL_NAME_MAX_LENGTH = 50
+REMARK_MAX_LENGTH = 255
+
+REGISTER_SUCCESS_MESSAGE = "注册申请已提交，请等待管理员审核"
+DUPLICATE_USER_NAME_MESSAGE = "该账号名已被占用，请更换后重试"
+DUPLICATE_USER_EMAIL_MESSAGE = "该邮箱已被其他账号使用"
+USER_NAME_FORMAT_MESSAGE = "账号名需为 3–32 位、以字母开头，仅可包含字母、数字、下划线、中划线与点"
+USER_NAME_AVAILABLE_MESSAGE = "该账号名可以使用"
+
+
+class RegisterRequest(BaseModel):
+    user_name: str = Field(..., description="账号名（3–32 位，字母开头）")
+    real_name: str = Field(..., description="用户姓名")
+    email: Optional[str] = Field(None, description="邮箱，选填；填写后全局唯一")
+    password: str = Field(..., description="登录密码（须符合等保复杂度要求）")
+    remark: Optional[str] = Field(None, description="备注（可选，最多 255 字）")
+
+
+async def _registration_enabled() -> bool:
+    """注册功能是否开启。默认关闭：配置缺失即视为关闭。"""
+    from app.services.config_service import (
+        USER_REGISTRATION_ENABLED_KEY,
+        ConfigService,
+    )
+
+    return await ConfigService.get(USER_REGISTRATION_ENABLED_KEY) == "true"
+
+
+@router.get("/register/available", summary="预检注册账号名是否可用")
+async def check_register_user_name(
+    http_request: Request,
+    user_name: str = "",
+    db: AsyncSession = Depends(get_db_session),
+):
+    """账号名可用性预检，供注册表单边输边查。
+
+    **安全取舍**：本接口是「账号名是否存在」的判定器，天然可被用于用户名枚举。
+    三重对冲：① 仅当注册功能开启时才存在（关闭时返回 403，等于接口不存在）；
+    ② 按 IP 走独立且更严的限流（60 次/小时，见 AuthService.REGISTER_CHECK_IP_LIMIT），
+    靠它批量枚举在时间上不可行；③ 不作任何额外信息回显（不透露占用者的姓名、状态）。
+    """
+    if not await _registration_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="系统当前未开放账号注册，请联系管理员开通",
+        )
+
+    client_ip = AuthService.resolve_client_ip(http_request)
+    if await AuthService.is_registration_check_rate_limited(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="账号名校验过于频繁，请稍后再试",
+        )
+
+    normalized = (user_name or "").strip()
+    if not USER_NAME_PATTERN.match(normalized):
+        return {
+            "status": "success",
+            "data": {
+                "available": False,
+                "reason": "invalid",
+                "message": USER_NAME_FORMAT_MESSAGE,
+            },
+        }
+
+    if await AuthService.is_user_name_taken(normalized, db=db):
+        return {
+            "status": "success",
+            "data": {
+                "available": False,
+                "reason": "taken",
+                "message": DUPLICATE_USER_NAME_MESSAGE,
+            },
+        }
+
+    return {
+        "status": "success",
+        "data": {
+            "available": True,
+            "reason": "ok",
+            "message": USER_NAME_AVAILABLE_MESSAGE,
+        },
+    }
+
+
+@router.post("/register", summary="提交账号注册申请")
+async def register(
+    http_request: Request,
+    request: RegisterRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """自助注册：创建待审核账号，不返回任何身份信息。
+
+    校验顺序即错误优先级：开关 → 限流 → 格式 → 等保 → 积压上限 → 重名 → 落库。
+    """
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.user import (
+        USER_STATUS_PENDING_REVIEW,
+        User,
+    )
+
+    # 1. 开关：注册功能默认关闭，关闭时即便直接打接口也必须拒绝
+    if not await _registration_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="系统当前未开放账号注册，请联系管理员开通",
+        )
+
+    user_name = (request.user_name or "").strip()
+    real_name = (request.real_name or "").strip()
+    remark = (request.remark or "").strip() or None
+
+    # 邮箱选填。strict=True 让格式错误明确 400，而不是被静默丢弃——
+    # 用户填了邮箱却因为格式问题没存上，会以为以后能收到通知。
+    raw_email = (getattr(request, "email", None) or "").strip()
+    try:
+        email = AuthService.normalize_email(raw_email, strict=True) if raw_email else None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    # 2. 限流：先于格式校验，避免绕过计数。
+    #    来源维度只在「能确信该地址标识真实来源」时生效（见 resolve_rate_limit_source）：
+    #    反代在异机/异 Pod 时 client.host 是反代自身，若照用会让全平台共用一个计数器，
+    #    「5 次/小时」静默退化成「全平台每小时只能注册 5 个」。账号名维度始终生效。
+    client_ip = AuthService.resolve_rate_limit_source(http_request)
+    if await AuthService.is_registration_rate_limited(client_ip, user_name):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="注册申请提交过于频繁，请 1 小时后再试",
+        )
+
+    # 3. 格式
+    if not USER_NAME_PATTERN.match(user_name):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=USER_NAME_FORMAT_MESSAGE,
+        )
+    if not real_name or len(real_name) > REAL_NAME_MAX_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"请填写用户姓名（不超过 {REAL_NAME_MAX_LENGTH} 字）",
+        )
+    if remark is not None and len(remark) > REMARK_MAX_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"备注不超过 {REMARK_MAX_LENGTH} 字",
+        )
+
+    # 4. 密码等保复杂度（与修改密码、管理员设密同一实现）
+    valid, message = AuthService.validate_password_complexity(
+        request.password, username=user_name
+    )
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+
+    # 5. 积压上限：与来源、请求头、部署拓扑都无关的兜底。
+    #    前面的两个限流维度都可能因为来源判定失效而少一层，这一层保证「不管谁在刷，
+    #    待审核队列都不会无限膨胀」——受伤的是管理员的审核负担和库表体积，不是某个用户。
+    pending = await AuthService.count_pending_registrations(db=db)
+    if pending >= AuthService.REGISTER_PENDING_LIMIT:
+        logger.warning(
+            "待审核申请已积压 %s 条（上限 %s），拒绝新注册申请",
+            pending,
+            AuthService.REGISTER_PENDING_LIMIT,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="当前待审核的注册申请过多，请稍后重试或联系管理员先行处理",
+        )
+
+    # 6. 重名：与「账号名预检」共用同一判定，覆盖全部状态
+    #    （禁用/待审核账号同样占用账号名），且大小写不敏感。
+    if await AuthService.is_user_name_taken(user_name, db=db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=DUPLICATE_USER_NAME_MESSAGE,
+        )
+
+    # 6.1 邮箱唯一性：与账号名同口径（任意状态都算占用，大小写不敏感）
+    if email and await AuthService.is_user_email_taken(email, db=db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=DUPLICATE_USER_EMAIL_MESSAGE,
+        )
+
+    # 6. 落库：待审核 + 预签发 API Key（审核通过后密码登录依赖它下发会话）
+    try:
+        await AuthService.generate_api_key(
+            user_name,
+            real_name=real_name,
+            remark=remark,
+            role="user",
+            status=USER_STATUS_PENDING_REVIEW,
+            email=email,
+            db=db,
+        )
+    except IntegrityError as exc:
+        # 并发下两个请求同时通过唯一性检查时由唯一索引兜底。
+        # 必须先判断是哪个索引冲突：注册接口同时受账号名与邮箱两个唯一键约束，
+        # 一律报「账号名已被占用」会让用户改错字段、反复试不通。
+        await db.rollback()
+        detail = (
+            DUPLICATE_USER_EMAIL_MESSAGE
+            if AuthService.is_email_unique_violation(exc)
+            else DUPLICATE_USER_NAME_MESSAGE
+        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    user_id = (
+        await db.execute(select(User.id).where(User.user_name == user_name))
+    ).scalar_one()
+    await AuthService.set_user_password(user_id, request.password, db=db)
+
+    # 通知管理员：尽力而为，且走后台任务。
+    # ① 必须传 None：绝不能把请求作用域的 session 带进后台任务 —— 响应返回后它已关闭，
+    #    若恰好落在另一个事件循环上还会报 attached to a different loop；
+    # ② 不 await：SMTP 是同步阻塞且有超时的，放响应前会把注册接口一起拖慢；
+    # ③ 响应体保持不变：是否发出通知属于平台内部信息，不能回传给注册者。
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    background_tasks.add_task(
+        EmailDeliveryService.notify_admins_of_pending_registration, user_id, None
+    )
+
+    return {"status": "success", "message": REGISTER_SUCCESS_MESSAGE}
 
 @router.post("/sso/login", summary="SSO 用户登录")
 async def sso_login(
@@ -233,6 +473,13 @@ async def login(
                 status_code=status.HTTP_403_FORBIDDEN, 
                 detail=result["message"]
             )
+        elif result["status"] == "pending_review":
+             # 待审核是正常流程中的中间态，必须给出明确提示，
+             # 否则申请人会误以为账号被拒而反复联系管理员。
+             raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result["message"]
+            )
         else:
              raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -338,9 +585,108 @@ async def change_password(
     success = await AuthService.set_user_password(user_id, password, db=db)
     
     if success:
+        # 改密后吊销该用户全部会话：否则「旧密码已泄露 → 改密」之后，对方手里的
+        # 会话依然有效，改密等于没改。当前设备同样会被登出，这是预期行为，前端在
+        # 成功提示后清本地凭据并跳登录页。长时效 API Key 不在会话索引里，不受影响。
+        try:
+            await AuthService.revoke_sessions_for_user(user_id)
+        except Exception as exc:  # noqa: BLE001
+            # 吊销失败不能让「密码已经改成功了」变成 500 —— 密码确实改了
+            logger.warning("改密后吊销会话失败 user_id=%s: %s", user_id, exc)
         return {"status": "success", "message": "密码修改成功"}
     else:
          raise HTTPException(500, "密码修改失败")
+
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(..., description="注册时使用的邮箱")
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str = Field(..., description="重置邮件链接里的 token")
+    password: str = Field(..., min_length=8, max_length=32, description="新密码（须符合等保复杂度要求）")
+
+
+@router.post("/password-reset/request", summary="发起密码找回（发送重置邮件）")
+async def request_password_reset(
+    payload: PasswordResetRequest,
+    background_tasks: BackgroundTasks,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """未登录可用的密码找回入口。
+
+    顺序即错误优先级：可用性（邮件服务 / 对外地址）→ Redis → 限流 → 格式 → 查库 → 发信。
+    除「与提交的邮箱无关」的平台级错误外，**一律返回同一句文案**（防枚举）：
+    邮箱不存在、待审核、已禁用、成功命中、被限流，响应必须逐字节相同。
+    """
+    from app.services.password_reset_service import UNIFIED_MESSAGE, PasswordResetService
+
+    # 1-2. 功能可用性（邮件服务 + 对外地址）。该判定与提交的邮箱无关，
+    #      因此可以明确报错，不构成枚举泄露；两种原因分开是为了让管理员知道该配什么。
+    unavailable = await PasswordResetService.availability()
+    if unavailable:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=unavailable)
+
+    # 3. Redis 必须可用：发信要 fail-closed —— 不能发一封之后根本无法核销的链接
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="密码重置服务暂时不可用，请稍后重试",
+        )
+
+    # 4. 限流（排在格式校验之前，与注册端点「限流先于格式校验」的不变式一致）
+    source = AuthService.resolve_rate_limit_source(http_request)
+    target = await PasswordResetService.request_reset(db, payload.email, source, redis)
+
+    # 5. 格式校验：只取决于输入本身，因此可以明确报错而不泄露任何注册信息
+    if target is None and AuthService.normalize_email(payload.email) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱格式不正确"
+        )
+
+    # 6. token 同步签发（保证链接一定可核销），SMTP 放到响应之后：
+    #    SMTP 是同步阻塞且耗时可观的，若放在响应前，「响应快慢」就成了邮箱是否存在的
+    #    观测点。
+    if target is not None:
+        user_id, email = target
+        link = await PasswordResetService.build_link(user_id, redis)
+        if link:
+            subject, body = PasswordResetService.build_mail(link)
+            background_tasks.add_task(PasswordResetService.deliver, email, subject, body)
+
+    return {"status": "success", "message": UNIFIED_MESSAGE}
+
+
+@router.post("/password-reset/confirm", summary="用邮件链接重置密码")
+async def confirm_password_reset(
+    payload: PasswordResetConfirmRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """核销链接并设置新密码。
+
+    刻意**不做限流**：token 是 32 字节随机 nonce，不可枚举；限流只会给真实用户添堵。
+
+    所有「链接不可用」的原因共用同一句 400 文案（过期 / 已用 / 被新申请覆盖 /
+    账号不可用 / token 被篡改），避免把失败原因变成探测面。密码复杂度错误是个例外：
+    它只取决于用户刚输入的内容，报清楚更有用，且此时链接尚未被核销。
+    """
+    from app.services.password_reset_service import PasswordResetService
+
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="密码重置服务暂时不可用，请稍后重试",
+        )
+
+    ok, message = await PasswordResetService.reset_password(
+        payload.token, payload.password, db, redis
+    )
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+    return {"status": "success", "message": message}
 
 @router.post("/logout", summary="退出登录")
 async def logout(
@@ -427,13 +773,28 @@ async def get_current_user_info(
             days_until_next_change = password_expire_days - days_since_last_change
             is_expired = days_until_next_change <= 0
 
+    # 邮箱必须优先取实时查库的 user_obj，而不是 require_api_key 注入的 user dict：
+    # 后者缓存在 Redis（auth:api_key:*，TTL 3600s），刚上线时老会话命中缓存会拿到
+    # 不含 email 的旧 dict，个人中心会误显示「未设置」。
+    # 同理顶层与 data 内各放一份：本特性的验收用例断言顶层 key，而前端读 data.email。
+    current_email = (user_obj.email if user_obj else None) or user.get("email", "") or ""
+
+    # 个人中心「测试发信」按钮的显示条件之一。放在这个需登录的接口里而不是
+    # /config/public：平台邮件是否配置属于内部状态，不该暴露给未登录访问者。
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    mail_service_available = (await EmailDeliveryService.load_global_smtp_settings()) is not None
+
     return {
         "status": "success",
+        "email": current_email,
         "data": {
             "id": user.get("user_id"),
             "user_id": user.get("user_id"),
             "user_name": user.get("user_name"),
             "real_name": user.get("real_name") or user.get("user_name"),
+            "email": current_email,
+            "mail_service_available": mail_service_available,
             "role": user.get("role"),
             "dept_code": user.get("dept_code"),
             "org_path": user.get("org_path"),
@@ -459,6 +820,151 @@ async def get_current_user_info(
             }
         }
     }
+
+
+class ProfileUpdateRequest(BaseModel):
+    """个人中心自助资料更新。刻意只有一个字段——最小权限。
+
+    设计上不允许用户自助修改 real_name / role / status / remark：
+    前三个是管理属性，改 remark 没有提出需求。用独立模型而不是复用管理员那套，
+    是为了让「哪些字段能自助改」这件事在类型层面就是显式的。
+    """
+    email: Optional[str] = None
+
+
+@router.post("/me/email-test", summary="给自己发一封测试邮件")
+async def send_self_test_email(
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """用**全局**邮件服务给当前用户自己的邮箱发一封测试邮件。
+
+    收件人固定为本人实时查库的邮箱，请求体不接受任何收件人 —— 一旦允许指定收件人，
+    任何登录用户都能借这个按钮给任意地址发信，平台等于垃圾邮件中继。（管理端的
+    POST /configs/email/test 允许任意收件人，是因为它要求系统配置权限。）
+
+    检查顺序：未设邮箱 → 服务未启用 → 冷却。前置检查在前，冷却只在确实要发送时才
+    消耗；但**发送失败也占用冷却**，否则 SMTP 配错时可以被无限猛刷，把一次配置故障
+    放大成持续负载。
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from app.models.user import User
+    from app.services.email_delivery_service import (
+        EmailDeliveryService,
+        build_self_test_mail,
+    )
+
+    user_id = int(user["user_id"])
+
+    # 实时查库，不能用 require_api_key 注入的 user dict：它缓存在 Redis（TTL 1 小时），
+    # 用户改了邮箱之后它仍是旧值，测试信会一直发往旧地址。
+    # （与 /me 里 current_email 的处理同因。）
+    user_obj = await db.get(User, user_id)
+    email = ((user_obj.email if user_obj else None) or "").strip()
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="请先在个人中心设置邮箱"
+        )
+
+    settings = await EmailDeliveryService.load_global_smtp_settings()
+    if settings is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="平台邮件服务未启用或配置不完整",
+        )
+
+    redis_client = await get_redis()
+    if redis_client is not None:
+        key = AuthService.mail_test_cooldown_key(user_id)
+        try:
+            acquired = await redis_client.set(
+                key, "1", ex=AuthService.MAIL_TEST_COOLDOWN_SECONDS, nx=True
+            )
+            if not acquired:
+                ttl = await redis_client.ttl(key)
+                wait = ttl if isinstance(ttl, int) and ttl > 0 else AuthService.MAIL_TEST_COOLDOWN_SECONDS
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"操作过于频繁，请 {wait} 秒后再试",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # Redis 故障不阻断自测：本功能没有防枚举诉求，失败开放最多多花一次 SMTP
+            # 配额，而失败关闭会让「Redis 抖动」表现为按钮点了没反应。
+            logger.warning("自测发信冷却检查失败，已放行: user_id=%s err=%s", user_id, exc)
+
+    subject, body = build_self_test_mail(
+        user_name=user.get("user_name") or "", sender_name=settings.sender_name
+    )
+    try:
+        # send_mail 是同步阻塞的（smtplib），必须丢线程池，否则卡住事件循环
+        ok, message = await run_in_threadpool(
+            EmailDeliveryService.send_mail, settings, [email], subject, body
+        )
+    except Exception as exc:  # noqa: BLE001
+        # 让「点一下按钮」看到可读原因，而不是 500
+        logger.warning("自测发信异常: user_id=%s err=%s", user_id, exc)
+        return {"ok": False, "message": f"发送失败：{exc}"}
+
+    if not ok:
+        logger.warning("自测发信失败: user_id=%s reason=%s", user_id, message)
+        return {"ok": False, "message": message}
+    return {"ok": True, "message": f"测试邮件已发送至 {email}，请查收"}
+
+
+@router.patch("/me/profile", summary="更新我的资料")
+async def update_my_profile(
+    request: ProfileUpdateRequest,
+    user: Dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """只允许改邮箱。
+
+    不要求输入当前密码（已决策）：邮箱不是登录因子，改了也能再改；
+    而要求密码确认会让纯 API Key 登录的账号无法自助修改。
+    变更只打结构化日志——平台没有通用的用户变更审计表，合规审计需另立设计。
+
+    注意：`auth.router` 是唯一没有整组挂 `require_api_key` 的 router，
+    所以这里的 `Depends(require_api_key)` 是**显式且必需**的，漏掉就是公开接口。
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.user import User
+
+    raw_email = (request.email or "").strip()
+    try:
+        email = AuthService.normalize_email(raw_email, strict=True) if raw_email else None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    user_id = int(user.get("id") or user.get("user_id"))
+    if email and await AuthService.is_user_email_taken(email, exclude_user_id=user_id, db=db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=DUPLICATE_USER_EMAIL_MESSAGE
+        )
+
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+
+    old_email = target.email
+    target.email = email
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # 并发下两人同时抢同一邮箱：唯一索引兜底
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=DUPLICATE_USER_EMAIL_MESSAGE
+        ) from exc
+
+    logger.info(
+        "用户自助修改邮箱: user_name=%s old=%s new=%s",
+        user.get("user_name"), old_email, email,
+    )
+    return {"status": "success", "email": email or ""}
 
 class EnableTwoFactorRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6, description="Google 身份验证器 6 位动态验证码")
@@ -757,7 +1263,7 @@ async def get_public_config(
     """
     获取不需要登录即可访问的系统配置（如是否启用 SSO）
     """
-    from app.services.config_service import ConfigService
+    from app.services.config_service import ConfigService, USER_REGISTRATION_ENABLED_KEY
     from app.services.platform_timezone import (
         DEFAULT_PLATFORM_TIMEZONE,
         PLATFORM_TIMEZONE_CONFIG_KEY,
@@ -766,12 +1272,28 @@ async def get_public_config(
 
     sso_enabled = await ConfigService.get("yovole_sso_enabled") == "true"
     hide_login_apikey = await ConfigService.get("hide_login_apikey") == "true"
+    user_registration_enabled = (
+        await ConfigService.get(USER_REGISTRATION_ENABLED_KEY) == "true"
+    )
     platform_timezone = await get_platform_timezone()
+
+    # 密码找回入口是否可见：与 request 端点用**同一个** availability() 判定，
+    # 避免出现「入口显示了但接口 503」这种自相矛盾的状态。
+    password_reset_available = False
+    try:
+        from app.services.password_reset_service import PasswordResetService
+
+        password_reset_available = (await PasswordResetService.availability()) is None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("计算 password_reset_available 失败：%s", exc)
+
     return {
         "status": "success",
         "data": {
             "yovole_sso_enabled": sso_enabled,
             "hide_login_apikey": hide_login_apikey,
+            "user_registration_enabled": user_registration_enabled,
+            "password_reset_available": password_reset_available,
             "platform_timezone": platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
             PLATFORM_TIMEZONE_CONFIG_KEY: platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
         }

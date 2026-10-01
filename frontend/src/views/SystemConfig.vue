@@ -44,7 +44,8 @@ import {
   InformationCircleIcon,
   ExclamationTriangleIcon,
   DocumentDuplicateIcon,
-  ChartBarSquareIcon
+  ChartBarSquareIcon,
+  EnvelopeIcon
 } from '@heroicons/vue/24/outline'
 
 const router = useRouter()
@@ -786,7 +787,7 @@ const sandboxSshHasSshCli = computed(() => {
 })
 const orderedCategories = computed(() => {
   if (!configGroups.value) return []
-  const order = ['general', 'agent_context', 'agent', 'metadata', 'data_api', 'knowledge', 'sandbox', 'other']
+  const order = ['general', 'agent_context', 'agent', 'metadata', 'data_api', 'knowledge', 'sandbox', 'other', 'email']
   const keys = Object.keys(configGroups.value)
   return keys.sort((a, b) => {
     const idxA = order.indexOf(a)
@@ -876,6 +877,7 @@ const getGroupSubtitle = (cat: string) => {
     'knowledge': '知识库连接与检索',
     'sandbox': 'Docker / K8s 沙箱执行环境',
     'other': '其余系统参数',
+    'email': '配置平台统一的邮件发送服务（SMTP），用于审核结果通知等系统邮件',
   }
   return map[cat] || '系统参数集合'
 }
@@ -887,7 +889,10 @@ const configSearchResults = computed(() => {
   if (!q) return []
   const results: Array<{ item: ConfigItem; category: string }> = []
   for (const [cat, items] of Object.entries(configGroups.value)) {
-    for (const item of items) {
+    // 必须复用 getVisibleItems：它承载「按开关隐藏从属项」等可见性规则。
+    // 直接遍历 items 会搜到界面上并不存在的参数（如邮件服务关闭时的 SMTP 明细、
+    // knowledge/sandbox 的隐藏项），点进去还因目标元素不存在而静默滚动失败。
+    for (const item of getVisibleItems(items, cat)) {
       const match =
         item.key.toLowerCase().includes(q) ||
         (item.description || '').toLowerCase().includes(q) ||
@@ -1403,6 +1408,80 @@ const toggleSecret = (key: string) => {
   showSecrets.value[key] = !showSecrets.value[key]
 }
 
+// --- 邮件服务测试发送 ---
+// 前端只持有脱敏后的 SMTP 密码，无法用「尚未保存的值」发信；
+// 后端始终读取已保存的全局邮件配置，因此界面提示用户先保存再测试。
+const emailTestSending = ref(false)
+const showEmailTestModal = ref(false)
+const emailTestTo = ref('')
+const emailTestError = ref('')
+const emailTestInputRef = ref<HTMLInputElement | null>(null)
+
+// 邮件服务关着的时候，「发送测试邮件」必然失败（后端会直接拒绝），
+// 让按钮可点只会换来一条 400 和一次困惑，所以据开关置灰。
+//
+// 这里可以禁用、而个人中心那个「测试连通性」只提示不禁用，是因为判定依据不同：
+// 本页的 email_service_enabled 开关就在同一屏、值确定可读；个人中心是从接口间接
+// 判断全局配置，读不到可能只是「没权限」，据它置灰会把本来可用的服务一起锁死。
+// 开关值在本文件里统一是字符串 'true' / 'false'（见开关的 @click 赋值）。
+const emailServiceEnabled = computed(() => {
+  const item = (configGroups.value.email || []).find(x => x.key === 'email_service_enabled')
+  return (item?.value ?? 'false') === 'true'
+})
+
+// 「发送测试邮件」的置灰必须按**已保存**的开关判断：后端测试接口只读库里的已保存
+// 配置（只接受收件人），所以拿内存里的未保存值判断会出现两种错配——
+// ① 刚把开关拨到「开」还没保存，按钮就变可点，点下去必然拿到 ok:false「未启用」；
+// ② 已保存为启用、再把开关拨回「关」（未保存），按钮被错误置灰。
+// 可见性仍用上面的内存值：SMTP 明细必须随开关即时收起/展开。
+const emailServiceEnabledSaved = computed(() => {
+  const saved = originalConfigs.value['email_service_enabled']
+  if (saved === undefined) return emailServiceEnabled.value
+  return String(saved).trim() === 'true'
+})
+
+// 与后端 AuthService 同口径的宽松校验：只挡明显笔误，不做过度限制
+const EMAIL_TEST_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+
+const openEmailTestModal = () => {
+  // 双保险：按钮已置灰，但禁用状态不该是唯一防线。
+  // 用「已保存」的开关判断——后端只按库里已保存的配置发信。
+  if (!emailServiceEnabledSaved.value) return
+  // 有的话预填管理员自己的邮箱：测试发送绝大多数时候就是发给自己；
+  // 拿不到就留空，此时后端会发给发件人地址自测（与旧行为一致）。
+  emailTestTo.value = String(userInfo.value?.email || '').trim()
+  emailTestError.value = ''
+  showEmailTestModal.value = true
+  nextTick(() => emailTestInputRef.value?.focus())
+}
+
+const closeEmailTestModal = () => {
+  if (emailTestSending.value) return   // 发送中不允许关闭，避免请求回来时状态已经没了
+  showEmailTestModal.value = false
+}
+
+const submitEmailTest = async () => {
+  const to = emailTestTo.value.trim()
+  // 留空是允许的（后端回落到发件人地址）；填了就必须像邮箱，先在前端拦掉笔误，
+  // 不然要等一次往返才看到一个格式错误。
+  if (to && !EMAIL_TEST_RE.test(to)) {
+    emailTestError.value = '邮箱格式不正确'
+    return
+  }
+  emailTestError.value = ''
+  emailTestSending.value = true
+  try {
+    const { data } = await axios.post('/api/portal/system/configs/email/test', { to })
+    showToast(data.message, data.ok ? 'success' : 'error')
+    // 成功才关窗；失败保持打开，地址可以就地改完重试
+    if (data.ok) showEmailTestModal.value = false
+  } catch (e: any) {
+    showToast(`测试失败: ${e.response?.data?.detail || e.message}`, 'error')
+  } finally {
+    emailTestSending.value = false
+  }
+}
+
 const getCategoryLabel = (cat: string, short = true) => {
   const map: Record<string, { short: string; full: string }> = {
     'agent_context': { short: '上下文管理', full: '上下文管理 (Context Management)' },
@@ -1413,6 +1492,7 @@ const getCategoryLabel = (cat: string, short = true) => {
     'general':       { short: '常规设置',    full: '常规设置 (General Settings)' },
     'sandbox':       { short: '安全沙箱',    full: '安全沙箱 (Sandbox)' },
     'other':         { short: '其他参数',    full: '其他参数 (Other Parameters)' },
+    'email':         { short: '邮件服务',    full: '邮件服务 (Mail Service)' },
   }
   const entry = map[cat]
   if (!entry) return cat.toUpperCase()
@@ -1438,6 +1518,7 @@ const CATEGORY_ICONS: Record<string, any> = {
   'knowledge':     ServerStackIcon,
   'sandbox':       CommandLineIcon,
   'other':         WrenchScrewdriverIcon,
+  'email':         EnvelopeIcon,
 }
 
 const getCategoryIcon = (cat: string) => CATEGORY_ICONS[cat] || CATEGORY_ICONS['general']
@@ -2376,9 +2457,12 @@ const handleDatasetSelect = (val: string | string[]) => {
 const configShortDescriptions: Record<string, string> = {
   hide_login_apikey: '关闭登录页的 API Key 选项卡。开启后登录页仅展示账号密码或 SSO 登录。',
   password_expire_days: '密码修改有效间隔天数（天）。个人中心将依据此天数提醒用户及时更新密码。默认 30 天。',
+  user_registration_enabled: '账号自主注册申请开关。开启后登录页显示「申请账号」入口，注册申请须管理员审核通过后才能登录。',
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
-  download_url_prefix: '生成文件下载链接时使用的公网地址前缀。',
+  download_url_prefix: '生成文件下载链接、以及忘记密码「重置链接」使用的公网地址前缀。'
+    + '只填协议 + 域名（如 https://your-domain.example.com），不要填写任何路径、文件名或 token。'
+    + '留空时回退 APP_PUBLIC_URL。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
   llm_request_read_timeout: '大模型请求的读取超时（秒），指相邻两次数据到达的最大间隔，默认 180，范围 30-300。',
   agent_max_toolcall_timeout: '单次 Agent 工具调用的全局超时时间（秒），默认 180 秒，范围 1-3600；版本级配置优先于全局配置。',
@@ -2469,6 +2553,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     const order = [
       'hide_login_apikey',
       'password_expire_days',
+      'user_registration_enabled',
       'platform_timezone',
       'agentscope_inject_runtime_state',
       'agentscope_inject_time_interval_hours',
@@ -2518,6 +2603,34 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'knowledge_ragflow_similarity_threshold',
       'knowledge_ragflow_vector_weight',
       'knowledge_ragflow_metadata_top_k'
+    ]
+    list.sort((a, b) => {
+      const idxA = order.indexOf(a.key)
+      const idxB = order.indexOf(b.key)
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB
+      if (idxA !== -1) return -1
+      if (idxB !== -1) return 1
+      return a.key.localeCompare(b.key)
+    })
+  }
+  if (category === 'email') {
+    // 与 knowledge_base_enabled 同一惯例：开关排第一；关闭时只留开关自己，
+    // 不让人对着一屏用不上的 SMTP 明细发呆（关着的时候填它也没有任何作用）。
+    // 注意：这里只是不渲染，值仍在 configGroups 里，保存不会清空已填的配置。
+    const enabledItem = list.find(x => x.key === 'email_service_enabled')
+    const enabled = (enabledItem?.value ?? 'false') === 'true'
+    if (!enabled) {
+      list = list.filter(x => x.key === 'email_service_enabled')
+    }
+    const order = [
+      'email_service_enabled',
+      'email_smtp_host',
+      'email_smtp_port',
+      'email_smtp_security',
+      'email_smtp_user',
+      'email_smtp_password',
+      'email_from_address',
+      'email_sender_name'
     ]
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
@@ -4020,6 +4133,18 @@ onUnmounted(() => {
                         <p class="text-[11px] text-gray-500 truncate max-w-md">{{ getGroupSubtitle(String(category)) }}</p>
                      </div>
                      <span class="ml-auto shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500" :title="`共 ${totalConfigCountFor(String(category))} 项配置`">{{ totalConfigCountFor(String(category)) }} 项</span>
+                     <button
+                       v-if="String(category) === 'email' && canSave"
+                       type="button"
+                       class="ml-3 shrink-0 rounded-lg border border-primary/30 bg-white px-3 py-1 text-xs font-medium text-primary shadow-sm transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+                       :disabled="emailTestSending || !emailServiceEnabledSaved"
+                       :title="emailServiceEnabledSaved
+                         ? '使用已保存的配置，请先保存再测试'
+                         : '邮件服务未启用：请先打开下方「email_service_enabled」开关并保存后再测试'"
+                       @click="openEmailTestModal"
+                     >
+                       {{ emailTestSending ? '发送中...' : '发送测试邮件' }}
+                     </button>
                  </div>
                  <div
                      id="config-group-body"
@@ -4035,6 +4160,12 @@ onUnmounted(() => {
                        <span class="text-gray-400 font-bold shrink-0">ℹ️</span>
                        <div>
                           知识库功能已<strong>关闭</strong>。开启「knowledge_base_enabled」后将显示 RAGFlow 连接与检索参数，并启用知识库管理、检索测试与智能体知识库检索工具。
+                       </div>
+                    </div>
+                    <div v-if="category === 'email'" class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-md text-sm text-blue-900 flex items-start space-x-2 mb-4">
+                       <span class="text-blue-500 font-bold shrink-0">ℹ️</span>
+                       <div>
+                          「发送测试邮件」<strong>使用已保存的配置</strong>，请先保存再测试。前端只持有脱敏后的密码，尚未保存的改动无法用于发信。
                        </div>
                     </div>
                     <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-6 py-5 first:pt-0 last:pb-2 transition-all duration-150" :class="[
@@ -4390,6 +4521,7 @@ onUnmounted(() => {
                              <div class="mt-2 text-xs text-blue-700 bg-blue-50/60 p-3 rounded-xl border border-blue-100/70 leading-relaxed">
                                <div>💡 <strong>设置示例：</strong>填写 <code class="font-mono text-blue-800">https://your-domain.example.com</code>，生成的下载地址会是 <code class="font-mono text-blue-800">https://your-domain.example.com/api/v1/chat/generated-files/...</code>。</div>
                                <div class="mt-1">只填写协议、域名和必要的反向代理前缀，<strong>不要填写</strong> API 路径、文件名或 token。留空时回退到环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code> 或相对地址。</div>
+                               <div class="mt-1">用户「忘记密码」时收到的重置邮件也用此前缀，链接形如 <code class="font-mono text-blue-800">https://your-domain.example.com/reset-password?token=...</code>；同样<strong>不要</strong>在前缀里填写 <code class="font-mono text-blue-800">/reset-password</code>。因此本项留空时，登录页的「忘记密码」入口会整块隐藏（邮件里的相对地址点不开，发出去等于废邮件）。</div>
                              </div>
                           </div>
                           <div v-else-if="item.key === 'sandbox_ssh_auth_type'" class="space-y-2">
@@ -4827,6 +4959,10 @@ onUnmounted(() => {
                                              <span class="text-gray-500 font-medium">备注说明 (remark):</span>
                                              <span class="font-mono text-gray-800 bg-gray-100 px-2 py-0.5 rounded w-max border border-gray-200/60">{{ parseJson(item.value)?.field_map?.remark || '未配置' }}</span>
                                           </div>
+                                          <div class="grid grid-cols-[110px_1fr] px-3.5 py-2.5 text-xs items-center">
+                                             <span class="text-gray-500 font-medium">邮箱 (email):</span>
+                                             <span class="font-mono text-gray-800 bg-gray-100 px-2 py-0.5 rounded w-max border border-gray-200/60">{{ parseJson(item.value)?.field_map?.email || '未配置' }}</span>
+                                          </div>
                                        </div>
                                     </div>
 
@@ -5117,7 +5253,7 @@ onUnmounted(() => {
                                 class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                               >{{ item.description }}</p>
                            </div>
-                           <div v-else-if="['embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'agentscope_inject_runtime_state'].includes(item.key)">
+                           <div v-else-if="['user_registration_enabled', 'embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'email_service_enabled', 'agentscope_inject_runtime_state'].includes(item.key)">
                              <div class="flex items-center">
                              <button
                                type="button"
@@ -5138,7 +5274,50 @@ onUnmounted(() => {
                                class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                              >{{ item.description }}</p>
                           </div>
-                          <div v-else-if="item.key === 'agentscope_inject_time_interval_hours'">
+                          <div v-else-if="item.key === 'email_smtp_security'">
+                             <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                               <option value="ssl">SSL/TLS（常用端口 465）</option>
+                               <option value="starttls">STARTTLS（常用端口 587）</option>
+                               <option value="none">不加密（仅内网中继，不安全）</option>
+                             </select>
+                             <p
+                               v-if="item.description"
+                               class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
+                             >{{ item.description }}</p>
+                           </div>
+                           <div v-else-if="item.key === 'email_smtp_port'">
+                             <div class="flex items-center gap-2 max-w-xs">
+                               <input
+                                 type="number"
+                                 min="1"
+                                 max="65535"
+                                 step="1"
+                                 :value="item.value"
+                                 :disabled="isConfigItemDisabled(String(category), item)"
+                                 @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                                 @input="(e) => {
+                                   const raw = (e.target as HTMLInputElement).value.replace(/\D/g, '')
+                                   item.value = raw
+                                   ;(e.target as HTMLInputElement).value = raw
+                                 }"
+                                 @blur="() => {
+                                   const n = parseInt(item.value, 10)
+                                   if (!item.value || !Number.isFinite(n) || n < 1 || n > 65535) {
+                                     item.value = '465'
+                                   }
+                                 }"
+                                 class="w-32 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:bg-white disabled:cursor-not-allowed"
+                                 placeholder="465"
+                               />
+                               <span class="text-xs font-semibold text-gray-500">端口</span>
+                               <span class="text-[11px] text-gray-400">（SSL 常用 465，STARTTLS 常用 587）</span>
+                             </div>
+                             <p
+                               v-if="item.description"
+                               class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
+                             >{{ item.description }}</p>
+                           </div>
+                           <div v-else-if="item.key === 'agentscope_inject_time_interval_hours'">
                              <div class="flex items-center gap-3 max-w-xs">
                                <input
                                  type="number"
@@ -6169,6 +6348,60 @@ onUnmounted(() => {
     />
 
     <!-- Image Cropper Modal -->
+    <!-- 发送测试邮件：原先用浏览器原生输入弹窗，视觉与交互都和平台脱节（无法做格式校验、
+         无法展示发送中状态、部分浏览器会拦截），改为与其它弹窗同一套内联模态。 -->
+    <div
+      v-if="showEmailTestModal"
+      class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
+      @click.self="closeEmailTestModal"
+      @keydown.esc="closeEmailTestModal"
+    >
+      <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100">
+        <div class="px-6 py-4 border-b border-gray-100 flex items-center space-x-2.5 bg-gray-50/50">
+          <div class="p-2 bg-primary/10 rounded-xl text-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+            </svg>
+          </div>
+          <h3 class="text-md font-bold text-gray-900">发送测试邮件</h3>
+        </div>
+        <div class="px-6 py-5 space-y-3">
+          <label class="block text-xs font-medium text-gray-700">收件人</label>
+          <input
+            ref="emailTestInputRef"
+            v-model="emailTestTo"
+            type="text"
+            :disabled="emailTestSending"
+            placeholder="留空则发给发件人地址"
+            class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none disabled:bg-gray-50"
+            @keydown.enter="submitEmailTest"
+          />
+          <p v-if="emailTestError" class="text-xs text-red-600">{{ emailTestError }}</p>
+          <p class="text-[11px] text-gray-500 leading-relaxed">
+            使用<strong class="text-gray-700">已保存</strong>的配置发送。前端只持有脱敏后的密码，请先保存再测试。
+          </p>
+        </div>
+        <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end space-x-3">
+          <button
+            type="button"
+            :disabled="emailTestSending"
+            class="px-4 py-2 rounded-xl text-sm font-bold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            @click="closeEmailTestModal"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            :disabled="emailTestSending"
+            class="px-5 py-2 rounded-xl text-sm font-bold text-white bg-primary hover:bg-primary-dark transition-all duration-200 active:scale-95 shadow-sm focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            @click="submitEmailTest"
+          >
+            {{ emailTestSending ? '发送中...' : '发送' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showCropper" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" @click.self="showCropper = false">
       <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden scale-100 transition-all duration-200 border border-gray-100 flex flex-col">
         <!-- Header -->

@@ -2,12 +2,17 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func, desc
+from sqlalchemy import select, update, delete, func, desc, or_
 from sqlalchemy.orm import selectinload
 from app.core.dependencies import require_admin, require_api_key, require_permission, require_permission
 from app.core.orm import get_db_session
 from app.services.auth_service import AuthService
-from app.models.user import User
+from app.models.user import (
+    USER_STATUS_DISABLED,
+    USER_STATUS_ENABLED,
+    USER_STATUS_PENDING_REVIEW,
+    User,
+)
 from app.schemas.permission import UserPermissionsResponse, PermissionUpdate
 from app.services.permission_service import PermissionService
 from app.models.permission import ResourcePermission, UserRoleRelation
@@ -32,6 +37,7 @@ class CreateUserRequest(BaseModel):
     allowed_resources: Optional[list] = []
     role_ids: Optional[List[int]] = [] # Business Roles
     remark: Optional[str] = None
+    email: Optional[str] = None
 
 class SsoSyncRequest(BaseModel):
     usernames: List[str]
@@ -281,9 +287,12 @@ class UpdateUserRequest(BaseModel):
     allowed_resources: Optional[list] = None
     role_ids: Optional[List[int]] = None # Business Roles
     remark: Optional[str] = None
+    email: Optional[str] = None
 
 class UpdateStatusRequest(BaseModel):
-    status: int  # 1=enabled, 0=disabled
+    status: int  # 0=disabled, 1=enabled, 2=pending_review
+    # 审核通过时顺带分配业务角色；None = 不触碰角色，[] = 显式清空
+    role_ids: Optional[List[int]] = None
 
 class BatchUpdateStatusRequest(BaseModel):
     user_ids: List[int] = Field(..., description="目标用户 ID 列表")
@@ -291,6 +300,20 @@ class BatchUpdateStatusRequest(BaseModel):
 
 # 单次批量操作的用户数上限，防止误操作与超长事务
 BATCH_STATUS_MAX_USERS = 200
+
+
+@router.get("/users/pending-count")
+async def get_pending_user_count(
+    admin: dict = Depends(require_permission("menu", "menu:system:users")),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """待审核账号数量，供用户管理页的「待审核」页签徽章展示。
+
+    只读计数，权限与用户列表一致（menu:system:users）；审核动作本身仍受 element:user:edit 保护。
+    与注册接口的「积压上限」兜底共用同一计数口径，避免徽章和门禁各算各的。
+    """
+    return {"count": await AuthService.count_pending_registrations(db=db)}
+
 
 @router.get("/users/{user_id}/permissions", response_model=UserPermissionsResponse)
 async def get_user_permissions(
@@ -346,6 +369,12 @@ async def list_users(
     search: Optional[str] = None,
     role: Optional[str] = None,
     status_filter: Optional[int] = Query(None, alias="status"),
+    exclude_status: Optional[int] = Query(
+        None,
+        ge=0,
+        description="排除某个状态的用户。用户列表用它排掉待审核（2），"
+                    "使待审核账号只出现在「待审核」页签里",
+    ),
     exclude_role_id: Optional[int] = Query(
         None,
         ge=1,
@@ -361,11 +390,21 @@ async def list_users(
     stmt = select(User).order_by(desc(User.created_at))
     
     if search:
-        stmt = stmt.where((User.user_name.like(f"%{search}%")) | (User.real_name.like(f"%{search}%")))
+        stmt = stmt.where(
+            (User.user_name.like(f"%{search}%"))
+            | (User.real_name.like(f"%{search}%"))
+            | (User.email.like(f"%{search}%"))
+        )
     if role and role in ["admin", "user"]:
         stmt = stmt.where(User.role == role)
     if status_filter is not None:
         stmt = stmt.where(User.status == status_filter)
+    if exclude_status is not None:
+        # 显式带上 NULL：status 列可空，而 SQL 里 `status != 2` 对 NULL 求值为 NULL
+        # （不成立），只写 `!=` 会让历史 NULL 行从「全部」里凭空消失。
+        stmt = stmt.where(
+            or_(User.status != exclude_status, User.status.is_(None))
+        )
     if exclude_role_id is not None:
         member_ids = select(UserRoleRelation.user_id).where(
             UserRoleRelation.role_id == exclude_role_id
@@ -389,6 +428,7 @@ async def list_users(
             "id": row.id,
             "user_name": row.user_name,
             "real_name": row.real_name,
+            "email": row.email or "",
             "role": row.role,
             "dept_code": row.dept_code,
             "org_path": row.org_path,
@@ -435,7 +475,15 @@ async def create_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already exists"
         )
-    
+
+    raw_email = (getattr(request, "email", None) or "").strip()
+    try:
+        email = AuthService.normalize_email(raw_email, strict=True) if raw_email else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if email and await AuthService.is_user_email_taken(email, db=db):
+        raise HTTPException(status_code=400, detail="该邮箱已被其他账号使用")
+
     try:
         # Generate API key (Delegates to AuthService which uses ORM now)
         api_key = await AuthService.generate_api_key(
@@ -446,6 +494,7 @@ async def create_user(
             dept_code=request.dept_code,
             org_path=request.org_path,
             extra_data=request.extra_data,
+            email=email,
             db=db # Pass session!
         )
         
@@ -518,7 +567,24 @@ async def update_user(
         
     if request.remark is not None:
         user.remark = request.remark
-        
+
+    # 邮箱：用 email_provided 而不是 `if email:` 判定，否则管理员把邮箱清空
+    # （传空串）时会被静默忽略，永远清不掉。语义：null / 字段缺省 = 不修改，
+    # 空串或纯空白 = 清空。
+    email_provided = getattr(request, "email", None) is not None
+    if email_provided:
+        raw_email = (request.email or "").strip()
+        try:
+            email = AuthService.normalize_email(raw_email, strict=True) if raw_email else None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        # 排除自己：否则「不改邮箱直接保存」会被判成与本人重复
+        if email and await AuthService.is_user_email_taken(
+            email, exclude_user_id=user_id, db=db
+        ):
+            raise HTTPException(status_code=400, detail="该邮箱已被其他账号使用")
+        user.email = email
+
     # Update Business Roles
     if request.role_ids is not None:
         service = PermissionService(db)
@@ -564,6 +630,34 @@ async def update_user(
     }
 
 
+async def _send_review_result_mail(user: User, approved: bool):
+    """审核结果通知，返回 (sent, error)。
+
+    强制走**全局** SMTP（已决策）：这是系统发给用户的通知，若走用户个人配置，
+    用户把个人 SMTP 关掉或填错就永远收不到审核结果——而这恰恰是他能否登录的前提。
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from app.services.email_delivery_service import (
+        EmailDeliveryService, build_review_mail,
+    )
+
+    if not (user.email or "").strip():
+        return False, "该用户未填写邮箱"
+
+    settings = await EmailDeliveryService.load_global_smtp_settings()
+    if settings is None:
+        return False, "平台邮件服务未启用或配置不完整"
+
+    subject, body = build_review_mail(user.user_name, approved, settings.sender_name)
+    ok, message = await run_in_threadpool(
+        EmailDeliveryService.send_mail, settings, [user.email], subject, body
+    )
+    if not ok:
+        logger.warning("审核结果邮件发送失败: user=%s reason=%s", user.user_name, message)
+    return ok, (None if ok else message)
+
+
 @router.patch("/users/{user_id}/status")
 async def update_user_status(
     user_id: int,
@@ -572,8 +666,14 @@ async def update_user_status(
     db: AsyncSession = Depends(get_db_session)
 ):
     """
-    Enable or disable a user.
+    更新用户状态（启用 / 禁用 / 待审核），并可在审核通过时顺带分配业务角色。
     """
+    if request.status not in (0, 1, 2):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="status must be 0 (disabled), 1 (enabled) or 2 (pending_review)",
+        )
+
     current_user_id = admin.get("user_id")
     try:
         current_user_id = int(current_user_id) if current_user_id else None
@@ -582,26 +682,94 @@ async def update_user_status(
     
     if user_id == current_user_id and request.status == 0:
         raise HTTPException(status_code=403, detail="Cannot disable yourself")
-        
+
+    # 角色存在性必须在改状态之前校验：否则状态已提交、角色写入却因外键失败，
+    # 请求以 500 收场，管理员会看到「审核失败」但实际上账号已经启用。
+    role_ids = request.role_ids
+    if role_ids is not None:
+        from app.models.permission import Role
+
+        requested = list(dict.fromkeys(int(rid) for rid in role_ids))
+        if requested:
+            found = (
+                await db.execute(select(Role.id).where(Role.id.in_(requested)))
+            ).scalars().all()
+            if set(found) != set(requested):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="包含不存在的业务角色，请刷新后重试",
+                )
+        role_ids = requested
+
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
+    # 记录审核前的状态：只有「待审核 → 启用/禁用」才是审核动作。
+    # 用它区分审核与日常启停，避免管理员事后启停账号时给用户发骚扰邮件，
+    # 而且不需要额外字段或动作类型参数。
+    was_pending = user.status == USER_STATUS_PENDING_REVIEW
+
     user.status = request.status
     await db.commit()
+
+    # 审核通过时顺带分配业务角色：role_ids=None 表示不触碰，[] 表示清空
+    if request.status == 1 and role_ids is not None:
+        try:
+            await PermissionService(db).update_user_roles(user_id, role_ids)
+        except Exception as e:
+            logger.error(f"Failed to update roles for user {user_id}: {e}")
+            raise HTTPException(status_code=500, detail="业务角色分配失败，请重试")
     
     # Security: Clear Redis cache to force re-authentication
     try:
-        from app.services.auth_service import AuthService
-        from app.services.permission_service import PermissionService
         await AuthService.invalidate_user_auth_cache(
             user_id, db=db, api_key_hash=user.api_key_hash
         )
         await PermissionService(db).invalidate_cached_permissions_for_users([user_id])
     except Exception as e:
         logger.error(f"Failed to clear user cache: {e}")
-    
-    return {"message": "User status updated successfully"}
+
+    # 审核结果通知：尽力而为，绝不影响审核结果本身。
+    # 放在所有可能抛错的动作之后，避免角色分配失败（500）时用户却已收到「已通过」邮件。
+    email_sent = False
+    email_error: Optional[str] = None
+    if was_pending and user.status in (USER_STATUS_ENABLED, USER_STATUS_DISABLED):
+        email_sent, email_error = await _send_review_result_mail(
+            user, approved=(user.status == USER_STATUS_ENABLED)
+        )
+
+    return {
+        "message": "User status updated successfully",
+        "email_sent": email_sent,
+        "email_error": email_error,
+    }
+
+
+class NotifyReviewMailRequest(BaseModel):
+    # 显式传事件而不是从当前状态推断：重发往往发生在用户状态已被改动之后，
+    # 从状态推断会发出与实际审核决定不符的文案。
+    approved: bool
+
+
+@router.post(
+    "/users/{user_id}/notify-review-mail",
+    dependencies=[Depends(require_permission("element", "element:user:edit"))],
+)
+async def notify_review_mail(
+    user_id: int,
+    request: NotifyReviewMailRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """重发审核结果邮件。"""
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target.status == USER_STATUS_PENDING_REVIEW:
+        raise HTTPException(status_code=400, detail="该用户仍在待审核状态，无需重发通知")
+
+    sent, error = await _send_review_result_mail(target, approved=request.approved)
+    return {"ok": sent, "message": "已发送" if sent else (error or "发送失败")}
 
 
 @router.patch("/users/batch-status")
