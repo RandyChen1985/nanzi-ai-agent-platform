@@ -285,6 +285,31 @@ def test_email_test_failure_surfaces_backend_detail():
     assert "emailTestResult.value = { ok: false, message }" in body
 
 
+def test_email_test_success_does_not_stack_a_global_toast():
+    """邮件测试**成功**后只留卡片内绿条，不得再叠一个全局 toast。
+
+    2026-10-01 用户实测反馈：卡片里已经有「测试通过 测试连通成功」的持久提示，
+    再弹一个「邮件测试连通成功！」属对同一信息的重复打扰。
+    但其它渠道（钉钉/企微/飞书/Webhook）没有卡片内结果区，必须继续靠 toast 反馈，
+    所以这条针的是「成功分支里邮件被排除在 toast 之外」，而不是把 toast 整个删掉。
+    """
+    src = _notification_configs_src()
+    import re
+
+    m = re.search(r"const testConfig = async \(channel: string\) => \{.*?\n\}", src, re.S)
+    assert m, "找不到 testConfig"
+    success = m.group(0).split("catch", 1)[0]  # 只取 try 内的成功分支
+    assert "emailTestResult.value = { ok: true" in success, "成功仍要写入卡片结果"
+    else_idx = success.find("} else {")
+    assert else_idx != -1, "成功分支必须按渠道区分反馈方式"
+    assert "channel === 'email'" in success[:else_idx], "邮件必须是被排除在 toast 外的那一支"
+    toast = success.find("show-toast")
+    assert toast != -1, "其它渠道没有卡片内结果区，成功 toast 不能被删掉"
+    assert toast > else_idx, (
+        "成功 toast 必须落在 else（非邮件）分支里；写在 email 分支内会导致邮件双份提示"
+    )
+
+
 def test_email_test_result_cleared_when_source_changes():
     """切换来源后旧结论不再适用，必须清掉，否则会显示针对另一种来源的失败原因。"""
     src = _notification_configs_src()

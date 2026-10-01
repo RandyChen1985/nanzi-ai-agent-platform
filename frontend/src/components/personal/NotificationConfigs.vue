@@ -911,14 +911,19 @@ const testConfig = async (channel: string) => {
       config_data: configs.value[channel]
     })
     if (res.data && res.data.status === 'success') {
-      emit('show-toast', `${getChannelName(channel)}测试连通成功！`, 'success')
       if (channel === 'email') {
+        // 邮件的成功反馈已经持久落在卡片里（紧邻测试按钮上方的绿色提示条），
+        // 再弹一次全局 toast 是对同一信息的重复打扰 —— 用户实测反馈「多余」。
+        // 其余渠道没有卡片内结果区，仍靠 toast 反馈。
         emailTestResult.value = { ok: true, message: res.data.message || '测试连通成功' }
+      } else {
+        emit('show-toast', `${getChannelName(channel)}测试连通成功！`, 'success')
       }
     }
   } catch (error: any) {
     const message = error.response?.data?.detail || '测试连通失败'
     emit('show-toast', message, 'error')
+    // 失败仍保留 toast：成功可以是安静的，失败要在第一时间被看见。
     // 邮件渠道额外把原因留在卡片里：这条是给用户看的，不能一闪而过
     if (channel === 'email') emailTestResult.value = { ok: false, message }
   } finally {
