@@ -107,8 +107,8 @@
                     :disabled="isSubmittingInit"
                     class="w-full py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
                 >
-                    <span v-if="isSubmittingInit">正在签发 Ticket 并发送...</span>
-                    <span v-else>发送 INIT_CONFIG {{ config.authMode === 'ticket' ? '(Ticket 换票)' : '' }}</span>
+                    <span v-if="isSubmittingInit">正在发送登录请求...</span>
+                    <span v-else>发送登录请求（INIT_CONFIG{{ config.authMode === 'ticket' ? ' · Ticket 换票' : '' }}）</span>
                 </button>
             </section>
 
@@ -1068,7 +1068,7 @@ const handleMessage = (event: MessageEvent) => {
         log(`RX: ${data.type}`);
         
         if (data.type === 'NANZI_WIDGET_READY') {
-            log('Widget Ready — 请配置 Token 后点击「发送 INIT_CONFIG」');
+            log('Widget Ready — 请配置 Token 后点击「发送登录请求」');
         }
     }
 };
