@@ -89,11 +89,41 @@ def test_metrics_view_supports_knowledge_base_drilldown_and_export():
     assert "exportCsv" in view
 
 
-def test_metrics_summary_endpoint_is_admin_only():
-    """平台级运营视图只对管理员开放：此前仅校验登录即可读取全平台知识库名与调用量。"""
+def test_metrics_summary_endpoint_requires_knowledge_menu_permission():
+    """运营视图按「知识库管理」菜单权限放行：此前仅校验登录即可读取全平台知识库名与调用量。
+
+    曾一度收紧为 `require_admin`，但前端菜单与路由仍按 `menu:knowledge_management` 放行，
+    于是持有该菜单权限的非管理员能进入页面、请求却必然 403「Admin access required」。
+    这里固定「后端 = 菜单权限」的口径，并由下一项断言锁死三处一致。
+    """
     endpoint = _source("app/api/portal/endpoints/ragflow.py")
 
-    assert '@router.get("/metrics/summary", dependencies=[Depends(require_admin)])' in endpoint
+    assert 'Depends(require_permission("menu", "menu:knowledge_management"))' in endpoint
+    # 反向护栏：不得退回管理员专属（会与前端菜单权限口径脱节）
+    assert '@router.get("/metrics/summary", dependencies=[Depends(require_admin)])' not in endpoint
+
+
+def test_metrics_permission_matches_frontend_menu_and_route():
+    """后端接口、侧边栏菜单、路由守卫三者必须使用同一个权限点。
+
+    任一处单独改动都会造出「菜单可见但数据加载失败」或「有权限却被挡在门外」的页面，
+    因此把一致性本身固化为契约，而不是只断言各自用了某个权限。
+    """
+    perm = "menu:knowledge_management"
+
+    router_source = _source("frontend/src/router/index.ts")
+    route_start = router_source.index("path: 'knowledge-metrics'")
+    route_block = router_source[route_start : route_start + 300]
+    assert f"perm: '{perm}'" in route_block
+
+    dashboard = _source("frontend/src/views/Dashboard.vue")
+    menu_line = next(
+        line for line in dashboard.splitlines() if "'/dashboard/knowledge-metrics'" in line
+    )
+    assert f"perm: '{perm}'" in menu_line
+
+    endpoint = _source("app/api/portal/endpoints/ragflow.py")
+    assert f'require_permission("menu", "{perm}")' in endpoint
 
 
 def test_metrics_endpoint_merges_before_querying():
@@ -103,7 +133,7 @@ def test_metrics_endpoint_merges_before_querying():
     （响应发出后才执行），本次响应就会读到归并前的旧值，用户必须连刷两次才看到最新数据。
     """
     endpoint = _source("app/api/portal/endpoints/ragflow.py")
-    route_start = endpoint.index('@router.get("/metrics/summary"')
+    route_start = endpoint.index("async def get_ragflow_metrics_summary(")
 
     merge_index = endpoint.index(
         "await KnowledgeMetricsService.sync_redis_metrics_to_db()", route_start

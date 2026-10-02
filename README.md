@@ -15,6 +15,8 @@
 > 📖 **实战连载**：[NanZi 开源智能体平台实战连载](https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzU3NzAwOTA0NA==&action=getalbum&album_id=4613921118301732865#wechat_redirect)（架构 · 安装 · 智能体配置 · ChatBI · 工具箱 · MCP）
 >
 > ❓ **疑难解答**：[疑难解答与常见问题手册 (FAQ)](https://randychen1985.github.io/nanzi-agic/products/faq.html)
+>
+> 🌐 **在线体验**：扫码进群获取免费体验账号与体验地址，[见下方「联系与交流」](#-联系与交流)
 
 ![Promo](docs/images/nanzi-platform-promo-16x9.png)
 ![Overview](docs/images/nanzi-platform-overview-16x9.png)

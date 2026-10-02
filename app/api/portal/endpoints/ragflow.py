@@ -723,7 +723,10 @@ async def get_dataset_permissions(
     }
 
 
-@router.get("/metrics/summary", dependencies=[Depends(require_admin)])
+@router.get(
+    "/metrics/summary",
+    dependencies=[Depends(require_permission("menu", "menu:knowledge_management"))],
+)
 async def get_ragflow_metrics_summary(
     start_date: str,
     end_date: str,
@@ -732,8 +735,12 @@ async def get_ragflow_metrics_summary(
     """
     获取指定日期范围内知识库与文档的统计指标汇总。
 
-    安全：运营分析属于平台级运营视图，仅对管理员开放——此前只校验登录即可读取
-    全平台知识库名、文件名与调用量。
+    安全：运营分析属于平台级运营视图，须持有「知识库管理」菜单权限
+    （`menu:knowledge_management`）才可读取。该口径必须与前端的菜单显示与路由守卫
+    逐字一致：三者若不一致，用户会看到一个能进、但数据必然加载失败的页面
+    （曾出现后端 `require_admin`、前端却按菜单权限放行的 403「Admin access required」）。
+    管理员由 `require_permission` 内部短路放行，无需在此另判角色。
+    注意此前只校验登录即可读取全平台知识库名、文件名与调用量，收紧口径时三处需同改。
     时效：查询前**先归并、再查询**，保证本次响应即包含最新数据。归并必须发生在查询之前：
     若改为 BackgroundTasks（响应发出后才执行），本次响应会读到归并前的旧值，用户需要
     连刷两次才能看到最新数据。归并本身由分钟级 Redis 锁串行化，重复调用不会重复累加。
