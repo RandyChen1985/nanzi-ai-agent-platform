@@ -10,6 +10,7 @@
 `AuthService.generate_api_key` 自身落库并只返回明文 API Key，`_drop_user` 负责清理。
 """
 import uuid
+from pathlib import Path
 
 import pytest
 from sqlalchemy import delete, select
@@ -160,7 +161,7 @@ async def pending_account():
 # --------------------------------------------------------------------------- #
 
 def test_password_reset_limit_constants_and_key_shapes():
-    assert AuthService.PWD_RESET_TTL_SECONDS == 1800
+    assert AuthService.PWD_RESET_TTL_SECONDS == 900
     assert AuthService.PWD_RESET_COOLDOWN_SECONDS == 60
     assert AuthService.PWD_RESET_EMAIL_LIMIT == 3
     assert AuthService.PWD_RESET_SOURCE_LIMIT == 5
@@ -189,7 +190,7 @@ async def test_issue_token_stores_hash_not_plaintext_and_sets_ttl():
     stored = redis.data["auth:pwdreset:7"]
     assert stored != nonce, "Redis 里必须是哈希，不能是明文 nonce"
     assert stored == PasswordResetService.hash_nonce(nonce)
-    assert redis.ttls["auth:pwdreset:7"] == 1800, "TTL 必须是 30 分钟"
+    assert redis.ttls["auth:pwdreset:7"] == 900, "TTL 必须是 15 分钟"
 
 
 @pytest.mark.no_infrastructure
@@ -375,9 +376,31 @@ def test_reset_mail_body_mentions_ttl_and_one_time():
     )
     assert "密码重置" in subject
     assert "https://x/reset-password?token=7.abc" in body
-    assert "30 分钟" in body
+    # 分钟数从常量推导，不再各写一份字面量
+    assert f"{AuthService.PWD_RESET_TTL_SECONDS // 60} 分钟" in body
     assert "一次" in body
     assert "忽略" in body
+
+
+@pytest.mark.no_infrastructure
+def test_ttl_minutes_agree_across_constant_mail_and_reset_page():
+    """有效期分钟数在「常量 / 重置邮件 / 重置页静态说明」三处必须一致。
+
+    这个数字本来是散在三处的字面量，改 TTL 时漏掉任何一处，用户看到的承诺就和
+    实际有效期对不上——页面承诺的时间比实际更久，用户只会认为平台有 bug。
+    邮件正文已改为从常量推导，重置页仍是硬编码，所以这里做一次跨层核对：
+    改 TTL 而忘改前端时，这个用例会先把漏改指出来。
+    """
+    minutes = AuthService.PWD_RESET_TTL_SECONDS // 60
+    _, body = PasswordResetService.build_mail("https://x/reset-password?token=7.abc")
+    assert f"{minutes} 分钟" in body
+
+    page = (
+        Path(__file__).resolve().parents[1] / "frontend/src/views/ResetPassword.vue"
+    ).read_text(encoding="utf-8")
+    assert f"重置链接有效期 {minutes} 分钟，且只能使用一次。" in page, (
+        "重置页静态说明里的有效期与后端 TTL 不一致"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -545,6 +568,7 @@ async def test_reset_password_audit_log_has_no_secrets(
 
 RESET_REQUEST_URL = "/api/portal/auth/password-reset/request"
 RESET_CONFIRM_URL = "/api/portal/auth/password-reset/confirm"
+RESET_VERIFY_URL = "/api/portal/auth/password-reset/verify"
 PUBLIC_CONFIG_URL = "/api/portal/auth/config/public"
 PORTAL_PREFIX = "https://portal.example.com"
 
@@ -816,3 +840,93 @@ async def test_change_password_revokes_all_sessions(
             await s.execute(select(User.id).where(User.user_name == "test_user"))
         ).scalar_one()
     assert revoked == [expected], "改密后必须吊销该用户的全部会话"
+
+
+# --------------------------------------------------------------------------- #
+# Task 7：进页面预校验（只读，不核销）
+#
+# 这个端点的全部意义是让重置页在用户填密码之前就知道链接还能不能用。因此最关键的
+# 不是某个分支的对错，而是它与 confirm 的判定**必须一致**：只要有一边宽松，
+# 用户就会遇到「页面显示正常、点提交却说失效」，那比不做预校验更让人困惑。
+# --------------------------------------------------------------------------- #
+
+async def test_verify_endpoint_reports_valid_and_does_not_consume(
+    client, enabled_account, monkeypatch
+):
+    """预校验必须是只读的：校验完用户还得用这条链接改密码。"""
+    redis = FakeRedis()
+    _stub_redis(monkeypatch, redis)
+    uid, _ = enabled_account
+    token = await PasswordResetService.issue_token(uid, redis)
+
+    resp = await client.get(RESET_VERIFY_URL, params={"token": token})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"valid": True}
+
+    # 关键：预校验不能把 token 烧掉，否则预览一下就再也改不了密码
+    assert await PasswordResetService.verify_token(token, redis) == uid
+
+
+async def test_verify_endpoint_says_invalid_without_saying_why(
+    client, enabled_account, monkeypatch
+):
+    """失效时只回 valid=false，不区分原因——与 confirm 同一套防探测口径。"""
+    redis = FakeRedis()
+    _stub_redis(monkeypatch, redis)
+    uid, _ = enabled_account
+    token = await PasswordResetService.issue_token(uid, redis)
+
+    # 已核销（等价于已被使用）：键消失
+    await redis.getdel(f"auth:pwdreset:{uid}")
+
+    used = await client.get(RESET_VERIFY_URL, params={"token": token})
+    assert used.status_code == 200
+    assert used.json() == {"valid": False}
+
+    for bad in ("999.deadbeef", "not-a-token", ""):
+        resp = await client.get(RESET_VERIFY_URL, params={"token": bad})
+        assert resp.status_code == 200, bad
+        assert resp.json() == {"valid": False}, bad
+
+
+async def test_verify_endpoint_matches_confirm_for_unusable_accounts(
+    client, disabled_account, pending_account, monkeypatch
+):
+    """禁用／待审核账号的链接一律不可用，判定必须与 reset_password 逐条一致。"""
+    redis = FakeRedis()
+    _stub_redis(monkeypatch, redis)
+
+    for account in (disabled_account, pending_account):
+        uid, _ = account
+        token = await PasswordResetService.issue_token(uid, redis)
+        resp = await client.get(RESET_VERIFY_URL, params={"token": token})
+        assert resp.status_code == 200
+        assert resp.json() == {"valid": False}, f"账号状态 {uid} 应判为不可用"
+
+
+async def test_precheck_agrees_with_confirm_outcome(
+    client, enabled_account, monkeypatch
+):
+    """预校验说有效 → 提交就必须能成功；用完之后预校验立刻转为无效。"""
+    redis = FakeRedis()
+    _stub_redis(monkeypatch, redis)
+    uid, _ = enabled_account
+    token = await PasswordResetService.issue_token(uid, redis)
+
+    pre = await client.get(RESET_VERIFY_URL, params={"token": token})
+    assert pre.json() == {"valid": True}
+
+    ok = await client.post(
+        RESET_CONFIRM_URL, json={"token": token, "password": "Str0ng#Passw0rd"}
+    )
+    assert ok.status_code == 200, ok.text
+
+    after = await client.get(RESET_VERIFY_URL, params={"token": token})
+    assert after.json() == {"valid": False}, "链接用过之后必须立刻显示失效"
+
+
+async def test_verify_endpoint_503_when_redis_down(client, monkeypatch):
+    """Redis 不可用要回 503：前端才能显示「稍后重试」而不是「链接已失效」。"""
+    _stub_redis(monkeypatch, None)
+    resp = await client.get(RESET_VERIFY_URL, params={"token": "1.abc"})
+    assert resp.status_code == 503

@@ -40,7 +40,7 @@ def test_ambient_lines_are_the_agreed_set():
 def test_ambient_line_sits_above_the_heading():
     """放在卡片顶部、大标题之上——用户指的就是那块留白。"""
     ambient = RESET.index("{{ ambientText }}")
-    heading = RESET.index("{{ hasToken ? '设置新密码' : '找回密码' }}")
+    heading = RESET.index("{{ heading }}")
     assert ambient < heading, "顶部文案必须在标题之上"
 
 
@@ -50,12 +50,12 @@ def test_ambient_line_renders_once_for_both_modes():
 
 
 def test_key_constraints_never_move_into_the_loop():
-    """「30 分钟有效、只能用一次」必须留在静态说明里。
+    """「15 分钟有效、只能用一次」必须留在静态说明里。
 
     循环动画每一轮都会清空重打，把关键约束放进去，用户正好错过那一轮就等于没提示过。
     """
-    assert "重置链接有效期 30 分钟，且只能使用一次。" in RESET
-    for leaked in ("30 分钟", "有效期", "邮箱", "密码"):
+    assert "重置链接有效期 15 分钟，且只能使用一次。" in RESET
+    for leaked in ("15 分钟", "有效期", "邮箱", "密码"):
         assert leaked not in AMBIENT_BLOCK, f"关键信息「{leaked}」不该进循环文案"
 
 

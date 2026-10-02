@@ -134,6 +134,27 @@ class PasswordResetService:
             return None
         return user_id
 
+    @staticmethod
+    async def check_token_usable(token: str, db: AsyncSession, redis) -> bool:
+        """只读预校验：token 有效且账号可用。**不核销**，校验完链接照常能用。
+
+        供重置页在用户填密码之前调用，避免「填完一整遍才被告知链接已过期」。
+
+        必须与 `reset_password` 的前两步**逐条对齐**（token → 账号状态）：
+        预校验比实际提交宽松，就会出现「页面显示有效、提交报失效」，
+        那比不做预校验更让人困惑；比提交更严格，则会让本来能用的链接被误判失效。
+        密码复杂度不在此列——它取决于用户即将输入的内容，不是链接的属性。
+        """
+        user_id = await PasswordResetService.verify_token(token, redis)
+        if user_id is None:
+            return False
+
+        row = (
+            await db.execute(select(User.status).where(User.id == user_id))
+        ).first()
+        # 与 reset_password 同口径：账号不存在/待审核/已禁用都算链接不可用
+        return row is not None and int(row.status) == USER_STATUS_ENABLED
+
     # ---------------- 风控 ---------------- #
 
     @staticmethod
@@ -240,7 +261,8 @@ class PasswordResetService:
         subject = "AI 智能体平台 - 密码重置"
         body = (
             "我们收到了重置你账号密码的请求。\n\n"
-            "请在 30 分钟内点击下面的链接设置新密码（该链接只能使用一次）：\n\n"
+            f"请在 {AuthService.PWD_RESET_TTL_SECONDS // 60} 分钟内点击下面的链接设置新密码"
+            "（该链接只能使用一次）：\n\n"
             f"{link}\n\n"
             "如果链接已过期，请在登录页重新发起找回密码。\n\n"
             "如果这不是你本人的操作，请忽略本邮件，你的密码不会被修改。\n"

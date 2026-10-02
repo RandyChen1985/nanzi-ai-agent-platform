@@ -691,6 +691,36 @@ async def confirm_password_reset(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
     return {"status": "success", "message": message}
 
+
+@router.get("/password-reset/verify", summary="校验重置链接是否仍可用（只读）")
+async def verify_password_reset_token(
+    token: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """重置页进入时的**只读预校验**：不核销，链接校验完照常能用。
+
+    前端要能把三种情况分开：链接有效、链接失效、服务不可用。后两者绝不能用同一
+    文案——把 503 或网络错误渲染成「链接已失效」，用户会白重新申请一封邮件，而问题
+    其实在服务端；反过来把失效说成「稍后重试」，则让用户对着一条死链反复重试。
+
+    安全口径与 confirm 完全一致：
+    - token 是 32 字节随机 nonce，不可枚举，因此**不做限流**（限流只会给真实用户添堵）；
+    - 返回体只有 `valid` 一个布尔，不区分「过期 / 已用 / 被新申请覆盖 / 账号不可用 /
+      token 被篡改」，避免把失败原因变成探测面。
+    """
+    from app.services.password_reset_service import PasswordResetService
+
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="密码重置服务暂时不可用，请稍后重试",
+        )
+
+    valid = await PasswordResetService.check_token_usable(token, db, redis)
+    return {"valid": valid}
+
+
 @router.post("/logout", summary="退出登录")
 async def logout(
     http_request: Request,
