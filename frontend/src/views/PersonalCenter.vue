@@ -1606,200 +1606,204 @@ onMounted(() => {
     </ConfirmModal>
 
     <!-- Google 身份验证器 2FA 绑定弹窗 -->
-    <div
-      v-if="showSetupModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-    >
-      <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-in fade-in zoom-in duration-200">
-        <div class="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
-          <div class="flex items-center gap-2.5">
-            <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-              🔐
-            </div>
-            <div>
-              <h3 class="text-base font-bold text-gray-900">开启 Google 身份验证器两步验证</h3>
-              <p class="text-xs text-gray-400">使用移动端身份验证器扫码绑定</p>
-            </div>
-          </div>
-          <button 
-            @click="showSetupModal = false"
-            class="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <div class="p-6 space-y-5">
-          <!-- 步骤一：扫码 -->
-          <div>
-            <div class="flex items-center gap-2 mb-2.5">
-              <span class="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">1</span>
-              <span class="text-xs font-bold text-gray-700">打开 Google Authenticator 扫描下方二维码</span>
-            </div>
-
-            <div class="flex flex-col items-center justify-center bg-gray-50 rounded-xl p-4 border border-gray-100">
-              <div v-if="loadingSetup" class="h-44 flex flex-col items-center justify-center text-gray-400 gap-2">
-                <svg class="w-6 h-6 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                </svg>
-                <span class="text-xs">生成安全密钥中...</span>
+    <Teleport to="body">
+      <div
+        v-if="showSetupModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      >
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-in fade-in zoom-in duration-200">
+          <div class="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                🔐
               </div>
-              <template v-else>
-                <img 
-                  v-if="setupQrDataUrl" 
-                  :src="setupQrDataUrl" 
-                  alt="Google Authenticator QR Code"
-                  class="w-44 h-44 rounded-lg bg-white p-2 shadow-sm border border-gray-200"
-                />
-                <div v-else class="text-xs text-gray-400 py-6">
-                  二维码加载中或无法预览，请直接复制下方密钥手动输入
-                </div>
+              <div>
+                <h3 class="text-base font-bold text-gray-900">开启 Google 身份验证器两步验证</h3>
+                <p class="text-xs text-gray-400">使用移动端身份验证器扫码绑定</p>
+              </div>
+            </div>
+            <button 
+              @click="showSetupModal = false"
+              class="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
 
-                <div class="mt-3 w-full bg-white px-3 py-2 rounded-lg border border-gray-200 flex items-center justify-between gap-2">
-                  <div class="truncate">
-                    <span class="text-[10px] text-gray-400 block uppercase font-bold">无法扫码？手动输入密钥</span>
-                    <span class="font-mono text-xs font-bold text-gray-800 tracking-wider select-all">{{ setupSecret }}</span>
+          <div class="p-6 space-y-5">
+            <!-- 步骤一：扫码 -->
+            <div>
+              <div class="flex items-center gap-2 mb-2.5">
+                <span class="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">1</span>
+                <span class="text-xs font-bold text-gray-700">打开 Google Authenticator 扫描下方二维码</span>
+              </div>
+
+              <div class="flex flex-col items-center justify-center bg-gray-50 rounded-xl p-4 border border-gray-100">
+                <div v-if="loadingSetup" class="h-44 flex flex-col items-center justify-center text-gray-400 gap-2">
+                  <svg class="w-6 h-6 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                  </svg>
+                  <span class="text-xs">生成安全密钥中...</span>
+                </div>
+                <template v-else>
+                  <img 
+                    v-if="setupQrDataUrl" 
+                    :src="setupQrDataUrl" 
+                    alt="Google Authenticator QR Code"
+                    class="w-44 h-44 rounded-lg bg-white p-2 shadow-sm border border-gray-200"
+                  />
+                  <div v-else class="text-xs text-gray-400 py-6">
+                    二维码加载中或无法预览，请直接复制下方密钥手动输入
                   </div>
-                  <button
-                    type="button"
-                    @click="copySecret"
-                    class="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded transition-colors flex-shrink-0"
-                  >
-                    复制
-                  </button>
-                </div>
-              </template>
+
+                  <div class="mt-3 w-full bg-white px-3 py-2 rounded-lg border border-gray-200 flex items-center justify-between gap-2">
+                    <div class="truncate">
+                      <span class="text-[10px] text-gray-400 block uppercase font-bold">无法扫码？手动输入密钥</span>
+                      <span class="font-mono text-xs font-bold text-gray-800 tracking-wider select-all">{{ setupSecret }}</span>
+                    </div>
+                    <button
+                      type="button"
+                      @click="copySecret"
+                      class="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded transition-colors flex-shrink-0"
+                    >
+                      复制
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- 步骤二：输入验证码 -->
+            <div>
+              <div class="flex items-center gap-2 mb-2">
+                <span class="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">2</span>
+                <span class="text-xs font-bold text-gray-700">输入应用中显示的 6 位动态验证码</span>
+              </div>
+              <input
+                v-model="setupCode"
+                type="text"
+                maxlength="6"
+                placeholder="000000"
+                class="w-full text-center text-2xl font-mono tracking-[0.3em] py-2.5 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all placeholder:text-gray-300 font-bold disabled:bg-gray-100"
+                @keyup.enter="handleEnable2FA"
+              />
             </div>
           </div>
 
-          <!-- 步骤二：输入验证码 -->
-          <div>
-            <div class="flex items-center gap-2 mb-2">
-              <span class="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">2</span>
-              <span class="text-xs font-bold text-gray-700">输入应用中显示的 6 位动态验证码</span>
-            </div>
-            <input
-              v-model="setupCode"
-              type="text"
-              maxlength="6"
-              placeholder="000000"
-              class="w-full text-center text-2xl font-mono tracking-[0.3em] py-2.5 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all placeholder:text-gray-300 font-bold disabled:bg-gray-100"
-              @keyup.enter="handleEnable2FA"
-            />
+          <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              @click="showSetupModal = false"
+              class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-white transition-colors"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              :disabled="loadingEnable2FA || !setupCode || setupCode.length !== 6"
+              @click="handleEnable2FA"
+              class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:shadow-none flex items-center gap-1.5"
+            >
+              <svg v-if="loadingEnable2FA" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+              </svg>
+              {{ loadingEnable2FA ? '验证中...' : '验证并开启' }}
+            </button>
           </div>
-        </div>
-
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            @click="showSetupModal = false"
-            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-white transition-colors"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            :disabled="loadingEnable2FA || !setupCode || setupCode.length !== 6"
-            @click="handleEnable2FA"
-            class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:shadow-none flex items-center gap-1.5"
-          >
-            <svg v-if="loadingEnable2FA" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-            </svg>
-            {{ loadingEnable2FA ? '验证中...' : '验证并开启' }}
-          </button>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 关闭两步验证弹窗 -->
-    <div
-      v-if="showDisableModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-    >
-      <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-in fade-in zoom-in duration-200">
-        <div class="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
-          <div class="flex items-center gap-2.5">
-            <div class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
-              ⚠️
+    <Teleport to="body">
+      <div
+        v-if="showDisableModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      >
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-in fade-in zoom-in duration-200">
+          <div class="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
+                ⚠️
+              </div>
+              <div>
+                <h3 class="text-base font-bold text-gray-900">关闭两步验证</h3>
+                <p class="text-xs text-gray-400">关闭后登录仅需密码，安全性将降低</p>
+              </div>
             </div>
-            <div>
-              <h3 class="text-base font-bold text-gray-900">关闭两步验证</h3>
-              <p class="text-xs text-gray-400">关闭后登录仅需密码，安全性将降低</p>
+            <button 
+              @click="showDisableModal = false"
+              class="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="p-6 space-y-4">
+            <div class="flex items-center gap-3 border-b border-gray-100 pb-3">
+              <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
+                <input type="radio" v-model="disableType" value="code" class="text-blue-600" />
+                <span>验证码确认</span>
+              </label>
+              <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
+                <input type="radio" v-model="disableType" value="password" class="text-blue-600" />
+                <span>当前密码确认</span>
+              </label>
+            </div>
+
+            <div v-if="disableType === 'code'" class="space-y-2">
+              <label class="block text-xs font-bold text-gray-600">Google 身份验证器 6 位动态码</label>
+              <input
+                v-model="disableCode"
+                type="text"
+                maxlength="6"
+                placeholder="000000"
+                class="w-full text-center text-xl font-mono tracking-[0.25em] py-2 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all placeholder:text-gray-300 font-bold disabled:bg-gray-100"
+                @keyup.enter="handleDisable2FA"
+              />
+            </div>
+            <div v-else class="space-y-2">
+              <label class="block text-xs font-bold text-gray-600">当前账号登录密码</label>
+              <input
+                v-model="disablePassword"
+                type="password"
+                placeholder="请输入当前密码"
+                class="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all disabled:bg-gray-100"
+                @keyup.enter="handleDisable2FA"
+              />
             </div>
           </div>
-          <button 
-            @click="showDisableModal = false"
-            class="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
 
-        <div class="p-6 space-y-4">
-          <div class="flex items-center gap-3 border-b border-gray-100 pb-3">
-            <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
-              <input type="radio" v-model="disableType" value="code" class="text-blue-600" />
-              <span>验证码确认</span>
-            </label>
-            <label class="flex items-center gap-1.5 text-xs font-semibold cursor-pointer text-gray-700">
-              <input type="radio" v-model="disableType" value="password" class="text-blue-600" />
-              <span>当前密码确认</span>
-            </label>
+          <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              @click="showDisableModal = false"
+              class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-white transition-colors"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              :disabled="loadingDisable2FA || (disableType === 'code' ? (!disableCode || disableCode.length !== 6) : !disablePassword)"
+              @click="handleDisable2FA"
+              class="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:shadow-none flex items-center gap-1.5"
+            >
+              <svg v-if="loadingDisable2FA" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+              </svg>
+              {{ loadingDisable2FA ? '处理中...' : '确认关闭' }}
+            </button>
           </div>
-
-          <div v-if="disableType === 'code'" class="space-y-2">
-            <label class="block text-xs font-bold text-gray-600">Google 身份验证器 6 位动态码</label>
-            <input
-              v-model="disableCode"
-              type="text"
-              maxlength="6"
-              placeholder="000000"
-              class="w-full text-center text-xl font-mono tracking-[0.25em] py-2 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all placeholder:text-gray-300 font-bold disabled:bg-gray-100"
-              @keyup.enter="handleDisable2FA"
-            />
-          </div>
-          <div v-else class="space-y-2">
-            <label class="block text-xs font-bold text-gray-600">当前账号登录密码</label>
-            <input
-              v-model="disablePassword"
-              type="password"
-              placeholder="请输入当前密码"
-              class="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all disabled:bg-gray-100"
-              @keyup.enter="handleDisable2FA"
-            />
-          </div>
-        </div>
-
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            @click="showDisableModal = false"
-            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-white transition-colors"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            :disabled="loadingDisable2FA || (disableType === 'code' ? (!disableCode || disableCode.length !== 6) : !disablePassword)"
-            @click="handleDisable2FA"
-            class="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:shadow-none flex items-center gap-1.5"
-          >
-            <svg v-if="loadingDisable2FA" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-            </svg>
-            {{ loadingDisable2FA ? '处理中...' : '确认关闭' }}
-          </button>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 重置 API Key 安全确认弹窗 -->
     <div

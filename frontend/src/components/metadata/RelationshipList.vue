@@ -957,307 +957,313 @@ onUnmounted(() => {
     </div>
 
     <!-- Modal -->
-    <div
-      v-if="showModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-      @click.self="showModal = false"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-gray-100 animate-fade-in-up"
+        v-if="showModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+        @click.self="showModal = false"
       >
         <div
-          class="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-50"
+          class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-gray-100 animate-fade-in-up"
         >
-          <h3 class="font-bold text-gray-900">
-            {{ editingId ? "编辑实体关系" : "新建实体关系" }}
-          </h3>
-          <button
-            @click="showModal = false"
-            class="text-gray-400 hover:text-gray-600"
-          >
-            &times;
-          </button>
-        </div>
-
-        <!-- Modal Error -->
-        <div v-if="modalError" class="px-6 pt-4 pb-0">
           <div
-            class="bg-red-50 text-red-600 px-3 py-2 rounded text-xs border border-red-100"
+            class="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-50"
           >
-            {{ modalError }}
+            <h3 class="font-bold text-gray-900">
+              {{ editingId ? "编辑实体关系" : "新建实体关系" }}
+            </h3>
+            <button
+              @click="showModal = false"
+              class="text-gray-400 hover:text-gray-600"
+            >
+              &times;
+            </button>
           </div>
-        </div>
 
-        <div class="p-6 space-y-4">
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1"
-                >源表 (Left)</label
-              >
-              <select
-                v-model="form.source_table_id"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
-              >
-                <option v-for="t in tables" :key="t.id" :value="t.id">
-                  {{ t.physical_name }} {{ t.term ? `(${t.term})` : "" }}
-                </option>
-              </select>
-              <!-- Field Selector -->
-              <div class="mt-2">
-                <label
-                  class="block text-[10px] uppercase font-bold text-gray-400 mb-1"
-                  >关联字段</label
+          <!-- Modal Error -->
+          <div v-if="modalError" class="px-6 pt-4 pb-0">
+            <div
+              class="bg-red-50 text-red-600 px-3 py-2 rounded text-xs border border-red-100"
+            >
+              {{ modalError }}
+            </div>
+          </div>
+
+          <div class="p-6 space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1"
+                  >源表 (Left)</label
                 >
                 <select
-                  v-model="sourceField"
-                  @change="applyJoinCondition"
-                  class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-white disabled:bg-gray-100"
+                  v-model="form.source_table_id"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
                 >
-                  <option value="">-- 选择字段 --</option>
-                  <option
-                    v-for="col in sourceColumns"
-                    :key="col.physical_name"
-                    :value="col.physical_name"
-                  >
-                    {{ col.physical_name }}
-                    {{ col.term ? `[${col.term}]` : "" }}
-                  </option>
-                </select>
-              </div>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1"
-                >目标表 (Right)</label
-              >
-              <!-- 跨数据集分组下拉 -->
-              <select
-                v-model="form.target_table_id"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
-              >
-                <!-- 当前数据集（同库关联）-->
-                <optgroup :label="'当前数据集'">
                   <option v-for="t in tables" :key="t.id" :value="t.id">
                     {{ t.physical_name }} {{ t.term ? `(${t.term})` : "" }}
                   </option>
-                </optgroup>
-                <!-- 其他数据集（跨库关联）-->
-                <template v-for="ds in allTablesList" :key="ds.dataset_id">
-                  <optgroup
-                    v-if="ds.tables.some(t => !tables.find(lt => lt.id === t.id))"
-                    :label="`${ds.display_name} [跨数据集]`"
+                </select>
+                <!-- Field Selector -->
+                <div class="mt-2">
+                  <label
+                    class="block text-[10px] uppercase font-bold text-gray-400 mb-1"
+                    >关联字段</label
                   >
+                  <select
+                    v-model="sourceField"
+                    @change="applyJoinCondition"
+                    class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-white disabled:bg-gray-100"
+                  >
+                    <option value="">-- 选择字段 --</option>
                     <option
-                      v-for="t in ds.tables.filter(t => !tables.find(lt => lt.id === t.id))"
-                      :key="t.id"
-                      :value="t.id"
+                      v-for="col in sourceColumns"
+                      :key="col.physical_name"
+                      :value="col.physical_name"
                     >
+                      {{ col.physical_name }}
+                      {{ col.term ? `[${col.term}]` : "" }}
+                    </option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1"
+                  >目标表 (Right)</label
+                >
+                <!-- 跨数据集分组下拉 -->
+                <select
+                  v-model="form.target_table_id"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                >
+                  <!-- 当前数据集（同库关联）-->
+                  <optgroup :label="'当前数据集'">
+                    <option v-for="t in tables" :key="t.id" :value="t.id">
                       {{ t.physical_name }} {{ t.term ? `(${t.term})` : "" }}
                     </option>
                   </optgroup>
-                </template>
-              </select>
-              <!-- Field Selector：跨数据集时字段无法自动推断，提示手动填写 -->
-              <div class="mt-2">
-                <label
-                  class="block text-[10px] uppercase font-bold text-gray-400 mb-1"
-                  >关联字段</label
-                >
-                <select
-                  v-model="targetField"
-                  @change="applyJoinCondition"
-                  class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-white disabled:bg-gray-100"
-                >
-                  <option value="">-- 选择字段 --</option>
-                  <option
-                    v-for="col in targetColumns"
-                    :key="col.physical_name"
-                    :value="col.physical_name"
-                  >
-                    {{ col.physical_name }}
-                    {{ col.term ? `[${col.term}]` : "" }}
-                  </option>
+                  <!-- 其他数据集（跨库关联）-->
+                  <template v-for="ds in allTablesList" :key="ds.dataset_id">
+                    <optgroup
+                      v-if="ds.tables.some(t => !tables.find(lt => lt.id === t.id))"
+                      :label="`${ds.display_name} [跨数据集]`"
+                    >
+                      <option
+                        v-for="t in ds.tables.filter(t => !tables.find(lt => lt.id === t.id))"
+                        :key="t.id"
+                        :value="t.id"
+                      >
+                        {{ t.physical_name }} {{ t.term ? `(${t.term})` : "" }}
+                      </option>
+                    </optgroup>
+                  </template>
                 </select>
+                <!-- Field Selector：跨数据集时字段无法自动推断，提示手动填写 -->
+                <div class="mt-2">
+                  <label
+                    class="block text-[10px] uppercase font-bold text-gray-400 mb-1"
+                    >关联字段</label
+                  >
+                  <select
+                    v-model="targetField"
+                    @change="applyJoinCondition"
+                    class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-white disabled:bg-gray-100"
+                  >
+                    <option value="">-- 选择字段 --</option>
+                    <option
+                      v-for="col in targetColumns"
+                      :key="col.physical_name"
+                      :value="col.physical_name"
+                    >
+                      {{ col.physical_name }}
+                      {{ col.term ? `[${col.term}]` : "" }}
+                    </option>
+                  </select>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1"
-              >关联类型</label
-            >
-            <div class="flex flex-wrap gap-4">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  v-model="form.join_type"
-                  value="left"
-                  class="text-purple-600 focus:ring-purple-500"
-                />
-                <span class="text-sm">Left Join · One to Many (1:N)</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  v-model="form.join_type"
-                  value="inner"
-                  class="text-purple-600 focus:ring-purple-500"
-                />
-                <span class="text-sm">Inner Join</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  v-model="form.join_type"
-                  value="one_to_one"
-                  class="text-purple-600 focus:ring-purple-500"
-                />
-                <span class="text-sm">One to One</span>
-              </label>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1"
+                >关联类型</label
+              >
+              <div class="flex flex-wrap gap-4">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    v-model="form.join_type"
+                    value="left"
+                    class="text-purple-600 focus:ring-purple-500"
+                  />
+                  <span class="text-sm">Left Join · One to Many (1:N)</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    v-model="form.join_type"
+                    value="inner"
+                    class="text-purple-600 focus:ring-purple-500"
+                  />
+                  <span class="text-sm">Inner Join</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    v-model="form.join_type"
+                    value="one_to_one"
+                    class="text-purple-600 focus:ring-purple-500"
+                  />
+                  <span class="text-sm">One to One</span>
+                </label>
+              </div>
+              <p class="mt-1.5 text-xs text-gray-500">
+                一对多请选第一项；历史数据里的 <code class="font-mono">ONE_TO_MANY</code> 会自动映射到此项。
+              </p>
             </div>
-            <p class="mt-1.5 text-xs text-gray-500">
-              一对多请选第一项；历史数据里的 <code class="font-mono">ONE_TO_MANY</code> 会自动映射到此项。
-            </p>
-          </div>
 
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1"
-              >关联条件 (ON ...)</label
-            >
-            <input
-              v-model="form.join_condition"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-purple-500 focus:outline-none"
-              placeholder="e.g. t1.user_id = t2.id"
-            />
-            <p class="text-xs text-gray-400 mt-1">使用表别名或完整表名均可。</p>
-          </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1"
+                >关联条件 (ON ...)</label
+              >
+              <input
+                v-model="form.join_condition"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                placeholder="e.g. t1.user_id = t2.id"
+              />
+              <p class="text-xs text-gray-400 mt-1">使用表别名或完整表名均可。</p>
+            </div>
 
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1"
-              >描述</label
-            >
-            <textarea
-              v-model="form.description"
-              rows="2"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
-            ></textarea>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1"
+                >描述</label
+              >
+              <textarea
+                v-model="form.description"
+                rows="2"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
+              ></textarea>
+            </div>
           </div>
-        </div>
-        <div class="p-6 bg-gray-50 flex justify-end gap-3">
-          <button
-            @click="showModal = false"
-            class="px-4 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50"
-          >
-            取消
-          </button>
-          <button
-            @click="handleSave"
-            :disabled="saving"
-            class="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-bold shadow-md disabled:opacity-50"
-          >
-            保存
-          </button>
+          <div class="p-6 bg-gray-50 flex justify-end gap-3">
+            <button
+              @click="showModal = false"
+              class="px-4 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50"
+            >
+              取消
+            </button>
+            <button
+              @click="handleSave"
+              :disabled="saving"
+              class="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-bold shadow-md disabled:opacity-50"
+            >
+              保存
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
     <!-- Delete Modal -->
-    <div
-      v-if="deleteId"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-      @click.self="deleteId = null"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up"
+        v-if="deleteId"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+        @click.self="deleteId = null"
       >
-        <div class="p-6 text-center">
-          <div
-            class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100"
-          >
-            <svg
-              class="w-8 h-8 text-red-500"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+        <div
+          class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up"
+        >
+          <div class="p-6 text-center">
+            <div
+              class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-          </div>
-          <h3 class="text-lg font-bold text-gray-900 mb-2">确认删除?</h3>
-          <p class="text-sm text-gray-500 mb-6">
-            您确定要删除此关联关系吗？<br />此操作无法撤销。
-          </p>
-          <div class="flex gap-3 justify-center">
-            <button
-              @click="deleteId = null"
-              class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white"
-            >
-              取消
-            </button>
-            <button
-              @click="confirmDelete"
-              class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30"
-            >
-              确认删除
-            </button>
+              <svg
+                class="w-8 h-8 text-red-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                />
+              </svg>
+            </div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">确认删除?</h3>
+            <p class="text-sm text-gray-500 mb-6">
+              您确定要删除此关联关系吗？<br />此操作无法撤销。
+            </p>
+            <div class="flex gap-3 justify-center">
+              <button
+                @click="deleteId = null"
+                class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white"
+              >
+                取消
+              </button>
+              <button
+                @click="confirmDelete"
+                class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30"
+              >
+                确认删除
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
     <!-- Batch Delete Modal -->
-    <div
-      v-if="showBatchDeleteModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-      @click.self="showBatchDeleteModal = false"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up"
+        v-if="showBatchDeleteModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+        @click.self="showBatchDeleteModal = false"
       >
-        <div class="p-6 text-center">
-          <div
-            class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100"
-          >
-            <svg
-              class="w-8 h-8 text-red-500"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+        <div
+          class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up"
+        >
+          <div class="p-6 text-center">
+            <div
+              class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-          </div>
-          <h3 class="text-lg font-bold text-gray-900 mb-2">确认批量删除实体关系?</h3>
-          <p class="text-sm text-gray-500 mb-6">
-            您确定要删除已选中的 <b class="text-red-600">{{ selectedRelIds.length }}</b> 条关联关系吗？<br />此操作无法撤销。
-          </p>
-          <div class="flex gap-3 justify-center">
-            <button
-              @click="showBatchDeleteModal = false"
-              :disabled="batchDeleting"
-              class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white"
-            >
-              取消
-            </button>
-            <button
-              @click="confirmBatchDelete"
-              :disabled="batchDeleting"
-              class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30 disabled:opacity-50 flex items-center gap-2"
-            >
-              <svg v-if="batchDeleting" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              <span>{{ batchDeleting ? '正在删除...' : '确认批量删除' }}</span>
-            </button>
+              <svg
+                class="w-8 h-8 text-red-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                />
+              </svg>
+            </div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">确认批量删除实体关系?</h3>
+            <p class="text-sm text-gray-500 mb-6">
+              您确定要删除已选中的 <b class="text-red-600">{{ selectedRelIds.length }}</b> 条关联关系吗？<br />此操作无法撤销。
+            </p>
+            <div class="flex gap-3 justify-center">
+              <button
+                @click="showBatchDeleteModal = false"
+                :disabled="batchDeleting"
+                class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white"
+              >
+                取消
+              </button>
+              <button
+                @click="confirmBatchDelete"
+                :disabled="batchDeleting"
+                class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30 disabled:opacity-50 flex items-center gap-2"
+              >
+                <svg v-if="batchDeleting" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                <span>{{ batchDeleting ? '正在删除...' : '确认批量删除' }}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Smart Relationship Discovery Modal (选表/计时/取消/采纳工作台) -->
     <SmartRelationshipModal

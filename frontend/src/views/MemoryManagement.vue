@@ -1598,147 +1598,149 @@ onMounted(async () => {
     />
   </div>
     <!-- 记忆系统设计规范与使用指南 Modal -->
-    <div v-if="showSpecsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-md shadow-purple-500/20" style="background-color: #9333ea; color: #ffffff;">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+    <Teleport to="body">
+      <div v-if="showSpecsModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-md shadow-purple-500/20" style="background-color: #9333ea; color: #ffffff;">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">记忆系统设计规范与使用指南</h2>
+                 <p class="text-xs text-gray-500 font-medium mt-0.5">跨会话长期记忆架构、自动防抖摘要提取、Redis 向量密集索引与大模型推理召回。</p>
+               </div>
+            </div>
+            <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['architecture', 'generation', 'practice']" 
+               :key="tab"
+               @click="activeSpecsTab = tab as any"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+               :class="activeSpecsTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'architecture' ? '核心架构与数据流 (Architecture & Data Flow)' :
+                  tab === 'generation' ? '数据生成机制与参数 (Generation & Parameters)' : '记忆检索与最佳实践 (Retrieval & Best Practice)' }}
+             </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+             <!-- Tab 1: Architecture -->
+             <div v-if="activeSpecsTab === 'architecture'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-purple-50 to-indigo-50 border-l-4 border-purple-600 p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-purple-900 mb-1">什么是跨会话长期记忆（Long-Term Memory）？</h3>
+                   <p class="text-xs text-purple-700 leading-relaxed">
+                      传统大模型每次新开会话都是“阅后即焚”的。记忆系统让智能体具备像人一样的“长期记忆”能力：在后台自动提炼用户的偏好、历史关键结论与业务背景，并在新会话中秒级召回注入，实现真正懂用户的个性化智能交互。
+                   </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-purple-500"></span> 📥 1. 自动防抖摘要提取
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         用户与智能体持续对话时，当满足设定的轮数与字数阈值，后台自动异步唤起小模型总结提取会话的核心事实（Key Facts）、实体标签与关键决策。
+                      </p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-indigo-500"></span> ⚡ 2. Redis Stack 密集向量索引
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         摘要内容通过系统全局 Embedding 模型转化为密集向量，写入 Redis 向量索引库（<code>nanzi:idx:memory:session_summary</code>），支持极速 KNN 余弦相似度检索。
+                      </p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-blue-500"></span> 🚀 3. 问答推理时语义召回
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         在新会话中，智能体自动对当前提问做向量相似度匹配，毫秒级召回该用户最相关的 Top-K 条历史记忆片段。
+                      </p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-emerald-500"></span> 💡 4. 动态注入 Prompt 思考链
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         将召回的记忆作为系统上下文装配给大模型，模型在回答时即可主动说出“参考您上次关心的华东地区数据...”，实现连贯体验。
+                      </p>
+                   </div>
+                </div>
              </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">记忆系统设计规范与使用指南</h2>
-               <p class="text-xs text-gray-500 font-medium mt-0.5">跨会话长期记忆架构、自动防抖摘要提取、Redis 向量密集索引与大模型推理召回。</p>
+
+             <!-- Tab 2: Generation & Parameters -->
+             <div v-else-if="activeSpecsTab === 'generation'" class="space-y-4 max-w-4xl mx-auto text-xs">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">分层记忆模型与核心参数详解</h4>
+                 
+                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-150 space-y-1">
+                         <span class="font-bold text-purple-900">1. 会话级摘要 (Session Summary)</span>
+                         <p class="text-gray-600">按单次对话窗口进行局部归纳，保留该次会话的具体讨论细节、SQL 条件与生成物。</p>
+                      </div>
+                      <div class="p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-150 space-y-1">
+                         <span class="font-bold text-indigo-900">2. 每日归纳画像 (Daily Consolidation)</span>
+                         <p class="text-gray-600">自动聚合用户当天所有会话的宏观画像，提炼用户长期的工作重点与高频关注指标。</p>
+                      </div>
+                   </div>
+
+                   <div class="space-y-2">
+                      <h5 class="font-bold text-gray-800 text-sm">核心治理参数：</h5>
+                      <div class="space-y-2 font-mono text-[11px]">
+                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
+                            <span><strong>memory_summarize_debounce_turns</strong>（触发轮数阈值）</span>
+                            <span class="text-gray-500">默认 3 轮，避免偶发单句对话频繁开销</span>
+                         </div>
+                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
+                            <span><strong>memory_summarize_min_assistant_chars</strong>（回复字数下限）</span>
+                            <span class="text-gray-500">默认 20 字，过滤“好的”等极简回复</span>
+                         </div>
+                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
+                            <span><strong>memory_summary_ttl_days</strong>（记忆有效期）</span>
+                            <span class="text-gray-500">默认 30 天，超时自动淘汰释放 Redis 内存</span>
+                         </div>
+                         <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
+                            <span><strong>memory_search_knn_top_k</strong>（召回数量）</span>
+                            <span class="text-gray-500">推荐 3~5 条，平衡 Prompt 长度与相关度</span>
+                         </div>
+                      </div>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 3: Retrieval & Best Practice -->
+             <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-4xl mx-auto text-xs">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">记忆调试与安全运维最佳实践</h4>
+                   <div class="space-y-3">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">1. 使用「检索测试」验证召回效果</span>
+                         <p class="text-gray-600 leading-relaxed">切换至「检索测试」Tab，输入模拟提问（如“我上次看的销售数据是哪张表”），可直接查看向量命中分数（Score）、匹配的会话内容与提取标签。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">2. 用户间严格数据隔离（Multi-Tenant Scope）</span>
+                         <p class="text-gray-600 leading-relaxed">记忆数据严格绑定 <code>user_id</code> 进行物理隔离，普通用户只能检索自己名下的历史记忆，严禁发生跨用户记忆泄露。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">3. Redis Stack / RediSearch 引擎监控</span>
+                         <p class="text-gray-600 leading-relaxed">在「服务配置」Tab 顶部实时查看 Redis 向量引擎连通状态与内存占用，支持一键「重建全部索引」修复损坏索引。</p>
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['architecture', 'generation', 'practice']" 
-             :key="tab"
-             @click="activeSpecsTab = tab as any"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-             :class="activeSpecsTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'architecture' ? '核心架构与数据流 (Architecture & Data Flow)' :
-                tab === 'generation' ? '数据生成机制与参数 (Generation & Parameters)' : '记忆检索与最佳实践 (Retrieval & Best Practice)' }}
-           </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
-           <!-- Tab 1: Architecture -->
-           <div v-if="activeSpecsTab === 'architecture'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-purple-50 to-indigo-50 border-l-4 border-purple-600 p-4 rounded-r-xl shadow-2xs">
-                 <h3 class="font-bold text-purple-900 mb-1">什么是跨会话长期记忆（Long-Term Memory）？</h3>
-                 <p class="text-xs text-purple-700 leading-relaxed">
-                    传统大模型每次新开会话都是“阅后即焚”的。记忆系统让智能体具备像人一样的“长期记忆”能力：在后台自动提炼用户的偏好、历史关键结论与业务背景，并在新会话中秒级召回注入，实现真正懂用户的个性化智能交互。
-                 </p>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-purple-500"></span> 📥 1. 自动防抖摘要提取
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       用户与智能体持续对话时，当满足设定的轮数与字数阈值，后台自动异步唤起小模型总结提取会话的核心事实（Key Facts）、实体标签与关键决策。
-                    </p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-indigo-500"></span> ⚡ 2. Redis Stack 密集向量索引
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       摘要内容通过系统全局 Embedding 模型转化为密集向量，写入 Redis 向量索引库（<code>nanzi:idx:memory:session_summary</code>），支持极速 KNN 余弦相似度检索。
-                    </p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-blue-500"></span> 🚀 3. 问答推理时语义召回
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       在新会话中，智能体自动对当前提问做向量相似度匹配，毫秒级召回该用户最相关的 Top-K 条历史记忆片段。
-                    </p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-emerald-500"></span> 💡 4. 动态注入 Prompt 思考链
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       将召回的记忆作为系统上下文装配给大模型，模型在回答时即可主动说出“参考您上次关心的华东地区数据...”，实现连贯体验。
-                    </p>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Generation & Parameters -->
-           <div v-else-if="activeSpecsTab === 'generation'" class="space-y-4 max-w-4xl mx-auto text-xs">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">分层记忆模型与核心参数详解</h4>
-                 
-                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-150 space-y-1">
-                       <span class="font-bold text-purple-900">1. 会话级摘要 (Session Summary)</span>
-                       <p class="text-gray-600">按单次对话窗口进行局部归纳，保留该次会话的具体讨论细节、SQL 条件与生成物。</p>
-                    </div>
-                    <div class="p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-150 space-y-1">
-                       <span class="font-bold text-indigo-900">2. 每日归纳画像 (Daily Consolidation)</span>
-                       <p class="text-gray-600">自动聚合用户当天所有会话的宏观画像，提炼用户长期的工作重点与高频关注指标。</p>
-                    </div>
-                 </div>
-
-                 <div class="space-y-2">
-                    <h5 class="font-bold text-gray-800 text-sm">核心治理参数：</h5>
-                    <div class="space-y-2 font-mono text-[11px]">
-                       <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
-                          <span><strong>memory_summarize_debounce_turns</strong>（触发轮数阈值）</span>
-                          <span class="text-gray-500">默认 3 轮，避免偶发单句对话频繁开销</span>
-                       </div>
-                       <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
-                          <span><strong>memory_summarize_min_assistant_chars</strong>（回复字数下限）</span>
-                          <span class="text-gray-500">默认 20 字，过滤“好的”等极简回复</span>
-                       </div>
-                       <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
-                          <span><strong>memory_summary_ttl_days</strong>（记忆有效期）</span>
-                          <span class="text-gray-500">默认 30 天，超时自动淘汰释放 Redis 内存</span>
-                       </div>
-                       <div class="p-2 bg-gray-50 rounded-lg border border-gray-150 flex justify-between items-center">
-                          <span><strong>memory_search_knn_top_k</strong>（召回数量）</span>
-                          <span class="text-gray-500">推荐 3~5 条，平衡 Prompt 长度与相关度</span>
-                       </div>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 3: Retrieval & Best Practice -->
-           <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-4xl mx-auto text-xs">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">记忆调试与安全运维最佳实践</h4>
-                 <div class="space-y-3">
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">1. 使用「检索测试」验证召回效果</span>
-                       <p class="text-gray-600 leading-relaxed">切换至「检索测试」Tab，输入模拟提问（如“我上次看的销售数据是哪张表”），可直接查看向量命中分数（Score）、匹配的会话内容与提取标签。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">2. 用户间严格数据隔离（Multi-Tenant Scope）</span>
-                       <p class="text-gray-600 leading-relaxed">记忆数据严格绑定 <code>user_id</code> 进行物理隔离，普通用户只能检索自己名下的历史记忆，严禁发生跨用户记忆泄露。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">3. Redis Stack / RediSearch 引擎监控</span>
-                       <p class="text-gray-600 leading-relaxed">在「服务配置」Tab 顶部实时查看 Redis 向量引擎连通状态与内存占用，支持一键「重建全部索引」修复损坏索引。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
 </template>

@@ -292,61 +292,63 @@ onMounted(() => {
       </div>
 
       <!-- Modal -->
-      <div v-if="showModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm">
-          <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 text-left max-h-[90vh] overflow-y-auto custom-scrollbar">
-              <h3 class="text-lg font-bold text-gray-900">{{ isEditing ? '编辑工具' : '添加新工具' }}</h3>
+      <Teleport to="body">
+        <div v-if="showModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm">
+            <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 text-left max-h-[90vh] overflow-y-auto custom-scrollbar">
+                <h3 class="text-lg font-bold text-gray-900">{{ isEditing ? '编辑工具' : '添加新工具' }}</h3>
               
-              <div class="space-y-4">
-                  <div class="grid grid-cols-2 gap-4">
-                      <div>
-                         <label class="block text-sm font-medium text-gray-700">工具名称 (唯一标识)</label>
-                         <input v-model="toolForm.name" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. search_weather" />
-                      </div>
-                      <div>
-                         <label class="block text-sm font-medium text-gray-700">HTTP 方法</label>
-                         <select v-model="toolForm.method" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
-                             <option value="GET">GET</option>
-                             <option value="POST">POST</option>
-                             <option value="PUT">PUT</option>
-                             <option value="DELETE">DELETE</option>
-                         </select>
-                      </div>
-                  </div>
+                <div class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                           <label class="block text-sm font-medium text-gray-700">工具名称 (唯一标识)</label>
+                           <input v-model="toolForm.name" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. search_weather" />
+                        </div>
+                        <div>
+                           <label class="block text-sm font-medium text-gray-700">HTTP 方法</label>
+                           <select v-model="toolForm.method" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
+                               <option value="GET">GET</option>
+                               <option value="POST">POST</option>
+                               <option value="PUT">PUT</option>
+                               <option value="DELETE">DELETE</option>
+                           </select>
+                        </div>
+                    </div>
                   
-                  <div>
-                     <label class="block text-sm font-medium text-gray-700">URL 模板</label>
-                     <input v-model="toolForm.url_template" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono" placeholder="https://api.example.com/v1/weather?city={city}" />
-                     <p class="text-xs text-gray-500 mt-1">使用 {param} 标记需要替换的参数</p>
-                  </div>
+                    <div>
+                       <label class="block text-sm font-medium text-gray-700">URL 模板</label>
+                       <input v-model="toolForm.url_template" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono" placeholder="https://api.example.com/v1/weather?city={city}" />
+                       <p class="text-xs text-gray-500 mt-1">使用 {param} 标记需要替换的参数</p>
+                    </div>
                   
-                  <div>
-                     <label class="block text-sm font-medium text-gray-700">描述</label>
-                     <textarea v-model="toolForm.description" rows="2" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="描述工具的功能..."></textarea>
-                  </div>
+                    <div>
+                       <label class="block text-sm font-medium text-gray-700">描述</label>
+                       <textarea v-model="toolForm.description" rows="2" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="描述工具的功能..."></textarea>
+                    </div>
                   
-                  <div>
-                     <label class="block text-sm font-medium text-gray-700">参数定义 (JSON Schema)</label>
-                     <textarea v-model="toolForm.parameter_schema_str" rows="5" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "city": { "type": "string", "description": "城市名" } }'></textarea>
-                     <p class="text-xs text-gray-500 mt-1">定义参数类型和描述，用于 LLM 理解</p>
-                  </div>
+                    <div>
+                       <label class="block text-sm font-medium text-gray-700">参数定义 (JSON Schema)</label>
+                       <textarea v-model="toolForm.parameter_schema_str" rows="5" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "city": { "type": "string", "description": "城市名" } }'></textarea>
+                       <p class="text-xs text-gray-500 mt-1">定义参数类型和描述，用于 LLM 理解</p>
+                    </div>
                   
-                  <div>
-                     <label class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
-                     <textarea v-model="toolForm.headers_str" rows="3" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "Authorization": "Bearer token" }'></textarea>
-                  </div>
+                    <div>
+                       <label class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
+                       <textarea v-model="toolForm.headers_str" rows="3" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "Authorization": "Bearer token" }'></textarea>
+                    </div>
 
-                  <div class="flex items-center">
-                      <input id="is_active" type="checkbox" v-model="toolForm.is_active" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
-                      <label for="is_active" class="ml-2 block text-sm text-gray-900">启用此工具</label>
-                  </div>
-              </div>
+                    <div class="flex items-center">
+                        <input id="is_active" type="checkbox" v-model="toolForm.is_active" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                        <label for="is_active" class="ml-2 block text-sm text-gray-900">启用此工具</label>
+                    </div>
+                </div>
               
-              <div class="flex justify-end space-x-3 mt-6">
-                  <button @click="showModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
-                  <button @click="saveTool" class="px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark">保存</button>
-              </div>
-          </div>
-      </div>
+                <div class="flex justify-end space-x-3 mt-6">
+                    <button @click="showModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
+                    <button @click="saveTool" class="px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark">保存</button>
+                </div>
+            </div>
+        </div>
+      </Teleport>
 
       <ConfirmModal
           v-if="showDeleteConfirm"

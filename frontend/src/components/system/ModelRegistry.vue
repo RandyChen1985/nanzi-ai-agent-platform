@@ -760,257 +760,259 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Model Modal (Moved inside component for self-containment) -->
-      <div v-if="showModelModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm" @click="showProviderMenu = false; showModelPicker = false">
-          <div class="bg-white rounded-xl shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 text-left" @click.stop>
-              <h3 class="text-lg font-bold text-gray-900">{{ isEditingModel ? '编辑模型' : '添加新模型' }}</h3>
+      <Teleport to="body">
+        <div v-if="showModelModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm" @click="showProviderMenu = false; showModelPicker = false">
+            <div class="bg-white rounded-xl shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 text-left" @click.stop>
+                <h3 class="text-lg font-bold text-gray-900">{{ isEditingModel ? '编辑模型' : '添加新模型' }}</h3>
               
-              <div class="space-y-3">
-                  <div>
-                     <label class="block text-sm font-medium text-gray-700">提供商</label>
-                     <div class="relative mt-1">
-                         <button type="button" class="provider-select-trigger model-form-control" @click.stop="showProviderMenu = !showProviderMenu; showModelPicker = false">
-                             <span class="flex items-center gap-2 min-w-0">
-                                 <span class="provider-icon" :style="{ backgroundColor: selectedProvider.color }">{{ selectedProvider.icon }}</span>
-                                 <span class="truncate">{{ selectedProvider.label }}</span>
-                             </span>
-                             <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-                         </button>
-                         <div v-if="showProviderMenu" class="provider-menu" @click.stop>
-                             <button
-                                 v-for="provider in providerCatalog"
-                                 :key="provider.value"
-                                 type="button"
-                                 class="provider-menu-item"
-                                 :class="String(modelForm.provider) === provider.value ? 'provider-menu-item-active' : ''"
-                                 @click="modelForm.provider = provider.value; handleProviderChange(); showProviderMenu = false"
-                             >
-                                 <span class="provider-icon" :style="{ backgroundColor: provider.color }">{{ provider.icon }}</span>
-                                 <span class="text-left min-w-0">
-                                     <span class="block truncate font-medium">{{ provider.label }}</span>
-                                     <span class="block truncate text-[11px] text-gray-400">{{ providerDefaultBaseUrls[provider.value] || '需要手工填写接口地址' }}</span>
-                                 </span>
-                                 <svg v-if="String(modelForm.provider) === provider.value" class="w-4 h-4 ml-auto text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
-                             </button>
-                         </div>
-                     </div>
-                  </div>
-                  <div>
-                     <label class="block text-sm font-medium text-gray-700">API Base URL</label>
-                     <input v-model="modelForm.api_base_url" class="model-form-control mt-1" :placeholder="providerBaseUrlHint" />
-                     <p class="provider-url-hint text-xs text-gray-500 mt-1">{{ providerBaseUrlHint }}</p>
-                  </div>
-                  <div>
-                     <label class="block text-sm font-medium text-gray-700">API Key</label>
-                     <input v-model="modelForm.api_key" type="password" class="model-form-control mt-1" :placeholder="isEditingModel && modelForm.has_api_key ? '已配置，留空则保留原密钥' : '留空则使用系统默认密钥'" />
-                  </div>
-                  <div>
-                     <div class="flex items-center justify-between">
-                         <label class="block text-sm font-medium text-gray-700">模型 ID (API)</label>
-                         <button type="button" class="discover-model-button" :class="{ 'discover-model-button-disabled': !canDiscoverModels }" :disabled="loadingDiscoveredModels || !canDiscoverModels" :title="canDiscoverModels ? '加载当前供应商模型列表' : (String(modelForm.provider) === 'azure' ? 'Azure OpenAI 请手工填写部署名称' : '请先填写 API Base URL')" @click="discoverProviderModels">
-                             <svg v-if="loadingDiscoveredModels" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
-                             <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" /></svg>
-                             {{ loadingDiscoveredModels ? '加载中' : '加载模型列表' }}
-                         </button>
-                     </div>
-                     <div class="relative mt-1">
-                         <input v-model="modelForm.model_id" :class="{ 'model-form-control-invalid': modelIdConflict }" class="model-form-control font-mono pr-3" placeholder="例如: gpt-4o" />
-                         <div v-if="showModelPicker" class="model-picker-menu" @click.stop>
-                             <div class="flex items-center justify-between gap-3 px-3 py-2 border-b border-gray-100 text-xs text-gray-500">
-                                 <span>选择 {{ providerLabels[String(modelForm.provider)] || modelForm.provider }} 模型</span>
-                                 <button type="button" class="model-picker-close" aria-label="关闭模型列表" title="关闭" @click.stop="showModelPicker = false">×</button>
-                             </div>
-                             <button v-for="option in discoveredModels" :key="option.model_id" type="button" class="model-picker-item" @click="selectDiscoveredModel(option)">
-                                 <span class="font-medium text-gray-800">{{ option.name }}</span>
-                                 <span class="text-xs font-mono text-gray-500">{{ option.model_id }}</span>
-                             </button>
-                         </div>
-                     </div>
-                     <p class="text-xs text-gray-500 mt-1">云服务商定义的实际模型标识符；可手工填写，也可从供应商列表选择</p>
-                     <p class="text-xs mt-1 min-h-[1rem]" :class="modelIdConflict ? 'text-red-600' : 'invisible'" aria-live="polite">该 model_id 已存在，模型 ID 必须全局唯一</p>
-                  </div>
-                  <div>
-                     <label class="block text-sm font-medium text-gray-700">模型类型</label>
-                     <select v-model="modelForm.type" class="model-form-control mt-1">
-                         <option value="llm">LLM (文本生成)</option>
-                         <option value="embedding">Embedding (向量)</option>
-                         <option value="multimodal">Multimodal (多模态)</option>
-                     </select>
-                  </div>
-                  <div>
-                     <label class="block text-sm font-medium text-gray-700">模型名称</label>
-                     <input v-model="modelForm.name" class="model-form-control mt-1" placeholder="例如: GPT-4o 生产版" />
-                     <p class="text-xs text-gray-500 mt-1">用于系统界面展示，不影响实际 API 调用</p>
-                  </div>
-                  <template v-if="modelForm.type !== 'embedding'">
-                      <section class="mb-3 rounded-lg border border-blue-100 bg-blue-50/50 p-3">
-                          <div class="flex items-center justify-between gap-3">
-                              <div>
-                                  <div class="flex items-center gap-1.5">
-                                      <label class="block text-sm font-medium text-gray-700">模型温度 {{ normalizeTemperature(modelForm.temperature).toFixed(2) }}</label>
-                                      <button
-                                          type="button"
-                                          class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-blue-300 text-[10px] font-bold leading-none text-blue-600 hover:bg-blue-100"
-                                          aria-label="查看温度参考"
-                                          title="查看各家模型温度参考"
-                                          @click="showTemperatureGuide = true"
-                                      >?</button>
-                                  </div>
-                                  <p class="mt-1 text-xs text-gray-500">新建模型默认跟随全局温度，可按模型单独调整；测试连接会使用这里的值。</p>
-                              </div>
-                              <span class="shrink-0 text-xs text-blue-600">0～2</span>
-                          </div>
-                          <input
-                              v-model.number="modelForm.temperature"
-                              type="range"
-                              min="0"
-                              max="2"
-                              step="0.05"
-                              class="mt-3 h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-blue-100 accent-blue-600"
-                          />
-                          <p class="mt-2 text-[11px] leading-4 text-gray-500">
-                              当前 {{ normalizeTemperature(modelForm.temperature).toFixed(2) }}：{{ getTemperatureGuidance(modelForm.temperature) }}
-                          </p>
-                          <p v-if="normalizeTemperature(modelForm.temperature) > 1" class="mt-2 text-[11px] leading-4 text-amber-600">
-                              温度大于 1，请确认官方模型文档是否支持该范围；部分模型可能不支持或忽略该参数。
-                          </p>
-                      </section>
-                      <button type="button" class="advanced-options-toggle" :aria-expanded="showAdvancedModelOptions" @click="showAdvancedModelOptions = !showAdvancedModelOptions">
-                          <span class="flex items-center gap-2">
-                              <svg class="w-4 h-4 transition-transform" :class="showAdvancedModelOptions ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
-                              <span>高级设置</span>
-                          </span>
-                          <span class="text-xs text-gray-400" :class="{ invisible: !(modelForm.context_size || modelForm.max_output_tokens || hasConfiguredThinking) }">已配置</span>
-                      </button>
-                      <div
-                          class="advanced-options-panel"
-                          :class="{ 'advanced-options-panel-open': showAdvancedModelOptions }"
-                          :inert="!showAdvancedModelOptions"
-                          :aria-hidden="!showAdvancedModelOptions"
-                      >
-                          <div class="advanced-options-panel-inner">
-                              <section class="thinking-mode-section">
-                                  <div class="advanced-section-heading">
-                                      <div>
-                                          <h4 class="advanced-section-title">思考能力与默认设置</h4>
-                                          <p class="advanced-section-description">配置该模型是否支持思考控制，以及新会话的默认行为。</p>
-                                      </div>
-                                      <label class="thinking-mode-capsule thinking-mode-capsule-primary" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_enable }">
-                                          <input v-model="modelForm.thinking_enable" type="checkbox" class="sr-only" />
-                                          <span class="thinking-mode-capsule-label">支持思考模式</span>
-                                          <span class="thinking-mode-capsule-track">
-                                              <span class="thinking-mode-capsule-thumb"></span>
-                                              <span>{{ modelForm.thinking_enable ? '开启' : '关闭' }}</span>
-                                          </span>
-                                      </label>
-                                  </div>
-                                  <div class="thinking-provider-tip" role="note">
-                                      <span class="thinking-provider-tip-label">配置建议</span>
-                                      <span>开启“支持思考模式”后，平台会向供应商显式传递思考开关。若供应商默认开启思考，请保持此项开启，再关闭“新会话默认开启思考”。</span>
-                                  </div>
-                                  <div v-if="modelForm.thinking_enable">
-                                      <div class="thinking-options-grid">
-                                          <div class="thinking-option-card">
-                                              <span>
-                                                  <span class="block text-sm font-medium text-gray-700">{{ modelForm.thinking_only ? '新会话默认开启思考' : '新会话默认关闭思考' }}</span>
-                                                  <span class="mt-1 block text-xs text-gray-500">{{ modelForm.thinking_only ? '新会话会默认进入思考模式；用户是否可以关闭，由右侧设置决定。' : '新会话会默认使用非思考模式；需要时，用户仍可在会话中手动开启。' }}</span>
-                                              </span>
-                                              <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_only }">
-                                                  <input v-model="modelForm.thinking_only" type="checkbox" class="sr-only" />
-                                                  <span class="thinking-mode-capsule-track">
-                                                      <span class="thinking-mode-capsule-thumb"></span>
-                                                      <span>{{ modelForm.thinking_only ? '开启' : '关闭' }}</span>
-                                                  </span>
-                                              </label>
-                                          </div>
-                                          <div class="thinking-option-card">
-                                              <span>
-                                                  <span class="block text-sm font-medium text-gray-700">{{ modelForm.allow_disable_thinking ? '允许用户关闭思考' : '禁止用户关闭思考' }}</span>
-                                                  <span class="mt-1 block text-xs text-gray-500">{{ modelForm.allow_disable_thinking ? '用户可以在当前会话中关闭思考；默认开启时仍可手动切换。' : '开启后，用户无法在本次会话中再关闭思考；默认关闭时仍可按需开启。' }}</span>
-                                              </span>
-                                              <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.allow_disable_thinking }">
-                                                  <input v-model="modelForm.allow_disable_thinking" type="checkbox" class="sr-only" />
-                                                  <span class="thinking-mode-capsule-track">
-                                                      <span class="thinking-mode-capsule-thumb"></span>
-                                                      <span>{{ modelForm.allow_disable_thinking ? '开启' : '关闭' }}</span>
-                                                  </span>
-                                              </label>
-                                          </div>
-                                      </div>
-                                      <div class="default-reasoning-effort-row">
-                                          <div class="default-reasoning-effort-field">
-                                              <label class="block text-sm font-medium text-gray-700">默认思考强度</label>
-                                              <select v-model="modelForm.reasoning_effort" class="default-reasoning-effort-select mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
-                                                  <option :value="null">自动（使用请求层默认值）</option>
-                                                  <option v-for="option in reasoningEffortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                                              </select>
-                                              <p class="mt-1 text-xs text-gray-500">选择“自动”仅表示不指定思考强度，不代表关闭思考。</p>
-                                          </div>
-                                      </div>
-                                      <div class="supported-reasoning-section">
-                                          <span class="block text-sm font-medium text-gray-700">支持的思考强度</span>
-                                          <div class="thinking-effort-options">
-                                              <label v-for="option in reasoningEffortOptions" :key="option.value" class="thinking-effort-option" :class="{ 'thinking-effort-option-selected': isReasoningEffortSupported(option.value) }">
-                                                  <input
-                                                      type="checkbox"
-                                                      class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
-                                                      :checked="isReasoningEffortSupported(option.value)"
-                                                      @change="handleReasoningEffortChange(option.value, $event)"
-                                                  />
-                                                  <span class="thinking-effort-label">
-                                                      <span>{{ option.label }}</span>
-                                                      <span class="thinking-effort-description">{{ option.description }}</span>
-                                                  </span>
-                                              </label>
-                                          </div>
-                                          <p class="mt-1 text-xs text-gray-500">至少保留一个强度；默认值为自动时不要求勾选自动。</p>
-                                      </div>
-                                  </div>
-                              </section>
-                              <section class="advanced-context-section">
-                                  <div class="advanced-section-heading">
-                                      <div>
-                                          <h4 class="advanced-section-title">上下文与输出</h4>
-                                          <p class="advanced-section-description">配置上下文窗口和单次请求的输出上限，留空使用供应商默认值。</p>
-                                      </div>
-                                  </div>
-                                  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                      <div>
-                                          <label class="block text-sm font-medium text-gray-700">输入上下文（可选）</label>
-                                          <input v-model.number="modelForm.context_size" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
-                                          <div class="token-preset-row">
-                                              <button v-for="size in contextSizePresets" :key="size" type="button" class="token-preset-button" :class="modelForm.context_size === size ? 'token-preset-button-active' : ''" @click="modelForm.context_size = size">{{ formatTokenSize(size) }}</button>
-                                          </div>
-                                          <p class="text-xs text-gray-500 mt-1">用于上下文压缩；留空使用运行时默认值</p>
-                                      </div>
-                                      <div>
-                                          <label class="block text-sm font-medium text-gray-700">输出上限（可选）</label>
-                                          <input v-model.number="modelForm.max_output_tokens" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
-                                          <div class="token-preset-row">
-                                              <button v-for="size in outputTokenPresets" :key="size" type="button" class="token-preset-button" :class="modelForm.max_output_tokens === size ? 'token-preset-button-active' : ''" @click="modelForm.max_output_tokens = size">{{ formatTokenSize(size) }}</button>
-                                          </div>
-                                          <p class="text-xs text-gray-500 mt-1">发送为 API 的最大输出 token；留空使用供应商默认值</p>
-                                      </div>
-                                  </div>
-                              </section>
-                          </div>
-                      </div>
-                  </template>
-                  <div class="flex items-center">
-                      <input id="is_active" type="checkbox" v-model="modelForm.is_active" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
-                      <label for="is_active" class="ml-2 block text-sm text-gray-900">启用此模型</label>
-                  </div>
-              </div>
+                <div class="space-y-3">
+                    <div>
+                       <label class="block text-sm font-medium text-gray-700">提供商</label>
+                       <div class="relative mt-1">
+                           <button type="button" class="provider-select-trigger model-form-control" @click.stop="showProviderMenu = !showProviderMenu; showModelPicker = false">
+                               <span class="flex items-center gap-2 min-w-0">
+                                   <span class="provider-icon" :style="{ backgroundColor: selectedProvider.color }">{{ selectedProvider.icon }}</span>
+                                   <span class="truncate">{{ selectedProvider.label }}</span>
+                               </span>
+                               <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                           </button>
+                           <div v-if="showProviderMenu" class="provider-menu" @click.stop>
+                               <button
+                                   v-for="provider in providerCatalog"
+                                   :key="provider.value"
+                                   type="button"
+                                   class="provider-menu-item"
+                                   :class="String(modelForm.provider) === provider.value ? 'provider-menu-item-active' : ''"
+                                   @click="modelForm.provider = provider.value; handleProviderChange(); showProviderMenu = false"
+                               >
+                                   <span class="provider-icon" :style="{ backgroundColor: provider.color }">{{ provider.icon }}</span>
+                                   <span class="text-left min-w-0">
+                                       <span class="block truncate font-medium">{{ provider.label }}</span>
+                                       <span class="block truncate text-[11px] text-gray-400">{{ providerDefaultBaseUrls[provider.value] || '需要手工填写接口地址' }}</span>
+                                   </span>
+                                   <svg v-if="String(modelForm.provider) === provider.value" class="w-4 h-4 ml-auto text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                               </button>
+                           </div>
+                       </div>
+                    </div>
+                    <div>
+                       <label class="block text-sm font-medium text-gray-700">API Base URL</label>
+                       <input v-model="modelForm.api_base_url" class="model-form-control mt-1" :placeholder="providerBaseUrlHint" />
+                       <p class="provider-url-hint text-xs text-gray-500 mt-1">{{ providerBaseUrlHint }}</p>
+                    </div>
+                    <div>
+                       <label class="block text-sm font-medium text-gray-700">API Key</label>
+                       <input v-model="modelForm.api_key" type="password" class="model-form-control mt-1" :placeholder="isEditingModel && modelForm.has_api_key ? '已配置，留空则保留原密钥' : '留空则使用系统默认密钥'" />
+                    </div>
+                    <div>
+                       <div class="flex items-center justify-between">
+                           <label class="block text-sm font-medium text-gray-700">模型 ID (API)</label>
+                           <button type="button" class="discover-model-button" :class="{ 'discover-model-button-disabled': !canDiscoverModels }" :disabled="loadingDiscoveredModels || !canDiscoverModels" :title="canDiscoverModels ? '加载当前供应商模型列表' : (String(modelForm.provider) === 'azure' ? 'Azure OpenAI 请手工填写部署名称' : '请先填写 API Base URL')" @click="discoverProviderModels">
+                               <svg v-if="loadingDiscoveredModels" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+                               <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" /></svg>
+                               {{ loadingDiscoveredModels ? '加载中' : '加载模型列表' }}
+                           </button>
+                       </div>
+                       <div class="relative mt-1">
+                           <input v-model="modelForm.model_id" :class="{ 'model-form-control-invalid': modelIdConflict }" class="model-form-control font-mono pr-3" placeholder="例如: gpt-4o" />
+                           <div v-if="showModelPicker" class="model-picker-menu" @click.stop>
+                               <div class="flex items-center justify-between gap-3 px-3 py-2 border-b border-gray-100 text-xs text-gray-500">
+                                   <span>选择 {{ providerLabels[String(modelForm.provider)] || modelForm.provider }} 模型</span>
+                                   <button type="button" class="model-picker-close" aria-label="关闭模型列表" title="关闭" @click.stop="showModelPicker = false">×</button>
+                               </div>
+                               <button v-for="option in discoveredModels" :key="option.model_id" type="button" class="model-picker-item" @click="selectDiscoveredModel(option)">
+                                   <span class="font-medium text-gray-800">{{ option.name }}</span>
+                                   <span class="text-xs font-mono text-gray-500">{{ option.model_id }}</span>
+                               </button>
+                           </div>
+                       </div>
+                       <p class="text-xs text-gray-500 mt-1">云服务商定义的实际模型标识符；可手工填写，也可从供应商列表选择</p>
+                       <p class="text-xs mt-1 min-h-[1rem]" :class="modelIdConflict ? 'text-red-600' : 'invisible'" aria-live="polite">该 model_id 已存在，模型 ID 必须全局唯一</p>
+                    </div>
+                    <div>
+                       <label class="block text-sm font-medium text-gray-700">模型类型</label>
+                       <select v-model="modelForm.type" class="model-form-control mt-1">
+                           <option value="llm">LLM (文本生成)</option>
+                           <option value="embedding">Embedding (向量)</option>
+                           <option value="multimodal">Multimodal (多模态)</option>
+                       </select>
+                    </div>
+                    <div>
+                       <label class="block text-sm font-medium text-gray-700">模型名称</label>
+                       <input v-model="modelForm.name" class="model-form-control mt-1" placeholder="例如: GPT-4o 生产版" />
+                       <p class="text-xs text-gray-500 mt-1">用于系统界面展示，不影响实际 API 调用</p>
+                    </div>
+                    <template v-if="modelForm.type !== 'embedding'">
+                        <section class="mb-3 rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+                            <div class="flex items-center justify-between gap-3">
+                                <div>
+                                    <div class="flex items-center gap-1.5">
+                                        <label class="block text-sm font-medium text-gray-700">模型温度 {{ normalizeTemperature(modelForm.temperature).toFixed(2) }}</label>
+                                        <button
+                                            type="button"
+                                            class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-blue-300 text-[10px] font-bold leading-none text-blue-600 hover:bg-blue-100"
+                                            aria-label="查看温度参考"
+                                            title="查看各家模型温度参考"
+                                            @click="showTemperatureGuide = true"
+                                        >?</button>
+                                    </div>
+                                    <p class="mt-1 text-xs text-gray-500">新建模型默认跟随全局温度，可按模型单独调整；测试连接会使用这里的值。</p>
+                                </div>
+                                <span class="shrink-0 text-xs text-blue-600">0～2</span>
+                            </div>
+                            <input
+                                v-model.number="modelForm.temperature"
+                                type="range"
+                                min="0"
+                                max="2"
+                                step="0.05"
+                                class="mt-3 h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-blue-100 accent-blue-600"
+                            />
+                            <p class="mt-2 text-[11px] leading-4 text-gray-500">
+                                当前 {{ normalizeTemperature(modelForm.temperature).toFixed(2) }}：{{ getTemperatureGuidance(modelForm.temperature) }}
+                            </p>
+                            <p v-if="normalizeTemperature(modelForm.temperature) > 1" class="mt-2 text-[11px] leading-4 text-amber-600">
+                                温度大于 1，请确认官方模型文档是否支持该范围；部分模型可能不支持或忽略该参数。
+                            </p>
+                        </section>
+                        <button type="button" class="advanced-options-toggle" :aria-expanded="showAdvancedModelOptions" @click="showAdvancedModelOptions = !showAdvancedModelOptions">
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4 transition-transform" :class="showAdvancedModelOptions ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                                <span>高级设置</span>
+                            </span>
+                            <span class="text-xs text-gray-400" :class="{ invisible: !(modelForm.context_size || modelForm.max_output_tokens || hasConfiguredThinking) }">已配置</span>
+                        </button>
+                        <div
+                            class="advanced-options-panel"
+                            :class="{ 'advanced-options-panel-open': showAdvancedModelOptions }"
+                            :inert="!showAdvancedModelOptions"
+                            :aria-hidden="!showAdvancedModelOptions"
+                        >
+                            <div class="advanced-options-panel-inner">
+                                <section class="thinking-mode-section">
+                                    <div class="advanced-section-heading">
+                                        <div>
+                                            <h4 class="advanced-section-title">思考能力与默认设置</h4>
+                                            <p class="advanced-section-description">配置该模型是否支持思考控制，以及新会话的默认行为。</p>
+                                        </div>
+                                        <label class="thinking-mode-capsule thinking-mode-capsule-primary" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_enable }">
+                                            <input v-model="modelForm.thinking_enable" type="checkbox" class="sr-only" />
+                                            <span class="thinking-mode-capsule-label">支持思考模式</span>
+                                            <span class="thinking-mode-capsule-track">
+                                                <span class="thinking-mode-capsule-thumb"></span>
+                                                <span>{{ modelForm.thinking_enable ? '开启' : '关闭' }}</span>
+                                            </span>
+                                        </label>
+                                    </div>
+                                    <div class="thinking-provider-tip" role="note">
+                                        <span class="thinking-provider-tip-label">配置建议</span>
+                                        <span>开启“支持思考模式”后，平台会向供应商显式传递思考开关。若供应商默认开启思考，请保持此项开启，再关闭“新会话默认开启思考”。</span>
+                                    </div>
+                                    <div v-if="modelForm.thinking_enable">
+                                        <div class="thinking-options-grid">
+                                            <div class="thinking-option-card">
+                                                <span>
+                                                    <span class="block text-sm font-medium text-gray-700">{{ modelForm.thinking_only ? '新会话默认开启思考' : '新会话默认关闭思考' }}</span>
+                                                    <span class="mt-1 block text-xs text-gray-500">{{ modelForm.thinking_only ? '新会话会默认进入思考模式；用户是否可以关闭，由右侧设置决定。' : '新会话会默认使用非思考模式；需要时，用户仍可在会话中手动开启。' }}</span>
+                                                </span>
+                                                <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.thinking_only }">
+                                                    <input v-model="modelForm.thinking_only" type="checkbox" class="sr-only" />
+                                                    <span class="thinking-mode-capsule-track">
+                                                        <span class="thinking-mode-capsule-thumb"></span>
+                                                        <span>{{ modelForm.thinking_only ? '开启' : '关闭' }}</span>
+                                                    </span>
+                                                </label>
+                                            </div>
+                                            <div class="thinking-option-card">
+                                                <span>
+                                                    <span class="block text-sm font-medium text-gray-700">{{ modelForm.allow_disable_thinking ? '允许用户关闭思考' : '禁止用户关闭思考' }}</span>
+                                                    <span class="mt-1 block text-xs text-gray-500">{{ modelForm.allow_disable_thinking ? '用户可以在当前会话中关闭思考；默认开启时仍可手动切换。' : '开启后，用户无法在本次会话中再关闭思考；默认关闭时仍可按需开启。' }}</span>
+                                                </span>
+                                                <label class="thinking-mode-capsule" :class="{ 'thinking-mode-capsule-on': modelForm.allow_disable_thinking }">
+                                                    <input v-model="modelForm.allow_disable_thinking" type="checkbox" class="sr-only" />
+                                                    <span class="thinking-mode-capsule-track">
+                                                        <span class="thinking-mode-capsule-thumb"></span>
+                                                        <span>{{ modelForm.allow_disable_thinking ? '开启' : '关闭' }}</span>
+                                                    </span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="default-reasoning-effort-row">
+                                            <div class="default-reasoning-effort-field">
+                                                <label class="block text-sm font-medium text-gray-700">默认思考强度</label>
+                                                <select v-model="modelForm.reasoning_effort" class="default-reasoning-effort-select mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
+                                                    <option :value="null">自动（使用请求层默认值）</option>
+                                                    <option v-for="option in reasoningEffortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                                                </select>
+                                                <p class="mt-1 text-xs text-gray-500">选择“自动”仅表示不指定思考强度，不代表关闭思考。</p>
+                                            </div>
+                                        </div>
+                                        <div class="supported-reasoning-section">
+                                            <span class="block text-sm font-medium text-gray-700">支持的思考强度</span>
+                                            <div class="thinking-effort-options">
+                                                <label v-for="option in reasoningEffortOptions" :key="option.value" class="thinking-effort-option" :class="{ 'thinking-effort-option-selected': isReasoningEffortSupported(option.value) }">
+                                                    <input
+                                                        type="checkbox"
+                                                        class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                                                        :checked="isReasoningEffortSupported(option.value)"
+                                                        @change="handleReasoningEffortChange(option.value, $event)"
+                                                    />
+                                                    <span class="thinking-effort-label">
+                                                        <span>{{ option.label }}</span>
+                                                        <span class="thinking-effort-description">{{ option.description }}</span>
+                                                    </span>
+                                                </label>
+                                            </div>
+                                            <p class="mt-1 text-xs text-gray-500">至少保留一个强度；默认值为自动时不要求勾选自动。</p>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="advanced-context-section">
+                                    <div class="advanced-section-heading">
+                                        <div>
+                                            <h4 class="advanced-section-title">上下文与输出</h4>
+                                            <p class="advanced-section-description">配置上下文窗口和单次请求的输出上限，留空使用供应商默认值。</p>
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">输入上下文（可选）</label>
+                                            <input v-model.number="modelForm.context_size" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
+                                            <div class="token-preset-row">
+                                                <button v-for="size in contextSizePresets" :key="size" type="button" class="token-preset-button" :class="modelForm.context_size === size ? 'token-preset-button-active' : ''" @click="modelForm.context_size = size">{{ formatTokenSize(size) }}</button>
+                                            </div>
+                                            <p class="text-xs text-gray-500 mt-1">用于上下文压缩；留空使用运行时默认值</p>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">输出上限（可选）</label>
+                                            <input v-model.number="modelForm.max_output_tokens" type="number" min="1" step="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="使用供应商默认值" />
+                                            <div class="token-preset-row">
+                                                <button v-for="size in outputTokenPresets" :key="size" type="button" class="token-preset-button" :class="modelForm.max_output_tokens === size ? 'token-preset-button-active' : ''" @click="modelForm.max_output_tokens = size">{{ formatTokenSize(size) }}</button>
+                                            </div>
+                                            <p class="text-xs text-gray-500 mt-1">发送为 API 的最大输出 token；留空使用供应商默认值</p>
+                                        </div>
+                                    </div>
+                                </section>
+                            </div>
+                        </div>
+                    </template>
+                    <div class="flex items-center">
+                        <input id="is_active" type="checkbox" v-model="modelForm.is_active" class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" />
+                        <label for="is_active" class="ml-2 block text-sm text-gray-900">启用此模型</label>
+                    </div>
+                </div>
               
-              <div class="flex justify-end space-x-3 mt-6">
-                  <button @click="showModelModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
-                  <button type="button" @click="testCurrentModel" :disabled="testingFormModel || !String(modelForm.model_id || '').trim()" class="inline-flex items-center gap-2 px-4 py-2 border border-blue-200 rounded-md text-sm font-medium text-primary bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed">
-                      <svg v-if="testingFormModel" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>
-                      {{ testingFormModel ? '测试中' : '测试连接' }}
-                  </button>
-                  <button @click="saveModel" :disabled="modelIdConflict" class="px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed">保存</button>
-              </div>
-          </div>
-      </div>
+                <div class="flex justify-end space-x-3 mt-6">
+                    <button @click="showModelModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
+                    <button type="button" @click="testCurrentModel" :disabled="testingFormModel || !String(modelForm.model_id || '').trim()" class="inline-flex items-center gap-2 px-4 py-2 border border-blue-200 rounded-md text-sm font-medium text-primary bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <svg v-if="testingFormModel" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>
+                        {{ testingFormModel ? '测试中' : '测试连接' }}
+                    </button>
+                    <button @click="saveModel" :disabled="modelIdConflict" class="px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed">保存</button>
+                </div>
+            </div>
+        </div>
+      </Teleport>
 
       <div
         v-if="showTemperatureGuide"

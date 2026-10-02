@@ -1350,402 +1350,408 @@ defineExpose({ fetchMetrics })
     </div>
 
     <!-- Add Permission Modal -->
-    <div v-if="showAddPermissionModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in" @click.self="closeAddPermissionModal">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col border border-gray-100">
-        <!-- Header -->
-        <div class="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-          <h3 class="text-sm font-bold text-gray-800 select-none">分配数据集授权成员</h3>
-          <button @click="closeAddPermissionModal" class="text-gray-400 hover:text-gray-600 transition-all">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
+    <Teleport to="body">
+      <div v-if="showAddPermissionModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in" @click.self="closeAddPermissionModal">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col border border-gray-100">
+          <!-- Header -->
+          <div class="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+            <h3 class="text-sm font-bold text-gray-800 select-none">分配数据集授权成员</h3>
+            <button @click="closeAddPermissionModal" class="text-gray-400 hover:text-gray-600 transition-all">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
 
-        <!-- Body -->
-        <div class="p-5 space-y-4">
-          <!-- 切换类型 -->
-          <div>
-            <label class="block text-xs font-semibold text-gray-400 mb-1.5 select-none">成员授权类型</label>
-            <div class="grid grid-cols-2 gap-2 bg-gray-50 p-1 rounded-xl border border-gray-150">
-              <button 
-                type="button"
-                @click="assignType = 'role'; selectedCandidateIds = []"
-                class="py-2 text-xs font-semibold rounded-lg transition-all"
-                :class="assignType === 'role' ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-800'"
-              >
-                按角色授权 (Role)
-              </button>
-              <button 
-                type="button"
-                @click="assignType = 'user'; selectedCandidateIds = []"
-                class="py-2 text-xs font-semibold rounded-lg transition-all"
-                :class="assignType === 'user' ? 'bg-white shadow text-emerald-600' : 'text-gray-500 hover:text-gray-800'"
-              >
-                按平台成员授权 (User)
-              </button>
+          <!-- Body -->
+          <div class="p-5 space-y-4">
+            <!-- 切换类型 -->
+            <div>
+              <label class="block text-xs font-semibold text-gray-400 mb-1.5 select-none">成员授权类型</label>
+              <div class="grid grid-cols-2 gap-2 bg-gray-50 p-1 rounded-xl border border-gray-150">
+                <button 
+                  type="button"
+                  @click="assignType = 'role'; selectedCandidateIds = []"
+                  class="py-2 text-xs font-semibold rounded-lg transition-all"
+                  :class="assignType === 'role' ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-800'"
+                >
+                  按角色授权 (Role)
+                </button>
+                <button 
+                  type="button"
+                  @click="assignType = 'user'; selectedCandidateIds = []"
+                  class="py-2 text-xs font-semibold rounded-lg transition-all"
+                  :class="assignType === 'user' ? 'bg-white shadow text-emerald-600' : 'text-gray-500 hover:text-gray-800'"
+                >
+                  按平台成员授权 (User)
+                </button>
+              </div>
+            </div>
+
+            <!-- 搜索输入框 -->
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                 <svg class="h-4.5 w-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                 </svg>
+              </span>
+              <input 
+                v-model="candidateSearchQuery"
+                type="search"
+                class="block w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl leading-5 bg-gray-50 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary sm:text-xs transition-all focus:bg-white"
+                :placeholder="assignType === 'role' ? '搜索角色名称或代码...' : '搜索用户姓名或账号...'"
+              />
+            </div>
+
+            <!-- 候选人列表勾选 -->
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold text-gray-400 select-none">
+                选择要添加的{{ assignType === 'role' ? '角色' : '用户' }} (可多选)
+              </label>
+              <div class="border border-gray-150 rounded-xl max-h-[30vh] overflow-y-auto divide-y divide-gray-100">
+                <!-- 候选角色 -->
+                <template v-if="assignType === 'role'">
+                  <div 
+                    v-for="r in availableRoles" 
+                    :key="r.id"
+                    class="flex items-center gap-3 p-3 hover:bg-gray-50 transition-all select-none cursor-pointer"
+                    @click="toggleCandidateSelection(r.id)"
+                  >
+                    <input 
+                      type="checkbox" 
+                      :checked="selectedCandidateIds.includes(r.id)"
+                      class="rounded text-indigo-600 border-gray-300 focus:ring-indigo-500" 
+                      @click.stop="toggleCandidateSelection(r.id)"
+                    />
+                    <div class="flex flex-col">
+                      <span class="text-sm font-semibold text-gray-800">{{ r.name }}</span>
+                      <span class="text-[10px] text-gray-400 font-mono mt-0.5">{{ r.code }}</span>
+                    </div>
+                  </div>
+                  <div v-if="!availableRoles.length" class="text-xs text-gray-400 text-center py-8 select-none">
+                    所有角色已完成分配授权。
+                  </div>
+                </template>
+
+                <!-- 候选用户 -->
+                <template v-if="assignType === 'user'">
+                  <div 
+                    v-for="u in availableUsers" 
+                    :key="u.id"
+                    class="flex items-center gap-3 p-3 hover:bg-gray-50 transition-all select-none cursor-pointer"
+                    @click="toggleCandidateSelection(u.id)"
+                  >
+                    <input 
+                      type="checkbox" 
+                      :checked="selectedCandidateIds.includes(u.id)"
+                      class="rounded text-emerald-600 border-gray-300 focus:ring-emerald-500" 
+                      @click.stop="toggleCandidateSelection(u.id)"
+                    />
+                    <div class="flex flex-col">
+                      <span class="text-sm font-semibold text-gray-800">{{ u.real_name || u.user_name }}</span>
+                      <span class="text-[10px] text-gray-400 font-mono mt-0.5">{{ u.user_name }}</span>
+                    </div>
+                  </div>
+                  <div v-if="!availableUsers.length" class="text-xs text-gray-400 text-center py-8 select-none">
+                    所有活跃用户已完成分配授权。
+                  </div>
+                </template>
+              </div>
             </div>
           </div>
 
-          <!-- 搜索输入框 -->
-          <div class="relative">
-            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-               <svg class="h-4.5 w-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-               </svg>
-            </span>
-            <input 
-              v-model="candidateSearchQuery"
-              type="search"
-              class="block w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl leading-5 bg-gray-50 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary sm:text-xs transition-all focus:bg-white"
-              :placeholder="assignType === 'role' ? '搜索角色名称或代码...' : '搜索用户姓名或账号...'"
-            />
+          <!-- Footer -->
+          <div class="p-5 border-t border-gray-100 flex justify-end gap-3 bg-gray-50/30">
+            <button 
+              type="button" 
+              class="px-4 py-2 border rounded-xl text-xs font-semibold hover:bg-gray-50 transition-all" 
+              @click="closeAddPermissionModal"
+            >
+              取消
+            </button>
+            <button 
+              type="button" 
+              class="px-4 py-2 rounded-xl text-xs font-semibold text-white transition-all shadow-md disabled:opacity-50"
+              :class="assignType === 'role' ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/10' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/10'"
+              :disabled="!selectedCandidateIds.length || savingPerms"
+              @click="submitPermissions"
+            >
+              {{ savingPerms ? '正在保存...' : '确认授权' }}
+            </button>
           </div>
-
-          <!-- 候选人列表勾选 -->
-          <div class="space-y-2">
-            <label class="block text-xs font-semibold text-gray-400 select-none">
-              选择要添加的{{ assignType === 'role' ? '角色' : '用户' }} (可多选)
-            </label>
-            <div class="border border-gray-150 rounded-xl max-h-[30vh] overflow-y-auto divide-y divide-gray-100">
-              <!-- 候选角色 -->
-              <template v-if="assignType === 'role'">
-                <div 
-                  v-for="r in availableRoles" 
-                  :key="r.id"
-                  class="flex items-center gap-3 p-3 hover:bg-gray-50 transition-all select-none cursor-pointer"
-                  @click="toggleCandidateSelection(r.id)"
-                >
-                  <input 
-                    type="checkbox" 
-                    :checked="selectedCandidateIds.includes(r.id)"
-                    class="rounded text-indigo-600 border-gray-300 focus:ring-indigo-500" 
-                    @click.stop="toggleCandidateSelection(r.id)"
-                  />
-                  <div class="flex flex-col">
-                    <span class="text-sm font-semibold text-gray-800">{{ r.name }}</span>
-                    <span class="text-[10px] text-gray-400 font-mono mt-0.5">{{ r.code }}</span>
-                  </div>
-                </div>
-                <div v-if="!availableRoles.length" class="text-xs text-gray-400 text-center py-8 select-none">
-                  所有角色已完成分配授权。
-                </div>
-              </template>
-
-              <!-- 候选用户 -->
-              <template v-if="assignType === 'user'">
-                <div 
-                  v-for="u in availableUsers" 
-                  :key="u.id"
-                  class="flex items-center gap-3 p-3 hover:bg-gray-50 transition-all select-none cursor-pointer"
-                  @click="toggleCandidateSelection(u.id)"
-                >
-                  <input 
-                    type="checkbox" 
-                    :checked="selectedCandidateIds.includes(u.id)"
-                    class="rounded text-emerald-600 border-gray-300 focus:ring-emerald-500" 
-                    @click.stop="toggleCandidateSelection(u.id)"
-                  />
-                  <div class="flex flex-col">
-                    <span class="text-sm font-semibold text-gray-800">{{ u.real_name || u.user_name }}</span>
-                    <span class="text-[10px] text-gray-400 font-mono mt-0.5">{{ u.user_name }}</span>
-                  </div>
-                </div>
-                <div v-if="!availableUsers.length" class="text-xs text-gray-400 text-center py-8 select-none">
-                  所有活跃用户已完成分配授权。
-                </div>
-              </template>
-            </div>
-          </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="p-5 border-t border-gray-100 flex justify-end gap-3 bg-gray-50/30">
-          <button 
-            type="button" 
-            class="px-4 py-2 border rounded-xl text-xs font-semibold hover:bg-gray-50 transition-all" 
-            @click="closeAddPermissionModal"
-          >
-            取消
-          </button>
-          <button 
-            type="button" 
-            class="px-4 py-2 rounded-xl text-xs font-semibold text-white transition-all shadow-md disabled:opacity-50"
-            :class="assignType === 'role' ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/10' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/10'"
-            :disabled="!selectedCandidateIds.length || savingPerms"
-            @click="submitPermissions"
-          >
-            {{ savingPerms ? '正在保存...' : '确认授权' }}
-          </button>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Edit Table Modal -->
-    <div v-if="showEditModal && editingTable" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showEditModal = false">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] border border-gray-100">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center border border-indigo-100">
-                <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+    <Teleport to="body">
+      <div v-if="showEditModal && editingTable" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showEditModal = false">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] border border-gray-100">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center border border-indigo-100">
+                  <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">编辑元数据定义</h2>
+                 <p class="text-xs text-gray-500 font-mono">{{ editingTable.physical_name }}</p>
+               </div>
+            </div>
+            <button @click="showEditModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-8 space-y-8 bg-white">
+             <!-- Table Level -->
+             <div class="grid grid-cols-2 gap-6">
+                <div class="space-y-2">
+                   <label class="text-sm font-bold text-gray-700">业务名称 (Term)</label>
+                   <input v-model="editingTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-100" placeholder="例如：用户订单表">
+                </div>
+                <div class="space-y-2">
+                   <label class="text-sm font-bold text-gray-700">描述 (Description)</label>
+                   <input v-model="editingTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-100" placeholder="简要描述表的用途...">
+                </div>
              </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">编辑元数据定义</h2>
-               <p class="text-xs text-gray-500 font-mono">{{ editingTable.physical_name }}</p>
+
+                <div class="grid grid-cols-2 gap-6">
+                  <div class="space-y-2">
+                    <label class="text-sm font-bold text-gray-700">分区字段</label>
+                    <input :value="optimizationFieldsText(editingTable.partition_fields)" @input="setOptimizationFields(editingTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="例如：event_date, tenant_id">
+                    <p class="text-xs text-gray-400">涉及时间或范围查询时，智能体会优先使用这些字段裁剪分区。</p>
+                  </div>
+                  <div class="space-y-2">
+                    <label class="text-sm font-bold text-gray-700">索引字段</label>
+                    <input :value="optimizationFieldsText(editingTable.index_fields)" @input="setOptimizationFields(editingTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="例如：tenant_id, user_id">
+                    <p class="text-xs text-gray-400">等值过滤、范围过滤和 JOIN 会优先参考这些字段。</p>
+                  </div>
+                </div>
+
+             <div class="border-t border-gray-100 pt-6">
+                <div class="flex justify-between items-center mb-4">
+                  <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2">
+                     <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                     字段定义 (Columns)
+                  </h3>
+                  <button 
+                    @click="addColumn"
+                    class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg border border-indigo-100 hover:bg-indigo-100 transition-colors flex items-center gap-1 font-bold"
+                  >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    添加字段
+                  </button>
+                </div>
+              
+                <div class="space-y-3">
+                   <!-- Header -->
+                   <div class="grid grid-cols-12 gap-4 px-2 text-xs font-medium text-gray-500 uppercase">
+                      <div class="col-span-3">Physical Name</div>
+                      <div class="col-span-2">Type</div>
+                      <div class="col-span-3">Business Term</div>
+                      <div class="col-span-3">Description</div>
+                      <div class="col-span-1"></div>
+                   </div>
+
+                   <!-- Rows -->
+                   <div v-for="(col, index) in editingTable.columns" :key="index" class="p-2 bg-gray-50 rounded-lg border border-transparent hover:border-indigo-100 hover:bg-white hover:shadow-sm transition-all space-y-1">
+                      <div class="grid grid-cols-12 gap-4 items-center">
+                         <div class="col-span-3">
+                            <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-xs font-mono px-1 py-0.5" placeholder="物理名">
+                         </div>
+                         <div class="col-span-2">
+                            <select v-model="col.type" class="w-full bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 outline-none p-0">
+                               <option value="String">String</option>
+                               <option value="Int64">Int64</option>
+                               <option value="Float64">Float64</option>
+                               <option value="DateTime">DateTime</option>
+                               <option value="Boolean">Boolean</option>
+                               <option value="JSON">JSON</option>
+                            </select>
+                         </div>
+                         <div class="col-span-3">
+                            <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-sm px-1 py-0.5" placeholder="字段业务名">
+                         </div>
+                         <div class="col-span-3">
+                            <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
+                         </div>
+                         <div class="col-span-1 flex justify-end items-center gap-1.5">
+                            <button
+                              type="button"
+                              :disabled="!col.physical_name || !col.physical_name.trim()"
+                              @click="openColumnAiRecommendation(col, editingTable)"
+                              class="p-1 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                              :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
+                            >
+                               <SparklesIcon class="w-4 h-4" />
+                            </button>
+                            <button @click="removeColumn(index)" class="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" title="删除此字段">
+                               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
+                         </div>
+                      </div>
+                      <!-- 维度角色与层级组（第二行） -->
+                      <div class="grid grid-cols-12 gap-4 items-center pl-1">
+                         <div class="col-span-3 flex items-center gap-1.5">
+                            <span class="text-[10px] text-gray-400 shrink-0">维度</span>
+                            <select v-model="col.dimension_role" class="bg-transparent border-none text-[10px] text-gray-600 focus:ring-0 outline-none p-0">
+                               <option value="none">无</option>
+                               <option value="time">时间</option>
+                               <option value="geo">地理</option>
+                               <option value="category">类目</option>
+                               <option value="identifier">标识符</option>
+                            </select>
+                         </div>
+                         <div class="col-span-5 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none'">
+                            <span class="text-[10px] text-gray-400 shrink-0">层级组</span>
+                            <input v-model="col.hierarchy_group" maxlength="100" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="同组字段构成下钻链，如 region">
+                         </div>
+                         <div class="col-span-2 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none' && col.hierarchy_group">
+                            <span class="text-[10px] text-gray-400 shrink-0">序号</span>
+                            <input v-model.number="col.hierarchy_order" type="number" min="1" class="w-12 bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="1">
+                         </div>
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <button @click="showEditModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
 
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-8 space-y-8 bg-white">
-           <!-- Table Level -->
-           <div class="grid grid-cols-2 gap-6">
-              <div class="space-y-2">
-                 <label class="text-sm font-bold text-gray-700">业务名称 (Term)</label>
-                 <input v-model="editingTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-100" placeholder="例如：用户订单表">
-              </div>
-              <div class="space-y-2">
-                 <label class="text-sm font-bold text-gray-700">描述 (Description)</label>
-                 <input v-model="editingTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-100" placeholder="简要描述表的用途...">
-              </div>
-           </div>
+          <!-- Footer -->
+          <div class="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+             <button @click="showEditModal = false" class="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors">取消</button>
+             <button @click="handleUpdateTable" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/20 transition-all flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                保存修改
+             </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Create Table Modal -->
+    <Teleport to="body">
+      <div v-if="showCreateTableModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showCreateTableModal = false">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center border border-blue-100">
+                  <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">手动创建新表</h2>
+                 <p class="text-xs text-gray-500 font-medium">手动定义表结构、字段及其业务含义</p>
+               </div>
+            </div>
+            <button @click="showCreateTableModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-8 space-y-8 bg-white">
+             <div class="grid grid-cols-2 gap-6">
+                <div class="space-y-2">
+                   <label class="text-sm font-bold text-gray-700">物理名称 (Physical Name) *</label>
+                   <input v-model="newTable.physical_name" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono disabled:bg-gray-100" placeholder="例如：t_orders">
+                </div>
+                <div class="space-y-2">
+                   <label class="text-sm font-bold text-gray-700">业务名称 (Term) *</label>
+                   <input v-model="newTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100" placeholder="例如：订单表">
+                </div>
+             </div>
+             <div class="space-y-2">
+                <label class="text-sm font-bold text-gray-700">描述 (Description)</label>
+                <input v-model="newTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100" placeholder="简要描述该表的作用...">
+             </div>
 
               <div class="grid grid-cols-2 gap-6">
                 <div class="space-y-2">
                   <label class="text-sm font-bold text-gray-700">分区字段</label>
-                  <input :value="optimizationFieldsText(editingTable.partition_fields)" @input="setOptimizationFields(editingTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="例如：event_date, tenant_id">
-                  <p class="text-xs text-gray-400">涉及时间或范围查询时，智能体会优先使用这些字段裁剪分区。</p>
+                  <input :value="optimizationFieldsText(newTable.partition_fields)" @input="setOptimizationFields(newTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="例如：event_date, tenant_id">
+                  <p class="text-xs text-gray-400">多个字段用逗号分隔。</p>
                 </div>
                 <div class="space-y-2">
                   <label class="text-sm font-bold text-gray-700">索引字段</label>
-                  <input :value="optimizationFieldsText(editingTable.index_fields)" @input="setOptimizationFields(editingTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="例如：tenant_id, user_id">
-                  <p class="text-xs text-gray-400">等值过滤、范围过滤和 JOIN 会优先参考这些字段。</p>
+                  <input :value="optimizationFieldsText(newTable.index_fields)" @input="setOptimizationFields(newTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="例如：tenant_id, user_id">
+                  <p class="text-xs text-gray-400">多个字段用逗号分隔。</p>
                 </div>
               </div>
 
-           <div class="border-t border-gray-100 pt-6">
-              <div class="flex justify-between items-center mb-4">
-                <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2">
-                   <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-                   字段定义 (Columns)
-                </h3>
-                <button 
-                  @click="addColumn"
-                  class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg border border-indigo-100 hover:bg-indigo-100 transition-colors flex items-center gap-1 font-bold"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                  添加字段
-                </button>
-              </div>
+             <div class="border-t border-gray-100 pt-6">
+                <div class="flex justify-between items-center mb-4">
+                  <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2">
+                     <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                     字段定义 (Columns)
+                  </h3>
+                  <button 
+                    @click="newTable.columns.push({ physical_name: '', term: '', type: 'String', description: '' })"
+                    class="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg border border-blue-100 hover:bg-blue-100 transition-colors flex items-center gap-1 font-bold"
+                  >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    添加字段
+                  </button>
+                </div>
               
-              <div class="space-y-3">
-                 <!-- Header -->
-                 <div class="grid grid-cols-12 gap-4 px-2 text-xs font-medium text-gray-500 uppercase">
-                    <div class="col-span-3">Physical Name</div>
-                    <div class="col-span-2">Type</div>
-                    <div class="col-span-3">Business Term</div>
-                    <div class="col-span-3">Description</div>
-                    <div class="col-span-1"></div>
-                 </div>
+                <div class="space-y-3">
+                   <div class="grid grid-cols-12 gap-4 px-2 text-xs font-medium text-gray-500 uppercase">
+                      <div class="col-span-3">Physical Name</div>
+                      <div class="col-span-2">Type</div>
+                      <div class="col-span-3">Business Term</div>
+                      <div class="col-span-3">Description</div>
+                      <div class="col-span-1"></div>
+                   </div>
 
-                 <!-- Rows -->
-                 <div v-for="(col, index) in editingTable.columns" :key="index" class="p-2 bg-gray-50 rounded-lg border border-transparent hover:border-indigo-100 hover:bg-white hover:shadow-sm transition-all space-y-1">
-                    <div class="grid grid-cols-12 gap-4 items-center">
-                       <div class="col-span-3">
-                          <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-xs font-mono px-1 py-0.5" placeholder="物理名">
-                       </div>
-                       <div class="col-span-2">
-                          <select v-model="col.type" class="w-full bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 outline-none p-0">
-                             <option value="String">String</option>
-                             <option value="Int64">Int64</option>
-                             <option value="Float64">Float64</option>
-                             <option value="DateTime">DateTime</option>
-                             <option value="Boolean">Boolean</option>
-                             <option value="JSON">JSON</option>
-                          </select>
-                       </div>
-                       <div class="col-span-3">
-                          <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-sm px-1 py-0.5" placeholder="字段业务名">
-                       </div>
-                       <div class="col-span-3">
-                          <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
-                       </div>
-                       <div class="col-span-1 flex justify-end items-center gap-1.5">
-                          <button
-                            type="button"
-                            :disabled="!col.physical_name || !col.physical_name.trim()"
-                            @click="openColumnAiRecommendation(col, editingTable)"
-                            class="p-1 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                            :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
-                          >
-                             <SparklesIcon class="w-4 h-4" />
-                          </button>
-                          <button @click="removeColumn(index)" class="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" title="删除此字段">
-                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                          </button>
-                       </div>
-                    </div>
-                    <!-- 维度角色与层级组（第二行） -->
-                    <div class="grid grid-cols-12 gap-4 items-center pl-1">
-                       <div class="col-span-3 flex items-center gap-1.5">
-                          <span class="text-[10px] text-gray-400 shrink-0">维度</span>
-                          <select v-model="col.dimension_role" class="bg-transparent border-none text-[10px] text-gray-600 focus:ring-0 outline-none p-0">
-                             <option value="none">无</option>
-                             <option value="time">时间</option>
-                             <option value="geo">地理</option>
-                             <option value="category">类目</option>
-                             <option value="identifier">标识符</option>
-                          </select>
-                       </div>
-                       <div class="col-span-5 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none'">
-                          <span class="text-[10px] text-gray-400 shrink-0">层级组</span>
-                          <input v-model="col.hierarchy_group" maxlength="100" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="同组字段构成下钻链，如 region">
-                       </div>
-                       <div class="col-span-2 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none' && col.hierarchy_group">
-                          <span class="text-[10px] text-gray-400 shrink-0">序号</span>
-                          <input v-model.number="col.hierarchy_order" type="number" min="1" class="w-12 bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="1">
-                       </div>
-                    </div>
-                 </div>
-              </div>
-           </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
-           <button @click="showEditModal = false" class="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors">取消</button>
-           <button @click="handleUpdateTable" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/20 transition-all flex items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-              保存修改
-           </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Create Table Modal -->
-    <div v-if="showCreateTableModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showCreateTableModal = false">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center border border-blue-100">
-                <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-             </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">手动创建新表</h2>
-               <p class="text-xs text-gray-500 font-medium">手动定义表结构、字段及其业务含义</p>
+                   <div v-for="(col, index) in newTable.columns" :key="index" class="grid grid-cols-12 gap-4 items-center p-2 bg-gray-50 rounded-lg border border-transparent hover:border-blue-100 hover:bg-white transition-all">
+                      <div class="col-span-3">
+                         <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-xs font-mono px-1 py-0.5" placeholder="字段名">
+                      </div>
+                      <div class="col-span-2">
+                         <select v-model="col.type" class="w-full bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 outline-none p-0">
+                            <option value="String">String</option>
+                            <option value="Int64">Int64</option>
+                            <option value="Float64">Float64</option>
+                            <option value="DateTime">DateTime</option>
+                            <option value="Boolean">Boolean</option>
+                            <option value="JSON">JSON</option>
+                         </select>
+                      </div>
+                      <div class="col-span-3">
+                         <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm px-1 py-0.5" placeholder="业务名">
+                      </div>
+                      <div class="col-span-3">
+                         <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
+                      </div>
+                      <div class="col-span-1 flex justify-end items-center gap-1.5">
+                         <button
+                           type="button"
+                           :disabled="!col.physical_name || !col.physical_name.trim()"
+                           @click="openColumnAiRecommendation(col, newTable)"
+                           class="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                           :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
+                         >
+                            <SparklesIcon class="w-4 h-4" />
+                         </button>
+                         <button @click="newTable.columns.splice(index, 1)" class="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" title="删除此字段">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                         </button>
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <button @click="showCreateTableModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
 
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-8 space-y-8 bg-white">
-           <div class="grid grid-cols-2 gap-6">
-              <div class="space-y-2">
-                 <label class="text-sm font-bold text-gray-700">物理名称 (Physical Name) *</label>
-                 <input v-model="newTable.physical_name" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono disabled:bg-gray-100" placeholder="例如：t_orders">
-              </div>
-              <div class="space-y-2">
-                 <label class="text-sm font-bold text-gray-700">业务名称 (Term) *</label>
-                 <input v-model="newTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100" placeholder="例如：订单表">
-              </div>
-           </div>
-           <div class="space-y-2">
-              <label class="text-sm font-bold text-gray-700">描述 (Description)</label>
-              <input v-model="newTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100" placeholder="简要描述该表的作用...">
-           </div>
-
-            <div class="grid grid-cols-2 gap-6">
-              <div class="space-y-2">
-                <label class="text-sm font-bold text-gray-700">分区字段</label>
-                <input :value="optimizationFieldsText(newTable.partition_fields)" @input="setOptimizationFields(newTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="例如：event_date, tenant_id">
-                <p class="text-xs text-gray-400">多个字段用逗号分隔。</p>
-              </div>
-              <div class="space-y-2">
-                <label class="text-sm font-bold text-gray-700">索引字段</label>
-                <input :value="optimizationFieldsText(newTable.index_fields)" @input="setOptimizationFields(newTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="例如：tenant_id, user_id">
-                <p class="text-xs text-gray-400">多个字段用逗号分隔。</p>
-              </div>
-            </div>
-
-           <div class="border-t border-gray-100 pt-6">
-              <div class="flex justify-between items-center mb-4">
-                <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2">
-                   <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                   字段定义 (Columns)
-                </h3>
-                <button 
-                  @click="newTable.columns.push({ physical_name: '', term: '', type: 'String', description: '' })"
-                  class="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg border border-blue-100 hover:bg-blue-100 transition-colors flex items-center gap-1 font-bold"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                  添加字段
-                </button>
-              </div>
-              
-              <div class="space-y-3">
-                 <div class="grid grid-cols-12 gap-4 px-2 text-xs font-medium text-gray-500 uppercase">
-                    <div class="col-span-3">Physical Name</div>
-                    <div class="col-span-2">Type</div>
-                    <div class="col-span-3">Business Term</div>
-                    <div class="col-span-3">Description</div>
-                    <div class="col-span-1"></div>
-                 </div>
-
-                 <div v-for="(col, index) in newTable.columns" :key="index" class="grid grid-cols-12 gap-4 items-center p-2 bg-gray-50 rounded-lg border border-transparent hover:border-blue-100 hover:bg-white transition-all">
-                    <div class="col-span-3">
-                       <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-blue-500 outline-none text-xs font-mono px-1 py-0.5" placeholder="字段名">
-                    </div>
-                    <div class="col-span-2">
-                       <select v-model="col.type" class="w-full bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 outline-none p-0">
-                          <option value="String">String</option>
-                          <option value="Int64">Int64</option>
-                          <option value="Float64">Float64</option>
-                          <option value="DateTime">DateTime</option>
-                          <option value="Boolean">Boolean</option>
-                          <option value="JSON">JSON</option>
-                       </select>
-                    </div>
-                    <div class="col-span-3">
-                       <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm px-1 py-0.5" placeholder="业务名">
-                    </div>
-                    <div class="col-span-3">
-                       <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
-                    </div>
-                    <div class="col-span-1 flex justify-end items-center gap-1.5">
-                       <button
-                         type="button"
-                         :disabled="!col.physical_name || !col.physical_name.trim()"
-                         @click="openColumnAiRecommendation(col, newTable)"
-                         class="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                         :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
-                       >
-                          <SparklesIcon class="w-4 h-4" />
-                       </button>
-                       <button @click="newTable.columns.splice(index, 1)" class="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" title="删除此字段">
-                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                       </button>
-                    </div>
-                 </div>
-              </div>
-           </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
-           <button @click="showCreateTableModal = false" class="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors">取消</button>
-           <button @click="handleCreateTable" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-              立即创建
-           </button>
+          <!-- Footer -->
+          <div class="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+             <button @click="showCreateTableModal = false" class="px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors">取消</button>
+             <button @click="handleCreateTable" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                立即创建
+             </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Smart Import Wizard -->
     <SmartImportWizard 
@@ -1769,192 +1775,202 @@ defineExpose({ fetchMetrics })
     />
 
     <!-- YAML Modal -->
-    <div v-if="showYamlModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showYamlModal = false">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[85vh] border border-gray-100">
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center border border-purple-100">
-                <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-             </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">AI 元数据预览 (YAML)</h2>
-               <p class="text-xs text-gray-400 font-medium">这是 Agent 在对话时实际获取到的语义上下文</p>
-             </div>
+    <Teleport to="body">
+      <div v-if="showYamlModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showYamlModal = false">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[85vh] border border-gray-100">
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center border border-purple-100">
+                  <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">AI 元数据预览 (YAML)</h2>
+                 <p class="text-xs text-gray-400 font-medium">这是 Agent 在对话时实际获取到的语义上下文</p>
+               </div>
+            </div>
+            <button @click="showYamlModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-          <button @click="showYamlModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
-        <div class="flex-1 overflow-auto bg-slate-900 p-0">
-          <pre class="p-6 text-sm font-mono text-cyan-400 leading-relaxed">{{ yamlContent }}</pre>
-        </div>
-        <div class="p-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
-           <button @click="exportMarkdown" class="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-bold hover:bg-purple-700 flex items-center gap-2 transition-all shadow-sm shadow-purple-500/20">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-              导出为 Markdown
-           </button>
-           <button @click="copyYaml" class="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 hover:bg-gray-100 flex items-center gap-2 transition-all">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-              复制内容
-           </button>
-           <button @click="showYamlModal = false" class="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 hover:bg-gray-100">关闭预览</button>
+          <div class="flex-1 overflow-auto bg-slate-900 p-0">
+            <pre class="p-6 text-sm font-mono text-cyan-400 leading-relaxed">{{ yamlContent }}</pre>
+          </div>
+          <div class="p-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+             <button @click="exportMarkdown" class="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-bold hover:bg-purple-700 flex items-center gap-2 transition-all shadow-sm shadow-purple-500/20">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                导出为 Markdown
+             </button>
+             <button @click="copyYaml" class="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 hover:bg-gray-100 flex items-center gap-2 transition-all">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                复制内容
+             </button>
+             <button @click="showYamlModal = false" class="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 hover:bg-gray-100">关闭预览</button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
     <!-- Batch Delete Tables Modal -->
-    <div v-if="showBatchDeleteTableModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showBatchDeleteTableModal = false">
-       <div class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
-          <div class="p-6 text-center">
-             <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
-                <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-             </div>
-             <h3 class="text-lg font-bold text-gray-900 mb-2">确认批量删除数据表?</h3>
-             <p class="text-sm text-gray-500 mb-4">
-               您确定要删除已选中的 <b class="text-red-600 font-mono">{{ selectedTableNames.length }}</b> 张数据表吗？<br>此操作不可恢复，关联的字段与关系定义也将同步删除。
-             </p>
-             <div class="max-h-36 overflow-y-auto bg-gray-50 rounded-lg p-2.5 mb-6 text-left border border-gray-100">
-                <div v-for="name in selectedTableNames" :key="name" class="text-xs font-mono text-gray-600 py-0.5 truncate">
-                   • {{ name }}
-                </div>
-             </div>
-             <div class="flex gap-3 justify-center">
-                <button @click="showBatchDeleteTableModal = false" :disabled="batchDeletingTables" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
-                <button @click="confirmBatchDeleteTables" :disabled="batchDeletingTables" class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30 disabled:opacity-50 flex items-center gap-2">
-                   <svg v-if="batchDeletingTables" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                   <span>{{ batchDeletingTables ? '正在删除...' : '确认批量删除' }}</span>
-                </button>
-             </div>
-          </div>
-       </div>
-    </div>
+    <Teleport to="body">
+      <div v-if="showBatchDeleteTableModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showBatchDeleteTableModal = false">
+         <div class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
+            <div class="p-6 text-center">
+               <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
+                  <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+               </div>
+               <h3 class="text-lg font-bold text-gray-900 mb-2">确认批量删除数据表?</h3>
+               <p class="text-sm text-gray-500 mb-4">
+                 您确定要删除已选中的 <b class="text-red-600 font-mono">{{ selectedTableNames.length }}</b> 张数据表吗？<br>此操作不可恢复，关联的字段与关系定义也将同步删除。
+               </p>
+               <div class="max-h-36 overflow-y-auto bg-gray-50 rounded-lg p-2.5 mb-6 text-left border border-gray-100">
+                  <div v-for="name in selectedTableNames" :key="name" class="text-xs font-mono text-gray-600 py-0.5 truncate">
+                     • {{ name }}
+                  </div>
+               </div>
+               <div class="flex gap-3 justify-center">
+                  <button @click="showBatchDeleteTableModal = false" :disabled="batchDeletingTables" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
+                  <button @click="confirmBatchDeleteTables" :disabled="batchDeletingTables" class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30 disabled:opacity-50 flex items-center gap-2">
+                     <svg v-if="batchDeletingTables" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                     <span>{{ batchDeletingTables ? '正在删除...' : '确认批量删除' }}</span>
+                  </button>
+               </div>
+            </div>
+         </div>
+      </div>
+    </Teleport>
     <!-- Delete Modal -->
-    <div v-if="deleteTableId" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="deleteTableId = null">
-       <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
-          <div class="p-6 text-center">
-             <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
-                <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-             </div>
-             <h3 class="text-lg font-bold text-gray-900 mb-2">确认删除表结构?</h3>
-             <p class="text-sm text-gray-500 mb-6">
-               您确定要删除表 <b>{{ deleteTableId }}</b> 吗？<br>此操作不可恢复。
-             </p>
-             <div class="flex gap-3 justify-center">
-                <button @click="deleteTableId = null" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
-                <button @click="confirmDeleteTable" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30">确认删除</button>
-             </div>
-          </div>
-       </div>
-    </div>
+    <Teleport to="body">
+      <div v-if="deleteTableId" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="deleteTableId = null">
+         <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
+            <div class="p-6 text-center">
+               <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
+                  <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+               </div>
+               <h3 class="text-lg font-bold text-gray-900 mb-2">确认删除表结构?</h3>
+               <p class="text-sm text-gray-500 mb-6">
+                 您确定要删除表 <b>{{ deleteTableId }}</b> 吗？<br>此操作不可恢复。
+               </p>
+               <div class="flex gap-3 justify-center">
+                  <button @click="deleteTableId = null" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
+                  <button @click="confirmDeleteTable" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30">确认删除</button>
+               </div>
+            </div>
+         </div>
+      </div>
+    </Teleport>
     <!-- Dataset Description Modal -->
-    <div v-if="showFullDescription" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showFullDescription = false">
-       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col border border-gray-100 animate-fade-in-up">
-          <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-             <h3 class="text-lg font-black text-gray-900 flex items-center gap-2">
-                <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                数据集描述详情
-             </h3>
-             <button @click="showFullDescription = false" class="p-2 hover:bg-white rounded-full transition-colors group">
-                <svg class="w-5 h-5 text-gray-400 group-hover:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-             </button>
-          </div>
-          <div class="p-8 overflow-y-auto max-h-[60vh]">
-             <div class="bg-blue-50/30 p-6 rounded-xl border border-blue-50">
-                <p class="text-gray-700 text-base leading-relaxed whitespace-pre-wrap select-text">{{ dataset?.description }}</p>
-             </div>
-          </div>
-          <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end">
-             <button @click="showFullDescription = false" class="px-6 py-2 bg-slate-900 text-white rounded-lg hover:bg-black font-bold text-sm shadow-lg transition-all">
-                关闭
-             </button>
-          </div>
-       </div>
-    </div>
+    <Teleport to="body">
+      <div v-if="showFullDescription" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showFullDescription = false">
+         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col border border-gray-100 animate-fade-in-up">
+            <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+               <h3 class="text-lg font-black text-gray-900 flex items-center gap-2">
+                  <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  数据集描述详情
+               </h3>
+               <button @click="showFullDescription = false" class="p-2 hover:bg-white rounded-full transition-colors group">
+                  <svg class="w-5 h-5 text-gray-400 group-hover:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+               </button>
+            </div>
+            <div class="p-8 overflow-y-auto max-h-[60vh]">
+               <div class="bg-blue-50/30 p-6 rounded-xl border border-blue-50">
+                  <p class="text-gray-700 text-base leading-relaxed whitespace-pre-wrap select-text">{{ dataset?.description }}</p>
+               </div>
+            </div>
+            <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end">
+               <button @click="showFullDescription = false" class="px-6 py-2 bg-slate-900 text-white rounded-lg hover:bg-black font-bold text-sm shadow-lg transition-all">
+                  关闭
+               </button>
+            </div>
+         </div>
+      </div>
+    </Teleport>
 
     <!-- AI Enhance Dataset Modal -->
-    <div v-if="showAiEnhanceModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showAiEnhanceModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/80 to-purple-50/80">
-          <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
-            <span class="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
-              <SparklesIcon class="w-4 h-4" />
-            </span>
-            AI 智能生成数据集描述与标签
-          </h3>
-          <button @click="showAiEnhanceModal = false" class="p-1.5 hover:bg-white rounded-lg transition-colors text-gray-400 hover:text-gray-600">
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-
-        <!-- Body -->
-        <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-          <div class="bg-indigo-50/60 p-3.5 rounded-xl border border-indigo-100 text-xs text-indigo-700 flex items-start gap-2 leading-relaxed">
-            <svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            <span>已基于当前数据集所包含的数据表、字段画像及业务指标深度提炼生成。您可以在下方直接编辑微调，确认无误后点击保存。</span>
-          </div>
-
-          <div>
-            <label class="block text-xs font-bold text-gray-700 mb-1.5">数据集业务描述</label>
-            <textarea 
-              v-model="aiGeneratedDesc" 
-              rows="4" 
-              class="w-full border border-gray-300 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 leading-relaxed transition-all"
-              placeholder="请输入或微调数据集描述..."
-            ></textarea>
-          </div>
-
-          <div>
-            <label class="block text-xs font-bold text-gray-700 mb-1.5">业务标签 (Tags)</label>
-            <div class="flex gap-2 mb-2">
-              <input 
-                v-model="aiTagInput" 
-                @keyup.enter="addAiTag" 
-                type="text" 
-                class="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" 
-                placeholder="输入标签并按回车添加..."
-              >
-              <button 
-                type="button" 
-                @click="addAiTag"
-                class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs rounded-lg font-medium transition-colors"
-              >
-                添加
-              </button>
-            </div>
-            <div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-gray-50 rounded-xl border border-gray-100">
-              <span 
-                v-for="(tag, i) in aiGeneratedTags" 
-                :key="i" 
-                class="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-lg flex items-center gap-1.5 border border-indigo-100 font-medium"
-              >
-                # {{ tag }}
-                <button @click="removeAiTag(i)" class="text-indigo-400 hover:text-red-500 transition-colors font-bold">&times;</button>
+    <Teleport to="body">
+      <div v-if="showAiEnhanceModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showAiEnhanceModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/80 to-purple-50/80">
+            <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
+              <span class="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
+                <SparklesIcon class="w-4 h-4" />
               </span>
-              <span v-if="aiGeneratedTags.length === 0" class="text-xs text-gray-400 py-0.5">暂无标签</span>
+              AI 智能生成数据集描述与标签
+            </h3>
+            <button @click="showAiEnhanceModal = false" class="p-1.5 hover:bg-white rounded-lg transition-colors text-gray-400 hover:text-gray-600">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+
+          <!-- Body -->
+          <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+            <div class="bg-indigo-50/60 p-3.5 rounded-xl border border-indigo-100 text-xs text-indigo-700 flex items-start gap-2 leading-relaxed">
+              <svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span>已基于当前数据集所包含的数据表、字段画像及业务指标深度提炼生成。您可以在下方直接编辑微调，确认无误后点击保存。</span>
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1.5">数据集业务描述</label>
+              <textarea 
+                v-model="aiGeneratedDesc" 
+                rows="4" 
+                class="w-full border border-gray-300 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 leading-relaxed transition-all"
+                placeholder="请输入或微调数据集描述..."
+              ></textarea>
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1.5">业务标签 (Tags)</label>
+              <div class="flex gap-2 mb-2">
+                <input 
+                  v-model="aiTagInput" 
+                  @keyup.enter="addAiTag" 
+                  type="text" 
+                  class="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" 
+                  placeholder="输入标签并按回车添加..."
+                >
+                <button 
+                  type="button" 
+                  @click="addAiTag"
+                  class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs rounded-lg font-medium transition-colors"
+                >
+                  添加
+                </button>
+              </div>
+              <div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-gray-50 rounded-xl border border-gray-100">
+                <span 
+                  v-for="(tag, i) in aiGeneratedTags" 
+                  :key="i" 
+                  class="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-lg flex items-center gap-1.5 border border-indigo-100 font-medium"
+                >
+                  # {{ tag }}
+                  <button @click="removeAiTag(i)" class="text-indigo-400 hover:text-red-500 transition-colors font-bold">&times;</button>
+                </span>
+                <span v-if="aiGeneratedTags.length === 0" class="text-xs text-gray-400 py-0.5">暂无标签</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- Footer -->
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
-          <button 
-            @click="showAiEnhanceModal = false" 
-            :disabled="savingAiEnhance"
-            class="px-4 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50 text-gray-700 font-medium transition-colors"
-          >
-            取消
-          </button>
-          <button 
-            @click="saveAiEnhance" 
-            :disabled="savingAiEnhance"
-            class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold shadow-md shadow-indigo-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
-          >
-            <svg v-if="savingAiEnhance" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            <span>{{ savingAiEnhance ? '正在保存...' : '应用并保存' }}</span>
-          </button>
+          <!-- Footer -->
+          <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
+            <button 
+              @click="showAiEnhanceModal = false" 
+              :disabled="savingAiEnhance"
+              class="px-4 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50 text-gray-700 font-medium transition-colors"
+            >
+              取消
+            </button>
+            <button 
+              @click="saveAiEnhance" 
+              :disabled="savingAiEnhance"
+              class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold shadow-md shadow-indigo-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
+            >
+              <svg v-if="savingAiEnhance" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              <span>{{ savingAiEnhance ? '正在保存...' : '应用并保存' }}</span>
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- AI 补全描述确认框（复用通用 ConfirmModal 组件） -->
     <ConfirmModal

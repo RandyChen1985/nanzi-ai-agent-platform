@@ -1847,206 +1847,208 @@ onMounted(async () => {
     </template>
 
     <!-- 任务调度设计规范与全流程指引 Modal -->
-    <div v-if="showSpecsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-orange-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-xl bg-orange-600 text-white flex items-center justify-center shadow-md shadow-orange-500/20" style="background-color: #ea580c; color: #ffffff;">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    <Teleport to="body">
+      <div v-if="showSpecsModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-orange-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-xl bg-orange-600 text-white flex items-center justify-center shadow-md shadow-orange-500/20" style="background-color: #ea580c; color: #ffffff;">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">任务调度设计规范与全流程指引</h2>
+                 <p class="text-xs text-gray-500 font-medium mt-0.5">从 Cron 定时周期编排、资源限定与安全审批，到渠道触达、时序观测与健康监控。</p>
+               </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button
+                v-if="!showTaskFlowGuide"
+                type="button"
+                @click="restoreTaskFlowGuide"
+                class="inline-flex items-center gap-1 text-xs font-medium text-orange-700 bg-orange-100/70 hover:bg-orange-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>恢复顶部流程提示</span>
+              </button>
+              <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['flow', 'context', 'approval']" 
+               :key="tab"
+               @click="activeSpecsTab = tab as any"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+               :class="activeSpecsTab === tab ? 'border-orange-600 text-orange-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'flow' ? '全流程指引 (Workflow)' :
+                  tab === 'context' ? '上下文注入与智能体规范 (Context & Specs)' : '安全审批与资源限定 (Approval & Scope)' }}
+             </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+             <!-- Tab 1: Workflow Flow -->
+             <div v-if="activeSpecsTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-orange-50 to-amber-50 border-l-4 border-orange-600 p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-orange-900 mb-1">任务调度 5 步全生命周期自动化体系</h3>
+                   <p class="text-xs text-orange-700 leading-relaxed">
+                      基于分布式调度引擎。定义目标智能体与 Cron 周期，限定资源沙箱与审批模式，配置钉钉/企微/邮件触达，支持时序 Trace 全景观测。
+                   </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <!-- Step 1 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-orange-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <h4 class="font-bold text-gray-900 text-sm">任务创建与周期编排</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            指定负责执行的目标智能体与模型参数；配置每天/每周/每月定时周期与提示词，支持 AI 智能扩写优化 Prompt。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                         <button
+                            type="button"
+                            @click="showSpecsModal = false; router.push('/dashboard/agent-management')"
+                            class="text-xs text-gray-600 hover:text-gray-900 font-medium px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 cursor-pointer"
+                         >
+                            智能体中心 &rarr;
+                         </button>
+                         <button
+                            type="button"
+                            @click="showSpecsModal = false; openCreateModal()"
+                            class="text-xs text-orange-600 hover:text-orange-800 font-bold cursor-pointer"
+                         >
+                            新建任务 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 2 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <h4 class="font-bold text-gray-900 text-sm">资源限定与安全审批</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            限定任务可访问的数据集、知识库、Skills 与 MCP 工具；设置 Allow 放行、Ask 人工确认或 Deny 拦截高危操作。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         任务编辑中设置安全与资源范围
+                      </div>
+                   </div>
+
+                   <!-- Step 3 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <h4 class="font-bold text-gray-900 text-sm">渠道分发与触达订阅</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            配置站内通知、钉钉群机器人、企业微信 Webhook 或邮件，任务完成后自动沉淀 Markdown 报告并向相关人推送。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         在通知配置中勾选推送渠道
+                      </div>
+                   </div>
+
+                   <!-- Step 4 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <h4 class="font-bold text-gray-900 text-sm">手动试跑与时序观测</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            在任务卡片上点击「立即执行」即刻试跑；点击「Trace」展开时序链路，全景观测思考耗时与工具调用入参返回。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         卡片点击「立即执行」或「Trace」
+                      </div>
+                   </div>
+
+                   <!-- Step 5 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">5</span>
+                            <h4 class="font-bold text-gray-900 text-sm">健康监控与异常处置</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            切换「执行记录」查看历史执行日志、状态统计（成功/待确认/失败）与平均耗时，支持异常审计告警与一键重试。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showSpecsModal = false; mainViewTab = 'history'"
+                            class="text-xs text-emerald-600 hover:text-emerald-800 font-medium cursor-pointer"
+                         >
+                            前往执行记录 &rarr;
+                         </button>
+                      </div>
+                   </div>
+                </div>
              </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">任务调度设计规范与全流程指引</h2>
-               <p class="text-xs text-gray-500 font-medium mt-0.5">从 Cron 定时周期编排、资源限定与安全审批，到渠道触达、时序观测与健康监控。</p>
+
+             <!-- Tab 2: Context & Specs -->
+             <div v-else-if="activeSpecsTab === 'context'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">自动化上下文注入与处理规范</h4>
+                   <div class="space-y-3">
+                      <p class="text-xs text-gray-600">
+                         每次调度执行时，系统在 <code>user_info</code> 中自动注入以下上下文元数据，智能体可通过这些标识识别定时自动化场景：
+                      </p>
+                      <div class="bg-gray-50 rounded-xl p-4 border border-gray-150 font-mono text-[11px] space-y-1.5">
+                         <div class="flex"><span class="text-blue-600 w-36 font-semibold">is_scheduled_task:</span><span class="text-emerald-600 font-bold">true</span><span class="text-gray-400 ml-auto">// 标识当前为定时自动化任务</span></div>
+                         <div class="flex"><span class="text-blue-600 w-36 font-semibold">task_name:</span><span class="text-emerald-600 font-bold">"数据巡检与周报"</span><span class="text-gray-400 ml-auto">// 当前执行的任务名称</span></div>
+                         <div class="flex"><span class="text-blue-600 w-36 font-semibold">user_id / role:</span><span class="text-emerald-600 font-bold">"admin" / "1"</span><span class="text-gray-400 ml-auto">// 模拟创建者的身份与权限</span></div>
+                      </div>
+                      <div class="p-3.5 bg-amber-50/70 rounded-xl border border-amber-100 space-y-1 text-xs">
+                         <span class="font-bold text-amber-900">结果导向输出原则</span>
+                         <p class="text-gray-600 leading-relaxed">识别到 <code>is_scheduled_task</code> 上下文后，智能体应跳过“您好”、“请稍等”等交互用语，直接输出结构化 Markdown 报表或数据结论。</p>
+                      </div>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 3: Approval & Scope -->
+             <div v-else-if="activeSpecsTab === 'approval'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">安全审批策略与资源沙箱限定</h4>
+                   <div class="space-y-3 text-xs">
+                      <div class="p-3.5 bg-green-50/60 rounded-xl border border-green-100 space-y-1">
+                         <span class="font-bold text-green-900 text-sm">Allow 模式（自动放行）</span>
+                         <p class="text-gray-600 leading-relaxed">智能体调用只读类或常规工具时全自动执行，无需人工干预，适合日常数据巡检与日报推送。</p>
+                      </div>
+                      <div class="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100 space-y-1">
+                         <span class="font-bold text-amber-900 text-sm">Ask 模式（待人工授权）</span>
+                         <p class="text-gray-600 leading-relaxed">触发涉及数据写操作或外部高危 API 时，任务将挂起并向管理员发送审批通知，人工点击确认后继续。</p>
+                      </div>
+                      <div class="p-3.5 bg-red-50/60 rounded-xl border border-red-100 space-y-1">
+                         <span class="font-bold text-red-900 text-sm">Deny 模式（严格拦截）</span>
+                         <p class="text-gray-600 leading-relaxed">禁止所有需要二次确认的操作，一旦大模型尝试发起高危调用将直接拦截并记录异常审计日志。</p>
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <div class="flex items-center gap-3">
-            <button
-              v-if="!showTaskFlowGuide"
-              type="button"
-              @click="restoreTaskFlowGuide"
-              class="inline-flex items-center gap-1 text-xs font-medium text-orange-700 bg-orange-100/70 hover:bg-orange-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              <span>恢复顶部流程提示</span>
-            </button>
-            <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['flow', 'context', 'approval']" 
-             :key="tab"
-             @click="activeSpecsTab = tab as any"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-             :class="activeSpecsTab === tab ? 'border-orange-600 text-orange-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'flow' ? '全流程指引 (Workflow)' :
-                tab === 'context' ? '上下文注入与智能体规范 (Context & Specs)' : '安全审批与资源限定 (Approval & Scope)' }}
-           </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
-           <!-- Tab 1: Workflow Flow -->
-           <div v-if="activeSpecsTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-orange-50 to-amber-50 border-l-4 border-orange-600 p-4 rounded-r-xl shadow-2xs">
-                 <h3 class="font-bold text-orange-900 mb-1">任务调度 5 步全生命周期自动化体系</h3>
-                 <p class="text-xs text-orange-700 leading-relaxed">
-                    基于分布式调度引擎。定义目标智能体与 Cron 周期，限定资源沙箱与审批模式，配置钉钉/企微/邮件触达，支持时序 Trace 全景观测。
-                 </p>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <!-- Step 1 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-orange-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                          <h4 class="font-bold text-gray-900 text-sm">任务创建与周期编排</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          指定负责执行的目标智能体与模型参数；配置每天/每周/每月定时周期与提示词，支持 AI 智能扩写优化 Prompt。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                       <button
-                          type="button"
-                          @click="showSpecsModal = false; router.push('/dashboard/agent-management')"
-                          class="text-xs text-gray-600 hover:text-gray-900 font-medium px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 cursor-pointer"
-                       >
-                          智能体中心 &rarr;
-                       </button>
-                       <button
-                          type="button"
-                          @click="showSpecsModal = false; openCreateModal()"
-                          class="text-xs text-orange-600 hover:text-orange-800 font-bold cursor-pointer"
-                       >
-                          新建任务 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 2 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
-                          <h4 class="font-bold text-gray-900 text-sm">资源限定与安全审批</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          限定任务可访问的数据集、知识库、Skills 与 MCP 工具；设置 Allow 放行、Ask 人工确认或 Deny 拦截高危操作。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       任务编辑中设置安全与资源范围
-                    </div>
-                 </div>
-
-                 <!-- Step 3 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
-                          <h4 class="font-bold text-gray-900 text-sm">渠道分发与触达订阅</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          配置站内通知、钉钉群机器人、企业微信 Webhook 或邮件，任务完成后自动沉淀 Markdown 报告并向相关人推送。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       在通知配置中勾选推送渠道
-                    </div>
-                 </div>
-
-                 <!-- Step 4 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
-                          <h4 class="font-bold text-gray-900 text-sm">手动试跑与时序观测</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          在任务卡片上点击「立即执行」即刻试跑；点击「Trace」展开时序链路，全景观测思考耗时与工具调用入参返回。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       卡片点击「立即执行」或「Trace」
-                    </div>
-                 </div>
-
-                 <!-- Step 5 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">5</span>
-                          <h4 class="font-bold text-gray-900 text-sm">健康监控与异常处置</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          切换「执行记录」查看历史执行日志、状态统计（成功/待确认/失败）与平均耗时，支持异常审计告警与一键重试。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showSpecsModal = false; mainViewTab = 'history'"
-                          class="text-xs text-emerald-600 hover:text-emerald-800 font-medium cursor-pointer"
-                       >
-                          前往执行记录 &rarr;
-                       </button>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Context & Specs -->
-           <div v-else-if="activeSpecsTab === 'context'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">自动化上下文注入与处理规范</h4>
-                 <div class="space-y-3">
-                    <p class="text-xs text-gray-600">
-                       每次调度执行时，系统在 <code>user_info</code> 中自动注入以下上下文元数据，智能体可通过这些标识识别定时自动化场景：
-                    </p>
-                    <div class="bg-gray-50 rounded-xl p-4 border border-gray-150 font-mono text-[11px] space-y-1.5">
-                       <div class="flex"><span class="text-blue-600 w-36 font-semibold">is_scheduled_task:</span><span class="text-emerald-600 font-bold">true</span><span class="text-gray-400 ml-auto">// 标识当前为定时自动化任务</span></div>
-                       <div class="flex"><span class="text-blue-600 w-36 font-semibold">task_name:</span><span class="text-emerald-600 font-bold">"数据巡检与周报"</span><span class="text-gray-400 ml-auto">// 当前执行的任务名称</span></div>
-                       <div class="flex"><span class="text-blue-600 w-36 font-semibold">user_id / role:</span><span class="text-emerald-600 font-bold">"admin" / "1"</span><span class="text-gray-400 ml-auto">// 模拟创建者的身份与权限</span></div>
-                    </div>
-                    <div class="p-3.5 bg-amber-50/70 rounded-xl border border-amber-100 space-y-1 text-xs">
-                       <span class="font-bold text-amber-900">结果导向输出原则</span>
-                       <p class="text-gray-600 leading-relaxed">识别到 <code>is_scheduled_task</code> 上下文后，智能体应跳过“您好”、“请稍等”等交互用语，直接输出结构化 Markdown 报表或数据结论。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 3: Approval & Scope -->
-           <div v-else-if="activeSpecsTab === 'approval'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">安全审批策略与资源沙箱限定</h4>
-                 <div class="space-y-3 text-xs">
-                    <div class="p-3.5 bg-green-50/60 rounded-xl border border-green-100 space-y-1">
-                       <span class="font-bold text-green-900 text-sm">Allow 模式（自动放行）</span>
-                       <p class="text-gray-600 leading-relaxed">智能体调用只读类或常规工具时全自动执行，无需人工干预，适合日常数据巡检与日报推送。</p>
-                    </div>
-                    <div class="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100 space-y-1">
-                       <span class="font-bold text-amber-900 text-sm">Ask 模式（待人工授权）</span>
-                       <p class="text-gray-600 leading-relaxed">触发涉及数据写操作或外部高危 API 时，任务将挂起并向管理员发送审批通知，人工点击确认后继续。</p>
-                    </div>
-                    <div class="p-3.5 bg-red-50/60 rounded-xl border border-red-100 space-y-1">
-                       <span class="font-bold text-red-900 text-sm">Deny 模式（严格拦截）</span>
-                       <p class="text-gray-600 leading-relaxed">禁止所有需要二次确认的操作，一旦大模型尝试发起高危调用将直接拦截并记录异常审计日志。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Edit Modal -->
     <Modal 
@@ -2599,119 +2601,121 @@ onMounted(async () => {
     </Modal>
 
     <!-- Execution History Logs Drawer -->
-    <div v-if="showLogsDrawer" class="fixed inset-0 z-50 flex justify-end">
-      <div class="fixed inset-0 bg-black/20 backdrop-blur-sm" @click="showLogsDrawer = false"></div>
-      <div class="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-slide-in-right"
-           :class="isMobile ? 'max-w-none' : ''"
-      >
-        <div class="p-6 border-b flex items-center justify-between bg-gray-50/50">
-          <div>
-            <h2 class="text-xl font-bold text-gray-900">执行历史回溯</h2>
-            <p class="text-xs text-gray-400 mt-1 uppercase tracking-widest font-mono">{{ selectedTask?.name }} · Logs</p>
+    <Teleport to="body">
+      <div v-if="showLogsDrawer" class="fixed inset-0 z-[100] flex justify-end">
+        <div class="fixed inset-0 bg-black/20 backdrop-blur-sm" @click="showLogsDrawer = false"></div>
+        <div class="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-slide-in-right"
+             :class="isMobile ? 'max-w-none' : ''"
+        >
+          <div class="p-6 border-b flex items-center justify-between bg-gray-50/50">
+            <div>
+              <h2 class="text-xl font-bold text-gray-900">执行历史回溯</h2>
+              <p class="text-xs text-gray-400 mt-1 uppercase tracking-widest font-mono">{{ selectedTask?.name }} · Logs</p>
+            </div>
+            <button @click="showLogsDrawer = false" class="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-400">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
           </div>
-          <button @click="showLogsDrawer = false" class="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-400">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
         
-        <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
-          <div v-if="logsLoading && logs.length === 0" class="flex flex-col items-center justify-center py-20">
-            <div class="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mb-4"></div>
-            <p class="text-sm text-gray-400">正在拉取审计轨迹...</p>
-          </div>
-          <div v-else-if="logs.length === 0" class="text-center py-20 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-            <p class="text-gray-400">暂无执行记录</p>
-          </div>
-          <div v-else class="space-y-4">
-            <div v-for="log in logs" :key="log.id" class="p-4 border rounded-2xl hover:border-primary/30 transition-all hover:shadow-sm bg-white overflow-hidden">
-              <div class="flex justify-between items-start mb-3">
-                <div class="flex items-center space-x-2">
-                  <span class="px-2 py-0.5 rounded-full text-[9px] font-black tracking-tighter" :class="logStatusMeta(log.status).class">{{ logStatusMeta(log.status).label }}</span>
-                  <span class="text-[10px] text-gray-300 font-mono">{{ log.trace_id.split('-')[0] }}...</span>
-                </div>
-                <span class="text-[10px] text-gray-400 font-medium">{{ formatDate(log.created_at) }}</span>
-              </div>
-              
-              <!-- Result Content -->
-              <p class="text-xs text-gray-600 line-clamp-3 mb-4 leading-relaxed font-medium bg-gray-50 p-3 rounded-xl border border-gray-100">"{{ log.summary || log.query }}"</p>
-              
-              <!-- Steps Accordion -->
-              <div class="mb-4">
-                  <button 
-                    @click="toggleLogSteps(log)"
-                    class="flex items-center space-x-2 text-[10px] font-black text-gray-400 uppercase tracking-widest hover:text-primary transition-colors group"
-                  >
-                    <div class="flex items-center">
-                        <div v-if="(log as any).stepsLoading" class="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin mr-2"></div>
-                        <svg class="w-4 h-4 transform transition-transform duration-300" :class="{ 'rotate-180': (log as any).isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
-                    </div>
-                    <span>执行步骤 (Steps)</span>
-                    <span v-if="(log as any).steps?.length" class="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full text-[8px] ml-1 group-hover:bg-primary/10 group-hover:text-primary transition-colors">{{ (log as any).steps.length }}</span>
-                  </button>
-
-                  <div v-show="(log as any).isExpanded" class="mt-3 pl-4 border-l-2 border-primary/10 space-y-3 animate-fade-in">
-                      <div v-if="(log as any).stepsLoading" class="py-4 flex justify-center">
-                          <div class="animate-pulse flex space-x-2 items-center">
-                              <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
-                              <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
-                              <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
-                          </div>
-                      </div>
-                      <div v-else-if="(log as any).steps && (log as any).steps.length > 0" class="space-y-3">
-                          <div v-for="(step, sIdx) in (log as any).steps" :key="sIdx" class="bg-gray-50/50 p-2.5 rounded-xl border border-gray-100/50 group/step relative">
-                              <div class="flex justify-between items-center mb-1.5">
-                                  <div class="flex items-center space-x-2">
-                                      <span 
-                                        class="text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter"
-                                        :class="{
-                                            'bg-blue-100 text-blue-700': (step as any).event_type === 'thought',
-                                            'bg-purple-100 text-purple-700': (step as any).event_type === 'router',
-                                            'bg-amber-100 text-amber-700': (step as any).event_type === 'tool_call',
-                                            'bg-green-100 text-green-700': (step as any).event_type === 'synthesis' || (step as any).event_type === 'final_answer',
-                                            'bg-red-100 text-red-700': (step as any).event_type === 'error'
-                                        }"
-                                      >
-                                        {{ (step as any).event_type }}
-                                      </span>
-                                      <span v-if="(step as any).tool_name" class="text-[9px] font-bold text-gray-700 font-mono">{{ (step as any).tool_name }}</span>
-                                  </div>
-                                  <span class="text-[8px] text-gray-300 font-mono italic">{{ (step as any).execution_time_ms?.toFixed(0) }}ms</span>
-                              </div>
-                              
-                              <!-- Simplified Content Preview -->
-                              <div class="text-[10px] text-gray-500 leading-relaxed break-words line-clamp-2 italic opacity-80 group-hover/step:opacity-100 transition-opacity">
-                                  {{ (step as any).tool_input ? (typeof (step as any).tool_input === 'string' ? (step as any).tool_input : JSON.stringify((step as any).tool_input)) : '' }}
-                                  {{ (step as any).tool_output?.content || (step as any).raw_log || '' }}
-                              </div>
-                          </div>
-                      </div>
-                      <div v-else class="py-2 text-[10px] text-gray-400 italic">未记录详细步骤</div>
+          <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <div v-if="logsLoading && logs.length === 0" class="flex flex-col items-center justify-center py-20">
+              <div class="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mb-4"></div>
+              <p class="text-sm text-gray-400">正在拉取审计轨迹...</p>
+            </div>
+            <div v-else-if="logs.length === 0" class="text-center py-20 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+              <p class="text-gray-400">暂无执行记录</p>
+            </div>
+            <div v-else class="space-y-4">
+              <div v-for="log in logs" :key="log.id" class="p-4 border rounded-2xl hover:border-primary/30 transition-all hover:shadow-sm bg-white overflow-hidden">
+                <div class="flex justify-between items-start mb-3">
+                  <div class="flex items-center space-x-2">
+                    <span class="px-2 py-0.5 rounded-full text-[9px] font-black tracking-tighter" :class="logStatusMeta(log.status).class">{{ logStatusMeta(log.status).label }}</span>
+                    <span class="text-[10px] text-gray-300 font-mono">{{ log.trace_id.split('-')[0] }}...</span>
                   </div>
-              </div>
+                  <span class="text-[10px] text-gray-400 font-medium">{{ formatDate(log.created_at) }}</span>
+                </div>
+              
+                <!-- Result Content -->
+                <p class="text-xs text-gray-600 line-clamp-3 mb-4 leading-relaxed font-medium bg-gray-50 p-3 rounded-xl border border-gray-100">"{{ log.summary || log.query }}"</p>
+              
+                <!-- Steps Accordion -->
+                <div class="mb-4">
+                    <button 
+                      @click="toggleLogSteps(log)"
+                      class="flex items-center space-x-2 text-[10px] font-black text-gray-400 uppercase tracking-widest hover:text-primary transition-colors group"
+                    >
+                      <div class="flex items-center">
+                          <div v-if="(log as any).stepsLoading" class="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin mr-2"></div>
+                          <svg class="w-4 h-4 transform transition-transform duration-300" :class="{ 'rotate-180': (log as any).isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
+                      </div>
+                      <span>执行步骤 (Steps)</span>
+                      <span v-if="(log as any).steps?.length" class="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full text-[8px] ml-1 group-hover:bg-primary/10 group-hover:text-primary transition-colors">{{ (log as any).steps.length }}</span>
+                    </button>
 
-              <!-- Footer Actions -->
-              <div class="flex justify-between items-center pt-2 border-t border-gray-50">
-                <span class="text-[9px] text-gray-300 font-medium" :title="`${Math.round(log.execution_time_ms)}ms`">时长: {{ formatDurationMs(log.execution_time_ms) }}</span>
-                <button @click="viewTrace(log.trace_id)" class="text-[10px] text-primary font-black flex items-center hover:underline uppercase tracking-widest">
-                  完整链路 (Trace)
-                  <svg class="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7-7 7" /></svg>
-                </button>
+                    <div v-show="(log as any).isExpanded" class="mt-3 pl-4 border-l-2 border-primary/10 space-y-3 animate-fade-in">
+                        <div v-if="(log as any).stepsLoading" class="py-4 flex justify-center">
+                            <div class="animate-pulse flex space-x-2 items-center">
+                                <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
+                                <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
+                                <div class="w-1 h-1 bg-primary/40 rounded-full"></div>
+                            </div>
+                        </div>
+                        <div v-else-if="(log as any).steps && (log as any).steps.length > 0" class="space-y-3">
+                            <div v-for="(step, sIdx) in (log as any).steps" :key="sIdx" class="bg-gray-50/50 p-2.5 rounded-xl border border-gray-100/50 group/step relative">
+                                <div class="flex justify-between items-center mb-1.5">
+                                    <div class="flex items-center space-x-2">
+                                        <span 
+                                          class="text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter"
+                                          :class="{
+                                              'bg-blue-100 text-blue-700': (step as any).event_type === 'thought',
+                                              'bg-purple-100 text-purple-700': (step as any).event_type === 'router',
+                                              'bg-amber-100 text-amber-700': (step as any).event_type === 'tool_call',
+                                              'bg-green-100 text-green-700': (step as any).event_type === 'synthesis' || (step as any).event_type === 'final_answer',
+                                              'bg-red-100 text-red-700': (step as any).event_type === 'error'
+                                          }"
+                                        >
+                                          {{ (step as any).event_type }}
+                                        </span>
+                                        <span v-if="(step as any).tool_name" class="text-[9px] font-bold text-gray-700 font-mono">{{ (step as any).tool_name }}</span>
+                                    </div>
+                                    <span class="text-[8px] text-gray-300 font-mono italic">{{ (step as any).execution_time_ms?.toFixed(0) }}ms</span>
+                                </div>
+                              
+                                <!-- Simplified Content Preview -->
+                                <div class="text-[10px] text-gray-500 leading-relaxed break-words line-clamp-2 italic opacity-80 group-hover/step:opacity-100 transition-opacity">
+                                    {{ (step as any).tool_input ? (typeof (step as any).tool_input === 'string' ? (step as any).tool_input : JSON.stringify((step as any).tool_input)) : '' }}
+                                    {{ (step as any).tool_output?.content || (step as any).raw_log || '' }}
+                                </div>
+                            </div>
+                        </div>
+                        <div v-else class="py-2 text-[10px] text-gray-400 italic">未记录详细步骤</div>
+                    </div>
+                </div>
+
+                <!-- Footer Actions -->
+                <div class="flex justify-between items-center pt-2 border-t border-gray-50">
+                  <span class="text-[9px] text-gray-300 font-medium" :title="`${Math.round(log.execution_time_ms)}ms`">时长: {{ formatDurationMs(log.execution_time_ms) }}</span>
+                  <button @click="viewTrace(log.trace_id)" class="text-[10px] text-primary font-black flex items-center hover:underline uppercase tracking-widest">
+                    完整链路 (Trace)
+                    <svg class="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7-7 7" /></svg>
+                  </button>
+                </div>
               </div>
             </div>
+              <div v-if="logsHasMore" class="pt-4 pb-8 flex justify-center">
+                   <button 
+                      @click="loadMoreLogs" 
+                      :disabled="logsLoading"
+                      class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold rounded-lg transition-colors disabled:opacity-50 flex items-center"
+                   >
+                      <svg v-if="logsLoading" class="w-3 h-3 mr-2 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      加载更多日志...
+                   </button>
+              </div>
           </div>
-            <div v-if="logsHasMore" class="pt-4 pb-8 flex justify-center">
-                 <button 
-                    @click="loadMoreLogs" 
-                    :disabled="logsLoading"
-                    class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold rounded-lg transition-colors disabled:opacity-50 flex items-center"
-                 >
-                    <svg v-if="logsLoading" class="w-3 h-3 mr-2 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    加载更多日志...
-                 </button>
-            </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Reusable Session Trace Modal (Rich UI) -->
     <SessionTraceModal

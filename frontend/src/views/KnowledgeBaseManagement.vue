@@ -3045,229 +3045,231 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
     </Modal>
   </div>
     <!-- 知识库设计规范与全流程指引 Modal -->
-    <div v-if="showHelp" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/20" style="background-color: #059669; color: #ffffff;">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+    <Teleport to="body">
+      <div v-if="showHelp" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/20" style="background-color: #059669; color: #ffffff;">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">知识库设计规范与全流程指引</h2>
+                 <p class="text-xs text-gray-500 font-medium mt-0.5">从基础设施连通、切分策略定义，到多模态解析、权限下发与多智能体挂载。</p>
+               </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button
+                v-if="!showKnowledgeFlowGuide"
+                type="button"
+                @click="restoreKnowledgeFlowGuide"
+                class="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100/70 hover:bg-emerald-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>恢复顶部流程提示</span>
+              </button>
+              <button @click="showHelp = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['flow', 'chunking', 'retrieval']" 
+               :key="tab"
+               @click="activeHelpTab = tab as any"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+               :class="activeHelpTab === tab ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'flow' ? '全流程指引 (Workflow)' :
+                  tab === 'chunking' ? '切分模板选型 (Chunk Methods)' : '检索调优与评测 (Retrieval & Rerank)' }}
+             </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+             <!-- Tab 1: Workflow Flow -->
+             <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm">
+                   <h3 class="font-bold text-emerald-900 mb-1">知识库 5 步全生命周期构建体系</h3>
+                   <p class="text-xs text-emerald-700 leading-relaxed">
+                      以 RAGFlow 为核心引擎。前置需确保系统配置连通；解析后建议先在召回测试台验证 Top-K 命中率；通过角色管理分配访问权限后挂载至智能体。
+                   </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <!-- Step 1 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <h4 class="font-bold text-gray-900 text-sm">环境连通与库创建</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            部署 RAGFlow 并在「系统配置」填入 API 地址与密钥确保引擎连通就绪。选择通用、QA 问答对、表格等模板创建知识库或一键同步。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/system?tab=configs')"
+                            class="text-xs text-gray-600 hover:text-gray-900 font-medium px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 cursor-pointer"
+                         >
+                            系统配置 &rarr;
+                         </button>
+                         <button
+                            type="button"
+                            @click="showHelp = false; openCreate()"
+                            class="text-xs text-emerald-600 hover:text-emerald-800 font-bold cursor-pointer"
+                         >
+                            新建知识库 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 2 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <h4 class="font-bold text-gray-900 text-sm">文档上传与解析</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            批量上传 PDF/Word/Excel/Markdown/图片等；自动化 OCR 版面分析并生成 Chunks 切片，支持逐条审校与修正。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         左侧树选择知识库上传并启动解析
+                      </div>
+                   </div>
+
+                   <!-- Step 3 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <h4 class="font-bold text-gray-900 text-sm">召回测试与调优</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            输入真实业务提问验证 Top-K 向量相似度、全文检索与 Rerank 命中精度；在指标监控中心查看检索频次与命中趋势。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/knowledge-metrics')"
+                            class="text-xs text-gray-600 hover:text-gray-900 font-medium px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 cursor-pointer"
+                         >
+                            指标监控 &rarr;
+                         </button>
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/knowledge-retrieval-test')"
+                            class="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
+                         >
+                            召回测试 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 4 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <h4 class="font-bold text-gray-900 text-sm">权限授权与角色分配</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            配置知识库公开/私有范围与协作者读写权限；在「角色管理」中授予对应角色访问权限，确保业务人员可正常检索。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/roles')"
+                            class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
+                         >
+                            前往角色管理 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 5 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">5</span>
+                            <h4 class="font-bold text-gray-900 text-sm">智能体挂载与知识问答</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            在「智能体中心」为目标智能体显式绑定该知识库（`dataset_ids`）；智能体在对话中自主调用 RAG 工具，生成带切片溯源的高质量回答。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/agent-management')"
+                            class="text-xs text-amber-600 hover:text-amber-800 font-medium cursor-pointer"
+                         >
+                            前往智能体中心挂载 &rarr;
+                         </button>
+                      </div>
+                   </div>
+                </div>
              </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">知识库设计规范与全流程指引</h2>
-               <p class="text-xs text-gray-500 font-medium mt-0.5">从基础设施连通、切分策略定义，到多模态解析、权限下发与多智能体挂载。</p>
+
+             <!-- Tab 2: Chunking Methods -->
+             <div v-else-if="activeHelpTab === 'chunking'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">RAGFlow 切分策略选型推荐</h4>
+                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 space-y-1">
+                         <span class="font-bold text-blue-900 text-sm">naive（通用分块，推荐）</span>
+                         <p class="text-gray-600 leading-relaxed">适用于大部分文章、产品说明书、Wiki 文档与 Markdown。按段落标点自适应合并切分。</p>
+                      </div>
+                      <div class="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-100 space-y-1">
+                         <span class="font-bold text-emerald-900 text-sm">qa（问答对模式）</span>
+                         <p class="text-gray-600 leading-relaxed">适用于 FAQ 客服手册、常见问题解答。自动提取 Q&A 问答对并向量化 Question。</p>
+                      </div>
+                      <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-100 space-y-1">
+                         <span class="font-bold text-purple-900 text-sm">table（表格模式）</span>
+                         <p class="text-gray-600 leading-relaxed">适用于 Excel、CSV、财务数据表。保留行列结构与表头，避免跨行错位。</p>
+                      </div>
+                      <div class="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100 space-y-1">
+                         <span class="font-bold text-amber-900 text-sm">laws / book（法律/长篇专著）</span>
+                         <p class="text-gray-600 leading-relaxed">按法律条文、合同章节、书籍目录层级结构进行树状切分，召回定位精准。</p>
+                      </div>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 3: Retrieval & Rerank -->
+             <div v-else-if="activeHelpTab === 'retrieval'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">RAG 混合检索与重排（Rerank）调优最佳实践</h4>
+                   <div class="space-y-3 text-xs">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
+                         <span class="font-bold text-gray-800">1. 混合检索（Hybrid Search）</span>
+                         <p class="text-gray-600">结合 Dense 稠密向量（语义相近）与 Sparse 稀疏关键词（精准专有名词、错误码、型号），兼顾语义与精确字面匹配。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
+                         <span class="font-bold text-gray-800">2. 重排模型（Reranker）</span>
+                         <p class="text-gray-600">初筛 Top-20 后通过 Cross-Encoder 语义重排输出最终 Top-5 最强相关切片，显著压低大模型幻觉。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
+                         <span class="font-bold text-gray-800">3. 召回测试验证</span>
+                         <p class="text-gray-600">在上线前务必通过「知识库召回测试」验证关键高频提问的匹配分数（建议相似度 > 0.65）。</p>
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <div class="flex items-center gap-3">
-            <button
-              v-if="!showKnowledgeFlowGuide"
-              type="button"
-              @click="restoreKnowledgeFlowGuide"
-              class="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100/70 hover:bg-emerald-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              <span>恢复顶部流程提示</span>
-            </button>
-            <button @click="showHelp = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['flow', 'chunking', 'retrieval']" 
-             :key="tab"
-             @click="activeHelpTab = tab as any"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-             :class="activeHelpTab === tab ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'flow' ? '全流程指引 (Workflow)' :
-                tab === 'chunking' ? '切分模板选型 (Chunk Methods)' : '检索调优与评测 (Retrieval & Rerank)' }}
-           </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
-           <!-- Tab 1: Workflow Flow -->
-           <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm">
-                 <h3 class="font-bold text-emerald-900 mb-1">知识库 5 步全生命周期构建体系</h3>
-                 <p class="text-xs text-emerald-700 leading-relaxed">
-                    以 RAGFlow 为核心引擎。前置需确保系统配置连通；解析后建议先在召回测试台验证 Top-K 命中率；通过角色管理分配访问权限后挂载至智能体。
-                 </p>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <!-- Step 1 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                          <h4 class="font-bold text-gray-900 text-sm">环境连通与库创建</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          部署 RAGFlow 并在「系统配置」填入 API 地址与密钥确保引擎连通就绪。选择通用、QA 问答对、表格等模板创建知识库或一键同步。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/system?tab=configs')"
-                          class="text-xs text-gray-600 hover:text-gray-900 font-medium px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 cursor-pointer"
-                       >
-                          系统配置 &rarr;
-                       </button>
-                       <button
-                          type="button"
-                          @click="showHelp = false; openCreate()"
-                          class="text-xs text-emerald-600 hover:text-emerald-800 font-bold cursor-pointer"
-                       >
-                          新建知识库 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 2 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
-                          <h4 class="font-bold text-gray-900 text-sm">文档上传与解析</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          批量上传 PDF/Word/Excel/Markdown/图片等；自动化 OCR 版面分析并生成 Chunks 切片，支持逐条审校与修正。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       左侧树选择知识库上传并启动解析
-                    </div>
-                 </div>
-
-                 <!-- Step 3 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">3</span>
-                          <h4 class="font-bold text-gray-900 text-sm">召回测试与调优</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          输入真实业务提问验证 Top-K 向量相似度、全文检索与 Rerank 命中精度；在指标监控中心查看检索频次与命中趋势。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/knowledge-metrics')"
-                          class="text-xs text-gray-600 hover:text-gray-900 font-medium px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 cursor-pointer"
-                       >
-                          指标监控 &rarr;
-                       </button>
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/knowledge-retrieval-test')"
-                          class="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
-                       >
-                          召回测试 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 4 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
-                          <h4 class="font-bold text-gray-900 text-sm">权限授权与角色分配</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          配置知识库公开/私有范围与协作者读写权限；在「角色管理」中授予对应角色访问权限，确保业务人员可正常检索。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/roles')"
-                          class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
-                       >
-                          前往角色管理 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 5 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">5</span>
-                          <h4 class="font-bold text-gray-900 text-sm">智能体挂载与知识问答</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          在「智能体中心」为目标智能体显式绑定该知识库（`dataset_ids`）；智能体在对话中自主调用 RAG 工具，生成带切片溯源的高质量回答。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/agent-management')"
-                          class="text-xs text-amber-600 hover:text-amber-800 font-medium cursor-pointer"
-                       >
-                          前往智能体中心挂载 &rarr;
-                       </button>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Chunking Methods -->
-           <div v-else-if="activeHelpTab === 'chunking'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">RAGFlow 切分策略选型推荐</h4>
-                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                    <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 space-y-1">
-                       <span class="font-bold text-blue-900 text-sm">naive（通用分块，推荐）</span>
-                       <p class="text-gray-600 leading-relaxed">适用于大部分文章、产品说明书、Wiki 文档与 Markdown。按段落标点自适应合并切分。</p>
-                    </div>
-                    <div class="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-100 space-y-1">
-                       <span class="font-bold text-emerald-900 text-sm">qa（问答对模式）</span>
-                       <p class="text-gray-600 leading-relaxed">适用于 FAQ 客服手册、常见问题解答。自动提取 Q&A 问答对并向量化 Question。</p>
-                    </div>
-                    <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-100 space-y-1">
-                       <span class="font-bold text-purple-900 text-sm">table（表格模式）</span>
-                       <p class="text-gray-600 leading-relaxed">适用于 Excel、CSV、财务数据表。保留行列结构与表头，避免跨行错位。</p>
-                    </div>
-                    <div class="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100 space-y-1">
-                       <span class="font-bold text-amber-900 text-sm">laws / book（法律/长篇专著）</span>
-                       <p class="text-gray-600 leading-relaxed">按法律条文、合同章节、书籍目录层级结构进行树状切分，召回定位精准。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 3: Retrieval & Rerank -->
-           <div v-else-if="activeHelpTab === 'retrieval'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">RAG 混合检索与重排（Rerank）调优最佳实践</h4>
-                 <div class="space-y-3 text-xs">
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
-                       <span class="font-bold text-gray-800">1. 混合检索（Hybrid Search）</span>
-                       <p class="text-gray-600">结合 Dense 稠密向量（语义相近）与 Sparse 稀疏关键词（精准专有名词、错误码、型号），兼顾语义与精确字面匹配。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
-                       <span class="font-bold text-gray-800">2. 重排模型（Reranker）</span>
-                       <p class="text-gray-600">初筛 Top-20 后通过 Cross-Encoder 语义重排输出最终 Top-5 最强相关切片，显著压低大模型幻觉。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
-                       <span class="font-bold text-gray-800">3. 召回测试验证</span>
-                       <p class="text-gray-600">在上线前务必通过「知识库召回测试」验证关键高频提问的匹配分数（建议相似度 > 0.65）。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 </template>
 
 <style scoped>

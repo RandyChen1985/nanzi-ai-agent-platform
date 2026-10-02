@@ -5101,229 +5101,233 @@ onUnmounted(() => {
     />
 
     <!-- Modal: Raw Prompt -->
-    <div
-      v-if="showRawPromptModal && selectedRawPrompt"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-fade-in-up"
+        v-if="showRawPromptModal && selectedRawPrompt"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       >
         <div
-          class="h-14 px-6 border-b border-gray-100 flex items-center justify-between bg-gray-50"
+          class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-fade-in-up"
         >
-          <h3 class="font-bold text-gray-800">Raw Prompt Data</h3>
-          <button
-            @click="closeModals"
-            class="text-gray-500 hover:text-gray-700"
-          >
-            <svg
-              class="w-6 h-6"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
-        </div>
-        <div class="flex-1 overflow-auto p-0 bg-gray-900">
           <div
-            v-for="(msg, idx) in selectedRawPrompt"
-            :key="idx"
-            class="border-b border-gray-700 p-4"
+            class="h-14 px-6 border-b border-gray-100 flex items-center justify-between bg-gray-50"
           >
-            <div class="flex items-center mb-2">
-              <span
-                class="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded"
-                :class="{
-                  'bg-green-900 text-green-300': msg.role === 'system',
-                  'bg-blue-900 text-blue-300': msg.role === 'user',
-                  'bg-purple-900 text-purple-300': msg.role === 'assistant',
-                  'bg-yellow-900 text-yellow-300': msg.role === 'tool',
-                }"
+            <h3 class="font-bold text-gray-800">Raw Prompt Data</h3>
+            <button
+              @click="closeModals"
+              class="text-gray-500 hover:text-gray-700"
+            >
+              <svg
+                class="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                {{ msg.role }}
-              </span>
-            </div>
-            <pre
-              class="text-sm font-mono text-gray-300 whitespace-pre-wrap break-all"
-              >{{ msg.content }}</pre
-            >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="flex-1 overflow-auto p-0 bg-gray-900">
             <div
-              v-if="msg.tool_calls"
-              class="mt-2 pl-4 border-l-2 border-yellow-700"
+              v-for="(msg, idx) in selectedRawPrompt"
+              :key="idx"
+              class="border-b border-gray-700 p-4"
             >
-              <p class="text-xs text-yellow-500 font-bold mb-1">Tool Calls:</p>
-              <pre class="text-xs text-yellow-200 font-mono">{{
-                JSON.stringify(msg.tool_calls, null, 2)
-              }}</pre>
+              <div class="flex items-center mb-2">
+                <span
+                  class="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded"
+                  :class="{
+                    'bg-green-900 text-green-300': msg.role === 'system',
+                    'bg-blue-900 text-blue-300': msg.role === 'user',
+                    'bg-purple-900 text-purple-300': msg.role === 'assistant',
+                    'bg-yellow-900 text-yellow-300': msg.role === 'tool',
+                  }"
+                >
+                  {{ msg.role }}
+                </span>
+              </div>
+              <pre
+                class="text-sm font-mono text-gray-300 whitespace-pre-wrap break-all"
+                >{{ msg.content }}</pre
+              >
+              <div
+                v-if="msg.tool_calls"
+                class="mt-2 pl-4 border-l-2 border-yellow-700"
+              >
+                <p class="text-xs text-yellow-500 font-bold mb-1">Tool Calls:</p>
+                <pre class="text-xs text-yellow-200 font-mono">{{
+                  JSON.stringify(msg.tool_calls, null, 2)
+                }}</pre>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Modal: Command Manager -->
-    <div
-      v-if="showCommandManager"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white rounded-xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden animate-fade-in-up"
+        v-if="showCommandManager"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       >
         <div
-          class="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50"
+          class="bg-white rounded-xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden animate-fade-in-up"
         >
-          <h3 class="font-bold text-gray-800">快捷指令管理</h3>
-          <button
-            @click="closeModals"
-            class="text-gray-500 hover:text-gray-700"
+          <div
+            class="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50"
           >
-            <svg
-              class="w-6 h-6"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+            <h3 class="font-bold text-gray-800">快捷指令管理</h3>
+            <button
+              @click="closeModals"
+              class="text-gray-500 hover:text-gray-700"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
-        </div>
-
-        <div class="p-6 bg-white flex-1 overflow-y-auto">
-          <!-- Form -->
-          <div class="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-100">
-            <h4 class="text-sm font-bold text-gray-700 mb-3">
-              {{ isEditingCmd ? "编辑指令" : "新建指令" }}
-            </h4>
-            <div class="grid grid-cols-12 gap-4 mb-3">
-              <div class="col-span-4">
-                <input
-                  v-model="editingCommand.label"
-                  type="text"
-                  placeholder="显示名称 (e.g. 🏢 列表)"
-                  class="w-full text-xs border-gray-300 rounded focus:ring-primary focus:border-primary"
-                />
-              </div>
-              <div class="col-span-6">
-                <input
-                  v-model="editingCommand.command"
-                  type="text"
-                  placeholder="执行内容"
-                  class="w-full text-xs border-gray-300 rounded focus:ring-primary focus:border-primary"
-                />
-              </div>
-              <div class="col-span-2">
-                <input
-                  v-model.number="editingCommand.sort_order"
-                  type="number"
-                  placeholder="排序"
-                  class="w-full text-xs border-gray-300 rounded focus:ring-primary focus:border-primary"
-                />
-              </div>
-            </div>
-            <div class="flex justify-end space-x-2">
-              <button
-                v-if="isEditingCmd"
-                @click="resetCommandForm"
-                class="px-3 py-1.5 text-xs text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50"
+              <svg
+                class="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                取消编辑
-              </button>
-              <button
-                @click="saveCommand"
-                class="px-3 py-1.5 text-xs text-white bg-primary rounded hover:bg-primary-dark transition-colors font-medium"
-              >
-                {{ isEditingCmd ? "保存修改" : "添加指令" }}
-              </button>
-            </div>
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
           </div>
 
-          <!-- List -->
-          <div class="space-y-2">
-            <div
-              v-for="(cmd, index) in slashCommands"
-              :key="cmd.id"
-              :draggable="currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name)"
-              @dragstart="onDragStart($event, index)"
-              @dragover.prevent
-              @dragenter.prevent
-              @drop="onDrop($event, index)"
-              class="flex items-center justify-between p-3 border border-gray-100 rounded-lg hover:bg-gray-50 group transition-all duration-200"
-              :class="{
-                'opacity-50 scale-[0.98] bg-blue-50 border-blue-200': draggedItemIndex === index,
-                'cursor-move': currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name),
-                'cursor-default': !(currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name))
-              }"
-            >
-              <div class="flex items-center space-x-3">
-                <!-- Drag Handle (Only visible if draggable) -->
-                <div v-if="currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name)" class="text-gray-300 group-hover:text-gray-400">
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M4 8h16M4 16h16"
-                    />
-                  </svg>
+          <div class="p-6 bg-white flex-1 overflow-y-auto">
+            <!-- Form -->
+            <div class="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-100">
+              <h4 class="text-sm font-bold text-gray-700 mb-3">
+                {{ isEditingCmd ? "编辑指令" : "新建指令" }}
+              </h4>
+              <div class="grid grid-cols-12 gap-4 mb-3">
+                <div class="col-span-4">
+                  <input
+                    v-model="editingCommand.label"
+                    type="text"
+                    placeholder="显示名称 (e.g. 🏢 列表)"
+                    class="w-full text-xs border-gray-300 rounded focus:ring-primary focus:border-primary"
+                  />
                 </div>
-                <div v-else class="w-4"></div> <!-- Spacer -->
-
-                <span class="text-xs font-bold text-gray-500 w-6 text-center">{{
-                  cmd.sort_order
-                }}</span>
-                <div class="flex items-center space-x-2">
-                  <span
-                    class="text-xs font-bold text-gray-800 bg-white border border-gray-200 px-2 py-0.5 rounded"
-                    >{{ cmd.label }}</span
-                  >
-                  <!-- Badges -->
-                  <span v-if="['system', 'admin'].includes(cmd.created_by)" class="px-1.5 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700 border border-purple-200 font-medium">System</span>
-                  <span v-else-if="currentUser && cmd.created_by === currentUser.user_name" class="px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700 border border-blue-200 font-medium">Mine</span>
+                <div class="col-span-6">
+                  <input
+                    v-model="editingCommand.command"
+                    type="text"
+                    placeholder="执行内容"
+                    class="w-full text-xs border-gray-300 rounded focus:ring-primary focus:border-primary"
+                  />
                 </div>
-
-                <span class="text-xs text-gray-500 truncate max-w-xs">{{
-                  cmd.command
-                }}</span>
+                <div class="col-span-2">
+                  <input
+                    v-model.number="editingCommand.sort_order"
+                    type="number"
+                    placeholder="排序"
+                    class="w-full text-xs border-gray-300 rounded focus:ring-primary focus:border-primary"
+                  />
+                </div>
               </div>
+              <div class="flex justify-end space-x-2">
+                <button
+                  v-if="isEditingCmd"
+                  @click="resetCommandForm"
+                  class="px-3 py-1.5 text-xs text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                >
+                  取消编辑
+                </button>
+                <button
+                  @click="saveCommand"
+                  class="px-3 py-1.5 text-xs text-white bg-primary rounded hover:bg-primary-dark transition-colors font-medium"
+                >
+                  {{ isEditingCmd ? "保存修改" : "添加指令" }}
+                </button>
+              </div>
+            </div>
+
+            <!-- List -->
+            <div class="space-y-2">
               <div
-                v-if="currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name)"
-                class="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                v-for="(cmd, index) in slashCommands"
+                :key="cmd.id"
+                :draggable="currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name)"
+                @dragstart="onDragStart($event, index)"
+                @dragover.prevent
+                @dragenter.prevent
+                @drop="onDrop($event, index)"
+                class="flex items-center justify-between p-3 border border-gray-100 rounded-lg hover:bg-gray-50 group transition-all duration-200"
+                :class="{
+                  'opacity-50 scale-[0.98] bg-blue-50 border-blue-200': draggedItemIndex === index,
+                  'cursor-move': currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name),
+                  'cursor-default': !(currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name))
+                }"
               >
-                <button
-                  @click="editCommand(cmd)"
-                  class="text-xs text-blue-600 hover:text-blue-800 underline"
+                <div class="flex items-center space-x-3">
+                  <!-- Drag Handle (Only visible if draggable) -->
+                  <div v-if="currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name)" class="text-gray-300 group-hover:text-gray-400">
+                    <svg
+                      class="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M4 8h16M4 16h16"
+                      />
+                    </svg>
+                  </div>
+                  <div v-else class="w-4"></div> <!-- Spacer -->
+
+                  <span class="text-xs font-bold text-gray-500 w-6 text-center">{{
+                    cmd.sort_order
+                  }}</span>
+                  <div class="flex items-center space-x-2">
+                    <span
+                      class="text-xs font-bold text-gray-800 bg-white border border-gray-200 px-2 py-0.5 rounded"
+                      >{{ cmd.label }}</span
+                    >
+                    <!-- Badges -->
+                    <span v-if="['system', 'admin'].includes(cmd.created_by)" class="px-1.5 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700 border border-purple-200 font-medium">System</span>
+                    <span v-else-if="currentUser && cmd.created_by === currentUser.user_name" class="px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700 border border-blue-200 font-medium">Mine</span>
+                  </div>
+
+                  <span class="text-xs text-gray-500 truncate max-w-xs">{{
+                    cmd.command
+                  }}</span>
+                </div>
+                <div
+                  v-if="currentUser && (currentUser.role === 'admin' || cmd.created_by === currentUser.user_name)"
+                  class="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity"
                 >
-                  编辑
-                </button>
-                <button
-                  @click="confirmDeleteCommand(cmd.id)"
-                  class="text-xs text-red-600 hover:text-red-800 underline"
-                >
-                  删除
-                </button>
+                  <button
+                    @click="editCommand(cmd)"
+                    class="text-xs text-blue-600 hover:text-blue-800 underline"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    @click="confirmDeleteCommand(cmd.id)"
+                    class="text-xs text-red-600 hover:text-red-800 underline"
+                  >
+                    删除
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 
   <CitationPopover

@@ -495,113 +495,115 @@ onMounted(() => {
     </div>
 
     <!-- 变更详情弹窗 -->
-    <div v-if="showDiffModal && selectedChange" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col border border-gray-200">
-        <!-- 头部 -->
-        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50/80">
-          <div>
-            <h2 class="text-lg font-bold text-gray-900">变更差异对比 (Diff)</h2>
-            <p class="text-xs text-gray-500 mt-0.5">{{ diffData?.summary || '对象属性前后版本变更明细' }}</p>
+    <Teleport to="body">
+      <div v-if="showDiffModal && selectedChange" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col border border-gray-200">
+          <!-- 头部 -->
+          <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50/80">
+            <div>
+              <h2 class="text-lg font-bold text-gray-900">变更差异对比 (Diff)</h2>
+              <p class="text-xs text-gray-500 mt-0.5">{{ diffData?.summary || '对象属性前后版本变更明细' }}</p>
+            </div>
+            <button 
+              @click="showDiffModal = false" 
+              class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-200/50"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
-          <button 
-            @click="showDiffModal = false" 
-            class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-200/50"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
 
-        <!-- 内容 -->
-        <div class="flex-1 overflow-auto p-5 space-y-4">
-          <div v-if="loadingDiff" class="flex justify-center items-center py-12">
-            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-          </div>
+          <!-- 内容 -->
+          <div class="flex-1 overflow-auto p-5 space-y-4">
+            <div v-if="loadingDiff" class="flex justify-center items-center py-12">
+              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
           
-          <div v-else-if="diffData" class="space-y-4">
-            <!-- 基本信息 -->
-            <div class="bg-gray-50/70 p-3.5 rounded-xl border border-gray-200/80 text-xs">
-              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <span class="text-gray-400">操作类型:</span>
-                  <span :class="[
-                    'ml-1.5 px-2 py-0.5 rounded text-[11px] font-bold border',
-                    getOperationBadgeStyle(selectedChange.operation)
-                  ]">
-                    {{ getOperationText(selectedChange.operation) }}
-                  </span>
+            <div v-else-if="diffData" class="space-y-4">
+              <!-- 基本信息 -->
+              <div class="bg-gray-50/70 p-3.5 rounded-xl border border-gray-200/80 text-xs">
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <span class="text-gray-400">操作类型:</span>
+                    <span :class="[
+                      'ml-1.5 px-2 py-0.5 rounded text-[11px] font-bold border',
+                      getOperationBadgeStyle(selectedChange.operation)
+                    ]">
+                      {{ getOperationText(selectedChange.operation) }}
+                    </span>
+                  </div>
+                  <div>
+                    <span class="text-gray-400">对象类型:</span>
+                    <span class="ml-1.5 font-bold text-gray-800">{{ getResourceTypeText(selectedChange.resource_type) }}</span>
+                  </div>
+                  <div>
+                    <span class="text-gray-400">操作人:</span>
+                    <span class="ml-1.5 font-bold text-gray-800">{{ selectedChange.user_name || '系统操作' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-gray-400">操作时间:</span>
+                    <span class="ml-1.5 font-mono text-gray-600">{{ formatDate(selectedChange.created_at) }}</span>
+                  </div>
                 </div>
-                <div>
-                  <span class="text-gray-400">对象类型:</span>
-                  <span class="ml-1.5 font-bold text-gray-800">{{ getResourceTypeText(selectedChange.resource_type) }}</span>
-                </div>
-                <div>
-                  <span class="text-gray-400">操作人:</span>
-                  <span class="ml-1.5 font-bold text-gray-800">{{ selectedChange.user_name || '系统操作' }}</span>
-                </div>
-                <div>
-                  <span class="text-gray-400">操作时间:</span>
-                  <span class="ml-1.5 font-mono text-gray-600">{{ formatDate(selectedChange.created_at) }}</span>
+                <div v-if="selectedChange.reason" class="mt-2.5 pt-2 border-t border-gray-200/60">
+                  <span class="text-gray-400">变更原因:</span>
+                  <span class="ml-1.5 text-gray-700">{{ selectedChange.reason }}</span>
                 </div>
               </div>
-              <div v-if="selectedChange.reason" class="mt-2.5 pt-2 border-t border-gray-200/60">
-                <span class="text-gray-400">变更原因:</span>
-                <span class="ml-1.5 text-gray-700">{{ selectedChange.reason }}</span>
-              </div>
-            </div>
 
-            <!-- 变更对比 -->
-            <div class="space-y-3">
-              <h3 class="text-xs font-bold text-gray-800 uppercase tracking-wider">字段级 Diff 对比</h3>
-              <div v-if="diffData.changes && diffData.changes.length > 0" class="space-y-3">
-                <div 
-                  v-for="change in diffData.changes" 
-                  :key="change.field"
-                  class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-2xs"
-                >
-                  <div class="text-xs font-bold font-mono text-gray-700 bg-gray-50 px-3.5 py-1.5 border-b border-gray-200 flex items-center justify-between">
-                    <span>属性: {{ change.field }}</span>
-                  </div>
-                  <!-- Diff 视图 -->
-                  <div class="font-mono text-xs overflow-x-auto p-2 bg-slate-900 text-slate-100">
-                    <template v-if="change.old_value !== null || change.new_value !== null">
-                      <div
-                        v-for="(part, idx) in computeDiff(change.old_value, change.new_value)"
-                        :key="idx"
-                        :class="[
-                          'px-2 py-0.5 whitespace-pre-wrap break-all rounded',
-                          part.added   ? 'bg-emerald-950/80 text-emerald-400 font-bold' :
-                          part.removed ? 'bg-rose-950/80 text-rose-400 line-through opacity-80' :
-                                         'text-slate-300'
-                        ]"
-                      >
-                        <span class="select-none mr-1 opacity-60">
-                          {{ part.added ? '+' : part.removed ? '-' : ' ' }}
-                        </span>{{ part.value }}</div>
-                    </template>
-                    <div v-else class="px-2 py-1 text-slate-500">(无数据)</div>
+              <!-- 变更对比 -->
+              <div class="space-y-3">
+                <h3 class="text-xs font-bold text-gray-800 uppercase tracking-wider">字段级 Diff 对比</h3>
+                <div v-if="diffData.changes && diffData.changes.length > 0" class="space-y-3">
+                  <div 
+                    v-for="change in diffData.changes" 
+                    :key="change.field"
+                    class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-2xs"
+                  >
+                    <div class="text-xs font-bold font-mono text-gray-700 bg-gray-50 px-3.5 py-1.5 border-b border-gray-200 flex items-center justify-between">
+                      <span>属性: {{ change.field }}</span>
+                    </div>
+                    <!-- Diff 视图 -->
+                    <div class="font-mono text-xs overflow-x-auto p-2 bg-slate-900 text-slate-100">
+                      <template v-if="change.old_value !== null || change.new_value !== null">
+                        <div
+                          v-for="(part, idx) in computeDiff(change.old_value, change.new_value)"
+                          :key="idx"
+                          :class="[
+                            'px-2 py-0.5 whitespace-pre-wrap break-all rounded',
+                            part.added   ? 'bg-emerald-950/80 text-emerald-400 font-bold' :
+                            part.removed ? 'bg-rose-950/80 text-rose-400 line-through opacity-80' :
+                                           'text-slate-300'
+                          ]"
+                        >
+                          <span class="select-none mr-1 opacity-60">
+                            {{ part.added ? '+' : part.removed ? '-' : ' ' }}
+                          </span>{{ part.value }}</div>
+                      </template>
+                      <div v-else class="px-2 py-1 text-slate-500">(无数据)</div>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div v-else class="text-center py-6 text-xs text-gray-400 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                暂无具体字段级 Diff 变更内容
+                <div v-else class="text-center py-6 text-xs text-gray-400 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                  暂无具体字段级 Diff 变更内容
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- 底部 -->
-        <div class="px-6 py-3 border-t border-gray-200 bg-gray-50 flex justify-end">
-          <button 
-            @click="showDiffModal = false"
-            class="px-4 py-1.5 bg-white border border-gray-300 rounded-lg text-xs font-bold text-gray-700 hover:bg-gray-50 shadow-2xs"
-          >
-            关闭
-          </button>
+          <!-- 底部 -->
+          <div class="px-6 py-3 border-t border-gray-200 bg-gray-50 flex justify-end">
+            <button 
+              @click="showDiffModal = false"
+              class="px-4 py-1.5 bg-white border border-gray-300 rounded-lg text-xs font-bold text-gray-700 hover:bg-gray-50 shadow-2xs"
+            >
+              关闭
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
 

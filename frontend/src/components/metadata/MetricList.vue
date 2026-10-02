@@ -399,100 +399,106 @@ defineExpose({ fetchMetrics })
     </div>
 
     <!-- Modal -->
-    <div v-if="showModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showModal = false">
-       <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100 animate-fade-in-up">
-          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-amber-50">
-             <h3 class="font-bold text-gray-900">{{ editingId ? '编辑指标' : '新建指标' }}</h3>
-             <button @click="showModal = false" class="text-gray-400 hover:text-gray-600">&times;</button>
-          </div>
+    <Teleport to="body">
+      <div v-if="showModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showModal = false">
+         <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100 animate-fade-in-up">
+            <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-amber-50">
+               <h3 class="font-bold text-gray-900">{{ editingId ? '编辑指标' : '新建指标' }}</h3>
+               <button @click="showModal = false" class="text-gray-400 hover:text-gray-600">&times;</button>
+            </div>
           
-          <!-- Modal Error -->
-          <div v-if="modalError" class="px-6 pt-4 pb-0">
-             <div class="bg-red-50 text-red-600 px-3 py-2 rounded text-xs border border-red-100">
-                {{ modalError }}
-             </div>
-          </div>
-          <div class="p-6 space-y-4">
-             <div class="grid grid-cols-2 gap-4">
-                <div>
-                   <label class="block text-sm font-medium text-gray-700 mb-1">物理标识 (ID)</label>
-                   <input v-model="form.name" :disabled="!!editingId" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="e.g. pue">
-                </div>
-                <div>
-                   <label class="block text-sm font-medium text-gray-700 mb-1">显示名称</label>
-                   <input v-model="form.display_name" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="e.g. PUE值">
-                </div>
-             </div>
-             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">计算逻辑</label>
-                 <textarea v-model="form.calculation_logic" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="e.g. total_power / it_power"></textarea>
-                 <p class="text-xs text-gray-400 mt-1">支持 SQL 表达式或自然语言描述。</p>
-             </div>
-             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">业务描述</label>
-                <textarea v-model="form.description" rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
-             </div>
-             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">单位</label>
-                <input v-model="form.unit" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="e.g. kWh, %">
-             </div>
-             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">标签 <span class="text-gray-400 font-normal">(用于业务归类与检索，可选)</span></label>
-                <input v-model="tagInput" @keyup.enter="addTag(form)" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="输入标签后回车">
-                <div class="flex flex-wrap gap-2 mt-2">
-                  <span v-for="(tag, i) in form.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
-                    {{ tag }}
-                    <button type="button" @click="removeTag(form, i as number)" class="text-blue-400 hover:text-red-500 ml-1" title="移除标签">&times;</button>
-                  </span>
-                  <span v-if="!form.tags || form.tags.length === 0" class="text-xs text-gray-400">暂无标签</span>
-                </div>
-             </div>
-          </div>
-          <div class="p-6 bg-gray-50 flex justify-end gap-3">
-             <button @click="showModal = false" class="px-4 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50">取消</button>
-             <button @click="handleSave" :disabled="saving" class="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-bold shadow-md disabled:opacity-50">保存</button>
-          </div>
-       </div>
-    </div>
+            <!-- Modal Error -->
+            <div v-if="modalError" class="px-6 pt-4 pb-0">
+               <div class="bg-red-50 text-red-600 px-3 py-2 rounded text-xs border border-red-100">
+                  {{ modalError }}
+               </div>
+            </div>
+            <div class="p-6 space-y-4">
+               <div class="grid grid-cols-2 gap-4">
+                  <div>
+                     <label class="block text-sm font-medium text-gray-700 mb-1">物理标识 (ID)</label>
+                     <input v-model="form.name" :disabled="!!editingId" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="e.g. pue">
+                  </div>
+                  <div>
+                     <label class="block text-sm font-medium text-gray-700 mb-1">显示名称</label>
+                     <input v-model="form.display_name" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="e.g. PUE值">
+                  </div>
+               </div>
+               <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">计算逻辑</label>
+                   <textarea v-model="form.calculation_logic" rows="3" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="e.g. total_power / it_power"></textarea>
+                   <p class="text-xs text-gray-400 mt-1">支持 SQL 表达式或自然语言描述。</p>
+               </div>
+               <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">业务描述</label>
+                  <textarea v-model="form.description" rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
+               </div>
+               <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">单位</label>
+                  <input v-model="form.unit" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="e.g. kWh, %">
+               </div>
+               <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">标签 <span class="text-gray-400 font-normal">(用于业务归类与检索，可选)</span></label>
+                  <input v-model="tagInput" @keyup.enter="addTag(form)" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none" placeholder="输入标签后回车">
+                  <div class="flex flex-wrap gap-2 mt-2">
+                    <span v-for="(tag, i) in form.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
+                      {{ tag }}
+                      <button type="button" @click="removeTag(form, i as number)" class="text-blue-400 hover:text-red-500 ml-1" title="移除标签">&times;</button>
+                    </span>
+                    <span v-if="!form.tags || form.tags.length === 0" class="text-xs text-gray-400">暂无标签</span>
+                  </div>
+               </div>
+            </div>
+            <div class="p-6 bg-gray-50 flex justify-end gap-3">
+               <button @click="showModal = false" class="px-4 py-2 border border-gray-300 rounded-lg text-sm bg-white hover:bg-gray-50">取消</button>
+               <button @click="handleSave" :disabled="saving" class="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-bold shadow-md disabled:opacity-50">保存</button>
+            </div>
+         </div>
+      </div>
+    </Teleport>
     <!-- Delete Modal -->
-    <div v-if="deleteId" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="deleteId = null">
-       <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
-          <div class="p-6 text-center">
-             <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
-                <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-             </div>
-             <h3 class="text-lg font-bold text-gray-900 mb-2">确认删除?</h3>
-             <p class="text-sm text-gray-500 mb-6">
-               您确定要删除此指标吗？<br>此操作无法撤销。
-             </p>
-             <div class="flex gap-3 justify-center">
-                <button @click="deleteId = null" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
-                <button @click="confirmDelete" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30">确认删除</button>
-             </div>
-          </div>
-       </div>
-    </div>
+    <Teleport to="body">
+      <div v-if="deleteId" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="deleteId = null">
+         <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
+            <div class="p-6 text-center">
+               <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
+                  <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+               </div>
+               <h3 class="text-lg font-bold text-gray-900 mb-2">确认删除?</h3>
+               <p class="text-sm text-gray-500 mb-6">
+                 您确定要删除此指标吗？<br>此操作无法撤销。
+               </p>
+               <div class="flex gap-3 justify-center">
+                  <button @click="deleteId = null" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
+                  <button @click="confirmDelete" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30">确认删除</button>
+               </div>
+            </div>
+         </div>
+      </div>
+    </Teleport>
     <!-- Batch Delete Modal -->
-    <div v-if="showBatchDeleteModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showBatchDeleteModal = false">
-       <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
-          <div class="p-6 text-center">
-             <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
-                <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-             </div>
-             <h3 class="text-lg font-bold text-gray-900 mb-2">确认批量删除指标?</h3>
-             <p class="text-sm text-gray-500 mb-6">
-               您确定要删除已选中的 <b class="text-red-600">{{ selectedMetricIds.length }}</b> 个指标吗？<br>此操作无法撤销。
-             </p>
-             <div class="flex gap-3 justify-center">
-                <button @click="showBatchDeleteModal = false" :disabled="batchDeleting" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
-                <button @click="confirmBatchDelete" :disabled="batchDeleting" class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30 disabled:opacity-50 flex items-center gap-2">
-                   <svg v-if="batchDeleting" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                   <span>{{ batchDeleting ? '正在删除...' : '确认批量删除' }}</span>
-                </button>
-             </div>
-          </div>
-       </div>
-    </div>
+    <Teleport to="body">
+      <div v-if="showBatchDeleteModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showBatchDeleteModal = false">
+         <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
+            <div class="p-6 text-center">
+               <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
+                  <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+               </div>
+               <h3 class="text-lg font-bold text-gray-900 mb-2">确认批量删除指标?</h3>
+               <p class="text-sm text-gray-500 mb-6">
+                 您确定要删除已选中的 <b class="text-red-600">{{ selectedMetricIds.length }}</b> 个指标吗？<br>此操作无法撤销。
+               </p>
+               <div class="flex gap-3 justify-center">
+                  <button @click="showBatchDeleteModal = false" :disabled="batchDeleting" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
+                  <button @click="confirmBatchDelete" :disabled="batchDeleting" class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30 disabled:opacity-50 flex items-center gap-2">
+                     <svg v-if="batchDeleting" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                     <span>{{ batchDeleting ? '正在删除...' : '确认批量删除' }}</span>
+                  </button>
+               </div>
+            </div>
+         </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 

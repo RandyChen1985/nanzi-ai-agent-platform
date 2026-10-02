@@ -1113,209 +1113,211 @@ onMounted(async () => {
     </Teleport>
   </div>
     <!-- 案例集设计规范与全流程指引 Modal -->
-    <div v-if="showHelp" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-cyan-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-xl bg-cyan-600 text-white flex items-center justify-center shadow-md shadow-cyan-500/20" style="background-color: #0891b2; color: #ffffff;">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+    <Teleport to="body">
+      <div v-if="showHelp" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-cyan-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-xl bg-cyan-600 text-white flex items-center justify-center shadow-md shadow-cyan-500/20" style="background-color: #0891b2; color: #ffffff;">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">案例集设计规范与全流程指引</h2>
+                 <p class="text-xs text-gray-500 font-medium mt-0.5">从会话点赞沉淀、专家审核向量化，到大模型动态 Few-Shot 召回注入与持续进化。</p>
+               </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button
+                v-if="!showExampleFlowGuide"
+                type="button"
+                @click="restoreExampleFlowGuide"
+                class="inline-flex items-center gap-1 text-xs font-medium text-cyan-700 bg-cyan-100/70 hover:bg-cyan-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>恢复顶部流程提示</span>
+              </button>
+              <button @click="showHelp = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['flow', 'dataflow', 'practice']" 
+               :key="tab"
+               @click="activeHelpTab = tab as any"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+               :class="activeHelpTab === tab ? 'border-cyan-600 text-cyan-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'flow' ? '全流程指引 (Workflow)' :
+                  tab === 'dataflow' ? '数据来源与消费机制 (Data Flow)' : '审核规范与最佳实践 (Best Practice)' }}
+             </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+             <!-- Tab 1: Workflow Flow -->
+             <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-cyan-50 to-blue-50 border-l-4 border-cyan-600 p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-cyan-900 mb-1">案例集 5 步全生命周期标准体系</h3>
+                   <p class="text-xs text-cyan-700 leading-relaxed">
+                      案例集是 Text-to-SQL 与 ChatBI 的核心范例库。真实会话点赞或专家录入 ➔ 审核清洗 ➔ 向量索引同步 ➔ 智能体提问时动态 Top-K 检索注入，全面提升准确率。
+                   </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <!-- Step 1 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-cyan-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <h4 class="font-bold text-gray-900 text-sm">样本沉淀与录入</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            用户在智能对话中对满意 SQL 点击 👍 采纳点赞，系统自动沉淀样本；业务专家亦可在后台直接录入高频复杂业务提问。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/chat')"
+                            class="text-xs text-cyan-600 hover:text-cyan-800 font-bold cursor-pointer"
+                         >
+                            前往智能对话 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 2 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <h4 class="font-bold text-gray-900 text-sm">专家审核与打标</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            在「待审核」Tab 下审查提问语义与 SQL 准确性，精炼意图（Refined Query）；通过审批后正式纳入经验案例库。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         在「待审核」Tab 下逐条审批
+                      </div>
+                   </div>
+
+                   <!-- Step 3 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <h4 class="font-bold text-gray-900 text-sm">向量同步与索引</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            审核通过的案例需同步至向量索引库；支持单个案例同步或顶部一键全量同步，构建语义密集检索向量。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                         <button
+                            type="button"
+                            @click="showHelp = false; showSyncAllConfirm = true"
+                            class="text-xs text-teal-600 hover:text-teal-800 font-bold cursor-pointer"
+                         >
+                            一键全量同步 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 4 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <h4 class="font-bold text-gray-900 text-sm">动态 Few-Shot 召回</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            智能体接收到新提问时，后台通过向量检索秒级召回 Top-1~3 最相似案例注入 Prompt，辅助大模型生成高精度 SQL。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/agent-management')"
+                            class="text-xs text-indigo-600 hover:text-indigo-800 font-medium cursor-pointer"
+                         >
+                            前往智能体中心 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 5 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">5</span>
+                            <h4 class="font-bold text-gray-900 text-sm">引用统计与持续迭代</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            系统自动记录案例的真实引用频次（use_count），对过时或低质案例标记「废弃」，持续维持高水准业务经验库。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         卡片中查看「引用次数」与「点赞类型」
+                      </div>
+                   </div>
+                </div>
              </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">案例集设计规范与全流程指引</h2>
-               <p class="text-xs text-gray-500 font-medium mt-0.5">从会话点赞沉淀、专家审核向量化，到大模型动态 Few-Shot 召回注入与持续进化。</p>
+
+             <!-- Tab 2: Data Flow -->
+             <div v-else-if="activeHelpTab === 'dataflow'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">数据从哪里来？在哪里被大模型消费？</h4>
+                   <div class="space-y-3">
+                      <div class="p-4 bg-cyan-50/60 rounded-xl border border-cyan-100 space-y-1 text-xs">
+                         <span class="font-bold text-cyan-900 text-sm">📥 数据来源（Where it comes from）</span>
+                         <ul class="list-disc list-inside text-gray-600 mt-1 space-y-1 leading-relaxed">
+                            <li><strong>真实会话采纳点赞</strong>：用户在对话中对生成的 SQL 或回答点击 👍，系统自动捕获提问、SQL 与上下文沉淀为样本；</li>
+                            <li><strong>业务专家手工录入</strong>：数据分析师在后台录入高频复杂报表查询、特殊业务口径的标准 SQL；</li>
+                            <li><strong>历史评测集回流</strong>：将回归评测集中的金标准用例导入案例库。</li>
+                         </ul>
+                      </div>
+                      <div class="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100 space-y-1 text-xs">
+                         <span class="font-bold text-indigo-900 text-sm">🚀 生产消费（Where and How it is used）</span>
+                         <ul class="list-disc list-inside text-gray-600 mt-1 space-y-1 leading-relaxed">
+                            <li><strong>向量动态匹配</strong>：用户提出新问题时，系统进行向量相似度检索，毫秒级召回 Top-1~3 相似案例；</li>
+                            <li><strong>Few-Shot Prompt 注入</strong>：系统将召回的黄金 SQL 案例组装进大模型 System Prompt；</li>
+                            <li><strong>精度飞跃提升</strong>：大模型通过参考范例中的字段名、关联条件与聚合口径，生成准确率提升至 95%+，极大消除幻觉。</li>
+                         </ul>
+                      </div>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 3: Best Practice -->
+             <div v-else-if="activeHelpTab === 'practice'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">高质量案例审核与维护最佳实践</h4>
+                   <div class="space-y-3 text-xs">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">1. 精炼意图（Refined Query）</span>
+                         <p class="text-gray-600 leading-relaxed">将口语化、含代词的多轮提问（如“那上个月的呢？”）精炼为自包含的明确语义（如“查询2026年7月份各部门总能耗”）。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">2. 规范 SQL 编写</span>
+                         <p class="text-gray-600 leading-relaxed">保证 SQL 格式工整、表名加别名、时间字段过滤明确，避免使用 <code>SELECT *</code>。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">3. 及时全量同步</span>
+                         <p class="text-gray-600 leading-relaxed">批量审核通过后，务必点击右上角「一键全量同步」，确保向量索引最新生效。</p>
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <div class="flex items-center gap-3">
-            <button
-              v-if="!showExampleFlowGuide"
-              type="button"
-              @click="restoreExampleFlowGuide"
-              class="inline-flex items-center gap-1 text-xs font-medium text-cyan-700 bg-cyan-100/70 hover:bg-cyan-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              <span>恢复顶部流程提示</span>
-            </button>
-            <button @click="showHelp = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['flow', 'dataflow', 'practice']" 
-             :key="tab"
-             @click="activeHelpTab = tab as any"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-             :class="activeHelpTab === tab ? 'border-cyan-600 text-cyan-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'flow' ? '全流程指引 (Workflow)' :
-                tab === 'dataflow' ? '数据来源与消费机制 (Data Flow)' : '审核规范与最佳实践 (Best Practice)' }}
-           </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
-           <!-- Tab 1: Workflow Flow -->
-           <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-cyan-50 to-blue-50 border-l-4 border-cyan-600 p-4 rounded-r-xl shadow-2xs">
-                 <h3 class="font-bold text-cyan-900 mb-1">案例集 5 步全生命周期标准体系</h3>
-                 <p class="text-xs text-cyan-700 leading-relaxed">
-                    案例集是 Text-to-SQL 与 ChatBI 的核心范例库。真实会话点赞或专家录入 ➔ 审核清洗 ➔ 向量索引同步 ➔ 智能体提问时动态 Top-K 检索注入，全面提升准确率。
-                 </p>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <!-- Step 1 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-cyan-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                          <h4 class="font-bold text-gray-900 text-sm">样本沉淀与录入</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          用户在智能对话中对满意 SQL 点击 👍 采纳点赞，系统自动沉淀样本；业务专家亦可在后台直接录入高频复杂业务提问。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/chat')"
-                          class="text-xs text-cyan-600 hover:text-cyan-800 font-bold cursor-pointer"
-                       >
-                          前往智能对话 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 2 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
-                          <h4 class="font-bold text-gray-900 text-sm">专家审核与打标</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          在「待审核」Tab 下审查提问语义与 SQL 准确性，精炼意图（Refined Query）；通过审批后正式纳入经验案例库。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       在「待审核」Tab 下逐条审批
-                    </div>
-                 </div>
-
-                 <!-- Step 3 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
-                          <h4 class="font-bold text-gray-900 text-sm">向量同步与索引</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          审核通过的案例需同步至向量索引库；支持单个案例同步或顶部一键全量同步，构建语义密集检索向量。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                       <button
-                          type="button"
-                          @click="showHelp = false; showSyncAllConfirm = true"
-                          class="text-xs text-teal-600 hover:text-teal-800 font-bold cursor-pointer"
-                       >
-                          一键全量同步 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 4 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">4</span>
-                          <h4 class="font-bold text-gray-900 text-sm">动态 Few-Shot 召回</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          智能体接收到新提问时，后台通过向量检索秒级召回 Top-1~3 最相似案例注入 Prompt，辅助大模型生成高精度 SQL。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/agent-management')"
-                          class="text-xs text-indigo-600 hover:text-indigo-800 font-medium cursor-pointer"
-                       >
-                          前往智能体中心 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 5 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">5</span>
-                          <h4 class="font-bold text-gray-900 text-sm">引用统计与持续迭代</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          系统自动记录案例的真实引用频次（use_count），对过时或低质案例标记「废弃」，持续维持高水准业务经验库。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       卡片中查看「引用次数」与「点赞类型」
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Data Flow -->
-           <div v-else-if="activeHelpTab === 'dataflow'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">数据从哪里来？在哪里被大模型消费？</h4>
-                 <div class="space-y-3">
-                    <div class="p-4 bg-cyan-50/60 rounded-xl border border-cyan-100 space-y-1 text-xs">
-                       <span class="font-bold text-cyan-900 text-sm">📥 数据来源（Where it comes from）</span>
-                       <ul class="list-disc list-inside text-gray-600 mt-1 space-y-1 leading-relaxed">
-                          <li><strong>真实会话采纳点赞</strong>：用户在对话中对生成的 SQL 或回答点击 👍，系统自动捕获提问、SQL 与上下文沉淀为样本；</li>
-                          <li><strong>业务专家手工录入</strong>：数据分析师在后台录入高频复杂报表查询、特殊业务口径的标准 SQL；</li>
-                          <li><strong>历史评测集回流</strong>：将回归评测集中的金标准用例导入案例库。</li>
-                       </ul>
-                    </div>
-                    <div class="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100 space-y-1 text-xs">
-                       <span class="font-bold text-indigo-900 text-sm">🚀 生产消费（Where and How it is used）</span>
-                       <ul class="list-disc list-inside text-gray-600 mt-1 space-y-1 leading-relaxed">
-                          <li><strong>向量动态匹配</strong>：用户提出新问题时，系统进行向量相似度检索，毫秒级召回 Top-1~3 相似案例；</li>
-                          <li><strong>Few-Shot Prompt 注入</strong>：系统将召回的黄金 SQL 案例组装进大模型 System Prompt；</li>
-                          <li><strong>精度飞跃提升</strong>：大模型通过参考范例中的字段名、关联条件与聚合口径，生成准确率提升至 95%+，极大消除幻觉。</li>
-                       </ul>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 3: Best Practice -->
-           <div v-else-if="activeHelpTab === 'practice'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">高质量案例审核与维护最佳实践</h4>
-                 <div class="space-y-3 text-xs">
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">1. 精炼意图（Refined Query）</span>
-                       <p class="text-gray-600 leading-relaxed">将口语化、含代词的多轮提问（如“那上个月的呢？”）精炼为自包含的明确语义（如“查询2026年7月份各部门总能耗”）。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">2. 规范 SQL 编写</span>
-                       <p class="text-gray-600 leading-relaxed">保证 SQL 格式工整、表名加别名、时间字段过滤明确，避免使用 <code>SELECT *</code>。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">3. 及时全量同步</span>
-                       <p class="text-gray-600 leading-relaxed">批量审核通过后，务必点击右上角「一键全量同步」，确保向量索引最新生效。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 案例集检索测试弹窗 -->
     <ExampleSearchTestModal ref="searchTestModalRef" />

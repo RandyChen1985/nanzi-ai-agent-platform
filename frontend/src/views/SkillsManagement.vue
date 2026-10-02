@@ -2056,315 +2056,317 @@ onUnmounted(() => {
     </template>
 
     <!-- 技能工作台设计规范与全流程指引 Modal -->
-    <div v-if="showHelpModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelpModal = false">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="skill-help-title"
-        class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up"
-      >
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/20" style="background-color: #059669; color: #ffffff;">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-             </div>
-             <div>
-               <h2 id="skill-help-title" class="text-xl font-bold text-gray-900">技能工作台研发规范与全流程指引</h2>
-               <p class="text-xs text-gray-500 font-medium mt-0.5">从 SKILL.md 规范定义、代码脚本沉淀，到发布审批、平台多版本隔离与智能体动态装配激活。</p>
-             </div>
+    <Teleport to="body">
+      <div v-if="showHelpModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelpModal = false">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skill-help-title"
+          class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up"
+        >
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/20" style="background-color: #059669; color: #ffffff;">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+               </div>
+               <div>
+                 <h2 id="skill-help-title" class="text-xl font-bold text-gray-900">技能工作台研发规范与全流程指引</h2>
+                 <p class="text-xs text-gray-500 font-medium mt-0.5">从 SKILL.md 规范定义、代码脚本沉淀，到发布审批、平台多版本隔离与智能体动态装配激活。</p>
+               </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button
+                v-if="!showSkillFlowGuide"
+                type="button"
+                @click="restoreSkillFlowGuide"
+                class="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100/70 hover:bg-emerald-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>恢复顶部流程提示</span>
+              </button>
+              <button @click="showHelpModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
           </div>
-          <div class="flex items-center gap-3">
-            <button
-              v-if="!showSkillFlowGuide"
-              type="button"
-              @click="restoreSkillFlowGuide"
-              class="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100/70 hover:bg-emerald-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              <span>恢复顶部流程提示</span>
-            </button>
-            <button @click="showHelpModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['flow', 'schema', 'audit']" 
+               :key="tab"
+               @click="activeHelpTab = tab as any"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+               :class="activeHelpTab === tab ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'flow' ? '全流程指引 (Workflow)' :
+                  tab === 'schema' ? 'SKILL.md 规范与生态安装 (Schema & Install)' : '审批发布与多版本隔离 (Audit & Versioning)' }}
+             </button>
           </div>
-        </div>
 
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['flow', 'schema', 'audit']" 
-             :key="tab"
-             @click="activeHelpTab = tab as any"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-             :class="activeHelpTab === tab ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'flow' ? '全流程指引 (Workflow)' :
-                tab === 'schema' ? 'SKILL.md 规范与生态安装 (Schema & Install)' : '审批发布与多版本隔离 (Audit & Versioning)' }}
-           </button>
-        </div>
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+             <!-- Tab 1: Workflow Flow -->
+             <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm">
+                   <h3 class="font-bold text-emerald-900 mb-1">技能工作台 5 步全生命周期标准体系</h3>
+                   <p class="text-xs text-emerald-700 leading-relaxed">
+                      Skills 是面向 AI 智能体的一套高阶执行规范与指令约束。通过 SKILL.md 定义与脚本编写，使智能体具备复杂的工具链执行能力。
+                   </p>
+                </div>
 
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
-           <!-- Tab 1: Workflow Flow -->
-           <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm">
-                 <h3 class="font-bold text-emerald-900 mb-1">技能工作台 5 步全生命周期标准体系</h3>
-                 <p class="text-xs text-emerald-700 leading-relaxed">
-                    Skills 是面向 AI 智能体的一套高阶执行规范与指令约束。通过 SKILL.md 定义与脚本编写，使智能体具备复杂的工具链执行能力。
-                 </p>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <!-- Step 1 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                          <h4 class="font-bold text-gray-900 text-sm">技能创建与目录规划</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          设定英文 ID、中文名称与业务描述（Description 是大模型识别意图的关键）；自动生成标准化入口 SKILL.md。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                       <button
-                          type="button"
-                          @click="showHelpModal = false; openCreateModal()"
-                          class="text-xs text-emerald-600 hover:text-emerald-800 font-bold cursor-pointer"
-                       >
-                          新建技能 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 2 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
-                          <h4 class="font-bold text-gray-900 text-sm">脚本编写与沙箱调试</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          在内置工作台编写多级文件树（scripts/ 脚本、resources/ 模板、references/ 规范）；支持 Markdown 在线渲染。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       点击技能卡片进入文件树编辑
-                    </div>
-                 </div>
-
-                 <!-- Step 3 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">3</span>
-                          <h4 class="font-bold text-gray-900 text-sm">提审申请与平台合规</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          个人技能成熟后在抽屉中点击「申请发布至平台」；管理员在「待审核」Tab 下审查文件 Diff 与代码合规性。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                       <button
-                          type="button"
-                          @click="showHelpModal = false; activeWorkspaceTab = 'review'"
-                          class="text-xs text-amber-600 hover:text-amber-800 font-bold cursor-pointer"
-                       >
-                          前往待审核 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 4 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
-                          <h4 class="font-bold text-gray-900 text-sm">平台发布与版本隔离</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          审批通过后晋升为平台公共技能，对全体业务角色公开；严格实现生产发布版本与开发草稿隔离。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelpModal = false; activeWorkspaceTab = 'global'; activeScope = 'global'"
-                          class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
-                       >
-                          平台技能 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 5 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">5</span>
-                          <h4 class="font-bold text-gray-900 text-sm">智能体绑定与动态激活</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          在智能体中心为目标助手显式勾选挂载该技能，或由大模型意图感知动态加载；支持在工作台中查看智能体绑定分布。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelpModal = false; router.push('/dashboard/agent-management')"
-                          class="text-xs text-teal-600 hover:text-teal-800 font-medium cursor-pointer"
-                       >
-                          前往智能体中心 &rarr;
-                       </button>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Schema & Install -->
-           <div v-else-if="activeHelpTab === 'schema'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">SKILL.md 规范与三种安装方式</h4>
-                 
-                 <!-- SKILL.md 结构 -->
-                 <div class="p-4 bg-emerald-50/50 rounded-xl border border-emerald-100 space-y-2 text-xs">
-                    <span class="font-bold text-emerald-900 text-sm">📄 SKILL.md YAML Frontmatter 规范</span>
-                    <pre class="bg-slate-900 text-slate-100 p-3 rounded-lg font-mono text-[11px] overflow-x-auto leading-relaxed">---
-name: doc-reviewer
-description: 专门审查 Markdown 与技术文档的格式与结构守则。当用户需要校对文档或生成规范报告时调用。
----
-# 执行步骤与指示
-1. 检查文档各级标题层级...
-2. 运行 scripts/lint.py 校验规范...</pre>
-                 </div>
-
-                 <!-- 安装方式详细说明：保留旧版 CLI、Git、压缩包安装信息，同时沿用当前 schema Tab。 -->
-                 <div class="space-y-4 text-xs">
-                    <section class="rounded-xl border border-blue-100 bg-blue-50/50 p-4 dark:border-blue-900/30 dark:bg-blue-950/10">
-                       <h5 class="flex items-center gap-2 font-bold text-blue-900 dark:text-blue-200">
-                          <span class="h-3 w-1.5 rounded-full bg-blue-500"></span>
-                          <span>什么是 Skills 技能</span>
-                       </h5>
-                       <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
-                          Skills 是面向 AI 智能体的一套高阶执行规范与指令约束。装载后，大模型可以感知技能内部的脚本、API 动作与业务守则，完成网页渲染、子进程管理、沙箱 SQL 分析等任务。
-                       </p>
-                    </section>
-
-                    <section class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-700 dark:bg-gray-800/40">
-                       <div class="flex items-start justify-between gap-3">
-                          <h5 class="flex items-center gap-2 font-bold text-gray-900 dark:text-gray-100">
-                             <span class="h-3 w-1.5 rounded-full bg-blue-500"></span>
-                             <span>平台全局技能安装 (npx CLI)</span>
-                          </h5>
-                          <button
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <!-- Step 1 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <h4 class="font-bold text-gray-900 text-sm">技能创建与目录规划</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            设定英文 ID、中文名称与业务描述（Description 是大模型识别意图的关键）；自动生成标准化入口 SKILL.md。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                         <button
                             type="button"
-                            @click="copyCommand"
-                            class="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100 hover:text-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-                          >
-                            {{ commandCopied ? '✓ 已复制' : '复制命令' }}
-                          </button>
-                       </div>
-                       <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
-                          平台会扫描运行环境中的全局技能目录：本地默认是 <code class="rounded bg-white px-1 py-0.5 font-mono text-blue-600 dark:bg-gray-900 dark:text-blue-300">~/.agents/skills</code>，Docker 环境默认是 <code class="rounded bg-white px-1 py-0.5 font-mono text-blue-600 dark:bg-gray-900 dark:text-blue-300">/app/data/skills</code>。请在与平台共享该目录的宿主机环境中执行安装命令。
-                       </p>
-                       <div class="mt-3 rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] text-slate-200 shadow-inner sm:text-xs">
-                          <div class="overflow-x-auto whitespace-nowrap select-all leading-relaxed">
-                             <span class="text-slate-500">$</span> npx skills add &lt;仓库地址&gt; --skill &lt;skill-id&gt;
-                          </div>
-                          <div class="mt-2 border-t border-slate-800 pt-2 text-[10px] leading-relaxed text-slate-400">
-                             示例：npx skills add https://github.com/vercel-labs/skills --skill find-skills
-                          </div>
-                       </div>
-                       <p class="mt-2 pl-3.5 leading-relaxed text-gray-500 dark:text-gray-400">
-                          也可以直接复制上面的示例命令。安装完成后，回到工作台刷新列表；技能目录必须包含有效的 <code>SKILL.md</code> 才会被平台识别。
-                       </p>
-                    </section>
+                            @click="showHelpModal = false; openCreateModal()"
+                            class="text-xs text-emerald-600 hover:text-emerald-800 font-bold cursor-pointer"
+                         >
+                            新建技能 &rarr;
+                         </button>
+                      </div>
+                   </div>
 
-                    <section class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-700 dark:bg-gray-800/40">
-                       <h5 class="flex items-center gap-2 font-bold text-gray-900 dark:text-gray-100">
-                          <span class="h-3 w-1.5 rounded-full bg-indigo-500"></span>
-                          <span>个人专属技能克隆 (Git clone)</span>
-                       </h5>
-                       <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
-                          如果要为某个用户安装个人技能，可以将仓库克隆到该用户隔离的技能目录。当前个人技能目录结构为：
-                       </p>
-                       <code class="mt-2 block overflow-x-auto rounded-lg bg-white p-2.5 font-mono text-[10px] text-gray-700 dark:bg-gray-900 dark:text-gray-300">
-                          git clone &lt;仓库地址&gt; data/agent_workspaces/{user_key}/skills/{skill_id}
-                       </code>
-                       <p class="mt-2 pl-3.5 leading-relaxed text-gray-500 dark:text-gray-400">
-                          Docker 环境对应 <code>/app/data/agent_workspaces/{user_key}/skills/{skill_id}</code>。其中 <code>{user_key}</code> 和 <code>{skill_id}</code> 需要替换为实际值，且技能目录中应包含入口文件 <code>SKILL.md</code>。
-                       </p>
-                    </section>
+                   <!-- Step 2 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <h4 class="font-bold text-gray-900 text-sm">脚本编写与沙箱调试</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            在内置工作台编写多级文件树（scripts/ 脚本、resources/ 模板、references/ 规范）；支持 Markdown 在线渲染。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         点击技能卡片进入文件树编辑
+                      </div>
+                   </div>
 
-                    <section class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-700 dark:bg-gray-800/40">
-                       <h5 class="flex items-center gap-2 font-bold text-gray-900 dark:text-gray-100">
-                          <span class="h-3 w-1.5 rounded-full bg-amber-500"></span>
-                          <span>压缩包导入规范</span>
-                       </h5>
-                       <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
-                          在技能工作台选择对应的「平台技能」或「我的技能」作用域，点击「导入技能 (Zip/Tar)」上传压缩文件，系统会自动解压并读取技能元数据。
-                       </p>
-                       <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
-                          <strong class="text-amber-700 dark:text-amber-300">导入限制：</strong>压缩包根目录，或仅包裹一层的子目录中，必须包含核心指令定义文件 <code class="rounded bg-white px-1 py-0.5 font-mono text-blue-600 dark:bg-gray-900 dark:text-blue-300">SKILL.md</code>；缺少该文件时，系统会拒绝导入并清理已解压内容。
-                       </p>
-                       <h6 class="mt-3 font-bold text-gray-800 dark:text-gray-200">覆盖模式与安全策略</h6>
-                       <p class="mt-1 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
-                          如果技能 ID 已存在，只有开启「允许覆盖原有技能」后才会覆盖导入；覆盖时系统会先清理同名物理目录，再重新解压写入。个人技能仅对当前用户可见，平台技能需遵循平台权限和审核流程。
-                       </p>
-                    </section>
+                   <!-- Step 3 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <h4 class="font-bold text-gray-900 text-sm">提审申请与平台合规</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            个人技能成熟后在抽屉中点击「申请发布至平台」；管理员在「待审核」Tab 下审查文件 Diff 与代码合规性。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                         <button
+                            type="button"
+                            @click="showHelpModal = false; activeWorkspaceTab = 'review'"
+                            class="text-xs text-amber-600 hover:text-amber-800 font-bold cursor-pointer"
+                         >
+                            前往待审核 &rarr;
+                         </button>
+                      </div>
+                   </div>
 
-                    <section class="rounded-xl border border-red-100 bg-red-50/60 p-4 dark:border-red-900/30 dark:bg-red-950/10">
-                       <h5 class="flex items-center gap-2 font-bold text-red-900 dark:text-red-200">
-                          <span class="h-3 w-1.5 rounded-full bg-red-500"></span>
-                          <span>安装前安全检查</span>
-                       </h5>
-                       <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
-                          安装前确认第三方来源和脚本内容，重点检查 <code>SKILL.md</code> 中的执行指令以及 <code>scripts/</code>、<code>resources/</code> 等目录。第三方 Skill 可能包含可执行脚本，请确认来源可信后再安装到平台技能目录。
-                       </p>
-                    </section>
-                 </div>
+                   <!-- Step 4 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <h4 class="font-bold text-gray-900 text-sm">平台发布与版本隔离</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            审批通过后晋升为平台公共技能，对全体业务角色公开；严格实现生产发布版本与开发草稿隔离。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelpModal = false; activeWorkspaceTab = 'global'; activeScope = 'global'"
+                            class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
+                         >
+                            平台技能 &rarr;
+                         </button>
+                      </div>
+                   </div>
 
-                 <div class="flex flex-col gap-3 border-t border-gray-100 pt-4 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
-                    <span class="text-[11px] text-gray-400">想寻找更多好用的 AI 技能？前往官方市场发现并下载</span>
-                    <a
-                      href="https://www.skills.sh/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="market-link inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-center text-xs font-bold shadow-md shadow-blue-500/20 transition-all active:scale-95"
-                    >
-                       <span>💡 前往官方 Skills 开放市场</span>
-                       <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                       </svg>
-                    </a>
-                 </div>
-              </div>
-           </div>
+                   <!-- Step 5 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">5</span>
+                            <h4 class="font-bold text-gray-900 text-sm">智能体绑定与动态激活</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            在智能体中心为目标助手显式勾选挂载该技能，或由大模型意图感知动态加载；支持在工作台中查看智能体绑定分布。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelpModal = false; router.push('/dashboard/agent-management')"
+                            class="text-xs text-teal-600 hover:text-teal-800 font-medium cursor-pointer"
+                         >
+                            前往智能体中心 &rarr;
+                         </button>
+                      </div>
+                   </div>
+                </div>
+             </div>
 
-           <!-- Tab 3: Audit & Versioning -->
-           <div v-else-if="activeHelpTab === 'audit'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">发布审批流程与生产版本隔离机制</h4>
-                 <div class="space-y-3 text-xs">
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
-                       <span class="font-bold text-gray-900">1. 个人开发沙箱（我的技能）</span>
-                       <p class="text-gray-600 leading-relaxed">每个用户的技能相互隔离在独立存储空间中，开发与调试过程完全不影响平台公共技能和其他用户。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
-                       <span class="font-bold text-gray-900">2. 提审发布与 Diff 对比</span>
-                       <p class="text-gray-600 leading-relaxed">点击「申请发布至平台」生成发布工单；平台管理员在「待审核」中对文件树变动、代码执行风险与 YAML 描述进行严格核验。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
-                       <span class="font-bold text-gray-900">3. 生产发布与热更新</span>
-                       <p class="text-gray-600 leading-relaxed">审核通过后，技能自动复制并归档至平台全局目录，版本号自增；绑定的智能体即刻生效，无需重启服务。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
+             <!-- Tab 2: Schema & Install -->
+             <div v-else-if="activeHelpTab === 'schema'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">SKILL.md 规范与三种安装方式</h4>
+                 
+                   <!-- SKILL.md 结构 -->
+                   <div class="p-4 bg-emerald-50/50 rounded-xl border border-emerald-100 space-y-2 text-xs">
+                      <span class="font-bold text-emerald-900 text-sm">📄 SKILL.md YAML Frontmatter 规范</span>
+                      <pre class="bg-slate-900 text-slate-100 p-3 rounded-lg font-mono text-[11px] overflow-x-auto leading-relaxed">---
+  name: doc-reviewer
+  description: 专门审查 Markdown 与技术文档的格式与结构守则。当用户需要校对文档或生成规范报告时调用。
+  ---
+  # 执行步骤与指示
+  1. 检查文档各级标题层级...
+  2. 运行 scripts/lint.py 校验规范...</pre>
+                   </div>
+
+                   <!-- 安装方式详细说明：保留旧版 CLI、Git、压缩包安装信息，同时沿用当前 schema Tab。 -->
+                   <div class="space-y-4 text-xs">
+                      <section class="rounded-xl border border-blue-100 bg-blue-50/50 p-4 dark:border-blue-900/30 dark:bg-blue-950/10">
+                         <h5 class="flex items-center gap-2 font-bold text-blue-900 dark:text-blue-200">
+                            <span class="h-3 w-1.5 rounded-full bg-blue-500"></span>
+                            <span>什么是 Skills 技能</span>
+                         </h5>
+                         <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
+                            Skills 是面向 AI 智能体的一套高阶执行规范与指令约束。装载后，大模型可以感知技能内部的脚本、API 动作与业务守则，完成网页渲染、子进程管理、沙箱 SQL 分析等任务。
+                         </p>
+                      </section>
+
+                      <section class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-700 dark:bg-gray-800/40">
+                         <div class="flex items-start justify-between gap-3">
+                            <h5 class="flex items-center gap-2 font-bold text-gray-900 dark:text-gray-100">
+                               <span class="h-3 w-1.5 rounded-full bg-blue-500"></span>
+                               <span>平台全局技能安装 (npx CLI)</span>
+                            </h5>
+                            <button
+                              type="button"
+                              @click="copyCommand"
+                              class="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100 hover:text-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                            >
+                              {{ commandCopied ? '✓ 已复制' : '复制命令' }}
+                            </button>
+                         </div>
+                         <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
+                            平台会扫描运行环境中的全局技能目录：本地默认是 <code class="rounded bg-white px-1 py-0.5 font-mono text-blue-600 dark:bg-gray-900 dark:text-blue-300">~/.agents/skills</code>，Docker 环境默认是 <code class="rounded bg-white px-1 py-0.5 font-mono text-blue-600 dark:bg-gray-900 dark:text-blue-300">/app/data/skills</code>。请在与平台共享该目录的宿主机环境中执行安装命令。
+                         </p>
+                         <div class="mt-3 rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] text-slate-200 shadow-inner sm:text-xs">
+                            <div class="overflow-x-auto whitespace-nowrap select-all leading-relaxed">
+                               <span class="text-slate-500">$</span> npx skills add &lt;仓库地址&gt; --skill &lt;skill-id&gt;
+                            </div>
+                            <div class="mt-2 border-t border-slate-800 pt-2 text-[10px] leading-relaxed text-slate-400">
+                               示例：npx skills add https://github.com/vercel-labs/skills --skill find-skills
+                            </div>
+                         </div>
+                         <p class="mt-2 pl-3.5 leading-relaxed text-gray-500 dark:text-gray-400">
+                            也可以直接复制上面的示例命令。安装完成后，回到工作台刷新列表；技能目录必须包含有效的 <code>SKILL.md</code> 才会被平台识别。
+                         </p>
+                      </section>
+
+                      <section class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-700 dark:bg-gray-800/40">
+                         <h5 class="flex items-center gap-2 font-bold text-gray-900 dark:text-gray-100">
+                            <span class="h-3 w-1.5 rounded-full bg-indigo-500"></span>
+                            <span>个人专属技能克隆 (Git clone)</span>
+                         </h5>
+                         <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
+                            如果要为某个用户安装个人技能，可以将仓库克隆到该用户隔离的技能目录。当前个人技能目录结构为：
+                         </p>
+                         <code class="mt-2 block overflow-x-auto rounded-lg bg-white p-2.5 font-mono text-[10px] text-gray-700 dark:bg-gray-900 dark:text-gray-300">
+                            git clone &lt;仓库地址&gt; data/agent_workspaces/{user_key}/skills/{skill_id}
+                         </code>
+                         <p class="mt-2 pl-3.5 leading-relaxed text-gray-500 dark:text-gray-400">
+                            Docker 环境对应 <code>/app/data/agent_workspaces/{user_key}/skills/{skill_id}</code>。其中 <code>{user_key}</code> 和 <code>{skill_id}</code> 需要替换为实际值，且技能目录中应包含入口文件 <code>SKILL.md</code>。
+                         </p>
+                      </section>
+
+                      <section class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-700 dark:bg-gray-800/40">
+                         <h5 class="flex items-center gap-2 font-bold text-gray-900 dark:text-gray-100">
+                            <span class="h-3 w-1.5 rounded-full bg-amber-500"></span>
+                            <span>压缩包导入规范</span>
+                         </h5>
+                         <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
+                            在技能工作台选择对应的「平台技能」或「我的技能」作用域，点击「导入技能 (Zip/Tar)」上传压缩文件，系统会自动解压并读取技能元数据。
+                         </p>
+                         <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
+                            <strong class="text-amber-700 dark:text-amber-300">导入限制：</strong>压缩包根目录，或仅包裹一层的子目录中，必须包含核心指令定义文件 <code class="rounded bg-white px-1 py-0.5 font-mono text-blue-600 dark:bg-gray-900 dark:text-blue-300">SKILL.md</code>；缺少该文件时，系统会拒绝导入并清理已解压内容。
+                         </p>
+                         <h6 class="mt-3 font-bold text-gray-800 dark:text-gray-200">覆盖模式与安全策略</h6>
+                         <p class="mt-1 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
+                            如果技能 ID 已存在，只有开启「允许覆盖原有技能」后才会覆盖导入；覆盖时系统会先清理同名物理目录，再重新解压写入。个人技能仅对当前用户可见，平台技能需遵循平台权限和审核流程。
+                         </p>
+                      </section>
+
+                      <section class="rounded-xl border border-red-100 bg-red-50/60 p-4 dark:border-red-900/30 dark:bg-red-950/10">
+                         <h5 class="flex items-center gap-2 font-bold text-red-900 dark:text-red-200">
+                            <span class="h-3 w-1.5 rounded-full bg-red-500"></span>
+                            <span>安装前安全检查</span>
+                         </h5>
+                         <p class="mt-2 pl-3.5 leading-relaxed text-gray-600 dark:text-gray-400">
+                            安装前确认第三方来源和脚本内容，重点检查 <code>SKILL.md</code> 中的执行指令以及 <code>scripts/</code>、<code>resources/</code> 等目录。第三方 Skill 可能包含可执行脚本，请确认来源可信后再安装到平台技能目录。
+                         </p>
+                      </section>
+                   </div>
+
+                   <div class="flex flex-col gap-3 border-t border-gray-100 pt-4 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+                      <span class="text-[11px] text-gray-400">想寻找更多好用的 AI 技能？前往官方市场发现并下载</span>
+                      <a
+                        href="https://www.skills.sh/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="market-link inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-center text-xs font-bold shadow-md shadow-blue-500/20 transition-all active:scale-95"
+                      >
+                         <span>💡 前往官方 Skills 开放市场</span>
+                         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                         </svg>
+                      </a>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 3: Audit & Versioning -->
+             <div v-else-if="activeHelpTab === 'audit'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">发布审批流程与生产版本隔离机制</h4>
+                   <div class="space-y-3 text-xs">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
+                         <span class="font-bold text-gray-900">1. 个人开发沙箱（我的技能）</span>
+                         <p class="text-gray-600 leading-relaxed">每个用户的技能相互隔离在独立存储空间中，开发与调试过程完全不影响平台公共技能和其他用户。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
+                         <span class="font-bold text-gray-900">2. 提审发布与 Diff 对比</span>
+                         <p class="text-gray-600 leading-relaxed">点击「申请发布至平台」生成发布工单；平台管理员在「待审核」中对文件树变动、代码执行风险与 YAML 描述进行严格核验。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
+                         <span class="font-bold text-gray-900">3. 生产发布与热更新</span>
+                         <p class="text-gray-600 leading-relaxed">审核通过后，技能自动复制并归档至平台全局目录，版本号自增；绑定的智能体即刻生效，无需重启服务。</p>
+                      </div>
+                   </div>
+                </div>
+             </div>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 新建技能 Modal -->
     <div 
