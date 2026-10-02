@@ -28,7 +28,10 @@ Ticket」互相矛盾，也确实让使用者误以为环境坏了。
    普通 `let` 不会被 `computed` 追踪，等待态将永远不更新。
 2. 等待态仅在**严格模式**下成立（生产环境的同源 Cookie 认证失败仍须如实报错）。
 3. 等待态在中性分支渲染，且**优先于**红色失效遮罩（`v-else-if` 链中的顺序）。
-4. 等待态文案点明"等待宿主下发 INIT_CONFIG"，且**不得**使用失效/过期一类措辞。
+4. 等待态文案面向**最终用户**：不得出现「宿主 / INIT_CONFIG / Ticket / API Key」这类
+   接入方术语，且**不得**使用失效/过期一类措辞。背景给骨架、前景给遮罩，让用户既知道
+   "这里将是一个对话界面"，也知道"此刻在等什么"。
+5. 等待**超过宽限期**后必须切换为可执行的引导：宿主没登录或接入配置没配对时，iframe 永远等不到凭据，若一直显示"稍等片刻"就是在骗人。
 """
 import re
 from pathlib import Path
@@ -143,28 +146,75 @@ def test_awaiting_placeholder_precedes_the_failure_overlay():
     assert 'v-if="!hasPermission"' not in source
 
 
-def test_awaiting_copy_is_neutral_and_actionable():
-    """文案要说明在等什么、以及无需用户干预即可自动进入。"""
+def _awaiting_block() -> str:
+    """等待态那一段源码（含骨架与遮罩）。"""
     source = _normalized()
-
     awaiting = source[source.index('data-testid="embed-awaiting-init"') :]
-    awaiting = awaiting[: awaiting.index("<!-- No Permission Overlay -->")]
+    return awaiting[: awaiting.index("<!-- No Permission Overlay -->")]
 
-    assert "等待宿主下发凭据" in awaiting
-    assert "INIT_CONFIG" in awaiting
-    assert "自动进入对话" in awaiting
+
+def test_awaiting_copy_is_written_for_end_users():
+    """文案面向最终用户：不得出现接入方术语，也不得复用失效/过期措辞。
+
+    「宿主」「INIT_CONFIG」「Ticket」「API Key」对接入方是精确的，对最终用户却是噪音——
+    用户不知道"宿主页面"是哪个页面，也就无从执行"请在宿主页面完成初始化"。
+    """
+    awaiting = _awaiting_block()
+
+    for jargon in ("宿主", "INIT_CONFIG", "Ticket", "API Key", "ticket", "api_key"):
+        assert jargon not in awaiting, f"等待态文案里不该出现接入方术语：{jargon}"
     # 不得复用失效/过期一类措辞，否则又变成误导
     for misleading in ("登录状态已失效", "已过期", "凭证已失效", "无访问权限"):
         assert misleading not in awaiting
+
+    # 但仍要传达"无需用户干预即可自动进入"——文案已抽到 computed，语义断言落在全文
+    assert "稍等片刻即可开始对话" in _normalized()
+
+
+def test_awaiting_copy_tells_the_user_what_to_do_after_the_grace_period():
+    """宽限期后必须给出可执行的下一步，而不是让用户继续等。"""
+    source = _normalized()
+
+    assert "HOST_INIT_NOTICE_GRACE_MS" in source
+    assert "const hostInitNoticeExpired = ref(false);" in source
+    assert "正在获取登录信息" in source
+    assert "暂未收到登录信息" in source
+    assert "回到原系统重新进入" in source
+
+
+def test_awaiting_grace_timer_is_watched_and_cleaned_up():
+    """定时器必须跟随等待态启停并在卸载时清理，否则会留下野定时器。"""
+    source = _normalized()
+
+    assert "watch( isAwaitingHostInitConfig," in source
+    # immediate 必须落在**这一个** watch 上：全局搜索会被文件里别处的 immediate 蒙混过关
+    # （首版契约就是被这样绕过的——把这里的 immediate 改成 false，测试依然全绿，
+    #  而那时定时器根本不会启动，超时降级形同虚设）。
+    watch_at = source.index("watch( isAwaitingHostInitConfig,")
+    window = source[watch_at : watch_at + 700]
+    assert "{ immediate: true }" in window, "等待态 watch 必须是 immediate，否则首屏就在等待时不会启动计时"
+    assert "clearTimeout(hostInitNoticeTimer)" in window
+
+
+def test_awaiting_state_shows_skeleton_behind_a_mask():
+    """背景骨架 + 前景半透明遮罩：用户能看到"这里将有什么"，但点不动任何东西。"""
+    awaiting = _awaiting_block()
+
+    # 骨架存在且仅作装饰；还要有底部输入框轮廓，否则看不出"这里是对话界面"
+    assert 'data-testid="embed-awaiting-skeleton"' in awaiting
+    assert 'aria-hidden="true"' in awaiting
+    assert "mt-auto h-11 rounded-xl" in awaiting
+    # 遮罩存在、半透明（能隐约透出骨架）、并且覆盖整层以吃掉点击
+    assert 'data-testid="embed-awaiting-mask"' in awaiting
+    assert "absolute inset-0" in awaiting
+    assert "bg-white/70" in awaiting
+    assert "backdrop-blur" in awaiting
 
 
 @pytest.mark.parametrize("token", ["text-red-500", "bg-red-50"])
 def test_awaiting_placeholder_is_not_styled_as_an_error(token):
     """红色 = 出错了。等待态不该用红色，否则观感上仍是报错。"""
-    source = _normalized()
-
-    awaiting = source[source.index('data-testid="embed-awaiting-init"') :]
-    awaiting = awaiting[: awaiting.index("<!-- No Permission Overlay -->")]
+    awaiting = _awaiting_block()
 
     assert token not in awaiting
     assert "text-blue-500" in awaiting
