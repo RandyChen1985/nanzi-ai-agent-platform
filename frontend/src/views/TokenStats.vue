@@ -44,29 +44,38 @@
     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
       <!-- Token 主卡：总量 + 输入/输出两行 -->
       <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-start justify-between gap-3 sm:col-span-2 lg:col-span-2 xl:col-span-1">
-        <div class="min-w-0 flex-1 space-y-2">
+        <div class="min-w-0 flex-1 space-y-1.5">
           <span class="text-sm font-medium text-gray-500">Token 消耗</span>
-          <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">
-            {{ formatTokenCompact(summaryData.total_tokens) }}
-          </h3>
-          <p
-            v-if="shouldShowTokenFullHint(summaryData.total_tokens)"
-            class="text-[10px] text-gray-400 tabular-nums"
-          >
-            {{ formatTokenFull(summaryData.total_tokens) }}
-          </p>
-          <div class="text-xs text-gray-500 space-y-1 leading-relaxed">
-            <p class="text-sky-700">
+          <!-- 完整数字与大数同行：它只是大数的精确值，独占一行会把四张卡一起撑高
+               （栅格内卡片等高，高度由内容最多的这张决定）。 -->
+          <div class="flex items-baseline gap-2 flex-wrap">
+            <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">
+              {{ formatTokenCompact(summaryData.total_tokens) }}
+            </h3>
+            <span
+              v-if="shouldShowTokenFullHint(summaryData.total_tokens)"
+              class="text-[10px] text-gray-400 tabular-nums"
+            >
+              {{ formatTokenFull(summaryData.total_tokens) }}
+            </span>
+          </div>
+          <!-- 输入/输出是并列关系，同行展示；「历史未拆分」是补充信息，仍单独占位 -->
+          <div class="flex items-center flex-wrap gap-x-3 gap-y-0.5 text-xs leading-relaxed">
+            <span class="text-sky-700" :title="formatTokenFull(summaryData.prompt_tokens)">
               <span class="text-gray-400">输入</span>
-              <span :title="formatTokenFull(summaryData.prompt_tokens)">{{ formatTokenCompact(summaryData.prompt_tokens) }}</span>
-            </p>
-            <p class="text-rose-700">
+              {{ formatTokenCompact(summaryData.prompt_tokens) }}
+            </span>
+            <span class="text-rose-700" :title="formatTokenFull(summaryData.completion_tokens)">
               <span class="text-gray-400">输出</span>
-              <span :title="formatTokenFull(summaryData.completion_tokens)">{{ formatTokenCompact(summaryData.completion_tokens) }}</span>
-            </p>
-            <p v-if="summaryData.legacy_tokens > 0" class="text-amber-700/90 pt-0.5">
-              历史未拆分 <span :title="formatTokenFull(summaryData.legacy_tokens)">{{ formatTokenCompact(summaryData.legacy_tokens) }}</span>
-            </p>
+              {{ formatTokenCompact(summaryData.completion_tokens) }}
+            </span>
+            <span
+              v-if="summaryData.legacy_tokens > 0"
+              class="text-amber-700/90"
+              :title="formatTokenFull(summaryData.legacy_tokens)"
+            >
+              历史未拆分 {{ formatTokenCompact(summaryData.legacy_tokens) }}
+            </span>
           </div>
         </div>
         <div class="flex-shrink-0 p-3.5 bg-amber-50/80 rounded-2xl text-amber-600">
@@ -92,7 +101,10 @@
       <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center justify-between gap-3">
         <div class="min-w-0 flex-1 space-y-1">
           <span class="text-sm font-medium text-gray-500">平均单次</span>
-          <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">{{ formatTokenCompact(summaryData.avg_tokens) }}</h3>
+          <h3
+            class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none"
+            :title="formatTokenFull(summaryData.avg_tokens)"
+          >{{ formatTokenCompact(summaryData.avg_tokens) }}</h3>
           <p class="text-xs text-gray-400">Token / 会话</p>
         </div>
         <div class="flex-shrink-0 p-3.5 rounded-2xl bg-yellow-50/80 text-yellow-600">
@@ -124,8 +136,12 @@
           趋势分析 · 输入/输出 Token 与交互频次
         </h2>
       </div>
-      <div class="h-96 w-full relative flex items-center justify-center">
-        <div v-if="trendData.length === 0" class="text-gray-400 text-sm">
+      <div class="h-72 sm:h-96 w-full relative flex items-center justify-center">
+        <!-- 加载中不能复用"暂无数据"：首屏会把"还在请求"显示成"确实没有数据" -->
+        <div v-if="loading && trendData.length === 0" class="text-gray-400 text-sm">
+          加载中…
+        </div>
+        <div v-else-if="trendData.length === 0" class="text-gray-400 text-sm">
           暂无趋势数据
         </div>
         <v-chart v-else class="h-full w-full" :option="trendChartOption" autoresize />
@@ -142,7 +158,10 @@
           </h2>
         </div>
         <div class="h-72 w-full relative flex items-center justify-center">
-          <div v-if="agentData.length === 0" class="text-gray-400 text-sm">
+          <div v-if="loading && agentData.length === 0" class="text-gray-400 text-sm">
+            加载中…
+          </div>
+          <div v-else-if="agentData.length === 0" class="text-gray-400 text-sm">
             暂无智能体分布
           </div>
           <v-chart v-else class="h-full w-full" :option="agentChartOption" autoresize />
@@ -169,7 +188,10 @@
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50 text-gray-700">
-              <tr v-if="agentData.length === 0">
+              <tr v-if="loading && agentData.length === 0">
+                <td colspan="6" class="py-10 text-center text-gray-400">加载中…</td>
+              </tr>
+              <tr v-else-if="agentData.length === 0">
                 <td colspan="6" class="py-10 text-center text-gray-400">暂无明细数据</td>
               </tr>
               <tr v-for="agent in agentData" :key="agent.agent_id" class="hover:bg-gray-50/50 transition-colors">
@@ -212,7 +234,10 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50 text-gray-700">
-            <tr v-if="userData.length === 0">
+            <tr v-if="loading && userData.length === 0">
+              <td colspan="7" class="py-10 text-center text-gray-400">加载中…</td>
+            </tr>
+            <tr v-else-if="userData.length === 0">
               <td colspan="7" class="py-10 text-center text-gray-400">暂无用户审计账单</td>
             </tr>
             <tr v-for="userItem in userData" :key="userItem.username" class="hover:bg-gray-50/50 transition-colors">
@@ -244,6 +269,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import axios from "../utils/axios";
+import { useToast } from "@/composables/useToast";
 import {
   formatTokenCompact,
   formatTokenFull,
@@ -269,6 +295,8 @@ use([
   LegendComponent,
   GridComponent,
 ]);
+
+const { showToast } = useToast();
 
 const API_BASE = "";
 const userInfo = ref<any>(null);
@@ -335,36 +363,49 @@ const onPeriodChange = () => {
   refreshAll();
 };
 
+let statsRequestVersion = 0;
+
 const refreshAll = async () => {
+  const requestVersion = ++statsRequestVersion;
   loading.value = true;
   try {
     let daysVal = 7;
     if (period.value === "today") daysVal = 1;
     else if (period.value === "month") daysVal = 30;
 
-    // 1. 获取折线趋势
-    const trendRes = await axios.get(`${API_BASE}/api/portal/dashboard/token-stats/trends`, {
-      params: { days: daysVal }
-    });
+    // 三个接口互不依赖，原先却逐个 await，总耗时是三段之和；并行后取决于最慢的那个。
+    const isAdmin = userInfo.value?.role === "admin";
+    const [trendRes, agentRes, userRes] = await Promise.all([
+      axios.get(`${API_BASE}/api/portal/dashboard/token-stats/trends`, {
+        params: { days: daysVal },
+      }),
+      axios.get(`${API_BASE}/api/portal/dashboard/token-stats/agents`, {
+        params: { period: period.value },
+      }),
+      isAdmin
+        ? axios.get(`${API_BASE}/api/portal/dashboard/token-stats/users`, {
+            params: { period: period.value },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    // 快速切换时段时先发的请求可能后到；不加版本号就会用旧时段的数据覆盖新时段。
+    if (requestVersion !== statsRequestVersion) return;
+
     trendData.value = trendRes.data;
-
-    // 2. 获取智能体分布占比
-    const agentRes = await axios.get(`${API_BASE}/api/portal/dashboard/token-stats/agents`, {
-      params: { period: period.value }
-    });
     agentData.value = agentRes.data;
-
-    // 3. 获取用户排行榜
-    if (userInfo.value?.role === "admin") {
-      const userRes = await axios.get(`${API_BASE}/api/portal/dashboard/token-stats/users`, {
-        params: { period: period.value }
-      });
-      userData.value = userRes.data;
-    }
+    if (userRes) userData.value = userRes.data;
   } catch (error) {
+    if (requestVersion !== statsRequestVersion) return;
     console.error("Failed to load token statistics:", error);
+    // 失败时必须清空：留着上一个时段的数据会让用户以为是当前时段的结果。
+    // 原先只打 console，界面上没有任何反馈。
+    trendData.value = [];
+    agentData.value = [];
+    userData.value = [];
+    showToast("加载 Token 统计失败，请稍后重试", "error");
   } finally {
-    loading.value = false;
+    if (requestVersion === statsRequestVersion) loading.value = false;
   }
 };
 

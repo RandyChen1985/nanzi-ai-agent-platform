@@ -179,21 +179,23 @@ onUnmounted(() => window.removeEventListener('deployment-checklist:open', openDe
     <span>部署检查</span>
   </button>
 
-  <div v-if="showHelp && activeHelp" class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-4" role="dialog" aria-modal="true" :aria-label="`${helpContent[activeHelp].title}检查说明`" @click.self="closeHelp">
-    <div class="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h2 class="text-lg font-bold text-gray-900">{{ helpContent[activeHelp].title }}：如何检查</h2>
-          <p class="mt-1 text-xs text-gray-500">按照下面的检查项目完成配置，最后再勾选清单。</p>
+  <Teleport to="body">
+    <div v-if="showHelp && activeHelp" class="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/40 p-4" role="dialog" aria-modal="true" :aria-label="`${helpContent[activeHelp].title}检查说明`" @click.self="closeHelp">
+      <div class="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="text-lg font-bold text-gray-900">{{ helpContent[activeHelp].title }}：如何检查</h2>
+            <p class="mt-1 text-xs text-gray-500">按照下面的检查项目完成配置，最后再勾选清单。</p>
+          </div>
+          <button type="button" class="text-2xl leading-none text-gray-400 hover:text-gray-700" aria-label="关闭检查说明" @click="closeHelp">×</button>
         </div>
-        <button type="button" class="text-2xl leading-none text-gray-400 hover:text-gray-700" aria-label="关闭检查说明" @click="closeHelp">×</button>
+        <div class="mt-5 grid gap-5 sm:grid-cols-3">
+          <div class="sm:col-span-2"><h3 class="text-sm font-semibold text-gray-900">检查项目</h3><ul class="mt-2 space-y-2 text-xs leading-relaxed text-gray-600"><li v-for="item in helpContent[activeHelp].checks" :key="item.key" class="flex gap-1.5"><span class="font-mono font-semibold text-blue-600">{{ item.key }}</span><span>{{ item.what }}</span></li></ul></div>
+          <div><h3 class="text-sm font-semibold text-gray-900">操作步骤</h3><ol class="mt-2 space-y-2 text-xs leading-relaxed text-gray-600"><li v-for="(item, index) in helpContent[activeHelp].steps" :key="item" class="flex gap-1.5"><span class="font-semibold text-blue-600">{{ index + 1 }}.</span>{{ item }}</li></ol></div>
+          <div><h3 class="text-sm font-semibold text-gray-900">完成标准</h3><p class="mt-2 rounded-lg bg-emerald-50 p-3 text-xs leading-relaxed text-emerald-800">{{ helpContent[activeHelp].done }}</p></div>
+        </div>
+        <div class="mt-6 flex justify-end"><button type="button" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700" @click="closeHelp">知道了</button></div>
       </div>
-      <div class="mt-5 grid gap-5 sm:grid-cols-3">
-        <div class="sm:col-span-2"><h3 class="text-sm font-semibold text-gray-900">检查项目</h3><ul class="mt-2 space-y-2 text-xs leading-relaxed text-gray-600"><li v-for="item in helpContent[activeHelp].checks" :key="item.key" class="flex gap-1.5"><span class="font-mono font-semibold text-blue-600">{{ item.key }}</span><span>{{ item.what }}</span></li></ul></div>
-        <div><h3 class="text-sm font-semibold text-gray-900">操作步骤</h3><ol class="mt-2 space-y-2 text-xs leading-relaxed text-gray-600"><li v-for="(item, index) in helpContent[activeHelp].steps" :key="item" class="flex gap-1.5"><span class="font-semibold text-blue-600">{{ index + 1 }}.</span>{{ item }}</li></ol></div>
-        <div><h3 class="text-sm font-semibold text-gray-900">完成标准</h3><p class="mt-2 rounded-lg bg-emerald-50 p-3 text-xs leading-relaxed text-emerald-800">{{ helpContent[activeHelp].done }}</p></div>
-      </div>
-      <div class="mt-6 flex justify-end"><button type="button" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700" @click="closeHelp">知道了</button></div>
     </div>
-  </div>
+  </Teleport>
 </template>

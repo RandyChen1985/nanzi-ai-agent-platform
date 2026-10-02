@@ -10,7 +10,7 @@
  * 「不该发信」的情况（邮箱不存在、待审核、已禁用、被限流）都返回同一句文案，前端若
  * 另写一句就会随服务端修改而漂移，也可能把「被限流」渲染成用户可感知的差异。
  */
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { clearUserSession } from '../utils/userSession'
@@ -23,7 +23,7 @@ const router = useRouter()
  * 卡片顶部的循环文案：卡片顶到标题之间那块留白，原本是整页最"冷"的地方。
  *
  * 刻意**不写业务措辞**（"输入邮箱""链接多久有效"）：这行字的作用是让页面有呼吸，
- * 不是传达指引。真正要用户读到的约束（30 分钟有效期、只能用一次）留在标题下方那行
+ * 不是传达指引。真正要用户读到的约束（15 分钟有效期、只能用一次）留在标题下方那行
  * 静态说明里——绝不能挪进循环动画，否则用户正好错过那一轮就等于没提示过。
  *
  * 两句一组、共四句，打完退回再换下一句；顺序即节奏，短句在前更抓得住视线。
@@ -41,6 +41,49 @@ const token = computed(() =>
   typeof route.query.token === 'string' ? route.query.token : ''
 )
 const hasToken = computed(() => token.value.length > 0)
+
+/**
+ * 链接预校验状态。有 token 时进页面立刻校验，让用户在动手填密码**之前**就知道
+ * 链接还能不能用——否则用户会认真填完整套密码，点提交才被告知链接已过期。
+ *
+ * 'unavailable' 必须与 'invalid' 分开：把服务端 503 或网络错误渲染成「链接已失效」，
+ * 用户会白重新申请一封邮件，而问题其实不在链接上；反过来把失效说成「稍后重试」，
+ * 则让用户对着一条已经失效的死链反复重试。
+ */
+type VerifyState = 'idle' | 'checking' | 'valid' | 'invalid' | 'unavailable'
+const verifyState = ref<VerifyState>('idle')
+
+const checkToken = async () => {
+  if (!hasToken.value) {
+    verifyState.value = 'idle'
+    return
+  }
+  verifyState.value = 'checking'
+  try {
+    const response = await axios.get('/api/portal/auth/password-reset/verify', {
+      params: { token: token.value }
+    })
+    verifyState.value = response.data?.valid ? 'valid' : 'invalid'
+  } catch {
+    // 网络错误与 5xx 一律按「无法确认」处理，绝不当成链接失效
+    verifyState.value = 'unavailable'
+  }
+}
+
+onMounted(checkToken)
+
+const heading = computed(() => {
+  if (!hasToken.value) return '找回密码'
+  // 校验中仍显示「设置新密码」：先闪一下「已失效」再变回表单是最糟的观感
+  return verifyState.value === 'invalid' ? '链接已失效' : '设置新密码'
+})
+
+const subtitle = computed(() => {
+  if (!hasToken.value) return '输入注册时使用的邮箱，我们会发送一条重置链接。'
+  if (verifyState.value === 'invalid') return '这条重置链接已过期或已被使用。'
+  if (verifyState.value === 'unavailable') return '暂时无法确认链接状态，请稍后重试。'
+  return '重置链接有效期 15 分钟，且只能使用一次。'
+})
 
 const email = ref('')
 const password = ref('')
@@ -143,13 +186,8 @@ const backToEmailMode = () => {
       </p>
 
       <div class="mb-6">
-        <h1 class="text-xl font-bold text-slate-900">
-          {{ hasToken ? '设置新密码' : '找回密码' }}
-        </h1>
-        <p class="mt-1 text-xs text-slate-500">
-          <template v-if="hasToken">重置链接有效期 30 分钟，且只能使用一次。</template>
-          <template v-else>输入注册时使用的邮箱，我们会发送一条重置链接。</template>
-        </p>
+        <h1 class="text-xl font-bold text-slate-900">{{ heading }}</h1>
+        <p class="mt-1 text-xs text-slate-500">{{ subtitle }}</p>
       </div>
 
       <div
@@ -200,8 +238,46 @@ const backToEmailMode = () => {
         </button>
       </form>
 
-      <!-- 有 token：设置新密码 -->
-      <form v-else class="space-y-4" @submit.prevent="submitConfirm">
+      <!-- 有 token：先按预校验结果分流，绝不做「先给表单、再把它抽走」 -->
+      <template v-else>
+        <!-- 校验中：给骨架占位，避免用户刚敲两个字符就被换成「已失效」 -->
+        <div v-if="verifyState === 'checking'" class="space-y-3">
+          <div class="h-[42px] animate-pulse rounded-lg bg-slate-100"></div>
+          <div class="h-[42px] animate-pulse rounded-lg bg-slate-100"></div>
+          <div class="h-[46px] animate-pulse rounded-lg bg-slate-100"></div>
+          <p class="text-center text-[11px] text-slate-400">正在确认链接状态…</p>
+        </div>
+
+        <!-- 链接失效：直接给重新申请入口，不再让用户白填一遍密码 -->
+        <div v-else-if="verifyState === 'invalid'" class="space-y-4">
+          <div class="rounded-lg bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-700">
+            <p>重置链接已失效：可能超过了 15 分钟有效期，或者已经被使用过。</p>
+            <p class="mt-1">重新申请一条新链接即可继续，旧链接会同时作废。</p>
+          </div>
+          <button
+            type="button"
+            class="w-full rounded-lg bg-blue-600 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/10 transition-all hover:bg-blue-700 active:scale-[0.98]"
+            @click="backToEmailMode"
+          >
+            重新申请重置链接
+          </button>
+        </div>
+
+        <!-- 服务不可用 / 网络异常：绝不能报成「链接失效」，否则用户白申请一封邮件 -->
+        <div v-else-if="verifyState === 'unavailable'" class="space-y-4">
+          <div class="rounded-lg bg-red-50 p-3 text-[11px] leading-relaxed text-red-600">
+            暂时无法确认链接状态，可能是网络或服务波动。链接本身未必失效，请稍后重试。
+          </div>
+          <button
+            type="button"
+            class="w-full rounded-lg border border-slate-200 py-3 text-sm font-bold text-slate-600 transition-all hover:border-blue-500 hover:text-blue-600 active:scale-[0.98]"
+            @click="checkToken"
+          >
+            重试
+          </button>
+        </div>
+
+        <form v-else class="space-y-4" @submit.prevent="submitConfirm">
         <div class="space-y-1.5">
           <label class="ml-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">
             新密码
@@ -249,6 +325,7 @@ const backToEmailMode = () => {
           链接已失效？重新申请
         </button>
       </form>
+      </template>
 
       <div class="mt-6 text-center">
         <router-link to="/login" class="text-xs text-blue-600 hover:underline">

@@ -1427,268 +1427,272 @@ watch(
     </Teleport>
 
     <!-- AI Suggestions Modal -->
-    <div
-      v-if="showOptimizeModal"
-      class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-fade-in-up"
+        v-if="showOptimizeModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm"
       >
         <div
-          class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/80"
+          class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-fade-in-up"
         >
-          <div class="flex items-center">
-            <div class="p-2 bg-indigo-100 rounded-lg mr-3">
-              <SparklesIcon class="w-5 h-5 text-indigo-600" />
-            </div>
-            <div>
-              <h3 class="text-sm font-bold text-gray-900">
-                AI 优化建议
-              </h3>
-              <p class="text-[10px] text-gray-400 font-medium">
-                共生成了多个侧重点不同的提示词方案
-              </p>
-            </div>
-          </div>
-          <button
-            @click="showOptimizeModal = false"
-            class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <svg
-              class="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
-        </div>
-
-        <div class="flex-1 flex min-h-0">
-          <!-- Sidebar Tabs -->
           <div
-            class="w-48 border-r border-gray-100 bg-gray-50/30 overflow-y-auto"
+            class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/80"
           >
-            <div
-              v-for="(item, index) in optimizeSuggestions"
-              :key="index"
-              @click="activeOptimizeTab = index"
-              class="px-4 py-4 cursor-pointer transition-all border-l-4"
-              :class="
-                activeOptimizeTab === index
-                  ? 'bg-white border-indigo-500 text-indigo-700 font-bold'
-                  : 'border-transparent text-gray-500 hover:bg-gray-100/50'
-              "
-            >
-              <div
-                class="text-[10px] opacity-60 mb-1 uppercase tracking-tighter"
-              >
-                方案 {{ index + 1 }}
+            <div class="flex items-center">
+              <div class="p-2 bg-indigo-100 rounded-lg mr-3">
+                <SparklesIcon class="w-5 h-5 text-indigo-600" />
               </div>
-              <div class="text-xs truncate">{{ item.title }}</div>
+              <div>
+                <h3 class="text-sm font-bold text-gray-900">
+                  AI 优化建议
+                </h3>
+                <p class="text-[10px] text-gray-400 font-medium">
+                  共生成了多个侧重点不同的提示词方案
+                </p>
+              </div>
             </div>
+            <button
+              @click="showOptimizeModal = false"
+              class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <svg
+                class="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
           </div>
 
-          <!-- Content Area -->
-          <div class="flex-1 flex flex-col min-h-0 bg-white">
-            <transition name="slide-fade" mode="out-in">
+          <div class="flex-1 flex min-h-0">
+            <!-- Sidebar Tabs -->
+            <div
+              class="w-48 border-r border-gray-100 bg-gray-50/30 overflow-y-auto"
+            >
               <div
-                v-if="optimizeSuggestions[activeOptimizeTab]"
-                :key="activeOptimizeTab"
-                class="flex-1 flex flex-col p-6 overflow-hidden"
+                v-for="(item, index) in optimizeSuggestions"
+                :key="index"
+                @click="activeOptimizeTab = index"
+                class="px-4 py-4 cursor-pointer transition-all border-l-4"
+                :class="
+                  activeOptimizeTab === index
+                    ? 'bg-white border-indigo-500 text-indigo-700 font-bold'
+                    : 'border-transparent text-gray-500 hover:bg-gray-100/50'
+                "
               >
                 <div
-                  class="mb-4 p-3 bg-indigo-50 border border-indigo-100 rounded-xl"
+                  class="text-[10px] opacity-60 mb-1 uppercase tracking-tighter"
+                >
+                  方案 {{ index + 1 }}
+                </div>
+                <div class="text-xs truncate">{{ item.title }}</div>
+              </div>
+            </div>
+
+            <!-- Content Area -->
+            <div class="flex-1 flex flex-col min-h-0 bg-white">
+              <transition name="slide-fade" mode="out-in">
+                <div
+                  v-if="optimizeSuggestions[activeOptimizeTab]"
+                  :key="activeOptimizeTab"
+                  class="flex-1 flex flex-col p-6 overflow-hidden"
                 >
                   <div
-                    class="text-[10px] font-bold text-indigo-700 uppercase mb-1"
+                    class="mb-4 p-3 bg-indigo-50 border border-indigo-100 rounded-xl"
                   >
-                    推荐理由 (Reason)
+                    <div
+                      class="text-[10px] font-bold text-indigo-700 uppercase mb-1"
+                    >
+                      推荐理由 (Reason)
+                    </div>
+                    <p class="text-xs text-indigo-900 leading-relaxed">
+                      {{ optimizeSuggestions[activeOptimizeTab].reason }}
+                    </p>
                   </div>
-                  <p class="text-xs text-indigo-900 leading-relaxed">
-                    {{ optimizeSuggestions[activeOptimizeTab].reason }}
-                  </p>
-                </div>
 
-                <div
-                  class="flex-1 relative bg-gray-50 rounded-xl overflow-hidden border border-gray-100"
-                >
-                  <div class="absolute top-3 right-3 z-10">
+                  <div
+                    class="flex-1 relative bg-gray-50 rounded-xl overflow-hidden border border-gray-100"
+                  >
+                    <div class="absolute top-3 right-3 z-10">
+                      <button
+                        @click="
+                          copyToClipboard(
+                            optimizeSuggestions[activeOptimizeTab].content
+                          )
+                        "
+                        class="p-1.5 bg-white shadow-sm border border-gray-200 rounded-lg text-gray-400 hover:text-indigo-600 transition-all active:scale-90"
+                        title="复制此版本"
+                      >
+                        <DocumentDuplicateIcon class="w-4 h-4" />
+                      </button>
+                    </div>
+                    <pre
+                      class="w-full h-full p-6 text-xs text-gray-700 font-mono overflow-y-auto whitespace-pre-wrap custom-scrollbar"
+                      >{{ optimizeSuggestions[activeOptimizeTab].content }}</pre
+                    >
+                  </div>
+
+                  <div class="mt-6 flex justify-end">
                     <button
                       @click="
-                        copyToClipboard(
+                        applySuggestion(
                           optimizeSuggestions[activeOptimizeTab].content
                         )
                       "
-                      class="p-1.5 bg-white shadow-sm border border-gray-200 rounded-lg text-gray-400 hover:text-indigo-600 transition-all active:scale-90"
-                      title="复制此版本"
+                      class="px-6 py-2.5 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-600/20 active:scale-95 transition-all flex items-center"
                     >
-                      <DocumentDuplicateIcon class="w-4 h-4" />
+                      <CheckBadgeIcon class="w-4 h-4 mr-2" />
+                      应用此方案
                     </button>
                   </div>
-                  <pre
-                    class="w-full h-full p-6 text-xs text-gray-700 font-mono overflow-y-auto whitespace-pre-wrap custom-scrollbar"
-                    >{{ optimizeSuggestions[activeOptimizeTab].content }}</pre
-                  >
                 </div>
-
-                <div class="mt-6 flex justify-end">
-                  <button
-                    @click="
-                      applySuggestion(
-                        optimizeSuggestions[activeOptimizeTab].content
-                      )
-                    "
-                    class="px-6 py-2.5 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-600/20 active:scale-95 transition-all flex items-center"
-                  >
-                    <CheckBadgeIcon class="w-4 h-4 mr-2" />
-                    应用此方案
-                  </button>
-                </div>
-              </div>
-            </transition>
+              </transition>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
     <!-- 提示词工坊设计规范与使用指南 Modal -->
-    <div v-if="showSpecsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-indigo-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20" style="background-color: #4f46e5; color: #ffffff;">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+    <Teleport to="body">
+      <div v-if="showSpecsModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-indigo-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20" style="background-color: #4f46e5; color: #ffffff;">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">提示词工坊设计规范与使用指南</h2>
+                 <p class="text-xs text-gray-500 font-medium mt-0.5">统一归集系统与智能体 Prompt、动态变量插值、多版本 Diff 审计与沙箱实时测试。</p>
+               </div>
+            </div>
+            <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['concept', 'syntax', 'practice']" 
+               :key="tab"
+               @click="activeSpecsTab = tab as any"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+               :class="activeSpecsTab === tab ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'concept' ? '核心架构与测试流 (Architecture)' :
+                  tab === 'syntax' ? '动态变量与模板语法 (Variables & Syntax)' : '版本管理与发布实践 (Best Practice)' }}
+             </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+             <!-- Tab 1: Architecture -->
+             <div v-if="activeSpecsTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-indigo-50 to-purple-50 border-l-4 border-indigo-600 p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-indigo-900 mb-1">双轨提示词归集与沙箱测试</h3>
+                   <p class="text-xs text-indigo-700 leading-relaxed">
+                      提示词工坊将平台全局系统级 Prompt（如 Text-to-SQL 编排、意图识别、总结提炼）与各个智能体（Agent）的 System Prompt 统一纳管，支持在线沙箱调试。
+                   </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-indigo-500"></span> 统一归集与分类视图
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         左侧按「全部」、「System（系统级）」、「Agent（智能体私有）」分类检索，点击即可加载对应的最新提示词草稿与已发布版本。
+                      </p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-purple-500"></span> 在线多模型沙箱测试
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         右侧测试面板可自由切换底层大模型（DeepSeek、Qwen 等），填入动态变量并点击「运行测试」，通过打字机流式输出实时观测模型响应效果与推理耗时。
+                      </p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-blue-500"></span> AI 智能优化建议
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         点击「AI 优化」唤起大模型专家助手，从提示词清晰度、约束完整性、角色设定与格式化输出 4 个维度提出优化建议并生成对照 Diff。
+                      </p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-emerald-500"></span> 字符级 Diff 审计与历史回滚
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         每次保存均生成不可变的历史版本记录；支持在版本历史中直观对比变更字符，并随时一键回滚至任意历史稳定版本。
+                      </p>
+                   </div>
+                </div>
              </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">提示词工坊设计规范与使用指南</h2>
-               <p class="text-xs text-gray-500 font-medium mt-0.5">统一归集系统与智能体 Prompt、动态变量插值、多版本 Diff 审计与沙箱实时测试。</p>
+
+             <!-- Tab 2: Syntax -->
+             <div v-else-if="activeSpecsTab === 'syntax'" class="space-y-4 max-w-4xl mx-auto text-xs">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">动态变量插值与占位符规范</h4>
+                   <div class="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 space-y-2">
+                      <span class="font-bold text-indigo-900 text-sm">💡 占位符格式：<code>{variable_name}</code></span>
+                      <p class="text-gray-600">在提示词中凡是用花括号包裹的英文字符串，系统会自动解析并在右侧测试区生成对应的输入框。</p>
+                   </div>
+                   <div class="space-y-2">
+                      <h5 class="font-bold text-gray-800 text-sm">常见系统内置注入变量：</h5>
+                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                         <div class="p-2.5 bg-gray-50 rounded-lg border border-gray-150 font-mono">
+                            <strong class="text-indigo-600">{schema_info}</strong>: 动态注入数据集表结构与字段语义
+                         </div>
+                         <div class="p-2.5 bg-gray-50 rounded-lg border border-gray-150 font-mono">
+                            <strong class="text-indigo-600">{few_shot_examples}</strong>: 动态注入向量召回的相似案例
+                         </div>
+                         <div class="p-2.5 bg-gray-50 rounded-lg border border-gray-150 font-mono">
+                            <strong class="text-indigo-600">{user_query}</strong>: 用户当前轮次的原始或精炼提问
+                         </div>
+                         <div class="p-2.5 bg-gray-50 rounded-lg border border-gray-150 font-mono">
+                            <strong class="text-indigo-600">{context}</strong>: 历史对话摘要或知识库召回片段
+                         </div>
+                      </div>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 3: Best Practice -->
+             <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-4xl mx-auto text-xs">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">提示词工程与发布规范</h4>
+                   <div class="space-y-3">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">1. 明确角色设定与约束负例（Negative Constraints）</span>
+                         <p class="text-gray-600 leading-relaxed">清晰定义 AI 的身份边界，例如：“严禁杜撰不存在的字段”、“仅返回标准 JSON 格式且不得包含任何 Markdown 代码块”。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">2. 结构化模块切分</span>
+                         <p class="text-gray-600 leading-relaxed">建议使用 Markdown 二级标题对 Prompt 进行清晰划分：# 角色定位 ➔ ## 任务目标 ➔ ## 业务规则 ➔ ## 输出格式。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">3. 保存前先在沙箱多样本跑测</span>
+                         <p class="text-gray-600 leading-relaxed">修改 Prompt 后，建议准备 3~5 组典型业务用例在沙箱中测试不同模型的表现，确认稳定后再保存发布。</p>
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['concept', 'syntax', 'practice']" 
-             :key="tab"
-             @click="activeSpecsTab = tab as any"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-             :class="activeSpecsTab === tab ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'concept' ? '核心架构与测试流 (Architecture)' :
-                tab === 'syntax' ? '动态变量与模板语法 (Variables & Syntax)' : '版本管理与发布实践 (Best Practice)' }}
-           </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
-           <!-- Tab 1: Architecture -->
-           <div v-if="activeSpecsTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-indigo-50 to-purple-50 border-l-4 border-indigo-600 p-4 rounded-r-xl shadow-2xs">
-                 <h3 class="font-bold text-indigo-900 mb-1">双轨提示词归集与沙箱测试</h3>
-                 <p class="text-xs text-indigo-700 leading-relaxed">
-                    提示词工坊将平台全局系统级 Prompt（如 Text-to-SQL 编排、意图识别、总结提炼）与各个智能体（Agent）的 System Prompt 统一纳管，支持在线沙箱调试。
-                 </p>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-indigo-500"></span> 统一归集与分类视图
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       左侧按「全部」、「System（系统级）」、「Agent（智能体私有）」分类检索，点击即可加载对应的最新提示词草稿与已发布版本。
-                    </p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-purple-500"></span> 在线多模型沙箱测试
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       右侧测试面板可自由切换底层大模型（DeepSeek、Qwen 等），填入动态变量并点击「运行测试」，通过打字机流式输出实时观测模型响应效果与推理耗时。
-                    </p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-blue-500"></span> AI 智能优化建议
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       点击「AI 优化」唤起大模型专家助手，从提示词清晰度、约束完整性、角色设定与格式化输出 4 个维度提出优化建议并生成对照 Diff。
-                    </p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-emerald-500"></span> 字符级 Diff 审计与历史回滚
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       每次保存均生成不可变的历史版本记录；支持在版本历史中直观对比变更字符，并随时一键回滚至任意历史稳定版本。
-                    </p>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Syntax -->
-           <div v-else-if="activeSpecsTab === 'syntax'" class="space-y-4 max-w-4xl mx-auto text-xs">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">动态变量插值与占位符规范</h4>
-                 <div class="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 space-y-2">
-                    <span class="font-bold text-indigo-900 text-sm">💡 占位符格式：<code>{variable_name}</code></span>
-                    <p class="text-gray-600">在提示词中凡是用花括号包裹的英文字符串，系统会自动解析并在右侧测试区生成对应的输入框。</p>
-                 </div>
-                 <div class="space-y-2">
-                    <h5 class="font-bold text-gray-800 text-sm">常见系统内置注入变量：</h5>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                       <div class="p-2.5 bg-gray-50 rounded-lg border border-gray-150 font-mono">
-                          <strong class="text-indigo-600">{schema_info}</strong>: 动态注入数据集表结构与字段语义
-                       </div>
-                       <div class="p-2.5 bg-gray-50 rounded-lg border border-gray-150 font-mono">
-                          <strong class="text-indigo-600">{few_shot_examples}</strong>: 动态注入向量召回的相似案例
-                       </div>
-                       <div class="p-2.5 bg-gray-50 rounded-lg border border-gray-150 font-mono">
-                          <strong class="text-indigo-600">{user_query}</strong>: 用户当前轮次的原始或精炼提问
-                       </div>
-                       <div class="p-2.5 bg-gray-50 rounded-lg border border-gray-150 font-mono">
-                          <strong class="text-indigo-600">{context}</strong>: 历史对话摘要或知识库召回片段
-                       </div>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 3: Best Practice -->
-           <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-4xl mx-auto text-xs">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">提示词工程与发布规范</h4>
-                 <div class="space-y-3">
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">1. 明确角色设定与约束负例（Negative Constraints）</span>
-                       <p class="text-gray-600 leading-relaxed">清晰定义 AI 的身份边界，例如：“严禁杜撰不存在的字段”、“仅返回标准 JSON 格式且不得包含任何 Markdown 代码块”。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">2. 结构化模块切分</span>
-                       <p class="text-gray-600 leading-relaxed">建议使用 Markdown 二级标题对 Prompt 进行清晰划分：# 角色定位 ➔ ## 任务目标 ➔ ## 业务规则 ➔ ## 输出格式。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">3. 保存前先在沙箱多样本跑测</span>
-                       <p class="text-gray-600 leading-relaxed">修改 Prompt 后，建议准备 3~5 组典型业务用例在沙箱中测试不同模型的表现，确认稳定后再保存发布。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
 </template>
 

@@ -91,3 +91,6 @@ nohup.out
 .last_applied_sql
 db-prod/.last_applied_sql
 db-prod-pg/.last_applied_sql
+
+# 浏览器工具截图产物（DSH browser_* 工具的默认输出目录，仅本地预览用）
+browser-screenshots/

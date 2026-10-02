@@ -107,8 +107,8 @@
                     :disabled="isSubmittingInit"
                     class="w-full py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
                 >
-                    <span v-if="isSubmittingInit">正在签发 Ticket 并发送...</span>
-                    <span v-else>发送 INIT_CONFIG {{ config.authMode === 'ticket' ? '(Ticket 换票)' : '' }}</span>
+                    <span v-if="isSubmittingInit">正在发送登录请求...</span>
+                    <span v-else>发送登录请求（INIT_CONFIG{{ config.authMode === 'ticket' ? ' · Ticket 换票' : '' }}）</span>
                 </button>
             </section>
 
@@ -171,249 +171,251 @@
 	        </div>
 	    </div>
 
-        <div
-          v-if="showIntegrationGuide"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4"
-          @click.self="showIntegrationGuide = false"
-        >
-          <div class="w-full max-w-5xl max-h-[88vh] bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col">
-            <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
-              <div class="min-w-0">
-                <h2 class="text-lg font-black text-gray-900">EmbedChat 集成指南</h2>
-                <p class="text-xs text-gray-500 mt-1">选择一种方式复制代码，示例会按当前登录态自动填入域名、API Key 和智能体模式。</p>
-              </div>
-              <button
-                @click="showIntegrationGuide = false"
-                class="h-9 w-9 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors flex-shrink-0"
-                title="关闭"
-                aria-label="关闭"
-              >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <!-- 顶部红色安全提示条 -->
-            <div class="mx-5 mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs flex items-start gap-2.5 text-rose-700">
-              <svg class="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <div class="leading-relaxed">
-                <span class="font-bold text-rose-800">安全规范提示：</span>
-                旧版直接在前端传递长期 API Key 的方式仅作为存量系统向后兼容，存在凭证外泄风险，<strong>不推荐在生产环境中使用</strong>。新系统集成强烈推荐使用 <strong>⭐ 临时 Ticket 模式</strong>（由宿主后端内网申请 5 分钟一次性票据，前端免密兑换并支持滑动续期）。
-              </div>
-            </div>
-
-            <div class="border-b border-gray-100 px-4 overflow-x-auto shrink-0">
-              <div class="flex items-center gap-1 min-w-max h-12">
+        <Teleport to="body">
+          <div
+            v-if="showIntegrationGuide"
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4"
+            @click.self="showIntegrationGuide = false"
+          >
+            <div class="w-full max-w-5xl max-h-[88vh] bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col">
+              <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
+                <div class="min-w-0">
+                  <h2 class="text-lg font-black text-gray-900">EmbedChat 集成指南</h2>
+                  <p class="text-xs text-gray-500 mt-1">选择一种方式复制代码，示例会按当前登录态自动填入域名、API Key 和智能体模式。</p>
+                </div>
                 <button
-                  v-for="tab in integrationTabs"
-                  :key="tab.id"
-                  @click="activeIntegrationTab = tab.id"
-                  class="h-12 px-4 inline-flex items-center whitespace-nowrap text-sm leading-none font-bold border-b-2 transition-colors flex-shrink-0"
-                  :class="activeIntegrationTab === tab.id ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-200'"
+                  @click="showIntegrationGuide = false"
+                  class="h-9 w-9 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors flex-shrink-0"
+                  title="关闭"
+                  aria-label="关闭"
                 >
-                  {{ tab.label }}
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
               </div>
-            </div>
 
-            <div class="flex-1 overflow-y-auto p-5 bg-gray-50">
-              <!-- Markdown 完整文档专属视图 -->
-              <div v-if="activeIntegrationTab === 'markdown_docs'" class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-100 bg-white flex items-center justify-between gap-4 sticky top-0 z-10">
-                  <div>
-                    <h3 class="text-base font-bold text-gray-900"> NanZi 智能体平台嵌入式组件集成指南 (EmbedChat)</h3>
-                    <p class="text-xs text-gray-500 mt-0.5">官方完整技术白皮书：涵盖架构时序、Ticket 签发、多语言后端/前端范例、PostMessage 协议与 FAQ</p>
-                  </div>
-                  <div class="flex items-center gap-2 flex-shrink-0">
-                    <button
-                      @click="copyGuideCode"
-                      class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-1.5 shadow-sm"
-                    >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                      复制 Markdown 全文
-                    </button>
-                  </div>
+              <!-- 顶部红色安全提示条 -->
+              <div class="mx-5 mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs flex items-start gap-2.5 text-rose-700">
+                <svg class="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div class="leading-relaxed">
+                  <span class="font-bold text-rose-800">安全规范提示：</span>
+                  旧版直接在前端传递长期 API Key 的方式仅作为存量系统向后兼容，存在凭证外泄风险，<strong>不推荐在生产环境中使用</strong>。新系统集成强烈推荐使用 <strong>⭐ 临时 Ticket 模式</strong>（由宿主后端内网申请 5 分钟一次性票据，前端免密兑换并支持滑动续期）。
                 </div>
-                <div
-                  class="p-6 text-sm text-gray-800 leading-relaxed font-sans prose prose-slate max-w-none select-text"
-                  v-html="renderedMarkdownDoc"
-                ></div>
               </div>
 
-              <!-- 其他代码生成器 Tabs 视图 -->
-              <template v-else>
-                <div class="mb-5 bg-white border border-gray-200 rounded-lg p-4">
-                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div class="min-w-0">
-                      <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">当前域名</div>
-                      <div class="font-mono text-xs text-gray-700 truncate bg-gray-50 border border-gray-100 rounded-md px-2 py-2">{{ integrationHost }}</div>
-                    </div>
-                    <div class="min-w-0">
-                      <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">API Key</div>
-                      <div
-                        class="font-mono text-xs truncate border rounded-md px-2 py-2"
-                        :class="integrationHasRealApiKey ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-amber-700 bg-amber-50 border-amber-100'"
-                        :title="integrationHasRealApiKey ? integrationApiKey : '当前浏览器未读取到登录 API Key，将使用占位值'"
-                      >
-                        {{ integrationHasRealApiKey ? maskApiKey(integrationApiKey) : integrationApiKey }}
-                      </div>
-                    </div>
-                    <div class="min-w-0 lg:col-span-2">
-                      <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">智能体模式</div>
-                      <div class="grid grid-cols-1 sm:grid-cols-[9rem_minmax(0,1fr)] gap-2">
-                        <select v-model="integrationAgentMode" class="w-full min-w-0 text-xs border-gray-300 rounded-md h-9">
-                          <option value="auto">自动路由</option>
-                          <option value="agent">指定智能体</option>
-                        </select>
-                        <select
-                          v-model="selectedIntegrationAgentId"
-                          class="w-full min-w-0 max-w-full text-xs border-gray-300 rounded-md h-9 truncate"
-                          :disabled="integrationAgentMode === 'auto' || integrationAgents.length === 0"
-                        >
-                          <option v-if="integrationAgents.length === 0" value="">暂无可用智能体</option>
-                          <option v-for="agent in integrationAgents" :key="agent.id" :value="agent.id">
-                            {{ agent.display_name || agent.name }} ({{ agent.id }})
-                          </option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                    <span class="px-2 py-1 rounded bg-gray-50 border border-gray-100">当前生成：{{ integrationAgentMode === 'auto' ? '不传 agent_id，由平台自动路由' : `指定 ${selectedIntegrationAgentLabel}` }}</span>
-                    <span v-if="!integrationHasRealApiKey" class="px-2 py-1 rounded bg-amber-50 border border-amber-100 text-amber-700">未读到本地 API Key，复制前请先登录或手动替换占位值</span>
-                  </div>
+              <div class="border-b border-gray-100 px-4 overflow-x-auto shrink-0">
+                <div class="flex items-center gap-1 min-w-max h-12">
+                  <button
+                    v-for="tab in integrationTabs"
+                    :key="tab.id"
+                    @click="activeIntegrationTab = tab.id"
+                    class="h-12 px-4 inline-flex items-center whitespace-nowrap text-sm leading-none font-bold border-b-2 transition-colors flex-shrink-0"
+                    :class="activeIntegrationTab === tab.id ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-200'"
+                  >
+                    {{ tab.label }}
+                  </button>
                 </div>
-                <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-5">
-                  <aside class="space-y-3">
-                    <div class="bg-white border border-gray-200 rounded-lg p-4">
-                      <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-2">适用场景</div>
-                      <p class="text-sm text-gray-700 leading-relaxed">{{ activeIntegrationTabData.summary }}</p>
-                    </div>
-                    <div class="bg-blue-50 border border-blue-100 rounded-lg p-4">
-                      <div class="text-xs font-black text-blue-500 uppercase tracking-wider mb-2">关键点</div>
-                      <ul class="space-y-2 text-sm text-blue-900">
-                        <li v-for="point in activeIntegrationTabData.points" :key="point" class="flex gap-2 leading-relaxed">
-                          <span class="mt-2 h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0"></span>
-                          <span>{{ point }}</span>
-                        </li>
-                      </ul>
-                    </div>
-                  </aside>
+              </div>
 
-	                <section class="bg-white border border-gray-200 rounded-lg overflow-hidden min-w-0">
-	                  <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3 bg-white">
-                      <div class="min-w-0">
-                        <h3 class="font-black text-gray-900 truncate">{{ activeIntegrationTabData.title }}</h3>
-                        <p class="text-xs text-gray-500 mt-0.5">{{ activeIntegrationTabData.caption }}</p>
-                      </div>
+              <div class="flex-1 overflow-y-auto p-5 bg-gray-50">
+                <!-- Markdown 完整文档专属视图 -->
+                <div v-if="activeIntegrationTab === 'markdown_docs'" class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                  <div class="px-6 py-4 border-b border-gray-100 bg-white flex items-center justify-between gap-4 sticky top-0 z-10">
+                    <div>
+                      <h3 class="text-base font-bold text-gray-900"> NanZi 智能体平台嵌入式组件集成指南 (EmbedChat)</h3>
+                      <p class="text-xs text-gray-500 mt-0.5">官方完整技术白皮书：涵盖架构时序、Ticket 签发、多语言后端/前端范例、PostMessage 协议与 FAQ</p>
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
                       <button
                         @click="copyGuideCode"
-                        class="px-3 py-1.5 rounded-md text-xs font-bold bg-gray-900 text-white hover:bg-black transition-colors flex-shrink-0"
+                        class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-1.5 shadow-sm"
                       >
-	                      复制代码
-	                    </button>
-	                  </div>
-                      <div class="p-4 border-b border-gray-100 bg-slate-50">
-                        <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-3">接入效果预览</div>
-                        <div class="relative h-56 rounded-lg border border-gray-200 bg-white overflow-hidden shadow-inner">
-                          <div class="absolute inset-x-0 top-0 h-9 bg-slate-900 flex items-center px-3 gap-2">
-                            <span class="h-2.5 w-2.5 rounded-full bg-red-400"></span>
-                            <span class="h-2.5 w-2.5 rounded-full bg-yellow-400"></span>
-                            <span class="h-2.5 w-2.5 rounded-full bg-green-400"></span>
-                            <span class="ml-2 text-[10px] font-bold text-slate-300">Host Business Page</span>
-                          </div>
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        复制 Markdown 全文
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    class="p-6 text-sm text-gray-800 leading-relaxed font-sans prose prose-slate max-w-none select-text"
+                    v-html="renderedMarkdownDoc"
+                  ></div>
+                </div>
 
-                          <template v-if="activeIntegrationTab === 'iframe'">
-                            <div class="absolute left-4 right-4 top-14 bottom-4 rounded-lg border border-blue-200 bg-blue-50 shadow-sm overflow-hidden">
-                              <div class="h-9 bg-blue-600 text-white px-3 flex items-center justify-between text-xs font-bold">
-                                <span>EmbedChat IFrame</span>
-                                <span>100% x 640px</span>
-                              </div>
-                              <div class="p-4 space-y-3">
-                                <div class="h-3 w-2/3 rounded bg-blue-200"></div>
-                                <div class="h-16 rounded-lg bg-white border border-blue-100"></div>
-                                <div class="h-9 rounded-full bg-blue-600/90"></div>
-                              </div>
-                            </div>
-                          </template>
-
-                          <template v-else-if="activeIntegrationTab === 'postmessage'">
-                            <div class="absolute left-4 top-14 bottom-4 w-[52%] rounded-lg bg-slate-100 border border-slate-200 p-3">
-                              <div class="h-3 w-20 rounded bg-slate-300 mb-3"></div>
-                              <div class="space-y-2">
-                                <div class="h-3 rounded bg-slate-200"></div>
-                                <div class="h-3 w-4/5 rounded bg-slate-200"></div>
-                                <div class="h-16 rounded border border-slate-200 bg-white"></div>
-                              </div>
-                            </div>
-                            <div class="absolute right-4 top-14 bottom-4 w-[38%] rounded-lg border border-emerald-200 bg-white shadow-lg overflow-hidden">
-                              <div class="h-8 bg-emerald-600 text-white px-3 flex items-center text-xs font-bold">Ready -> INIT_CONFIG</div>
-                              <div class="p-3 space-y-2">
-                                <div class="flex items-center gap-2 text-[10px] text-emerald-700 font-bold">
-                                  <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-                                  Token via postMessage
-                                </div>
-                                <div class="h-14 rounded-lg bg-emerald-50 border border-emerald-100"></div>
-                                <div class="h-7 rounded-full bg-emerald-600/90"></div>
-                              </div>
-                            </div>
-                          </template>
-
-                          <template v-else-if="activeIntegrationTab === 'floating'">
-                            <div class="absolute left-4 top-14 right-4 bottom-4 rounded-lg bg-slate-100 border border-slate-200 p-4">
-                              <div class="grid grid-cols-3 gap-3 h-full">
-                                <div class="rounded bg-white border border-slate-200"></div>
-                                <div class="rounded bg-white border border-slate-200"></div>
-                                <div class="rounded bg-white border border-slate-200"></div>
-                              </div>
-                            </div>
-                            <div class="absolute right-5 bottom-5 h-24 w-32 rounded-xl bg-white border border-blue-200 shadow-2xl overflow-hidden">
-                              <div class="h-7 bg-blue-600 text-white px-2 flex items-center text-[10px] font-bold">AI Assistant</div>
-                              <div class="absolute right-1.5 top-1.5 h-4 w-4 rounded-full bg-white/20 text-white flex items-center justify-center text-[10px] font-black">-</div>
-                              <div class="p-2 space-y-1">
-                                <div class="h-2 rounded bg-blue-100"></div>
-                                <div class="h-2 w-2/3 rounded bg-blue-100"></div>
-                                <div class="h-5 rounded-full bg-blue-600/90 mt-2"></div>
-                              </div>
-                            </div>
-                            <div class="absolute right-5 bottom-5 translate-x-4 translate-y-4 h-11 w-11 rounded-full bg-blue-600 text-white shadow-xl flex items-center justify-center text-xs font-black ring-4 ring-white">AI</div>
-                          </template>
-
-                          <template v-else>
-                            <div class="absolute left-4 top-14 bottom-4 w-[45%] rounded-lg border border-violet-200 bg-white shadow-sm overflow-hidden">
-                              <div class="h-8 bg-violet-600 text-white px-3 flex items-center text-xs font-bold">ticket-sidebar-ai</div>
-                              <div class="p-3 space-y-2">
-                                <div class="h-3 rounded bg-violet-100"></div>
-                                <div class="h-3 w-3/4 rounded bg-violet-100"></div>
-                                <div class="h-14 rounded-lg border border-violet-100 bg-violet-50"></div>
-                              </div>
-                            </div>
-                            <div class="absolute right-4 top-14 bottom-4 w-[45%] rounded-lg border border-amber-200 bg-white shadow-sm overflow-hidden">
-                              <div class="h-8 bg-amber-500 text-white px-3 flex items-center text-xs font-bold">report-page-ai</div>
-                              <div class="p-3 space-y-2">
-                                <div class="h-3 rounded bg-amber-100"></div>
-                                <div class="h-3 w-2/3 rounded bg-amber-100"></div>
-                                <div class="h-14 rounded-lg border border-amber-100 bg-amber-50"></div>
-                              </div>
-                            </div>
-                          </template>
+                <!-- 其他代码生成器 Tabs 视图 -->
+                <template v-else>
+                  <div class="mb-5 bg-white border border-gray-200 rounded-lg p-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div class="min-w-0">
+                        <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">当前域名</div>
+                        <div class="font-mono text-xs text-gray-700 truncate bg-gray-50 border border-gray-100 rounded-md px-2 py-2">{{ integrationHost }}</div>
+                      </div>
+                      <div class="min-w-0">
+                        <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">API Key</div>
+                        <div
+                          class="font-mono text-xs truncate border rounded-md px-2 py-2"
+                          :class="integrationHasRealApiKey ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-amber-700 bg-amber-50 border-amber-100'"
+                          :title="integrationHasRealApiKey ? integrationApiKey : '当前浏览器未读取到登录 API Key，将使用占位值'"
+                        >
+                          {{ integrationHasRealApiKey ? maskApiKey(integrationApiKey) : integrationApiKey }}
                         </div>
                       </div>
+                      <div class="min-w-0 lg:col-span-2">
+                        <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-1">智能体模式</div>
+                        <div class="grid grid-cols-1 sm:grid-cols-[9rem_minmax(0,1fr)] gap-2">
+                          <select v-model="integrationAgentMode" class="w-full min-w-0 text-xs border-gray-300 rounded-md h-9">
+                            <option value="auto">自动路由</option>
+                            <option value="agent">指定智能体</option>
+                          </select>
+                          <select
+                            v-model="selectedIntegrationAgentId"
+                            class="w-full min-w-0 max-w-full text-xs border-gray-300 rounded-md h-9 truncate"
+                            :disabled="integrationAgentMode === 'auto' || integrationAgents.length === 0"
+                          >
+                            <option v-if="integrationAgents.length === 0" value="">暂无可用智能体</option>
+                            <option v-for="agent in integrationAgents" :key="agent.id" :value="agent.id">
+                              {{ agent.display_name || agent.name }} ({{ agent.id }})
+                            </option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                      <span class="px-2 py-1 rounded bg-gray-50 border border-gray-100">当前生成：{{ integrationAgentMode === 'auto' ? '不传 agent_id，由平台自动路由' : `指定 ${selectedIntegrationAgentLabel}` }}</span>
+                      <span v-if="!integrationHasRealApiKey" class="px-2 py-1 rounded bg-amber-50 border border-amber-100 text-amber-700">未读到本地 API Key，复制前请先登录或手动替换占位值</span>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-5">
+                    <aside class="space-y-3">
+                      <div class="bg-white border border-gray-200 rounded-lg p-4">
+                        <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-2">适用场景</div>
+                        <p class="text-sm text-gray-700 leading-relaxed">{{ activeIntegrationTabData.summary }}</p>
+                      </div>
+                      <div class="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                        <div class="text-xs font-black text-blue-500 uppercase tracking-wider mb-2">关键点</div>
+                        <ul class="space-y-2 text-sm text-blue-900">
+                          <li v-for="point in activeIntegrationTabData.points" :key="point" class="flex gap-2 leading-relaxed">
+                            <span class="mt-2 h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0"></span>
+                            <span>{{ point }}</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </aside>
 
-	                  <div class="p-4 bg-slate-950 overflow-x-auto">
-	                    <pre class="font-mono text-xs text-slate-100 leading-relaxed"><code>{{ activeIntegrationTabData.code }}</code></pre>
-	                  </div>
-	                </section>
-                </div>
-              </template>
+  	                <section class="bg-white border border-gray-200 rounded-lg overflow-hidden min-w-0">
+  	                  <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3 bg-white">
+                        <div class="min-w-0">
+                          <h3 class="font-black text-gray-900 truncate">{{ activeIntegrationTabData.title }}</h3>
+                          <p class="text-xs text-gray-500 mt-0.5">{{ activeIntegrationTabData.caption }}</p>
+                        </div>
+                        <button
+                          @click="copyGuideCode"
+                          class="px-3 py-1.5 rounded-md text-xs font-bold bg-gray-900 text-white hover:bg-black transition-colors flex-shrink-0"
+                        >
+  	                      复制代码
+  	                    </button>
+  	                  </div>
+                        <div class="p-4 border-b border-gray-100 bg-slate-50">
+                          <div class="text-xs font-black text-gray-400 uppercase tracking-wider mb-3">接入效果预览</div>
+                          <div class="relative h-56 rounded-lg border border-gray-200 bg-white overflow-hidden shadow-inner">
+                            <div class="absolute inset-x-0 top-0 h-9 bg-slate-900 flex items-center px-3 gap-2">
+                              <span class="h-2.5 w-2.5 rounded-full bg-red-400"></span>
+                              <span class="h-2.5 w-2.5 rounded-full bg-yellow-400"></span>
+                              <span class="h-2.5 w-2.5 rounded-full bg-green-400"></span>
+                              <span class="ml-2 text-[10px] font-bold text-slate-300">Host Business Page</span>
+                            </div>
+
+                            <template v-if="activeIntegrationTab === 'iframe'">
+                              <div class="absolute left-4 right-4 top-14 bottom-4 rounded-lg border border-blue-200 bg-blue-50 shadow-sm overflow-hidden">
+                                <div class="h-9 bg-blue-600 text-white px-3 flex items-center justify-between text-xs font-bold">
+                                  <span>EmbedChat IFrame</span>
+                                  <span>100% x 640px</span>
+                                </div>
+                                <div class="p-4 space-y-3">
+                                  <div class="h-3 w-2/3 rounded bg-blue-200"></div>
+                                  <div class="h-16 rounded-lg bg-white border border-blue-100"></div>
+                                  <div class="h-9 rounded-full bg-blue-600/90"></div>
+                                </div>
+                              </div>
+                            </template>
+
+                            <template v-else-if="activeIntegrationTab === 'postmessage'">
+                              <div class="absolute left-4 top-14 bottom-4 w-[52%] rounded-lg bg-slate-100 border border-slate-200 p-3">
+                                <div class="h-3 w-20 rounded bg-slate-300 mb-3"></div>
+                                <div class="space-y-2">
+                                  <div class="h-3 rounded bg-slate-200"></div>
+                                  <div class="h-3 w-4/5 rounded bg-slate-200"></div>
+                                  <div class="h-16 rounded border border-slate-200 bg-white"></div>
+                                </div>
+                              </div>
+                              <div class="absolute right-4 top-14 bottom-4 w-[38%] rounded-lg border border-emerald-200 bg-white shadow-lg overflow-hidden">
+                                <div class="h-8 bg-emerald-600 text-white px-3 flex items-center text-xs font-bold">Ready -> INIT_CONFIG</div>
+                                <div class="p-3 space-y-2">
+                                  <div class="flex items-center gap-2 text-[10px] text-emerald-700 font-bold">
+                                    <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+                                    Token via postMessage
+                                  </div>
+                                  <div class="h-14 rounded-lg bg-emerald-50 border border-emerald-100"></div>
+                                  <div class="h-7 rounded-full bg-emerald-600/90"></div>
+                                </div>
+                              </div>
+                            </template>
+
+                            <template v-else-if="activeIntegrationTab === 'floating'">
+                              <div class="absolute left-4 top-14 right-4 bottom-4 rounded-lg bg-slate-100 border border-slate-200 p-4">
+                                <div class="grid grid-cols-3 gap-3 h-full">
+                                  <div class="rounded bg-white border border-slate-200"></div>
+                                  <div class="rounded bg-white border border-slate-200"></div>
+                                  <div class="rounded bg-white border border-slate-200"></div>
+                                </div>
+                              </div>
+                              <div class="absolute right-5 bottom-5 h-24 w-32 rounded-xl bg-white border border-blue-200 shadow-2xl overflow-hidden">
+                                <div class="h-7 bg-blue-600 text-white px-2 flex items-center text-[10px] font-bold">AI Assistant</div>
+                                <div class="absolute right-1.5 top-1.5 h-4 w-4 rounded-full bg-white/20 text-white flex items-center justify-center text-[10px] font-black">-</div>
+                                <div class="p-2 space-y-1">
+                                  <div class="h-2 rounded bg-blue-100"></div>
+                                  <div class="h-2 w-2/3 rounded bg-blue-100"></div>
+                                  <div class="h-5 rounded-full bg-blue-600/90 mt-2"></div>
+                                </div>
+                              </div>
+                              <div class="absolute right-5 bottom-5 translate-x-4 translate-y-4 h-11 w-11 rounded-full bg-blue-600 text-white shadow-xl flex items-center justify-center text-xs font-black ring-4 ring-white">AI</div>
+                            </template>
+
+                            <template v-else>
+                              <div class="absolute left-4 top-14 bottom-4 w-[45%] rounded-lg border border-violet-200 bg-white shadow-sm overflow-hidden">
+                                <div class="h-8 bg-violet-600 text-white px-3 flex items-center text-xs font-bold">ticket-sidebar-ai</div>
+                                <div class="p-3 space-y-2">
+                                  <div class="h-3 rounded bg-violet-100"></div>
+                                  <div class="h-3 w-3/4 rounded bg-violet-100"></div>
+                                  <div class="h-14 rounded-lg border border-violet-100 bg-violet-50"></div>
+                                </div>
+                              </div>
+                              <div class="absolute right-4 top-14 bottom-4 w-[45%] rounded-lg border border-amber-200 bg-white shadow-sm overflow-hidden">
+                                <div class="h-8 bg-amber-500 text-white px-3 flex items-center text-xs font-bold">report-page-ai</div>
+                                <div class="p-3 space-y-2">
+                                  <div class="h-3 rounded bg-amber-100"></div>
+                                  <div class="h-3 w-2/3 rounded bg-amber-100"></div>
+                                  <div class="h-14 rounded-lg border border-amber-100 bg-amber-50"></div>
+                                </div>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+
+  	                  <div class="p-4 bg-slate-950 overflow-x-auto">
+  	                    <pre class="font-mono text-xs text-slate-100 leading-relaxed"><code>{{ activeIntegrationTabData.code }}</code></pre>
+  	                  </div>
+  	                </section>
+                  </div>
+                </template>
+              </div>
             </div>
           </div>
-        </div>
+        </Teleport>
 	  </div>
 	</template>
 	
@@ -1066,7 +1068,7 @@ const handleMessage = (event: MessageEvent) => {
         log(`RX: ${data.type}`);
         
         if (data.type === 'NANZI_WIDGET_READY') {
-            log('Widget Ready — 请配置 Token 后点击「发送 INIT_CONFIG」');
+            log('Widget Ready — 请配置 Token 后点击「发送登录请求」');
         }
     }
 };

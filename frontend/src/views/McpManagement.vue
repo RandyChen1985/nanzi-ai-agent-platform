@@ -222,204 +222,206 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
     </div>
 
     <!-- MCP 设计规范与全流程指引 Modal -->
-    <div v-if="showHelp" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-indigo-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20" style="background-color: #4f46e5; color: #ffffff;">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>
+    <Teleport to="body">
+      <div v-if="showHelp" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-indigo-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20" style="background-color: #4f46e5; color: #ffffff;">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">MCP 工具集设计规范与全流程指引</h2>
+                 <p class="text-xs text-gray-500 font-medium mt-0.5">Model Context Protocol 开放生态集成，从服务接入、自发现探活到多智能体装配调用。</p>
+               </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button
+                v-if="!showMcpFlowGuide"
+                type="button"
+                @click="restoreMcpFlowGuide"
+                class="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 bg-indigo-100/70 hover:bg-indigo-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>恢复顶部流程提示</span>
+              </button>
+              <button @click="showHelp = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['flow', 'protocols', 'security']" 
+               :key="tab"
+               @click="activeHelpTab = tab as any"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+               :class="activeHelpTab === tab ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'flow' ? '全流程指引 (Workflow)' :
+                  tab === 'protocols' ? '连接协议与生态规范 (Protocols)' : '安全隔离与作用域 (Scope & Security)' }}
+             </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+             <!-- Tab 1: Workflow Flow -->
+             <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-indigo-50 to-blue-50 border-l-4 border-indigo-600 p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-indigo-900 mb-1">MCP 5 步全生命周期接入体系</h3>
+                   <p class="text-xs text-indigo-700 leading-relaxed">
+                      Model Context Protocol (MCP) 是标准化的外部工具开放协议。接入服务后平台自动发起 tools/list 自发现，可在线沙箱调试并在智能体中心一键挂载。
+                   </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <!-- Step 1 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <h4 class="font-bold text-gray-900 text-sm">服务登记与生态安装</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            支持接入 SSE 或 Streamable HTTP 远程服务，或粘贴包含 URL 的 JSON 配置；可直接从生态市场一键安装官方精选服务。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                         <button
+                            type="button"
+                            @click="showHelp = false; registryRef?.openAddModal('manual')"
+                            class="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
+                         >
+                            新增服务 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 2 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <h4 class="font-bold text-gray-900 text-sm">探活发现与工具同步</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            系统自动发起 tools/list 协议握手，提取工具名称、描述与 JSON Schema 入参定义；支持随时点击刷新保持最新。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         服务列表中点击「刷新工具」
+                      </div>
+                   </div>
+
+                   <!-- Step 3 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <h4 class="font-bold text-gray-900 text-sm">在线测试与参数调试</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            在服务卡片中点击工具「测试」按钮进入内置调试台，输入实参实时触发 MCP 执行并观测原始报文返回。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         服务卡片中点击「测试」按钮
+                      </div>
+                   </div>
+
+                   <!-- Step 4 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <h4 class="font-bold text-gray-900 text-sm">范围隔离与权限分配</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            区分「平台公开 MCP」（全员共享，管理员维护）与「我的 MCP」（个人私有专属）；在角色管理中细粒度下发维护权限。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/roles')"
+                            class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
+                         >
+                            前往角色管理 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 5 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">5</span>
+                            <h4 class="font-bold text-gray-900 text-sm">智能体挂载与协同调用</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            前往「智能体中心」在目标智能体版本装配中勾选已启用的 MCP 服务；智能体在对话中自主调度 MCP 完成复杂操作。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/agent-management')"
+                            class="text-xs text-amber-600 hover:text-amber-800 font-medium cursor-pointer"
+                         >
+                            前往智能体中心挂载 &rarr;
+                         </button>
+                      </div>
+                   </div>
+                </div>
              </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">MCP 工具集设计规范与全流程指引</h2>
-               <p class="text-xs text-gray-500 font-medium mt-0.5">Model Context Protocol 开放生态集成，从服务接入、自发现探活到多智能体装配调用。</p>
+
+             <!-- Tab 2: Protocols -->
+             <div v-else-if="activeHelpTab === 'protocols'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">MCP 协议连接模式与生态规范</h4>
+                   <div class="space-y-3 text-xs">
+                      <div class="p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-100 space-y-1">
+                         <span class="font-bold text-indigo-900 text-sm">1. SSE 远程服务传输（Server-Sent Events）</span>
+                         <p class="text-gray-600 leading-relaxed">适用于部署在独立 Docker 容器或云服务上的 MCP Server（例如 <code>http://mcp-server:8000/sse</code>）。支持自定义 Header 鉴权与长连接流式响应。</p>
+                      </div>
+                      <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 space-y-1">
+                         <span class="font-bold text-blue-900 text-sm">2. Streamable HTTP 远程服务传输</span>
+                         <p class="text-gray-600 leading-relaxed">适用于提供 MCP HTTP 端点的云服务或网关（例如 <code>https://example.com/mcp</code>）。系统会自动探测协议，并通过 HTTP 请求完成初始化、工具发现和调用；支持自定义 Header 鉴权。</p>
+                      </div>
+                      <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-100 space-y-1">
+                         <span class="font-bold text-purple-900 text-sm">3. JSON 配置粘贴</span>
+                         <p class="text-gray-600 leading-relaxed">支持粘贴 Claude Desktop / VSCode 的标准 <code>mcpServers</code> JSON 配置，提取其中第一个包含 URL 的服务地址与请求头；纯 Stdio 配置（仅 command/args）暂不支持。</p>
+                      </div>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 3: Security & Scope -->
+             <div v-else-if="activeHelpTab === 'security'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">安全隔离与作用域（Scope）规则</h4>
+                   <div class="space-y-3 text-xs">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">平台 MCP（Global Scope）</span>
+                         <p class="text-gray-600">全局公共服务，由系统管理员统一维护。所有获得智能体使用权限的用户均可基于智能体调用该服务中的已发布工具。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">我的 MCP（Personal Scope）</span>
+                         <p class="text-gray-600">个人私有专属服务，服务名称带专属前缀隔离，仅限本人在个人会话与私有智能体中挂载，确保私密密钥不外泄。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">工具级发布状态（Publish Status）</span>
+                         <p class="text-gray-600">服务端探测到的工具默认需处于「已发布」状态方可在对话中被大模型检索和调用；支持一键下线特定高危工具。</p>
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <div class="flex items-center gap-3">
-            <button
-              v-if="!showMcpFlowGuide"
-              type="button"
-              @click="restoreMcpFlowGuide"
-              class="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 bg-indigo-100/70 hover:bg-indigo-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              <span>恢复顶部流程提示</span>
-            </button>
-            <button @click="showHelp = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['flow', 'protocols', 'security']" 
-             :key="tab"
-             @click="activeHelpTab = tab as any"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-             :class="activeHelpTab === tab ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'flow' ? '全流程指引 (Workflow)' :
-                tab === 'protocols' ? '连接协议与生态规范 (Protocols)' : '安全隔离与作用域 (Scope & Security)' }}
-           </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
-           <!-- Tab 1: Workflow Flow -->
-           <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-indigo-50 to-blue-50 border-l-4 border-indigo-600 p-4 rounded-r-xl shadow-2xs">
-                 <h3 class="font-bold text-indigo-900 mb-1">MCP 5 步全生命周期接入体系</h3>
-                 <p class="text-xs text-indigo-700 leading-relaxed">
-                    Model Context Protocol (MCP) 是标准化的外部工具开放协议。接入服务后平台自动发起 tools/list 自发现，可在线沙箱调试并在智能体中心一键挂载。
-                 </p>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <!-- Step 1 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                          <h4 class="font-bold text-gray-900 text-sm">服务登记与生态安装</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          支持接入 SSE 或 Streamable HTTP 远程服务，或粘贴包含 URL 的 JSON 配置；可直接从生态市场一键安装官方精选服务。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                       <button
-                          type="button"
-                          @click="showHelp = false; registryRef?.openAddModal('manual')"
-                          class="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
-                       >
-                          新增服务 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 2 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">2</span>
-                          <h4 class="font-bold text-gray-900 text-sm">探活发现与工具同步</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          系统自动发起 tools/list 协议握手，提取工具名称、描述与 JSON Schema 入参定义；支持随时点击刷新保持最新。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       服务列表中点击「刷新工具」
-                    </div>
-                 </div>
-
-                 <!-- Step 3 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">3</span>
-                          <h4 class="font-bold text-gray-900 text-sm">在线测试与参数调试</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          在服务卡片中点击工具「测试」按钮进入内置调试台，输入实参实时触发 MCP 执行并观测原始报文返回。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       服务卡片中点击「测试」按钮
-                    </div>
-                 </div>
-
-                 <!-- Step 4 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
-                          <h4 class="font-bold text-gray-900 text-sm">范围隔离与权限分配</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          区分「平台公开 MCP」（全员共享，管理员维护）与「我的 MCP」（个人私有专属）；在角色管理中细粒度下发维护权限。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/roles')"
-                          class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
-                       >
-                          前往角色管理 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 5 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">5</span>
-                          <h4 class="font-bold text-gray-900 text-sm">智能体挂载与协同调用</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          前往「智能体中心」在目标智能体版本装配中勾选已启用的 MCP 服务；智能体在对话中自主调度 MCP 完成复杂操作。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/agent-management')"
-                          class="text-xs text-amber-600 hover:text-amber-800 font-medium cursor-pointer"
-                       >
-                          前往智能体中心挂载 &rarr;
-                       </button>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Protocols -->
-           <div v-else-if="activeHelpTab === 'protocols'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">MCP 协议连接模式与生态规范</h4>
-                 <div class="space-y-3 text-xs">
-                    <div class="p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-100 space-y-1">
-                       <span class="font-bold text-indigo-900 text-sm">1. SSE 远程服务传输（Server-Sent Events）</span>
-                       <p class="text-gray-600 leading-relaxed">适用于部署在独立 Docker 容器或云服务上的 MCP Server（例如 <code>http://mcp-server:8000/sse</code>）。支持自定义 Header 鉴权与长连接流式响应。</p>
-                    </div>
-                    <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 space-y-1">
-                       <span class="font-bold text-blue-900 text-sm">2. Streamable HTTP 远程服务传输</span>
-                       <p class="text-gray-600 leading-relaxed">适用于提供 MCP HTTP 端点的云服务或网关（例如 <code>https://example.com/mcp</code>）。系统会自动探测协议，并通过 HTTP 请求完成初始化、工具发现和调用；支持自定义 Header 鉴权。</p>
-                    </div>
-                    <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-100 space-y-1">
-                       <span class="font-bold text-purple-900 text-sm">3. JSON 配置粘贴</span>
-                       <p class="text-gray-600 leading-relaxed">支持粘贴 Claude Desktop / VSCode 的标准 <code>mcpServers</code> JSON 配置，提取其中第一个包含 URL 的服务地址与请求头；纯 Stdio 配置（仅 command/args）暂不支持。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 3: Security & Scope -->
-           <div v-else-if="activeHelpTab === 'security'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">安全隔离与作用域（Scope）规则</h4>
-                 <div class="space-y-3 text-xs">
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">平台 MCP（Global Scope）</span>
-                       <p class="text-gray-600">全局公共服务，由系统管理员统一维护。所有获得智能体使用权限的用户均可基于智能体调用该服务中的已发布工具。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">我的 MCP（Personal Scope）</span>
-                       <p class="text-gray-600">个人私有专属服务，服务名称带专属前缀隔离，仅限本人在个人会话与私有智能体中挂载，确保私密密钥不外泄。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">工具级发布状态（Publish Status）</span>
-                       <p class="text-gray-600">服务端探测到的工具默认需处于「已发布」状态方可在对话中被大模型检索和调用；支持一键下线特定高危工具。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>

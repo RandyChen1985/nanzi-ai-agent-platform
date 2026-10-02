@@ -1927,660 +1927,670 @@ onMounted(async () => {
     </div>
 
     <!-- Delete Confirmation Modal -->
-    <div v-if="showDeleteModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showDeleteModal = false">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
-        <div class="p-6 text-center">
-           <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
-              <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-           </div>
-           <h3 class="text-lg font-bold text-gray-900 mb-2">确认删除数据集?</h3>
-           <p class="text-sm text-gray-500 mb-6 leading-relaxed">
-             您即将删除 <b>{{ deletingDataset?.name }}</b>。<br>
-             此操作将永久删除该数据集及其包含的所有表结构定义，且<span class="text-red-600 font-bold">不可恢复</span>。
-           </p>
-           <div class="flex gap-3 justify-center">
-              <button @click="showDeleteModal = false" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
-              <button @click="confirmDelete" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30">确认删除</button>
-           </div>
+    <Teleport to="body">
+      <div v-if="showDeleteModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showDeleteModal = false">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
+          <div class="p-6 text-center">
+             <div class="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
+                <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+             </div>
+             <h3 class="text-lg font-bold text-gray-900 mb-2">确认删除数据集?</h3>
+             <p class="text-sm text-gray-500 mb-6 leading-relaxed">
+               您即将删除 <b>{{ deletingDataset?.name }}</b>。<br>
+               此操作将永久删除该数据集及其包含的所有表结构定义，且<span class="text-red-600 font-bold">不可恢复</span>。
+             </p>
+             <div class="flex gap-3 justify-center">
+                <button @click="showDeleteModal = false" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
+                <button @click="confirmDelete" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-red-500/30">确认删除</button>
+             </div>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Sync Confirmation Modal -->
-    <div v-if="showSyncConfirmModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSyncConfirmModal = false">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
-        <div class="p-6 text-center">
-           <div class="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-indigo-100">
-              <svg class="w-8 h-8 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-           </div>
-           <h3 class="text-lg font-bold text-gray-900 mb-2">同步到 RAGFlow?</h3>
-           <p class="text-sm text-gray-500 mb-6 leading-relaxed">
-             即将把 <b>{{ syncingDataset?.display_name }}</b> 的元数据同步到 RAGFlow 知识库。<br>
-             这会<b>覆盖</b>远端已有的同名文件并触发重新解析。
-           </p>
-           <div class="flex gap-3 justify-center">
-              <button @click="showSyncConfirmModal = false" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
-              <button @click="confirmSync" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-indigo-500/30">确认同步</button>
-           </div>
+    <Teleport to="body">
+      <div v-if="showSyncConfirmModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSyncConfirmModal = false">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
+          <div class="p-6 text-center">
+             <div class="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-indigo-100">
+                <svg class="w-8 h-8 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+             </div>
+             <h3 class="text-lg font-bold text-gray-900 mb-2">同步到 RAGFlow?</h3>
+             <p class="text-sm text-gray-500 mb-6 leading-relaxed">
+               即将把 <b>{{ syncingDataset?.display_name }}</b> 的元数据同步到 RAGFlow 知识库。<br>
+               这会<b>覆盖</b>远端已有的同名文件并触发重新解析。
+             </p>
+             <div class="flex gap-3 justify-center">
+                <button @click="showSyncConfirmModal = false" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 bg-white">取消</button>
+                <button @click="confirmSync" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-md transition-colors shadow-indigo-500/30">确认同步</button>
+             </div>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Test Retrieval Modal -->
-    <div v-if="showTestModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showTestModal = false">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[88vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-amber-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center border border-amber-200">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-             </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">Schema 检索模拟器</h2>
-               <p class="text-xs text-gray-500 font-medium">模拟 AI Agent 的检索过程，验证关键词召回的准确性。</p>
-             </div>
-          </div>
-          <button @click="showTestModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
-
-        <div class="flex-1 overflow-hidden flex flex-col">
-           <!-- Search Bar -->
-           <div class="p-6 bg-white border-b border-gray-100 flex flex-col gap-4">
-              <div class="flex gap-4">
-                 <input 
-                   v-model="testQuery" 
-                   @keyup.enter="handleTestRetrieval"
-                   class="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all disabled:bg-gray-100"
-                   placeholder="输入用户问题，例如：'查询上海机房的PUE'..."
-                 >
-                 <button 
-                   @click="handleTestRetrieval"
-                   :disabled="testLoading || !testQuery"
-                   class="px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 flex items-center gap-2"
-                 >
-                   <svg v-if="testLoading" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                   <span v-else>执行检索</span>
-                 </button>
-              </div>
-
-              <!-- 折叠触发按钮 -->
-              <div class="flex items-center">
-                <button 
-                  @click="showAdvancedSettings = !showAdvancedSettings"
-                  class="text-xs text-gray-500 hover:text-amber-600 transition-colors flex items-center gap-1 font-medium cursor-pointer"
-                >
-                  <svg 
-                    class="w-4 h-4 transition-transform duration-200" 
-                    :class="{ 'rotate-90': showAdvancedSettings }"
-                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  >
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                  </svg>
-                  高级参数配置 (仅临时测试)
-                </button>
-              </div>
-
-              <!-- 折叠面板内容 -->
-              <div v-if="showAdvancedSettings" class="p-4 bg-gray-50/80 rounded-xl border border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs transition-all duration-300">
-                <!-- Provider -->
-                <div class="flex items-center gap-3">
-                  <span class="w-24 text-gray-600 font-medium shrink-0">元数据提供方:</span>
-                  <select 
-                    v-model="tempProvider"
-                    class="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-500 flex-1 cursor-pointer"
-                  >
-                    <option value="default">系统默认配置</option>
-                    <option value="local">本地检索模式 (local)</option>
-                    <option value="ragflow">知识库检索模式 (ragflow)</option>
-                  </select>
-                </div>
-
-                <!-- Top K -->
-                <div class="flex items-center gap-3">
-                  <span class="w-24 text-gray-600 font-medium shrink-0 flex items-center gap-1">
-                    Top K 数量:
-                    <span class="group relative cursor-pointer text-gray-400 hover:text-gray-600">
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                      <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-48 bg-slate-900 text-white text-[10px] p-2 rounded shadow-xl leading-normal z-50">
-                        元数据检索时返回的 Top K 数量，控制 AI 可感知的表结构上限 (对应配置: ragflow_metadata_top_k)
-                      </span>
-                    </span>
-                  </span>
-                  <div class="flex items-center gap-2 flex-1">
-                    <input 
-                      type="range" min="1" max="20" step="1"
-                      v-model.number="tempTopK"
-                      class="flex-1 accent-amber-500 cursor-pointer"
-                    >
-                    <span class="w-8 text-right font-mono font-semibold text-gray-700 bg-white border border-gray-200 rounded px-1 py-0.5">{{ tempTopK }}</span>
-                  </div>
-                </div>
-
-                <!-- Similarity Threshold -->
-                <div class="flex items-center gap-3">
-                  <span class="w-24 text-gray-600 font-medium shrink-0 flex items-center gap-1">
-                    相似度阈值:
-                    <span class="group relative cursor-pointer text-gray-400 hover:text-gray-600">
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                      <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-48 bg-slate-900 text-white text-[10px] p-2 rounded shadow-xl leading-normal z-50">
-                        语义检索的最低相似度阈值 (0-1)，低于此阈值的匹配项将被忽略，越低召回率越高但越不精准 (对应配置: ragflow_similarity_threshold)
-                      </span>
-                    </span>
-                  </span>
-                  <div class="flex items-center gap-2 flex-1">
-                    <input 
-                      type="range" min="0" max="1" step="0.05"
-                      v-model.number="tempThreshold"
-                      class="flex-1 accent-amber-500 cursor-pointer"
-                    >
-                    <span class="w-8 text-right font-mono font-semibold text-gray-700 bg-white border border-gray-200 rounded px-1 py-0.5">{{ tempThreshold.toFixed(2) }}</span>
-                  </div>
-                </div>
-
-                <!-- Vector Weight -->
-                <div v-if="showVectorWeight" class="flex items-center gap-3">
-                  <span class="w-24 text-gray-600 font-medium shrink-0 flex items-center gap-1">
-                    向量检索权重:
-                    <span class="group relative cursor-pointer text-gray-400 hover:text-gray-600">
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                      <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-48 bg-slate-900 text-white text-[10px] p-2 rounded shadow-xl leading-normal z-50">
-                        RAGFlow 混合检索中向量检索的权重 (0-1)，剩余为全文检索权重 (对应配置: ragflow_vector_weight)
-                      </span>
-                    </span>
-                  </span>
-                  <div class="flex items-center gap-2 flex-1">
-                    <input 
-                      type="range" min="0" max="1" step="0.05"
-                      v-model.number="tempVectorWeight"
-                      class="flex-1 accent-amber-500 cursor-pointer"
-                    >
-                    <span class="w-8 text-right font-mono font-semibold text-gray-700 bg-white border border-gray-200 rounded px-1 py-0.5">{{ tempVectorWeight.toFixed(2) }}</span>
-                  </div>
-                </div>
-              </div>
-           </div>
-
-           <!-- Results -->
-           <div class="flex-1 overflow-hidden bg-gray-50 flex">
-              <!-- Left Column: Results -->
-              <div class="flex-1 overflow-y-auto p-6 border-r border-gray-200">
-                  <div v-if="!testResult && !testLoading" class="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
-                     <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 16l2.879-2.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242zM21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                     <p>请输入关键词开始测试</p>
-                  </div>
-
-                  <div v-else-if="testResult" class="space-y-6">
-                     <!-- Status Banner -->
-                     <div v-if="testResult.found" class="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
-                        <svg class="w-5 h-5 text-green-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                        <div>
-                           <h4 class="font-bold text-green-800 text-sm">检索成功 (Hit)</h4>
-                           <p class="text-xs text-green-700 mt-1">
-                              Provider: <b class="uppercase">{{ testResult.provider }}</b> | 
-                              命中了 <b>{{ testResult.datasets.length }}</b> 个数据集
-                           </p>
-                        </div>
-                     </div>
-                     <div v-else class="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
-                        <svg class="w-5 h-5 text-red-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                        <div>
-                          <span class="font-bold text-red-800 text-sm">未找到相关元数据 (Miss)</span>
-                          <p class="text-xs text-red-600 mt-1">请查看右侧「执行日志 (Trace)」：含 Redis 连接、索引 num_docs、向量维度、KNN 原始命中与阈值过滤详情。</p>
-                        </div>
-                     </div>
-
-                     <!-- Context Preview -->
-                     <div v-if="testResult.found" class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                        <div class="px-4 py-2 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
-                           <span class="text-xs font-mono text-slate-400">Generated Context (YAML/Markdown)</span>
-                           <span class="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">Inject to LLM</span>
-                        </div>
-                        <pre class="p-6 text-xs font-mono text-emerald-400 overflow-x-auto whitespace-pre-wrap">{{ testResult.context }}</pre>
-                     </div>
-                  </div>
-              </div>
-
-              <!-- Right Column: Debug Logs -->
-              <div class="w-1/3 bg-slate-50 border-l border-gray-200 flex flex-col" v-if="testResult">
-                  <div class="px-4 py-3 border-b border-gray-200 bg-white">
-                      <h3 class="text-sm font-bold text-gray-700 flex items-center gap-2">
-                          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-                          执行日志 (Trace)
-                      </h3>
-                  </div>
-                  <div class="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-xs">
-                      <div
-                        v-for="(log, i) in testResult.logs"
-                        :key="i"
-                        class="p-2 rounded border text-xs font-mono break-all shadow-sm"
-                        :class="String(log).includes('[WARN]') || String(log).includes('[HINT]') || String(log).includes('failed')
-                          ? 'bg-amber-50 border-amber-200 text-amber-900'
-                          : String(log).includes('[KNN]') || String(log).includes('[Redis]') || String(log).includes('[RediSearch]')
-                            ? 'bg-slate-50 border-slate-200 text-slate-700'
-                            : 'bg-white border-gray-200 text-gray-600'"
-                      >
-                          <span class="text-gray-300 mr-2">{{ Number(i) + 1 }}.</span>
-                          {{ log }}
-                      </div>
-                      <div v-if="!testResult.logs || testResult.logs.length === 0" class="text-gray-400 italic text-center mt-10">
-                          暂无详细日志
-                      </div>
-                  </div>
-              </div>
-           </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Spec Modal -->
-    <div v-if="showSpecModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecModal = false">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center border border-purple-200">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
-             </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">元数据设计规范与全流程指引</h2>
-               <p class="text-xs text-gray-500 font-medium">构建 AI 可理解的业务语义层，提升 Text-to-SQL 准确率。</p>
-             </div>
-          </div>
-          <div class="flex items-center gap-3">
-            <button
-              v-if="!showFlowGuide"
-              type="button"
-              @click="restoreFlowGuide"
-              class="inline-flex items-center gap-1 text-xs font-medium text-purple-700 bg-purple-100/70 hover:bg-purple-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              <span>恢复顶部流程提示</span>
-            </button>
-            <button @click="showSpecModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+    <Teleport to="body">
+      <div v-if="showTestModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showTestModal = false">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[88vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-amber-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center border border-amber-200">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">Schema 检索模拟器</h2>
+                 <p class="text-xs text-gray-500 font-medium">模拟 AI Agent 的检索过程，验证关键词召回的准确性。</p>
+               </div>
+            </div>
+            <button @click="showTestModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
-        </div>
 
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['flow', 'concept', 'structure', 'fields', 'practice']" 
-             :key="tab"
-             @click="activeSpecTab = tab"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors capitalize cursor-pointer"
-             :class="activeSpecTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'flow' ? '全流程指引 (Workflow)' :
-                tab === 'concept' ? '核心理念 (Concepts)' : 
-                tab === 'structure' ? 'YAML 结构 (Schema)' : 
-                tab === 'fields' ? '字段规范 (Fields)' : '最佳实践 (Best Practice)' }}
-           </button>
-        </div>
+          <div class="flex-1 overflow-hidden flex flex-col">
+             <!-- Search Bar -->
+             <div class="p-6 bg-white border-b border-gray-100 flex flex-col gap-4">
+                <div class="flex gap-4">
+                   <input 
+                     v-model="testQuery" 
+                     @keyup.enter="handleTestRetrieval"
+                     class="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all disabled:bg-gray-100"
+                     placeholder="输入用户问题，例如：'查询上海机房的PUE'..."
+                   >
+                   <button 
+                     @click="handleTestRetrieval"
+                     :disabled="testLoading || !testQuery"
+                     class="px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 flex items-center gap-2"
+                   >
+                     <svg v-if="testLoading" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                     <span v-else>执行检索</span>
+                   </button>
+                </div>
 
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-8 bg-gray-50/50">
-           
-           <!-- Tab 0: Workflow Flow -->
-           <div v-if="activeSpecTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-lg shadow-2xs">
-                 <h3 class="font-bold text-blue-900 mb-1">从数据源到 AI 智能体的端到端流程</h3>
-                 <p class="text-xs text-blue-700 leading-relaxed">
-                    遵循标准 4 步流程：先连接摸排数据源，再通过 AI 智能解析表结构与枚举，继而完善指标与跨库实体关系，最后同步至向量库供 ChatBI 与 Agent 消费。
-                 </p>
-              </div>
+                <!-- 折叠触发按钮 -->
+                <div class="flex items-center">
+                  <button 
+                    @click="showAdvancedSettings = !showAdvancedSettings"
+                    class="text-xs text-gray-500 hover:text-amber-600 transition-colors flex items-center gap-1 font-medium cursor-pointer"
+                  >
+                    <svg 
+                      class="w-4 h-4 transition-transform duration-200" 
+                      :class="{ 'rotate-90': showAdvancedSettings }"
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                    </svg>
+                    高级参数配置 (仅临时测试)
+                  </button>
+                </div>
 
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                          <h4 class="font-bold text-gray-900 text-sm">连接与摸排数据源</h4>
+                <!-- 折叠面板内容 -->
+                <div v-if="showAdvancedSettings" class="p-4 bg-gray-50/80 rounded-xl border border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs transition-all duration-300">
+                  <!-- Provider -->
+                  <div class="flex items-center gap-3">
+                    <span class="w-24 text-gray-600 font-medium shrink-0">元数据提供方:</span>
+                    <select 
+                      v-model="tempProvider"
+                      class="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-500 flex-1 cursor-pointer"
+                    >
+                      <option value="default">系统默认配置</option>
+                      <option value="local">本地检索模式 (local)</option>
+                      <option value="ragflow">知识库检索模式 (ragflow)</option>
+                    </select>
+                  </div>
+
+                  <!-- Top K -->
+                  <div class="flex items-center gap-3">
+                    <span class="w-24 text-gray-600 font-medium shrink-0 flex items-center gap-1">
+                      Top K 数量:
+                      <span class="group relative cursor-pointer text-gray-400 hover:text-gray-600">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-48 bg-slate-900 text-white text-[10px] p-2 rounded shadow-xl leading-normal z-50">
+                          元数据检索时返回的 Top K 数量，控制 AI 可感知的表结构上限 (对应配置: ragflow_metadata_top_k)
+                        </span>
+                      </span>
+                    </span>
+                    <div class="flex items-center gap-2 flex-1">
+                      <input 
+                        type="range" min="1" max="20" step="1"
+                        v-model.number="tempTopK"
+                        class="flex-1 accent-amber-500 cursor-pointer"
+                      >
+                      <span class="w-8 text-right font-mono font-semibold text-gray-700 bg-white border border-gray-200 rounded px-1 py-0.5">{{ tempTopK }}</span>
+                    </div>
+                  </div>
+
+                  <!-- Similarity Threshold -->
+                  <div class="flex items-center gap-3">
+                    <span class="w-24 text-gray-600 font-medium shrink-0 flex items-center gap-1">
+                      相似度阈值:
+                      <span class="group relative cursor-pointer text-gray-400 hover:text-gray-600">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-48 bg-slate-900 text-white text-[10px] p-2 rounded shadow-xl leading-normal z-50">
+                          语义检索的最低相似度阈值 (0-1)，低于此阈值的匹配项将被忽略，越低召回率越高但越不精准 (对应配置: ragflow_similarity_threshold)
+                        </span>
+                      </span>
+                    </span>
+                    <div class="flex items-center gap-2 flex-1">
+                      <input 
+                        type="range" min="0" max="1" step="0.05"
+                        v-model.number="tempThreshold"
+                        class="flex-1 accent-amber-500 cursor-pointer"
+                      >
+                      <span class="w-8 text-right font-mono font-semibold text-gray-700 bg-white border border-gray-200 rounded px-1 py-0.5">{{ tempThreshold.toFixed(2) }}</span>
+                    </div>
+                  </div>
+
+                  <!-- Vector Weight -->
+                  <div v-if="showVectorWeight" class="flex items-center gap-3">
+                    <span class="w-24 text-gray-600 font-medium shrink-0 flex items-center gap-1">
+                      向量检索权重:
+                      <span class="group relative cursor-pointer text-gray-400 hover:text-gray-600">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-48 bg-slate-900 text-white text-[10px] p-2 rounded shadow-xl leading-normal z-50">
+                          RAGFlow 混合检索中向量检索的权重 (0-1)，剩余为全文检索权重 (对应配置: ragflow_vector_weight)
+                        </span>
+                      </span>
+                    </span>
+                    <div class="flex items-center gap-2 flex-1">
+                      <input 
+                        type="range" min="0" max="1" step="0.05"
+                        v-model.number="tempVectorWeight"
+                        class="flex-1 accent-amber-500 cursor-pointer"
+                      >
+                      <span class="w-8 text-right font-mono font-semibold text-gray-700 bg-white border border-gray-200 rounded px-1 py-0.5">{{ tempVectorWeight.toFixed(2) }}</span>
+                    </div>
+                  </div>
+                </div>
+             </div>
+
+             <!-- Results -->
+             <div class="flex-1 overflow-hidden bg-gray-50 flex">
+                <!-- Left Column: Results -->
+                <div class="flex-1 overflow-y-auto p-6 border-r border-gray-200">
+                    <div v-if="!testResult && !testLoading" class="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
+                       <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 16l2.879-2.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242zM21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                       <p>请输入关键词开始测试</p>
+                    </div>
+
+                    <div v-else-if="testResult" class="space-y-6">
+                       <!-- Status Banner -->
+                       <div v-if="testResult.found" class="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
+                          <svg class="w-5 h-5 text-green-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                          <div>
+                             <h4 class="font-bold text-green-800 text-sm">检索成功 (Hit)</h4>
+                             <p class="text-xs text-green-700 mt-1">
+                                Provider: <b class="uppercase">{{ testResult.provider }}</b> | 
+                                命中了 <b>{{ testResult.datasets.length }}</b> 个数据集
+                             </p>
+                          </div>
                        </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          配置外部关系型/分析型数据库连接（MySQL/PG/ClickHouse/Oracle/SQL Server 等），支持连通性测试与一键异步智能摸排，提取表画像、字段分布与样本。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showSpecModal = false; router.push('/dashboard/data-sources')"
-                          class="text-xs text-blue-600 hover:text-blue-800 font-medium inline-flex items-center gap-1 cursor-pointer"
-                       >
-                          前往数据源管理 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">2</span>
-                          <h4 class="font-bold text-gray-900 text-sm">智能导入与 AI 语义解析</h4>
+                       <div v-else class="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+                          <svg class="w-5 h-5 text-red-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                          <div>
+                            <span class="font-bold text-red-800 text-sm">未找到相关元数据 (Miss)</span>
+                            <p class="text-xs text-red-600 mt-1">请查看右侧「执行日志 (Trace)」：含 Redis 连接、索引 num_docs、向量维度、KNN 原始命中与阈值过滤详情。</p>
+                          </div>
                        </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          支持摸排画像免推理导入、库表直读或 DDL 粘贴。大模型自动提取中文业务名、字段语义、枚举字典与主键标记，并在前端提供向导式审查与保存。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showSpecModal = false; showImportModal = true"
-                          class="text-xs text-indigo-600 hover:text-indigo-800 font-medium inline-flex items-center gap-1 cursor-pointer"
-                       >
-                          向导新建数据集 &rarr;
-                       </button>
-                    </div>
-                 </div>
 
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">3</span>
-                          <h4 class="font-bold text-gray-900 text-sm">建模指标与实体关联</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          在数据集中维护业务指标（Metrics）与计算公式，配置 1:1、1:N 实体关联条件与跨库 Join 拓扑图谱，支持 AI 智能推荐指标与关系。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <span class="text-xs text-gray-400">点击下方数据集卡片进入配置</span>
-                    </div>
-                 </div>
-
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">4</span>
-                          <h4 class="font-bold text-gray-900 text-sm">向量同步与智能体挂载</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          一键将数据集导出为高压缩比 YAML 并同步至向量知识库（RAGFlow / Redis），供 ChatBI 与 Agent 智能体精准召回表结构并生成 SQL。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <span class="text-xs text-gray-400">在智能体工作台挂载使用</span>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 1: Concepts -->
-           <div v-if="activeSpecTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg">
-                 <h3 class="font-bold text-blue-800 mb-2">为什么需要 Semantic Layer?</h3>
-                 <p class="text-sm text-blue-700 leading-relaxed">
-                    单纯依赖数据库 Schema (DDL) 是不够的。大模型不知道 "pue" 代表 "能源利用效率"，也不知道 "status=1" 代表 "正常"。
-                    元数据层通过注入<b>业务语义</b>、<b>枚举含义</b>和<b>计算逻辑</b>，弥补了这一鸿沟。
-                 </p>
-              </div>
-              
-              <div class="grid grid-cols-2 gap-6">
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                    <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center text-green-600 mb-3 font-bold">1</div>
-                    <h4 class="font-bold text-gray-900 mb-2">这是什么? (Definition)</h4>
-                    <p class="text-xs text-gray-500">不仅提供表名，还提供通俗易懂的业务术语和描述。例如：将 `metrics_table` 标记为 "实时能耗监控表"。</p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                    <div class="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 mb-3 font-bold">2</div>
-                    <h4 class="font-bold text-gray-900 mb-2">有哪些值? (Enums)</h4>
-                    <p class="text-xs text-gray-500">对于分类字段（Status/Type），显式列出所有可能的枚举值及其含义。防止 AI 幻觉生成不存在的状态码。</p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                    <div class="w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 mb-3 font-bold">3</div>
-                    <h4 class="font-bold text-gray-900 mb-2">什么关系? (Relationships)</h4>
-                    <p class="text-xs text-gray-500">定义跨表的 Join 路径。即使数据库没有外键约束，这里也要告诉 AI 哪两个字段是可以关联的。</p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                    <div class="w-8 h-8 bg-rose-100 rounded-full flex items-center justify-center text-rose-600 mb-3 font-bold">4</div>
-                    <h4 class="font-bold text-gray-900 mb-2">怎么计算? (Metrics)</h4>
-                    <p class="text-xs text-gray-500">预定义复杂的计算公式（如 PUE 计算、同比环比）。AI 只需引用指标名，无需重写复杂 SQL。</p>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Structure -->
-           <div v-else-if="activeSpecTab === 'structure'" class="max-w-4xl mx-auto">
-              <div class="bg-slate-900 rounded-xl overflow-hidden border border-slate-700 shadow-lg">
-                 <div class="bg-slate-800 px-4 py-2 flex justify-between items-center">
-                    <span class="text-xs font-mono text-slate-400">sample_metadata.yaml</span>
-                    <span class="text-[10px] text-slate-500 uppercase">YAML</span>
-                 </div>
-                 <pre class="p-6 text-sm font-mono text-emerald-400 overflow-x-auto leading-relaxed">version: "1.0"
-domain: "IDC_Energy" 
-entities:
-  - name: "metrics_realtime"
-    term: "实时能耗指标表"
-    description: "存储各机房实时电力数据，每分钟更新。"
-    synonyms: ["实时数据", "监控表"]
-    columns:
-      - name: "pue"
-        term: "PUE值"
-        type: "float"
-        description: "越低越好 (Total Power / IT Power)"
-        examples: [1.2, 1.5]
-        
-      - name: "room_id"
-        term: "机房ID"
-        foreign_key: "rooms.id"
-
-      - name: "metric_type"
-        term: "指标类型"
-        enums:
-          - value: "voltage"
-            description: "电压 (V)"
-          - value: "current"
-            description: "电流 (A)"
-
-relationships:
-  - source: "metrics_realtime.room_id"
-    target: "rooms.id"
-    type: "many_to_one"
-    description: "指标归属机房"</pre>
-              </div>
-           </div>
-
-           <!-- Tab 3: Fields -->
-           <div v-else-if="activeSpecTab === 'fields'" class="max-w-4xl mx-auto space-y-6">
-              <div class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                 <table class="min-w-full text-sm text-left">
-                    <thead class="bg-gray-50 text-gray-700 font-bold uppercase text-xs">
-                       <tr>
-                          <th class="px-6 py-3 border-b">Scope</th>
-                          <th class="px-6 py-3 border-b">Field</th>
-                          <th class="px-6 py-3 border-b">Required</th>
-                          <th class="px-6 py-3 border-b">Description</th>
-                       </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-100">
-                       <tr class="hover:bg-gray-50">
-                          <td class="px-6 py-3 font-medium text-gray-900" rowspan="4">Entity (Table)</td>
-                          <td class="px-6 py-3 font-mono text-purple-600">name</td>
-                          <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
-                          <td class="px-6 py-3 text-gray-500">数据库物理表名 (e.g. `t_users`)</td>
-                       </tr>
-                       <tr class="hover:bg-gray-50">
-                          <td class="px-6 py-3 font-mono text-purple-600">term</td>
-                          <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
-                          <td class="px-6 py-3 text-gray-500">业务通用名称 (e.g. "用户表")</td>
-                       </tr>
-                       <tr class="hover:bg-gray-50">
-                          <td class="px-6 py-3 font-mono text-purple-600">description</td>
-                          <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
-                          <td class="px-6 py-3 text-gray-500">详细描述，包含数据粒度、更新频率等</td>
-                       </tr>
-                       <tr class="hover:bg-gray-50">
-                          <td class="px-6 py-3 font-mono text-purple-600">synonyms</td>
-                          <td class="px-6 py-3 text-gray-400">No</td>
-                          <td class="px-6 py-3 text-gray-500">同义词列表，用于增强 RAG 检索命中率</td>
-                       </tr>
-
-                       <!-- Columns -->
-                       <tr class="hover:bg-gray-50 bg-gray-50/30">
-                          <td class="px-6 py-3 font-medium text-gray-900" rowspan="4">Column</td>
-                          <td class="px-6 py-3 font-mono text-blue-600">name / term</td>
-                          <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
-                          <td class="px-6 py-3 text-gray-500">物理列名与业务列名</td>
-                       </tr>
-                       <tr class="hover:bg-gray-50 bg-gray-50/30">
-                          <td class="px-6 py-3 font-mono text-blue-600">enums</td>
-                          <td class="px-6 py-3 text-amber-500 font-bold">Vital</td>
-                          <td class="px-6 py-3 text-gray-500">枚举值列表。极大地帮助 LLM 生成正确的 WHERE 条件。</td>
-                       </tr>
-                       <tr class="hover:bg-gray-50 bg-gray-50/30">
-                          <td class="px-6 py-3 font-mono text-blue-600">examples</td>
-                          <td class="px-6 py-3 text-gray-400">No</td>
-                          <td class="px-6 py-3 text-gray-500">典型值示例 (Few-shot)，防止幻觉。</td>
-                       </tr>
-                       <tr class="hover:bg-gray-50 bg-gray-50/30">
-                          <td class="px-6 py-3 font-mono text-blue-600">foreign_key</td>
-                          <td class="px-6 py-3 text-gray-400">No</td>
-                          <td class="px-6 py-3 text-gray-500">显式关联指针 (e.g. `other_table.id`)</td>
-                       </tr>
-                    </tbody>
-                 </table>
-              </div>
-           </div>
-
-           <!-- Tab 4: Practice -->
-           <div v-else-if="activeSpecTab === 'practice'" class="max-w-4xl mx-auto space-y-8">
-              <section>
-                 <h3 class="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2"><FolderIcon class="w-5 h-5 text-gray-500" /> 文件组织策略</h3>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200">
-                    <p class="text-sm text-gray-600 mb-4">
-                       建议采用 <b>按业务域 (Domain-Driven)</b> 分组的策略。将逻辑紧密相关的表定义在同一个 YAML 文件中。
-                    </p>
-                    <div class="flex gap-4">
-                       <div class="flex-1 bg-gray-50 p-3 rounded border border-gray-100">
-                          <h5 class="font-bold text-xs text-gray-500 uppercase mb-2">推荐</h5>
-                          <ul class="text-sm text-gray-700 space-y-1 font-mono">
-                             <li>meta/resources.yaml</li>
-                             <li>meta/energy_metrics.yaml</li>
-                             <li>meta/billing.yaml</li>
-                          </ul>
-                       </div>
-                       <div class="flex-1 bg-red-50 p-3 rounded border border-red-100">
-                          <h5 class="font-bold text-xs text-red-400 uppercase mb-2">避免</h5>
-                          <ul class="text-sm text-gray-700 space-y-1">
-                             <li>🚫 整个库一个大文件 (Too large)</li>
-                             <li>🚫 一表一个文件 (Fragmented)</li>
-                          </ul>
+                       <!-- Context Preview -->
+                       <div v-if="testResult.found" class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
+                          <div class="px-4 py-2 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
+                             <span class="text-xs font-mono text-slate-400">Generated Context (YAML/Markdown)</span>
+                             <span class="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30">Inject to LLM</span>
+                          </div>
+                          <pre class="p-6 text-xs font-mono text-emerald-400 overflow-x-auto whitespace-pre-wrap">{{ testResult.context }}</pre>
                        </div>
                     </div>
-                 </div>
-              </section>
+                </div>
 
-              <section>
-                 <h3 class="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2"><CpuChipIcon class="w-5 h-5 text-indigo-600" /> RAG 检索策略</h3>
-                 <div class="bg-indigo-50 p-5 rounded-xl border border-indigo-100">
-                    <ol class="relative border-l border-indigo-200 ml-3 space-y-6">
-                       <li class="ml-6">
-                          <span class="absolute flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full -left-3 ring-4 ring-white text-indigo-600 font-bold text-xs">1</span>
-                          <h4 class="font-bold text-gray-900 text-sm">User Query</h4>
-                          <p class="text-xs text-gray-500 mt-1">用户提问："帮我查一下上海机房昨天的 PUE"</p>
-                       </li>
-                       <li class="ml-6">
-                          <span class="absolute flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full -left-3 ring-4 ring-white text-indigo-600 font-bold text-xs">2</span>
-                          <h4 class="font-bold text-gray-900 text-sm">Vector Search (Retrieval)</h4>
-                          <p class="text-xs text-gray-500 mt-1">系统在向量库中检索关键词 "机房", "PUE"。命中 `res_room` 和 `metrics_pue` 两张表。</p>
-                       </li>
-                       <li class="ml-6">
-                          <span class="absolute flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full -left-3 ring-4 ring-white text-indigo-600 font-bold text-xs">3</span>
-                          <h4 class="font-bold text-gray-900 text-sm">Prompt Injection</h4>
-                          <p class="text-xs text-gray-500 mt-1">
-                             系统仅将 <b>命中的这 2 张表</b> 的 YAML 片段注入到 LLM 上下文。
-                             <br>
-                             <span class="inline-block mt-1 bg-white px-2 py-0.5 rounded border border-indigo-100 text-indigo-600">精简上下文 = 更高准确率 + 更低成本</span>
-                          </p>
-                       </li>
-                    </ol>
-                 </div>
-              </section>
-           </div>
-
+                <!-- Right Column: Debug Logs -->
+                <div class="w-1/3 bg-slate-50 border-l border-gray-200 flex flex-col" v-if="testResult">
+                    <div class="px-4 py-3 border-b border-gray-200 bg-white">
+                        <h3 class="text-sm font-bold text-gray-700 flex items-center gap-2">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                            执行日志 (Trace)
+                        </h3>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-xs">
+                        <div
+                          v-for="(log, i) in testResult.logs"
+                          :key="i"
+                          class="p-2 rounded border text-xs font-mono break-all shadow-sm"
+                          :class="String(log).includes('[WARN]') || String(log).includes('[HINT]') || String(log).includes('failed')
+                            ? 'bg-amber-50 border-amber-200 text-amber-900'
+                            : String(log).includes('[KNN]') || String(log).includes('[Redis]') || String(log).includes('[RediSearch]')
+                              ? 'bg-slate-50 border-slate-200 text-slate-700'
+                              : 'bg-white border-gray-200 text-gray-600'"
+                        >
+                            <span class="text-gray-300 mr-2">{{ Number(i) + 1 }}.</span>
+                            {{ log }}
+                        </div>
+                        <div v-if="!testResult.logs || testResult.logs.length === 0" class="text-gray-400 italic text-center mt-10">
+                            暂无详细日志
+                        </div>
+                    </div>
+                </div>
+             </div>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
+
+    <!-- Spec Modal -->
+    <Teleport to="body">
+      <div v-if="showSpecModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecModal = false">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-purple-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center border border-purple-200">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">元数据设计规范与全流程指引</h2>
+                 <p class="text-xs text-gray-500 font-medium">构建 AI 可理解的业务语义层，提升 Text-to-SQL 准确率。</p>
+               </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button
+                v-if="!showFlowGuide"
+                type="button"
+                @click="restoreFlowGuide"
+                class="inline-flex items-center gap-1 text-xs font-medium text-purple-700 bg-purple-100/70 hover:bg-purple-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>恢复顶部流程提示</span>
+              </button>
+              <button @click="showSpecModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['flow', 'concept', 'structure', 'fields', 'practice']" 
+               :key="tab"
+               @click="activeSpecTab = tab"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors capitalize cursor-pointer"
+               :class="activeSpecTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'flow' ? '全流程指引 (Workflow)' :
+                  tab === 'concept' ? '核心理念 (Concepts)' : 
+                  tab === 'structure' ? 'YAML 结构 (Schema)' : 
+                  tab === 'fields' ? '字段规范 (Fields)' : '最佳实践 (Best Practice)' }}
+             </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-8 bg-gray-50/50">
+           
+             <!-- Tab 0: Workflow Flow -->
+             <div v-if="activeSpecTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-lg shadow-2xs">
+                   <h3 class="font-bold text-blue-900 mb-1">从数据源到 AI 智能体的端到端流程</h3>
+                   <p class="text-xs text-blue-700 leading-relaxed">
+                      遵循标准 4 步流程：先连接摸排数据源，再通过 AI 智能解析表结构与枚举，继而完善指标与跨库实体关系，最后同步至向量库供 ChatBI 与 Agent 消费。
+                   </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <h4 class="font-bold text-gray-900 text-sm">连接与摸排数据源</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            配置外部关系型/分析型数据库连接（MySQL/PG/ClickHouse/Oracle/SQL Server 等），支持连通性测试与一键异步智能摸排，提取表画像、字段分布与样本。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showSpecModal = false; router.push('/dashboard/data-sources')"
+                            class="text-xs text-blue-600 hover:text-blue-800 font-medium inline-flex items-center gap-1 cursor-pointer"
+                         >
+                            前往数据源管理 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <h4 class="font-bold text-gray-900 text-sm">智能导入与 AI 语义解析</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            支持摸排画像免推理导入、库表直读或 DDL 粘贴。大模型自动提取中文业务名、字段语义、枚举字典与主键标记，并在前端提供向导式审查与保存。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showSpecModal = false; showImportModal = true"
+                            class="text-xs text-indigo-600 hover:text-indigo-800 font-medium inline-flex items-center gap-1 cursor-pointer"
+                         >
+                            向导新建数据集 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <h4 class="font-bold text-gray-900 text-sm">建模指标与实体关联</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            在数据集中维护业务指标（Metrics）与计算公式，配置 1:1、1:N 实体关联条件与跨库 Join 拓扑图谱，支持 AI 智能推荐指标与关系。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <span class="text-xs text-gray-400">点击下方数据集卡片进入配置</span>
+                      </div>
+                   </div>
+
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <h4 class="font-bold text-gray-900 text-sm">向量同步与智能体挂载</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            一键将数据集导出为高压缩比 YAML 并同步至向量知识库（RAGFlow / Redis），供 ChatBI 与 Agent 智能体精准召回表结构并生成 SQL。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <span class="text-xs text-gray-400">在智能体工作台挂载使用</span>
+                      </div>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 1: Concepts -->
+             <div v-if="activeSpecTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg">
+                   <h3 class="font-bold text-blue-800 mb-2">为什么需要 Semantic Layer?</h3>
+                   <p class="text-sm text-blue-700 leading-relaxed">
+                      单纯依赖数据库 Schema (DDL) 是不够的。大模型不知道 "pue" 代表 "能源利用效率"，也不知道 "status=1" 代表 "正常"。
+                      元数据层通过注入<b>业务语义</b>、<b>枚举含义</b>和<b>计算逻辑</b>，弥补了这一鸿沟。
+                   </p>
+                </div>
+              
+                <div class="grid grid-cols-2 gap-6">
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                      <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center text-green-600 mb-3 font-bold">1</div>
+                      <h4 class="font-bold text-gray-900 mb-2">这是什么? (Definition)</h4>
+                      <p class="text-xs text-gray-500">不仅提供表名，还提供通俗易懂的业务术语和描述。例如：将 `metrics_table` 标记为 "实时能耗监控表"。</p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                      <div class="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 mb-3 font-bold">2</div>
+                      <h4 class="font-bold text-gray-900 mb-2">有哪些值? (Enums)</h4>
+                      <p class="text-xs text-gray-500">对于分类字段（Status/Type），显式列出所有可能的枚举值及其含义。防止 AI 幻觉生成不存在的状态码。</p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                      <div class="w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 mb-3 font-bold">3</div>
+                      <h4 class="font-bold text-gray-900 mb-2">什么关系? (Relationships)</h4>
+                      <p class="text-xs text-gray-500">定义跨表的 Join 路径。即使数据库没有外键约束，这里也要告诉 AI 哪两个字段是可以关联的。</p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                      <div class="w-8 h-8 bg-rose-100 rounded-full flex items-center justify-center text-rose-600 mb-3 font-bold">4</div>
+                      <h4 class="font-bold text-gray-900 mb-2">怎么计算? (Metrics)</h4>
+                      <p class="text-xs text-gray-500">预定义复杂的计算公式（如 PUE 计算、同比环比）。AI 只需引用指标名，无需重写复杂 SQL。</p>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 2: Structure -->
+             <div v-else-if="activeSpecTab === 'structure'" class="max-w-4xl mx-auto">
+                <div class="bg-slate-900 rounded-xl overflow-hidden border border-slate-700 shadow-lg">
+                   <div class="bg-slate-800 px-4 py-2 flex justify-between items-center">
+                      <span class="text-xs font-mono text-slate-400">sample_metadata.yaml</span>
+                      <span class="text-[10px] text-slate-500 uppercase">YAML</span>
+                   </div>
+                   <pre class="p-6 text-sm font-mono text-emerald-400 overflow-x-auto leading-relaxed">version: "1.0"
+  domain: "IDC_Energy" 
+  entities:
+    - name: "metrics_realtime"
+      term: "实时能耗指标表"
+      description: "存储各机房实时电力数据，每分钟更新。"
+      synonyms: ["实时数据", "监控表"]
+      columns:
+        - name: "pue"
+          term: "PUE值"
+          type: "float"
+          description: "越低越好 (Total Power / IT Power)"
+          examples: [1.2, 1.5]
+        
+        - name: "room_id"
+          term: "机房ID"
+          foreign_key: "rooms.id"
+
+        - name: "metric_type"
+          term: "指标类型"
+          enums:
+            - value: "voltage"
+              description: "电压 (V)"
+            - value: "current"
+              description: "电流 (A)"
+
+  relationships:
+    - source: "metrics_realtime.room_id"
+      target: "rooms.id"
+      type: "many_to_one"
+      description: "指标归属机房"</pre>
+                </div>
+             </div>
+
+             <!-- Tab 3: Fields -->
+             <div v-else-if="activeSpecTab === 'fields'" class="max-w-4xl mx-auto space-y-6">
+                <div class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                   <table class="min-w-full text-sm text-left">
+                      <thead class="bg-gray-50 text-gray-700 font-bold uppercase text-xs">
+                         <tr>
+                            <th class="px-6 py-3 border-b">Scope</th>
+                            <th class="px-6 py-3 border-b">Field</th>
+                            <th class="px-6 py-3 border-b">Required</th>
+                            <th class="px-6 py-3 border-b">Description</th>
+                         </tr>
+                      </thead>
+                      <tbody class="divide-y divide-gray-100">
+                         <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-3 font-medium text-gray-900" rowspan="4">Entity (Table)</td>
+                            <td class="px-6 py-3 font-mono text-purple-600">name</td>
+                            <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
+                            <td class="px-6 py-3 text-gray-500">数据库物理表名 (e.g. `t_users`)</td>
+                         </tr>
+                         <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-3 font-mono text-purple-600">term</td>
+                            <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
+                            <td class="px-6 py-3 text-gray-500">业务通用名称 (e.g. "用户表")</td>
+                         </tr>
+                         <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-3 font-mono text-purple-600">description</td>
+                            <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
+                            <td class="px-6 py-3 text-gray-500">详细描述，包含数据粒度、更新频率等</td>
+                         </tr>
+                         <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-3 font-mono text-purple-600">synonyms</td>
+                            <td class="px-6 py-3 text-gray-400">No</td>
+                            <td class="px-6 py-3 text-gray-500">同义词列表，用于增强 RAG 检索命中率</td>
+                         </tr>
+
+                         <!-- Columns -->
+                         <tr class="hover:bg-gray-50 bg-gray-50/30">
+                            <td class="px-6 py-3 font-medium text-gray-900" rowspan="4">Column</td>
+                            <td class="px-6 py-3 font-mono text-blue-600">name / term</td>
+                            <td class="px-6 py-3 text-red-500 font-bold">Yes</td>
+                            <td class="px-6 py-3 text-gray-500">物理列名与业务列名</td>
+                         </tr>
+                         <tr class="hover:bg-gray-50 bg-gray-50/30">
+                            <td class="px-6 py-3 font-mono text-blue-600">enums</td>
+                            <td class="px-6 py-3 text-amber-500 font-bold">Vital</td>
+                            <td class="px-6 py-3 text-gray-500">枚举值列表。极大地帮助 LLM 生成正确的 WHERE 条件。</td>
+                         </tr>
+                         <tr class="hover:bg-gray-50 bg-gray-50/30">
+                            <td class="px-6 py-3 font-mono text-blue-600">examples</td>
+                            <td class="px-6 py-3 text-gray-400">No</td>
+                            <td class="px-6 py-3 text-gray-500">典型值示例 (Few-shot)，防止幻觉。</td>
+                         </tr>
+                         <tr class="hover:bg-gray-50 bg-gray-50/30">
+                            <td class="px-6 py-3 font-mono text-blue-600">foreign_key</td>
+                            <td class="px-6 py-3 text-gray-400">No</td>
+                            <td class="px-6 py-3 text-gray-500">显式关联指针 (e.g. `other_table.id`)</td>
+                         </tr>
+                      </tbody>
+                   </table>
+                </div>
+             </div>
+
+             <!-- Tab 4: Practice -->
+             <div v-else-if="activeSpecTab === 'practice'" class="max-w-4xl mx-auto space-y-8">
+                <section>
+                   <h3 class="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2"><FolderIcon class="w-5 h-5 text-gray-500" /> 文件组织策略</h3>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200">
+                      <p class="text-sm text-gray-600 mb-4">
+                         建议采用 <b>按业务域 (Domain-Driven)</b> 分组的策略。将逻辑紧密相关的表定义在同一个 YAML 文件中。
+                      </p>
+                      <div class="flex gap-4">
+                         <div class="flex-1 bg-gray-50 p-3 rounded border border-gray-100">
+                            <h5 class="font-bold text-xs text-gray-500 uppercase mb-2">推荐</h5>
+                            <ul class="text-sm text-gray-700 space-y-1 font-mono">
+                               <li>meta/resources.yaml</li>
+                               <li>meta/energy_metrics.yaml</li>
+                               <li>meta/billing.yaml</li>
+                            </ul>
+                         </div>
+                         <div class="flex-1 bg-red-50 p-3 rounded border border-red-100">
+                            <h5 class="font-bold text-xs text-red-400 uppercase mb-2">避免</h5>
+                            <ul class="text-sm text-gray-700 space-y-1">
+                               <li>🚫 整个库一个大文件 (Too large)</li>
+                               <li>🚫 一表一个文件 (Fragmented)</li>
+                            </ul>
+                         </div>
+                      </div>
+                   </div>
+                </section>
+
+                <section>
+                   <h3 class="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2"><CpuChipIcon class="w-5 h-5 text-indigo-600" /> RAG 检索策略</h3>
+                   <div class="bg-indigo-50 p-5 rounded-xl border border-indigo-100">
+                      <ol class="relative border-l border-indigo-200 ml-3 space-y-6">
+                         <li class="ml-6">
+                            <span class="absolute flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full -left-3 ring-4 ring-white text-indigo-600 font-bold text-xs">1</span>
+                            <h4 class="font-bold text-gray-900 text-sm">User Query</h4>
+                            <p class="text-xs text-gray-500 mt-1">用户提问："帮我查一下上海机房昨天的 PUE"</p>
+                         </li>
+                         <li class="ml-6">
+                            <span class="absolute flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full -left-3 ring-4 ring-white text-indigo-600 font-bold text-xs">2</span>
+                            <h4 class="font-bold text-gray-900 text-sm">Vector Search (Retrieval)</h4>
+                            <p class="text-xs text-gray-500 mt-1">系统在向量库中检索关键词 "机房", "PUE"。命中 `res_room` 和 `metrics_pue` 两张表。</p>
+                         </li>
+                         <li class="ml-6">
+                            <span class="absolute flex items-center justify-center w-6 h-6 bg-indigo-100 rounded-full -left-3 ring-4 ring-white text-indigo-600 font-bold text-xs">3</span>
+                            <h4 class="font-bold text-gray-900 text-sm">Prompt Injection</h4>
+                            <p class="text-xs text-gray-500 mt-1">
+                               系统仅将 <b>命中的这 2 张表</b> 的 YAML 片段注入到 LLM 上下文。
+                               <br>
+                               <span class="inline-block mt-1 bg-white px-2 py-0.5 rounded border border-indigo-100 text-indigo-600">精简上下文 = 更高准确率 + 更低成本</span>
+                            </p>
+                         </li>
+                      </ol>
+                   </div>
+                </section>
+             </div>
+
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Create Modal -->
-    <div v-if="showCreateModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100">
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
-          <h2 class="text-xl font-bold text-gray-900">新建数据集</h2>
-          <button @click="showCreateModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
-        <div class="p-6 space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">物理名称 (Unique Name)</label>
-            <input v-model="newDataset.name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. nanzi_resources">
+    <Teleport to="body">
+      <div v-if="showCreateModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100">
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-xl font-bold text-gray-900">新建数据集</h2>
+            <button @click="showCreateModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
-            <input v-model="newDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 南孜资源数据集">
-          </div>
-          <div>
-            <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
-              <span>数据源 ID (Data Source ID)</span>
-              <span class="inline-block ml-1 text-gray-400 hover:text-gray-600 cursor-help" title="后续 ChatBI 查数会根据这个数据源来连接数据库的">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-              </span>
-            </label>
-            <div class="relative flex gap-2">
-              <input v-model="newDataset.data_source" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. default_clickhouse or mysql_crm_01">
-              <button 
-                type="button"
-                @click="toggleDataSourceDropdown('create')"
-                class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-500 hover:text-blue-500 hover:border-blue-500 transition-colors flex-shrink-0"
-                title="选择已配置的数据源"
-              >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-              </button>
-              <div v-if="showCreateDsDropdown" class="absolute right-0 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl z-[60] overflow-y-auto max-h-48 py-1">
-                <div v-if="dbConnections.length === 0" class="px-4 py-2 text-xs text-gray-400 italic">暂无已配置的数据源</div>
-                <button
-                  v-else
-                  v-for="conn in dbConnections"
-                  :key="conn.id"
-                  @click="selectDataSource(conn.name, 'create')"
+          <div class="p-6 space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">物理名称 (Unique Name)</label>
+              <input v-model="newDataset.name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. nanzi_resources">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
+              <input v-model="newDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 南孜资源数据集">
+            </div>
+            <div>
+              <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
+                <span>数据源 ID (Data Source ID)</span>
+                <span class="inline-block ml-1 text-gray-400 hover:text-gray-600 cursor-help" title="后续 ChatBI 查数会根据这个数据源来连接数据库的">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </span>
+              </label>
+              <div class="relative flex gap-2">
+                <input v-model="newDataset.data_source" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. default_clickhouse or mysql_crm_01">
+                <button 
                   type="button"
-                  class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors flex items-center justify-between"
+                  @click="toggleDataSourceDropdown('create')"
+                  class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-500 hover:text-blue-500 hover:border-blue-500 transition-colors flex-shrink-0"
+                  title="选择已配置的数据源"
                 >
-                  <span class="font-medium font-mono">{{ conn.name }}</span>
-                  <span class="text-[10px] uppercase px-1.5 py-0.5 rounded font-bold bg-blue-50 text-blue-600 border border-blue-100">{{ conn.db_type }}</span>
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
                 </button>
+                <div v-if="showCreateDsDropdown" class="absolute right-0 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl z-[60] overflow-y-auto max-h-48 py-1">
+                  <div v-if="dbConnections.length === 0" class="px-4 py-2 text-xs text-gray-400 italic">暂无已配置的数据源</div>
+                  <button
+                    v-else
+                    v-for="conn in dbConnections"
+                    :key="conn.id"
+                    @click="selectDataSource(conn.name, 'create')"
+                    type="button"
+                    class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors flex items-center justify-between"
+                  >
+                    <span class="font-medium font-mono">{{ conn.name }}</span>
+                    <span class="text-[10px] uppercase px-1.5 py-0.5 rounded font-bold bg-blue-50 text-blue-600 border border-blue-100">{{ conn.db_type }}</span>
+                  </button>
+                </div>
+              </div>
+              <p class="text-xs text-gray-400 mt-1">留空则使用系统默认 ({{ defaultDataSource }})。若需使用 MySQL，建议 ID 包含 'mysql'。</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">描述</label>
+              <textarea v-model="newDataset.description" rows="3" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
+            </div>
+
+            <div>
+
+              <label class="block text-sm font-medium text-gray-700 mb-1">标签</label>
+              <div class="flex gap-2 mb-2">
+                <input v-model="tagInput" @keyup.enter="addTag" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <span v-for="(tag, i) in newDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
+                  {{ tag }}
+                  <button @click="removeTag(newDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
+                </span>
               </div>
             </div>
-            <p class="text-xs text-gray-400 mt-1">留空则使用系统默认 ({{ defaultDataSource }})。若需使用 MySQL，建议 ID 包含 'mysql'。</p>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">描述</label>
-            <textarea v-model="newDataset.description" rows="3" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
+          <div class="bg-gray-50 p-6 flex justify-end gap-3">
+            <button @click="showCreateModal = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">取消</button>
+            <button @click="handleCreate" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认创建</button>
           </div>
-
-          <div>
-
-            <label class="block text-sm font-medium text-gray-700 mb-1">标签</label>
-            <div class="flex gap-2 mb-2">
-              <input v-model="tagInput" @keyup.enter="addTag" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <span v-for="(tag, i) in newDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
-                {{ tag }}
-                <button @click="removeTag(newDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
-              </span>
-            </div>
-          </div>
-        </div>
-        <div class="bg-gray-50 p-6 flex justify-end gap-3">
-          <button @click="showCreateModal = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">取消</button>
-          <button @click="handleCreate" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认创建</button>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Smart Import Wizard -->
     <SmartImportWizard 
@@ -2590,92 +2600,94 @@ relationships:
     />
 
     <!-- Edit Dataset Modal -->
-    <div v-if="showEditDatasetModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100">
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
-          <h2 class="text-xl font-bold text-gray-900">编辑数据集</h2>
-          <button @click="showEditDatasetModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
-        <div class="p-6 space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">物理名称 (Unique Name)</label>
-            <input v-model="editingDataset.name" type="text" disabled class="w-full bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-500 cursor-not-allowed disabled:bg-gray-100" title="物理名称不可修改">
+    <Teleport to="body">
+      <div v-if="showEditDatasetModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100">
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
+            <h2 class="text-xl font-bold text-gray-900">编辑数据集</h2>
+            <button @click="showEditDatasetModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
-            <input v-model="editingDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 南孜资源数据集">
-          </div>
-          <div>
-            <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
-              <span>数据源 ID (Data Source ID)</span>
-              <span class="inline-block ml-1 text-gray-400 hover:text-gray-600 cursor-help" title="后续 ChatBI 查数会根据这个数据源来连接数据库的">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-              </span>
-            </label>
-            <div class="relative flex gap-2">
-              <input v-model="editingDataset.data_source" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. default_clickhouse or mysql_crm_01">
-              <button 
-                type="button"
-                @click="toggleDataSourceDropdown('edit')"
-                class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-500 hover:text-blue-500 hover:border-blue-500 transition-colors flex-shrink-0"
-                title="选择已配置的数据源"
-              >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-              </button>
-              <div v-if="showEditDsDropdown" class="absolute right-0 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl z-[60] overflow-y-auto max-h-48 py-1">
-                <div v-if="dbConnections.length === 0" class="px-4 py-2 text-xs text-gray-400 italic">暂无已配置的数据源</div>
-                <button
-                  v-else
-                  v-for="conn in dbConnections"
-                  :key="conn.id"
-                  @click="selectDataSource(conn.name, 'edit')"
+          <div class="p-6 space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">物理名称 (Unique Name)</label>
+              <input v-model="editingDataset.name" type="text" disabled class="w-full bg-white border border-gray-300 rounded-lg px-4 py-2 text-gray-500 cursor-not-allowed disabled:bg-gray-100" title="物理名称不可修改">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
+              <input v-model="editingDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 南孜资源数据集">
+            </div>
+            <div>
+              <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
+                <span>数据源 ID (Data Source ID)</span>
+                <span class="inline-block ml-1 text-gray-400 hover:text-gray-600 cursor-help" title="后续 ChatBI 查数会根据这个数据源来连接数据库的">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </span>
+              </label>
+              <div class="relative flex gap-2">
+                <input v-model="editingDataset.data_source" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. default_clickhouse or mysql_crm_01">
+                <button 
                   type="button"
-                  class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors flex items-center justify-between"
+                  @click="toggleDataSourceDropdown('edit')"
+                  class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-500 hover:text-blue-500 hover:border-blue-500 transition-colors flex-shrink-0"
+                  title="选择已配置的数据源"
                 >
-                  <span class="font-medium font-mono">{{ conn.name }}</span>
-                  <span class="text-[10px] uppercase px-1.5 py-0.5 rounded font-bold bg-blue-50 text-blue-600 border border-blue-100">{{ conn.db_type }}</span>
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                </button>
+                <div v-if="showEditDsDropdown" class="absolute right-0 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl z-[60] overflow-y-auto max-h-48 py-1">
+                  <div v-if="dbConnections.length === 0" class="px-4 py-2 text-xs text-gray-400 italic">暂无已配置的数据源</div>
+                  <button
+                    v-else
+                    v-for="conn in dbConnections"
+                    :key="conn.id"
+                    @click="selectDataSource(conn.name, 'edit')"
+                    type="button"
+                    class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors flex items-center justify-between"
+                  >
+                    <span class="font-medium font-mono">{{ conn.name }}</span>
+                    <span class="text-[10px] uppercase px-1.5 py-0.5 rounded font-bold bg-blue-50 text-blue-600 border border-blue-100">{{ conn.db_type }}</span>
+                  </button>
+                </div>
+              </div>
+              <p class="text-xs text-gray-400 mt-1">留空则使用系统默认 ({{ defaultDataSource }})。若需使用 MySQL，建议 ID 包含 'mysql'。</p>
+            </div>
+            <div>
+              <div class="flex justify-between items-center mb-1">
+                <label class="block text-sm font-medium text-gray-700">描述</label>
+                <button 
+                  @click="handleEnhanceMetadata(editingDataset.id)"
+                  :disabled="enhancing"
+                  class="text-[10px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1 font-bold transition-all disabled:opacity-50"
+                >
+                  <svg v-if="enhancing" class="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  <SparklesIcon v-else class="w-3 h-3" />
+                  AI 辅助生成 (基于表信息)
                 </button>
               </div>
+              <textarea v-model="editingDataset.description" rows="3" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
             </div>
-            <p class="text-xs text-gray-400 mt-1">留空则使用系统默认 ({{ defaultDataSource }})。若需使用 MySQL，建议 ID 包含 'mysql'。</p>
-          </div>
-          <div>
-            <div class="flex justify-between items-center mb-1">
-              <label class="block text-sm font-medium text-gray-700">描述</label>
-              <button 
-                @click="handleEnhanceMetadata(editingDataset.id)"
-                :disabled="enhancing"
-                class="text-[10px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1 font-bold transition-all disabled:opacity-50"
-              >
-                <svg v-if="enhancing" class="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                <SparklesIcon v-else class="w-3 h-3" />
-                AI 辅助生成 (基于表信息)
-              </button>
-            </div>
-            <textarea v-model="editingDataset.description" rows="3" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="描述该数据集包含的内容..."></textarea>
-          </div>
 
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">标签</label>
-            <div class="flex gap-2 mb-2">
-              <input v-model="tagInput" @keyup.enter="addTag(editingDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <span v-for="(tag, i) in editingDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
-                {{ tag }}
-                <button @click="removeTag(editingDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
-              </span>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">标签</label>
+              <div class="flex gap-2 mb-2">
+                <input v-model="tagInput" @keyup.enter="addTag(editingDataset)" type="text" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入标签并回车">
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <span v-for="(tag, i) in editingDataset.tags" :key="i" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full flex items-center gap-1 border border-blue-100">
+                  {{ tag }}
+                  <button @click="removeTag(editingDataset, i as number)" class="text-blue-400 hover:text-red-500 ml-1">&times;</button>
+                </span>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="bg-gray-50 p-6 flex justify-end gap-3">
-          <button @click="showEditDatasetModal = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">取消</button>
-          <button @click="handleUpdateDataset" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认更新</button>
+          <div class="bg-gray-50 p-6 flex justify-end gap-3">
+            <button @click="showEditDatasetModal = false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">取消</button>
+            <button @click="handleUpdateDataset" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-all shadow-md font-medium">确认更新</button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Empty State -->
     <div v-if="!loading && datasets.length === 0" class="text-center py-24 bg-white rounded-xl border border-dashed border-gray-300">
@@ -2688,833 +2700,841 @@ relationships:
     </div>
 
     <!-- Data Permission Configuration Modal -->
-    <div v-if="showPermConfigModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showPermConfigModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center border border-emerald-200">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-             </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">数据权限配置</h2>
-               <p class="text-xs text-gray-500 font-medium">管理数据集 <b>{{ configuringDataset?.display_name }}</b> 的行级隔离策略。</p>
-             </div>
+    <Teleport to="body">
+      <div v-if="showPermConfigModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showPermConfigModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden border border-gray-100 transform transition-all animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center border border-emerald-200">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">数据权限配置</h2>
+                 <p class="text-xs text-gray-500 font-medium">管理数据集 <b>{{ configuringDataset?.display_name }}</b> 的行级隔离策略。</p>
+               </div>
+            </div>
+            <button @click="showPermConfigModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-          <button @click="showPermConfigModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
 
-        <!-- Body -->
-        <div class="p-8 space-y-6 max-h-[75vh] overflow-y-auto custom-scrollbar" @click="closeMenus">
-           <div class="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
-             <div>
-               <h4 class="text-sm font-bold text-gray-900">启用精细化权限校验</h4>
-               <p class="text-xs text-gray-500 mt-0.5">
-                 开启后，系统将强制执行下方定义的 SQL 过滤规则。
-                 <button @click.prevent="showPermHelpModal = true" class="text-blue-600 hover:text-blue-700 hover:underline font-medium ml-1">帮助指引</button>
-               </p>
-             </div>
-             <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" v-model="configuringDataset.enable_data_perm" class="sr-only peer">
-                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-              </label>
-           </div>
-
-           <div v-if="configuringDataset.enable_data_perm" class="space-y-4">
-             <!-- Strategy Tabs -->
-             <div class="flex items-center justify-between border-b border-gray-100 pb-2">
-               <div class="flex p-1 bg-gray-100 rounded-xl w-fit">
-                 <button 
-                   @click.stop.prevent="activePolicyTab = (activePolicyTab === 'json' ? 'user' : activePolicyTab)"
-                   class="px-5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2"
-                   :class="activePolicyTab !== 'json' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-                 >
-                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                   可视化编辑
-                 </button>
-                 <button 
-                   @click.stop.prevent="activePolicyTab = 'json'; syncFromVisual(true)"
-                   class="px-5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2"
-                   :class="activePolicyTab === 'json' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-                 >
-                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-                   JSON 视图
-                 </button>
+          <!-- Body -->
+          <div class="p-8 space-y-6 max-h-[75vh] overflow-y-auto custom-scrollbar" @click="closeMenus">
+             <div class="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
+               <div>
+                 <h4 class="text-sm font-bold text-gray-900">启用精细化权限校验</h4>
+                 <p class="text-xs text-gray-500 mt-0.5">
+                   开启后，系统将强制执行下方定义的 SQL 过滤规则。
+                   <button @click.prevent="showPermHelpModal = true" class="text-blue-600 hover:text-blue-700 hover:underline font-medium ml-1">帮助指引</button>
+                 </p>
                </div>
-
-               <!-- Sub Strategy Tabs (L2, Only for Visual Mode) -->
-               <div v-if="activePolicyTab !== 'json'" class="flex p-1 bg-white border border-gray-100 rounded-xl w-fit shadow-sm">
-                 <button 
-                   @click.stop.prevent="activePolicyTab = 'user'"
-                   class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1"
-                   :class="activePolicyTab === 'user' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-400 hover:text-gray-600'"
-                 >
-                   用户例外
-                   <span class="text-[10px] opacity-60" v-if="Object.keys(visualRules.user_overrides).length > 0">
-                     ({{ Object.keys(visualRules.user_overrides).length }})
-                   </span>
-                 </button>
-                 <button 
-                   @click.stop.prevent="activePolicyTab = 'role'"
-                   class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1"
-                   :class="activePolicyTab === 'role' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-400 hover:text-gray-600'"
-                 >
-                   角色策略
-                   <span class="text-[10px] opacity-60" v-if="Object.keys(visualRules.role_policies).length > 0">
-                     ({{ Object.keys(visualRules.role_policies).length }})
-                   </span>
-                 </button>
-                 <button 
-                   @click.stop.prevent="activePolicyTab = 'default'"
-                   class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1"
-                   :class="activePolicyTab === 'default' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-400 hover:text-gray-600'"
-                 >
-                   默认规则
-                   <span class="text-[10px] opacity-60" v-if="visualRules.default_policy.length > 0">
-                     ({{ visualRules.default_policy.length }})
-                   </span>
-                 </button>
-               </div>
+               <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" v-model="configuringDataset.enable_data_perm" class="sr-only peer">
+                  <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
              </div>
 
-             <!-- Tab Content: Visual Editor -->
-             <div v-if="activePolicyTab === 'visual'" class="space-y-4 min-h-[350px]">
-                <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">可视化规则编辑器</h5>
+             <div v-if="configuringDataset.enable_data_perm" class="space-y-4">
+               <!-- Strategy Tabs -->
+               <div class="flex items-center justify-between border-b border-gray-100 pb-2">
+                 <div class="flex p-1 bg-gray-100 rounded-xl w-fit">
+                   <button 
+                     @click.stop.prevent="activePolicyTab = (activePolicyTab === 'json' ? 'user' : activePolicyTab)"
+                     class="px-5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2"
+                     :class="activePolicyTab !== 'json' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                   >
+                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                     可视化编辑
+                   </button>
+                   <button 
+                     @click.stop.prevent="activePolicyTab = 'json'; syncFromVisual(true)"
+                     class="px-5 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2"
+                     :class="activePolicyTab === 'json' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                   >
+                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                     JSON 视图
+                   </button>
+                 </div>
+
+                 <!-- Sub Strategy Tabs (L2, Only for Visual Mode) -->
+                 <div v-if="activePolicyTab !== 'json'" class="flex p-1 bg-white border border-gray-100 rounded-xl w-fit shadow-sm">
+                   <button 
+                     @click.stop.prevent="activePolicyTab = 'user'"
+                     class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1"
+                     :class="activePolicyTab === 'user' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-400 hover:text-gray-600'"
+                   >
+                     用户例外
+                     <span class="text-[10px] opacity-60" v-if="Object.keys(visualRules.user_overrides).length > 0">
+                       ({{ Object.keys(visualRules.user_overrides).length }})
+                     </span>
+                   </button>
+                   <button 
+                     @click.stop.prevent="activePolicyTab = 'role'"
+                     class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1"
+                     :class="activePolicyTab === 'role' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-400 hover:text-gray-600'"
+                   >
+                     角色策略
+                     <span class="text-[10px] opacity-60" v-if="Object.keys(visualRules.role_policies).length > 0">
+                       ({{ Object.keys(visualRules.role_policies).length }})
+                     </span>
+                   </button>
+                   <button 
+                     @click.stop.prevent="activePolicyTab = 'default'"
+                     class="px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1"
+                     :class="activePolicyTab === 'default' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-400 hover:text-gray-600'"
+                   >
+                     默认规则
+                     <span class="text-[10px] opacity-60" v-if="visualRules.default_policy.length > 0">
+                       ({{ visualRules.default_policy.length }})
+                     </span>
+                   </button>
+                 </div>
+               </div>
+
+               <!-- Tab Content: Visual Editor -->
+               <div v-if="activePolicyTab === 'visual'" class="space-y-4 min-h-[350px]">
+                  <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">可视化规则编辑器</h5>
                 
-                <!-- Rule Builder Section -->
-                <div class="space-y-4">
-                  <!-- User Overrides -->
-                  <div class="bg-amber-50/30 rounded-xl border border-amber-100 p-4">
-                    <h6 class="text-sm font-bold text-amber-700 mb-3">用户例外策略</h6>
-                    <div v-if="Object.keys(visualRules.user_overrides).length > 0" class="space-y-3">
-                      <div v-for="(rules, userId) in visualRules.user_overrides" :key="userId" class="bg-white rounded-lg p-3 border border-amber-200">
-                        <div class="flex items-center justify-between mb-2">
-                          <span class="text-sm font-medium text-gray-700">用户ID: {{ userId }}</span>
-                          <button @click="delete visualRules.user_overrides[userId]; visualRules = {...visualRules}" class="text-red-500 hover:text-red-700">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                          </button>
-                        </div>
-                        <div v-for="(rule, idx) in rules" :key="idx" class="mb-2">
-                          <div class="flex items-end gap-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200">
-                            <div class="flex-1 space-y-1">
-                              <label class="block text-[10px] text-amber-600 font-bold ml-1">目标表</label>
-                              <RowFilterOptionSelect
-                                v-model="rule._builder_table"
-                                :options="tableSelectOptions"
-                                placeholder="选择表..."
-                                button-class="border-amber-300 focus:ring-amber-500"
-                                menu-class="hover:bg-amber-50"
-                              />
-                            </div>
-                            <div class="flex-1 space-y-1">
-                              <label class="block text-[10px] text-amber-600 font-bold ml-1">字段</label>
-                              <RowFilterOptionSelect
-                                v-model="rule._builder_field"
-                                :options="getColumnSelectOptions(rule._builder_table)"
-                                placeholder="选择字段..."
-                                :disabled="!rule._builder_table"
-                                button-class="border-amber-300 focus:ring-amber-500"
-                                menu-class="hover:bg-amber-50"
-                              />
-                            </div>
-                            <div class="flex-1 space-y-1">
-                              <label class="block text-[10px] text-amber-600 font-bold ml-1">操作符</label>
-                              <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-28 shadow-sm">
-                                <option value="" disabled selected>操作符...</option>
-                                <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
-                              </select>
-                            </div>
-                            <div class="flex-1 space-y-1">
-                              <label class="block text-[10px] text-amber-600 font-bold ml-1">过滤值/变量</label>
-                              <div class="relative flex items-center gap-1">
-                                <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
-                                <button @click.stop="toggleMenu(`visual-user-${userId}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
-                                  { }
-                                </button>
-                                <PermissionVariableMenu
-                                  v-if="activeMenuPath === `visual-user-${userId}-${idx}-vars`"
-                                  :builtin-variables="[...BUILTIN_USER_VARIABLES]"
-                                  :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
-                                  accent="amber"
-                                  @select="(v) => { rule._builder_val = v; closeMenus() }"
-                                />
-                              </div>
-                            </div>
-                            <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
-                              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0h6"/></svg>
-                            </button>
-                            <button @click="rules.splice(idx, 1)" class="text-red-500 hover:text-red-700">
+                  <!-- Rule Builder Section -->
+                  <div class="space-y-4">
+                    <!-- User Overrides -->
+                    <div class="bg-amber-50/30 rounded-xl border border-amber-100 p-4">
+                      <h6 class="text-sm font-bold text-amber-700 mb-3">用户例外策略</h6>
+                      <div v-if="Object.keys(visualRules.user_overrides).length > 0" class="space-y-3">
+                        <div v-for="(rules, userId) in visualRules.user_overrides" :key="userId" class="bg-white rounded-lg p-3 border border-amber-200">
+                          <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-medium text-gray-700">用户ID: {{ userId }}</span>
+                            <button @click="delete visualRules.user_overrides[userId]; visualRules = {...visualRules}" class="text-red-500 hover:text-red-700">
                               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                             </button>
                           </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div v-else class="text-center py-8">
-                      <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-                      <p class="text-gray-500 font-medium">暂无用户例外策略</p>
-                      <button @click="visualRules.user_overrides['new_user'] = [{ condition: '', _builder_table: '', _builder_field: '', _builder_op: '', _builder_val: '' }]; visualRules = {...visualRules}" class="text-amber-600 hover:text-amber-700 font-medium mt-2">
-                        + 添加用户例外
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                
-                <!-- Validation Section -->
-                <div class="bg-blue-50 rounded-xl border border-blue-200 p-4">
-                  <h6 class="text-sm font-bold text-blue-700 mb-3">规则校验</h6>
-                  <div class="space-y-3">
-                    <div class="flex items-center justify-between">
-                      <span class="text-sm text-gray-700">校验当前配置</span>
-                      <button @click="validateRules" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-md">
-                        <MagnifyingGlassIcon class="w-4 h-4 inline-block mr-1" /> 校验规则
-                      </button>
-                    </div>
-                    <div v-if="validationResult" class="mt-3 p-3 rounded-lg" :class="validationResult.isValid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'">
-                      <div class="flex items-center gap-2 mb-2">
-                        <div class="w-6 h-6 rounded-full flex items-center justify-center" :class="validationResult.isValid ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'">
-                          {{ validationResult.isValid ? '✓' : '✗' }}
-                        </div>
-                        <span class="font-medium" :class="validationResult.isValid ? 'text-green-700' : 'text-red-700'">
-                          {{ validationResult.isValid ? '校验通过' : '校验失败' }}
-                        </span>
-                      </div>
-                      <div class="text-sm" :class="validationResult.isValid ? 'text-green-600' : 'text-red-600'">
-                        {{ validationResult.message }}
-                      </div>
-                      <div v-if="validationResult.details && validationResult.details.length > 0" class="mt-2">
-                        <div class="text-xs text-gray-500 mb-1">详细信息:</div>
-                        <div class="space-y-1">
-                          <div v-for="(detail, idx) in validationResult.details" :key="idx" class="flex items-center gap-2 text-xs p-2 bg-gray-50 rounded">
-                            <span :class="detail.type === 'error' ? 'text-red-600' : detail.type === 'warning' ? 'text-yellow-600' : 'text-blue-600'">
-                              <ExclamationTriangleIcon v-if="detail.type === 'error' || detail.type === 'warning'" class="w-4 h-4" />
-                              <InformationCircleIcon v-else class="w-4 h-4" />
-                            </span>
-                            <span class="flex-1">{{ detail.message }}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-             </div>
-             <div v-if="activePolicyTab === 'role'" class="space-y-4 min-h-[350px]">
-                <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">按角色配置策略</h5>
-                
-                <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar pb-32">
-                  <div v-if="Object.keys(visualRules.role_policies).length > 0">
-                    <div v-for="(rules, roleName) in visualRules.role_policies" :key="roleName" class="space-y-4">
-                      <div class="p-4 bg-gray-50 rounded-xl border border-gray-200 relative group">
-                        <div class="flex items-center gap-2 mb-3">
-                          <div class="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded uppercase">角色</div>
-                          <span class="text-sm font-bold text-gray-700">{{ roleName }}</span>
-                          <span class="text-[10px] text-gray-400">({{ allRoles.find(r => r.code === roleName)?.name || '未找到角色名' }})</span>
-                          <button @click="delete (visualRules.role_policies as any)[roleName]; visualRules = {...visualRules}" class="ml-auto text-gray-300 hover:text-red-500 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                          </button>
-                        </div>
-                        
-                        <div v-for="(rule, idx) in rules" :key="idx" class="space-y-2 mb-2">
-                          <div class="flex flex-col gap-2">
-                            <div class="flex items-center gap-2">
-                              <input v-model="rule.condition" class="flex-1 text-xs font-mono border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="e.g. dept_code = {user.dept_code}">
-                              <button @click="rules.splice(idx, 1); if(rules.length===0) delete (visualRules.role_policies as any)[roleName]; visualRules = {...visualRules}" class="text-gray-300 hover:text-red-500">
-                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                              </button>
-                            </div>
-                            
-                            <!-- Rule Builder for Role Policy -->
-                            <div class="flex items-end gap-3 p-3 bg-emerald-50/80 rounded-xl border border-emerald-200">
-                              <div class="space-y-1">
-                                <label class="block text-[10px] text-emerald-600 font-bold ml-1">目标表</label>
+                          <div v-for="(rule, idx) in rules" :key="idx" class="mb-2">
+                            <div class="flex items-end gap-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200">
+                              <div class="flex-1 space-y-1">
+                                <label class="block text-[10px] text-amber-600 font-bold ml-1">目标表</label>
                                 <RowFilterOptionSelect
                                   v-model="rule._builder_table"
                                   :options="tableSelectOptions"
-                                  placeholder="选择数据表..."
-                                  button-class="border-emerald-300 focus:ring-emerald-500"
-                                  menu-class="hover:bg-emerald-50"
+                                  placeholder="选择表..."
+                                  button-class="border-amber-300 focus:ring-amber-500"
+                                  menu-class="hover:bg-amber-50"
                                 />
                               </div>
-                              
-                              <div class="space-y-1">
-                                <label class="block text-[10px] text-emerald-600 font-bold ml-1">选择字段</label>
+                              <div class="flex-1 space-y-1">
+                                <label class="block text-[10px] text-amber-600 font-bold ml-1">字段</label>
                                 <RowFilterOptionSelect
                                   v-model="rule._builder_field"
                                   :options="getColumnSelectOptions(rule._builder_table)"
                                   placeholder="选择字段..."
                                   :disabled="!rule._builder_table"
-                                  button-class="border-emerald-300 focus:ring-emerald-500"
-                                  menu-class="hover:bg-emerald-50"
+                                  button-class="border-amber-300 focus:ring-amber-500"
+                                  menu-class="hover:bg-amber-50"
                                 />
                               </div>
-
-                              <div class="space-y-1">
-                                <label class="block text-[10px] text-emerald-600 font-bold ml-1">操作符</label>
-                                <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-emerald-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none w-28 shadow-sm">
+                              <div class="flex-1 space-y-1">
+                                <label class="block text-[10px] text-amber-600 font-bold ml-1">操作符</label>
+                                <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-28 shadow-sm">
                                   <option value="" disabled selected>操作符...</option>
                                   <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
                                 </select>
                               </div>
-                              
                               <div class="flex-1 space-y-1">
-                                <label class="block text-[10px] text-emerald-600 font-bold ml-1">过滤值/变量</label>
+                                <label class="block text-[10px] text-amber-600 font-bold ml-1">过滤值/变量</label>
                                 <div class="relative flex items-center gap-1">
-                                  <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-emerald-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
-                                  <!-- System variable dropdown trigger -->
-                                  <button @click.stop="toggleMenu(`role-${roleName}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
+                                  <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
+                                  <button @click.stop="toggleMenu(`visual-user-${userId}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
                                     { }
                                   </button>
                                   <PermissionVariableMenu
-                                    v-if="activeMenuPath === `role-${roleName}-${idx}-vars`"
+                                    v-if="activeMenuPath === `visual-user-${userId}-${idx}-vars`"
                                     :builtin-variables="[...BUILTIN_USER_VARIABLES]"
                                     :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
-                                    accent="emerald"
+                                    accent="amber"
                                     @select="(v) => { rule._builder_val = v; closeMenus() }"
                                   />
                                 </div>
                               </div>
-                              
-                              <button @click="appendBuilderCondition(rule)" class="bg-emerald-700 hover:bg-emerald-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                              <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0h6"/></svg>
+                              </button>
+                              <button @click="rules.splice(idx, 1)" class="text-red-500 hover:text-red-700">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                               </button>
                             </div>
-
-                            <button @click="rules.push({condition: ''})" class="text-[9px] text-emerald-600 font-bold hover:underline ml-auto">+ 追加条件 (AND)</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="text-center py-8">
+                        <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
+                        <p class="text-gray-500 font-medium">暂无用户例外策略</p>
+                        <button @click="visualRules.user_overrides['new_user'] = [{ condition: '', _builder_table: '', _builder_field: '', _builder_op: '', _builder_val: '' }]; visualRules = {...visualRules}" class="text-amber-600 hover:text-amber-700 font-medium mt-2">
+                          + 添加用户例外
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                
+                  <!-- Validation Section -->
+                  <div class="bg-blue-50 rounded-xl border border-blue-200 p-4">
+                    <h6 class="text-sm font-bold text-blue-700 mb-3">规则校验</h6>
+                    <div class="space-y-3">
+                      <div class="flex items-center justify-between">
+                        <span class="text-sm text-gray-700">校验当前配置</span>
+                        <button @click="validateRules" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-md">
+                          <MagnifyingGlassIcon class="w-4 h-4 inline-block mr-1" /> 校验规则
+                        </button>
+                      </div>
+                      <div v-if="validationResult" class="mt-3 p-3 rounded-lg" :class="validationResult.isValid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'">
+                        <div class="flex items-center gap-2 mb-2">
+                          <div class="w-6 h-6 rounded-full flex items-center justify-center" :class="validationResult.isValid ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'">
+                            {{ validationResult.isValid ? '✓' : '✗' }}
+                          </div>
+                          <span class="font-medium" :class="validationResult.isValid ? 'text-green-700' : 'text-red-700'">
+                            {{ validationResult.isValid ? '校验通过' : '校验失败' }}
+                          </span>
+                        </div>
+                        <div class="text-sm" :class="validationResult.isValid ? 'text-green-600' : 'text-red-600'">
+                          {{ validationResult.message }}
+                        </div>
+                        <div v-if="validationResult.details && validationResult.details.length > 0" class="mt-2">
+                          <div class="text-xs text-gray-500 mb-1">详细信息:</div>
+                          <div class="space-y-1">
+                            <div v-for="(detail, idx) in validationResult.details" :key="idx" class="flex items-center gap-2 text-xs p-2 bg-gray-50 rounded">
+                              <span :class="detail.type === 'error' ? 'text-red-600' : detail.type === 'warning' ? 'text-yellow-600' : 'text-blue-600'">
+                                <ExclamationTriangleIcon v-if="detail.type === 'error' || detail.type === 'warning'" class="w-4 h-4" />
+                                <InformationCircleIcon v-else class="w-4 h-4" />
+                              </span>
+                              <span class="flex-1">{{ detail.message }}</span>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
-                    <div class="pt-2 flex justify-center">
-                      <button @click="addNewRolePolicyDirect" class="text-[10px] text-emerald-600 font-bold flex items-center gap-1.5 hover:bg-emerald-50 px-4 py-2 rounded-lg transition-all border border-emerald-100 bg-white shadow-sm">
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                        添加新角色策略
-                      </button>
-                    </div>
                   </div>
-                  <div v-else class="text-center py-8">
-                    <div class="w-full py-4 border-2 border-dashed border-emerald-200 rounded-xl text-emerald-400 hover:text-emerald-600 transition-all flex items-center justify-center gap-2 font-medium cursor-pointer" @click="addNewRolePolicyDirect">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                      添加角色策略
-                    </div>
-                  </div>
-                </div>
-             </div>
-
-             <!-- Tab Content: User Overrides -->
-             <div v-if="activePolicyTab === 'user'" class="space-y-4 min-h-[350px]">
-                <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">特定用户例外 (优先级最高)</h5>
-                <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar pb-32">
-                  <div v-if="Object.keys(visualRules.user_overrides).length > 0">
-                    <div v-for="(rules, uid) in visualRules.user_overrides" :key="uid" class="space-y-4">
-                      <div class="p-4 bg-amber-50/30 rounded-xl border border-amber-100 relative group">
-                        <div class="flex items-center gap-2 mb-3">
-                          <div class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded uppercase">用户</div>
-                          <span class="text-xs font-bold text-amber-800">{{ allUsers.find(u => u.id === Number(uid))?.real_name || uid }} ({{ allUsers.find(u => u.id === Number(uid))?.user_name || 'ID: ' + uid }})</span>
-                          <button @click="delete (visualRules.user_overrides as any)[uid]; visualRules = {...visualRules}" class="ml-auto text-gray-300 hover:text-red-500 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                          </button>
-                        </div>
+               </div>
+               <div v-if="activePolicyTab === 'role'" class="space-y-4 min-h-[350px]">
+                  <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">按角色配置策略</h5>
+                
+                  <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar pb-32">
+                    <div v-if="Object.keys(visualRules.role_policies).length > 0">
+                      <div v-for="(rules, roleName) in visualRules.role_policies" :key="roleName" class="space-y-4">
+                        <div class="p-4 bg-gray-50 rounded-xl border border-gray-200 relative group">
+                          <div class="flex items-center gap-2 mb-3">
+                            <div class="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded uppercase">角色</div>
+                            <span class="text-sm font-bold text-gray-700">{{ roleName }}</span>
+                            <span class="text-[10px] text-gray-400">({{ allRoles.find(r => r.code === roleName)?.name || '未找到角色名' }})</span>
+                            <button @click="delete (visualRules.role_policies as any)[roleName]; visualRules = {...visualRules}" class="ml-auto text-gray-300 hover:text-red-500 transition-colors">
+                              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
+                          </div>
                         
-                        <div v-for="(rule, idx) in rules" :key="idx" class="space-y-2 mb-2">
-                           <div class="flex flex-col gap-2">
+                          <div v-for="(rule, idx) in rules" :key="idx" class="space-y-2 mb-2">
+                            <div class="flex flex-col gap-2">
                               <div class="flex items-center gap-2">
-                                <input v-model="rule.condition" class="flex-1 text-xs font-mono border border-amber-200 rounded-lg px-3 py-2 bg-white" placeholder="e.g. 1=1">
-                                <button @click="rules.splice(idx, 1); if(rules.length===0) delete (visualRules.user_overrides as any)[uid]; visualRules = {...visualRules}" class="text-gray-300 hover:text-red-500">
+                                <input v-model="rule.condition" class="flex-1 text-xs font-mono border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="e.g. dept_code = {user.dept_code}">
+                                <button @click="rules.splice(idx, 1); if(rules.length===0) delete (visualRules.role_policies as any)[roleName]; visualRules = {...visualRules}" class="text-gray-300 hover:text-red-500">
                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
                               </div>
-                              
-                              <!-- Rule Builder for User Override -->
-                              <div class="flex items-end gap-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200">
+                            
+                              <!-- Rule Builder for Role Policy -->
+                              <div class="flex items-end gap-3 p-3 bg-emerald-50/80 rounded-xl border border-emerald-200">
                                 <div class="space-y-1">
-                                  <label class="block text-[10px] text-amber-600 font-bold ml-1">目标表</label>
+                                  <label class="block text-[10px] text-emerald-600 font-bold ml-1">目标表</label>
                                   <RowFilterOptionSelect
                                     v-model="rule._builder_table"
                                     :options="tableSelectOptions"
                                     placeholder="选择数据表..."
-                                    button-class="border-amber-300 focus:ring-amber-500"
-                                    menu-class="hover:bg-amber-50"
+                                    button-class="border-emerald-300 focus:ring-emerald-500"
+                                    menu-class="hover:bg-emerald-50"
                                   />
                                 </div>
-                                
+                              
                                 <div class="space-y-1">
-                                  <label class="block text-[10px] text-amber-600 font-bold ml-1">选择字段</label>
+                                  <label class="block text-[10px] text-emerald-600 font-bold ml-1">选择字段</label>
                                   <RowFilterOptionSelect
                                     v-model="rule._builder_field"
                                     :options="getColumnSelectOptions(rule._builder_table)"
                                     placeholder="选择字段..."
                                     :disabled="!rule._builder_table"
-                                    button-class="border-amber-300 focus:ring-amber-500"
-                                    menu-class="hover:bg-amber-50"
+                                    button-class="border-emerald-300 focus:ring-emerald-500"
+                                    menu-class="hover:bg-emerald-50"
                                   />
                                 </div>
 
                                 <div class="space-y-1">
-                                  <label class="block text-[10px] text-amber-600 font-bold ml-1">操作符</label>
-                                  <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-28 shadow-sm">
+                                  <label class="block text-[10px] text-emerald-600 font-bold ml-1">操作符</label>
+                                  <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-emerald-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none w-28 shadow-sm">
                                     <option value="" disabled selected>操作符...</option>
                                     <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
                                   </select>
                                 </div>
-                                
+                              
                                 <div class="flex-1 space-y-1">
-                                  <label class="block text-[10px] text-amber-600 font-bold ml-1">过滤值/变量</label>
+                                  <label class="block text-[10px] text-emerald-600 font-bold ml-1">过滤值/变量</label>
                                   <div class="relative flex items-center gap-1">
-                                    <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
+                                    <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-emerald-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
                                     <!-- System variable dropdown trigger -->
-                                    <button @click.stop="toggleMenu(`user-${uid}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
+                                    <button @click.stop="toggleMenu(`role-${roleName}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
                                       { }
                                     </button>
                                     <PermissionVariableMenu
-                                      v-if="activeMenuPath === `user-${uid}-${idx}-vars`"
+                                      v-if="activeMenuPath === `role-${roleName}-${idx}-vars`"
                                       :builtin-variables="[...BUILTIN_USER_VARIABLES]"
                                       :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
-                                      accent="amber"
+                                      accent="emerald"
                                       @select="(v) => { rule._builder_val = v; closeMenus() }"
                                     />
                                   </div>
                                 </div>
-                                
-                                <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                              
+                                <button @click="appendBuilderCondition(rule)" class="bg-emerald-700 hover:bg-emerald-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
                                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
                                 </button>
                               </div>
 
-                              <button @click="rules.push({condition: ''})" class="text-[9px] text-amber-600 font-bold hover:underline ml-auto">+ 追加条件</button>
-                           </div>
+                              <button @click="rules.push({condition: ''})" class="text-[9px] text-emerald-600 font-bold hover:underline ml-auto">+ 追加条件 (AND)</button>
+                            </div>
+                          </div>
                         </div>
                       </div>
+                      <div class="pt-2 flex justify-center">
+                        <button @click="addNewRolePolicyDirect" class="text-[10px] text-emerald-600 font-bold flex items-center gap-1.5 hover:bg-emerald-50 px-4 py-2 rounded-lg transition-all border border-emerald-100 bg-white shadow-sm">
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                          添加新角色策略
+                        </button>
+                      </div>
                     </div>
-                    <div class="pt-2 flex justify-center">
-                      <button @click="addNewUserOverrideDirect" class="text-[10px] text-amber-600 font-bold flex items-center gap-1.5 hover:bg-amber-50 px-4 py-2 rounded-lg transition-all border border-amber-100 bg-white shadow-sm">
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                        添加用户例外
-                      </button>
+                    <div v-else class="text-center py-8">
+                      <div class="w-full py-4 border-2 border-dashed border-emerald-200 rounded-xl text-emerald-400 hover:text-emerald-600 transition-all flex items-center justify-center gap-2 font-medium cursor-pointer" @click="addNewRolePolicyDirect">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                        添加角色策略
+                      </div>
                     </div>
                   </div>
-                  <div v-else class="text-center py-8">
-                    <div class="w-full py-4 border-2 border-dashed border-amber-200 rounded-xl text-amber-400 hover:text-amber-600 transition-all flex items-center justify-center gap-2 font-medium cursor-pointer" @click="addNewUserOverrideDirect">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                      添加用户例外
-                    </div>
-                  </div>
-                </div>
-             </div>
+               </div>
 
-             <!-- Tab Content: Default Policy -->
-             <div v-if="activePolicyTab === 'default'" class="space-y-4 min-h-[350px]">
-                <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">兜底策略 (无匹配时生效)</h5>
-                <div class="p-6 bg-slate-50 rounded-xl border border-slate-200">
-                   <p class="text-xs text-slate-500 mb-4">当请求用户不满足任何“用户例外”或“角色策略”时，将强制执行此过滤条件。推荐设为 <code class="bg-slate-200 px-1 rounded">1=0</code> (全部拒绝)。</p>
-                   <div v-if="visualRules.default_policy.length > 0" class="space-y-4">
-                      <div v-for="(rule, idx) in visualRules.default_policy" :key="idx" class="flex flex-col gap-2 p-3 bg-white rounded-lg border border-slate-200 shadow-sm">
-                         <div class="flex items-center gap-2">
-                            <input v-model="rule.condition" class="flex-1 text-sm font-mono border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-slate-500 outline-none" placeholder="e.g. 1=0">
-                            <button @click="visualRules.default_policy.splice(idx, 1); visualRules = {...visualRules}" class="text-slate-400 hover:text-red-500 transition-colors">
-                               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+               <!-- Tab Content: User Overrides -->
+               <div v-if="activePolicyTab === 'user'" class="space-y-4 min-h-[350px]">
+                  <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">特定用户例外 (优先级最高)</h5>
+                  <div class="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar pb-32">
+                    <div v-if="Object.keys(visualRules.user_overrides).length > 0">
+                      <div v-for="(rules, uid) in visualRules.user_overrides" :key="uid" class="space-y-4">
+                        <div class="p-4 bg-amber-50/30 rounded-xl border border-amber-100 relative group">
+                          <div class="flex items-center gap-2 mb-3">
+                            <div class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded uppercase">用户</div>
+                            <span class="text-xs font-bold text-amber-800">{{ allUsers.find(u => u.id === Number(uid))?.real_name || uid }} ({{ allUsers.find(u => u.id === Number(uid))?.user_name || 'ID: ' + uid }})</span>
+                            <button @click="delete (visualRules.user_overrides as any)[uid]; visualRules = {...visualRules}" class="ml-auto text-gray-300 hover:text-red-500 transition-colors">
+                              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                             </button>
-                         </div>
-                         
-                         <!-- New single-row builder -->
-                         <div class="flex items-end gap-3 p-3 bg-slate-50/80 rounded-xl border border-slate-200">
-                           <div class="space-y-1">
-                             <label class="block text-[10px] text-slate-400 font-bold ml-1">目标表</label>
-                             <RowFilterOptionSelect
-                               v-model="rule._builder_table"
-                               :options="tableSelectOptions"
-                               placeholder="选择数据表..."
-                               button-class="border-slate-300 focus:ring-slate-500"
-                               menu-class="hover:bg-slate-50"
-                             />
-                           </div>
-                           
-                           <div class="space-y-1">
-                             <label class="block text-[10px] text-slate-400 font-bold ml-1">选择字段</label>
-                             <RowFilterOptionSelect
-                               v-model="rule._builder_field"
-                               :options="getColumnSelectOptions(rule._builder_table)"
-                               placeholder="选择字段..."
-                               :disabled="!rule._builder_table"
-                               button-class="border-slate-300 focus:ring-slate-500"
-                               menu-class="hover:bg-slate-50"
-                             />
-                           </div>
+                          </div>
+                        
+                          <div v-for="(rule, idx) in rules" :key="idx" class="space-y-2 mb-2">
+                             <div class="flex flex-col gap-2">
+                                <div class="flex items-center gap-2">
+                                  <input v-model="rule.condition" class="flex-1 text-xs font-mono border border-amber-200 rounded-lg px-3 py-2 bg-white" placeholder="e.g. 1=1">
+                                  <button @click="rules.splice(idx, 1); if(rules.length===0) delete (visualRules.user_overrides as any)[uid]; visualRules = {...visualRules}" class="text-gray-300 hover:text-red-500">
+                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                  </button>
+                                </div>
+                              
+                                <!-- Rule Builder for User Override -->
+                                <div class="flex items-end gap-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200">
+                                  <div class="space-y-1">
+                                    <label class="block text-[10px] text-amber-600 font-bold ml-1">目标表</label>
+                                    <RowFilterOptionSelect
+                                      v-model="rule._builder_table"
+                                      :options="tableSelectOptions"
+                                      placeholder="选择数据表..."
+                                      button-class="border-amber-300 focus:ring-amber-500"
+                                      menu-class="hover:bg-amber-50"
+                                    />
+                                  </div>
+                                
+                                  <div class="space-y-1">
+                                    <label class="block text-[10px] text-amber-600 font-bold ml-1">选择字段</label>
+                                    <RowFilterOptionSelect
+                                      v-model="rule._builder_field"
+                                      :options="getColumnSelectOptions(rule._builder_table)"
+                                      placeholder="选择字段..."
+                                      :disabled="!rule._builder_table"
+                                      button-class="border-amber-300 focus:ring-amber-500"
+                                      menu-class="hover:bg-amber-50"
+                                    />
+                                  </div>
 
-                           <div class="space-y-1">
-                             <label class="block text-[10px] text-slate-400 font-bold ml-1">操作符</label>
-                             <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-slate-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-slate-500 outline-none w-28 shadow-sm">
-                                <option value="" disabled selected>操作符...</option>
-                                <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
-                             </select>
-                           </div>
-                           
-                           <div class="flex-1 space-y-1">
-                             <label class="block text-[10px] text-slate-400 font-bold ml-1">过滤值/变量</label>
-                             <div class="relative flex items-center gap-1">
-                               <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-slate-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-slate-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
-                               <!-- System variable dropdown trigger -->
-                               <button @click.stop="toggleMenu(`default-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
-                                 { }
-                               </button>
-                               <PermissionVariableMenu
-                                 v-if="activeMenuPath === `default-${idx}-vars`"
-                                 :builtin-variables="[...BUILTIN_USER_VARIABLES]"
-                                 :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
-                                 accent="slate"
-                                 @select="(v) => { rule._builder_val = v; closeMenus() }"
-                               />
+                                  <div class="space-y-1">
+                                    <label class="block text-[10px] text-amber-600 font-bold ml-1">操作符</label>
+                                    <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-28 shadow-sm">
+                                      <option value="" disabled selected>操作符...</option>
+                                      <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
+                                    </select>
+                                  </div>
+                                
+                                  <div class="flex-1 space-y-1">
+                                    <label class="block text-[10px] text-amber-600 font-bold ml-1">过滤值/变量</label>
+                                    <div class="relative flex items-center gap-1">
+                                      <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
+                                      <!-- System variable dropdown trigger -->
+                                      <button @click.stop="toggleMenu(`user-${uid}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
+                                        { }
+                                      </button>
+                                      <PermissionVariableMenu
+                                        v-if="activeMenuPath === `user-${uid}-${idx}-vars`"
+                                        :builtin-variables="[...BUILTIN_USER_VARIABLES]"
+                                        :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
+                                        accent="amber"
+                                        @select="(v) => { rule._builder_val = v; closeMenus() }"
+                                      />
+                                    </div>
+                                  </div>
+                                
+                                  <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                                  </button>
+                                </div>
+
+                                <button @click="rules.push({condition: ''})" class="text-[9px] text-amber-600 font-bold hover:underline ml-auto">+ 追加条件</button>
                              </div>
-                           </div>
-                           
-                           <button @click="appendBuilderCondition(rule)" class="bg-slate-700 hover:bg-slate-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
-                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-                           </button>
-                         </div>
+                          </div>
+                        </div>
                       </div>
                       <div class="pt-2 flex justify-center">
-                         <button @click="visualRules.default_policy.push({condition: ''}); visualRules = {...visualRules}" class="text-[10px] text-blue-600 font-bold flex items-center gap-1.5 hover:bg-blue-50 px-4 py-2 rounded-lg transition-all border border-blue-100 bg-white shadow-sm">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                            追加一组策略 (OR)
-                         </button>
+                        <button @click="addNewUserOverrideDirect" class="text-[10px] text-amber-600 font-bold flex items-center gap-1.5 hover:bg-amber-50 px-4 py-2 rounded-lg transition-all border border-amber-100 bg-white shadow-sm">
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                          添加用户例外
+                        </button>
                       </div>
-                   </div>
-                   <button v-else @click="visualRules.default_policy = [{condition: '1=0'}]; visualRules = {...visualRules}" class="w-full py-4 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 hover:text-slate-600 transition-all flex items-center justify-center gap-2 font-medium">
-                      启用默认策略
-                   </button>
-                </div>
-             </div>
-
-             <!-- Tab Content: JSON View -->
-             <div v-if="activePolicyTab === 'json'" class="space-y-4 min-h-[350px]">
-                <div class="flex items-center justify-between">
-                  <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">JSON 配置视图 (只读)</h5>
-                  <button @click="copyJSON()" class="text-[10px] bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1 rounded-lg transition-colors flex items-center gap-1.5 font-bold">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                    复制 JSON
-                  </button>
-                </div>
-                
-                <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700 relative">
-                  <div class="absolute top-3 right-4 flex gap-2">
-                    <div class="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
-                    <div class="w-2.5 h-2.5 rounded-full bg-amber-500/50"></div>
-                    <div class="w-2.5 h-2.5 rounded-full bg-emerald-500/50"></div>
+                    </div>
+                    <div v-else class="text-center py-8">
+                      <div class="w-full py-4 border-2 border-dashed border-amber-200 rounded-xl text-amber-400 hover:text-amber-600 transition-all flex items-center justify-center gap-2 font-medium cursor-pointer" @click="addNewUserOverrideDirect">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                        添加用户例外
+                      </div>
+                    </div>
                   </div>
-                  <pre class="p-6 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-[400px] custom-scrollbar leading-relaxed">{{ jsonEditorContent }}</pre>
-                </div>
-                <p class="text-[10px] text-gray-400 italic">此视图实时展示可视化编辑器的配置结果，不可直接编辑。</p>
-             </div>
-           </div>
-           
-           <div v-else class="py-12 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
-              <LockOpenIcon class="w-8 h-8 mx-auto mb-2 text-gray-300" />
-              <p class="text-sm text-gray-400 font-medium">当前数据集未启用权限校验，所有授权用户可查询全量数据。</p>
-           </div>
-        </div>
+               </div>
 
-        <!-- Footer -->
-        <div class="bg-gray-50 px-8 py-4 flex justify-end gap-3 border-t border-gray-100">
-          <button @click="showPermConfigModal = false" class="px-5 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">取消</button>
-          <button @click="handleSavePermConfig" class="px-8 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-lg shadow-emerald-200 transition-all active:scale-95">
-            保存配置
-          </button>
+               <!-- Tab Content: Default Policy -->
+               <div v-if="activePolicyTab === 'default'" class="space-y-4 min-h-[350px]">
+                  <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">兜底策略 (无匹配时生效)</h5>
+                  <div class="p-6 bg-slate-50 rounded-xl border border-slate-200">
+                     <p class="text-xs text-slate-500 mb-4">当请求用户不满足任何“用户例外”或“角色策略”时，将强制执行此过滤条件。推荐设为 <code class="bg-slate-200 px-1 rounded">1=0</code> (全部拒绝)。</p>
+                     <div v-if="visualRules.default_policy.length > 0" class="space-y-4">
+                        <div v-for="(rule, idx) in visualRules.default_policy" :key="idx" class="flex flex-col gap-2 p-3 bg-white rounded-lg border border-slate-200 shadow-sm">
+                           <div class="flex items-center gap-2">
+                              <input v-model="rule.condition" class="flex-1 text-sm font-mono border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-slate-500 outline-none" placeholder="e.g. 1=0">
+                              <button @click="visualRules.default_policy.splice(idx, 1); visualRules = {...visualRules}" class="text-slate-400 hover:text-red-500 transition-colors">
+                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                              </button>
+                           </div>
+                         
+                           <!-- New single-row builder -->
+                           <div class="flex items-end gap-3 p-3 bg-slate-50/80 rounded-xl border border-slate-200">
+                             <div class="space-y-1">
+                               <label class="block text-[10px] text-slate-400 font-bold ml-1">目标表</label>
+                               <RowFilterOptionSelect
+                                 v-model="rule._builder_table"
+                                 :options="tableSelectOptions"
+                                 placeholder="选择数据表..."
+                                 button-class="border-slate-300 focus:ring-slate-500"
+                                 menu-class="hover:bg-slate-50"
+                               />
+                             </div>
+                           
+                             <div class="space-y-1">
+                               <label class="block text-[10px] text-slate-400 font-bold ml-1">选择字段</label>
+                               <RowFilterOptionSelect
+                                 v-model="rule._builder_field"
+                                 :options="getColumnSelectOptions(rule._builder_table)"
+                                 placeholder="选择字段..."
+                                 :disabled="!rule._builder_table"
+                                 button-class="border-slate-300 focus:ring-slate-500"
+                                 menu-class="hover:bg-slate-50"
+                               />
+                             </div>
+
+                             <div class="space-y-1">
+                               <label class="block text-[10px] text-slate-400 font-bold ml-1">操作符</label>
+                               <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-slate-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-slate-500 outline-none w-28 shadow-sm">
+                                  <option value="" disabled selected>操作符...</option>
+                                  <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
+                               </select>
+                             </div>
+                           
+                             <div class="flex-1 space-y-1">
+                               <label class="block text-[10px] text-slate-400 font-bold ml-1">过滤值/变量</label>
+                               <div class="relative flex items-center gap-1">
+                                 <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-slate-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-slate-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
+                                 <!-- System variable dropdown trigger -->
+                                 <button @click.stop="toggleMenu(`default-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
+                                   { }
+                                 </button>
+                                 <PermissionVariableMenu
+                                   v-if="activeMenuPath === `default-${idx}-vars`"
+                                   :builtin-variables="[...BUILTIN_USER_VARIABLES]"
+                                   :extra-data-variables="EXTRA_DATA_USER_VARIABLES"
+                                   accent="slate"
+                                   @select="(v) => { rule._builder_val = v; closeMenus() }"
+                                 />
+                               </div>
+                             </div>
+                           
+                             <button @click="appendBuilderCondition(rule)" class="bg-slate-700 hover:bg-slate-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                             </button>
+                           </div>
+                        </div>
+                        <div class="pt-2 flex justify-center">
+                           <button @click="visualRules.default_policy.push({condition: ''}); visualRules = {...visualRules}" class="text-[10px] text-blue-600 font-bold flex items-center gap-1.5 hover:bg-blue-50 px-4 py-2 rounded-lg transition-all border border-blue-100 bg-white shadow-sm">
+                              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                              追加一组策略 (OR)
+                           </button>
+                        </div>
+                     </div>
+                     <button v-else @click="visualRules.default_policy = [{condition: '1=0'}]; visualRules = {...visualRules}" class="w-full py-4 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 hover:text-slate-600 transition-all flex items-center justify-center gap-2 font-medium">
+                        启用默认策略
+                     </button>
+                  </div>
+               </div>
+
+               <!-- Tab Content: JSON View -->
+               <div v-if="activePolicyTab === 'json'" class="space-y-4 min-h-[350px]">
+                  <div class="flex items-center justify-between">
+                    <h5 class="text-xs font-bold text-gray-400 uppercase tracking-wider">JSON 配置视图 (只读)</h5>
+                    <button @click="copyJSON()" class="text-[10px] bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1 rounded-lg transition-colors flex items-center gap-1.5 font-bold">
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                      复制 JSON
+                    </button>
+                  </div>
+                
+                  <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700 relative">
+                    <div class="absolute top-3 right-4 flex gap-2">
+                      <div class="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
+                      <div class="w-2.5 h-2.5 rounded-full bg-amber-500/50"></div>
+                      <div class="w-2.5 h-2.5 rounded-full bg-emerald-500/50"></div>
+                    </div>
+                    <pre class="p-6 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-[400px] custom-scrollbar leading-relaxed">{{ jsonEditorContent }}</pre>
+                  </div>
+                  <p class="text-[10px] text-gray-400 italic">此视图实时展示可视化编辑器的配置结果，不可直接编辑。</p>
+               </div>
+             </div>
+           
+             <div v-else class="py-12 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                <LockOpenIcon class="w-8 h-8 mx-auto mb-2 text-gray-300" />
+                <p class="text-sm text-gray-400 font-medium">当前数据集未启用权限校验，所有授权用户可查询全量数据。</p>
+             </div>
+          </div>
+
+          <!-- Footer -->
+          <div class="bg-gray-50 px-8 py-4 flex justify-end gap-3 border-t border-gray-100">
+            <button @click="showPermConfigModal = false" class="px-5 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">取消</button>
+            <button @click="handleSavePermConfig" class="px-8 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-lg shadow-emerald-200 transition-all active:scale-95">
+              保存配置
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Permission Help Modal -->
-    <div v-if="showPermHelpModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showPermHelpModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center border border-blue-200">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-             </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">数据权限配置指南</h2>
-               <p class="text-xs text-gray-500 font-medium">配置行级过滤策略 (Row-Level Security)。</p>
-             </div>
+    <Teleport to="body">
+      <div v-if="showPermHelpModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showPermHelpModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center border border-blue-200">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">数据权限配置指南</h2>
+                 <p class="text-xs text-gray-500 font-medium">配置行级过滤策略 (Row-Level Security)。</p>
+               </div>
+            </div>
+            <button @click="showPermHelpModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-          <button @click="showPermHelpModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
 
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-           <section class="space-y-2">
-             <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-               <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
-               匹配优先级
-             </h3>
-             <p class="text-xs text-gray-600 leading-relaxed pl-3 border-l-2 border-gray-100 ml-0.5">
-               系统按以下顺序解析规则，匹配到即停止：<br>
-               <b class="text-blue-600">1. 用户例外 (user_overrides)</b> &gt; 
-               <b class="text-blue-600">2. 角色策略 (role_policies)</b> &gt; 
-               <b class="text-blue-600">3. 默认策略 (default_policy)</b>
-             </p>
-           </section>
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+             <section class="space-y-2">
+               <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
+                 <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
+                 匹配优先级
+               </h3>
+               <p class="text-xs text-gray-600 leading-relaxed pl-3 border-l-2 border-gray-100 ml-0.5">
+                 系统按以下顺序解析规则，匹配到即停止：<br>
+                 <b class="text-blue-600">1. 用户例外 (user_overrides)</b> &gt; 
+                 <b class="text-blue-600">2. 角色策略 (role_policies)</b> &gt; 
+                 <b class="text-blue-600">3. 默认策略 (default_policy)</b>
+               </p>
+             </section>
 
-           <section class="space-y-2">
-             <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-               <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
-               支持的动态变量
-             </h3>
-             <div class="grid grid-cols-2 gap-2 text-[10px]">
-               <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.id}</span> 用户唯一ID</div>
-               <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.user_name}</span> 登录账号</div>
-               <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.real_name}</span> 真实姓名</div>
-               <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.dept_code}</span> 部门代码</div>
-               <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.org_path}</span> 组织全路径</div>
-               <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.role}</span> 系统角色</div>
-             </div>
-             <p class="text-[10px] text-gray-500 mt-2">以上 6 项为<strong>内置用户属性</strong>，所有用户均可用。</p>
-           </section>
-
-           <section class="space-y-2">
-             <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-               <span class="w-1 h-4 bg-violet-500 rounded-full"></span>
-               extra_data 扩展字段
-             </h3>
-             <p class="text-[10px] text-gray-600 leading-relaxed">
-               来自用户 <code class="text-violet-600 bg-violet-50 px-1 rounded">extra_data</code> JSON 的键，运行时摊平为
-               <code class="font-mono text-violet-600">{user.键名}</code>。下拉列表从平台用户聚合展示，并标注「扩展」与内置变量区分。
-             </p>
-             <div v-if="EXTRA_DATA_USER_VARIABLES.length" class="grid grid-cols-1 gap-1.5 text-[10px] max-h-32 overflow-y-auto">
-               <div
-                 v-for="v in EXTRA_DATA_USER_VARIABLES"
-                 :key="v.value"
-                 class="p-2 bg-violet-50 rounded border border-violet-100 font-mono flex items-center justify-between gap-2"
-               >
-                 <span><span class="text-violet-700 font-bold">{{ v.value }}</span> {{ v.label }}</span>
-                 <span class="text-[8px] px-1 py-0.5 rounded bg-violet-100 text-violet-600 font-bold shrink-0">扩展</span>
+             <section class="space-y-2">
+               <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
+                 <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
+                 支持的动态变量
+               </h3>
+               <div class="grid grid-cols-2 gap-2 text-[10px]">
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.id}</span> 用户唯一ID</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.user_name}</span> 登录账号</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.real_name}</span> 真实姓名</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.dept_code}</span> 部门代码</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.org_path}</span> 组织全路径</div>
+                 <div class="p-2 bg-gray-50 rounded border border-gray-100 font-mono"><span class="text-blue-600 font-bold">{user.role}</span> 系统角色</div>
                </div>
-             </div>
-             <p v-else class="text-[10px] text-gray-400">当前暂无 extra_data 扩展字段，可在用户管理或第三方用户同步中配置。</p>
-           </section>
+               <p class="text-[10px] text-gray-500 mt-2">以上 6 项为<strong>内置用户属性</strong>，所有用户均可用。</p>
+             </section>
 
-           <section class="space-y-4">
-             <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
-               <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
-               配置示例
-             </h3>
-             
-             <div class="space-y-2">
-               <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">示例 1: 按所属部门过滤 (最常用)</p>
-               <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                 <pre class="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto">{
-  "role_policies": {
-    "viewer": [
-      { "condition": "dept_code = {user.dept_code}" }
-    ]
-  }
-}</pre>
-               </div>
-             </div>
-
-             <div class="space-y-2">
-               <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">示例 2: 组织架构模糊匹配 (树形结构)</p>
-               <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                 <pre class="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto">{
-  "role_policies": {
-    "regional_viewer": [
-      { "condition": "org_path LIKE '{user.org_path}%'" }
-    ]
-  }
-}</pre>
-               </div>
-             </div>
-
-             <div class="space-y-2">
-               <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">示例 3: 复杂 OR 逻辑 (多维度权限并集)</p>
-               <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                 <pre class="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto">{
-  "role_policies": {
-    "manager": [
-      { "condition": "dept_code = {user.dept_code}" },
-      { "condition": "region_code = 'SH'" }
-    ]
-  }
-}</pre>
-                 <div class="bg-slate-800 px-4 py-2 text-[10px] text-slate-400 border-t border-slate-700 italic">
-                   提示：数组内的多条规则将被注入为 (cond1 AND cond2)。若需 OR，请写在一条 condition 内。
+             <section class="space-y-2">
+               <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
+                 <span class="w-1 h-4 bg-violet-500 rounded-full"></span>
+                 extra_data 扩展字段
+               </h3>
+               <p class="text-[10px] text-gray-600 leading-relaxed">
+                 来自用户 <code class="text-violet-600 bg-violet-50 px-1 rounded">extra_data</code> JSON 的键，运行时摊平为
+                 <code class="font-mono text-violet-600">{user.键名}</code>。下拉列表从平台用户聚合展示，并标注「扩展」与内置变量区分。
+               </p>
+               <div v-if="EXTRA_DATA_USER_VARIABLES.length" class="grid grid-cols-1 gap-1.5 text-[10px] max-h-32 overflow-y-auto">
+                 <div
+                   v-for="v in EXTRA_DATA_USER_VARIABLES"
+                   :key="v.value"
+                   class="p-2 bg-violet-50 rounded border border-violet-100 font-mono flex items-center justify-between gap-2"
+                 >
+                   <span><span class="text-violet-700 font-bold">{{ v.value }}</span> {{ v.label }}</span>
+                   <span class="text-[8px] px-1 py-0.5 rounded bg-violet-100 text-violet-600 font-bold shrink-0">扩展</span>
                  </div>
                </div>
-             </div>
-           </section>
-        </div>
+               <p v-else class="text-[10px] text-gray-400">当前暂无 extra_data 扩展字段，可在用户管理或第三方用户同步中配置。</p>
+             </section>
 
-        <!-- Footer -->
-        <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
-          <button @click="showPermHelpModal = false" class="px-8 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all text-sm">
-            明白了
-          </button>
+             <section class="space-y-4">
+               <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
+                 <span class="w-1 h-4 bg-blue-500 rounded-full"></span>
+                 配置示例
+               </h3>
+             
+               <div class="space-y-2">
+                 <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">示例 1: 按所属部门过滤 (最常用)</p>
+                 <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
+                   <pre class="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto">{
+    "role_policies": {
+      "viewer": [
+        { "condition": "dept_code = {user.dept_code}" }
+      ]
+    }
+  }</pre>
+                 </div>
+               </div>
+
+               <div class="space-y-2">
+                 <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">示例 2: 组织架构模糊匹配 (树形结构)</p>
+                 <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
+                   <pre class="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto">{
+    "role_policies": {
+      "regional_viewer": [
+        { "condition": "org_path LIKE '{user.org_path}%'" }
+      ]
+    }
+  }</pre>
+                 </div>
+               </div>
+
+               <div class="space-y-2">
+                 <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">示例 3: 复杂 OR 逻辑 (多维度权限并集)</p>
+                 <div class="bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
+                   <pre class="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto">{
+    "role_policies": {
+      "manager": [
+        { "condition": "dept_code = {user.dept_code}" },
+        { "condition": "region_code = 'SH'" }
+      ]
+    }
+  }</pre>
+                   <div class="bg-slate-800 px-4 py-2 text-[10px] text-slate-400 border-t border-slate-700 italic">
+                     提示：数组内的多条规则将被注入为 (cond1 AND cond2)。若需 OR，请写在一条 condition 内。
+                   </div>
+                 </div>
+               </div>
+             </section>
+          </div>
+
+          <!-- Footer -->
+          <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
+            <button @click="showPermHelpModal = false" class="px-8 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all text-sm">
+              明白了
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- Role Selector Modal -->
-    <div v-if="showRoleSelectorModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showRoleSelectorModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center border border-emerald-200">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-             </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">选择角色</h2>
-               <p class="text-xs text-gray-500 font-medium">为特定角色配置数据访问权限策略。</p>
-             </div>
+    <Teleport to="body">
+      <div v-if="showRoleSelectorModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showRoleSelectorModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center border border-emerald-200">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">选择角色</h2>
+                 <p class="text-xs text-gray-500 font-medium">为特定角色配置数据访问权限策略。</p>
+               </div>
+            </div>
+            <button @click="showRoleSelectorModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-          <button @click="showRoleSelectorModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
 
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
-          <!-- Search Filter -->
-          <div class="mb-4">
-            <div class="relative">
-              <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-              </span>
-              <input 
-                v-model="roleSearchQuery" 
-                type="search"
-                class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white sm:text-sm transition-all" 
-                placeholder="搜索角色名称或代码..."
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <!-- Search Filter -->
+            <div class="mb-4">
+              <div class="relative">
+                <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                </span>
+                <input 
+                  v-model="roleSearchQuery" 
+                  type="search"
+                  class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white sm:text-sm transition-all" 
+                  placeholder="搜索角色名称或代码..."
+                >
+              </div>
+            </div>
+
+            <div v-if="filteredRoles.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button 
+                v-for="role in filteredRoles" 
+                :key="role.code"
+                @click="selectRoleFromModal(role)"
+                class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition-all text-left group"
+                :disabled="visualRules.role_policies[role.code] !== undefined"
               >
+                <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold text-sm border border-emerald-200">
+                  {{ (role.name || role.code || 'R').charAt(0).toUpperCase() }}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-medium text-gray-900 text-sm truncate">{{ role.name || '未知角色' }}</div>
+                  <div class="text-xs text-gray-500 truncate font-mono">{{ role.code }}</div>
+                </div>
+                <div class="text-xs text-gray-400">
+                  CODE: {{ role.code }}
+                </div>
+                <div v-if="visualRules.role_policies[role.code] !== undefined" class="px-2 py-1 bg-green-100 text-green-700 text-[10px] rounded-full font-medium">
+                  已添加
+                </div>
+              </button>
+            </div>
+            <div v-else-if="roleSearchQuery && filteredRoles.length === 0" class="text-center py-12">
+              <MagnifyingGlassIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
+              <p class="text-gray-500 font-medium">未找到匹配的角色</p>
+              <p class="text-gray-400 text-sm mt-1">尝试调整搜索关键词</p>
+            </div>
+            <div v-else class="text-center py-12">
+              <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
+              <p class="text-gray-500 font-medium">暂无角色数据</p>
+              <p class="text-gray-400 text-sm mt-1">请先在系统中添加角色</p>
             </div>
           </div>
 
-          <div v-if="filteredRoles.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <button 
-              v-for="role in filteredRoles" 
-              :key="role.code"
-              @click="selectRoleFromModal(role)"
-              class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition-all text-left group"
-              :disabled="visualRules.role_policies[role.code] !== undefined"
-            >
-              <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold text-sm border border-emerald-200">
-                {{ (role.name || role.code || 'R').charAt(0).toUpperCase() }}
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="font-medium text-gray-900 text-sm truncate">{{ role.name || '未知角色' }}</div>
-                <div class="text-xs text-gray-500 truncate font-mono">{{ role.code }}</div>
-              </div>
-              <div class="text-xs text-gray-400">
-                CODE: {{ role.code }}
-              </div>
-              <div v-if="visualRules.role_policies[role.code] !== undefined" class="px-2 py-1 bg-green-100 text-green-700 text-[10px] rounded-full font-medium">
-                已添加
-              </div>
+          <!-- Footer -->
+          <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
+            <button @click="showRoleSelectorModal = false" class="px-6 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">
+              取消
             </button>
           </div>
-          <div v-else-if="roleSearchQuery && filteredRoles.length === 0" class="text-center py-12">
-            <MagnifyingGlassIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-            <p class="text-gray-500 font-medium">未找到匹配的角色</p>
-            <p class="text-gray-400 text-sm mt-1">尝试调整搜索关键词</p>
-          </div>
-          <div v-else class="text-center py-12">
-            <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-            <p class="text-gray-500 font-medium">暂无角色数据</p>
-            <p class="text-gray-400 text-sm mt-1">请先在系统中添加角色</p>
-          </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
-          <button @click="showRoleSelectorModal = false" class="px-6 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">
-            取消
-          </button>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- User Selector Modal -->
-    <div v-if="showUserSelectorModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showUserSelectorModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-amber-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center border border-amber-200">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-             </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">选择用户</h2>
-               <p class="text-xs text-gray-500 font-medium">为特定用户配置数据访问权限例外。</p>
-             </div>
+    <Teleport to="body">
+      <div v-if="showUserSelectorModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showUserSelectorModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-amber-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center border border-amber-200">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">选择用户</h2>
+                 <p class="text-xs text-gray-500 font-medium">为特定用户配置数据访问权限例外。</p>
+               </div>
+            </div>
+            <button @click="showUserSelectorModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-          <button @click="showUserSelectorModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
 
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
-          <!-- Search Filter -->
-          <div class="mb-4">
-            <div class="relative">
-              <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-              </span>
-              <input 
-                v-model="userSearchQuery" 
-                type="search"
-                class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white sm:text-sm transition-all" 
-                placeholder="搜索用户姓名、用户名或ID..."
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <!-- Search Filter -->
+            <div class="mb-4">
+              <div class="relative">
+                <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                </span>
+                <input 
+                  v-model="userSearchQuery" 
+                  type="search"
+                  class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white sm:text-sm transition-all" 
+                  placeholder="搜索用户姓名、用户名或ID..."
+                >
+              </div>
+            </div>
+
+            <div v-if="filteredUsers.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button 
+                v-for="user in filteredUsers" 
+                :key="user.id"
+                @click="selectUserFromModal(user)"
+                class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-amber-300 hover:bg-amber-50 transition-all text-left group"
+                :disabled="visualRules.user_overrides[user.id] !== undefined"
               >
+                <div class="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold text-sm border border-amber-200">
+                  {{ (user.real_name || user.user_name || 'U').charAt(0).toUpperCase() }}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-medium text-gray-900 text-sm truncate">{{ user.real_name || '未知用户' }}</div>
+                  <div class="text-xs text-gray-500 truncate">{{ user.user_name }}</div>
+                </div>
+                <div class="text-xs text-gray-400">
+                  ID: {{ user.id }}
+                </div>
+                <div v-if="visualRules.user_overrides[user.id] !== undefined" class="px-2 py-1 bg-green-100 text-green-700 text-[10px] rounded-full font-medium">
+                  已添加
+                </div>
+              </button>
+            </div>
+            <div v-else-if="userSearchQuery && filteredUsers.length === 0" class="text-center py-12">
+              <MagnifyingGlassIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
+              <p class="text-gray-500 font-medium">未找到匹配的用户</p>
+              <p class="text-gray-400 text-sm mt-1">尝试调整搜索关键词</p>
+            </div>
+            <div v-else class="text-center py-12">
+              <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
+              <p class="text-gray-500 font-medium">暂无用户数据</p>
+              <p class="text-gray-400 text-sm mt-1">请先在系统中添加用户</p>
             </div>
           </div>
 
-          <div v-if="filteredUsers.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <button 
-              v-for="user in filteredUsers" 
-              :key="user.id"
-              @click="selectUserFromModal(user)"
-              class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-amber-300 hover:bg-amber-50 transition-all text-left group"
-              :disabled="visualRules.user_overrides[user.id] !== undefined"
-            >
-              <div class="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold text-sm border border-amber-200">
-                {{ (user.real_name || user.user_name || 'U').charAt(0).toUpperCase() }}
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="font-medium text-gray-900 text-sm truncate">{{ user.real_name || '未知用户' }}</div>
-                <div class="text-xs text-gray-500 truncate">{{ user.user_name }}</div>
-              </div>
-              <div class="text-xs text-gray-400">
-                ID: {{ user.id }}
-              </div>
-              <div v-if="visualRules.user_overrides[user.id] !== undefined" class="px-2 py-1 bg-green-100 text-green-700 text-[10px] rounded-full font-medium">
-                已添加
-              </div>
+          <!-- Footer -->
+          <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
+            <button @click="showUserSelectorModal = false" class="px-6 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">
+              取消
             </button>
           </div>
-          <div v-else-if="userSearchQuery && filteredUsers.length === 0" class="text-center py-12">
-            <MagnifyingGlassIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-            <p class="text-gray-500 font-medium">未找到匹配的用户</p>
-            <p class="text-gray-400 text-sm mt-1">尝试调整搜索关键词</p>
-          </div>
-          <div v-else class="text-center py-12">
-            <UserIcon class="w-10 h-10 mx-auto mb-4 text-gray-300" />
-            <p class="text-gray-500 font-medium">暂无用户数据</p>
-            <p class="text-gray-400 text-sm mt-1">请先在系统中添加用户</p>
-          </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
-          <button @click="showUserSelectorModal = false" class="px-6 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">
-            取消
-          </button>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 当前元数据同步实时日志 -->
     <Transition name="sync-log-drawer">

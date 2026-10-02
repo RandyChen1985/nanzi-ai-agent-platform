@@ -431,372 +431,374 @@ const handleClose = () => {
 </script>
 
 <template>
-  <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="handleClose">
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden animate-fade-in-up border border-gray-100">
+  <Teleport to="body">
+    <div v-if="show" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="handleClose">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden animate-fade-in-up border border-gray-100">
       
-      <!-- Header -->
-      <div class="px-8 py-5 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/70 via-blue-50/40 to-white">
-        <div class="flex items-center gap-4">
-          <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-200">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-          </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <h2 class="text-lg font-bold text-gray-900 flex items-center gap-1.5"><SparklesIcon class="w-5 h-5 text-indigo-600" /> 智能指标发现</h2>
-              <span class="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-semibold rounded-full">AI 自动生成</span>
+        <!-- Header -->
+        <div class="px-8 py-5 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/70 via-blue-50/40 to-white">
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-200">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             </div>
-            <p class="text-xs text-gray-500 mt-0.5">深度分析数据 Schema、字段语义与聚合潜力，自动推荐高价值业务指标与 SQL</p>
-          </div>
-        </div>
-        <button @click="handleClose" class="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-white rounded-full">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
-      </div>
-
-      <!-- Main Content -->
-      <div class="flex-1 overflow-y-auto p-6 md:p-8 bg-gray-50/40">
-        <!-- Initial / Config State -->
-        <div v-if="recommendations.length === 0 && !analyzing" class="space-y-6">
-          <div
-            v-if="runStatus === 'interrupted' || runStatus === 'error'"
-            class="flex items-start gap-3 rounded-lg border px-4 py-3 text-left"
-            :class="runStatus === 'interrupted' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-red-200 bg-red-50 text-red-800'"
-          >
-            <span class="mt-0.5 h-2 w-2 flex-shrink-0 rounded-full" :class="runStatus === 'interrupted' ? 'bg-amber-500' : 'bg-red-500'"></span>
-            <div class="min-w-0">
-              <div class="text-xs font-bold">{{ runStatus === 'interrupted' ? '上次生成已中断' : '上次生成失败' }}</div>
-              <div class="mt-0.5 break-words text-[11px]">{{ progress.message }}</div>
-            </div>
-          </div>
-          
-          <!-- 1. Table Selection Section (Collapsible) -->
-          <div class="bg-white rounded-xl border border-gray-200/80 p-5 shadow-sm transition-all">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3" :class="isTablesCollapsed ? 'mb-0' : 'mb-4'">
-              <div 
-                @click="isTablesCollapsed = !isTablesCollapsed"
-                class="flex items-center gap-2 cursor-pointer select-none group"
-              >
-                <span class="w-2 h-2 rounded-full bg-indigo-600"></span>
-                <h3 class="text-sm font-bold text-gray-900 group-hover:text-indigo-600 transition-colors flex items-center gap-1.5">
-                  分析数据表范围
-                </h3>
-                <span class="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full font-medium">
-                  已选 {{ selectedTableNames.length }} / {{ internalTables.length }} 张表
-                </span>
-              </div>
-
-              <div class="flex items-center gap-3">
-                <input
-                  v-if="!isTablesCollapsed && internalTables.length > 5"
-                  v-model="tableSearchQuery"
-                  type="text"
-                  placeholder="搜索表名/术语..."
-                  class="px-2.5 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-indigo-500 w-36 sm:w-44"
-                />
-                <button
-                  @click="toggleSelectAllTables"
-                  class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors hover:underline"
-                >
-                  {{ isAllTablesSelected ? '取消全选' : '全选所有表' }}
-                </button>
-                <button
-                  @click="isTablesCollapsed = !isTablesCollapsed"
-                  type="button"
-                  class="flex items-center gap-1 text-xs text-gray-500 hover:text-indigo-600 px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors"
-                >
-                  <span>{{ isTablesCollapsed ? '展开' : '收起' }}</span>
-                  <svg 
-                    class="w-3.5 h-3.5 transform transition-transform duration-200" 
-                    :class="isTablesCollapsed ? '-rotate-90' : 'rotate-0'"
-                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  >
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <!-- Collapsed Summary Chips -->
-            <div 
-              v-if="isTablesCollapsed" 
-              class="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center gap-1.5"
-            >
-              <span class="text-[11px] text-gray-400">已选表预览:</span>
-              <template v-if="selectedTableNames.length === 0">
-                <span class="text-[11px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded">未选择任何表</span>
-              </template>
-              <template v-else>
-                <span
-                  v-for="name in selectedTableNames.slice(0, 5)"
-                  :key="name"
-                  class="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-mono border border-indigo-100/60"
-                >
-                  {{ name }}
-                </span>
-                <span 
-                  v-if="selectedTableNames.length > 5" 
-                  @click="isTablesCollapsed = false"
-                  class="text-[10px] text-gray-400 hover:text-indigo-600 cursor-pointer font-medium hover:underline"
-                >
-                  +{{ selectedTableNames.length - 5 }} 张... (点击展开)
-                </span>
-              </template>
-            </div>
-
-            <!-- Expanded Tables Grid -->
-            <div v-show="!isTablesCollapsed">
-              <div v-if="loadingTables" class="py-6 flex items-center justify-center text-xs text-gray-400 gap-2">
-                <svg class="animate-spin h-4 w-4 text-indigo-600" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                正在加载表列表...
-              </div>
-
-              <div v-else-if="internalTables.length === 0" class="py-6 text-center text-xs text-gray-400">
-                当前数据集暂无可分析的表，请先导入或创建表结构。
-              </div>
-
-              <div v-else class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-48 overflow-y-auto pr-1">
-                <div
-                  v-for="tbl in filteredTables"
-                  :key="tbl.physical_name"
-                  @click="toggleTable(tbl.physical_name)"
-                  class="flex items-center gap-2.5 p-2.5 rounded-lg border transition-all cursor-pointer select-none text-left"
-                  :class="selectedTableNames.includes(tbl.physical_name) 
-                    ? 'border-indigo-400 bg-indigo-50/50 text-indigo-900 shadow-sm' 
-                    : 'border-gray-200 hover:border-gray-300 bg-white text-gray-700'"
-                >
-                  <div 
-                    class="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors"
-                    :class="selectedTableNames.includes(tbl.physical_name) ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-300 bg-white'"
-                  >
-                    <svg v-if="selectedTableNames.includes(tbl.physical_name)" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="text-xs font-semibold truncate">{{ tbl.term || tbl.physical_name }}</div>
-                    <div class="text-[10px] text-gray-400 font-mono truncate">{{ tbl.physical_name }}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 2. Custom Business Prompt Section with Help Modal -->
-          <div class="bg-white rounded-xl border border-gray-200/80 p-5 shadow-sm relative">
-            <div class="flex items-center justify-between mb-2.5">
+            <div>
               <div class="flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-blue-600"></span>
-                <label class="text-sm font-bold text-gray-900">自定义业务偏好与关注点 (可选)</label>
-                <!-- Help button with Question Mark -->
-                <button
-                  @click="showHelpModal = true"
-                  type="button"
-                  title="查看填写帮助与示例"
-                  class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-xs font-bold transition-transform hover:scale-110 shadow-sm"
+                <h2 class="text-lg font-bold text-gray-900 flex items-center gap-1.5"><SparklesIcon class="w-5 h-5 text-indigo-600" /> 智能指标发现</h2>
+                <span class="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-semibold rounded-full">AI 自动生成</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-0.5">深度分析数据 Schema、字段语义与聚合潜力，自动推荐高价值业务指标与 SQL</p>
+            </div>
+          </div>
+          <button @click="handleClose" class="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-white rounded-full">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <!-- Main Content -->
+        <div class="flex-1 overflow-y-auto p-6 md:p-8 bg-gray-50/40">
+          <!-- Initial / Config State -->
+          <div v-if="recommendations.length === 0 && !analyzing" class="space-y-6">
+            <div
+              v-if="runStatus === 'interrupted' || runStatus === 'error'"
+              class="flex items-start gap-3 rounded-lg border px-4 py-3 text-left"
+              :class="runStatus === 'interrupted' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-red-200 bg-red-50 text-red-800'"
+            >
+              <span class="mt-0.5 h-2 w-2 flex-shrink-0 rounded-full" :class="runStatus === 'interrupted' ? 'bg-amber-500' : 'bg-red-500'"></span>
+              <div class="min-w-0">
+                <div class="text-xs font-bold">{{ runStatus === 'interrupted' ? '上次生成已中断' : '上次生成失败' }}</div>
+                <div class="mt-0.5 break-words text-[11px]">{{ progress.message }}</div>
+              </div>
+            </div>
+          
+            <!-- 1. Table Selection Section (Collapsible) -->
+            <div class="bg-white rounded-xl border border-gray-200/80 p-5 shadow-sm transition-all">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3" :class="isTablesCollapsed ? 'mb-0' : 'mb-4'">
+                <div 
+                  @click="isTablesCollapsed = !isTablesCollapsed"
+                  class="flex items-center gap-2 cursor-pointer select-none group"
                 >
-                  ?
+                  <span class="w-2 h-2 rounded-full bg-indigo-600"></span>
+                  <h3 class="text-sm font-bold text-gray-900 group-hover:text-indigo-600 transition-colors flex items-center gap-1.5">
+                    分析数据表范围
+                  </h3>
+                  <span class="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full font-medium">
+                    已选 {{ selectedTableNames.length }} / {{ internalTables.length }} 张表
+                  </span>
+                </div>
+
+                <div class="flex items-center gap-3">
+                  <input
+                    v-if="!isTablesCollapsed && internalTables.length > 5"
+                    v-model="tableSearchQuery"
+                    type="text"
+                    placeholder="搜索表名/术语..."
+                    class="px-2.5 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-indigo-500 w-36 sm:w-44"
+                  />
+                  <button
+                    @click="toggleSelectAllTables"
+                    class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors hover:underline"
+                  >
+                    {{ isAllTablesSelected ? '取消全选' : '全选所有表' }}
+                  </button>
+                  <button
+                    @click="isTablesCollapsed = !isTablesCollapsed"
+                    type="button"
+                    class="flex items-center gap-1 text-xs text-gray-500 hover:text-indigo-600 px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors"
+                  >
+                    <span>{{ isTablesCollapsed ? '展开' : '收起' }}</span>
+                    <svg 
+                      class="w-3.5 h-3.5 transform transition-transform duration-200" 
+                      :class="isTablesCollapsed ? '-rotate-90' : 'rotate-0'"
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Collapsed Summary Chips -->
+              <div 
+                v-if="isTablesCollapsed" 
+                class="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center gap-1.5"
+              >
+                <span class="text-[11px] text-gray-400">已选表预览:</span>
+                <template v-if="selectedTableNames.length === 0">
+                  <span class="text-[11px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded">未选择任何表</span>
+                </template>
+                <template v-else>
+                  <span
+                    v-for="name in selectedTableNames.slice(0, 5)"
+                    :key="name"
+                    class="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-mono border border-indigo-100/60"
+                  >
+                    {{ name }}
+                  </span>
+                  <span 
+                    v-if="selectedTableNames.length > 5" 
+                    @click="isTablesCollapsed = false"
+                    class="text-[10px] text-gray-400 hover:text-indigo-600 cursor-pointer font-medium hover:underline"
+                  >
+                    +{{ selectedTableNames.length - 5 }} 张... (点击展开)
+                  </span>
+                </template>
+              </div>
+
+              <!-- Expanded Tables Grid -->
+              <div v-show="!isTablesCollapsed">
+                <div v-if="loadingTables" class="py-6 flex items-center justify-center text-xs text-gray-400 gap-2">
+                  <svg class="animate-spin h-4 w-4 text-indigo-600" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  正在加载表列表...
+                </div>
+
+                <div v-else-if="internalTables.length === 0" class="py-6 text-center text-xs text-gray-400">
+                  当前数据集暂无可分析的表，请先导入或创建表结构。
+                </div>
+
+                <div v-else class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-48 overflow-y-auto pr-1">
+                  <div
+                    v-for="tbl in filteredTables"
+                    :key="tbl.physical_name"
+                    @click="toggleTable(tbl.physical_name)"
+                    class="flex items-center gap-2.5 p-2.5 rounded-lg border transition-all cursor-pointer select-none text-left"
+                    :class="selectedTableNames.includes(tbl.physical_name) 
+                      ? 'border-indigo-400 bg-indigo-50/50 text-indigo-900 shadow-sm' 
+                      : 'border-gray-200 hover:border-gray-300 bg-white text-gray-700'"
+                  >
+                    <div 
+                      class="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors"
+                      :class="selectedTableNames.includes(tbl.physical_name) ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-300 bg-white'"
+                    >
+                      <svg v-if="selectedTableNames.includes(tbl.physical_name)" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-xs font-semibold truncate">{{ tbl.term || tbl.physical_name }}</div>
+                      <div class="text-[10px] text-gray-400 font-mono truncate">{{ tbl.physical_name }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. Custom Business Prompt Section with Help Modal -->
+            <div class="bg-white rounded-xl border border-gray-200/80 p-5 shadow-sm relative">
+              <div class="flex items-center justify-between mb-2.5">
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                  <label class="text-sm font-bold text-gray-900">自定义业务偏好与关注点 (可选)</label>
+                  <!-- Help button with Question Mark -->
+                  <button
+                    @click="showHelpModal = true"
+                    type="button"
+                    title="查看填写帮助与示例"
+                    class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-xs font-bold transition-transform hover:scale-110 shadow-sm"
+                  >
+                    ?
+                  </button>
+                </div>
+                <button
+                  v-if="userPrompt"
+                  @click="userPrompt = ''"
+                  class="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  清空
                 </button>
               </div>
+
+              <p class="text-xs text-gray-500 mb-3">
+                输入您的特定关注方向或分析偏好，AI 将定向推导符合业务口径的高价值指标；留空则全局推断核心 KPI。
+              </p>
+
+              <div class="relative">
+                <textarea
+                  v-model="userPrompt"
+                  rows="3"
+                  placeholder="例如：重点统计月度业务增长趋势，按分类/状态计算占比与完成率，发掘失败与超时的预警指标... (点击上方 ? 按钮查看结构化填法与通用示例)"
+                  class="w-full text-xs p-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none leading-relaxed transition-all"
+                ></textarea>
+              </div>
+
+              <!-- Quick Template Chips (Generic Patterns) -->
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <span class="text-[11px] text-gray-400 font-medium">通用分析模式:</span>
+                <button
+                  v-for="item in promptExamples"
+                  :key="item.title"
+                  @click="userPrompt = item.prompt"
+                  type="button"
+                  class="px-2.5 py-1 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-600 text-gray-600 text-[11px] rounded-lg border border-gray-200/60 transition-colors flex items-center gap-1"
+                >
+                  <span>{{ item.title.split(' ')[0] }}</span>
+                  <span>{{ item.title.split(' ')[1] }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Bottom Action Trigger -->
+            <div class="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div class="flex items-center gap-2 text-xs text-gray-400">
+                <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                <span>10 分钟内自动去重，避免重复推荐相同指标</span>
+              </div>
+
               <button
-                v-if="userPrompt"
-                @click="userPrompt = ''"
-                class="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                @click="handleRecommend"
+                :disabled="selectedTableNames.length === 0"
+                class="w-full sm:w-auto px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2"
               >
-                清空
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <span>立即开始识别 (已选 {{ selectedTableNames.length }} 张表)</span>
               </button>
             </div>
 
-            <p class="text-xs text-gray-500 mb-3">
-              输入您的特定关注方向或分析偏好，AI 将定向推导符合业务口径的高价值指标；留空则全局推断核心 KPI。
-            </p>
-
-            <div class="relative">
-              <textarea
-                v-model="userPrompt"
-                rows="3"
-                placeholder="例如：重点统计月度业务增长趋势，按分类/状态计算占比与完成率，发掘失败与超时的预警指标... (点击上方 ? 按钮查看结构化填法与通用示例)"
-                class="w-full text-xs p-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none leading-relaxed transition-all"
-              ></textarea>
-            </div>
-
-            <!-- Quick Template Chips (Generic Patterns) -->
-            <div class="mt-3 flex flex-wrap items-center gap-2">
-              <span class="text-[11px] text-gray-400 font-medium">通用分析模式:</span>
-              <button
-                v-for="item in promptExamples"
-                :key="item.title"
-                @click="userPrompt = item.prompt"
-                type="button"
-                class="px-2.5 py-1 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-600 text-gray-600 text-[11px] rounded-lg border border-gray-200/60 transition-colors flex items-center gap-1"
-              >
-                <span>{{ item.title.split(' ')[0] }}</span>
-                <span>{{ item.title.split(' ')[1] }}</span>
-              </button>
-            </div>
           </div>
 
-          <!-- Bottom Action Trigger -->
-          <div class="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div class="flex items-center gap-2 text-xs text-gray-400">
-              <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-              <span>10 分钟内自动去重，避免重复推荐相同指标</span>
-            </div>
-
-            <button
-              @click="handleRecommend"
-              :disabled="selectedTableNames.length === 0"
-              class="w-full sm:w-auto px-8 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-              <span>立即开始识别 (已选 {{ selectedTableNames.length }} 张表)</span>
-            </button>
-          </div>
-
-        </div>
-
-        <!-- Analyzing State：展示后端 SSE 推送的真实阶段进度。 -->
-        <div v-else-if="analyzing" class="min-h-96 flex flex-col items-center justify-center text-center p-6 space-y-5">
-          <div class="relative w-20 h-20 flex items-center justify-center">
-            <div class="absolute inset-0 border-4 border-indigo-100 rounded-full"></div>
-            <div class="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
-            <div class="flex flex-col items-center justify-center z-10">
-              <span class="text-sm font-mono font-bold text-indigo-700">{{ progressPercent }}%</span>
-              <span class="text-[10px] text-gray-400">{{ elapsedSeconds }}s</span>
-            </div>
-          </div>
-
-          <div class="w-full max-w-xl space-y-2 text-left">
-            <div class="flex items-center justify-between gap-3 text-xs">
-              <span class="font-bold text-gray-800">{{ progress.message }}</span>
-              <span class="flex-shrink-0 font-mono text-indigo-700">{{ progressPercent }}%</span>
-            </div>
-            <div class="h-2 w-full overflow-hidden rounded bg-gray-200">
-              <div class="h-full bg-indigo-600 transition-all duration-500" :style="{ width: `${progressPercent}%` }"></div>
-            </div>
-            <div class="grid grid-cols-3 gap-2 text-center text-[11px]">
-              <div class="rounded border border-gray-200 bg-white px-2 py-2">
-                <div class="text-gray-400">执行阶段</div>
-                <div class="mt-0.5 font-bold text-gray-800">{{ progress.completed_units || 0 }} / {{ progress.total_units || 5 }}</div>
-              </div>
-              <div class="rounded border border-gray-200 bg-white px-2 py-2">
-                <div class="text-gray-400">剩余阶段</div>
-                <div class="mt-0.5 font-bold text-gray-800">{{ progress.remaining_units ?? 5 }}</div>
-              </div>
-              <div class="rounded border border-gray-200 bg-white px-2 py-2">
-                <div class="text-gray-400">预计剩余</div>
-                <div class="mt-0.5 font-bold text-gray-800">{{ estimatedRemainingText }}</div>
+          <!-- Analyzing State：展示后端 SSE 推送的真实阶段进度。 -->
+          <div v-else-if="analyzing" class="min-h-96 flex flex-col items-center justify-center text-center p-6 space-y-5">
+            <div class="relative w-20 h-20 flex items-center justify-center">
+              <div class="absolute inset-0 border-4 border-indigo-100 rounded-full"></div>
+              <div class="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
+              <div class="flex flex-col items-center justify-center z-10">
+                <span class="text-sm font-mono font-bold text-indigo-700">{{ progressPercent }}%</span>
+                <span class="text-[10px] text-gray-400">{{ elapsedSeconds }}s</span>
               </div>
             </div>
-          </div>
 
-          <div class="max-w-xl rounded border border-blue-200 bg-blue-50 px-3 py-2 text-left text-[11px] leading-relaxed text-blue-900">
-            AI 努力生成中，可能较为耗时。已选 {{ selectedTableNames.length }} 张表；进度流中断时页面会明确显示中断状态，请耐心等待。
-          </div>
-
-          <!-- Cancel Action Button -->
-          <div class="pt-1">
-            <button
-              @click="handleCancelRecommend"
-              type="button"
-              class="px-6 py-2 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center gap-2 group"
-            >
-              <svg class="w-3.5 h-3.5 text-gray-400 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-              <span>取消生成 (已等待 {{ formattedElapsedTime }})</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Result List -->
-        <div v-else class="space-y-4">
-          <div class="flex justify-between items-center mb-4">
-            <div class="flex items-center gap-2">
-              <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">推荐列表 ({{ recommendations.length }})</h3>
-              <span class="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-medium">已完成去重</span>
-            </div>
-            <div class="flex items-center gap-4">
-              <button @click="selectedIndices = recommendations.map((_, i) => i)" class="text-xs text-indigo-600 font-bold hover:underline">全选</button>
-              <button @click="selectedIndices = []" class="text-xs text-gray-400 font-bold hover:underline">取消全选</button>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div 
-              v-for="(item, idx) in recommendations" 
-              :key="idx" 
-              @click="toggleSelection(idx)"
-              class="relative bg-white border-2 rounded-2xl p-5 transition-all cursor-pointer group hover:shadow-xl"
-              :class="selectedIndices.includes(idx) ? 'border-indigo-500 bg-indigo-50/20' : 'border-transparent shadow-sm hover:border-gray-200'"
-            >
-              <button
-                type="button"
-                @click.stop="openRecommendationDetail(idx)"
-                class="absolute right-14 top-4 inline-flex items-center gap-1 rounded-lg border border-indigo-100 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-600 transition-colors hover:border-indigo-200 hover:bg-indigo-100"
-                title="查看指标完整详情"
-              >
-                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0Z" />
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7Z" />
-                </svg>
-                <span class="hidden sm:inline">查看详情</span>
-              </button>
-
-              <!-- Checkbox Overlay -->
-              <div class="absolute top-4 right-4">
-                <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors"
-                     :class="selectedIndices.includes(idx) ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200 bg-white'">
-                  <svg v-if="selectedIndices.includes(idx)" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+            <div class="w-full max-w-xl space-y-2 text-left">
+              <div class="flex items-center justify-between gap-3 text-xs">
+                <span class="font-bold text-gray-800">{{ progress.message }}</span>
+                <span class="flex-shrink-0 font-mono text-indigo-700">{{ progressPercent }}%</span>
+              </div>
+              <div class="h-2 w-full overflow-hidden rounded bg-gray-200">
+                <div class="h-full bg-indigo-600 transition-all duration-500" :style="{ width: `${progressPercent}%` }"></div>
+              </div>
+              <div class="grid grid-cols-3 gap-2 text-center text-[11px]">
+                <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                  <div class="text-gray-400">执行阶段</div>
+                  <div class="mt-0.5 font-bold text-gray-800">{{ progress.completed_units || 0 }} / {{ progress.total_units || 5 }}</div>
+                </div>
+                <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                  <div class="text-gray-400">剩余阶段</div>
+                  <div class="mt-0.5 font-bold text-gray-800">{{ progress.remaining_units ?? 5 }}</div>
+                </div>
+                <div class="rounded border border-gray-200 bg-white px-2 py-2">
+                  <div class="text-gray-400">预计剩余</div>
+                  <div class="mt-0.5 font-bold text-gray-800">{{ estimatedRemainingText }}</div>
                 </div>
               </div>
+            </div>
 
-              <div class="pr-8">
-                <div class="flex items-center gap-2 mb-1.5">
-                  <span class="font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">{{ item.display_name }}</span>
-                  <span class="text-[10px] font-mono text-gray-400">#{{ item.name }}</span>
-                  <span v-if="item.unit" class="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">{{ item.unit }}</span>
+            <div class="max-w-xl rounded border border-blue-200 bg-blue-50 px-3 py-2 text-left text-[11px] leading-relaxed text-blue-900">
+              AI 努力生成中，可能较为耗时。已选 {{ selectedTableNames.length }} 张表；进度流中断时页面会明确显示中断状态，请耐心等待。
+            </div>
+
+            <!-- Cancel Action Button -->
+            <div class="pt-1">
+              <button
+                @click="handleCancelRecommend"
+                type="button"
+                class="px-6 py-2 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center gap-2 group"
+              >
+                <svg class="w-3.5 h-3.5 text-gray-400 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                <span>取消生成 (已等待 {{ formattedElapsedTime }})</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Result List -->
+          <div v-else class="space-y-4">
+            <div class="flex justify-between items-center mb-4">
+              <div class="flex items-center gap-2">
+                <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">推荐列表 ({{ recommendations.length }})</h3>
+                <span class="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-medium">已完成去重</span>
+              </div>
+              <div class="flex items-center gap-4">
+                <button @click="selectedIndices = recommendations.map((_, i) => i)" class="text-xs text-indigo-600 font-bold hover:underline">全选</button>
+                <button @click="selectedIndices = []" class="text-xs text-gray-400 font-bold hover:underline">取消全选</button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div 
+                v-for="(item, idx) in recommendations" 
+                :key="idx" 
+                @click="toggleSelection(idx)"
+                class="relative bg-white border-2 rounded-2xl p-5 transition-all cursor-pointer group hover:shadow-xl"
+                :class="selectedIndices.includes(idx) ? 'border-indigo-500 bg-indigo-50/20' : 'border-transparent shadow-sm hover:border-gray-200'"
+              >
+                <button
+                  type="button"
+                  @click.stop="openRecommendationDetail(idx)"
+                  class="absolute right-14 top-4 inline-flex items-center gap-1 rounded-lg border border-indigo-100 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-600 transition-colors hover:border-indigo-200 hover:bg-indigo-100"
+                  title="查看指标完整详情"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7Z" />
+                  </svg>
+                  <span class="hidden sm:inline">查看详情</span>
+                </button>
+
+                <!-- Checkbox Overlay -->
+                <div class="absolute top-4 right-4">
+                  <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors"
+                       :class="selectedIndices.includes(idx) ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200 bg-white'">
+                    <svg v-if="selectedIndices.includes(idx)" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                  </div>
                 </div>
-                <p class="text-xs text-gray-500 line-clamp-2 h-8 leading-relaxed mb-3">{{ item.description }}</p>
+
+                <div class="pr-8">
+                  <div class="flex items-center gap-2 mb-1.5">
+                    <span class="font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">{{ item.display_name }}</span>
+                    <span class="text-[10px] font-mono text-gray-400">#{{ item.name }}</span>
+                    <span v-if="item.unit" class="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">{{ item.unit }}</span>
+                  </div>
+                  <p class="text-xs text-gray-500 line-clamp-2 h-8 leading-relaxed mb-3">{{ item.description }}</p>
                 
-                <div class="bg-gray-900/5 rounded-xl p-3 font-mono text-[10px] text-gray-700 overflow-hidden relative">
-                  <div class="absolute top-0 right-0 px-2 py-0.5 bg-gray-200 text-gray-500 text-[8px] rounded-bl font-semibold uppercase">SQL</div>
-                  <div class="line-clamp-3 leading-relaxed">{{ item.calculation_logic }}</div>
+                  <div class="bg-gray-900/5 rounded-xl p-3 font-mono text-[10px] text-gray-700 overflow-hidden relative">
+                    <div class="absolute top-0 right-0 px-2 py-0.5 bg-gray-200 text-gray-500 text-[8px] rounded-bl font-semibold uppercase">SQL</div>
+                    <div class="line-clamp-3 leading-relaxed">{{ item.calculation_logic }}</div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Footer -->
-      <div v-if="recommendations.length > 0 && !analyzing" class="p-5 border-t border-gray-100 bg-white/90 backdrop-blur flex justify-between items-center">
-        <button 
-          v-if="currentTraceId"
-          @click="showLogs = true"
-          class="text-xs text-gray-400 hover:text-indigo-600 flex items-center gap-1.5 transition-colors"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-          查看 AI 思考过程
-        </button>
-        <div v-else></div>
+        <!-- Footer -->
+        <div v-if="recommendations.length > 0 && !analyzing" class="p-5 border-t border-gray-100 bg-white/90 backdrop-blur flex justify-between items-center">
+          <button 
+            v-if="currentTraceId"
+            @click="showLogs = true"
+            class="text-xs text-gray-400 hover:text-indigo-600 flex items-center gap-1.5 transition-colors"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            查看 AI 思考过程
+          </button>
+          <div v-else></div>
 
-        <div class="flex items-center gap-3">
-          <button 
-            @click="handleBackToConfig" 
-            class="px-5 py-2.5 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded-xl transition-colors border border-gray-200"
-            :disabled="saving"
-          >
-            调整配置 / 重新发现
-          </button>
-          <button 
-            @click="handleSave" 
-            :disabled="selectedIndices.length === 0 || saving"
-            class="px-7 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <svg v-if="saving" class="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            {{ saving ? '入库中...' : `保存选中指标 (${selectedIndices.length})` }}
-          </button>
+          <div class="flex items-center gap-3">
+            <button 
+              @click="handleBackToConfig" 
+              class="px-5 py-2.5 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded-xl transition-colors border border-gray-200"
+              :disabled="saving"
+            >
+              调整配置 / 重新发现
+            </button>
+            <button 
+              @click="handleSave" 
+              :disabled="selectedIndices.length === 0 || saving"
+              class="px-7 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg v-if="saving" class="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              {{ saving ? '入库中...' : `保存选中指标 (${selectedIndices.length})` }}
+            </button>
+          </div>
         </div>
-      </div>
 
+      </div>
     </div>
-  </div>
+  </Teleport>
 
   <!-- Recommendation detail modal -->
   <div
@@ -848,144 +850,146 @@ const handleClose = () => {
   </div>
 
   <!-- Help & Guidelines Modal (问号弹窗 - 通用化指南与示例) -->
-  <div 
-    v-if="showHelpModal" 
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in"
-    @click.self="showHelpModal = false"
-  >
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100">
+  <Teleport to="body">
+    <div 
+      v-if="showHelpModal" 
+      class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in"
+      @click.self="showHelpModal = false"
+    >
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-100">
       
-      <!-- Modal Header -->
-      <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-blue-50/60 to-indigo-50/60">
-        <div class="flex items-center gap-2.5">
-          <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-sm font-bold shadow-sm">
-            ?
+        <!-- Modal Header -->
+        <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-blue-50/60 to-indigo-50/60">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-sm font-bold shadow-sm">
+              ?
+            </div>
+            <div>
+              <h3 class="text-sm font-bold text-gray-900">业务偏好提示词：填写指南与影响说明</h3>
+              <p class="text-[11px] text-gray-500">掌握结构化填法与核心影响，让 AI 精准产出最贴合业务的分析指标</p>
+            </div>
           </div>
-          <div>
-            <h3 class="text-sm font-bold text-gray-900">业务偏好提示词：填写指南与影响说明</h3>
-            <p class="text-[11px] text-gray-500">掌握结构化填法与核心影响，让 AI 精准产出最贴合业务的分析指标</p>
-          </div>
+          <button 
+            @click="showHelpModal = false" 
+            class="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-white rounded-full transition-colors"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
         </div>
-        <button 
-          @click="showHelpModal = false" 
-          class="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-white rounded-full transition-colors"
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
-      </div>
 
-      <!-- Modal Body -->
-      <div class="p-6 overflow-y-auto space-y-5 text-xs text-gray-600 leading-relaxed">
+        <!-- Modal Body -->
+        <div class="p-6 overflow-y-auto space-y-5 text-xs text-gray-600 leading-relaxed">
         
-        <!-- 1. 为什么填？具体产生哪些影响？ -->
-        <div class="p-4 bg-indigo-50/60 border border-indigo-100 rounded-xl space-y-2.5">
-          <div class="font-bold text-indigo-900 flex items-center gap-1.5">
-            <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            填与不填的区别？具体会带来哪些影响？
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-            <div class="p-3 bg-white rounded-lg border border-indigo-100/80 space-y-1">
-              <div class="font-bold text-indigo-950 flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                填写自定义偏好时
-              </div>
-              <ul class="text-[11px] text-gray-600 list-disc list-inside space-y-0.5">
-                <li><strong>聚焦指定领域</strong>：将有限名额（5~10个）集中在您关心的业务主线，避免无意义列求和。</li>
-                <li><strong>引导高阶 SQL</strong>：指定“趋势”生成时间函数、指定“占比”生成比率除法、指定“异常”生成条件过滤。</li>
-                <li><strong>深度发掘业务语义</strong>：推断复合比率（如完成率、流失率、利用率）。</li>
-              </ul>
+          <!-- 1. 为什么填？具体产生哪些影响？ -->
+          <div class="p-4 bg-indigo-50/60 border border-indigo-100 rounded-xl space-y-2.5">
+            <div class="font-bold text-indigo-900 flex items-center gap-1.5">
+              <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              填与不填的区别？具体会带来哪些影响？
             </div>
-
-            <div class="p-3 bg-white rounded-lg border border-indigo-100/80 space-y-1">
-              <div class="font-bold text-indigo-950 flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
-                留空（不填）时
-              </div>
-              <ul class="text-[11px] text-gray-600 list-disc list-inside space-y-0.5">
-                <li><strong>全局基础发掘</strong>：AI 基于所选数据表 Schema 进行通用推断。</li>
-                <li><strong>标准 KPI 组合</strong>：默认推断基础行数（COUNT）、数值列均值（AVG）、枚举字段维度分布（GROUP BY）。</li>
-                <li><strong>适合冷启动</strong>：适合初次摸排表结构或无特定分析方向时使用。</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        <!-- 2. 怎么填？四段式万能填法 -->
-        <div class="p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
-          <div class="font-bold text-gray-900 flex items-center gap-1.5">
-            <PencilIcon class="w-4 h-4 text-gray-500" /> 怎么填？通用的「四段式填法结构」
-          </div>
-          <p class="text-[11px] text-gray-500">
-            无论面对什么类型的数据表（订单、日志、设备、用户、财务等），您只需在输入框中组合以下 2~3 个要素：
-          </p>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-            <div class="bg-white p-2 rounded-lg border border-gray-200 text-center">
-              <div class="text-[10px] text-indigo-600 font-bold">① 核心主题</div>
-              <div class="text-[11px] text-gray-700 mt-0.5">业务量/活跃/耗时/收支</div>
-            </div>
-            <div class="bg-white p-2 rounded-lg border border-gray-200 text-center">
-              <div class="text-[10px] text-indigo-600 font-bold">② 统计维度</div>
-              <div class="text-[11px] text-gray-700 mt-0.5">按天/月、按分类、按部门</div>
-            </div>
-            <div class="bg-white p-2 rounded-lg border border-gray-200 text-center">
-              <div class="text-[10px] text-indigo-600 font-bold">③ 计算类型</div>
-              <div class="text-[11px] text-gray-700 mt-0.5">总量/均值/占比/排名TOP</div>
-            </div>
-            <div class="bg-white p-2 rounded-lg border border-gray-200 text-center">
-              <div class="text-[10px] text-indigo-600 font-bold">④ 过滤/异常</div>
-              <div class="text-[11px] text-gray-700 mt-0.5">失败率/超时/超阈值预警</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 3. 5 大全行业通用示例（一键应用） -->
-        <div>
-          <h4 class="font-bold text-gray-800 mb-2.5 flex items-center justify-between">
-            <span class="flex items-center gap-1.5">
-              <LightBulbIcon class="w-4 h-4 text-amber-500" /> 全行业通用场景示例
-            </span>
-            <span class="text-[11px] font-normal text-gray-400">点击卡片可直接一键填入输入框</span>
-          </h4>
-
-          <div class="space-y-2.5">
-            <div 
-              v-for="(item, idx) in promptExamples" 
-              :key="idx"
-              @click="applyPromptExample(item.prompt)"
-              class="p-3.5 rounded-xl border border-gray-200 hover:border-indigo-400 bg-white hover:bg-indigo-50/30 transition-all cursor-pointer group shadow-sm"
-            >
-              <div class="flex items-center justify-between mb-1">
-                <div class="flex items-center gap-2">
-                  <span class="font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">{{ item.title }}</span>
-                  <span class="text-[10px] px-2 py-0.2 bg-gray-100 group-hover:bg-indigo-100 text-gray-600 group-hover:text-indigo-700 rounded font-medium">{{ item.badge }}</span>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              <div class="p-3 bg-white rounded-lg border border-indigo-100/80 space-y-1">
+                <div class="font-bold text-indigo-950 flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                  填写自定义偏好时
                 </div>
-                <span class="text-[10px] text-indigo-600 font-semibold group-hover:underline flex items-center gap-1">
-                  应用此模式
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
-                </span>
+                <ul class="text-[11px] text-gray-600 list-disc list-inside space-y-0.5">
+                  <li><strong>聚焦指定领域</strong>：将有限名额（5~10个）集中在您关心的业务主线，避免无意义列求和。</li>
+                  <li><strong>引导高阶 SQL</strong>：指定“趋势”生成时间函数、指定“占比”生成比率除法、指定“异常”生成条件过滤。</li>
+                  <li><strong>深度发掘业务语义</strong>：推断复合比率（如完成率、流失率、利用率）。</li>
+                </ul>
               </div>
-              <p class="text-[11px] text-gray-500 mb-1.5">{{ item.description }}</p>
-              <div class="p-2 bg-gray-50 group-hover:bg-white rounded-lg border border-gray-100 font-mono text-[10.5px] text-gray-700">
-                "{{ item.prompt }}"
+
+              <div class="p-3 bg-white rounded-lg border border-indigo-100/80 space-y-1">
+                <div class="font-bold text-indigo-950 flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
+                  留空（不填）时
+                </div>
+                <ul class="text-[11px] text-gray-600 list-disc list-inside space-y-0.5">
+                  <li><strong>全局基础发掘</strong>：AI 基于所选数据表 Schema 进行通用推断。</li>
+                  <li><strong>标准 KPI 组合</strong>：默认推断基础行数（COUNT）、数值列均值（AVG）、枚举字段维度分布（GROUP BY）。</li>
+                  <li><strong>适合冷启动</strong>：适合初次摸排表结构或无特定分析方向时使用。</li>
+                </ul>
               </div>
             </div>
           </div>
+
+          <!-- 2. 怎么填？四段式万能填法 -->
+          <div class="p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+            <div class="font-bold text-gray-900 flex items-center gap-1.5">
+              <PencilIcon class="w-4 h-4 text-gray-500" /> 怎么填？通用的「四段式填法结构」
+            </div>
+            <p class="text-[11px] text-gray-500">
+              无论面对什么类型的数据表（订单、日志、设备、用户、财务等），您只需在输入框中组合以下 2~3 个要素：
+            </p>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              <div class="bg-white p-2 rounded-lg border border-gray-200 text-center">
+                <div class="text-[10px] text-indigo-600 font-bold">① 核心主题</div>
+                <div class="text-[11px] text-gray-700 mt-0.5">业务量/活跃/耗时/收支</div>
+              </div>
+              <div class="bg-white p-2 rounded-lg border border-gray-200 text-center">
+                <div class="text-[10px] text-indigo-600 font-bold">② 统计维度</div>
+                <div class="text-[11px] text-gray-700 mt-0.5">按天/月、按分类、按部门</div>
+              </div>
+              <div class="bg-white p-2 rounded-lg border border-gray-200 text-center">
+                <div class="text-[10px] text-indigo-600 font-bold">③ 计算类型</div>
+                <div class="text-[11px] text-gray-700 mt-0.5">总量/均值/占比/排名TOP</div>
+              </div>
+              <div class="bg-white p-2 rounded-lg border border-gray-200 text-center">
+                <div class="text-[10px] text-indigo-600 font-bold">④ 过滤/异常</div>
+                <div class="text-[11px] text-gray-700 mt-0.5">失败率/超时/超阈值预警</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. 5 大全行业通用示例（一键应用） -->
+          <div>
+            <h4 class="font-bold text-gray-800 mb-2.5 flex items-center justify-between">
+              <span class="flex items-center gap-1.5">
+                <LightBulbIcon class="w-4 h-4 text-amber-500" /> 全行业通用场景示例
+              </span>
+              <span class="text-[11px] font-normal text-gray-400">点击卡片可直接一键填入输入框</span>
+            </h4>
+
+            <div class="space-y-2.5">
+              <div 
+                v-for="(item, idx) in promptExamples" 
+                :key="idx"
+                @click="applyPromptExample(item.prompt)"
+                class="p-3.5 rounded-xl border border-gray-200 hover:border-indigo-400 bg-white hover:bg-indigo-50/30 transition-all cursor-pointer group shadow-sm"
+              >
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">{{ item.title }}</span>
+                    <span class="text-[10px] px-2 py-0.2 bg-gray-100 group-hover:bg-indigo-100 text-gray-600 group-hover:text-indigo-700 rounded font-medium">{{ item.badge }}</span>
+                  </div>
+                  <span class="text-[10px] text-indigo-600 font-semibold group-hover:underline flex items-center gap-1">
+                    应用此模式
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                  </span>
+                </div>
+                <p class="text-[11px] text-gray-500 mb-1.5">{{ item.description }}</p>
+                <div class="p-2 bg-gray-50 group-hover:bg-white rounded-lg border border-gray-100 font-mono text-[10.5px] text-gray-700">
+                  "{{ item.prompt }}"
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="px-6 py-3.5 border-t border-gray-100 bg-gray-50/50 flex justify-end">
+          <button 
+            @click="showHelpModal = false"
+            class="px-5 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
+          >
+            关闭
+          </button>
         </div>
 
       </div>
-
-      <!-- Modal Footer -->
-      <div class="px-6 py-3.5 border-t border-gray-100 bg-gray-50/50 flex justify-end">
-        <button 
-          @click="showHelpModal = false"
-          class="px-5 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
-        >
-          关闭
-        </button>
-      </div>
-
     </div>
-  </div>
+  </Teleport>
 
   <TraceLogViewer 
     :visible="showLogs" 

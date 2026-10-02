@@ -4877,229 +4877,231 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
     <!-- 智能体调度与托管说明 Modal -->
     <!-- 智能体规范与全流程指引 Modal -->
-    <div v-if="showHelp" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20" style="background-color: #2563eb; color: #ffffff;">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+    <Teleport to="body">
+      <div v-if="showHelp" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelp = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20" style="background-color: #2563eb; color: #ffffff;">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">智能体设计规范与全流程指引</h2>
+                 <p class="text-xs text-gray-500 font-medium mt-0.5">从角色定义、模型与技能装配，到版本发布、角色权限下发与渠道消费。</p>
+               </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button
+                v-if="!showAgentFlowGuide"
+                type="button"
+                @click="restoreAgentFlowGuide"
+                class="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-100/70 hover:bg-blue-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>恢复顶部流程提示</span>
+              </button>
+              <button @click="showHelp = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['flow', 'routing', 'readiness']" 
+               :key="tab"
+               @click="activeHelpTab = tab as any"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+               :class="activeHelpTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'flow' ? '全流程指引 (Workflow)' :
+                  tab === 'routing' ? '调度与委派机制 (Delegation)' : '就绪度与发布规范 (Readiness)' }}
+             </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+             <!-- Tab 1: Workflow Flow -->
+             <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-blue-900 mb-1">智能体 5 步全生命周期构建体系</h3>
+                   <p class="text-xs text-blue-700 leading-relaxed">
+                      智能体涵盖需求定义、模型装配、多版本隔离、权限下发与渠道落地。注意：系统智能体由主专家统一自动委派；必须在「角色管理」中完成授权分配，普通用户方可访问。
+                   </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <!-- Step 1 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">1</span>
+                            <h4 class="font-bold text-gray-900 text-sm">定义与系统标识</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            填写名称与业务描述（描述帮助主专家判断委派方向）。勾选为「系统智能体」以加入主专家的自动委派目录，或从场景模板一键交付。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/scenario-templates')"
+                            class="text-xs text-gray-600 hover:text-gray-900 font-medium px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 cursor-pointer"
+                         >
+                            场景模板 &rarr;
+                         </button>
+                         <button
+                            type="button"
+                            @click="showHelp = false; startAgentCreation()"
+                            class="text-xs text-blue-600 hover:text-blue-800 font-bold cursor-pointer"
+                         >
+                            新建智能体 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 2 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">2</span>
+                            <h4 class="font-bold text-gray-900 text-sm">模型与能力装配</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            选定模型底座与系统提示词（可在提示词工坊调试），按需装配内置 API 工具、MCP 协议工具、动态 Skills 及显式绑定的元数据集/知识库。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/skills')"
+                            class="text-xs text-indigo-600 hover:text-indigo-800 font-medium cursor-pointer"
+                         >
+                            前往技能工作台 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 3 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">3</span>
+                            <h4 class="font-bold text-gray-900 text-sm">版本管理与发布</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            开发草稿 (DRAFT) 与生产发布隔离。系统自动校验主类型、工具链与数据绑定就绪度 (Readiness)，一键发布后即刻生效为生产版本。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
+                         点击下方智能体卡片进入版本管理
+                      </div>
+                   </div>
+
+                   <!-- Step 4 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
+                            <h4 class="font-bold text-gray-900 text-sm">角色授权与访问权限</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            在「角色管理」中为目标业务角色授予该智能体的交互与使用权限。未获得角色授权的普通用户将无法在工作台查看或调用该智能体。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/roles')"
+                            class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
+                         >
+                            前往角色管理 &rarr;
+                         </button>
+                      </div>
+                   </div>
+
+                   <!-- Step 5 -->
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
+                      <div>
+                         <div class="flex items-center gap-2 mb-2">
+                            <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">5</span>
+                            <h4 class="font-bold text-gray-900 text-sm">调试验证与渠道消费</h4>
+                         </div>
+                         <p class="text-xs text-gray-500 leading-relaxed">
+                            在「智能体调试台」实时观测思考链时序与工具链调用；系统智能体由主专家按任务需要自动委派，支持生成 Embed 嵌入链接或对接钉钉/企微/邮件机器人。
+                         </p>
+                      </div>
+                      <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                         <button
+                            type="button"
+                            @click="showHelp = false; router.push('/dashboard/agent-debug')"
+                            class="text-xs text-amber-600 hover:text-amber-800 font-medium cursor-pointer"
+                         >
+                            前往智能体调试台 &rarr;
+                         </button>
+                      </div>
+                   </div>
+                </div>
              </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">智能体设计规范与全流程指引</h2>
-               <p class="text-xs text-gray-500 font-medium mt-0.5">从角色定义、模型与技能装配，到版本发布、角色权限下发与渠道消费。</p>
+
+             <!-- Tab 2: Routing Mechanism -->
+             <div v-else-if="activeHelpTab === 'routing'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">主专家自动委派规则</h4>
+                   <div class="flex items-start gap-3 p-3 bg-blue-50/50 rounded-xl border border-blue-100">
+                      <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-bold">1</span>
+                      <div>
+                         <div class="font-semibold text-gray-900">主专家自动委派机制</div>
+                         <div class="text-xs text-gray-600 mt-0.5">
+                            未指定专家时，主对话默认进入 <span class="font-bold text-blue-600">主专家 Main</span>；主专家会根据任务需要直接回答，或从已启用且有权限的系统智能体中自动委派。系统智能体的描述用于辅助委派判断。
+                         </div>
+                      </div>
+                   </div>
+                   <div class="flex items-start gap-3 p-3 bg-purple-50/50 rounded-xl border border-purple-100">
+                      <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-purple-600 text-white text-xs font-bold">2</span>
+                      <div>
+                         <div class="font-semibold text-gray-900">个人与自定义智能体访问</div>
+                         <div class="text-xs text-gray-600 mt-0.5">
+                            非系统智能体属于独立专属沙箱助手，不会自动进入主专家的委派目录；用户可在对话框输入 <code class="font-mono bg-purple-100 text-purple-700 px-1 rounded">@智能体名称</code> 进行显式手动调用。
+                         </div>
+                      </div>
+                   </div>
+                   <div class="flex items-start gap-3 p-3 bg-amber-50/50 rounded-xl border border-amber-100">
+                      <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white text-xs font-bold">3</span>
+                      <div>
+                         <div class="font-semibold text-gray-900">外部托管引擎协同</div>
+                         <div class="text-xs text-gray-600 mt-0.5">
+                            若引擎类型为 <span class="font-bold text-gray-900">RAGFlow</span> 或 <span class="font-bold text-gray-900">OpenClaw</span>，本平台作为统一委派代理层与安全审计网关，复杂流程编排在对应外部工作流中维护。
+                         </div>
+                      </div>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 3: Readiness Check -->
+             <div v-else-if="activeHelpTab === 'readiness'" class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">智能体就绪度 (Readiness) 校验标准</h4>
+                   <p class="text-xs text-gray-500">发布或启用智能体前，系统会自动对配置完整度进行静态与运行时校验：</p>
+                   <div class="space-y-2.5">
+                      <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
+                         <span class="font-bold text-gray-800">✅ 必须具备已发布版本 (Published Version)</span>：未发布的草稿版本不可被主专家委派。
+                      </div>
+                      <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
+                         <span class="font-bold text-gray-800">✅ 主类型能力匹配 (Primary Capability)</span>：ChatBI 类型必须装配 SQL/数据查询工具；知识库类型必须挂载知识库或检索工具。
+                      </div>
+                      <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
+                         <span class="font-bold text-gray-800">✅ 资源绑定完备性 (Resource Bindings)</span>：若配置了显式数据集或知识库，需保证所引用的资源在平台中存在且处于可用状态。
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <div class="flex items-center gap-3">
-            <button
-              v-if="!showAgentFlowGuide"
-              type="button"
-              @click="restoreAgentFlowGuide"
-              class="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-100/70 hover:bg-blue-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-              <span>恢复顶部流程提示</span>
-            </button>
-            <button @click="showHelp = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['flow', 'routing', 'readiness']" 
-             :key="tab"
-             @click="activeHelpTab = tab as any"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-             :class="activeHelpTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'flow' ? '全流程指引 (Workflow)' :
-                tab === 'routing' ? '调度与委派机制 (Delegation)' : '就绪度与发布规范 (Readiness)' }}
-           </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
-           <!-- Tab 1: Workflow Flow -->
-           <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-xl shadow-2xs">
-                 <h3 class="font-bold text-blue-900 mb-1">智能体 5 步全生命周期构建体系</h3>
-                 <p class="text-xs text-blue-700 leading-relaxed">
-                    智能体涵盖需求定义、模型装配、多版本隔离、权限下发与渠道落地。注意：系统智能体由主专家统一自动委派；必须在「角色管理」中完成授权分配，普通用户方可访问。
-                 </p>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <!-- Step 1 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">1</span>
-                          <h4 class="font-bold text-gray-900 text-sm">定义与系统标识</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          填写名称与业务描述（描述帮助主专家判断委派方向）。勾选为「系统智能体」以加入主专家的自动委派目录，或从场景模板一键交付。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/scenario-templates')"
-                          class="text-xs text-gray-600 hover:text-gray-900 font-medium px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 cursor-pointer"
-                       >
-                          场景模板 &rarr;
-                       </button>
-                       <button
-                          type="button"
-                          @click="showHelp = false; startAgentCreation()"
-                          class="text-xs text-blue-600 hover:text-blue-800 font-bold cursor-pointer"
-                       >
-                          新建智能体 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 2 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">2</span>
-                          <h4 class="font-bold text-gray-900 text-sm">模型与能力装配</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          选定模型底座与系统提示词（可在提示词工坊调试），按需装配内置 API 工具、MCP 协议工具、动态 Skills 及显式绑定的元数据集/知识库。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/skills')"
-                          class="text-xs text-indigo-600 hover:text-indigo-800 font-medium cursor-pointer"
-                       >
-                          前往技能工作台 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 3 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">3</span>
-                          <h4 class="font-bold text-gray-900 text-sm">版本管理与发布</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          开发草稿 (DRAFT) 与生产发布隔离。系统自动校验主类型、工具链与数据绑定就绪度 (Readiness)，一键发布后即刻生效为生产版本。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">
-                       点击下方智能体卡片进入版本管理
-                    </div>
-                 </div>
-
-                 <!-- Step 4 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs font-bold">4</span>
-                          <h4 class="font-bold text-gray-900 text-sm">角色授权与访问权限</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          在「角色管理」中为目标业务角色授予该智能体的交互与使用权限。未获得角色授权的普通用户将无法在工作台查看或调用该智能体。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/roles')"
-                          class="text-xs text-purple-600 hover:text-purple-800 font-medium cursor-pointer"
-                       >
-                          前往角色管理 &rarr;
-                       </button>
-                    </div>
-                 </div>
-
-                 <!-- Step 5 -->
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between md:col-span-2">
-                    <div>
-                       <div class="flex items-center gap-2 mb-2">
-                          <span class="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold">5</span>
-                          <h4 class="font-bold text-gray-900 text-sm">调试验证与渠道消费</h4>
-                       </div>
-                       <p class="text-xs text-gray-500 leading-relaxed">
-                          在「智能体调试台」实时观测思考链时序与工具链调用；系统智能体由主专家按任务需要自动委派，支持生成 Embed 嵌入链接或对接钉钉/企微/邮件机器人。
-                       </p>
-                    </div>
-                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                       <button
-                          type="button"
-                          @click="showHelp = false; router.push('/dashboard/agent-debug')"
-                          class="text-xs text-amber-600 hover:text-amber-800 font-medium cursor-pointer"
-                       >
-                          前往智能体调试台 &rarr;
-                       </button>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Routing Mechanism -->
-           <div v-else-if="activeHelpTab === 'routing'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">主专家自动委派规则</h4>
-                 <div class="flex items-start gap-3 p-3 bg-blue-50/50 rounded-xl border border-blue-100">
-                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-bold">1</span>
-                    <div>
-                       <div class="font-semibold text-gray-900">主专家自动委派机制</div>
-                       <div class="text-xs text-gray-600 mt-0.5">
-                          未指定专家时，主对话默认进入 <span class="font-bold text-blue-600">主专家 Main</span>；主专家会根据任务需要直接回答，或从已启用且有权限的系统智能体中自动委派。系统智能体的描述用于辅助委派判断。
-                       </div>
-                    </div>
-                 </div>
-                 <div class="flex items-start gap-3 p-3 bg-purple-50/50 rounded-xl border border-purple-100">
-                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-purple-600 text-white text-xs font-bold">2</span>
-                    <div>
-                       <div class="font-semibold text-gray-900">个人与自定义智能体访问</div>
-                       <div class="text-xs text-gray-600 mt-0.5">
-                          非系统智能体属于独立专属沙箱助手，不会自动进入主专家的委派目录；用户可在对话框输入 <code class="font-mono bg-purple-100 text-purple-700 px-1 rounded">@智能体名称</code> 进行显式手动调用。
-                       </div>
-                    </div>
-                 </div>
-                 <div class="flex items-start gap-3 p-3 bg-amber-50/50 rounded-xl border border-amber-100">
-                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white text-xs font-bold">3</span>
-                    <div>
-                       <div class="font-semibold text-gray-900">外部托管引擎协同</div>
-                       <div class="text-xs text-gray-600 mt-0.5">
-                          若引擎类型为 <span class="font-bold text-gray-900">RAGFlow</span> 或 <span class="font-bold text-gray-900">OpenClaw</span>，本平台作为统一委派代理层与安全审计网关，复杂流程编排在对应外部工作流中维护。
-                       </div>
-                    </div>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 3: Readiness Check -->
-           <div v-else-if="activeHelpTab === 'readiness'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">智能体就绪度 (Readiness) 校验标准</h4>
-                 <p class="text-xs text-gray-500">发布或启用智能体前，系统会自动对配置完整度进行静态与运行时校验：</p>
-                 <div class="space-y-2.5">
-                    <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
-                       <span class="font-bold text-gray-800">✅ 必须具备已发布版本 (Published Version)</span>：未发布的草稿版本不可被主专家委派。
-                    </div>
-                    <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
-                       <span class="font-bold text-gray-800">✅ 主类型能力匹配 (Primary Capability)</span>：ChatBI 类型必须装配 SQL/数据查询工具；知识库类型必须挂载知识库或检索工具。
-                    </div>
-                    <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
-                       <span class="font-bold text-gray-800">✅ 资源绑定完备性 (Resource Bindings)</span>：若配置了显式数据集或知识库，需保证所引用的资源在平台中存在且处于可用状态。
-                    </div>
-                 </div>
-              </div>
-           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 推荐排版样式效果预览 Modal -->
     <Modal

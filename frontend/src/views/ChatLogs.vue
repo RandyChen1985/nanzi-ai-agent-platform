@@ -95,6 +95,8 @@ type ConversationTurn = AgentExecutionHistory & {
   userQuestionText?: string
 }
 const conversationTurns = ref<ConversationTurn[]>([])
+/** 该会话的总轮数（后端 total）。详情一次只取最近 100 轮，需要据此提示用户。 */
+const turnsTotal = ref(0)
 const turnsLoading = ref(false)
 const selectedTraceId = ref<string | null>(null)
 let turnsRequestVersion = 0
@@ -126,6 +128,30 @@ const renderTurnReply = (text?: string) => {
   }
 }
 
+/** 无回复轮次的说明文案。
+ *
+ * 原先只显示「(无响应内容)」，用户看不出这是被取消、执行失败，还是模型确实没返回——
+ * 这三种情况的处置完全不同（取消无需追查、失败要看轨迹、静默无返回才可能是异常）。
+ */
+const emptyReplyView = (turn: ConversationTurn) => {
+  if (turn.status === 'cancelled') {
+    return {
+      title: '该轮已取消，未产生回复',
+      detail: '在模型返回前被中断或取消，因此没有回复内容。',
+    }
+  }
+  if (turn.status === 'error') {
+    return {
+      title: '该轮执行失败，未产生回复',
+      detail: '可在「轨迹」页签中查看具体的错误信息。',
+    }
+  }
+  return {
+    title: '该轮未产生回复',
+    detail: '模型没有返回任何内容，可在「轨迹」页签中确认执行情况。',
+  }
+}
+
 const hasActiveFilters = computed(() =>
   Object.values(filters.value).some((v) => v !== ''),
 )
@@ -139,7 +165,12 @@ const fetchAgents = async () => {
   }
 }
 
+let logsRequestVersion = 0
+
 const fetchLogs = async () => {
+  // 与 loadContextCompactions / loadConversationTurns 保持同一套竞态保护：
+  // 连续切换筛选或翻页时，先发的请求可能后到，不加版本号就会用旧结果覆盖新列表。
+  const requestVersion = ++logsRequestVersion
   loading.value = true
   try {
     const params: Record<string, any> = {
@@ -153,6 +184,7 @@ const fetchLogs = async () => {
     })
 
     const res = await agentApi.getChatHistory(params)
+    if (requestVersion !== logsRequestVersion) return
     logs.value = res.data.data.items || []
     total.value = res.data.data.total
 
@@ -163,10 +195,11 @@ const fetchLogs = async () => {
       selectedId.value = logs.value[0]?.id ?? null
     }
   } catch (e) {
+    if (requestVersion !== logsRequestVersion) return
     console.error('Failed to fetch logs', e)
     showToast('获取聊天日志失败', 'error')
   } finally {
-    loading.value = false
+    if (requestVersion === logsRequestVersion) loading.value = false
   }
 }
 
@@ -202,7 +235,10 @@ const selectLog = (log: AgentExecutionHistory) => {
   selectedId.value = log.id
 }
 
+let traceRequestVersion = 0
+
 const loadTrace = async (traceId?: string) => {
+  const requestVersion = ++traceRequestVersion
   if (!traceId) {
     traceDetail.value = null
     return
@@ -211,12 +247,16 @@ const loadTrace = async (traceId?: string) => {
   traceDetail.value = null
   try {
     const res = await agentApi.getChatTrace(traceId)
+    // 快速连点列表项时，上一条的链路响应可能后到；丢了它，否则右侧会显示与左侧选中项
+    // 不一致的链路（高亮 B、详情却是 A）。
+    if (requestVersion !== traceRequestVersion) return
     traceDetail.value = res.data.data
   } catch (e) {
+    if (requestVersion !== traceRequestVersion) return
     console.error('Failed to fetch trace', e)
     showToast('获取执行链路失败', 'error')
   } finally {
-    traceLoading.value = false
+    if (requestVersion === traceRequestVersion) traceLoading.value = false
   }
 }
 
@@ -417,6 +457,56 @@ const renderPayloadMarkdown = (text: string) => {
   }
 }
 
+/** 详情面板里 payload 的解析结果缓存。
+ *
+ * 每个 step 在模板中要多次用到解析结果（判空、hasMarkdown、两种渲染），而 Vue 模板里的
+ * 函数调用**每次重渲染都会重新执行**：原先同一字段在一次渲染里被 parsePayloadObject
+ * 解析 3~4 次，再各自套一次 JSON 高亮 / Markdown 渲染——一个 100+ 步、payload 几十 KB 的
+ * 链路，切换页签、hover、resize 都会引发全量重算，卡顿明显。
+ *
+ * 这里按「原始值」缓存整份视图结果：字符串 payload 是不可变的，用 Map（限容防长会话吃内存）；
+ * 对象 payload 走 WeakMap，元素被回收时缓存自动释放。
+ */
+type PayloadView = {
+  isObject: boolean
+  textContent: string | null
+  hasMarkdown: boolean
+  jsonHtml: string
+  markdownHtml: string
+}
+
+const payloadObjectCache = new WeakMap<object, PayloadView>()
+const payloadTextCache = new Map<string, PayloadView>()
+const PAYLOAD_TEXT_CACHE_MAX = 500
+
+const payloadView = (value: unknown): PayloadView => {
+  const isObject = value !== null && typeof value === 'object'
+  if (isObject) {
+    const hit = payloadObjectCache.get(value as object)
+    if (hit) return hit
+  } else if (typeof value === 'string') {
+    const hit = payloadTextCache.get(value)
+    if (hit) return hit
+  }
+
+  const parsed = parsePayloadObject(value)
+  const view: PayloadView = {
+    isObject: parsed.isObject,
+    textContent: parsed.textContent,
+    hasMarkdown: parsed.hasMarkdown,
+    jsonHtml: highlightJsonHtml(value),
+    markdownHtml: parsed.textContent ? renderPayloadMarkdown(parsed.textContent) : '',
+  }
+
+  if (isObject) {
+    payloadObjectCache.set(value as object, view)
+  } else if (typeof value === 'string') {
+    if (payloadTextCache.size >= PAYLOAD_TEXT_CACHE_MAX) payloadTextCache.clear()
+    payloadTextCache.set(value, view)
+  }
+  return view
+}
+
 const getSubagentMeta = (step: { meta_info?: Record<string, unknown> | null }) =>
   normalizeSubagentTraceMeta(step.meta_info?.subagent)
 
@@ -560,6 +650,7 @@ const loadConversationTurns = async (log: AgentExecutionHistory | null) => {
     })
     if (reqVer !== turnsRequestVersion) return
     const items = res.data.data.items || []
+    turnsTotal.value = res.data.data.total ?? items.length
     if (items.length > 0) {
       items.sort(
         (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
@@ -632,7 +723,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-[calc(100vh-7.5rem)] min-h-[560px] max-w-[1600px] mx-auto gap-4">
+  <!-- 高度用 h-full 而不是 calc(100vh-7.5rem)：<main> 自身没有内边距，硬编码 7.5rem
+       会少算 Dashboard 头部的高度，整块内容因此贴不到底、下方露出一条空白。 -->
+  <div class="flex flex-col h-full min-h-[560px] max-w-[1600px] mx-auto gap-4">
     <!-- Header -->
     <div class="shrink-0 flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-3 min-w-0">
@@ -864,9 +957,23 @@ onMounted(() => {
         </div>
 
         <div class="shrink-0 px-3 py-2.5 border-t border-gray-100 bg-white/90 flex items-center justify-between gap-2">
-          <span class="text-[10px] text-gray-400 font-mono truncate">
-            {{ total === 0 ? '0' : `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)}` }} / {{ total }}
-          </span>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="text-[10px] text-gray-400 font-mono truncate">
+              {{ total === 0 ? '0' : `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)}` }} / {{ total }}
+            </span>
+            <!-- 会话量常达数百条，15 条/页要翻几十页。换页大小后必须回到第 1 页：watch 只负责
+                 重新拉取，不会改页码，否则会停在一个很深的页码上，看起来像"跳过了数据"。 -->
+            <select
+              v-model.number="pageSize"
+              class="text-[10px] py-0.5 pl-1 pr-0.5 border border-gray-200 rounded-md bg-white text-gray-500 hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary/30"
+              title="每页显示条数"
+              @change="page = 1"
+            >
+              <option :value="15">15/页</option>
+              <option :value="30">30/页</option>
+              <option :value="50">50/页</option>
+            </select>
+          </div>
           <div class="flex items-center gap-1">
             <button
               type="button"
@@ -1035,6 +1142,18 @@ onMounted(() => {
             v-show="activeDetailTab === 'conversation'"
             class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-5 space-y-6"
           >
+
+            <!-- 详情一次只取最近 100 轮（后端 page_size 上限即 100），超出的会话必须明说，
+                 否则用户会以为这就是全部记录。 -->
+            <div
+              v-if="turnsTotal > conversationTurns.length"
+              class="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2 text-amber-700"
+            >
+              <ExclamationCircleIcon class="w-4 h-4 shrink-0 mt-0.5" />
+              <p class="text-[11px] leading-relaxed">
+                本会话共 {{ turnsTotal }} 轮，此处仅显示最近 {{ conversationTurns.length }} 轮。
+              </p>
+            </div>
             <div v-if="turnsLoading && conversationTurns.length === 0" class="py-20 text-center text-sm text-gray-400">
               <ArrowPathIcon class="w-6 h-6 animate-spin mx-auto mb-2 text-primary" />
               正在加载对话记录...
@@ -1129,7 +1248,16 @@ onMounted(() => {
                     </button>
                   </div>
                 </div>
-                <div v-if="!turn.summary && !turn.userQuestion && !turn.userQuestionText" class="text-sm text-gray-500">(无响应内容)</div>
+                <div
+                  v-if="!turn.summary && !turn.userQuestion && !turn.userQuestionText"
+                  class="flex items-start gap-2 rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-2.5"
+                >
+                  <ExclamationCircleIcon class="w-4 h-4 shrink-0 mt-0.5 text-gray-400" />
+                  <div>
+                    <p class="text-[12px] font-medium text-gray-600">{{ emptyReplyView(turn).title }}</p>
+                    <p class="text-[11px] text-gray-400 mt-0.5">{{ emptyReplyView(turn).detail }}</p>
+                  </div>
+                </div>
                 <!-- 主动提问轮没有正文（模型只提了问题），回放提问卡，否则日志里只剩「(无响应内容)」 -->
                 <UserQuestionCard
                   v-if="turn.userQuestion"
@@ -1319,7 +1447,7 @@ onMounted(() => {
                         </label>
                         <div class="flex items-center gap-1.5">
                           <div
-                            v-if="parsePayloadObject(step.tool_input).hasMarkdown"
+                            v-if="payloadView(step.tool_input).hasMarkdown"
                             class="inline-flex rounded-md border border-gray-200 bg-white p-0.5 text-[10px]"
                           >
                             <button
@@ -1355,14 +1483,14 @@ onMounted(() => {
                       </div>
 
                       <div
-                        v-if="getStepViewMode(`input-${idx}`) === 'render' && parsePayloadObject(step.tool_input).textContent"
+                        v-if="getStepViewMode(`input-${idx}`) === 'render' && payloadView(step.tool_input).textContent"
                         class="markdown-body prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
-                        v-html="renderPayloadMarkdown(parsePayloadObject(step.tool_input).textContent!)"
+                        v-html="payloadView(step.tool_input).markdownHtml"
                       />
                       <pre
                         v-else
                         class="text-xs text-slate-100 leading-relaxed font-mono bg-[#0d1117] border border-gray-800 rounded-lg p-3.5 overflow-x-auto"
-                        v-html="highlightJsonHtml(step.tool_input)"
+                        v-html="payloadView(step.tool_input).jsonHtml"
                       />
                     </div>
 
@@ -1373,7 +1501,7 @@ onMounted(() => {
                         </label>
                         <div class="flex items-center gap-1.5">
                           <div
-                            v-if="parsePayloadObject(step.tool_output).hasMarkdown"
+                            v-if="payloadView(step.tool_output).hasMarkdown"
                             class="inline-flex rounded-md border border-gray-200 bg-white p-0.5 text-[10px]"
                           >
                             <button
@@ -1409,14 +1537,14 @@ onMounted(() => {
                       </div>
 
                       <div
-                        v-if="getStepViewMode(`output-${idx}`) === 'render' && parsePayloadObject(step.tool_output).textContent"
+                        v-if="getStepViewMode(`output-${idx}`) === 'render' && payloadView(step.tool_output).textContent"
                         class="markdown-body prose prose-sm max-w-none text-gray-800 break-words bg-white border border-gray-100 rounded-lg p-3.5"
-                        v-html="renderPayloadMarkdown(parsePayloadObject(step.tool_output).textContent!)"
+                        v-html="payloadView(step.tool_output).markdownHtml"
                       />
                       <pre
                         v-else
                         class="text-xs text-slate-100 leading-relaxed font-mono bg-[#0d1117] border border-gray-800 rounded-lg p-3.5 overflow-x-auto"
-                        v-html="highlightJsonHtml(step.tool_output)"
+                        v-html="payloadView(step.tool_output).jsonHtml"
                       />
                     </div>
                     <div

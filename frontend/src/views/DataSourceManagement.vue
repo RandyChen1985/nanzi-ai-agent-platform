@@ -590,123 +590,125 @@ onUnmounted(() => {
     </div>
 
     <!-- 数据源配置表单 Modal (Premium Design) -->
-    <div v-if="showFormModal" class="fixed inset-0 z-50 overflow-y-auto animate-fade-in" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-      <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-        <div @click="showFormModal = false" class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true"></div>
-        <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-        <div class="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-xl sm:w-full border border-gray-100">
-          <!-- Modal 头部 -->
-          <div class="bg-gray-50 px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-            <div>
-              <h3 class="text-base font-black text-gray-900">{{ editingId ? '编辑数据源' : '添加数据源' }}</h3>
-              <p class="text-xs text-gray-500 mt-0.5">{{ editingId ? '修改后需重新测试连接，通过后保存更新。' : '测试通过后保存，元数据导入时会从这里选择读取。' }}</p>
-            </div>
-            <button @click="showFormModal = false" class="text-gray-400 hover:text-gray-600 transition-colors text-xl font-bold">
-              &times;
-            </button>
-          </div>
-          
-          <!-- Modal 主体 -->
-          <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
-            <div class="-mx-1 overflow-x-auto pb-1 custom-scrollbar">
-              <div class="flex w-max gap-2 px-1">
-              <button
-                v-for="db in dbTypes"
-                :key="db.id"
-                @click="setDbType(db.id)"
-                class="w-28 min-w-28 p-2 rounded-xl border-2 transition-all flex flex-col items-center gap-1.5"
-                :class="form.type === db.id ? 'border-primary bg-primary/5 text-primary' : 'border-gray-100 hover:border-gray-200 text-gray-700'"
-              >
-                <span class="text-lg leading-6">{{ db.icon }}</span>
-                <span class="text-[11px] font-black whitespace-nowrap">{{ db.name }}</span>
-              </button>
+    <Teleport to="body">
+      <div v-if="showFormModal" class="fixed inset-0 z-[100] overflow-y-auto animate-fade-in" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+          <div @click="showFormModal = false" class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true"></div>
+          <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+          <div class="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-xl sm:w-full border border-gray-100">
+            <!-- Modal 头部 -->
+            <div class="bg-gray-50 px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 class="text-base font-black text-gray-900">{{ editingId ? '编辑数据源' : '添加数据源' }}</h3>
+                <p class="text-xs text-gray-500 mt-0.5">{{ editingId ? '修改后需重新测试连接，通过后保存更新。' : '测试通过后保存，元数据导入时会从这里选择读取。' }}</p>
               </div>
+              <button @click="showFormModal = false" class="text-gray-400 hover:text-gray-600 transition-colors text-xl font-bold">
+                &times;
+              </button>
             </div>
-
-            <div>
-              <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">数据源名称</label>
-                <div class="flex items-center w-full border border-gray-200 rounded-lg focus-within:ring-2 focus-within:ring-primary/50 overflow-hidden text-sm">
-                  <span class="shrink-0 px-3 py-2 bg-gray-50 text-gray-500 font-bold border-r border-gray-200">{{ dataSourcePrefix }}</span>
-                  <input
-                    v-model="form.nameSuffix"
-                    @input="sanitizeNameSuffix"
-                    @paste="handleNamePaste"
-                    class="min-w-0 flex-1 border-0 px-3 py-2 focus:outline-none focus:ring-0"
-                    placeholder="如：ods、production、analytics"
-                  >
+          
+            <!-- Modal 主体 -->
+            <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <div class="-mx-1 overflow-x-auto pb-1 custom-scrollbar">
+                <div class="flex w-max gap-2 px-1">
+                <button
+                  v-for="db in dbTypes"
+                  :key="db.id"
+                  @click="setDbType(db.id)"
+                  class="w-28 min-w-28 p-2 rounded-xl border-2 transition-all flex flex-col items-center gap-1.5"
+                  :class="form.type === db.id ? 'border-primary bg-primary/5 text-primary' : 'border-gray-100 hover:border-gray-200 text-gray-700'"
+                >
+                  <span class="text-lg leading-6">{{ db.icon }}</span>
+                  <span class="text-[11px] font-black whitespace-nowrap">{{ db.name }}</span>
+                </button>
                 </div>
-                <p class="mt-1.5 text-[10px] leading-relaxed text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5">
-                  前缀由数据库类型自动生成；后缀仅支持英文、数字和下划线，ChatBI 将据此前缀识别 SQL 方言。
-              </p>
-            </div>
-
-            <div>
-              <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">备注/用途说明</label>
-              <textarea
-                v-model="form.description"
-                rows="2"
-                class="w-full border border-gray-200 rounded-lg px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
-                placeholder="如：用于 ChatBI 生产库元数据导入"
-              ></textarea>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">主机 (Host)</label>
-                <input v-model="form.host" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="127.0.0.1">
               </div>
-              <div>
-                <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">端口 (Port)</label>
-                <input v-model.number="form.port" type="number" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm">
-              </div>
-              <div>
-                <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">用户名 (User)</label>
-                <input v-model="form.user" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="root">
-              </div>
-              <div>
-                <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">密码 (Password)</label>
-                <input v-model="form.password" type="password" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="******">
-              </div>
-            </div>
 
-            <div>
-              <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">数据库/库名 (Database)</label>
-              <input v-model="form.database" class="w-full border border-blue-200 bg-blue-50/20 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="e.g. metadata_db">
-            </div>
+              <div>
+                <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">数据源名称</label>
+                  <div class="flex items-center w-full border border-gray-200 rounded-lg focus-within:ring-2 focus-within:ring-primary/50 overflow-hidden text-sm">
+                    <span class="shrink-0 px-3 py-2 bg-gray-50 text-gray-500 font-bold border-r border-gray-200">{{ dataSourcePrefix }}</span>
+                    <input
+                      v-model="form.nameSuffix"
+                      @input="sanitizeNameSuffix"
+                      @paste="handleNamePaste"
+                      class="min-w-0 flex-1 border-0 px-3 py-2 focus:outline-none focus:ring-0"
+                      placeholder="如：ods、production、analytics"
+                    >
+                  </div>
+                  <p class="mt-1.5 text-[10px] leading-relaxed text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5">
+                    前缀由数据库类型自动生成；后缀仅支持英文、数字和下划线，ChatBI 将据此前缀识别 SQL 方言。
+                </p>
+              </div>
 
-            <div v-if="form.type === 'clickhouse'" class="p-3 bg-blue-50/50 border border-blue-100 rounded-xl text-[11px] text-blue-700 leading-relaxed">
-              <p class="font-bold mb-1">ClickHouse 连接提示：</p>
-              <p>原生 TCP 常用端口为 9000；如果是 HTTP 端口 8123 请改为 9000。</p>
-            </div>
+              <div>
+                <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">备注/用途说明</label>
+                <textarea
+                  v-model="form.description"
+                  rows="2"
+                  class="w-full border border-gray-200 rounded-lg px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+                  placeholder="如：用于 ChatBI 生产库元数据导入"
+                ></textarea>
+              </div>
 
-            <div v-if="connError" class="p-3 bg-red-50 border border-red-100 rounded-lg text-xs text-red-600 leading-relaxed font-mono">
-              {{ connError }}
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">主机 (Host)</label>
+                  <input v-model="form.host" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="127.0.0.1">
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">端口 (Port)</label>
+                  <input v-model.number="form.port" type="number" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm">
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">用户名 (User)</label>
+                  <input v-model="form.user" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="root">
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">密码 (Password)</label>
+                  <input v-model="form.password" type="password" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="******">
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">数据库/库名 (Database)</label>
+                <input v-model="form.database" class="w-full border border-blue-200 bg-blue-50/20 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="e.g. metadata_db">
+              </div>
+
+              <div v-if="form.type === 'clickhouse'" class="p-3 bg-blue-50/50 border border-blue-100 rounded-xl text-[11px] text-blue-700 leading-relaxed">
+                <p class="font-bold mb-1">ClickHouse 连接提示：</p>
+                <p>原生 TCP 常用端口为 9000；如果是 HTTP 端口 8123 请改为 9000。</p>
+              </div>
+
+              <div v-if="connError" class="p-3 bg-red-50 border border-red-100 rounded-lg text-xs text-red-600 leading-relaxed font-mono">
+                {{ connError }}
+              </div>
             </div>
-          </div>
           
-          <!-- Modal 尾部 -->
-          <div class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-between items-center">
-            <button
-              @click="testConnection"
-              :disabled="testing || !form.host || !form.database"
-              class="px-4 py-2 rounded-lg bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100 text-xs font-bold disabled:opacity-50 transition-colors"
-            >
-              {{ testing ? '正在连接...' : testPassed ? '连接成功' : '测试连接' }}
-            </button>
-            <div class="flex gap-2">
-              <button @click="showFormModal = false" class="px-4 py-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 text-xs font-bold transition-colors">取消</button>
+            <!-- Modal 尾部 -->
+            <div class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-between items-center">
               <button
-                @click="saveConfig"
-                :disabled="saving || !testPassed || !form.nameSuffix.trim() || !form.host || !form.database"
-                class="px-5 py-2 rounded-lg bg-primary text-white hover:bg-primary-dark text-xs font-bold shadow-lg shadow-primary/20 disabled:opacity-50 transition-colors"
+                @click="testConnection"
+                :disabled="testing || !form.host || !form.database"
+                class="px-4 py-2 rounded-lg bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100 text-xs font-bold disabled:opacity-50 transition-colors"
               >
-                {{ saving ? '保存中...' : editingId ? '保存修改' : '保存数据源' }}
+                {{ testing ? '正在连接...' : testPassed ? '连接成功' : '测试连接' }}
               </button>
+              <div class="flex gap-2">
+                <button @click="showFormModal = false" class="px-4 py-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 text-xs font-bold transition-colors">取消</button>
+                <button
+                  @click="saveConfig"
+                  :disabled="saving || !testPassed || !form.nameSuffix.trim() || !form.host || !form.database"
+                  class="px-5 py-2 rounded-lg bg-primary text-white hover:bg-primary-dark text-xs font-bold shadow-lg shadow-primary/20 disabled:opacity-50 transition-colors"
+                >
+                  {{ saving ? '保存中...' : editingId ? '保存修改' : '保存数据源' }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <div class="w-full">
       <section class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-visible">
@@ -934,106 +936,108 @@ onUnmounted(() => {
     />
 
     <!-- SQL 在线调试 Modal (Premium Design) -->
-    <div v-if="debugTarget" class="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-      <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-        <!-- Backdrop -->
-        <div @click="closeSqlDebug" class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true"></div>
+    <Teleport to="body">
+      <div v-if="debugTarget" class="fixed inset-0 z-[100] overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+          <!-- Backdrop -->
+          <div @click="closeSqlDebug" class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true"></div>
 
-        <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+          <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-        <!-- Modal Content Container -->
-        <div class="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full border border-gray-100">
-          <div class="bg-gray-50 px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="text-xl">🛠️</span>
-              <div>
-                <h3 class="text-base font-black text-gray-900">数据源直连调试: {{ debugTarget.name }}</h3>
-                <p class="text-xs text-gray-500 mt-0.5">本地直连驱动测试 · 仅允许执行只读 SELECT/WITH 查询</p>
-              </div>
-            </div>
-            <button @click="closeSqlDebug" class="text-gray-400 hover:text-gray-600 transition-colors text-xl font-bold">
-              &times;
-            </button>
-          </div>
-
-          <div class="p-6 space-y-4">
-            <div>
-              <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">输入调试 SQL 语句</label>
-              <textarea
-                v-model="debugSql"
-                rows="5"
-                class="w-full border border-gray-200 rounded-xl px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y bg-white disabled:bg-gray-100"
-                placeholder="SELECT * FROM table_name LIMIT 10"
-              ></textarea>
-            </div>
-
-            <div class="flex items-center justify-between gap-4">
+          <!-- Modal Content Container -->
+          <div class="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full border border-gray-100">
+            <div class="bg-gray-50 px-6 py-4 border-b border-gray-100 flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <label class="text-xs font-bold text-gray-400">限制行数 (Max Limit):</label>
-                <select v-model.number="debugLimit" class="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary bg-white">
-                  <option :value="10">10 行</option>
-                  <option :value="50">50 行</option>
-                  <option :value="100">100 行</option>
-                  <option :value="500">500 行</option>
-                </select>
+                <span class="text-xl">🛠️</span>
+                <div>
+                  <h3 class="text-base font-black text-gray-900">数据源直连调试: {{ debugTarget.name }}</h3>
+                  <p class="text-xs text-gray-500 mt-0.5">本地直连驱动测试 · 仅允许执行只读 SELECT/WITH 查询</p>
+                </div>
               </div>
-              <button
-                @click="runSqlDebug"
-                :disabled="debugExecuting || !debugSql.trim()"
-                class="px-5 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-sm font-bold shadow-lg shadow-emerald-600/20 disabled:opacity-50 transition-colors flex items-center gap-2"
-              >
-                <span v-if="debugExecuting" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
-                <span>{{ debugExecuting ? '正在执行...' : '执行查询' }}</span>
+              <button @click="closeSqlDebug" class="text-gray-400 hover:text-gray-600 transition-colors text-xl font-bold">
+                &times;
               </button>
             </div>
 
-            <!-- Error Banner -->
-            <div v-if="debugError" class="p-4 bg-red-50 border border-red-100 rounded-xl text-xs text-red-700 font-mono leading-relaxed break-all">
-              <div class="font-bold mb-1">❌ SQL 执行错误:</div>
-              {{ debugError }}
-            </div>
-
-            <!-- Results Section -->
-            <div v-if="debugResult" class="space-y-2">
-              <div class="flex items-center justify-between text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
-                <span>📊 查询返回行数: <strong class="text-gray-900">{{ debugResult.rows.length }}</strong> 行</span>
-                <span v-if="debugResult.execution_time_ms">⏱️ 数据库耗时: <strong class="text-gray-900">{{ debugResult.execution_time_ms.toFixed(2) }}</strong> ms</span>
+            <div class="p-6 space-y-4">
+              <div>
+                <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">输入调试 SQL 语句</label>
+                <textarea
+                  v-model="debugSql"
+                  rows="5"
+                  class="w-full border border-gray-200 rounded-xl px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y bg-white disabled:bg-gray-100"
+                  placeholder="SELECT * FROM table_name LIMIT 10"
+                ></textarea>
               </div>
 
-              <div class="border border-gray-100 rounded-xl overflow-hidden max-h-[300px] overflow-y-auto overflow-x-auto custom-scrollbar">
-                <table class="w-full text-left border-collapse text-xs font-mono">
-                  <thead>
-                    <tr class="bg-gray-50 border-b border-gray-100 text-gray-400 font-bold uppercase">
-                      <th v-for="col in debugResult.columns" :key="col.name" class="px-4 py-2 border-r border-gray-100 shrink-0 whitespace-nowrap">
-                        {{ col.name }} <span class="text-[9px] text-gray-300 font-normal">({{ col.type }})</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-gray-100 text-gray-700">
-                    <tr v-if="debugResult.rows.length === 0">
-                      <td :colspan="debugResult.columns.length" class="text-center py-8 text-gray-400 italic bg-white">
-                        查询成功，但返回数据为空。
-                      </td>
-                    </tr>
-                    <tr v-else v-for="(row, rIdx) in debugResult.rows" :key="rIdx" class="hover:bg-gray-50 bg-white">
-                      <td v-for="(cell, cIdx) in row" :key="cIdx" class="px-4 py-2 border-r border-gray-100 whitespace-nowrap max-w-[200px] truncate" :title="String(cell)">
-                        {{ cell === null ? 'NULL' : cell }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center gap-2">
+                  <label class="text-xs font-bold text-gray-400">限制行数 (Max Limit):</label>
+                  <select v-model.number="debugLimit" class="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary bg-white">
+                    <option :value="10">10 行</option>
+                    <option :value="50">50 行</option>
+                    <option :value="100">100 行</option>
+                    <option :value="500">500 行</option>
+                  </select>
+                </div>
+                <button
+                  @click="runSqlDebug"
+                  :disabled="debugExecuting || !debugSql.trim()"
+                  class="px-5 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-sm font-bold shadow-lg shadow-emerald-600/20 disabled:opacity-50 transition-colors flex items-center gap-2"
+                >
+                  <span v-if="debugExecuting" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
+                  <span>{{ debugExecuting ? '正在执行...' : '执行查询' }}</span>
+                </button>
+              </div>
+
+              <!-- Error Banner -->
+              <div v-if="debugError" class="p-4 bg-red-50 border border-red-100 rounded-xl text-xs text-red-700 font-mono leading-relaxed break-all">
+                <div class="font-bold mb-1">❌ SQL 执行错误:</div>
+                {{ debugError }}
+              </div>
+
+              <!-- Results Section -->
+              <div v-if="debugResult" class="space-y-2">
+                <div class="flex items-center justify-between text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+                  <span>📊 查询返回行数: <strong class="text-gray-900">{{ debugResult.rows.length }}</strong> 行</span>
+                  <span v-if="debugResult.execution_time_ms">⏱️ 数据库耗时: <strong class="text-gray-900">{{ debugResult.execution_time_ms.toFixed(2) }}</strong> ms</span>
+                </div>
+
+                <div class="border border-gray-100 rounded-xl overflow-hidden max-h-[300px] overflow-y-auto overflow-x-auto custom-scrollbar">
+                  <table class="w-full text-left border-collapse text-xs font-mono">
+                    <thead>
+                      <tr class="bg-gray-50 border-b border-gray-100 text-gray-400 font-bold uppercase">
+                        <th v-for="col in debugResult.columns" :key="col.name" class="px-4 py-2 border-r border-gray-100 shrink-0 whitespace-nowrap">
+                          {{ col.name }} <span class="text-[9px] text-gray-300 font-normal">({{ col.type }})</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100 text-gray-700">
+                      <tr v-if="debugResult.rows.length === 0">
+                        <td :colspan="debugResult.columns.length" class="text-center py-8 text-gray-400 italic bg-white">
+                          查询成功，但返回数据为空。
+                        </td>
+                      </tr>
+                      <tr v-else v-for="(row, rIdx) in debugResult.rows" :key="rIdx" class="hover:bg-gray-50 bg-white">
+                        <td v-for="(cell, cIdx) in row" :key="cIdx" class="px-4 py-2 border-r border-gray-100 whitespace-nowrap max-w-[200px] truncate" :title="String(cell)">
+                          {{ cell === null ? 'NULL' : cell }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-end">
-            <button @click="closeSqlDebug" class="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 text-xs font-bold transition-colors">
-              关闭调试
-            </button>
+            <div class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-end">
+              <button @click="closeSqlDebug" class="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 text-xs font-bold transition-colors">
+                关闭调试
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <DbTableProfileExplorerModal
       ref="profileExplorerRef"
@@ -1058,126 +1062,128 @@ onUnmounted(() => {
     />
   </div>
     <!-- 数据源管理规范与表画像摸排指南 Modal -->
-    <div v-if="showSpecsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
-          <div class="flex items-center gap-3">
-             <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20" style="background-color: #2563eb; color: #ffffff;">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+    <Teleport to="body">
+      <div v-if="showSpecsModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showSpecsModal = false">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-blue-50/30">
+            <div class="flex items-center gap-3">
+               <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20" style="background-color: #2563eb; color: #ffffff;">
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+               </div>
+               <div>
+                 <h2 class="text-xl font-bold text-gray-900">数据源管理设计规范与表画像摸排指南</h2>
+                 <p class="text-xs text-gray-500 font-medium mt-0.5">外部多引擎数据库连接维护、安全只读隔离、异步表结构画像摸排与元数据中心打通。</p>
+               </div>
+            </div>
+            <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 bg-white px-6">
+             <button 
+               v-for="tab in ['concept', 'security', 'practice']" 
+               :key="tab"
+               @click="activeSpecsTab = tab as any"
+               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+               :class="activeSpecsTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+             >
+               {{ tab === 'concept' ? '核心架构与表画像流程 (Architecture & Profiling)' :
+                  tab === 'security' ? '连接配置与安全隔离规范 (Security & Connections)' : '故障排查与最佳实践 (Best Practice)' }}
+             </button>
+          </div>
+
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
+             <!-- Tab 1: Architecture & Profiling -->
+             <div v-if="activeSpecsTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-xl shadow-2xs">
+                   <h3 class="font-bold text-blue-900 mb-1">物理连接与元数据中心解耦设计</h3>
+                   <p class="text-xs text-blue-700 leading-relaxed">
+                      数据源管理是平台的底层物理连接层。在此配置好 MySQL、PostgreSQL、ClickHouse、Oracle、SQL Server 连接后，业务人员在「元数据中心」即可直接按库表一键导入语义，无需重复输入账号密码。
+                   </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-blue-500"></span> 1. 多类型数据库统一接入
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         支持 MySQL 5.7/8.0、PostgreSQL、ClickHouse、Oracle 11g/19c 与 Microsoft SQL Server，提供一键连通性测试与参数校验。
+                      </p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-emerald-500"></span> 2. 异步表结构画像摸排 (Profiling)
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         后台智能摸排引擎自动扫描库内全部表的总行数、字段注释、主外键关系及枚举值基数（Cardinality），无需人工介入即可生成高清数据库拓扑。
+                      </p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-indigo-500"></span> 3. 在线 SQL 调试沙箱
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         内置 SQL 执行沙箱，支持对数据源进行即时采样查询（默认限制 Limit 100 条并统计执行毫秒），方便排查网络延迟与表结构可用性。
+                      </p>
+                   </div>
+                   <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                      <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                         <span class="w-2 h-2 rounded-full bg-amber-500"></span> 4. 增量与全量摸排策略
+                      </h4>
+                      <p class="text-gray-500 leading-relaxed">
+                         支持只针对新增/修改表进行「增量摸排」，或针对整个数据库执行「全量重新摸排」，保障元数据语义始终与线上业务库同步。
+                      </p>
+                   </div>
+                </div>
              </div>
-             <div>
-               <h2 class="text-xl font-bold text-gray-900">数据源管理设计规范与表画像摸排指南</h2>
-               <p class="text-xs text-gray-500 font-medium mt-0.5">外部多引擎数据库连接维护、安全只读隔离、异步表结构画像摸排与元数据中心打通。</p>
+
+             <!-- Tab 2: Security & Connections -->
+             <div v-else-if="activeSpecsTab === 'security'" class="space-y-4 max-w-4xl mx-auto text-xs">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">安全配置与最小权限原则</h4>
+                   <div class="p-4 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
+                      <span class="font-bold text-amber-900 text-sm">🔒 推荐配置：只读账号（Read-Only User）</span>
+                      <p class="text-gray-600">为防止误操作或 SQL 注入风险，强烈建议为平台分配仅包含 <code>SELECT</code>、<code>SHOW</code>、<code>DESCRIBE</code> 权限的数据库只读账号，严禁配置 <code>DROP</code>、<code>DELETE</code>、<code>ALTER</code> 权限。</p>
+                   </div>
+                   <div class="space-y-2">
+                      <h5 class="font-bold text-gray-800 text-sm">网络与端口安全建议：</h5>
+                      <ul class="list-disc list-inside text-gray-600 space-y-1">
+                         <li>若数据库部署在私有 VPC 或内网，请确保平台宿主机或 Docker 容器网络能够解析 Host 并路由至指定端口；</li>
+                         <li>建议配置数据库白名单，仅允许平台服务器 IP 地址发起连接；</li>
+                         <li>ClickHouse 请注意区分原生 TCP 端口（如 9000）与 HTTP 协议端口（如 8123）。</li>
+                      </ul>
+                   </div>
+                </div>
+             </div>
+
+             <!-- Tab 3: Best Practice -->
+             <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-4xl mx-auto text-xs">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
+                   <h4 class="font-bold text-gray-900 text-base">常见连通性问题排查与最佳实践</h4>
+                   <div class="space-y-3">
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">1. 连接超时 (Connection Timeout)</span>
+                         <p class="text-gray-600 leading-relaxed">请检查数据库宿主机防火墙（iptables/Security Group）是否放行对应端口，以及数据库是否开启了远程登录授权（如 MySQL 的 <code>'user'@'%'</code>）。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">2. 字符集与中文乱码</span>
+                         <p class="text-gray-600 leading-relaxed">建议数据库统一采用 <code>utf8mb4</code> 字符集，避免表注释或字段内容在画像摸排与大模型理解时产生乱码。</p>
+                      </div>
+                      <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                         <span class="font-bold text-gray-900">3. 大库表摸排优化</span>
+                         <p class="text-gray-600 leading-relaxed">若数据库表数量超过 500 张，表结构画像摸排将在后台异步队列执行，可在卡片中实时查看摸排进度条，无需停留在当前页面等待。</p>
+                      </div>
+                   </div>
+                </div>
              </div>
           </div>
-          <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 bg-white px-6">
-           <button 
-             v-for="tab in ['concept', 'security', 'practice']" 
-             :key="tab"
-             @click="activeSpecsTab = tab as any"
-             class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-             :class="activeSpecsTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-           >
-             {{ tab === 'concept' ? '核心架构与表画像流程 (Architecture & Profiling)' :
-                tab === 'security' ? '连接配置与安全隔离规范 (Security & Connections)' : '故障排查与最佳实践 (Best Practice)' }}
-           </button>
-        </div>
-
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
-           <!-- Tab 1: Architecture & Profiling -->
-           <div v-if="activeSpecsTab === 'concept'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-600 p-4 rounded-r-xl shadow-2xs">
-                 <h3 class="font-bold text-blue-900 mb-1">物理连接与元数据中心解耦设计</h3>
-                 <p class="text-xs text-blue-700 leading-relaxed">
-                    数据源管理是平台的底层物理连接层。在此配置好 MySQL、PostgreSQL、ClickHouse、Oracle、SQL Server 连接后，业务人员在「元数据中心」即可直接按库表一键导入语义，无需重复输入账号密码。
-                 </p>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-blue-500"></span> 1. 多类型数据库统一接入
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       支持 MySQL 5.7/8.0、PostgreSQL、ClickHouse、Oracle 11g/19c 与 Microsoft SQL Server，提供一键连通性测试与参数校验。
-                    </p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-emerald-500"></span> 2. 异步表结构画像摸排 (Profiling)
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       后台智能摸排引擎自动扫描库内全部表的总行数、字段注释、主外键关系及枚举值基数（Cardinality），无需人工介入即可生成高清数据库拓扑。
-                    </p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-indigo-500"></span> 3. 在线 SQL 调试沙箱
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       内置 SQL 执行沙箱，支持对数据源进行即时采样查询（默认限制 Limit 100 条并统计执行毫秒），方便排查网络延迟与表结构可用性。
-                    </p>
-                 </div>
-                 <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-2">
-                    <h4 class="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-                       <span class="w-2 h-2 rounded-full bg-amber-500"></span> 4. 增量与全量摸排策略
-                    </h4>
-                    <p class="text-gray-500 leading-relaxed">
-                       支持只针对新增/修改表进行「增量摸排」，或针对整个数据库执行「全量重新摸排」，保障元数据语义始终与线上业务库同步。
-                    </p>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 2: Security & Connections -->
-           <div v-else-if="activeSpecsTab === 'security'" class="space-y-4 max-w-4xl mx-auto text-xs">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">安全配置与最小权限原则</h4>
-                 <div class="p-4 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
-                    <span class="font-bold text-amber-900 text-sm">🔒 推荐配置：只读账号（Read-Only User）</span>
-                    <p class="text-gray-600">为防止误操作或 SQL 注入风险，强烈建议为平台分配仅包含 <code>SELECT</code>、<code>SHOW</code>、<code>DESCRIBE</code> 权限的数据库只读账号，严禁配置 <code>DROP</code>、<code>DELETE</code>、<code>ALTER</code> 权限。</p>
-                 </div>
-                 <div class="space-y-2">
-                    <h5 class="font-bold text-gray-800 text-sm">网络与端口安全建议：</h5>
-                    <ul class="list-disc list-inside text-gray-600 space-y-1">
-                       <li>若数据库部署在私有 VPC 或内网，请确保平台宿主机或 Docker 容器网络能够解析 Host 并路由至指定端口；</li>
-                       <li>建议配置数据库白名单，仅允许平台服务器 IP 地址发起连接；</li>
-                       <li>ClickHouse 请注意区分原生 TCP 端口（如 9000）与 HTTP 协议端口（如 8123）。</li>
-                    </ul>
-                 </div>
-              </div>
-           </div>
-
-           <!-- Tab 3: Best Practice -->
-           <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-4xl mx-auto text-xs">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-gray-650 leading-relaxed">
-                 <h4 class="font-bold text-gray-900 text-base">常见连通性问题排查与最佳实践</h4>
-                 <div class="space-y-3">
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">1. 连接超时 (Connection Timeout)</span>
-                       <p class="text-gray-600 leading-relaxed">请检查数据库宿主机防火墙（iptables/Security Group）是否放行对应端口，以及数据库是否开启了远程登录授权（如 MySQL 的 <code>'user'@'%'</code>）。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">2. 字符集与中文乱码</span>
-                       <p class="text-gray-600 leading-relaxed">建议数据库统一采用 <code>utf8mb4</code> 字符集，避免表注释或字段内容在画像摸排与大模型理解时产生乱码。</p>
-                    </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
-                       <span class="font-bold text-gray-900">3. 大库表摸排优化</span>
-                       <p class="text-gray-600 leading-relaxed">若数据库表数量超过 500 张，表结构画像摸排将在后台异步队列执行，可在卡片中实时查看摸排进度条，无需停留在当前页面等待。</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
 </template>

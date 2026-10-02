@@ -304,38 +304,67 @@
       <!-- Awaiting host INIT_CONFIG (strict/debug mode) -->
       <div
         v-if="isAwaitingHostInitConfig"
-        class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 text-center"
+        class="absolute inset-0 z-50 flex flex-col overflow-hidden"
         data-testid="embed-awaiting-init"
       >
-        <div class="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-full mb-4">
-          <svg
-            class="w-12 h-12 text-blue-500 animate-spin"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="3"
-            />
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
-        </div>
-        <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
-          等待宿主下发凭据
-        </h3>
-        <p
-          class="text-sm text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed"
+        <!-- 背景骨架：让用户隐约看出这里将是一个对话界面（纯装饰，不参与交互） -->
+        <div
+          class="flex-1 flex flex-col space-y-6 px-3 sm:px-4 pt-3 sm:pt-4 pb-3"
+          aria-hidden="true"
+          data-testid="embed-awaiting-skeleton"
         >
-          尚未收到宿主通过 INIT_CONFIG 下发的 Ticket 或 API Key。请在宿主页面完成初始化，收到后将自动进入对话。
-        </p>
+          <div v-for="i in 3" :key="i" class="flex items-start space-x-3">
+            <div class="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
+            <div class="flex-1 space-y-2">
+              <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 animate-pulse"></div>
+              <div class="h-4 bg-gray-100 dark:bg-gray-800 rounded w-1/2 animate-pulse"></div>
+            </div>
+          </div>
+          <!-- 底部输入框轮廓：一眼看出这里将是一个对话界面 -->
+          <div class="mt-auto h-11 rounded-xl bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
+        </div>
+
+        <!-- 半透明遮罩：骨架若隐若现，同时整层吃掉点击，避免凭据落定前误操作 -->
+        <div
+          class="absolute inset-0 flex flex-col items-center justify-center bg-white/70 dark:bg-gray-900/80 backdrop-blur-[2px] p-6 text-center"
+          data-testid="embed-awaiting-mask"
+        >
+          <div class="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-full mb-4">
+            <svg
+              class="w-12 h-12 text-blue-500 animate-spin"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="3"
+              />
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+          </div>
+          <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
+            {{ hostInitNotice.title }}
+          </h3>
+          <p
+            class="text-sm text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed"
+          >
+            {{ hostInitNotice.message }}
+          </p>
+          <p
+            v-if="hostInitNoticeExpired"
+            class="mt-3 text-xs text-gray-400 dark:text-gray-500"
+          >
+            若一直停在这里，可先刷新本页重试。
+          </p>
+        </div>
       </div>
       <!-- No Permission Overlay -->
       <div
@@ -7200,6 +7229,56 @@ const isAwaitingHostInitConfig = computed(
     strictTokenValidation.value &&
     (!initConfigReceived.value || hostInitInFlight.value)
 );
+
+/** 等待凭据期间给**终端用户**看的说明。
+ *
+ * 措辞刻意避开「宿主」「INIT_CONFIG」「Ticket」「API Key」：这些是接入方术语，最终用户
+ * 既不知道指的是什么，也不知道自己能做什么——"请在宿主页面完成初始化"连"宿主页面是
+ * 哪个页面"都没说。背景骨架已经交代了"这里将是一个对话界面"，文案只需说清在等什么。
+ *
+ * 超过宽限期仍未收到凭据时，切换为可执行的引导：此时多半是宿主侧没登录、或接入配置
+ * （域名白名单等）没配对，继续显示"稍等片刻"就是骗人——用户会一直干等下去。
+ */
+const HOST_INIT_NOTICE_GRACE_MS = 10_000;
+const hostInitNoticeExpired = ref(false);
+const hostInitNotice = computed(() =>
+  hostInitNoticeExpired.value
+    ? {
+        title: "暂未收到登录信息",
+        message:
+          "请回到原系统重新进入本页面。若反复出现，请联系管理员确认接入配置是否正确。",
+      }
+    : {
+        title: "正在获取登录信息",
+        message: "正在从原系统获取你的登录信息，稍等片刻即可开始对话。",
+      }
+);
+
+let hostInitNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+watch(
+  isAwaitingHostInitConfig,
+  (awaiting) => {
+    if (hostInitNoticeTimer !== undefined) {
+      clearTimeout(hostInitNoticeTimer);
+      hostInitNoticeTimer = undefined;
+    }
+    if (!awaiting) {
+      hostInitNoticeExpired.value = false;
+      return;
+    }
+    hostInitNoticeExpired.value = false;
+    hostInitNoticeTimer = setTimeout(() => {
+      hostInitNoticeExpired.value = true;
+    }, HOST_INIT_NOTICE_GRACE_MS);
+  },
+  { immediate: true }
+);
+onUnmounted(() => {
+  if (hostInitNoticeTimer !== undefined) {
+    clearTimeout(hostInitNoticeTimer);
+    hostInitNoticeTimer = undefined;
+  }
+});
 
 /** 仅在服务端校验通过后同步到内存，避免 URL 里陈旧的 ?token= 覆盖有效凭据。
  *

@@ -391,7 +391,10 @@ class AuthService:
     #   ① 同邮箱 60 秒冷却 —— 挡住连点，也让「刚被申请过」无法被用来探测邮箱是否存在；
     #   ② 同邮箱 3 次/小时 —— 挡住对单个邮箱的邮件轰炸；
     #   ③ 同来源 5 次/小时 —— 挡住换邮箱刷量（来源可信度判定复用注册那一套）。
-    PWD_RESET_TTL_SECONDS = 1800        # 链接有效期 30 分钟
+    # 链接有效期。签发时一次定死，不随用户停留滑动续期；到期由 Redis TTL 自动删除，
+    # 没有清理任务。改这个数字必须同步改三处对外文案（重置邮件正文、重置页静态说明）
+    # 与 tests/test_password_reset.py、tests/frontend/test_typewriter_contract.py 的断言。
+    PWD_RESET_TTL_SECONDS = 900         # 链接有效期 15 分钟
     PWD_RESET_COOLDOWN_SECONDS = 60     # 同邮箱冷却
     PWD_RESET_EMAIL_LIMIT = 3           # 同邮箱每小时
     PWD_RESET_SOURCE_LIMIT = 5          # 同来源每小时

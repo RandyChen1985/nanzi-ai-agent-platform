@@ -115,3 +115,47 @@ def test_existing_download_prefix_migration_contract_untouched():
     )
     for text, path in ((mysql, "db-prod/V129"), (pg, "db-prod-pg/V29")):
         assert "download_url_prefix" in text, path
+
+
+# --------------------------------------------------------------------------- #
+# 进页面预校验：不让用户填完一整遍密码才被告知链接已过期
+# --------------------------------------------------------------------------- #
+
+def test_reset_page_prechecks_token_on_entry():
+    assert "/api/portal/auth/password-reset/verify" in RESET
+    assert "onMounted(checkToken)" in RESET
+
+
+def test_reset_page_never_shows_the_form_before_the_check():
+    """校验期间必须有独立分支：先渲染表单、校验回来再抽走，是最差的观感。"""
+    assert "verifyState" in RESET
+    assert RESET.index("verifyState === 'checking'") < RESET.index("<form v-else")
+
+
+def test_service_failure_is_never_rendered_as_a_dead_link():
+    """503／网络错误必须落到 'unavailable'：报成「链接已失效」会让用户白申请一封邮件。
+
+    反向把失效说成「稍后重试」同样有害——用户会对着一条死链反复试。
+    """
+    assert "verifyState.value = 'unavailable'" in RESET
+    catch_idx = RESET.index("catch {")
+    catch_body = RESET[catch_idx : catch_idx + 200]
+    assert "'unavailable'" in catch_body
+    assert "'invalid'" not in catch_body, "catch 分支绝不能把异常判成链接失效"
+
+
+def test_invalid_and_unavailable_offer_different_actions():
+    """失效给「重新申请」，无法确认给「重试」——两条路不能给成同一个按钮。"""
+    assert "重新申请重置链接" in RESET
+    assert "重试" in RESET
+
+
+def test_heading_and_subtitle_follow_the_check_result():
+    """标题与说明由校验状态驱动，而不是只看 URL 里有没有 token。"""
+    assert "const heading = computed" in RESET
+    assert "const subtitle = computed" in RESET
+    assert "{{ heading }}" in RESET
+    # 「链接已失效」只有在确认失效时才出现
+    idx = RESET.index("const heading = computed")
+    window = RESET[idx : idx + 200]
+    assert "'invalid' ? '链接已失效'" in window

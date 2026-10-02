@@ -155,119 +155,121 @@
     />
 
     <!-- 固化报表设计规范与使用指南 Modal -->
-    <div
-      v-if="showSpecsModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in"
-      @click.self="showSpecsModal = false"
-    >
+    <Teleport to="body">
       <div
-        class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden border border-gray-100 dark:border-gray-800"
+        v-if="showSpecsModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in"
+        @click.self="showSpecsModal = false"
       >
-        <!-- Header -->
-        <div class="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-blue-50/40 dark:bg-gray-800/60">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20">
-              <span class="text-lg">▤</span>
+        <div
+          class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden border border-gray-100 dark:border-gray-800"
+        >
+          <!-- Header -->
+          <div class="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-blue-50/40 dark:bg-gray-800/60">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20">
+                <span class="text-lg">▤</span>
+              </div>
+              <div>
+                <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100">固化报表设计规范与使用指南</h2>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">标准化 SQL 资产沉淀、自动化定时订阅、多渠道分发与全员共享协同机制。</p>
+              </div>
             </div>
-            <div>
-              <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100">固化报表设计规范与使用指南</h2>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">标准化 SQL 资产沉淀、自动化定时订阅、多渠道分发与全员共享协同机制。</p>
-            </div>
+            <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
           </div>
-          <button @click="showSpecsModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
 
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-6">
-          <button
-            v-for="tab in ['concept', 'workflow', 'practice']"
-            :key="tab"
-            @click="activeSpecsTab = tab as any"
-            class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
-            :class="activeSpecsTab === tab ? 'border-blue-600 text-blue-700 dark:text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-700'"
-          >
-            {{ tab === 'concept' ? '核心理念与价值 (Core Concept)' :
-               tab === 'workflow' ? '报表开发与沉淀流 (Development Workflow)' : '调度订阅与最佳实践 (Subscription & Best Practice)' }}
-          </button>
-        </div>
+          <!-- Tabs -->
+          <div class="flex border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-6">
+            <button
+              v-for="tab in ['concept', 'workflow', 'practice']"
+              :key="tab"
+              @click="activeSpecsTab = tab as any"
+              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer"
+              :class="activeSpecsTab === tab ? 'border-blue-600 text-blue-700 dark:text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            >
+              {{ tab === 'concept' ? '核心理念与价值 (Core Concept)' :
+                 tab === 'workflow' ? '报表开发与沉淀流 (Development Workflow)' : '调度订阅与最佳实践 (Subscription & Best Practice)' }}
+            </button>
+          </div>
 
-        <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50 dark:bg-gray-950/40 text-xs space-y-6">
-          <!-- Tab 1: Concept -->
-          <div v-if="activeSpecsTab === 'concept'" class="space-y-4 max-w-3xl">
-            <div class="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/20 border-l-4 border-blue-600 p-4 rounded-r-xl">
-              <h3 class="font-bold text-blue-900 dark:text-blue-200 mb-1">什么是「固化报表」？</h3>
-              <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
-                固化报表（Saved Reports）是企业级数据资产的“标准件”。它将一次性、偶发性的 AI 即席查数（Ad-hoc Query）或专业数据分析师编写的高质量 SQL，经过验证后**“固化”**为具备明确业务口径、权限受控、可重复执行的标准报表。
-              </p>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div class="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 space-y-2">
-                <h4 class="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-                  <span class="text-blue-500">✦</span> 1. 双轨沉淀机制
-                </h4>
-                <p class="text-gray-500 dark:text-gray-400 leading-relaxed">
-                  既支持在 ChatBI 对话查数成功后一键「添加固化报表」，也支持在报表中心直接点击「新建固化报表」手写 SQL 录入。
+          <!-- Content -->
+          <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50 dark:bg-gray-950/40 text-xs space-y-6">
+            <!-- Tab 1: Concept -->
+            <div v-if="activeSpecsTab === 'concept'" class="space-y-4 max-w-3xl">
+              <div class="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/20 border-l-4 border-blue-600 p-4 rounded-r-xl">
+                <h3 class="font-bold text-blue-900 dark:text-blue-200 mb-1">什么是「固化报表」？</h3>
+                <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+                  固化报表（Saved Reports）是企业级数据资产的“标准件”。它将一次性、偶发性的 AI 即席查数（Ad-hoc Query）或专业数据分析师编写的高质量 SQL，经过验证后**“固化”**为具备明确业务口径、权限受控、可重复执行的标准报表。
                 </p>
               </div>
-              <div class="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 space-y-2">
-                <h4 class="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-                  <span class="text-indigo-500">✦</span> 2. 自动化调度与触达
-                </h4>
-                <p class="text-gray-500 dark:text-gray-400 leading-relaxed">
-                  可针对任意固化报表配置定时调度订阅，支持每日/每周/每月定时执行，并自动推送到站内信、企微群或邮件。
-                </p>
-              </div>
-            </div>
-          </div>
 
-          <!-- Tab 2: Workflow -->
-          <div v-else-if="activeSpecsTab === 'workflow'" class="space-y-4 max-w-3xl">
-            <div class="bg-white dark:bg-gray-900 p-6 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-4">
-              <h4 class="font-bold text-gray-900 dark:text-gray-100 text-sm">标准化报表开发四步法</h4>
-              <div class="space-y-3">
-                <div class="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
-                  <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">1</span>
-                  <div>
-                    <strong class="text-gray-800 dark:text-gray-200">数据源选择与权限校验</strong>
-                    <p class="text-gray-500 dark:text-gray-400 mt-0.5">选择报表所针对的物理数据源连接或元数据数据集，系统自动进行只读鉴权反查。</p>
-                  </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 space-y-2">
+                  <h4 class="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
+                    <span class="text-blue-500">✦</span> 1. 双轨沉淀机制
+                  </h4>
+                  <p class="text-gray-500 dark:text-gray-400 leading-relaxed">
+                    既支持在 ChatBI 对话查数成功后一键「添加固化报表」，也支持在报表中心直接点击「新建固化报表」手写 SQL 录入。
+                  </p>
                 </div>
-                <div class="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
-                  <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">2</span>
-                  <div>
-                    <strong class="text-gray-800 dark:text-gray-200">SQL 编写与在线试跑</strong>
-                    <p class="text-gray-500 dark:text-gray-400 mt-0.5">在编辑器中输入 SELECT 语句，点击【▶ 试跑测试 SQL】校验语法并预览前 50 条真实数据。</p>
-                  </div>
-                </div>
-                <div class="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
-                  <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">3</span>
-                  <div>
-                    <strong class="text-gray-800 dark:text-gray-200">业务口径与标签打标</strong>
-                    <p class="text-gray-500 dark:text-gray-400 mt-0.5">录入业务统计口径说明与分类标签（如“财务, 营收, 月报”），方便全员检索。</p>
-                  </div>
+                <div class="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 space-y-2">
+                  <h4 class="font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
+                    <span class="text-indigo-500">✦</span> 2. 自动化调度与触达
+                  </h4>
+                  <p class="text-gray-500 dark:text-gray-400 leading-relaxed">
+                    可针对任意固化报表配置定时调度订阅，支持每日/每周/每月定时执行，并自动推送到站内信、企微群或邮件。
+                  </p>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Tab 3: Practice -->
-          <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-3xl">
-            <div class="bg-white dark:bg-gray-900 p-6 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-4">
-              <h4 class="font-bold text-gray-900 dark:text-gray-100 text-sm">运维与共享最佳实践</h4>
-              <ul class="space-y-2.5 text-gray-600 dark:text-gray-300 list-disc pl-5 leading-relaxed">
-                <li><strong>避免全表无分页扫描</strong>：建议在报表 SQL 中显式指定聚合维度（GROUP BY）或合理的 LIMIT 条数；</li>
-                <li><strong>动态时间报表</strong>：系统会自动识别 SQL 中的固定日期条件，并支持在后续执行时选择动态时间窗口（如“本月”、“最近 7 天”）；</li>
-                <li><strong>协同共享</strong>：报表创建者可在报表详情中将其「共享」给部门或全员，共享后其他用户将获得执行与订阅权限，但无法修改原始 SQL。</li>
-              </ul>
+            <!-- Tab 2: Workflow -->
+            <div v-else-if="activeSpecsTab === 'workflow'" class="space-y-4 max-w-3xl">
+              <div class="bg-white dark:bg-gray-900 p-6 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-4">
+                <h4 class="font-bold text-gray-900 dark:text-gray-100 text-sm">标准化报表开发四步法</h4>
+                <div class="space-y-3">
+                  <div class="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">1</span>
+                    <div>
+                      <strong class="text-gray-800 dark:text-gray-200">数据源选择与权限校验</strong>
+                      <p class="text-gray-500 dark:text-gray-400 mt-0.5">选择报表所针对的物理数据源连接或元数据数据集，系统自动进行只读鉴权反查。</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">2</span>
+                    <div>
+                      <strong class="text-gray-800 dark:text-gray-200">SQL 编写与在线试跑</strong>
+                      <p class="text-gray-500 dark:text-gray-400 mt-0.5">在编辑器中输入 SELECT 语句，点击【▶ 试跑测试 SQL】校验语法并预览前 50 条真实数据。</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+                    <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">3</span>
+                    <div>
+                      <strong class="text-gray-800 dark:text-gray-200">业务口径与标签打标</strong>
+                      <p class="text-gray-500 dark:text-gray-400 mt-0.5">录入业务统计口径说明与分类标签（如“财务, 营收, 月报”），方便全员检索。</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 3: Practice -->
+            <div v-else-if="activeSpecsTab === 'practice'" class="space-y-4 max-w-3xl">
+              <div class="bg-white dark:bg-gray-900 p-6 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-4">
+                <h4 class="font-bold text-gray-900 dark:text-gray-100 text-sm">运维与共享最佳实践</h4>
+                <ul class="space-y-2.5 text-gray-600 dark:text-gray-300 list-disc pl-5 leading-relaxed">
+                  <li><strong>避免全表无分页扫描</strong>：建议在报表 SQL 中显式指定聚合维度（GROUP BY）或合理的 LIMIT 条数；</li>
+                  <li><strong>动态时间报表</strong>：系统会自动识别 SQL 中的固定日期条件，并支持在后续执行时选择动态时间窗口（如“本月”、“最近 7 天”）；</li>
+                  <li><strong>协同共享</strong>：报表创建者可在报表详情中将其「共享」给部门或全员，共享后其他用户将获得执行与订阅权限，但无法修改原始 SQL。</li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <ConfirmModal
       v-if="deletingReport"
