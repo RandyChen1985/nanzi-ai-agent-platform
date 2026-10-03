@@ -1,0 +1,40 @@
+# 统一行尾处理：仓库内文本文件统一以 LF 形式存储。
+#
+# 背景：本仓库此前没有行尾约定，Windows 侧 Git 的 core.autocrlf=true 会把文本文件
+# 检出为 CRLF，而 WSL/Linux 侧不设置该选项，导致同一份工作区在 WSL 下被误报为
+# 600+ 个文件「全部被修改」（diff 行数等于文件总行数的两倍，实际只是 CRLF/LF 差异）。
+#
+# 规则说明：
+#   text=auto  —— 由 Git 自动识别文本文件，入库时统一归一化为 LF，比较时也按 LF 归一化，
+#                 因此 Windows 与 WSL/Linux 两侧看到的改动状态一致。
+#   检出到工作区时的实际换行符，仍由各平台自身的 core.autocrlf / core.eol 决定，
+#   本次调整不改变任何人现有的检出行为。
+* text=auto
+
+# Shell 脚本必须以 LF 存储并检出。
+# 原因：脚本若以 CRLF 检出，首行 shebang 会变成 "#!/bin/bash\r"，系统会去找一个
+# 名为 "bash\r" 的解释器，在 WSL/Linux 下执行时直接报
+# "cannot execute: required file not found"。此规则只约束检出行为，不改变脚本内容。
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# .gitattributes 自身固定为 LF，避免被各平台来回转换
+.gitattributes text eol=lf
+
+# 明确声明二进制文件，避免被误判为文本而损坏
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
+*.zip  binary
+*.gz   binary
+*.pdf  binary
+*.xlsx binary
+*.docx binary
+*.pptx binary
