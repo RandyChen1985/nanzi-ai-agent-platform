@@ -195,7 +195,9 @@ def test_browser_panel_does_not_request_duplicate_initial_snapshot_and_reports_d
     assert "client.send(JSON.stringify({ type: 'snapshot' }));" not in on_open
     assert "if (socket.value !== client) return;" in on_open
     assert "BROWSER_PANEL_REFRESH_INTERVAL_MS = 5000" in source
-    assert "setInterval(requestSnapshot, BROWSER_PANEL_REFRESH_INTERVAL_MS)" in source
+    # 轮询间隔改为自适应：空闲 5s，AI 有动作时临时提频。间隔统一由 currentPollIntervalMs() 决定，
+    # 因此不再直接以固定常量建定时器。
+    assert "setInterval(requestSnapshot, currentPollIntervalMs())" in source
     assert "浏览器连接已断开" in source
 
 
@@ -626,3 +628,59 @@ def test_browser_panel_honours_external_refresh_signal_during_human_control():
         "外部刷新信号不应因人工接管而被丢弃"
     )
     assert "requestSnapshot()" in block
+
+
+def test_browser_panel_pauses_polling_while_tab_hidden():
+    """标签页切到后台时必须停轮询。
+
+    面板此前无论可见性都每 5 秒跑一次完整快照 + 截图：没人看画面，服务端却在
+    反复做全量 DOM 抓取并往磁盘写帧。切回前台要立刻补一帧，否则用户看到的是
+    切走之前那张旧图，还得再等满一个周期。
+    """
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "const handleVisibilityChange = () =>" in source
+    assert "document.addEventListener('visibilitychange', handleVisibilityChange)" in source
+    assert "document.removeEventListener('visibilitychange', handleVisibilityChange)" in source, (
+        "卸载时必须摘掉监听，否则组件反复挂载会累积回调"
+    )
+    assert "pageHidden = typeof document !== 'undefined' && document.hidden;" in source
+
+    hidden_block = source.split("const handleVisibilityChange = () => {", 1)[1].split("\n};", 1)[0]
+    assert "stopPolling();" in hidden_block, "隐藏时必须停轮询"
+    assert "requestSnapshot();" in hidden_block, "回到前台必须补一帧"
+    # startPolling 自身也要挡住后台取帧：其他路径（control_state / captcha 恢复等）都会调它
+    start_polling = source.split("const startPolling = () => {", 1)[1].split("\n};", 1)[0]
+    assert "if (pageHidden) return;" in start_polling
+
+
+def test_browser_panel_uses_active_burst_interval_after_ai_actions():
+    """AI 一动就把画面节奏提上来，但必须是有界窗口，且不得反复重建定时器。
+
+    固定 5 秒最尴尬的地方是"最该看的那一刻反而最慢"：AI 刚点击/跳转，用户正盯着
+    面板，却要等满一整个周期。这里在 ai_action 后开一个 10 秒活跃窗口、间隔降到
+    1.2 秒，窗口结束自动降回 5 秒。
+    """
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "const BROWSER_PANEL_ACTIVE_INTERVAL_MS = 1200;" in source
+    assert "const BROWSER_PANEL_ACTIVE_BURST_MS = 10000;" in source
+    assert "const currentPollIntervalMs = () =>" in source
+    assert "const enterActiveBurst = () =>" in source
+    assert "const exitActiveBurst = () =>" in source
+    # ai_action 是"AI 正在操作"的信号，必须由它触发活跃窗口
+    ai_action_block = source.split("} else if (payload.type === 'ai_action') {", 1)[1][:400]
+    assert "enterActiveBurst();" in ai_action_block
+    # 活跃窗口内不重建定时器：否则密集的 ai_action 会把间隔无限重置，一帧都不刷新
+    enter_block = source.split("const enterActiveBurst = () => {", 1)[1].split("\n};", 1)[0]
+    assert "const wasActive = Date.now() < activeBurstUntil;" in enter_block
+    assert "if (!wasActive && pollTimer) startPolling();" in enter_block
+    # 窗口结束降回空闲节奏
+    exit_block = source.split("const exitActiveBurst = () => {", 1)[1].split("\n};", 1)[0]
+    assert "activeBurstUntil = 0;" in exit_block
+    assert "if (pollTimer) startPolling();" in exit_block
+    # 断开与卸载都要清掉活跃定时器，避免泄漏
+    assert "clearTimeout(activeBurstTimer);" in source
+    assert source.count("clearTimeout(activeBurstTimer);") >= 2, (
+        "stopPolling 路径与 closeSocket/卸载路径都应清理活跃窗口定时器"
+    )

@@ -7,6 +7,7 @@ import pytest
 
 from app.schemas.browser import BrowserSnapshot
 from app.services.ai.browser.browser_worker import BrowserTargetStale, BrowserWorker
+from app.services.ai.browser.browser_worker import VIEWER_FRAME_KEEP, VIEWER_SCREENSHOT_KEEP
 from app.services.ai.browser.browser_worker import _BrowserHandle
 
 
@@ -1778,3 +1779,141 @@ def test_slider_trajectory_never_yields_complex_delays():
     points = _slider_points(320)
 
     assert all(isinstance(delay, float) for _x, _y, delay in points)
+
+
+class RecordingScreenshotPage(FakePage):
+    """记录 screenshot 关键字参数，用于断言编码格式的选择。"""
+
+    def __init__(self):
+        super().__init__()
+        self.screenshot_calls: list[dict] = []
+
+    async def screenshot(self, path, **kwargs):
+        self.screenshot_calls.append(kwargs)
+        Path(path).write_bytes(b"img")
+
+
+async def _open_worker_with_session(tmp_path, fake_playwright, session_id: str) -> BrowserWorker:
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=str(tmp_path),
+    )
+    await worker.open(
+        session_id=session_id,
+        profile_path=str(tmp_path / f"profile-{session_id}"),
+        url="https://www.baidu.com/",
+    )
+    return worker
+
+
+@pytest.mark.asyncio
+async def test_viewer_frame_skips_page_text_and_leaves_agent_cache_untouched(tmp_path):
+    """面板帧必须与 Agent 快照分家。
+
+    面板每 5 秒轮询一次，此前复用 Agent 的 snapshot()：既白白抓一遍页面正文
+    （page_text 的 innerText 加上 visibleText() 的逐节点 getComputedStyle），
+    又会挤占 Agent 的 target_ref 缓存名额，还会把 AI 的验证码状态机一并重置。
+    """
+    fake_playwright = FakePlaywright()
+    worker = await _open_worker_with_session(tmp_path, fake_playwright, "bs-viewer")
+    page = fake_context_page(fake_playwright)
+
+    page.evaluate_scripts.clear()
+    frame = await worker.viewer_frame("bs-viewer")
+    viewer_scripts = "\n".join(page.evaluate_scripts)
+
+    # 1) 不抓正文：visibleText() 是整条链路最重的一步，page_text 是第二次 innerText
+    assert "visibleText" not in viewer_scripts
+    assert "page_text" not in viewer_scripts
+    # 2) 面板帧不写 Agent 的 target_ref 缓存
+    assert "bs-viewer" not in worker._snapshots
+    # 3) 面板帧有自己的缓存，且能按 snapshot_id 取回
+    assert worker.cached_viewer_frame("bs-viewer", frame.snapshot_id) is frame
+    # 4) elements 仍要保留：前端靠 bbox/name 渲染悬停元素标签
+    assert frame.elements
+    # 5) page_state 照常给出：验证码 HUD 依赖它
+    assert frame.page_state == "ready"
+    # 6) 未知 snapshot_id 必须报"过期"，不能静默返回
+    with pytest.raises(ValueError):
+        worker.cached_viewer_frame("bs-viewer", "not-a-frame")
+
+    # 对照组：Agent 快照仍然抓正文，且照常写入自己的缓存
+    page.evaluate_scripts.clear()
+    await worker.snapshot("bs-viewer")
+    agent_scripts = "\n".join(page.evaluate_scripts)
+    assert "visibleText" in agent_scripts
+    assert "page_text" in agent_scripts
+    assert "bs-viewer" in worker._snapshots
+
+
+@pytest.mark.asyncio
+async def test_viewer_frame_cache_is_bounded(tmp_path):
+    """面板帧缓存必须有界：面板每 5 秒一帧，无上限会随会话时长无限增长。"""
+    fake_playwright = FakePlaywright()
+    worker = await _open_worker_with_session(tmp_path, fake_playwright, "bs-ring")
+
+    frames = [await worker.viewer_frame("bs-ring") for _ in range(VIEWER_FRAME_KEEP + 3)]
+
+    assert len(worker._viewer_frames["bs-ring"]) == VIEWER_FRAME_KEEP
+    assert worker.cached_viewer_frame("bs-ring", frames[-1].snapshot_id) is frames[-1]
+    with pytest.raises(ValueError):
+        worker.cached_viewer_frame("bs-ring", frames[0].snapshot_id)
+
+
+@pytest.mark.asyncio
+async def test_frames_are_encoded_as_webp_and_bounded_on_disk(tmp_path):
+    """截图换 WebP，并按会话环形保留。
+
+    帧文件名带 snapshot_id 因而永不覆盖，5 秒一帧等于每小时数百个文件；此前全仓
+    没有任何回收路径（只有 Chromium 进程会被空闲清理），面板开一下午就能在
+    data/uploads/browser 堆出上百 MB 的常驻垃圾。
+    """
+    fake_playwright = FakePlaywright()
+    worker = await _open_worker_with_session(tmp_path, fake_playwright, "bs-shots")
+    recording = RecordingScreenshotPage()
+    worker._handles["bs-shots"].page = recording
+
+    for _ in range(VIEWER_SCREENSHOT_KEEP + 4):
+        await worker.viewer_frame("bs-shots")
+
+    # 首选 WebP：同画质比 JPEG 小 25%~35%，且没有 JPEG 的文字振铃
+    assert recording.screenshot_calls
+    assert all(call.get("type") == "webp" for call in recording.screenshot_calls)
+    assert all(call.get("quality") == 75 for call in recording.screenshot_calls)
+
+    assert len(list(tmp_path.glob("bs-shots_*"))) == VIEWER_SCREENSHOT_KEEP, (
+        "截图必须按会话环形保留，不能随会话时长无限增长"
+    )
+
+    # 会话关闭后不留残余
+    await worker.close("bs-shots")
+    assert not list(tmp_path.glob("bs-shots_*"))
+
+
+@pytest.mark.asyncio
+async def test_viewer_frame_falls_back_to_jpeg_when_webp_is_unsupported(tmp_path):
+    """老环境不支持 WebP 时必须自动降级，且不留下 0 字节的空帧。"""
+    fake_playwright = FakePlaywright()
+    worker = await _open_worker_with_session(tmp_path, fake_playwright, "bs-fallback")
+
+    class NoWebpPage(FakePage):
+        def __init__(self):
+            super().__init__()
+            self.calls: list[dict] = []
+
+        async def screenshot(self, path, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("type") == "webp":
+                raise ValueError("unsupported image type")
+            Path(path).write_bytes(b"img")
+
+    fallback = NoWebpPage()
+    worker._handles["bs-fallback"].page = fallback
+
+    frame = await worker.viewer_frame("bs-fallback")
+
+    assert frame.screenshot_ref is not None
+    assert frame.screenshot_ref.endswith(".jpeg")
+    assert not list(tmp_path.glob("bs-fallback_*.webp")), "降级后不得残留空 WebP 文件"
+    assert Path(frame.screenshot_ref).is_file()

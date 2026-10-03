@@ -346,6 +346,51 @@ async def test_browser_runtime_keeps_recent_ai_snapshot_when_viewer_refreshes():
 
 
 @pytest.mark.asyncio
+async def test_browser_runtime_viewer_frame_bypasses_agent_snapshot_bookkeeping():
+    """面板取帧必须绕开 Agent 的快照记账。
+
+    _remember_snapshot_locked 在 page_state 非 captcha 时会清空验证码重试额度、
+    解除"已放弃自动解算"与"入口按钮已点击"的记忆。面板每 5 秒自动轮询一次，
+    若共用该路径，就等于每 5 秒把 AI 的验证码状态机重置一遍；同时面板帧还会
+    挤占 Agent 的 5 个 snapshot 名额，让 AI 多步操作稍慢就拿到 target 过期。
+    """
+    worker = ControlProbeWorker()
+    ai_snapshot = BrowserSnapshot(
+        session_id="session-1",
+        snapshot_id="snapshot-ai",
+        url="https://example.com/",
+        title="Example",
+    )
+    viewer_frame = BrowserSnapshot(
+        session_id="session-1",
+        snapshot_id="frame-viewer",
+        url="https://example.com/",
+        title="Example",
+    )
+    worker.snapshot = AsyncMock(return_value=ai_snapshot)
+    worker.viewer_frame = AsyncMock(return_value=viewer_frame)
+    runtime = BrowserRuntime(worker=worker)
+
+    await runtime.snapshot("session-1")
+    # 制造一份「AI 已放弃自动解算」的状态，面板轮询不得把它抹掉
+    runtime._captcha_gave_up.add("session-1")
+    runtime._captcha_attempts["session-1"] = CAPTCHA_MAX_ATTEMPTS
+
+    result = await runtime.viewer_frame("session-1")
+
+    assert result is viewer_frame
+    worker.viewer_frame.assert_awaited_once_with("session-1")
+    # 面板帧不进 Agent 的 snapshot 表
+    with pytest.raises(ValueError):
+        runtime.cached_snapshot("session-1", "frame-viewer")
+    # AI 自己的快照仍在
+    assert runtime.cached_snapshot("session-1", "snapshot-ai") is ai_snapshot
+    # 面板帧不得重置 AI 的验证码状态机
+    assert "session-1" in runtime._captcha_gave_up
+    assert runtime._captcha_attempts["session-1"] == CAPTCHA_MAX_ATTEMPTS
+
+
+@pytest.mark.asyncio
 async def test_browser_runtime_scrolls_and_remembers_the_fresh_snapshot():
     worker = ControlProbeWorker()
     scrolled = BrowserSnapshot(

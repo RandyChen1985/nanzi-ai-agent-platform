@@ -365,8 +365,12 @@ async def get_browser_screenshot(
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="浏览器截图已过期，请刷新页面")
                 try:
                     snapshot = browser_runtime.cached_snapshot(session.id, snapshot_id)
-                except ValueError as exc:
-                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="浏览器截图已过期，请刷新页面") from exc
+                except ValueError:
+                    # 面板帧走独立的 viewer 缓存，不会出现在 Agent 的 snapshot 表里。
+                    try:
+                        snapshot = browser_runtime.cached_viewer_frame(session.id, snapshot_id)
+                    except ValueError as exc:
+                        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="浏览器截图已过期，请刷新页面") from exc
             else:
                 if not browser_runtime.has_session(session.id):
                     await browser_runtime.open_session(db, session)
@@ -377,16 +381,53 @@ async def get_browser_screenshot(
     screenshot_ref = snapshot.screenshot_ref
     if not screenshot_ref or not Path(screenshot_ref).is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="浏览器截图不存在")
-    is_jpeg = screenshot_ref.endswith(".jpeg") or screenshot_ref.endswith(".jpg")
-    media_type = "image/jpeg" if is_jpeg else "image/png"
-    filename = f"{session_id}.jpeg" if is_jpeg else f"{session_id}.png"
-    return FileResponse(screenshot_ref, media_type=media_type, filename=filename)
+    suffix = Path(screenshot_ref).suffix.lower()
+    media_type = {
+        ".jpeg": "image/jpeg",
+        ".jpg": "image/jpeg",
+        ".webp": "image/webp",
+    }.get(suffix, "image/png")
+    # 文件名带 snapshot_id、内容永不变化，因此可以放心让浏览器长时间复用同一帧，
+    # 拖拽与断线重连时就不必为了同一张图再跑一趟。
+    return FileResponse(
+        screenshot_ref,
+        media_type=media_type,
+        filename=f"{session_id}{suffix or '.png'}",
+        headers={"Cache-Control": "private, max-age=60, immutable"},
+    )
+
+
+# 面板只消费这些字段。此前用 model_dump() 全量下发，于是每 5 秒一帧都会把只有 Agent
+# 才需要的 page_text（6000 字符）与 visible_text（12000 字符）一并推给前端，纯占带宽。
+_VIEWER_SNAPSHOT_FIELDS = frozenset(
+    {
+        "session_id",
+        "snapshot_id",
+        "tab_id",
+        "url",
+        "title",
+        "page_state",
+        "page_status",
+        "scroll_x",
+        "scroll_y",
+        "can_go_back",
+        "can_go_forward",
+        "viewport_width",
+        "viewport_height",
+        "document_width",
+        "document_height",
+        "elements",
+    }
+)
 
 
 def _viewer_snapshot_payload(session_id: str, snapshot) -> dict[str, Any]:
-    payload = snapshot.model_dump(mode="json")
-    if snapshot.screenshot_ref:
-        payload["screenshot_ref"] = f"/api/v1/chat/browser/sessions/{session_id}/screenshot"
+    payload = snapshot.model_dump(mode="json", include=set(_VIEWER_SNAPSHOT_FIELDS))
+    payload["screenshot_ref"] = (
+        f"/api/v1/chat/browser/sessions/{session_id}/screenshot"
+        if snapshot.screenshot_ref
+        else None
+    )
     return payload
 
 
@@ -421,8 +462,13 @@ async def _captcha_auto_solve_worker(session_id: str) -> None:
 
 
 async def _viewer_snapshot(session_id: str) -> Any:
-    """Viewer 取快照：先返回画面，验证码解算交给后台任务，避免阻塞人工操作。"""
-    snapshot = await browser_runtime.snapshot(session_id, auto_solve=False)
+    """Viewer 取帧：走轻量的 viewer_frame 通道，验证码解算交给后台任务不阻塞人工操作。
+
+    刻意不用 browser_runtime.snapshot()：那是给 Agent 用的完整快照，除了白算
+    page_text / visible_text，还会挤占 Agent 的快照缓存、并把 AI 的验证码状态机
+    每 5 秒重置一次。
+    """
+    snapshot = await browser_runtime.viewer_frame(session_id)
     if snapshot.page_state == "captcha":
         _schedule_captcha_auto_solve(session_id)
     return snapshot

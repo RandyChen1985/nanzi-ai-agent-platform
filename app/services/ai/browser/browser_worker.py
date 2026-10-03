@@ -271,6 +271,17 @@ SNAPSHOT_JS = r"""
 """
 SNAPSHOT_PAGE_TEXT_LIMIT = 6000
 SNAPSHOT_VISIBLE_TEXT_LIMIT = 12000
+# —— Viewer（右侧面板）取帧与 Agent 快照刻意分家 ——
+# 面板帧只服务"给人看画面"：不抓页面正文、不建 target_ref 映射、也不写 Agent 快照缓存。
+# 此前两者共用同一条 snapshot() 通道，代价有三：
+#   1) 每 5 秒白白跑一遍 innerText + 全节点 getComputedStyle（panel 根本不消费这两个字段）；
+#   2) 面板帧会挤占 Agent 的 5 个 snapshot 名额，AI 多步操作稍慢就拿到 target 过期；
+#   3) 面板帧会误触发"页面已恢复即清零验证码重试额度 / 解除已放弃记忆"的副作用。
+VIEWER_FRAME_KEEP = 5
+# 截图文件按会话环形保留：runtime 侧只记最近 5 个快照，留 8 帧足够兜住手动刷新与重连。
+VIEWER_SCREENSHOT_KEEP = 8
+# 帧截图前的渲染稳定等待预算：仅在 document.readyState 仍未 complete 时才启用。
+VIEWER_FRAME_SETTLE_MS = 900
 SNAPSHOT_SETTLE_DELAY_MS = 150
 DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 1800  # 30 分钟无操作自动清理空闲 Chromium 实例
 # 动作失败时的自动恢复次数：stale/超时错误先刷新快照再重试，避免一次性失败直接中断流程。
@@ -533,6 +544,8 @@ class BrowserWorker:
         self._playwright_context_manager = None
         self._handles: dict[str, _BrowserHandle] = {}
         self._snapshots: dict[str, dict[str, dict[str, Any]]] = {}
+        # Viewer 帧独立缓存：只放面板帧自身，绝不与 Agent 的 _snapshots（target_ref 映射）混用。
+        self._viewer_frames: dict[str, dict[str, BrowserSnapshot]] = {}
         self._cached_chromium_version: str | None = None
 
     async def _ensure_playwright(self) -> Any:
@@ -1098,11 +1111,17 @@ class BrowserWorker:
                     continue
                 raise
 
-    async def _snapshot_once(self, session_id: str) -> BrowserSnapshot:
+    async def _snapshot_once(self, session_id: str, *, viewer: bool = False) -> BrowserSnapshot:
         handle = self._handle(session_id)
         info = await self._page_info(handle.page)
         captcha_detected, _captcha_reason = await self._detect_captcha(handle.page)
-        page_context = await self._snapshot_page_context(handle.page)
+        # Viewer 帧不取页面正文：page_text / visible_text 需要 innerText 与"逐节点
+        # getComputedStyle + getBoundingClientRect"（强制同步布局），而面板一个字段都不消费。
+        page_context = (
+            await self._viewer_page_context(handle.page)
+            if viewer
+            else await self._snapshot_page_context(handle.page)
+        )
         # 主文档元素抓取走原 page.locator("body *") 路径（CSS 选择器默认穿透 open shadow DOM，
         # 保证 _node_index 能通过 nth() 稳定重定位）；返回值按帧分组：main 帧 frame_index=None。
         locator = handle.page.locator(SNAPSHOT_NODE_SELECTOR)
@@ -1155,16 +1174,16 @@ class BrowserWorker:
                     bbox=item.get("bbox"),
                 )
                 elements.append(element)
-                target_map[ref] = item
-        if session_id not in self._snapshots:
-            self._snapshots[session_id] = {}
-        self._snapshots[session_id][snapshot_id] = target_map
-        if len(self._snapshots[session_id]) > 5:
-            oldest_key = next(iter(self._snapshots[session_id]))
-            self._snapshots[session_id].pop(oldest_key, None)
-
-        screenshot_ref = await self._capture_screenshot(handle.page, session_id, snapshot_id)
-        return BrowserSnapshot(
+                if not viewer:
+                    # target_ref 映射只服务 Agent 的动作定位；面板帧只用 bbox/name 做悬停标签。
+                    target_map[ref] = item
+        screenshot_ref = await self._capture_screenshot(
+            handle.page,
+            session_id,
+            snapshot_id,
+            settle_ms=VIEWER_FRAME_SETTLE_MS if viewer else 0,
+        )
+        snapshot = BrowserSnapshot(
             session_id=session_id,
             snapshot_id=snapshot_id,
             tab_id=self._tab_id(handle, handle.page),
@@ -1185,6 +1204,18 @@ class BrowserWorker:
             page_text=page_context.get("page_text", ""),
             visible_text=page_context.get("visible_text", ""),
         )
+        if viewer:
+            # 面板帧只进 viewer 缓存：既不挤占 Agent 的 snapshot 名额，也不会误触发
+            # Agent 侧"页面已恢复即清零验证码重试额度 / 解除已放弃记忆"的副作用。
+            self._remember_viewer_frame(session_id, snapshot)
+        else:
+            if session_id not in self._snapshots:
+                self._snapshots[session_id] = {}
+            self._snapshots[session_id][snapshot_id] = target_map
+            if len(self._snapshots[session_id]) > 5:
+                oldest_key = next(iter(self._snapshots[session_id]))
+                self._snapshots[session_id].pop(oldest_key, None)
+        return snapshot
 
     async def _snapshot_page_context(self, page: Any) -> dict[str, Any]:
         evaluate = getattr(page, "evaluate", None)
@@ -1267,6 +1298,67 @@ class BrowserWorker:
                 context[key] = None
         context["page_text"] = str(result.get("page_text") or "")[:SNAPSHOT_PAGE_TEXT_LIMIT]
         context["visible_text"] = str(result.get("visible_text") or "")[:SNAPSHOT_VISIBLE_TEXT_LIMIT]
+        return context
+
+    async def _viewer_page_context(self, page: Any) -> dict[str, Any]:
+        """面板帧专用的轻量页面上下文：只要滚动位置与视口/文档尺寸，不碰页面正文。
+
+        对应地跳过 _snapshot_page_context 里的 body.innerText 与 visibleText()。后者对
+        每个节点调用 getComputedStyle + getBoundingClientRect（典型的强制同步布局），
+        是整条轮询链路上最重的一步，而面板并不消费 page_text / visible_text 这两个字段。
+        """
+        evaluate = getattr(page, "evaluate", None)
+        if not callable(evaluate):
+            return {}
+        try:
+            result = await _maybe_await(
+                evaluate(
+                    r"""
+                    () => {
+                      const root = document.documentElement;
+                      const body = document.body;
+                      let canGoBack = false;
+                      let canGoForward = false;
+                      try {
+                        if (window.navigation) {
+                          canGoBack = Boolean(window.navigation.canGoBack);
+                          canGoForward = Boolean(window.navigation.canGoForward);
+                        } else if (window.history) {
+                          canGoBack = (window.history.length || 0) > 1;
+                        }
+                      } catch (e) {}
+                      return {
+                        scroll_x: Math.round(window.scrollX || 0),
+                        scroll_y: Math.round(window.scrollY || 0),
+                        can_go_back: canGoBack,
+                        can_go_forward: canGoForward,
+                        viewport_width: Math.round(window.innerWidth || 0),
+                        viewport_height: Math.round(window.innerHeight || 0),
+                        document_width: Math.max(root?.scrollWidth || 0, body?.scrollWidth || 0),
+                        document_height: Math.max(root?.scrollHeight || 0, body?.scrollHeight || 0),
+                      };
+                    }
+                    """
+                )
+            )
+        except Exception:
+            return {}
+        if not isinstance(result, dict):
+            return {}
+        context: dict[str, Any] = {}
+        for key in ("scroll_x", "scroll_y"):
+            try:
+                context[key] = float(result.get(key) or 0)
+            except (TypeError, ValueError):
+                context[key] = 0
+        context["can_go_back"] = bool(result.get("can_go_back", False))
+        context["can_go_forward"] = bool(result.get("can_go_forward", False))
+        for key in ("viewport_width", "viewport_height", "document_width", "document_height"):
+            try:
+                value = result.get(key)
+                context[key] = int(value) if value is not None else None
+            except (TypeError, ValueError):
+                context[key] = None
         return context
 
     def has_session(self, session_id: str) -> bool:
@@ -2186,21 +2278,110 @@ class BrowserWorker:
         self._snapshots.pop(session_id, None)
         return await self._page_info(handle.page, focused_input=focused_input)
 
-    async def _capture_screenshot(self, page: Any, session_id: str, snapshot_id: str) -> str | None:
+    async def _wait_frame_settle(self, page: Any, budget_ms: int) -> None:
+        """帧截图前的极短渲染稳定等待，且仅在页面确实还在加载时才启用。
+
+        面板帧此前不做任何等待：AI 刚点击/导航完就截图，用户很容易看到半渲染画面
+        （captcha_solver 早前修过同一个问题）。这里刻意与 captcha 不同——预算小得多、
+        且任何失败都忽略，因为面板要的是"尽快看到最新画面"，不能因为等待而卡住。
+        """
+        # _network_idle_or_timeout 在 wait_for_load_state 不可用时会在无 await 的
+        # 循环里空转到 deadline，因此这里先行挡住。
+        if not callable(getattr(page, "wait_for_load_state", None)):
+            return
+        evaluate = getattr(page, "evaluate", None)
+        if callable(evaluate):
+            try:
+                state = await _maybe_await(evaluate("() => document.readyState"))
+            except Exception:
+                return
+            if str(state or "").strip() == "complete":
+                return
+        try:
+            await self._network_idle_or_timeout(page, max(0.1, budget_ms / 1000.0))
+        except Exception:
+            pass
+
+    def _prune_screenshots(self, directory: Path, safe_session_id: str) -> None:
+        """按会话环形保留最近若干帧截图。
+
+        截图文件名带 snapshot_id 因而永不覆盖；面板每 5 秒一帧意味着每小时数百个文件，
+        而此前全仓没有任何回收路径（只有 Chromium 进程会被空闲清理），
+        面板开一下午就能在 data/uploads/browser 堆出上百 MB 的常驻垃圾。
+        """
+        try:
+            candidates = sorted(
+                directory.glob(f"{safe_session_id}_*"),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            return
+        for stale in candidates[VIEWER_SCREENSHOT_KEEP:]:
+            try:
+                stale.unlink()
+            except OSError:
+                continue
+
+    async def _capture_screenshot(
+        self,
+        page: Any,
+        session_id: str,
+        snapshot_id: str,
+        *,
+        settle_ms: int = 0,
+    ) -> str | None:
         if not self._screenshot_dir:
             return None
         directory = Path(self._screenshot_dir)
         directory.mkdir(parents=True, exist_ok=True)
         safe_session_id = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:80] or "session"
-        path = directory / f"{safe_session_id}_{snapshot_id}.jpeg"
+        if settle_ms > 0:
+            await self._wait_frame_settle(page, settle_ms)
+        # WebP 在 UI/文字截图场景下同画质比 JPEG 小 25%~35%，且没有 JPEG 的文字振铃。
+        path = directory / f"{safe_session_id}_{snapshot_id}.webp"
         try:
-            await page.screenshot(path=str(path), type="jpeg", quality=75, full_page=False)
+            await page.screenshot(path=str(path), type="webp", quality=75, full_page=False)
         except Exception:
+            path.unlink(missing_ok=True)
+            path = directory / f"{safe_session_id}_{snapshot_id}.jpeg"
             try:
-                await page.screenshot(path=str(path), full_page=False)
+                await page.screenshot(path=str(path), type="jpeg", quality=75, full_page=False)
             except Exception:
-                return None
+                try:
+                    await page.screenshot(path=str(path), full_page=False)
+                except Exception:
+                    return None
+        self._prune_screenshots(directory, safe_session_id)
         return str(path)
+
+    def _remember_viewer_frame(self, session_id: str, snapshot: BrowserSnapshot) -> None:
+        frames = self._viewer_frames.setdefault(session_id, {})
+        frames[snapshot.snapshot_id] = snapshot
+        while len(frames) > VIEWER_FRAME_KEEP:
+            frames.pop(next(iter(frames)), None)
+
+    def cached_viewer_frame(self, session_id: str, snapshot_id: str) -> BrowserSnapshot:
+        frames = self._viewer_frames.get(session_id)
+        if not isinstance(frames, dict) or snapshot_id not in frames:
+            raise ValueError("浏览器截图已过期，请刷新页面")
+        return frames[snapshot_id]
+
+    async def viewer_frame(self, session_id: str) -> BrowserSnapshot:
+        """产出一帧"只给人看"的面板画面。
+
+        与 snapshot() 的关键差别：不抓页面正文、不建 target_ref 映射、不写 Agent 快照缓存，
+        因此既不会挤掉 AI 正在使用的 snapshot，也不会误触发 Agent 侧的验证码状态机副作用。
+        """
+        for attempt in range(2):
+            try:
+                return await self._snapshot_once(session_id, viewer=True)
+            except Exception as exc:
+                if attempt == 0 and _is_navigation_context_error(exc):
+                    await asyncio.sleep(0.05)
+                    continue
+                raise
+        raise RuntimeError("浏览器帧获取失败")
 
     def _target(self, session_id: str, snapshot: BrowserSnapshot, target_ref: str) -> dict[str, Any]:
         handle = self._handle(session_id)
@@ -2527,9 +2708,27 @@ class BrowserWorker:
 
         return exec_
 
+    def _purge_session_screenshots(self, session_id: str) -> None:
+        """会话结束时清掉它留下的全部截图——会话都关了，帧就没有保留必要。"""
+        if not self._screenshot_dir:
+            return
+        directory = Path(self._screenshot_dir)
+        safe_session_id = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:80] or "session"
+        try:
+            stale_files = list(directory.glob(f"{safe_session_id}_*"))
+        except OSError:
+            return
+        for stale in stale_files:
+            try:
+                stale.unlink()
+            except OSError:
+                continue
+
     async def close(self, session_id: str) -> None:
         handle = self._handles.pop(session_id, None)
         self._snapshots.pop(session_id, None)
+        self._viewer_frames.pop(session_id, None)
+        self._purge_session_screenshots(session_id)
         if handle is None:
             return
         await _maybe_await(handle.context.close())

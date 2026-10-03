@@ -717,6 +717,20 @@ class BrowserRuntime:
             return raw_snapshot
         return await self.auto_solve_captcha(session_id, raw_snapshot)
 
+    async def viewer_frame(self, session_id: str) -> BrowserSnapshot:
+        """面板取帧：与 Agent 快照刻意分家，只产出"给人看"的一帧。
+
+        这里刻意不走 _remember_snapshot_locked —— 那一侧在 page_state 非 captcha 时会
+        顺手清空验证码重试额度、解除"已放弃解算"与"入口按钮已点击"的记忆。面板每 5 秒
+        自动轮询一次，若共用该路径，等于每 5 秒把 AI 的验证码状态机重置一遍；
+        同时面板帧还会挤占 Agent 的 5 个 snapshot 名额，让 AI 多步操作稍慢就拿到 target 过期。
+        """
+        async with self._session_lock(session_id):
+            return await self.worker.viewer_frame(session_id)
+
+    def cached_viewer_frame(self, session_id: str, snapshot_id: str) -> BrowserSnapshot:
+        return self.worker.cached_viewer_frame(session_id, snapshot_id)
+
     async def auto_solve_captcha(
         self, session_id: str, snapshot: BrowserSnapshot | None = None
     ) -> BrowserSnapshot:

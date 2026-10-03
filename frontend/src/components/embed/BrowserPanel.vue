@@ -1341,7 +1341,11 @@ type BrowserSnapshot = {
   page_state?: string | null;
 };
 type RemotePoint = { x: number; y: number };
+// 空闲节奏：没人在意画面变化时就该省着取帧。
 const BROWSER_PANEL_REFRESH_INTERVAL_MS = 5000;
+// 活跃节奏：AI 刚点击/跳转时用户正盯着面板，此时临时提频追几帧。
+const BROWSER_PANEL_ACTIVE_INTERVAL_MS = 1200;
+const BROWSER_PANEL_ACTIVE_BURST_MS = 10000;
 
 const props = defineProps<{
   visible: boolean;
@@ -2292,6 +2296,7 @@ const loadingStage = computed(() => {
 });
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let activeBurstTimer: ReturnType<typeof setTimeout> | null = null;
 let interactionFinishTimer: ReturnType<typeof setTimeout> | null = null;
 let messageResetTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -2309,6 +2314,48 @@ const stopPolling = () => {
   if (!pollTimer) return;
   clearInterval(pollTimer);
   pollTimer = null;
+};
+
+// —— 轮询节奏与可见性 ——
+// 固定 5 秒的毛病是"最该看的那一刻反而最慢"：AI 刚点击/跳转时用户正盯着面板，
+// 却要等满一整个周期才看到新画面；而页面完全静止时，每 5 秒全量取帧又是纯浪费。
+// 另外标签页切到后台时没人看画面，此前仍在每 5 秒跑一次全量快照 + 截图。
+let pageHidden = typeof document !== 'undefined' && document.hidden;
+let activeBurstUntil = 0;
+
+const currentPollIntervalMs = () =>
+  Date.now() < activeBurstUntil
+    ? BROWSER_PANEL_ACTIVE_INTERVAL_MS
+    : BROWSER_PANEL_REFRESH_INTERVAL_MS;
+
+const exitActiveBurst = () => {
+  activeBurstTimer = null;
+  activeBurstUntil = 0;
+  // 降回空闲节奏：startPolling 会按新间隔重建定时器
+  if (pollTimer) startPolling();
+};
+
+const enterActiveBurst = () => {
+  const wasActive = Date.now() < activeBurstUntil;
+  activeBurstUntil = Date.now() + BROWSER_PANEL_ACTIVE_BURST_MS;
+  if (activeBurstTimer) clearTimeout(activeBurstTimer);
+  activeBurstTimer = setTimeout(exitActiveBurst, BROWSER_PANEL_ACTIVE_BURST_MS);
+  // 已在活跃窗口内就绝不重建定时器：密集的 ai_action 会把间隔无限重置，
+  // 定时器永远不到期，画面反而一帧都不刷新。
+  if (!wasActive && pollTimer) startPolling();
+};
+
+const handleVisibilityChange = () => {
+  pageHidden = typeof document !== 'undefined' && document.hidden;
+  if (pageHidden) {
+    // 标签页不可见：没人看画面，截图与全量快照都没有意义，直接停掉整条轮询。
+    stopPolling();
+    return;
+  }
+  if (!connected.value) return;
+  // 回到前台先补一帧：否则用户看到的是切走之前那张旧图，还要再等满一个周期。
+  requestSnapshot();
+  startPolling();
 };
 
 const stopInteractionFinishTimer = () => {
@@ -2330,6 +2377,11 @@ const closeSocket = () => {
   stopPolling();
   stopInteractionFinishTimer();
   stopInteractionSnapshot();
+  if (activeBurstTimer) {
+    clearTimeout(activeBurstTimer);
+    activeBurstTimer = null;
+  }
+  activeBurstUntil = 0;
   interactionInProgress.value = false;
   snapshotRequestInFlight.value = false;
   if (socket.value) {
@@ -2468,6 +2520,8 @@ const connect = async () => {
       }
     } else if (payload.type === 'ai_action') {
       if (payload.action) {
+        // AI 正在操作：此刻用户最需要看到画面变化，临时提频追帧。
+        enterActiveBurst();
         currentAiAction.value = {
           action: payload.action,
           detail: payload.detail || '',
@@ -2624,7 +2678,9 @@ const startPolling = () => {
   // 只是「正在操作的那几秒」（interactionInProgress）。早先这里连同下面
   // finishInteraction 不重启轮询，导致人工双击跳转后画面永远停在旧截图。
   if (autoRefreshPaused.value || interactionInProgress.value || captchaDetected.value || !connected.value) return;
-  pollTimer = setInterval(requestSnapshot, BROWSER_PANEL_REFRESH_INTERVAL_MS);
+  // 标签页在后台时不轮询：没人看画面，取帧纯属白烧服务端 CPU 与磁盘。
+  if (pageHidden) return;
+  pollTimer = setInterval(requestSnapshot, currentPollIntervalMs());
 };
 
 const pauseAutoRefresh = () => {
@@ -3277,6 +3333,7 @@ watch(() => props.refreshSignal, () => {
   // 人工接管空闲时同样要取帧：refreshSignal 表示「远程页面已经变了」，
   // 与轮询同理，真正该跳过的只是正在操作的那几秒。
   if (autoRefreshPaused.value || interactionInProgress.value || captchaDetected.value) return;
+  if (pageHidden) return;
   requestSnapshot();
 });
 
@@ -3289,6 +3346,9 @@ onMounted(() => {
   mobileMq.addEventListener?.('change', syncMobile);
   window.addEventListener('resize', syncMobile);
   window.addEventListener('click', closeTabContextMenu);
+  // 后台标签页不轮询；回到前台时补一帧再恢复节奏。
+  pageHidden = typeof document !== 'undefined' && document.hidden;
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 });
 
 onUnmounted(() => {
@@ -3297,6 +3357,7 @@ onUnmounted(() => {
   mobileMq?.removeEventListener?.('change', syncMobile);
   window.removeEventListener('resize', syncMobile);
   window.removeEventListener('click', closeTabContextMenu);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
 });
 </script>
 
