@@ -11,6 +11,16 @@
 #   本次调整不改变任何人现有的检出行为。
 * text=auto
 
+# Shell 脚本必须以 LF 存储并检出。
+# 原因：脚本若以 CRLF 检出，首行 shebang 会变成 "#!/bin/bash\r"，系统会去找一个
+# 名为 "bash\r" 的解释器，在 WSL/Linux 下执行时直接报
+# "cannot execute: required file not found"。此规则只约束检出行为，不改变脚本内容。
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# .gitattributes 自身固定为 LF，避免被各平台来回转换
+.gitattributes text eol=lf
+
 # 明确声明二进制文件，避免被误判为文本而损坏
 *.png  binary
 *.jpg  binary
