@@ -1,0 +1,376 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.18.0
+  风格：深蓝渐变科技风 / 现代化精编版（卡片式阴影、微渐变、导读浅析）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等排版工具）
+  2. 封面图可在微信公众号后台直接使用 docs/release/1.0.18/release-cover-info.md 中的素材生成
+  3. 全部采用内联 style 样式，兼容微信图文排版规范
+-->
+
+<section style="box-sizing:border-box;max-width:760px;margin:0 auto;padding:0 2px;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;word-break:break-word;overflow-wrap:break-word;">
+
+  <!-- 标题区：科技感深蓝微渐变 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:linear-gradient(135deg,#060c1f 0%,#0f172a 48%,#1e293b 100%);box-shadow:0 4px 24px rgba(6,182,212,0.15);border-radius:6px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#38bdf8;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.18.0</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#cbd5e1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">Langfuse 链路追踪 · 自主注册与审核 · 全平台邮件服务 · 采样温度口径统一 · Slate Navy 界面焕新 · LF 行尾规范治理</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#0f172a;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#0f172a;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与商用。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、持续打磨生产级 AI 智能体技术栈。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #0284c7;background:#f0f9ff;border-radius:0 4px 4px 0;">
+    <p style="margin:0;font-size:14px;color:#0369a1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#0c4a6e;">GitHub 仓库：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 24px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#0f172a;">v1.0.18.0</strong> 版本！这是一次以<strong>全链路 AI 可观测性（Langfuse 链路追踪深度集成与直调链路统一埋点）、企业级账号与邮件安全闭环（自主注册申请审核 / 全平台邮件服务 / 忘记密码邮件找回 / 个人中心邮箱管理）</strong>为核心驱动，并全面推进<strong>AI 采样温度口径统一与真实上报、侧边栏 Modern Slate Navy 质感重构、仓库全量 LF 行尾治理（.gitattributes）及浏览器自动化交互优化</strong>的生产级加固版本。
+    </p>
+    <p style="margin:0;font-size:14px;color:#64748b;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">9ae58af6</code> 至 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">75ed5d96</code>，共 <strong>75 个提交</strong>（68 个非 Merge 提交），变更 <strong>276 个文件</strong>，<strong>53,576 行新增</strong>、<strong>12,919 行删除</strong>。
+    </p>
+  </section>
+
+  <!-- 升级提示 -->
+  <section style="margin:0 0 28px 0;padding:14px 16px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 4px 4px 0;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#92400e;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      ⚠️ 升级核心须知 (Upgrade Notes)
+    </p>
+    <ul style="margin:0;padding-left:18px;font-size:13px;color:#78350f;line-height:1.8;">
+      <li style="margin-bottom:6px;"><strong>数据库迁移必跑</strong>：新增 4 组数据库迁移（MySQL <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">V161 ~ V164</code> / PostgreSQL <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">V62 ~ V65</code>），涉及 Langfuse 配置表、自主注册配置、用户邮箱字段（唯一索引）及平台邮件服务配置。</li>
+      <li style="margin-bottom:6px;"><strong>换行符规范</strong>：仓库已加入 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">.gitattributes</code> 规范代码与 Shell 脚本统一为 LF。Windows 用户拉取后如遇脚本报错，建议执行 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">git checkout-index --force --all</code> 刷新本地工作区。</li>
+      <li><strong>改密会话安全失效</strong>：用户重置密码或修改密码后将自动注销该用户所有现存会话，属于预期内安全防盗号机制。</li>
+    </ul>
+  </section>
+
+  <!-- 章节一：核心特性 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心特性 (Key Features)
+    </p>
+
+    <!-- 特性卡片 1 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #0284c7;padding-left:10px;">
+        01 · 接入 Langfuse 链路追踪：AI 思考过程与 Token 消耗一目了然
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        告别大模型调用的“黑盒”时代，全面接入业内知名的开源可观测平台 Langfuse：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>整轮对话全透明</strong>：智能体思考了几秒、调用了哪些工具、回复花了多长时间，像看快递物流一样清晰透明，排查定位异常不再盲猜。</li>
+        <li><strong>成本账本清清楚楚</strong>：无论是多轮复杂对话，还是内部自动写 SQL、意图分析、总结摘要，每一笔大模型调用的响应速度与 Token 消耗全部精准统计。</li>
+        <li><strong>开箱即用与安全脱敏</strong>：在管理后台填入密钥即可直接测试连通，无需重启服务；自带敏感内容脱敏开关，只记性能与用量、不泄露隐私，省心又安全。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：Langfuse 配置页（独立 Tab、连接测试）、Langfuse 平台追踪流水详情（会话调用耗时瀑布流与 Token 消耗标签）</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 2 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #3b82f6;padding-left:10px;">
+        02 · 账号自主注册、审核看板与全平台邮件服务
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        企业级账号生命周期与通知安全闭环：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>自主注册与审核闭环</strong>：支持自主申请、输入期防抖查重、后台待审核看板与审核结果邮件触达。</li>
+        <li><strong>统一邮件服务 (SMTP)</strong>：新增系统配置邮件分组，统一发信底座，支持连通性自测，测试邮件强制发给自己防冒用。</li>
+        <li><strong>忘记密码防枚举安全找回</strong>：五态一致 200 返回，异步发信消除耗时侧信道，15 分钟单次原子核销，改密成功吊销全量现有会话。</li>
+        <li><strong>个人中心自服务</strong>：支持自助修改绑定邮箱；通知渠道状态真实对齐，邮件正文全面支持 Markdown 富文本。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：登录页「申请账号」弹窗与查重预检、用户管理后台「待审核」选项卡与审核弹窗、忘记密码重置界面与 Markdown 邮件预览</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 3 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #10b981;padding-left:10px;">
+        03 · AI 采样温度统一口径与真实上报
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        重塑全链路温度解析与上报一致性：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>全链路解析统一</strong>：确立「工具覆盖 &gt; 会话覆盖 &gt; 版本温度 &gt; 全局默认」优先级规则。</li>
+        <li><strong>精确放行 0.0 温度</strong>：修正真假值判定，彻底解决「设为 0 度被当成未设置」的问题，工具卡片与审计轨迹真实上报。</li>
+        <li><strong>启动加速</strong>：启动阶段跳过本地向量全量同步，服务启动耗时显著降低。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：执行时间线工具卡片展开（真实下发温度展示）、调试配置面板温度覆盖滑块与审计历史对比</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 4 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #6366f1;padding-left:10px;">
+        04 · Modern Slate Navy 界面焕新与工程治理
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>侧边栏视觉重塑</strong>：深色主题改为 Modern Slate Navy 紧凑渐变色系，品牌名统一为 NanZi Agent / NanZi AI Agent，版本号本地展示 dev、生产展示数字版本。</li>
+        <li><strong>弹层遮罩 Teleport</strong>：统一挂载至 body 根节点，彻底解决遮罩遮不满视口的问题；嵌入式个人中心增加优雅骨架等待与宽限降级。</li>
+        <li><strong>仓库全量 LF 治理</strong>：引入 .gitattributes 规范，全量文件转为 LF，为 Shell 脚本固定 eol=lf，消灭跨平台报错。</li>
+        <li><strong>长期测试基线大清理</strong>：收敛 Mock 漂移与跨用例上下文泄漏，大幅清理长期遗留失败用例。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：侧边栏 Modern Slate Navy 深色主题界面效果、紧凑化品牌区、全站统一 Teleport 遮罩弹层</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 5 -->
+    <section style="margin:0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #06b6d4;padding-left:10px;">
+        05 · 自动化浏览器与交互体验优化
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>取帧与快照解耦</strong>：前端面板抓帧走轻量独立通道，不占 Agent 快照名额，不碰状态机；WebP 压缩并环形保留 8 帧，离线自动暂停。</li>
+        <li><strong>解算可视化与平滑接管</strong>：多模态识别结果动态可视化展示；AI 解算遇阻时平滑转人工，人工介入即刻中止 AI 解算，操作后自动追帧校验。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：自动化浏览器右侧监控面板、验证码解算 HUD 准星与轨迹回放、人机平滑接管提示卡片</p>
+      </section>
+    </section>
+  </section>
+
+  <!-- 章节二：Bug Fixes -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🐛 缺陷修复 (Bug Fixes)
+    </p>
+
+    <!-- 缺陷分类 1 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🧠 AI 运行时 / 链路追踪
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">Langfuse 默认过滤器丢弃根 span</strong>：默认上报过滤器仅认自家插桩，重写 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">should_export_span</code> 精确放行平台命名空间。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">Langfuse 重建 client 阻塞事件循环</strong>：关闭旧 client 改为后台异步任务处理，配置无实质变动时跳过无谓重建。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">直调 span 篡改外层 Trace 标识</strong>：解耦 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">identity_attributes()</code>，直调 span 仅绑定会话与用户，保留外层 Trace 名称完整性。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">采样温度设为 0.0 被当作未设置</strong>：修正以真假值判定的逻辑，数值型解析器正确放行 0.0 绝对严谨温度。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">沙箱执行步骤日志被自身子步骤遮挡</strong>：优化执行时间线日志流收集结构，确保父命令与容器终端输出分层呈现。</p>
+    </section>
+
+    <!-- 缺陷分类 2 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🔐 账号认证 / 邮件通知 / 安全风控
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">忘记密码接口存在邮箱枚举攻击面</strong>：统一各分支（不存在/待审核/限流/成功）返回一致成功消息，异步发信消除耗时侧信道。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">重置密码核销失败却提前作废 Token</strong>：调整为前置只读校验账号状态与密码复杂度，保存时刻原子 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">GETDEL</code> 一次性核销。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">改密后既有泄露会话依旧有效</strong>：重置密码或修改密码成功后立即全量吊销旧会话凭据，强制重新鉴权登录。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">邮件测试接口存在开放代发风险</strong>：连通性测试邮件强制限定发给当前登录用户自身邮箱，严防凭据冒用。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">自定义 SMTP 加密方式被硬编码为 SSL</strong>：改为根据端口自适应（465 对应 SSL，其他对应 STARTTLS）并支持显式配置。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">收件人含有全角标点导致发信失败</strong>：增加全角标点归一化清洗与格式校验，支持输入法混合逗号分号。</p>
+    </section>
+
+    <!-- 缺陷分类 3 -->
+    <section style="margin:0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        💻 前端交互 / 性能 / 跨平台
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">全屏弹层遮罩受局部容器限制</strong>：统一改用 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">Teleport to="body"</code>，确保遮罩覆盖率 100%。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">Token 统计加载慢与图例遮挡</strong>：指标请求改为并行聚合，压缩卡片高度；优化 ECharts 图例居中布局，消除与 X 轴刻度重叠。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">WSL/Linux 环境运行脚本提示 \r 错误</strong>：引入 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">.gitattributes</code> 并全量转为 LF，彻底清除脚本中的 CR 换行符。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">历史失败测试基线大清理</strong>：清理过期测试用例，修复 Mock 漂移与跨用例上下文泄漏，大幅收敛测试清单。</p>
+    </section>
+  </section>
+
+  <!-- 章节三：数据库与依赖变更 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库与依赖变更清单
+    </p>
+
+    <!-- 数据库迁移对照表格 -->
+    <p style="margin:0 0 10px 0;font-size:12px;color:#94a3b8;line-height:1.6;">📱 下方表格较宽，移动端可<b>左右滑动</b>查看完整内容</p>
+    <section style="margin:0 0 18px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #e2e8f0;border-radius:4px;">
+      <table style="width:100%;min-width:680px;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:1.7;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <colgroup>
+          <col style="width:120px;">
+          <col style="width:320px;">
+          <col style="width:240px;">
+        </colgroup>
+        <thead>
+          <tr style="background:#f1f5f9;">
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">版本号 (MySQL / PG)</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">变更核心说明与影响</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">涉及脚本文件</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V161 / V62</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新增 Langfuse 链路追踪配置表（单行单例 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">id=1</code>，支持密钥对称加密）及操作权限码 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">element:system:langfuse_save</code></td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V161-create-langfuse-config.sql<br>
+              PG: V62-create-langfuse-config.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V162 / V63</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新增自主注册功能总控开关配置项 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">user_registration_enabled</code>（默认禁用）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V162-add-user-self-registration-config.sql<br>
+              PG: V63-add-user-self-registration-config.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V163 / V64</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">users</code> 表新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">email</code> 字段（VARCHAR(254) 可空）并建立全局唯一索引 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">uk_ai_agent_users_email</code></td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V163-add-user-email.sql<br>
+              PG: V64-add-user-email.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V164 / V65</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新增全平台邮件服务（SMTP）配置组，包含服务器地址、端口、发信账号、密文密码及加密方式等 8 项配置</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V164-add-email-service-configs.sql<br>
+              PG: V65-add-email-service-configs.sql
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 依赖变更表格 -->
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">🆕 环境变量与依赖变更</p>
+    <p style="margin:0 0 10px 0;font-size:13px;color:#475569;line-height:1.8;">
+      本次版本<strong style="color:#0f172a;">未新增任何强制环境变量</strong>，<code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">env.example</code> 无变更（Langfuse 与邮件服务均在管理后台可视化配置并对称加密持久化）。新增与调整的组件依赖如下：
+    </p>
+
+    <section style="margin:0 0 16px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #e2e8f0;border-radius:4px;">
+      <table style="width:100%;min-width:680px;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:1.7;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <colgroup>
+          <col style="width:140px;">
+          <col style="width:100px;">
+          <col style="width:140px;">
+          <col style="width:300px;">
+        </colgroup>
+        <thead>
+          <tr style="background:#f1f5f9;">
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">依赖项 / 机制</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">变更前</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">变更后</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">langfuse</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;vertical-align:top;">未引入</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;vertical-align:top;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">==4.15.6</code></td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新增全链路 AI 可观测性追踪 SDK，用于会话轮次与直调链路追踪导出</td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">.gitattributes</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;vertical-align:top;">无规范文件</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;vertical-align:top;">统一归一化 LF</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">固定 Shell 脚本 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">eol=lf</code>，根治 WSL/Linux 跨平台报错</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7;">
+      💡 升级提示：MySQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod/apply-sql.sh</code>，PostgreSQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod-pg/apply-sql.sh</code>，脚本具备完整的幂等性检查、断点续跑与结构校验。
+    </p>
+  </section>
+
+  <!-- 章节四：平滑升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📖 平滑升级指南 (Upgrade Guide)
+    </p>
+    <p style="margin:0 0 14px 0;font-size:14px;color:#334155;line-height:1.8;">
+      遵循以下标准步骤即可平滑无缝升级至 <strong style="color:#0f172a;">v1.0.18.0</strong>。请务必注意：本版本新增 4 组数据库迁移必须执行、需安装 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">langfuse</code> 依赖、改密成功后旧会话自动吊销属于预期内安全加固。
+    </p>
+
+    <!-- 方式一：源码拉取升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式一：源码拉取升级（开发与虚机部署）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 同步拉取主分支最新代码</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">git fetch origin &amp;&amp; git checkout main &amp;&amp; git pull origin main</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 执行数据库结构平滑迁移 (MySQL / PG)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 更新依赖组件（安装 langfuse==4.15.6）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">poetry install --no-root</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 4. 刷新工作区行尾（Windows 用户推荐）并启动本地服务</p>
+        <p style="margin:0;color:#38bdf8;">git checkout-index --force --all &amp;&amp; ./dev.sh</p>
+      </section>
+      <p style="margin:10px 0 0 0;font-size:13px;color:#64748b;line-height:1.75;">
+        📌 检查项：拉取后若在 Windows/WSL 运行脚本报 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">\r</code> 错，执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">git checkout-index --force --all</code> 即可完成本地工作区 LF 行尾刷新。
+      </p>
+    </section>
+
+    <!-- 方式二：Docker 容器化升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式二：Docker 容器化升级（生产环境推荐）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 执行数据库增量升级 (宿主或临时容器)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 导入官方 Release 镜像归档（x86_64 / ARM64 按架构选择）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.18.0_linux-amd64_*.tar</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.18.0_linux-arm64_*.tar</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># （或在本地自主构建：cd docker &amp;&amp; ./build_linux_x86.sh 1.0.18.0）</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 重启容器服务</p>
+        <p style="margin:0;color:#38bdf8;">cd docker &amp;&amp; ./start-nanzi-ai-agent.sh</p>
+      </section>
+    </section>
+
+    <!-- 方式三：沙箱构建与跨平台运维 CLI -->
+    <section style="margin:0 0 12px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式三：沙箱构建与跨平台运维 CLI（若启用沙箱策略）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># Docker 沙箱：环境预检与镜像构建</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash sandbox/docker/build-docker-sandbox-image.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：集群就绪与 RBAC 权限健康检查</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash k8s_deploy/nanzi-k8s.sh health</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：构建沙箱网关镜像（默认内置清华源加速）</p>
+        <p style="margin:0;color:#38bdf8;">bash k8s_deploy/build-k8s-sandbox-image.sh --pip-index https://pypi.tuna.tsinghua.edu.cn/simple</p>
+      </section>
+    </section>
+  </section>
+
+
+  <!-- 结语 -->
+  <section style="margin:24px 0 10px 0;text-align:center;">
+    <p style="margin:0 0 8px 0;font-size:15px;color:#0f172a;font-weight:bold;">
+      致敬每一位在生产级 AI 道路上砥砺前行的开发者！
+    </p>
+    <p style="margin:0;font-size:13.5px;color:#64748b;line-height:1.8;">
+      欢迎在 GitHub Star 关注我们，参与社群交流与代码共建。
+    </p>
+  </section>
+
+</section>
