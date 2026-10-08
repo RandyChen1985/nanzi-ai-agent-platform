@@ -82,6 +82,34 @@ def test_apply_delegation_tool_filter_empty_allowlist_hides_all_specs():
     assert apply_delegation_tool_filter(tools, []) == []
 
 
+MCP_PLATFORM_TOOL_NAME = "mcp-public-admin-ivsom-mcp-server:mcp_query_abnormal_list"
+MCP_MODEL_TOOL_NAME = "mcp_mcp-public-admin-ivsom-mcp-server_mcp_query_abnor_c243c57fdb"
+
+
+def test_resolve_delegation_tool_filter_normalizes_mcp_platform_names():
+    """MCP 工具在委派链路里也要落到模型侧调用名，否则子智能体工具会被静默过滤。"""
+    resolver = getattr(delegation_tool, "resolve_delegation_tool_filter", lambda *_: (None, "missing"))
+
+    filtered, error = resolver([MCP_PLATFORM_TOOL_NAME], [MCP_PLATFORM_TOOL_NAME])
+
+    assert error is None
+    assert filtered == [MCP_MODEL_TOOL_NAME]
+
+    filtered_by_alias, alias_error = resolver([MCP_PLATFORM_TOOL_NAME], [MCP_MODEL_TOOL_NAME])
+
+    assert alias_error is None
+    assert filtered_by_alias == [MCP_MODEL_TOOL_NAME]
+
+
+def test_delegation_tool_filter_matches_registered_mcp_spec_name():
+    from app.services.ai.runtime.agentscope.tools import apply_delegation_tool_filter
+
+    tool = SimpleNamespace(name=MCP_MODEL_TOOL_NAME)
+
+    assert apply_delegation_tool_filter([tool], [MCP_MODEL_TOOL_NAME]) == [tool]
+    assert apply_delegation_tool_filter([tool], [MCP_PLATFORM_TOOL_NAME]) == []
+
+
 def test_agent_context_keeps_agent_toolcall_timeout_snapshot():
     context = AgentContext(
         agent_id="main-agent-id",

@@ -1,4 +1,5 @@
 import asyncio
+import re
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
@@ -724,4 +725,111 @@ def test_platform_prompt_enforces_html_interactive_app_output():
     assert "必须直接在回答正文中输出包含完整结构的 ```html 代码块" in prompt
     assert "严禁" in prompt
     assert "除非用户明确表达“保存为文件”、“下载”或“导出”" in prompt
+
+
+# MCP 工具的平台内部标识（server_name:tool_name）与模型侧 Function Calling 名不同，
+# 提示词清单必须给出模型侧可调用名，否则模型照抄平台标识会被运行时白名单拦截。
+MCP_PLATFORM_TOOL_NAME = "mcp-public-admin-ivsom-mcp-server:mcp_query_abnormal_list"
+MCP_MODEL_TOOL_NAME = "mcp_mcp-public-admin-ivsom-mcp-server_mcp_query_abnor_c243c57fdb"
+
+
+def _prompt_inventory_names(prompt: str) -> set[str]:
+    """解析「本轮可用工具」清单中的工具调用名（忽略摘要与说明行）。"""
+    lines = prompt.split("## 本轮可用工具", 1)[1].splitlines()[1:]
+    names: set[str] = set()
+    started = False
+    for line in lines:
+        match = re.match(r"^- ([A-Za-z0-9_:-]+)(?::\s|\s*$)", line)
+        if not match:
+            if started:
+                break
+            continue
+        started = True
+        names.add(match.group(1))
+    return names
+
+
+def test_prompt_tool_inventory_lists_mcp_tools_by_model_callable_name():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={MCP_PLATFORM_TOOL_NAME},
+    )
+
+    assert f"- {MCP_MODEL_TOOL_NAME}" in prompt
+    assert MCP_PLATFORM_TOOL_NAME not in prompt
+
+
+def test_prompt_tool_inventory_names_satisfy_function_calling_contract():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={MCP_PLATFORM_TOOL_NAME, "session_status", "Bash"},
+    )
+
+    names = _prompt_inventory_names(prompt)
+
+    assert names == {"Bash", "session_status", MCP_MODEL_TOOL_NAME}
+    for name in names:
+        assert re.fullmatch(r"[a-zA-Z0-9_-]+", name), name
+
+
+def test_prompt_tool_inventory_documents_mcp_alias_rule_when_mcp_tools_present():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={MCP_PLATFORM_TOOL_NAME},
+    )
+
+    assert "平台内部标识" in prompt
+    assert MCP_MODEL_TOOL_NAME in prompt
+
+
+def test_prompt_tool_inventory_omits_mcp_alias_rule_without_mcp_tools():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={"session_status", "Bash"},
+    )
+
+    assert "平台内部标识" not in prompt
+
+
+def test_effective_prompt_tool_names_render_as_agreed_mcp_callable_name():
+    config = SimpleNamespace(
+        agent_name="TestAgent",
+        tools=[{"name": MCP_PLATFORM_TOOL_NAME, "enabled": True}],
+    )
+
+    configured = resolve_effective_prompt_tool_names(config)
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names=configured,
+    )
+
+    inventory = _prompt_inventory_names(prompt)
+
+    assert MCP_MODEL_TOOL_NAME in inventory
+    assert MCP_PLATFORM_TOOL_NAME not in prompt
+
+
+def test_prompt_inventory_mcp_name_matches_registered_model_tool_name():
+    """清单里的 MCP 调用名必须等于 MCP 工厂实际注册给模型的名字。"""
+    from app.models.mcp import McpToolCache
+    from app.services.ai.tools.mcp_factory import McpToolFactory
+
+    record = McpToolCache(
+        id="tool-1",
+        server_id="server-1",
+        tool_name=MCP_PLATFORM_TOOL_NAME,
+        tool_description="查询异常列表",
+        parameter_schema='{"type": "object", "properties": {}}',
+        is_published=True,
+        is_available=True,
+    )
+
+    registered_name = McpToolFactory.create_tool(record).name
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        runtime_tool_names={record.tool_name},
+    )
+
+    assert registered_name == MCP_MODEL_TOOL_NAME
+    assert _prompt_inventory_names(prompt) == {registered_name}
 

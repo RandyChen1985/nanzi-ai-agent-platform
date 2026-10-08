@@ -84,19 +84,30 @@ def test_dashboard_chrome_layers_stay_below_the_overlay():
 # 全项目规则：同类写法一次性收敛（2026-10-02 排查时还剩 62 处）
 # --------------------------------------------------------------------------- #
 
+#: Tailwind 的等价写法：`z-50` 与 `z-[50]` 落地是同一个层级；中间还可能夹着
+#: `overflow-hidden` 一类修饰类。用正则而不是字面量匹配，否则等价写法会漏网。
+_OVERLAY_ON_LAYOUT_LAYER = re.compile(r"fixed inset-0[^\"'<>]*z-(?:50|\[50\])")
+
+
 def test_no_overlay_left_on_the_layout_layer():
-    """全项目不许再出现 `fixed inset-0 z-50` 的弹层遮罩。
+    """全项目不许再出现停在布局层（`z-50` / `z-[50]`）的弹层遮罩。
 
     它和侧边栏（z-50）同层——谁在上面只由 DOM 顺序决定；又不在 Teleport 内，
     祖先一旦带上 transform 就遮不满。新增弹层请照抄 `Teleport` + `z-[100]`。
     布局自己的层级（如顶栏 z-30、移动端遮罩 z-40、侧边栏 z-50）不受此约束。
+
+    2026-10-08 补漏：原规则只匹配字面量 `fixed inset-0 z-50`，于是
+    `AgentVersionsDrawer.vue` 的 `fixed inset-0 overflow-hidden z-[50]`
+    （等价写法 + 中间夹类）成了唯一漏网之鱼，用户再次截图反馈「遮罩没铺满」。
     """
-    offenders = [
-        str(p.relative_to(ROOT))
-        for p in (ROOT / "frontend/src").rglob("*.vue")
-        if "fixed inset-0 z-50" in p.read_text(encoding="utf-8")
-    ]
-    assert not offenders, f"这些文件仍有未收敛的全屏遮罩: {offenders}"
+    offenders = []
+    for path in sorted((ROOT / "frontend/src").rglob("*.vue")):
+        text = path.read_text(encoding="utf-8")
+        for match in _OVERLAY_ON_LAYOUT_LAYER.finditer(text):
+            line = text[: match.start()].count("\n") + 1
+            offenders.append(f"{path.relative_to(ROOT)}:{line}: {match.group(0)}")
+
+    assert not offenders, f"这些弹层遮罩仍停在布局层，请改为 Teleport + z-[100]: {offenders}"
 
 
 def test_every_full_screen_overlay_sits_inside_a_teleport():
