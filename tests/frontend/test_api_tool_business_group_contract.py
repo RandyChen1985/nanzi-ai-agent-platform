@@ -138,3 +138,65 @@ def test_business_groups_collapse_by_default_in_read_only_mode():
     assert "isBusinessGroupLabel" in body
     assert "expandedBusinessGroups" in body, "只读态下用户手动展开的分组要单独记录"
     assert "expandedBusinessGroups" in _statement(source, "resetVersionEditorUi")
+
+
+# --------------------------------------------------------------------------- #
+# 注册表页：分组维度的可读性与操作（下拉计数 / 徽章筛选 / 未分组提醒 / 分组视图）
+# --------------------------------------------------------------------------- #
+def test_registry_group_filter_shows_counts():
+    """看不到「每组多少、还有多少没归类」，就无从开始治理。"""
+    source = _source(REGISTRY)
+    assert "groupFilterOptions" in source
+    # 三个选项都要带计数，否则「每组多少 / 还剩多少没归类」又看不见了
+    assert ">分组：全部 ({{" in source
+    assert ">未分组 ({{" in source
+    assert "{{ name }} ({{ count }})" in source
+
+
+def test_registry_group_badge_filters_on_click():
+    """分组徽章从「只能看」变成「点一下就筛出这一组」。"""
+    source = _source(REGISTRY)
+    assert "filterByGroup" in source
+    assert '@click="filterByGroup(t.group_name)"' in source
+
+
+def test_registry_surfaces_ungrouped_backlog():
+    source = _source(REGISTRY)
+    assert "ungroupedToolsCount" in source
+    assert "个工具未分组" in source
+
+
+def test_registry_offers_group_view_toggle():
+    source = _source(REGISTRY)
+    assert "viewMode" in source
+    assert "分组视图" in source and "列表视图" in source
+
+
+def test_group_view_reuses_the_very_same_row_markup():
+    """两种视图必须共用同一份行标记：写两套迟早漂移（列数、操作按钮不一致）。"""
+    source = _source(REGISTRY)
+    assert source.count('v-for="t in group.tools"') == 1
+    assert "displayGroups" in source
+
+
+def test_group_view_expands_groups_while_searching():
+    source = _source(REGISTRY)
+    body = _statement(source, "isGroupCollapsed")
+    assert "toolSearchQuery" in body, "搜索命中时该组要自动展开"
+
+
+def test_group_view_can_select_a_whole_group():
+    source = _source(REGISTRY)
+    assert "全选本组" in source
+    assert "selectGroupTools" in source
+    assert "collapsedRegistryGroups" in source
+
+
+def test_registry_toolbar_keeps_title_on_one_line():
+    """控件增多时曾把「API 工具注册表」挤成两行、把「+ 添加工具」挤到下一行。
+
+    标题必须禁止折行，筛选控件必须独占一行且搜索框自适应吃满剩余宽度。
+    """
+    source = _source(REGISTRY)
+    assert 'text-lg font-medium text-gray-900 whitespace-nowrap">API 工具注册表' in source
+    assert "min-w-[12rem] flex-1" in source
