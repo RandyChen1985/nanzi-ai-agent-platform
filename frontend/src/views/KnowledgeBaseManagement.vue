@@ -1278,7 +1278,7 @@ const previewDocUrl = computed(() => {
   return `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/file`
 })
 
-/** 6 种 Office 格式交给 DocumentViewer；其余（含 PDF）继续走 iframe */
+/** Office 与文本格式交给 DocumentViewer；其余（含 PDF）继续走 iframe */
 const canPreviewSelectedDocument = computed(() =>
   canPreviewWithDocumentViewer(selectedDocument.value?.name || ''),
 )

@@ -7,6 +7,8 @@ import {
   shouldDownloadInsteadOfPreview,
   resolveDocumentViewerMime,
   getWorkspaceFileExtension,
+  DOCUMENT_VIEWER_EXTENSIONS,
+  OFFICE_PREVIEW_EXTENSIONS,
 } from '../../frontend/src/utils/documentPreviewFormats.ts'
 
 // --- 6 种组件官方支持的格式，必须判为可预览 ---
@@ -44,5 +46,31 @@ assert.equal(resolveDocumentViewerMime('a.txt'), undefined, '未知格式无 MIM
 // --- 扩展名提取 ---
 assert.equal(getWorkspaceFileExtension('a.tar.gz'), '.gz', '多点取最后一段')
 assert.equal(getWorkspaceFileExtension('noext'), '', '无扩展名返回空串')
+
+// --- 文本格式改由 @file-viewer/renderer-text 原生渲染（markdown + code 共 50 种）---
+for (const name of ['a.md', 'a.markdown', 'a.txt', 'a.json', 'a.yaml', 'a.yml',
+                    'a.ini', 'a.toml', 'a.log', 'a.vue', 'a.tsx', 'a.js', 'a.py',
+                    'a.sh', 'a.sql', 'a.xml', 'a.html', 'a.go', 'a.rs', 'a.kt']) {
+  assert.equal(canPreviewWithDocumentViewer(name), true, `${name} 应由 DocumentViewer 渲染`)
+}
+// .ppt 仍不可预览、仍走下载
+assert.equal(canPreviewWithDocumentViewer('a.ppt'), false, '.ppt 仍不可预览')
+assert.equal(shouldDownloadInsteadOfPreview('a.ppt'), true, '.ppt 仍走下载')
+// 明确不支持的格式
+assert.equal(canPreviewWithDocumentViewer('a.rst'), false, '.rst 官方不支持，仍走 iframe')
+assert.equal(canPreviewWithDocumentViewer('a.env'), false, '.env 官方不支持，仍走 iframe')
+
+// --- 画布语义：文本格式必须留在 'code'，只有 Office 走 'document' ---
+assert.equal(OFFICE_PREVIEW_EXTENSIONS.size, 6, 'OFFICE_PREVIEW_EXTENSIONS 应为 6 种')
+for (const name of ['a.docx', 'a.doc', 'a.xlsx', 'a.xls', 'a.xlsm', 'a.pptx']) {
+  assert.equal(OFFICE_PREVIEW_EXTENSIONS.has(getWorkspaceFileExtension(name)), true, `${name} 应为 Office 预览`)
+}
+assert.equal(OFFICE_PREVIEW_EXTENSIONS.has('.ppt'), false, '.ppt 不应在 Office 预览集合')
+for (const name of ['a.md', 'a.ts', 'a.vue', 'a.json', 'a.py']) {
+  assert.equal(OFFICE_PREVIEW_EXTENSIONS.has(getWorkspaceFileExtension(name)), false, `${name} 不应判成画布文档预览`)
+  // 但在 RAG/知识库语义里仍交给 DocumentViewer
+  assert.equal(canPreviewWithDocumentViewer(name), true, `${name} 仍应交给 DocumentViewer`)
+}
+assert.equal(DOCUMENT_VIEWER_EXTENSIONS.size, 56, 'DOCUMENT_VIEWER_EXTENSIONS 应仍为 56 种')
 
 console.log('文档预览格式判定测试全部通过')

@@ -1037,6 +1037,74 @@ const overlayBackdropClass = computed(() =>
             <span>AI 分析差异</span>
           </button>
 
+          <!-- 保存到目录（画布内容写入工作区） -->
+          <button
+            v-if="canSaveGeneratedContent"
+            type="button"
+            @click="requestSaveToDirectory"
+            :disabled="saving"
+            class="p-1.5 rounded-lg transition-colors text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            :title="saving ? '保存中...' : '保存到目录'"
+            :aria-label="saving ? '保存中' : '保存到目录'"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+
+          <!-- 复制链接 / 复制代码 -->
+          <button
+            type="button"
+            @click="copyContent"
+            class="p-1.5 rounded-lg transition-colors"
+            :class="copied
+              ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20'
+              : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'"
+            :title="copied ? '已复制！' : (data?.type === 'image' || isDocumentPreview ? '复制链接' : '复制代码')"
+            :aria-label="copied ? '已复制' : '复制'"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                v-if="copied"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M5 13l4 4L19 7"
+              />
+              <path
+                v-else
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+              />
+            </svg>
+          </button>
+
+          <!--
+            DocumentViewer（Office/PDF）由 file-viewer 渲染，其工具栏自带「下载」，
+            故此处不显示下载图标避免重复。.ppt 不会走到 document 类型（已在
+            useWorkspaceCanvas 里被 shouldDownloadInsteadOfPreview 拦成下载），
+            因此它仍保留该图标。
+
+            用 isDocumentPreview 而不是内联的字面量 type 比较：内联比较会让 TS 对本
+            按钮的子节点收窄 data.type，导致按钮内的 pdf/document 比较报 2 条
+            TS2367（vue-tsc 62 → 64 条，落在本文件）。
+            语义完全等价（isDocumentPreview = document || pdf）。
+          -->
+          <button
+            v-if="!isDocumentPreview"
+            type="button"
+            @click="downloadFile"
+            class="p-1.5 rounded-lg transition-colors text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+            :title="data?.type === 'image' || data?.type === 'pdf' || data?.type === 'document' ? '下载文件' : '下载数据'"
+            :aria-label="data?.type === 'image' ? '下载文件' : '下载数据'"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+          </button>
+
           <!-- Pin Button -->
           <button
             v-if="!isMobile"
@@ -1584,56 +1652,6 @@ const overlayBackdropClass = computed(() =>
         @save="handleDirectorySave"
       />
 
-      <!-- Action Footer -->
-      <div class="p-3 border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800/80 flex space-x-3 flex-shrink-0">
-        <button
-          v-if="canSaveGeneratedContent"
-          type="button"
-          @click="requestSaveToDirectory"
-          class="flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center space-x-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-100 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-900/30"
-          :disabled="saving"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-          </svg>
-          <span>{{ saving ? '保存中...' : '保存到目录' }}</span>
-        </button>
-        <button
-          @click="copyContent"
-          class="flex-1 py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center space-x-1.5"
-          :class="copied
-            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-900/30'
-            : 'bg-gray-100 hover:bg-gray-200 text-gray-700 border border-transparent dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              v-if="copied"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M5 13l4 4L19 7"
-            />
-            <path
-              v-else
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-            />
-          </svg>
-          <span>{{ copied ? '已复制！' : (data?.type === 'image' || isDocumentPreview ? '复制链接' : '复制代码') }}</span>
-        </button>
-
-        <button
-          @click="downloadFile"
-          class="flex-1 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.98] rounded-lg transition-all flex items-center justify-center space-x-1.5 shadow-sm shadow-blue-600/10"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
-          <span>{{ data?.type === 'image' || data?.type === 'pdf' || data?.type === 'document' ? '下载文件' : '下载数据' }}</span>
-        </button>
-      </div>
       </div>
     </Transition>
   </teleport>

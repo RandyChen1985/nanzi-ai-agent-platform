@@ -156,7 +156,7 @@ const props = defineProps<{
   content: string;
 }>();
 
-/** 6 种组件支持的 Office 格式：交给 DocumentViewer 内联预览 */
+/** Office 与文本格式：交给 DocumentViewer 内联预览 */
 const canPreview = computed(() => canPreviewWithDocumentViewer(props.docName));
 /** 只有旧版二进制 .ppt 会命中：保持「暂不支持 + 下载」 */
 const isDownloadOnlyOffice = computed(() => shouldDownloadInsteadOfPreview(props.docName));

@@ -19,12 +19,44 @@ export const OFFICE_EXTENSIONS = new Set([
 ])
 
 /**
- * 交给 DocumentViewer 渲染的格式。
- * 刻意不含旧版二进制 `.ppt`：它需要 @file-viewer/renderer-ppt，
- * 而该链会引入带内置水印、许可为 SEE LICENSE IN LICENSE 的 @file-viewer/ppt。
+ * Office 里可交给 DocumentViewer 预览的格式（排除旧版二进制 .ppt）。
+ *
+ * 画布的类型分派用它：画布认为「文档预览」只应该是 Office。
+ * 文本格式（.md/.ts 等）在画布里必须留在 'code'，否则会丢掉画布的
+ * markdown 渲染、编辑/预览切换以及 mermaid/ECharts 集成。
+ */
+export const OFFICE_PREVIEW_EXTENSIONS = new Set([
+  '.docx', '.doc', '.xlsx', '.xls', '.xlsm', '.pptx',
+])
+
+/**
+ * 交给 DocumentViewer 渲染的格式 = Office 可预览格式 + file-viewer 原生支持的文本。
+ *
+ * 不含旧版二进制 `.ppt`：它需要 @file-viewer/renderer-ppt，而该链会引入
+ * 带内置水印、许可为 SEE LICENSE IN LICENSE 的 @file-viewer/ppt。
+ *
+ * 文本类由 @file-viewer/renderer-text 原生支持（markdown 2 种 + code 48 种），
+ * 共 50 种。用它而不是自己取文本渲染，除了格式覆盖更全、代码文件有语法高亮，
+ * 也顺带避开了「后端无法为 .md/.yaml 等格式给出可内联 Content-Type、
+ * 导致浏览器直接下载」的问题——组件靠扩展名选择渲染链路，不依赖 Content-Type。
+ *
+ * ⚠️ 本集合是 RAG 引用抽屉 / 知识库预览弹窗的语义（「能否交给 DocumentViewer」），
+ * 不等于画布语义。画布分派必须用 OFFICE_PREVIEW_EXTENSIONS。
  */
 export const DOCUMENT_VIEWER_EXTENSIONS = new Set([
-  '.docx', '.doc', '.xlsx', '.xls', '.xlsm', '.pptx',
+  // Office
+  ...OFFICE_PREVIEW_EXTENSIONS,
+  // Markdown（renderer-text: markdown）
+  '.md', '.markdown',
+  // 纯文本与代码（renderer-text: code）
+  '.txt', '.json', '.jsonc', '.json5', '.log',
+  '.yaml', '.yml', '.ini', '.toml',
+  '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.vue', '.react',
+  '.css', '.html', '.htm', '.xml', '.http', '.gv',
+  '.py', '.java', '.go', '.rs', '.rb', '.php', '.swift', '.kt', '.cs',
+  '.c', '.cpp', '.cc', '.h', '.hpp',
+  '.sh', '.bash', '.sql', '.tex', '.proto', '.hcl', '.ipynb',
+  '.diff', '.patch', '.bundle', '.bdl',
 ])
 
 /** 交给 DocumentViewer 渲染时使用的 MIME，用于组件内部选择 renderer */
@@ -49,13 +81,13 @@ export function resolveDocumentViewerMime(name: string): string | undefined {
 }
 
 /**
- * 处于 OFFICE_EXTENSIONS 但不在 DOCUMENT_VIEWER_EXTENSIONS 的格式：目前只有旧版二进制 `.ppt`。
+ * 处于 OFFICE_EXTENSIONS 但不在 OFFICE_PREVIEW_EXTENSIONS 的格式：目前只有旧版二进制 `.ppt`。
  * 它能被识别为 Office 文件，但因需要带内置水印、许可为 SEE LICENSE IN LICENSE 的
  * @file-viewer/ppt，刻意不交给 DocumentViewer —— 这些格式保持「点击即下载」。
  */
 export function shouldDownloadInsteadOfPreview(name: string): boolean {
   const ext = getWorkspaceFileExtension(name)
-  return OFFICE_EXTENSIONS.has(ext) && !DOCUMENT_VIEWER_EXTENSIONS.has(ext)
+  return OFFICE_EXTENSIONS.has(ext) && !OFFICE_PREVIEW_EXTENSIONS.has(ext)
 }
 
 /**

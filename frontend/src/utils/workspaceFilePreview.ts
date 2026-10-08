@@ -5,6 +5,7 @@ import {
   DOCUMENT_VIEWER_EXTENSIONS,
   IMAGE_EXTENSIONS,
   OFFICE_EXTENSIONS,
+  OFFICE_PREVIEW_EXTENSIONS,
   TEXT_EXTENSIONS,
   getWorkspaceFileExtension,
   resolveDocumentViewerMime,
@@ -53,7 +54,9 @@ export function resolveWorkspaceCanvasType(name: string): WorkspaceCanvasType {
   if (lower.endsWith('.pdf')) return 'pdf'
   if (/\.(jpe?g|png|gif|webp)$/.test(lower)) return 'image'
   if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html'
-  if (DOCUMENT_VIEWER_EXTENSIONS.has(getWorkspaceFileExtension(name))) return 'document'
+  // 只有 Office 才在画布里走 'document'（.ppt 由 useWorkspaceCanvas 单独处理成下载）；
+  // 文本格式必须留在 'code'，否则会丢掉画布的 markdown 渲染与编辑能力。
+  if (OFFICE_PREVIEW_EXTENSIONS.has(getWorkspaceFileExtension(name))) return 'document'
   return 'code'
 }
 

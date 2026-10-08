@@ -8,7 +8,7 @@ import {
   resolveDocumentViewerMime,
   shouldAttachWorkspaceSourcePath,
   getWorkspaceFileExtension,
-  DOCUMENT_VIEWER_EXTENSIONS,
+  OFFICE_PREVIEW_EXTENSIONS,
   shouldDownloadInsteadOfPreview,
   downloadWorkspaceFile,
 } from "@/utils/workspaceFilePreview";
@@ -133,7 +133,8 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
         const resolvedUrl = options.resolveFileUrl(filePath);
         const filename = payload.title || filePath.split("/").pop() || "文件预览";
         const canvasType = resolveWorkspaceCanvasType(filename);
-        if (DOCUMENT_VIEWER_EXTENSIONS.has(getWorkspaceFileExtension(filename)) || canvasType === "pdf") {
+        // 画布只把 Office 当「文档预览」；文本格式留在 'code'，保住 markdown 渲染与代码编辑
+        if (OFFICE_PREVIEW_EXTENSIONS.has(getWorkspaceFileExtension(filename)) || canvasType === "pdf") {
           // Office 与 PDF 只传鉴权 URL，Blob 交给 DocumentViewer 获取
           canvasData.value = {
             type: canvasType === "pdf" ? "pdf" : "document",
