@@ -9,6 +9,7 @@ import {
   getWorkspaceFileExtension,
   DOCUMENT_VIEWER_EXTENSIONS,
   OFFICE_PREVIEW_EXTENSIONS,
+  PDF_EXTENSIONS,
 } from '../../frontend/src/utils/documentPreviewFormats.ts'
 
 // --- 6 种组件官方支持的格式，必须判为可预览 ---
@@ -72,5 +73,28 @@ for (const name of ['a.md', 'a.ts', 'a.vue', 'a.json', 'a.py']) {
   assert.equal(canPreviewWithDocumentViewer(name), true, `${name} 仍应交给 DocumentViewer`)
 }
 assert.equal(DOCUMENT_VIEWER_EXTENSIONS.size, 56, 'DOCUMENT_VIEWER_EXTENSIONS 应仍为 56 种')
+
+// --- PDF 的路由三态：画布与 RAG 抽屉都不走 file-viewer，只有知识库走 ---
+// 原因：RAG 引用抽屉靠 `${fileUrl}#page=${pageNo}` 让浏览器原生 PDF 阅读器跳到引用页，
+// 而 file-viewer 的 pdf 渲染器不认这个 URL fragment（renderer-pdf 里只有缩略图的
+// data-pdf-thumbnail-page）。所以 .pdf 必须留在独立集合里，绝不能混进共享集合。
+assert.equal(
+  canPreviewWithDocumentViewer('a.pdf'),
+  false,
+  '.pdf 在 RAG 语义下仍不走 DocumentViewer（需保 #page= 引用页跳转）',
+)
+assert.equal(
+  DOCUMENT_VIEWER_EXTENSIONS.has('.pdf'),
+  false,
+  '.pdf 绝不能进 DOCUMENT_VIEWER_EXTENSIONS —— 会连带改掉 RAG 抽屉并丢掉引用页跳转',
+)
+assert.equal(PDF_EXTENSIONS.has('.pdf'), true, 'PDF_EXTENSIONS 应含 .pdf')
+assert.equal(PDF_EXTENSIONS.size, 1, 'PDF_EXTENSIONS 目前只应有 .pdf')
+assert.equal(
+  resolveDocumentViewerMime('a.pdf'),
+  'application/pdf',
+  '.pdf 需显式 MIME，否则 DocumentViewer 只能靠响应头兜底',
+)
+assert.equal(resolveDocumentViewerMime('a.PDF'), 'application/pdf', '大写 .PDF 同样应解析出 MIME')
 
 console.log('文档预览格式判定测试全部通过')
