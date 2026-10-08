@@ -69,6 +69,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/.DS_Store
 
+# pnpm store（沙箱环境下用户级 store 不可写时 pnpm 会回退到项目内，勿提交）
+.pnpm-store/
+
 # Credentials (DO NOT COMMIT)
 ADMIN_CREDENTIALS.md
 

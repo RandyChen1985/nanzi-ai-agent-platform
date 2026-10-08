@@ -1,11 +1,14 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import path from "path";
+import { fileViewerRenderers } from "@file-viewer/vite-plugin";
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   return {
-    plugins: [vue()],
+    // fileViewerRenderers 自动发现已安装的 @file-viewer/preset-*，
+    // 并把 Worker / WASM / 字体资产复制到 public/file-viewer/（dev 与 build 均生效）
+    plugins: [vue(), fileViewerRenderers({ copyAssets: true })],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

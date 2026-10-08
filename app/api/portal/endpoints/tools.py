@@ -9,9 +9,17 @@ from app.core.dependencies import require_admin, require_permission, require_api
 from app.core.orm import get_db_session
 from app.models.tool import SysApiTool
 from app.models.mcp import McpToolCache
-from app.schemas.tool import SysApiToolCreate, SysApiToolUpdate, SysApiToolResponse
+from app.schemas.tool import (
+    SysApiToolBatchGroupRequest,
+    SysApiToolCreate,
+    SysApiToolResponse,
+    SysApiToolUpdate,
+)
 
 router = APIRouter()
+
+# 注册表写操作所需的权限依赖抽成具名对象：避免同一字符串散落多处，也便于测试覆盖。
+SYSTEM_CONFIG_SAVE_PERMISSION = require_permission("element", "element:system:config_save")
 
 @router.get("/mcp", response_model=List[Dict[str, Any]])
 async def list_published_mcp_tools(
@@ -130,6 +138,25 @@ async def update_tool(
     await db.commit()
     await db.refresh(tool)
     return tool
+
+@router.post("/batch-group")
+async def batch_set_tool_group(
+    payload: SysApiToolBatchGroupRequest,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(SYSTEM_CONFIG_SAVE_PERMISSION),
+):
+    """批量设置业务分组（注册表页多选后一次改完）。
+
+    只改 ``group_name``：``group_name`` 留空表示清除分组，回到「未分组」状态。
+    刻意不做「按名称前缀自动归类」——分组口径由使用者决定，代码里不写死任何前缀。
+    """
+    result = await db.execute(select(SysApiTool).where(SysApiTool.id.in_(payload.ids)))
+    tools = result.scalars().all()
+    for tool in tools:
+        tool.group_name = payload.group_name
+    await db.commit()
+    return {"updated": len(tools), "group_name": payload.group_name}
+
 
 @router.delete("/{tool_id}")
 async def delete_tool(

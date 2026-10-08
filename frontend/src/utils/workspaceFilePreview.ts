@@ -1,28 +1,21 @@
 import axios from '@/utils/axios'
 import { copyToClipboard } from './clipboard'
+import type { CanvasPanelData, WorkspaceCanvasType } from '@/types/canvas'
+import {
+  IMAGE_EXTENSIONS,
+  OFFICE_EXTENSIONS,
+  OFFICE_PREVIEW_EXTENSIONS,
+  TEXT_EXTENSIONS,
+  getWorkspaceFileExtension,
+  resolveDocumentViewerMime,
+} from './documentPreviewFormats'
 
-export type WorkspaceCanvasType = 'html' | 'code' | 'pdf' | 'csv' | 'image'
+// 格式判定集中在零依赖模块，便于 Node 行为测试；此处 re-export 保持既有导入路径不变
+export * from './documentPreviewFormats'
 
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
-const TEXT_EXTENSIONS = new Set([
-  '.txt', '.md', '.csv', '.json', '.sql', '.py', '.js', '.ts',
-  '.sh', '.xml', '.html', '.css', '.yaml', '.yml', '.ini', '.conf',
-  '.log', '.env', '.htm',
-])
-const OFFICE_EXTENSIONS = new Set([
-  '.docx', '.doc', '.xlsx', '.xls', '.xlsm', '.pptx', '.ppt',
-])
+export type { CanvasPanelData, WorkspaceCanvasType } from '@/types/canvas'
 
-export type CanvasPanelData = {
-  type: WorkspaceCanvasType | 'compare' | 'mermaid'
-  title: string
-  content: string
-  sourcePath?: string
-  compareContent?: string
-  compareTitle?: string
-  langName?: string
-  runnable?: boolean
-}
+// 以下为依赖 axios / clipboard 的工作区编排逻辑，保持原样（normalizeWorkspacePath 起）
 
 export function normalizeWorkspacePath(path: string): string {
   return String(path || '').replace(/\\/g, '/').replace(/\/+$/, '')
@@ -34,12 +27,6 @@ export function isSameWorkspacePreviewPath(
 ): boolean {
   if (!a || !b) return false
   return normalizeWorkspacePath(a) === normalizeWorkspacePath(b)
-}
-
-export function getWorkspaceFileExtension(name: string): string {
-  const parts = name.split('.')
-  if (parts.length < 2) return ''
-  return `.${parts.pop()!.toLowerCase()}`
 }
 
 export function resolveWorkspaceScriptLanguage(name: string): 'python' | 'shell' | null {
@@ -66,6 +53,9 @@ export function resolveWorkspaceCanvasType(name: string): WorkspaceCanvasType {
   if (lower.endsWith('.pdf')) return 'pdf'
   if (/\.(jpe?g|png|gif|webp)$/.test(lower)) return 'image'
   if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html'
+  // 只有 Office 才在画布里走 'document'（.ppt 由 useWorkspaceCanvas 单独处理成下载）；
+  // 文本格式必须留在 'code'，否则会丢掉画布的 markdown 渲染与编辑能力。
+  if (OFFICE_PREVIEW_EXTENSIONS.has(getWorkspaceFileExtension(name))) return 'document'
   return 'code'
 }
 
@@ -216,6 +206,24 @@ export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOpt
   }
 
   try {
+    // 只有 Office 走 DocumentViewer。文本格式（.md/.ts/.txt 等）必须落到下方
+    // 取 resText 的分支，否则会被当成文档预览：徽章显示 OFFICE，且丢掉代码视图
+    // 与可运行脚本能力。DOCUMENT_VIEWER_EXTENSIONS 含 50 种文本格式，那是 RAG
+    // 抽屉与知识库弹窗的语义，不可用于画布 / 工作空间的分派。
+    if (OFFICE_PREVIEW_EXTENSIONS.has(ext)) {
+      // 只传鉴权 URL：Blob 由 DocumentViewer 用 axios 获取，
+      // 避免 Blob 进入响应式状态，也避免在此处创建对象 URL。
+      onOpen({
+        type: 'document',
+        title: name,
+        content: resolvedUrl,
+        documentMeta: { filename: name, mime: resolveDocumentViewerMime(name) },
+        downloadPath: path,
+      })
+      return
+    }
+
+    // 旧版二进制 .ppt 仍需走下载：它处于 OFFICE_EXTENSIONS 但不在 OFFICE_PREVIEW_EXTENSIONS
     if (OFFICE_EXTENSIONS.has(ext)) {
       const response = await axios.get(resolvedUrl, { responseType: 'blob' })
       const filename = name || 'download'
@@ -231,7 +239,19 @@ export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOpt
       return
     }
 
-    if (payload.type === 'pdf' || payload.type === 'image' || payload.type === 'csv') {
+    if (payload.type === 'pdf') {
+      // PDF 同样交给 DocumentViewer，只传 URL，不预取 Blob
+      onOpen({
+        type: 'pdf',
+        title: name,
+        content: resolvedUrl,
+        documentMeta: { filename: name, mime: 'application/pdf' },
+        downloadPath: path,
+      })
+      return
+    }
+
+    if (payload.type === 'image' || payload.type === 'csv') {
       const response = await axios.get(resolvedUrl, { responseType: 'blob' })
       const blobUrl = URL.createObjectURL(response.data)
       if (activeBlobUrlRef) activeBlobUrlRef.value = blobUrl

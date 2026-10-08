@@ -12,6 +12,8 @@
     "@codemirror/lang-sql": "^6.9.0",
     "@codemirror/state": "^6.5.3",
     "@codemirror/view": "^6.39.7",
+    "@file-viewer/preset-standard": "^3.1.2",
+    "@file-viewer/vue3": "^3.1.2",
     "@heroicons/vue": "^2.2.0",
     "@scalar/api-reference": "^1.40.9",
     "@types/diff": "^8.0.0",
@@ -35,6 +37,7 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@file-viewer/vite-plugin": "^3.1.2",
     "@types/node": "^24.10.1",
     "@types/qrcode": "^1.5.5",
     "@vitejs/plugin-vue": "^6.0.1",

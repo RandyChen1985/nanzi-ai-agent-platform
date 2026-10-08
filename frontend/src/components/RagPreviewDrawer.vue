@@ -11,7 +11,7 @@
             {{ docName }}
           </h3>
           <p class="text-[11px] text-gray-400 mt-0.5">
-            第 {{ pageNo }} 页 RAG 关联原档智能高亮预览
+            {{ subtitle }}
           </p>
         </div>
         <button
@@ -57,7 +57,15 @@
             v-show="previewExpanded"
             class="flex-1 min-h-0 bg-gray-100/30 relative flex flex-col items-center justify-center overflow-hidden"
           >
-            <div v-if="isOfficeDocument" class="p-8 text-center max-w-sm space-y-4 flex flex-col items-center">
+            <DocumentViewer
+              v-if="canPreview && modelValue && fileUrl"
+              :url="fileUrl"
+              :filename="docName"
+              :meta="{ filename: docName, mime: resolveDocumentViewerMime(docName) }"
+              :theme="viewerTheme"
+              @fallback-download="downloadOriginalFile"
+            />
+            <div v-else-if="isDownloadOnlyOffice" class="p-8 text-center max-w-sm space-y-4 flex flex-col items-center">
               <div class="inline-flex p-4 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 rounded-full">
                 <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -130,7 +138,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
+import DocumentViewer from "@/components/embed/DocumentViewer.vue";
+import { useDarkThemeFlag } from "@/composables/useDarkThemeFlag";
+import {
+  canPreviewWithDocumentViewer,
+  shouldDownloadInsteadOfPreview,
+  resolveDocumentViewerMime,
+} from "@/utils/workspaceFilePreview";
 
 const modelValue = defineModel<boolean>({ default: false });
 
@@ -139,8 +154,19 @@ const props = defineProps<{
   pageNo: string | number;
   fileUrl: string;
   content: string;
-  isOfficeDocument: boolean;
 }>();
+
+/** Office 与文本格式：交给 DocumentViewer 内联预览 */
+const canPreview = computed(() => canPreviewWithDocumentViewer(props.docName));
+/** 只有旧版二进制 .ppt 会命中：保持「暂不支持 + 下载」 */
+const isDownloadOnlyOffice = computed(() => shouldDownloadInsteadOfPreview(props.docName));
+/** 抽屉跟随全局暗色主题（本组件已有 dark: 适配）；composable 必须在 setup 顶层调用一次 */
+const isDark = useDarkThemeFlag();
+const viewerTheme = computed<'light' | 'dark'>(() => (isDark.value ? 'dark' : 'light'));
+/** Office 不跳页，文案不能声称「第 N 页」 */
+const subtitle = computed(() =>
+  canPreview.value ? 'RAG 关联原档预览' : `第 ${props.pageNo} 页 RAG 关联原档智能高亮预览`,
+);
 
 const previewExpanded = ref(true);
 const citationExpanded = ref(true);

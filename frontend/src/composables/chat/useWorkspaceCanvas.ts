@@ -4,21 +4,20 @@ import {
   openWorkspaceFileInCanvas,
   isSameWorkspacePreviewPath,
   resolveWorkspaceScriptLanguage,
+  resolveWorkspaceCanvasType,
+  resolveDocumentViewerMime,
   shouldAttachWorkspaceSourcePath,
+  getWorkspaceFileExtension,
+  OFFICE_PREVIEW_EXTENSIONS,
+  shouldDownloadInsteadOfPreview,
+  downloadWorkspaceFile,
 } from "@/utils/workspaceFilePreview";
+import type { CanvasPanelData } from "@/types/canvas";
 
-export type WorkspaceCanvasType = "html" | "code" | "mermaid" | "pdf" | "csv" | "image" | "compare";
+export type { WorkspaceCanvasType } from "@/types/canvas";
 
-export interface WorkspaceCanvasPayload {
-  type: WorkspaceCanvasType;
-  title: string;
-  content: string;
-  sourcePath?: string;
-  langName?: string;
-  runnable?: boolean;
-  compareContent?: string;
-  compareTitle?: string;
-}
+/** 打开画布的输入负载：与画布面板数据同构 */
+export type WorkspaceCanvasPayload = CanvasPanelData;
 
 export interface UseWorkspaceCanvasOptions {
   getConversationId: () => string;
@@ -132,33 +131,44 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
           filePath = filePath.replace(/###HTML_TAG_PLACEHOLDER_\d+###/g, "").trim();
         }
         const resolvedUrl = options.resolveFileUrl(filePath);
-        const normalizedPath = ((filePath.toLowerCase().split("?")[0] ?? "").split("#")[0] ?? "");
-        const isOfficeFile = [".docx", ".doc", ".xlsx", ".xls", ".xlsm", ".pptx", ".ppt"].some((extension) => normalizedPath.endsWith(extension));
-        if (isOfficeFile) {
-          const response = await axios.get(resolvedUrl, { responseType: "blob" });
-          const filename = filePath.split("/").pop() || "download";
-          const blobUrl = URL.createObjectURL(response.data);
-          const link = document.createElement("a");
-          link.href = blobUrl;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(blobUrl);
-          options.showToast(`已开始下载 ${filename}`, "success");
+        const filename = payload.title || filePath.split("/").pop() || "文件预览";
+        const canvasType = resolveWorkspaceCanvasType(filename);
+        // 画布只把 Office 当「文档预览」；文本格式留在 'code'，保住 markdown 渲染与代码编辑
+        if (OFFICE_PREVIEW_EXTENSIONS.has(getWorkspaceFileExtension(filename)) || canvasType === "pdf") {
+          // Office 与 PDF 只传鉴权 URL，Blob 交给 DocumentViewer 获取
+          canvasData.value = {
+            type: canvasType === "pdf" ? "pdf" : "document",
+            title: filename,
+            content: resolvedUrl,
+            documentMeta: {
+              filename,
+              mime:
+                canvasType === "pdf"
+                  ? "application/pdf"
+                  : resolveDocumentViewerMime(filename),
+            },
+            downloadPath: filePath,
+          };
+        } else if (shouldDownloadInsteadOfPreview(filename)) {
+          // 旧版二进制 .ppt：可识别但不预览，复用共享下载逻辑
+          // （不要在此内联 link.download —— 见 test_workspace_document_preview_contract.py 的守卫）
+          await downloadWorkspaceFile({
+            path: filePath,
+            name: filename,
+            conversationId: options.getConversationId(),
+            showToast: options.showToast,
+          });
           return;
-        }
-        if (payload.type === "pdf" || payload.type === "image" || payload.type === "csv") {
+        } else if (canvasType === "image" || canvasType === "csv") {
           const response = await axios.get(resolvedUrl, { responseType: "blob" });
           const blobUrl = URL.createObjectURL(response.data);
           activeBlobUrl.value = blobUrl;
-          canvasData.value = { type: payload.type, title: payload.title || filePath.split("/").pop() || "文件预览", content: blobUrl };
+          canvasData.value = { type: canvasType, title: filename, content: blobUrl };
         } else {
           const content = await axios.get(resolvedUrl).then((response) => response.data);
-          const filename = payload.title || filePath.split("/").pop() || "文件预览";
           const scriptLanguage = resolveWorkspaceScriptLanguage(filename);
           canvasData.value = {
-            type: payload.type,
+            type: canvasType,
             title: filename,
             content,
             sourcePath: shouldAttachWorkspaceSourcePath(filePath, filename) ? filePath : undefined,

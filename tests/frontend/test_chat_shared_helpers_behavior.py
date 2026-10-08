@@ -1113,6 +1113,16 @@ const requireModule = id => {
   if (id === '@/utils/workspaceFilePreview') return {
     isSameWorkspacePreviewPath: (left, right) => left === right,
     shouldAttachWorkspaceSourcePath: () => true,
+    resolveWorkspaceScriptLanguage: () => null,
+    resolveWorkspaceCanvasType: () => 'code',
+    resolveDocumentViewerMime: () => undefined,
+    getWorkspaceFileExtension: name => {
+      const parts = name.split('.');
+      return parts.length < 2 ? '' : '.' + parts.pop().toLowerCase();
+    },
+    // 画布分派用的是「仅 Office」集合（.md/.ts 等文本格式必须留在 'code'），
+    // 与 useWorkspaceCanvas.ts 的 import 面保持一致，否则 canvas://file 分支会拿到 undefined
+    OFFICE_PREVIEW_EXTENSIONS: new Set(['.docx', '.doc', '.xlsx', '.xls', '.xlsm', '.pptx']),
     openWorkspaceFileInCanvas: async options => options.onOpen({ type: 'code', title: options.name, content: 'preview' })
   };
   return require(id);

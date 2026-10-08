@@ -57,11 +57,14 @@ def test_code_execution_composable_parses_sse_and_exposes_running_state():
 def test_workspace_source_files_keep_script_execution_metadata():
     canvas = _source("frontend/src/components/embed/ChatCanvas.vue")
     preview = _source("frontend/src/utils/workspaceFilePreview.ts")
+    canvas_types = _source("frontend/src/types/canvas.ts")
 
     assert "props.data.runnable === true" in canvas
     assert "resolveWorkspaceScriptLanguage" in preview
     assert "runnable: !!scriptLanguage" in preview
-    assert "sourcePath?: string" in canvas
+    # sourcePath 已收敛到类型唯一来源
+    assert "sourcePath?: string" in canvas_types
+    assert "CanvasPanelData" in canvas
 
 
 def test_code_execution_uses_code_and_output_tabs_instead_of_vertical_split():
@@ -106,8 +109,11 @@ def test_output_analysis_is_sent_after_prefilling_existing_chat_input():
 
 def test_workspace_canvas_preserves_script_metadata_when_normalizing_payload():
     source = _source("frontend/src/composables/chat/useWorkspaceCanvas.ts")
+    canvas_types = _source("frontend/src/types/canvas.ts")
 
-    assert "langName?: string" in source
-    assert "runnable?: boolean" in source
+    # langName / runnable 已随 WorkspaceCanvasPayload 收敛到画布类型唯一来源
+    assert "langName?: string" in canvas_types
+    assert "runnable?: boolean" in canvas_types
+    assert "from '@/types/canvas'" in source or 'from "@/types/canvas"' in source
     assert "langName: payload.langName" in source
     assert "runnable: payload.runnable" in source

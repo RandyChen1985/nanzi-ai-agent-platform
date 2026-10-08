@@ -86,6 +86,10 @@ const emit = defineEmits<{
   toggleSelectAllStatic: [label: string];
   toggleMcpGroupCollapse: [serverName: string];
   toggleStaticGroupCollapse: [label: string];
+  expandAllMcpGroups: [];
+  collapseAllMcpGroups: [];
+  expandAllStaticGroups: [];
+  collapseAllStaticGroups: [];
   setOrchestratorTemperature: [value: number];
   setSynthesisTemperature: [value: number];
   openToolRuntimeConfig: [name: string];
@@ -102,6 +106,21 @@ const emit = defineEmits<{
   checkAgentName: [name: string];
   resetAgentNameCheck: [];
 }>();
+
+// 搜索期间一律展开分组（只读覆盖，不写回折叠集合）：否则搜索命中的工具躲在折叠的
+// 分组里，用户只看到标题与计数；清空搜索即回到原本的折叠状态，无需保存快照。
+const isSearching = computed(() => props.toolSearchQuery.trim().length > 0);
+
+// 批量展开 / 折叠按当前页签派发；Skills 页签没有分组，不渲染这两个按钮。
+const emitBulkExpandGroups = () => {
+  if (props.toolTab === 'mcp') emit('expandAllMcpGroups');
+  else emit('expandAllStaticGroups');
+};
+
+const emitBulkCollapseGroups = () => {
+  if (props.toolTab === 'mcp') emit('collapseAllMcpGroups');
+  else emit('collapseAllStaticGroups');
+};
 
 const isMainAgent = computed(() => {
   const agent = props.selectedAgent;
@@ -1001,6 +1020,34 @@ const externalCreationMissingFields = computed(() => {
                   已选 {{ selectedToolsCount }}/{{ allAvailableToolsCount + mcpToolsCount }}
                 </span>
               </div>
+              <!-- 分组批量展开 / 折叠：图标按钮 + 细竖线，避免与右侧页签组形成两个并列的「盒子」 -->
+              <div
+                v-if="toolTab !== 'skills'"
+                class="flex items-center border-r border-gray-200 pr-1.5 mr-0.5"
+              >
+                <button
+                  type="button"
+                  @click="emitBulkExpandGroups"
+                  aria-label="展开当前页签下的全部分组"
+                  title="展开当前页签下的全部分组"
+                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7 7-7-7" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  @click="emitBulkCollapseGroups"
+                  aria-label="折叠当前页签下的全部分组"
+                  title="折叠当前页签下的全部分组"
+                  class="p-1.5 rounded-md text-gray-400 hover:text-primary hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 11l7-7 7 7M5 19l7-7 7 7" />
+                  </svg>
+                </button>
+              </div>
               <div class="flex bg-gray-100 p-0.5 rounded-lg text-xs">
                 <button
                   type="button"
@@ -1030,9 +1077,12 @@ const externalCreationMissingFields = computed(() => {
                   <button
                     type="button"
                     @click="emit('toggleStaticGroupCollapse', group.label)"
+                    :disabled="isSearching"
+                    :title="isSearching ? '搜索状态下分组自动展开，清空搜索后可折叠' : ''"
+                    :class="isSearching ? 'cursor-default' : ''"
                     class="flex items-center gap-2 min-w-0 flex-1 text-left"
                   >
-                    <svg class="w-3.5 h-3.5 text-gray-400 transition-transform" :class="{ 'rotate-90': !isStaticGroupCollapsed(group.label) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-3.5 h-3.5 text-gray-400 transition-transform" :class="{ 'rotate-90': !isStaticGroupCollapsed(group.label) || isSearching }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>
                     <span class="text-xs">{{ group.icon }}</span>
@@ -1048,7 +1098,7 @@ const externalCreationMissingFields = computed(() => {
                     {{ isAllStaticGroupSelected(group.label) ? '取消全选' : '全选' }}
                   </button>
                 </div>
-                <div v-show="!isStaticGroupCollapsed(group.label)" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
+                <div v-show="!isStaticGroupCollapsed(group.label) || isSearching" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
                   <div
                     v-for="tool in group.tools"
                     :key="tool.name"
@@ -1150,8 +1200,8 @@ const externalCreationMissingFields = computed(() => {
               </div>
               <div v-else v-for="(tools, serverName) in currentScopeGroupedMcpTools" :key="serverName" class="rounded-lg border border-indigo-100 overflow-hidden">
                 <div class="flex items-center justify-between py-2 px-3 bg-indigo-50/60 border-b border-indigo-100/50">
-                  <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
-                    <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" :disabled="isSearching" :title="isSearching ? '搜索状态下分组自动展开，清空搜索后可折叠' : ''" :class="isSearching ? 'cursor-default' : ''" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
+                    <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) || isSearching }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>
                     <span class="min-w-0 flex-1">
@@ -1176,7 +1226,7 @@ const externalCreationMissingFields = computed(() => {
                     {{ isAllMcpSelected(serverName, tools) ? '取消全选' : '一键全选' }}
                   </button>
                 </div>
-                <div v-show="!isMcpGroupCollapsed(serverName)" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
+                <div v-show="!isMcpGroupCollapsed(serverName) || isSearching" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
                   <div
                     v-for="tool in tools"
                     :key="tool.id"
