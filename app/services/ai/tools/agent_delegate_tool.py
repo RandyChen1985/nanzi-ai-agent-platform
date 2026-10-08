@@ -116,9 +116,16 @@ def _configured_tool_name(item: Any) -> str:
 
 
 def _canonical_tool_name(name: str) -> str:
+    """把平台侧工具名换算为模型侧调用名（内置别名 + MCP 别名）。
+
+    委派白名单最终要与运行时 ``RuntimeToolSpec.name`` 比较，而 MCP 工具在运行时
+    注册的是别名；这里必须用同一口径，否则子智能体的 MCP 工具会被静默过滤。
+    """
+    from app.services.ai.tools.model_tool_name import to_model_tool_name
     from app.services.ai.tools.registry import AGENTSCOPE_BUILTIN_TOOL_ALIASES
 
-    return AGENTSCOPE_BUILTIN_TOOL_ALIASES.get(name, name)
+    model_name = to_model_tool_name(name)
+    return AGENTSCOPE_BUILTIN_TOOL_ALIASES.get(model_name, model_name)
 
 
 def resolve_delegation_tool_filter(

@@ -12,6 +12,7 @@ from app.services.ai.runtime.agentscope.stream_reconcile import (
     extract_tool_summary,
     format_tool_args_for_display,
 )
+from app.services.ai.runtime.agentscope.tool_guard import describe_unregistered_tool_call
 from app.services.ai.runtime.agentscope.tool_result import normalize_tool_result_state
 
 logger = logging.getLogger(__name__)
@@ -580,13 +581,9 @@ async def map_standard_agentscope_event(
                 yield {
                     "type": "log",
                     "id": tool_id,
-                    "title": f"⚠️ 未知工具调用被拦截: {tool_name}",
-                    "details": (
-                        f"模型尝试调用工具 `{tool_name}`，但该工具未在本智能体当前会话中注册。"
-                        f"已拦截，将向模型注入错误反馈以纠正。"
-                    ),
                     "status": "error",
                     "category": "tool",
+                    **describe_unregistered_tool_call(tool_name, tools),
                 }
                 return
 

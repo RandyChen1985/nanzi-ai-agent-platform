@@ -80,6 +80,7 @@ from app.services.ai.runtime.agentscope.event_stream import (
     map_standard_agentscope_event,
     new_native_stream_state,
 )
+from app.services.ai.runtime.agentscope.tool_guard import describe_unregistered_tool_call
 from app.services.ai.runtime.agentscope.tool_result import (
     build_final_tool_result_context,
     build_tool_result_envelope,
@@ -2477,13 +2478,9 @@ class AssistantAgentRunner(BaseExecutor):
                 yield {
                     "type": "log",
                     "id": tool_id,
-                    "title": f"⚠️ 工具调用已拦截: {tool_name}",
-                    "details": (
-                        f"工具 `{tool_name}` 未在本智能体注册，调用已被平台拦截。"
-                        f"模型已收到错误反馈，将重新生成回答。"
-                    ),
                     "status": "error",
                     "category": "tool",
+                    **describe_unregistered_tool_call(tool_name, tools),
                 }
                 return
 
