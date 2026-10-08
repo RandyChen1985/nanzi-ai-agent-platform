@@ -220,17 +220,32 @@ def test_registry_table_has_six_columns():
     assert 'colspan="6"' in source
 
 
-def test_registry_columns_share_the_spare_width():
-    """URL 列并入名称列后，腾出的宽度要按比例分给各列。
+def test_registry_only_the_name_column_absorbs_spare_width():
+    """固定布局下只能有一列自适应，否则多出的空间会被塞给首列。
 
-    若只给名称列 min-width、其余列固定宽度，宽屏下余量会全被名称列吃掉，
-    中间空出一大块。名称列按比例、其余列也按比例，才是均匀的吸收方式。
+    踩过的坑：勾选列声明 48px、其余列用百分比（合计 84%），表格多出的空间在
+    ``table-fixed`` 下被浏览器全部算到首列头上——复选框那一列空出一大块。
+    正确做法：名称列不声明宽度（吸收剩余），其余列给固定宽度。
     """
     source = _source(REGISTRY)
     header = source[source.index("<thead"):source.index("</thead>")]
-    assert 'class="w-[40%] min-w-[16rem]' in header, "名称列按比例并保留最小宽度"
-    for ratio in ("w-[10%]", "w-[13%]", "w-[9%]", "w-[12%]"):
-        assert ratio in header, f"{ratio} 应出现在表头"
+
+    name_th = next(tag for tag in header.split("<th") if ">名称</th>" in tag)
+    assert not re.search(r'class="[^"]*\bw-', name_th), f"名称列不应声明宽度：{name_th}"
+
+    fixed_columns = {
+        ">选择</span>": "w-12",
+        ">Method</th>": "w-24",
+        ">业务分组</th>": "w-32",
+        ">状态</th>": "w-24",
+        ">操作</th>": "w-32",
+    }
+    for marker, width in fixed_columns.items():
+        tag = next(tag for tag in header.split("<th") if marker in tag)
+        assert f'class="{width} ' in tag, f"{marker} 应为固定宽度 {width}：{tag}"
+
+    assert "w-[40%]" not in header and "w-[10%]" not in header, "不应再混用百分比列宽"
+
 
 
 def test_registry_table_never_grows_sideways_from_long_text():

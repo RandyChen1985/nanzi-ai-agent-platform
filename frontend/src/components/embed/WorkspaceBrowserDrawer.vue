@@ -734,6 +734,41 @@ const closeContextMenu = () => {
   contextMenu.value = null
 }
 
+// 菜单用 fixed 定位 + Teleport 到 body，不会被抽屉裁切，但会溢出**视口**——
+// 在列表靠下处右键时菜单向下展开，底部的项直接看不见。这里按实测尺寸决定落点：
+// 下方放不下就向上翻，右侧放不下就向左收，最后再夹到视口内。
+const CONTEXT_MENU_MARGIN = 8
+const contextMenuRef = ref<HTMLElement | null>(null)
+const contextMenuPosition = ref<{ left: number; top: number }>({ left: 0, top: 0 })
+const contextMenuMaxHeight = ref(typeof window === 'undefined' ? 0 : window.innerHeight)
+
+const adjustContextMenuPosition = () => {
+  const element = contextMenuRef.value
+  if (!element || !contextMenu.value) return
+  const margin = CONTEXT_MENU_MARGIN
+  const { width } = element.getBoundingClientRect()
+  // 关键：先把菜单高度限制在可视区之内（项多时内部滚动）。
+  // 只翻转是不够的——菜单本身高于剩余空间时，翻上去照样露不全。
+  const available = Math.max(120, window.innerHeight - margin * 2)
+  const height = Math.min(element.scrollHeight, available)
+  contextMenuMaxHeight.value = height
+
+  let left = contextMenu.value.x
+  let top = contextMenu.value.y
+  if (left + width > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - width - margin)
+  }
+  // 下方放不下就向上翻转：贴住点击点上方展开
+  if (top + height > window.innerHeight - margin) {
+    top = contextMenu.value.y - height
+  }
+  if (top < margin) top = margin
+  if (top + height > window.innerHeight - margin) {
+    top = Math.max(margin, window.innerHeight - height - margin)
+  }
+  contextMenuPosition.value = { left, top }
+}
+
 const openContextMenu = (event: MouseEvent, parentPath: string, item?: { path: string; name: string; is_dir: boolean; is_public?: boolean; is_user_workspace?: boolean }) => {
   const itemAllowed = item && (canManageItem(item) || isTrashListItem(item) || isTrashRootItem(item) || isPublicItem(item))
   if (!canUseCreateMenu.value && !itemAllowed) return
@@ -741,6 +776,8 @@ const openContextMenu = (event: MouseEvent, parentPath: string, item?: { path: s
   event.preventDefault()
   event.stopPropagation()
   contextMenu.value = { x: event.clientX, y: event.clientY, parentPath, item }
+  contextMenuPosition.value = { left: event.clientX, top: event.clientY }
+  void nextTick(adjustContextMenuPosition)
 }
 
 const handleListContextMenu = (event: MouseEvent) => {
@@ -2329,8 +2366,9 @@ onUnmounted(() => {
   <Teleport to="body">
     <div
       v-if="contextMenu"
-      class="fixed z-[130] min-w-[10rem] py-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl ring-1 ring-black/5 text-xs font-bold text-gray-700 dark:text-gray-200"
-      :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+      class="fixed z-[130] min-w-[10rem] py-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl ring-1 ring-black/5 text-xs font-bold text-gray-700 dark:text-gray-200 overflow-y-auto custom-scrollbar"
+      ref="contextMenuRef"
+      :style="{ left: `${contextMenuPosition.left}px`, top: `${contextMenuPosition.top}px`, maxHeight: `${contextMenuMaxHeight}px` }"
       @click.stop
       @contextmenu.prevent.stop
     >
