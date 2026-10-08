@@ -377,11 +377,34 @@ export async function emptyWorkspaceTrash() {
   return axios.post('/api/v1/chat/fs/empty-trash')
 }
 
-export async function uploadToWorkspaceDir(parentPath: string, file: File) {
+export interface WorkspaceUploadTransportOptions {
+  /** 进度回调。快链路下 axios 可能只触发一次（浏览器把数据写入 socket 缓冲区即算完成）。 */
+  onProgress?: (payload: { loaded: number; total?: number }) => void
+  /** 请求体已发送完毕，进入等待服务端落盘的阶段。 */
+  onCommit?: () => void
+  /** 取消信号。 */
+  signal?: AbortSignal
+}
+
+export async function uploadToWorkspaceDir(
+  parentPath: string,
+  file: File,
+  options?: WorkspaceUploadTransportOptions,
+) {
   const form = new FormData()
   form.append('file', file)
   return axios.post('/api/v1/chat/fs/upload', form, {
     params: { parent_path: parentPath },
+    signal: options?.signal,
+    // 大文件落盘可能远超默认 60s：此处不设超时，交由用户取消或服务端 413 终止
+    timeout: 0,
+    onUploadProgress: (event: any) => {
+      const total = Number(event?.total) || file.size
+      const loaded = Number(event?.loaded) || 0
+      options?.onProgress?.({ loaded, total })
+      // 请求体写完即进入服务端落盘阶段，UI 需据此切换文案，避免进度停在 100% 无解释
+      if (total > 0 && loaded >= total) options?.onCommit?.()
+    },
   })
 }
 

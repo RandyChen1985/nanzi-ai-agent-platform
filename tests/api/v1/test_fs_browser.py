@@ -906,3 +906,142 @@ async def test_public_directory_metadata_and_readonly_protection(
         assert preview_resp.text == "# Public Guidelines"
 
 
+# --------------------------------------------------------------------------- #
+# 工作空间上传：分块流式落盘、可配置上限、失败不留残留
+# --------------------------------------------------------------------------- #
+
+
+async def _user_workspace_dir(client: AsyncClient, api_key: str) -> str:
+    """经列表 API 取当前用户的私有工作目录路径，避免在测试里猜测 user_key 组成。"""
+    root = await client.get("/api/v1/chat/fs/list", headers={"X-API-Key": api_key})
+    assert root.status_code == 200, root.text
+    for item in root.json()["data"]["items"]:
+        if item.get("is_user_workspace"):
+            return item["path"]
+
+    workspaces = next(
+        (i for i in root.json()["data"]["items"] if i["name"] == "agent_workspaces"),
+        None,
+    )
+    assert workspaces is not None, "虚拟根未暴露 agent_workspaces，无法定位用户工作区"
+
+    inner = await client.get(
+        "/api/v1/chat/fs/list",
+        params={"path": workspaces["path"]},
+        headers={"X-API-Key": api_key},
+    )
+    assert inner.status_code == 200, inner.text
+    user_dir = next((i for i in inner.json()["data"]["items"] if i.get("is_user_workspace")), None)
+    assert user_dir is not None, "未找到当前用户的私有工作目录"
+    return user_dir["path"]
+
+
+@pytest.mark.asyncio
+async def test_upload_writes_file_and_returns_original_and_stored_name(db_session, valid_api_key):
+    """上传应落盘成功，且响应同时给出原始文件名与加后缀后的落盘名。"""
+    payload = b"%PDF-1.4 fake content"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        target = await _user_workspace_dir(client, valid_api_key)
+
+        resp = await client.post(
+            "/api/v1/chat/fs/upload",
+            params={"parent_path": target},
+            files={"file": ("季度报告.pdf", payload, "application/pdf")},
+            headers={"X-API-Key": valid_api_key},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    # name 必须是原始文件名：历史实现错误地返回了加过后缀的落盘名，用户会以为传错了文件
+    assert data["name"] == "季度报告.pdf"
+    # stored_name 是防重名后的真实落盘名，且确实存在于磁盘
+    assert data["stored_name"] != "季度报告.pdf"
+    assert data["stored_name"].startswith("季度报告")
+    assert data["stored_name"].endswith(".pdf")
+    assert os.path.isfile(os.path.join(target, data["stored_name"]))
+    assert data["size"] == len(payload)
+
+
+@pytest.mark.asyncio
+async def test_upload_returns_413_and_leaves_no_residue_when_oversized(
+    db_session, valid_api_key, monkeypatch
+):
+    """超限必须返回 413 并在中止时删除半截文件，不能留下残骸。"""
+    from app.core.config import settings as app_settings
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        target = await _user_workspace_dir(client, valid_api_key)
+        before = set(os.listdir(target))
+
+        # 把上限压到 1MB，避免测试真的构造 200MB 负载；同时确保确实触发分块累计路径
+        monkeypatch.setattr(app_settings, "WORKSPACE_UPLOAD_MAX_MB", 1, raising=False)
+
+        resp = await client.post(
+            "/api/v1/chat/fs/upload",
+            params={"parent_path": target},
+            files={"file": ("huge.bin", b"x" * (2 * 1024 * 1024), "application/octet-stream")},
+            headers={"X-API-Key": valid_api_key},
+        )
+
+        assert resp.status_code == 413, resp.text
+        assert "上限" in resp.json()["detail"]
+        # 关键：失败不得留下半截文件
+        assert set(os.listdir(target)) == before
+
+
+@pytest.mark.asyncio
+async def test_upload_limit_reads_from_config(db_session, valid_api_key, monkeypatch):
+    """上限来自配置项：调大后 2MB 文件应能正常上传。"""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "WORKSPACE_UPLOAD_MAX_MB", 4, raising=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        target = await _user_workspace_dir(client, valid_api_key)
+
+        resp = await client.post(
+            "/api/v1/chat/fs/upload",
+            params={"parent_path": target},
+            files={"file": ("ok.bin", b"y" * (2 * 1024 * 1024), "application/octet-stream")},
+            headers={"X-API-Key": valid_api_key},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["size"] == 2 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_forbidden_extension_without_residue(db_session, valid_api_key):
+    """脚本类扩展名仍按现状禁传，且校验早于写盘，不得留下任何文件。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        target = await _user_workspace_dir(client, valid_api_key)
+        before = set(os.listdir(target))
+
+        resp = await client.post(
+            "/api/v1/chat/fs/upload",
+            params={"parent_path": target},
+            files={"file": ("payload.py", b"print(1)", "text/x-python")},
+            headers={"X-API-Key": valid_api_key},
+        )
+
+        assert resp.status_code == 403, resp.text
+        assert set(os.listdir(target)) == before
+
+
+@pytest.mark.asyncio
+async def test_upload_into_other_users_workspace_is_rejected(db_session, valid_api_key):
+    """普通用户向他人工作目录上传必须被拦截。"""
+    base = get_data_base_dir()
+    other_dir = os.path.join(base, "agent_workspaces", "other_user__999", "conv-upload")
+    os.makedirs(other_dir, exist_ok=True)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/chat/fs/upload",
+            params={"parent_path": other_dir},
+            files={"file": ("evil.txt", b"x", "text/plain")},
+            headers={"X-API-Key": valid_api_key},
+        )
+
+    assert resp.status_code in (403, 404), resp.text
+    assert not os.path.exists(os.path.join(other_dir, "evil.txt"))

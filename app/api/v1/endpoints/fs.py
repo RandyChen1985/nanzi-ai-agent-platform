@@ -665,8 +665,30 @@ async def create_fs_entry(
     )
 
 
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+# 上传上限来自配置（WORKSPACE_UPLOAD_MAX_MB），默认 200MB。
+DEFAULT_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
+# 分块落盘大小：避免把整个文件读进内存（旧实现一次性 read 会造成与文件等量的内存峰值）。
+UPLOAD_CHUNK_BYTES = 1024 * 1024
 FORBIDDEN_UPLOAD_EXTENSIONS = {".exe", ".bat", ".sh", ".cmd", ".com", ".msi", ".php", ".jsp", ".asp", ".py", ".pl"}
+
+
+def _workspace_upload_max_bytes() -> int:
+    """读取上传上限。配置缺失或非法时回退默认值，保证接口始终可用。"""
+    try:
+        from app.core.config import settings
+
+        megabytes = int(getattr(settings, "WORKSPACE_UPLOAD_MAX_MB", 0) or 0)
+    except Exception:
+        megabytes = 0
+    if megabytes <= 0:
+        return DEFAULT_UPLOAD_MAX_BYTES
+    return megabytes * 1024 * 1024
+
+
+def _format_size_limit(limit_bytes: int) -> str:
+    if limit_bytes >= 1024 * 1024 * 1024:
+        return f"{max(1, limit_bytes // (1024 * 1024 * 1024))}GB"
+    return f"{max(1, limit_bytes // (1024 * 1024))}MB"
 
 
 def _resolve_writable_entry_path(path: str, user_info: Dict[str, Any]) -> str:
@@ -755,7 +777,10 @@ class FileDeleteResponse(BaseModel):
 
 class FileUploadResponse(BaseModel):
     path: str
+    # 用户选择的原始文件名
     name: str
+    # 实际落盘名（防重名会追加短后缀）：UI 据此解释「为什么名字变了」
+    stored_name: Optional[str] = None
     size: int
     mtime: float
 
@@ -943,27 +968,62 @@ async def upload_to_workspace(
     if not os.path.isdir(parent):
         raise HTTPException(status_code=400, detail="目标路径不是目录。")
 
-    contents = await file.read(MAX_UPLOAD_BYTES + 1)
-    if len(contents) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=400, detail="文件大小超出 20MB 限制")
-
+    # 扩展名校验必须早于任何写盘动作，避免「先落盘再拒绝」留下垃圾文件
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext in FORBIDDEN_UPLOAD_EXTENSIONS:
         raise HTTPException(status_code=403, detail=f"禁止上传该类型文件: {ext}")
 
+    max_bytes = _workspace_upload_max_bytes()
+    original_name = os.path.basename(file.filename or "") or "upload"
+
     try:
-        target, handle = open_upload_storage_file(parent, file.filename)
-        with handle:
-            handle.write(contents)
-        unique_name = os.path.basename(target)
-        stat = os.stat(target)
+        target, handle = open_upload_storage_file(parent, original_name)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"上传失败: {exc}") from exc
 
+    stored_name = os.path.basename(target)
+    written = 0
+    try:
+        # 分块流式落盘：内存占用与文件大小无关，且超限可中途截断
+        while True:
+            chunk = await file.read(UPLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"文件大小超出 {_format_size_limit(max_bytes)} 上限",
+                )
+            handle.write(chunk)
+        handle.flush()
+    except HTTPException:
+        # 超限即中止，并且不留下半截文件
+        if not handle.closed:
+            handle.close()
+        try:
+            os.remove(target)
+        except OSError:
+            pass
+        raise
+    except OSError as exc:
+        if not handle.closed:
+            handle.close()
+        try:
+            os.remove(target)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"上传失败: {exc}") from exc
+    finally:
+        if not handle.closed:
+            handle.close()
+
+    stat = os.stat(target)
     return StandardResponse(
         data=FileUploadResponse(
             path=target,
-            name=unique_name,
+            name=original_name,
+            stored_name=stored_name,
             size=stat.st_size,
             mtime=stat.st_mtime,
         )
