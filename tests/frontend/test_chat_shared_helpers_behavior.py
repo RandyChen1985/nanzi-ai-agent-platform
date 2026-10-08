@@ -1113,6 +1113,14 @@ const requireModule = id => {
   if (id === '@/utils/workspaceFilePreview') return {
     isSameWorkspacePreviewPath: (left, right) => left === right,
     shouldAttachWorkspaceSourcePath: () => true,
+    resolveWorkspaceScriptLanguage: () => null,
+    resolveWorkspaceCanvasType: () => 'code',
+    resolveDocumentViewerMime: () => undefined,
+    getWorkspaceFileExtension: name => {
+      const parts = name.split('.');
+      return parts.length < 2 ? '' : '.' + parts.pop().toLowerCase();
+    },
+    DOCUMENT_VIEWER_EXTENSIONS: new Set(['.docx', '.xlsx', '.pptx']),
     openWorkspaceFileInCanvas: async options => options.onOpen({ type: 'code', title: options.name, content: 'preview' })
   };
   return require(id);

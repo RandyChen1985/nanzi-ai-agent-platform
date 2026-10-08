@@ -1258,7 +1258,6 @@
       :page-no="ragPreviewPageNo"
       :file-url="ragPreviewFileUrl"
       :content="ragPreviewContent"
-      :is-office-document="isOfficeDocument"
     />
 
     <!-- Input Area -->
@@ -8073,13 +8072,6 @@ const ragPreviewFileUrl = computed(() => {
   const datasetId = encodeURIComponent(ragPreviewDatasetId.value);
   const docId = encodeURIComponent(ragPreviewDocId.value);
   return `/api/portal/ragflow/datasets/${datasetId}/documents/${docId}/file`;
-});
-
-const isOfficeDocument = computed(() => {
-  const name = ragPreviewDocName.value.toLowerCase();
-  return name.endsWith(".doc") || name.endsWith(".docx") || 
-         name.endsWith(".xls") || name.endsWith(".xlsx") || 
-         name.endsWith(".ppt") || name.endsWith(".pptx");
 });
 
 const handleViewOriginal = (citation: any) => {

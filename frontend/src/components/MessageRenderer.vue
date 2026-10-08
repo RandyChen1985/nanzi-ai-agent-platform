@@ -9,6 +9,7 @@ import { applyChartDarkTheme, applyChartViewMode, buildChartTableRows, getAvaila
 import { useDarkThemeFlag } from '@/composables/useDarkThemeFlag';
 import { dedupeSqlPlanPayload, parseSqlPlan, type SqlPlanData } from '@/utils/sqlPlan';
 import { copyToClipboard } from '@/utils/clipboard';
+import type { CanvasPanelData } from '@/types/canvas';
 import type { MarkdownTheme } from '@/types/markdownTheme';
 import MermaidRenderer from './MermaidRenderer.vue';
 import SqlPlanCard from './SqlPlanCard.vue';
@@ -81,13 +82,7 @@ const emit = defineEmits<{
   }): void;
   (e: 'show-citation', payload: { id: string; anchor: HTMLElement }): void;
   (e: 'open-browser-url', url: string): void;
-  (e: 'open-canvas', payload: {
-    type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare';
-    title: string;
-    content: string;
-    langName?: string;
-    runnable?: boolean;
-  }): void;
+  (e: 'open-canvas', payload: Omit<CanvasPanelData, 'sourcePath'> & { sourcePath?: string }): void;
 }>();
 
 const RUNNABLE_CODE_LANGUAGES = new Set(['python', 'python3', 'shell', 'sh', 'bash']);

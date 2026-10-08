@@ -8,6 +8,8 @@ import KnowledgeFlowGuideBanner from '../components/knowledge/KnowledgeFlowGuide
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { copyToClipboard as copyText } from '../utils/clipboard'
+import DocumentViewer from '@/components/embed/DocumentViewer.vue'
+import { canPreviewWithDocumentViewer, resolveDocumentViewerMime } from '@/utils/workspaceFilePreview'
 
 const router = useRouter()
 const route = useRoute()
@@ -1275,6 +1277,23 @@ const previewDocUrl = computed(() => {
   const docId = encodeURIComponent(selectedDocument.value.id)
   return `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/file`
 })
+
+/** 6 种 Office 格式交给 DocumentViewer；其余（含 PDF）继续走 iframe */
+const canPreviewSelectedDocument = computed(() =>
+  canPreviewWithDocumentViewer(selectedDocument.value?.name || ''),
+)
+
+/** 组件内部下载兜底的接收方；与画布版 downloadWorkspaceFile 一致的临时 a 标签写法 */
+const downloadPreviewDocument = () => {
+  if (!previewDocUrl.value) return
+  const link = document.createElement('a')
+  link.href = previewDocUrl.value
+  link.download = selectedDocument.value?.name || ''
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
+
 const openDocPreview = () => {
   if (!previewDocUrl.value) return
   showDocPreview.value = true
@@ -2868,8 +2887,16 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       @close="closeDocPreview"
     >
       <div class="h-[70vh] w-full">
+        <DocumentViewer
+          v-if="canPreviewSelectedDocument && showDocPreview && previewDocUrl"
+          :url="previewDocUrl"
+          :filename="selectedDocument?.name || ''"
+          :meta="{ filename: selectedDocument?.name || '', mime: resolveDocumentViewerMime(selectedDocument?.name || '') }"
+          theme="light"
+          @fallback-download="downloadPreviewDocument"
+        />
         <iframe
-          v-if="showDocPreview && previewDocUrl"
+          v-else-if="showDocPreview && previewDocUrl"
           :src="previewDocUrl"
           class="w-full h-full rounded-xl border border-gray-200 bg-white"
           title="文档原文件预览"

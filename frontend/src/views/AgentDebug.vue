@@ -3028,13 +3028,6 @@ const ragPreviewFileUrl = computed(() => {
   return `/api/portal/ragflow/datasets/${datasetId}/documents/${docId}/file`;
 });
 
-const isOfficeDocument = computed(() => {
-  const name = ragPreviewDocName.value.toLowerCase();
-  return name.endsWith(".doc") || name.endsWith(".docx") || 
-         name.endsWith(".xls") || name.endsWith(".xlsx") || 
-         name.endsWith(".ppt") || name.endsWith(".pptx");
-});
-
 const handleViewOriginal = (citation: any) => {
   closeCitationPopover();
   if (citation.source_type === "web") {
@@ -5346,7 +5339,6 @@ onUnmounted(() => {
     :page-no="ragPreviewPageNo"
     :file-url="ragPreviewFileUrl"
     :content="ragPreviewContent"
-    :is-office-document="isOfficeDocument"
   />
 
   <ConfirmModal

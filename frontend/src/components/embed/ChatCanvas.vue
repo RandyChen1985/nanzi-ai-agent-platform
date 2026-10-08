@@ -8,9 +8,12 @@ import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectoryS
 import ConfirmModal from '@/components/ConfirmModal.vue';
 import PivotTable from '@/components/embed/PivotTable.vue';
 import { useToast } from '@/composables/useToast';
-import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
+import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, downloadWorkspaceFile, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
 import { copyToClipboard } from '@/utils/clipboard';
 import { useCodeExecution } from '@/composables/chat/useCodeExecution';
+import DocumentViewer from '@/components/embed/DocumentViewer.vue';
+import type { CanvasPanelData } from '@/types/canvas';
+import { useDarkThemeFlag } from '@/composables/useDarkThemeFlag';
 
 const pinned = defineModel<boolean>('pinned', { default: false });
 const canvasWidth = defineModel<number>('canvasWidth', { default: 520 });
@@ -18,16 +21,7 @@ const canvasWidth = defineModel<number>('canvasWidth', { default: 520 });
 const props = withDefaults(
   defineProps<{
     visible: boolean;
-    data: {
-      type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare';
-      title: string;
-      content: string;
-      sourcePath?: string;
-      langName?: string;
-      runnable?: boolean;
-      compareContent?: string;
-      compareTitle?: string;
-    } | null;
+    data: CanvasPanelData | null;
     /** 工作空间预览时靠左停靠，避免与右侧抽屉重叠 */
     dockSide?: 'left' | 'right';
     /** 叠放在父级聊天区域内，不挤压主布局 */
@@ -118,8 +112,21 @@ const downloadFile = () => {
   if (!props.data) return;
   const content = resolvedContent.value;
 
-  // 对于图片、PDF以及CSV（这里的CSV content存放的是文件链接），我们可以通过原生a标签进行链接下载或跳转
-  if (props.data.type === 'image' || props.data.type === 'pdf' || props.data.type === 'csv') {
+  // 文档类优先按工作区路径重新取 Blob 下载：
+  // 其 content 是鉴权 URL（PDF 为 inline），直接 a.href 会退化成新窗口打开
+  if (props.data.type === 'document' || props.data.type === 'pdf') {
+    if (props.data.downloadPath) {
+      downloadWorkspaceFile({
+        path: props.data.downloadPath,
+        name: props.data.documentMeta?.filename || props.data.title,
+        conversationId: resolveConversationId(),
+        showToast,
+      });
+      return;
+    }
+  }
+
+  if (props.data.type === 'image' || props.data.type === 'csv') {
     const a = document.createElement('a');
     a.href = content;
     a.download = props.data.title || 'download';
@@ -653,12 +660,21 @@ const resolvedContent = computed(() => {
     });
   }
 
-  if (data && (data.type === 'image' || data.type === 'pdf' || data.type === 'csv')) {
+  if (data && (data.type === 'image' || data.type === 'pdf' || data.type === 'csv' || data.type === 'document')) {
     return resolveUrlPath(val);
   }
 
   return val;
 });
+
+const isDarkTheme = useDarkThemeFlag();
+/** file-viewer 的主题取值，跟随项目明暗主题 */
+const canvasTheme = computed<'light' | 'dark'>(() => (isDarkTheme.value ? 'dark' : 'light'));
+
+/** Office 文档与 PDF 由 DocumentViewer 统一渲染 */
+const isDocumentPreview = computed(
+  () => props.data?.type === 'document' || props.data?.type === 'pdf',
+);
 
 // ==========================================
 // 4. Watchers & Lifecycles
@@ -987,6 +1003,7 @@ const overlayBackdropClass = computed(() =>
                 data?.type === 'csv' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' :
                 data?.type === 'mermaid' ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400' :
                 data?.type === 'compare' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' :
+                data?.type === 'document' ? 'bg-teal-100 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400' :
                 isMarkdownFile ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400' :
                 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
               "
@@ -999,6 +1016,7 @@ const overlayBackdropClass = computed(() =>
                 data?.type === 'csv' ? 'CSV Table' :
                 data?.type === 'mermaid' ? 'Diagram' :
                 data?.type === 'compare' ? 'File Diff' :
+                data?.type === 'document' ? 'Office' :
                 'Code'
               }}
             </span>
@@ -1156,8 +1174,19 @@ const overlayBackdropClass = computed(() =>
           </div>
         </div>
 
+        <!-- Office 文档 / PDF：由 DocumentViewer 统一渲染 -->
+        <template v-if="isDocumentPreview">
+          <DocumentViewer
+            :url="resolvedContent"
+            :filename="data?.documentMeta?.filename || data?.title || 'document'"
+            :meta="data?.documentMeta"
+            :theme="canvasTheme"
+            @fallback-download="downloadFile"
+          />
+        </template>
+
         <!-- HTML Safe Sandbox Rendering / Code Switchable -->
-        <template v-if="isHtmlContent">
+        <template v-else-if="isHtmlContent">
           <!-- HTML Preview iframe -->
           <div v-if="activeTab === 'preview'" class="w-full h-full bg-white dark:bg-gray-950 rounded-xl overflow-hidden shadow-inner border border-gray-100 dark:border-gray-800 min-h-[500px]">
             <iframe
@@ -1318,16 +1347,6 @@ const overlayBackdropClass = computed(() =>
             <pre v-if="codeStderr.length" class="mt-2 whitespace-pre-wrap break-words text-rose-300"><template v-for="(item, index) in codeStderr" :key="`stderr-${index}`">{{ item.chunk }}</template></pre>
             <p v-if="codeExecutionError" class="mt-2 whitespace-pre-wrap break-words text-amber-300">{{ codeExecutionError }}</p>
             <p v-if="!codeOutputChunks.length && !codeExecutionError" class="text-gray-500">点击“运行”后，这里会显示实时输出。</p>
-          </div>
-        </template>
-
-        <!-- PDF Viewer Sandbox -->
-        <template v-else-if="data?.type === 'pdf'">
-          <div class="w-full h-full bg-white dark:bg-gray-950 rounded-xl overflow-hidden shadow-inner border border-gray-100 dark:border-gray-800 min-h-[500px]">
-            <iframe
-              :src="resolvedContent"
-              class="w-full h-full border-none"
-            ></iframe>
           </div>
         </template>
 
@@ -1602,7 +1621,7 @@ const overlayBackdropClass = computed(() =>
               d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
             />
           </svg>
-          <span>{{ copied ? '已复制！' : (data?.type === 'image' || data?.type === 'pdf' ? '复制链接' : '复制代码') }}</span>
+          <span>{{ copied ? '已复制！' : (data?.type === 'image' || isDocumentPreview ? '复制链接' : '复制代码') }}</span>
         </button>
 
         <button
@@ -1612,7 +1631,7 @@ const overlayBackdropClass = computed(() =>
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          <span>{{ data?.type === 'image' || data?.type === 'pdf' ? '下载文件' : '下载数据' }}</span>
+          <span>{{ data?.type === 'image' || data?.type === 'pdf' || data?.type === 'document' ? '下载文件' : '下载数据' }}</span>
         </button>
       </div>
       </div>
