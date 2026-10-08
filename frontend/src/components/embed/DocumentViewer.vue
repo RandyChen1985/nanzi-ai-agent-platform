@@ -7,7 +7,12 @@ import '@file-viewer/vue3/dist/file-viewer3.css'
 
 const props = defineProps<{
   /** 需要鉴权的文档地址；走 axios 获取，因此跨站嵌入场景同样可用 */
-  url: string
+  url?: string
+  /**
+   * 直接给出文本内容时使用：跳过网络请求，由本组件包装成 File 交给渲染器。
+   * 画布的文本格式已经取到内容，不必再由本组件重复请求一次。
+   */
+  content?: string
   filename: string
   meta?: CanvasDocumentMeta
   theme: 'light' | 'dark'
@@ -43,6 +48,16 @@ async function loadBlob() {
   status.value = 'loading'
   errorMessage.value = ''
   fileBlob.value = null
+
+  const resolvedName = props.meta?.filename || props.filename || 'document'
+
+  // 直接给出内容：不请求网络（画布文本格式走这条）。
+  // 空字符串是合法内容（空文件），因此用 undefined/null 判断而不是真值判断。
+  if (props.content !== undefined && props.content !== null) {
+    fileBlob.value = new File([props.content], resolvedName, { type: props.meta?.mime || '' })
+    status.value = 'ready'
+    return
+  }
 
   if (!props.url) {
     status.value = 'error'
@@ -85,7 +100,7 @@ const viewerOptions = computed(() => ({
 const resolvedFilename = computed(() => props.meta?.filename || props.filename || 'document')
 const resolvedType = computed(() => props.meta?.mime)
 
-watch(() => props.url, loadBlob, { immediate: true })
+watch(() => [props.url, props.content], loadBlob, { immediate: true })
 
 onUnmounted(() => {
   controller?.abort()

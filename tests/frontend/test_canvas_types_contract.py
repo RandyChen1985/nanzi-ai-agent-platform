@@ -76,18 +76,23 @@ def test_canvas_document_dispatch_uses_office_only_preview_set():
 def test_chat_canvas_hides_duplicate_download_button_for_document_viewer():
     """Office/PDF 由 file-viewer 渲染，其工具栏自带下载，画布下载按钮须隐藏以免重复。
 
-    用 `!isDocumentPreview` 而不是内联的 `data?.type !== 'document' && data?.type !== 'pdf'`：
+    判据用 `!isFileViewerRendered`（= isDocumentPreview 或「文本格式 + 预览标签页」），
+    而不是内联的 `data?.type !== 'document' && data?.type !== 'pdf'`：
     后者会让 TS 对本按钮子节点收窄 `data.type`，使按钮内「下载文件/下载数据」
     那行的 pdf/document 比较变成不可达分支，新增 2 条 TS2367
-    （vue-tsc 62 → 64 条且落在本文件）。语义等价：isDocumentPreview = document || pdf。
+    （vue-tsc 62 → 64 条且落在本文件）。内联 `data?.type` 比较仍然禁止。
     """
     canvas = _source("frontend/src/components/embed/ChatCanvas.vue")
 
     # isDocumentPreview 的定义保持 document || pdf
     assert "() => props.data?.type === 'document' || props.data?.type === 'pdf'" in canvas
-    assert "v-if=\"!isDocumentPreview\"" in canvas
+    # 判据升级为 isFileViewerRendered：除 Office/PDF 外，文本格式在「预览」标签页下也由
+    # file-viewer 渲染，同样要隐藏画布下载图标；切到「源代码」后图标恢复。
+    assert "v-if=\"!isFileViewerRendered\"" in canvas
+    assert "isDocumentPreview.value ||" in canvas
+    assert "isFileViewerTextPreview.value && activeTab.value === 'preview'" in canvas
     # 该 v-if 必须恰好挂在 header 中 @click="downloadFile" 的按钮上（.ppt 仍走此按钮）
-    download_button = canvas.split("v-if=\"!isDocumentPreview\"")[1].split("</button>")[0]
+    download_button = canvas.split("v-if=\"!isFileViewerRendered\"")[1].split("</button>")[0]
     assert '@click="downloadFile"' in download_button
     # 「复制链接」保留：file-viewer 没有对应功能
     assert "isDocumentPreview ? '复制链接' : '复制代码'" in canvas
@@ -140,8 +145,8 @@ def test_chat_canvas_actions_render_as_header_icon_buttons():
         assert ":aria-label=" in block, label
         assert "flex-1" not in block, label
 
-    # Office/PDF 仍隐藏下载图标（file-viewer 工具栏自带下载）：判据 = isDocumentPreview
-    download_button = canvas.split('v-if="!isDocumentPreview"')[1].split("</button>")[0]
+    # file-viewer 渲染时隐藏下载图标（其工具栏自带下载）：判据 = isFileViewerRendered
+    download_button = canvas.split('v-if="!isFileViewerRendered"')[1].split("</button>")[0]
     assert '@click="downloadFile"' in download_button
 
 

@@ -8,7 +8,7 @@ import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectoryS
 import ConfirmModal from '@/components/ConfirmModal.vue';
 import PivotTable from '@/components/embed/PivotTable.vue';
 import { useToast } from '@/composables/useToast';
-import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, downloadWorkspaceFile, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
+import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, downloadWorkspaceFile, isDirectRenderableUrl, resolveHighlightLanguage, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent, shouldPreviewWithFileViewerInCanvas } from '@/utils/workspaceFilePreview';
 import { copyToClipboard } from '@/utils/clipboard';
 import { useCodeExecution } from '@/composables/chat/useCodeExecution';
 import DocumentViewer from '@/components/embed/DocumentViewer.vue';
@@ -172,20 +172,10 @@ const highlightedCode = computed(() => {
   if (!props.data || (props.data.type !== 'code' && props.data.type !== 'html')) return '';
   const content = codeTextContent.value;
 
-  let lang = 'txt';
-  if (props.data.type === 'html') {
-    lang = 'xml';
-  } else {
-    const title = props.data.title.toLowerCase();
-    if (title.includes('python')) lang = 'python';
-    else if (title.includes('javascript') || title.includes('js')) lang = 'javascript';
-    else if (title.includes('typescript') || title.includes('ts')) lang = 'typescript';
-    else if (title.includes('sql')) lang = 'sql';
-    else if (title.includes('css')) lang = 'css';
-    else if (title.includes('html')) lang = 'xml';
-    else if (title.includes('json')) lang = 'json';
-    else if (title.includes('sh') || title.includes('bash')) lang = 'bash';
-  }
+  // 高亮语言由扩展名决定（共享判定，见 documentPreviewFormats.resolveHighlightLanguage）。
+  // 早期版本按文件名字串推断，导致 .json 含子串 js 被判成 javascript、assets.txt 含 ts
+  // 被判成 typescript、crash.log 含 sh 被判成 bash，而 main.py 又因不含 "python" 丢成纯文本。
+  const lang = props.data.type === 'html' ? 'xml' : resolveHighlightLanguage(props.data.title);
 
   try {
     if (hljs.getLanguage(lang)) {
@@ -676,6 +666,23 @@ const isDocumentPreview = computed(
   () => props.data?.type === 'document' || props.data?.type === 'pdf',
 );
 
+/**
+ * 文本/代码格式是否默认交给 file-viewer 预览。
+ * 判定是静态的（只看扩展名），.md/.html/.py/.sh 等画布专属格式被排除在外。
+ */
+const isFileViewerTextPreview = computed(() => {
+  if (!props.data || props.data.type !== 'code') return false;
+  return shouldPreviewWithFileViewerInCanvas(props.data.title);
+});
+
+/**
+ * 当前是否由 file-viewer 承担渲染。
+ * 用途：file-viewer 工具栏自带「下载」，此时隐藏画布顶部的下载图标避免重复。
+ */
+const isFileViewerRendered = computed(
+  () => isDocumentPreview.value || (isFileViewerTextPreview.value && activeTab.value === 'preview'),
+);
+
 // ==========================================
 // 4. Watchers & Lifecycles
 // ==========================================
@@ -693,7 +700,7 @@ watch(() => props.data, () => {
 
   // 自动根据类型与内容初始化当前激活 Tab
   if (props.data) {
-    if (props.data.type === 'html' || isMarkdownContent.value) {
+    if (props.data.type === 'html' || isMarkdownContent.value || isFileViewerTextPreview.value) {
       activeTab.value = 'preview';
     } else {
       activeTab.value = 'code';
@@ -1082,18 +1089,16 @@ const overlayBackdropClass = computed(() =>
           </button>
 
           <!--
-            DocumentViewer（Office/PDF）由 file-viewer 渲染，其工具栏自带「下载」，
-            故此处不显示下载图标避免重复。.ppt 不会走到 document 类型（已在
-            useWorkspaceCanvas 里被 shouldDownloadInsteadOfPreview 拦成下载），
-            因此它仍保留该图标。
+            file-viewer（Office/PDF/文本预览）工具栏自带「下载」，故此时隐藏该图标避免重复。
+            切到「源代码」编辑时 file-viewer 不再渲染，图标重新出现。
+            .ppt 不会走到 document 类型（已在 useWorkspaceCanvas 里被
+            shouldDownloadInsteadOfPreview 拦成下载），因此它始终保留该图标。
 
-            用 isDocumentPreview 而不是内联的字面量 type 比较：内联比较会让 TS 对本
-            按钮的子节点收窄 data.type，导致按钮内的 pdf/document 比较报 2 条
-            TS2367（vue-tsc 62 → 64 条，落在本文件）。
-            语义完全等价（isDocumentPreview = document || pdf）。
+            用 computed 而不是内联的字面量 type 比较：内联比较会让 TS 对本按钮的子节点
+            收窄 data.type，导致按钮内的 pdf/document 比较报 TS2367（本文件 +2 条）。
           -->
           <button
-            v-if="!isDocumentPreview"
+            v-if="!isFileViewerRendered"
             type="button"
             @click="downloadFile"
             class="p-1.5 rounded-lg transition-colors text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -1186,7 +1191,7 @@ const overlayBackdropClass = computed(() =>
       </div>
 
       <!-- HTML / Markdown Preview/Code Tabs Selector -->
-      <div v-if="isHtmlContent || isMarkdownContent" class="px-4 py-2 border-b border-gray-100/50 dark:border-gray-700/50 bg-slate-50/50 dark:bg-gray-900/10 flex-shrink-0 flex items-center justify-center gap-2">
+      <div v-if="isHtmlContent || isMarkdownContent || isFileViewerTextPreview" class="px-4 py-2 border-b border-gray-100/50 dark:border-gray-700/50 bg-slate-50/50 dark:bg-gray-900/10 flex-shrink-0 flex items-center justify-center gap-2">
         <div class="bg-gray-150/80 dark:bg-gray-900 p-0.5 rounded-lg flex space-x-1 w-full max-w-[240px] border border-gray-200/20 shadow-inner">
           <button
             @click="activeTab = 'preview'"
@@ -1246,6 +1251,17 @@ const overlayBackdropClass = computed(() =>
         <template v-if="isDocumentPreview">
           <DocumentViewer
             :url="resolvedContent"
+            :filename="data?.documentMeta?.filename || data?.title || 'document'"
+            :meta="data?.documentMeta"
+            :theme="canvasTheme"
+            @fallback-download="downloadFile"
+          />
+        </template>
+
+        <!-- 文本格式：默认由 file-viewer 预览，可切到「源代码」编辑 -->
+        <template v-else-if="isFileViewerTextPreview && activeTab === 'preview'">
+          <DocumentViewer
+            :content="data?.content || ''"
             :filename="data?.documentMeta?.filename || data?.title || 'document'"
             :meta="data?.documentMeta"
             :theme="canvasTheme"
