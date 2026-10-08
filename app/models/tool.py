@@ -14,5 +14,7 @@ class SysApiTool(Base):
     parameter_schema = Column(Text, nullable=True)  # Stored as JSON string
     
     is_active = Column(Boolean, default=True)
+    # 业务分组名：智能体配置的「工具能力」步骤按它归组；NULL 表示未分组（走关键字回落）
+    group_name = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

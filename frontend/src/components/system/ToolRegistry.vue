@@ -23,6 +23,12 @@ const showModal = ref(false)
 const isEditing = ref(false)
 const showDeleteConfirm = ref(false)
 const deletingTool = ref<SysApiTool | null>(null)
+const groupFilter = ref('all')
+const selectedToolIds = ref<Set<string>>(new Set())
+const showBatchGroupModal = ref(false)
+const batchGroupName = ref('')
+// 筛选下拉里代表「没有业务分组」的哨兵值
+const UNGROUPED_FILTER = '__ungrouped__'
 
 const toolForm = ref<Partial<SysApiToolCreate> & { id?: string; parameter_schema_str: string; headers_str: string }>({
   name: '',
@@ -31,7 +37,8 @@ const toolForm = ref<Partial<SysApiToolCreate> & { id?: string; parameter_schema
   url_template: '',
   headers_str: '{}',
   parameter_schema_str: '{}',
-  is_active: true
+  is_active: true,
+  group_name: ''
 })
 
 const filteredTools = computed(() => {
@@ -44,9 +51,60 @@ const filteredTools = computed(() => {
         const matchesStatus = toolStatusFilter.value === 'all'
             || (toolStatusFilter.value === 'active' && tool.is_active)
             || (toolStatusFilter.value === 'inactive' && !tool.is_active)
-        return matchesKeyword && matchesMethod && matchesStatus
+        const groupName = String(tool.group_name || '').trim()
+        const matchesGroup = groupFilter.value === 'all'
+            || (groupFilter.value === UNGROUPED_FILTER && !groupName)
+            || groupName === groupFilter.value
+        return matchesKeyword && matchesMethod && matchesStatus && matchesGroup
     })
 })
+
+// 已有业务分组名：表单用 datalist 复用，避免同一业务域被写成「履约罚款」「履约罚金」两个组
+const existingGroupNames = computed(() => Array.from(new Set(
+    tools.value.map((tool) => String(tool.group_name || '').trim()).filter(Boolean)
+)).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')))
+
+const allFilteredSelected = computed(() => (
+    filteredTools.value.length > 0
+    && filteredTools.value.every((tool) => selectedToolIds.value.has(tool.id))
+))
+
+const toggleToolSelection = (id: string) => {
+    const next = new Set(selectedToolIds.value)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    selectedToolIds.value = next
+}
+
+// 存量工具靠这两步归类：先「选中当前筛选结果」，再「批量设置分组」
+const toggleSelectAllFiltered = () => {
+    const next = new Set(selectedToolIds.value)
+    if (allFilteredSelected.value) {
+        filteredTools.value.forEach((tool) => next.delete(tool.id))
+    } else {
+        filteredTools.value.forEach((tool) => next.add(tool.id))
+    }
+    selectedToolIds.value = next
+}
+
+const openBatchGroupModal = () => {
+    batchGroupName.value = ''
+    showBatchGroupModal.value = true
+}
+
+const confirmBatchGroup = async () => {
+    const ids = Array.from(selectedToolIds.value)
+    if (ids.length === 0) return
+    try {
+        const res = await toolApi.batchSetGroup(ids, batchGroupName.value.trim() || null)
+        showToast(`已更新 ${res.data.updated} 个工具的业务分组`, 'success')
+        showBatchGroupModal.value = false
+        selectedToolIds.value = new Set()
+        fetchTools()
+    } catch (e: any) {
+        showToast('批量设置分组失败: ' + (e.response?.data?.detail || e.message), 'error')
+    }
+}
 
 const toolMethodOptions = computed(() => Array.from(new Set([
     'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS',
@@ -57,12 +115,14 @@ const hasToolFilters = computed(() => Boolean(
     toolSearchQuery.value.trim()
     || toolMethodFilter.value !== 'all'
     || toolStatusFilter.value !== 'all'
+    || groupFilter.value !== 'all'
 ))
 
 const clearToolFilters = () => {
     toolSearchQuery.value = ''
     toolMethodFilter.value = 'all'
     toolStatusFilter.value = 'all'
+    groupFilter.value = 'all'
 }
 
 const fetchTools = async () => {
@@ -98,7 +158,8 @@ const openModal = (tool?: SysApiTool, isClone = false) => {
             url_template: '',
             headers_str: '{}',
             parameter_schema_str: '{}',
-            is_active: true
+            is_active: true,
+            group_name: ''
         }
     }
     showModal.value = true
@@ -139,7 +200,8 @@ const saveTool = async () => {
             url_template: toolForm.value.url_template,
             headers: headers,
             parameter_schema: schema,
-            is_active: toolForm.value.is_active
+            is_active: toolForm.value.is_active,
+            group_name: (toolForm.value.group_name || '').trim() || null
         }
 
         if (isEditing.value && toolForm.value.id) {
@@ -204,6 +266,25 @@ onMounted(() => {
                     <option value="active">启用</option>
                     <option value="inactive">停用</option>
                 </select>
+                <select v-model="groupFilter" class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" title="按业务分组筛选">
+                    <option value="all">分组：全部</option>
+                    <option :value="UNGROUPED_FILTER">未分组</option>
+                    <option v-for="name in existingGroupNames" :key="name" :value="name">{{ name }}</option>
+                </select>
+                <button
+                    v-if="canSave"
+                    type="button"
+                    class="px-2.5 py-2 text-sm rounded-lg border border-gray-300 bg-white shadow-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    :disabled="filteredTools.length === 0"
+                    :title="allFilteredSelected ? '取消选择当前筛选结果' : '选中当前筛选结果（便于批量归类）'"
+                    @click="toggleSelectAllFiltered"
+                >{{ allFilteredSelected ? '取消选择' : '选中当前筛选结果' }}</button>
+                <button
+                    v-if="canSave && selectedToolIds.size > 0"
+                    type="button"
+                    class="px-3 py-2 text-sm rounded-lg bg-primary text-white hover:bg-primary-dark transition-colors"
+                    @click="openBatchGroupModal"
+                >批量设置分组（{{ selectedToolIds.size }}）</button>
                 <button
                     type="button"
                     class="px-2.5 py-2 text-sm text-gray-500 hover:text-primary"
@@ -224,35 +305,62 @@ onMounted(() => {
          
          <div v-if="loading" class="p-8 text-center text-gray-400">加载中...</div>
          <div v-else class="overflow-x-auto">
-         <table class="min-w-[900px] w-full divide-y divide-gray-200">
+         <table class="min-w-[1060px] w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
                 <tr>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">名称</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Method</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">URL Template</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
-                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                    <th class="w-10 px-4 py-3"><span class="sr-only">选择</span>
+                        <input
+                            v-if="canSave"
+                            type="checkbox"
+                            class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                            :checked="allFilteredSelected"
+                            :disabled="filteredTools.length === 0"
+                            aria-label="选中当前筛选结果"
+                            title="选中当前筛选结果"
+                            @change="toggleSelectAllFiltered"
+                        />
+                    </th>
+                    <th class="min-w-[14rem] px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">名称</th>
+                    <th class="w-24 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Method</th>
+                    <th class="w-32 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">业务分组</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">URL Template</th>
+                    <th class="w-20 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">状态</th>
+                    <th class="w-32 px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">操作</th>
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
                 <tr v-for="t in filteredTools" :key="t.id" class="hover:bg-gray-50">
+                    <td class="px-4 py-4">
+                        <input
+                            v-if="canSave"
+                            type="checkbox"
+                            class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                            :checked="selectedToolIds.has(t.id)"
+                            :aria-label="`选择工具 ${t.name}`"
+                            @change="toggleToolSelection(t.id)"
+                        />
+                    </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {{ t.name }}
                         <p class="text-xs text-gray-500 font-normal truncate max-w-xs">{{ t.description }}</p>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full" 
+                        <span class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full" 
                             :class="{'bg-green-100 text-green-800': t.method === 'GET', 'bg-blue-100 text-blue-800': t.method === 'POST', 'bg-yellow-100 text-yellow-800': t.method === 'PUT', 'bg-red-100 text-red-800': t.method === 'DELETE'}"
                         >
                             {{ t.method }}
                         </span>
                     </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                        <span v-if="t.group_name" class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-medium rounded-full bg-indigo-50 text-indigo-700">{{ t.group_name }}</span>
+                        <span v-else class="text-gray-300">—</span>
+                    </td>
                     <td class="px-6 py-4 text-sm text-gray-500 font-mono truncate max-w-sm" :title="t.url_template">
                         {{ t.url_template }}
                     </td>
                      <td class="px-6 py-4 whitespace-nowrap">
-                        <span v-if="t.is_active" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">启用</span>
-                        <span v-else class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">停用</span>
+                        <span v-if="t.is_active" class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">启用</span>
+                        <span v-else class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">停用</span>
                      </td>
                      <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div v-if="canSave" class="flex items-center justify-end space-x-2">
@@ -284,12 +392,16 @@ onMounted(() => {
                      </td>
                 </tr>
                 <tr v-if="filteredTools.length === 0">
-                    <td colspan="5" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasToolFilters ? '暂无匹配工具' : '暂无工具配置' }}</td>
+                    <td colspan="7" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasToolFilters ? '暂无匹配工具' : '暂无工具配置' }}</td>
                 </tr>
             </tbody>
          </table>
          </div>
       </div>
+
+      <datalist id="tool-group-options">
+          <option v-for="name in existingGroupNames" :key="name" :value="name"></option>
+      </datalist>
 
       <!-- Modal -->
       <Teleport to="body">
@@ -332,6 +444,12 @@ onMounted(() => {
                     </div>
                   
                     <div>
+                       <label class="block text-sm font-medium text-gray-700">业务分组</label>
+                       <input v-model="toolForm.group_name" list="tool-group-options" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. 履约罚款（留空表示未分组）" />
+                       <p class="text-xs text-gray-500 mt-1">智能体配置的「工具能力」步骤会按它归组；留空则该工具落在「其他扩展工具」</p>
+                    </div>
+
+                    <div>
                        <label class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
                        <textarea v-model="toolForm.headers_str" rows="3" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "Authorization": "Bearer token" }'></textarea>
                     </div>
@@ -345,6 +463,23 @@ onMounted(() => {
                 <div class="flex justify-end space-x-3 mt-6">
                     <button @click="showModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
                     <button @click="saveTool" class="px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark">保存</button>
+                </div>
+            </div>
+        </div>
+      </Teleport>
+
+      <Teleport to="body">
+        <div v-if="showBatchGroupModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm">
+            <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4 text-left">
+                <h3 class="text-lg font-bold text-gray-900">批量设置业务分组</h3>
+                <p class="text-sm text-gray-500">将对已选中的 {{ selectedToolIds.size }} 个工具设置业务分组；留空表示清除分组。</p>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">业务分组</label>
+                    <input v-model="batchGroupName" list="tool-group-options" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. 履约罚款（留空表示清除分组）" />
+                </div>
+                <div class="flex justify-end space-x-3 pt-2">
+                    <button @click="showBatchGroupModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
+                    <button @click="confirmBatchGroup" class="px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark">确定</button>
                 </div>
             </div>
         </div>

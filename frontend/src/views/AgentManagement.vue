@@ -612,7 +612,8 @@ const onboardingKey = ref(createUuid());
 const onboardingAgent = ref<AIAgent | null>(null);
 const onboardingVersion = ref<AIAgentVersion | null>(null);
 
-const availableTools = [
+// 内置工具清单（isSystem: true）；group_name 仅用于与动态工具保持同构，内置工具始终走关键字归组
+const availableTools: Array<{ name: string; description: string; isSystem: boolean; group_name?: string | null }> = [
   {
     name: "execute_sql_query",
     description: "执行 ClickHouse SQL 查询",
@@ -924,6 +925,18 @@ const toggleMcpGroupCollapse = (serverName: string) => {
   collapsedMcpGroups.value = next;
 };
 
+// 一键展开 / 一键折叠：作用于 MCP 页签的**全部分组**（不区分「平台 MCP / 我的 MCP」
+// 子 scope）。用全量 groupedMcpTools 而不是过滤后的视图，否则搜索时批量操作会被
+// 悄悄缩小作用范围，清空搜索后又冒出一堆展开着的分组。
+// 绝不能换成 currentScopeGroupedMcpTools——那是搜索过滤后的视图。
+const expandAllMcpGroups = () => {
+  collapsedMcpGroups.value = new Set();
+};
+
+const collapseAllMcpGroups = () => {
+  collapsedMcpGroups.value = new Set(Object.keys(groupedMcpTools.value));
+};
+
 const getMcpGroupSelectedCount = (tools: any[]) => {
   return tools.filter(tool => isToolSelected(tool.name)).length;
 };
@@ -1097,7 +1110,7 @@ const handleVersionConfigStepChange = (step: VersionConfigStep) => {
 
 const filteredGroupedTools = computed(() => {
   const q = toolSearchQuery.value.trim().toLowerCase();
-  return Object.values(groupedTools.value)
+  return groupedTools.value
     .map((group) => ({
       ...group,
       tools: group.tools.filter((tool) =>
@@ -1137,6 +1150,8 @@ const filteredEnabledSkills = computed(() => {
 });
 
 const collapsedStaticGroups = ref<Set<string>>(new Set());
+// 只读态（已发布版本）下，业务分组默认折叠；这里记录用户手动展开过哪些
+const expandedBusinessGroups = ref<Set<string>>(new Set());
 const CHATBI_TOOL_GROUP_LABEL = 'ChatBI 数据分析';
 
 const getDefaultCollapsedStaticGroups = () => {
@@ -1154,12 +1169,40 @@ const applyKnowledgeBaseToolGroupDefaults = () => {
   collapsedStaticGroups.value = next;
 };
 
-const isStaticGroupCollapsed = (label: string) => collapsedStaticGroups.value.has(label);
+// 业务分组（注册表页给 API 工具填的 group_name）判定
+const isBusinessGroupLabel = (label: string) =>
+  groupedTools.value.some((group) => group.kind === 'business' && group.label === label);
+
+const isStaticGroupCollapsed = (label: string) => {
+  if (collapsedStaticGroups.value.has(label)) return true;
+  // 只读态（如已发布版本）默认折叠业务分组：否则打开就是一屏几十张卡片；用户仍可点开
+  if (canEditVersion.value || !isBusinessGroupLabel(label)) return false;
+  return !expandedBusinessGroups.value.has(label);
+};
+
 const toggleStaticGroupCollapse = (label: string) => {
+  // 只读态下业务分组走「默认折叠 + 手动展开」这套独立状态，避免污染可编辑态的折叠集合
+  if (!canEditVersion.value && isBusinessGroupLabel(label)) {
+    const expanded = new Set(expandedBusinessGroups.value);
+    if (expanded.has(label)) expanded.delete(label);
+    else expanded.add(label);
+    expandedBusinessGroups.value = expanded;
+    return;
+  }
   const next = new Set(collapsedStaticGroups.value);
   if (next.has(label)) next.delete(label);
   else next.add(label);
   collapsedStaticGroups.value = next;
+};
+
+// 一键展开 / 一键折叠：作用于系统工具页签的**全部分组**。同样刻意使用全量
+// groupedTools，而不是搜索过滤后的 filteredGroupedTools。
+const expandAllStaticGroups = () => {
+  collapsedStaticGroups.value = new Set();
+};
+
+const collapseAllStaticGroups = () => {
+  collapsedStaticGroups.value = new Set(groupedTools.value.map((group) => group.label));
 };
 
 const getStaticGroupSelectedCount = (tools: any[]) => {
@@ -1257,6 +1300,7 @@ const resetVersionEditorUi = () => {
   toolSearchQuery.value = '';
   collapsedMcpGroups.value = new Set();
   collapsedStaticGroups.value = getDefaultCollapsedStaticGroups();
+  expandedBusinessGroups.value = new Set();
 };
 
 watch(versionConfigStep, (step, previousStep) => {
@@ -1296,6 +1340,8 @@ const allAvailableTools = computed(() => {
     name: t.name,
     description: t.description || `HTTP Tool: ${t.method} ${t.url_template}`,
     isSystem: false,
+    // 业务分组必须透传：漏掉这一步，智能体配置里的分组会静默失效（全部落回兜底组）
+    group_name: t.group_name ?? null,
   }));
 
   // Merge, ensuring no duplicates (though names should be unique system-wide ideally)
@@ -1309,9 +1355,13 @@ const allAvailableTools = computed(() => {
 });
 
 type ToolGroupKey = 'chatbi' | 'knowledge' | 'web' | 'browser' | 'system' | 'office' | 'notification' | 'memory' | 'delegation' | 'other';
-type ToolGroup = { label: string; icon: string; tools: any[] };
+type ToolGroup = { label: string; icon: string; tools: any[]; kind?: 'builtin' | 'business' | 'fallback' };
 
-const groupedTools = computed(() => {
+const BUSINESS_GROUP_FALLBACK_LABEL = '其他扩展工具';
+const BUSINESS_GROUP_ICON = '🔌';
+
+const groupedTools = computed<ToolGroup[]>(() => {
+  // 内置工具仍按能力域关键字归组（顺序即展示顺序）
   const groups: Record<ToolGroupKey, ToolGroup> = {
     chatbi: { label: 'ChatBI 数据分析', icon: '📊', tools: [] },
     knowledge: { label: '知识库检索 (RAG)', icon: '📖', tools: [] },
@@ -1322,11 +1372,32 @@ const groupedTools = computed(() => {
     notification: { label: '消息通知', icon: '💬', tools: [] },
     memory: { label: '长期事实与记忆引擎', icon: '🧠', tools: [] },
     delegation: { label: '多智能体协同与调度', icon: '🤖', tools: [] },
-    other: { label: '其他扩展工具', icon: '🔧', tools: [] }
+    other: { label: BUSINESS_GROUP_FALLBACK_LABEL, icon: '🔧', tools: [], kind: 'fallback' }
   };
+
+  // 业务分组：注册表页给 API 工具填的 group_name，按业务域聚合
+  const businessGroups = new Map<string, ToolGroup>();
 
   allAvailableTools.value.forEach(tool => {
     const name = tool.name.toLowerCase();
+    const businessGroup = (tool.group_name || '').trim();
+
+    // 使用者显式指定的业务分组优先于关键字猜测；
+    // 未分组的工具继续走下面的关键字回落——老数据行为与改动前完全一致。
+    if (businessGroup) {
+      const existing = businessGroups.get(businessGroup);
+      if (existing) {
+        existing.tools.push(tool);
+      } else {
+        businessGroups.set(businessGroup, {
+          label: businessGroup,
+          icon: BUSINESS_GROUP_ICON,
+          kind: 'business',
+          tools: [tool]
+        });
+      }
+      return;
+    }
 
     if (name.startsWith('browser_') || name.includes('browser')) {
       groups.browser.tools.push(tool);
@@ -1396,14 +1467,20 @@ const groupedTools = computed(() => {
     }
   });
 
-  const result: ToolGroup[] = [];
-  for (const key of Object.keys(groups) as ToolGroupKey[]) {
-    const group = groups[key];
-    if (group.tools.length > 0) {
-      result.push(group);
-    }
-  }
-  return result;
+  const builtinGroups: ToolGroup[] = (Object.keys(groups) as ToolGroupKey[])
+    .filter((key) => key !== 'other')
+    .map((key) => groups[key])
+    .filter((group) => group.tools.length > 0);
+
+  // 业务分组按工具数降序（工具多的业务域一眼可见），同数量按名称稳定排序
+  const sortedBusinessGroups = Array.from(businessGroups.values()).sort(
+    (a, b) => b.tools.length - a.tools.length || a.label.localeCompare(b.label, 'zh-Hans-CN')
+  );
+
+  const fallbackGroups: ToolGroup[] = groups.other.tools.length > 0 ? [groups.other] : [];
+
+  // 展示顺序：内置关键字组（原有顺序）→ 业务分组 → 兜底组殿后
+  return [...builtinGroups, ...sortedBusinessGroups, ...fallbackGroups];
 });
 
 const fetchAgents = async () => {
@@ -4595,6 +4672,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @toggle-select-all-static="toggleSelectAllStatic"
       @toggle-mcp-group-collapse="toggleMcpGroupCollapse"
       @toggle-static-group-collapse="toggleStaticGroupCollapse"
+      @expand-all-mcp-groups="expandAllMcpGroups"
+      @collapse-all-mcp-groups="collapseAllMcpGroups"
+      @expand-all-static-groups="expandAllStaticGroups"
+      @collapse-all-static-groups="collapseAllStaticGroups"
       @set-orchestrator-temperature="setOrchestratorTemperature"
       @set-synthesis-temperature="setSynthesisTemperature"
       @open-tool-runtime-config="openToolRuntimeConfig"
