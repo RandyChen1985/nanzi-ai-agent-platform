@@ -1,5 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import {
+    PARAM_TYPE_OPTIONS,
+    parseToolSchema,
+    serializeToolSchema,
+    type ParsedToolSchema,
+    type SchemaParam,
+} from '../../utils/toolSchema'
 import { toolApi, type SysApiTool, type SysApiToolCreate } from '../../api/tool'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
@@ -252,7 +259,78 @@ const openModal = (tool?: SysApiTool, isClone = false) => {
             group_name: ''
         }
     }
+    // 打开时就按形态预解析一次，切到可视化即是所见
+    schemaEditorMode.value = 'json'
+    loadVisualFromJson()
     showModal.value = true
+}
+
+// ---------------- 参数定义：JSON / 可视化 双模式 ----------------
+// 解析与序列化放在 utils/toolSchema.ts（纯函数，可用 Node 直接跑往返测试）。
+// 这里只维护 UI 状态：模式、行数据、以及「非法 JSON 不切换」等交互约定。
+type VisualParam = SchemaParam & { key: string }
+
+const schemaEditorMode = ref<'json' | 'visual'>('json')
+const visualParams = ref<VisualParam[]>([])
+const parsedSchema = ref<ParsedToolSchema>({ shape: 'flat', hadRequiredList: false, rest: {}, params: [] })
+let visualParamSeed = 0
+
+const nextVisualParamKey = () => {
+    visualParamSeed += 1
+    return `param-${visualParamSeed}`
+}
+
+// 嵌套参数（带 items / properties 子结构）在可视化里只能改类型、描述与必填，
+// 子结构本身请回 JSON 模式编辑——这里只做提示。
+const visualNestedCount = computed(() => visualParams.value.filter(
+    (param) => param.extra.items || param.extra.properties
+).length)
+
+const loadVisualFromJson = (): boolean => {
+    const parsed = parseToolSchema(toolForm.value.parameter_schema_str)
+    if (!parsed) {
+        showToast('参数定义不是合法 JSON，请先修正后再切到可视化编辑', 'error')
+        return false
+    }
+    parsedSchema.value = parsed
+    visualParams.value = parsed.params.map((param) => ({ ...param, key: nextVisualParamKey() }))
+    return true
+}
+
+const buildSchemaJson = (): string => serializeToolSchema({
+    shape: parsedSchema.value.shape,
+    hadRequiredList: parsedSchema.value.hadRequiredList,
+    rest: parsedSchema.value.rest,
+    // 剥掉仅用于 v-for 的 key：它不属于 schema 数据
+    params: visualParams.value.map(({ key, ...param }) => param),
+})
+
+const addVisualParam = () => {
+    visualParams.value = [...visualParams.value, {
+        key: nextVisualParamKey(),
+        name: '',
+        type: 'string',
+        required: true,
+        description: '',
+        defaultValue: '',
+        extra: {},
+    }]
+}
+
+const removeVisualParam = (index: number) => {
+    visualParams.value = visualParams.value.filter((_, i) => i !== index)
+}
+
+const switchSchemaMode = (mode: 'json' | 'visual') => {
+    if (mode === schemaEditorMode.value) return
+    if (mode === 'visual') {
+        // JSON 非法时留在原地：既不丢用户输入，也能让他看到错在哪
+        if (!loadVisualFromJson()) return
+        schemaEditorMode.value = 'visual'
+        return
+    }
+    toolForm.value.parameter_schema_str = buildSchemaJson()
+    schemaEditorMode.value = 'json'
 }
 
 const cloneTool = (tool: SysApiTool) => {
@@ -447,10 +525,10 @@ onMounted(() => {
                     @click="selectGroupTools(group)"
                 >{{ isGroupAllSelected(group) ? '取消本组' : '全选本组' }}</button>
             </div>
-         <table v-show="!isGroupCollapsed(group.key)" class="min-w-[1060px] w-full divide-y divide-gray-200">
+         <table v-show="!isGroupCollapsed(group.key)" class="min-w-[900px] w-full table-fixed divide-y divide-gray-200">
             <thead class="bg-gray-50">
                 <tr>
-                    <th class="w-10 px-4 py-3"><span class="sr-only">选择</span>
+                    <th class="w-12 px-4 py-3"><span class="sr-only">选择</span>
                         <input
                             v-if="canSave"
                             type="checkbox"
@@ -462,12 +540,11 @@ onMounted(() => {
                             @change="toggleSelectAllFiltered"
                         />
                     </th>
-                    <th class="min-w-[14rem] px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">名称</th>
-                    <th class="w-24 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Method</th>
-                    <th class="w-32 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">业务分组</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">URL Template</th>
-                    <th class="w-20 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">状态</th>
-                    <th class="w-32 px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">操作</th>
+                    <th class="w-[40%] min-w-[16rem] px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">名称</th>
+                    <th class="w-[10%] px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Method</th>
+                    <th class="w-[13%] px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">业务分组</th>
+                    <th class="w-[9%] px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">状态</th>
+                    <th class="w-[12%] px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">操作</th>
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
@@ -483,8 +560,9 @@ onMounted(() => {
                         />
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {{ t.name }}
-                        <p class="text-xs text-gray-500 font-normal truncate max-w-xs">{{ t.description }}</p>
+                        <div class="truncate">{{ t.name }}</div>
+                        <p class="text-xs text-gray-500 font-normal whitespace-normal break-words">{{ t.description }}</p>
+                        <p class="text-xs text-gray-400 font-mono font-normal break-all select-all" :title="t.url_template">{{ t.url_template }}</p>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         <span class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full" 
@@ -503,9 +581,6 @@ onMounted(() => {
                             @click="filterByGroup(t.group_name)"
                         >{{ t.group_name }}</button>
                         <span v-else class="text-gray-300">—</span>
-                    </td>
-                    <td class="px-6 py-4 text-sm text-gray-500 font-mono truncate max-w-sm" :title="t.url_template">
-                        {{ t.url_template }}
                     </td>
                      <td class="px-6 py-4 whitespace-nowrap">
                         <span v-if="t.is_active" class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">启用</span>
@@ -541,7 +616,7 @@ onMounted(() => {
                      </td>
                 </tr>
                 <tr v-if="group.tools.length === 0">
-                    <td colspan="7" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasToolFilters ? '暂无匹配工具' : '暂无工具配置' }}</td>
+                    <td colspan="6" class="px-6 py-8 text-center text-gray-400 text-sm">{{ hasToolFilters ? '暂无匹配工具' : '暂无工具配置' }}</td>
                 </tr>
             </tbody>
          </table>
@@ -588,8 +663,60 @@ onMounted(() => {
                     </div>
                   
                     <div>
-                       <label class="block text-sm font-medium text-gray-700">参数定义 (JSON Schema)</label>
-                       <textarea v-model="toolForm.parameter_schema_str" rows="5" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "city": { "type": "string", "description": "城市名" } }'></textarea>
+                       <div class="flex flex-wrap items-center gap-2">
+                          <label class="block text-sm font-medium text-gray-700">参数定义 (JSON Schema)</label>
+                          <div class="flex bg-gray-100 p-0.5 rounded-lg text-xs" role="group" aria-label="参数定义编辑模式">
+                             <button
+                                type="button"
+                                class="px-2.5 py-1 rounded-md transition-all font-medium"
+                                :class="schemaEditorMode === 'json' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
+                                @click="switchSchemaMode('json')"
+                             >JSON</button>
+                             <button
+                                type="button"
+                                class="px-2.5 py-1 rounded-md transition-all font-medium"
+                                :class="schemaEditorMode === 'visual' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
+                                @click="switchSchemaMode('visual')"
+                             >可视化</button>
+                          </div>
+                          <span v-if="schemaEditorMode === 'visual' && visualNestedCount > 0" class="text-xs text-amber-600">
+                             有 {{ visualNestedCount }} 个嵌套参数：可改类型/描述/必填，子结构请用 JSON 模式编辑
+                          </span>
+                       </div>
+                       <textarea v-if="schemaEditorMode === 'json'" v-model="toolForm.parameter_schema_str" rows="5" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "city": { "type": "string", "description": "城市名" } }'></textarea>
+                       <div v-else class="mt-1 space-y-2 rounded-md border border-gray-200 bg-gray-50/60 p-2">
+                          <p v-if="visualParams.length === 0" class="px-1 py-1 text-xs text-gray-400">还没有参数，点下面的「+ 添加参数」开始</p>
+                          <div v-for="(p, index) in visualParams" :key="p.key" class="flex flex-wrap items-center gap-2 rounded-md bg-white p-2 shadow-sm">
+                             <input v-model="p.name" class="w-40 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono" placeholder="参数名" />
+                             <select v-model="p.type" class="w-24 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono">
+                                <option v-for="option in PARAM_TYPE_OPTIONS" :key="option" :value="option">{{ option }}</option>
+                             </select>
+                             <label class="flex items-center gap-1 text-xs text-gray-600">
+                                <input type="checkbox" v-model="p.required" class="h-3.5 w-3.5 text-primary focus:ring-primary border-gray-300 rounded" />
+                                必填
+                             </label>
+                             <input v-model="p.description" class="min-w-[10rem] flex-1 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs" placeholder="描述（给 LLM 看）" />
+                             <input v-model="p.defaultValue" :disabled="p.required" class="w-32 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono disabled:bg-gray-100" :placeholder="p.required ? '默认值（需非必填）' : '默认值'" />
+                             <span v-if="p.extra.items || p.extra.properties" class="rounded-full bg-amber-50 px-2 text-xs leading-5 text-amber-700" title="嵌套子结构请用 JSON 模式编辑">嵌套</span>
+                             <button
+                                type="button"
+                                class="rounded-md p-1 text-gray-400 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                                :title="`删除参数 ${p.name || index + 1}`"
+                                :aria-label="`删除参数 ${p.name || index + 1}`"
+                                @click="removeVisualParam(index)"
+                             >
+                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                             </button>
+                          </div>
+                          <button
+                             type="button"
+                             class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                             @click="addVisualParam"
+                          >+ 添加参数</button>
+                          <p class="text-xs text-gray-500">未勾选「必填」的参数会写成 <code class="font-mono">required: false</code>（运行时缺省按必填处理，默认值只在非必填时生效）</p>
+                       </div>
                        <p class="text-xs text-gray-500 mt-1">定义参数类型和描述，用于 LLM 理解</p>
                     </div>
                   

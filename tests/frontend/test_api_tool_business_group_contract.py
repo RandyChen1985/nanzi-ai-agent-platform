@@ -200,3 +200,54 @@ def test_registry_toolbar_keeps_title_on_one_line():
     source = _source(REGISTRY)
     assert 'text-lg font-medium text-gray-900 whitespace-nowrap">API 工具注册表' in source
     assert "min-w-[12rem] flex-1" in source
+
+
+def test_registry_puts_url_under_the_tool_name():
+    """URL 是名称的补充信息：并入名称列第三行后，省掉最吃宽度的一整列。"""
+    source = _source(REGISTRY)
+    assert ">URL Template</th>" not in source, "独立的 URL 列应已移除"
+    cell = source[source.index("{{ t.name }}"):]
+    cell = cell[: cell.index("</td>")]
+    assert "t.description" in cell, "描述仍在名称列"
+    assert "t.url_template" in cell, "URL 应落在名称列内"
+
+
+def test_registry_table_has_six_columns():
+    """列数一变，空态 colspan 与分组视图的复用都要跟着改。"""
+    source = _source(REGISTRY)
+    header = source[source.index("<thead"):source.index("</thead>")]
+    assert len(re.findall(r"<th[\s>]", header)) == 6
+    assert 'colspan="6"' in source
+
+
+def test_registry_columns_share_the_spare_width():
+    """URL 列并入名称列后，腾出的宽度要按比例分给各列。
+
+    若只给名称列 min-width、其余列固定宽度，宽屏下余量会全被名称列吃掉，
+    中间空出一大块。名称列按比例、其余列也按比例，才是均匀的吸收方式。
+    """
+    source = _source(REGISTRY)
+    header = source[source.index("<thead"):source.index("</thead>")]
+    assert 'class="w-[40%] min-w-[16rem]' in header, "名称列按比例并保留最小宽度"
+    for ratio in ("w-[10%]", "w-[13%]", "w-[9%]", "w-[12%]"):
+        assert ratio in header, f"{ratio} 应出现在表头"
+
+
+def test_registry_table_never_grows_sideways_from_long_text():
+    """长描述/长 URL 不能把表格撑宽、把后面的列推出视野。
+
+    ``truncate`` 在 auto 布局的表格里挡不住内容：单元格按 max-content 撑开整张表，
+    用户就得横向滚动才能看到 Method / 状态。这里要求固定布局 + 长文本折行。
+    """
+    source = _source(REGISTRY)
+    table_tag = source[source.index("<table"):source.index(">", source.index("<table"))]
+    assert "table-fixed" in table_tag, "表格应使用固定布局"
+
+    # 固定布局下每列都要有宽度，否则勾选列会吞掉剩余空间
+    header = source[source.index("<thead"):source.index("</thead>")]
+    assert 'class="w-12 px-4 py-3"' in header, "勾选列需要明确宽度"
+
+    assert "break-words" in source, "描述应折行"
+    assert "break-all" in source, "URL 应折行（无空格，必须 break-all）"
+    assert "truncate\">{{ t.description }}" not in source, "描述不应再单行截断"
+    assert "truncate select-all" not in source, "URL 不应再单行截断"
