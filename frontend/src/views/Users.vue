@@ -961,6 +961,11 @@
                   >
                     <PlusIcon class="w-3 h-3" /> 添加键值对
                   </button>
+                  <p class="text-[10px] text-gray-400 leading-relaxed pt-1">
+                    值统一按字符串保存（如
+                    <code class="font-mono">"teamId": "116573125898872954882"</code>），
+                    避免长数字被当作 number 丢掉精度。
+                  </p>
                 </div>
 
                 <!-- JSON Mode -->
@@ -2225,6 +2230,12 @@ import { useUser } from "../composables/useUser";
 import { MENU_TREE, getMenuDescendantIds } from "../constants/permissions";
 import { copyToClipboard } from "../utils/clipboard";
 import { checkPasswordPolicy } from "../utils/passwordPolicy";
+import {
+  extraDataJsonToPairs,
+  isExtraDataJsonObject,
+  pairsToExtraDataJson,
+  type ExtraDataPair,
+} from "../utils/userExtraData";
 import Switch from "../components/Switch.vue";
 import RoleList from "../components/RoleList.vue";
 import ThirdPartyUserSyncDrawer from "../components/ThirdPartyUserSyncDrawer.vue";
@@ -2677,7 +2688,7 @@ const formData = ref({
 
 // Extra Data Tabs and Pairs
 const extraDataTab = ref<"visual" | "json">("visual");
-const extraDataPairs = ref<{ key: string; value: string }[]>([]);
+const extraDataPairs = ref<ExtraDataPair[]>([]);
 
 const addExtraDataPair = () => {
   extraDataPairs.value.push({ key: "", value: "" });
@@ -2688,43 +2699,21 @@ const removeExtraDataPair = (index: number) => {
 };
 
 // Syncing functions
+// 值一律按字符串写回：第三方同步写入的雪花 ID 走 Number() 会被改写精度
+// （"116573125898872954882" → 116573125898872960000），详见 utils/userExtraData.ts
 const syncPairsToExtraData = () => {
-  const result: Record<string, any> = {};
-  extraDataPairs.value.forEach((pair) => {
-    if (pair.key.trim()) {
-      let val = pair.value;
-      // Try to parse as number or boolean if it looks like one
-      if (val.toLowerCase() === "true") result[pair.key] = true;
-      else if (val.toLowerCase() === "false") result[pair.key] = false;
-      else if (!isNaN(Number(val)) && val.trim() !== "")
-        result[pair.key] = Number(val);
-      else result[pair.key] = val;
-    }
-  });
-  formData.value.extra_data =
-    Object.keys(result).length > 0 ? JSON.stringify(result, null, 2) : "";
+  formData.value.extra_data = pairsToExtraDataJson(extraDataPairs.value);
 };
 
 const syncExtraDataToPairs = () => {
-  if (!formData.value.extra_data) {
-    extraDataPairs.value = [];
+  const raw = formData.value.extra_data;
+  // JSON 手写模式下写坏了：保留可视化面板里已有的键值对，等用户改好再同步，
+  // 否则一按标签就会把面板清空，看着像数据丢了。
+  if (raw && String(raw).trim() && !isExtraDataJsonObject(raw)) {
+    console.warn("extra_data 不是合法的 JSON 对象，暂不同步到可视化面板");
     return;
   }
-  try {
-    const data =
-      typeof formData.value.extra_data === "string"
-        ? JSON.parse(formData.value.extra_data)
-        : formData.value.extra_data;
-    if (data && typeof data === "object") {
-      extraDataPairs.value = Object.entries(data).map(([key, value]) => ({
-        key,
-        value: String(value),
-      }));
-    }
-  } catch (e) {
-    console.error("Failed to parse extra_data", e);
-    // If parse fails, we'll just keep pairs empty or handle as needed
-  }
+  extraDataPairs.value = extraDataJsonToPairs(raw);
 };
 
 const handleExtraDataTabChange = (tab: "visual" | "json") => {
