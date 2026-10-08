@@ -164,3 +164,44 @@ def test_chat_canvas_header_actions_precede_pin_button():
     assert canvas.index("保存到目录") < canvas.index("钉住画布（固定在侧边不遮挡对话）")
     # 钉住按钮本身保持原样
     assert ":title=\"pinned ? '取消钉住' : '钉住画布（固定在侧边不遮挡对话）'\"" in canvas
+
+
+def test_every_canvas_dispatch_site_uses_office_preview_set_only():
+    """画布 / 工作空间的**所有**分派点必须用 OFFICE_PREVIEW_EXTENSIONS。
+
+    DOCUMENT_VIEWER_EXTENSIONS 有 56 种（含 50 种文本格式），那是 RAG 引用抽屉与
+    知识库预览弹窗的语义。一旦被画布分派点使用，.md/.ts/.txt 会被判成 'document'：
+    徽章显示 OFFICE，且丢掉代码视图与可运行脚本能力。
+
+    这条断言刻意覆盖**全部三个入口**——此前只断言了其中两个，导致工作空间那条
+    （workspaceFilePreview 的打开路径）漏网，同一回归连续出现两次。
+    """
+    dispatch_sites = {
+        "canvas 类型分派 + 工作空间打开路径": "frontend/src/utils/workspaceFilePreview.ts",
+        "canvas://file 分支": "frontend/src/composables/chat/useWorkspaceCanvas.ts",
+        "画布面板": "frontend/src/components/embed/ChatCanvas.vue",
+    }
+
+    for label, path in dispatch_sites.items():
+        source = _source(path)
+        # 允许出现在注释里（解释为什么不能用），但不允许作为判定使用
+        assert "DOCUMENT_VIEWER_EXTENSIONS.has(" not in source, label
+        assert "DOCUMENT_VIEWER_EXTENSIONS.size" not in source, label
+
+    # 三个入口都必须真的用 Office 集合：workspaceFilePreview 有两处（类型分派 + 打开路径）
+    preview = _source("frontend/src/utils/workspaceFilePreview.ts")
+    assert preview.count("OFFICE_PREVIEW_EXTENSIONS.has(") >= 2, "类型分派与工作空间打开路径"
+    composable = _source("frontend/src/composables/chat/useWorkspaceCanvas.ts")
+    assert "OFFICE_PREVIEW_EXTENSIONS.has(" in composable
+
+
+def test_workspace_text_files_fall_through_to_text_branch():
+    """文本格式必须落到取 resText 的分支，而不是在 Office 判定处被拦走。"""
+    preview = _source("frontend/src/utils/workspaceFilePreview.ts")
+
+    office_at = preview.index("if (OFFICE_PREVIEW_EXTENSIONS.has(ext))")
+    text_at = preview.index("const resText = await axios.get(resolvedUrl)")
+    assert office_at < text_at
+    # 该分支具备代码视图与可运行脚本能力（正是文本格式需要的）
+    assert "resolveWorkspaceScriptLanguage(name)" in preview
+    assert "runnable: !!scriptLanguage" in preview

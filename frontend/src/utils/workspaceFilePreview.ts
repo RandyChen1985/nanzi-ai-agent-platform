@@ -2,7 +2,6 @@ import axios from '@/utils/axios'
 import { copyToClipboard } from './clipboard'
 import type { CanvasPanelData, WorkspaceCanvasType } from '@/types/canvas'
 import {
-  DOCUMENT_VIEWER_EXTENSIONS,
   IMAGE_EXTENSIONS,
   OFFICE_EXTENSIONS,
   OFFICE_PREVIEW_EXTENSIONS,
@@ -207,7 +206,11 @@ export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOpt
   }
 
   try {
-    if (DOCUMENT_VIEWER_EXTENSIONS.has(ext)) {
+    // 只有 Office 走 DocumentViewer。文本格式（.md/.ts/.txt 等）必须落到下方
+    // 取 resText 的分支，否则会被当成文档预览：徽章显示 OFFICE，且丢掉代码视图
+    // 与可运行脚本能力。DOCUMENT_VIEWER_EXTENSIONS 含 50 种文本格式，那是 RAG
+    // 抽屉与知识库弹窗的语义，不可用于画布 / 工作空间的分派。
+    if (OFFICE_PREVIEW_EXTENSIONS.has(ext)) {
       // 只传鉴权 URL：Blob 由 DocumentViewer 用 axios 获取，
       // 避免 Blob 进入响应式状态，也避免在此处创建对象 URL。
       onOpen({
@@ -220,7 +223,7 @@ export async function openWorkspaceFileInCanvas(options: OpenWorkspacePreviewOpt
       return
     }
 
-    // 旧版二进制 .ppt 仍需走下载（见 DOCUMENT_VIEWER_EXTENSIONS 注释）
+    // 旧版二进制 .ppt 仍需走下载：它处于 OFFICE_EXTENSIONS 但不在 OFFICE_PREVIEW_EXTENSIONS
     if (OFFICE_EXTENSIONS.has(ext)) {
       const response = await axios.get(resolvedUrl, { responseType: 'blob' })
       const filename = name || 'download'
