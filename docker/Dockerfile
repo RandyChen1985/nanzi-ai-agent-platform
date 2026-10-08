@@ -1,5 +1,16 @@
 # --- 阶段 1: 前端构建 ---
 # PREBUILD_FRONTEND=1：宿主机已执行 vite build，仅 COPY dist（Mac 跨平台打 x86 包时推荐，避免容器 OOM）
+#
+# 容器内堆上限说明（3048 -> 4096）：
+#   接入 @file-viewer 后，@file-viewer/vite-plugin 会自动把 preset-standard 注入 bundle，
+#   它静态引入 word/pdf/spreadsheet/pptx/ofd/archive 等渲染器，产出约 4.4MB 的 chunk
+#   （含 pdf.worker 1.0MB、pptx.worker 0.6MB），构建峰值内存随之超过原先的 3048MB，
+#   在容器内表现为：
+#     FATAL ERROR: Ineffective mark-compacts near heap limit
+#     Allocation failed - JavaScript heap out of memory  (exit 134)
+#   4096 与 docker/_build_common.sh 中宿主机预构建所用的 --max-old-space-size 保持一致，
+#   避免「宿主机能过、容器内 OOM」这类两条路径行为不一致的问题。
+#   若构建机内存紧张，优先改用 PREBUILD_FRONTEND=1 在宿主机完成前端构建。
 ARG PREBUILD_FRONTEND=0
 ARG APP_VERSION=dev
 FROM node:20-slim AS frontend-builder
@@ -15,7 +26,7 @@ RUN if [ "$PREBUILD_FRONTEND" = "1" ]; then \
       test -f dist/index.html || (echo "ERROR: PREBUILD_FRONTEND=1 但未找到 frontend/dist/index.html，请先在宿主机执行前端构建" && exit 1); \
       echo "使用宿主机预构建的前端产物"; \
     else \
-      NODE_OPTIONS="--max-old-space-size=3048" VITE_APP_VERSION="$APP_VERSION" npx vite build; \
+      NODE_OPTIONS="--max-old-space-size=4096" VITE_APP_VERSION="$APP_VERSION" npx vite build; \
     fi
 
 # --- 阶段 2: Python 环境构建 ---
