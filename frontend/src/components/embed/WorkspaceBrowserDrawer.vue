@@ -8,6 +8,7 @@ import {
 } from '@/utils/fileTypeVisual'
 import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash } from '@/utils/workspaceFilePreview'
 import { useWorkspaceUploadQueue } from '@/composables/useWorkspaceUploadQueue'
+import { shouldAutoDismissUploads } from '@/utils/workspaceUploadQueue'
 import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
@@ -107,6 +108,24 @@ const {
   clearFinished: clearFinishedWorkspaceUpload,
 } = useWorkspaceUploadQueue()
 const uploadPanelCollapsed = ref(false)
+
+// 全部成功后自动清除队列面板：抽屉是常驻挂载的（父组件用 v-model 而非 v-if），
+// 若只靠手动「清除已完成」，成功的浮层会一直跟着用户跨目录、跨会话占位。
+// 留 3 秒是为了让「已完成」有机会被看见；有失败或取消时不清除，见 shouldAutoDismissUploads。
+const UPLOAD_PANEL_AUTO_DISMISS_MS = 3000
+let uploadAutoDismissTimer: ReturnType<typeof setTimeout> | null = null
+
+const cancelUploadAutoDismiss = () => {
+  if (uploadAutoDismissTimer === null) return
+  clearTimeout(uploadAutoDismissTimer)
+  uploadAutoDismissTimer = null
+}
+
+// 手动清除也要撤销待执行的自动清除，否则面板已清空后还会再触发一次空清除
+const clearFinishedUploads = () => {
+  cancelUploadAutoDismiss()
+  clearFinishedWorkspaceUpload()
+}
 
 const formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -1002,6 +1021,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cancelUploadAutoDismiss()
   if (recentFilesPersistTimer) {
     clearTimeout(recentFilesPersistTimer)
     recentFilesPersistTimer = null
@@ -1316,6 +1336,10 @@ const handleUploadFiles = async (event: Event) => {
   const target = uploadTargetPath.value
   if (!files?.length || !target) return
   // 入队即返回：并发、进度、取消、重试全部交给队列引擎，此处不再串行阻塞
+  // 同步撤销待执行的自动清除：若新任务在同一 tick 内就进入终态（例如超限被立即判失败），
+  // active 会 true→false 一闪而过，下面那个 watcher 只看到最终值 false 就直接返回，
+  // 上一轮的定时器不会被撤销，3 秒后会把这一批失败条目一起清掉。
+  cancelUploadAutoDismiss()
   enqueueWorkspaceUpload(Array.from(files), target)
   input.value = ''
 }
@@ -1325,7 +1349,12 @@ const handleUploadFiles = async (event: Event) => {
 watch(
   () => uploadSnapshot.value.aggregate.active,
   async (active, wasActive) => {
-    if (!wasActive || active) return
+    // 新一轮上传开始：撤销尚未到期的自动清除，否则刚入队的新任务会被一起清掉
+    if (active) {
+      cancelUploadAutoDismiss()
+      return
+    }
+    if (!wasActive) return
     const { done, failed, canceled } = uploadSnapshot.value.aggregate
     if (done > 0) {
       await fetchDirectory(currentPath.value, { preserveSearch: true })
@@ -1335,6 +1364,14 @@ watch(
     } else if (done > 0) {
       const tail = canceled > 0 ? `，${canceled} 个已取消` : ''
       showToast(`${done} 个文件上传完成${tail}`, 'success')
+    }
+    // 全部成功才自动清除；有失败/取消时保留条目，供重试和确认「可能已保存」
+    if (shouldAutoDismissUploads(uploadSnapshot.value.aggregate)) {
+      cancelUploadAutoDismiss()
+      uploadAutoDismissTimer = setTimeout(() => {
+        uploadAutoDismissTimer = null
+        clearFinishedWorkspaceUpload()
+      }, UPLOAD_PANEL_AUTO_DISMISS_MS)
     }
   },
 )
@@ -2296,6 +2333,16 @@ onUnmounted(() => {
 
                   <!-- 上传队列面板：传输中 / 服务端写入中 / 失败重试都在这里可见，
                        避免上传大文件时界面完全静默（用户无法区分「在传」和「卡死」） -->
+                  <!-- 淡出交给 transition：自动清除时先播完 200ms 再移除 DOM，
+                       否则面板「啪」地消失，最后一条状态来不及被看见 -->
+                  <transition
+                    enter-active-class="transition-opacity ease-out duration-150"
+                    enter-from-class="opacity-0"
+                    enter-to-class="opacity-100"
+                    leave-active-class="transition-opacity ease-in duration-200"
+                    leave-from-class="opacity-100"
+                    leave-to-class="opacity-0"
+                  >
                   <div
                     v-if="uploadSnapshot.tasks.length > 0"
                     class="absolute bottom-5 left-3 z-30 w-[min(22rem,calc(100%-1.5rem))] rounded-xl border border-gray-200 bg-white/95 shadow-lg ring-1 ring-black/5 backdrop-blur dark:border-gray-700 dark:bg-gray-900/95"
@@ -2321,7 +2368,7 @@ onUnmounted(() => {
                           v-if="!uploadSnapshot.aggregate.active"
                           type="button"
                           class="rounded px-1.5 py-0.5 text-[10px] text-gray-500 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
-                          @click="clearFinishedWorkspaceUpload()"
+                          @click="clearFinishedUploads()"
                         >清除已完成</button>
                       </div>
                     </div>
@@ -2378,6 +2425,7 @@ onUnmounted(() => {
                       </div>
                     </div>
                   </div>
+                  </transition>
                 </div>
               </div>
             </div>

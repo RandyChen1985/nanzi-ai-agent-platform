@@ -4,7 +4,7 @@
 // 这类时序语义，静态断言完全看不出来。这里注入假上传函数与假时钟，把时间轴握在手里。
 import assert from 'node:assert/strict'
 
-import { createWorkspaceUploadQueue } from '../../frontend/src/utils/workspaceUploadQueue.ts'
+import { createWorkspaceUploadQueue, shouldAutoDismissUploads } from '../../frontend/src/utils/workspaceUploadQueue.ts'
 
 let passed = 0
 const check = (name, fn) => {
@@ -333,6 +333,68 @@ const flush = async () => {
   check('0 字节文件完成后为 100% 而不是 0%', () => {
     assert.equal(fileAt(queue, 0).percent, 100)
     assert.equal(fileAt(queue, 0).status, 'done')
+  })
+
+  queue.destroy()
+}
+
+// --- 10. 面板自动清除判定：只有「全部成功」才允许自动消失 ---
+// 这条产品规则的代价很高：一旦误判，失败条目会在用户重试前被静默清掉、
+// 「已取消，可能已保存」的提示也会一起消失。所以逐种终态组合都钉死。
+{
+  const agg = (over) => ({
+    total: 1, done: 1, failed: 0, canceled: 0,
+    totalBytes: 1, loadedBytes: 1, active: false, ...over,
+  })
+
+  check('全部成功时允许自动清除面板', () => {
+    assert.equal(shouldAutoDismissUploads(agg({ total: 3, done: 3 })), true)
+  })
+
+  check('仍有任务在途时不自动清除', () => {
+    assert.equal(shouldAutoDismissUploads(agg({ active: true })), false)
+  })
+
+  check('存在失败任务时不自动清除（失败条目要留给用户重试）', () => {
+    assert.equal(shouldAutoDismissUploads(agg({ total: 2, done: 1, failed: 1 })), false)
+  })
+
+  check('存在取消任务时不自动清除（要让用户看到「可能已保存」）', () => {
+    assert.equal(shouldAutoDismissUploads(agg({ total: 2, done: 1, canceled: 1 })), false)
+  })
+
+  check('全部取消时不自动清除', () => {
+    assert.equal(shouldAutoDismissUploads(agg({ total: 1, done: 0, canceled: 1 })), false)
+  })
+
+  check('空队列不自动清除（避免清除动作空转）', () => {
+    assert.equal(shouldAutoDismissUploads(agg({ total: 0, done: 0, loadedBytes: 0, totalBytes: 0 })), false)
+  })
+}
+
+// --- 10b. 与真实队列快照对接：手造 aggregate 的字段名可能与 snapshot 漂移 ---
+{
+  const clock = makeClock()
+  const { upload, calls } = makeUploader()
+  const queue = createWorkspaceUploadQueue({
+    upload, now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+  })
+
+  queue.enqueue([fakeFile('a.txt', 10), fakeFile('b.txt', 20)], '/ws')
+  calls[0].resolve({ data: { data: { name: 'a.txt' } } })
+  calls[1].resolve({ data: { data: { name: 'b.txt' } } })
+  await flush()
+
+  check('真实队列全部成功后判定为可自动清除', () => {
+    assert.equal(shouldAutoDismissUploads(queue.snapshot().aggregate), true)
+  })
+
+  queue.enqueue([fakeFile('c.txt', 30)], '/ws')
+  calls[2].reject(new Error('boom'))
+  await flush()
+
+  check('真实队列出现失败后判定为不可自动清除', () => {
+    assert.equal(shouldAutoDismissUploads(queue.snapshot().aggregate), false)
   })
 
   queue.destroy()

@@ -104,6 +104,15 @@ export const UPLOAD_PROGRESS_REFRESH_MS = 400
 const RATE_WINDOW_MS = 2000
 const RATE_BUCKET_MS = 250
 
+/**
+ * 是否应当自动清除上传面板：仅当全部任务成功结束（且确实有成功的）才成立。
+ *
+ * 有任何失败或取消都必须保留条目——失败要留给用户重试，取消要让用户看到
+ * 「已取消，可能已保存」的提示；自动清除等于把这两种情况静默吞掉。
+ */
+export const shouldAutoDismissUploads = (aggregate: WorkspaceUploadAggregate): boolean =>
+  !aggregate.active && aggregate.done > 0 && aggregate.failed === 0 && aggregate.canceled === 0
+
 function toPercent(loaded: number, size: number): number {
   if (!size || size <= 0) return 100
   const ratio = loaded / size

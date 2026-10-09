@@ -90,6 +90,48 @@ def test_upload_queue_composable_bridges_vue_and_engine():
     assert "destroy()" in source
 
 
+def test_auto_dismiss_only_when_every_upload_succeeded():
+    """上传完成后浮层自动消失，但只允许发生在「全部成功」时。
+
+    抽屉是常驻挂载的（父组件用 v-model 而非 v-if），不自动清除的话，一个成功的
+    浮层会跟着用户跨目录、跨会话一直占位；反之若失败条目被自动清掉，用户就没机会
+    重试，「已取消，可能已保存」的提示也会一起消失。两侧代价都不低，所以钉死判定条件。
+    """
+    engine = _source("frontend/src/utils/workspaceUploadQueue.ts")
+    drawer = _source("frontend/src/components/embed/WorkspaceBrowserDrawer.vue")
+
+    assert "shouldAutoDismissUploads" in engine, "缺少「是否可自动清除面板」的判定"
+    # 三种否决条件缺一不可：仍在途、有失败、有取消
+    assert "!aggregate.active" in engine
+    assert "aggregate.failed === 0" in engine
+    assert "aggregate.canceled === 0" in engine
+    assert "aggregate.done > 0" in engine, "空队列也应否决，避免清除动作空转"
+
+    assert "shouldAutoDismissUploads" in drawer, "抽屉未接自动清除判定"
+    assert "UPLOAD_PANEL_AUTO_DISMISS_MS" in drawer, "缺少自动清除延时"
+    assert "clearTimeout(uploadAutoDismissTimer)" in drawer, "自动清除定时器没有取消路径"
+    # 新一轮上传必须撤销尚未到期的清除，否则刚入队的新任务会被顺手清掉
+    assert "cancelUploadAutoDismiss()" in drawer
+    # 手动清除也要撤销，否则清空后会再触发一次空清除
+    assert '@click="clearFinishedUploads()"' in drawer, "手动清除未走统一入口"
+    # 淡出过渡：直接移除 DOM 会让面板「啪」地消失，最后一条状态来不及被看见
+    assert 'leave-to-class="opacity-0"' in drawer, "自动清除缺少淡出过渡"
+
+    # 组件卸载时必须撤销定时器，否则卸载后仍会触发一次清除
+    unmount_at = drawer.index("onUnmounted(() => {")
+    assert "cancelUploadAutoDismiss()" in drawer[unmount_at : unmount_at + 300], (
+        "onUnmounted 未清理自动清除定时器"
+    )
+
+    # 入队处必须再同步撤销一次。只靠 active 的 watcher 不够：若新任务在同一 tick 内
+    # 就进入终态（超限被立即判失败），active 会 true→false 一闪而过，watcher 只看到
+    # 最终值 false 便直接返回，上一轮的定时器就会在 3 秒后清掉这一批失败条目。
+    handle_at = drawer.index("const handleUploadFiles")
+    assert "cancelUploadAutoDismiss()" in drawer[handle_at : handle_at + 700], (
+        "入队时未同步撤销待执行的自动清除"
+    )
+
+
 def test_backend_streams_chunks_and_reads_limit_from_config():
     """后端必须分块落盘，并且上限来自配置而非硬编码常量。"""
     source = _source("app/api/v1/endpoints/fs.py")
