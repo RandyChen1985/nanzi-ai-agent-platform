@@ -82,7 +82,7 @@ async def list_accessible_knowledge_bases() -> str:
 
     使用规则：
     - 当用户问「我有哪些知识库」「能检索哪些文档库」「知识库列表」时调用。
-    - 仅返回目录级信息；具体内容检索请使用 search_knowledge_base。
+    - 仅返回目录级信息，不含文档正文；本工具不承担正文检索。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:
@@ -124,7 +124,7 @@ async def list_available_agents() -> str:
 
     使用规则：
     - 当用户问「我有哪些智能体」「能调用哪些专家」「可用智能体列表」时调用。
-    - 在需要通过 sub_agent_call 委派子任务前，若需查询或确认可委派的智能体标识 (agent_name) 与核心能力，可调用此工具。
+    - 在需要委派子任务前，若需查询或确认可委派的智能体标识 (agent_name) 与核心能力，可调用此工具。
     - 返回当前用户有权限访问的全部可用智能体，当前正在对话的自身智能体标注为 is_current=true。
     """
     ctx = get_current_agent_context()
@@ -159,7 +159,7 @@ async def list_accessible_directories() -> str:
     使用规则：
     - 当 AI 需要了解自身当前可访问哪些目录、需要确定文件落盘位置（如生成报告、导出 Excel/PDF、写入临时代码）、或查看公共与个人空间区别时调用此工具。
     - 读写或搜索文件前若不确定目标文件路径，或遇到文件找不到/写入被拒时，必须优先调用本工具查看全景映射，严禁盲猜路径。
-    - 本工具只负责可访问目录、权限和路径映射；目标目录已经明确且只需要查看目录树时，使用 directory_tree_navigator。
+    - 本工具只负责可访问目录、权限和路径映射；目标目录已经明确时无需重复调用本工具。
     - 清楚区分「平台公共文档与手册 (data/docs/)，只读」、「系统公共技能库 (skills/)，只读」、「用户专属持久化文档库 (docs/)，可写」、「当前会话临时工作区 (sessions/{cid}/)，可写」和「用户上传附件 (uploads/)，可读写」。
     - 当公共 docs 未命中时，可把 platform_help_files 中列出的服务根目录一级 *.md 作为平台帮助文档兜底来源；仍只能通过宿主 Read/Glob/Grep 只读访问。
     """
