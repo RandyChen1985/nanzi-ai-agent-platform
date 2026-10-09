@@ -514,6 +514,7 @@ async def map_standard_agentscope_event(
     tools: List[Any] | None = None,
     native_model: Any | None = None,
     agent_name: str | None = None,
+    agent_version: str | None = None,
     emit_observability: bool = True,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     if emit_observability:
@@ -583,7 +584,11 @@ async def map_standard_agentscope_event(
                     "id": tool_id,
                     "status": "error",
                     "category": "tool",
-                    **describe_unregistered_tool_call(tool_name, tools),
+                    **describe_unregistered_tool_call(
+                        tool_name,
+                        tools,
+                        agent_version=agent_version,
+                    ),
                 }
                 return
 

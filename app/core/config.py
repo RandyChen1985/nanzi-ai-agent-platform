@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     MCP_RATE_LIMIT_CLIENT_PER_MINUTE: int = 120
     MCP_RATE_LIMIT_USER_PER_MINUTE: int = 60
 
+    # 工作空间「上传到此目录」单文件上限（MB）。
+    # 调大前需同步确认磁盘配额；若前置了反向代理，还需对齐其 body 上限。
+    WORKSPACE_UPLOAD_MAX_MB: int = 200
+
     # Security - API Key Encryption
     # Fernet Key (32 url-safe base64-encoded bytes)
     ENCRYPTION_KEY: str

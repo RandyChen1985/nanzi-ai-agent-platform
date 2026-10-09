@@ -2480,7 +2480,11 @@ class AssistantAgentRunner(BaseExecutor):
                     "id": tool_id,
                     "status": "error",
                     "category": "tool",
-                    **describe_unregistered_tool_call(tool_name, tools),
+                    **describe_unregistered_tool_call(
+                        tool_name,
+                        tools,
+                        agent_version=self.config.agent_version,
+                    ),
                 }
                 return
 
@@ -2597,6 +2601,7 @@ class AssistantAgentRunner(BaseExecutor):
                 tools=tools,
                 native_model=native_model,
                 agent_name=self._runtime_agent_name(),
+                agent_version=self.config.agent_version,
             ):
                 yield chunk
                 if is_interrupt_sse_chunk(chunk):

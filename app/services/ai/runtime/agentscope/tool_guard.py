@@ -25,10 +25,18 @@ def registered_model_name_for(tool_name: str, tools: Iterable[Any] | None) -> st
 def describe_unregistered_tool_call(
     tool_name: str,
     tools: Iterable[Any] | None,
+    *,
+    agent_version: str | None = None,
 ) -> dict[str, str]:
-    """构造拦截卡片的标题与详情。"""
+    """构造拦截卡片的标题与详情。
+
+    ``agent_version`` 是**本轮实际生效**的版本号。配置页保存的是草稿，只有发布
+    后的版本才在对话中生效；旧文案只说"可能未发布"却不给出生效版本，用户只能靠
+    猜。这里把生效版本与本轮注册的工具数一起写出来，让排障能直接对照。
+    """
     name = str(tool_name or "")
-    model_name = registered_model_name_for(name, tools)
+    tool_list = list(tools or ())
+    model_name = registered_model_name_for(name, tool_list)
     if model_name:
         details = (
             f"工具 `{name}` 是本平台 MCP 工具的内部标识，不是模型调用名；"
@@ -36,8 +44,14 @@ def describe_unregistered_tool_call(
             f"调用已按名称口径不一致拦截，模型已收到错误反馈，将重新生成回答。"
         )
     else:
+        effective = (
+            f"本轮生效配置 {agent_version}，共注册 {len(tool_list)} 个工具。"
+            if agent_version
+            else f"本轮共注册 {len(tool_list)} 个工具。"
+        )
         details = (
             f"工具 `{name}` 未在本轮注册的工具名单中（可能未绑定、未发布、已下线或名称有误）。"
+            f"{effective}"
             f"模型已收到错误反馈，将重新生成回答。"
         )
     return {"title": f"{_GHOST_TOOL_TITLE_PREFIX}: {name}", "details": details}

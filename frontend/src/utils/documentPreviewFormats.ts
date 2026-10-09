@@ -59,6 +59,25 @@ export const DOCUMENT_VIEWER_EXTENSIONS = new Set([
   '.diff', '.patch', '.bundle', '.bdl',
 ])
 
+/**
+ * PDF —— **刻意独立成集合，绝不并入 `DOCUMENT_VIEWER_EXTENSIONS`**。
+ *
+ * 同一份 PDF 在三处的正确走向并不相同：
+ *  - **画布**：PDF 走画布自己的 `type === 'pdf'` 分支（由 `isDocumentPreview` 覆盖），
+ *    与本集合无关；
+ *  - **RAG 引用抽屉**：必须留给 iframe —— 它靠 `` `${fileUrl}#page=${pageNo}` `` 让
+ *    浏览器原生 PDF 阅读器跳到引用页，而 file-viewer 的 pdf 渲染器**不认这个 URL
+ *    fragment**（`renderer-pdf/dist/pdf.js` 里只有缩略图的 `data-pdf-thumbnail-page`）。
+ *    改用 DocumentViewer 会静默丢掉「跳到第 N 页」这个能力，且不会有任何报错；
+ *  - **知识库「预览原文件」**：没有页码定位需求，因此纳入 DocumentViewer，以获得统一
+ *    工具栏（搜索/缩放/打印/目录）并摆脱对浏览器原生阅读器的依赖。
+ *
+ * 所以**只允许由知识库那一个调用点显式并入**。一旦有人图省事把 `.pdf` 加进共享集合，
+ * RAG 抽屉会连带被改掉 —— `document_preview_formats.mjs`（运行时真值）与
+ * `test_rag_document_preview_contract.py`（源码形状）都钉住了这一点。
+ */
+export const PDF_EXTENSIONS = new Set(['.pdf'])
+
 /** 交给 DocumentViewer 渲染时使用的 MIME，用于组件内部选择 renderer */
 const DOCUMENT_VIEWER_MIME: Record<string, string> = {
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -67,6 +86,10 @@ const DOCUMENT_VIEWER_MIME: Record<string, string> = {
   '.xls': 'application/vnd.ms-excel',
   '.xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  // .pdf 不在 DOCUMENT_VIEWER_EXTENSIONS 里，但知识库会显式并入（见 PDF_EXTENSIONS）。
+  // 后端虽然已强制 application/pdf（ragflow.py 的 download_document 代理），仍显式给出，
+  // 免得 DocumentViewer 只能靠响应头兜底。
+  '.pdf': 'application/pdf',
 }
 
 export function getWorkspaceFileExtension(name: string): string {

@@ -1,11 +1,40 @@
 import pytest
 import asyncio
+import re
 from typing import List
 from app.services.ai.tools.registry import ToolRegistry
 from app.schemas.agent import ToolConfigItem
 from app.services.ai.runtime.agentscope.chat import legacy_tools_to_openai_schemas
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+def test_implicit_tool_descriptions_do_not_advertise_unregistered_tools():
+    """隐式工具对所有智能体无条件可见，其描述不得推荐一个没注册的兄弟工具。
+
+    模型会照描述去调，而运行时白名单会硬拦截未注册工具
+    （``event_stream.py`` 的 ToolGuard）。因此描述里每多一个这样的点名，
+    就多一次必然发生的「工具调用已拦截」——即使该智能体从未配置过那个工具。
+    """
+    implicit_tools = ToolRegistry.get_system_implicit_tools()
+    implicit_names = {getattr(tool, "name", "") for tool in implicit_tools}
+    registered_names = set(ToolRegistry._registry)
+
+    offenders: dict[str, list[str]] = {}
+    for tool in implicit_tools:
+        name = getattr(tool, "name", "")
+        description = str(getattr(tool, "description", "") or "")
+        referenced = {
+            candidate
+            for candidate in registered_names
+            if candidate != name
+            and re.search(rf"\b{re.escape(candidate)}\b", description)
+        }
+        leaked = sorted(referenced - implicit_names)
+        if leaked:
+            offenders[name] = leaked
+
+    assert offenders == {}
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,9 @@ import {
   resolveFileTypeVisual,
   type FileTypeCategory,
 } from '@/utils/fileTypeVisual'
-import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, uploadToWorkspaceDir, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash } from '@/utils/workspaceFilePreview'
+import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash } from '@/utils/workspaceFilePreview'
+import { useWorkspaceUploadQueue } from '@/composables/useWorkspaceUploadQueue'
+import { shouldAutoDismissUploads } from '@/utils/workspaceUploadQueue'
 import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
@@ -92,6 +94,82 @@ const QUICK_NAV_MENU_WIDTH = 220
 const longPressTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
 const { showToast } = useToast()
+
+// --------------------------------------------------------------------------
+// 上传队列：进度、取消、重试统一由零依赖引擎编排（见 utils/workspaceUploadQueue.ts）。
+// 之所以不再是「串行 await + 逐个 toast」：浏览器把请求体写入 socket 缓冲区即算发送完成，
+// 5MB 文件只会触发一次进度事件，若不显式建模「服务端写入中」阶段，界面就会长时间静默。
+// --------------------------------------------------------------------------
+const {
+  snapshot: uploadSnapshot,
+  enqueue: enqueueWorkspaceUpload,
+  cancel: cancelWorkspaceUpload,
+  retry: retryWorkspaceUpload,
+  clearFinished: clearFinishedWorkspaceUpload,
+} = useWorkspaceUploadQueue()
+const uploadPanelCollapsed = ref(false)
+
+// 全部成功后自动清除队列面板：抽屉是常驻挂载的（父组件用 v-model 而非 v-if），
+// 若只靠手动「清除已完成」，成功的浮层会一直跟着用户跨目录、跨会话占位。
+// 留 3 秒是为了让「已完成」有机会被看见；有失败或取消时不清除，见 shouldAutoDismissUploads。
+const UPLOAD_PANEL_AUTO_DISMISS_MS = 3000
+let uploadAutoDismissTimer: ReturnType<typeof setTimeout> | null = null
+
+const cancelUploadAutoDismiss = () => {
+  if (uploadAutoDismissTimer === null) return
+  clearTimeout(uploadAutoDismissTimer)
+  uploadAutoDismissTimer = null
+}
+
+// 手动清除也要撤销待执行的自动清除，否则面板已清空后还会再触发一次空清除
+const clearFinishedUploads = () => {
+  cancelUploadAutoDismiss()
+  clearFinishedWorkspaceUpload()
+}
+
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
+}
+
+const formatUploadSpeed = (bps: number | null) => (bps && bps > 0 ? `${formatBytes(bps)}/s` : '')
+
+const formatUploadEta = (seconds: number | null) => {
+  if (!seconds || seconds <= 0) return ''
+  if (seconds < 60) return `约 ${seconds} 秒`
+  return `约 ${Math.ceil(seconds / 60)} 分钟`
+}
+
+const UPLOAD_STATUS_TEXT: Record<string, string> = {
+  queued: '等待中',
+  transferring: '传输中',
+  committing: '服务端写入中…',
+  done: '已完成',
+  failed: '失败',
+  canceled: '已取消',
+}
+
+const uploadTaskStatusText = (status: string) => UPLOAD_STATUS_TEXT[status] ?? status
+
+const uploadTaskHint = (task: { status: string; error: string | null; speedBps: number | null; remainingSeconds: number | null }) => {
+  if (task.status === 'failed') return task.error || '上传失败'
+  // 取消只能中止传输：请求体可能已完整送达并被服务端落盘，因此不承诺「未保存」
+  if (task.status === 'canceled') return '已取消，可能已保存'
+  if (task.status === 'done') return '已保存'
+  if (task.status === 'committing') return '文件已送达，正在写入工作空间…'
+  return [formatUploadSpeed(task.speedBps), formatUploadEta(task.remainingSeconds)].filter(Boolean).join(' · ')
+}
+
+const uploadTaskActive = (status: string) =>
+  status === 'queued' || status === 'transferring' || status === 'committing'
+
 const selectedItem = ref<any | null>(null)
 const searchQuery = ref('')
 const includeSubdirs = ref(true)
@@ -943,6 +1021,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cancelUploadAutoDismiss()
   if (recentFilesPersistTimer) {
     clearTimeout(recentFilesPersistTimer)
     recentFilesPersistTimer = null
@@ -1254,18 +1333,48 @@ const openUploadPicker = (parentPath?: string) => {
 const handleUploadFiles = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const files = input.files
-  if (!files?.length || !uploadTargetPath.value) return
-  for (const file of Array.from(files)) {
-    try {
-      await uploadToWorkspaceDir(uploadTargetPath.value, file)
-      showToast(`已上传 ${file.name}`, 'success')
-    } catch (error: any) {
-      showToast(error?.response?.data?.detail || `上传 ${file.name} 失败`, 'error')
-    }
-  }
+  const target = uploadTargetPath.value
+  if (!files?.length || !target) return
+  // 入队即返回：并发、进度、取消、重试全部交给队列引擎，此处不再串行阻塞
+  // 同步撤销待执行的自动清除：若新任务在同一 tick 内就进入终态（例如超限被立即判失败），
+  // active 会 true→false 一闪而过，下面那个 watcher 只看到最终值 false 就直接返回，
+  // 上一轮的定时器不会被撤销，3 秒后会把这一批失败条目一起清掉。
+  cancelUploadAutoDismiss()
+  enqueueWorkspaceUpload(Array.from(files), target)
   input.value = ''
-  await fetchDirectory(currentPath.value, { preserveSearch: true })
 }
+
+// 目录刷新收敛为「队列全部进入终态后刷一次」：
+// 逐个文件刷新会让批量上传十几次互相打断滚动位置与选中项。
+watch(
+  () => uploadSnapshot.value.aggregate.active,
+  async (active, wasActive) => {
+    // 新一轮上传开始：撤销尚未到期的自动清除，否则刚入队的新任务会被一起清掉
+    if (active) {
+      cancelUploadAutoDismiss()
+      return
+    }
+    if (!wasActive) return
+    const { done, failed, canceled } = uploadSnapshot.value.aggregate
+    if (done > 0) {
+      await fetchDirectory(currentPath.value, { preserveSearch: true })
+    }
+    if (failed > 0) {
+      showToast(`${done} 个文件上传成功，${failed} 个失败`, 'error')
+    } else if (done > 0) {
+      const tail = canceled > 0 ? `，${canceled} 个已取消` : ''
+      showToast(`${done} 个文件上传完成${tail}`, 'success')
+    }
+    // 全部成功才自动清除；有失败/取消时保留条目，供重试和确认「可能已保存」
+    if (shouldAutoDismissUploads(uploadSnapshot.value.aggregate)) {
+      cancelUploadAutoDismiss()
+      uploadAutoDismissTimer = setTimeout(() => {
+        uploadAutoDismissTimer = null
+        clearFinishedWorkspaceUpload()
+      }, UPLOAD_PANEL_AUTO_DISMISS_MS)
+    }
+  },
+)
 
 const copyItemPath = async (path: string) => {
   try {
@@ -2221,6 +2330,102 @@ onUnmounted(() => {
                       <CheckCircleIcon v-else class="h-5 w-5" aria-hidden="true" />
                     </button>
                   </div>
+
+                  <!-- 上传队列面板：传输中 / 服务端写入中 / 失败重试都在这里可见，
+                       避免上传大文件时界面完全静默（用户无法区分「在传」和「卡死」） -->
+                  <!-- 淡出交给 transition：自动清除时先播完 200ms 再移除 DOM，
+                       否则面板「啪」地消失，最后一条状态来不及被看见 -->
+                  <transition
+                    enter-active-class="transition-opacity ease-out duration-150"
+                    enter-from-class="opacity-0"
+                    enter-to-class="opacity-100"
+                    leave-active-class="transition-opacity ease-in duration-200"
+                    leave-from-class="opacity-100"
+                    leave-to-class="opacity-0"
+                  >
+                  <div
+                    v-if="uploadSnapshot.tasks.length > 0"
+                    class="absolute bottom-5 left-3 z-30 w-[min(22rem,calc(100%-1.5rem))] rounded-xl border border-gray-200 bg-white/95 shadow-lg ring-1 ring-black/5 backdrop-blur dark:border-gray-700 dark:bg-gray-900/95"
+                    role="region"
+                    aria-label="上传队列"
+                  >
+                    <div class="flex items-center justify-between gap-2 border-b border-gray-100 px-3 py-2 dark:border-gray-800">
+                      <div class="flex min-w-0 items-center gap-2">
+                        <span class="text-[11px] font-bold text-gray-700 dark:text-gray-200">
+                          上传 {{ uploadSnapshot.aggregate.done }}/{{ uploadSnapshot.aggregate.total }}
+                        </span>
+                        <span class="truncate text-[10px] text-gray-400">
+                          {{ formatBytes(uploadSnapshot.aggregate.loadedBytes) }} / {{ formatBytes(uploadSnapshot.aggregate.totalBytes) }}
+                        </span>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <button
+                          type="button"
+                          class="rounded px-1.5 py-0.5 text-[10px] text-gray-500 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+                          @click="uploadPanelCollapsed = !uploadPanelCollapsed"
+                        >{{ uploadPanelCollapsed ? '展开' : '收起' }}</button>
+                        <button
+                          v-if="!uploadSnapshot.aggregate.active"
+                          type="button"
+                          class="rounded px-1.5 py-0.5 text-[10px] text-gray-500 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+                          @click="clearFinishedUploads()"
+                        >清除已完成</button>
+                      </div>
+                    </div>
+
+                    <div v-if="!uploadPanelCollapsed" class="max-h-56 space-y-2 overflow-y-auto px-3 py-2">
+                      <div v-for="task in uploadSnapshot.tasks" :key="task.id" class="space-y-1">
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="min-w-0 flex-1 truncate text-[11px] font-medium text-gray-700 dark:text-gray-200" :title="task.name">
+                            {{ task.name }}
+                          </span>
+                          <button
+                            v-if="uploadTaskActive(task.status)"
+                            type="button"
+                            class="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-gray-400 transition-colors hover:text-red-500"
+                            @click="cancelWorkspaceUpload(task.id)"
+                          >取消</button>
+                          <button
+                            v-else-if="task.status === 'failed' || task.status === 'canceled'"
+                            type="button"
+                            class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold text-primary hover:underline"
+                            @click="retryWorkspaceUpload(task.id)"
+                          >重试</button>
+                        </div>
+
+                        <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                          <div
+                            class="h-full rounded-full transition-all"
+                            :class="task.status === 'failed'
+                              ? 'bg-red-400'
+                              : task.status === 'canceled'
+                                ? 'bg-gray-300 dark:bg-gray-600'
+                                : task.status === 'committing'
+                                  ? 'animate-pulse bg-primary/60'
+                                  : 'bg-primary'"
+                            :style="{ width: `${task.percent}%` }"
+                          />
+                        </div>
+
+                        <div class="flex items-center justify-between gap-2 text-[10px]">
+                          <span :class="task.status === 'failed' ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'">
+                            {{ uploadTaskStatusText(task.status) }}
+                          </span>
+                          <span class="truncate text-gray-400">{{ uploadTaskHint(task) }}</span>
+                        </div>
+
+                        <!-- 落盘名会追加短后缀防重名，必须显式说明，否则用户会以为传错了文件 -->
+                        <div
+                          v-if="task.status === 'done' && task.storedName && task.storedName !== task.name"
+                          class="truncate text-[10px] text-gray-400"
+                          :title="task.storedName"
+                        >
+                          已存为 {{ task.storedName }}（加后缀避免重名）
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  </transition>
                 </div>
               </div>
             </div>

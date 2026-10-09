@@ -9,7 +9,12 @@ import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { copyToClipboard as copyText } from '../utils/clipboard'
 import DocumentViewer from '@/components/embed/DocumentViewer.vue'
-import { canPreviewWithDocumentViewer, resolveDocumentViewerMime } from '@/utils/workspaceFilePreview'
+import {
+  canPreviewWithDocumentViewer,
+  resolveDocumentViewerMime,
+  PDF_EXTENSIONS,
+  getWorkspaceFileExtension,
+} from '@/utils/workspaceFilePreview'
 
 const router = useRouter()
 const route = useRoute()
@@ -1278,10 +1283,27 @@ const previewDocUrl = computed(() => {
   return `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/file`
 })
 
-/** Office 与文本格式交给 DocumentViewer；其余（含 PDF）继续走 iframe */
-const canPreviewSelectedDocument = computed(() =>
-  canPreviewWithDocumentViewer(selectedDocument.value?.name || ''),
-)
+/**
+ * 交给 DocumentViewer 渲染的格式：Office + 文本（canPreviewWithDocumentViewer），
+ * **外加 PDF**。
+ *
+ * PDF 在知识库这里并入，是有意的、而且**只在这一个调用点并入**：知识库「预览原文件」
+ * 没有引用页跳转需求，用它换取统一工具栏（搜索/缩放/打印/目录），并摆脱对浏览器原生
+ * PDF 阅读器的依赖（移动端与部分嵌入 WebView 会直接下载而不是预览）。
+ *
+ * RAG 引用抽屉必须保持 iframe —— 它靠 `#page=N` 跳到引用页，而 file-viewer 的 pdf
+ * 渲染器不认这个 URL fragment。所以 `.pdf` 绝不能加进共享的
+ * DOCUMENT_VIEWER_EXTENSIONS（详见 utils/documentPreviewFormats.ts 的 PDF_EXTENSIONS）。
+ *
+ * 其余 file-viewer 不支持的格式（.rst/.env/.ppt 等）继续走 iframe 兜底。
+ */
+const canPreviewSelectedDocument = computed(() => {
+  const name = selectedDocument.value?.name || ''
+  return (
+    canPreviewWithDocumentViewer(name) ||
+    PDF_EXTENSIONS.has(getWorkspaceFileExtension(name))
+  )
+})
 
 /** 组件内部下载兜底的接收方；与画布版 downloadWorkspaceFile 一致的临时 a 标签写法 */
 const downloadPreviewDocument = () => {
@@ -2884,9 +2906,13 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       :show="showDocPreview"
       :title="`原文件预览：${selectedDocument?.name || ''}`"
       size="max-w-5xl"
+      maximizable
       @close="closeDocPreview"
     >
-      <div class="h-[70vh] w-full">
+      <!-- maximized 由 Modal 内部状态透出：普通态仍是固定的 70vh（与原行为一致），
+           最大化时改用 h-full 吃满内容区高度，DocumentViewer 与 iframe 两个分支共用 -->
+      <template #default="{ maximized }">
+      <div :class="maximized ? 'h-full w-full' : 'h-[70vh] w-full'">
         <DocumentViewer
           v-if="canPreviewSelectedDocument && showDocPreview && previewDocUrl"
           :url="previewDocUrl"
@@ -2902,6 +2928,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           title="文档原文件预览"
         ></iframe>
       </div>
+      </template>
     </Modal>
 
     <!-- View chunks modal -->

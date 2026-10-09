@@ -514,6 +514,7 @@ async def stream_agentscope_events(
             tools=tools,
             native_model=native_model,
             agent_name=runner._runtime_agent_name(),
+            agent_version=getattr(runner.config, "agent_version", None),
         ):
             yield chunk
             if is_interrupt_sse_chunk(chunk):
