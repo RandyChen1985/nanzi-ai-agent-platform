@@ -197,7 +197,8 @@ See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [Intelligent delegatio
 | [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) | End-to-end chat flow |
 | [PROMPT_LAYERS.md](architech/design/chat/PROMPT_LAYERS.md) | Prompt layering |
 | [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md) | Intelligent delegation and expert selection |
-| [api_integration_guide.md](docs/md/api_integration_guide.md) | Embed / V1 API integration |
+| [api_integration_guide.md](docs/md/api_integration_guide.md) | Server-side V1 API integration (Chat Completions) |
+| [embed_integration_guide.md](docs/md/embed_integration_guide.md) | Embeddable widget (iframe/SDK): ticket auth, PostMessage protocol, Java/Python/Go/Vue/React examples |
 | [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md) | Code Canvas, workspace files, and execution API |
 | [sandbox/docker/README.md](sandbox/docker/README.md) | Docker sandbox prebuild & ops guide (troubleshooting toolchain, `--dry-run`, `--list`) |
 | [sandbox/k8s/README.md](sandbox/k8s/README.md) | K8s sandbox prebuilt image guide (cold-start speedup, `k8s_deploy` ops & monitoring) |

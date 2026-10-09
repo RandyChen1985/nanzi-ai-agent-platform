@@ -216,7 +216,8 @@
 | [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md)                                                                         | 智能委派与专家直选设计                                         |
 | [mcp-business-integration-authentication-design.md](architech/design/mcp-business-integration-authentication-design.md)                     | MCP 业务集成认证总体架构、安全策略与调用流程                   |
 | [mcp-platform-inbound-service-design.md](architech/design/mcp-platform-inbound-service-design.md)                                           | NanZi 平台级 MCP 对外服务、OAuth2 授权、管理页与元数据方法方案 |
-| [api_integration_guide.md](docs/md/api_integration_guide.md)                                                                                | Embed / V1 API 集成                                            |
+| [api_integration_guide.md](docs/md/api_integration_guide.md)                                                                                | 服务端 V1 API 集成（Chat Completions、智能体直连）             |
+| [embed_integration_guide.md](docs/md/embed_integration_guide.md)                                                                            | 嵌入式组件集成：Ticket 鉴权、PostMessage 协议与多语言示例      |
 | [mcp_user_context_integration_guide.md](docs/md/mcp_user_context_integration_guide.md)                                                      | 自有 MCP UserContext 接入、JWKS 验签及 Python / Java 示例      |
 | [mcp_echo_test_server.md](docs/md/mcp_echo_test_server.md)                                                                                  | 平台级 MCP Echo 测试服务创建、智能体挂载与认证诊断             |
 | [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md)                                                            | 代码画布、工作区文件与执行 API                                 |
