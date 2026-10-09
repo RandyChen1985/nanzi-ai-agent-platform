@@ -1084,14 +1084,14 @@ const firstOpen = {
   title: canvas.canvasData.value.title,
   pinned: canvas.canvasPinned.value
 };
-canvas.canvasPinned.value = false;
-const manuallyUnpinned = canvas.canvasPinned.value;
+canvas.canvasPinned.value = true;
+const manuallyPinned = canvas.canvasPinned.value;
 await canvas.handleWorkspaceFilePreview({ path: '/workspace/a.md', name: 'a.md' });
 const toggledClosed = canvas.canvasVisible.value;
 await canvas.handleOpenCanvas({ type: 'html', title: '', content: '<p>x</p>', sourcePath: '/workspace/a.md' });
 return {
   firstOpen,
-  manuallyUnpinned,
+  manuallyPinned,
   toggledClosed,
   direct: canvas.canvasData.value,
   reopenedPinned: canvas.canvasPinned.value
@@ -1130,10 +1130,13 @@ const requireModule = id => {
 """,
     )
 
-    assert result["firstOpen"] == {"visible": True, "title": "a.md", "pinned": True}
-    assert result["manuallyUnpinned"] is False
+    # 工作空间里打开画布：不默认钉住（预览文件时不该把对话区占满）
+    assert result["firstOpen"] == {"visible": True, "title": "a.md", "pinned": False}
+    # 用户仍可手动钉住工作空间画布
+    assert result["manuallyPinned"] is True
     assert result["toggledClosed"] is False
     assert result["direct"] == {"type": "html", "title": "文件预览", "content": "<p>x</p>"}
+    # 对话消息里打开画布：仍然默认钉住（有意保留，方便并排看画布与对话）
     assert result["reopenedPinned"] is True
 
 

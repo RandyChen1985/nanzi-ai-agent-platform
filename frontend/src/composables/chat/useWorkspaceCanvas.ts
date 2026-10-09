@@ -51,10 +51,18 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
     revokeActiveBlobUrl();
   };
 
-  const showCanvas = () => {
+  /**
+   * 打开画布。
+   *
+   * @param pinByDefault 桌面端是否默认钉住。
+   *   - 对话消息里打开（工具调用、对比、远程 HTML、直传 payload）：默认 `true`，
+   *     钉住侧栏与对话并排，方便一边聊一边看画布；
+   *   - 工作空间里打开文件预览：传 `false`，避免预览文件时把对话区占满。
+   *   移动端一律不钉住（全屏置顶，压过工作区 z-125，关画布后工作区仍在）。
+   */
+  const showCanvas = (pinByDefault = true) => {
     const mobile = options.isMobile?.() ?? false;
-    // 桌面钉住侧栏并排；移动端全屏置顶（压过工作区 z-125），关画布后工作区仍在
-    canvasPinned.value = !mobile;
+    canvasPinned.value = pinByDefault && !mobile;
     canvasVisible.value = true;
   };
 
@@ -87,7 +95,8 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
       onOpen: (data) => {
         workspaceCanvasPreviewPath.value = payload.path;
         canvasData.value = data as WorkspaceCanvasPayload;
-        showCanvas();
+        // 工作空间侧不默认钉住：预览文件时不该把对话区占满（对话侧仍默认钉住）
+        showCanvas(false);
       },
     });
   };

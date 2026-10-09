@@ -8504,6 +8504,24 @@ const canvasPinnedWidthPx = computed(() => {
   return canvasPinnedWidthReactive.value;
 });
 
+/**
+ * 画布宽度的让位方位取决于停靠侧 —— 必须拆成左右两份，不能只用一份 marginRight。
+ *
+ * `canvasFromWorkspace` 为真（工作空间预览）时，EmbedChat 传 `dock-side="left"`，
+ * ChatCanvas 用 `fixed left-0 right-auto`：面板贴在视口左侧、不占布局空间。
+ * 此时若把画布宽度加进 `totalPinnedDrawerPx`（它只被当作 `marginRight` 用），
+ * 对话列的左边界仍停在 x=0，会被画布从左边切掉「画布宽」那一条，右侧还空出
+ * 等宽的死空白；把画布拖窄时最明显。
+ *
+ * 右停靠画布（普通画布）仍然走 marginRight，行为与改动前完全一致。
+ */
+const canvasRightDockWidthPx = computed(() =>
+  canvasFromWorkspace.value ? 0 : canvasPinnedWidthPx.value,
+);
+const canvasLeftDockWidthPx = computed(() =>
+  canvasFromWorkspace.value ? canvasPinnedWidthPx.value : 0,
+);
+
 const workspaceDrawerWidthPx = computed(() => {
   if (!showWorkspaceDrawer.value || !workspacePinned.value || isMobile.value) return 0;
   return workspaceDrawerWidthReactive.value;
@@ -8527,7 +8545,8 @@ const totalPinnedDrawerPx = computed(() => {
   px += portalDrawerWidthPx.value;
   px += knowledgeDrawerWidthPx.value;
   px += workspaceDrawerWidthPx.value;
-  px += canvasPinnedWidthPx.value;
+  // 只有右停靠画布才需要右侧让位；左停靠（工作空间预览）走 canvasLeftDockWidthPx
+  px += canvasRightDockWidthPx.value;
   px += browserPanelWidthPx.value;
   px += webPreviewPanelWidthPx.value;
   if (showMemoryDrawer.value && memoryPinned.value) px += 448;
@@ -8536,7 +8555,12 @@ const totalPinnedDrawerPx = computed(() => {
 
 const pinnedDrawerMarginStyle = computed(() => {
   const px = totalPinnedDrawerPx.value;
-  return px > 0 ? { marginRight: `min(${px}px, 100vw)` } : {};
+  const leftPx = canvasLeftDockWidthPx.value;
+  const style: Record<string, string> = {};
+  if (px > 0) style.marginRight = `min(${px}px, 100vw)`;
+  // 左停靠画布贴在视口左侧，必须用 marginLeft 让位，否则对话会被它从左边切掉
+  if (leftPx > 0) style.marginLeft = `min(${leftPx}px, 100vw)`;
+  return style;
 });
 
 const workspacePinnedDockClass = computed(() => {
