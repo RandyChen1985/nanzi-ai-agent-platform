@@ -2906,9 +2906,13 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       :show="showDocPreview"
       :title="`原文件预览：${selectedDocument?.name || ''}`"
       size="max-w-5xl"
+      maximizable
       @close="closeDocPreview"
     >
-      <div class="h-[70vh] w-full">
+      <!-- maximized 由 Modal 内部状态透出：普通态仍是固定的 70vh（与原行为一致），
+           最大化时改用 h-full 吃满内容区高度，DocumentViewer 与 iframe 两个分支共用 -->
+      <template #default="{ maximized }">
+      <div :class="maximized ? 'h-full w-full' : 'h-[70vh] w-full'">
         <DocumentViewer
           v-if="canPreviewSelectedDocument && showDocPreview && previewDocUrl"
           :url="previewDocUrl"
@@ -2924,6 +2928,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           title="文档原文件预览"
         ></iframe>
       </div>
+      </template>
     </Modal>
 
     <!-- View chunks modal -->
