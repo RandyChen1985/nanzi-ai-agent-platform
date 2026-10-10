@@ -9,6 +9,9 @@ from typing import Any
 from app.services.ai.runtime.agentscope.request_timeout import (
     build_llm_request_timeout,
 )
+from app.services.ai.runtime.agentscope.tool_schema_sanitize import (
+    sanitize_tool_schemas,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -307,6 +310,20 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
             self._thinking_protocol = thinking_protocol
             self._is_deepseek_v4 = is_deepseek_v4
             super().__init__(*args, **kwargs)
+
+        def _format_tools(self, tools: Any, tool_choice: Any) -> Any:
+            """在 AgentScope 展平 ``$ref`` 之后、发请求之前净化工具 schema。
+
+            上游启用 constrained decoding 时会整体编译 tools schema，任何非法约束
+            （如 ``required`` 引用了未定义的属性）都会让整单请求 400——43 个工具里
+            1 个坏 schema 就能废掉整轮对话。这里只做语义等价的修复并把问题点名到
+            具体工具；不改工具集合，也不动其它关键字。
+            """
+            formatted_tools, formatted_tool_choice = super()._format_tools(
+                tools,
+                tool_choice,
+            )
+            return sanitize_tool_schemas(formatted_tools), formatted_tool_choice
 
         async def _call_api_once(self, *args: Any, **kwargs: Any) -> Any:
             request_kwargs = dict(kwargs)
