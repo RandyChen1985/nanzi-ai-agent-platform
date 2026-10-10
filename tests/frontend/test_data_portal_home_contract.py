@@ -59,12 +59,14 @@ def test_data_portal_full_page_route_and_mobile_navigation_contract():
     assert "name: '我的数据门户'" not in dashboard
 
 
-def test_data_portal_workspace_stays_full_width_inside_personal_center_gutter():
+def test_data_portal_workspace_stays_full_width_without_personal_center_gutter():
     dashboard = _read("frontend/src/views/Dashboard.vue")
     page = _read("frontend/src/views/DataPortalHome.vue")
 
     assert 'route.name === "PersonalCenter"' in dashboard
-    assert "px-3 sm:px-4" in dashboard
+    # 个人中心路由不再叠加外层水平边距：原 `px-3 sm:px-4` 已移除（与 /embed/personal 口径一致）
+    assert 'if (route.name === "PersonalCenter") return "p-0";' in dashboard
+    assert "px-3 sm:px-4" not in dashboard
     assert "props.embedded ? 'bg-white dark:bg-gray-900'" in page
     assert "props.embedded ? 'min-h-[620px]'" in page
     assert "max-w-[1500px]" not in page
@@ -163,7 +165,7 @@ def test_data_portal_lives_in_personal_center_data_tab():
     assert 'path: "/dashboard/personal", query: { tab: "data" }' in debug
 
 
-def test_personal_center_has_light_horizontal_gutter_without_remounting_tabs():
+def test_personal_center_drops_the_dashboard_gutter_without_remounting_tabs():
     personal = _read("frontend/src/views/PersonalCenter.vue")
     dashboard = _read("frontend/src/views/Dashboard.vue")
 
@@ -174,6 +176,7 @@ def test_personal_center_has_light_horizontal_gutter_without_remounting_tabs():
     assert "dashboardContentSpacing" in dashboard
     assert 'route.name === "AIChat"' in dashboard
     assert 'route.name === "PersonalCenter"' in dashboard
-    assert "px-3 sm:px-4" in dashboard
+    # 外层 gutter 已移除：内容宽度不再被 Dashboard 再吃一层（内边距由组件自身按 Tab 负责）
+    assert 'if (route.name === "PersonalCenter") return "p-0";' in dashboard
     assert ':key="$route.path"' in dashboard
     assert ':key="$route.fullPath"' not in dashboard

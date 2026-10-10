@@ -35,7 +35,10 @@ const displayVersion = computed(() => {
 });
 const dashboardContentSpacing = computed(() => {
   if (route.name === "AIChat") return "p-0";
-  if (route.name === "PersonalCenter") return "px-3 sm:px-4";
+  // 个人中心：两边都不再叠加外层水平边距。内容自身的内边距由 PersonalCenter 内部按 Tab
+  // 分组设置（普通 Tab 有 px-4 sm:px-6，data/skills/mcp/tasks 全宽无内边距），这里再加
+  // 一层只会白吃掉内容宽度——移动端 393px 视口下尤其明显，也与 /embed/personal 口径一致。
+  if (route.name === "PersonalCenter") return "p-0";
   if (route.name === "PersonalWorkbench") return "p-0 sm:px-4 sm:pt-2.5 sm:pb-4 md:px-6 md:pt-3 md:pb-6 lg:px-8 lg:pt-3.5 lg:pb-6";
   return "p-0 sm:px-4 sm:pt-2.5 sm:pb-4 md:px-6 md:pt-3 md:pb-6 lg:px-8 lg:pt-3.5 lg:pb-6";
 });
