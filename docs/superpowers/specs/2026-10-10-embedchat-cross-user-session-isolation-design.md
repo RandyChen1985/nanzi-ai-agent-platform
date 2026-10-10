@@ -125,3 +125,71 @@ viewer token 是**会话级 bearer 凭证**：`resolve_viewer_token` 只校验�
 | `ReusableResultList.vue` 未带实例 | 该抽屉组件拿不到实例上下文，`/chat/reusable-results` 仍不带 `instance_id`（后端已支持、`EmbedChat` 直调处已带）。实际不可达：可复用结果存在即意味着该会话已有 DB 行，归属判定不依赖活跃会话桶。 |
 | 匿名降级提示的 `unknown` 桶 | 无用户身份的运行仍写 `sandbox:degraded:unknown:{cid}`；任何已认证读取方都查不到该键（fail-closed），相比改动前「知道 cid 就能读到」是收紧。保留写入以便匿名运行时至少留下痕迹。 |
 | 界面级偏好仍按浏览器共享 | 抽屉固定、显示开关、主题等 localStorage 项不含会话数据，换人后沿用（有意为之，不属隔离范围）；「数据集本轮挂载」「输入草稿/附件」等**会话相关**状态已随身份变化清空。 |
+
+## 第六轮修订：混杂会话的判定口径（事实与策略分离）
+
+第三～五轮的归属守卫把「这个 cid 里有没有别人的轮次」直接当成结论，于是把**多人共用一个
+`conversation_id` 的会话**整条判成「别人的会话」。这类数据不是边角情况：
+
+- 打补丁前会话 ID 与登录身份无关（同一浏览器换人登录会沿用同一个 cid），已经产生了大量混杂行；
+- 宿主下发的 resume id 由业务侧决定，同一租户多人共用同一个 id 是正常用法。
+
+于是出现两个用户可见故障：① 侧栏点开自己参与过的历史会话被拦（提示「该会话包含其他用户的
+记录，已阻止在当前身份下打开」）；② 刷新后回到空会话——归属被判成 `foreign`，前端清掉本地
+续接指针，续接断掉。
+
+判定改为**两个相互独立的事实 + 一条策略**：
+
+| 事实 | 含义 | 实现 |
+| --- | --- | --- |
+| `foreign` | 该 cid 里存在**他人**的轮次（`user_id` 非空且不是本人） | `_conversation_owned_by_other_user` |
+| `owned` | 该 cid 里存在**我自己**的轮次或记忆（本人 `user_id` 的 DB 行，或「用户 + 会话」前缀的 Redis 历史） | `_conversation_has_own_content` |
+
+- **策略（后端 `_conversation_blocked_for_user` 与前端 `checkConversationAdoption` 共用同一条）：
+  只有 `foreign && !owned` 才拦。** 写侧两个入口（`POST /chat/active`、`POST /chat/completions`）
+  与前端三处采用点、侧栏点选都走这条。
+- `owned` 刻意**不**采信「该会话正是我的活跃会话」：活跃指针只是一条字符串，而补丁前的越界写入
+  恰恰是通过 `/chat/active` 发生的；若指针能证明归属，只要先把别人的 cid 登记成自己的活跃会话
+  就能绕开守卫。活跃指针只保留给 `_conversation_belongs_to_user` 的「空会话尚未落库」回退
+  （可复用结果等读取路径仍需要它，否则空会话会被误判为不存在）。
+- **放行混杂会话是安全的**：读侧一律按 `user_id` 过滤（`/chat/history` 只回本人轮次、Redis 记忆
+  键带用户维度、导出与产物按归属人校验），放行不会多暴露任何他人内容，只是允许用户继续写自己的
+  轮次；「一个用户从未参与过的他人会话」依旧被拦（这正是补丁要防的越界写入）。
+- 前端三态不变，但语义收紧：`foreign` = 「确实只有别人的轮次」；`unknown`（接口异常、重试一次仍
+  失败）单独给文案（「会话归属暂时无法确认，请稍后重试」），且此时**兜底新建的会话不落盘、不覆盖
+  服务端活跃指针**（`generateNewConversation({ persist: false })`），避免一次接口抖动抹掉用户的
+  续接记录；服务端活跃会话查询本身抛错同样按 `unknown` 处理。
+
+## 第七轮修订：成功判定必须按真实响应信封（两套信封并存）
+
+第六轮之后用户在实机上看到的提示变成了「会话归属暂时无法确认，请稍后重试」（第六轮才引入的
+`unknown` 文案），这说明归属请求**本身失败/未被认下来**，而不是判定成「别人的会话」。追查结论：
+
+- 平台后端有**两套成功信封**：
+  - `/api/v1/**`（含全部 `/chat/*`）走 `StandardResponse`（`app/schemas/response.py`）：
+    `{code, message, data, timestamp, trace_id, execution_mode}` —— **没有** `status` 字段；
+  - 门户部分历史接口（`/api/portal/auth/user_apikey`、票据兑换等）走遗留的 `{status: "success", data}`。
+- 第三轮加的归属校验写成 `res.data?.status !== "success"`（沿用门户遗留口径），在 `/chat/*` 上
+  **永远为真** ⇒ `checkConversationAdoption` 永远返回 `unknown` ⇒ 三处会话采用点（宿主下发 /
+  本地残留 / 服务端活跃会话）全部退化，前端随后清/覆盖续接指针。用户最初报的两个现象都由此产生。
+- 同一类错误还有一处更早的：`/chat/active`（GET）的活跃会话判定（`ae825e20` 引入）也从一开始
+  就永远不成立，即「跨设备 / 无痕模式同步活跃会话」从未生效。
+
+修法：新增 `frontend/src/utils/apiEnvelope.ts` 的 `isApiSuccess(payload)`，同时认两套信封
+（`code === 200` 或 `status === "success"`，其余一律失败），会话采用相关的三处判定全部改走它。
+**不对称的地方不去猜**：网关/门户遗留接口继续保持原判定，只改聊天面。
+
+### 教训：源码字符串契约挡不住「读不存在的字段」
+
+第三～六轮的归属类契约测试都在断言源码里的字符串（包括把 `status !== "success"` 这行**当成正确
+实现钉了下来**），而后端用例只看 `data` 载荷、不看信封外壳。于是「前端按错误的信封字段判成功」
+这一层没有任何用例覆盖，连续三轮全绿。
+
+补上的锁是两层的：
+
+1. `tests/frontend/test_api_envelope_behavior.py`：用 node 真实执行 `isApiSuccess`，把**与
+   `StandardResponse` 逐字段一致、且断言不含 `status`** 的信封喂进去，必须判成功；同时钉住
+   三处调用点不得再出现 `res.data?.status`；
+2. `tests/api/v1/test_chat_session_user_isolation.py::test_conversation_ownership_envelope_is_the_standard_response`：
+   从后端侧钉住 `/ownership` 的信封形状（`code == 200` 且**没有** `status`），前端契约则钉住它按
+   `code` 判定——两侧各自钉住自己的一半，任何一侧漂移都会有用例变红。

@@ -268,11 +268,11 @@ async def test_conversation_ownership_endpoint_distinguishes_own_and_brand_new(d
         assert fresh.json()["data"] == {"owned": False, "foreign": False}
 
 
-async def test_conversation_ownership_uses_the_requested_instance_bucket(db_session, isolation):
-    """归属判定必须把前端传来的 instance_id 带进活跃会话查询。
+async def test_conversation_belongs_to_user_uses_the_requested_instance_bucket(db_session, isolation):
+    """「归属」判定必须把调用方传来的 instance_id 带进活跃会话查询。
 
-    多实例嵌入下「活跃会话」是按实例分桶存储的；丢掉 instance_id 会让判定退回默认桶，
-    `owned` 语义失真（前端目前只依赖 `foreign`，但接口一旦被别处复用就会误判）。
+    多实例嵌入下「活跃会话」按实例分桶存储；丢掉 instance_id 会退回默认桶，把空会话
+    误判为不归属（可复用结果列表会静默变空）。
     """
     user = await isolation.create_user(db_session, "iso_own_instance", "user")
     conversation_id = f"conv-{uuid.uuid4().hex[:12]}"
@@ -282,8 +282,40 @@ async def test_conversation_ownership_uses_the_requested_instance_bucket(db_sess
         seen.append((str(user_id), instance_id))
         return conversation_id
 
+    from app.api.v1.endpoints.chat import _conversation_belongs_to_user
+
     with patch(
         "app.api.v1.endpoints.chat.memory_service.get_active_conversation", fake_get_active
+    ), patch(
+        "app.api.v1.endpoints.chat.memory_service.history_exists",
+        AsyncMock(return_value=False),
+    ):
+        belongs = await _conversation_belongs_to_user(
+            db_session, user["user_id"], conversation_id, instance_id="embed-inst-a"
+        )
+
+    assert belongs is True
+    assert seen == [(user["user_id"], "embed-inst-a")], "instance_id 必须透传到活跃会话查询"
+
+
+async def test_conversation_ownership_does_not_treat_a_polluted_active_pointer_as_owned(
+    db_session, isolation
+):
+    """仅「该会话正是我的活跃会话」不足以证明归属。
+
+    会话 ID 只是字符串：打补丁前，换用户后本地残留的 cid 会被写进新身份的活跃指针。
+    若 owned 认这条指针，别人的会话就会被判成「我的」，写侧守卫随之失效。
+    """
+    mine = await isolation.create_user(db_session, "iso_ptr_mine", "user")
+    other = await isolation.create_user(db_session, "iso_ptr_other", "user")
+    conversation_id = f"conv-{uuid.uuid4().hex[:12]}"
+    await isolation.seed_turn(
+        db_session, user=other, conversation_id=conversation_id, query="别人的轮次", summary="x"
+    )
+
+    with patch(
+        "app.api.v1.endpoints.chat.memory_service.get_active_conversation",
+        AsyncMock(return_value=conversation_id),
     ), patch(
         "app.api.v1.endpoints.chat.memory_service.history_exists",
         AsyncMock(return_value=False),
@@ -291,13 +323,11 @@ async def test_conversation_ownership_uses_the_requested_instance_bucket(db_sess
         async with _client() as client:
             res = await client.get(
                 f"/api/v1/chat/conversation/{conversation_id}/ownership",
-                params={"instance_id": "embed-inst-a"},
-                headers=user["headers"],
+                headers=mine["headers"],
             )
 
     assert res.status_code == 200, res.text
-    assert seen == [(user["user_id"], "embed-inst-a")], "instance_id 必须透传到活跃会话查询"
-    assert res.json()["data"] == {"owned": True, "foreign": False}
+    assert res.json()["data"] == {"owned": False, "foreign": True}
 
 
 async def test_set_active_conversation_rejects_foreign_conversation(db_session, isolation):
@@ -380,3 +410,143 @@ async def test_reusable_results_uses_the_requested_instance_bucket(db_session, i
 
     assert res.status_code == 200, res.text
     assert seen == ["embed-inst-b"], "instance_id 必须透传到活跃会话查询"
+
+
+# ---------------------------------------------------------------------------
+# 混杂会话（同一 cid 下既有我的轮次、也有他人的轮次）
+#
+# 这不是假设：打补丁前「会话 ID 只按实例分桶、与登录身份无关」，同一浏览器换人登录后
+# 会沿用同一个 cid；宿主下发的 resume id 也可能被同一租户的多人共用。于是历史数据里
+# 存在大量「一个 cid、多个归属人」的会话。
+#
+# 对这类会话不能一律按「别人的会话」处理：
+#   - 读侧本来就按 user_id 过滤（`/chat/history` 只回我自己的轮次、Redis 记忆键也带 user_id），
+#     拦下来并不会多挡住任何跨用户内容，只会让用户**打不开自己参与过的会话**；
+#   - 前端一旦判成 foreign 就会清掉本地续接指针，表现为「刷新后内容没了、像开了新会话」。
+# 正确的判定是「**只有**在别人的轮次存在、且没有我一轮时才拦」。
+# ---------------------------------------------------------------------------
+
+
+async def test_conversation_ownership_reports_my_own_share_of_a_mixed_conversation(db_session, isolation):
+    mine = await isolation.create_user(db_session, "iso_mixed_mine", "user")
+    other = await isolation.create_user(db_session, "iso_mixed_other", "user")
+    conversation_id = f"conv-{uuid.uuid4().hex[:12]}"
+    await isolation.seed_turn(
+        db_session, user=other, conversation_id=conversation_id, query="别人的轮次", summary="x"
+    )
+    await isolation.seed_turn(
+        db_session, user=mine, conversation_id=conversation_id, query="我的轮次", summary="y"
+    )
+
+    async with _client() as client:
+        res = await client.get(
+            f"/api/v1/chat/conversation/{conversation_id}/ownership",
+            headers=mine["headers"],
+        )
+
+    assert res.status_code == 200, res.text
+    # owned 与 foreign 必须相互独立：既「有我的一份」，也「混着别人的记录」。
+    assert res.json()["data"] == {"owned": True, "foreign": True}
+
+
+async def test_blocking_rule_only_rejects_conversations_without_any_of_my_turns(db_session, isolation):
+    mine = await isolation.create_user(db_session, "iso_rule_mine", "user")
+    other = await isolation.create_user(db_session, "iso_rule_other", "user")
+    mixed = f"conv-{uuid.uuid4().hex[:12]}"
+    foreign_only = f"conv-{uuid.uuid4().hex[:12]}"
+    await isolation.seed_turn(db_session, user=other, conversation_id=mixed, query="o", summary="x")
+    await isolation.seed_turn(db_session, user=mine, conversation_id=mixed, query="m", summary="y")
+    await isolation.seed_turn(
+        db_session, user=other, conversation_id=foreign_only, query="o", summary="x"
+    )
+
+    from app.api.v1.endpoints.chat import _conversation_blocked_for_user
+
+    assert (
+        await _conversation_blocked_for_user(db_session, mine["user_id"], foreign_only) is True
+    ), "只有别人的轮次 → 必须拦住（换用户后沿用他人会话 ID 的越界写入）"
+    assert (
+        await _conversation_blocked_for_user(db_session, mine["user_id"], mixed) is False
+    ), "有我自己的轮次 → 不是越界写入，必须放行"
+    assert (
+        await _conversation_blocked_for_user(db_session, mine["user_id"], f"conv-{uuid.uuid4().hex[:12]}") is False
+    ), "全新会话既非我的也非他人的 → 放行"
+
+
+async def test_set_active_conversation_allows_a_mixed_conversation_i_participate_in(db_session, isolation):
+    mine = await isolation.create_user(db_session, "iso_mixed_active_mine", "user")
+    other = await isolation.create_user(db_session, "iso_mixed_active_other", "user")
+    conversation_id = f"conv-{uuid.uuid4().hex[:12]}"
+    await isolation.seed_turn(
+        db_session, user=other, conversation_id=conversation_id, query="别人的轮次", summary="x"
+    )
+    await isolation.seed_turn(
+        db_session, user=mine, conversation_id=conversation_id, query="我的轮次", summary="y"
+    )
+
+    async with _client() as client:
+        res = await client.post(
+            "/api/v1/chat/active",
+            json={"conversation_id": conversation_id},
+            headers=mine["headers"],
+        )
+
+    assert res.status_code == 200, res.text
+
+
+async def test_chat_completions_allows_continuing_a_mixed_conversation_i_participate_in(
+    db_session, isolation
+):
+    mine = await isolation.create_user(db_session, "iso_mixed_comp_mine", "user")
+    other = await isolation.create_user(db_session, "iso_mixed_comp_other", "user")
+    conversation_id = f"conv-{uuid.uuid4().hex[:12]}"
+    await isolation.seed_turn(
+        db_session, user=other, conversation_id=conversation_id, query="别人的轮次", summary="x"
+    )
+    await isolation.seed_turn(
+        db_session, user=mine, conversation_id=conversation_id, query="我的轮次", summary="y"
+    )
+
+    completion_mock = AsyncMock(
+        return_value={"trace_id": "trace-mixed-continue", "content": "ok", "intent": "chat"}
+    )
+    with patch(
+        "app.api.v1.endpoints.chat.agent_service.chat_completion", completion_mock
+    ):
+        async with _client() as client:
+            res = await client.post(
+                "/api/v1/chat/completions",
+                json={
+                    "messages": [{"role": "user", "content": "继续我自己的会话"}],
+                    "conversation_id": conversation_id,
+                    "stream": False,
+                },
+                headers=mine["headers"],
+            )
+
+    assert res.status_code == 200, res.text
+    completion_mock.assert_awaited(), "参与过的混杂会话必须能继续对话"
+
+
+async def test_conversation_ownership_envelope_is_the_standard_response(db_session, isolation):
+    """归属查询走 StandardResponse 信封（`code` / `message` / `data`），**没有** `status`。
+
+    跨层约定：聊天面前端必须按 `code === 200` 判成功（见
+    `tests/frontend/test_api_envelope_behavior.py` 的真实信封行为测试）。前端曾按门户遗留信封
+    读 `status`，在聊天面上永远为假——归属校验静默退化成「判不出来」，历史会话打不开、
+    刷新后像开了新会话。这条断言把信封形状钉在后端侧。
+    """
+    user = await isolation.create_user(db_session, "iso_envelope_user", "user")
+    conversation_id = f"conv-{uuid.uuid4().hex[:12]}"
+
+    async with _client() as client:
+        res = await client.get(
+            f"/api/v1/chat/conversation/{conversation_id}/ownership",
+            headers=user["headers"],
+        )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["code"] == 200
+    assert body["message"] == "success"
+    assert "status" not in body, "StandardResponse 没有 status 字段，前端不得按它判成功"

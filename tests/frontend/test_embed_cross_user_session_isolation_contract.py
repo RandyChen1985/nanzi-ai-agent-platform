@@ -86,7 +86,7 @@ def test_identity_change_resets_the_previous_users_session_view():
 
     assert "const resetSessionForIdentityChange = (" in source
     reset_body = source[
-        source.index("const resetSessionForIdentityChange = ("):source.index("const generateNewConversation = () =>")
+        source.index("const resetSessionForIdentityChange = ("):source.index("const generateNewConversation = (")
     ]
     # 会话现场的每一项都必须清掉：只换存储键会留下看得见的上一位用户对话。
     for statement in (
@@ -310,3 +310,89 @@ def test_host_welcome_message_override_survives_identity_change():
     ]
     assert "welcomeMessageFromHost = String(data.welcome_message_override);" in apply_body
     assert "config.welcomeMessage = welcomeMessageFromHost;" in apply_body
+
+
+def _check_adoption_body() -> str:
+    source = _source()
+    return source[
+        source.index("const checkConversationAdoption = async ("):
+        source.index("const resetSessionForIdentityChange = (")
+    ]
+
+
+def _history_click_body() -> str:
+    source = _source()
+    return source[
+        source.index("const handleHistoryClick = async (item: any) => {"):
+        source.index("const handleDeleteHistory = async (traceId: string) => {")
+    ]
+
+
+def test_mixed_conversation_with_my_own_turns_is_still_adoptable():
+    """一个 cid 里既有别人的轮次、也有我自己的轮次时，必须放行而不是拦下。
+
+    这种「一个会话 ID、多个归属人」的历史数据很常见：打补丁前会话 ID 与登录身份无关，
+    同一浏览器换人登录会沿用同一个 cid；宿主下发的 resume id 也可能被同租户多人共用。
+    读侧本来就按 user_id 过滤（历史只回我自己的轮次、Redis 记忆键也带 user_id），
+    拦下这类会话不会多挡住任何跨用户内容，只会让用户打不开自己参与过的历史；前端一旦
+    判成 foreign 还会清掉本地续接指针，表现就是「刷新后内容没了、像开了新会话」。
+    """
+    check = _check_adoption_body()
+
+    assert "const owned = data.owned === true;" in check
+    assert "const foreign = data.foreign === true;" in check
+    # 拦住的条件必须是「有别人的轮次 **且** 没有我自己的轮次」。
+    assert "if (foreign && !owned) {" in check
+    blocked_at = check.index("if (foreign && !owned) {")
+    adopt_at = check.index("return 'adoptable';")
+    assert blocked_at < adopt_at, "混杂会话必须走到 adoptable，而不是被当成别人的会话"
+    # 只报「别人的轮次」的旧判定会让混杂会话被误拦。
+    assert "if (res.data?.data?.foreign === true) {" not in check
+
+
+def test_history_click_toast_separates_foreign_ownership_from_a_failed_check():
+    """「确实是别人的会话」和「归属暂时查不出来」不能共用一句提示。"""
+    handler = _history_click_body()
+
+    assert "adoption === 'foreign'" in handler
+    assert "该会话属于其他用户，已阻止在当前身份下打开" in handler
+    assert "会话归属暂时无法确认，请稍后重试" in handler
+    # 旧文案把两种结论混为一谈（查不出来时也说「包含其他用户的记录」）。
+    assert "该会话包含其他用户的记录" not in handler
+
+
+def test_unverifiable_ownership_does_not_overwrite_the_stored_pointer():
+    """归属校验失败（unknown）时兜底新建的会话不得落盘，否则等于抹掉用户的续接记录。
+
+    校验失败只说明「此刻问不出来」，不是「这会话不是你的」。若此时用新会话覆盖本地指针
+    与服务端活跃指针，用户下次打开就只剩一个空会话，看起来像「刷新后内容没了」。
+    """
+    init_chat = _init_chat_body()
+    source = _source()
+
+    assert "let adoptionUnknown = false;" in init_chat
+    assert "if (requestedAdoption === 'unknown') adoptionUnknown = true;" in init_chat
+    assert "} else if (savedId && savedAdoption === 'unknown') {" in init_chat
+    assert "if (activeAdoption === 'unknown') adoptionUnknown = true;" in init_chat
+    assert "generateNewConversation({ persist: !adoptionUnknown });" in init_chat
+    # 只有确认属于别人（foreign）才允许清掉本地指针。
+    assert "if (requestedAdoption === 'foreign') clearStoredConversationId();" in init_chat
+
+    generate_at = source.index(
+        "const generateNewConversation = (options: { persist?: boolean } = {}) => {"
+    )
+    generate = source[generate_at:source.index("\n};", generate_at)]
+    guard_at = generate.index("if (options.persist !== false) {")
+    assert guard_at < generate.index("persistConversationId(conversationId.value);"), (
+        "persist: false 时必须跳过本地指针写入"
+    )
+    assert guard_at < generate.index("updateActiveConversationOnServer(conversationId.value);"), (
+        "persist: false 时也必须跳过服务端活跃指针写入"
+    )
+
+
+def test_adoption_check_retries_before_giving_up():
+    """接口抖动不该直接降级成「不采用」：先重试一次再下结论。"""
+    check = _check_adoption_body()
+
+    assert "for (let attempt = 0; attempt < 2; attempt += 1) {" in check

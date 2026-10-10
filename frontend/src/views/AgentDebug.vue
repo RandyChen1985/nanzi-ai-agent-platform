@@ -54,6 +54,7 @@ import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
 import { cancelConversationRun } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
+import { isApiSuccess } from "@/utils/apiEnvelope";
 import { createSseLineParser } from "@/utils/chartRenderer";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import {
@@ -854,8 +855,12 @@ const checkConversationAdoption = async (
     const res = await axios.get(
       `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/ownership`,
     );
-    if (res.data?.status !== "success") return "unknown";
-    if (res.data?.data?.foreign === true) {
+    // 聊天面是 StandardResponse（`code: 200`），没有 `status` 字段。
+    if (!isApiSuccess(res.data)) return "unknown";
+    // 只有「有别人的轮次、且没有我自己的轮次」才是真正别人的会话；混杂（一个 cid 多个
+    // 归属人，历史遗留）必须放行——读侧本来就按用户过滤。
+    const data = res.data?.data || {};
+    if (data.foreign === true && data.owned !== true) {
       console.warn("[AgentDebug] 已丢弃属于其他用户的调试会话指针。");
       return "foreign";
     }

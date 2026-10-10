@@ -119,3 +119,15 @@ def test_agent_debug_persists_the_pointer_only_through_the_scoped_helper():
     assert "options: { persist?: boolean } = {}" in generator
     assert "options.persist !== false" in generator
     assert "persistConversationId(conversationId.value);" in generator
+
+
+def test_agent_debug_allows_a_mixed_conversation_i_have_my_own_turns_in():
+    """调试页与聊天面共用一条判定：只有「有别人的轮次、且没有我自己的」才丢弃。
+
+    历史数据里同一个 cid 混着多人轮次很常见；读侧按用户过滤，丢弃混杂会话只会让
+    用户丢掉自己的调试续接指针。
+    """
+    check = _block(_source(), "const checkConversationAdoption = ")
+
+    assert "data.foreign === true && data.owned !== true" in check
+    assert 'return "adoptable";' in check

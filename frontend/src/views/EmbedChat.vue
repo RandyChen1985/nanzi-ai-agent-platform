@@ -2255,6 +2255,7 @@ import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
 import { cancelConversationRun } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
+import { isApiSuccess } from "@/utils/apiEnvelope";
 import { planHistorySync } from "@/utils/runRecoverySync";
 import {
   planStreamReplay,
@@ -5138,24 +5139,40 @@ const checkConversationAdoption = async (
 ): Promise<'adoptable' | 'foreign' | 'unknown'> => {
   const normalized = String(cid || "").trim();
   if (!normalized) return 'unknown';
-  try {
-    const res = await axios.get(
-      `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/ownership`,
-      {
-        params: activeConversationRequestParams(),
-        headers: embedAuthHeaders(),
-      },
-    );
-    if (res.data?.status !== "success") return 'unknown';
-    if (res.data?.data?.foreign === true) {
-      console.warn("[Session] Discarded a conversation id that belongs to another user.");
-      return 'foreign';
+  // 接口抖动不该被当成「别人的会话」（unknown 会保留指针，但也不会采用），重试一次再下结论。
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const res = await axios.get(
+        `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/ownership`,
+        {
+          params: activeConversationRequestParams(),
+          headers: embedAuthHeaders(),
+        },
+      );
+      // 聊天面是 StandardResponse（`code: 200`），**没有** `status` 字段；按遗留门户信封
+      // 判定会永远为假，会话采用会一路退化成「判不出来」（历史点不开、刷新像新会话）。
+      if (!isApiSuccess(res.data)) continue;
+      // 判定依据是后端给出的两个**相互独立的事实**：`foreign` = 这个 cid 里有别人的轮次，
+      // `owned` = 这个 cid 里有我自己的轮次/记忆。只有「有别人的、且没有我的」才是真正
+      // 别人的会话；「混杂」必须放行——历史数据里「一个 cid、多个归属人」很常见（打补丁前
+      // 会话 ID 与登录身份无关，宿主下发的 resume id 也可能被同租户多人共用），而读侧本来
+      // 就按用户过滤，拦下来只会让用户打不开自己参与过的历史、刷新后续接也断掉。
+      const data = res.data?.data || {};
+      const owned = data.owned === true;
+      const foreign = data.foreign === true;
+      if (foreign && !owned) {
+        console.warn("[Session] Discarded a conversation id that belongs to another user.");
+        return 'foreign';
+      }
+      if (foreign && owned) {
+        console.warn("[Session] Conversation also holds other users' turns; showing only my own view.");
+      }
+      return 'adoptable';
+    } catch (e: any) {
+      console.warn("[Session] Conversation ownership check failed; not adopting it:", e?.message || e);
     }
-    return 'adoptable';
-  } catch (e: any) {
-    console.warn("[Session] Conversation ownership check failed; not adopting it:", e?.message || e);
-    return 'unknown';
   }
+  return 'unknown';
 };
 
 /** 仅用于「能否采用」的布尔判断（不采用即返回 false）。 */
@@ -5261,7 +5278,7 @@ const resetSessionForIdentityChange = (
   activeIdentityKey = nextIdentityKey;
 };
 
-const generateNewConversation = () => {
+const generateNewConversation = (options: { persist?: boolean } = {}) => {
   const previousId = conversationId.value;
   if (previousId) {
     finalizeConversationInBackground(previousId);
@@ -5274,8 +5291,12 @@ const generateNewConversation = () => {
   conversationId.value = createConversationId();
   resourceScope.value = emptyResourceScopeState();
   Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
-  persistConversationId(conversationId.value);
-  updateActiveConversationOnServer(conversationId.value);
+  // `persist: false` 用于「归属暂时判不出来」的场景：只换内存里的会话，绝不覆盖本地指针
+  // 与服务端活跃指针，用户下次打开还能接回自己的会话（否则一次接口抖动就等于抹掉续接记录）。
+  if (options.persist !== false) {
+    persistConversationId(conversationId.value);
+    updateActiveConversationOnServer(conversationId.value);
+  }
   loadResourceScope();
 };
 // Mention State (Moved to ChatInput)
@@ -5825,7 +5846,12 @@ const handleHistoryClick = async (item: any) => {
     const adoption = await checkConversationAdoption(target);
     if (adoptionSequence !== historyAdoptionSequence) return;
     if (adoption !== 'adoptable') {
-        showToast("该会话包含其他用户的记录，已阻止在当前身份下打开", "warning");
+        showToast(
+            adoption === 'foreign'
+                ? "该会话属于其他用户，已阻止在当前身份下打开"
+                : "会话归属暂时无法确认，请稍后重试",
+            "warning",
+        );
         if (adoption === 'foreign') {
             if (readStoredConversationId() === target) clearStoredConversationId();
             void fetchHistory();
@@ -7815,6 +7841,9 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
     //    直接采用就会加载（并继续写入）别人的会话。
     if (initGeneration !== conversationInitializationGeneration) return;
     let loadedCid = false;
+    // 归属判定「暂时拿不到结论」（unknown）与「确实是别人的」（foreign）必须分开处理：
+    // 前者绝不能被后面的兜底新建会话顺手覆盖掉用户的续接指针。
+    let adoptionUnknown = false;
     if (requestedConversationId) {
       const requested = String(requestedConversationId);
       const requestedAdoption = await checkConversationAdoption(requested);
@@ -7835,6 +7864,7 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
         // 只有确认「确实是别人的」才清掉本地记录：网络异常时清掉，会平白删掉用户
         // 自己的续接记录（会话仍在历史列表里，但不再自动续接）。
         if (requestedAdoption === 'foreign') clearStoredConversationId();
+        if (requestedAdoption === 'unknown') adoptionUnknown = true;
       }
     }
     if (initGeneration !== conversationInitializationGeneration) return;
@@ -7850,6 +7880,8 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       } else if (savedId && savedAdoption === 'foreign') {
         // 本身份下的残留记录已属于别人（历史遗留写入）：清掉，不要再读。
         clearStoredConversationId();
+      } else if (savedId && savedAdoption === 'unknown') {
+        adoptionUnknown = true;
       }
       if (initGeneration !== conversationInitializationGeneration) return;
       if (shouldUseServerActiveConversation()) {
@@ -7860,7 +7892,9 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
           });
           if (initGeneration !== conversationInitializationGeneration) return;
           const activeCid = String(activeRes.data?.data?.conversation_id || "").trim();
-          if (activeRes.data?.status === "success" && activeCid) {
+          // 同一类错误：`/chat/active` 也是 StandardResponse，按 `status` 判定永远不成立，
+          // 于是「跨设备/无痕模式同步活跃会话」自引入起就没生效过。
+          if (activeCid && isApiSuccess(activeRes.data)) {
             const activeAdoption = await checkConversationAdoption(activeCid);
             if (initGeneration !== conversationInitializationGeneration) return;
             if (activeAdoption === 'adoptable') {
@@ -7868,12 +7902,16 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
               persistConversationId(activeCid);
               loadedCid = true;
             } else {
-              // 服务端活跃指针指向别人的会话：不采用，交由下面新建会话覆盖它。
-              console.warn("[Init] Server active conversation belongs to another user; starting a new one.");
+              // 确认属于别人（foreign）时交由下面新建会话覆盖这条指针；只是判不出来
+              // （unknown）则保留指针，只开一个不落盘的临时会话。
+              console.warn("[Init] Server active conversation is not adoptable; starting a new one.");
+              if (activeAdoption === 'unknown') adoptionUnknown = true;
             }
           }
         } catch (e: any) {
+          // 活跃会话查不出来同样是「判不出来」：不得让后面的兜底新建会话覆盖掉它。
           console.warn("[Init] Failed to fetch active conversation from server:", e);
+          adoptionUnknown = true;
         }
       }
     }
@@ -7881,7 +7919,9 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
 
     if (!loadedCid) {
       if (!conversationId.value) {
-        generateNewConversation();
+        // 判不出来时只开临时会话（不落盘、不覆盖服务端指针）。用户自己的会话指针与历史
+        // 都还在，下次打开（归属校验恢复）照样能续接。
+        generateNewConversation({ persist: !adoptionUnknown });
       } else {
         updateActiveConversationOnServer(conversationId.value);
       }

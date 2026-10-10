@@ -87,6 +87,44 @@ def _require_numeric_chat_user_id(user_info: Optional[Dict[str, Any]]) -> int:
         raise HTTPException(status_code=401, detail="当前用户身份格式无效") from exc
 
 
+async def _conversation_has_own_content(
+    db: AsyncSession,
+    user_id: str,
+    conversation_id: Optional[str],
+) -> bool:
+    """该会话里是否有**我自己**的轮次或记忆。
+
+    刻意**不**把「该会话正是我的活跃会话」算进来：活跃指针只是一条字符串记录，打补丁前
+    换用户后残留的会话 ID 正是从「设置活跃会话」写进新身份的；若把指针当成归属证据，
+    就会把别人的会话判成我的，恰好绕过写侧守卫。指针只用于 `_conversation_belongs_to_user`
+    的「空会话尚未落库」回退。
+    """
+    from sqlalchemy import select
+    from app.models.audit import AgentExecutionHistory
+
+    normalized = str(conversation_id or "").strip()
+    if not normalized or not user_id:
+        return False
+
+    statement = (
+        select(AgentExecutionHistory.id)
+        .where(
+            AgentExecutionHistory.conversation_id == normalized,
+            AgentExecutionHistory.user_id == user_id,
+        )
+        .limit(1)
+    )
+    result = await db.execute(statement)
+    if result.scalar_one_or_none() is not None:
+        return True
+
+    try:
+        return bool(await memory_service.history_exists(user_id, normalized))
+    except Exception:
+        # Redis 不可用时按「没有我的内容」处理：fail-closed，宁可拦住也不越界写。
+        return False
+
+
 async def _conversation_belongs_to_user(
     db: AsyncSession,
     user_id: str,
@@ -104,25 +142,11 @@ async def _conversation_belongs_to_user(
     ``instance_id`` 必须与「设置活跃会话」时用的实例一致：活跃会话按实例分桶存储，
     丢掉它就会退回默认桶，把多实例嵌入下的自己会话误判为不归属。
     """
-    from sqlalchemy import select
-    from app.models.audit import AgentExecutionHistory
-
-    statement = (
-        select(AgentExecutionHistory.id)
-        .where(
-            AgentExecutionHistory.conversation_id == conversation_id,
-            AgentExecutionHistory.user_id == user_id,
-        )
-        .limit(1)
-    )
-    result = await db.execute(statement)
-    if result.scalar_one_or_none() is not None:
+    if await _conversation_has_own_content(db, user_id, conversation_id):
         return True
 
-    # 空会话回退：该用户该会话已有 Redis 历史，或该会话正是该用户的活跃会话。
+    # 空会话回退：该会话正是该用户的活跃会话（尚未落库、也还没有 Redis 历史）。
     try:
-        if await memory_service.history_exists(user_id, conversation_id):
-            return True
         active = await memory_service.get_active_conversation(user_id, instance_id=instance_id)
         if active and str(active) == conversation_id:
             return True
@@ -132,17 +156,34 @@ async def _conversation_belongs_to_user(
     return False
 
 
+async def _conversation_blocked_for_user(
+    db: AsyncSession,
+    user_id: str,
+    conversation_id: Optional[str],
+) -> bool:
+    """写侧归属守卫的**唯一**判定：是否「只有别人的轮次、而我一轮都没有」。
+
+    不能直接用 `_conversation_owned_by_other_user`：那只是「这里有别人的轮次」，对
+    「一个 cid、多个归属人」的会话（打补丁前共享键的产物、宿主下发的共享 resume id）
+    同样为真。而读侧本来就按用户过滤，拦下这类会话不会多挡住任何跨用户内容，只会让用户
+    **打不开、也接手不了自己参与过的会话**（前端还会因此清掉续接指针）。真正要防的是
+    「我正在往一个自己从未参与过的他人会话里写」。
+    """
+    if not await _conversation_owned_by_other_user(db, user_id, conversation_id):
+        return False
+    return not await _conversation_has_own_content(db, user_id, conversation_id)
+
+
 async def _conversation_owned_by_other_user(
     db: AsyncSession,
     user_id: str,
     conversation_id: Optional[str],
 ) -> bool:
-    """该会话是否已归属**其他**用户。
+    """该会话里是否**存在他人的轮次**。
 
-    用于**写侧**归属守卫（登记活跃会话、发起对话、前端采用会话 ID 前校验）：
-    ``conversation_id`` 是客户端可自由传入的字符串，若不做校验，换用户后残留的
-    会话 ID 会让新用户把自己的轮次写进别人的会话。读侧本来就按用户过滤，这里的
-    意义是「不越界写」。
+    注意这只是一条**事实**，不是「能否使用」的结论：同一个 ``conversation_id`` 下可能既有
+    别人的轮次、也有我自己的（打补丁前「会话 ID 与登录身份无关」的共享键产物，宿主下发的
+    共享 resume id 也会这样）。是否该拦由 `_conversation_blocked_for_user` 决定。
 
     只认数据库里已存在的他人轮次：全新会话（尚无任何行）与历史遗留的
     ``user_id IS NULL`` 行都不算他人所有，避免把正常新建会话误判为越权。
@@ -1637,7 +1678,7 @@ async def create_chat_completion(
 
     # 归属守卫：拒绝把提问写进他人的会话。会话 ID 由客户端传入且换用户后可能残留，
     # 不挡住就会出现「新用户把自己的轮次写进别人会话」的越界写入。
-    if completion_request.conversation_id and await _conversation_owned_by_other_user(
+    if completion_request.conversation_id and await _conversation_blocked_for_user(
         db, chat_user_id, completion_request.conversation_id
     ):
         raise HTTPException(status_code=403, detail="该会话不属于当前用户")
@@ -3005,7 +3046,7 @@ async def set_active_conversation(
     # 归属守卫：不允许把「已属于他人」的会话登记成自己的活跃会话。
     # 换用户登录后本地残留的 conversation_id 正是从这里被写进新用户身份的，
     # 不挡住就会让新用户后续的提问落进别人的会话。
-    if await _conversation_owned_by_other_user(db, stable_user_id, body.conversation_id):
+    if await _conversation_blocked_for_user(db, stable_user_id, body.conversation_id):
         raise HTTPException(status_code=403, detail="该会话不属于当前用户，无法设为活跃会话")
 
     user_id: Any = int(stable_user_id) if stable_user_id.isdigit() else stable_user_id
@@ -3018,8 +3059,8 @@ async def set_active_conversation(
 
 
 class ConversationOwnershipResponse(BaseModel):
-    owned: bool = Field(..., description="会话是否归属当前用户（含 Redis 历史与活跃会话）")
-    foreign: bool = Field(..., description="会话是否已归属其他用户")
+    owned: bool = Field(..., description="会话里是否有当前用户自己的轮次或记忆")
+    foreign: bool = Field(..., description="会话里是否有其他用户的轮次（可能与 owned 同时为真）")
 
 
 @router.get(
@@ -3038,14 +3079,15 @@ async def get_conversation_ownership(
     db: AsyncSession = Depends(get_db_session),
 ):
     user_id = _require_chat_user_id(user_info)
+    # 两个字段是**相互独立的事实**，不是二选一：
+    #   foreign 这个 cid 里有没有别人的轮次；
+    #   owned   这个 cid 里有没有我自己的轮次/记忆（不含「只是被我设为活跃」）。
+    # 前端据此判定「能否采用/续写」：只有 `foreign and not owned` 才拦（读侧本就按用户过滤，
+    # 混杂会话拦下来只会让用户打不开自己参与过的历史——刷新后续接也会断）。
+    # `instance_id` 仍接收（前端各处统一携带）但**不参与**归属判定：`owned` 不采信活跃指针，
+    # 实例分桶只影响 `_conversation_belongs_to_user` 的空会话回退（读取路径仍在用）。
     foreign = await _conversation_owned_by_other_user(db, user_id, conversation_id)
-    owned = (
-        False
-        if foreign
-        else await _conversation_belongs_to_user(
-            db, user_id, conversation_id, instance_id=instance_id
-        )
-    )
+    owned = await _conversation_has_own_content(db, user_id, conversation_id)
     return StandardResponse(
         data=ConversationOwnershipResponse(owned=owned, foreign=foreign)
     )

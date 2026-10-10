@@ -177,3 +177,61 @@
 - 前端契约：`pytest --confcutdir=tests/frontend tests/frontend` **1680 passed**（1667 → 1680，本轮新增 13 项）；`vue-tsc --noEmit` **exit 0、零错误**。
 - 变异验证：**9 条**（后端 3 + 前端 2 + 调试页 4）全部在「去掉修复」后变红，且每个文件按 md5 校验原样恢复；变异脚本为临时文件、未入库。
 
+
+### 复审（第六轮：用户实机反馈的两个现象）
+
+用户反馈（原文）：「打开历史出现这个，2）我新会话正常聊天，然后刷新后，之前内容没有了，感觉有变成新会话了」，
+并附截图：侧栏点开 6 分钟前的会话「你好，我是谁」时弹出「该会话包含其他用户的记录，已阻止在当前身份下打开」，
+界面停在全新会话。**两个现象同一根因。**
+
+| # | 现象 | 根因 | 修法 | 验证 |
+| --- | --- | --- | --- | --- |
+| 1 | 侧栏点开自己的历史会话被拦，提示「该会话包含其他用户的记录」 | `/ownership` 把 `foreign` 当成结论（`owned = False if foreign else ...`），`_conversation_owned_by_other_user` 对「混着他人轮次」的 cid（打补丁前共享键产物、宿主共享 resume id）必然为真；`handleHistoryClick` 又对非 `adoptable` 一律弹同一句提示 | 拆成两个独立事实（`foreign` / `owned`）+ 一条策略：**只有 `foreign && !owned` 才拦**；提示语区分「确实属于别人」与「暂时判不出来」 | 后端 +3（`/ownership` 报 `{owned:true, foreign:true}`、写侧守卫三条判定表、`/chat/active` 放行混杂）、前端 +1 契约 |
+| 2 | 新会话正常聊天，刷新后内容不见了，像变成新会话 | 同一根因的连锁反应：`/ownership` 判 `foreign` ⇒ `initChat` 清掉本地续接指针、也不采用服务端活跃指针 ⇒ 兜底 `generateNewConversation()` 再把新 cid 写回去，原会话就此丢失续接 | 同上（混杂会话判 `adoptable`）；另外把「判不出来」做成非破坏性：归属校验失败重试一次、`unknown` 时兜底新建会话 `persist: false`（不写本地指针、不覆盖服务端活跃指针）、活跃会话查询抛错也计入 `unknown` | 后端 +2（`/chat/completions` 放行、守卫判定表）、前端 +3 契约（非破坏性兜底、`persist:false` 守卫、重试） |
+| 3 | 复核时的连带修正 | 已有契约 `test_set_active_conversation_rejects_another_users_conversation` 的 DB 替身对「有没有别人的轮次」「有没有我的轮次」都回答「命中」，等于伪造出一个混杂会话（现在属于放行情形） | 替身改为分别作答（`own_row` 参数），并固定 `history_exists=False` 保持用例自洽；另补一条「混杂会话必须放行」的用例 | 该文件 4 passed |
+
+**判定口径（后端守卫与前端采用共用一条）**：`foreign` = 这个 cid 里有别人的轮次；`owned` = 这个 cid 里有
+我自己的轮次或记忆（DB 行或「用户 + 会话」Redis 历史）。`owned` **不采信活跃指针**——指针只是字符串，
+补丁前的越界写入正是通过 `/chat/active` 发生的，认指针等于给守卫开后门。活跃指针仍服务于
+`_conversation_belongs_to_user` 的「空会话尚未落库」回退。
+
+#### 最终验证（第六轮）
+
+- 后端：`tests/api` + `tests/core` **723 passed / 8 xfailed / 2 xpassed / 1 failed**（唯一失败
+  `test_list_artifacts_uses_configured_public_url` 为改动前既有；717 → 723 即本轮新增 6 项）。
+- `tests/services`（`.venv` 3.11）：**1397 passed / 11 skipped / 5 xfailed / 1 failed**，唯一失败
+  `test_user_sync_service.py::test_normalize_external_user` 为改动前既有。首轮全量时
+  `test_code_execution_service.py::test_execute_code_stream_emits_stdout_stderr_and_exit_code`
+  曾失败一次，单跑 3/3 通过、全量重跑亦通过，判定为**偶发**且与本次改动零交集。
+- 前端契约：`pytest --confcutdir=tests/frontend tests/frontend` **1685 passed**（1680 → 1685，
+  本轮新增 5 项）；`vue-tsc --noEmit` **exit 0、零错误**。
+- 变异验证：**12 条**（前端 7 + 后端 5）全部在「去掉修复」后变红，文件按 md5 校验原样恢复；
+  变异脚本为临时文件、未入库。
+- 浏览器实测需你在控制台跑 `./dev.sh`（后端重启 + 前端重新构建）后确认。
+
+### 复审（第七轮：用户实机反馈「历史都打不开」，三次「会话归属暂时无法确认」）
+
+用户截图显示侧栏点历史时连续三次弹出第六轮才引入的 `unknown` 文案。该文案只在「归属请求没有
+被认下来」时出现，说明问题不在归属语义，而在**请求结果的判定**上。
+
+| # | 现象 | 根因 | 修法 | 验证 |
+| --- | --- | --- | --- | --- |
+| 1 | 点历史一直「会话归属暂时无法确认」；刷新后像开了新会话（含用户上一轮报的两个现象） | 归属校验按门户遗留信封判成功（`res.data?.status !== "success"`），而 `/chat/*` 用的是 `StandardResponse`（`code/message/data`，**没有** `status`）⇒ 判定永远为真 ⇒ 三处采用点恒为 `unknown` | 新增 `isApiSuccess()`（同时认 `code === 200` 与遗留 `status === "success"`），会话采用三处判定改走它 | 新增 `tests/frontend/test_api_envelope_behavior.py` 4 项（**真实执行 TS**：喂入逐字段等于 `StandardResponse` 且断言不含 `status` 的信封必须判成功；遗留门户信封仍认；401/畸形/非对象一律失败；三处调用点不得再出现 `res.data?.status`）+ 后端信封锁定 1 项 |
+| 2 | （顺带）「跨设备 / 无痕模式同步活跃会话」从未生效 | 同一类错误，更早引入：`/chat/active`（GET）的活跃会话判定也按 `status` | 同一 helper 修正 | 同上（契约断言 `isApiSuccess(activeRes.data)`） |
+| 3 | 第六轮的「混杂会话」修正 | 不是本次现象的主因（主因是 #1），但仍是真实缺陷：信封修好后，若按「有他人轮次就拦」，用户自己参与过的混杂会话会打不开、`/chat/active`+`/chat/completions` 也会 403。该修正保留 | — | 第六轮的 12 条变异仍全部命中 |
+
+#### 教训（写进设计文档）
+
+第三～六轮的归属契约测试只断言源码字符串，其中甚至把 `status !== "success"` 这行**当成正确实现
+钉住了**；后端用例只看 `data` 载荷不看信封外壳。于是「前端按不存在的信封字段判成功」连续三轮没有
+任何用例覆盖。补法：前端把真实信封喂给真实实现的**行为测试** + 后端钉住信封形状，两侧各钉一半。
+
+#### 最终验证（第七轮）
+
+- 前端契约：`pytest --confcutdir=tests/frontend tests/frontend` **1689 passed**（1685 → 1689，
+  本轮新增 4 项）；`vue-tsc --noEmit` **exit 0**。
+- 后端：`tests/api` + `tests/core` **724 passed / 8 xfailed / 2 xpassed / 1 failed**（唯一失败
+  `test_list_artifacts_uses_configured_public_url` 为改动前既有；723 → 724 即本轮新增的信封锁定用例）；
+  `tests/services`（`.venv` 3.11）**1397 passed / 11 skipped / 5 xfailed / 1 failed**（既有失败）。
+- 变异验证：累计 **17 条**（第六轮 12 + 本轮 5：三处判定退回按 `status`、helper 只认遗留信封、
+  helper 放宽成「有 data 即成功」）全部变红且文件按 md5 原样恢复。
