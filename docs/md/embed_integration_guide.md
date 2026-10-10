@@ -4,14 +4,15 @@
 
 平台的嵌入能力按路由划分，**各路由的凭据要求不同，请勿混用**：
 
-| 嵌入路由            | 组件          | 内容                                     | 凭据要求                                     |
-| ------------------- | ------------- | ---------------------------------------- | -------------------------------------------- |
-| `/embed/chat`     | EmbedChat     | AI 对话主界面                            | Ticket 或 API Key，**由本页自行兑换**  |
-| `/embed/personal` | EmbedPersonal | 个人中心（与 `/dashboard/personal` 一致） | **无独立凭据入口**，依赖 Cookie 已就绪 |
+| 嵌入路由            | 组件          | 内容                                     | 凭据要求                                              |
+| ------------------- | ------------- | ---------------------------------------- | ----------------------------------------------------- |
+| `/embed/chat`     | EmbedChat     | AI 对话主界面                            | Ticket 或 API Key，**由本页自行兑换**           |
+| `/embed/personal` | EmbedPersonal | 个人中心（与 `/dashboard/personal` 一致） | Ticket，**由本页自行兑换**；也接受已有会话 Cookie |
 
-> ⚠️ **重要**：`/embed/personal` **不接受** `?ticket=` 与 `?token=` 参数。它必须在嵌入会话
-> 已经建立之后才可访问，详见[第十章](#十嵌入式个人中心-embedpersonal)。这是当前版本最容易被
-> 集成方踩空的限制——**跨站第三方 iframe 环境暂不可用**。
+> ⚠️ **重要**：`/embed/personal` 接受 `?ticket=` 并**在页内自行兑换**，因此**跨站第三方 iframe
+> 可用**——兑换来的会话令牌会写进页面的请求头并落在本 tab，不再依赖跨站不会发送的 Cookie。
+> 它**不接受** `?token=` 长期 API Key：该页面没有存量宿主需要兼容，长期密钥不该进地址栏。
+> 详见[第十章](#十嵌入式个人中心-embedpersonal)。
 
 ---
 
@@ -460,6 +461,10 @@ document.getElementById('nanzi-close-btn').onclick = () => {
 
 - **组件发出的消息**：固定包含 `{ source: "nanzi-agent-embed" }`；
 - **宿主发出的消息**：支持传递 `instance_id` 用于多实例隔离。
+- **`/embed/personal` 只实现凭据子集**：下行 `INIT_CONFIG` / `RESET_SESSION`（仅接受 `ticket`
+  或短期会话令牌），上行 `NANZI_WIDGET_READY` / `INIT_SUCCESS` / `INIT_FAILURE`；
+  对话类指令（`SEND_COMMAND`、`STOP_GENERATION`、`SET_THEME` 等）不适用。
+  详见[第十章](#十嵌入式个人中心-embedpersonal)。
 
 ### 2. 下行指令集 (Host -> Widget)
 
@@ -564,12 +569,14 @@ frame.contentWindow.postMessage({
 
 ### Q5: 嵌入 `/embed/personal` 后一直显示「无法访问个人中心」？
 
-- **解答**：该页不接受 `?ticket=` / `?token=` 参数，页面加载后会用 `GET /api/portal/auth/me`
-  核验身份，核验失败即拒绝渲染，因此**直接打开它、或与 `/embed/chat` 并列放在同一页面里同时加载，
-  都会命中这一页**。
-- **解决方案**：先让 `/embed/chat` 完成 Ticket 兑换（这一步才会种下嵌入会话 Cookie），
-  再加载 `/embed/personal`。若宿主与平台**不同站**，浏览器不会携带 `SameSite=Lax` 的 Cookie，
-  该页当前不可用，请改用同源部署或等待后续版本。详见[第十章](#十嵌入式个人中心-embedpersonal)。
+- **解答**：该页加载后会自行用 `GET /api/portal/auth/me` 核验身份，核验失败即拒绝渲染。
+  常见原因有三类：① 既没带 `?ticket=`，宿主与平台又**不同主域**——`portal_session` 与
+  `embed_session` 都是 `SameSite=Lax`，而 SameSite 的判定基准是**顶层站点的站**，跨站 iframe
+  里的请求不会携带它们；② ticket 已过期或已被核销（一次性，默认 5 分钟）；③ 签发时配了
+  `allowed_origins`，与访问来源不匹配（兑换返回 403）。
+- **解决方案**：按[第十章](#十嵌入式个人中心-embedpersonal)由宿主后端签发 ticket，并以
+  `/embed/personal?ticket=emt_...` 打开（跨站也适用）。若宿主与平台**同主域**（含子域，
+  属同站），也可以不带 ticket，直接依赖已就绪的门户会话。
 
 ### Q6: 嵌入页面报 `Refused to display ... in a frame` 被拒绝？
 
@@ -594,60 +601,110 @@ frame.contentWindow.postMessage({
 | 路由           | `/embed/personal`                                               |
 | 对应平台内页面 | `/dashboard/personal`                                           |
 | 可嵌入性       | ✅ 允许被任意站点 iframe（与 `/embed/chat` 同口径）              |
-| 接受 URL 参数  | ❌ **无**。不接受 `ticket` / `token` / `theme` 等参数      |
-| 身份来源       | 已有会话 Cookie（`portal_session` 或 `embed_session`）          |
+| 接受 URL 参数  | `ticket`（一次性票据，推荐）、`instance_id`（多实例隔离）。❌ 不接受 `token` 长期 API Key      |
+| 身份来源       | `?ticket=` 换来的会话令牌（由本页自行兑换并写进请求头）；或已有 Cookie（`portal_session` / `embed_session`，同站场景）          |
+| 刷新凭据       | 会话令牌按 `instance_id` 分桶落在本 tab 的 sessionStorage，跨站刷新不依赖 Cookie |
 | 拒绝访问时     | 渲染「未授权访问」提示页，**不会**渲染出空壳个人中心        |
 
-### 2. 前提条件（重要）
+### 2. 前提条件与使用顺序
 
-该页面的凭据**只能来自已建立的会话 Cookie**，没有自己的 Ticket 兑换入口。正确的使用顺序是：
+凭据有三个来源，**优先级为：URL 里的 ticket → 本 tab 已持久化的会话令牌 → Cookie**。
+推荐做法是宿主后端先签发一次性票据，再把它交给嵌入页自行兑换：
 
 ```mermaid
 sequenceDiagram
     autonumber
+    participant S as 宿主后端
     participant H as 宿主页面
-    participant C as /embed/chat (Iframe)
     participant P as /embed/personal (Iframe)
     participant A as 南孜平台 API
 
-    Note over H, A: 第一步：先建立嵌入会话
-    H->>C: 加载 /embed/chat?ticket=emt_...
-    C->>A: POST /api/v1/embed/tickets/exchange
-    A-->>C: 签发 embed_session Cookie（SameSite=Lax）
-    Note over H: 此时浏览器已持有会话 Cookie
+    Note over S, A: 第一步：服务端签发一次性票据（长期 API Key 不出内网）
+    S->>A: POST /api/v1/embed/tickets (X-API-Key)<br/>{ "username": "zhangsan" }
+    A-->>S: { "ticket": "emt_...", "expires_in": 300 }
 
-    Note over H, A: 第二步：再加载个人中心
-    H->>P: 加载 /embed/personal（不带任何参数）
-    P->>A: GET /api/portal/auth/me（自动携带 Cookie）
+    Note over H, P: 第二步：把票据交给嵌入页
+    H->>P: 加载 /embed/personal?ticket=emt_...&instance_id=personal-a
+    P->>A: POST /api/v1/embed/tickets/exchange { "ticket": "emt_..." }
+    Note over A: 原子核销票据（GETDEL，一次性）<br/>签发 24 小时滑动续期的会话令牌 emb_ses_*
+    A-->>P: { "session_token": "emb_ses_...", "user_info": {...} }
+    Note over P: 令牌写入 axios 默认请求头并落到本 tab<br/>ticket 随即从地址栏移除
+    P->>A: GET /api/portal/auth/me（携带令牌）
     A-->>P: 200 + 用户身份
-    P-->>H: 渲染 PersonalCenter
+    P-->>H: INIT_SUCCESS
 ```
+
+> **身份由签发环节决定，不由 URL 决定**：`username` 放在服务端签发请求的 body 里，由宿主
+> 后端用服务账号（`X-API-Key`）代表该用户签发，并受「代他人签发嵌入凭证」权限约束。
+> **不要**试图用 `?username=xx` 这类身份参数打开本页——那不是凭据，任何人都能改，
+> 页面若据此渲染就是直接越权。
 
 ### 3. 接入示例
 
-```html
-<!-- 第一步：建立嵌入会话（可隐藏，仅用于换取 Cookie） -->
-<iframe id="nanzi-session" src="https://nanzi-ai.yourcompany.com/embed/chat?ticket=emt_xxx"
-        style="width:0;height:0;border:0;position:absolute;" aria-hidden="true"></iframe>
+**方式 A：票据放在 URL（最简）**
 
-<!-- 第二步：会话就绪后再加载个人中心 -->
-<iframe id="nanzi-personal" src="about:blank"
+```html
+<!-- ticket 由宿主后端签发；instance_id 用于一页多实例隔离 -->
+<iframe src="https://nanzi-ai.yourcompany.com/embed/personal?ticket=emt_xxx&instance_id=personal-a"
+        style="width:100%;height:100%;border:none;"
+        allow="clipboard-write"></iframe>
+```
+
+> ticket 是一次性的：兑换成功后页面会立刻把它从地址栏移除（`history.replaceState`），
+> 刷新改由已落地的会话令牌支撑。因此**刷新页面不需要重新签发**，关闭标签页后需要。
+
+**方式 B：postMessage 下发（票据不进入 URL 与浏览器历史）**
+
+```html
+<iframe id="nanzi-personal"
+        src="https://nanzi-ai.yourcompany.com/embed/personal?instance_id=personal-a"
         style="width:100%;height:100%;border:none;"></iframe>
 
 <script>
 const personal = document.getElementById('nanzi-personal');
+const INSTANCE = 'personal-a';
 
-// 等 /embed/chat 初始化完成（此时 Cookie 已种下）再挂载个人中心
-window.addEventListener('message', (event) => {
-  if (event.data?.source === 'nanzi-agent-embed' && event.data?.type === 'INIT_SUCCESS') {
-    personal.src = 'https://nanzi-ai.yourcompany.com/embed/personal';
+async function fetchTicket() {
+  return (await fetch('/api/ai/embed-ticket').then(r => r.json())).ticket;
+}
+
+window.addEventListener('message', async (event) => {
+  const data = event.data;
+  if (data?.source !== 'nanzi-agent-embed') return;
+  if (data.instance_id && data.instance_id !== INSTANCE) return; // 一页多实例时按它过滤
+
+  // 组件已加载完成，此时再下发凭据（避免过早 postMessage 丢失）
+  if (data.type === 'NANZI_WIDGET_READY') {
+    personal.contentWindow.postMessage(
+      { source: 'nanzi-agent-embed', type: 'INIT_CONFIG', ticket: await fetchTicket(), instance_id: INSTANCE },
+      '*',
+    );
+  }
+
+  // 会话过期 / 票据失效：重签一张后静默续接，无需用户重新登录
+  if (data.type === 'INIT_FAILURE') {
+    console.warn('嵌入个人中心鉴权失败:', data.reason); // invalid_ticket / origin_not_allowed / invalid_token
+    personal.contentWindow.postMessage(
+      { source: 'nanzi-agent-embed', type: 'RESET_SESSION', ticket: await fetchTicket(), instance_id: INSTANCE },
+      '*',
+    );
   }
 });
 </script>
 ```
 
-> 若宿主与平台**同源**（同一主域、同协议同端口，或平台作为宿主的反代路径），
-> 可以跳过第一步——门户会话本身即可通过核验，直接渲染 `/embed/personal`。
+**方式 C：同站嵌入（宿主与平台同主域，含子域）**
+
+宿主与平台同属一个主域时（如宿主 `crm.company.com`、平台 `ai.company.com`），浏览器判定为
+**同站**，`SameSite=Lax` 的门户会话 Cookie 会正常发送，因此可以不带凭据直接加载：
+
+```html
+<iframe src="https://nanzi-ai.yourcompany.com/embed/personal"
+        style="width:100%;height:100%;border:none;"></iframe>
+```
+
+> 「同站」的边界是**主域（eTLD+1）**，不是 origin：`crm.company.com` 与 `ai.company.com`
+> 属同站；`crm.example.com` 与 `nanzi-ai.yourcompany.com` 则是**跨站**，必须走方式 A / B。
 
 ### 4. 访问门禁的三态行为
 
@@ -662,16 +719,21 @@ window.addEventListener('message', (event) => {
 | 断网 / 服务重启 / 上游 `5xx`  | **独立的**「暂时无法确认访问权限」重试页，不误判为未登录   | 重试按钮                           |
 | `200` 但身份结构异常          | 同样拒绝渲染，不展示空壳                                         | 重新核验                           |
 
+其中 `401` / `403` 与 **ticket 兑换失败**（`invalid_ticket` / `origin_not_allowed`）都归入
+「未授权访问」，并经上行的 `INIT_FAILURE` 把具体原因告诉宿主，便于宿主自动重签；而断网 /
+上游 `5xx` 走独立的「暂时不可用」重试页，且**不会**上报 `INIT_FAILURE`——否则会诱使宿主
+去重签一张本来没问题的票据。
+
 ### 5. 当前版本的已知限制
 
-> 集成前请务必确认以下边界，其中第 1 条会影响方案可行性。
-
-1. **跨站第三方 iframe 暂不可用**：`portal_session` 与 `embed_session` 均为 `SameSite=Lax`，
-   浏览器在跨站 iframe 中不会携带它们，`/embed/personal` 必然落到「未授权访问」页。
-   当前仅**同源**（或同站）嵌入可用。若需跨站，需由平台侧为该路由增加 ticket / 显式 header
-   注入能力，或改 `SameSite=None` 并全站 HTTPS——**当前版本尚未提供**。
-2. **嵌入会话中途过期不会自动回到门禁**：页面通过核验后若会话失效，各 Tab 内的 `401`
-   会静默失败，需刷新页面才会重新回到「未授权访问」页。
-3. **与 `/embed/chat` 并列同时加载不可行**：个人中心的核验可能早于 Ticket 兑换完成，
-   从而误判为未登录。请务必按第 2 节的顺序串行加载。
+1. **不接受长期 API Key**：该页只认 `?ticket=` 与已有会话 Cookie，没有 `?token=` 入口。
+   这是刻意的——嵌入个人中心没有存量宿主需要兼容，长期密钥不该进浏览器地址栏、历史记录
+   与访问日志。
+2. **刷新依赖本 tab 的 sessionStorage**：兑换来的会话令牌按 `instance_id` 分桶存在本 tab，
+   因此关闭标签页后需要重新签发 ticket；浏览器禁用存储（部分隐私模式）时，跨站刷新同样需要
+   重新签发。令牌是短期、可吊销的，即使被 XSS 读出也无法长期使用。
+3. **嵌入会话中途过期不会自动回到门禁**：页面通过核验后若会话失效，各 Tab 内的 `401`
+   会静默失败，需刷新页面、或由宿主发送 `RESET_SESSION` + 新 ticket 才会重新核验。
+4. **不经 axios 的资源请求不带令牌**：页面内由浏览器直接发起的图片 / 下载等请求无法附加
+   请求头，跨站场景下这些链接可能失效（与 `/embed/chat` 的限制一致）。
 

@@ -1496,19 +1496,38 @@ def test_execution_timeline_renders_workspace_prewarm_progress():
     timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
 
     # prewarm 感知对时间线树做泛型递归：Bash 卡片挂在 narration(text) 下时，
-    # prewarm 占位日志是其三层的子项，必须能被递归命中，否则进度条/倒计时不显示。
+    # prewarm 占位日志是其三层的子项，必须能被递归命中，否则预热 tick 不启动。
     assert "const walk = (node: ProcessTimelineItem): boolean => {" in timeline
     assert "if (walk(child)) return true;" in timeline
-    assert "prewarmStageLabel" in timeline
-    assert "prewarmElapsedSeconds" in timeline
-    assert "已等待 {{ prewarmElapsedSeconds }}s" in timeline
-    assert "workspace-prewarm-bar" in timeline
-    assert "aria-busy=\"true\"" in timeline
     assert "void tickNow.value" in timeline
+
+    # 5 处（顶层 item / child / 两处 subStep / nestedStep）统一改为组件调用
+    assert timeline.count("<TimelinePendingHint") == 5
+    # 挂起文案必须拿到真实时间戳：tickNow 只是 500ms 递增的渲染触发器（计数器），
+    # 把计数器当 now 传进去会让 elapsedMs 恒为 0，文案永远不显示。
+    assert timeline.count(':now="nowMs"') == 5
+    assert ':now="tickNow"' not in timeline
+    assert "const nowMs = computed" in timeline
+    # 注意断言必须带 v-if=" 前缀：findWorkspacePrewarmPending 的 walk 里仍要调用
+    # isWorkspacePrewarmPending，用裸函数名做断言会永远失败。
+    assert 'v-if="isWorkspacePrewarmPending(' not in timeline
+    # 旧的三个 prewarm 计算属性与连带死代码必须删净，避免留下无人读写的状态
+    assert "prewarmStageLabel" not in timeline
+    assert "prewarmElapsedSeconds" not in timeline
+    assert "prewarmStartedAtMs" not in timeline
+    # 动效条样式已随组件搬走，父组件不得再留一份
+    assert ".workspace-prewarm-bar {" not in timeline
+
+    hint = (ROOT / "frontend/src/components/chat/TimelinePendingHint.vue").read_text(encoding="utf-8")
+    assert ".workspace-prewarm-bar {" in hint
+    assert "@keyframes workspace-prewarm-slide" in hint
+    assert "已等待" in hint
+    assert "showElapsed" in hint
 
     process = (ROOT / "frontend/src/utils/processTimeline.ts").read_text(encoding="utf-8")
     assert "WORKSPACE_PREWARM_LOG_ID" in process
     assert "workspace:sandbox" in process
+    assert "sandbox: PREWARM_STAGE_LABELS" in process, "沙箱文案必须是引用而非复制"
 
 
 def test_process_timeline_keeps_tool_args_when_tool_output_overwrites_details():
@@ -1757,3 +1776,131 @@ return {
     assert result["trimmed"] == "工具完成 · Bash · 查看容器状态"
     assert result["blank"] == "工具完成 · Bash"
     assert result["missing"] == "工具完成 · Bash"
+
+
+def test_pending_hint_resolves_stage_labels_by_category_and_threshold():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const t = 1000000;
+const at = (ms) => t + ms;
+const model = { id: 'model_call_1', category: 'model', status: 'pending', started_at: t };
+return {
+  belowThreshold: api.resolvePendingHint(model, at(2999), true),
+  firstStage: api.resolvePendingHint(model, at(3000), true),
+  secondStage: api.resolvePendingHint(model, at(10000), true),
+  thirdStage: api.resolvePendingHint(model, at(20000), true),
+  farLong: api.resolvePendingHint(model, at(300000), true),
+};
+""",
+    )
+
+    assert result["belowThreshold"] is None, "未满 3 秒不得显示文案（否则快步骤会闪）"
+    assert result["firstStage"]["label"] == "正在思考…", "3 秒时模型早就在生成，不能说「正在理解你的问题」"
+    assert result["secondStage"]["label"] == "正在生成回答…"
+    assert "内容较长" in result["thirdStage"]["label"]
+    assert result["farLong"]["label"] == result["thirdStage"]["label"], "超过最后一档后不再变化"
+
+
+def test_pending_hint_covers_each_category_and_suppresses_waiting_states():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const t = 1000000;
+const at = (ms) => t + ms;
+const mk = (category, extra) => Object.assign(
+  { id: 'x', category, status: 'pending', started_at: t }, extra || {}
+);
+return {
+  knowledge: api.resolvePendingHint(mk('knowledge'), at(3000), true).label,
+  tool: api.resolvePendingHint(mk('tool'), at(3000), true).label,
+  otherCategory: api.resolvePendingHint(mk('sql'), at(3000), true).label,
+  noCategory: api.resolvePendingHint(mk(undefined), at(3000), true).label,
+  permission: api.resolvePendingHint(mk('permission'), at(60000), true),
+  external: api.resolvePendingHint(mk('external'), at(60000), true),
+  agent: api.resolvePendingHint(mk('agent'), at(60000), true),
+  success: api.resolvePendingHint({ id: 'x', category: 'model', status: 'success', started_at: t }, at(60000), true),
+  noStartedAt: api.resolvePendingHint({ id: 'x', category: 'model', status: 'pending' }, at(60000), true),
+  undefinedItem: api.resolvePendingHint(undefined, at(60000), true),
+};
+""",
+    )
+
+    assert result["knowledge"] == "正在整理检索结果…", "该行出现时检索已完成，不能说「正在查阅知识库资料」"
+    assert "正在执行该步骤" in result["tool"]
+    assert "正在处理" in result["otherCategory"], "未知类别落兜底文案"
+    assert "正在处理" in result["noCategory"]
+    assert result["permission"] is None, "等待用户确认时机器没在跑，不得显示「正在…」"
+    assert result["external"] is None, "等待外部执行时机器没在跑，不得显示「正在…」"
+    assert result["agent"] is None, "主专家/智能体阶段行标题已自解释，不再叠加「正在处理…」"
+    assert result["success"] is None
+    assert result["noStartedAt"] is None
+    assert result["undefinedItem"] is None
+
+
+def test_pending_hint_keeps_sandbox_immediate_and_marks_redundant_elapsed_prefix():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const t = 1000000;
+const at = (ms) => t + ms;
+const sandbox = { id: 'workspace:sandbox', status: 'pending', started_at: t };
+const model = { id: 'm', category: 'model', status: 'pending', started_at: t };
+const timer = api.resolvePendingHint(model, at(8000), true);
+const legacy = api.resolvePendingHint(model, at(8000), false);
+// 时钟回拨用沙箱项观测：通用类别回拨后未满阈值会返回 null，拿不到 elapsedSeconds
+const rewind = api.resolvePendingHint(sandbox, at(-5000), false);
+return {
+  sandboxImmediate: api.resolvePendingHint(sandbox, at(0), true).label,
+  sandboxMid: api.resolvePendingHint(sandbox, at(4000), true).label,
+  sandboxLong: api.resolvePendingHint(sandbox, at(10000), true).label,
+  exportedMid: api.workspacePrewarmStageLabel(4000),
+  exportedLong: api.workspacePrewarmStageLabel(10000),
+  sandboxIndicator: api.resolvePendingHint(sandbox, at(0), true).indicator,
+  modelIndicator: timer.indicator,
+  knowledgeIndicator: api.resolvePendingHint(
+    { id: 'k', category: 'knowledge', status: 'pending', started_at: t }, at(9000), true).indicator,
+  timerShowElapsed: timer.showElapsed,
+  timerSeconds: timer.elapsedSeconds,
+  legacyShowElapsed: legacy.showElapsed,
+  rewindSeconds: rewind.elapsedSeconds,
+  rewindShowElapsed: rewind.showElapsed,
+};
+""",
+    )
+
+    assert "首次创建沙箱" in result["sandboxImmediate"], "沙箱保持 0 秒立即显示，不受通用档位约束"
+    assert result["sandboxMid"] == result["exportedMid"], "沙箱文案必须与既有导出函数同源，不得复制第二份"
+    assert result["sandboxLong"] == result["exportedLong"]
+    assert result["timerShowElapsed"] is False, "正在走右侧秒表的行不再重复显示「已等待 Ns」"
+    assert result["timerSeconds"] == 8
+    assert result["legacyShowElapsed"] is True, "无秒表的历史挂起行仍要显示已等待时长"
+    assert result["rewindSeconds"] == 0, "时钟回拨不得出现负数"
+    assert result["rewindShowElapsed"] is True
+    assert result["sandboxIndicator"] == "bar", "沙箱仍用既有的横向进度条（它的专属签名）"
+    assert result["modelIndicator"] == "wave", "通用步骤改用波形，与沙箱的横条在形状与颜色上都区分开"
+    assert result["knowledgeIndicator"] == "wave"
+
+
+def test_timeline_pending_hint_component_owns_label_and_indicator_style():
+    """动效条样式必须与组件同址：父组件是 scoped 样式，抽出的子组件内部元素
+    不会带父 scope id，样式若留在父组件里，动效条会静默失效。"""
+    hint = (ROOT / "frontend/src/components/chat/TimelinePendingHint.vue").read_text(encoding="utf-8")
+
+    assert "resolvePendingHint" in hint, "文案规则必须来自纯函数，不得在组件里重写一份"
+    assert "workspace-prewarm-bar" in hint
+    assert 'aria-live="polite"' in hint
+    assert 'aria-busy="true"' in hint
+    assert "showElapsed" in hint, "「已等待 Ns」前缀必须由 showElapsed 条件化"
+    assert "已等待" in hint
+    # 样式随组件走：缺了这两条，动效条会没有宽度与动画
+    assert ".workspace-prewarm-bar {" in hint
+    assert "@keyframes workspace-prewarm-slide" in hint
+    # 指示器按纯函数给出的 indicator 切换：沙箱保留横条，其余走波形
+    assert "hint.indicator === 'bar'" in hint, "指示器类型必须来自纯函数，不在组件里重写判断"
+    assert "pending-hint-wave" in hint
+    assert ".pending-hint-wave {" in hint
+    assert "@keyframes pending-hint-wave" in hint
+    assert "scaleY" in hint, "竖条起伏用 scaleY，height 动画会每帧触发布局"
+    assert "text-slate-400 dark:text-slate-500" in hint, "波形用石板灰，避开沙箱进度条的亮蓝"
+    assert "scaleY(0.72)" in hint, "减弱动效时给中等静态高度，否则停在最矮的基线帧"
