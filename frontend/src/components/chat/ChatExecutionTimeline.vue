@@ -164,19 +164,12 @@
                       >子代理 · </span>
                       <span>{{ displayTimelineTitle(child) }}</span>
                     </span>
-                    <!-- 沙箱工作区预热进行中文案与动效条（同行右侧对齐） -->
-                    <div
-                      v-if="isWorkspacePrewarmPending(child)"
-                      class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
-                      aria-live="polite"
-                      aria-busy="true"
-                    >
-                      <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
-                      <span
-                        class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
-                        :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
-                      >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
-                    </div>
+                    <!-- 挂起步骤安抚文案与动效条：机器正在推进时按耗时递进，等待用户操作的类别不显示 -->
+                    <TimelinePendingHint
+                      :item="child"
+                      :now="nowMs"
+                      :is-live-timer="String(child.id) === liveTimerLogId"
+                    />
                     <span
                       v-if="child.subagent && subagentStatusLabel(child.status)"
                       class="shrink-0 text-[10px]"
@@ -223,19 +216,12 @@
                         />
                         <component v-else :is="timelineIconFor(subStep)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                         <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(subStep)">{{ displayTimelineTitle(subStep) }}</span>
-                        <!-- 沙箱工作区预热进行中文案与动效条（同行右侧对齐） -->
-                        <div
-                          v-if="isWorkspacePrewarmPending(subStep)"
-                          class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
-                          aria-live="polite"
-                          aria-busy="true"
-                        >
-                          <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
-                          <span
-                            class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
-                            :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
-                          >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
-                        </div>
+                        <!-- 挂起步骤安抚文案与动效条：机器正在推进时按耗时递进，等待用户操作的类别不显示 -->
+                        <TimelinePendingHint
+                          :item="subStep"
+                          :now="nowMs"
+                          :is-live-timer="String(subStep.id) === liveTimerLogId"
+                        />
                         <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                         <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
                         <svg v-if="hasVisibleTimelineText(subStep.details) || hasTimelineArgs(subStep)" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -343,19 +329,12 @@
                 >子代理 · </span>
                 <span>{{ displayTimelineTitle(item) }}</span>
               </span>
-              <!-- 沙箱工作区预热进行中文案与动效条（顶层项） -->
-              <div
-                v-if="isWorkspacePrewarmPending(item)"
-                class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
-                aria-live="polite"
-                aria-busy="true"
-              >
-                <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
-                <span
-                  class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
-                  :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
-                >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
-              </div>
+              <!-- 挂起步骤安抚文案与动效条：机器正在推进时按耗时递进，等待用户操作的类别不显示 -->
+              <TimelinePendingHint
+                :item="item"
+                :now="nowMs"
+                :is-live-timer="String(item.id) === liveTimerLogId"
+              />
               <button
                 v-if="isQueueWaitItem(item)"
                 type="button"
@@ -437,19 +416,12 @@
                   />
                   <component v-else :is="timelineIconFor(subStep)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(subStep)">{{ displayTimelineTitle(subStep) }}</span>
-                  <!-- 沙箱工作区预热进行中文案与动效条（同行右侧对齐） -->
-                  <div
-                    v-if="isWorkspacePrewarmPending(subStep)"
-                    class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
-                    aria-live="polite"
-                    aria-busy="true"
-                  >
-                    <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
-                    <span
-                      class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
-                      :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
-                    >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
-                  </div>
+                  <!-- 挂起步骤安抚文案与动效条：机器正在推进时按耗时递进，等待用户操作的类别不显示 -->
+                  <TimelinePendingHint
+                    :item="subStep"
+                    :now="nowMs"
+                    :is-live-timer="String(subStep.id) === liveTimerLogId"
+                  />
                   <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                   <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
                   <svg v-if="hasVisibleTimelineText(subStep.details) || hasTimelineArgs(subStep) || subStep.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.children?.length ? (subStep.childrenExpanded !== false) : subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -511,19 +483,12 @@
                       />
                       <component v-else :is="timelineIconFor(nestedStep)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                       <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(nestedStep)">{{ displayTimelineTitle(nestedStep) }}</span>
-                      <!-- 沙箱工作区预热进行中文案与动效条（同行右侧对齐） -->
-                      <div
-                        v-if="isWorkspacePrewarmPending(nestedStep)"
-                        class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
-                        aria-live="polite"
-                        aria-busy="true"
-                      >
-                        <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
-                        <span
-                          class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
-                          :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
-                        >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
-                      </div>
+                      <!-- 挂起步骤安抚文案与动效条：机器正在推进时按耗时递进，等待用户操作的类别不显示 -->
+                      <TimelinePendingHint
+                        :item="nestedStep"
+                        :now="nowMs"
+                        :is-live-timer="String(nestedStep.id) === liveTimerLogId"
+                      />
                       <span v-if="nestedStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                       <span v-if="formatTimelineDuration(nestedStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(nestedStep)">{{ formatTimelineDuration(nestedStep) }}</span>
                       <svg v-if="hasVisibleTimelineText(nestedStep.details) || hasTimelineArgs(nestedStep)" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': nestedStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -597,6 +562,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
 import TimelineToolArgsBlock from "@/components/chat/TimelineToolArgsBlock.vue";
+import TimelinePendingHint from "@/components/chat/TimelinePendingHint.vue";
 import {
   ArrowsPointingInIcon,
   BookOpenIcon,
@@ -637,8 +603,6 @@ import {
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
   isWorkspacePrewarmPending,
-  workspacePrewarmStageLabel,
-  workspacePrewarmElapsedSeconds,
   type FileToolMetadata,
   type ProcessTimelineItem,
   type ProcessTimelineLogItem,
@@ -913,19 +877,18 @@ function findWorkspacePrewarmPending(items: ProcessTimelineItem[]): boolean {
 }
 
 const tickNow = ref(0);
-const prewarmStartedAtMs = ref<number | null>(null);
+/**
+ * 挂起文案使用的真实时间戳。
+ *
+ * tickNow 只是每 500ms 加 1 的渲染触发器（计数器），不能当成时间用；
+ * 这里仅借它建立重算依赖，取值的仍是 Date.now()，与 liveTimerDuration 同源。
+ */
+const nowMs = computed(() => {
+  void tickNow.value;
+  return Date.now();
+});
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 const isWorkspacePrewarming = computed(() => findWorkspacePrewarmPending(items.value));
-
-watch(
-  () => isWorkspacePrewarming.value,
-  (prewarming) => {
-    prewarmStartedAtMs.value = prewarming
-      ? (prewarmStartedAtMs.value ?? Date.now())
-      : null;
-  },
-  { immediate: true },
-);
 
 /** 当前该走实时秒表的那条步骤：只有最后一条挂起项、且不是在等用户操作。 */
 const liveTimerLogId = computed(() => {
@@ -960,15 +923,6 @@ onBeforeUnmount(() => {
     tickTimer = null;
   }
 });
-
-const prewarmElapsedMs = computed(() => {
-  // 依赖 tickNow 使已等待耗时与阶段安抚文案每 500ms 动态推进更新
-  void tickNow.value;
-  if (!isWorkspacePrewarming.value || prewarmStartedAtMs.value === null) return 0;
-  return Math.max(0, Date.now() - prewarmStartedAtMs.value);
-});
-const prewarmElapsedSeconds = computed(() => workspacePrewarmElapsedSeconds(prewarmElapsedMs.value));
-const prewarmStageLabel = computed(() => workspacePrewarmStageLabel(prewarmElapsedMs.value));
 
 function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {
   return isReasoningContentExpanded(item);
@@ -1256,40 +1210,9 @@ async function handleCopy(key: string, text?: string | null) {
   50% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 0 0.28rem rgba(14, 165, 233, 0.08); }
 }
 
-/* 沙箱工作区预热的不确定进度条：滑块往复扫动，示意仍在推进。 */
-.workspace-prewarm-bar {
-  position: relative;
-  overflow: hidden;
-  width: 3.5rem;
-  height: 0.25rem;
-  border-radius: 9999px;
-  background: rgba(14, 165, 233, 0.15);
-}
-.workspace-prewarm-bar::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -40%;
-  width: 40%;
-  border-radius: 9999px;
-  background: rgba(14, 165, 233, 0.75);
-  animation: workspace-prewarm-slide 1.2s ease-in-out infinite;
-}
-@keyframes workspace-prewarm-slide {
-  0% { left: -40%; }
-  100% { left: 100%; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .thought-status-dot {
     animation: none;
-  }
-  .workspace-prewarm-bar::after {
-    animation: none;
-    left: 0;
-    width: 100%;
-    opacity: 0.5;
   }
 }
 </style>

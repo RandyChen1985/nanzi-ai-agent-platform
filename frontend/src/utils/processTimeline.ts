@@ -153,6 +153,93 @@ export function workspacePrewarmElapsedSeconds(elapsedMs: number): number {
   return Math.max(0, Math.floor(elapsedMs / 1000));
 }
 
+export interface PendingHintStage {
+  afterMs: number;
+  label: string;
+}
+
+export interface PendingHint {
+  label: string;
+  elapsedSeconds: number;
+  /** 该行是否应显示「已等待 Ns ·」前缀；正在走右侧实时秒表的行不重复显示。 */
+  showElapsed: boolean;
+  /**
+   * 该行用哪种指示器。
+   *
+   * 沙箱保留既有的横向进度条（亮蓝横条是「正在创建工作区」的专属签名），
+   * 其余类别用石板灰波形——形状与颜色都与沙箱拉开，避免被读成同一件事。
+   */
+  indicator: "bar" | "wave";
+}
+
+/** 各类别挂起项的安抚文案档位（通用类别 3s / 10s / 20s）；沙箱档直接引用既有常量，避免文案出现第二份副本。 */
+const PENDING_HINT_STAGE_LABELS: Record<string, PendingHintStage[]> = {
+  sandbox: PREWARM_STAGE_LABELS,
+  // 第一档用「思考」而非「理解」：3 秒时模型早就在生成 token，说「理解」等于把阶段说晚了。
+  // 知识库行出现时检索已经完成（标题即「检索完成，正在组织回答」），故也不说「正在查阅」。
+  model: [
+    { afterMs: 3000, label: "正在思考…" },
+    { afterMs: 10000, label: "正在生成回答…" },
+    { afterMs: 20000, label: "内容较长，仍在生成中…" },
+  ],
+  knowledge: [
+    { afterMs: 3000, label: "正在整理检索结果…" },
+    { afterMs: 10000, label: "正在组织回答…" },
+    { afterMs: 20000, label: "资料较多，仍在整理中…" },
+  ],
+  tool: [
+    { afterMs: 3000, label: "正在执行该步骤…" },
+    { afterMs: 10000, label: "执行耗时偏长，仍在进行中…" },
+    { afterMs: 20000, label: "该步骤较慢，请继续稍候…" },
+  ],
+  default: [
+    { afterMs: 3000, label: "正在处理…" },
+    { afterMs: 10000, label: "仍在处理中，请稍候…" },
+    { afterMs: 20000, label: "处理耗时较长，请继续稍候…" },
+  ],
+};
+
+/**
+ * 返回某条挂起项此刻应显示的安抚文案；返回 null 表示这行不该显示任何文案。
+ *
+ * 调用方每 500ms 随既有心跳重算，因此这里必须是纯函数、不持有状态。
+ * 沙箱保持 0 秒立即显示（其文案本就是「首次创建」那一刻的叙述），
+ * 其余类别的第一档即为通用阈值（3 秒）。
+ */
+export function resolvePendingHint(
+  item: ProcessTimelineLogItem | undefined,
+  now: number,
+  isLiveTimer: boolean,
+): PendingHint | null {
+  if (!item || item.status !== "pending") return null;
+  const startedAt = item.started_at;
+  if (typeof startedAt !== "number" || !Number.isFinite(startedAt)) return null;
+
+  const isSandbox = isWorkspacePrewarmPending(item);
+  const category = String(item.category || "default");
+  // permission / external 机器没在跑，agent 行标题已自解释；
+  // 详见 PENDING_HINT_SILENT_CATEGORIES 的说明
+  if (!isSandbox && PENDING_HINT_SILENT_CATEGORIES.has(category)) return null;
+
+  const stages =
+    (isSandbox ? PENDING_HINT_STAGE_LABELS.sandbox : PENDING_HINT_STAGE_LABELS[category])
+    || PENDING_HINT_STAGE_LABELS.default;
+  const elapsedMs = Math.max(0, now - startedAt);
+  const first = stages?.[0];
+  if (!first || elapsedMs < first.afterMs) return null;
+
+  let label = first.label;
+  for (const stage of stages) {
+    if (elapsedMs >= stage.afterMs) label = stage.label;
+  }
+  return {
+    label,
+    elapsedSeconds: Math.max(0, Math.floor(elapsedMs / 1000)),
+    showElapsed: !isLiveTimer,
+    indicator: isSandbox ? "bar" : "wave",
+  };
+}
+
 /** 将底层事件名转换为思考卡片中的用户语言，原始详情仍保留在展开内容中。 */
 export function formatTimelineTitle(title: unknown): string {
   const value = String(title || "处理步骤");
@@ -604,6 +691,19 @@ export function isReasoningContentExpanded(item: ProcessTimelineTextItem): boole
 export const NON_LIVE_TIMER_CATEGORIES: ReadonlySet<string> = new Set([
   "permission",
   "external",
+]);
+
+/**
+ * 不显示安抚文案的挂起类别。
+ *
+ * - permission / external：等待用户操作、等待外部执行，机器并没有在跑，
+ *   显示「正在…」是误导（与不展示实时秒表同源）；
+ * - agent：主专家/智能体阶段行本身就叫「主专家开始处理」，再补一句「正在处理…」
+ *   是同义重复。它仍保留实时秒表，故不并入 NON_LIVE_TIMER_CATEGORIES。
+ */
+const PENDING_HINT_SILENT_CATEGORIES: ReadonlySet<string> = new Set([
+  ...NON_LIVE_TIMER_CATEGORIES,
+  "agent",
 ]);
 
 function isEligibleLiveTimerLog(item: ProcessTimelineLogItem): boolean {
