@@ -4,8 +4,9 @@
     内容与 /dashboard/personal 完全一致（同一个 PersonalCenter 组件），
     唯一区别是**不渲染 Dashboard 的主题框架**——没有顶部 header（因此也没有面包屑导航）
     与左侧主导航，嵌入方页面里只出现个人中心本身。
-    视觉口径对齐 Dashboard 的 <main>：同样的 bg-gray-100 底色、px-3 sm:px-4 内边距
-    与滚动条样式，保证与 /dashboard/personal 看起来一模一样。
+    滚动容器与主站同口径（bg-gray-100 底 + 同一套滚动条），但**不自带左右内边距**：
+    主站那层间距是用来把个人中心与侧边栏、面包屑隔开的，嵌入页没有平台框架，留着只会
+    凭空吃掉宿主给 iframe 的宽度（移动端 393px 视口下尤其明显），外边距交给宿主容器决定。
 
     凭据门禁：本页 meta.public，路由守卫不会拦，因此**必须自己在渲染前校验凭据**。
     无 portal_session / embed_session 时 PersonalCenter 会把「未登录」渲染成
@@ -21,7 +22,7 @@
   -->
   <div
     v-if="gateState === 'granted'"
-    class="h-full w-full overflow-y-auto overflow-x-hidden bg-gray-100 custom-scrollbar px-3 sm:px-4"
+    class="h-full w-full overflow-y-auto overflow-x-hidden bg-gray-100 custom-scrollbar"
   >
     <PersonalCenter />
   </div>

@@ -73,14 +73,30 @@ def test_embed_personal_has_no_breadcrumb_header_or_sidebar():
     assert template.count("<PersonalCenter />") == 1
 
 
-def test_embed_personal_content_spacing_matches_dashboard_personal():
-    """视觉口径对齐 Dashboard 的 main：bg-gray-100 + px-3 sm:px-4 + 同一套滚动条。"""
+def test_embed_personal_lets_host_own_the_outer_gutter():
+    """嵌入页不自带左右内边距：外边距由宿主容器决定，白底铺满 iframe 宽度。
+
+    原先嵌入页复刻了 Dashboard 对 PersonalCenter 的 `px-3 sm:px-4`，那层灰边在窄栏里
+    只会凭空吃掉内容宽度（实测 393px 移动端视口下两侧各占 12px）。该 gutter 现已**两边
+    同时移除**：`/dashboard/personal` 的 Dashboard 外层改为 `p-0`，嵌入页同样不带，
+    保持两个入口视觉一致。内容自身的内边距由 PersonalCenter 内部按 Tab 分组负责。
+    底色与滚动条仍与主站同一口径。
+    """
     view = _source(EMBED_PERSONAL)
+    template = _template_block(EMBED_PERSONAL)
     dashboard = _source("frontend/src/views/Dashboard.vue")
-    # Dashboard 对 PersonalCenter 路由的间距就是 px-3 sm:px-4，无上下内边距
-    assert "if (route.name === \"PersonalCenter\") return \"px-3 sm:px-4\";" in dashboard
+
+    # 主站同口径：PersonalCenter 路由不再叠加外层水平边距（两边一起改，不许只改一边）
+    assert "if (route.name === \"PersonalCenter\") return \"p-0\";" in dashboard
+
+    # 反向护栏：别把那层 gutter 又搬回嵌入页
+    assert "px-3 sm:px-4" not in template, "嵌入页又加回了左右内边距"
+    # granted 容器保持「铺满 + 自管滚动 + 同一底色」的全貌（末尾不再有 px-*）
+    assert (
+        'class="h-full w-full overflow-y-auto overflow-x-hidden bg-gray-100 custom-scrollbar"'
+        in template
+    )
     assert "bg-gray-100" in view
-    assert "px-3 sm:px-4" in view
     assert "custom-scrollbar" in view
 
 
