@@ -2637,6 +2637,8 @@ interface Message {
   files?: ChatFile[];
   logs?: LogEntry[];
   citations?: any[];
+  /** 历史回放标记：引用详情解析不到时用于区分「已过期」与「加载中」 */
+  isHistory?: boolean;
   isThinking?: boolean;
   isThoughtExpanded?: boolean;
   processNarration?: string;
@@ -7604,6 +7606,8 @@ const fetchConversationHistory = async (
                   content: item.summary,
                   reasoningContent: item.reasoning_content ?? undefined,
                   processTimeline: hydratedTimeline,
+                  citations: item.citations ?? undefined,
+                  isHistory: true,
                   userQuestion: persistedQuestions[0],
                   logs: [],
                   isThinking: false,
@@ -8047,13 +8051,26 @@ const resolveCitation = (msg: Message, citeId: string) => {
   return target || null;
 };
 
+/** Fig. n 只是 Markdown 渲染器的兼容匹配面，并非知识库引用，不能据此提示「已过期」 */
+const isKnowledgeCitationBadge = (text: string) => /^\s*[\[【]\s*ID\s*:/i.test(text);
+
 const handleShowCitation = async (msg: Message, citeId: string, anchor?: HTMLElement) => {
+  const anchorEl = anchor || (document.querySelector(`[data-cite-id="${citeId}"]`) as HTMLElement | null);
+
   const target = resolveCitation(msg, citeId);
-  if (!target) return;
+  if (!target) {
+    // 引用详情走 Redis 旁路存储且有 TTL：历史消息解析不到即已过期，
+    // 流式进行中则可能只是事件还没到，两种状态必须区分。
+    if (!isKnowledgeCitationBadge(anchorEl?.textContent || "")) return;
+    showToast(
+      msg.isHistory ? "引用详情已过期，正文中的引用标记已无法展开" : "引用详情加载中，请稍候",
+      msg.isHistory ? "warning" : "info",
+    );
+    return;
+  }
 
   msg.isCitationsExpanded = true;
   await nextTick();
-  const anchorEl = anchor || (document.querySelector(`[data-cite-id="${citeId}"]`) as HTMLElement);
   if (anchorEl) {
     anchorEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
     openCitationPopover(target, anchorEl);
@@ -9888,6 +9905,7 @@ onMounted(() => {
             currentMsg.content = latestServerItem.summary;
             currentMsg.reasoningContent = latestServerItem.reasoning_content ?? currentMsg.reasoningContent;
             currentMsg.processTimeline = hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content);
+            currentMsg.citations = latestServerItem.citations ?? currentMsg.citations;
             currentMsg.isThinking = false;
             // 流中断时占位消息拿不到智能体元数据，恢复同步时补齐。
             if (!currentMsg.agentName) {
@@ -9908,6 +9926,7 @@ onMounted(() => {
             content: latestServerItem.summary,
             reasoningContent: latestServerItem.reasoning_content ?? undefined,
             processTimeline: hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content),
+            citations: latestServerItem.citations ?? undefined,
             logs: [],
             isThinking: false,
             feedback: null,

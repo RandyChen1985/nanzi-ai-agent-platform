@@ -1165,6 +1165,24 @@ async def get_conversation_history(
                 })
         history = fallback_history
         
+    # 引用详情走 Redis 旁路存储，覆盖上面三条来源（Redis 正常 / 审计合并 / DB 兜底），
+    # 在此汇合点统一回填一次，避免每个分支各补一遍。
+    detail_trace_ids = [
+        str(message.get("trace_id"))
+        for message in history
+        if message.get("role") == "assistant" and message.get("trace_id")
+    ]
+    if detail_trace_ids:
+        from app.services.ai.knowledge_citation_store import knowledge_citation_store
+
+        details_by_trace = await knowledge_citation_store.load_many(detail_trace_ids)
+        for message in history:
+            if message.get("role") != "assistant":
+                continue
+            found = details_by_trace.get(str(message.get("trace_id") or ""))
+            if found:
+                message["citations"] = found
+
     return StandardResponse(data=ConversationHistoryResponse(
         conversation_id=conversation_id,
         messages=history
@@ -2241,6 +2259,24 @@ async def get_history(
                 item.project_name = scope.get("project_name") or None
             items.append(item)
     
+    # 引用详情走 Redis 旁路存储（见 knowledge_citation_store）：DB 历史本身不含它，
+    # 这里统一回填一次，让刷新后的历史消息仍能展开引用弹层。
+    # 放在组装循环之后而非其中，是因为 result.all() 只能消费一次，且分组/非分组
+    # 两个分支都要覆盖。
+    if items:
+        from app.services.ai.knowledge_citation_store import knowledge_citation_store
+
+        citations_by_trace = await knowledge_citation_store.load_many(
+            [str(item.trace_id) for item in items if item.trace_id]
+        )
+        if citations_by_trace:
+            items = [
+                item.model_copy(update={"citations": citations_by_trace[str(item.trace_id)]})
+                if str(item.trace_id or "") in citations_by_trace
+                else item
+                for item in items
+            ]
+
     return StandardResponse(data=AgentExecutionHistoryListResponse(
         total=total,
         page=page,
@@ -2286,7 +2322,12 @@ async def delete_history(
     await db.execute(delete(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id))
     
     await db.commit()
-    
+
+    # Redis 旁路存储的引用详情不随 DB 级联删除，需显式清理（失败只告警）
+    from app.services.ai.knowledge_citation_store import knowledge_citation_store
+
+    await knowledge_citation_store.delete_many([trace_id])
+
     return StandardResponse(data={"success": True})
 
 class BatchDeleteHistoryRequest(BaseModel):
@@ -2338,6 +2379,12 @@ async def batch_delete_history(
     await db.execute(delete_history_stmt)
     
     await db.commit()
+
+    if trace_ids:
+        # trace_ids 已在上方按权限范围筛出（见 stmt 的 user_id 过滤）
+        from app.services.ai.knowledge_citation_store import knowledge_citation_store
+
+        await knowledge_citation_store.delete_many(trace_ids)
 
     # 数据库历史删除后同步清理会话 Redis，避免项目资源范围和记忆残留。
     from app.services.ai.memory_service import memory_service
@@ -2415,6 +2462,11 @@ async def truncate_history_endpoint(
             delete(AgentExecutionHistory).where(AgentExecutionHistory.id.in_(del_ids))
         )
         await db.commit()
+
+        if trace_ids:
+            from app.services.ai.knowledge_citation_store import knowledge_citation_store
+
+            await knowledge_citation_store.delete_many(trace_ids)
 
     return StandardResponse(data={"success": True, "keep_count": payload.keep_count})
 
