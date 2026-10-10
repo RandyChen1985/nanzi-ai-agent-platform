@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 
 const props = defineProps<{
   /** 工具入参展示文本；命令类工具（Bash）即命令原文。 */
@@ -24,12 +24,29 @@ const isCommandTool = computed(() => {
 });
 
 const label = computed(() => (isCommandTool.value ? "命令" : "参数"));
+
+// 入参区块自带折叠开关：长命令、长 SQL 只占一行标题，不必随所属时间线行一起被
+// 收起（那一行可能还要看错误原因、模型元信息和工具输出）。默认展开以保持原有视觉。
+const bodyExpanded = ref(true);
 </script>
 
 <template>
-  <div class="mb-1 rounded border border-gray-200/70 bg-gray-50/70 p-1.5 dark:border-gray-700/70 dark:bg-gray-800/40">
+  <!-- 无框内容块：盒子（边框 / 底色 / 宽度）由父级容器提供，元信息也归父级容器，
+       这样「参数 + 模型 / 温度 / 工具状态」是一整块，而不是框内框外两截。 -->
+  <div>
     <div class="flex items-center justify-between gap-2">
-      <span class="text-[10px] font-medium text-gray-400 dark:text-gray-500">{{ label }}</span>
+      <button
+        type="button"
+        class="flex min-w-0 items-center gap-1 rounded text-[10px] font-medium text-gray-400 transition-colors hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+        :aria-expanded="bodyExpanded"
+        :title="bodyExpanded ? `收起${label}` : `展开${label}`"
+        @click="bodyExpanded = !bodyExpanded"
+      >
+        <svg class="h-3 w-3 shrink-0 transition-transform" :class="{ 'rotate-180': bodyExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+        </svg>
+        <span>{{ label }}</span>
+      </button>
       <button
         type="button"
         class="flex h-4 w-4 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200"
@@ -46,6 +63,6 @@ const label = computed(() => (isCommandTool.value ? "命令" : "参数"));
         </svg>
       </button>
     </div>
-    <pre class="mt-0.5 whitespace-pre-wrap break-words pr-1 font-mono text-[10px] leading-relaxed text-gray-600 dark:text-gray-300">{{ text }}</pre>
+    <pre v-show="bodyExpanded" class="mt-0.5 whitespace-pre-wrap break-words pr-1 font-mono text-[10px] leading-relaxed text-gray-600 dark:text-gray-300">{{ text }}</pre>
   </div>
 </template>

@@ -190,6 +190,21 @@
                     {{ fileMetadataSummary(child.file_metadata) }}
                   </div>
 
+                  <!-- 自身入参与元信息：这是本次调用「输入了什么」（如委派工具的 agent_name / query），必须排在内部步骤之前，否则会读成最后一个子步骤的参数 -->
+                  <div v-if="(hasTimelineArgs(child) || timelineMetaText(child)) && isChildDetailsOpen(child)" class="mt-1 border-l-2 border-gray-200/80 pl-2.5 dark:border-gray-700/80">
+                    <TimelineToolArgsBlock
+                      v-if="timelineArgsText(child)"
+                      :text="timelineArgsText(child)"
+                      :tool-name="child.tool_name || child.title"
+                      :copy-key="`child-args-${child.id}`"
+                      :copied-key="copiedKey"
+                      @copy="handleCopy"
+                    />
+                    <div v-if="timelineMetaText(child)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
+                      {{ timelineMetaText(child) }}
+                    </div>
+                  </div>
+
                   <!-- 嵌套展示子代理/沙箱准备等内部前置步骤 -->
                   <div v-if="child.children?.length && child.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
                     <div
@@ -231,7 +246,8 @@
                       <div v-if="subStep.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
                         错误原因：{{ subStep.error_reason }}
                       </div>
-                      <div v-if="(hasVisibleTimelineText(subStep.details) || hasTimelineArgs(subStep)) && subStep.isExpanded" class="mt-1">
+                      <!-- 子步骤自身的入参与元信息：与其它层级一致，参数独立成盒 -->
+                      <div v-if="(hasTimelineArgs(subStep) || timelineMetaText(subStep)) && subStep.isExpanded" class="mt-1 border-l-2 border-gray-200/80 pl-2.5 dark:border-gray-700/80">
                         <TimelineToolArgsBlock
                           v-if="timelineArgsText(subStep)"
                           :text="timelineArgsText(subStep)"
@@ -243,6 +259,9 @@
                         <div v-if="timelineMetaText(subStep)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
                           {{ timelineMetaText(subStep) }}
                         </div>
+                      </div>
+                      <!-- 子步骤的工具输出：独立于参数盒（输入 → 过程 → 输出） -->
+                      <div v-if="hasVisibleTimelineText(subStep.details) && subStep.isExpanded" class="mt-1">
                         <div v-if="hasVisibleTimelineText(subStep.details)" class="group/details relative border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
                           <button
                             type="button"
@@ -264,19 +283,8 @@
                     </div>
                   </div>
 
-                  <!-- 节点自身的入参区块与输出区块（哪怕挂有子步骤如沙箱准备，自身执行日志与命令也不被吞） -->
-                  <div v-if="(hasVisibleTimelineText(child.details) || hasTimelineArgs(child)) && isChildDetailsOpen(child)" class="mt-1">
-                    <TimelineToolArgsBlock
-                      v-if="timelineArgsText(child)"
-                      :text="timelineArgsText(child)"
-                      :tool-name="child.tool_name || child.title"
-                      :copy-key="`child-args-${child.id}`"
-                      :copied-key="copiedKey"
-                      @copy="handleCopy"
-                    />
-                    <div v-if="timelineMetaText(child)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
-                      {{ timelineMetaText(child) }}
-                    </div>
+                  <!-- 工具输出：属于「这次调用产出了什么」，排在内部步骤之后，与「输入 → 过程 → 输出」的阅读顺序一致 -->
+                  <div v-if="hasVisibleTimelineText(child.details) && isChildDetailsOpen(child)" class="mt-1">
                     <div v-if="hasVisibleTimelineText(child.details)" class="group/details relative border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
                       <button
                         type="button"
@@ -390,6 +398,21 @@
               {{ fileMetadataSummary(item.file_metadata) }}
             </div>
 
+            <!-- 顶级项自身入参与元信息：这次调用「输入了什么」，排在子步骤之前 -->
+            <div v-if="(hasTimelineArgs(item) || timelineMetaText(item)) && isTimelineItemDetailsOpen(item)" class="mt-1 border-l-2 border-gray-200/80 pl-2.5 dark:border-gray-700/80">
+              <TimelineToolArgsBlock
+                v-if="timelineArgsText(item)"
+                :text="timelineArgsText(item)"
+                :tool-name="item.tool_name || item.title"
+                :copy-key="`item-args-${item.id}`"
+                :copied-key="copiedKey"
+                @copy="handleCopy"
+              />
+              <div v-if="timelineMetaText(item)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
+                {{ timelineMetaText(item) }}
+              </div>
+            </div>
+
             <!-- 嵌套展示根级别子代理内部步骤 / 子步骤 -->
             <div v-if="item.children?.length && item.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
               <div
@@ -405,8 +428,8 @@
                 <button
                   type="button"
                   class="flex w-full items-center gap-2 text-left"
-                  :aria-expanded="subStep.children?.length ? subStep.childrenExpanded !== false : subStep.isExpanded === true"
-                  @click="subStep.children?.length ? (subStep.childrenExpanded = subStep.childrenExpanded === false) : (hasVisibleTimelineText(subStep.details) || hasTimelineArgs(subStep) ? subStep.isExpanded = !subStep.isExpanded : undefined)"
+                  :aria-expanded="isSubStepDetailsOpen(subStep)"
+                  @click="toggleSubStepItem(subStep)"
                 >
                   <span v-if="subStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
                   <WrenchScrewdriverIcon
@@ -424,11 +447,12 @@
                   />
                   <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                   <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
-                  <svg v-if="hasVisibleTimelineText(subStep.details) || hasTimelineArgs(subStep) || subStep.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.children?.length ? (subStep.childrenExpanded !== false) : subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg v-if="hasVisibleTimelineText(subStep.details) || hasTimelineArgs(subStep) || subStep.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': isSubStepDetailsOpen(subStep) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                   </svg>
                 </button>
-                <div v-if="(hasVisibleTimelineText(subStep.details) || hasTimelineArgs(subStep)) && subStep.isExpanded && !subStep.children?.length" class="mt-1">
+                <!-- 子步骤自身的入参与元信息：有更深子步骤时也必须显示，且排在它们之前 -->
+                <div v-if="(hasTimelineArgs(subStep) || timelineMetaText(subStep)) && isSubStepDetailsOpen(subStep)" class="mt-1 border-l-2 border-gray-200/80 pl-2.5 dark:border-gray-700/80">
                   <TimelineToolArgsBlock
                     v-if="timelineArgsText(subStep)"
                     :text="timelineArgsText(subStep)"
@@ -439,23 +463,6 @@
                   />
                   <div v-if="timelineMetaText(subStep)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
                     {{ timelineMetaText(subStep) }}
-                  </div>
-                  <div v-if="hasVisibleTimelineText(subStep.details)" class="group/details relative border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
-                    <button
-                      type="button"
-                      class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
-                      :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `substep-${subStep.id}` }"
-                      :title="copiedKey === `substep-${subStep.id}` ? '已复制' : '复制内容'"
-                      @click.stop="handleCopy(`substep-${subStep.id}`, visibleTimelineText(subStep.details))"
-                    >
-                      <svg v-if="copiedKey === `substep-${subStep.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
-                      </svg>
-                      <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
-                      </svg>
-                    </button>
-                    <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(subStep.details) }}</pre>
                   </div>
                 </div>
                 <div v-if="subStep.children?.length && subStep.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
@@ -498,37 +505,48 @@
                     <div v-if="nestedStep.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
                       错误原因：{{ nestedStep.error_reason }}
                     </div>
-                    <TimelineToolArgsBlock
-                      v-if="timelineArgsText(nestedStep) && nestedStep.isExpanded"
-                      :text="timelineArgsText(nestedStep)"
-                      :tool-name="nestedStep.tool_name || nestedStep.title"
-                      :copy-key="`nested-args-${nestedStep.id}`"
-                      :copied-key="copiedKey"
-                      class="mt-1"
-                      @copy="handleCopy"
-                    />
-                    <div v-if="timelineMetaText(nestedStep)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
-                      {{ timelineMetaText(nestedStep) }}
+                    <!-- 第四层同样用独立参数盒，元信息留在盒内，与其它层级保持同一套结构 -->
+                    <div v-if="(hasTimelineArgs(nestedStep) || timelineMetaText(nestedStep)) && nestedStep.isExpanded" class="mt-1 border-l-2 border-gray-200/80 pl-2.5 dark:border-gray-700/80">
+                      <TimelineToolArgsBlock
+                        v-if="timelineArgsText(nestedStep)"
+                        :text="timelineArgsText(nestedStep)"
+                        :tool-name="nestedStep.tool_name || nestedStep.title"
+                        :copy-key="`nested-args-${nestedStep.id}`"
+                        :copied-key="copiedKey"
+                        @copy="handleCopy"
+                      />
+                      <div v-if="timelineMetaText(nestedStep)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
+                        {{ timelineMetaText(nestedStep) }}
+                      </div>
                     </div>
                     <pre v-if="hasVisibleTimelineText(nestedStep.details) && nestedStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ visibleTimelineText(nestedStep.details) }}</pre>
+                  </div>
+                </div>
+                <!-- 子步骤的工具输出：排在更深子步骤之后（输入 → 过程 → 输出） -->
+                <div v-if="hasVisibleTimelineText(subStep.details) && isSubStepDetailsOpen(subStep)" class="mt-1">
+                  <div v-if="hasVisibleTimelineText(subStep.details)" class="group/details relative border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
+                    <button
+                      type="button"
+                      class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
+                      :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `substep-${subStep.id}` }"
+                      :title="copiedKey === `substep-${subStep.id}` ? '已复制' : '复制内容'"
+                      @click.stop="handleCopy(`substep-${subStep.id}`, visibleTimelineText(subStep.details))"
+                    >
+                      <svg v-if="copiedKey === `substep-${subStep.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+                      </svg>
+                      <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+                      </svg>
+                    </button>
+                    <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(subStep.details) }}</pre>
                   </div>
                 </div>
               </div>
             </div>
 
-            <!-- 顶级项自身入参及详情（哪怕挂有子步骤，自身详情也不被吞） -->
-            <div v-if="(hasVisibleTimelineText(item.details) || hasTimelineArgs(item)) && isTimelineItemDetailsOpen(item)" class="mt-1">
-              <TimelineToolArgsBlock
-                v-if="timelineArgsText(item)"
-                :text="timelineArgsText(item)"
-                :tool-name="item.tool_name || item.title"
-                :copy-key="`item-args-${item.id}`"
-                :copied-key="copiedKey"
-                @copy="handleCopy"
-              />
-              <div v-if="timelineMetaText(item)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
-                {{ timelineMetaText(item) }}
-              </div>
+            <!-- 顶级项的工具输出：属于「这次调用产出了什么」，排在子步骤之后 -->
+            <div v-if="hasVisibleTimelineText(item.details) && isTimelineItemDetailsOpen(item)" class="mt-1">
               <div v-if="hasVisibleTimelineText(item.details)" class="group/details relative border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
                 <button
                   type="button"
@@ -1049,6 +1067,12 @@ function toggleChildItem(child: ProcessTimelineLogItem): void {
     child.isExpanded = nextOpen;
   }
 }
+
+// 子步骤（第三层）与 child（第二层）的展开语义必须完全一致：subStep 下有更深子步骤时，
+// 自身入参与输出要跟着子列表一起开关。此前 subStep 的点击只切 childrenExpanded，
+// isExpanded 永远是 false —— 详情区即便去掉 !children?.length 也照样打不开。
+const isSubStepDetailsOpen = isChildDetailsOpen;
+const toggleSubStepItem = toggleChildItem;
 
 function iconFor(item: ProcessTimelineLogItem): string {
   if (item.category === "tool_resolution") return item.status === "error" ? "⚠️" : "🧭";
