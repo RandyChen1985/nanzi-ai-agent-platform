@@ -506,6 +506,21 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             "status": "error",
         }
 
+    def _knowledge_synthesis_event(self, status: str, details: str) -> Dict[str, Any]:
+        """知识库问答的「检索完成，正在组织回答」过程项。
+
+        发出（pending）与收尾（success）必须共用同一 id 与 title：前端按 id 归并，
+        title 不一致会让两个状态各成一条。故集中在此，勿在调用处手写字面量。
+        """
+        return {
+            "type": "log",
+            "id": "knowledge_synthesis",
+            "title": "检索完成，正在组织回答",
+            "details": details,
+            "status": status,
+            "category": "knowledge",
+        }
+
     async def execute(
         self,
         history: List[Dict[str, str]],
@@ -683,6 +698,9 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         prefetched_citations_raw: list | None = None
         knowledge_service_unavailable = False
         prefetch_had_citations = False
+        # 预检索后发出、首个正文 chunk 到达时收尾的状态项；跨重试轮只发/收一次。
+        knowledge_synthesis_details = ""
+        synthesis_pending = False
         knowledge_state_prompt = ""
 
         if is_catalog_query:
@@ -763,6 +781,17 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 supplement_allowed=not prefetch_had_citations,
             )
             self._knowledge_retrieval_succeeded = prefetch_had_citations
+
+            # 0 条引用时不得谎报「已获取 0 条资料」。文案在发出时定稿、收尾复用同一份：
+            # 模型若在 ReAct 中二次检索会更新 _valid_citation_ids，收尾时重算会让
+            # 同一条目前后文案不一致。
+            knowledge_synthesis_details = (
+                f"已获取 {len(self._valid_citation_ids)} 条资料，正在生成回答…"
+                if prefetch_had_citations
+                else "未检索到相关资料，正在组织回复…"
+            )
+            yield self._knowledge_synthesis_event(status="pending", details=knowledge_synthesis_details)
+            synthesis_pending = True
 
         self._rag_empty = False
         if knowledge_state_prompt:
@@ -920,6 +949,8 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         while retry_count <= max_retries:
             chunks_buffer = []
             full_text = ""
+            # 终止信号标志位：error chunk 不再进缓冲区，无法靠扫缓冲区识别。
+            saw_error = False
             
             execute_kwargs = {
                 "native_model": native_model,
@@ -932,6 +963,10 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 execute_kwargs["initial_tool_choice"] = initial_tool_choice
 
             async for chunk in self._execute_with_agentscope_native_agent(**execute_kwargs):
+                # 错误事件可能是安全拦截，且**携带 content**；若只在不带 content 的
+                # 分支里识别，这类错误会被漏判而进入幻觉评估，把拦截误判成幻觉。
+                if chunk.get("type") == "error":
+                    saw_error = True
                 if "content" in chunk:
                     content = str(chunk.get("content") or "")
                     if self._valid_citation_ids:
@@ -939,9 +974,24 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                     full_text += content
                     chunk = dict(chunk)
                     chunk["content"] = content
-                chunks_buffer.append(chunk)
+                    chunks_buffer.append(chunk)
+                    if synthesis_pending:
+                        # 首个正文 chunk 到达即收尾：此时 model_call 的 pending 项已经
+                        # 实时转发出来，卡片能无缝接上「模型调用: <模型名> · 进行中」；
+                        # 若等 flush 才收尾，中间会出现「状态项已完成 + 模型调用已完成
+                        # + 正文未到达」的空档，卡片会再次停住。
+                        synthesis_pending = False
+                        yield self._knowledge_synthesis_event(
+                            status="success",
+                            details=knowledge_synthesis_details,
+                        )
+                else:
+                    # 过程性事件（model_call / log / reasoning_content / meta 等）实时转发。
+                    # 此前它们与正文一起进缓冲区，用户在模型生成期间收不到任何事件，
+                    # 思考卡片停在「工具完成: search_knowledge_base」上，看起来像卡死。
+                    yield chunk
 
-            if any(chunk.get("type") == "error" for chunk in chunks_buffer):
+            if saw_error:
                 # 错误事件是终止信号，不能进入知识库事实评估/反思循环，
                 # 否则会把安全拦截误判成幻觉并覆盖原始错误。
                 for chunk in chunks_buffer:

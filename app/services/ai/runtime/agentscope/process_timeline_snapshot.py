@@ -609,7 +609,11 @@ def finalize_process_timeline(state: Optional[List[Dict[str, Any]]]) -> Optional
             continue
         if item.get("kind") == "log":
             copied = _finalize_log(item)
-            if copied.get("status") == "pending" and copied.get("category") == "model":
+            # knowledge 是「检索完成、正在组织回答」的过程项，异常中断时若仍留 pending，
+            # 历史回放会永远显示「进行中」。permission / external 是「等待用户操作、
+            # 机器没在跑」的类别（对应前端 NON_LIVE_TIMER_CATEGORIES），必须保持待处理，
+            # 故只按需扩展，不写成"收尾所有 pending"。
+            if copied.get("status") == "pending" and copied.get("category") in ("model", "knowledge"):
                 copied["status"] = "success"
             items.append(copied)
             continue
