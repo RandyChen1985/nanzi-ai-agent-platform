@@ -80,7 +80,12 @@ def test_required_referencing_undefined_property_is_dropped_and_the_tool_is_name
     assert "$.required" in logs[0], "必须给出可定位的路径"
 
 
-def test_empty_required_is_removed(caplog):
+def test_empty_required_is_preserved(caplog):
+    """``required: []`` 是合法写法（等价于无必填项），必须原样保留。
+
+    删掉它等于让根层丢掉 ``required`` 这个关键字，反而会触发上游 400——这与
+    「根层缺 ``required`` 就补」是同一件事的两面，方向必须一致。
+    """
     from app.services.ai.runtime.agentscope.tool_schema_sanitize import (
         sanitize_tool_schemas,
     )
@@ -95,10 +100,190 @@ def test_empty_required_is_removed(caplog):
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
         out = sanitize_tool_schemas(tools)
 
-    assert "required" not in _params(out)
+    assert _params(out)["required"] == [], "required: [] 必须原样保留"
+    assert out is tools, "无需修复时不得改动对象"
+    assert _issues(caplog) == []
+
+
+# ── 根层缺 required：上游要求该关键字存在，缺了整单 400 ──────────────────────────
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"type": "object", "properties": {"a": {"type": "string"}}},
+        {"type": "object", "properties": {}},
+        {"type": "object"},
+        {},
+    ],
+    ids=["with-property", "empty-properties", "type-only", "empty-schema"],
+)
+def test_missing_root_required_is_filled_and_named(parameters, caplog, monkeypatch):
+    from app.services.ai.runtime.agentscope import tool_schema_sanitize as mod
+
+    monkeypatch.setattr(mod, "_REPORTED_ISSUES", set())
+
+    tools = [_tool("no_required_tool", dict(parameters))]
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        out = mod.sanitize_tool_schemas(tools)
+
+    assert _params(out)["required"] == [], "根层必须补上空 required"
+
     logs = _issues(caplog)
     assert len(logs) == 1
-    assert "empty_required_tool" in logs[0]
+    assert "no_required_tool" in logs[0], "必须点名到具体工具"
+    assert "missing_required" in logs[0]
+    assert "$.required" in logs[0]
+
+
+def test_missing_root_required_is_aggregated_into_one_line(monkeypatch, caplog):
+    """多个工具都缺 ``required`` 时只汇总一条，而不是每个工具各刷一条。
+
+    缺 ``required`` 是常态（多数 MCP 工具都不写这个关键字），逐个工具点名会让首轮
+    刷出几十条日志。
+    """
+    from app.services.ai.runtime.agentscope import tool_schema_sanitize as mod
+
+    monkeypatch.setattr(mod, "_REPORTED_ISSUES", set())
+    monkeypatch.setattr(mod, "_PENDING_MISSING_REQUIRED", [])
+
+    tools = [
+        _tool(
+            f"agg_tool_{i}",
+            {"type": "object", "properties": {"a": {"type": "string"}}},
+        )
+        for i in range(5)
+    ]
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        out = mod.sanitize_tool_schemas(tools)
+
+    assert [_params(out, i)["required"] for i in range(5)] == [[]] * 5
+
+    logs = _issues(caplog)
+    assert len(logs) == 1, f"应聚合为一条，实际 {len(logs)} 条"
+    assert "missing_required" in logs[0]
+    assert "count=5" in logs[0]
+    for i in range(5):
+        assert f"agg_tool_{i}" in logs[0], "聚合日志必须列出被修复的工具名"
+
+
+def test_missing_required_summary_is_reported_only_once_per_process(
+    monkeypatch, caplog
+):
+    from app.services.ai.runtime.agentscope import tool_schema_sanitize as mod
+
+    monkeypatch.setattr(mod, "_REPORTED_ISSUES", set())
+    monkeypatch.setattr(mod, "_PENDING_MISSING_REQUIRED", [])
+
+    tools = [
+        _tool("once_tool", {"type": "object", "properties": {"a": {"type": "string"}}})
+    ]
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        mod.sanitize_tool_schemas(tools)
+        first_round = _issues(caplog)
+        caplog.clear()
+        mod.sanitize_tool_schemas(tools)
+        second_round = _issues(caplog)
+
+    assert len(first_round) == 1
+    assert second_round == [], "同一问题不应每轮对话都报"
+
+
+def test_aggregated_summary_coexists_with_per_tool_issues(monkeypatch, caplog):
+    """聚合的 missing_required 与逐条点名的其它问题互不干扰。"""
+    from app.services.ai.runtime.agentscope import tool_schema_sanitize as mod
+
+    monkeypatch.setattr(mod, "_REPORTED_ISSUES", set())
+    monkeypatch.setattr(mod, "_PENDING_MISSING_REQUIRED", [])
+
+    tools = [
+        _tool(
+            "agg_first",
+            {"type": "object", "properties": {"a": {"type": "string"}}},
+        ),
+        _tool(
+            "undefined_second",
+            {
+                "type": "object",
+                "properties": {"b": {"type": "string"}},
+                "required": ["b", "ghost"],
+            },
+        ),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        mod.sanitize_tool_schemas(tools)
+
+    logs = _issues(caplog)
+    assert len(logs) == 2, f"应为「一条聚合 + 一条逐条」，实际 {len(logs)} 条"
+
+    summary = [line for line in logs if "count=" in line]
+    per_tool = [
+        line for line in logs if "count=" not in line and "undefined_second" in line
+    ]
+    assert len(summary) == 1
+    assert "agg_first" in summary[0]
+    assert len(per_tool) == 1
+
+
+def test_nested_missing_required_is_not_filled(caplog):
+    """嵌套属性本来就不写 ``required``，补了只是噪音：只在根层补。"""
+    from app.services.ai.runtime.agentscope.tool_schema_sanitize import (
+        sanitize_tool_schemas,
+    )
+
+    tools = [
+        _tool(
+            "nested_no_required_tool",
+            {
+                "type": "object",
+                "properties": {
+                    "filter": {
+                        "type": "object",
+                        "properties": {"id": {"type": "string"}},
+                    }
+                },
+                "required": ["filter"],
+            },
+        )
+    ]
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        out = sanitize_tool_schemas(tools)
+
+    nested = _params(out)["properties"]["filter"]
+    assert "required" not in nested, "嵌套层不得被补 required"
+    assert _issues(caplog) == []
+
+
+def test_filling_required_keeps_everything_else_intact(caplog):
+    """补 ``[]`` 只新增一个关键字，其它内容一个字都不能动（语义中立）。"""
+    from app.services.ai.runtime.agentscope.tool_schema_sanitize import (
+        sanitize_tool_schemas,
+    )
+
+    parameters = {
+        "type": "object",
+        "title": "NeutralArgs",
+        "description": "keep me",
+        "additionalProperties": False,
+        "properties": {
+            "a": {"type": "string", "enum": ["x", "y"]},
+            "b": {"type": "integer"},
+        },
+    }
+    tools = [_tool("neutral_tool", parameters)]
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        out = sanitize_tool_schemas(tools)
+
+    fixed = _params(out)
+    assert fixed["required"] == []
+    assert {key: value for key, value in fixed.items() if key != "required"} == parameters
+    assert out[0]["function"]["name"] == "neutral_tool"
+    assert out[0]["type"] == "function"
 
 
 # ── 健康 schema 必须一动不动 ────────────────────────────────────────────────────
@@ -170,6 +355,7 @@ def test_nested_object_property_is_repaired(caplog):
             "nested_tool",
             {
                 "type": "object",
+                # 根层显式声明 required，本用例只聚焦「嵌套层」的修复
                 "properties": {
                     "filter": {
                         "type": "object",
@@ -177,6 +363,7 @@ def test_nested_object_property_is_repaired(caplog):
                         "required": ["id", "ghost"],
                     }
                 },
+                "required": ["filter"],
             },
         )
     ]
@@ -201,6 +388,7 @@ def test_array_items_are_repaired(caplog):
             "items_tool",
             {
                 "type": "object",
+                # 根层显式声明 required，本用例只聚焦「数组元素」的修复
                 "properties": {
                     "rows": {
                         "type": "array",
@@ -211,6 +399,7 @@ def test_array_items_are_repaired(caplog):
                         },
                     }
                 },
+                "required": ["rows"],
             },
         )
     ]
@@ -232,13 +421,15 @@ def test_anyof_branch_is_repaired(caplog):
         _tool(
             "anyof_tool",
             {
+                # 根层显式声明 required，本用例只聚焦「anyOf 分支」的修复
                 "anyOf": [
                     {
                         "type": "object",
                         "properties": {"a": {"type": "string"}},
                         "required": ["a", "ghost"],
                     }
-                ]
+                ],
+                "required": ["a"],
             },
         )
     ]

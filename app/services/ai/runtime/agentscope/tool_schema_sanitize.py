@@ -10,13 +10,16 @@
 
 1. **预检点名**：把问题定位到具体工具与 schema 路径后写日志（同一问题每进程只报一次，
    避免每轮对话刷屏）；
-2. **语义等价净化**：只修两类确定的坏约束——
-   - ``required`` 引用了 ``properties`` 中不存在的字段名（受限解码后端无法据此构造语法）；
-   - ``required: []`` 空数组（等价于「无必填项」，直接删除该关键字）。
+2. **语义等价净化**：只修两类确定会被后端拒绝的约束——
+   - 根层 ``parameters`` 缺 ``required`` 关键字时补 ``[]``：该关键字必须存在，空数组是
+     后端接受的写法，缺失则整个请求 400（``***.***.***.parameters/required``）；
+   - ``required`` 引用了 ``properties`` 中不存在的字段名（受限解码后端无法据此构造语法）。
 
-**不做**的事：不摘工具、不改 ``properties``、不动其它关键字；``required`` 与
-``anyOf`` / ``oneOf`` / ``allOf`` / ``$ref`` 并列时无法静态确定合法字段集，一律不碰；
-自引用（递归定义）的 schema 也不修改，但会点名报出——它同样是受限解码后端的常见难点。
+**不做**的事：不摘工具、不改 ``properties``、不动其它关键字；``required: []`` 本身就是
+合法写法（等价于无必填项），必须保留——删掉等于让根层丢掉这个关键字，反而触发 400；
+``required`` 与 ``anyOf`` / ``oneOf`` / ``allOf`` / ``$ref`` 并列时无法静态确定合法字段集，
+一律不碰；自引用（递归定义）的 schema 也不修改，但会点名报出——它同样是受限解码后端的
+常见难点。
 """
 
 from __future__ import annotations
@@ -57,6 +60,14 @@ _SINGLE_KEYS = (
 #: 递归深度上限：schema 本身不深，超过即视为异常输入，停止下钻。
 _MAX_DEPTH = 60
 
+#: 根层 schema 的路径标记；只有根层需要保证 ``required`` 关键字存在。
+_ROOT_PATH = "$"
+
+#: 本次调用中「根层缺 required 被补」的工具名（签名去重，按序遍历顺序）；在
+#: ``sanitize_tool_schemas`` 返回前汇总成一条日志——缺 required 是常态（多数
+#: MCP 工具都不写这个关键字），逐个工具点名会让首轮刷出几十条。
+_PENDING_MISSING_REQUIRED: list[str] = []
+
 
 def sanitize_tool_schemas(tools: Any) -> Any:
     """预检并净化 OpenAI 形态的 tools schema 列表。
@@ -71,10 +82,14 @@ def sanitize_tool_schemas(tools: Any) -> Any:
     if not isinstance(tools, list):
         return tools
     try:
-        return _sanitize_tool_list(tools)
+        result = _sanitize_tool_list(tools)
     except Exception:
         _report_preflight_failure()
-        return tools
+        result = tools
+    finally:
+        # 汇总日志必须发出去：即便上面走了兜底，已补过的工具也要留下痕迹。
+        _flush_missing_required()
+    return result
 
 
 def _sanitize_tool_list(tools: list[Any]) -> Any:
@@ -90,6 +105,24 @@ def _sanitize_tool_list(tools: list[Any]) -> Any:
         repaired.append(new_tool)
 
     return tools if repaired is None else repaired
+
+
+def _flush_missing_required() -> None:
+    """把「根层补了 required」的工具汇总成一条日志。
+
+    缺 ``required`` 是常态，逐个工具点名会让首轮刷出几十条；汇总成一条既保留
+    「补了哪些工具」的可观测性，又不吵。
+    """
+    if not _PENDING_MISSING_REQUIRED:
+        return
+    names = list(_PENDING_MISSING_REQUIRED)
+    _PENDING_MISSING_REQUIRED.clear()
+    logger.warning(
+        "[AgentScope] Tool schema issue: kind=missing_required path=$.required "
+        "action=repaired count=%d tools=%s (upstream requires the keyword to be present)",
+        len(names),
+        ", ".join(names),
+    )
 
 
 def _report_preflight_failure() -> None:
@@ -151,13 +184,9 @@ def _sanitize_schema(
         return node
     seen = seen | {id(node)}
 
-    action = _repair_required(node, tool_name=tool_name, path=path)
-    if action is not None:
-        kind, value = action
-        if kind == "delete":
-            node = {key: item for key, item in node.items() if key != "required"}
-        else:
-            node = {**node, "required": value}
+    fixed_required = _repair_required(node, tool_name=tool_name, path=path)
+    if fixed_required is not None:
+        node = {**node, "required": fixed_required}
 
     updates: dict[str, Any] = {}
     for key, value in node.items():
@@ -255,10 +284,20 @@ def _repair_required(
     *,
     tool_name: str,
     path: str,
-) -> tuple[str, Any] | None:
-    """返回对本层 ``required`` 的处理动作，或 ``None`` 表示不动。"""
+) -> list[Any] | None:
+    """返回本层 ``required`` 修复后的取值，或 ``None`` 表示不动。"""
     if "required" not in node:
-        return None
+        # 只有根层补：上游要求 function.parameters 带 required 这个关键字，缺了整个
+        # 请求 400。嵌套属性本来就不写 required，补了只是噪音。
+        if path != _ROOT_PATH:
+            return None
+        _report(
+            tool_name,
+            kind="missing_required",
+            path=f"{path}.required",
+            detail="added empty 'required' (upstream requires the keyword to be present)",
+        )
+        return []
     required = node.get("required")
     if not isinstance(required, list):
         # 形态异常（如 required: "bad"）：不是我们能安全推断的输入，不动。
@@ -266,13 +305,8 @@ def _repair_required(
 
     required_path = f"{path}.required"
     if not required:
-        _report(
-            tool_name,
-            kind="empty_required",
-            path=required_path,
-            detail="removed empty 'required' (equivalent to no required fields)",
-        )
-        return ("delete", None)
+        # `required: []` 是合法写法（等价于无必填项），上游也接受，必须保留。
+        return None
 
     properties = node.get("properties")
     if not isinstance(properties, dict):
@@ -304,7 +338,7 @@ def _repair_required(
             + ", ".join(undefined)
         ),
     )
-    return ("set", kept)
+    return kept
 
 
 def _report(
@@ -319,6 +353,10 @@ def _report(
     if signature in _REPORTED_ISSUES:
         return
     _REPORTED_ISSUES.add(signature)
+    if kind == "missing_required":
+        # 「补 required」单独汇总（见 _flush_missing_required），不逐条打印。
+        _PENDING_MISSING_REQUIRED.append(tool_name)
+        return
     logger.warning(
         "[AgentScope] Tool schema issue: tool=%s kind=%s path=%s "
         "action=%s detail=%s",
