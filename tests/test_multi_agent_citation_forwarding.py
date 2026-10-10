@@ -125,3 +125,23 @@ async def test_citation_keeps_its_payload_shape(monkeypatch):
     assert citations, "citation 未被转发"
     assert isinstance(citations[0]["data"], list), "data 必须仍是数组，前端按数组消费"
     assert citations[0] == CITATION_CHUNK, "citation 事件被改写了"
+
+
+def test_synthesis_prompt_preserves_citation_markers():
+    """合成 prompt 必须要求原样保留 [ID:n]。
+
+    回归场景：多智能体轮次的正文由主模型重写，引用列表（引用来源 N 条）能显示，
+    但正文里一个 [ID:n] 都没有，用户点不到任何引用。原因是子智能体的回答本来带
+    序号（知识库工具的 CRITICAL 指令），但它只作为合成素材，而合成 prompt 没有任何
+    「保留引用标记」的契约，模型重写时就把序号丢掉了。
+    """
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    system_prompt = AgentServicePrompts.MULTI_AGENT_SYNTHESIS_SYSTEM
+    assert "[ID:n]" in system_prompt, "合成 system prompt 未要求保留 [ID:n] 引用标记"
+    assert "原样保留" in system_prompt, "缺少『原样保留』的明确措辞，模型仍可能重写序号"
+
+    human_prompt = AgentServicePrompts.multi_agent_synthesis_human(
+        "问题", "### 专家智能体: 知识库助手\n答案是 X [ID:1]\n\n"
+    )
+    assert "原样保留" in human_prompt, "最靠近生成位置的 human prompt 未重申引用标记契约"
