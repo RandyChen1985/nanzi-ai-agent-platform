@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, getCurrentInstance, ref } from 'vue';
 import { linkifyGeneratedFileUrls, resolveGeneratedFileHref } from '@/utils/generatedFileUrl';
+import { buildArtifactDownloadUrl, resolveGeneratedPreviewPlan } from '@/utils/generatedFilePreviewPlan';
+import { resolveDocumentViewerMime } from '@/utils/documentPreviewFormats';
 import { appendBrowserOpenActions, appendBrowserOpenActionsToCode, isBrowserOpenableUrl } from '@/utils/messageBrowserLinks';
 import { renderMarkdown } from '@/utils/markdown';
 import { enhanceMarkdownTablesForMobile } from '@/utils/markdownTableResponsive';
@@ -83,7 +85,18 @@ const emit = defineEmits<{
   (e: 'show-citation', payload: { id: string; anchor: HTMLElement }): void;
   (e: 'open-browser-url', url: string): void;
   (e: 'open-canvas', payload: Omit<CanvasPanelData, 'sourcePath'> & { sourcePath?: string }): void;
+  (e: 'preview-generated-file', payload: { url: string; name: string }): void;
 }>();
+
+/**
+ * 宿主是否接了产物预览。
+ *
+ * 未接线时（例如只用于展示回答摘要的 MessageRenderer）必须退回浏览器默认行为（下载），
+ * 否则链接点了没反应 —— 比"点了会下载"更糟。
+ */
+const canPreviewGeneratedFile = Boolean(
+  getCurrentInstance()?.vnode.props?.onPreviewGeneratedFile,
+);
 
 const RUNNABLE_CODE_LANGUAGES = new Set(['python', 'python3', 'shell', 'sh', 'bash']);
 
@@ -161,6 +174,32 @@ interface ContentSegment {
     text.replace(filePathRegex, (pathVal) => appendOpenLinkToPath(pathVal));
 
   /**
+   * 产物能力链接（/api/v1/chat/generated-files/{32hex}?token=...）
+   *
+   * token 未必是第一个 query 参数（例如带 `download=1` 的地址），所以显式允许它前面还有
+   * 若干 `参数&`。中间那段字符类刻意排除引号/空白/`<>`/`&`：既不会跨过标签边界，也不会
+   * 像 `\?.*&token=` 那样（`.*` 贪婪）一路吃到**别的**链接上的 token。
+   */
+  const GENERATED_FILE_HREF_PATTERN = /\/api\/v1\/chat\/generated-files\/[0-9a-f]{32}\?(?:[^"'\s<>&]+&)*token=[A-Za-z0-9_-]+/i;
+
+  /**
+   * 给产物链接追加「下载」小按钮。
+   *
+   * 地址放在 `data-generated-download` 上而不是 href：链接本体的点击由下面的
+   * 画布预览分支接管，href 会被截走，无法再表达「下载」这一动作。
+   */
+  const appendGeneratedFileDownloadActions = (html: string) =>
+    html.replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (match, href, _inner, offset) => {
+      if (!GENERATED_FILE_HREF_PATTERN.test(href)) return match;
+      // 幂等：按钮在 </a> 之后，因此必须看「这段链接之后紧邻的内容」，
+      // 而不能看 <a> 自身的 match（那样永远为假，重复处理会叠加第二个按钮）。
+      const following = String(html).slice(Number(offset) + match.length);
+      if (following.startsWith('<button') && following.includes('data-generated-download')) return match;
+      const escaped = String(href).replace(/"/g, '&quot;');
+      return `${match}<button type="button" class="generated-file-download-btn" data-generated-download="${escaped}" title="下载原文件">下载</button>`;
+    });
+
+  /**
    * 后处理：修复被 Markdown 引擎“误杀”转义的 HTML
    */
   const postProcessHtml = (html: string) => {
@@ -199,9 +238,9 @@ interface ContentSegment {
           !val.startsWith('/static/') &&
           !val.startsWith('/api/') &&
           !val.startsWith('/assets/')) {
-        const convId = props.conversationId === undefined
-          ? localStorage.getItem("yovole_embed_conv_id") || ""
-          : props.conversationId || "";
+        // 只认调用方传入的会话 ID：不再回退读 `yovole_embed_conv_id`（那是没有用户维度的
+        // 旧键，已按「只清理、不读取」处理；读到的是上一位使用者的会话 ID）。
+        const convId = props.conversationId || "";
         const convParam = convId ? `&conversation_id=${encodeURIComponent(convId)}` : "";
         const newVal = `/api/v1/chat/fs/preview?path=${encodeURIComponent(val)}${convParam}`;
         return `${attr}="${newVal}"`;
@@ -242,6 +281,10 @@ interface ContentSegment {
     res = res.replace(/###HTML_LINK_PLACEHOLDER_(\d+)###/g, (_match, idx) => {
       return links[parseInt(idx, 10)] ?? "";
     });
+
+    // 产物链接后追加「下载」按钮。必须放在占位符还原**之后**：markdown 链接在上面
+    // 被抽成了 ###HTML_LINK_PLACEHOLDER_n###，过早处理会漏掉它们（只剩裸 URL 那条路径）。
+    res = appendGeneratedFileDownloadActions(res);
 
     // 兜底：Markdown 反引号会把路径包进 <code>，上面占位符还原后再处理一次 code 内文本
     res = res.replace(/<code>([^<]*)<\/code>/gi, (_match, inner) => `<code>${injectOpenLinksForPaths(inner)}</code>`);
@@ -309,6 +352,24 @@ const handleContentClick = (event: MouseEvent) => {
     return;
   }
 
+  // 产物链接后的「下载」按钮：显式下载，与链接本体的「预览」互补。
+  // 必须放在 <a> 分支之前处理，否则会被下面的预览逻辑截走。
+  const generatedDownloadBtn = target.closest<HTMLElement>('[data-generated-download]');
+  if (generatedDownloadBtn) {
+    const downloadUrl = generatedDownloadBtn.getAttribute('data-generated-download') || '';
+    if (downloadUrl) {
+      const anchor = document.createElement('a');
+      anchor.href = buildArtifactDownloadUrl(downloadUrl);
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+
   const linkEl = target.closest('a');
   if (linkEl) {
     const href = linkEl.getAttribute('href');
@@ -339,9 +400,33 @@ const handleContentClick = (event: MouseEvent) => {
         const isImage = lowerHref.endsWith('.jpg') || lowerHref.endsWith('.jpeg') || lowerHref.endsWith('.png') || lowerHref.endsWith('.gif') || lowerHref.endsWith('.webp');
         const isCompare = href.startsWith('canvas://compare');
         const isCanvasFile = href.startsWith('canvas://file');
+        // 产物地址本身不带扩展名（/api/v1/chat/generated-files/{32hex}），
+        // 只能靠链接文字里的文件名后缀识别，故 href 与 linkText 都要看。
+        const isOfficeDoc = ['.docx', '.doc', '.xlsx', '.xls', '.xlsm', '.pptx']
+          .some((ext) => lowerHref.endsWith(ext) || linkText.endsWith(ext));
 
-        if (isPdf || isCsv || isHtml || isImage || isCompare || isCanvasFile) {
-          let type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare' = 'code';
+        // 产物链接（/api/v1/chat/generated-files/{32hex}?token=…）本身不带扩展名，
+        // 上面这份扩展名清单只覆盖了常见类型；`.md`/`.txt`/`.json`/代码等文本类此前
+        // 没有任何分支，点击直接落到浏览器默认行为（下载），而同样的文件在
+        // 「我的产出」抽屉里却能预览 —— 两边判定必须一致。这里复用抽屉同一套分派器。
+        if (
+          GENERATED_FILE_HREF_PATTERN.test(href)
+          && !(isPdf || isCsv || isHtml || isImage || isOfficeDoc)
+        ) {
+          const artifactName = linkEl.textContent?.trim() || '';
+          const plan = resolveGeneratedPreviewPlan(artifactName);
+          if (plan.kind !== 'download-only' && canPreviewGeneratedFile) {
+            emit('preview-generated-file', { url: href, name: artifactName });
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          // 不可预览（.ppt/.zip/无扩展名）或宿主未接线：保持浏览器默认下载
+          return;
+        }
+
+        if (isPdf || isCsv || isHtml || isImage || isCompare || isCanvasFile || isOfficeDoc) {
+          let type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare' | 'document' = 'code';
           let filename = '预览';
 
           if (isCompare) {
@@ -362,6 +447,11 @@ const handleContentClick = (event: MouseEvent) => {
             } catch {
               type = 'code';
             }
+          } else if (isOfficeDoc) {
+            // Office 此前没有任何分支，点击会落到浏览器默认行为（即直接下载），
+            // 现在交给画布的 file-viewer 渲染（DocumentViewer 用 axios 取 Blob，attachment 不拦）。
+            type = 'document';
+            filename = linkEl.textContent?.trim() || 'Office 文档';
           } else if (isHtml) {
             type = 'html';
             filename = linkEl.textContent?.trim() || 'HTML 交互应用';
@@ -370,7 +460,14 @@ const handleContentClick = (event: MouseEvent) => {
             filename = linkEl.textContent?.trim() || (isPdf ? 'PDF 文档' : isCsv ? 'CSV 数据表' : '图片预览');
           }
 
-          emit('open-canvas', { type, title: filename, content: href });
+          emit('open-canvas', {
+            type,
+            title: filename,
+            content: href,
+            documentMeta: isOfficeDoc
+              ? { filename, mime: resolveDocumentViewerMime(filename) }
+              : undefined,
+          });
           event.preventDefault();
           event.stopPropagation();
           return;
@@ -692,6 +789,29 @@ const segments = computed<ContentSegment[]>(() => {
 .markdown-body :deep(a[href^="http"]),
 .markdown-body :deep(a[href^="/api/"]),
 .markdown-body :deep(a.generated-file-link) { color: #2563eb !important; text-decoration: underline !important; cursor: pointer !important; }
+/* 产物链接后的「下载」按钮（v-html 注入，故必须走 :deep） */
+.markdown-body :deep(.generated-file-download-btn) {
+  display: inline-flex !important;
+  flex: 0 0 auto !important;
+  align-items: center !important;
+  white-space: nowrap !important;
+  margin-left: 6px !important;
+  padding: 1px 6px !important;
+  border: 1px solid #bfdbfe !important;
+  border-radius: 5px !important;
+  background: #eff6ff !important;
+  color: #2563eb !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.5 !important;
+  cursor: pointer !important;
+  vertical-align: middle !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease !important;
+}
+.markdown-body :deep(.generated-file-download-btn:hover) {
+  background: #dbeafe !important;
+  border-color: #93c5fd !important;
+}
 .markdown-body :deep(.message-link-open) {
   display: inline-flex !important;
   flex: 0 0 auto !important;

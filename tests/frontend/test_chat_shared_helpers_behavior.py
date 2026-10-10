@@ -1110,6 +1110,7 @@ const ref = initial => {
 const requireModule = id => {
   if (id === 'vue') return { ref, watch: (target, callback) => target.watchers.push(callback), onUnmounted: () => {} };
   if (id === '@/utils/axios') return { default: { get: async () => ({ data: '' }) } };
+  if (id === '@/utils/generatedFilePreview') return { openGeneratedFileInCanvas: async () => true };
   if (id === '@/utils/workspaceFilePreview') return {
     isSameWorkspacePreviewPath: (left, right) => left === right,
     shouldAttachWorkspaceSourcePath: () => true,
@@ -1138,6 +1139,73 @@ const requireModule = id => {
     assert result["direct"] == {"type": "html", "title": "文件预览", "content": "<p>x</p>"}
     # 对话消息里打开画布：仍然默认钉住（有意保留，方便并排看画布与对话）
     assert result["reopenedPinned"] is True
+
+
+def test_workspace_canvas_direct_payload_keeps_document_meta_for_office_preview():
+    """调试页（normalizeDirectPayloadTitle: true）直连画布时，documentMeta 必须传到画布。
+
+    真跑分支逻辑：`type: 'document'` 且 content 不以 `canvas://` 开头 → 走 normalize 分支。
+    该分支是白名单式重建对象，白名单漏了 documentMeta，Office 预览就拿不到 filename/mime。
+    同时确认**白名单语义没变**（sourcePath 这类上下文仍然不进画布）。
+    """
+    result = _run_typescript(
+        "frontend/src/composables/chat/useWorkspaceCanvas.ts",
+        """
+const canvas = api.useWorkspaceCanvas({
+  getConversationId: () => 'conv-1',
+  resolveFileUrl: value => value,
+  showToast: () => {},
+  normalizeDirectPayloadTitle: true
+});
+await canvas.handleOpenCanvas({
+  type: 'document',
+  title: '',
+  content: '/api/v1/chat/fs/preview?path=/workspace/report.docx',
+  sourcePath: '/workspace/report.docx',
+  documentMeta: {
+    filename: 'report.docx',
+    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  }
+});
+return canvas.canvasData.value;
+""",
+        """
+const ref = initial => {
+  let current = initial;
+  const target = { watchers: [] };
+  Object.defineProperty(target, 'value', {
+    get: () => current,
+    set: value => { current = value; target.watchers.forEach(watcher => watcher(value)); }
+  });
+  return target;
+};
+const requireModule = id => {
+  if (id === 'vue') return { ref, watch: (target, callback) => target.watchers.push(callback), onUnmounted: () => {} };
+  if (id === '@/utils/axios') return { default: { get: async () => ({ data: '' }) } };
+  if (id === '@/utils/generatedFilePreview') return { openGeneratedFileInCanvas: async () => true };
+  if (id === '@/utils/workspaceFilePreview') return {
+    isSameWorkspacePreviewPath: (left, right) => left === right,
+    shouldAttachWorkspaceSourcePath: () => true,
+    resolveWorkspaceScriptLanguage: () => null,
+    resolveWorkspaceCanvasType: () => 'code',
+    resolveDocumentViewerMime: () => undefined,
+    getWorkspaceFileExtension: name => {
+      const parts = name.split('.');
+      return parts.length < 2 ? '' : '.' + parts.pop().toLowerCase();
+    },
+    OFFICE_PREVIEW_EXTENSIONS: new Set(['.docx', '.doc', '.xlsx', '.xls', '.xlsm', '.pptx']),
+    openWorkspaceFileInCanvas: async options => options.onOpen({ type: 'code', title: options.name, content: 'preview' })
+  };
+  return require(id);
+};
+""",
+    )
+
+    assert result["title"] == "文件预览"
+    assert result["documentMeta"]["filename"] == "report.docx"
+    assert result["documentMeta"]["mime"].endswith("wordprocessingml.document")
+    # 白名单语义不变：上下文类字段（sourcePath）仍然不会进画布
+    assert "sourcePath" not in result
 
 
 def test_workspace_canvas_mobile_keeps_workspace_and_skips_pin():
@@ -1170,6 +1238,7 @@ const ref = initial => {
 const requireModule = id => {
   if (id === 'vue') return { ref, watch: (target, callback) => target.watchers.push(callback), onUnmounted: () => {} };
   if (id === '@/utils/axios') return { default: { get: async () => ({ data: '' }) } };
+  if (id === '@/utils/generatedFilePreview') return { openGeneratedFileInCanvas: async () => true };
   if (id === '@/utils/workspaceFilePreview') return {
     isSameWorkspacePreviewPath: (left, right) => left === right,
     shouldAttachWorkspaceSourcePath: () => true,

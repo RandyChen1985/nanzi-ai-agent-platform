@@ -1,13 +1,13 @@
 """Private publication and capability-link download support for generated files."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
 import logging
 import mimetypes
 import re
-import secrets
 import shutil
 import uuid
 from dataclasses import dataclass
@@ -117,6 +117,49 @@ def _mime_type_for(filename: str) -> str:
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _artifact_token_secret() -> bytes:
+    """签名密钥：优先专用配置，回退平台加密密钥。"""
+    dedicated = str(getattr(settings, "ARTIFACT_TOKEN_SECRET", "") or "").strip()
+    return (dedicated or settings.ENCRYPTION_KEY).encode("utf-8")
+
+
+def _as_utc(value: datetime) -> datetime:
+    """naive 时间按既有习惯视为 UTC（与下载校验里的过期判断保持一致）。"""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def build_artifact_token(artifact_id: str, expires_at: datetime | None) -> str:
+    """确定性派生产物下载 token：同一 artifact_id + 同一 expires_at 恒得同一 token。
+
+    为什么不用随机 token：`ai_artifacts` 只存 token 哈希、无法还原明文，产物列表接口
+    为了给出可用的 download_url 只能「重新签发并覆盖哈希」—— 而登记时已经写进消息正文
+    的链接用的是当时那个 token，于是「一打开我的产出抽屉，正文里的链接就全部失效」。
+    改为确定性签名后，列表接口直接重算同一个 token，无需写库，链接不再互相吊销。
+    """
+    if expires_at is None:
+        raise ValueError("缺少过期时间，无法派生产物下载 token")
+    message = f"{artifact_id}:{int(_as_utc(expires_at).timestamp())}".encode("utf-8")
+    digest = hmac.new(_artifact_token_secret(), message, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def verify_artifact_token(
+    artifact_id: str,
+    expires_at: datetime | None,
+    token: str,
+    stored_hash: str | None,
+) -> bool:
+    """先验签名（新机制），失败再回退历史哈希比对（兼容升级前签发的随机 token）。"""
+    if not token:
+        return False
+    if expires_at is not None:
+        if hmac.compare_digest(build_artifact_token(artifact_id, expires_at), token):
+            return True
+    if stored_hash:
+        return hmac.compare_digest(str(stored_hash), _token_hash(token))
+    return False
 
 
 def record_published_download_url(download_url: str) -> None:
@@ -243,12 +286,18 @@ async def register_artifact(
     if owner_user_id is None:
         raise ValueError("登记工作区产物需要 owner_user_id")
 
-    expires_at = datetime.now(timezone.utc) + ttl
-    token = secrets.token_urlsafe(32)
+    # 规整到整秒：DB 的 DateTime 列不保存微秒（MySQL DATETIME(0) 还会四舍五入），
+    # 而 token 由 expires_at 的秒值派生 —— 不规整就会出现「登记时派生 43 秒、
+    # 从库里读回 44 秒」的 1 秒漂移，导致重算出的 token 与登记时不符。
+    expires_at = (datetime.now(timezone.utc) + ttl).replace(microsecond=0)
+    # 签名 token 由 (artifact_id, expires_at) 派生：产物列表接口稍后能重算同一个值，
+    # 因此不需要（也不允许）在列表时重新签发并覆盖哈希。
+    artifact_id = uuid.uuid4().hex
+    token = build_artifact_token(artifact_id, expires_at)
 
     async with AsyncSessionLocal() as session:
         artifact = AiArtifact(
-            id=uuid.uuid4().hex,
+            id=artifact_id,
             owner_user_id=int(owner_user_id),
             conversation_id=conversation_id or None,
             trace_id=trace_id or None,
@@ -401,7 +450,7 @@ async def resolve_workspace_artifact(artifact_id: str, token: str) -> GeneratedF
             if expires <= datetime.now(timezone.utc):
                 return None
 
-        if not hmac.compare_digest(record.token_hash or "", _token_hash(token)):
+        if not verify_artifact_token(artifact_id, record.expires_at, token, record.token_hash):
             return None
 
         storage = Path(record.storage_path).resolve()

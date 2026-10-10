@@ -2391,6 +2391,25 @@ const closeSocket = () => {
   }
 };
 
+// viewer WebSocket 的两个子协议前缀：前者是「查看令牌」，后者是「连接者身份凭据」。
+// 服务端要求连接者能证明自己就是该浏览器会话的归属人（viewer token 只是 bearer 凭证，
+// 证明不了谁在连），而握手既不能带自定义请求头、跨站 iframe 也发不出 SameSite=Lax 的
+// 会话 Cookie，因此身份只能借子协议上送。
+const VIEWER_AUTH_PROTOCOL_PREFIX = 'browser-auth.';
+
+// 子协议值必须是合法 HTTP token 字符，否则浏览器会在 new WebSocket() 直接抛 SyntaxError。
+// 不合格就只发 viewer token 协议，退回服务端的同源 Cookie 身份判定。
+const isSubprotocolSafeCredential = (value?: string | null): boolean =>
+  !!value && /^[A-Za-z0-9._~-]+$/.test(value);
+
+const viewerSocketProtocols = (): string[] => {
+  const protocols = [`browser-viewer.${props.viewerToken}`];
+  if (isSubprotocolSafeCredential(props.authToken)) {
+    protocols.push(`${VIEWER_AUTH_PROTOCOL_PREFIX}${props.authToken}`);
+  }
+  return protocols;
+};
+
 const connect = async () => {
   closeSocket();
   snapshot.value = null;
@@ -2405,7 +2424,7 @@ const connect = async () => {
   await nextTick();
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = `${scheme}//${window.location.host}/api/v1/chat/browser/sessions/${encodeURIComponent(props.sessionId)}/viewer`;
-  const client = new WebSocket(url, [`browser-viewer.${props.viewerToken}`]);
+  const client = new WebSocket(url, viewerSocketProtocols());
   socket.value = client;
   client.onopen = () => {
     if (socket.value !== client) return;
@@ -3299,7 +3318,7 @@ const closeAllTabs = () => {
 };
 
 watch(
-  () => [props.visible, props.sessionId, props.viewerToken] as const,
+  () => [props.visible, props.sessionId, props.viewerToken, props.authToken] as const,
   () => void connect(),
   { immediate: true },
 );

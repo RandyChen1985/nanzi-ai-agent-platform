@@ -4,6 +4,24 @@ import type { ProcessTimelineItem } from '../utils/processTimeline'
 
 export type AgentType = 'GENERAL' | 'CHATBI' | 'KNOWLEDGE_BASE'
 
+/**
+ * `/chat/history` 与 `/chat/admin/history` 共用的查询参数。
+ *
+ * 两个端点签名一致：`username` 只在审计端点上有意义（自隔离端点会忽略它）。
+ */
+export interface ChatHistoryQueryParams {
+  page?: number
+  page_size?: number
+  agent_id?: string
+  conversation_id?: string
+  username?: string
+  keyword?: string
+  status?: string
+  start_date?: string
+  end_date?: string
+  group_by_conversation?: boolean
+}
+
 export interface AIAgent {
   id: string
   name: string
@@ -136,26 +154,32 @@ export const agentApi = {
   getAgentExecutions: (agentId: string, limit: number = 50) => axios.get<AgentExecutionHistory[]>(`/api/portal/agents/${agentId}/executions`, { params: { limit } }),
 
   // Unified Chat History (New V1 API)
-  getChatHistory: (params: { 
-    page?: number, 
-    page_size?: number, 
-    agent_id?: string,
-    conversation_id?: string,
-    username?: string,
-    keyword?: string, 
-    status?: string,
-    start_date?: string, 
-    end_date?: string,
-    group_by_conversation?: boolean,
-  }) => axios.get<StandardResponse<AgentExecutionHistoryListResponse>>('/api/v1/chat/history', { params }),
+  getChatHistory: (params: ChatHistoryQueryParams) =>
+    axios.get<StandardResponse<AgentExecutionHistoryListResponse>>('/api/v1/chat/history', { params }),
+
+  // 聊天日志审计（admin 专用）：跨用户查询会话历史。非 admin 调用一律 403。
+  // 与上面的自隔离端点共用同一实现，只是不按当前用户过滤。
+  getAdminChatHistory: (params: ChatHistoryQueryParams) =>
+    axios.get<StandardResponse<AgentExecutionHistoryListResponse>>('/api/v1/chat/admin/history', { params }),
 
   // Get chat trace logs
   getChatTrace: (traceId: string) => axios.get<StandardResponse<any>>(`/api/v1/chat/logs/${traceId}`),
+
+  // 聊天日志审计（admin 专用）：查看任意用户单次对话的执行链路。
+  getAdminChatTrace: (traceId: string) =>
+    axios.get<StandardResponse<any>>(`/api/v1/chat/admin/logs/${traceId}`),
 
   // Get context compaction timeline for one conversation
   getContextCompactions: (conversationId: string, config?: { headers?: Record<string, string> }) =>
     axios.get<StandardResponse<ContextCompactionsResponse>>(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId)}/context_compactions`,
+      config,
+    ),
+
+  // 聊天日志审计（admin 专用）：按会话归属人读取上下文压缩时间线。
+  getAdminContextCompactions: (conversationId: string, config?: { headers?: Record<string, string> }) =>
+    axios.get<StandardResponse<ContextCompactionsResponse>>(
+      `/api/v1/chat/admin/conversation/${encodeURIComponent(conversationId)}/context_compactions`,
       config,
     ),
 

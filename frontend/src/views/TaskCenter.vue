@@ -140,6 +140,17 @@ const canManageTask = (task: AgentTask) => {
   }
   return canManage.value
 }
+
+/**
+ * 执行链路按角色取源：admin 可能正在看**别人**的任务（见 `canViewDetails`），
+ * 走审计端点 `/chat/admin/logs/*` 才能展开步骤；普通用户走自隔离端点。
+ *
+ * 自隔离端点在拿不到自己的历史行时返回 404，而这里的 catch 只打 console，
+ * 失败表现是「步骤静默为空」——比报错更难发现，所以必须显式分流。
+ */
+const traceApi = computed(() =>
+  userInfo.value?.role === 'admin' ? agentApi.getAdminChatTrace : agentApi.getChatTrace,
+)
 const showHistoryTab = computed(() => true)
 const mainViewTab = ref<'tasks' | 'history'>('tasks')
 
@@ -1065,7 +1076,7 @@ const toggleLogSteps = async (log: any) => {
     if (log.isExpanded && (!log.steps || log.steps.length === 0)) {
         log.stepsLoading = true
         try {
-            const res = await agentApi.getChatTrace(log.trace_id)
+            const res = await traceApi.value(log.trace_id)
             if (res.data?.data?.steps) {
                 log.steps = res.data.data.steps
             }
@@ -1097,7 +1108,7 @@ const viewTrace = async (traceId: string) => {
   
   try {
     // 1. Get Log Detail
-    const res = await agentApi.getChatTrace(traceId)
+    const res = await traceApi.value(traceId)
     const traceData = res.data.data
     
     // 2. Wrap as a single turn session (Task execution is usually single turn)

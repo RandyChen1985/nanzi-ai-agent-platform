@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import Modal from '../Modal.vue'
 import { agentApi, type AIAgent, type AgentExecutionHistory } from '../../api/agent'
 import { useToast } from '@/composables/useToast'
+import { useUser } from '@/composables/useUser'
 import { renderMarkdown } from '@/utils/markdown'
 import { copyToClipboard } from '@/utils/clipboard'
 
@@ -17,6 +18,18 @@ const emit = defineEmits<{
 }>()
 
 const { showToast } = useToast()
+const { isAdmin } = useUser()
+
+/**
+ * 管理员看跨用户的执行历史，普通用户只看自己的。
+ *
+ * 该弹窗按 `agent_id` 过滤、没有用户名维度：此前 admin 是靠 `/chat/history` 的 admin
+ * 旁路顺带看到所有用户的执行记录。旁路删除后必须显式切到审计端点（`require_admin`），
+ * 否则 admin 的智能体排障视角会静默退化为「只看自己跑过的那些」。
+ */
+const historyApi = computed(() =>
+  isAdmin.value ? agentApi.getAdminChatHistory : agentApi.getChatHistory,
+)
 
 const executions = ref<AgentExecutionHistory[]>([])
 const loading = ref(false)
@@ -83,7 +96,7 @@ const fetchHistory = async (loadMore = false) => {
   if (!props.agent) return
   loading.value = true
   try {
-    const res = await agentApi.getChatHistory({
+    const res = await historyApi.value({
       agent_id: props.agent.id,
       page: page.value,
       page_size: pageSize,

@@ -54,6 +54,7 @@ import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
 import { cancelConversationRun } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
+import { isApiSuccess } from "@/utils/apiEnvelope";
 import { createSseLineParser } from "@/utils/chartRenderer";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import {
@@ -310,7 +311,7 @@ const continueChatFromTrace = () => {
         }
         conversationId.value = targetId;
         resetDebugThinkingOverrides();
-        localStorage.setItem("agent_debug_conv_id", targetId);
+        persistConversationId(targetId);
         messages.value = [];
         loadSessionHistory(targetId);
         showSessionPreview.value = false;
@@ -629,7 +630,7 @@ const loadGreeting = async () => {
   }
 };
 
-const generateNewConversation = (isManual = false) => {
+const generateNewConversation = (isManual = false, options: { persist?: boolean } = {}) => {
   const previousId = conversationId.value;
   if (previousId) {
     finalizeConversationInBackground(previousId);
@@ -637,7 +638,11 @@ const generateNewConversation = (isManual = false) => {
   conversationId.value = createConversationId();
   resetDebugThinkingOverrides();
   debugConfig.enableGrounding = false;
-  localStorage.setItem("agent_debug_conv_id", conversationId.value);
+  // `persist: false` 用于「身份未知」或「归属校验不可用」的场景：只换内存里的会话，
+  // 不覆盖存储里的指针，等下次能校验时再用回用户的会话。
+  if (options.persist !== false) {
+    persistConversationId(conversationId.value);
+  }
   if (isManual) {
     messages.value = [];
     loadGreeting();
@@ -761,8 +766,151 @@ const fetchCurrentUser = async () => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// 调试会话指针的隔离
+//
+// 指针过去存在 localStorage["agent_debug_conv_id"]：键里没有任何用户维度，而且 onMounted
+// 里是**同步**读取——`fetchCurrentUser()` 还没回来就已经把上一位使用者的会话 ID 塞进
+// conversationId 并去拉对方的会话历史。会话 ID 只是字符串，换了身份它不会自己换，所以
+// 存储键必须带身份维度，且采用前必须问一次归属。
+// ---------------------------------------------------------------------------
+const LEGACY_DEBUG_CONVERSATION_STORAGE_KEY = "agent_debug_conv_id";
+const DEBUG_CONVERSATION_STORAGE_PREFIX = "agent_debug_conv_id:";
+/** 用户维度标记：键形如 `agent_debug_conv_id:u:<identity>`。 */
+const USER_SCOPED_STORAGE_SEGMENT = "u";
+
+/** 身份键：优先 user_id，其次 user_name；都拿不到返回空串（表示身份未知）。 */
+const identityKeyFromUserData = (data: any): string => {
+  const userId = String(data?.user_id ?? "").trim();
+  if (userId) return `id:${userId}`;
+  const userName = String(data?.user_name ?? "").trim();
+  return userName ? `name:${userName}` : "";
+};
+
+const currentIdentityKey = (): string => identityKeyFromUserData(currentUser.value);
+
+/** 当前身份下的存储键；身份未知时返回空串（此时既不读也不写）。 */
+const conversationStorageKey = (): string => {
+  const identity = currentIdentityKey();
+  if (!identity) return "";
+  return `${DEBUG_CONVERSATION_STORAGE_PREFIX}${USER_SCOPED_STORAGE_SEGMENT}:${encodeURIComponent(identity)}`;
+};
+
+const readStoredConversationId = (): string => {
+  try {
+    const key = conversationStorageKey();
+    return key ? (localStorage.getItem(key) || "").trim() : "";
+  } catch {
+    return "";
+  }
+};
+
+const persistConversationId = (cid: string) => {
+  if (!cid) return;
+  try {
+    const key = conversationStorageKey();
+    if (key) localStorage.setItem(key, cid);
+  } catch {
+    /* 存储不可用时无需处理 */
+  }
+};
+
+const clearStoredConversationId = () => {
+  try {
+    const key = conversationStorageKey();
+    if (key) localStorage.removeItem(key);
+  } catch {
+    /* 存储不可用时无需处理 */
+  }
+};
+
+/** 清掉所有没有用户维度的历史键：只清理、绝不读取。 */
+const purgeLegacyConversationStorage = () => {
+  try {
+    localStorage.removeItem(LEGACY_DEBUG_CONVERSATION_STORAGE_KEY);
+    const scopedPrefix = `${DEBUG_CONVERSATION_STORAGE_PREFIX}${USER_SCOPED_STORAGE_SEGMENT}:`;
+    const staleKeys: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index) || "";
+      if (!key.startsWith(DEBUG_CONVERSATION_STORAGE_PREFIX)) continue;
+      if (key.startsWith(scopedPrefix)) continue;
+      staleKeys.push(key);
+    }
+    staleKeys.forEach((key) => localStorage.removeItem(key));
+  } catch {
+    /* 存储不可用时无需处理 */
+  }
+};
+
+/**
+ * 采用一个已存会话 ID 之前先确认归属：`/ownership` 对「属于别人」显式返回 foreign。
+ * 三态而非布尔：网络/接口异常必须与「确实属于别人」区分开——前者不该清掉用户的指针。
+ */
+const checkConversationAdoption = async (
+  cid: string,
+): Promise<"adoptable" | "foreign" | "unknown"> => {
+  const normalized = String(cid || "").trim();
+  if (!normalized) return "unknown";
+  try {
+    const res = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/ownership`,
+    );
+    // 聊天面是 StandardResponse（`code: 200`），没有 `status` 字段。
+    if (!isApiSuccess(res.data)) return "unknown";
+    // 只有「有别人的轮次、且没有我自己的轮次」才是真正别人的会话；混杂（一个 cid 多个
+    // 归属人，历史遗留）必须放行——读侧本来就按用户过滤。
+    const data = res.data?.data || {};
+    if (data.foreign === true && data.owned !== true) {
+      console.warn("[AgentDebug] 已丢弃属于其他用户的调试会话指针。");
+      return "foreign";
+    }
+    return "adoptable";
+  } catch (e: any) {
+    console.warn("[AgentDebug] 会话归属校验失败，本轮不采用该指针：", e?.message || e);
+    return "unknown";
+  }
+};
+
+/**
+ * 启动时的会话指针恢复。
+ *
+ * 顺序是安全边界的一部分：**先拿到身份**再碰存储；身份未知既不读也不写（连旧指针都不覆盖，
+ * 等身份恢复后还能用）；拿到指针也要先过归属校验，`foreign` 清掉重开，`unknown` 只换内存里的
+ * 会话、保留存储指针。
+ */
+const bootstrapDebugConversation = async () => {
+  await fetchCurrentUser();
+  purgeLegacyConversationStorage();
+  const identity = currentIdentityKey();
+  const savedId = readStoredConversationId();
+  if (!identity) {
+    console.warn("[AgentDebug] 身份未就绪，跳过已存调试会话，改用临时会话。");
+    generateNewConversation(false, { persist: false });
+    return;
+  }
+  if (!savedId) {
+    generateNewConversation();
+    return;
+  }
+  const adoption = await checkConversationAdoption(savedId);
+  if (adoption === "adoptable") {
+    conversationId.value = savedId;
+    loadSessionHistory(savedId);
+    return;
+  }
+  if (adoption === "unknown") {
+    // 归属暂时判不出来（网络/接口异常）：这轮只换内存里的会话，保留存储里的指针，
+    // 用户下次回来还能用回自己的会话。
+    generateNewConversation(false, { persist: false });
+    return;
+  }
+  // foreign：指针属于其他用户，清掉重开。
+  clearStoredConversationId();
+  generateNewConversation();
+};
+
 onMounted(() => {
-  fetchCurrentUser();
+  // 身份由 bootstrapDebugConversation 内部 await：读会话指针前必须先知道「我是谁」。
   // Check for traceId in URL
   const queryTraceId = route.query.traceId as string;
   if (queryTraceId) {
@@ -789,15 +937,9 @@ onMounted(() => {
     debugMode.value = "auto";
   }
 
-  // Initialize or Retrieve Conversation ID
-  const savedId = localStorage.getItem("agent_debug_conv_id");
-  if (savedId) {
-    conversationId.value = savedId;
-    loadSessionHistory(savedId);
-  } else {
-    // If no session, generate key
-    generateNewConversation();
-  }
+  // Initialize or Retrieve Conversation ID：必须在拿到身份之后（见 bootstrapDebugConversation），
+  // 且采用已存指针前会先校验归属。
+  void bootstrapDebugConversation();
 
   if (qVersionId) agentParams.version_id = qVersionId;
   if (qSampleQuestion) userInput.value = qSampleQuestion;
@@ -2141,6 +2283,7 @@ const {
   canvasData,
   handleWorkspaceFilePreview,
   handleOpenCanvas,
+  handleGeneratedFilePreview,
   closeCanvas,
   revokeActiveBlobUrl,
 } = useWorkspaceCanvas({
@@ -2151,6 +2294,19 @@ const {
   isMobile: () => isMobile.value,
 });
 onUnmounted(() => revokeActiveBlobUrl());
+
+/**
+ * 消息正文里的产物链接预览。
+ *
+ * 与 EmbedChat 走同一条链路（绑当前 Host → 按扩展名取内容或用 URL → 右侧钉住画布）。
+ * 没有它时，正文里的产物链接在这个页面只会走浏览器默认行为（下载）。
+ */
+const previewGeneratedFileInCanvas = (payload: { url: string; name: string }) => {
+  void handleGeneratedFilePreview({
+    url: resolveGeneratedFileHref(payload.url),
+    name: payload.name,
+  });
+};
 
 const isImageFile = isImageAttachment;
 
@@ -4135,7 +4291,7 @@ onUnmounted(() => {
                             </div>
                             <div>
                                 <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 opacity-70">智能体</div>
-                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="stripInternalContextBlocks(turn.summary || 'N/A')" @open-canvas="handleOpenCanvas" /></div>
+                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="stripInternalContextBlocks(turn.summary || 'N/A')" @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas" /></div>
                             </div>
                         </div>
 
@@ -4440,7 +4596,7 @@ onUnmounted(() => {
               >
                 <template v-for="parts in [splitUserMessageContent(msg.content)]" :key="'user-parts'">
                   <template v-if="parts.hasContext">
-                    <MessageRenderer v-if="parts.userPart" :content="parts.userPart" @open-canvas="handleOpenCanvas" />
+                    <MessageRenderer v-if="parts.userPart" :content="parts.userPart" @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas" />
                     <div v-if="parts.userPart" class="my-2.5 border-t border-white/30" role="separator" />
                     <details class="group/sys mt-2 text-[10px] text-white/70 select-none">
                       <summary class="cursor-pointer hover:text-white flex items-center gap-1 font-semibold focus:outline-none list-none [&::-webkit-details-marker]:hidden">
@@ -4454,7 +4610,7 @@ onUnmounted(() => {
                       </div>
                     </details>
                   </template>
-                  <MessageRenderer v-else :content="msg.content" @open-canvas="handleOpenCanvas" />
+                  <MessageRenderer v-else :content="msg.content" @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas" />
                 </template>
 
                 <!-- Attached Files In Bubble -->
@@ -4830,7 +4986,7 @@ onUnmounted(() => {
                   :hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"
                   @quick-question="handleQuickQuestion"
                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
-                  @open-canvas="handleOpenCanvas"
+                  @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas"
                 />
                 <ChatBIInsightPanel
                   v-if="msg.chatbiInsight || (msg.citations && msg.citations.length)"

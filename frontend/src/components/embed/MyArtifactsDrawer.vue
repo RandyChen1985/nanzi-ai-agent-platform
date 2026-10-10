@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { artifactApi, type ArtifactListItem } from '@/api/artifact'
 import { resolveGeneratedFileHref } from '@/utils/generatedFileUrl'
+import { buildArtifactDownloadUrl, resolveGeneratedPreviewPlan } from '@/utils/generatedFilePreviewPlan'
 import { resolveFileTypeVisual } from '@/utils/fileTypeVisual'
 import { useToast } from '@/composables/useToast'
 import ReusableResultList from '@/components/embed/ReusableResultList.vue'
@@ -27,6 +28,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'select-reusable-result': [result: ReusableResultListItem]
+  'preview-file': [item: ArtifactListItem]
 }>()
 
 const { showToast } = useToast()
@@ -172,13 +174,41 @@ const loadMore = async () => {
   }
 }
 
-const openArtifact = (it: ArtifactListItem) => {
+/** 该产物类型能否在画布中预览（`.ppt`、未知扩展名等只能下载） */
+const canPreviewArtifact = (it: ArtifactListItem) =>
+  resolveGeneratedPreviewPlan(it.filename).kind !== 'download-only'
+
+/**
+ * 下载：追加 `download=1` 强制 attachment。
+ * 后端对 html / pdf / 图片默认给 inline，不追加时「下载」会退化成新标签页预览。
+ */
+const downloadArtifact = (it: ArtifactListItem) => {
   if (!it.download_url) {
     showToast('该产出物缺少下载地址', 'warning')
     return
   }
-  const href = resolveGeneratedFileHref(it.download_url)
+  const href = buildArtifactDownloadUrl(resolveGeneratedFileHref(it.download_url))
   window.open(href, '_blank', 'noopener,noreferrer')
+}
+
+/** 预览：交给父组件在画布中打开（画布状态归 useWorkspaceCanvas，抽屉不构造画布数据） */
+const previewArtifact = (it: ArtifactListItem) => {
+  if (!it.download_url) {
+    showToast('该产出物缺少下载地址', 'warning')
+    return
+  }
+  if (!canPreviewArtifact(it)) {
+    showToast('该格式暂不支持预览，已为你下载原文件', 'info')
+    downloadArtifact(it)
+    return
+  }
+  emit('preview-file', it)
+}
+
+/** 主体点击：可预览则预览，否则直接下载 —— 不留「点了没反应」的死区 */
+const activateArtifact = (it: ArtifactListItem) => {
+  if (canPreviewArtifact(it)) previewArtifact(it)
+  else downloadArtifact(it)
 }
 
 const closeDrawer = () => {
@@ -398,42 +428,71 @@ onUnmounted(() => {
 
               <!-- List -->
               <ul v-else class="flex flex-col gap-2">
-                <li v-for="it in items" :key="it.id">
-                  <button
-                    type="button"
-                    class="w-full flex items-start gap-3 rounded-xl p-3 text-left transition-colors border border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/60 hover:border-gray-100 dark:hover:border-gray-700 group"
-                    :title="`打开 ${it.filename}`"
-                    @click="openArtifact(it)"
-                  >
-                    <span
-                      :class="[
-                        'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center border mt-0.5 text-lg',
-                        fileVisuals[it.id]?.iconBg || 'bg-gray-100 dark:bg-gray-800',
-                      ]"
+                <li v-for="it in items" :key="it.id" class="group">
+                  <div class="w-full flex items-start gap-2 rounded-xl p-3 transition-colors border border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/60 hover:border-gray-100 dark:hover:border-gray-700">
+                    <!-- 主体：点击 = 预览（不可预览的类型改为直接下载） -->
+                    <button
+                      type="button"
+                      class="flex flex-1 min-w-0 items-start gap-3 text-left"
+                      :title="canPreviewArtifact(it) ? `预览 ${it.filename}` : `下载 ${it.filename}`"
+                      @click="activateArtifact(it)"
                     >
-                      {{ fileVisuals[it.id]?.icon || '📎' }}
-                    </span>
-                    <span class="flex-1 min-w-0">
-                      <span class="block text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">
-                        {{ it.filename }}
+                      <span
+                        :class="[
+                          'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center border mt-0.5 text-lg',
+                          fileVisuals[it.id]?.iconBg || 'bg-gray-100 dark:bg-gray-800',
+                        ]"
+                      >
+                        {{ fileVisuals[it.id]?.icon || '📎' }}
                       </span>
-                      <span class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500">
-                        <span class="px-1 py-px rounded bg-gray-100 dark:bg-gray-800 text-[10px] font-semibold">{{ typeLabel(it.artifact_type) }}</span>
-                        <span>{{ formatSize(it.size) }}</span>
-                        <span v-if="formatTime(it.created_at)">{{ formatTime(it.created_at) }}</span>
-                        <span
-                          class="rounded px-1 py-px text-[10px] font-semibold"
-                          :class="it.trace_id === props.traceId ? 'bg-primary/10 text-primary' : 'bg-gray-100 dark:bg-gray-800'"
-                          :title="artifactTraceTitle(it.trace_id)"
-                        >
-                          {{ artifactTraceLabel(it) }}
+                      <span class="flex-1 min-w-0">
+                        <span class="block text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">
+                          {{ it.filename }}
                         </span>
-                        <svg class="h-3 w-3 text-gray-300 dark:text-gray-600 group-hover:text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
+                        <span class="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500">
+                          <span class="px-1 py-px rounded bg-gray-100 dark:bg-gray-800 text-[10px] font-semibold">{{ typeLabel(it.artifact_type) }}</span>
+                          <span>{{ formatSize(it.size) }}</span>
+                          <span v-if="formatTime(it.created_at)">{{ formatTime(it.created_at) }}</span>
+                          <span
+                            class="rounded px-1 py-px text-[10px] font-semibold"
+                            :class="it.trace_id === props.traceId ? 'bg-primary/10 text-primary' : 'bg-gray-100 dark:bg-gray-800'"
+                            :title="artifactTraceTitle(it.trace_id)"
+                          >
+                            {{ artifactTraceLabel(it) }}
+                          </span>
+                        </span>
                       </span>
+                    </button>
+                    <!-- 动作区：预览 / 下载（桌面端 hover 或聚焦时显现，触屏常显） -->
+                    <span class="flex items-center gap-0.5 flex-shrink-0 self-center">
+                      <button
+                        v-if="canPreviewArtifact(it)"
+                        type="button"
+                        class="p-1.5 rounded-lg text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 transition-all focus-visible:opacity-100"
+                        :class="isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+                        :title="`预览 ${it.filename}`"
+                        :aria-label="`预览 ${it.filename}`"
+                        @click.stop="previewArtifact(it)"
+                      >
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="p-1.5 rounded-lg text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 transition-all focus-visible:opacity-100"
+                        :class="isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+                        :title="`下载 ${it.filename}`"
+                        :aria-label="`下载 ${it.filename}`"
+                        @click.stop="downloadArtifact(it)"
+                      >
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                      </button>
                     </span>
-                  </button>
+                  </div>
                 </li>
                 <li v-if="loading" class="flex items-center justify-center py-4">
                   <svg class="h-5 w-5 text-primary animate-spin" fill="none" viewBox="0 0 24 24">

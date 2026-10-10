@@ -53,7 +53,10 @@ def test_history_schema_exposes_citations():
 
 def test_db_history_endpoint_backfills_citations_by_trace_id():
     source = _read(CHAT_ENDPOINT)
-    fetch = source[source.index("async def get_history("):source.index("async def delete_history(")]
+    # 常规 `/history` 与审计 `/admin/history` 共用同一实现，切片起点取实现而非路由壳子。
+    fetch = source[
+        source.index("async def _build_chat_history_response("):source.index("async def delete_history(")
+    ]
 
     assert "knowledge_citation_store" in fetch, "DB 历史必须回填引用详情"
     assert "load_many" in fetch

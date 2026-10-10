@@ -56,7 +56,13 @@ def test_embed_chat_sends_turn_metadata_datasets_and_persists_pins():
     assert "unpinMetadataDatasetFromSession" in source
     assert "persistResourceScope" in source
     assert "const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value]" in source
-    assert source.index("const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value]") < source.index("chatInputRef.value.uploadedFiles = []")
+    # 顺序断言必须限定在发送流程内：文件里别处（身份切换重置）也会清空 uploadedFiles，
+    # 用全文件 index 比较会被那个更早的位置带偏。
+    send_start = source.index("const sendMessageInternal = async")
+    send_body = source[send_start:source.index("\nconst ", send_start + 10)]
+    assert send_body.index("const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value]") < send_body.index(
+        "chatInputRef.value.uploadedFiles = []"
+    )
     assert "body.metadata_dataset_ids = turnMetadataDatasetIds" in source
 
 
