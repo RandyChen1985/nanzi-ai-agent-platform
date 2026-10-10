@@ -80,6 +80,27 @@ async def init_infrastructure(request):
     await database.close_db()
     await redis.close_redis()
 
+
+@pytest.fixture(scope="function", autouse=True)
+def _release_loop_bound_singletons():
+    """兜底清理：任何测试结束后都丢弃绑定本轮 event loop 的全局 Redis 客户端。
+
+    ``no_infrastructure`` 测试会跳过 ``init_infrastructure``（既不初始化也不清理），但
+    它们仍可能执行真实业务代码路径、惰性创建全局 Redis 客户端；该连接绑定当轮 event
+    loop，若留到下一个测试（新 loop）就会报 ``Event loop is closed`` /
+    ``got Future attached to a different loop``。
+
+    这里**只把全局引用置空，绝不 await 关闭**：pytest-asyncio 的异步夹具 finalizer 运行
+    在**另一个新建的 loop** 里（``runner.run(async_finalizer())``），此时对绑定旧 loop 的
+    连接调用 ``aclose()`` 会立刻抛 ``RuntimeError: Event loop is closed``——本夹具最初就是
+    这么写的，结果给 ``test_session_status.py`` 引入了 7 个 teardown error。置空后下一个
+    测试会用新 loop 惰性重建连接，旧连接随 GC 回收。
+    """
+    yield
+    redis.redis_client = None
+    redis.redis_client_binary = None
+
+
 @pytest.fixture(autouse=True)
 async def mock_audit_manager():
     """Global mock for AuditManager."""
