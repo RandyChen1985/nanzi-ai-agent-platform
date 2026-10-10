@@ -226,6 +226,13 @@
 钉住了**；后端用例只看 `data` 载荷不看信封外壳。于是「前端按不存在的信封字段判成功」连续三轮没有
 任何用例覆盖。补法：前端把真实信封喂给真实实现的**行为测试** + 后端钉住信封形状，两侧各钉一半。
 
+#### 补充（2026-10-11）：把这条接缝做成会执行的回归
+
+`tests/api/v1/test_chat_session_restore_chain_cross_layer.py`——httpx+ASGI 打真实后端拿真实响应体，
+再用 node 执行 `EmbedChat.vue` 里**真实的 `checkConversationAdoption`**（连同真实的 `isApiSuccess`），
+断言混杂会话与「服务端活跃会话」两个来源都判成 `adoptable`、且历史只回自己的轮次；实现被改回去或
+helper 退化成只认遗留信封都会立刻变红（两条变异已验证）。无 node 的环境自动 skip。
+
 #### 最终验证（第七轮）
 
 - 前端契约：`pytest --confcutdir=tests/frontend tests/frontend` **1689 passed**（1685 → 1689，
