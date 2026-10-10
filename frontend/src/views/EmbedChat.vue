@@ -3917,7 +3917,7 @@ const loadReusableResultAvailability = async () => {
     return;
   }
   try {
-    const res = await artifactApi.reusableResults(cid);
+    const res = await artifactApi.reusableResults(cid, config.instanceId);
     if (conversationId.value !== cid) return;
     const items = res.data?.data?.items ?? [];
     const counts: Record<string, number> = {};
@@ -3972,6 +3972,7 @@ const {
   activeMetadataDatasetIds,
   syncActiveMetadataDatasetsFromInput,
   toggleMetadataDatasetActive,
+  clearActiveMetadataDatasets,
 } = useDatasetMount();
 const resourceScopeDraft = reactive({ project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
 const resourceOptionsLoading = ref(false);
@@ -4500,6 +4501,11 @@ const saveResourceScope = async () => {
 };
 
 let requestedConversationId = "";
+/**
+ * 当前界面上的会话所属身份。身份与它不一致时（同一 tab 换用户登录、宿主换票），
+ * 必须把上一位用户的会话现场整个丢掉，而不能只是换个存储键。
+ */
+let activeIdentityKey = "";
 let resourceScopeLoadSequence = 0;
 // 需为 ref：`isAwaitingHostInitConfig` 要据此判断宿主是否已下发凭据，普通 let 不会被 computed 追踪。
 const initConfigReceived = ref(false);
@@ -4507,21 +4513,93 @@ let pendingUrlTokenInitTimer: number | null = null;
 let conversationInitializationGeneration = 0;
 const LEGACY_CONVERSATION_STORAGE_KEY = "yovole_embed_conv_id";
 const INSTANCE_CONVERSATION_STORAGE_PREFIX = "yovole_embed_conv_id:";
+/** 用户维度标记：键形如 `yovole_embed_conv_id:u:<identity>[:<instance>]`。 */
+const USER_SCOPED_STORAGE_SEGMENT = "u";
 
 const normalizeEmbedInstanceId = (value: unknown): string => {
   const normalized = String(value ?? "").trim();
   return normalized;
 };
 
-const conversationStorageKey = () =>
-  config.instanceId
-    ? `${INSTANCE_CONVERSATION_STORAGE_PREFIX}${encodeURIComponent(config.instanceId)}`
-    : LEGACY_CONVERSATION_STORAGE_KEY;
+/**
+ * 身份键：会话与草稿快照的存储都必须带上它。
+ *
+ * 存储键过去只按 `instance_id` 分桶，与「谁在登录」无关：同一浏览器换用户登录后，
+ * 后一位用户会直接读到前一位用户的 conversation_id，进而加载、甚至继续写入
+ * 对方的会话。会话 ID 只是字符串，身份换了它不会自己换，所以存储必须带上身份维度。
+ */
+const identityKeyFromUserData = (data: any): string => {
+  const userId = String(data?.user_id ?? "").trim();
+  if (userId) return `id:${userId}`;
+  const userName = String(data?.user_name ?? "").trim();
+  return userName ? `name:${userName}` : "";
+};
 
-const readStoredConversationId = () => localStorage.getItem(conversationStorageKey());
+const currentIdentityKey = (): string => identityKeyFromUserData(currentUser.value);
+
+/**
+ * 当前身份下的会话存储键；身份未知时返回空串（此时既不读也不写）。
+ *
+ * 刻意**不回退**读取任何没有用户维度的旧键：那正是串会话的来源，宁可当作没有记录
+ * ——代价只是升级后重新开一个空会话，服务端历史与日志页都不受影响。
+ */
+const conversationStorageKey = (): string => {
+  const identity = currentIdentityKey();
+  if (!identity) return "";
+  const scope = `${USER_SCOPED_STORAGE_SEGMENT}:${encodeURIComponent(identity)}`;
+  const instanceId = normalizeEmbedInstanceId(config.instanceId);
+  return instanceId
+    ? `${INSTANCE_CONVERSATION_STORAGE_PREFIX}${scope}:${encodeURIComponent(instanceId)}`
+    : `${INSTANCE_CONVERSATION_STORAGE_PREFIX}${scope}`;
+};
+
+const readStoredConversationId = (): string => {
+  try {
+    const key = conversationStorageKey();
+    return key ? (localStorage.getItem(key) || "").trim() : "";
+  } catch {
+    return "";
+  }
+};
+
+const clearStoredConversationId = () => {
+  try {
+    const key = conversationStorageKey();
+    if (key) localStorage.removeItem(key);
+  } catch {
+    /* 存储不可用时无需处理 */
+  }
+};
 
 const persistConversationId = (cid: string) => {
-  if (cid) localStorage.setItem(conversationStorageKey(), cid);
+  if (!cid) return;
+  try {
+    const key = conversationStorageKey();
+    if (key) localStorage.setItem(key, cid);
+  } catch {
+    /* 存储不可用时无需处理 */
+  }
+};
+
+/**
+ * 清掉所有没有用户维度的历史键（无 instance 维度的旧键、以及带 instance 但没有用户
+ * 维度的键）。它们没有身份边界，留着只会被误读，所以只清理、绝不读取。
+ */
+const purgeLegacyConversationStorage = () => {
+  try {
+    localStorage.removeItem(LEGACY_CONVERSATION_STORAGE_KEY);
+    const scopedPrefix = `${INSTANCE_CONVERSATION_STORAGE_PREFIX}${USER_SCOPED_STORAGE_SEGMENT}:`;
+    const staleKeys: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index) || "";
+      if (!key.startsWith(INSTANCE_CONVERSATION_STORAGE_PREFIX)) continue;
+      if (key.startsWith(scopedPrefix)) continue;
+      staleKeys.push(key);
+    }
+    staleKeys.forEach((key) => localStorage.removeItem(key));
+  } catch {
+    /* 存储不可用时无需处理 */
+  }
 };
 
 /**
@@ -4535,14 +4613,39 @@ const STREAM_SNAPSHOT_STORAGE_PREFIX = "nzi_embed_stream_snapshot:";
 const STREAM_SNAPSHOT_WRITE_INTERVAL_MS = 1500;
 
 const streamSnapshotStorageKey = (cid: string): string => {
-  const bucket = config.instanceId ? encodeURIComponent(config.instanceId) : "default";
-  return `${STREAM_SNAPSHOT_STORAGE_PREFIX}${bucket}:${encodeURIComponent(cid)}`;
+  // 同样带身份维度：换用户后重建页面时，绝不能把上一位用户的流式草稿还原到
+  // 新用户的界面上（草稿正文就是从对方会话里抄来的）。
+  // 身份未知（尚未鉴权成功）时**不产生键**：绝不回退到 shared/unknown 桶，否则匿名态
+  // 落盘的草稿会被随后登录的任意用户读到（草稿正文就是会话内容）。
+  const identity = currentIdentityKey();
+  if (!identity || !cid) return "";
+  const instanceBucket = config.instanceId ? encodeURIComponent(config.instanceId) : "default";
+  return `${STREAM_SNAPSHOT_STORAGE_PREFIX}${USER_SCOPED_STORAGE_SEGMENT}:${encodeURIComponent(identity)}:${instanceBucket}:${encodeURIComponent(cid)}`;
+};
+
+/** 清掉没有用户维度的历史草稿键：只清理、不读取。 */
+const purgeLegacyStreamSnapshots = () => {
+  try {
+    const scopedPrefix = `${STREAM_SNAPSHOT_STORAGE_PREFIX}${USER_SCOPED_STORAGE_SEGMENT}:`;
+    const staleKeys: string[] = [];
+    for (let index = 0; index < sessionStorage.length; index += 1) {
+      const key = sessionStorage.key(index) || "";
+      if (!key.startsWith(STREAM_SNAPSHOT_STORAGE_PREFIX)) continue;
+      if (key.startsWith(scopedPrefix)) continue;
+      staleKeys.push(key);
+    }
+    staleKeys.forEach((key) => sessionStorage.removeItem(key));
+  } catch {
+    /* 存储不可用时无需处理 */
+  }
 };
 
 const clearStreamSnapshot = (cid: string) => {
   if (!cid) return;
   try {
-    sessionStorage.removeItem(streamSnapshotStorageKey(cid));
+    const key = streamSnapshotStorageKey(cid);
+    if (!key) return;
+    sessionStorage.removeItem(key);
   } catch {
     // 隐私模式或配额异常：忽略。
   }
@@ -4590,8 +4693,10 @@ const persistStreamSnapshot = (
     },
   });
   if (!snapshot) return;
+  const key = streamSnapshotStorageKey(cid);
+  if (!key) return;
   try {
-    sessionStorage.setItem(streamSnapshotStorageKey(cid), JSON.stringify(snapshot));
+    sessionStorage.setItem(key, JSON.stringify(snapshot));
   } catch {
     // 超配额或隐私模式：放弃本次快照，不影响对话本身。
   }
@@ -4599,7 +4704,9 @@ const persistStreamSnapshot = (
 
 const readStreamSnapshot = (cid: string): EmbedStreamSnapshot | null => {
   try {
-    const raw = sessionStorage.getItem(streamSnapshotStorageKey(cid));
+    const key = streamSnapshotStorageKey(cid);
+    if (!key) return null;
+    const raw = sessionStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as EmbedStreamSnapshot;
     if (!isEmbedStreamSnapshotUsable(parsed, cid)) {
@@ -5013,6 +5120,146 @@ const updateActiveConversationOnServer = async (cid: string) => {
 watch(conversationId, () => {
   void loadResourceScope();
 });
+
+/**
+ * 采用某个会话 ID 之前先确认它不是别人的。三种结果：
+ *
+ * - `adoptable`：可以安全采用（含「全新会话」与「确实属于自己」）；
+ * - `foreign`：已属于他人 —— 必须丢弃，并清掉本地记录；
+ * - `unknown`：校验没能得出结论（网络/服务异常）—— 同样**不采用**，但**不清**本地记录，
+ *   否则一次网络抖动就会永久删掉用户自己的续接记录（会话仍在历史列表里，可手动找回）。
+ *
+ * 会话 ID 是纯字符串，来源有三处都不可信：宿主下发的 `conversation_id`、localStorage
+ * 里的残留、服务端按用户存的活跃会话（历史遗留写入）。身份换了它们都不会变，所以要
+ * 逐个问服务端「这个会话是不是已经属于别人了」。
+ */
+const checkConversationAdoption = async (
+  cid: string,
+): Promise<'adoptable' | 'foreign' | 'unknown'> => {
+  const normalized = String(cid || "").trim();
+  if (!normalized) return 'unknown';
+  try {
+    const res = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/ownership`,
+      {
+        params: activeConversationRequestParams(),
+        headers: embedAuthHeaders(),
+      },
+    );
+    if (res.data?.status !== "success") return 'unknown';
+    if (res.data?.data?.foreign === true) {
+      console.warn("[Session] Discarded a conversation id that belongs to another user.");
+      return 'foreign';
+    }
+    return 'adoptable';
+  } catch (e: any) {
+    console.warn("[Session] Conversation ownership check failed; not adopting it:", e?.message || e);
+    return 'unknown';
+  }
+};
+
+/** 仅用于「能否采用」的布尔判断（不采用即返回 false）。 */
+const isConversationAdoptable = async (cid: string): Promise<boolean> =>
+  (await checkConversationAdoption(cid)) === 'adoptable';
+
+/** 宿主下发的欢迎语覆盖文案：换身份时用于恢复「宿主口径」，而不是恢复上一位用户的姓名。 */
+let welcomeMessageFromHost = "";
+
+/**
+ * 身份切换时丢弃上一位用户的会话现场。
+ *
+ * 存储键已按身份分桶，但内存里的消息、会话 ID、分页游标、资源范围与流式草稿不会自己
+ * 消失；只清存储的话，界面上仍然是上一位用户的对话，而新提问已经写到新身份名下——
+ * 这正是「切换用户后加载到其他用户会话」的最后一环。
+ */
+
+const resetSessionForIdentityChange = (
+  nextIdentityKey: string,
+  options?: { preserveRequestedConversationId?: boolean },
+) => {
+  const previousId = conversationId.value;
+  // 刻意**不动**上一位用户的会话：既不用新身份去 finalize 它（那是别人的会话，新身份也
+  // 读不到它的 Redis 历史，只会白跑一次请求），也不去删它的草稿快照（快照键含身份维度，
+  // 新身份读不到；反过来按新身份算键去删，删的是新身份自己的）。
+  if (previousId) {
+    console.log("[Session] Dropped the previous identity's conversation view:", previousId);
+  }
+  // 上一位用户的生成可能还在途：必须先断掉本地流。否则它的回调会继续往下面刚清空的
+  // messages 里追加内容，等于把对方会话的内容重新贴回新用户界面。
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+  isProcessing.value = false;
+  if (thoughtTimer) {
+    clearInterval(thoughtTimer);
+    thoughtTimer = null;
+  }
+  dropPendingQuickSend();
+  clearRunStatusNudge();
+  messages.value = [];
+  conversationId.value = "";
+  if (!options?.preserveRequestedConversationId) requestedConversationId = "";
+  resourceScope.value = emptyResourceScopeState();
+  Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
+  resourceScopeLoadSequence += 1;
+  historyRequestSequence += 1;
+  historyOffset.value = 0;
+  hasMoreHistory.value = true;
+  isLoadingHistory.value = false;
+  activeStreamDraft = null;
+  streamReplayCursor.value = { lastSeq: 0, traceId: "" };
+  clearStreamReplayTimer();
+  // 续显标志位也归零：否则新身份首屏恢复草稿时会「未对齐就重放」，正文可能重复一段。
+  streamReplayPrimed = false;
+  streamReplayNoticeShown = false;
+  // 远程运行轮询与降级提示属于上一位用户的会话运行态：先停掉，避免新身份输入框
+  // 短暂显示「生成中」或残留对方的沙箱降级横幅。
+  stopRemoteRunPolling();
+  markOutputCompleted();
+  sandboxDegradedMessage.value = "";
+
+  // —— 界面现场：会话数据清了不等于界面清了 ——
+  // 历史侧栏列表是上一位用户拉取的（列表项里就有对方的提问原文与摘要），必须清空；
+  // 否则换人后侧栏仍显示对方会话，点进去还会采用一个不属于自己的会话 ID。
+  historyList.value = [];
+  historyPage.value = 1;
+  historyHasMore.value = true;
+  loadingHistory.value = false;
+  loadingMoreHistory.value = false;
+  historyKeyword.value = "";
+  historyFilters.value = { ...DEFAULT_HISTORY_FILTERS };
+  // 浏览器面板/网页预览：面板靠 session-id + viewer-token 保持实时画面（服务端 token 是
+  // 会话级凭证、不绑用户），换人后既会继续显示对方画面，还能把输入转发过去。必须断开。
+  browserOpenGeneration += 1;
+  browserPanelVisible.value = false;
+  browserPanelOpening.value = false;
+  browserSessionId.value = null;
+  browserViewerToken.value = null;
+  browserEnvironmentError.value = null;
+  webPreviewVisible.value = false;
+  webPreviewUrl.value = null;
+  // 输入区：草稿文字、已上传附件（含图片）、数据集挂载都是上一位用户的内容。
+  userInput.value = "";
+  clearActiveMetadataDatasets(chatInputRef.value);
+  if (chatInputRef.value) chatInputRef.value.uploadedFiles = [];
+  // 回溯/统计弹窗的内存内容：弹窗恰好开着时显示的仍是对方的执行链与统计。
+  traceLogData.value = null;
+  activeHistoryItem.value = null;
+  conversationTurns.value = [];
+  expandedTraceSteps.value = {};
+  currentStats.value = [];
+  expandedStats.value = {};
+  // 智能体列表与路由偏好按身份从服务端取：置为未拉取，让新身份的初始化真正重新拉一次
+  // （纯 Cookie 身份切换不会触发 token watcher 的强制刷新）。
+  hasFetchedAgents.value = false;
+  // 宿主业务上下文（页面信息等）随身份一起作废：新用户初始化时会重新下发。
+  injectedContext.value = {};
+  // 欢迎语里含上一位用户的姓名，必须重算；宿主下发过覆盖文案则沿用宿主的。
+  config.welcomeMessage = welcomeMessageFromHost;
+  resetEmbedThinkingOverrides();
+  activeIdentityKey = nextIdentityKey;
+};
 
 const generateNewConversation = () => {
   const previousId = conversationId.value;
@@ -5561,22 +5808,41 @@ const fetchHistory = async (isLoadMore = false) => {
     }
   }
 };
-const handleHistoryClick = (item: any) => {
+/** 侧栏连续点击的采用序列：只让最后一次点击生效。 */
+let historyAdoptionSequence = 0;
+
+const handleHistoryClick = async (item: any) => {
     if (!item.conversation_id) {
         if (item.query) userInput.value = item.query;
         return;
     }
 
+    // 侧栏列表是「本人视角」的，但这份列表也可能是上一位用户留下的旧列表，或者里面
+    // 混着历史遗留的串号会话。采用前仍要过一次归属校验：采用别人的会话，界面会切过去，
+    // 但后续提问会被后端 403 拦住，变成一个说不清的僵局。
+    const target = String(item.conversation_id);
+    const adoptionSequence = ++historyAdoptionSequence;
+    const adoption = await checkConversationAdoption(target);
+    if (adoptionSequence !== historyAdoptionSequence) return;
+    if (adoption !== 'adoptable') {
+        showToast("该会话包含其他用户的记录，已阻止在当前身份下打开", "warning");
+        if (adoption === 'foreign') {
+            if (readStoredConversationId() === target) clearStoredConversationId();
+            void fetchHistory();
+        }
+        return;
+    }
+
     const previousId = conversationId.value;
-    if (previousId && previousId !== item.conversation_id) {
+    if (previousId && previousId !== target) {
         finalizeConversationInBackground(previousId);
     }
 
     // Switch to this conversation
     resetEmbedThinkingOverrides();
-    conversationId.value = item.conversation_id;
-    persistConversationId(item.conversation_id);
-    updateActiveConversationOnServer(item.conversation_id);
+    conversationId.value = target;
+    persistConversationId(target);
+    updateActiveConversationOnServer(target);
 
     // Reset message list and history state
     messages.value = [];
@@ -6733,14 +6999,18 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
     }
   }
   if (data.conversation_id) {
+    // 宿主下发的会话 ID 只登记为「待采用」，**不写内存、不持久化**：它还没过归属校验，
+    // 直接持久化会把它写进当前身份的桶、覆盖本人原有的续接记录；直接采用会让界面在
+    // 校验完成前短暂停在一个可能属于他人的会话上。真正的采用在 initChat 校验通过后完成。
     requestedConversationId = String(data.conversation_id);
-    conversationId.value = requestedConversationId;
-    persistConversationId(requestedConversationId);
   } else if (!data.agent_id) {
     requestedConversationId = "";
   }
   if (data.theme) applyTheme(data.theme, data.styleVars);
-  if (data.welcome_message_override) config.welcomeMessage = data.welcome_message_override;
+  if (data.welcome_message_override) {
+    welcomeMessageFromHost = String(data.welcome_message_override);
+    config.welcomeMessage = welcomeMessageFromHost;
+  }
   if (data.user_avatar) config.userAvatar = data.user_avatar;
   if (data.agent_avatar) config.agentAvatar = data.agent_avatar;
   if (data.business_context) mergeBusinessContext(data.business_context);
@@ -7327,6 +7597,48 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     "X-API-Key": token,
   });
 
+  /** 按同源 Cookie 的身份完成认证：清掉可能属于上一位用户的本地凭据与请求头。 */
+  const attachCookieIdentity = (data: Record<string, unknown>) => {
+    attachUser(data);
+    localStorage.removeItem("api_key");
+    localStorage.removeItem("yovole_token");
+    delete axios.defaults.headers.common["Authorization"];
+    delete axios.defaults.headers.common["X-API-Key"];
+    config.token = "";
+  };
+
+  /**
+   * 本 tab 存储的嵌入令牌「有效但属于别人」时，改用同源 Cookie 的身份。
+   *
+   * sessionStorage 里的令牌是上一位使用者留下的，而浏览器 Cookie 已经是新登录的用户
+   * （同一台机器换人登录、或门户退出后换账号再打开嵌入页）。此时若继续用存储令牌，界面
+   * 会显示新用户、数据却读写到旧用户名下——包括读出对方的会话。Cookie 才是当前权威身份，
+   * 因此这里以 Cookie 为准并丢弃存储令牌。
+   *
+   * 返回 true 表示已按 Cookie 身份认证成功（调用方直接成功返回）。
+   */
+  const switchToCookieIdentityIfChanged = async (): Promise<boolean> => {
+    const storedIdentity = currentIdentityKey();
+    if (!storedIdentity) return false;
+    try {
+      const res = await fetch("/api/portal/auth/user_apikey", { credentials: "include" });
+      if (!res.ok) return false;
+      const body = await res.json();
+      if (body?.status !== "success" || !body.data) return false;
+      const cookieIdentity = identityKeyFromUserData(body.data);
+      if (!cookieIdentity || cookieIdentity === storedIdentity) return false;
+      console.warn("[Auth] Stored embed session belongs to another identity; using the session cookie identity instead.");
+      attachCookieIdentity(body.data);
+      clearEmbedSession();
+      lastSessionCookieIssued.value = false;
+      console.log("[Auth] Validation success via session cookie identity:", accountInfo.value?.user_name);
+      return true;
+    } catch (e: any) {
+      console.warn("[Auth] Cookie identity reconciliation failed:", e?.message || e);
+      return false;
+    }
+  };
+
   if (strict) {
     const token = config.token?.trim();
     if (!token) return false;
@@ -7363,10 +7675,17 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
   console.log("[Auth] Starting validation, candidates:", candidates.length);
 
   let rejectedCredential = false;
+  const explicitToken = String(config.token || "").trim();
   for (const key of candidates) {
     try {
       const ok = await tryOnce(authHeaders(key));
       if (ok) {
+        // 只有「本 tab 存储的令牌」（而非本次显式下发的 token）才允许被 Cookie 身份取代：
+        // 它是上一位使用者留下的，而 Cookie 已经是新登录的用户。
+        const usingStoredCredential = key === storedSessionCredential && key !== explicitToken;
+        if (usingStoredCredential && (await switchToCookieIdentityIfChanged())) {
+          return true;
+        }
         // 优先使用后端换发的短期会话令牌，真实 Key 用后即弃
         syncValidatedCredentials(issuedSessionToken || key);
         // 令牌已落到本 tab，刷新有据可依，可以清 URL 里的长期 Key 了
@@ -7377,6 +7696,15 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     } catch (error: any) {
       const status = error.response?.status;
       if (status === 401 || status === 403) {
+        // 显式凭据（URL ?token= / INIT_CONFIG 的 token）被拒：宿主已经明确指定了身份，
+        // 绝不能再拿「本 tab 存储的令牌」顶上——那个令牌属于上一位使用者，顶上去等于
+        // 宿主想切到 B、页面却静默地以 A 的身份继续跑（共享设备上就是串号）。
+        if (key === explicitToken) {
+          console.warn(
+            "[Auth] Explicit credential rejected (" + status + "); not falling back to the stored session.",
+          );
+          return false;
+        }
         console.warn("[Auth] Key candidate rejected (" + status + "), trying next...");
         rejectedCredential = true;
         continue;
@@ -7392,24 +7720,21 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     lastSessionCookieIssued.value = false;
   }
 
-  // 显式提供了凭据（URL ?token= 或 INIT_CONFIG 的 token/api_key）或本 tab 持有嵌入会话
-  // 时，凭据无效即失败，不再回落到同源 Cookie：否则宿主传了无效 token（或本 tab 的嵌入
-  // 会话已失效）却以浏览器里残留的 portal 会话「成功」进入，共享设备上会被上一位用户
-  // 带着进门，代客场景下还会把身份静默换成门户登录用户。
-  // 仅当「完全没有嵌入凭据」（平台内 iframe 访问，子页拿不到 HttpOnly Cookie）时才回落。
-  if (!config.token && !storedSessionCredential) {
+  // 显式提供了凭据（URL ?token= 或 INIT_CONFIG 的 token/api_key）时，凭据无效即失败，
+  // 不再回落到同源 Cookie：否则宿主传了无效 token 却以浏览器里残留的 portal 会话「成功」
+  // 进入，共享设备上会被上一位用户带着进门，代客场景下还会把身份静默换成门户登录用户。
+  //
+  // 只有「本 tab 存储的嵌入令牌」不同：它可能正是上一位使用者留下的、已被吊销，
+  // 此时回落到当前 Cookie 身份才是正确行为（换人登录的主场景）；仅当浏览器里确实没有
+  // 同源 Cookie 会话时才会失败。
+  if (!config.token) {
     // 仅携带 Cookie（httponly portal_session），且不走 axios 拦截器以免带上失效的 localStorage
     try {
       const res = await fetch("/api/portal/auth/user_apikey", { credentials: "include" });
       if (res.ok) {
         const body = await res.json();
         if (body?.status === "success" && body.data) {
-          attachUser(body.data);
-          localStorage.removeItem("api_key");
-          localStorage.removeItem("yovole_token");
-          delete axios.defaults.headers.common["Authorization"];
-          delete axios.defaults.headers.common["X-API-Key"];
-          config.token = "";
+          attachCookieIdentity(body.data);
           console.log("[Auth] Validation success via session cookie:", accountInfo.value?.user_name);
           return true;
         }
@@ -7439,6 +7764,13 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
     }
     if (initGeneration !== conversationInitializationGeneration) return;
     hasPermission.value = true;
+    // 身份已在上面确定：若与界面上会话所属身份不同（换用户登录 / 宿主换票），先丢弃
+    // 上一位用户的会话现场。此处保留本次 INIT_CONFIG 下发的 resume id——它属于新身份。
+    const identityKey = currentIdentityKey();
+    if (identityKey && identityKey !== activeIdentityKey) {
+      console.log("[Session] Identity changed; resetting the previous user's session view.");
+      resetSessionForIdentityChange(identityKey, { preserveRequestedConversationId: true });
+    }
     // 2. Clear skeleton as soon as auth is confirmed
     isInitialLoading.value = false;
     // 3. Set default welcome message if not provided
@@ -7479,16 +7811,47 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
         }
     }).catch(e => console.warn("Failed to preload agents", e));
     // 6. Workbench/host explicit resume wins; otherwise fetch the active conversation.
+    //    任何来源的会话 ID 都必须先过归属校验：它只是字符串，换身份后不会自己变，
+    //    直接采用就会加载（并继续写入）别人的会话。
     if (initGeneration !== conversationInitializationGeneration) return;
     let loadedCid = false;
     if (requestedConversationId) {
-      conversationId.value = requestedConversationId;
-      persistConversationId(requestedConversationId);
-      updateActiveConversationOnServer(requestedConversationId);
-      loadedCid = true;
-    } else {
+      const requested = String(requestedConversationId);
+      const requestedAdoption = await checkConversationAdoption(requested);
+      // await 期间可能已经开始了新一次初始化（宿主重发 INIT_CONFIG / 重新校验身份）：
+      // 必须在这里再确认一次代次，否则会把上一代的结论写进新一代的状态里。
+      if (initGeneration !== conversationInitializationGeneration) return;
+      if (requestedAdoption === 'adoptable') {
+        conversationId.value = requested;
+        persistConversationId(requested);
+        updateActiveConversationOnServer(requested);
+        loadedCid = true;
+      } else {
+        requestedConversationId = "";
+        // applyInitConfigPayload 只登记待采用 ID，但更早的采用/新建仍可能把同一个 ID
+        // 留在 conversationId 上；校验不通过时必须一并清掉，否则后面会「沿用」这个
+        // 不可用的他人会话 ID，既不新建会话、又会在空历史里停住。
+        if (conversationId.value === requested) conversationId.value = "";
+        // 只有确认「确实是别人的」才清掉本地记录：网络异常时清掉，会平白删掉用户
+        // 自己的续接记录（会话仍在历史列表里，但不再自动续接）。
+        if (requestedAdoption === 'foreign') clearStoredConversationId();
+      }
+    }
+    if (initGeneration !== conversationInitializationGeneration) return;
+
+    if (!loadedCid) {
       const savedId = readStoredConversationId();
-      if (savedId) conversationId.value = savedId;
+      const savedAdoption = savedId ? await checkConversationAdoption(savedId) : 'unknown';
+      if (initGeneration !== conversationInitializationGeneration) return;
+      if (savedId && savedAdoption === 'adoptable') {
+        conversationId.value = savedId;
+        updateActiveConversationOnServer(savedId);
+        loadedCid = true;
+      } else if (savedId && savedAdoption === 'foreign') {
+        // 本身份下的残留记录已属于别人（历史遗留写入）：清掉，不要再读。
+        clearStoredConversationId();
+      }
+      if (initGeneration !== conversationInitializationGeneration) return;
       if (shouldUseServerActiveConversation()) {
         try {
           const activeRes = await axios.get("/api/v1/chat/active", {
@@ -7496,10 +7859,18 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
             headers: embedAuthHeaders()
           });
           if (initGeneration !== conversationInitializationGeneration) return;
-          if (activeRes.data?.status === "success" && activeRes.data?.data?.conversation_id) {
-            conversationId.value = activeRes.data.data.conversation_id;
-            persistConversationId(conversationId.value);
-            loadedCid = true;
+          const activeCid = String(activeRes.data?.data?.conversation_id || "").trim();
+          if (activeRes.data?.status === "success" && activeCid) {
+            const activeAdoption = await checkConversationAdoption(activeCid);
+            if (initGeneration !== conversationInitializationGeneration) return;
+            if (activeAdoption === 'adoptable') {
+              conversationId.value = activeCid;
+              persistConversationId(activeCid);
+              loadedCid = true;
+            } else {
+              // 服务端活跃指针指向别人的会话：不采用，交由下面新建会话覆盖它。
+              console.warn("[Init] Server active conversation belongs to another user; starting a new one.");
+            }
           }
         } catch (e: any) {
           console.warn("[Init] Failed to fetch active conversation from server:", e);
@@ -7630,6 +8001,12 @@ const fetchConversationHistory = async (
               });
           }
       });
+      // 首屏历史必须无条件覆盖：空结果同样要清空。否则「本会话没有任何属于当前用户
+      // 的轮次」这种情况（正好是换用户后残留的会话 ID 会遇到的）会保留上一位用户已经
+      // 渲染在界面上的消息，形成看得见的串会话。
+      if (newHistoryBatch.length === 0 && !isLoadMore) {
+        messages.value = [];
+      }
       if (newHistoryBatch.length > 0) {
         if (
           requestSequence !== historyRequestSequence ||
@@ -9733,6 +10110,9 @@ const onUnmountHandlers = ref<{
 // Lifecycle
 onMounted(() => {
   console.log("[LifeCycle] EmbedChat mounted. App Version: 2026-01-20-v1");
+  // 没有用户维度的会话/草稿键一律清掉：它们没有身份边界，留着只会被误读。
+  purgeLegacyConversationStorage();
+  purgeLegacyStreamSnapshots();
   window.addEventListener("resize", updateWidth);
   updateWidth();
 

@@ -22,8 +22,8 @@ def test_embedchat_defines_dual_track_conversation_storage_policy():
     assert 'const LEGACY_CONVERSATION_STORAGE_KEY = "yovole_embed_conv_id";' in source
     assert 'const INSTANCE_CONVERSATION_STORAGE_PREFIX = "yovole_embed_conv_id:";' in source
     assert "const normalizeEmbedInstanceId =" in source
-    assert "const conversationStorageKey = () =>" in source
-    assert "const readStoredConversationId = () =>" in source
+    assert "const conversationStorageKey = (): string =>" in source
+    assert "const readStoredConversationId = (): string =>" in source
     assert "const persistConversationId = (cid: string) =>" in source
     assert "const shouldUseServerActiveConversation = () => Boolean(config.token);" in source
     assert 'localStorage.setItem("yovole_embed_conv_id",' not in source
@@ -73,7 +73,11 @@ def test_embedchat_passes_current_conversation_to_message_renderer():
 
     assert embed_source.count(':conversation-id="conversationId"') >= 2
     assert "conversationId?: string;" in renderer_source
-    assert "props.conversationId === undefined" in renderer_source
+    # 预览 URL 只用调用方传入的会话 ID；不得回退读没有用户维度的旧键
+    # （`yovole_embed_conv_id` 已按「只清理、不读取」处理）。
+    assert "const convId = props.conversationId || \"\";" in renderer_source
+    assert 'getItem("yovole_embed_conv_id")' not in renderer_source
+    assert "getItem('yovole_embed_conv_id')" not in renderer_source
 
 
 def test_embedchat_normalizes_instance_ids_before_postmessage_filtering():

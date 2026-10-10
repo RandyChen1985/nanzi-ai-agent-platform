@@ -108,11 +108,16 @@ def test_stop_generation_cancels_backend_run_before_aborting_sse():
 
     assert "/api/v1/chat/cancel" in util
     for source in (embed, debug):
-        cancel_at = source.find("cancelConversationRun(")
-        abort_at = source.find("abortController.abort()")
-        stop_at = source.find("const stopGeneration")
-        assert cancel_at > stop_at > 0
-        assert abort_at > cancel_at
+        # 只在 stopGeneration 函数体内比较顺序：EmbedChat 里别处（如身份切换重置会话）
+        # 也会 abortController.abort()，用全文 find 会把顺序断言打在无关代码上。
+        stop_at = source.index("const stopGeneration")
+        stop_body = source[stop_at:]
+        next_top_level_const = stop_body.find("\nconst ", 1)
+        if next_top_level_const > 0:
+            stop_body = stop_body[:next_top_level_const]
+        cancel_at = stop_body.index("cancelConversationRun(")
+        abort_at = stop_body.index("abortController.abort()")
+        assert cancel_at < abort_at, "必须先请求后端释放会话锁，再断开本地 SSE"
 
 
 

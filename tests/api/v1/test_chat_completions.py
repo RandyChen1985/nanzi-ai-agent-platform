@@ -6,6 +6,21 @@ from app.main import app
 from unittest.mock import AsyncMock, MagicMock
 from app.services.auth_service import AuthService
 
+
+def _db_session_without_foreign_conversation():
+    """SSE 契约用例的最小 DB 替身。
+
+    `/chat/completions` 现在会先做会话归属守卫（查 DB 里是否存在他人的同名会话），
+    因此这些用例不能再传 `None` 或裸 `MagicMock()`：前者的 `execute` 不可调用，
+    后者的 `scalar_one_or_none()` 返回真值会被误判成「他人会话」而 403。
+    """
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+    return session
+
+
 @pytest.fixture
 async def mock_agent_dispatcher(mocker):
     """
@@ -133,7 +148,7 @@ async def test_chat_completion_stream_sse_snapshot(monkeypatch):
         return {"user_id": "u-sse", "role": "user"}
 
     async def fake_db_session():
-        yield None
+        yield _db_session_without_foreign_conversation()
 
     async def fake_chat_completion_stream(*args, **kwargs):
         yield {"type": "log", "title": "调用工具: search_knowledge_base", "status": "pending"}
@@ -230,7 +245,7 @@ async def test_chat_completion_stream_client_disconnect_resilience(mocker):
     )
 
     async def _override_get_db_session():
-        yield MagicMock()
+        yield _db_session_without_foreign_conversation()
 
     app.dependency_overrides[chat_endpoint.require_api_key] = lambda: {
         "user_id": 1,
@@ -293,7 +308,7 @@ async def test_duplicate_client_request_id_does_not_start_another_stream(monkeyp
         return {"project_name": "", "datasets": [], "knowledge_bases": [], "skills": [], "mcp_tools": []}
 
     async def fake_db_session():
-        yield None
+        yield _db_session_without_foreign_conversation()
 
     async def fake_require_api_key():
         return {"user_id": "u-duplicate", "role": "user"}
@@ -381,7 +396,7 @@ async def test_chat_completion_stream_producer_hard_timeout_releases_locks(mocke
     mocker.patch.object(chat_endpoint.ConfigService, "get", side_effect=_tiny_config)
 
     async def _override_get_db_session():
-        yield MagicMock()
+        yield _db_session_without_foreign_conversation()
 
     app.dependency_overrides[chat_endpoint.require_api_key] = lambda: {
         "user_id": 1,

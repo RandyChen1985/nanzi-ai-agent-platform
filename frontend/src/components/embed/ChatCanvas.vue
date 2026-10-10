@@ -523,11 +523,7 @@ const analyzeCodeOutput = () => {
   emit('analyze-output', question);
 };
 
-const resolveConversationId = () =>
-  props.conversationId
-  || localStorage.getItem('yovole_embed_conv_id')
-  || localStorage.getItem('agent_debug_conv_id')
-  || '';
+const resolveConversationId = () => props.conversationId || '';
 
 const syncEditorFromData = () => {
   const raw = props.data?.content;

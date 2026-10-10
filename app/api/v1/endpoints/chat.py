@@ -16,7 +16,7 @@ from app.services.ai.context_usage import estimate_context_usage
 from app.services.ai.export_service import ExportService
 from app.services.config_service import ConfigService
 from app.core.context import set_debug_context
-from app.core.dependencies import require_api_key
+from app.core.dependencies import require_admin, require_api_key
 from app.schemas.response import StandardResponse, ListResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
 from app.utils.fs_access import get_user_uploads_dir, open_upload_storage_file
@@ -91,6 +91,8 @@ async def _conversation_belongs_to_user(
     db: AsyncSession,
     user_id: str,
     conversation_id: str,
+    *,
+    instance_id: Optional[str] = None,
 ) -> bool:
     """判断会话是否归属当前用户，用于避免读取他人会话结果。
 
@@ -98,6 +100,9 @@ async def _conversation_belongs_to_user(
     同时该用户在该会话下也可能已有 Redis 消息历史。因此只要三者任一成立即视为归属，
     避免空会话被误判为不存在而返回 404。读取侧本身按“用户+会话”Redis 前缀隔离，
     因此该判定不会造成跨用户数据泄露。
+
+    ``instance_id`` 必须与「设置活跃会话」时用的实例一致：活跃会话按实例分桶存储，
+    丢掉它就会退回默认桶，把多实例嵌入下的自己会话误判为不归属。
     """
     from sqlalchemy import select
     from app.models.audit import AgentExecutionHistory
@@ -118,13 +123,48 @@ async def _conversation_belongs_to_user(
     try:
         if await memory_service.history_exists(user_id, conversation_id):
             return True
-        active = await memory_service.get_active_conversation(user_id)
+        active = await memory_service.get_active_conversation(user_id, instance_id=instance_id)
         if active and str(active) == conversation_id:
             return True
     except Exception:
         # Redis 不可用时不做额外判定，保持原有 DB 判定结果（即未命中则拒绝）。
         pass
     return False
+
+
+async def _conversation_owned_by_other_user(
+    db: AsyncSession,
+    user_id: str,
+    conversation_id: Optional[str],
+) -> bool:
+    """该会话是否已归属**其他**用户。
+
+    用于**写侧**归属守卫（登记活跃会话、发起对话、前端采用会话 ID 前校验）：
+    ``conversation_id`` 是客户端可自由传入的字符串，若不做校验，换用户后残留的
+    会话 ID 会让新用户把自己的轮次写进别人的会话。读侧本来就按用户过滤，这里的
+    意义是「不越界写」。
+
+    只认数据库里已存在的他人轮次：全新会话（尚无任何行）与历史遗留的
+    ``user_id IS NULL`` 行都不算他人所有，避免把正常新建会话误判为越权。
+    """
+    from sqlalchemy import select
+    from app.models.audit import AgentExecutionHistory
+
+    normalized = str(conversation_id or "").strip()
+    if not normalized or not user_id:
+        return False
+
+    statement = (
+        select(AgentExecutionHistory.id)
+        .where(
+            AgentExecutionHistory.conversation_id == normalized,
+            AgentExecutionHistory.user_id.is_not(None),
+            AgentExecutionHistory.user_id != str(user_id),
+        )
+        .limit(1)
+    )
+    result = await db.execute(statement)
+    return result.scalar_one_or_none() is not None
 
 
 @public_router.get("/generated-files/{artifact_id}")
@@ -337,8 +377,13 @@ class ReusableResultListItem(BaseModel):
 
 
 def _should_enrich_history_reusable_metadata(user_info: Dict[str, Any]) -> bool:
-    """仅为普通用户读取其自身 Redis 会话，避免管理员串用 Redis 身份。"""
-    return (user_info or {}).get("role") != "admin"
+    """历史接口是否用 Redis 富化可复用结果元数据。
+
+    历史查询已严格自隔离（任何角色都只返回自己的轮次），Redis 读取用的就是
+    当前用户自己的键，因此不再需要「管理员跳过富化」的特例——那个特例只会让
+    管理员在 EmbedChat 里看不到自己会话的数据徽标。
+    """
+    return True
 
 
 def _history_reusable_metadata_window(page: int, page_size: int) -> Dict[str, int]:
@@ -357,11 +402,15 @@ def _history_reusable_metadata_window(page: int, page_size: int) -> Dict[str, in
 )
 async def list_reusable_results(
     conversation_id: str = Query(..., min_length=1, description="会话 id"),
+    instance_id: Optional[str] = Query(default=None, max_length=128, description="嵌入实例 id"),
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
     user_id = _require_chat_user_id(user_info)
-    if not await _conversation_belongs_to_user(db, user_id, conversation_id):
+    # 活跃会话按实例分桶存储，归属判定必须带上实例，否则多实例嵌入下会误判为不存在。
+    if not await _conversation_belongs_to_user(
+        db, user_id, conversation_id, instance_id=instance_id
+    ):
         raise HTTPException(status_code=404, detail="会话不存在")
     try:
         current, stack, legacy = await asyncio.gather(
@@ -932,7 +981,7 @@ async def get_conversation_run_status(
     try:
         from app.services.ai.runtime.sandbox_degradation import get_sandbox_degraded
 
-        degraded_msg = await get_sandbox_degraded(conversation_id)
+        degraded_msg = await get_sandbox_degraded(user_id, conversation_id)
     except Exception:
         degraded_msg = None
     if degraded_msg:
@@ -1439,6 +1488,73 @@ async def get_context_compactions(
     )
 
 
+async def _resolve_conversation_owner_user_id(
+    db: AsyncSession, conversation_id: str
+) -> Optional[str]:
+    """审计视图：从历史行解析某个会话的归属用户 ID。
+
+    压缩时间线按「用户 + 会话」存储，管理员查看他人会话时必须先定位归属人，
+    否则读到的是管理员自己名下的空记录（该能力过去一直缺失，审计页的压缩页签
+    在看他人会话时是空的）。
+    """
+    from app.models.audit import AgentExecutionHistory
+    from sqlalchemy import select
+
+    normalized = str(conversation_id or "").strip()
+    if not normalized:
+        return None
+    result = await db.execute(
+        select(AgentExecutionHistory.user_id)
+        .where(
+            AgentExecutionHistory.conversation_id == normalized,
+            AgentExecutionHistory.user_id.is_not(None),
+        )
+        .order_by(AgentExecutionHistory.created_at.desc())
+        .limit(1)
+    )
+    owner = result.scalar_one_or_none()
+    return str(owner) if owner else None
+
+
+@router.get(
+    "/admin/conversation/{conversation_id}/context_compactions",
+    response_model=StandardResponse[ContextCompactionsResponse],
+    summary="[审计] 获取任意用户会话的上下文压缩时间线",
+    description=(
+        "聊天日志审计页专用：admin 可按会话归属人读取他人会话的上下文压缩记录。"
+        "非 admin 一律 403。聊天界面（EmbedChat）不会调用此端点。"
+    ),
+    dependencies=[Depends(require_admin)],
+)
+async def get_admin_context_compactions(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """聊天日志审计：按会话归属人读取压缩时间线（require_admin 门控）。"""
+    owner_user_id = await _resolve_conversation_owner_user_id(db, conversation_id)
+    raw_records = (
+        await context_compaction_log_service.list_records(owner_user_id, conversation_id)
+        if owner_user_id
+        else []
+    )
+    records: List[ContextCompactionRecord] = []
+    for raw_record in raw_records:
+        try:
+            records.append(ContextCompactionRecord.model_validate(raw_record))
+        except Exception:
+            logger.warning(
+                "Skip invalid context compaction API record conversation=%s",
+                conversation_id,
+            )
+
+    return StandardResponse(
+        data=ContextCompactionsResponse(
+            records=records,
+            count=len(records),
+        )
+    )
+
+
 @router.post(
     "/conversation/{conversation_id}/context_compactions/manual",
     response_model=StandardResponse[Dict[str, Any]],
@@ -1518,6 +1634,14 @@ async def create_chat_completion(
     Supports both standard JSON response and SSE Streaming.
     """
     chat_user_id = _require_chat_user_id(user_info)
+
+    # 归属守卫：拒绝把提问写进他人的会话。会话 ID 由客户端传入且换用户后可能残留，
+    # 不挡住就会出现「新用户把自己的轮次写进别人会话」的越界写入。
+    if completion_request.conversation_id and await _conversation_owned_by_other_user(
+        db, chat_user_id, completion_request.conversation_id
+    ):
+        raise HTTPException(status_code=403, detail="该会话不属于当前用户")
+
     # Initialize Request Context for Debugging
     effective_debug_options = dict(completion_request.debug_options or {})
     # 资源范围只能由服务端会话快照决定，禁止客户端通过 debug_options 注入范围。
@@ -2094,29 +2218,124 @@ async def resume_external_execution(
     )
 
 
-@router.get("/history", 
-    response_model=StandardResponse[AgentExecutionHistoryListResponse],
-    summary="查询历史记录",
-    description="支持分页、筛选查询持久化的对话历史。支持按会话聚合展示。"
-)
-async def get_history(
-    page: int = 1,
-    page_size: int = 20,
-    agent_id: Optional[str] = None,
-    conversation_id: Optional[str] = None, # 新增参数
-    username: Optional[str] = None,
-    keyword: Optional[str] = None,
-    status: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    group_by_conversation: bool = False,
-    scope: Optional[str] = None,
-    request: Request = None,
-    db: AsyncSession = Depends(get_db_session)
+class _ChatHistoryQueryParams:
+    """`/history` 与 `/admin/history` 共用的查询参数。
+
+    两个路由共用同一份签名，避免「审计端点加了筛选条件、常规端点忘了加」这类漂移。
+    """
+
+    def __init__(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        agent_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        username: Optional[str] = None,
+        keyword: Optional[str] = None,
+        status: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        group_by_conversation: bool = False,
+        scope: Optional[str] = None,
+    ) -> None:
+        self.page = page
+        self.page_size = page_size
+        self.agent_id = agent_id
+        self.conversation_id = conversation_id
+        self.username = username
+        self.keyword = keyword
+        self.status = status
+        self.start_date = start_date
+        self.end_date = end_date
+        self.group_by_conversation = group_by_conversation
+        self.scope = scope
+
+
+async def _resolve_owner_user_ids_by_username(
+    db: AsyncSession, usernames: List[Any]
+) -> Dict[str, str]:
+    """审计视图：把历史行上的用户名解析成用户 ID。
+
+    资源范围按「归属用户 + 会话」存储，历史行可能只有 username（早期行的 user_id 为空），
+    所以要能按用户名回填出归属人，否则管理员的审计列表里项目范围会整列为空。
+    """
+    from app.models.user import User
+    from sqlalchemy import select
+
+    names = sorted({str(name) for name in usernames if str(name or "").strip()})
+    if not names:
+        return {}
+    result = await db.execute(select(User.user_name, User.id).where(User.user_name.in_(names)))
+    return {str(name): str(user_id) for name, user_id in result.all()}
+
+
+async def _load_history_resource_scopes(
+    db: AsyncSession,
+    rows: List[Any],
+    *,
+    scoped_user_id: Optional[str],
+    cross_user: bool,
+) -> List[Dict[str, Any]]:
+    """按归属读取这些历史行所属会话的资源范围，返回值与 `rows` **一一对应**（同序同长）。
+
+    - 自隔离视图：所有行都属于 `scoped_user_id`，一次批量读。
+    - 审计视图（`cross_user`）：同一页里可能混着多个用户，必须按「归属用户 + 会话」
+      逐个读，否则读到的是管理员自己名下的空范围，审计页的项目范围会整列丢失。
+
+    刻意返回**列表**而不是 `conversation_id -> scope` 映射：审计视图一页里同一个
+    conversation_id 可能分属两个归属人（历史遗留的串号会话），按 cid 建映射会互相覆盖，
+    把项目名显示成另一个人的；列表按行对齐则天然没有这个歧义。
+    """
+    if not rows:
+        return []
+
+    if not cross_user:
+        conversation_ids = [
+            str(getattr(row, "conversation_id", "") or "") for row in rows
+        ]
+        wanted = [cid for cid in conversation_ids if cid]
+        scopes = (
+            await ConversationResourceService.get_many(scoped_user_id, wanted)
+            if wanted
+            else {}
+        )
+        return [scopes.get(cid, {}) if cid else {} for cid in conversation_ids]
+
+    owner_map = await _resolve_owner_user_ids_by_username(
+        db, [getattr(row, "username", None) for row in rows]
+    )
+    row_keys: List[tuple[str, str]] = []
+    pairs: List[tuple[str, str]] = []
+    for row in rows:
+        conversation_id = str(getattr(row, "conversation_id", "") or "")
+        owner_id = str(
+            getattr(row, "user_id", "")
+            or owner_map.get(str(getattr(row, "username", "") or ""))
+            or ""
+        )
+        row_keys.append((owner_id, conversation_id))
+        if owner_id and conversation_id:
+            pairs.append((owner_id, conversation_id))
+
+    scopes_by_owner = (
+        await ConversationResourceService.get_many_for_owners(pairs) if pairs else {}
+    )
+    return [
+        scopes_by_owner.get((owner_id, conversation_id), {})
+        if conversation_id
+        else {}
+        for owner_id, conversation_id in row_keys
+    ]
+
+
+async def _build_chat_history_response(
+    *,
+    params: "_ChatHistoryQueryParams",
+    request: Request,
+    db: AsyncSession,
+    cross_user: bool,
 ):
-    """
-    Get dialogue history with filtering and pagination.
-    """
+    """历史查询的唯一实现；`cross_user` 仅供审计端点使用。"""
     from sqlalchemy import select
     from datetime import datetime
     from app.schemas.agent import AgentExecutionHistoryResponse
@@ -2126,39 +2345,44 @@ async def get_history(
     start_dt = None
     end_dt = None
     try:
-        if start_date:
-            start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
-        if end_date:
-            end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+        if params.start_date:
+            start_dt = datetime.fromisoformat(params.start_date.replace("Z", "+00:00"))
+        if params.end_date:
+            end_dt = datetime.fromisoformat(params.end_date.replace("Z", "+00:00"))
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601.")
 
-    # 1. User scope is resolved before grouping so one user's latest turn
-    # cannot hide or select another user's conversation row.
     user_info = getattr(request.state, "user", None) if request else None
     if not user_info:
         raise HTTPException(status_code=401, detail="缺少用户身份")
-    is_admin = user_info.get("role") == "admin"
-    history_user_id = None if is_admin else _require_chat_user_id(user_info)
-    # 用户范围由 history_query 内部重建（user_id 优先，其次 username）；
-    # 这里解析出的 history_user_id 继续供后续资源范围查询使用。
+
+    if cross_user:
+        # 审计视图（仅 admin 可达，见 `/admin/history` 的 require_admin）：按 username
+        # 可选筛选，但不做用户过滤——这正是聊天日志审计页需要的跨用户视图。
+        # 注意：常规端点永远不会走到这里，EmbedChat 的会话读取始终自隔离。
+        history_user_id: Optional[str] = None
+    else:
+        # 1. 会话数据严格自隔离：任何角色（含 admin）都只能读取自己的历史。
+        #    这里刻意不再保留 `role == "admin"` 的跨用户旁路——admin 登录 EmbedChat 时
+        #    若继承了他人残留的会话 ID，就会真的读到别人的会话正文。
+        history_user_id = _require_chat_user_id(user_info)
 
     # 查询构建收敛到 app/services/ai/history_query.py：
     # 会话级属性（来源 / 智能体 / 时间）过滤分组代表行，
     # 轮次级属性（关键词 / 状态）以会话键 IN 子查询判定会话内存在性。
     query, count_query = build_history_query(
-        page=page,
-        page_size=page_size,
+        page=params.page,
+        page_size=params.page_size,
         user_id=history_user_id,
-        username=username,
-        agent_id=agent_id,
-        conversation_id=conversation_id,
-        keyword=keyword,
-        status=status,
+        username=params.username,
+        agent_id=params.agent_id,
+        conversation_id=params.conversation_id,
+        keyword=params.keyword,
+        status=params.status,
         start_dt=start_dt,
         end_dt=end_dt,
-        scope=scope,
-        group_by_conversation=group_by_conversation,
+        scope=params.scope,
+        group_by_conversation=params.group_by_conversation,
     )
 
     # Get Total Count
@@ -2181,13 +2405,19 @@ async def get_history(
     # /history is DB-backed, while reusable-result metadata is also persisted in
     # Redis history. Merge it by assistant trace_id so a refreshed conversation
     # can restore both the data badge and the generated/reused relation.
+    # 审计视图刻意跳过：Redis 历史按「用户 + 会话」存储，用管理员身份读他人会话只会
+    # 读到空值（或管理员自己名下的同名会话），没有任何可用的跨用户语义。
     reusable_metadata_by_trace: Dict[str, Dict[str, Any]] = {}
-    if conversation_id and _should_enrich_history_reusable_metadata(user_info):
+    if (
+        params.conversation_id
+        and not cross_user
+        and _should_enrich_history_reusable_metadata(user_info)
+    ):
         try:
-            redis_window = _history_reusable_metadata_window(page, page_size)
+            redis_window = _history_reusable_metadata_window(params.page, params.page_size)
             redis_history = await memory_service.get_history(
                 _require_chat_user_id(user_info),
-                conversation_id,
+                params.conversation_id,
                 **redis_window,
             )
             for message in redis_history:
@@ -2207,55 +2437,34 @@ async def get_history(
             logger.debug("[History API] Failed to enrich output metadata from Redis: %s", exc)
 
     items = []
-    if group_by_conversation:
+    if params.group_by_conversation:
         rows = result.all()
-        if (user_info or {}).get("role") == "admin":
-            from app.models.user import User
-            usernames = {row_obj.username for row_obj, _ in rows if row_obj.username}
-            owner_result = await db.execute(select(User.user_name, User.id).where(User.user_name.in_(usernames))) if usernames else None
-            owner_map = {str(row.user_name): row.id for row in owner_result.all()} if owner_result else {}
-            scopes = await ConversationResourceService.get_many_for_owners(
-                [(owner_map.get(row_obj.username), row_obj.conversation_id) for row_obj, _ in rows if row_obj.conversation_id and owner_map.get(row_obj.username) is not None]
-            )
-            scope_key = lambda item: (str(owner_map.get(item.username)), item.conversation_id)
-        else:
-            scopes = await ConversationResourceService.get_many(
-                history_user_id,
-                [row_obj.conversation_id for row_obj, _ in rows if row_obj.conversation_id],
-            )
-            scope_key = lambda item: item.conversation_id
-        for row_obj, turn_count in rows:
+        scopes = await _load_history_resource_scopes(
+            db,
+            [row_obj for row_obj, _ in rows],
+            scoped_user_id=history_user_id,
+            cross_user=cross_user,
+        )
+        for index, (row_obj, turn_count) in enumerate(rows):
             item = AgentExecutionHistoryResponse.from_orm(row_obj)
             item = item.model_copy(update=reusable_metadata_by_trace.get(str(item.trace_id), {}))
             item.turn_count = turn_count
             _apply_agent_identity(item, agent_map)
             if item.conversation_id:
-                scope = scopes.get(scope_key(row_obj), {})
+                scope = scopes[index] if index < len(scopes) else {}
                 item.project_name = scope.get("project_name") or None
             items.append(item)
     else:
         rows = result.scalars().all()
-        if (user_info or {}).get("role") == "admin":
-            from app.models.user import User
-            usernames = {row.username for row in rows if row.username}
-            owner_result = await db.execute(select(User.user_name, User.id).where(User.user_name.in_(usernames))) if usernames else None
-            owner_map = {str(row.user_name): row.id for row in owner_result.all()} if owner_result else {}
-            scopes = await ConversationResourceService.get_many_for_owners(
-                [(owner_map.get(row.username), row.conversation_id) for row in rows if row.conversation_id and owner_map.get(row.username) is not None]
-            )
-            scope_key = lambda item: (str(owner_map.get(item.username)), item.conversation_id)
-        else:
-            scopes = await ConversationResourceService.get_many(
-                history_user_id,
-                [row.conversation_id for row in rows if row.conversation_id],
-            )
-            scope_key = lambda item: item.conversation_id
-        for row in rows:
+        scopes = await _load_history_resource_scopes(
+            db, list(rows), scoped_user_id=history_user_id, cross_user=cross_user
+        )
+        for index, row in enumerate(rows):
             item = AgentExecutionHistoryResponse.from_orm(row)
             item = item.model_copy(update=reusable_metadata_by_trace.get(str(item.trace_id), {}))
             _apply_agent_identity(item, agent_map)
             if item.conversation_id:
-                scope = scopes.get(scope_key(row), {})
+                scope = scopes[index] if index < len(scopes) else {}
                 item.project_name = scope.get("project_name") or None
             items.append(item)
     
@@ -2279,10 +2488,47 @@ async def get_history(
 
     return StandardResponse(data=AgentExecutionHistoryListResponse(
         total=total,
-        page=page,
-        page_size=page_size,
+        page=params.page,
+        page_size=params.page_size,
         items=items
     ))
+
+
+@router.get("/history", 
+    response_model=StandardResponse[AgentExecutionHistoryListResponse],
+    summary="查询历史记录",
+    description="支持分页、筛选查询持久化的对话历史。支持按会话聚合展示。"
+)
+async def get_history(
+    params: _ChatHistoryQueryParams = Depends(),
+    request: Request = None,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """当前用户自己的历史记录。任何角色（含 admin）都看不到他人会话。"""
+    return await _build_chat_history_response(
+        params=params, request=request, db=db, cross_user=False
+    )
+
+
+@router.get(
+    "/admin/history",
+    response_model=StandardResponse[AgentExecutionHistoryListResponse],
+    summary="[审计] 查询全部用户历史记录",
+    description=(
+        "聊天日志审计页专用：admin 可跨用户查询会话历史，支持按 username 筛选。"
+        "非 admin 一律 403。聊天界面（EmbedChat）不会调用此端点。"
+    ),
+    dependencies=[Depends(require_admin)],
+)
+async def get_admin_history(
+    params: _ChatHistoryQueryParams = Depends(),
+    request: Request = None,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """聊天日志审计：admin 跨用户历史视图（require_admin 门控）。"""
+    return await _build_chat_history_response(
+        params=params, request=request, db=db, cross_user=True
+    )
 
 @router.delete("/history/{trace_id}",
     response_model=StandardResponse[Dict[str, bool]],
@@ -2302,22 +2548,23 @@ async def delete_history(
 
     user_info = getattr(request.state, "user", None) if request else None
     current_user_id = _require_chat_user_id(user_info)
-    is_admin = user_info.get("role") == "admin"
 
-    # 1. Find Record
-    stmt = select(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id)
+    # 1. Find Record——先按「当前用户」过滤：他人记录一律按不存在处理（404），
+    #    任何角色（含 admin）都不能删除别人的历史与轨迹。
+    stmt = (
+        select(AgentExecutionHistory)
+        .where(
+            AgentExecutionHistory.trace_id == trace_id,
+            AgentExecutionHistory.user_id == current_user_id,
+        )
+    )
     result = await db.execute(stmt)
     history = result.scalar_one_or_none()
-    
+
     if not history:
         raise HTTPException(status_code=404, detail="History not found")
 
-    # 2. Permission Check
-    # Only allow if admin OR the persisted stable user ID owns the record.
-    if not is_admin and str(history.user_id or "") != current_user_id:
-        raise HTTPException(status_code=403, detail="Permission denied")
-
-    # 3. Delete Traces and History
+    # 2. Delete Traces and History
     await db.execute(delete(AgentExecutionTrace).where(AgentExecutionTrace.trace_id == trace_id))
     await db.execute(delete(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id))
     
@@ -2349,21 +2596,25 @@ async def batch_delete_history(
     if not payload.conversation_ids:
         raise HTTPException(status_code=400, detail="conversation_ids 不能为空")
 
-    # 1. 权限隔离：如果是非 admin 用户，只能删除属于该用户的会话
+    # 1. 严格自隔离：任何角色（含 admin）都只能删除属于自己的会话，
+    #    不能借 conversation_ids 删除他人的 DB 历史与 Redis 记忆。
     user_info = getattr(request.state, "user", None)
     current_user_id = _require_chat_user_id(user_info)
-    is_admin = user_info.get("role") == "admin"
 
-    # 2. 同时取出会话归属人；Redis key 的 user_id 必须使用目标用户，而不是当前管理员。
-    stmt = select(
-        AgentExecutionHistory.conversation_id,
-        AgentExecutionHistory.trace_id,
-        AgentExecutionHistory.username,
-        AgentExecutionHistory.user_id,
-    ).where(AgentExecutionHistory.conversation_id.in_(payload.conversation_ids))
-    if user_info and not is_admin:
-        stmt = stmt.where(AgentExecutionHistory.user_id == current_user_id)
-    
+    # 2. 取出会话归属人；Redis key 的 user_id 必须与 DB 删除范围同源。
+    stmt = (
+        select(
+            AgentExecutionHistory.conversation_id,
+            AgentExecutionHistory.trace_id,
+            AgentExecutionHistory.username,
+            AgentExecutionHistory.user_id,
+        )
+        .where(
+            AgentExecutionHistory.conversation_id.in_(payload.conversation_ids),
+            AgentExecutionHistory.user_id == current_user_id,
+        )
+    )
+
     result = await db.execute(stmt)
     history_rows = result.all()
     trace_ids = [row.trace_id for row in history_rows if row.trace_id]
@@ -2371,11 +2622,12 @@ async def batch_delete_history(
     # 3. 执行批量级联删除
     if trace_ids:
         await db.execute(delete(AgentExecutionTrace).where(AgentExecutionTrace.trace_id.in_(trace_ids)))
-    
-    delete_history_stmt = delete(AgentExecutionHistory).where(AgentExecutionHistory.conversation_id.in_(payload.conversation_ids))
-    if user_info and not is_admin:
-        delete_history_stmt = delete_history_stmt.where(AgentExecutionHistory.user_id == current_user_id)
-        
+
+    delete_history_stmt = delete(AgentExecutionHistory).where(
+        AgentExecutionHistory.conversation_id.in_(payload.conversation_ids),
+        AgentExecutionHistory.user_id == current_user_id,
+    )
+
     await db.execute(delete_history_stmt)
     
     await db.commit()
@@ -2387,18 +2639,11 @@ async def batch_delete_history(
         await knowledge_citation_store.delete_many(trace_ids)
 
     # 数据库历史删除后同步清理会话 Redis，避免项目资源范围和记忆残留。
+    # 删除范围已被 user_id 收敛到当前用户，因此 Redis 也只清当前用户自己的键——
+    # 绝不能按传入的 conversation_id 去清他人的记忆。
     from app.services.ai.memory_service import memory_service
     for conversation_id in payload.conversation_ids:
-        matching_owners = {
-            str(row.user_id).strip()
-            for row in history_rows
-            if row.conversation_id == conversation_id and row.user_id
-        }
-        matching_owners.discard(None)
-        if not matching_owners and not is_admin:
-            matching_owners.add(current_user_id)
-        for owner_id in matching_owners:
-            await memory_service.clear_history(owner_id, conversation_id)
+        await memory_service.clear_history(current_user_id, conversation_id)
 
     return StandardResponse(data={"success": True})
 
@@ -2470,37 +2715,34 @@ async def truncate_history_endpoint(
 
     return StandardResponse(data={"success": True, "keep_count": payload.keep_count})
 
-@router.get("/logs/{trace_id}", 
-    response_model=StandardResponse[TraceLogResponse],
-    summary="获取执行链路",
-    description="获取单次对话的详细内部执行步骤 (Trace)。"
-)
-async def get_trace_logs(
+async def _build_trace_logs_response(
+    *,
     trace_id: str,
-    request: Request,
-    user_info: Dict[str, Any] = Depends(require_api_key),
-    db: AsyncSession = Depends(get_db_session)
+    user_info: Dict[str, Any],
+    db: AsyncSession,
+    cross_user: bool,
 ):
-    """
-    Get detailed execution trace for a chat turn.
-    """
+    """执行链路查询的唯一实现；`cross_user` 仅供审计端点使用。"""
     from app.models.audit import AgentExecutionTrace, AgentExecutionHistory
     from sqlalchemy import select
     from app.schemas.agent import AgentExecutionStep, AgentExecutionHistoryResponse
     from app.services.ai.audit_payload import bound_audit_payload
-    
-    # 1. Fetch High-Level History within the current user's stable identity scope.
-    current_user_id = _require_chat_user_id(user_info)
-    is_admin = user_info.get("role") == "admin"
-    history_stmt = select(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id)
-    if not is_admin:
-        history_stmt = history_stmt.where(AgentExecutionHistory.user_id == current_user_id)
+
+    # 1. Fetch High-Level History.
+    #    常规端点：只能读自己的轨迹，他人 trace_id 按「不存在」处理，既不返回步骤也不
+    #    泄露该 trace 是否存在（任何角色含 admin 都一样）。
+    #    审计端点：admin 跨用户读取，不做用户过滤——聊天日志审计页需要它。
+    history_stmt = select(AgentExecutionHistory).where(
+        AgentExecutionHistory.trace_id == trace_id
+    )
+    if not cross_user:
+        history_stmt = history_stmt.where(
+            AgentExecutionHistory.user_id == _require_chat_user_id(user_info)
+        )
     history_res = await db.execute(history_stmt)
     history_item = history_res.scalar_one_or_none()
     if not history_item:
         raise HTTPException(status_code=404, detail="History not found")
-
-    # Permission Check: only admin or owner can view trace logs
     # 2. Fetch Trace Steps
     trace_stmt = select(AgentExecutionTrace).where(AgentExecutionTrace.trace_id == trace_id)
     if history_item and history_item.created_at:
@@ -2544,6 +2786,43 @@ async def get_trace_logs(
         history=AgentExecutionHistoryResponse.from_orm(history_item) if history_item else None
     ))
 
+
+@router.get("/logs/{trace_id}", 
+    response_model=StandardResponse[TraceLogResponse],
+    summary="获取执行链路",
+    description="获取单次对话的详细内部执行步骤 (Trace)。"
+)
+async def get_trace_logs(
+    trace_id: str,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """当前用户自己的执行链路。任何角色（含 admin）都读不到他人轨迹。"""
+    return await _build_trace_logs_response(
+        trace_id=trace_id, user_info=user_info, db=db, cross_user=False
+    )
+
+
+@router.get(
+    "/admin/logs/{trace_id}",
+    response_model=StandardResponse[TraceLogResponse],
+    summary="[审计] 获取任意用户的执行链路",
+    description=(
+        "聊天日志审计页专用：admin 可查看任意用户单次对话的完整执行步骤。"
+        "非 admin 一律 403。聊天界面（EmbedChat）不会调用此端点。"
+    ),
+    dependencies=[Depends(require_admin)],
+)
+async def get_admin_trace_logs(
+    trace_id: str,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """聊天日志审计：admin 跨用户执行链路视图（require_admin 门控）。"""
+    return await _build_trace_logs_response(
+        trace_id=trace_id, user_info=user_info, db=db, cross_user=True
+    )
+
 @router.post("/agents/{agent_id}/chat",
     response_model=StandardResponse[ChatCompletionResponse],
     summary="指定智能体对话",
@@ -2574,14 +2853,17 @@ async def export_trace_data(
     """
     Export tool output data for a given trace.
     """
-    # Permission Check: only admin or owner can export
+    # Permission Check: only the owner can export（任何角色都不得导出他人数据）
     from app.models.audit import AgentExecutionHistory
     from sqlalchemy import select
     current_user_id = _require_chat_user_id(user_info)
-    is_admin = user_info.get("role") == "admin"
-    history_stmt = select(AgentExecutionHistory).where(AgentExecutionHistory.trace_id == trace_id)
-    if not is_admin:
-        history_stmt = history_stmt.where(AgentExecutionHistory.user_id == current_user_id)
+    history_stmt = (
+        select(AgentExecutionHistory)
+        .where(
+            AgentExecutionHistory.trace_id == trace_id,
+            AgentExecutionHistory.user_id == current_user_id,
+        )
+    )
     history_res = await db.execute(history_stmt)
     history_item = history_res.scalar_one_or_none()
     if not history_item:
@@ -2715,9 +2997,17 @@ async def set_active_conversation(
     body: ActiveConversationRequest,
     user_info: dict = Depends(require_api_key),
     instance_id: Optional[str] = Query(default=None, max_length=128),
+    db: AsyncSession = Depends(get_db_session),
 ):
     from app.services.ai.memory_service import memory_service
     stable_user_id = _require_chat_user_id(user_info)
+
+    # 归属守卫：不允许把「已属于他人」的会话登记成自己的活跃会话。
+    # 换用户登录后本地残留的 conversation_id 正是从这里被写进新用户身份的，
+    # 不挡住就会让新用户后续的提问落进别人的会话。
+    if await _conversation_owned_by_other_user(db, stable_user_id, body.conversation_id):
+        raise HTTPException(status_code=403, detail="该会话不属于当前用户，无法设为活跃会话")
+
     user_id: Any = int(stable_user_id) if stable_user_id.isdigit() else stable_user_id
     await memory_service.set_active_conversation(
         user_id,
@@ -2725,6 +3015,40 @@ async def set_active_conversation(
         instance_id=instance_id,
     )
     return StandardResponse(data={"status": "success"})
+
+
+class ConversationOwnershipResponse(BaseModel):
+    owned: bool = Field(..., description="会话是否归属当前用户（含 Redis 历史与活跃会话）")
+    foreign: bool = Field(..., description="会话是否已归属其他用户")
+
+
+@router.get(
+    "/conversation/{conversation_id}/ownership",
+    response_model=StandardResponse[ConversationOwnershipResponse],
+    summary="查询会话归属",
+    description=(
+        "供前端在采用某个会话 ID 之前校验归属：宿主下发或本地存储残留的会话 ID "
+        "若属于他人，必须丢弃并新建会话。任何角色（含 admin）都按当前用户判定。"
+    ),
+)
+async def get_conversation_ownership(
+    conversation_id: str,
+    instance_id: Optional[str] = Query(default=None, max_length=128),
+    user_info: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = _require_chat_user_id(user_info)
+    foreign = await _conversation_owned_by_other_user(db, user_id, conversation_id)
+    owned = (
+        False
+        if foreign
+        else await _conversation_belongs_to_user(
+            db, user_id, conversation_id, instance_id=instance_id
+        )
+    )
+    return StandardResponse(
+        data=ConversationOwnershipResponse(owned=owned, foreign=foreign)
+    )
 
 
 @router.get("/conversation/{conversation_id}/resource-scope", summary="获取会话资源范围")

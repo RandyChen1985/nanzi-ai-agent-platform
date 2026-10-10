@@ -2368,6 +2368,7 @@ class AssistantAgentRunner(BaseExecutor):
                 exc,
             )
             await set_sandbox_degraded(
+                self._runtime_user_id(),
                 str(self.conversation_id or ""),
                 "沙箱当前不可用，本轮已降级为本地执行（Bash 工具不可用）；沙箱恢复后将自动恢复。",
             )
@@ -2389,7 +2390,7 @@ class AssistantAgentRunner(BaseExecutor):
             ]
         else:
             # 沙箱构建成功：清除历史降级提示，恢复后由前端自动隐藏。
-            await clear_sandbox_degraded(str(self.conversation_id or ""))
+            await clear_sandbox_degraded(self._runtime_user_id(), str(self.conversation_id or ""))
         # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
         tools = await bind_configured_tools_to_workspace(
             workspace,

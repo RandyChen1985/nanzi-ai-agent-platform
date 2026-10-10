@@ -227,15 +227,25 @@ def test_history_response_exposes_output_metadata_for_refresh_recovery():
 
 
 def test_history_endpoint_enriches_reusable_metadata_from_redis_history():
-    source = inspect.getsource(chat_endpoint.get_history)
+    # 常规 `/history` 与审计 `/admin/history` 共用同一实现，因此断言打在实现上；
+    # 路由壳子只负责传 cross_user 开关。
+    source = inspect.getsource(chat_endpoint._build_chat_history_response)
 
     assert "memory_service.get_history" in source
     assert "reusable_result_id" in source
     assert "reusable_result_status" in source
+    # 审计视图必须跳过富化：Redis 历史按「用户 + 会话」存储，用管理员身份读他人会话
+    # 只会读到空值（或管理员自己名下的同名会话），没有跨用户语义。
+    assert "not cross_user" in source
 
 
-def test_history_reusable_metadata_skips_admin_cross_user_queries():
-    assert _should_enrich_history_reusable_metadata({"role": "admin", "user_id": 1}) is False
+def test_history_reusable_metadata_enriches_every_role():
+    """历史查询已严格自隔离，Redis 读取就是当前用户自己的键。
+
+    原先「管理员跳过富化」的特例只会让 admin 在 EmbedChat 里看不到自己会话的
+    数据徽标，随跨用户旁路一并移除。
+    """
+    assert _should_enrich_history_reusable_metadata({"role": "admin", "user_id": 1}) is True
     assert _should_enrich_history_reusable_metadata({"role": "user", "user_id": 1}) is True
 
 

@@ -56,6 +56,25 @@ const cachedUser = localStorage.getItem('user_info')
 const userInfo = ref(cachedUser ? JSON.parse(cachedUser) : null)
 const isAdmin = computed(() => userInfo.value?.role === 'admin')
 
+/**
+ * 聊天日志审计页的两套数据源。
+ *
+ * - admin：走 `/api/v1/chat/admin/*` 审计端点，可跨用户查看（这是本页存在的意义）；
+ * - 其他用户（拥有 `menu:chat_logs` 时）：退化为只看自己的会话。
+ *
+ * 后端把两者做成不同端点，是为了让聊天界面（EmbedChat）不可能误用跨用户视图：
+ * 常规 `/chat/history`、`/chat/logs/*` 始终按当前用户过滤，任何角色都一样。
+ */
+const historyApi = computed(() =>
+  isAdmin.value ? agentApi.getAdminChatHistory : agentApi.getChatHistory,
+)
+const traceApi = computed(() =>
+  isAdmin.value ? agentApi.getAdminChatTrace : agentApi.getChatTrace,
+)
+const compactionsApi = computed(() =>
+  isAdmin.value ? agentApi.getAdminContextCompactions : agentApi.getContextCompactions,
+)
+
 const viewMode = ref<'conversation' | 'turn'>('conversation')
 const logs = ref<AgentExecutionHistory[]>([])
 const agents = ref<AIAgent[]>([])
@@ -183,7 +202,7 @@ const fetchLogs = async () => {
       if (params[key] === '') delete params[key]
     })
 
-    const res = await agentApi.getChatHistory(params)
+    const res = await historyApi.value(params)
     if (requestVersion !== logsRequestVersion) return
     logs.value = res.data.data.items || []
     total.value = res.data.data.total
@@ -246,7 +265,7 @@ const loadTrace = async (traceId?: string) => {
   traceLoading.value = true
   traceDetail.value = null
   try {
-    const res = await agentApi.getChatTrace(traceId)
+    const res = await traceApi.value(traceId)
     // 快速连点列表项时，上一条的链路响应可能后到；丢了它，否则右侧会显示与左侧选中项
     // 不一致的链路（高亮 B、详情却是 A）。
     if (requestVersion !== traceRequestVersion) return
@@ -275,7 +294,7 @@ const loadContextCompactions = async (conversationId?: string, force = false) =>
   contextLoading.value = true
   contextError.value = false
   try {
-    const res = await agentApi.getContextCompactions(id)
+    const res = await compactionsApi.value(id)
     if (requestVersion !== contextRequestVersion) return
     contextCompactions.value = res.data.data.records || []
     contextLoadedFor.value = id
@@ -532,7 +551,7 @@ const fetchAllTurnsForExport = async (log: AgentExecutionHistory) => {
   const collected: AgentExecutionHistory[] = []
   let total = 0
   do {
-    const res = await agentApi.getChatHistory({
+    const res = await historyApi.value({
       conversation_id: conversationId,
       page,
       page_size: pageSize,
@@ -556,7 +575,7 @@ const fetchTracesForTurns = async (turns: AgentExecutionHistory[]) => {
     turns.map(async (turn) => {
       if (!turn.trace_id) return
       try {
-        const res = await agentApi.getChatTrace(turn.trace_id)
+        const res = await traceApi.value(turn.trace_id)
         tracesByTraceId[turn.trace_id] = res.data.data as ChatTraceDetail
       } catch (e) {
         console.error('Failed to fetch trace for export', turn.trace_id, e)
@@ -643,7 +662,7 @@ const loadConversationTurns = async (log: AgentExecutionHistory | null) => {
 
   turnsLoading.value = true
   try {
-    const res = await agentApi.getChatHistory({
+    const res = await historyApi.value({
       conversation_id: log.conversation_id.trim(),
       page: 1,
       page_size: 100,

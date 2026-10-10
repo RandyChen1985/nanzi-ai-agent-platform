@@ -199,9 +199,9 @@ interface ContentSegment {
           !val.startsWith('/static/') &&
           !val.startsWith('/api/') &&
           !val.startsWith('/assets/')) {
-        const convId = props.conversationId === undefined
-          ? localStorage.getItem("yovole_embed_conv_id") || ""
-          : props.conversationId || "";
+        // 只认调用方传入的会话 ID：不再回退读 `yovole_embed_conv_id`（那是没有用户维度的
+        // 旧键，已按「只清理、不读取」处理；读到的是上一位使用者的会话 ID）。
+        const convId = props.conversationId || "";
         const convParam = convId ? `&conversation_id=${encodeURIComponent(convId)}` : "";
         const newVal = `/api/v1/chat/fs/preview?path=${encodeURIComponent(val)}${convParam}`;
         return `${attr}="${newVal}"`;

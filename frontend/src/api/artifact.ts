@@ -59,9 +59,15 @@ export const artifactApi = {
       '/api/v1/chat/artifacts/counts',
       { params: { conversation_id: conversationId } },
     ),
-  reusableResults: (conversationId: string) =>
+  reusableResults: (conversationId: string, instanceId?: string | null) =>
     axios.get<StandardResponse<ListResponse<ReusableResultListItem>>>(
       '/api/v1/chat/reusable-results',
-      { params: { conversation_id: conversationId } },
+      {
+        params: {
+          conversation_id: conversationId,
+          // 活跃会话按实例分桶存储：带上实例，后端归属判定才不会退回默认桶。
+          ...(instanceId ? { instance_id: instanceId } : {}),
+        },
+      },
     ),
 }
