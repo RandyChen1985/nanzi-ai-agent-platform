@@ -183,6 +183,12 @@ async def _execute_multi_agent_impl(
                     await queue.put(chunk)
                 elif chunk_type == "thinking":
                     await queue.put(chunk)
+                elif chunk_type == "citation":
+                    # 引用详情必须原样透传：它不进正文，最终合成也不会把它带出来，
+                    # 只能从这里转发出去。漏掉它会让委派场景的引用列表整块消失，
+                    # 点正文里的 [ID:n] 只能提示「引用详情加载中」；单专家路径不经过
+                    # 这里，所以只有委派会丢——这正是用户反馈的差异。
+                    await queue.put(chunk)
         except Exception as exc:
             logger.error(
                 f"Error in multi-agent sub-task ({config.agent_name}): {exc}",

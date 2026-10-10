@@ -594,6 +594,12 @@ async def _consume_sub_agent_stream(
             if sub_session_id:
                 main_ctx.browser_session_id = str(sub_session_id)
             await main_ctx.event_queue.put(chunk)
+        elif chunk_type == "citation" and main_ctx.event_queue:
+            # 引用详情必须原样穿透到主聊天流：它不属于委派正文
+            # （_extract_delegation_text 只认 content/text/message），不在这里转发就会被
+            # 静默丢弃，主助手回答里的 [ID:n] 便没有任何切片可展开——这正是
+            # 「委派后引用列表整块消失、点序号只提示引用详情加载中」的根因。
+            await main_ctx.event_queue.put(chunk)
 
     return full_output, interrupt_type
 

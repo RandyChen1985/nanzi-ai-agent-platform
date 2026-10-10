@@ -1145,3 +1145,54 @@ async def test_sub_agent_call_timeout_generator_closed():
     assert aclose_called is True
 
     set_agent_context(None)
+
+
+async def test_consume_sub_agent_stream_forwards_citation_events():
+    """子智能体的 citation 必须穿透到主聊天流。
+
+    回归场景：主助手委派给知识库专家后，回答正文里的 [ID:n] 点不开、消息底部
+    引用列表整块消失，只弹「引用详情加载中，请稍候」。原因是 citation 既不是正文
+    （``_extract_delegation_text`` 只认 content/text/message，取不到东西），也不在
+    log / browser_session 的转发分支里，于是被静默丢弃；而单专家对话不经过委派，
+    所以那条路径一切正常。
+    """
+    from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
+
+    citation_chunk = {
+        "type": "citation",
+        "data": [
+            {
+                "id": "1",
+                "chunk_id": "ck-1",
+                "doc_name": "手册.pdf",
+                "content": "片段正文",
+            }
+        ],
+    }
+
+    async def sub_stream():
+        yield {"type": "log", "title": "检索知识库", "status": "success"}
+        yield citation_chunk
+        yield {"type": "process_narration_promote", "content": "答案"}
+
+    eq = asyncio.Queue()
+    ctx = AgentContext(agent_id="main", agent_name="MainAgent", event_queue=eq)
+    full_output, interrupt = await _consume_sub_agent_stream(
+        sub_stream(),
+        main_ctx=ctx,
+        sub_display_name="知识库助手",
+    )
+
+    assert full_output == "答案", "citation 不得计入委派正文"
+    assert interrupt is None
+
+    forwarded = []
+    while not eq.empty():
+        forwarded.append(await eq.get())
+        eq.task_done()
+
+    citations = [c for c in forwarded if c.get("type") == "citation"]
+    assert len(citations) == 1, (
+        "子智能体的 citation 被丢掉了：主助手回答里的 [ID:n] 将永远无法展开"
+    )
+    assert citations[0] == citation_chunk, "citation 必须原样透传，前端按数组形状去重合并"
