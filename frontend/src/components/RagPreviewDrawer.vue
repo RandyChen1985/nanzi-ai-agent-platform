@@ -86,11 +86,24 @@
               </button>
             </div>
 
-            <iframe
+            <div
               v-else-if="modelValue && fileUrl"
-              :src="`${fileUrl}#page=${pageNo}`"
-              class="w-full h-full border-none"
-            />
+              class="relative w-full h-full"
+            >
+              <iframe
+                :src="`${fileUrl}#page=${pageNo}`"
+                class="w-full h-full border-none"
+                @load="onPreviewLoaded"
+              />
+              <!-- 原生 PDF 阅读器自带零反馈：从打开到第 N 页画出来之间是纯空白 -->
+              <div
+                v-if="previewLoading"
+                class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-gray-100/70 dark:bg-gray-900/70 backdrop-blur-[1px] pointer-events-none"
+              >
+                <div class="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-primary dark:border-gray-700"></div>
+                <span class="text-xs text-gray-400 dark:text-gray-500">正在加载原档预览…</span>
+              </div>
+            </div>
             <div v-else class="absolute inset-0 flex items-center justify-center text-gray-400 text-xs">
               正在加载文档预览...
             </div>
@@ -138,7 +151,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import DocumentViewer from "@/components/embed/DocumentViewer.vue";
 import { useDarkThemeFlag } from "@/composables/useDarkThemeFlag";
 import {
@@ -167,6 +180,55 @@ const viewerTheme = computed<'light' | 'dark'>(() => (isDark.value ? 'dark' : 'l
 const subtitle = computed(() =>
   canPreview.value ? 'RAG 关联原档预览' : `第 ${props.pageNo} 页 RAG 关联原档智能高亮预览`,
 );
+
+/**
+ * iframe 加载反馈。
+ *
+ * PDF 为了能用 `#page=N` 跳到引用页，只能交给浏览器原生阅读器（file-viewer 的 pdf
+ * 渲染器不认这个 fragment），而原生阅读器没有任何加载指示：从打开到目标页画出来
+ * 之间就是一片空白。这里自己补一层遮罩，由 iframe 的 load 事件收起。
+ */
+const PREVIEW_LOAD_TIMEOUT_MS = 8000;
+const previewLoading = ref(false);
+let previewLoadingTimer: ReturnType<typeof setTimeout> | null = null;
+
+const clearPreviewLoadingTimer = () => {
+  if (previewLoadingTimer) {
+    clearTimeout(previewLoadingTimer);
+    previewLoadingTimer = null;
+  }
+};
+
+const startPreviewLoading = () => {
+  clearPreviewLoadingTimer();
+  previewLoading.value = true;
+  // 兜底：iframe 的 load 在个别情况下不会触发（插件未就绪、请求被中断），
+  // 没有兜底就会让遮罩永久盖住文档，那比不加加载反馈更糟。
+  previewLoadingTimer = setTimeout(() => {
+    previewLoadingTimer = null;
+    previewLoading.value = false;
+  }, PREVIEW_LOAD_TIMEOUT_MS);
+};
+
+const onPreviewLoaded = () => {
+  clearPreviewLoadingTimer();
+  previewLoading.value = false;
+};
+
+/** 只有走原生 iframe 的分支需要遮罩；Office/文本走 DocumentViewer，它自带 loading */
+const usesNativeIframe = computed(
+  () => !canPreview.value && !isDownloadOnlyOffice.value,
+);
+
+watch(
+  () => [modelValue.value, props.fileUrl] as const,
+  ([visible, url]) => {
+    if (visible && url && usesNativeIframe.value) startPreviewLoading();
+  },
+  { immediate: true },
+);
+
+onUnmounted(clearPreviewLoadingTimer);
 
 const previewExpanded = ref(true);
 const citationExpanded = ref(true);

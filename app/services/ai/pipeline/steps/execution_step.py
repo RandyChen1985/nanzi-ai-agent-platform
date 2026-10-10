@@ -15,6 +15,7 @@ from app.services.ai.agent_service import (
     _public_agent_type,
     _trace_has_tool_call,
 )
+from app.services.ai.knowledge_citation_store import accumulate_citation_details
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,10 @@ class ExecutionStep(BasePipelineStep):
                         execution_status = _apply_turn_status_signal(
                             execution_status, chunk
                         )
+                        # 引用详情只存在于流事件里，必须在此累积，否则刷新后无法回放。
+                        # 与下方 reusable_result_status 同一处收口，覆盖所有 executor。
+                        if chunk.get("type") == "citation":
+                            accumulate_citation_details(shared_state, chunk)
                         if chunk.get("type") == "reusable_result_status":
                             status = str(chunk.get("status") or "")
                             result_id = str(chunk.get("result_id") or "").strip()

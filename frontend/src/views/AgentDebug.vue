@@ -682,6 +682,7 @@ const loadSessionHistory = async (id: string) => {
             content: m.content as string,
             reasoningContent: m.reasoning_content || undefined,
             processTimeline: hydratedTimeline,
+            citations: m.citations ?? undefined,
             // 提问卡实时渲染依赖消息对象上的 userQuestion（不落库），历史回放需从
             // process_timeline 快照重建，否则调试台只能看到一行「需要用户回答」。
             userQuestion: userQuestionStatesFromTimeline(hydratedTimeline)[0],
@@ -3001,13 +3002,26 @@ const resolveCitation = (msg: Message, citeId: string) => {
   return target || null;
 };
 
+/** Fig. n 只是 Markdown 渲染器的兼容匹配面，并非知识库引用，不能据此提示「已过期」 */
+const isKnowledgeCitationBadge = (text: string) => /^\s*[\[【]\s*ID\s*:/i.test(text);
+
 const handleShowCitation = async (msg: Message, citeId: string, anchor?: HTMLElement) => {
+  const anchorEl = anchor || (document.querySelector(`[data-cite-id="${citeId}"]`) as HTMLElement | null);
+
   const target = resolveCitation(msg, citeId);
-  if (!target) return;
+  if (!target) {
+    // 引用详情走 Redis 旁路存储且有 TTL：历史消息解析不到即已过期，
+    // 流式进行中则可能只是事件还没到，两种状态必须区分。
+    if (!isKnowledgeCitationBadge(anchorEl?.textContent || "")) return;
+    showToast(
+      msg.isHistory ? "引用详情已过期，正文中的引用标记已无法展开" : "引用详情加载中，请稍候",
+      msg.isHistory ? "warning" : "info",
+    );
+    return;
+  }
 
   msg.isCitationsExpanded = true;
   await nextTick();
-  const anchorEl = anchor || (document.querySelector(`[data-cite-id="${citeId}"]`) as HTMLElement);
   if (anchorEl) {
     anchorEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
     openCitationPopover(target, anchorEl);

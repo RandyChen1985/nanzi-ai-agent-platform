@@ -179,6 +179,15 @@ class FinalizeStep(BasePipelineStep):
                     ),
                     name=f"persist-cancelled-turn-{conversation_id}",
                 )
+                # 引用详情与消息同判定落 Redis：不落库的消息不产生引用详情，
+                # 落库的消息其引用详情必然写入，避免「有正文没引用」的不对称。
+                citation_details = shared_state.get("knowledge_citations")
+                if citation_details:
+                    from app.services.ai.knowledge_citation_store import (
+                        knowledge_citation_store,
+                    )
+
+                    await knowledge_citation_store.save(trace_id, citation_details)
             elif conversation_id and context.shared_state.get("context_user_message"):
                 # 本轮未产生可持久化的有效输出（异常早退、短路或空取消等），
                 # 清理本轮在 ContextStep 预写入的孤儿用户消息，保持会话轮次对称。
