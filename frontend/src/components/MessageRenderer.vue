@@ -173,8 +173,14 @@ interface ContentSegment {
   const injectOpenLinksForPaths = (text: string) =>
     text.replace(filePathRegex, (pathVal) => appendOpenLinkToPath(pathVal));
 
-  /** 产物能力链接（/api/v1/chat/generated-files/{32hex}?token=...） */
-  const GENERATED_FILE_HREF_PATTERN = /\/api\/v1\/chat\/generated-files\/[0-9a-f]{32}\?token=[A-Za-z0-9_-]+/i;
+  /**
+   * 产物能力链接（/api/v1/chat/generated-files/{32hex}?token=...）
+   *
+   * token 未必是第一个 query 参数（例如带 `download=1` 的地址），所以显式允许它前面还有
+   * 若干 `参数&`。中间那段字符类刻意排除引号/空白/`<>`/`&`：既不会跨过标签边界，也不会
+   * 像 `\?.*&token=` 那样（`.*` 贪婪）一路吃到**别的**链接上的 token。
+   */
+  const GENERATED_FILE_HREF_PATTERN = /\/api\/v1\/chat\/generated-files\/[0-9a-f]{32}\?(?:[^"'\s<>&]+&)*token=[A-Za-z0-9_-]+/i;
 
   /**
    * 给产物链接追加「下载」小按钮。

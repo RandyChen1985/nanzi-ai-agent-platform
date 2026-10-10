@@ -2283,6 +2283,7 @@ const {
   canvasData,
   handleWorkspaceFilePreview,
   handleOpenCanvas,
+  handleGeneratedFilePreview,
   closeCanvas,
   revokeActiveBlobUrl,
 } = useWorkspaceCanvas({
@@ -2293,6 +2294,19 @@ const {
   isMobile: () => isMobile.value,
 });
 onUnmounted(() => revokeActiveBlobUrl());
+
+/**
+ * 消息正文里的产物链接预览。
+ *
+ * 与 EmbedChat 走同一条链路（绑当前 Host → 按扩展名取内容或用 URL → 右侧钉住画布）。
+ * 没有它时，正文里的产物链接在这个页面只会走浏览器默认行为（下载）。
+ */
+const previewGeneratedFileInCanvas = (payload: { url: string; name: string }) => {
+  void handleGeneratedFilePreview({
+    url: resolveGeneratedFileHref(payload.url),
+    name: payload.name,
+  });
+};
 
 const isImageFile = isImageAttachment;
 
@@ -4277,7 +4291,7 @@ onUnmounted(() => {
                             </div>
                             <div>
                                 <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 opacity-70">智能体</div>
-                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="stripInternalContextBlocks(turn.summary || 'N/A')" @open-canvas="handleOpenCanvas" /></div>
+                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="stripInternalContextBlocks(turn.summary || 'N/A')" @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas" /></div>
                             </div>
                         </div>
 
@@ -4582,7 +4596,7 @@ onUnmounted(() => {
               >
                 <template v-for="parts in [splitUserMessageContent(msg.content)]" :key="'user-parts'">
                   <template v-if="parts.hasContext">
-                    <MessageRenderer v-if="parts.userPart" :content="parts.userPart" @open-canvas="handleOpenCanvas" />
+                    <MessageRenderer v-if="parts.userPart" :content="parts.userPart" @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas" />
                     <div v-if="parts.userPart" class="my-2.5 border-t border-white/30" role="separator" />
                     <details class="group/sys mt-2 text-[10px] text-white/70 select-none">
                       <summary class="cursor-pointer hover:text-white flex items-center gap-1 font-semibold focus:outline-none list-none [&::-webkit-details-marker]:hidden">
@@ -4596,7 +4610,7 @@ onUnmounted(() => {
                       </div>
                     </details>
                   </template>
-                  <MessageRenderer v-else :content="msg.content" @open-canvas="handleOpenCanvas" />
+                  <MessageRenderer v-else :content="msg.content" @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas" />
                 </template>
 
                 <!-- Attached Files In Bubble -->
@@ -4972,7 +4986,7 @@ onUnmounted(() => {
                   :hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"
                   @quick-question="handleQuickQuestion"
                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
-                  @open-canvas="handleOpenCanvas"
+                  @open-canvas="handleOpenCanvas" @preview-generated-file="previewGeneratedFileInCanvas"
                 />
                 <ChatBIInsightPanel
                   v-if="msg.chatbiInsight || (msg.citations && msg.citations.length)"

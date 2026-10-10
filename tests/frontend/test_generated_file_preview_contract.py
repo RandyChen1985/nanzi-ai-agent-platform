@@ -235,3 +235,93 @@ def test_embed_chat_wires_message_body_artifact_preview_to_the_canvas():
     assert "handleGeneratedFilePreview({" in body
     assert "resolveGeneratedFileHref(payload.url)" in body
     assert "payload.name" in body
+
+
+def test_workspace_canvas_normalizing_title_keeps_document_meta():
+    """`normalizeDirectPayloadTitle` 分支不能把 `documentMeta` 吃掉。
+
+    回归背景：AgentDebug 配了 `normalizeDirectPayloadTitle: true`，而该分支是**白名单式**重建
+    对象（type/title/content/langName/runnable），白名单里漏了 `documentMeta` —— Office 预览
+    正是靠它（filename + mime）选渲染链路，传不到就预览不出来。
+
+    注意修法是**往白名单里补字段**，而不是改成 `...payload`：既有测试
+    （`test_workspace_canvas_keeps_workspace_toggle_and_debug_title_normalization`）固化了
+    「normalize 后不夹带 sourcePath 等上下文」的语义。
+    """
+    source = _source("frontend/src/composables/chat/useWorkspaceCanvas.ts")
+
+    start = source.index("canvasData.value = options.normalizeDirectPayloadTitle")
+    body = source[start : source.index(": payload;", start)]
+
+    assert "documentMeta" in body, "documentMeta 必须进白名单，否则调试页 Office 预览拿不到 mime"
+    assert "title: payload.title || " in body, "只对 title 做缺省兜底"
+    assert "content: payload.content" in body, "既有白名单字段保持不动"
+
+
+def test_generated_file_href_pattern_accepts_token_after_other_query_params(tmp_path):
+    """产物链接正则要兼容 token 不在 query 首位（下载按钮会追加 `download=1`）。
+
+    这里把 .vue 里的真实正则字面量抽出来跑真实用例 —— 不是"源码里写了什么"，而是"它匹配什么"。
+    """
+    source = _source("frontend/src/components/MessageRenderer.vue")
+    pattern_line = next(
+        line for line in source.splitlines() if line.strip().startswith("const GENERATED_FILE_HREF_PATTERN")
+    )
+    literal = pattern_line.split("=", 1)[1].strip().rstrip(";")
+
+    script = tmp_path / "generated_file_pattern.mjs"
+    script.write_text(
+        f"""
+const PATTERN = {literal};
+const id = 'a'.repeat(32);
+const base = '/api/v1/chat/generated-files/' + id;
+const cases = [
+  [base + '?token=abc', true],
+  [base + '?token=abc&download=1', true],
+  ['http://localhost:8001' + base + '?token=abc', true],
+  // 放宽点：token 不是第一个参数时也要认出来，否则产物链接会被降级成普通下载
+  [base + '?download=1&token=abc', true],
+  [base, false],
+  [base + '?token=', false],
+  ['/api/v1/chat/generated-files/nothex?token=abc', false],
+  ['/api/v1/chat/fs/preview?path=/docs/a.docx', false],
+];
+const failed = cases.filter(([url, expected]) => PATTERN.test(url) !== expected);
+if (failed.length) {{
+  console.error('未通过:', JSON.stringify(failed));
+  process.exit(1);
+}}
+// 防贪婪：匹配不得跨过标签边界。
+// 注意第二个链接要用 `?d=1&token=` 形式 —— 贪婪写法（`\\?.*&token=`）只有在 token 前面
+// 存在 `&` 时才会"跨过 </a> 去吃别人的 token"，用 `?token=` 构造的话它根本跨不过来，测不出来。
+const crossTag = '<a href="' + base + '?x=1">A</a><a href="' + base + '?d=1&token=zzz">B</a>';
+const crossed = PATTERN.exec(crossTag);
+if (!crossed) {{
+  console.error('跨标签场景没有匹配到第二个链接的 token');
+  process.exit(1);
+}}
+if (crossed[0].includes('</a>') || crossed[0].includes('?x=1')) {{
+  console.error('匹配跨过了标签边界:', crossed[0]);
+  process.exit(1);
+}}
+console.log('产物链接正则用例全部通过');
+""",
+        encoding="utf-8",
+    )
+    node = subprocess.run(["node", str(script)], cwd=ROOT, capture_output=True, text=True)
+    assert node.returncode == 0, f"stdout={node.stdout}\nstderr={node.stderr}"
+
+
+def test_agent_debug_wires_message_body_artifact_preview_to_its_canvas():
+    """调试页用的是同一份 MessageRenderer，同样要接正文产物预览（否则回落成点击下载）。"""
+    source = _source("frontend/src/views/AgentDebug.vue")
+
+    assert "handleGeneratedFilePreview" in source
+    start = source.index("const previewGeneratedFileInCanvas")
+    body = source[start : source.index("};", start)]
+    assert "handleGeneratedFilePreview({" in body
+    assert "resolveGeneratedFileHref(payload.url)" in body
+    # 每个画布接线点都要接上预览事件，避免"有的消息能预览、有的只能下载"
+    assert source.count('@preview-generated-file="previewGeneratedFileInCanvas"') == source.count(
+        '@open-canvas="handleOpenCanvas"'
+    )

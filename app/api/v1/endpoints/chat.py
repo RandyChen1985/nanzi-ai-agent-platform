@@ -329,8 +329,11 @@ async def list_artifacts(
         expires_at = row.expires_at
         if expires_at is None:
             # 历史记录缺过期时间：补一次（仅此一次写库），否则无法派生 token。
-            # 同样规整到整秒，保证「入库值」与「token 派生值」严格一致。
-            expires_at = ((row.created_at or datetime.now()) + DEFAULT_TTL).replace(microsecond=0)
+            # 兜底必须用 **UTC**：expires_at 这一列的语义是 UTC（登记时用
+            # datetime.now(timezone.utc) 写入），而 datetime.now() 是本地 naive 时间 ——
+            # 在 TZ 不是 UTC 的部署上，补出来的过期时间会整体偏移，由它派生的下载 token
+            # 也会跟着错。同样规整到整秒，保证「入库值」与「token 派生值」严格一致。
+            expires_at = ((row.created_at or datetime.now(timezone.utc)) + DEFAULT_TTL).replace(microsecond=0)
             row.expires_at = expires_at
         items.append(
             ArtifactListItem(

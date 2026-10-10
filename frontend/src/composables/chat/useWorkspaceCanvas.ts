@@ -250,6 +250,11 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
       return;
     }
 
+    // 这里刻意保留「白名单」语义：画布只接收它认识的字段，不把 sourcePath 之类的上下文
+    // 夹带进去（test_workspace_canvas_keeps_workspace_toggle_and_debug_title_normalization
+    // 固化了这一点）。但白名单里曾经漏掉 documentMeta —— AgentDebug 配了
+    // normalizeDirectPayloadTitle，于是调试页点 Office 文档时画布拿不到 filename/mime，
+    // Office 预览因此选不出渲染链路。payload 没带 documentMeta 时保持对象形状不变。
     canvasData.value = options.normalizeDirectPayloadTitle
       ? {
           type: payload.type,
@@ -257,6 +262,7 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
           content: payload.content,
           langName: payload.langName,
           runnable: payload.runnable,
+          ...(payload.documentMeta ? { documentMeta: payload.documentMeta } : {}),
         }
       : payload;
     showCanvas();

@@ -230,3 +230,58 @@ export async function openGeneratedFileInCanvas(options: {
 **验证**：契约测试 +3（复用分派器、兜底前提、EmbedChat 接线含 handler 体内 Host 绑定），前端全量 **1695 passed / 1 skipped / 0 failed**，`vue-tsc` 仍为既有 63 项且新增标识符 0 命中；正文侧变异 **4/4**（不再复用分派器 / 去掉兜底 / 不再接线 / 不再绑 Host）。
 
 **遗留**：`AgentDebug.vue` 的 4 处 `MessageRenderer` 未接 `preview-generated-file`（内部调试页，靠兜底维持"点击下载"，不劣化）；需要时一行即可接上。
+
+## 12. 修订补记（2026-10-11）：外部 review 三条建议的核实与处理
+
+外部 AI review 提了 3 条。逐条核实（读代码 + 跑真实用例验证），**2 条采纳、1 条采纳意图但换写法**，另顺带补掉 §11 的遗留。
+
+### 12.1 【采纳】`normalizeDirectPayloadTitle` 会吃掉 `documentMeta`
+
+`useWorkspaceCanvas.ts` 里该分支是**逐字段重建**对象（`type/title/content/langName/runnable`），而 `AgentDebug.vue` 配了 `normalizeDirectPayloadTitle: true` → `MessageRenderer` 通过 `open-canvas` 传出的 `documentMeta`（Office 预览靠它拿 filename/mime）在调试页被丢弃。
+
+补充两点事实修正：① `EmbedChat` **没有**开这个开关，所以线上聊天页不受影响，只有调试页；② 上一期改动后，**产物**链接在调试页走的是 `preview-generated-file`（当时无人接 → 兜底下载），真正踩到这条的是**非产物**的 Office 链接（如工作区 `.docx` 直链）。
+
+修法上**没有照搬 review 的建议**。review 建议改成 `{ ...payload, title: ... }`（全量展开），但这会破坏该分支的既有语义：它是**白名单式**重建，只把画布认识的字段传下去，不夹带 `sourcePath` 之类的上下文 —— 既有测试 `test_workspace_canvas_keeps_workspace_toggle_and_debug_title_normalization`（真跑 TS，断言 `direct == {type,title,content}`）与 `test_workspace_canvas_preserves_script_metadata_when_normalizing_payload`（断言白名单字段存在）已经把它固化为规范。变异 M17b（就是换成 `...payload`）被这两个测试抓住即为证。
+
+所以采用的是**往白名单里补字段**，并且只在 payload 确实带了 `documentMeta` 时才加（保持对象形状不变，不引入 `documentMeta: undefined` 这种多余键）：
+
+```ts
+?(payload.documentMeta ? { documentMeta: payload.documentMeta } : {})
+```
+
+### 12.2 【采纳意图、换写法】产物链接正则的 query 假设
+
+review 说的风险（token 不是第一个参数时认不出来）方向对，但**给的正则 `(?:\?|\?.*&)token=` 反而更差**，实测（变异 M19）：
+
+- `\?.*&token=` 里的 `.*` 是贪婪的，在单行 HTML 里会跨过 `</a>` 去匹配**别的**链接上的 token（抓它的用例必须让第二个链接写成 `?d=1&token=`，否则贪婪分支根本跨不过来 —— 第一版用例就因此漏抓）；
+- 单独使用 `\?.*&token=` 时连最普通的 `?token=` 都匹配不了（它强制要求 `&`）。
+
+最终写法显式允许 token 前面有若干 `参数&`，并把中间字符类收窄：
+
+```js
+/\/api\/v1\/chat\/generated-files\/[0-9a-f]{32}\?(?:[^"'\s<>&]+&)*token=[A-Za-z0-9_-]+/i
+```
+
+字符类排除 `"'\s<>&`：既不会跨标签，也不会误吃别的 token。用例覆盖 `?token=`、`?token=…&download=1`、`?download=1&token=…`、无 token、空 token、非 32 位 hex，以及一条**防贪婪**断言（匹配结果不得含 `</a>`）。
+
+> 需要说明的是：当前后端 `build_download_url` 恒定把 token 放在第一个参数，所以这条**不是线上 bug**，属于防御性放宽。
+
+### 12.3 【采纳】`list_artifacts` 兜底用了本地 naive 时间
+
+```python
+expires_at = ((row.created_at or datetime.now()) + DEFAULT_TTL).replace(microsecond=0)
+```
+
+`expires_at` 列的语义是 UTC（登记时用 `datetime.now(timezone.utc)` 写入），而 `datetime.now()` 是**本地** naive 时间 → 在 TZ 不是 UTC 的部署上，兜底补出来的过期时间会整体偏移，由它派生的 token 也跟着错。
+
+修法：`datetime.now(timezone.utc)`。补充事实：当前容器 TZ=UTC，所以实际没有暴露（这也解释了此前取证里 `expires_at - created_at` 只多 21.7 分钟、而不是 8 小时）；另外 `ai_artifacts.created_at` 用的是 `default=datetime.now`，那是**全项目惯例**（`user.py`/`task.py`/`metadata.py` 等都如此），本次不动它，只在兜底处显式用 UTC 并在注释里写明原因。
+
+### 12.4 【顺带补齐 §11 遗留】调试页接上正文产物预览
+
+`AgentDebug.vue` 解构出 `handleGeneratedFilePreview`、加 `previewGeneratedFileInCanvas`、并在**全部 4 处** `MessageRenderer` 上接 `@preview-generated-file`（用 `count` 断言与 `@open-canvas` 数量相等，避免"有的消息能预览、有的只能下载"）。
+
+### 12.5 验证
+
+- 新增/调整测试 5 条：`test_workspace_canvas_normalizing_title_keeps_document_meta`（契约）、`test_workspace_canvas_direct_payload_keeps_document_meta_for_office_preview`（**真跑 TS** 的行为测试，同时断言白名单语义不变）、`test_generated_file_href_pattern_accepts_token_after_other_query_params`（**真跑正则字面量** + 防贪婪断言）、`test_agent_debug_wires_message_body_artifact_preview_to_its_canvas`、`test_list_artifacts_backfills_missing_expiry_with_utc`；
+- 变异 **6/6** 命中且字节级还原：M17 白名单漏 documentMeta、**M17b 换成 review 的全量展开写法（被既有白名单语义测试抓住）**、M18 退回严格正则、**M19 换成 review 原样正则（被防贪婪断言抓住）**、M20 兜底退回 naive 本地时间、M21 调试页不接线；
+- 回归：前端契约全量 **1702 passed / 1 skipped / 0 failed**、`tests/api/v1/test_chat_artifacts.py` **10 passed**、`tests/ai/tools` **203 passed / 4 xfailed**、`vue-tsc -b --force` **63 项**（与改动前相同；3 处命中均为既有错误：2 处逐字一致、1 处行号随新增代码平移 14 行）。

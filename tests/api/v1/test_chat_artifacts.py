@@ -1,11 +1,11 @@
 """GET /api/v1/chat/artifacts —— 我的 AI 产物列表接口的契约测试。
 
-覆盖：新签发下载 token 并回写 token_hash/expires_at、按 owner_user_id 过滤、
-artifact_type 过滤、分页 total/page/page_size、download_url 格式、鉴权用户解析。
+覆盖：下载地址按确定性签名重算且**不改写** token_hash、历史记录缺 expires_at 时的兜底、
+按 owner_user_id 过滤、artifact_type 过滤、分页 total/page/page_size、download_url 格式、鉴权用户解析。
 """
 import pytest
 from httpx import AsyncClient, ASGITransport
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.main import app
 from app.api.v1.endpoints import chat as chat_endpoint
@@ -47,9 +47,13 @@ class _FakeSession:
         self.mutated = list(self._rows)
 
 
+_UNSET = object()
+
+
 def _make_artifact(*, artifact_id, owner_user_id=7, artifact_type="word",
                    filename="报告.docx", mime_type=None, size=1024,
-                   conversation_id="conv-1", trace_id="trace-1"):
+                   conversation_id="conv-1", trace_id="trace-1",
+                   expires_at=_UNSET, created_at=_UNSET):
     return AiArtifact(
         id=artifact_id,
         owner_user_id=owner_user_id,
@@ -61,8 +65,8 @@ def _make_artifact(*, artifact_id, owner_user_id=7, artifact_type="word",
         size=size,
         storage_path=f"/data/workspaces/u7/{artifact_id}.docx",
         token_hash="old-hash",
-        expires_at=datetime.now(timezone.utc),
-        created_at=datetime.now(),
+        expires_at=datetime.now(timezone.utc) if expires_at is _UNSET else expires_at,
+        created_at=datetime.now() if created_at is _UNSET else created_at,
     )
 
 
@@ -306,3 +310,37 @@ async def test_list_artifacts_invalid_pagination_rejected():
         app.dependency_overrides.clear()
 
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_list_artifacts_backfills_missing_expiry_with_utc(monkeypatch):
+    """历史记录缺 expires_at 时补出来的值必须是 **UTC** 整秒。
+
+    `expires_at` 这一列的语义是 UTC（登记时用 `datetime.now(timezone.utc)` 写入），
+    而 `datetime.now()` 是**本地** naive 时间 —— 在 TZ 不是 UTC 的部署上，兜底补出来的
+    过期时间会整体偏移，由它派生的下载 token 也随之不对。created_at 为空是极罕见路径，
+    但兜底同样要写对。
+    """
+    async def _no_prefix():
+        return ""
+
+    monkeypatch.setattr(generated_file_service, "get_download_url_prefix", _no_prefix)
+    row = _make_artifact(artifact_id="dd" * 16, expires_at=None, created_at=None)
+    session = _FakeSession(rows=[row], count=1)
+
+    app.dependency_overrides[chat_endpoint.require_api_key] = _fake_require_api_key({"user_id": "7", "role": "user"})
+    app.dependency_overrides[get_db_session] = _db_override(session)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/v1/chat/artifacts", headers={"X-API-Key": "test-key"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    assert row.expires_at is not None
+    assert row.expires_at.microsecond == 0, "必须规整到整秒，否则 token 重算会漂移"
+    assert row.expires_at.tzinfo is not None, "兜底不能返回 naive 时间（naive 会被当成 UTC，而它其实是本地时间）"
+    assert row.expires_at.utcoffset() == timedelta(0), "兜底必须是 UTC"
+    # 返回的下载地址同样要由这个值派生出来
+    token = resp.json()["data"]["items"][0]["download_url"].split("token=")[1]
+    assert token == generated_file_service.build_artifact_token(row.id, row.expires_at)
