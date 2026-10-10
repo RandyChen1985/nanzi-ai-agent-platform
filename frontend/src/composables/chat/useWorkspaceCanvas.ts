@@ -1,5 +1,6 @@
 import { onUnmounted, ref, watch } from "vue";
 import axios from "@/utils/axios";
+import { openGeneratedFileInCanvas } from "@/utils/generatedFilePreview";
 import {
   openWorkspaceFileInCanvas,
   isSameWorkspacePreviewPath,
@@ -97,6 +98,34 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
         canvasData.value = data as WorkspaceCanvasPayload;
         // 工作空间侧不默认钉住：预览文件时不该把对话区占满（对话侧仍默认钉住）
         showCanvas(false);
+      },
+    });
+  };
+
+  /**
+   * 打开 AI 产物（「我的产出」抽屉里的预览动作）。
+   *
+   * **右侧钉住**（`canvasFromWorkspace = false` + `showCanvas(true)`），与消息正文里点
+   * 产物链接的行为一致：一边聊一边看产出物。因此调用方（EmbedChat）要在**预览成功后
+   * 收起产物抽屉** —— 否则右侧抽屉（z-125）与画布（z-145）会挤在同一侧。
+   * 显式把 `canvasFromWorkspace` 置回 false 是必要的：上一次可能是工作区预览。
+   *
+   * 传入的 url 必须已绑定当前页面 Host（utils/generatedFileUrl.resolveGeneratedFileHref）：
+   * 跨站嵌入时产物地址里是配置的 APP_PUBLIC_URL，当相对路径用会打到宿主域。
+   */
+  const handleGeneratedFilePreview = async (payload: { url: string; name: string }) => {
+    canvasFromWorkspace.value = false;
+    return openGeneratedFileInCanvas({
+      url: payload.url,
+      name: payload.name,
+      showToast: options.showToast,
+      activeBlobUrlRef: activeBlobUrl,
+      onOpen: (data) => {
+        // 对象 URL 的旧值回收在 openGeneratedFileInCanvas 内完成（先回收再赋值），
+        // 这里只负责采用新数据，避免把刚创建的对象 URL 又 revoke 掉。
+        canvasData.value = data;
+        // 钉住：桌面端与对话并排，移动端由 showCanvas 内部自动降级为全屏
+        showCanvas(true);
       },
     });
   };
@@ -239,6 +268,7 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
     canvasFromWorkspace,
     canvasData,
     handleWorkspaceFilePreview,
+    handleGeneratedFilePreview,
     handleOpenCanvas,
     closeCanvas,
     revokeActiveBlobUrl,

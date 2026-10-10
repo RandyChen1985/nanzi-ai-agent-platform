@@ -9,6 +9,7 @@ import ConfirmModal from '@/components/ConfirmModal.vue';
 import PivotTable from '@/components/embed/PivotTable.vue';
 import { useToast } from '@/composables/useToast';
 import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, downloadWorkspaceFile, isDirectRenderableUrl, resolveHighlightLanguage, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent, shouldPreviewWithFileViewerInCanvas } from '@/utils/workspaceFilePreview';
+import { buildArtifactDownloadUrl } from '@/utils/generatedFilePreviewPlan';
 import { copyToClipboard } from '@/utils/clipboard';
 import { useCodeExecution } from '@/composables/chat/useCodeExecution';
 import DocumentViewer from '@/components/embed/DocumentViewer.vue';
@@ -122,6 +123,19 @@ const downloadFile = () => {
         conversationId: resolveConversationId(),
         showToast,
       });
+      return;
+    }
+    // AI 产物预览（「我的产出」抽屉）没有工作区路径，content 是产物鉴权 URL。
+    // 若不在这里拦下，会穿透到下面「把 content 当文本做 Blob」的兜底，
+    // 用户拿到的将是一个内容为 URL 字符串的 .docx。
+    // 产物地址不带扩展名（/api/v1/chat/generated-files/{32hex}），只能按 URL 形态判定。
+    if (/^(https?:)?\/\//.test(content) || content.startsWith('/api/')) {
+      const anchor = document.createElement('a');
+      anchor.href = buildArtifactDownloadUrl(content);
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
       return;
     }
   }

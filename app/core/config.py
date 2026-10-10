@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     # Fernet Key (32 url-safe base64-encoded bytes)
     ENCRYPTION_KEY: str
 
+    # 产物下载 token 的签名密钥（可选）。
+    # 未配置时回退 ENCRYPTION_KEY —— 单机/开发环境无需额外配置。
+    # 说明：签名 token 由本密钥确定性派生（artifact_id + expires_at），同一产物在同一
+    # 过期时间内 token 恒定，因此产物列表接口可以重算而不写库，也不会吊销已经分发到
+    # 消息正文里的链接。轮换本密钥会使所有已分发链接失效。
+    ARTIFACT_TOKEN_SECRET: Optional[str] = None
+
     # LLM Gateway
     LLM_BASE_URL: Optional[str] = None
     LLM_API_KEY: Optional[str] = None

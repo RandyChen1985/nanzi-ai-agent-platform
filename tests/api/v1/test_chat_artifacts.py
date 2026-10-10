@@ -34,6 +34,7 @@ class _FakeSession:
         self._count = count
         self.commits = 0
         self.mutated = []  # 回写 token_hash/expires_at 的记录
+        self.rows_by_id = {row.id: row for row in self._rows}
 
     async def scalar(self, stmt):
         return self._count
@@ -82,7 +83,20 @@ def _db_override(session):
 
 
 @pytest.mark.asyncio
-async def test_list_artifacts_returns_items_and_rotates_token():
+async def test_list_artifacts_returns_stable_signed_token_without_rotating(monkeypatch):
+    """列表必须重算确定性签名 token，且**不得**改写 token_hash。
+
+    这一条是回归锁：旧实现每次列出都重新签发并覆盖哈希，导致登记时已经写进消息正文的
+    链接被吊销（用户实测：点正文里的产物链接返回 404「文件不存在或已过期」，而同一个
+    文件在「我的产出」抽屉里点开却正常）。
+    """
+    # 显式钉住公开前缀：否则 download_url 会带上环境/系统配置里的前缀，断言随环境漂移
+    # （旧用例正是因此被记进 known_failures）。chat.py 在函数内 import 该函数，
+    # 调用时从模块取属性，所以 patch 模块属性即可生效。
+    async def _no_prefix():
+        return ""
+
+    monkeypatch.setattr(generated_file_service, "get_download_url_prefix", _no_prefix)
     a1 = _make_artifact(artifact_id="aa" * 16, filename="方案.docx")
     a2 = _make_artifact(artifact_id="bb" * 16, artifact_type="excel", filename="报表.xlsx")
     session = _FakeSession(rows=[a2, a1], count=2)
@@ -102,31 +116,28 @@ async def test_list_artifacts_returns_items_and_rotates_token():
     assert data["total"] == 2
     assert data["page"] == 1
     assert data["page_size"] == 20
-    filenames = [item["filename"] for item in data["items"]]
-    # 后端按 created_at 倒序返回，这里 fake session 直接按给定顺序返回
-    assert set(filenames) == {"方案.docx", "报表.xlsx"}
+    assert {item["filename"] for item in data["items"]} == {"方案.docx", "报表.xlsx"}
 
-    # download_url 格式 + token 新签发，且 DB 回写 token_hash / expires_at
-    assert session.commits == 1
-    urls = [item["download_url"] for item in data["items"]]
-    for idx, item in enumerate(data["items"]):
+    for item in data["items"]:
         assert item["download_url"].startswith(f"/api/v1/chat/generated-files/{item['id']}?token=")
         token = item["download_url"].split("token=")[1]
-        # 回写记录：新 token 的哈希必须写回对应 fake row
-        row = session.mutated[idx]
-        assert row.token_hash == generated_file_service._token_hash(token)
-        assert row.expires_at is not None
+        row = session.rows_by_id[item["id"]]
+        # 返回的就是由 (id, expires_at) 派生的签名 token —— 与登记时签发的一致
+        assert token == generated_file_service.build_artifact_token(row.id, row.expires_at)
+        # 关键回归断言：token_hash 没有被改写（改写即吊销已分发到正文里的旧链接）
+        assert row.token_hash == "old-hash"
 
 
 @pytest.mark.asyncio
 async def test_list_artifacts_uses_configured_public_url(monkeypatch):
     a1 = _make_artifact(artifact_id="cc" * 16, filename="方案.docx")
     session = _FakeSession(rows=[a1], count=1)
-    monkeypatch.setattr(
-        generated_file_service.settings,
-        "APP_PUBLIC_URL",
-        "https://files.example.com/",
-    )
+    # 直接钉住配置读取：真实环境里系统配置项 download_url_prefix 优先于 APP_PUBLIC_URL，
+    # 只 patch APP_PUBLIC_URL 会让断言随环境漂移（该用例在配置了前缀的环境下一直是红的）。
+    async def _configured_prefix(key, default=None):
+        return "https://files.example.com/" if key == "download_url_prefix" else None
+
+    monkeypatch.setattr(generated_file_service.ConfigService, "get", _configured_prefix)
 
     app.dependency_overrides[chat_endpoint.require_api_key] = _fake_require_api_key({"user_id": "7", "role": "user"})
     app.dependency_overrides[get_db_session] = _db_override(session)

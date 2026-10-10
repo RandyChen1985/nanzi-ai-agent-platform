@@ -5,6 +5,7 @@ import texmath from 'markdown-it-texmath'
 import 'highlight.js/styles/github.css' // Base styles
 import 'katex/dist/katex.min.css'
 import { normalizeGroundingNoticeMarkdown } from './markdownNormalization'
+import { registerBareFilenameUnlink } from './markdownBareFilename'
 
 const mathOptions = {
   engine: katex,
@@ -22,6 +23,9 @@ const md: MarkdownIt = new MarkdownIt({
   highlight: null
 })
 md.use(texmath, mathOptions)
+// linkify 会把「北京…清单.md」当成中文域名（.md 是 ccTLD），点开是 DNS 解析失败。
+// 撤掉这类"裸文件名"的自动链接；真实域名与显式链接不受影响。
+registerBareFilenameUnlink(md)
 
 // Override fence rule to prevent double wrapping
 md.renderer.rules.fence = function (tokens, idx, _options, _env, _self) {
@@ -152,6 +156,7 @@ const mdPreview = new MarkdownIt({
   highlight: null,
 })
 mdPreview.use(texmath, mathOptions)
+registerBareFilenameUnlink(mdPreview)
 mdPreview.renderer.rules.fence = md.renderer.rules.fence!
 mdPreview.validateLink = md.validateLink
 

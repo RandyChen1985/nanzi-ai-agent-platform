@@ -2,7 +2,6 @@ import json
 import os
 import time
 import asyncio
-import secrets
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, AsyncGenerator, Dict, Any, Union, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
@@ -275,8 +274,8 @@ class ArtifactListItem(BaseModel):
     response_model=StandardResponse[ListResponse[ArtifactListItem]],
     summary="我的 AI 产物列表",
     description="列出当前用户在 ai_artifacts 中登记的 AI 生成/导出产物（Word/Excel/导出等）。"
-    "由于 ai_artifacts 只存 token 哈希，为每条记录新签发一个下载 token 并回写哈希与过期时间，"
-    "保证返回的 download_url 可用。",
+    "下载地址按 (artifact_id, 过期时间) 重算确定性签名 token，**不改写已登记的 token_hash**，"
+    "避免吊销已经分发到消息正文里的旧链接（历史随机 token 只要哈希未被覆盖就继续有效）。",
 )
 async def list_artifacts(
     page: int = Query(1, ge=1),
@@ -290,7 +289,7 @@ async def list_artifacts(
     from app.models.artifact import AiArtifact
     from app.services.ai.tools.generated_file_service import (
         DEFAULT_TTL,
-        _token_hash,
+        build_artifact_token,
         build_download_url,
         get_download_url_prefix,
     )
@@ -321,16 +320,18 @@ async def list_artifacts(
     )
     rows = (await db.scalars(stmt)).all()
 
-    now = datetime.now(timezone.utc)
     public_base_url = await get_download_url_prefix()
     items: List[ArtifactListItem] = []
-    # 数据库只存 token 哈希，无法还原旧 token。这里对新列出的每条记录新签发下载 token
-    # 并回写 token_hash/expires_at，保证前端拿到的 download_url 可直接下载。
+    # 确定性签名：同一产物重算出的 token 与登记时一致，因此这里**不再改写 token_hash**。
+    # 旧实现「每列出一次就新签发并覆盖哈希」会把已经发到消息正文里的链接全部吊销
+    # （正文用的是登记时那个 token），本接口必须保持只读语义。
     for row in rows:
-        token = secrets.token_urlsafe(32)
-        new_expires_at = now + DEFAULT_TTL
-        row.token_hash = _token_hash(token)
-        row.expires_at = new_expires_at
+        expires_at = row.expires_at
+        if expires_at is None:
+            # 历史记录缺过期时间：补一次（仅此一次写库），否则无法派生 token。
+            # 同样规整到整秒，保证「入库值」与「token 派生值」严格一致。
+            expires_at = ((row.created_at or datetime.now()) + DEFAULT_TTL).replace(microsecond=0)
+            row.expires_at = expires_at
         items.append(
             ArtifactListItem(
                 id=row.id,
@@ -341,10 +342,10 @@ async def list_artifacts(
                 conversation_id=row.conversation_id,
                 trace_id=row.trace_id,
                 created_at=row.created_at,
-                expires_at=new_expires_at,
+                expires_at=expires_at,
                 download_url=build_download_url(
                     row.id,
-                    token,
+                    build_artifact_token(row.id, expires_at),
                     public_base_url=public_base_url,
                 ),
             )

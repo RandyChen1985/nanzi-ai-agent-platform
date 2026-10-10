@@ -947,6 +947,7 @@
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                                                                   @open-canvas="handleOpenCanvas"
+                                                                  @preview-generated-file="previewGeneratedFileInCanvas"
                                                                   @open-browser-url="handleOpenWebPreviewUrl"
                                                                 />
                                                                 <ErrorDetailCard
@@ -1497,6 +1498,7 @@
       :focused-result-id="focusedReusableResultId"
       :reused-result-id="reusedReusableResultId"
       @select-reusable-result="selectReusableResult"
+      @preview-file="previewArtifactInCanvas"
     />
 
     <MemoryBrowserDrawer
@@ -2926,6 +2928,39 @@ const openMessageArtifacts = (traceId?: string | null) => {
   focusedOutputTraceId.value = traceId || null;
   reusedReusableResultId.value = null;
   showMyArtifactsDrawer.value = true;
+};
+
+/**
+ * 「我的产出」抽屉里的预览动作。
+ *
+ * 产物地址必须先用 resolveGeneratedFileHref 绑到当前页面 Host：跨站嵌入时
+ * download_url 里是配置的 APP_PUBLIC_URL，当相对路径用会打到宿主域而 404。
+ * 画布状态归 useWorkspaceCanvas，抽屉只 emit 意图。
+ *
+ * 画布是右侧钉住，所以预览成功后要收起抽屉（否则两者在同一侧互挤）；
+ * 但**失败时不收**——取内容 404 或网络错误时保住抽屉，用户还能改点「下载」。
+ */
+const previewArtifactInCanvas = async (item: { download_url: string; filename: string }) => {
+  const opened = await handleGeneratedFilePreview({
+    url: resolveGeneratedFileHref(item.download_url),
+    name: item.filename,
+  });
+  if (opened) showMyArtifactsDrawer.value = false;
+};
+
+/**
+ * 消息正文里的产物链接预览。
+ *
+ * 与抽屉走**同一条链路**（`handleGeneratedFilePreview`：绑当前 Host → 按扩展名取内容或
+ * 直接用 URL → 右侧钉住画布），差别只在于正文点击时抽屉没开，不需要收起。
+ * 没有这条链路时，`.md`/`.txt`/`.json`/代码等文本类产物在正文里点击会直接下载，
+ * 而同样的文件在抽屉里能预览 —— 行为不一致。
+ */
+const previewGeneratedFileInCanvas = (payload: { url: string; name: string }) => {
+  void handleGeneratedFilePreview({
+    url: resolveGeneratedFileHref(payload.url),
+    name: payload.name,
+  });
 };
 
 const selectReusableResult = (result: { result_id: string; origin_name?: string }) => {
@@ -6127,6 +6162,7 @@ const {
   canvasFromWorkspace,
   canvasData,
   handleWorkspaceFilePreview,
+  handleGeneratedFilePreview,
   handleOpenCanvas,
   closeCanvas,
   revokeActiveBlobUrl,

@@ -1110,6 +1110,7 @@ const ref = initial => {
 const requireModule = id => {
   if (id === 'vue') return { ref, watch: (target, callback) => target.watchers.push(callback), onUnmounted: () => {} };
   if (id === '@/utils/axios') return { default: { get: async () => ({ data: '' }) } };
+  if (id === '@/utils/generatedFilePreview') return { openGeneratedFileInCanvas: async () => true };
   if (id === '@/utils/workspaceFilePreview') return {
     isSameWorkspacePreviewPath: (left, right) => left === right,
     shouldAttachWorkspaceSourcePath: () => true,
@@ -1170,6 +1171,7 @@ const ref = initial => {
 const requireModule = id => {
   if (id === 'vue') return { ref, watch: (target, callback) => target.watchers.push(callback), onUnmounted: () => {} };
   if (id === '@/utils/axios') return { default: { get: async () => ({ data: '' }) } };
+  if (id === '@/utils/generatedFilePreview') return { openGeneratedFileInCanvas: async () => true };
   if (id === '@/utils/workspaceFilePreview') return {
     isSameWorkspacePreviewPath: (left, right) => left === right,
     shouldAttachWorkspaceSourcePath: () => true,
