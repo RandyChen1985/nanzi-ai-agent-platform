@@ -21,7 +21,7 @@
 4. 类型检查：`cd frontend && NODE_OPTIONS="--max-old-space-size=4096" ./node_modules/.bin/vue-tsc -b --pretty false`，基线 **62 条**，不得新增。
 5. 新增注释与文案用中文。
 
-## 与 spec 的九处实现层补充（评审计划时请一并确认）
+## 与 spec 的十处实现层补充（评审计划时请一并确认）
 
 这三处是写计划时发现的、spec 未写到但必须处理的点：
 
@@ -62,6 +62,10 @@
 **补充 9（用户复测反馈）：第一档文案不再声称停在早期阶段。**
 
 `model` 第一档「正在理解你的问题…」→「正在思考…」、第二档「正在组织回答…」→「正在生成回答…」；`knowledge` 第一档「正在查阅知识库资料…」→「正在整理检索结果…」、第二档「正在比对相关资料…」→「正在组织回答…」。理由是 3 秒时模型早已在生成 token、知识库行出现时检索已完成，原措辞把阶段说晚了。护栏：两条精确断言（`== "正在思考…"`、`== "正在整理检索结果…"`）+ 变异 M12。
+
+**补充 10（用户复测反馈）：第三档不再替用户猜原因。**
+
+`model` 20s「内容较长，仍在生成中…」→「生成耗时较长，仍在继续…」，`knowledge` 20s「资料较多，仍在整理中…」→「整理耗时较长，仍在继续…」——原措辞断言了慢的原因，而 20 秒未出可能是推理久或上游排队，猜错会让用户误以为「快好了」。`tool` 20s「该步骤较慢，请继续稍候…」→「仍未收到该步骤的返回，请继续稍候…」，因为原第二、三档基本同义，第三档应给出新信息。`default` 三档保持不变。护栏：三条精确断言（含新补的 `knowledge`/`tool` 第三档采样）+ 变异 M13。
 
 ---
 
@@ -214,17 +218,17 @@ const PENDING_HINT_STAGE_LABELS: Record<string, PendingHintStage[]> = {
   model: [
     { afterMs: 3000, label: "正在思考…" },
     { afterMs: 10000, label: "正在生成回答…" },
-    { afterMs: 20000, label: "内容较长，仍在生成中…" },
+    { afterMs: 20000, label: "生成耗时较长，仍在继续…" },
   ],
   knowledge: [
     { afterMs: 3000, label: "正在整理检索结果…" },
     { afterMs: 10000, label: "正在组织回答…" },
-    { afterMs: 20000, label: "资料较多，仍在整理中…" },
+    { afterMs: 20000, label: "整理耗时较长，仍在继续…" },
   ],
   tool: [
     { afterMs: 3000, label: "正在执行该步骤…" },
-    { afterMs: 10000, label: "执行耗时偏长，仍在进行中…" },
-    { afterMs: 20000, label: "该步骤较慢，请继续稍候…" },
+    { afterMs: 10000, label: "执行耗时偏长，仍在处理…" },
+    { afterMs: 20000, label: "仍未收到该步骤的返回，请继续稍候…" },
   ],
   default: [
     { afterMs: 3000, label: "正在处理…" },
@@ -682,7 +686,7 @@ Expected: 三个文件都在。
 
 > 用 `cp` 备份而**不用 `git checkout --`**：工作区含本次未提交改动，`git checkout` 会一并丢弃。
 
-- [x] **Step 2: 逐条执行 12 项变异，确认每项都被捕获**
+- [x] **Step 2: 逐条执行 14 项变异，确认每项都被捕获**
 
 每条变异后运行
 `bash .venv/bin/python -m pytest --confcutdir=tests/frontend tests/frontend/test_chat_shared_helpers_behavior.py -q`
@@ -702,6 +706,8 @@ Expected: 三个文件都在。
 | M10 | 波形配色退回 `sky` | 契约的 `text-slate-400 dark:text-slate-500` | failed |
 | M11 | 删掉减弱动效的静态高度 | 契约的 `scaleY(0.72)` | failed |
 | M12 | 第一档文案退回「正在理解你的问题…」 | 行为用例的 `== "正在思考…"` | failed |
+| M13 | 第三档又替用户猜原因（「内容较长」） | 行为用例的 `== "生成耗时较长，仍在继续…"` | failed |
+| M14 | `tool` 第二档退回「仍在进行中…」 | 行为用例的 `== "执行耗时偏长，仍在处理…"` | failed |
 
 M1 示例命令（其余按同法替换 `old` / `new` 与目标文件）：
 ```bash
@@ -738,7 +744,7 @@ Expected: 三行「已还原」，`diff` 无输出。
 在表格分隔行（`| 特性 / 修复项 | ...` 的下一行）之后、现有第一行数据行**之前**插入新行：
 
 ```markdown
-| 挂起步骤「傻等」修复：动态安抚文案 + 5 处渲染收敛为组件 (Pending Step Live Hint) | `frontend/src/components/chat/TimelinePendingHint.vue`（新增）、`frontend/src/utils/processTimeline.ts`、`frontend/src/components/chat/ChatExecutionTimeline.vue`、`tests/frontend/test_chat_shared_helpers_behavior.py`、`docs/superpowers/specs/2026-10-10-pending-step-live-hint-design.md`（新增）、`docs/superpowers/plans/2026-10-10-pending-step-live-hint.md`（新增）、`tests/CHECKLIST.md` | **用户反馈（截图）**：知识库问答的思考卡片里「模型调用 · DeepSeek-V3.2」右侧秒表已走到 28.6s，标题与秒表之间一大片空白，整行除不断变大的数字外没有任何信息，问「这个模型调用如果要很久就会一直在这里，超过多少秒能不能后面加一些动态文案」。**根因**：该能力**早已实现但被绑死在沙箱上**——`processTimeline.ts:119-123` 的 `PREWARM_STAGE_LABELS` 就是三档递进安抚文案（0s 申请隔离资源 / 4s 初始化工作区 / 10s 耗时较长请稍候），`ChatExecutionTimeline.vue` 也有 5 处「动效条 + 已等待 Ns · 阶段文案」渲染，但判定 `isWorkspacePrewarmPending`（`:133-140`）只认 `workspace:sandbox*` 这一个 id，因此其余挂起步骤（模型调用、工具执行、检索）在长时间等待时只有秒表。**同时暴露一处结构问题**：那 5 处渲染（`:169` child、`:228` child.children 的 subStep、`:348` 顶层 item、`:443` 另一处 subStep、`:517` nestedStep）是**同一段 HTML 复制了 5 遍**，只有循环变量名不同。**方案（用户选定「所有长时间挂起的步骤」+ 阈值 3 秒 + 三档递进）**：① 文案规则抽成纯函数 `resolvePendingHint(item, now, isLiveTimer)`（`processTimeline.ts`），按类别给三档表——`model` 3s 正在思考… / 10s 正在生成回答… / 20s 内容较长，仍在生成中…；`knowledge` 3s 正在整理检索结果… / 10s 正在组织回答… / 20s 资料较多，仍在整理中…；`tool` 与 `default` 各有兜底三档；`sandbox` 档**直接引用 `PREWARM_STAGE_LABELS`**（不复制第二份文案，与 `workspacePrewarmStageLabel` 逐字同源）。② **沙箱保持 0s 立即显示**（其文案本就是「首次创建」那一刻的叙述，套 3 秒会让前 3 秒退回无提示），用户选的 3 秒阈值落在通用类别第一档上。③ **`permission` / `external` 不显示任何文案**：这两类表示「等用户确认 / 等外部系统回话，机器并没有在跑」，显示「正在理解你的问题…」是误导——判据与 `NON_LIVE_TIMER_CATEGORIES`（`:604-607`，唯一不显示实时秒表的两类）同源，且沙箱判定优先于类别排除。④ 渲染抽成 `TimelinePendingHint.vue`（props `item` / `now` / `isLiveTimer`，不持有定时器，`now` 由父级既有 500ms 心跳注入），5 处重复片段统一替换为组件调用。⑤ **顺带去掉一处数字重复**：正在走右侧秒表的行不再显示「已等待 Ns ·」前缀（`showElapsed = !isLiveTimer`），无秒表的历史挂起行仍保留前缀。⑥ **指示器分两种**（用户复测「不能跟沙箱拉起一样的效果」后定案）：沙箱保留既有横向亮蓝进度条（它的专属签名），其余类别改用石板灰三根竖条波形（`pending-hint-wave`，浅色 `slate-400` / 深色 `slate-500`），形状与颜色双重区分；`PendingHint.indicator` 取 `"bar" | "wave"` 由纯函数决定，组件只按字段渲染；起伏用 `scaleY` 而非 `height`（不每帧触发布局），深色走 Tailwind `dark:` 变体（避开 scoped 里手写 `.dark` 命中所有深色祖先的坑），`prefers-reduced-motion` 时静止在 `scaleY(0.72)`。**过程中发现并处理的两个坑**：一是**样式作用域陷阱**——`workspace-prewarm-bar` 的样式（含 `::after` 滑动动画与 `@keyframes`）定义在父组件 `<style scoped>` 内，抽成子组件后子组件内部 `span` 不带父 scope id，选择器不再匹配、动效条会**静默失效**（而源码契约仍会通过），因此样式随组件搬移并在契约里加护栏；`:1284-1294` 的 `prefers-reduced-motion` 块同时含 `.thought-status-dot`（留在父组件，别处仍在用）与 bar 规则（随组件走），**必须拆成两半**。二是**连带死代码**：`prewarmStartedAtMs` 与其 watch 的唯一消费者是被删除的 `prewarmElapsedMs`，故一并删除；而 `findWorkspacePrewarmPending` 与 `isWorkspacePrewarming` 必须保留（仍是 tick 启动条件的一部分），因此契约断言写成 `v-if="isWorkspacePrewarmPending(` 而非裸函数名——后者在 `walk` 里仍需调用，用裸名会永远失败。**明确未做**：不改秒表逻辑与 `NON_LIVE_TIMER_CATEGORIES`；不做后端推进（不为展示文案引入服务端计时或新 SSE 事件）；不介入 `agent_max_toolcall_timeout` 超时机制；不引入动画库（动效用 CSS keyframes），但指示器分两种：沙箱横条 / 通用波形。**验证**：行为测试 **3 项**（Node 真跑 `resolvePendingHint`，覆盖阈值边界 2999/3000、三档递进、五类文案、`permission`/`external`/非 pending/缺 `started_at` 均返回 null、沙箱 0s 立即且与既有导出函数逐字同源、`showElapsed` 随 `isLiveTimer` 翻转、时钟回拨归 0）+ 组件契约 **1 项**（含样式随组件走的护栏）+ 改写既有时间线契约 **1 项**（5 处替换计数、旧判定与死代码清零、样式搬移）；**变异验证 12/12 全部被捕获**（第一档阈值改 0、删掉 permission 排除、沙箱套 3 秒、`showElapsed` 恒 true、5 处只回退 1 处、删掉组件 style 段、now 绑定退回 tickNow 计数器、静音集合移除 agent、非沙箱也返回 bar、波形配色退回 sky、删掉减弱动效静态高度），每项还原后 `diff` 证明三个文件与备份逐字节一致。**人工验证（需用户在控制台跑 `./dev.sh` 后执行）**：① 提一个需要长时间思考的问题 → 3 秒后该行出现「正在理解你的问题…」，10 秒后转「正在组织回答…」，20 秒后转「内容较长，仍在生成中…」；② 快速步骤（如 `search_knowledge_base` 1.6s）不出现任何文案、行高不跳；③ 沙箱首次创建仍是 0 秒立即出文案，且不再与右侧秒表重复显示「已等待 Ns」；④ 触发权限确认时该行不出现任何「正在…」文案。未跑 `./dev.sh`、未执行 git commit。 | ✅ 挂起步骤按类别三档递进安抚文案（3 秒阈值、沙箱保持 0 秒）；`permission`/`external` 不显示；5 处重复渲染收敛为 `TimelinePendingHint.vue`；动效条样式随组件搬移（scoped 陷阱已规避）；行为测试 3 项 + 组件契约 1 项 + 改写既有契约 1 项，变异 12/12 捕获 | 2026-10-10 |
+| 挂起步骤「傻等」修复：动态安抚文案 + 5 处渲染收敛为组件 (Pending Step Live Hint) | `frontend/src/components/chat/TimelinePendingHint.vue`（新增）、`frontend/src/utils/processTimeline.ts`、`frontend/src/components/chat/ChatExecutionTimeline.vue`、`tests/frontend/test_chat_shared_helpers_behavior.py`、`docs/superpowers/specs/2026-10-10-pending-step-live-hint-design.md`（新增）、`docs/superpowers/plans/2026-10-10-pending-step-live-hint.md`（新增）、`tests/CHECKLIST.md` | **用户反馈（截图）**：知识库问答的思考卡片里「模型调用 · DeepSeek-V3.2」右侧秒表已走到 28.6s，标题与秒表之间一大片空白，整行除不断变大的数字外没有任何信息，问「这个模型调用如果要很久就会一直在这里，超过多少秒能不能后面加一些动态文案」。**根因**：该能力**早已实现但被绑死在沙箱上**——`processTimeline.ts:119-123` 的 `PREWARM_STAGE_LABELS` 就是三档递进安抚文案（0s 申请隔离资源 / 4s 初始化工作区 / 10s 耗时较长请稍候），`ChatExecutionTimeline.vue` 也有 5 处「动效条 + 已等待 Ns · 阶段文案」渲染，但判定 `isWorkspacePrewarmPending`（`:133-140`）只认 `workspace:sandbox*` 这一个 id，因此其余挂起步骤（模型调用、工具执行、检索）在长时间等待时只有秒表。**同时暴露一处结构问题**：那 5 处渲染（`:169` child、`:228` child.children 的 subStep、`:348` 顶层 item、`:443` 另一处 subStep、`:517` nestedStep）是**同一段 HTML 复制了 5 遍**，只有循环变量名不同。**方案（用户选定「所有长时间挂起的步骤」+ 阈值 3 秒 + 三档递进）**：① 文案规则抽成纯函数 `resolvePendingHint(item, now, isLiveTimer)`（`processTimeline.ts`），按类别给三档表——`model` 3s 正在思考… / 10s 正在生成回答… / 20s 生成耗时较长，仍在继续…；`knowledge` 3s 正在整理检索结果… / 10s 正在组织回答… / 20s 整理耗时较长，仍在继续…；`tool` 与 `default` 各有兜底三档；`sandbox` 档**直接引用 `PREWARM_STAGE_LABELS`**（不复制第二份文案，与 `workspacePrewarmStageLabel` 逐字同源）。② **沙箱保持 0s 立即显示**（其文案本就是「首次创建」那一刻的叙述，套 3 秒会让前 3 秒退回无提示），用户选的 3 秒阈值落在通用类别第一档上。③ **`permission` / `external` 不显示任何文案**：这两类表示「等用户确认 / 等外部系统回话，机器并没有在跑」，显示「正在理解你的问题…」是误导——判据与 `NON_LIVE_TIMER_CATEGORIES`（`:604-607`，唯一不显示实时秒表的两类）同源，且沙箱判定优先于类别排除。④ 渲染抽成 `TimelinePendingHint.vue`（props `item` / `now` / `isLiveTimer`，不持有定时器，`now` 由父级既有 500ms 心跳注入），5 处重复片段统一替换为组件调用。⑤ **顺带去掉一处数字重复**：正在走右侧秒表的行不再显示「已等待 Ns ·」前缀（`showElapsed = !isLiveTimer`），无秒表的历史挂起行仍保留前缀。⑥ **指示器分两种**（用户复测「不能跟沙箱拉起一样的效果」后定案）：沙箱保留既有横向亮蓝进度条（它的专属签名），其余类别改用石板灰三根竖条波形（`pending-hint-wave`，浅色 `slate-400` / 深色 `slate-500`），形状与颜色双重区分；`PendingHint.indicator` 取 `"bar" | "wave"` 由纯函数决定，组件只按字段渲染；起伏用 `scaleY` 而非 `height`（不每帧触发布局），深色走 Tailwind `dark:` 变体（避开 scoped 里手写 `.dark` 命中所有深色祖先的坑），`prefers-reduced-motion` 时静止在 `scaleY(0.72)`。**过程中发现并处理的两个坑**：一是**样式作用域陷阱**——`workspace-prewarm-bar` 的样式（含 `::after` 滑动动画与 `@keyframes`）定义在父组件 `<style scoped>` 内，抽成子组件后子组件内部 `span` 不带父 scope id，选择器不再匹配、动效条会**静默失效**（而源码契约仍会通过），因此样式随组件搬移并在契约里加护栏；`:1284-1294` 的 `prefers-reduced-motion` 块同时含 `.thought-status-dot`（留在父组件，别处仍在用）与 bar 规则（随组件走），**必须拆成两半**。二是**连带死代码**：`prewarmStartedAtMs` 与其 watch 的唯一消费者是被删除的 `prewarmElapsedMs`，故一并删除；而 `findWorkspacePrewarmPending` 与 `isWorkspacePrewarming` 必须保留（仍是 tick 启动条件的一部分），因此契约断言写成 `v-if="isWorkspacePrewarmPending(` 而非裸函数名——后者在 `walk` 里仍需调用，用裸名会永远失败。**明确未做**：不改秒表逻辑与 `NON_LIVE_TIMER_CATEGORIES`；不做后端推进（不为展示文案引入服务端计时或新 SSE 事件）；不介入 `agent_max_toolcall_timeout` 超时机制；不引入动画库（动效用 CSS keyframes），但指示器分两种：沙箱横条 / 通用波形。**验证**：行为测试 **3 项**（Node 真跑 `resolvePendingHint`，覆盖阈值边界 2999/3000、三档递进、五类文案、`permission`/`external`/非 pending/缺 `started_at` 均返回 null、沙箱 0s 立即且与既有导出函数逐字同源、`showElapsed` 随 `isLiveTimer` 翻转、时钟回拨归 0）+ 组件契约 **1 项**（含样式随组件走的护栏）+ 改写既有时间线契约 **1 项**（5 处替换计数、旧判定与死代码清零、样式搬移）；**变异验证 14/14 全部被捕获**（第一档阈值改 0、删掉 permission 排除、沙箱套 3 秒、`showElapsed` 恒 true、5 处只回退 1 处、删掉组件 style 段、now 绑定退回 tickNow 计数器、静音集合移除 agent、非沙箱也返回 bar、波形配色退回 sky、删掉减弱动效静态高度），每项还原后 `diff` 证明三个文件与备份逐字节一致。**人工验证（需用户在控制台跑 `./dev.sh` 后执行）**：① 提一个需要长时间思考的问题 → 3 秒后该行出现「正在理解你的问题…」，10 秒后转「正在组织回答…」，20 秒后转「生成耗时较长，仍在继续…」；② 快速步骤（如 `search_knowledge_base` 1.6s）不出现任何文案、行高不跳；③ 沙箱首次创建仍是 0 秒立即出文案，且不再与右侧秒表重复显示「已等待 Ns」；④ 触发权限确认时该行不出现任何「正在…」文案。未跑 `./dev.sh`、未执行 git commit。 | ✅ 挂起步骤按类别三档递进安抚文案（3 秒阈值、沙箱保持 0 秒）；`permission`/`external` 不显示；5 处重复渲染收敛为 `TimelinePendingHint.vue`；动效条样式随组件搬移（scoped 陷阱已规避）；行为测试 3 项 + 组件契约 1 项 + 改写既有契约 1 项，变异 14/14 捕获 | 2026-10-10 |
 ```
 
 - [x] **Step 5: 跑前端契约全量**
@@ -767,7 +773,7 @@ Expected: 改动文件仅 `frontend/` 下 3 个文件 + `tests/frontend/...` + `
 
 - [x] **Step 8: 检查点（不提交）**
 
-汇报：改动文件清单、4 + 1 条契约、变异 12/12 结果、CHECKLIST 已更新、全量契约与类型检查结果。建议 commit message：
+汇报：改动文件清单、4 + 1 条契约、变异 14/14 结果、CHECKLIST 已更新、全量契约与类型检查结果。建议 commit message：
 
 ```
 feat(timeline): 挂起步骤按耗时递进显示安抚文案，5 处渲染收敛为组件
@@ -779,7 +785,7 @@ feat(timeline): 挂起步骤按耗时递进显示安抚文案，5 处渲染收�
   动效条样式随组件搬移（父组件 scoped 作用不到子组件内部元素）
 - 删除 prewarmElapsedMs / prewarmElapsedSeconds / prewarmStageLabel 及连带死代码
   prewarmStartedAtMs 与其 watch；findWorkspacePrewarmPending / isWorkspacePrewarming 保留
-- 行为测试 3 项 + 组件契约 1 项 + 改写既有时间线契约 1 项，变异验证 12/12 全部被捕获
+- 行为测试 3 项 + 组件契约 1 项 + 改写既有时间线契约 1 项，变异验证 14/14 全部被捕获
 ```
 
 ---

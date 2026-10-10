@@ -1798,7 +1798,7 @@ return {
     assert result["belowThreshold"] is None, "未满 3 秒不得显示文案（否则快步骤会闪）"
     assert result["firstStage"]["label"] == "正在思考…", "3 秒时模型早就在生成，不能说「正在理解你的问题」"
     assert result["secondStage"]["label"] == "正在生成回答…"
-    assert "内容较长" in result["thirdStage"]["label"]
+    assert result["thirdStage"]["label"] == "生成耗时较长，仍在继续…", "不替用户猜原因：慢未必因为内容长"
     assert result["farLong"]["label"] == result["thirdStage"]["label"], "超过最后一档后不再变化"
 
 
@@ -1813,7 +1813,10 @@ const mk = (category, extra) => Object.assign(
 );
 return {
   knowledge: api.resolvePendingHint(mk('knowledge'), at(3000), true).label,
+  knowledgeThird: api.resolvePendingHint(mk('knowledge'), at(20000), true).label,
   tool: api.resolvePendingHint(mk('tool'), at(3000), true).label,
+  toolSecond: api.resolvePendingHint(mk('tool'), at(10000), true).label,
+  toolThird: api.resolvePendingHint(mk('tool'), at(20000), true).label,
   otherCategory: api.resolvePendingHint(mk('sql'), at(3000), true).label,
   noCategory: api.resolvePendingHint(mk(undefined), at(3000), true).label,
   permission: api.resolvePendingHint(mk('permission'), at(60000), true),
@@ -1828,6 +1831,9 @@ return {
 
     assert result["knowledge"] == "正在整理检索结果…", "该行出现时检索已完成，不能说「正在查阅知识库资料」"
     assert "正在执行该步骤" in result["tool"]
+    assert result["knowledgeThird"] == "整理耗时较长，仍在继续…"
+    assert result["toolSecond"] == "执行耗时偏长，仍在处理…"
+    assert result["toolThird"] == "仍未收到该步骤的返回，请继续稍候…", "第三档要给出新信息：一直没收到返回"
     assert "正在处理" in result["otherCategory"], "未知类别落兜底文案"
     assert "正在处理" in result["noCategory"]
     assert result["permission"] is None, "等待用户确认时机器没在跑，不得显示「正在…」"

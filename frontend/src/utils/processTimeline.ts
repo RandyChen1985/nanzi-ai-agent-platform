@@ -176,21 +176,23 @@ export interface PendingHint {
 const PENDING_HINT_STAGE_LABELS: Record<string, PendingHintStage[]> = {
   sandbox: PREWARM_STAGE_LABELS,
   // 第一档用「思考」而非「理解」：3 秒时模型早就在生成 token，说「理解」等于把阶段说晚了。
+  // 第三档只陈述事实（耗时较长、未收到返回），不替用户猜原因——慢未必因为「内容长/资料多」，
+  // 猜错了用户会以为「快好了」，反而更焦躁。
   // 知识库行出现时检索已经完成（标题即「检索完成，正在组织回答」），故也不说「正在查阅」。
   model: [
     { afterMs: 3000, label: "正在思考…" },
     { afterMs: 10000, label: "正在生成回答…" },
-    { afterMs: 20000, label: "内容较长，仍在生成中…" },
+    { afterMs: 20000, label: "生成耗时较长，仍在继续…" },
   ],
   knowledge: [
     { afterMs: 3000, label: "正在整理检索结果…" },
     { afterMs: 10000, label: "正在组织回答…" },
-    { afterMs: 20000, label: "资料较多，仍在整理中…" },
+    { afterMs: 20000, label: "整理耗时较长，仍在继续…" },
   ],
   tool: [
     { afterMs: 3000, label: "正在执行该步骤…" },
-    { afterMs: 10000, label: "执行耗时偏长，仍在进行中…" },
-    { afterMs: 20000, label: "该步骤较慢，请继续稍候…" },
+    { afterMs: 10000, label: "执行耗时偏长，仍在处理…" },
+    { afterMs: 20000, label: "仍未收到该步骤的返回，请继续稍候…" },
   ],
   default: [
     { afterMs: 3000, label: "正在处理…" },
