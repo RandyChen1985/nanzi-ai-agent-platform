@@ -26,6 +26,7 @@ from app.schemas.browser import (
     BrowserSessionOpenRequest,
     BrowserSessionResponse,
 )
+from app.services.auth_service import AuthService
 from app.services.ai.browser import BrowserEnvironmentError
 from app.services.ai.browser.browser_policy import BrowserUrlBlocked
 from app.services.ai.browser.browser_runtime import (
@@ -47,6 +48,9 @@ router = APIRouter()
 viewer_router = APIRouter()
 logger = logging.getLogger(__name__)
 _browser_install_lock = asyncio.Lock()
+# viewer WebSocket 的两个子协议前缀：前者是「查看令牌」，后者是「连接者身份凭据」。
+_VIEWER_TOKEN_PROTOCOL_PREFIX = "browser-viewer."
+_VIEWER_AUTH_PROTOCOL_PREFIX = "browser-auth."
 
 
 def _sse(data: dict[str, Any]) -> str:
@@ -477,9 +481,47 @@ async def _viewer_snapshot(session_id: str) -> Any:
 def _viewer_token_from_websocket(websocket: WebSocket) -> tuple[str | None, str | None]:
     protocols = [item.strip() for item in websocket.headers.get("sec-websocket-protocol", "").split(",")]
     for protocol in protocols:
-        if protocol.startswith("browser-viewer."):
-            return protocol[len("browser-viewer."):], protocol
+        if protocol.startswith(_VIEWER_TOKEN_PROTOCOL_PREFIX):
+            return protocol[len(_VIEWER_TOKEN_PROTOCOL_PREFIX):], protocol
     return websocket.query_params.get("token"), None
+
+
+def _viewer_credential_from_websocket(websocket: WebSocket) -> str | None:
+    """从子协议里取「连接者身份凭据」。
+
+    为什么走子协议：viewer token 只是**会话级 bearer 凭证**，证明不了连接者是谁；而浏览器
+    发起的 WebSocket 握手既不能自定义请求头，跨站第三方 iframe 下 `SameSite=Lax` 的
+    `portal_session` / `embed_session` 也不会随握手发送（见 `_set_embed_session_cookie` 的说明）。
+    子协议是唯一「不经 URL、又能带任意值」的通道（放查询串会把凭据写进访问日志）。
+    """
+    protocols = [item.strip() for item in websocket.headers.get("sec-websocket-protocol", "").split(",")]
+    for protocol in protocols:
+        if protocol.startswith(_VIEWER_AUTH_PROTOCOL_PREFIX):
+            credential = protocol[len(_VIEWER_AUTH_PROTOCOL_PREFIX):]
+            if credential:
+                return credential
+    return None
+
+
+async def _resolve_viewer_user_id(websocket: WebSocket, db: AsyncSession) -> str | None:
+    """解析浏览器 viewer 连接者的用户身份；解析不出来返回 `None`（调用方必须 fail-closed）。
+
+    优先级与 `require_api_key` 的 Cookie 顺序保持一致（portal_session 在前），但**显式凭据
+    优先于 Cookie**：跨站 iframe 场景只有显式凭据可用，而它也更明确地表达了「以谁的身份连接」。
+    任何异常一律当作「解析失败」，不让浏览器的鉴权因为 Redis 抖动而放行。
+    """
+    credential = _viewer_credential_from_websocket(websocket)
+    if not credential:
+        credential = websocket.cookies.get("portal_session") or websocket.cookies.get("embed_session")
+    if not credential:
+        return None
+    try:
+        user_info = await AuthService.verify_api_key(credential, db)
+    except Exception:
+        logger.warning("Browser viewer credential verification failed", exc_info=True)
+        return None
+    user_id = (user_info or {}).get("user_id")
+    return str(user_id) if user_id not in (None, "") else None
 
 
 def _viewer_origin_allowed(websocket: WebSocket) -> bool:
@@ -615,6 +657,19 @@ async def browser_viewer(websocket: WebSocket, session_id: str):
             session = await BrowserSessionService(db).resolve_viewer_token(token)
             if session.id != session_id:
                 raise BrowserAccessDenied("浏览器查看令牌与会话不匹配")
+            # 令牌证明不了「谁在连」。这条连接不仅能看画面，还能转发鼠标/键盘/导航，因此必须
+            # 在 accept() 之前确认连接者就是会话归属人——对所有角色一致，admin 也不能接管他人
+            # 的浏览器会话。取不到身份即拒绝（fail-closed）。
+            viewer_user_id = await _resolve_viewer_user_id(websocket, db)
+            if not viewer_user_id or viewer_user_id != str(session.user_id):
+                logger.warning(
+                    "Browser viewer rejected: session=%s owner=%s caller=%s",
+                    session_id,
+                    session.user_id,
+                    viewer_user_id or "unknown",
+                )
+                await websocket.close(code=4403)
+                return
             viewer_connection_id = uuid.uuid4().hex
             await websocket.accept(subprotocol=selected_protocol)
             should_release_control = True

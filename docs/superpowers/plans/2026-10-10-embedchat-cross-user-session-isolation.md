@@ -151,3 +151,29 @@
 - `tests/services`（用 `.venv` 的 3.11；3.13 缺 `langfuse` 无法收集）：**1397 passed / 11 skipped / 5 xfailed / 1 failed**（失败项 `test_normalize_external_user` 为改动前既有）。
 - 前端契约：`pytest --confcutdir=tests/frontend tests/frontend` **1667 passed**；`vue-tsc --noEmit` **零错误**（exit 0）。
 - 变异验证：本轮新增/收紧的 6 条前端契约 + 1 条后端契约，全部在「去掉修复」后变红，确认断言有牙（脚本临时文件未入库）。
+
+### 复审（第五轮：用户点名的两项残留）
+
+第四轮汇报时把两项「浏览器子系统 / 调试页」的残留写进了「已知限制」，用户随即点名：「修掉吧」。两项都按 TDD 走（先写用例、确认变红、再实现），并补了变异验证。
+
+#### 已修（本轮）
+
+| # | 问题 | 修法 | 验证 |
+| --- | --- | --- | --- |
+| 1 | viewer token 是会话级 bearer：`resolve_viewer_token` 只校验过期 + 哈希，WebSocket 入口只比对 `session.id` ⇒ 拿到令牌即可连上并**转发鼠标/键盘/导航**（前端「身份变化即断开面板」只堵继承路径） | 握手阶段要求连接者证明自己就是归属人：身份来自子协议 `browser-auth.<credential>`（跨站 iframe 带不了 `SameSite=Lax` Cookie，必须有这条路）或同源 `portal_session`/`embed_session`；**先判归属再 `accept()`**，取不到身份 / 不是归属人一律 `close(4403)`，且不得触碰 `browser_runtime`；admin 无例外 | 新增 `tests/api/v1/test_browser_viewer_owner_binding.py` 10 项（端点级：无身份、他人身份、admin 他人身份 → 4403 且未 accept、未 `open_session`；归属人成功流收到首帧）+ 6 项前端契约；变异：删守卫 / 只认 Cookie / 先 accept 再判 / 不带身份子协议 / 凭据变化不重连，5 条全部变红 |
+| 2 | 前端没有把身份送上握手：面板只用 `browser-viewer.<token>` 子协议 | `viewerSocketProtocols()` 复用父级已有的 `:auth-token="config.token"` 追加 `browser-auth.<credential>`；子协议值做 HTTP token 字符白名单（非法字符会让 `new WebSocket()` 抛 `SyntaxError`，不合格就退回 Cookie 判定）；`authToken` 纳入重连依赖 | 前端契约 6 项（含字符集守卫、重连依赖、EmbedChat 传参）；变异 2 条变红 |
+| 3 | `AgentDebug.vue` 的调试会话指针无用户维度，且 `onMounted` **同步**读取 ⇒ `fetchCurrentUser()` 未返回就采用上一位使用者的会话 | 键改 `agent_debug_conv_id:u:<identity>`（身份未知即空键：不读不写）；旧键只清理不读取；抽 `bootstrapDebugConversation()` 先 `await fetchCurrentUser()` 再读存储；采用前过 `/ownership` 三态（`adoptable` 采用 / `foreign` 清指针重开 / `unknown` 只换内存会话并保留指针） | 新增 `tests/frontend/test_agent_debug_conversation_isolation_contract.py` 7 项；变异 4 条（回读旧键、跳过归属校验、foreign 不清指针、`persist` 失效）全部变红 |
+
+#### 保留（本轮明确不做）
+
+| 发现 | 复核结论 |
+| --- | --- |
+| `GET /sessions/{id}/screenshot` 未绑归属 | 保留为令牌/查看 Cookie 能力 URL：`<img src>` 无法自定义请求头，跨站 iframe 又没有 Cookie，绑身份会直接打断画面读取；其会话 ID 为 uuid4 不可枚举，新用户侧面板状态已清空、交付 `screenshot_ref` 的 WebSocket 也已绑归属 |
+| 跨站 iframe 的 `SameSite=Lax` Cookie | 仍是既有约束（`_set_embed_session_cookie` 注释里已记为后续阶段）；本轮的身份子协议正是为绕开它而设，`SameSite=None` 的切换不在本次范围 |
+
+#### 最终验证（第五轮）
+
+- 后端：`tests/api` + `tests/core` **717 passed / 8 xfailed / 2 xpassed / 1 failed**（唯一失败 `test_list_artifacts_uses_configured_public_url` 为改动前既有；707 → 717 即本轮新增 10 项）。
+- 前端契约：`pytest --confcutdir=tests/frontend tests/frontend` **1680 passed**（1667 → 1680，本轮新增 13 项）；`vue-tsc --noEmit` **exit 0、零错误**。
+- 变异验证：**9 条**（后端 3 + 前端 2 + 调试页 4）全部在「去掉修复」后变红，且每个文件按 md5 校验原样恢复；变异脚本为临时文件、未入库。
+

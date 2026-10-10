@@ -74,11 +74,36 @@
 5. **既有 admin 场景的连带对齐**：`/chat/history`、`/chat/logs/*` 的 admin 旁路被删除后，还有两个界面此前是靠它顺带具备跨用户能力的，需一并切到审计端点：`AgentHistoryModal.vue`（智能体「对话历史」弹窗，此前 admin 能看到所有用户在该智能体下的执行记录）、`TaskCenter.vue`（admin 打开他人任务后「展开步骤」：此前能读他人 trace，收紧后对该 trace 返回 404，而该处的 catch 只打 console、失败表现为「步骤静默为空」）。两处都用各文件已有的角色信息（`useUser().isAdmin` / `userInfo.role`）做分流，不做新的权限码。
 6. **权限粒度**：沿用 `Depends(require_admin)`，即"所有 admin 等价"。**未**引入独立审计员权限码——本仓库 `require_permission` 对 admin 直接放行，用权限码并不能把其它 admin 挡在外面，真正要区分需要新的角色/权限模型（见"不在本次范围内"）。
 
+## 浏览器实时画面的归属绑定（第五轮）
+
+viewer token 是**会话级 bearer 凭证**：`resolve_viewer_token` 只校验「过期 + 令牌哈希」，WebSocket 入口只用它比对 `session.id`，因此任何拿到该令牌的人都能连上这条连接——而这条连接不只是看画面，还能**转发鼠标/键盘/导航**。前端的「身份变化即断开面板并丢弃 token」只堵住客户端状态继承这一条泄露路径，凭证本身仍是万能钥匙，所以身份必须在**服务端**绑定。
+
+1. **身份来源两条路**（浏览器发起的 WebSocket 握手不能自定义请求头，跨站第三方 iframe 下 `portal_session` / `embed_session` 都是 `SameSite=Lax`、握手不会带 Cookie）：
+   - 显式凭据：子协议 `browser-auth.<credential>`（前端复用父级已有的 `:auth-token="config.token"`）；
+   - 同源 Cookie 兜底：`portal_session` 优先、其次 `embed_session`（与 `require_api_key` 同序）。
+2. **判定在 `accept()` 之前**：取不到身份、或身份与会话归属人不一致 → `close(4403)`，并且**不得** subscribe 运行时事件、不得 `open_session`——先连上再拒绝等于画面已经发出去了。
+3. **角色无例外**：归属判定对所有角色一致，admin 也不能接管他人的浏览器会话（与聊天面口径一致）。
+4. **子协议字符集**：子协议值必须是合法 HTTP token 字符，否则浏览器在 `new WebSocket()` 直接抛 `SyntaxError`；前端先做白名单校验，不合格就不带身份协议、退回 Cookie 判定（宁可少一条路，也不能让面板连不上）。
+5. **凭据变化必须重连**：`authToken` 纳入面板重连依赖，避免换身份后复用带着旧身份的连接。
+
+**未绑定的相邻面**：`GET /sessions/{id}/screenshot` 仍是「查看令牌 / 查看 Cookie 能力 URL」——`<img src>` 无法自定义请求头、跨站 iframe 也没有 Cookie，绑身份会直接打断画面读取；其会话 ID 不可枚举，且新用户侧的面板状态与交付该 URL 的 WebSocket 都已受控（见"已知限制"）。
+
+## 调试页会话指针的隔离（第五轮）
+
+`AgentDebug.vue` 的调试会话指针过去存在无用户维度的 `localStorage["agent_debug_conv_id"]`，且 `onMounted` 里**同步**读取——`fetchCurrentUser()` 还没回来就已把上一位使用者的会话 ID 交给 `loadSessionHistory()`。修法与 EmbedChat 同口径：
+
+1. 键带身份维度 `agent_debug_conv_id:u:<identity>`（`user_id` 优先、`user_name` 兜底）；**身份未知即空键**，既不读也不写；
+2. 无用户维度的历史键（含带前缀但没有 `u:` 段的）**只清理、不读取**；
+3. 首屏把「先拿身份、再读存储」抽成 `bootstrapDebugConversation()`，不再依赖 `onMounted` 里的隐式顺序；
+4. 采用已存指针前一律过 `/ownership` 三态：`adoptable` 采用、`foreign` 清掉指针并重开、`unknown`（网络/接口异常）**只换内存里的会话、保留存储指针**（`generateNewConversation(false, { persist: false })`）——区分「属于别人」与「判不出来」是必须的，否则一次网络抖动就会抹掉用户自己的续接记录。
+
 ## 验证策略
 
 - 后端 API 用例：普通用户与管理员在 `/chat/history`、`/chat/logs/{trace_id}` 都读不到他人会话；`/ownership` 判定正确；`POST /chat/active`、`/chat/completions` 拒绝他人会话；删除类端点（单条 / 批量）不触碰他人记录；导出端点同样自隔离。
 - 审计端点用例：admin 能按会话/按用户名跨用户读取历史、能读他人轨迹、压缩时间线按归属人读取；非 admin 一律 403、未认证 401、不存在的 trace 404；**反向护栏**：常规 `/history` 对 admin 仍返回空、常规 `/logs/{trace_id}` 对 admin 仍 404。
 - 前端契约用例：存储键含用户维度且不再读取旧键；身份变化重置函数存在且被调用；首屏空历史重置；采用会话 ID 前调用归属校验；令牌与 Cookie 身份比对。
+- 浏览器 viewer 归属用例：无身份 / 他人身份 / admin 他人身份一律 `close(4403)` 且未 `accept`、未触碰 runtime；归属人可连接并收到首帧；身份来源优先级（显式凭据 > Cookie）与异常兜底（凭据校验抛错按解析失败处理）。
+- 调试页指针用例：存储键含身份维度、不读取旧键、先拿身份再读存储、采用前校验归属、`foreign` 清指针、`unknown` 不覆盖指针、写入只走带身份的 helper。
 - 回归：`tests/frontend`、`tests/api`、`tests/core`、`vue-tsc --noEmit`。
 
 ## 不在本次范围内
@@ -95,8 +120,8 @@
 | 项 | 说明与理由 |
 | --- | --- |
 | 会话存在性探测面 | `/chat/conversation/{id}/ownership` 返回 `foreign=true`、写侧拒绝时回 403「该会话不属于当前用户」，二者合起来让**已认证**用户能判断「某 cid 是否存在且属于他人」。cid 是随机串（不可枚举），且换成中性错误会显著损害排障可读性；接受该低风险信息披露（未加限流、未加访问留痕）。 |
-| 浏览器查看令牌不绑用户 | 服务端 `resolve_viewer_token` 只校验**过期 + 令牌哈希**，WebSocket 入口只比对 `session.id`，不校验连接者是否该会话的归属人——viewer token 本质是会话级 bearer。前端已在身份变化时断开面板并丢弃 token；**服务端侧绑定（握手时校验归属人）未做**，属于浏览器子系统改动。 |
-| `AgentDebug` 的会话键 | 调试页仍用无用户维度的 `agent_debug_conv_id`。写入侧守卫上线后，同浏览器换人打开调试页会沿用上一位用户的调试会话：发消息得到 403（fail-closed、不泄露内容），但页面不会提示，用户需手动新建会话。修它要给该页做身份分桶 + 归属校验，未在本轮范围内。 |
+| ~~浏览器查看令牌不绑用户~~（**第五轮已修**） | 握手阶段已要求连接者证明自己就是会话归属人（子协议 `browser-auth.<credential>` / 同源 Cookie），先判归属再 `accept()`，admin 亦无例外。**残留**：`GET /sessions/{id}/screenshot` 仍是令牌/查看 Cookie 能力 URL（`<img src>` 无法带自定义头、跨站 iframe 无 Cookie，绑身份会打断画面读取）；其会话 ID 为 uuid4 不可枚举，新用户侧面板状态已清空、交付 `screenshot_ref` 的 WebSocket 也已绑归属，`?token=` 兼容入口仍接受原始令牌。 |
+| ~~`AgentDebug` 的会话键~~（**第五轮已修**） | 键已带身份维度 `agent_debug_conv_id:u:<identity>`，旧键只清理不读取，首屏先 `await fetchCurrentUser()` 再读存储，采用前过 `/ownership` 三态（`unknown` 只换内存会话、不覆盖指针）。**残留**：调试页仍不区分「临时会话」与「已存会话」的界面提示，`unknown` 分支下刷新会重新开一个空会话（指针本身没丢）。 |
 | `ReusableResultList.vue` 未带实例 | 该抽屉组件拿不到实例上下文，`/chat/reusable-results` 仍不带 `instance_id`（后端已支持、`EmbedChat` 直调处已带）。实际不可达：可复用结果存在即意味着该会话已有 DB 行，归属判定不依赖活跃会话桶。 |
 | 匿名降级提示的 `unknown` 桶 | 无用户身份的运行仍写 `sandbox:degraded:unknown:{cid}`；任何已认证读取方都查不到该键（fail-closed），相比改动前「知道 cid 就能读到」是收紧。保留写入以便匿名运行时至少留下痕迹。 |
 | 界面级偏好仍按浏览器共享 | 抽屉固定、显示开关、主题等 localStorage 项不含会话数据，换人后沿用（有意为之，不属隔离范围）；「数据集本轮挂载」「输入草稿/附件」等**会话相关**状态已随身份变化清空。 |
