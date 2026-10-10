@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -148,6 +149,134 @@ def _disabled_request_extra_body(
     return {}
 
 
+_MAX_FAILURE_DETAIL_CHARS = 1000
+
+
+def _extract_failure_detail(
+    exc: BaseException,
+) -> tuple[Any, str | None, str | None]:
+    """提取上游失败的可排查信息：HTTP 状态码 / 错误码 / 响应摘要。"""
+    status = getattr(exc, "status_code", None)
+    body = getattr(exc, "body", None)
+
+    code: str | None = None
+    upstream: str | None = None
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            raw_code = error.get("code") or error.get("type")
+            if raw_code:
+                code = str(raw_code)
+            message = error.get("message")
+            if message:
+                upstream = str(message)
+        elif body.get("message"):
+            upstream = str(body["message"])
+        if upstream is None:
+            try:
+                upstream = json.dumps(body, ensure_ascii=False, default=str)
+            except Exception:
+                upstream = None
+
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+
+    if upstream is None:
+        response = getattr(exc, "response", None)
+        text = getattr(response, "text", None)
+        if text:
+            upstream = str(text)
+
+    if upstream is None:
+        upstream = str(exc) or None
+
+    if upstream is not None:
+        upstream = upstream[:_MAX_FAILURE_DETAIL_CHARS]
+
+    return status, code, upstream
+
+
+def _describe_request(request_kwargs: dict[str, Any]) -> str:
+    """描述请求形状（不含消息正文与凭据），用于把失败定位到具体调用。"""
+    messages = request_kwargs.get("messages") or []
+    tools = request_kwargs.get("tools") or []
+    tool_choice = request_kwargs.get("tool_choice")
+    mode = getattr(tool_choice, "mode", None)
+    if mode is None and isinstance(tool_choice, str):
+        mode = tool_choice
+
+    parts = [f"messages={len(messages)}", f"tools={len(tools)}"]
+    if mode:
+        parts.append(f"tool_choice={mode}")
+    extra_body = request_kwargs.get("extra_body")
+    if isinstance(extra_body, dict) and extra_body:
+        parts.append("extra_body=" + ",".join(sorted(map(str, extra_body))))
+    return " ".join(parts)
+
+
+def _log_model_call_failure(
+    model: Any,
+    exc: BaseException,
+    *,
+    phase: str,
+    request_kwargs: dict[str, Any] | None = None,
+) -> None:
+    """记录一次模型调用失败的上游详情。
+
+    主模型失败后 AgentScope 会静默降级到 fallback，异常被丢弃，日志里只剩
+    "exhausted all N attempt(s)"。这里在平台自己的调用边界补上留痕。
+
+    只记录，绝不改变控制流：记录过程本身的任何异常都在此处兜住，最差退化成
+    一条最小日志。
+    """
+    model_name = str(getattr(model, "model", None) or "unknown")
+    try:
+        base_url = str(
+            getattr(getattr(model, "credential", None), "base_url", None)
+            or "unknown"
+        )
+        status, code, upstream = _extract_failure_detail(exc)
+        logger.warning(
+            "[AgentScope] Model call failed: model=%s base_url=%s phase=%s "
+            "status=%s error_type=%s error_code=%s request=%s upstream=%s",
+            model_name,
+            base_url,
+            phase,
+            status if status is not None else "-",
+            type(exc).__name__,
+            code or "-",
+            _describe_request(request_kwargs or {}),
+            upstream or "-",
+        )
+    except BaseException:
+        try:
+            logger.warning(
+                "[AgentScope] Model call failed: model=%s phase=%s error_type=%s",
+                model_name,
+                phase,
+                type(exc).__name__,
+            )
+        except BaseException:
+            pass
+
+
+async def _log_stream_failures(stream: Any, model: Any) -> Any:
+    """透传流式响应，只在中途失败时补一条失败日志。"""
+    try:
+        async for item in stream:
+            yield item
+    except Exception as exc:
+        _log_model_call_failure(model, exc, phase="stream")
+        raise
+
+
+def _wrap_stream_failures(result: Any, model: Any) -> Any:
+    if not hasattr(result, "__aiter__"):
+        return result
+    return _log_stream_failures(result, model)
+
+
 def create_openai_chat_model(config: AgentScopeModelConfig):
     if not config.api_key:
         raise ValueError(f"LLM API Key is missing for model '{config.model}'")
@@ -201,7 +330,7 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
             import openai
 
             try:
-                return await self._call_api_once(*args, **kwargs)
+                result = await self._call_api_once(*args, **kwargs)
             except openai.BadRequestError as exc:
                 tool_choice = kwargs.get("tool_choice")
                 if not (
@@ -209,6 +338,12 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
                     and _is_forced_tool_choice(tool_choice)
                     and _is_thinking_tool_choice_error(exc)
                 ):
+                    _log_model_call_failure(
+                        self,
+                        exc,
+                        phase="request",
+                        request_kwargs=kwargs,
+                    )
                     raise
 
                 logger.warning(
@@ -259,7 +394,26 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
                 from agentscope.tool import ToolChoice
 
                 fallback_kwargs["tool_choice"] = ToolChoice(mode="auto")
-                return await fallback._call_api_once(*args, **fallback_kwargs)
+                try:
+                    result = await fallback._call_api_once(*args, **fallback_kwargs)
+                except Exception as retry_exc:
+                    _log_model_call_failure(
+                        self,
+                        retry_exc,
+                        phase="thinking-off-retry",
+                        request_kwargs=fallback_kwargs,
+                    )
+                    raise
+            except Exception as exc:
+                _log_model_call_failure(
+                    self,
+                    exc,
+                    phase="request",
+                    request_kwargs=kwargs,
+                )
+                raise
+
+            return _wrap_stream_failures(result, self)
 
     parameters = OpenAIChatModel.Parameters(
         temperature=config.temperature,
