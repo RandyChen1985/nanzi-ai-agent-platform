@@ -195,6 +195,25 @@ def test_defaults_are_sane():
     assert DEFAULT_TTL_SECONDS >= 300
 
 
+def test_event_log_capacity_covers_a_long_task_with_headroom():
+    """默认容量按真实任务量级选定：2000 → 5000 → 8000。
+
+    依据（实测 Redis 中一次真实长任务，31 步 + 长报告）：该轮共 652 条事件、71.6KB、
+    平均 113B/条，其中 89% 是合并后的过程叙述增量——容量是被「生成正文期间的高频
+    叙述」吃掉的。list 与 seq 共用 1800s 滑动 TTL 且**跨轮累积**，所以要覆盖的是
+    TTL 窗口内的事件总量：合并窗口 1000ms 把高频增量压到约 1800 条，加上不参与合并
+    的 log / tool / model_call 等约 2000-2500 条。8000 条约 0.9MB/会话。锁定具体值
+    是为了让后续再调时必须同步这处说明。
+    """
+    assert DEFAULT_MAX_EVENTS == 8000
+
+    # 容量必须盖得住「窗口推导出的 TTL 内上限」并留出余量给不参与合并的事件，
+    # 否则 key 还没过期就会先被 LTRIM 截断（两本账对不上）。
+    coalesce_interval_seconds = 1.0
+    ttl_window_ceiling = DEFAULT_TTL_SECONDS / coalesce_interval_seconds
+    assert DEFAULT_MAX_EVENTS > 2 * ttl_window_ceiling
+
+
 async def test_append_allocates_batch_with_single_incrby(fake_redis):
     """一批事件只分配一次序号，避免逐条 INCR 带来的 N 次网络往返。
 

@@ -18,7 +18,12 @@ from app.services.ai.conversation_identity import require_user_id
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_EVENTS = 2000
+# 默认保留条数：按实测一次真实长任务（31 步 + 长报告）652 条事件、平均 113B/条选定。
+# list 与 seq 计数器共用 1800s 滑动 TTL 且**跨轮累积**，所以这里要覆盖的是「TTL 窗口
+# 内的事件总量」，而非单轮量：合并窗口 1000ms 把高频增量的上限压到约 1800 条，加上
+# 不参与合并的 log / tool / model_call 等，量级约 2000-2500。8000 条约 0.9MB/会话，
+# 留足余量后容量与 TTL 才记同一本账，不会出现 key 尚未过期就先被 LTRIM 截断。
+DEFAULT_MAX_EVENTS = 8000
 DEFAULT_TTL_SECONDS = 1800
 CONFIG_KEY_MAX_EVENTS = "chat_stream_journal_max_events"
 CONFIG_KEY_TTL_SECONDS = "chat_stream_journal_ttl_seconds"

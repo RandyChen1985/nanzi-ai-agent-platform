@@ -12,6 +12,7 @@ from app.services.ai.runtime.agentscope.request_timeout import (
     LLM_REQUEST_READ_TIMEOUT_KEY,
     parse_llm_request_read_timeout,
 )
+from app.services.ai.runtime.agentscope.stream_idle_guard import guard_model_stream_idle
 from app.utils.model_credentials import decrypt_model_api_key
 from app.core.context import get_debug_option
 from app.services.ai.reasoning import UNSET, resolve_reasoning_settings
@@ -164,7 +165,12 @@ class LLMFactory:
         )
 
         return AgentScopeLLMHandle(
-            native_model=native_model,
+            # 应用层兜底：httpx 的 read timeout 语义是「相邻两次数据到达的间隔」，
+            # 网关心跳或中间层只要持续有字节到达就不再成立——真实故障里它一次都没
+            # 触发过，会话被死死锁住十分钟。这里按 chunk 间隔自己兜一层。
+            # 放在这里而不是 get_llm_async：同步的 get_llm 也走这个方法，
+            # 而主助手链路正是从那条路进来的。
+            native_model=guard_model_stream_idle(native_model, read_timeout),
             model_name=final_model,
             temperature=float(final_temp),
             streaming=streaming,

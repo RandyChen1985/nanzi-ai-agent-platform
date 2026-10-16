@@ -183,3 +183,144 @@ def test_embed_chat_aborts_in_flight_stream_on_unmount():
     assert "if (abortController) abortController.abort();" in source
     # 卸载后的收尾副作用必须被守卫
     assert "if (!embedUnmounted) {" in source
+
+
+def _keep_recovery_sync(is_processing: bool, last_message, has_unsettled_draft: bool):
+    """直接执行真实 TS 源码里的重试判据（非复刻）。"""
+    module_path = "frontend/src/utils/runRecoverySync.ts"
+    script = f"""
+(async () => {{
+const fs = require('fs');
+const ts = require('./frontend/node_modules/typescript');
+const source = fs.readFileSync({json.dumps(module_path)}, 'utf8');
+const code = ts.transpileModule(source, {{
+  compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }}
+}}).outputText;
+const moduleRef = {{ exports: {{}} }};
+new Function('module', 'exports', 'require', code)(moduleRef, moduleRef.exports, require);
+const result = moduleRef.exports.shouldKeepRecoverySync({{
+  isProcessing: {json.dumps(is_processing)},
+  lastMessage: {json.dumps(last_message, ensure_ascii=False)},
+  hasUnsettledDraft: {json.dumps(has_unsettled_draft)},
+}});
+process.stdout.write(JSON.stringify(result));
+}})().catch(error => {{ console.error(error); process.exit(1); }});
+"""
+    completed = subprocess.run(
+        ["node", "-e", script], cwd=ROOT, check=True, capture_output=True, text=True
+    )
+    return json.loads(completed.stdout)
+
+
+def test_recovery_retry_continues_while_a_draft_is_still_unsettled():
+    """在途草稿（快照已还原、落库终态未到）时不得因为「草稿已有正文」而放弃重试。
+
+    切回时草稿是「切走瞬间」的前缀，落库终态可能还要几秒到几十秒才出现。旧判据只看
+    `isThinking || !content`，草稿一旦有正文就判定 needsSync=false 并静默放弃重试，
+    于是界面永久停在这份草稿上——这正是「刷新页面才能看到已跑完的回答」的成因。
+    """
+    assert (
+        _keep_recovery_sync(
+            False, {"role": "agent", "content": "半截回答", "isThinking": False}, True
+        )
+        is True
+    )
+
+
+def test_recovery_retry_stops_when_nothing_is_pending():
+    assert (
+        _keep_recovery_sync(
+            False, {"role": "agent", "content": "完整回答", "isThinking": False}, False
+        )
+        is False
+    )
+
+
+def test_recovery_retry_covers_processing_and_placeholder_states():
+    assert _keep_recovery_sync(True, None, False) is True
+    assert _keep_recovery_sync(False, {"role": "user", "content": "hi"}, False) is True
+    assert (
+        _keep_recovery_sync(
+            False, {"role": "agent", "content": "", "isThinking": True}, False
+        )
+        is True
+    )
+
+
+def test_embed_chat_routes_retry_decision_through_pure_helper():
+    source = _embed_source()
+    assert "shouldKeepRecoverySync({" in source
+    assert "hasUnsettledDraft: activeStreamDraft !== null," in source
+
+
+def test_session_reset_clears_run_status_instead_of_marking_output_completed():
+    """身份/会话重置必须整体复位运行态，不能只标记「本轮输出已完成」。
+
+    切回页面会走一次重置；若重置只调 markOutputCompleted()，残留的完成标记会让
+    随后「仍有一轮在跑」的查询无法重新锁住输入框。
+    """
+    source = _embed_source()
+    assert "stopRemoteRunPolling();\n  markOutputCompleted();" not in source
+    assert "stopRemoteRunPolling();\n  resetRunStatus();" in source
+
+
+def test_stream_replay_is_idempotent_against_a_stale_cursor():
+    """续显幂等不能只信游标，必须以「草稿已应用进度」兜底。
+
+    游标会随快照恢复 / 会话重置归零；一旦它落后于草稿的真实进度，同一批事件会被
+    再叠加一遍——表现为同一条回复里整段正文重复（用户实测）。
+    """
+    source = _embed_source()
+    assert "lastAppliedSeq?: number" in source
+    assert "const draftAppliedSeq = Math.max(0, Number(activeStreamDraft?.lastAppliedSeq ?? 0) || 0);" in source
+    assert "const afterSeq = Math.max(Number(streamReplayCursor.value.lastSeq || 0) || 0, draftAppliedSeq);" in source
+    assert "params: { after_seq: afterSeq }," in source
+    assert "activeStreamDraft.lastAppliedSeq = Math.max(draftAppliedSeq, Number(plan.lastSeq || 0) || 0);" in source
+    # 首次判定同样要用有效起点，否则会把「草稿进度领先」误判成首次而清空正文。
+    assert "const isFirstPoll = shouldResetDraftBeforeReplay(\n        { lastSeq: afterSeq }," in source
+
+
+def test_recovery_poll_does_not_trip_the_give_up_fallback():
+    """恢复器的周期轮询不得落进「重试耗尽」的兜底分支。
+
+    恢复器按 (1, 1) 调用：它本身靠外层定时器反复重试，不存在「重试耗尽」。若兜底
+    分支对它也生效，就会每 3s 调一次 markOutputCompleted()，把仍被后端锁住的输入框
+    反复解锁，并留下「输出已完成」标记污染后续加锁。
+    """
+    source = _embed_source()
+    assert "await syncLatestSessionHistory(1, 1);" in source
+    assert "} else if (maxAttempts > 1) {" in source
+
+
+def test_embed_chat_stream_replay_does_not_finish_the_turn():
+    """切回后的历史重放只做过程展示，不得触发「本轮结束」的交互收尾。
+
+    事件日志里含 run_status 终态帧（后端先发该帧、之后才落库，且它不在合并白名单里），
+    续显必然重放它。若重放也调用 markOutputCompleted()，恢复器会在启动后 1 秒内
+    自断：这正是「没有 toast、输入框没锁、界面停在半截」的直接成因。
+    """
+    source = _embed_source()
+
+    replay_start = source.index("const pollConversationStreamEvents")
+    replay_end = source.index("const scheduleStreamReplay")
+    replay_block = source[replay_start:replay_end]
+    assert "applyPermissionStreamEvent(replayTarget, event, { replay: true });" in replay_block
+
+    apply_start = source.index("const applyPermissionStreamEvent")
+    apply_block = source[apply_start : apply_start + 3000]
+    assert "const replay = options?.replay === true;" in apply_block
+
+    run_status_branch = apply_block[apply_block.index('type === "run_status"') :]
+    guarded_at = run_status_branch.index("if (!replay) {")
+    assert "markOutputCompleted();" in run_status_branch[guarded_at : guarded_at + 200]
+    assert "clearStallTimer();" in run_status_branch[guarded_at : guarded_at + 200]
+
+
+def test_embed_chat_keeps_lock_truth_driving_recovery_while_composer_uses_busy():
+    """恢复器必须以锁真相为驱动，输入解锁只认 busy：两者不得再耦合成同一个标志。"""
+    source = _embed_source()
+    assert ':is-processing="isProcessing || remoteRunBusy"' in source
+    assert "const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || sendLocked.value;" in source
+    assert "watch(remoteRunActive, (active) =>" in source
+    assert "if (!remoteRunActive.value || document.visibilityState" in source
+

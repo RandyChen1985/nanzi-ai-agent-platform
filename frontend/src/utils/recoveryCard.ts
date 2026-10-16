@@ -1,0 +1,88 @@
+/**
+ * 会话恢复提示卡片的状态决策。
+ *
+ * EmbedChat 切页面回来时靠 run-status 恢复器 + 事件续显把后台进度收敛回界面。此前提示
+ * 只有一条 toast：装不下「后台在不在跑、跑到哪、要不要刷新」，而快照不可用
+ * （`activeStreamDraft` 为 null）时续显不会启动，连那条 toast 都不会出现——后台照跑、
+ * 界面不动，用户只能手动刷新。
+ *
+ * 这里把提示升级成可关闭的状态卡片，决策收敛为纯函数：组件只负责渲染。
+ */
+
+export interface RecoveryCardInput {
+  /** 后端运行锁是否仍持有（run-status 的真相）。 */
+  runActive: boolean;
+  /** 界面上是否还有一份在途草稿（快照已还原、落库终态未到）。 */
+  hasDraft: boolean;
+  /** 草稿已渲染的执行步骤数。 */
+  draftStepCount: number;
+  /** 续显已应用到的事件序号（后端每轮清空日志，`_seq` 从 1 重新计数）。 */
+  appliedSeq: number;
+  /** 本轮卡片是否已被用户手动关闭。 */
+  turnDismissed: boolean;
+  /** 落库终态是否已写入界面。 */
+  terminalApplied: boolean;
+  /**
+   * 本端 SSE 是否仍在收流。
+   *
+   * 正常对话（流健康）期间 `runActive` 与在途草稿同时为真，但那是本端在实时接收，
+   * 不是「后台在跑而前端断了」的恢复场景，不能弹恢复提示。
+   */
+  streaming: boolean;
+  /**
+   * 本轮是否真的因恢复场景展示过卡片。
+   *
+   * 正常对话结束时同样会「落库终态已写入界面」，但用户全程没离开过页面，弹一句
+   * 「内容已补齐」纯属噪音——只有先提示过「后台仍在处理」，补齐才值得再说一声。
+   */
+  engaged: boolean;
+  /** 当前执行阶段摘要（无则省略该段）。 */
+  stageLabel?: string;
+}
+
+export type RecoveryCardPhase = "hidden" | "syncing" | "done";
+
+export interface RecoveryCardState {
+  phase: RecoveryCardPhase;
+  message: string;
+  detail?: string;
+}
+
+const SYNCING_WITH_DRAFT_MESSAGE = "会话仍在后台处理中，已恢复实时同步";
+const SYNCING_WITHOUT_DRAFT_MESSAGE = "正在同步后台进度，输出完成后会自动补齐";
+const DONE_MESSAGE = "执行已完成，内容已补齐";
+const DONE_DETAIL = "已切换到落库的最终结果";
+
+/** 把「阶段 / 步数 / 已同步事件数」里已知的部分拼成一行；一个都不知道时留空。 */
+const buildDetail = (input: RecoveryCardInput): string | undefined => {
+  const parts: string[] = [];
+  const stageLabel = String(input?.stageLabel || "").trim();
+  if (stageLabel) parts.push(stageLabel);
+  const stepCount = Math.max(0, Number(input?.draftStepCount ?? 0) || 0);
+  if (stepCount > 0) parts.push(`${stepCount} 步`);
+  const appliedSeq = Math.max(0, Number(input?.appliedSeq ?? 0) || 0);
+  if (appliedSeq > 0) parts.push(`已同步 ${appliedSeq} 条事件`);
+  return parts.length ? parts.join(" · ") : undefined;
+};
+
+export function planRecoveryCard(input: RecoveryCardInput): RecoveryCardState {
+  // 用户本轮已明确关闭：不再打扰。范围仅限本轮，下一轮提问会复位该标记。
+  // 关闭优先于完成态——用户已经表示不想看这张卡片了。
+  if (input?.turnDismissed) return { phase: "hidden", message: "" };
+  // 本端仍在收流 = 这是一次正常对话，不是恢复场景：此时提示「已恢复实时同步」是误报。
+  if (input?.streaming) return { phase: "hidden", message: "" };
+  // 内容已补齐就是完成态：不必等后端释放锁（锁在落库完成后才释放，存在时间窗）。
+  // 但只在本轮确实展示过恢复提示时才收尾，否则正常对话结束也会多一句噪音。
+  if (input?.terminalApplied) {
+    if (!input?.engaged) return { phase: "hidden", message: "" };
+    return { phase: "done", message: DONE_MESSAGE, detail: DONE_DETAIL };
+  }
+  if (input?.runActive) {
+    return {
+      phase: "syncing",
+      message: input?.hasDraft ? SYNCING_WITH_DRAFT_MESSAGE : SYNCING_WITHOUT_DRAFT_MESSAGE,
+      detail: buildDetail(input),
+    };
+  }
+  return { phase: "hidden", message: "" };
+}

@@ -75,17 +75,142 @@ def test_both_chat_surfaces_refresh_remote_status_on_visibility_and_bind_busy_st
         assert "run-status" in source
         assert "refreshCurrentRunStatus" in source
         assert "visibilitychange" in source
-        assert ':is-processing="isProcessing || remoteRunActive"' in source
+        # 输入区绑定的是「本轮是否还占着输入」的 busy 判定，而不是后端锁真相：
+        # 锁真相要在输出完成后继续驱动恢复收敛，不能被输入解锁一并抹掉。
+        assert ':is-processing="isProcessing || remoteRunBusy"' in source
         assert ':is-submitting="sendLocked"' in source
-        assert "if (isProcessing.value || remoteRunActive.value) return;" in source
+        assert "if (isProcessing.value || remoteRunBusy.value) return;" in source
+
+
+def test_mark_output_completed_keeps_lock_truth_alive_for_recovery():
+    """输出完成只应解锁输入，不得把「后端仍在跑」这个事实从界面抹掉。
+
+    后端在 finalize 里先 yield run_status 帧、之后才落库；前端收到该帧（或切回后
+    续显重放该帧）就会 markOutputCompleted()。若这一次调用同时把 remoteRunActive
+    压成 false，运行恢复器与 run-status 轮询会一起停摆，落库慢于最后一次历史同步时
+    界面永久停在草稿、只能刷新页面（用户实测现象）。
+    """
+    result = _run_typescript(
+        """
+let active = true;
+const controller = api.createConversationRunStatusController(
+  async () => ({ active, trace_id: 't1', ttl_seconds: 30 }), 100000);
+await controller.refresh('c1');
+const lockAfterSync = controller.remoteRunActive.value;
+controller.markOutputCompleted();
+const lockAfterMark = controller.remoteRunActive.value;
+await controller.refresh('c1');
+const lockAfterResync = controller.remoteRunActive.value;
+active = false;
+await controller.refresh('c1');
+const lockWhenDone = controller.remoteRunActive.value;
+// 必须停掉轮询定时器：否则 node 会带着待触发的 setTimeout 不退出，测试挂死。
+controller.stopPolling();
+return {
+  lockAfterSync, lockAfterMark, lockAfterResync, lockWhenDone,
+};
+""",
+    )
+    assert result == {
+        "lockAfterSync": True,
+        "lockAfterMark": True,
+        "lockAfterResync": True,
+        "lockWhenDone": False,
+    }
+
+
+def test_composer_busy_flag_is_released_by_completion_without_stopping_recovery():
+    """输入解锁走 busy 判定：输出完成即解锁，但锁真相继续驱动恢复。"""
+    result = _run_typescript(
+        """
+let active = true;
+const controller = api.createConversationRunStatusController(
+  async () => ({ active, trace_id: 't1', ttl_seconds: 30 }), 100000);
+await controller.refresh('c1');
+const busyAfterSync = controller.remoteRunBusy.value;
+controller.markOutputCompleted();
+const busyAfterMark = controller.remoteRunBusy.value;
+const lockAfterMark = controller.remoteRunActive.value;
+active = false;
+await controller.refresh('c1');
+const busyWhenDone = controller.remoteRunBusy.value;
+controller.stopPolling();
+return {
+  busyAfterSync, busyAfterMark, lockAfterMark, busyWhenDone,
+};
+""",
+    )
+    assert result == {
+        "busyAfterSync": True,
+        "busyAfterMark": False,
+        "lockAfterMark": True,
+        "busyWhenDone": False,
+    }
+
+
+def test_session_reset_clears_output_completed_so_a_running_turn_relocks_the_composer():
+    """会话重置不得留下「输出已完成」标记。
+
+    切页面再切回会在新实例里走一次身份重置。若重置路径复用 markOutputCompleted，
+    该标记会残留，之后任何一次「仍有一轮在跑」的查询都会把输入锁判成 false——
+    表现为恢复器活着（思考卡片在动）、输入框却始终不锁（用户实测）。
+    """
+    result = _run_typescript(
+        """
+let active = true;
+const controller = api.createConversationRunStatusController(
+  async () => ({ active, trace_id: 't1', ttl_seconds: 30 }), 100000);
+controller.markOutputCompleted();
+controller.resetRunStatus();
+await controller.refresh('c1');
+const lockAfterReset = controller.remoteRunActive.value;
+const busyAfterReset = controller.remoteRunBusy.value;
+controller.stopPolling();
+return { lockAfterReset, busyAfterReset };
+""",
+    )
+    assert result == {"lockAfterReset": True, "busyAfterReset": True}
+
+
+def test_starting_a_new_turn_resets_output_completed():
+    """新一轮开始必须复位 outputCompleted。
+
+    否则上一轮的「输出已完成」会持续压制新一轮的锁：用户切走再切回时恢复器
+    不启动，界面停在半截输出。
+    """
+    result = _run_typescript(
+        """
+let active = true;
+const controller = api.createConversationRunStatusController(
+  async () => ({ active, trace_id: 't1', ttl_seconds: 30 }), 100000);
+await controller.refresh('c1');
+controller.markOutputCompleted();
+controller.markRunStarted();
+const lockAfterStart = controller.remoteRunActive.value;
+const busyAfterStart = controller.remoteRunBusy.value;
+await controller.refresh('c1');
+const lockAfterRefresh = controller.remoteRunActive.value;
+const busyAfterRefresh = controller.remoteRunBusy.value;
+controller.stopPolling();
+return {
+  lockAfterStart, busyAfterStart, lockAfterRefresh, busyAfterRefresh,
+};
+""",
+    )
+    assert result == {
+        "lockAfterStart": True,
+        "busyAfterStart": True,
+        "lockAfterRefresh": True,
+        "busyAfterRefresh": True,
+    }
 
 
 def test_embed_chat_focuses_desktop_input_only_after_all_busy_states_clear():
     source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
 
     assert "const focusChatInputWhenReady = () =>" in source
-    assert "if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;" in source
-    assert "watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);" in source
+    assert "if (isMobile.value || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;" in source
+    assert "watch([isProcessing, remoteRunBusy, sendLocked], focusChatInputWhenReady);" in source
     assert "nextTick(() => chatInputRef.value?.focus());" in source
 
     completion_block = source[source.index("isProcessing.value = false;", source.index("const sendMessageInternal")):source.index("const BOTTOM_THRESHOLD_PX")]
@@ -95,12 +220,12 @@ def test_embed_chat_focuses_desktop_input_only_after_all_busy_states_clear():
 def test_agent_debug_focuses_desktop_input_only_after_all_busy_states_clear():
     source = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
 
-    watch_index = source.index("watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);")
+    watch_index = source.index("watch([isProcessing, remoteRunBusy, sendLocked], focusChatInputWhenReady);")
     assert source.index("const isProcessing = ref(false);") < watch_index
     assert source.index("const { locked: sendLocked", source.index("const isProcessing = ref(false);")) < watch_index
     assert "const focusChatInputWhenReady = () =>" in source
-    assert "if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;" in source
-    assert "watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);" in source
+    assert "if (isMobile.value || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;" in source
+    assert "watch([isProcessing, remoteRunBusy, sendLocked], focusChatInputWhenReady);" in source
     assert "nextTick(() => chatInputRef.value?.focus());" in source
 
     # 收尾不再直接置 false，而是在 finally 中按待处理权限/外部执行状态收敛 isProcessing；

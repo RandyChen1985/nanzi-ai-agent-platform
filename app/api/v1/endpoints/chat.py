@@ -33,6 +33,7 @@ from app.services.ai.reusable_result import (
     normalize_legacy_data_result,
 )
 from app.services.ai.runtime.agentscope.tool_timeout import load_agent_max_toolcall_timeout
+from app.services.ai.runtime.producer_watchdog import load_producer_hard_timeout
 from app.services.ai.error_response_service import sanitize_error_text
 from app.utils.env import get_env
 import logging
@@ -1977,7 +1978,10 @@ async def create_chat_completion(
             "process_narration_commit",
             "process_narration_promote",
         }
-        STREAM_JOURNAL_COALESCE_INTERVAL_SECONDS = 0.3
+        # 合并窗口：同一窗口内的高频增量合并成一条事件。1000ms 让「TTL 1800s 内的
+        # 事件条数」落在容量预算内（此前 300ms 时理论上限约 6000 条，会先被 LTRIM
+        # 截断）；正文恢复时的更新粒度由毫秒级变为每秒一次，体感差异可忽略。
+        STREAM_JOURNAL_COALESCE_INTERVAL_SECONDS = 1.0
         STREAM_JOURNAL_COALESCE_MAX_CHARS = 2000
         stream_journal_pending: list[dict[str, Any]] = []
         stream_journal_chars = 0
@@ -2171,17 +2175,9 @@ async def create_chat_completion(
                     producer_task.cancel()
                 raise
 
-        async def _producer_hard_timeout() -> float:
-            # 默认 600s；配置异常时回落 600s。0/负值表示“不经看门狗”（关闭兜底）。
-            try:
-                raw = await ConfigService.get(
-                    "agent_chat_producer_hard_timeout_seconds", "600"
-                )
-                return max(0.0, float(raw))
-            except (TypeError, ValueError):
-                return 600.0
-
-        _producer_hard_timeout_seconds = await _producer_hard_timeout()
+        # 取值语义（0 = 关闭、60-3600 范围校验、与工具超时的维度差异）统一收在
+        # producer_watchdog 模块，这里只调用，避免默认值出现第二份。
+        _producer_hard_timeout_seconds = await load_producer_hard_timeout()
         if _producer_hard_timeout_seconds > 0:
             # 看门狗随 producer 结束而结束：`wait_for` 会在 producer 完成后提前返回，
             # 不会为了等满整个 hard_timeout 而残留。

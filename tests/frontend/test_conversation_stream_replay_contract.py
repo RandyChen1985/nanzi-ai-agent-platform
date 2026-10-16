@@ -105,10 +105,15 @@ return api.planStreamReplay([], { lastSeq: 12, traceId: 't1' })
 
 
 EMBED_CHAT = ROOT / "frontend/src/views/EmbedChat.vue"
+RECOVERY_CARD_MODULE = ROOT / "frontend/src/utils/recoveryCard.ts"
 
 
 def _embed_source() -> str:
     return EMBED_CHAT.read_text(encoding="utf-8")
+
+
+def _recovery_card_source() -> str:
+    return RECOVERY_CARD_MODULE.read_text(encoding="utf-8")
 
 
 def test_embed_chat_polls_stream_events_with_cursor():
@@ -117,19 +122,23 @@ def test_embed_chat_polls_stream_events_with_cursor():
     assert "const pollConversationStreamEvents = async (" in source
     assert "STREAM_REPLAY_POLL_INTERVAL_MS" in source
     assert "/conversation/${encodeURIComponent(cid)}/stream-events" in source
-    assert "params: { after_seq: streamReplayCursor.value.lastSeq }" in source
+    # 起点取「游标」与「草稿已应用进度」的较大者：游标可能落后于草稿真实进度，
+    # 只信它会把同一批事件再叠加一遍。
+    assert "params: { after_seq: afterSeq }," in source
 
 
 def test_embed_chat_applies_replay_events_through_shared_dispatcher():
     source = _embed_source()
     # 必须复用既有分发器，避免恢复期与正常流的渲染逻辑分叉
-    assert "applyPermissionStreamEvent(replayTarget, event)" in source
+    assert "applyPermissionStreamEvent(replayTarget, event, { replay: true });" in source
     assert "planStreamReplay(" in source
 
 
 def test_embed_chat_persists_replay_cursor_into_snapshot():
     source = _embed_source()
-    assert "lastSeq: streamReplayCursor.value.lastSeq" in source
+    # 落盘进度取游标与草稿已应用进度的较大者，避免切回后重放已渲染过的事件。
+    assert "Number(streamReplayCursor.value.lastSeq || 0) || 0," in source
+    assert "Number(active.lastAppliedSeq || 0) || 0," in source
 
 
 def test_embed_chat_rebuilds_draft_from_full_log_on_first_poll():
@@ -257,18 +266,16 @@ def test_plan_should_reset_draft_before_replay_on_first_poll():
 
 
 def test_embed_chat_notifies_when_replay_channel_takes_over():
-    """续显通道接管实时推进时，应提示用户「会话仍在处理中，已恢复实时同步」。
+    """续显通道接管实时推进时，应让用户看到「会话恢复」提示卡片。
 
     否则用户切回来只看到界面在动，无法判断任务到底还在不在跑。提示挂在续显
-    启动处，因此正常对话（SSE 健康、续显根本不启动）不会误弹；同一轮任务内
-    只弹一次，任务结束后重置，保证下一轮仍能提示。
+    启动处，因此正常对话（SSE 健康、续显根本不启动）不会误弹。提示形态已从 toast
+    升级为可关闭的状态卡片（见 test_recovery_card_contract.py），文案交给
+    planRecoveryCard 的纯函数决策。
     """
     source = _embed_source()
     start = source.index("const scheduleStreamReplay = () => {")
     body = source[start : start + 900]
-    assert "showToast(" in body, "续显启动处应提示会话仍在处理"
-    assert "streamReplayNoticeShown" in body, "提示需防重复，避免每次轮询都弹"
-    assert "if (!streamReplayNoticeShown)" in body
-    assert "已恢复实时同步" in source, "提示文案应说明已恢复实时同步"
-    # 终态时重置标志，保证下一轮任务切回仍能提示
-    assert "streamReplayNoticeShown = false" in source
+    assert "refreshRecoveryCard();" in body, "续显启动处应刷新恢复提示卡片"
+    assert "showToast(" not in body, "恢复提示不应再走 toast"
+    assert "已恢复实时同步" in _recovery_card_source(), "提示文案应说明已恢复实时同步"

@@ -1413,7 +1413,7 @@
       <ChatInput
         ref="chatInputRef"
         v-model="userInput"
-        :is-processing="isProcessing || remoteRunActive"
+        :is-processing="isProcessing || remoteRunBusy"
         :is-submitting="sendLocked"
         :show-shortcuts="!isMobile && config.showShortcuts"
         :slash-commands="effectiveSlashCommands"
@@ -1502,6 +1502,11 @@
           <div v-if="activeTodoTimeline" class="mx-3 mt-2">
             <ChatTodoCard :timeline="activeTodoTimeline" />
           </div>
+          <ChatRecoveryCard
+            class="mx-3 mt-2"
+            :state="recoveryCardState"
+            @dismiss="dismissRecoveryCard"
+          />
           <div
             v-if="sandboxDegradedMessage || showBashBanner"
             class="mx-3 mt-2"
@@ -2398,7 +2403,8 @@ import { cancelConversationRun } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
 import { isApiSuccess } from "@/utils/apiEnvelope";
 import { isSkillForbidden } from "@/utils/skillForbidden";
-import { planHistorySync } from "@/utils/runRecoverySync";
+import { planHistorySync, shouldKeepRecoverySync } from "@/utils/runRecoverySync";
+import { planRecoveryCard, type RecoveryCardState } from "@/utils/recoveryCard";
 import {
   planStreamReplay,
   resetDraftForReplay,
@@ -2532,6 +2538,7 @@ import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
+import ChatRecoveryCard from "@/components/chat/ChatRecoveryCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
 import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
 import K8sTerminalModal from "@/components/chat/K8sTerminalModal.vue";
@@ -2635,7 +2642,7 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
-import { hydrateHistoryProcessTimeline, timelineHasPending } from "@/utils/processTimeline";
+import { hydrateHistoryProcessTimeline, settlePendingTimelineSteps, timelineHasPending } from "@/utils/processTimeline";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
@@ -4871,8 +4878,6 @@ const STREAM_REPLAY_POLL_INTERVAL_MS = 1000;
 const streamReplayCursor = ref<{ lastSeq: number; traceId: string }>({ lastSeq: 0, traceId: "" });
 let streamReplayTimer: ReturnType<typeof setTimeout> | null = null;
 let streamReplayInFlight = false;
-/** 续显接管时的提示只弹一次；任务结束（run-status 转 false）时重置，供下一轮再提示。 */
-let streamReplayNoticeShown = false;
 /** 本轮是否已完成首次游标对齐：对齐只做一次，避免历史事件被重放。 */
 let streamReplayPrimed = false;
 
@@ -4934,8 +4939,24 @@ const readStreamSnapshot = (cid: string): EmbedStreamSnapshot | null => {
 };
 
 /** 在途流式的草稿引用：供节流写入与卸载前强制落盘使用。 */
-let activeStreamDraft: { conversationId: string; msg: Message } | null = null;
+let activeStreamDraft: { conversationId: string; msg: Message; lastAppliedSeq?: number } | null = null;
 let lastStreamSnapshotAt = 0;
+
+/**
+ * 本轮助手消息：终态收敛收尾要落定的那一条。
+ *
+ * `agentMsg` 是 sendMessageInternal 内的局部 ref，顶层收尾函数取不到它——直接引用会把
+ * ReferenceError 拼进回答正文。这里只用顶层可解析的来源：在途草稿优先，否则取消息列表
+ * 末尾的助手消息（两条终态收敛路径都会先清掉草稿，所以必须有兜底）。
+ */
+const currentStreamAgentMessage = (): Message | null => {
+  if (activeStreamDraft?.msg) return activeStreamDraft.msg;
+  for (let index = messages.value.length - 1; index >= 0; index -= 1) {
+    const candidate = messages.value[index];
+    if (candidate.role !== "user") return candidate;
+  }
+  return null;
+};
 
 const currentStreamUserMessage = (): Message | undefined => {
   for (let index = messages.value.length - 1; index >= 0; index -= 1) {
@@ -4951,7 +4972,12 @@ const maybePersistStreamSnapshot = (force = false) => {
   if (!force && now - lastStreamSnapshotAt < STREAM_SNAPSHOT_WRITE_INTERVAL_MS) return;
   lastStreamSnapshotAt = now;
   persistStreamSnapshot(active.conversationId, active.msg, currentStreamUserMessage(), {
-    lastSeq: streamReplayCursor.value.lastSeq,
+    // 落盘进度取「游标」与「草稿已应用进度」的较大者：游标可能因会话重置归零，而草稿
+    // 的进度才是界面真实渲染到哪。取小了会让切回后重放旧事件、正文重复。
+    lastSeq: Math.max(
+      Number(streamReplayCursor.value.lastSeq || 0) || 0,
+      Number(active.lastAppliedSeq || 0) || 0,
+    ),
   });
 };
 
@@ -5018,7 +5044,9 @@ const restoreEmbedStreamSnapshot = async (expectedGeneration?: number) => {
   messages.value = [...messages.value, ...restored];
   const restoredAgent = restored[restored.length - 1];
   // 登记续显目标：切回后事件要点进这条草稿，卸载前也要靠它强制落盘。
-  activeStreamDraft = { conversationId: cid, msg: restoredAgent };
+  activeStreamDraft = { conversationId: cid, msg: restoredAgent, lastAppliedSeq: Number(snapshot.lastSeq || 0) || 0 };
+  // 草稿已还原：恢复卡片立即反映「已接管续显」。
+  refreshRecoveryCard();
   // 游标随快照恢复：after_seq 从已渲染的进度续起，避免重复叠加正文。
   streamReplayCursor.value = {
     lastSeq: Number(snapshot.lastSeq || 0) || 0,
@@ -5092,23 +5120,33 @@ const pollConversationStreamEvents = async () => {
   if (!cid || streamReplayInFlight) return;
   streamReplayInFlight = true;
   try {
+    // 幂等防线的最后一道：以「草稿已应用到哪」与游标的较大者作为起点。
+    // 游标会随快照恢复 / 会话重置归零，一旦它落后于草稿的真实进度，旧事件就会被
+    // 再叠加一遍——表现为同一条回复里整段正文重复。
+    const draftAppliedSeq = Math.max(0, Number(activeStreamDraft?.lastAppliedSeq ?? 0) || 0);
+    const afterSeq = Math.max(Number(streamReplayCursor.value.lastSeq || 0) || 0, draftAppliedSeq);
     const response = await axios.get(
       `/api/v1/chat/conversation/${encodeURIComponent(cid)}/stream-events`,
       {
-        params: { after_seq: streamReplayCursor.value.lastSeq },
+        params: { after_seq: afterSeq },
         headers: embedAuthHeaders(),
       },
     );
     const data = (response.data?.data || {}) as Record<string, any>;
-    const plan = planStreamReplay(data.events, streamReplayCursor.value);
+    const plan = planStreamReplay(data.events, {
+      lastSeq: afterSeq,
+      traceId: streamReplayCursor.value.traceId,
+    });
     if (plan.gap) {
       console.warn("[EmbedChat] 事件日志出现断层，过程展示可能不完整，终态仍以历史为准");
     }
     const replayTarget = activeStreamDraft?.msg ?? null;
     if (replayTarget) {
       const replayEvents = plan.events as Record<string, any>[];
+      // 判定同样以「有效起点」为准：草稿进度领先于游标时不属于首次拉取，绝不能清空重建，
+      // 否则会先清掉已有正文、再只补增量，内容反而丢失。
       const isFirstPoll = shouldResetDraftBeforeReplay(
-        streamReplayCursor.value,
+        { lastSeq: afterSeq },
         {
           hasContent: Boolean(
             String(replayTarget.content || "").trim() ||
@@ -5122,13 +5160,15 @@ const pollConversationStreamEvents = async () => {
         // 新产出的全部事件。直接重放会把前缀叠加一遍（逐条 delta 达不到去重阈值），
         // 只对齐游标又会让切走期间的内容永久缺失——所以先清空累加字段，再整体重建。
         resetDraftForReplay(replayTarget);
+        // 内容已清空：应用进度同步归位到本次起点，异常中断也不会跳过后续事件。
+        if (activeStreamDraft) activeStreamDraft.lastAppliedSeq = afterSeq;
       }
       // 首次但日志有断层（被 LTRIM 截断）时既不清空也不重放：保住快照里已有的内容，
       // 缺口交给历史终态同步兜底，避免用残缺日志覆盖掉更完整的界面。
       const shouldReplayEvents = !isFirstPoll || (!plan.gap && replayEvents.length > 0);
       if (shouldReplayEvents) {
         for (const event of replayEvents) {
-          applyPermissionStreamEvent(replayTarget, event);
+          applyPermissionStreamEvent(replayTarget, event, { replay: true });
         }
         if (replayEvents.length) {
           await nextTick();
@@ -5137,7 +5177,13 @@ const pollConversationStreamEvents = async () => {
       }
       streamReplayPrimed = true;
       streamReplayCursor.value = { lastSeq: plan.lastSeq, traceId: String(replayTarget.trace_id || "") };
+      // 草稿自身记下已应用到的 seq：即便游标将来归零，也不会重放旧事件。
+      if (activeStreamDraft) {
+        activeStreamDraft.lastAppliedSeq = Math.max(draftAppliedSeq, Number(plan.lastSeq || 0) || 0);
+      }
       maybePersistStreamSnapshot(true);
+      // 进度推进了：刷新恢复卡片上的阶段 / 步数 / 已同步事件数。
+      refreshRecoveryCard();
     } else {
       streamReplayCursor.value = { ...streamReplayCursor.value, lastSeq: plan.lastSeq };
     }
@@ -5156,12 +5202,9 @@ const pollConversationStreamEvents = async () => {
 const scheduleStreamReplay = () => {
   clearStreamReplayTimer();
   if (document.visibilityState !== "visible") return;
-  // 续显接管意味着 SSE 已不再推进（切页面回来 / 流已静默）。此时明确告知用户
-  // 任务仍在后台运行，避免切回后只看到界面在动、却不清楚任务是否还在跑。
-  if (!streamReplayNoticeShown) {
-    streamReplayNoticeShown = true;
-    showToast("会话仍在处理中，已恢复实时同步", "info");
-  }
+  // 续显接管意味着 SSE 已不再推进（切页面回来 / 流已静默）。提示交给恢复卡片：
+  // 它装得下后台状态、执行阶段与同步进度，并且可以被用户手动关闭。
+  refreshRecoveryCard();
   streamReplayTimer = setTimeout(async () => {
     await pollConversationStreamEvents();
     if (streamReplayTimer !== null) scheduleStreamReplay();
@@ -5170,9 +5213,12 @@ const scheduleStreamReplay = () => {
 
 const {
   remoteRunActive,
+  remoteRunBusy,
   refresh: refreshRemoteRunStatus,
   stopPolling: stopRemoteRunPolling,
   markOutputCompleted,
+  markRunStarted,
+  resetRunStatus,
 } = useConversationRunStatus(async (cid) => {
   const response = await axios.get(
     `/api/v1/chat/conversation/${encodeURIComponent(cid)}/run-status`,
@@ -5193,6 +5239,116 @@ const refreshCurrentRunStatus = () => (
     ? refreshRemoteRunStatus(conversationId.value)
     : Promise.resolve(false)
 );
+
+// --- 恢复提示卡片 ---
+// 切页面回来时用卡片替代原来的 toast：装得下「后台在不在跑、跑到哪、要不要刷新」，
+// 也补掉了此前「快照没还原成功 → 连 toast 都不会出现」的静默场景（runActive 为真但
+// 没有草稿时同样提示）。决策收敛在 planRecoveryCard 纯函数里，这里只做状态转发。
+const RECOVERY_CARD_DONE_VISIBLE_MS = 3000;
+const recoveryCardDismissedForTurn = ref(false);
+const recoveryCardTerminalApplied = ref(false);
+// 本轮是否真的展示过恢复提示：没展示过就不该在收尾时补一句「内容已补齐」。
+const recoveryCardEngagedForTurn = ref(false);
+const recoveryCardState = ref<RecoveryCardState>({ phase: "hidden", message: "" });
+let recoveryCardDoneTimer: any = null;
+
+const clearRecoveryCardDoneTimer = () => {
+  if (recoveryCardDoneTimer) {
+    clearTimeout(recoveryCardDoneTimer);
+    recoveryCardDoneTimer = null;
+  }
+};
+
+/** 草稿时间线里最后一条「工具/步骤」标题，作为卡片上的执行阶段摘要。 */
+const recoveryStageLabel = () => {
+  const timeline = activeStreamDraft?.msg.processTimeline;
+  if (!Array.isArray(timeline)) return "";
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const item = timeline[index];
+    if (item && item.kind === "log" && item.title) return String(item.title);
+  }
+  return "";
+};
+
+const refreshRecoveryCard = () => {
+  const draftTimeline = activeStreamDraft?.msg.processTimeline;
+  const next = planRecoveryCard({
+    runActive: remoteRunActive.value,
+    hasDraft: activeStreamDraft !== null,
+    draftStepCount: Array.isArray(draftTimeline) ? draftTimeline.length : 0,
+    appliedSeq: Number(activeStreamDraft?.lastAppliedSeq ?? 0) || 0,
+    turnDismissed: recoveryCardDismissedForTurn.value,
+    terminalApplied: recoveryCardTerminalApplied.value,
+    streaming: streamInFlight,
+    engaged: recoveryCardEngagedForTurn.value,
+    stageLabel: recoveryStageLabel(),
+  });
+  recoveryCardState.value = next;
+  if (next.phase === "syncing") recoveryCardEngagedForTurn.value = true;
+  if (next.phase === "done") {
+    // 完成态短暂停留：让用户知道「刚才是后台补上的」，之后自动收起。
+    if (recoveryCardDoneTimer === null) {
+      recoveryCardDoneTimer = setTimeout(() => {
+        recoveryCardDoneTimer = null;
+        recoveryCardTerminalApplied.value = false;
+        refreshRecoveryCard();
+      }, RECOVERY_CARD_DONE_VISIBLE_MS);
+    }
+    return;
+  }
+  clearRecoveryCardDoneTimer();
+};
+
+const dismissRecoveryCard = () => {
+  recoveryCardDismissedForTurn.value = true;
+  refreshRecoveryCard();
+};
+
+/** 新一轮提问 / 会话重置：复位本轮关闭标记与完成态，让提示重新可用。 */
+const resetRecoveryCard = () => {
+  clearRecoveryCardDoneTimer();
+  recoveryCardDismissedForTurn.value = false;
+  recoveryCardTerminalApplied.value = false;
+  recoveryCardEngagedForTurn.value = false;
+  refreshRecoveryCard();
+};
+
+/**
+ * 后台一轮结束（含切走页面再回来后的恢复收敛）时的统一收尾。
+ *
+ * 恢复路径此前只置了「终态已对齐」标记，没有走流结束那套收尾，于是思考卡片里那一步
+ * 仍是 pending：秒表继续走、文案停在「生成耗时较长，仍在继续…」，而此时恢复卡片已经
+ * 消失、输入框也已解锁——界面自相矛盾。秒表由「最后一条 pending 项」驱动，所以这里
+ * 必须把挂起项落定。
+ */
+const settleRecoveredTimeline = () => {
+  const msg = currentStreamAgentMessage();
+  if (msg) {
+    settlePendingTimelineSteps(msg.processTimeline);
+    if (Array.isArray(msg.logs)) {
+      msg.logs.forEach((log) => {
+        if (
+          log.status === "pending"
+          && log.category !== "permission"
+          && log.category !== "external"
+        ) {
+          log.status = "success";
+        }
+      });
+    }
+    msg.isThinking = false;
+    msg.processNarrationPending = false;
+  }
+  if (thoughtTimer) {
+    clearInterval(thoughtTimer);
+    thoughtTimer = null;
+  }
+  clearStallTimer();
+  showStalledPrompt.value = false;
+};
+
+watch([remoteRunActive, remoteRunBusy, isProcessing], refreshRecoveryCard);
+if (remoteRunActive.value) refreshRecoveryCard();
 
 /**
  * 流刚结束时加速 run-status 收敛。
@@ -5230,11 +5386,11 @@ const clearRunStatusNudge = () => {
 };
 
 const focusChatInputWhenReady = () => {
-  if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
+  if (isMobile.value || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;
   nextTick(() => chatInputRef.value?.focus());
 };
 
-watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);
+watch([isProcessing, remoteRunBusy, sendLocked], focusChatInputWhenReady);
 
 watch(conversationId, () => {
   void refreshCurrentRunStatus();
@@ -5439,15 +5595,18 @@ const resetSessionForIdentityChange = (
   hasMoreHistory.value = true;
   isLoadingHistory.value = false;
   activeStreamDraft = null;
+  // 换身份 / 清空会话：恢复卡片整体复位（含本轮关闭标记）。
+  resetRecoveryCard();
   streamReplayCursor.value = { lastSeq: 0, traceId: "" };
   clearStreamReplayTimer();
   // 续显标志位也归零：否则新身份首屏恢复草稿时会「未对齐就重放」，正文可能重复一段。
   streamReplayPrimed = false;
-  streamReplayNoticeShown = false;
   // 远程运行轮询与降级提示属于上一位用户的会话运行态：先停掉，避免新身份输入框
   // 短暂显示「生成中」或残留对方的沙箱降级横幅。
+  // 用 resetRunStatus 而非 markOutputCompleted：后者会把「本轮输出已完成」的标记
+  // 留在新会话上，导致切页面回来时仍在跑的那一轮再也锁不住输入框。
   stopRemoteRunPolling();
-  markOutputCompleted();
+  resetRunStatus();
   sandboxDegradedMessage.value = "";
 
   // —— 界面现场：会话数据清了不等于界面清了 ——
@@ -9027,7 +9186,7 @@ const quickContextForMessage = (msg: Message): QuickQuestionContext | undefined 
 /**
  * 快捷按钮（quick button）的待补发队列。
  *
- * `remoteRunActive` 由 run-status 轮询驱动，最长有 1.5s 滞后；SSE 的 `run_status` 终态
+ * `remoteRunBusy` 由 run-status 轮询驱动，最长有 1.5s 滞后；SSE 的 `run_status` 终态
  * 事件在切后台/代理缓冲时可能丢失。此前被锁时直接 `return` 静默丢弃，用户体感就是
  * 「已经输出完了，第一次点快捷按钮没反应，得再点一次」。改为：点击即核验后端真相，
  * 确实仍在处理则记下这次点击，锁释放后自动补发，绝不静默吞掉。
@@ -9049,7 +9208,7 @@ let pendingQuickSend: {
   /** 点击时已就绪的「本轮强制走查数智能体」意图，随补发一起生效。 */
   forceDataQueryAgent: boolean;
 } | null = null;
-const quickSendBlocked = () => isProcessing.value || remoteRunActive.value || sendLocked.value;
+const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || sendLocked.value;
 /** 输入框里是否已有用户自己的内容（文字或附件）。 */
 const hasUserComposerDraft = () =>
   Boolean(userInput.value.trim()) || Boolean(chatInputRef.value?.uploadedFiles?.length);
@@ -9115,7 +9274,7 @@ const flushPendingQuickSend = async () => {
   }));
 };
 // 锁一释放立即补发；这里不依赖用户再点一次。
-watch([isProcessing, remoteRunActive, sendLocked], () => {
+watch([isProcessing, remoteRunBusy, sendLocked], () => {
   void flushPendingQuickSend();
 });
 // 切换 / 新建 / 清空会话后，属于旧会话的排队项立即作废：否则旧会话的提问会被补发到
@@ -9173,7 +9332,7 @@ const handleGroundingAction = async (
   payload: GroundingBlockedPayload | undefined,
   action: GroundingBlockedAction,
 ) => {
-  if (!payload || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
+  if (!payload || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;
   if (action.kind === "grounding_retry") {
     const groundingAction = {
       ...(action.payload || {}),
@@ -9617,7 +9776,15 @@ const applyReusableResultStatusEvent = (msg: Message, data: any): boolean => {
   return true;
 };
 
-const applyPermissionStreamEvent = (msg: Message, data: any) => {
+const applyPermissionStreamEvent = (
+  msg: Message,
+  data: any,
+  options?: { replay?: boolean },
+) => {
+  // 历史重放（切回后的事件续显）只做过程展示，不触发「本轮结束」的交互收尾：事件日志
+  // 里含 run_status 终态帧（后端先发该帧、之后才落库），若重放也调 markOutputCompleted
+  // 就会在恢复器启动后 1 秒内把它自断，界面永久停在草稿。
+  const replay = options?.replay === true;
   applyStreamTraceId(msg, data);
   if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
   if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
@@ -9644,9 +9811,11 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
         data.status === "error" || data.status === "failed" ? "error" : "completed";
     }
     msg.isThinking = false;
-    clearStallTimer();
-    showStalledPrompt.value = false;
-    markOutputCompleted();
+    if (!replay) {
+      clearStallTimer();
+      showStalledPrompt.value = false;
+      markOutputCompleted();
+    }
     if (data.status === "success") {
       (msg as any).status = "success";
     }
@@ -10027,20 +10196,20 @@ const captureSendSnapshot = (overrides: ChatSendOverrides = {}): ChatSendSnapsho
 const sendPreparedMessage = async (
   prepare: () => Promise<ChatSendSnapshot | null>,
 ) => runSendExclusive(async () => {
-  if (isProcessing.value || remoteRunActive.value) return;
+  if (isProcessing.value || remoteRunBusy.value) return;
   const snapshot = await prepare();
   if (!snapshot) return;
   return sendMessageInternal(snapshot);
 });
 
 const sendMessage = async (overrides: ChatSendOverrides = {}) => runSendExclusive(async () => {
-  if (isProcessing.value || remoteRunActive.value) return;
+  if (isProcessing.value || remoteRunBusy.value) return;
   return sendMessageInternal(captureSendSnapshot(overrides));
 });
 
 const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const { content, files } = snapshot;
-  if ((!content && files.length === 0) || isProcessing.value || remoteRunActive.value) return;
+  if ((!content && files.length === 0) || isProcessing.value || remoteRunBusy.value) return;
 
   // 一旦有真正的发送落地，排队的快捷提问即视为已被用户后续操作取代，避免重复发送。
   // 若这次落地并非那次排队补发本身（补发会先自行取走队列），则连同它 arm 的
@@ -10124,7 +10293,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   startThoughtTimer(agentMsg.value);
   // 3. API Call
   // SSE 可能因切后台/网络变化提前结束；在状态接口确认释放前继续阻止新一轮发送。
-  remoteRunActive.value = true;
+  // 用 markRunStarted 而非裸置位：必须同时复位上一轮的「输出已完成」，
+  // 否则上一轮的完成态会继续压制本轮恢复（切走再切回时恢复器不启动）。
+  markRunStarted();
   abortController = new AbortController();
   streamInFlight = true;
   // 新一轮开始：续显游标整体归零。后端在 producer 启动时会清空上一轮日志并让 _seq
@@ -10133,7 +10304,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   streamReplayCursor.value = { lastSeq: 0, traceId: "" };
   streamReplayPrimed = false;
   // 登记在途草稿：供节流写入与卸载前强制落盘使用（重建后据此还原已输出的思考）。
-  activeStreamDraft = { conversationId: conversationId.value, msg: agentMsg.value };
+  activeStreamDraft = { conversationId: conversationId.value, msg: agentMsg.value, lastAppliedSeq: 0 };
+  // 新一轮提问：复位上一轮的关闭标记与完成态，恢复提示重新可用。
+  resetRecoveryCard();
   // 首片正文立即显示，后续正文按帧合并更新。
   let pendingContentBuffer = "";
   let contentRafId: number | null = null;
@@ -10303,7 +10476,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             agentMsg.value.isThinking = false;
             (agentMsg.value as any).status = "duplicate_request";
             agentMsg.value.content = String(data.content || "相同发送请求已提交，请等待原任务完成。\n");
-            remoteRunActive.value = true;
+            markRunStarted();
             void refreshCurrentRunStatus();
           } else if (data.type === "run_status") {
             flushContentBuffer();
@@ -10472,8 +10645,11 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     flushContentBuffer();
     // 流已正常读完（收到 [DONE]）：本轮草稿不再是「在途」，清掉引用。
     // 否则在「SSE 已结束、run-status 尚未翻回 false」的时间窗里，运行恢复器会把它
-    // 误判为断线在途——既误弹「会话仍在处理中，已恢复实时同步」提示，又白拉一次事件日志。
+    // 误判为断线在途——既误弹恢复提示，又白拉一次事件日志。
     activeStreamDraft = null;
+    // 本轮的输出已经完整落到界面，恢复卡片转入完成态。
+    recoveryCardTerminalApplied.value = true;
+    settleRecoveredTimeline();
     clearStreamReplayTimer();
   } catch (e: any) {
     flushContentBuffer();
@@ -10486,6 +10662,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     }
   } finally {
     streamInFlight = false;
+    // SSE 已收流结束，此时才谈得上完成态：放在 streamInFlight 归零之后刷新，
+    // 否则「本端仍在收流」的判据会把完成提示压掉。
+    refreshRecoveryCard();
     // 组件已卸载时不再执行收尾副作用：否则 abort 后的 refreshCurrentRunStatus 会在
     // 已销毁的实例上重启会话轮询与网络请求。结果由下次挂载时的运行恢复器取回。
     if (!embedUnmounted) {
@@ -10758,6 +10937,9 @@ onMounted(() => {
         if (action.kind === "reload") {
           // 页面重建后消息列表为空、服务端已出现终态记录：重拉整段历史。
           // 只补一条助手消息会丢掉对应的用户提问，直接忽略则回答永远不出现。
+          recoveryCardTerminalApplied.value = true;
+          settleRecoveredTimeline();
+          refreshRecoveryCard();
           clearStreamSnapshot(conversationId.value);
           await fetchConversationHistory(false);
           if (isProcessing.value) {
@@ -10812,7 +10994,12 @@ onMounted(() => {
           if (isProcessing.value) {
             isProcessing.value = false;
           }
-          // 终态已落到界面：草稿使命结束。
+          // 终态已落到界面：草稿使命结束（同时让重试判据不再把在途草稿算作待收敛）。
+          activeStreamDraft = null;
+          // 内容已补齐 → 恢复卡片转完成态并短暂停留。
+          recoveryCardTerminalApplied.value = true;
+          settleRecoveredTimeline();
+          refreshRecoveryCard();
           clearStreamSnapshot(conversationId.value);
           clearVisibilitySyncTimer();
           await nextTick();
@@ -10826,20 +11013,31 @@ onMounted(() => {
 
     if (attempt < maxAttempts) {
       const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : undefined;
-      const needsSync = isProcessing.value || (lastMsg && (lastMsg.role === 'user' || (lastMsg.role === 'agent' && (lastMsg.isThinking || !lastMsg.content))));
+      // 判据抽成纯函数：只要界面上还有未收敛的痕迹（含「草稿已有正文但在途」）就继续
+      // 重试。此前按 `isThinking || !content` 判定，草稿一有正文就静默放弃重试，
+      // 落库稍慢就会让界面永久停在半截输出，只能刷新页面。
+      const needsSync = shouldKeepRecoverySync({
+        isProcessing: isProcessing.value,
+        lastMessage: lastMsg,
+        hasUnsettledDraft: activeStreamDraft !== null,
+      });
       if (needsSync && document.visibilityState === "visible") {
         clearVisibilitySyncTimer();
         visibilitySyncTimer = setTimeout(() => {
           syncLatestSessionHistory(attempt + 1, maxAttempts);
         }, 1500);
       }
-    } else {
+    } else if (maxAttempts > 1) {
+      // 只有「带重试的调用」才存在「重试耗尽」这件事。恢复器是按 (1, 1) 调用的周期
+      // 轮询，它本身就靠外层定时器反复重试；若也落进这个兜底分支，就会每 3s 调一次
+      // markOutputCompleted，把仍被后端锁住的输入框反复解锁，并留下「输出已完成」标记。
       if (isProcessing.value) {
         isProcessing.value = false;
       }
       // 历史同步重试已耗尽，说明前端再也拿不到更权威的进展信号。此时若界面已无待确认
-      // 卡片、流也已结束，就一并释放运行锁——否则 `remoteRunActive` 会一直把快捷按钮
-      // 拦在 `handleQuickQuestion` 的守卫里，表现为「输出完了却点不动」。
+      // 卡片、流也已结束，就一并解锁输入——否则 `remoteRunBusy` 会一直把快捷按钮拦在
+      // `handleQuickQuestion` 的守卫里，表现为「输出完了却点不动」。
+      // 注意：只解锁输入，`remoteRunActive`（锁真相）保持不动，恢复器仍会继续收敛。
       if (remoteRunActive.value && !streamInFlight && !hasPendingConfirmation()) {
         markOutputCompleted();
       }
@@ -10898,7 +11096,6 @@ onMounted(() => {
     // 锁已释放，收敛助推与排队补发都不必再等；补发由 quickSendBlocked 的 watch 立即接手。
     clearRunStatusNudge();
     // 本轮提示已消费完毕，重置后下一轮任务切回仍会提示。
-    streamReplayNoticeShown = false;
     streamReplayPrimed = false;
     if (!streamInFlight && isProcessing.value && !hasPendingConfirmation()) {
       // run-status 是权威真相源：流已死时不能把输入框永久锁在 busy。
@@ -10940,6 +11137,8 @@ onUnmounted(() => {
   // 由运行恢复器在下次挂载时取回），并停止流收尾副作用。
   embedUnmounted = true;
   streamInFlight = false;
+  // 恢复卡片的完成态停留定时器必须随组件一起清掉，避免卸载后回调触碰已失效的状态。
+  clearRecoveryCardDoneTimer();
   if (abortController) abortController.abort();
   if (abortController) abortController = null;
   cancelPendingUrlTokenInitialization();

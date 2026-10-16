@@ -18,6 +18,10 @@ from app.services.ai.runtime.agentscope.request_timeout import (
     LLM_REQUEST_READ_TIMEOUT_KEY,
     validate_llm_request_read_timeout,
 )
+from app.services.ai.runtime.producer_watchdog import (
+    PRODUCER_HARD_TIMEOUT_KEY,
+    validate_producer_hard_timeout,
+)
 from app.services.ai.runtime.tool_loop_detector import (
     AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY,
     validate_agent_tool_loop_global_limit,
@@ -81,6 +85,9 @@ def validate_config_update(key: str, value: str) -> None:
     """校验系统配置更新是否合法。"""
     if key == AGENT_MAX_TOOLCALL_TIMEOUT_KEY:
         validate_agent_max_toolcall_timeout(value)
+    elif key == PRODUCER_HARD_TIMEOUT_KEY:
+        # 紧挨工具超时：两者是「整轮」与「单个工具」的关系，配错方向最容易被忽略。
+        validate_producer_hard_timeout(value)
     elif key == LLM_REQUEST_READ_TIMEOUT_KEY:
         validate_llm_request_read_timeout(value)
     elif key == AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY:
