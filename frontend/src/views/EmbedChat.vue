@@ -6510,6 +6510,17 @@ const handleHistoryClick = async (item: any) => {
         return;
     }
 
+    // 点自己当前会话：没有可切换的目标。此时若照旧清空消息列表，正在流式输出的这条草稿会变成
+    // 「脱离列表的孤儿」——SSE 仍往它写（写入目标是 sendMessageInternal 内的局部 ref，见那里的
+    // 注释），而恢复器又因 streamInFlight 为真不介入（它只在没有活流时接管），界面就会冻结在
+    // 点击那一刻，直到本轮结束才一次性补齐。这里只把视图滚到底，不做任何重载。
+    // 消息为空时不走这条：初始化中／异常态的当前会话仍需要正常重载。
+    if (target === conversationId.value && messages.value.length > 0) {
+      if (isMobile.value) showHistorySidebar.value = false;
+      scrollToBottom();
+      return;
+    }
+
     const previousId = conversationId.value;
     if (previousId && previousId !== target) {
         finalizeConversationInBackground(previousId);
