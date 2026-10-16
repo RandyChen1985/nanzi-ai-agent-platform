@@ -43,11 +43,21 @@ def test_zero_and_negative_disable_the_watchdog(raw):
 
 @pytest.mark.parametrize(
     "raw",
-    [None, "", "   ", "abc", True, False, float("nan"), float("inf"), float("-inf"),
-     "59.9", "3600.1", 1e9],
+    [None, "", "   ", "abc", True, False, float("nan"), float("inf"), float("-inf")],
 )
-def test_garbage_and_out_of_range_fall_back_to_default(raw):
+def test_garbage_falls_back_to_default(raw):
     assert parse_producer_hard_timeout(raw) == DEFAULT_PRODUCER_HARD_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize("raw", ["0.2", "1", "30", "59.9", "3600.1", "1e9", 1e9])
+def test_legal_numbers_are_preserved_even_outside_the_managed_range(raw):
+    """读取侧不做范围二次判定——范围是**写入侧**的约束。
+
+    回归护栏：曾经在 parse 里也判了 60-3600，导致两件事同时坏掉——
+    ① DB 里手工填的 30 被静默改成 600（"配置写着 30、实际跑 600"）；
+    ② 等待小超时的集成测试（mock 返回 "0.2" 验证看门狗释放锁）会挂住 600 秒。
+    """
+    assert parse_producer_hard_timeout(raw) == pytest.approx(float(str(raw)))
 
 
 def test_parse_accepts_a_custom_default():

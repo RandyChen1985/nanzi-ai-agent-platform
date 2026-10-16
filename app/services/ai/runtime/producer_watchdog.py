@@ -31,10 +31,15 @@ def parse_producer_hard_timeout(
     *,
     default: float = DEFAULT_PRODUCER_HARD_TIMEOUT_SECONDS,
 ) -> float:
-    """解析看门狗配置值；无法解析或超范围时回退 ``default``。
+    """解析看门狗配置值；无法解析时回退 ``default``。
 
-    与 ``validate_producer_hard_timeout`` 的分工：校验负责拦住管理端的错误输入，
-    解析负责让运行期永远拿到一个可用值——配置脏数据绝不能阻断对话。
+    与 ``validate_producer_hard_timeout`` 的分工（重要）：
+    - **校验**约束写入侧（管理端保存）：只接受 0 或 60-3600；
+    - **解析**只负责读取侧的健壮性——脏数据不能阻断对话，但**合法数字一律原样使用**，
+      不在这里二次判定范围。
+
+    读取侧再判范围会造成两类问题：DB 里手工填的 30 被静默改成 600（「配置写着 30、
+    实际跑 600」是最难排查的一类问题），以及等待小超时的集成测试根本无从下手。
     """
     if isinstance(value, bool):
         return default
@@ -51,8 +56,6 @@ def parse_producer_hard_timeout(
         return default
     if number <= 0:
         return PRODUCER_HARD_TIMEOUT_DISABLED
-    if number < MIN_PRODUCER_HARD_TIMEOUT_SECONDS or number > MAX_PRODUCER_HARD_TIMEOUT_SECONDS:
-        return default
     return number
 
 
