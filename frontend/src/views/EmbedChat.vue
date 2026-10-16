@@ -161,7 +161,7 @@
                             @click="toggleActiveRuns"
                         >
                             <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l2.5 2.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 12h-4l-3 9L9 3l-3 9H2" />
                             </svg>
                             <span
                                 v-if="activeRunsCount"
@@ -395,7 +395,7 @@
                       class="flex w-full items-center gap-3 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:text-gray-200 dark:hover:bg-primary/20"
                       @click="runHeaderMoreActiveRuns"
                     >
-                      <svg class="h-5 w-5 shrink-0 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l2.5 2.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <svg class="h-5 w-5 shrink-0 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
                       <span class="flex-1 text-left font-medium">进行中的会话</span>
                       <span v-if="activeRunsCount" class="shrink-0 rounded-full px-1.5 text-[10px] font-semibold text-white" :class="activeRunsStaleCount ? 'bg-amber-500' : 'bg-primary'">{{ activeRunsCount > 99 ? '99+' : activeRunsCount }}</span>
                     </button>
@@ -5738,6 +5738,37 @@ const generateNewConversation = (options: { persist?: boolean } = {}) => {
   }
   loadResourceScope();
 };
+
+/**
+ * 新建 / 清空会话前，把「上一轮还在跑」的本地痕迹停干净。
+ *
+ * 只清 messages 并换 conversation_id 是不够的，三样残留会把新会话的输入框钉死：
+ *   1. 旧 SSE 流没断：`isProcessing` 一直是 true，它的回调还会继续往刚清空的 messages
+ *      里追加内容（等于把上一轮的回答贴进新会话）；
+ *   2. 运行态没复位：`remoteRunBusy` / `outputCompleted` 残留，输入框按「仍在生成」渲染；
+ *   3. 旧会话的 run-status 轮询没停：下一次 tick 会拿**旧** conversation_id 查到
+ *      active=true，把 `remoteRunActive` 重新翻回 true——复位过也会被再次锁上。
+ * 口径与 `resetSessionForIdentityChange` 保持一致。
+ */
+const stopInflightGenerationForNewConversation = () => {
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+  isProcessing.value = false;
+  if (thoughtTimer) {
+    clearInterval(thoughtTimer);
+    thoughtTimer = null;
+  }
+  dropPendingQuickSend();
+  clearRunStatusNudge();
+  stopRemoteRunPolling();
+  resetRunStatus();
+  activeStreamDraft = null;
+  resetRecoveryCard();
+  clearStreamReplayTimer();
+  streamReplayPrimed = false;
+};
 // Mention State (Moved to ChatInput)
 // const showMentionList = ref(false); // Removed
 // const mentionKeyword = ref(""); // Removed
@@ -6475,6 +6506,8 @@ const confirmDeleteGroup = async () => {
 
     // 检查是否包含当前正在对话的会话 ID
     if (convIds.includes(conversationId.value)) {
+      // 删掉当前会话等于丢掉它的界面：同样要停掉在途生成，否则输入框会留锁。
+      stopInflightGenerationForNewConversation();
       messages.value = [];
       generateNewConversation();
     }
@@ -8053,6 +8086,9 @@ watch(
   { immediate: true },
 );
 const resetSession = async (newToken?: string, ticket?: string) => {
+  // 生成中点「新会话」时，先把上一轮在途生成停干净：否则旧流回调会把内容写进新会话，
+  // isProcessing / remoteRunBusy 残留也会让新会话的输入框一直锁着。
+  stopInflightGenerationForNewConversation();
   messages.value = [];
   config.enableGrounding = false; // 新会话恢复默认关闭
   generateNewConversation();
@@ -8944,6 +8980,8 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
     case "/project":
       userInput.value = "";
       // 与新会话一致：先清空当前对话内容并换新 conversation_id，再打开项目资源配置
+      // （同样要停掉在途生成，否则新会话的输入框会被上一轮的 isProcessing 锁住）
+      stopInflightGenerationForNewConversation();
       messages.value = [];
       config.enableGrounding = false;
       generateNewConversation();
