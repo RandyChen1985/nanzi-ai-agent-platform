@@ -1279,7 +1279,9 @@ const updateContextUsageDetailsPlacement = () => {
 };
 
 const toggleContextUsageDetails = async () => {
-  if (isInteractionLocked.value) return;
+  // 刻意不挡 isInteractionLocked：上下文用量是**只读信息**，不参与发送、也不撞会话锁，
+  // 而生成中恰恰是用户最想看它的时候（还能再塞多少进去）。跟着输入框一起锁只会让人以为
+  // 按钮坏了——按钮本身还是可点样式，点了却没反应，比明确置灰更难判断。
   closeContextCompactionDetails();
   showContextUsageDetails.value = !showContextUsageDetails.value;
   if (showContextUsageDetails.value) {

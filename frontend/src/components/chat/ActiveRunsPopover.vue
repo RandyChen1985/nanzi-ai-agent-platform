@@ -52,8 +52,21 @@
           刷新失败，正在重试（显示的是上一次结果）
         </p>
 
-        <div v-if="!items.length" class="px-3 py-6 text-center text-[12px] text-gray-400">
-          当前没有进行中的会话
+        <div v-if="!items.length" class="px-3 py-6 text-center">
+          <p class="text-[12px] text-gray-400">当前没有进行中的会话</p>
+          <!-- 空状态要给一条出路：用户点这个入口多半是在找某个会话，进行中的没有，去处就只剩
+               会话历史，而界面上此前没有任何指向它的引导。 -->
+          <p class="mt-1 text-[11px] text-gray-400/80">已结束的会话都在会话历史里</p>
+          <button
+            type="button"
+            class="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] text-gray-600 transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary dark:border-gray-700 dark:text-gray-300"
+            @click="emit('open-history')"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2M3.05 11a9 9 0 1 1 .5 4M3 4v5h5" />
+            </svg>
+            打开会话历史
+          </button>
         </div>
 
         <template v-else>
@@ -155,6 +168,7 @@ const emit = defineEmits<{
   (e: 'terminate', item: ActiveRunView): void
   (e: 'refresh'): void
   (e: 'close'): void
+  (e: 'open-history'): void
 }>()
 
 const activeItems = computed(() => props.items.filter((item) => item.state !== 'stale'))

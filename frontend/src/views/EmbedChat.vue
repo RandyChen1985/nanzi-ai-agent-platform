@@ -184,6 +184,7 @@
                             @terminate="handleActiveRunTerminate"
                             @refresh="refreshActiveRuns"
                             @close="showActiveRuns = false"
+                            @open-history="handleActiveRunsOpenHistory"
                         />
                     </div>
                 </div>
@@ -1598,6 +1599,7 @@
             @terminate="handleActiveRunTerminate"
             @refresh="refreshActiveRuns"
             @close="showActiveRuns = false"
+            @open-history="handleActiveRunsOpenHistory"
           />
           <div
             v-if="sandboxDegradedMessage || showBashBanner"
@@ -1970,15 +1972,6 @@
       type="danger"
       @confirm="executeDeleteCommand"
       @cancel="showDeleteCommandModal = false"
-    />
-    <!-- Clear Session Confirmation Modal -->
-    <ConfirmModal
-      v-if="showConfirmModal"
-      title="确定要开始新对话吗？"
-      message="当前内容将保存至历史记录。"
-      type="primary"
-      @confirm="handleConfirmClearSession"
-      @cancel="showConfirmModal = false"
     />
     <!-- Docker Workspace Terminal Modal -->
     <DockerTerminalModal
@@ -3997,7 +3990,6 @@ const loadWelcomeCards = async (agentId?: string) => {
     welcomeCards.value = [];
   }
 };
-const showConfirmModal = ref(false);
 
 /** URL ?agent_id= 深链锁定：禁止切换专家 / 自动路由 / @提及 */
 const urlPinnedAgentKey = ref("");
@@ -6454,6 +6446,13 @@ watch(showActiveRuns, (open) => {
   setActiveRunsOpen(open);
 });
 
+// 空状态引导：这个入口没内容时，用户想找的多半是已结束的会话，直接把他送到会话历史。
+// 必须先收起浮层再开侧栏——移动端浮层是带遮罩的 modal，顺序反了侧栏会被压在遮罩下面。
+const handleActiveRunsOpenHistory = () => {
+  showActiveRuns.value = false;
+  showHistorySidebar.value = true;
+};
+
 const handleActiveRunSelect = async (targetConversationId: string) => {
   showActiveRuns.value = false;
   if (!targetConversationId || targetConversationId === conversationId.value) return;
@@ -8214,9 +8213,9 @@ const resetSession = async (newToken?: string, ticket?: string) => {
     clear_host_conversation_pin: true,
   });
 };
-const handleConfirmClearSession = () => {
+// 开始新对话。当前内容本来就会保存进历史，所以不再弹确认框——多一次点击只是阻力。
+const startNewConversation = () => {
   resetSession();
-  showConfirmModal.value = false;
   nextTick(() => {
     if (!isMobile.value) {
       chatInputRef.value?.focus();
@@ -9075,7 +9074,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
     case "/new":
     case "/clear": // legacy alias
       userInput.value = "";
-      showConfirmModal.value = true;
+      void startNewConversation();
       return true;
     case "/project":
       userInput.value = "";
