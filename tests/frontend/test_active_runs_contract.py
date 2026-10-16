@@ -177,6 +177,8 @@ def test_desktop_active_runs_entry_sits_next_to_subtitle():
     assert 'ref="activeRunsRef"' in block, "桌面入口不在副标题行内"
     assert "h-3.5 w-3.5" in block, "入口图标未缩小"
     assert "rounded-lg p-2" not in block, "入口仍用头部按钮的大尺寸"
+    # 时钟图标看起来像「历史记录」（用户反馈），已换成活动脉冲图标
+    assert "M12 8v4l2.5 2.5" not in block, "入口又用回了像历史的时钟图标"
 
 
 def test_active_runs_popover_supports_left_alignment():
@@ -198,4 +200,22 @@ def test_header_text_container_does_not_clip_the_popover():
     classes = re.findall(r'class="([^"]*)"', source[header_at:subtitle_at])
     assert not any("overflow-hidden" in value for value in classes), (
         "标题区祖先带 overflow-hidden，会把锚定浮层裁掉"
+    )
+
+
+def test_active_run_item_click_really_opens_that_conversation():
+    """点条目必须真的切进那个会话，而不是只把面板关掉。
+
+    切换走 handleHistoryClick：它用后端 ownership 接口做归属校验（不查本地列表），
+    所以「跨标签/跨设备、尚未出现在侧栏里的会话」同样能打开——本人持锁的会话必然
+    owned，不会被判成 foreign 拦下。
+    """
+    source = EMBED_CHAT.read_text(encoding="utf-8")
+    body = re.search(r"const handleActiveRunSelect = async \(([\s\S]*?)\n\};", source)
+    assert body, "未找到 handleActiveRunSelect 实现"
+    handler = body.group(1)
+
+    assert "showActiveRuns.value = false" in handler, "点击后未关闭面板"
+    assert "handleHistoryClick({ conversation_id: targetConversationId })" in handler, (
+        "点击条目没有切进目标会话"
     )
