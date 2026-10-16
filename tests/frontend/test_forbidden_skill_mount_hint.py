@@ -136,7 +136,7 @@ def test_available_skill_mount_never_carries_a_filesystem_path():
     assert "/app/data/skills" not in hint
     assert "技能 ID：alpha" in hint
     assert "已随本轮上下文预载" in hint, "必须告诉模型正文已经预载，不要去读文件"
-    assert "list_accessible_directories" in hint, "读附带脚本要走目录清单拿真实位置"
+    assert "read_skill_instruction" in hint, "读附带脚本/资源要走技能资源读取入口（path 参数）"
     assert "skills meta 为：name: Alpha, description: 演示" in hint
 
 

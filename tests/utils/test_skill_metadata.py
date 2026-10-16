@@ -44,17 +44,18 @@ def test_build_skill_attachment_hint_with_override():
 
 
 def test_build_skill_attachment_hint_prefers_explicit_skill_dir():
-    """调用方确知技能真实目录时给目录；否则退回 list_accessible_directories 指引。"""
+    """调用方确知技能真实目录时给目录；否则退回 read_skill_instruction 资源读取指引。"""
     hint = build_skill_attachment_hint(
         "p1",
         meta_override={"name": "个人技能"},
         skill_dir="/app/data/agent_workspaces/admin__1/skills/p1",
     )
     assert "/app/data/agent_workspaces/admin__1/skills/p1" in hint
-    assert "list_accessible_directories" not in hint
+    assert "read_skill_instruction" not in hint
 
     fallback = build_skill_attachment_hint("p1", meta_override={"name": "个人技能"})
-    assert "list_accessible_directories" in fallback
+    assert "read_skill_instruction" in fallback
+    assert 'path="references/rules.md"' in fallback
     assert "/app/data/agent_workspaces" not in fallback
 
 
@@ -107,7 +108,7 @@ def test_upgrade_legacy_skill_mount_hints_rewrites_dead_path():
     assert "/app/data/skills" not in content
     assert "Alpha（技能 ID：alpha）" in content, "显示名要保留，并换成 ID 标记"
     assert "已随本轮上下文预载" in content
-    assert "list_accessible_directories" in content
+    assert "read_skill_instruction" in content
     assert "skills meta 为：name: Alpha, description: 演示" in content, "meta 行必须原样保留"
     assert "帮我看看" in content
     assert messages[1]["content"] == "好的", "不含旧提示的消息逐字节不动"
