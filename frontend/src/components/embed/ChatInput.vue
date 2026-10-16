@@ -854,8 +854,19 @@ const handleMentionSelectAuto = () => {
   showMentionList.value = false;
 };
 
+/** 生成中也保持可用的快捷指令。
+ *
+ * `/history` 只是开关历史侧栏，`/new` 会先弹二次确认再切换会话——两者都不会把消息
+ * 投进正在运行的会话，所以在「生成中锁定」的范围之外。
+ * 其余指令（含用户自定义指令的「填充 + 直接发送」）仍按原样拦截，避免撞上会话运行锁。
+ */
+const PROCESSING_SAFE_SHORTCUT_IDS = new Set(["sys_clear", "sys_history"]);
+const isShortcutAvailableWhileProcessing = (cmd: any): boolean =>
+    PROCESSING_SAFE_SHORTCUT_IDS.has(String(cmd?.id ?? ""));
+
 const handleShortcutClick = (cmd: any) => {
-    if (isInteractionLocked.value || !cmd) return;
+    if (!cmd) return;
+    if (isInteractionLocked.value && !isShortcutAvailableWhileProcessing(cmd)) return;
     if (cmd.disabled) return;
     if (String(cmd.id).startsWith('sys_')) {
         emit('system-command', cmd.command);
@@ -1868,10 +1879,16 @@ defineExpose({
           ref="shortcutBarRef"
           data-shortcut-bar
           class="flex items-center space-x-2 mb-2 px-1 relative h-8"
-          :class="{ 'opacity-50 pointer-events-none select-none': isProcessing }"
+          :class="{ 'select-none': isProcessing }"
         >
+            <!-- 生成中不再整条禁用：/new 与 /history 保持可用，其余逐项置灰并挡指针，
+                 判定口径见 isShortcutAvailableWhileProcessing。 -->
             <!-- 1. Left Toggle Button (Visible on all devices now) -->
-            <div @click="emit('toggle-shortcuts')" class="flex items-center space-x-1 cursor-pointer select-none group flex-shrink-0 bg-white dark:bg-gray-900 pr-2 z-10">
+            <div
+              @click="emit('toggle-shortcuts')"
+              class="flex items-center space-x-1 cursor-pointer select-none group flex-shrink-0 bg-white dark:bg-gray-900 pr-2 z-10"
+              :class="{ 'pointer-events-none opacity-50': isProcessing }"
+            >
                 <CommandLineIcon class="h-3.5 w-3.5 shrink-0 text-gray-400 group-hover:text-primary" aria-hidden="true" />
                 <span class="text-[10px] font-black text-gray-400 group-hover:text-primary transition-colors tracking-tighter">快捷指令</span>
                 <svg class="w-3 h-3 text-gray-300 group-hover:text-primary transition-transform duration-200 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" /></svg>
@@ -1887,6 +1904,8 @@ defineExpose({
                                   @wheel="onShortcutWheel"
                                 >
                                     <template v-for="cmd in visibleRowSystemCommands" :key="'row-sys-'+cmd.id">
+                                        <!-- 新会话（含右侧 ⌄ 会话类型菜单）与历史在生成中保持可用：
+                                             前者先弹二次确认、后者只开关侧栏，都不会把消息投进正在运行的会话。 -->
                                         <div
                                           v-if="cmd.id === 'sys_clear'"
                                           :ref="setNewConversationMenuRef"
@@ -1895,11 +1914,11 @@ defineExpose({
                                           <button :disabled="cmd.disabled" @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-l-full whitespace-nowrap hover:bg-gray-200 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"><component :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
                                           <button type="button" @mousedown.stop @click.stop="toggleNewConversationMenu" class="px-1.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-r-full border-l border-white/70 dark:border-gray-700 hover:bg-gray-200" title="选择会话类型">⌄</button>
                                         </div>
-                                        <button v-else :disabled="cmd.disabled" @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-full whitespace-nowrap hover:bg-gray-200 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-100"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
+                                        <button v-else :disabled="cmd.disabled" @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-full whitespace-nowrap hover:bg-gray-200 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-100" :class="{ 'pointer-events-none opacity-40': isProcessing && !isShortcutAvailableWhileProcessing(cmd) }"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
                                     </template>
                                     <div v-if="showShortcutDivider" class="w-px h-3 bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
                                     <template v-for="cmd in visibleRowUserCommands" :key="'row-user-'+cmd.id">
-                                        <button @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 border border-blue-100/50 dark:border-blue-800 rounded-full whitespace-nowrap hover:bg-blue-100 transition-colors flex-shrink-0"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
+                                        <button @click="handleShortcutClick(cmd)" class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 border border-blue-100/50 dark:border-blue-800 rounded-full whitespace-nowrap hover:bg-blue-100 transition-colors flex-shrink-0" :class="{ 'pointer-events-none opacity-40': isProcessing }"><component v-if="getSystemCommandIcon(cmd)" :is="getSystemCommandIcon(cmd)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{{ cmd.label }}</button>
                                     </template>
                                 </div>
                             </div>
@@ -1909,7 +1928,7 @@ defineExpose({
                                 type="button"
                                 @click.stop="toggleCommandDrawer"
                                 class="flex-shrink-0 inline-flex items-center text-[10px] font-black text-primary hover:opacity-80 transition-all whitespace-nowrap"
-                                :class="{ 'opacity-100': isDrawerExpanded }"
+                                :class="isProcessing ? 'pointer-events-none opacity-50' : (isDrawerExpanded ? 'opacity-100' : '')"
                             >
                                 {{ isDrawerExpanded ? '收起' : '更多' }}
                                 <svg class="w-3 h-3 ml-0.5 transition-transform" :class="{ 'rotate-180': isDrawerExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" /></svg>
@@ -1918,7 +1937,12 @@ defineExpose({
             </div>
 
             <!-- Add Button -->
-            <button @click="emit('open-command-manager')" class="flex-shrink-0 p-1.5 text-gray-400 hover:text-primary transition-all rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 group" title="新建快捷指令">
+            <button
+                @click="emit('open-command-manager')"
+                class="flex-shrink-0 p-1.5 text-gray-400 hover:text-primary transition-all rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 group"
+                :class="{ 'pointer-events-none opacity-50': isProcessing }"
+                title="新建快捷指令"
+            >
                 <svg class="w-4 h-4 transform group-hover:rotate-90 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" /></svg>
             </button>
         </div>
