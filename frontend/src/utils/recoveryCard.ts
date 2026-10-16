@@ -16,8 +16,14 @@ export interface RecoveryCardInput {
   hasDraft: boolean;
   /** 草稿已渲染的执行步骤数。 */
   draftStepCount: number;
-  /** 续显已应用到的事件序号（后端每轮清空日志，`_seq` 从 1 重新计数）。 */
-  appliedSeq: number;
+  /**
+   * 本次恢复实际补回的事件条数（累计从事件日志拉取并应用到草稿的条数）。
+   *
+   * 不能拿续显游标（`activeStreamDraft.lastAppliedSeq`）充当这个数：游标是 Redis
+   * INCR 分配的事件序号，与日志 list 索引解耦、还受 LTRIM 截断影响，序号会远大于
+   * 实际补回的条数——直接展示会让用户以为加载了成倍的量。
+   */
+  syncedEventCount: number;
   /** 本轮卡片是否已被用户手动关闭。 */
   turnDismissed: boolean;
   /** 落库终态是否已写入界面。 */
@@ -53,15 +59,15 @@ const SYNCING_WITHOUT_DRAFT_MESSAGE = "正在同步后台进度，输出完成�
 const DONE_MESSAGE = "执行已完成，内容已补齐";
 const DONE_DETAIL = "已切换到落库的最终结果";
 
-/** 把「阶段 / 步数 / 已同步事件数」里已知的部分拼成一行；一个都不知道时留空。 */
+/** 把「阶段 / 步数 / 本轮补回事件数」里已知的部分拼成一行；一个都不知道时留空。 */
 const buildDetail = (input: RecoveryCardInput): string | undefined => {
   const parts: string[] = [];
   const stageLabel = String(input?.stageLabel || "").trim();
   if (stageLabel) parts.push(stageLabel);
   const stepCount = Math.max(0, Number(input?.draftStepCount ?? 0) || 0);
   if (stepCount > 0) parts.push(`${stepCount} 步`);
-  const appliedSeq = Math.max(0, Number(input?.appliedSeq ?? 0) || 0);
-  if (appliedSeq > 0) parts.push(`已同步 ${appliedSeq} 条事件`);
+  const syncedEventCount = Math.max(0, Number(input?.syncedEventCount ?? 0) || 0);
+  if (syncedEventCount > 0) parts.push(`本轮补回 ${syncedEventCount} 条事件`);
   return parts.length ? parts.join(" · ") : undefined;
 };
 

@@ -2475,6 +2475,8 @@ import {
   planStreamReplay,
   resetDraftForReplay,
   shouldResetDraftBeforeReplay,
+  isDraftBoundToConversation,
+  shouldRebindReplayOnConversationSwitch,
 } from "@/utils/conversationStreamReplay";
 import {
   buildEmbedStreamSnapshot,
@@ -3418,8 +3420,10 @@ const openEmbedTrace = (traceId: string) => {
   embedTraceId.value = traceId;
   showEmbedTrace.value = true;
 };
+// @conversation-scoped: isProcessing
 const isProcessing = ref(false);
 // 流式读取是否在途：用于区分「流仍在读」与「流已死但界面还挂着 busy」。
+// @conversation-scoped: streamInFlight
 let streamInFlight = false;
 // 组件是否已卸载：卸载后不再执行流收尾副作用（避免僵尸请求与会话轮询）。
 let embedUnmounted = false;
@@ -4941,11 +4945,27 @@ const clearStreamSnapshot = (cid: string) => {
 const STREAM_REPLAY_POLL_INTERVAL_MS = 1000;
 
 /** 事件续显游标：lastSeq 会随快照持久化，保证重复恢复不会叠加正文。 */
+// @conversation-scoped: streamReplayCursor
 const streamReplayCursor = ref<{ lastSeq: number; traceId: string }>({ lastSeq: 0, traceId: "" });
 let streamReplayTimer: ReturnType<typeof setTimeout> | null = null;
 let streamReplayInFlight = false;
 /** 本轮是否已完成首次游标对齐：对齐只做一次，避免历史事件被重放。 */
+// @conversation-scoped: streamReplayPrimed
 let streamReplayPrimed = false;
+/**
+ * 本次恢复累计补回的事件条数（恢复卡片展示用）。
+ *
+ * 与游标分开记：游标是后端 INCR 分配的事件序号，和日志 list 索引解耦且受 LTRIM
+ * 截断，序号远大于真正补回的条数——拿游标展示会让用户以为加载了成倍的量。
+ */
+// @conversation-scoped: recoverySyncedEventCount
+let recoverySyncedEventCount = 0;
+
+/**
+ * 切换会话会主动 `resetRunStatus()`，由此触发的「运行结束」watcher 分支必须被抑制：
+ * 那是「换会话」，不是「本轮结束」。
+ */
+let suppressRunTerminalSyncForConversationSwitch = false;
 
 /** 停止续显轮询。游标是幂等依据，任何情况下都不在这里清空。 */
 const clearStreamReplayTimer = () => {
@@ -5005,6 +5025,7 @@ const readStreamSnapshot = (cid: string): EmbedStreamSnapshot | null => {
 };
 
 /** 在途流式的草稿引用：供节流写入与卸载前强制落盘使用。 */
+// @conversation-scoped: activeStreamDraft
 let activeStreamDraft: { conversationId: string; msg: Message; lastAppliedSeq?: number } | null = null;
 let lastStreamSnapshotAt = 0;
 
@@ -5184,6 +5205,12 @@ const embedAuthHeaders = (): Record<string, string> | undefined => {
 const pollConversationStreamEvents = async () => {
   const cid = conversationId.value;
   if (!cid || streamReplayInFlight) return;
+  // 草稿必须属于当前会话：切换会话瞬间的残留草稿（属于上一个会话）绝不能当续显目标，
+  // 否则事件会写进已脱离消息列表的孤儿对象，而当前会话永远看不到进度。
+  if (activeStreamDraft && !isDraftBoundToConversation(activeStreamDraft, cid)) {
+    activeStreamDraft = null;
+    streamReplayPrimed = false;
+  }
   streamReplayInFlight = true;
   try {
     // 幂等防线的最后一道：以「草稿已应用到哪」与游标的较大者作为起点。
@@ -5198,6 +5225,9 @@ const pollConversationStreamEvents = async () => {
         headers: embedAuthHeaders(),
       },
     );
+    // await 期间可能已经切走：这批结果属于上一个会话，直接丢弃，否则会把它的进度
+    // 写进当前会话的草稿、或把游标推到一个不相干的序号上。
+    if (conversationId.value !== cid) return;
     const data = (response.data?.data || {}) as Record<string, any>;
     const plan = planStreamReplay(data.events, {
       lastSeq: afterSeq,
@@ -5229,13 +5259,16 @@ const pollConversationStreamEvents = async () => {
         // 内容已清空：应用进度同步归位到本次起点，异常中断也不会跳过后续事件。
         if (activeStreamDraft) activeStreamDraft.lastAppliedSeq = afterSeq;
       }
-      // 首次但日志有断层（被 LTRIM 截断）时既不清空也不重放：保住快照里已有的内容，
-      // 缺口交给历史终态同步兜底，避免用残缺日志覆盖掉更完整的界面。
-      const shouldReplayEvents = !isFirstPoll || (!plan.gap && replayEvents.length > 0);
+      // 断层（日志被 LTRIM 截断）时不清空重建：快照里的内容可能比残缺日志更完整，缺口
+      // 交给历史终态同步兜底。但**仍然要应用**这批事件——afterSeq 取自快照/游标进度，
+      // 拉到的都是进度之后的增量，不会覆盖已有内容；若在此丢弃，它们会随游标推进被永久
+      // 跳过（切走期间的过程时间线永久缺失）。
+      const shouldReplayEvents = !isFirstPoll || replayEvents.length > 0;
       if (shouldReplayEvents) {
         for (const event of replayEvents) {
           applyPermissionStreamEvent(replayTarget, event, { replay: true });
         }
+        recoverySyncedEventCount += replayEvents.length;
         if (replayEvents.length) {
           await nextTick();
           scrollToBottom();
@@ -5342,7 +5375,7 @@ const refreshRecoveryCard = () => {
     runActive: remoteRunActive.value,
     hasDraft: activeStreamDraft !== null,
     draftStepCount: Array.isArray(draftTimeline) ? draftTimeline.length : 0,
-    appliedSeq: Number(activeStreamDraft?.lastAppliedSeq ?? 0) || 0,
+    syncedEventCount: recoverySyncedEventCount,
     turnDismissed: recoveryCardDismissedForTurn.value,
     terminalApplied: recoveryCardTerminalApplied.value,
     streaming: streamInFlight,
@@ -5626,6 +5659,54 @@ let welcomeMessageFromHost = "";
  * 这正是「切换用户后加载到其他用户会话」的最后一环。
  */
 
+/**
+ * 复位所有「会话级」运行时状态（切会话 / 新建会话 / 丢弃会话视图 / 换身份的唯一入口）。
+ *
+ * 下面这些状态都是模块级单例，语义上却属于「当前会话」：此前它们散落在各条重置路径里手工
+ * 清理，漏一项就是一个跨会话缺陷——事件写进孤儿草稿、输入框永久锁死、卡片显示别的会话的
+ * 进度，这些都已实际发生过。因此收敛成唯一入口，并由
+ * `test_conversation_scoped_state_registry_contract.py` 扫描 `@conversation-scoped`
+ * 标记强制登记：以后新增会话级状态忘了登记，测试会直接失败。
+ *
+ * 只负责运行时状态：`messages`、历史分页、身份与界面现场由各调用点自行处理。
+ * 用 `resetRunStatus` 而非 `markOutputCompleted`：后者会把「本轮输出已完成」的标记留在
+ * 新会话上，导致切页面回来时仍在跑的那一轮再也锁不住输入框。
+ */
+const resetConversationScopedState = () => {
+  // 先停本地在途读数：服务端 producer 不受影响，切回时靠续显补齐。不 abort 的话，全局单例
+  // abortController 会在别的会话里被「停止」按钮误用，abort 掉上一个会话的流。
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+  streamInFlight = false;
+  isProcessing.value = false;
+  if (thoughtTimer) {
+    clearInterval(thoughtTimer);
+    thoughtTimer = null;
+  }
+  // 顺序要紧：resetStallTimer 在 isProcessing 仍为 true 时会重新起一个「生成耗时较长」的
+  // 定时器，必须排在复位锁态之后。
+  resetStallTimer();
+  clearStalePendingTimer();
+  // 待补发的快速指令属于上一个会话（flushPendingQuickSend 另有 conversationId 兜底丢弃，
+  // 这里只是不留残留、也不留下一次无效的运行态核验）。
+  dropPendingQuickSend();
+  clearRunStatusNudge();
+  // 运行态轮询与锁态：目标会话若真在跑，watch(conversationId) 会重新核验并重新提供锁。
+  stopRemoteRunPolling();
+  resetRunStatus();
+  // 续显三元组 + 已补回条数：草稿、游标、首次对齐标志都是会话局部的（后端每轮清空事件日志、
+  // seq 从 1 重新计数，沿用旧游标会把目标会话的事件全挡在 after_seq 之内）。
+  activeStreamDraft = null;
+  streamReplayCursor.value = { lastSeq: 0, traceId: "" };
+  clearStreamReplayTimer();
+  streamReplayPrimed = false;
+  recoverySyncedEventCount = 0;
+  // 恢复卡片（含本轮关闭标记与完成态定时器）属于本轮。
+  resetRecoveryCard();
+};
+
 const resetSessionForIdentityChange = (
   nextIdentityKey: string,
   options?: { preserveRequestedConversationId?: boolean },
@@ -5637,19 +5718,9 @@ const resetSessionForIdentityChange = (
   if (previousId) {
     console.log("[Session] Dropped the previous identity's conversation view:", previousId);
   }
-  // 上一位用户的生成可能还在途：必须先断掉本地流。否则它的回调会继续往下面刚清空的
-  // messages 里追加内容，等于把对方会话的内容重新贴回新用户界面。
-  if (abortController) {
-    abortController.abort();
-    abortController = null;
-  }
-  isProcessing.value = false;
-  if (thoughtTimer) {
-    clearInterval(thoughtTimer);
-    thoughtTimer = null;
-  }
-  dropPendingQuickSend();
-  clearRunStatusNudge();
+  // 会话级运行时状态一次性复位（停流、续显三元组、恢复卡片、运行态轮询与锁态）；
+  // 上一位用户的回调再也不会往下面刚清空的 messages 里追加内容。
+  resetConversationScopedState();
   messages.value = [];
   conversationId.value = "";
   if (!options?.preserveRequestedConversationId) requestedConversationId = "";
@@ -5660,19 +5731,6 @@ const resetSessionForIdentityChange = (
   historyOffset.value = 0;
   hasMoreHistory.value = true;
   isLoadingHistory.value = false;
-  activeStreamDraft = null;
-  // 换身份 / 清空会话：恢复卡片整体复位（含本轮关闭标记）。
-  resetRecoveryCard();
-  streamReplayCursor.value = { lastSeq: 0, traceId: "" };
-  clearStreamReplayTimer();
-  // 续显标志位也归零：否则新身份首屏恢复草稿时会「未对齐就重放」，正文可能重复一段。
-  streamReplayPrimed = false;
-  // 远程运行轮询与降级提示属于上一位用户的会话运行态：先停掉，避免新身份输入框
-  // 短暂显示「生成中」或残留对方的沙箱降级横幅。
-  // 用 resetRunStatus 而非 markOutputCompleted：后者会把「本轮输出已完成」的标记
-  // 留在新会话上，导致切页面回来时仍在跑的那一轮再也锁不住输入框。
-  stopRemoteRunPolling();
-  resetRunStatus();
   sandboxDegradedMessage.value = "";
 
   // —— 界面现场：会话数据清了不等于界面清了 ——
@@ -5739,36 +5797,6 @@ const generateNewConversation = (options: { persist?: boolean } = {}) => {
   loadResourceScope();
 };
 
-/**
- * 新建 / 清空会话前，把「上一轮还在跑」的本地痕迹停干净。
- *
- * 只清 messages 并换 conversation_id 是不够的，三样残留会把新会话的输入框钉死：
- *   1. 旧 SSE 流没断：`isProcessing` 一直是 true，它的回调还会继续往刚清空的 messages
- *      里追加内容（等于把上一轮的回答贴进新会话）；
- *   2. 运行态没复位：`remoteRunBusy` / `outputCompleted` 残留，输入框按「仍在生成」渲染；
- *   3. 旧会话的 run-status 轮询没停：下一次 tick 会拿**旧** conversation_id 查到
- *      active=true，把 `remoteRunActive` 重新翻回 true——复位过也会被再次锁上。
- * 口径与 `resetSessionForIdentityChange` 保持一致。
- */
-const stopInflightGenerationForNewConversation = () => {
-  if (abortController) {
-    abortController.abort();
-    abortController = null;
-  }
-  isProcessing.value = false;
-  if (thoughtTimer) {
-    clearInterval(thoughtTimer);
-    thoughtTimer = null;
-  }
-  dropPendingQuickSend();
-  clearRunStatusNudge();
-  stopRemoteRunPolling();
-  resetRunStatus();
-  activeStreamDraft = null;
-  resetRecoveryCard();
-  clearStreamReplayTimer();
-  streamReplayPrimed = false;
-};
 // Mention State (Moved to ChatInput)
 // const showMentionList = ref(false); // Removed
 // const mentionKeyword = ref(""); // Removed
@@ -6076,10 +6104,15 @@ const mergeBusinessContext = (rawContext: unknown) => {
 const connectionStatus = ref<"connected" | "disconnected" | "reconnecting">(
   "connected"
 );
+// @conversation-scoped: abortController
 let abortController: AbortController | null = null;
+// @conversation-scoped: thoughtTimer
 let thoughtTimer: any = null;
+// @conversation-scoped: stallTimer
 let stallTimer: any = null;
+// @conversation-scoped: stalePendingTimer
 let stalePendingTimer: ReturnType<typeof setInterval> | null = null;
+// @conversation-scoped: showStalledPrompt
 const showStalledPrompt = ref(false);
 const clearStalePendingTimer = () => {
   if (stalePendingTimer) {
@@ -6435,10 +6468,14 @@ const handleHistoryClick = async (item: any) => {
 
     // Switch to this conversation
     resetEmbedThinkingOverrides();
-    // 目标会话可能正是「仍在跑」的那一轮：先清掉上一轮残留的「输出已完成」标记，
-    // 否则 remoteRunBusy 会被它压制——进来后既没有「正在处理」也没有停止按钮。
-    // 用 resetRunStatus 而非 markOutputCompleted，理由同换身份路径。
-    resetRunStatus();
+    // 切到别的会话：上一轮的会话级运行时状态整体复位（唯一入口，见函数注释）。判定交给
+    // 纯函数——点历史里的当前会话不该清掉在途进度；草稿已属于目标时也无需重绑。
+    // 这次 `resetRunStatus` 会把 remoteRunActive 翻回 false，触发的「运行结束」是「换会话」
+    // 而非「本轮结束」，所以要先立起抑制标志（watcher 异步 flush，仍能读到）。
+    if (shouldRebindReplayOnConversationSwitch(activeStreamDraft?.conversationId, target)) {
+      suppressRunTerminalSyncForConversationSwitch = true;
+      resetConversationScopedState();
+    }
     conversationId.value = target;
     persistConversationId(target);
     updateActiveConversationOnServer(target);
@@ -6449,7 +6486,8 @@ const handleHistoryClick = async (item: any) => {
     hasMoreHistory.value = true;
 
     // Load the full history for this conversation
-    fetchConversationHistory(false);
+    // 顺序与初始化路径一致（先历史、后快照）：历史会整体替换消息列表，先恢复快照会被冲掉。
+    void fetchConversationHistory(false).then(() => restoreEmbedStreamSnapshot());
 
     // Auto-close sidebar on mobile
     if (isMobile.value) {
@@ -6507,7 +6545,7 @@ const confirmDeleteGroup = async () => {
     // 检查是否包含当前正在对话的会话 ID
     if (convIds.includes(conversationId.value)) {
       // 删掉当前会话等于丢掉它的界面：同样要停掉在途生成，否则输入框会留锁。
-      stopInflightGenerationForNewConversation();
+      resetConversationScopedState();
       messages.value = [];
       generateNewConversation();
     }
@@ -8088,7 +8126,7 @@ watch(
 const resetSession = async (newToken?: string, ticket?: string) => {
   // 生成中点「新会话」时，先把上一轮在途生成停干净：否则旧流回调会把内容写进新会话，
   // isProcessing / remoteRunBusy 残留也会让新会话的输入框一直锁着。
-  stopInflightGenerationForNewConversation();
+  resetConversationScopedState();
   messages.value = [];
   config.enableGrounding = false; // 新会话恢复默认关闭
   generateNewConversation();
@@ -8981,7 +9019,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
       userInput.value = "";
       // 与新会话一致：先清空当前对话内容并换新 conversation_id，再打开项目资源配置
       // （同样要停掉在途生成，否则新会话的输入框会被上一轮的 isProcessing 锁住）
-      stopInflightGenerationForNewConversation();
+      resetConversationScopedState();
       messages.value = [];
       config.enableGrounding = false;
       generateNewConversation();
@@ -9414,6 +9452,7 @@ const quickContextForMessage = (msg: Message): QuickQuestionContext | undefined 
  *    发到 B 会话里。
  */
 const PENDING_QUICK_SEND_TTL_MS = 15000;
+// @conversation-scoped: pendingQuickSend
 let pendingQuickSend: {
   content: string;
   quickContext?: QuickQuestionContext;
@@ -10518,6 +10557,11 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   // after_seq 之内而被丢弃；保留 traceId 则会把上一轮的残留事件放行进来。
   streamReplayCursor.value = { lastSeq: 0, traceId: "" };
   streamReplayPrimed = false;
+  recoverySyncedEventCount = 0;
+  // 本次流的会话归属：收尾副作用（落定时间线、置完成态、写全局锁态）只对「仍是当前
+  // 会话」生效。切走之后在别的会话里收尾，会把那个会话正在 pending 的步骤落定、并用
+  // 本轮的权限态去写全局 isProcessing——界面与服务端真相相反。
+  const streamConversationId = conversationId.value;
   // 登记在途草稿：供节流写入与卸载前强制落盘使用（重建后据此还原已输出的思考）。
   activeStreamDraft = { conversationId: conversationId.value, msg: agentMsg.value, lastAppliedSeq: 0 };
   // 新一轮提问：复位上一轮的关闭标记与完成态，恢复提示重新可用。
@@ -10861,11 +10905,15 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     // 流已正常读完（收到 [DONE]）：本轮草稿不再是「在途」，清掉引用。
     // 否则在「SSE 已结束、run-status 尚未翻回 false」的时间窗里，运行恢复器会把它
     // 误判为断线在途——既误弹恢复提示，又白拉一次事件日志。
-    activeStreamDraft = null;
-    // 本轮的输出已经完整落到界面，恢复卡片转入完成态。
-    recoveryCardTerminalApplied.value = true;
-    settleRecoveredTimeline();
-    clearStreamReplayTimer();
+    // 收尾副作用限定在本轮自己的会话：切走后草稿槽已被换绑，此刻再落定时间线会落到
+    // 当前会话的消息上（`currentStreamAgentMessage` 的兜底是「列表最后一条」）。
+    if (conversationId.value === streamConversationId) {
+      activeStreamDraft = null;
+      // 本轮的输出已经完整落到界面，恢复卡片转入完成态。
+      recoveryCardTerminalApplied.value = true;
+      settleRecoveredTimeline();
+      clearStreamReplayTimer();
+    }
   } catch (e: any) {
     flushContentBuffer();
     if (e.name === "AbortError") {
@@ -10884,7 +10932,11 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     // 已销毁的实例上重启会话轮询与网络请求。结果由下次挂载时的运行恢复器取回。
     if (!embedUnmounted) {
       flushContentBuffer();
-      isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
+      // 锁态是全局的：只有本轮仍是当前会话时才用本轮的权限态覆盖它。切走后若照写，
+      // 会把目标会话刚算好的锁态冲掉，或用本轮的 pending 权限把它误锁住。
+      if (conversationId.value === streamConversationId) {
+        isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
+      }
       // 流刚结束：立刻核验一次后端真相，并短时重试，把「后端已收尾、前端锁尚未收敛」
       // 的窗口从最长 1.5s 压到近乎瞬时（不能直接清锁：流被中断时后端可能仍在跑）。
       nudgeRunStatusConvergence();
@@ -11133,6 +11185,9 @@ onMounted(() => {
 
   const syncLatestSessionHistory = async (attempt = 1, maxAttempts = 15) => {
     if (!conversationId.value || !hasPermission.value) return;
+    // 本次同步服务于哪个会话：await 期间可能已经切走，那时任何写入（尤其是 reload 分支
+    // 的 clearStreamSnapshot）都会打到新会话身上。
+    const startedForConversation = conversationId.value;
     try {
       const headers: any = {};
       if (config.token) {
@@ -11154,6 +11209,9 @@ onMounted(() => {
         if (action.kind === "reload") {
           // 页面重建后消息列表为空、服务端已出现终态记录：重拉整段历史。
           // 只补一条助手消息会丢掉对应的用户提问，直接忽略则回答永远不出现。
+          // 会话已切换则放弃：这个 reload 是「切走」造成的空列表，不是页面重建——
+          // 照做会删掉目标会话仍在跑的在途快照。
+          if (conversationId.value !== startedForConversation) return;
           recoveryCardTerminalApplied.value = true;
           settleRecoveredTimeline();
           refreshRecoveryCard();
@@ -11165,10 +11223,17 @@ onMounted(() => {
           clearVisibilitySyncTimer();
           return;
         }
+        if (conversationId.value !== startedForConversation) return;
         if (action.kind === "update" || action.kind === "fill") {
           const currentMsg = messages.value[action.index];
           if (currentMsg) {
-            currentMsg.trace_id = currentMsg.trace_id || latestServerItem.trace_id;
+            // fill 是「草稿还没有 trace_id」时就地补全：这一支没有 trace 匹配可依据，
+            // 服务端 items[0] 有可能仍是上一轮的陈留记录。此时若把它的 trace_id 写进草稿，
+            // 本轮真答案落库后就再也匹配不上（末条又是有内容的 agent → ignore），界面会
+            // 永久停在上一轮的答案上。所以只补内容、不锁 trace。
+            if (action.kind === "update") {
+              currentMsg.trace_id = currentMsg.trace_id || latestServerItem.trace_id;
+            }
             currentMsg.content = latestServerItem.summary;
             currentMsg.reasoningContent = latestServerItem.reasoning_content ?? currentMsg.reasoningContent;
             currentMsg.processTimeline = hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content);
@@ -11317,6 +11382,13 @@ onMounted(() => {
     if (!streamInFlight && isProcessing.value && !hasPendingConfirmation()) {
       // run-status 是权威真相源：流已死时不能把输入框永久锁在 busy。
       isProcessing.value = false;
+    }
+    // 切换会话主动 resetRunStatus() 也会走到这里，但那是「换会话」而不是「本轮结束」：
+    // 此刻消息列表刚清空、草稿已换绑，收敛会把空列表判成 reload 并删掉目标会话的在途
+    // 快照。真正的收敛交给切换路径自己按目标会话执行。
+    if (suppressRunTerminalSyncForConversationSwitch) {
+      suppressRunTerminalSyncForConversationSwitch = false;
+      return;
     }
     // 运行结束收敛：把后台 producer 已落库的最终回答取回界面。
     void syncLatestSessionHistory(1, 5);

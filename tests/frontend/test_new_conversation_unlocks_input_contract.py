@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EMBED_CHAT = ROOT / "frontend" / "src" / "views" / "EmbedChat.vue"
-HELPER = "stopInflightGenerationForNewConversation"
+ENTRY = "resetConversationScopedState"
 
 
 def _source() -> str:
@@ -34,9 +34,13 @@ def _body(source: str, signature: str) -> str:
     return match.group(0)
 
 
-def test_helper_stops_inflight_stream_and_resets_run_state():
-    """三样残留都要清：本地流、isProcessing、旧会话轮询与运行态。"""
-    body = _body(_source(), f"const {HELPER} = ")
+def test_entry_point_stops_inflight_stream_and_resets_run_state():
+    """三样残留都要清：本地流、isProcessing、旧会话轮询与运行态。
+
+    这些复位原先在三条路径上各有一份手写副本（其中一份漏过游标与 stall 定时器），现在
+    收敛成唯一入口；完整性另由 test_conversation_scoped_state_registry_contract.py 守。
+    """
+    body = _body(_source(), f"const {ENTRY} = ")
 
     assert "abortController.abort()" in body, "旧流没断，回调会写进新会话且 isProcessing 解不开"
     assert "isProcessing.value = false" in body, "isProcessing 残留会把输入框一直锁住"
@@ -44,19 +48,19 @@ def test_helper_stops_inflight_stream_and_resets_run_state():
     assert "resetRunStatus()" in body, "outputCompleted / remoteRunBusy 残留会让锁判定失真"
 
 
-def test_reset_session_stops_inflight_generation_first():
+def test_reset_session_goes_through_the_single_entry():
     """「新会话」确认后的 resetSession 是用户实测的入口。"""
     body = _body(_source(), "const resetSession = async")
-    assert f"{HELPER}()" in body, "resetSession 没停掉在途生成，新会话输入框仍会被锁"
+    assert f"{ENTRY}()" in body, "resetSession 没停掉在途生成，新会话输入框仍会被锁"
 
 
 def test_project_conversation_path_uses_the_same_reset():
     """/project 自己内联了 messages=[] + generateNewConversation()，同样要停流。"""
     project_case = _source().split('case "/project":')[1].split("case ")[0]
-    assert f"{HELPER}()" in project_case, "项目会话路径漏了停流，输入框会留锁"
+    assert f"{ENTRY}()" in project_case, "项目会话路径漏了停流，输入框会留锁"
 
 
 def test_deleting_current_conversation_uses_the_same_reset():
     """生成中删掉当前会话，同样会把新会话的输入框留锁。"""
     delete_group = _source().split("const confirmDeleteGroup")[1][:1500]
-    assert f"{HELPER}()" in delete_group, "删除当前会话路径漏了停流，输入框会留锁"
+    assert f"{ENTRY}()" in delete_group, "删除当前会话路径漏了停流，输入框会留锁"

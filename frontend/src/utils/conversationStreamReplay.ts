@@ -103,3 +103,35 @@ export function planStreamReplay(
 
   return { events: accepted, lastSeq, gap };
 }
+
+/**
+ * 续显目标是否与当前会话一致。
+ *
+ * 草稿（`activeStreamDraft`）是模块级单例，切会话时若不换绑就会变成「孤儿」：事件仍写
+ * 进去，而它已不在消息列表里——表现为目标会话的进度永远不显示，卡片却显示上一个会话的
+ * 步数与事件数。所以写入前必须比对归属。
+ */
+export function isDraftBoundToConversation(
+  draft: { conversationId?: string } | null | undefined,
+  conversationId: string,
+): boolean {
+  const bound = String(draft?.conversationId || "").trim();
+  const current = String(conversationId || "").trim();
+  return Boolean(bound) && bound === current;
+}
+
+/**
+ * 切换会话时是否需要复位续显状态。
+ *
+ * 游标（`streamReplayCursor`）记的是「已应用到第几号事件」，而后端每轮 producer 启动都会
+ * 清空日志、让 `_seq` 从 1 重新计数；沿用上一个会话的游标几乎必然把目标会话的事件全挡在
+ * `after_seq` 之内。因此只要草稿不属于目标会话（含根本没有草稿）就应当复位。
+ */
+export function shouldRebindReplayOnConversationSwitch(
+  draftConversationId: string | null | undefined,
+  targetConversationId: string,
+): boolean {
+  const target = String(targetConversationId || "").trim();
+  if (!target) return false;
+  return !isDraftBoundToConversation({ conversationId: String(draftConversationId || "") }, target);
+}

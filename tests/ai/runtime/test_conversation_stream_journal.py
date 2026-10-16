@@ -1,6 +1,8 @@
 """会话流事件日志服务单测（内存 FakeRedis，按项目惯例 monkeypatch get_redis）。"""
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from app.services.ai.runtime.conversation_stream_journal import (
@@ -190,6 +192,50 @@ async def test_clear_removes_log(fake_redis):
     assert batch["events"] == []
 
 
+async def test_clear_retries_once_before_giving_up(fake_redis):
+    """清空失败只告警，但后果隐蔽：上一轮事件残留，而前端新一轮已把游标归零、traceId
+    置空（否则本轮事件会被上一轮 traceId 过滤掉），残留事件就可能被当成「本轮过程」重放。
+
+    所以首次失败后必须重试一次，成功即返回。
+    """
+    journal = _journal()
+    await journal.append("u1", "c1", [{"type": "log", "title": "x"}])
+
+    calls = {"count": 0}
+    original_delete = fake_redis.delete
+
+    async def flaky_delete(*keys):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("redis down")
+        return await original_delete(*keys)
+
+    fake_redis.delete = flaky_delete
+    await journal.clear("u1", "c1")
+
+    assert calls["count"] == 2, "首次失败后必须重试一次"
+    batch = await journal.read_after("u1", "c1", after_seq=0)
+    assert batch["events"] == [], "重试成功后日志与计数器都应被清空"
+
+
+async def test_clear_reports_at_error_level_when_both_attempts_fail(fake_redis, caplog):
+    """两次都失败时不抛异常（事件日志是旁路），但要用 error 级日志留下线索：
+    便于从「正文里混入上一轮内容」这一现象反查到清空失败。"""
+    journal = _journal()
+    await journal.append("u1", "c1", [{"type": "log", "title": "x"}])
+
+    async def always_fail(*keys):
+        raise RuntimeError("redis down")
+
+    fake_redis.delete = always_fail
+    with caplog.at_level(logging.ERROR):
+        await journal.clear("u1", "c1")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("clear failed" in message for message in messages)
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+
 def test_defaults_are_sane():
     assert DEFAULT_MAX_EVENTS >= 500
     assert DEFAULT_TTL_SECONDS >= 300
@@ -200,10 +246,13 @@ def test_event_log_capacity_covers_a_long_task_with_headroom():
 
     依据（实测 Redis 中一次真实长任务，31 步 + 长报告）：该轮共 652 条事件、71.6KB、
     平均 113B/条，其中 89% 是合并后的过程叙述增量——容量是被「生成正文期间的高频
-    叙述」吃掉的。list 与 seq 共用 1800s 滑动 TTL 且**跨轮累积**，所以要覆盖的是
-    TTL 窗口内的事件总量：合并窗口 1000ms 把高频增量压到约 1800 条，加上不参与合并
-    的 log / tool / model_call 等约 2000-2500 条。8000 条约 0.9MB/会话。锁定具体值
-    是为了让后续再调时必须同步这处说明。
+    叙述」吃掉的。每轮 producer 启动都会 clear()，所以要覆盖的是**单轮**量：合并窗口
+    1000ms 把高频增量压到约 1800 条，加上不参与合并的 log / tool / model_call 等约
+    2000-2500 条。8000 条约 0.9MB/会话。锁定具体值是为了让后续再调时必须同步这处说明。
+
+    注意单轮量并非总在这个量级内：工具输出逐条入日志，实测出现过单轮 3.6 万条。那时
+    list 会被 LTRIM 截断、read_after 报 gap=true，前端据此不清空重建，缺口交给历史
+    终态兜底——过程可视化有损，终态仍准确。
     """
     assert DEFAULT_MAX_EVENTS == 8000
 

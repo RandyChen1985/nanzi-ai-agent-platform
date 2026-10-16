@@ -279,3 +279,22 @@ def test_embed_chat_notifies_when_replay_channel_takes_over():
     assert "refreshRecoveryCard();" in body, "续显启动处应刷新恢复提示卡片"
     assert "showToast(" not in body, "恢复提示不应再走 toast"
     assert "已恢复实时同步" in _recovery_card_source(), "提示文案应说明已恢复实时同步"
+
+
+def test_draft_binding_requires_the_very_same_conversation():
+    """草稿归属必须严格相等：空归属、别人的会话都不算绑定。"""
+    assert _call("return api.isDraftBoundToConversation({ conversationId: 'c1' }, 'c1')") is True
+    assert _call("return api.isDraftBoundToConversation({ conversationId: 'c1' }, 'c2')") is False
+    assert _call("return api.isDraftBoundToConversation({ conversationId: '' }, '')") is False
+    assert _call("return api.isDraftBoundToConversation(null, 'c1')") is False
+    assert _call("return api.isDraftBoundToConversation({}, 'c1')") is False
+
+
+def test_conversation_switch_rebinds_unless_the_draft_already_belongs_to_the_target():
+    """切会话要复位续显：只有草稿已属于目标会话时才无需重绑。"""
+    assert _call("return api.shouldRebindReplayOnConversationSwitch('c1', 'c2')") is True
+    assert _call("return api.shouldRebindReplayOnConversationSwitch(null, 'c2')") is True
+    assert _call("return api.shouldRebindReplayOnConversationSwitch(undefined, 'c2')") is True
+    assert _call("return api.shouldRebindReplayOnConversationSwitch('c1', 'c1')") is False
+    # 目标为空（无效切换）不动任何状态。
+    assert _call("return api.shouldRebindReplayOnConversationSwitch('c1', '')") is False

@@ -87,7 +87,9 @@ def test_switching_conversation_resets_remote_run_status():
     assert match, "未找到 handleHistoryClick 定义"
     body = match.group(1)
 
-    assert "resetRunStatus();" in body, "handleHistoryClick 未重置远程运行态"
+    # 复位已收敛到统一入口（内含 resetRunStatus）；完整性由
+    # test_conversation_scoped_state_registry_contract.py 的登记式检查守着。
+    assert "resetConversationScopedState();" in body, "handleHistoryClick 未重置远程运行态"
     assert "conversationId.value = target;" in body
 
 
