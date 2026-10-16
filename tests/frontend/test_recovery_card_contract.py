@@ -25,7 +25,7 @@ def _plan(**overrides):
         "runActive": False,
         "hasDraft": False,
         "draftStepCount": 0,
-        "appliedSeq": 0,
+        "syncedEventCount": 0,
         "turnDismissed": False,
         "terminalApplied": False,
         "streaming": False,
@@ -122,17 +122,17 @@ def test_detail_reports_stage_steps_and_synced_events():
         runActive=True,
         hasDraft=True,
         draftStepCount=18,
-        appliedSeq=12,
+        syncedEventCount=12,
         stageLabel="模型调用 · 正在生成回答",
     )
-    assert result["detail"] == "模型调用 · 正在生成回答 · 18 步 · 已同步 12 条事件"
+    assert result["detail"] == "模型调用 · 正在生成回答 · 18 步 · 本轮补回 12 条事件"
 
 
 def test_detail_omits_unknown_pieces_instead_of_printing_zeros():
     no_info = _plan(runActive=True, hasDraft=True)
     assert no_info.get("detail") is None
-    only_progress = _plan(runActive=True, appliedSeq=7)
-    assert only_progress["detail"] == "已同步 7 条事件"
+    only_progress = _plan(runActive=True, syncedEventCount=7)
+    assert only_progress["detail"] == "本轮补回 7 条事件"
 
 
 def test_recovery_card_component_renders_from_the_decision_only():
@@ -166,3 +166,32 @@ def test_embed_chat_resets_the_card_on_a_new_turn():
     assert "recoveryCardDoneTimer" in source
     # 新一轮提问必须复位「本轮已关闭」标记，否则提示会被永久静默掉。
     assert "recoveryCardDismissedForTurn.value = false" in source
+
+
+def test_detail_reports_what_was_actually_replayed_not_the_cursor():
+    """游标是后端 INCR 序号（受 LTRIM 截断影响），远大于真正补回的条数。"""
+    source = (ROOT / "frontend/src/utils/recoveryCard.ts").read_text(encoding="utf-8")
+    assert "本轮补回" in source
+    # 旧文案把「事件序号」当「同步条数」展示，是「怎么加载这么多」的原始误导来源。
+    assert "已同步 ${appliedSeq} 条事件" not in source
+    assert "appliedSeq" not in source
+
+
+def test_embed_chat_counts_replayed_events_instead_of_cursor_position():
+    source = _embed_source()
+    assert "recoverySyncedEventCount += replayEvents.length" in source
+    assert "syncedEventCount: recoverySyncedEventCount" in source
+    # 游标只用于 after_seq 增量定位，不能当展示用的「补回条数」。
+    assert "appliedSeq: Number(activeStreamDraft?.lastAppliedSeq ?? 0) || 0" not in source
+
+
+def test_embed_chat_resets_the_replayed_count_with_the_replay_state():
+    source = _embed_source()
+    # 两处复位：统一入口（换身份 / 丢弃当前会话 / 切会话）与新一轮提问前。
+    # 按缩进计数，把文件顶部的 `let recoverySyncedEventCount = 0;` 声明排除在外。
+    assert source.count("\n  recoverySyncedEventCount = 0;\n") == 2
+    # 入口里必须与 streamReplayPrimed 同处复位（登记式检查见 registry 契约）。
+    entry_start = source.index("const resetConversationScopedState = () => {")
+    entry = source[entry_start : source.index("\n};", entry_start)]
+    assert "recoverySyncedEventCount = 0;" in entry
+    assert "streamReplayPrimed = false;" in entry

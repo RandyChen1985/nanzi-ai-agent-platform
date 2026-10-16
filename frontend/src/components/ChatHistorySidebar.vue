@@ -14,6 +14,10 @@ const props = withDefaults(
     historyList: any[];
     activeTraceId?: string;
     activeConversationId?: string;
+    /** 正在运行的会话 ID：列表项上显示转圈的「进行中」。 */
+    runningConversationIds?: string[];
+    /** 疑似僵死的会话 ID：与运行中区分开，否则会让人以为它还活着。 */
+    staleConversationIds?: string[];
     modelValue: string; // keyword
     filters?: ChatHistoryFilters;
     availableAgents?: AgentOption[];
@@ -24,6 +28,8 @@ const props = withDefaults(
     hasMore: false,
     activeTraceId: "",
     activeConversationId: "",
+    runningConversationIds: () => [],
+    staleConversationIds: () => [],
     availableAgents: () => [],
     showAgentFilter: false,
     filters: () => ({
@@ -243,6 +249,14 @@ const isItemActive = (item: any) => {
   }
   return false;
 };
+
+// 会话是否正在后台运行（用于列表项上的转圈标识）。
+const isItemRunning = (item: any) =>
+  Boolean(item?.conversation_id) && props.runningConversationIds.includes(item.conversation_id);
+
+// 疑似僵死（lane 锁已停止续约）：不能和真正在跑的一样转圈，否则用户会以为它还活着。
+const isItemStale = (item: any) =>
+  Boolean(item?.conversation_id) && props.staleConversationIds.includes(item.conversation_id);
 
 // Group Accordion State
 const collapsedGroups = ref<Record<string, boolean>>({
@@ -718,7 +732,19 @@ const confirmDelete = (item: any) => {
                 <!-- Footer: Turn Count & Active Tag -->
                 <div class="mt-2 flex items-center justify-between text-[10px] text-gray-400">
                   <div class="flex items-center gap-1.5">
+                    <!-- 运行中转圈 / 疑似僵死琥珀静态点 / 否则沿用上一轮成功失败色 -->
                     <span
+                      v-if="isItemRunning(item) && !isItemStale(item)"
+                      class="w-2 h-2 rounded-full border-[1.5px] border-primary border-t-transparent animate-spin"
+                      title="正在运行"
+                    ></span>
+                    <span
+                      v-else-if="isItemStale(item)"
+                      class="w-2 h-2 rounded-full bg-amber-500"
+                      title="疑似僵死（锁已停止续约）"
+                    ></span>
+                    <span
+                      v-else
                       class="w-1.5 h-1.5 rounded-full"
                       :class="item.status === 'success' ? 'bg-emerald-500' : 'bg-rose-500'"
                     ></span>
@@ -727,12 +753,21 @@ const confirmDelete = (item: any) => {
                     </span>
                   </div>
 
-                  <span
-                    v-if="isItemActive(item)"
-                    class="px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-bold text-[9px] uppercase tracking-wider"
-                  >
-                    当前会话
-                  </span>
+                  <div class="flex items-center gap-1">
+                    <span
+                      v-if="isItemRunning(item)"
+                      class="px-1.5 py-0.5 rounded-md font-bold text-[9px] tracking-wider"
+                      :class="isItemStale(item) ? 'bg-amber-500/10 text-amber-600' : 'bg-primary/10 text-primary'"
+                    >
+                      {{ isItemStale(item) ? '疑似僵死' : '进行中' }}
+                    </span>
+                    <span
+                      v-if="isItemActive(item)"
+                      class="px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-bold text-[9px] uppercase tracking-wider"
+                    >
+                      当前会话
+                    </span>
+                  </div>
                 </div>
 
                 <!-- Inline Delete Confirmation Overlay -->

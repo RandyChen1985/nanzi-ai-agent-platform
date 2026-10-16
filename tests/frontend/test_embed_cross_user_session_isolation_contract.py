@@ -90,13 +90,13 @@ def test_identity_change_resets_the_previous_users_session_view():
     ]
     # 会话现场的每一项都必须清掉：只换存储键会留下看得见的上一位用户对话。
     for statement in (
+        # 会话级运行时状态（含 activeStreamDraft / clearStreamReplayTimer）整体收敛到唯一入口。
+        "resetConversationScopedState();",
         "messages.value = [];",
         'conversationId.value = "";',
         "resourceScope.value = emptyResourceScopeState();",
         "historyOffset.value = 0;",
         "hasMoreHistory.value = true;",
-        "activeStreamDraft = null;",
-        "clearStreamReplayTimer();",
         "resetEmbedThinkingOverrides();",
         "activeIdentityKey = nextIdentityKey;",
     ):
@@ -121,8 +121,7 @@ def test_identity_change_resets_the_previous_users_session_view():
         "hasFetchedAgents.value = false;",
         "injectedContext.value = {};",
         "config.welcomeMessage = welcomeMessageFromHost;",
-        "stopRemoteRunPolling();",
-        "streamReplayPrimed = false;",
+        # stopRemoteRunPolling / streamReplayPrimed 已随会话级状态收进统一入口（见上）。
     ):
         assert statement in reset_body, f"身份切换重置缺少：{statement}"
     # 浏览器面板的在途打开请求也要作废，否则旧请求回来会把面板重新挂上对方的会话。

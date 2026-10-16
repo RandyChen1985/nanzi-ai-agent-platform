@@ -19,10 +19,14 @@ from app.services.ai.conversation_identity import require_user_id
 logger = logging.getLogger(__name__)
 
 # 默认保留条数：按实测一次真实长任务（31 步 + 长报告）652 条事件、平均 113B/条选定。
-# list 与 seq 计数器共用 1800s 滑动 TTL 且**跨轮累积**，所以这里要覆盖的是「TTL 窗口
-# 内的事件总量」，而非单轮量：合并窗口 1000ms 把高频增量的上限压到约 1800 条，加上
-# 不参与合并的 log / tool / model_call 等，量级约 2000-2500。8000 条约 0.9MB/会话，
-# 留足余量后容量与 TTL 才记同一本账，不会出现 key 尚未过期就先被 LTRIM 截断。
+# 注意**每轮 producer 启动都会 clear()**（见 chat.py 的 _producer_task），所以这里要
+# 覆盖的是「单轮」事件量，而不是 TTL 窗口内的多轮累计：合并窗口 1000ms 把高频增量的
+# 上限压到约 1800 条，加上不参与合并的 log / tool / model_call 等，常见量级约
+# 2000-2500。8000 条约 0.9MB/会话，留足余量后容量与 TTL 才记同一本账。
+#
+# 但单轮事件量并不总落在这个量级内：工具输出是逐条入日志的，一轮上万条并不罕见
+# （实测出现过单轮 3.6 万条）。那时 list 会先被 LTRIM 截断，read_after 因断层返回
+# gap=true，前端据此「不清空重建」、缺口交给历史终态兜底——过程可视化有损，终态仍准。
 DEFAULT_MAX_EVENTS = 8000
 DEFAULT_TTL_SECONDS = 1800
 CONFIG_KEY_MAX_EVENTS = "chat_stream_journal_max_events"
@@ -163,22 +167,33 @@ class ConversationStreamJournal:
         return {"events": events, "next_seq": next_seq}
 
     async def clear(self, user_id: str | int | None, conversation_id: str) -> None:
+        """清空事件日志与序号计数器（每轮 producer 启动时调用）。
+
+        失败只告警、不影响对话主流程，但留下一个隐蔽后果：上一轮事件残留在列表里，而
+        前端新一轮会把游标整体归零、并把 traceId 置空（否则本轮事件会被上一轮的 traceId
+        过滤掉），残留事件就可能被当成「本轮过程」重放。所以失败后重试一次，仍失败则用
+        error 级日志——便于从「正文里混入上一轮内容」反查到这里。
+        """
         if not conversation_id:
             return
-        try:
-            redis = await self._redis()
-            if redis is None:
+        for attempt in range(2):
+            try:
+                redis = await self._redis()
+                if redis is None:
+                    return
+                await redis.delete(
+                    self._list_key(user_id, conversation_id),
+                    self._seq_key(user_id, conversation_id),
+                )
                 return
-            await redis.delete(
-                self._list_key(user_id, conversation_id),
-                self._seq_key(user_id, conversation_id),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "[StreamJournal] clear failed for conversation=%s: %s",
-                conversation_id,
-                exc,
-            )
+            except Exception as exc:  # noqa: BLE001
+                log = logger.error if attempt == 1 else logger.warning
+                log(
+                    "[StreamJournal] clear failed for conversation=%s (attempt %d/2): %s",
+                    conversation_id,
+                    attempt + 1,
+                    exc,
+                )
 
 
 conversation_stream_journal = ConversationStreamJournal()
