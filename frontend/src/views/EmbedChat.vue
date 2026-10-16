@@ -12,6 +12,8 @@
       :has-more="historyHasMore"
       :history-list="groupedHistoryList"
       :active-conversation-id="conversationId"
+      :running-conversation-ids="runningConversationIds"
+      :stale-conversation-ids="staleRunConversationIds"
       :filters="historyFilters"
       :available-agents="historyAgentOptions"
       :show-agent-filter="showAgentFilter"
@@ -320,6 +322,32 @@
                   打开服务端浏览器
                 </div>
               </div>
+            </div>
+
+            <!-- 移动端「进行中的会话」：与桌面同一个入口，但收在「更多」里的话，用户得点开
+                 菜单才知道有没有会话在跑，所以提到「更多」之前独立成一个图标按钮。
+                 复用同一个 showActiveRuns / toggleActiveRuns，浮层走下方 v-if="isMobile" 的
+                 modal 变体（打开时顺带把轮询切到 3s，见 watch(showActiveRuns)）。 -->
+            <div v-if="isMobile" class="relative inline-flex items-center">
+              <button
+                type="button"
+                @click="toggleActiveRuns"
+                class="relative flex min-h-11 min-w-11 items-center justify-center rounded-lg transition-all hover:bg-gray-100 hover:text-primary dark:hover:bg-gray-800"
+                :class="showActiveRuns ? 'text-primary bg-gray-100 dark:bg-gray-700' : 'text-gray-400'"
+                :aria-label="activeRunsAriaLabel"
+                :aria-expanded="showActiveRuns"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
+                <span
+                  v-if="activeRunsCount"
+                  class="absolute right-1.5 top-1.5 flex h-3.5 min-w-[0.875rem] items-center justify-center rounded-full px-0.5 text-[8px] font-semibold leading-none text-white ring-1 ring-white dark:ring-gray-900"
+                  :class="activeRunsStaleCount ? 'bg-amber-500' : 'bg-primary'"
+                >
+                  {{ activeRunsCount > 99 ? '99+' : activeRunsCount }}
+                </span>
+              </button>
             </div>
 
             <!-- 移动端「更多」：锚定弹层（与输入区「+」弹层同形态，不用底部抽屉）。
@@ -6292,6 +6320,8 @@ const fetchHistory = async (isLoadMore = false) => {
     if (!historyHasMore.value || loadingMoreHistory.value || loadingHistory.value) return;
     loadingMoreHistory.value = true;
   } else {
+    // 刷新路径同样要去重：开关面板是随手动作，并发请求乱序返回会让列表回退到更旧的一份。
+    if (loadingHistory.value) return;
     loadingHistory.value = true;
     historyPage.value = 1;
     historyHasMore.value = true;
@@ -6389,6 +6419,25 @@ const activeRunViews = computed(() =>
     ...item,
     title: activeRunTitleIndex.value.get(item.conversation_id) || `会话 ${item.conversation_id.slice(0, 8)}`,
   }))
+);
+
+// 历史列表项上的「进行中 / 疑似僵死」标识：其他会话靠 active-runs 轮询（浮层关闭时 15s
+// 一次，所以最多滞后一轮），当前会话则直接并入本地运行态——自己刚发起的这一轮立刻就能在
+// 列表上看到「进行中」，不必等下一轮轮询。
+const runningConversationIds = computed(() => {
+  const ids = new Set(
+    activeRunItems.value
+      .filter((item) => item.state === "active")
+      .map((item) => item.conversation_id),
+  );
+  if (conversationId.value && remoteRunActive.value) ids.add(conversationId.value);
+  return [...ids];
+});
+
+const staleRunConversationIds = computed(() =>
+  activeRunItems.value
+    .filter((item) => item.state === "stale")
+    .map((item) => item.conversation_id)
 );
 
 const activeRunsAriaLabel = computed(() =>
@@ -6947,9 +6996,11 @@ const executeDeleteCommand = async () => {
 };
 
 watch(showHistorySidebar, (val) => {
-    if (val && historyList.value.length === 0) {
-        fetchHistory();
-    }
+    if (!val) return;
+    // 打开面板总是取最新。此前这里带了「列表为空」的条件，首次拉取之后列表就非空了，于是
+    // 后续每次打开都只显示那份旧快照——新会话不出现、当前会话的轮次数 / 摘要 / 时间全部
+    // 过期，用户只能手动点面板里的刷新按钮。
+    fetchHistory();
 });
 watch(historyKeyword, () => {
     if (showHistorySidebar.value) {
@@ -11392,6 +11443,11 @@ onMounted(() => {
     }
     // 运行结束收敛：把后台 producer 已落库的最终回答取回界面。
     void syncLatestSessionHistory(1, 5);
+    // 后端已确认本轮结束、终态落库：面板开着时列表里的轮次数 / 摘要 / 时间已过期，顺手取最新。
+    // 挂在 run-status 翻 false 而不是 SSE 读完，是因为流结束时 FinalizeStep 可能还在落库。
+    if (showHistorySidebar.value) {
+      void fetchHistory();
+    }
   });
   // 挂载竞态兜底：若 run-status 在本组件挂载前就已解析为 active，watch 不会再触发。
   if (remoteRunActive.value) scheduleRunRecoverySync();
