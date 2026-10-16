@@ -743,6 +743,50 @@ export function resolveLiveTimerLogId(
 }
 
 /**
+ * 把时间线里仍挂起的步骤落定，返回落定条数。
+ *
+ * 一轮结束时必须调用（包括切走页面再回来后的恢复收敛）：秒表和安抚文案都由
+ * 「最后一条 pending 项」驱动，没人落定就会一直显示「生成耗时较长，仍在继续…」，
+ * 用户会以为后台还在干活。
+ *
+ * - log 项：pending → success；但等用户操作 / 等外部执行（NON_LIVE_TIMER_CATEGORIES）
+ *   保持 pending —— 机器并没有在跑，标成成功是误导。
+ * - text 项（旁白/推理）：pending → false，否则旁白会一直停在「思考中」。
+ * - todo 项：不动。待办是任务级语义，不受单轮结束影响。
+ *
+ * 直接就地修改传入的 items（与 upsertTimelineLog 等既有函数同一约定）。
+ */
+export function settlePendingTimelineSteps(
+  items: ProcessTimelineItem[] | undefined,
+): number {
+  let settled = 0;
+
+  const walk = (list: ProcessTimelineItem[] | undefined) => {
+    for (const item of list || []) {
+      if (!item) continue;
+      if (item.kind === "log") {
+        const waitingOnHuman =
+          Boolean(item.category) && NON_LIVE_TIMER_CATEGORIES.has(item.category as string);
+        if (item.status === "pending" && !waitingOnHuman) {
+          item.status = "success";
+          settled += 1;
+        }
+      } else if (item.kind === "text") {
+        if (item.pending) {
+          item.pending = false;
+          settled += 1;
+        }
+      }
+      // todo 项没有 children；这里只递归真正带子节点的类别。
+      walk((item as { children?: ProcessTimelineItem[] }).children);
+    }
+  };
+
+  walk(items);
+  return settled;
+}
+
+/**
  * 计算某条 log 此刻应展示的实时耗时（毫秒）。
  *
  * 返回 null 表示这条不该走秒表（已完成 / 不是当前 live 项 / 没有基准），

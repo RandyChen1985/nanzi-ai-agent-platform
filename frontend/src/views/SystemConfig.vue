@@ -1054,6 +1054,47 @@ const normalizeAgentToolcallTimeoutInput = (item: ConfigItem) => {
     ? String(Math.min(3600, value))
     : '120'
 }
+// producer 硬超时看门狗。与工具超时的唯一区别是下界：0 是合法值，表示关闭看门狗
+// （后端 validate_producer_hard_timeout 接受 0 或 60-3600）。注意「清空输入框」不等于
+// 「填 0」——空值一律回落默认值，否则用户误删一下就静默关掉了兜底。
+const PRODUCER_HARD_TIMEOUT_MIN = 0
+const PRODUCER_HARD_TIMEOUT_MAX = 3600
+const PRODUCER_HARD_TIMEOUT_DEFAULT = 600
+const getProducerHardTimeoutValue = (item: ConfigItem) => {
+  const raw = String(item.value ?? '').trim()
+  if (raw === '') return PRODUCER_HARD_TIMEOUT_DEFAULT
+  const value = Number(raw)
+  if (Number.isInteger(value) && value >= PRODUCER_HARD_TIMEOUT_MIN && value <= PRODUCER_HARD_TIMEOUT_MAX) return value
+  return PRODUCER_HARD_TIMEOUT_DEFAULT
+}
+const adjustProducerHardTimeout = (item: ConfigItem, delta: number) => {
+  if (isConfigItemDisabled('agent', item)) return
+  const current = getProducerHardTimeoutValue(item)
+  item.value = String(Math.min(PRODUCER_HARD_TIMEOUT_MAX, Math.max(PRODUCER_HARD_TIMEOUT_MIN, current + delta)))
+}
+const handleProducerHardTimeoutKeydown = (event: KeyboardEvent) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return
+  if (['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab', 'Enter', 'Escape'].includes(event.key)) return
+  if (!/^\d$/.test(event.key)) event.preventDefault()
+}
+const handleProducerHardTimeoutInput = (item: ConfigItem, event: Event) => {
+  if (isConfigItemDisabled('agent', item)) return
+  const target = event.target as HTMLInputElement
+  const digits = target.value.replace(/\D/g, '')
+  item.value = digits
+  target.value = digits
+}
+const normalizeProducerHardTimeoutInput = (item: ConfigItem) => {
+  const digits = String(item.value ?? '').replace(/\D/g, '')
+  if (digits === '') {
+    item.value = String(PRODUCER_HARD_TIMEOUT_DEFAULT)
+    return
+  }
+  const value = Number(digits)
+  item.value = Number.isInteger(value) && value >= PRODUCER_HARD_TIMEOUT_MIN
+    ? String(Math.min(PRODUCER_HARD_TIMEOUT_MAX, value))
+    : String(PRODUCER_HARD_TIMEOUT_DEFAULT)
+}
 const parseJson = (val: string) => {
   try {
     return JSON.parse(val)
@@ -1302,6 +1343,9 @@ const fetchConfigs = async () => {
             }
             if (item.key === 'llm_request_read_timeout') {
               item.value = String(getLlmReadTimeoutValue(item))
+            }
+            if (item.key === 'agent_chat_producer_hard_timeout_seconds') {
+              item.value = String(getProducerHardTimeoutValue(item))
             }
             originalConfigs.value[item.key] = item.value
             if (item.key === 'third_party_user_sync_config' && !item.description) {
@@ -2515,6 +2559,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'agent_max_iterations',
       'agent_tool_loop_global_limit',
       'agent_max_toolcall_timeout',
+      'agent_chat_producer_hard_timeout_seconds',
       'llm_model_name',
       'multimodal_model_name',
       'llm_temperature',
@@ -5515,6 +5560,37 @@ onUnmounted(() => {
                                class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                              >+</button>
                              <span class="text-xs text-gray-500">秒</span>
+                          </div>
+                                                    <div v-else-if="item.key === 'agent_chat_producer_hard_timeout_seconds'" class="flex items-center gap-2 max-w-xs">
+                            <button
+                              type="button"
+                              aria-label="减少看门狗超时时间"
+                              :disabled="isConfigItemDisabled(String(category), item) || getProducerHardTimeoutValue(item) <= PRODUCER_HARD_TIMEOUT_MIN"
+                              @click="adjustProducerHardTimeout(item, -1)"
+                              class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >−</button>
+                            <input
+                              type="number"
+                              inputmode="numeric"
+                              :min="PRODUCER_HARD_TIMEOUT_MIN"
+                              :max="PRODUCER_HARD_TIMEOUT_MAX"
+                              step="1"
+                              :value="item.value"
+                              :disabled="isConfigItemDisabled(String(category), item)"
+                              @keydown="handleProducerHardTimeoutKeydown"
+                              @input="handleProducerHardTimeoutInput(item, $event)"
+                              @blur="normalizeProducerHardTimeoutInput(item)"
+                              aria-label="producer 硬超时看门狗（秒），0 表示关闭"
+                              class="min-w-[5rem] rounded-md border border-gray-300 bg-white disabled:bg-gray-100 px-3 py-2 text-center font-mono text-sm text-gray-700 shadow-sm focus:border-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
+                            />
+                            <button
+                              type="button"
+                              aria-label="增加看门狗超时时间"
+                              :disabled="isConfigItemDisabled(String(category), item) || getProducerHardTimeoutValue(item) >= PRODUCER_HARD_TIMEOUT_MAX"
+                              @click="adjustProducerHardTimeout(item, 1)"
+                              class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >+</button>
+                            <span class="text-xs text-gray-500">秒</span>
                           </div>
                           <div v-else-if="item.key === 'llm_request_read_timeout'">
                              <!-- 与 0.0-1.0、0-100% 两组共用同一套排版：数值框与滑块行等高居中对齐 -->

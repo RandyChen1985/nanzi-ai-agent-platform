@@ -27,6 +27,9 @@ def test_producer_coalesces_high_frequency_deltas():
     assert "STREAM_JOURNAL_COALESCE_INTERVAL_SECONDS" in source
     assert "STREAM_JOURNAL_COALESCE_MAX_CHARS" in source
     assert "STREAM_JOURNAL_COALESCED_TYPES" in source
+    # 窗口必须是 1s：300ms 时 TTL（1800s）内的高频增量理论上限约 6000 条，
+    # 会让 key 在过期前先被 LTRIM 截断——容量与 TTL 必须记同一本账。
+    assert "STREAM_JOURNAL_COALESCE_INTERVAL_SECONDS = 1.0" in source
 
 
 def test_stream_events_endpoint_reads_journal_after_cursor():

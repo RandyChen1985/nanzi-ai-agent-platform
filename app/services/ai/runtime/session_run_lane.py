@@ -45,6 +45,20 @@ class ConversationRunLane:
             return None
         return text
 
+    @staticmethod
+    def _glob_escape(value: str) -> str:
+        """转义 Redis glob（SCAN MATCH）元字符。
+
+        uid 可能来自用户名等外部输入，若含 `*` / `?` / `[` / `]` / `\\`，未转义的
+        MATCH 模式会扩散到其他用户的会话键，把别人的 conversation_id 列出来。
+        """
+        escaped: list[str] = []
+        for char in str(value):
+            if char in "*?[]\\":
+                escaped.append("\\")
+            escaped.append(char)
+        return "".join(escaped)
+
     async def _is_enabled(self) -> bool:
         from app.services.config_service import ConfigService
 
@@ -283,6 +297,124 @@ class ConversationRunLane:
         except Exception as exc:
             logger.warning("[ConversationRunLane] get_status failed: %s", exc)
             return empty
+
+    async def list_active(
+        self,
+        *,
+        user_id: str | int | None,
+    ) -> dict[str, object]:
+        """列出该用户当前仍持有 lane 锁的会话（纯只读，不写不删任何 key）。
+
+        `state` 判定：lane 锁由 `renew_lock_during_hold` 以 `ttl/3` 为间隔续约，
+        所以正常活跃的锁，其剩余 TTL 必然落在 `(2/3·ttl, ttl]`；剩余低于
+        `ttl/2` 说明续约已连续错过（进程崩溃 / pod 被杀 / 任务卡死），判为
+        `stale`（疑似僵死或孤儿锁）。阈值刻意不贴 `2/3·ttl`——那与正常下限零
+        距离，一次事件循环调度抖动就会误报。响应里的 `stale_before_ttl_seconds`
+        即该阈值，前端不要自行推算。
+        """
+        try:
+            enabled = await self._is_enabled()
+        except Exception as exc:
+            logger.warning("[ConversationRunLane] list_active config check failed: %s", exc)
+            enabled = False
+
+        ttl_seconds = DEFAULT_LOCK_TTL_SECONDS
+        try:
+            ttl_seconds = await self._ttl_seconds()
+        except Exception as exc:
+            logger.warning("[ConversationRunLane] list_active ttl read failed: %s", exc)
+
+        # 续约间隔是 ttl/3，正常活跃锁的剩余 TTL 落在 (2/3·ttl, ttl]；阈值取一半，
+        # 留出半个续约周期的余量。若阈值贴着 2/3·ttl，流式输出/工具密集期的一次
+        # 事件循环调度延迟（sleep 醒来 → pexpire 之间）就足以把正在跑的会话标成
+        # 「疑似僵死」，而用户对该条目点「强制释放」是硬取消（存在 handle 时
+        # request_stop 会 task.cancel()）——会误杀正常运行的 run。
+        stale_before = max(1, int(ttl_seconds * 0.5))
+        empty: dict[str, object] = {
+            "ttl_seconds": ttl_seconds,
+            "stale_before_ttl_seconds": stale_before,
+            "items": [],
+        }
+        if not enabled:
+            return empty
+
+        from app.core.redis import get_redis
+
+        try:
+            redis = await get_redis()
+        except Exception as exc:
+            logger.warning("[ConversationRunLane] list_active Redis unavailable: %s", exc)
+            return empty
+        if redis is None:
+            return empty
+
+        uid = require_user_id(user_id)
+        # SCAN 的 match 是 glob 模式：uid 里的元字符必须先转义，否则模式会扩散到
+        # 别人的会话键。match 只是粗筛，uid 段仍要逐条二次校验。
+        key_prefix = "nanzi:conv_run:"
+        items: list[dict[str, object]] = []
+        try:
+            async for raw_key in redis.scan_iter(
+                match=f"{key_prefix}{self._glob_escape(uid)}:*", count=200
+            ):
+                key = (
+                    raw_key.decode("utf-8", errors="ignore")
+                    if isinstance(raw_key, bytes)
+                    else str(raw_key)
+                )
+                # 二次校验 uid 段：不能把匹配结果当作身份边界。conversation_id 用
+                # partition 取整段（acquire 把 cid 里的 ":" 归一化为 "_"，当前 cid
+                # 本身是 UUID）
+                key_uid, sep, conversation_id = key[len(key_prefix):].partition(":")
+                if not sep or key_uid != uid or not conversation_id:
+                    continue
+
+                raw_token = await redis.get(key)
+                if raw_token is None:
+                    continue
+                if isinstance(raw_token, bytes):
+                    raw_token = raw_token.decode("utf-8", errors="ignore")
+
+                remaining: int | None = None
+                ttl_reader = getattr(redis, "ttl", None)
+                if ttl_reader is not None:
+                    try:
+                        parsed_ttl = int(await ttl_reader(key))
+                    except (TypeError, ValueError):
+                        parsed_ttl = -1
+                    if parsed_ttl == -2:
+                        # key 已过期，跳过
+                        continue
+                    # -1（无过期，理论不该出现）保守按活跃处理
+                    remaining = parsed_ttl if parsed_ttl >= 0 else None
+
+                state = "active" if remaining is None or remaining >= stale_before else "stale"
+                items.append(
+                    {
+                        "conversation_id": conversation_id,
+                        # 锁值只回传服务端 UUID trace token，异常内容一律丢弃
+                        "trace_id": self._safe_trace_id(raw_token),
+                        "ttl_seconds": remaining,
+                        "state": state,
+                    }
+                )
+        except Exception as exc:
+            logger.warning("[ConversationRunLane] list_active scan failed: %s", exc)
+            return empty
+
+        def _sort_key(item: dict[str, object]) -> tuple[int, int]:
+            ttl_value = item.get("ttl_seconds")
+            return (
+                0 if item.get("state") == "active" else 1,
+                ttl_value if isinstance(ttl_value, int) else 10 ** 9,
+            )
+
+        items.sort(key=_sort_key)
+        return {
+            "ttl_seconds": ttl_seconds,
+            "stale_before_ttl_seconds": stale_before,
+            "items": items,
+        }
 
     @asynccontextmanager
     async def hold(

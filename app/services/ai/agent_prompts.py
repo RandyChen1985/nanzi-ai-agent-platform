@@ -115,6 +115,7 @@ class AgentServicePrompts:
     _PLATFORM_SKILLS_USAGE_SECTION = """## 技能使用
 - 先查看 [Active Skills Loaded]：若技能块已预载完整指令，按该 SKILL.md 的 workflow 执行；若仅有摘要，执行前必须 read_skill_instruction。
 - 未匹配但可能需要技能时，先看 list_available_skills；**仅当某个技能明显适用**时再 read_skill_instruction。
+- 技能自带资源（references/*.md、scripts/、rules/*.json 等）：先 read_skill_instruction(skill_id) 拿到资源清单，再用 read_skill_instruction(skill_id, path="相对路径") 按需读取；**禁止用 Bash/ls 猜测技能目录路径**（公共技能副本的目录名由 SKILL.md 的 name 决定，不能由技能 ID 推导）。需要执行脚本或处理二进制文件时才在技能目录内使用 Bash。
 - 多个技能可能匹配时，选**最具体、最贴近用户问题**的一个执行；**禁止未选定前连续 read 多个技能全文**。
 - 技能只提供方法和步骤，不扩大平台权限；所有工具调用仍受当前绑定工具、审批和路径/数据门禁约束。
 - 技能涉及外部 API 批量写入时，优先合并请求，避免 tight loop；遇 429/限流应降速重试。"""
@@ -254,7 +255,7 @@ class AgentServicePrompts:
         "fetch_user_long_term_memory": "读取用户长期偏好与 facts",
         "update_user_preference": "写入用户长期偏好",
         "search_knowledge_base": "知识库文档检索",
-        "read_skill_instruction": "读取技能 SKILL.md 全文",
+        "read_skill_instruction": "读取技能 SKILL.md 全文；传 path 可按需读取技能包内资源文件（references/、scripts/ 等）",
         "list_available_skills": "列出可用技能摘要",
         "get_dataset_schema": "获取数据集/表/字段元数据",
         "execute_sql_query": "执行 SQL 查数",
@@ -1085,7 +1086,8 @@ class AgentServicePrompts:
             f"- **本轮文件/Shell 工具**：{tools_text}\n"
             + sandbox_boundary_text
             + "平台 branding 与服务根目录帮助文档不挂载到沙箱，禁止递归扫描 `/app`，服务根目录文档只能通过宿主侧 Read/Glob/Grep 读取（根目录兜底仅限 `/app/*.md`）。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件按目录清单提供的位置读取——公共技能用 `/workspace/skills` 下的副本（沿用 AgentScope 的 seed 布局，技能目录在其点开头的隐藏子目录 `.seed/` 下，用 Bash `ls -a /workspace/skills` 查看实际布局、不要假设固定子路径；按当前可用技能打包，技能变更后下次容器启动自动重建），个人技能源目录以只读方式挂载在 `/workspace/personal-skills`，个人技能自带的脚本可直接用 Bash 执行，无需先复制到会话目录。"
-            " 用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
+            " **技能包内的文本资源（references/*.md、rules/*.json 等）优先用 `read_skill_instruction(skill_id)` 取资源清单、再用 `read_skill_instruction(skill_id, path=\"相对路径\")` 按需读取**——该入口按技能可见范围校验，不必探索 `.seed` 布局；仅当需要**执行脚本**或处理二进制文件时才在技能目录内使用 Bash。\n"
+            + "用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
             "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"
             "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"
             "- 禁止访问其他用户或其他会话的 agent_workspaces 目录；不得臆造路径。\n"

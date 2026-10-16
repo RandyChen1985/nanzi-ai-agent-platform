@@ -25,7 +25,7 @@ def test_chat_surfaces_lock_duplicate_sends_before_async_preflight_finishes():
     ):
         source = (ROOT / relative_path).read_text(encoding="utf-8")
         _assert_send_lock_contract(source)
-        assert ':is-processing="isProcessing || remoteRunActive"' in source
+        assert ':is-processing="isProcessing || remoteRunBusy"' in source
         assert ':is-submitting="sendLocked"' in source
 
 

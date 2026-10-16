@@ -66,11 +66,13 @@ export const useChatAttachments = ({
     const idText = skillId ? `（技能 ID：${skillId}）` : "";
     // 与后端 `app/utils/skill_metadata.build_skill_attachment_hint` 是同一份文案口径：
     // 不再给 SKILL.md 的绝对路径（原因见 attachmentImages.getServerAttachmentPath），
-    // 技能附带的脚本/资源一律走 list_accessible_directories 取真实位置。
+    // 技能附带的脚本/资源一律走 read_skill_instruction 的资源清单 + path 参数按需读取。
     let hint =
       `用户本轮已调用生态技能工作流：${skillName}${idText}。` +
       "其 SKILL.md 正文已随本轮上下文预载，本轮直接按预载指令执行，无需再读取技能文件；" +
-      "如需读取该技能附带的脚本或资源，请先用 list_accessible_directories 查询技能目录的真实位置。";
+      "如需读取该技能附带的脚本或资源（references/、scripts/ 等），请调用 read_skill_instruction " +
+      '获取该技能的资源清单，再用 path 参数按需读取（例如 path="references/rules.md"）；' +
+      "技能目录布局不保证可由技能 ID 推导，不要猜测固定路径。";
     if (metaText) {
       hint += `\nskills meta 为：${metaText}`;
     }

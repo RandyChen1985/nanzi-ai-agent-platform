@@ -118,12 +118,13 @@ _LEGACY_HINT_TAIL = "，对应的物理描述文件绝对路径是："
 
 
 def _skill_directory_hint(skill_dir: Optional[str] = None) -> str:
-    """技能目录怎么找：调用方确知真实目录就给路径，否则指向目录清单工具。"""
+    """技能目录怎么找：调用方确知真实目录就给路径，否则指向技能资源读取工具。"""
     if skill_dir:
         return f"该技能目录的真实路径是：{skill_dir}"
     return (
-        "如需读取该技能附带的脚本或资源，请先用 list_accessible_directories "
-        "查询技能目录的真实位置"
+        "如需读取该技能附带的脚本或资源（references/、scripts/ 等），"
+        "请调用 read_skill_instruction 获取该技能的资源清单，再用 path 参数按需读取"
+        "（例如 path=\"references/rules.md\"）；技能目录布局不保证可由技能 ID 推导，不要猜测固定路径"
     )
 
 

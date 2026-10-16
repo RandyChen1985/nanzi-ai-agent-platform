@@ -1574,7 +1574,7 @@ MCP 服务台中的“使用指南”Tab 提供 OAuth2 调用流程、Endpoint/M
 | 工具标识 (Tool Name) | 内置属性 | 默认权限 | 功能说明与典型应用场景 |
 | :--- | :--- | :--- | :--- |
 | `list_available_skills` | **原生内置** | `read` (只读) | 动态检索当前智能体可用的公共与私有技能包清单（Skills）。 |
-| `read_skill_instruction` | **原生内置** | `read` (只读) | 按需读取指定技能包的 `SKILL.md` 指令内容，将其动态注入会话上下文。 |
+| `read_skill_instruction` | **原生内置** | `read` (只读) | 按需读取指定技能包的 `SKILL.md` 指令内容；不传 `path` 时会附带该技能自带资源清单（`references/`、`scripts/` 等），传 `path`（如 `references/rules.md`）可按需读取技能包内的单个文本资源。 |
 | `create_skills` | **原生内置** | `ask` (需批准) | 智能体在完成某项复杂任务后，自主将经验沉淀为全新的业务技能包。 |
 | `list_accessible_datasets` | **原生内置** | `read` (只读) | 查询当前登录用户有权访问的所有数据集清单。 |
 | `list_accessible_knowledge_bases` | **原生内置** | `read` (只读) | 查询用户可用的全部知识库目录与检索范围。 |

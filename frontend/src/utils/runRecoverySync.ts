@@ -66,3 +66,38 @@ export function planHistorySync(
 
   return { kind: "ignore" };
 }
+
+export interface RecoverySyncMessage {
+  role: string;
+  trace_id?: string;
+  content?: string;
+  isThinking?: boolean;
+}
+
+export interface RecoverySyncInput {
+  isProcessing: boolean;
+  lastMessage?: RecoverySyncMessage | null;
+  /** 界面上还有一份未收敛的在途草稿（快照已还原、落库终态未到）。 */
+  hasUnsettledDraft: boolean;
+}
+
+/**
+ * 历史终态同步是否值得再试一次。
+ *
+ * 只判断「界面上还有没有未收敛的痕迹」：本轮仍在处理、仍有在途草稿、最后一条是等待
+ * 回答的提问，或助手消息还是占位/思考态。
+ *
+ * 刻意**不看草稿是否已有正文**：草稿恰恰是「切走瞬间」的前缀，而后端落库晚于它发出的
+ * run_status 终态帧，晚到几秒到几十秒是常态。此前按 `isThinking || !content` 判定，
+ * 草稿一旦有正文就判定无需重试并静默放弃，界面便永久停在这份草稿上——这正是
+ * 「切回来什么都没动、刷新页面才看到已跑完的回答」的成因。
+ */
+export function shouldKeepRecoverySync(input: RecoverySyncInput): boolean {
+  if (input?.isProcessing) return true;
+  if (input?.hasUnsettledDraft) return true;
+  const last = input?.lastMessage;
+  if (!last) return false;
+  if (last.role === "user") return true;
+  if (last.role === "agent" && (last.isThinking === true || !last.content)) return true;
+  return false;
+}

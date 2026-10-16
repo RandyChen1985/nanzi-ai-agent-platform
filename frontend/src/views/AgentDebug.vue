@@ -569,9 +569,11 @@ const sessionMountedMetadataDatasetIds = ref<string[]>([]);
 
 const {
   remoteRunActive,
+  remoteRunBusy,
   refresh: refreshRemoteRunStatus,
   stopPolling: stopRemoteRunPolling,
   markOutputCompleted,
+  markRunStarted,
 } = useConversationRunStatus(async (cid) => {
   const response = await axios.get(
     `/api/v1/chat/conversation/${encodeURIComponent(cid)}/run-status`,
@@ -2539,11 +2541,11 @@ const enterFullScreenFromTip = () => {
 const userInput = ref("");
 const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
 const focusChatInputWhenReady = () => {
-  if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
+  if (isMobile.value || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;
   nextTick(() => chatInputRef.value?.focus());
 };
 
-watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);
+watch([isProcessing, remoteRunBusy, sendLocked], focusChatInputWhenReady);
 
 const activeTodoTimeline = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -2729,7 +2731,7 @@ const handleChatBIResultAction = async (
 
 const handleQuickQuestion = async (question: string, action: "send" | "fill" = "send", sourceContent?: string) => {
   if (!question) return;
-  if (action === "send" && (isProcessing.value || remoteRunActive.value || sendLocked.value)) return;
+  if (action === "send" && (isProcessing.value || remoteRunBusy.value || sendLocked.value)) return;
   const selectedSource = sourceContent?.trim();
   const nextContent = selectedSource
     ? `${question}${USER_MESSAGE_CONTEXT_DIVIDER}【被点击的 AI 回复】\n${selectedSource}`
@@ -2750,7 +2752,7 @@ const handleGroundingAction = async (
   payload: GroundingBlockedPayload | undefined,
   action: GroundingBlockedAction,
 ) => {
-  if (!payload || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
+  if (!payload || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;
   if (action.kind === "grounding_retry") {
     const groundingAction = {
       ...(action.payload || {}),
@@ -3417,14 +3419,14 @@ const captureSendSnapshot = (overrides: ChatSendOverrides = {}): ChatSendSnapsho
 const sendPreparedMessage = async (
   prepare: () => Promise<ChatSendSnapshot | null>,
 ) => runSendExclusive(async () => {
-  if (isProcessing.value || remoteRunActive.value) return;
+  if (isProcessing.value || remoteRunBusy.value) return;
   const snapshot = await prepare();
   if (!snapshot) return;
   return sendMessageInternal(snapshot);
 });
 
 const sendMessage = async (overrides: ChatSendOverrides = {}) => runSendExclusive(async () => {
-  if (isProcessing.value || remoteRunActive.value) return;
+  if (isProcessing.value || remoteRunBusy.value) return;
   return sendMessageInternal(captureSendSnapshot(overrides));
 });
 
@@ -3432,7 +3434,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const { content, files } = snapshot;
   const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
   if (!content && files.length === 0) return;
-  if (isProcessing.value || remoteRunActive.value) return;
+  if (isProcessing.value || remoteRunBusy.value) return;
 
   // 尽早消费「强制查数智能体」标记，避免中途 return 后泄漏到下一轮普通提问
   const forcedDataAgentIdForTurn = forceDataQueryAgentOnce.value ? resolvePreferredDataQueryAgentId() : "";
@@ -3519,7 +3521,8 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
 
   // 3. Call Real API with SSE
   // SSE 可能因切后台/网络变化提前结束；在状态接口确认释放前继续阻止新一轮发送。
-  remoteRunActive.value = true;
+  // 用 markRunStarted 而非裸置位：必须同时复位上一轮的「输出已完成」。
+  markRunStarted();
   abortController = new AbortController();
   ragRetrievalMeta.value = null;
 
@@ -3648,7 +3651,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
               agentMsg.value.isThinking = false;
               (agentMsg.value as any).status = "duplicate_request";
               agentMsg.value.content = String(data.content || "相同发送请求已提交，请等待原任务完成。\n");
-              remoteRunActive.value = true;
+              markRunStarted();
               void refreshCurrentRunStatus();
             } else if (data.type === "run_status") {
               agentMsg.value.isThinking = false;
@@ -5186,7 +5189,7 @@ onUnmounted(() => {
         <ChatInput
           ref="chatInputRef"
           v-model="userInput"
-          :is-processing="isProcessing || remoteRunActive"
+          :is-processing="isProcessing || remoteRunBusy"
           :is-submitting="sendLocked"
           :show-shortcuts="debugConfig.showShortcuts"
           :slash-commands="slashCommands"

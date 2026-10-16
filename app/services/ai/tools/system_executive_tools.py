@@ -7,6 +7,7 @@ import psutil
 import json
 import re
 import fnmatch
+from typing import Optional
 from app.services.ai.tools.tool_compat import tool
 from app.services.ai.code_execution_service import run_shell_command_capture
 from app.services.ai.runtime.shell_deletion_policy import assess_shell_deletion
@@ -76,6 +77,169 @@ def _parse_skill_frontmatter(skill_id: str, skill_md_path: str) -> dict:
     需要展示兜底文案的调用方自己补。
     """
     return parse_skill_frontmatter(skill_id, skill_md_path)
+
+
+#: 技能文件单次读取上限（SKILL.md 与技能包内资源同一口径）
+SKILL_RESOURCE_MAX_BYTES = 262144
+#: 技能资源清单的条目 / 深度上限：技能包导入上限是 2000 个文件，清单无上限会写爆上下文
+_SKILL_RESOURCE_LIST_MAX_ENTRIES = 200
+_SKILL_RESOURCE_LIST_MAX_DEPTH = 4
+
+
+def _skill_allowed_roots(user_info: Optional[dict]) -> list[str]:
+    """读取技能文件允许的物理根：平台技能库 + 当前用户个人技能目录。
+
+    ``abspath`` 与 ``realpath`` 两种形式都放进去：部署里 ``SKILLS_DIR`` 自身可能就是
+    软链接，只留一种会把合法技能判成"路径越界"；任一命中即通过。
+    """
+    roots: list[str] = []
+
+    def _add(raw: Optional[str]) -> None:
+        if not raw:
+            return
+        for candidate in (os.path.abspath(raw), os.path.realpath(os.path.abspath(raw))):
+            if candidate and candidate not in roots:
+                roots.append(candidate)
+
+    try:
+        from app.core.config import settings
+
+        _add(getattr(settings, "SKILLS_DIR", None))
+    except Exception:
+        pass
+    if user_info:
+        try:
+            from app.services.ai.skill_resolver import get_user_personal_skills_dir
+
+            _add(get_user_personal_skills_dir(user_info))
+        except Exception:
+            pass
+    return roots
+
+
+def _path_within_roots(path: str, roots: list[str]) -> bool:
+    """路径是否落在任一允许根内（不解析软链接，调用方自行决定传不传 realpath）。"""
+    for root in roots:
+        if not root:
+            continue
+        try:
+            if os.path.commonpath([os.path.abspath(path), root]) == root:
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
+
+
+def _decode_skill_resource(blob: bytes) -> Optional[str]:
+    """技能资源按 UTF-8 文本解码；二进制（含 NUL 或非 UTF-8）返回 ``None``。"""
+    if b"\x00" in blob:
+        return None
+    try:
+        return blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _format_skill_resource_tree(skill_dir: str) -> str:
+    """技能包内资源清单（路径相对技能目录，排除 SKILL.md 与隐藏项）。
+
+    这是"有哪些资源可读"的提示，不是目录树工具：条目数与深度都有上限，超限在末尾
+    显式说明，避免大技能包把上下文写爆。没有任何附带资源时返回空串。
+    """
+    entries: list[str] = []
+    truncated = False
+    root = os.path.abspath(skill_dir)
+    for current, dirnames, filenames in os.walk(root, followlinks=False):
+        depth = 0 if current == root else os.path.relpath(current, root).count(os.sep) + 1
+        dirnames[:] = sorted(
+            name for name in dirnames if not name.startswith(".") and name != "__pycache__"
+        )
+        if depth >= _SKILL_RESOURCE_LIST_MAX_DEPTH:
+            if dirnames:
+                truncated = True
+            dirnames[:] = []
+        rel_dir = os.path.relpath(current, root)
+        for filename in sorted(filenames):
+            if filename.startswith(".") or filename == "SKILL.md":
+                continue
+            if len(entries) >= _SKILL_RESOURCE_LIST_MAX_ENTRIES:
+                truncated = True
+                break
+            rel = filename if rel_dir == os.curdir else os.path.join(rel_dir, filename)
+            entries.append(rel.replace(os.sep, "/"))
+        if len(entries) >= _SKILL_RESOURCE_LIST_MAX_ENTRIES:
+            break
+    if not entries and not truncated:
+        return ""
+    lines = [f"- {entry}" for entry in entries]
+    if truncated:
+        lines.append(
+            f"- …（清单已截断：最多列 {_SKILL_RESOURCE_LIST_MAX_ENTRIES} 条 / "
+            f"{_SKILL_RESOURCE_LIST_MAX_DEPTH} 层；需要完整目录请用 directory_tree_navigator 或 Bash）"
+        )
+    return "\n".join(lines)
+
+
+def _read_skill_resource_file(
+    *,
+    skill_id: str,
+    skill_dir: str,
+    rel_path: str,
+    scope: str,
+    allowed_roots: list[str],
+) -> str:
+    """读取技能包内单个资源文件（相对技能目录）；所有越界情形一律拒绝。"""
+    raw = str(rel_path or "").strip().replace("\\", "/")
+    if not raw:
+        return "错误：path 不能为空；如需列出技能资源，直接调用 read_skill_instruction(skill_id)。"
+    # 控制字符一律拒绝：技能包是用户可上传内容，带 \x1b 等转义序列的文件名会被原样回显到
+    # 日志与模型上下文里（终端控制序列注入）。这里只拦控制字符，不学窄字符白名单——那会把
+    # 中文名（references/边界规则.md）与带空格、括号的合法资源名一起挡掉。
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in raw):
+        return "错误：path 含控制字符，技能资源路径只允许可打印字符。"
+    if raw.startswith("/") or os.path.isabs(raw):
+        return "错误：path 必须是技能目录内的相对路径（例如 references/calc-rules.md）。"
+    parts = [part for part in raw.split("/") if part not in ("", os.curdir)]
+    if not parts or any(part == os.pardir for part in parts):
+        return "错误：path 不允许包含 .. 越界。"
+
+    real_dir = os.path.realpath(skill_dir)
+    try:
+        target = os.path.abspath(os.path.join(real_dir, *parts))
+    except (OSError, ValueError):
+        return f"错误：非法的技能资源路径 {raw}。"
+    # 技能包导入时 symlink/hardlink 一律不落盘（safe_extract_archive），这里保持一致口径：
+    # 只读真实文件，避免软链接把读取引到同根下的其他技能、或绕过下面的越界判定。
+    if os.path.islink(target):
+        return f"错误：技能资源 {raw} 是软链接，技能入口只读取技能目录内的真实文件。"
+    # 双重判定：解析软链接后仍在技能目录内，且技能目录本身仍在允许的技能根下。
+    real_target = os.path.realpath(target)
+    if not _path_within_roots(real_target, [real_dir]) or not _path_within_roots(
+        real_target, allowed_roots
+    ):
+        return "错误：技能资源路径越界。"
+    if os.path.isdir(real_target):
+        return f"错误：{raw} 是目录，不是文件；不传 path 可列出该技能的资源清单。"
+    if not os.path.isfile(real_target):
+        return f"错误：技能 {skill_id} 中没有资源文件 {raw}。"
+
+    try:
+        with open(real_target, "rb") as handle:
+            blob = handle.read(SKILL_RESOURCE_MAX_BYTES + 1)
+    except OSError as exc:
+        return f"错误：读取技能资源失败，原因: {exc}"
+
+    truncated = len(blob) > SKILL_RESOURCE_MAX_BYTES
+    text = _decode_skill_resource(blob[:SKILL_RESOURCE_MAX_BYTES])
+    if text is None:
+        return (
+            f"错误：技能资源 {raw} 不是文本文件（二进制或非 UTF-8），本工具只读文本资源；"
+            "如需在技能目录内处理二进制，请使用 Bash 或代码执行类工具。"
+        )
+    header = f"[技能读取成功: {skill_id}/{raw} · scope={scope}]"
+    if truncated:
+        header += f"\n[已截断至 {SKILL_RESOURCE_MAX_BYTES} 字节]"
+    return f"{header}\n{text}"
 
 
 def _is_forbidden_shell_command(command: str) -> str | None:
@@ -178,14 +342,17 @@ async def list_available_skills() -> str:
 
 
 @tool
-async def read_skill_instruction(skill_id: str) -> str:
+async def read_skill_instruction(skill_id: str, path: Optional[str] = None) -> str:
     """
-    读取指定技能的 SKILL.md 指令内容。调用前应先使用 list_available_skills 确认技能存在且适用。
+    读取技能指令与技能包内资源。调用前应先使用 list_available_skills 确认技能存在且适用。
+    不传 path：读取该技能 SKILL.md 全文，并附上技能包内其他资源文件清单（references/、scripts/ 等）。
+    传 path：读取技能包内的单个资源文件，如 path="references/calc-rules.md"、"scripts/run.py"。
     仅允许读取当前会话可见技能（含自定义白名单过滤后的公共技能与个人技能），
-    被权限侧禁用（forbidden_skills）的公共技能一律拒绝。
+    被权限侧禁用（forbidden_skills）的公共技能一律拒绝；path 不可越出该技能目录。
 
     Args:
         skill_id: 技能唯一 ID，仅允许英文、数字、中划线及下划线。
+        path: 可选。技能包内的相对路径（相对技能根目录）。不传则读 SKILL.md 并列出资源清单。
     """
     try:
         from app.core.context import get_current_agent_context
@@ -226,34 +393,35 @@ async def read_skill_instruction(skill_id: str) -> str:
 
         # 路径安全：限制在全局 SKILLS_DIR 或个人 skills 根目录下
         abs_md = os.path.abspath(skill_md_path)
-        allowed_roots: list[str] = []
-        try:
-            from app.core.config import settings
-
-            if getattr(settings, "SKILLS_DIR", None):
-                allowed_roots.append(os.path.abspath(settings.SKILLS_DIR))
-        except Exception:
-            pass
-        if user_info:
-            try:
-                from app.services.ai.skill_resolver import get_user_personal_skills_dir
-
-                personal_dir = get_user_personal_skills_dir(user_info)
-                if personal_dir:
-                    allowed_roots.append(os.path.abspath(personal_dir))
-            except Exception:
-                pass
-        if not any(
-            os.path.commonpath([abs_md, root]) == root
-            for root in allowed_roots
-            if root
-        ):
+        allowed_roots = _skill_allowed_roots(user_info)
+        if not _path_within_roots(abs_md, allowed_roots):
             return "错误：技能路径越界。"
 
-        with open(abs_md, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read(262144)
+        skill_dir = os.path.dirname(abs_md)
         scope = matched.get("scope") or "global"
-        return f"[技能读取成功: {safe_skill_id}/SKILL.md · scope={scope}]\n{content}"
+
+        # 按需读技能包内资源：模型不必自己探索 .seed 布局，也不会绕开技能白名单
+        if path is not None and str(path).strip():
+            return _read_skill_resource_file(
+                skill_id=safe_skill_id,
+                skill_dir=skill_dir,
+                rel_path=str(path),
+                scope=scope,
+                allowed_roots=allowed_roots,
+            )
+
+        with open(abs_md, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read(SKILL_RESOURCE_MAX_BYTES)
+
+        header = f"[技能读取成功: {safe_skill_id}/SKILL.md · scope={scope}]"
+        resource_tree = _format_skill_resource_tree(skill_dir)
+        if resource_tree:
+            header += (
+                "\n[技能自带资源（路径相对技能目录，可按需读取："
+                f'read_skill_instruction(skill_id="{safe_skill_id}", path="<相对路径>")）]\n'
+                f"{resource_tree}"
+            )
+        return f"{header}\n{content}"
     except ValueError as e:
         return f"错误：非法技能 ID，{str(e)}"
     except Exception as e:

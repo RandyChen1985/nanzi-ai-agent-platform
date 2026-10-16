@@ -84,9 +84,9 @@ def test_pending_quick_send_flushes_when_lock_releases():
     """锁一释放即自动补发，不依赖用户再点一次。"""
     source = _embed_source()
     assert "flushPendingQuickSend" in source
-    # 补发由锁状态变化驱动。
+    # 补发由「输入是否仍被占住」驱动：锁真相归恢复器，不再兼任输入锁。
     assert re.search(
-        r"watch\(\[isProcessing, remoteRunActive, sendLocked\], \(\) => \{\s*void flushPendingQuickSend\(\);",
+        r"watch\(\[isProcessing, remoteRunBusy, sendLocked\], \(\) => \{\s*void flushPendingQuickSend\(\);",
         source,
     ), "待补发的快捷提问应在发送锁释放时自动 flush"
 
