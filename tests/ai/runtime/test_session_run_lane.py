@@ -413,3 +413,218 @@ async def test_conversation_run_lane_status_is_safe_when_disabled_or_unavailable
         "trace_id": None,
         "ttl_seconds": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_list_active_marks_stale_when_renewal_stopped(monkeypatch):
+    """续约间隔是 ttl/3：剩余 TTL 跌破 2/3·ttl 说明续约已停，应判为 stale。"""
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    fresh = f"conv-fresh-{uuid.uuid4().hex}"
+    stale = f"conv-stale-{uuid.uuid4().hex}"
+    fake.store[lane._lock_key("u1", fresh)] = str(uuid.uuid4())
+    fake.store[lane._lock_key("u1", stale)] = str(uuid.uuid4())
+    fake.ttls[lane._lock_key("u1", fresh)] = 590
+    fake.ttls[lane._lock_key("u1", stale)] = 60
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        if key == "agent_session_run_lock_enabled":
+            return "true"
+        if key == "agent_session_run_lock_ttl_seconds":
+            return "600"
+        return default
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+
+    snapshot = await lane.list_active(user_id="u1")
+
+    assert snapshot["ttl_seconds"] == 600
+    assert snapshot["stale_before_ttl_seconds"] == 300
+    states = {item["conversation_id"]: item["state"] for item in snapshot["items"]}
+    assert states[fresh] == "active"
+    assert states[stale] == "stale"
+    assert set(states) == {fresh, stale}
+
+
+@pytest.mark.asyncio
+async def test_list_active_ignores_other_users_and_expired_keys(monkeypatch):
+    """只返回本人会话；TTL=-2（已过期）跳过，TTL=-1（无过期）保守判活跃。"""
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    mine = f"conv-mine-{uuid.uuid4().hex}"
+    other = f"conv-other-{uuid.uuid4().hex}"
+    expired = f"conv-expired-{uuid.uuid4().hex}"
+    no_expiry = f"conv-noexp-{uuid.uuid4().hex}"
+    fake.store[lane._lock_key("u1", mine)] = str(uuid.uuid4())
+    fake.ttls[lane._lock_key("u1", mine)] = 500
+    fake.store[lane._lock_key("u2", other)] = str(uuid.uuid4())
+    fake.ttls[lane._lock_key("u2", other)] = 500
+    fake.store[lane._lock_key("u1", expired)] = str(uuid.uuid4())
+    fake.ttls[lane._lock_key("u1", expired)] = -2
+    fake.store[lane._lock_key("u1", no_expiry)] = str(uuid.uuid4())
+    fake.ttls.pop(lane._lock_key("u1", no_expiry), None)
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        if key == "agent_session_run_lock_enabled":
+            return "true"
+        if key == "agent_session_run_lock_ttl_seconds":
+            return "600"
+        return default
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+
+    snapshot = await lane.list_active(user_id="u1")
+    ids = {item["conversation_id"] for item in snapshot["items"]}
+
+    assert mine in ids
+    assert no_expiry in ids
+    assert other not in ids
+    assert expired not in ids
+    by_id = {item["conversation_id"]: item for item in snapshot["items"]}
+    assert by_id[no_expiry]["state"] == "active"
+    assert by_id[no_expiry]["ttl_seconds"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_active_returns_empty_when_disabled(monkeypatch):
+    """锁功能关闭时列表为空，且不触碰 Redis。"""
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    fake.store[lane._lock_key("u1", "conv-x")] = str(uuid.uuid4())
+    fake.ttls[lane._lock_key("u1", "conv-x")] = 500
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        return "false" if key == "agent_session_run_lock_enabled" else default
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+
+    snapshot = await lane.list_active(user_id="u1")
+    assert snapshot["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_list_active_tolerates_renewal_jitter(monkeypatch):
+    """续约抖动绝不能把活跃锁误判成僵死。
+
+    续约间隔恰好是 ttl/3，所以正常活跃锁的剩余 TTL 下限（2/3·ttl）与「续约已停」
+    只差一个事件循环延迟。若阈值贴着 2/3·ttl，流式输出/工具密集期的一次调度延迟
+    就会把正在跑的会话标成「疑似僵死」——用户点「强制释放」会真取消这个 run
+    （cancel 接口对存在 handle 的会话是硬取消，不是只删锁）。
+    因此阈值必须留出余量：剩余 TTL 掉到一半以下才算续约异常。
+    """
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    # 380 已经低于一个续约周期（400），但远高于阈值 300 → 属于正常抖动，判活跃
+    jittered = f"conv-jitter-{uuid.uuid4().hex}"
+    # 280 低于阈值 → 续约确实已停
+    stalled = f"conv-stalled-{uuid.uuid4().hex}"
+    fake.store[lane._lock_key("u1", jittered)] = str(uuid.uuid4())
+    fake.store[lane._lock_key("u1", stalled)] = str(uuid.uuid4())
+    fake.ttls[lane._lock_key("u1", jittered)] = 380
+    fake.ttls[lane._lock_key("u1", stalled)] = 280
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        if key == "agent_session_run_lock_enabled":
+            return "true"
+        if key == "agent_session_run_lock_ttl_seconds":
+            return "600"
+        return default
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+
+    snapshot = await lane.list_active(user_id="u1")
+    by_id = {item["conversation_id"]: item["state"] for item in snapshot["items"]}
+
+    assert by_id[jittered] == "active", "续约抖动被误判为僵死，会让用户误取消正在运行的会话"
+    assert by_id[stalled] == "stale"
+    assert snapshot["stale_before_ttl_seconds"] == 300
+
+
+@pytest.mark.asyncio
+async def test_list_active_parses_bytes_keys_and_rejects_foreign_uid(monkeypatch):
+    """Redis 返回 bytes key 时要能正常解析；uid 段必须二次校验，防止 match 扩大后串号。"""
+
+    class BytesKeyFakeRedis(FakeRedis):
+        """模拟真实 redis-py：key 以 bytes 返回。
+
+        同时故意让 scan_iter 多吐一条「前缀相同但 uid 不同」的 key，
+        用来验证实现层必须按 uid 段二次校验，而不是把匹配结果照单全收。
+        """
+
+        async def scan_iter(self, match=None, count=50):
+            for k in list(self.store.keys()):
+                yield k.encode("utf-8")
+            yield b"nanzi:conv_run:u1-other:conv-foreign"
+
+    fake = BytesKeyFakeRedis()
+    lane = ConversationRunLane()
+    mine = f"conv-bytes-{uuid.uuid4().hex}"
+    fake.store[lane._lock_key("u1", mine)] = str(uuid.uuid4())
+    fake.ttls[lane._lock_key("u1", mine)] = 500
+    fake.store["nanzi:conv_run:u1-other:conv-foreign"] = str(uuid.uuid4())
+    fake.ttls["nanzi:conv_run:u1-other:conv-foreign"] = 500
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        if key == "agent_session_run_lock_enabled":
+            return "true"
+        if key == "agent_session_run_lock_ttl_seconds":
+            return "600"
+        return default
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+
+    snapshot = await lane.list_active(user_id="u1")
+    ids = {item["conversation_id"] for item in snapshot["items"]}
+
+    # 精确断言：多出任何一条都说明 uid 段没被二次校验（会把别人的会话串进来）
+    assert ids == {mine}
+
+
+def test_glob_escape_neutralizes_redis_wildcards():
+    """uid 里的 glob 元字符必须被转义，否则 SCAN 模式会扩散到别人的会话键。"""
+    from app.services.ai.runtime.session_run_lane import ConversationRunLane
+
+    escape = getattr(ConversationRunLane, "_glob_escape")
+    assert escape("u1") == "u1"
+    assert escape("u*") == "u\\*"
+    assert escape("u?") == "u\\?"
+    assert escape("u[1]") == "u\\[1\\]"
+    assert escape("u\\x") == "u\\\\x"
+
+
+@pytest.mark.asyncio
+async def test_list_active_returns_empty_when_redis_unavailable(monkeypatch):
+    """Redis 不可用时返回空列表而不是抛异常。"""
+    lane = ConversationRunLane()
+
+    async def _redis():
+        return None
+
+    async def _config_get(key, default=None):
+        return "true" if key == "agent_session_run_lock_enabled" else default
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+
+    snapshot = await lane.list_active(user_id="u1")
+    assert snapshot["items"] == []

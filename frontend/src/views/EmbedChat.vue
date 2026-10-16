@@ -103,7 +103,10 @@
               </div>
             </div>
           </div>
-          <div class="flex flex-col min-w-0 overflow-hidden">
+          <!-- 不能加 overflow-hidden：副标题行里挂着「进行中的会话」浮层（absolute 定位），
+               祖先裁剪会让浮层整块不可见（表现为点了没反应）。文字截断由各行 span
+               自己的 truncate 负责。 -->
+          <div class="flex flex-col min-w-0">
                 <div class="flex items-center space-x-1.5 leading-tight">
                     <span class="text-[13px] font-semibold text-gray-800 dark:text-gray-100 truncate">
                         <template v-if="isProcessing">
@@ -127,12 +130,12 @@
                         锁定
                     </span>
                 </div>
-                <div class="text-[11px] text-gray-400 dark:text-gray-500 truncate flex items-center gap-1.5 min-w-0 leading-tight mt-0.5">
+                <div class="text-[11px] text-gray-400 dark:text-gray-500 flex items-center gap-1.5 min-w-0 leading-tight mt-0.5">
                     <template v-if="isProcessing">
-                        <span>正在处理您的请求...</span>
+                        <span class="truncate">正在处理您的请求...</span>
                     </template>
                     <template v-else-if="headerExpertLabel">
-                        <span class="normal-case tracking-normal">准备就绪</span>
+                        <span class="normal-case tracking-normal truncate">准备就绪</span>
                         <button
                             v-if="!isRoutingSettingsLocked"
                             type="button"
@@ -143,8 +146,44 @@
                         </button>
                     </template>
                     <template v-else>
-                        <span>准备就绪</span>
+                        <span class="truncate">准备就绪</span>
                     </template>
+                    <!-- 进行中的会话：挂在副标题后面（不占右侧按钮组），角标提示还有几个会话在跑。
+                         注意本行**不能**再用 truncate——overflow:hidden 会把下面的浮层裁掉，
+                         文字截断交给上面各 span 自己处理。 -->
+                    <div v-if="!isMobile" ref="activeRunsRef" class="relative inline-flex shrink-0">
+                        <button
+                            type="button"
+                            class="relative -my-0.5 rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary dark:hover:bg-gray-800"
+                            :class="showActiveRuns ? 'bg-primary/10 text-primary' : ''"
+                            :aria-label="activeRunsAriaLabel"
+                            :aria-expanded="showActiveRuns"
+                            @click="toggleActiveRuns"
+                        >
+                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l2.5 2.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span
+                                v-if="activeRunsCount"
+                                class="absolute -right-1 -top-1 flex h-3.5 min-w-[0.875rem] items-center justify-center rounded-full px-0.5 text-[8px] font-semibold leading-none text-white ring-1 ring-white dark:ring-gray-900"
+                                :class="activeRunsStaleCount ? 'bg-amber-500' : 'bg-primary'"
+                            >
+                                {{ activeRunsCount > 99 ? '99+' : activeRunsCount }}
+                            </span>
+                        </button>
+                        <ActiveRunsPopover
+                            :open="showActiveRuns"
+                            :items="activeRunViews"
+                            :loading="activeRunsLoading"
+                            :failed="activeRunsFailed"
+                            :active-conversation-id="conversationId"
+                            align="left"
+                            @select="handleActiveRunSelect"
+                            @terminate="handleActiveRunTerminate"
+                            @refresh="refreshActiveRuns"
+                            @close="showActiveRuns = false"
+                        />
+                    </div>
                 </div>
             </div>
         </div>
@@ -349,6 +388,16 @@
                       <svg class="h-5 w-5 shrink-0 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" stroke-width="1.8"/><path stroke-linecap="round" stroke-width="1.8" d="M3 8h18M7 6h.01M10 6h.01"/></svg>
                       <span class="flex-1 text-left font-medium">服务端浏览器</span>
                       <span v-if="browserPanelVisible" class="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                    </button>
+
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-3 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:text-gray-200 dark:hover:bg-primary/20"
+                      @click="runHeaderMoreActiveRuns"
+                    >
+                      <svg class="h-5 w-5 shrink-0 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l2.5 2.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <span class="flex-1 text-left font-medium">进行中的会话</span>
+                      <span v-if="activeRunsCount" class="shrink-0 rounded-full px-1.5 text-[10px] font-semibold text-white" :class="activeRunsStaleCount ? 'bg-amber-500' : 'bg-primary'">{{ activeRunsCount > 99 ? '99+' : activeRunsCount }}</span>
                     </button>
 
                     <!-- 账号类入口用分隔线与上面的「功能」区分开 -->
@@ -1507,6 +1556,21 @@
             :state="recoveryCardState"
             @dismiss="dismissRecoveryCard"
           />
+
+          <!-- 移动端「进行中的会话」：从「更多」进入，用 modal 变体（带遮罩）展示 -->
+          <ActiveRunsPopover
+            v-if="isMobile"
+            :open="showActiveRuns"
+            :items="activeRunViews"
+            :loading="activeRunsLoading"
+            :failed="activeRunsFailed"
+            :active-conversation-id="conversationId"
+            variant="modal"
+            @select="handleActiveRunSelect"
+            @terminate="handleActiveRunTerminate"
+            @refresh="refreshActiveRuns"
+            @close="showActiveRuns = false"
+          />
           <div
             v-if="sandboxDegradedMessage || showBashBanner"
             class="mx-3 mt-2"
@@ -2399,7 +2463,9 @@ import { CommandLineIcon } from "@heroicons/vue/24/outline";
 import { useRouter } from "vue-router";
 import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
-import { cancelConversationRun } from "@/utils/cancelConversationRun";
+import ActiveRunsPopover from "@/components/chat/ActiveRunsPopover.vue";
+import { createActiveRunsController, type ActiveRunItem } from "@/composables/chat/useActiveRuns";
+import { cancelConversationRun, cancelConversationRunDetailed } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
 import { isApiSuccess } from "@/utils/apiEnvelope";
 import { isSkillForbidden } from "@/utils/skillForbidden";
@@ -6205,6 +6271,105 @@ const fetchHistory = async (isLoadMore = false) => {
 /** 侧栏连续点击的采用序列：只让最后一次点击生效。 */
 let historyAdoptionSequence = 0;
 
+// —— 顶部「进行中的会话」：跨标签/跨设备的运行态唯一入口 ——
+// 兜住「会话还在跑，但界面已经没有停止按钮」的僵死场景：这里能看到全部
+// 仍在持锁的会话，并能直接终止（含续约已停的孤儿锁）。
+const showActiveRuns = ref(false);
+const activeRunsRef = ref<HTMLElement | null>(null);
+
+const fetchActiveRuns = async () => {
+  const res = await axios.get("/api/v1/chat/active-runs", { headers: embedAuthHeaders() });
+  const body = (res.data?.data || {}) as Record<string, any>;
+  const rawItems = Array.isArray(body.items) ? body.items : [];
+  return {
+    ttlSeconds: Number(body.ttl_seconds || 0) || 0,
+    staleBeforeTtlSeconds: Number(body.stale_before_ttl_seconds || 0) || 0,
+    items: rawItems
+      .map((raw: any) => ({
+        conversation_id: String(raw?.conversation_id || ""),
+        trace_id: typeof raw?.trace_id === "string" ? raw.trace_id : null,
+        ttl_seconds: typeof raw?.ttl_seconds === "number" ? raw.ttl_seconds : null,
+        state: raw?.state === "stale" ? ("stale" as const) : ("active" as const),
+      }))
+      .filter((item: ActiveRunItem) => item.conversation_id),
+  };
+};
+
+const {
+  items: activeRunItems,
+  count: activeRunsCount,
+  staleCount: activeRunsStaleCount,
+  loading: activeRunsLoading,
+  failed: activeRunsFailed,
+  refresh: refreshActiveRuns,
+  start: startActiveRunsWatch,
+  stop: stopActiveRunsWatch,
+  setOpen: setActiveRunsOpen,
+} = createActiveRunsController(fetchActiveRuns);
+
+// 标题尽力映射：活跃会话通常就在已加载的会话列表里；映射不到则退化为 ID 短码，
+// 至少让用户能靠会话 ID 与「当前会话」标记定位。
+const activeRunTitleIndex = computed(() => {
+  const index = new Map<string, string>();
+  for (const item of aggregatedHistoryList.value as any[]) {
+    const cid = String(item?.conversation_id || "");
+    if (!cid || index.has(cid)) continue;
+    const title = String(item?.query || item?.summary || "").trim();
+    if (title) index.set(cid, title);
+  }
+  return index;
+});
+
+const activeRunViews = computed(() =>
+  activeRunItems.value.map((item) => ({
+    ...item,
+    title: activeRunTitleIndex.value.get(item.conversation_id) || `会话 ${item.conversation_id.slice(0, 8)}`,
+  }))
+);
+
+const activeRunsAriaLabel = computed(() =>
+  activeRunsStaleCount.value
+    ? `进行中的会话（${activeRunsCount.value} 个，其中 ${activeRunsStaleCount.value} 个疑似僵死）`
+    : `进行中的会话（${activeRunsCount.value} 个）`
+);
+
+const toggleActiveRuns = () => {
+  showActiveRuns.value = !showActiveRuns.value;
+};
+
+watch(showActiveRuns, (open) => {
+  setActiveRunsOpen(open);
+});
+
+const handleActiveRunSelect = async (targetConversationId: string) => {
+  showActiveRuns.value = false;
+  if (!targetConversationId || targetConversationId === conversationId.value) return;
+  await handleHistoryClick({ conversation_id: targetConversationId });
+};
+
+const handleActiveRunTerminate = async (item: { conversation_id: string; trace_id: string | null }) => {
+  const cid = String(item?.conversation_id || "");
+  if (!cid) return;
+  // 终止当前会话必须走 stopGeneration：本地 isProcessing、消息标记与恢复卡片
+  // 需要一起收敛，只发一个 HTTP 请求会让界面停在「生成中」。
+  if (cid === conversationId.value) {
+    stopGeneration({ notifySuccess: true });
+    return;
+  }
+  const result = await cancelConversationRunDetailed(cid, {
+    traceId: item?.trace_id || undefined,
+    headers: embedAuthHeaders(),
+  });
+  if (!result.success) {
+    showToast("释放失败，请重试", "warning");
+  } else if (result.runCancelled) {
+    showToast("已终止运行并释放锁", "success");
+  } else {
+    showToast("已强制释放（该会话任务未在运行）", "success");
+  }
+  void refreshActiveRuns();
+};
+
 const handleHistoryClick = async (item: any) => {
     if (!item.conversation_id) {
         if (item.query) userInput.value = item.query;
@@ -6239,6 +6404,10 @@ const handleHistoryClick = async (item: any) => {
 
     // Switch to this conversation
     resetEmbedThinkingOverrides();
+    // 目标会话可能正是「仍在跑」的那一轮：先清掉上一轮残留的「输出已完成」标记，
+    // 否则 remoteRunBusy 会被它压制——进来后既没有「正在处理」也没有停止按钮。
+    // 用 resetRunStatus 而非 markOutputCompleted，理由同换身份路径。
+    resetRunStatus();
     conversationId.value = target;
     persistConversationId(target);
     updateActiveConversationOnServer(target);
@@ -7401,6 +7570,11 @@ const runHeaderMoreBrowser = () => {
   closeHeaderMore();
   toggleBrowserPanel();
 };
+// 移动端「进行中的会话」：顶部栏放不下，收进「更多」后用 modal 变体展示。
+const runHeaderMoreActiveRuns = () => {
+  showHeaderMore.value = false;
+  showActiveRuns.value = true;
+};
 // 「我的账号」：跳 /embed/personal。它与 /embed/chat 同 layout、同为 public，
 // 在 iframe / 小程序 web-view 内可直接做 SPA 内切换，不需要走 postMessageToHost。
 // 注意**不能**跳 /dashboard/personal——那是门户路由，嵌入场景下会被守卫拦到登录页。
@@ -7414,6 +7588,9 @@ const runHeaderMoreAccount = () => {
 const handleHeaderMoreGlobalClick = (event: MouseEvent) => {
   if (showHeaderMore.value && headerMoreRef.value && !headerMoreRef.value.contains(event.target as Node)) {
     showHeaderMore.value = false;
+  }
+  if (showActiveRuns.value && activeRunsRef.value && !activeRunsRef.value.contains(event.target as Node)) {
+    showActiveRuns.value = false;
   }
 };
 onMounted(() => document.addEventListener('click', handleHeaderMoreGlobalClick));
@@ -10773,6 +10950,8 @@ const onUnmountHandlers = ref<{
 // Lifecycle
 onMounted(() => {
   console.log("[LifeCycle] EmbedChat mounted. App Version: 2026-01-20-v1");
+  // 顶部「进行中的会话」角标：进页面就开始低频轮询（15s），面板打开时自动提速到 3s。
+  startActiveRunsWatch();
   // 没有用户维度的会话/草稿键一律清掉：它们没有身份边界，留着只会被误读。
   purgeLegacyConversationStorage();
   purgeLegacyStreamSnapshots();
@@ -11113,8 +11292,10 @@ onMounted(() => {
       void refreshCurrentRunStatus();
       syncLatestSessionHistory(1, 15);
       scheduleRunRecoverySync();
+      startActiveRunsWatch();
     } else {
       stopRemoteRunPolling();
+      stopActiveRunsWatch();
       clearVisibilitySyncTimer();
       clearRunRecoveryTimer();
       // hidden 只暂停续显轮询：游标保留，切回时从原处接着拉。
@@ -11131,6 +11312,7 @@ onMounted(() => {
   (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onVisibilityChange, clearVisibilitySyncTimer, clearRunRecoveryTimer, clearStreamReplayTimer };
 });
 onUnmounted(() => {
+  stopActiveRunsWatch();
   // 卸载前把在途草稿强制落盘：重建后先还原已输出的思考与正文，等落库终态再覆盖。
   maybePersistStreamSnapshot(true);
   // 组件已卸载：终止仍在读取的幽灵流（服务端 producer 不受影响，仍会跑完落库并

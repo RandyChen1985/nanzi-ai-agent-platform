@@ -1031,6 +1031,25 @@ class ConversationRunStatusResponse(BaseModel):
     sandbox_degraded_message: Optional[str] = None
 
 
+class ActiveConversationRunItem(BaseModel):
+    """一条仍在运行的会话记录。"""
+
+    conversation_id: str
+    trace_id: Optional[str] = None
+    ttl_seconds: Optional[int] = None
+    # active=续约正常；stale=续约已停（疑似僵死或孤儿锁）
+    state: str = "active"
+
+
+class ActiveConversationRunsResponse(BaseModel):
+    """当前用户进行中的会话列表。"""
+
+    ttl_seconds: int = 0
+    # 剩余 TTL 低于该值即判为 stale，随锁 TTL 配置变化，前端不自行推算
+    stale_before_ttl_seconds: int = 0
+    items: List[ActiveConversationRunItem] = Field(default_factory=list)
+
+
 @router.get(
     "/conversation/{conversation_id}/run-status",
     response_model=StandardResponse[ConversationRunStatusResponse],
@@ -1062,6 +1081,28 @@ async def get_conversation_run_status(
         status["sandbox_degraded"] = False
         status["sandbox_degraded_message"] = None
     return StandardResponse(data=ConversationRunStatusResponse(**status))
+
+
+@router.get(
+    "/active-runs",
+    response_model=StandardResponse[ActiveConversationRunsResponse],
+    summary="列出当前用户进行中的会话",
+    description=(
+        "读取当前身份在 Redis 中的会话运行锁，返回仍在运行的会话列表，"
+        "并区分「续约正常」与「疑似僵死（续约已停的孤儿锁）」。"
+        "供 EmbedChat 顶部「进行中的会话」面板展示与强制终止。纯只读，不修改任何锁。"
+    ),
+)
+async def list_active_conversation_runs(
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.ai.runtime.session_run_lane import conversation_run_lane
+
+    # 注意路径必须是 /chat/active-runs：写成 /conversation/active-runs 会被
+    # /conversation/{conversation_id} 抢先匹配。
+    user_id = _require_chat_user_id(user_info)
+    snapshot = await conversation_run_lane.list_active(user_id=user_id)
+    return StandardResponse(data=ActiveConversationRunsResponse(**snapshot))
 
 
 class ConversationStreamEventsResponse(BaseModel):
