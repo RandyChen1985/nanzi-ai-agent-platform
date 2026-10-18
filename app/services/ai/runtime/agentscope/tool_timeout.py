@@ -162,3 +162,37 @@ async def apply_configured_agent_tool_timeout(
         await load_agent_max_toolcall_timeout(),
         agent_timeout=agent_timeout,
     )
+
+
+#: 沙箱 gateway 单次请求超时的下限。AgentScope 在
+#: ``_sandboxed_base`` 里把该值硬编码为 30s；即使平台把
+#: ``agent_max_toolcall_timeout`` 调得更小，也保留 30s，避免把
+#: 健康检查/短命令的传输超时压得过紧。
+MIN_SANDBOX_GATEWAY_TIMEOUT = 30.0
+
+
+async def apply_sandbox_gateway_timeout(workspace: Any) -> float | None:
+    """把沙箱 gateway 的传输超时对齐到 ``agent_max_toolcall_timeout``。
+
+    沙箱内的 Bash/Read/Write 工具都经 ``GatewayClient.exec_request``
+    转发：每条请求在沙箱里跑一次 shim，再由 shim 调用 ``/mcps/...``
+    等到工具真正执行完。AgentScope 把这次等待硬编码为 30s，所以命令
+    只要超过 30s（例如 ``sleep 300``）就会以
+    ``gateway shim exited with -1: timed out`` 失败，与平台侧的工具
+    调用超时配置无关。这里在 workspace 初始化完成后覆盖该属性，
+    让长命令按平台配置的上限执行。
+
+    Returns:
+        实际写入的超时秒数；workspace 没有 gateway（本地/SSH 策略）时
+        返回 ``None``。
+    """
+    gateway = getattr(workspace, "_gateway", None)
+    if gateway is None:
+        return None
+    configured = await load_agent_max_toolcall_timeout()
+    timeout = max(float(configured), MIN_SANDBOX_GATEWAY_TIMEOUT)
+    try:
+        gateway.timeout = timeout
+    except Exception:
+        return None
+    return timeout

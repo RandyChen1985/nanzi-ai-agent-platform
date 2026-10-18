@@ -18,6 +18,9 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Iterable
 
+from app.services.ai.runtime.agentscope.tool_timeout import (
+    apply_sandbox_gateway_timeout,
+)
 from app.services.ai.tools.registry import AGENTSCOPE_BUILTIN_TOOL_ALIASES
 
 logger = logging.getLogger(__name__)
@@ -2224,6 +2227,7 @@ async def _policy_docker_workspace(
                 str(exc),
                 reason_code=reason_code,
             ) from exc
+        await apply_sandbox_gateway_timeout(workspace)
 
         # initialize() 里 AgentScope 已按最新 skill_paths 重新打包 seed；这一步把
         # 公共技能同步进（首次装备时就冻结的）既有分区，再记录指纹。顺序不能颠倒：
@@ -3500,6 +3504,7 @@ async def _policy_e2b_workspace(
     except Exception:
         await _close_workspace_safely(workspace, reason="E2B initialization failure")
         raise
+    await apply_sandbox_gateway_timeout(workspace)
     return workspace
 
 
@@ -3618,6 +3623,7 @@ async def _policy_ssh_workspace(
     except Exception:
         await _close_workspace_safely(workspace, reason="SSH initialization failure")
         raise
+    await apply_sandbox_gateway_timeout(workspace)
     return workspace
 
 
@@ -3826,6 +3832,7 @@ async def _policy_k8s_workspace(
     except Exception:
         await _close_workspace_safely(workspace, reason="K8s initialization failure")
         raise
+    await apply_sandbox_gateway_timeout(workspace)
 
     workspace._platform_sandbox_policy = SANDBOX_POLICY_K8S
     workspace._platform_execution_backend = SANDBOX_POLICY_K8S
@@ -3996,6 +4003,9 @@ class LazySandboxWorkspaceProxy:
 
                 self._real_sandbox_ws = ws
                 self._sandbox_cache_key = s_key
+                # 缓存命中时不会重新走 initialize()，这里再对齐一次 gateway 超时，
+                # 保证配置变更后旧沙箱也按最新的 agent_max_toolcall_timeout 等待。
+                await apply_sandbox_gateway_timeout(ws)
 
                 # 挂载配置
                 if (
