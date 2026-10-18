@@ -121,12 +121,10 @@
                             {{ branding.default_agent_name || 'NanZi · AI' }}
                         </template>
                     </span>
-                    <span v-if="isProcessing" class="flex h-1.5 w-1.5 relative">
-                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                        <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary"></span>
-                    </span>
+                    <!-- 锁定徽章原本与状态点靠 v-if / v-else-if 二选一；点移到副标题行后，
+                         互斥条件必须显式写出来，否则生成中会同时出现徽章和状态点。 -->
                     <span
-                        v-else-if="headerExpertLabel"
+                        v-if="headerExpertLabel && !isProcessing"
                         class="inline-flex items-center px-1.5 py-0.2 rounded-full bg-primary/10 text-primary text-[9px] font-semibold uppercase tracking-wider shrink-0"
                     >
                         锁定
@@ -134,6 +132,12 @@
                 </div>
                 <div class="text-[11px] text-gray-400 dark:text-gray-500 flex items-center gap-1.5 min-w-0 leading-tight mt-0.5">
                     <template v-if="isProcessing">
+                        <!-- 状态点贴在状态描述前（用户要求）：它修饰的是「这个状态正在发生」，
+                             而不是主标题的装饰。 -->
+                        <span class="flex h-1.5 w-1.5 relative shrink-0">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary"></span>
+                        </span>
                         <span class="truncate">正在处理您的请求...</span>
                     </template>
                     <template v-else-if="headerExpertLabel">
