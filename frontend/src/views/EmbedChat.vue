@@ -156,8 +156,11 @@
                     </template>
                     <!-- 进行中的会话：挂在副标题后面（不占右侧按钮组），角标提示还有几个会话在跑。
                          注意本行**不能**再用 truncate——overflow:hidden 会把下面的浮层裁掉，
+                         桌面与移动端**共用**这一个入口：移动端原本单独占一个 44px 按钮，
+                         与同样 44px 的「更多」并排，16px 图标被两圈 padding 撑出约 36px
+                         视觉空白，看起来「离得远」，因此并进副标题行。
                          文字截断交给上面各 span 自己处理。 -->
-                    <div v-if="!isMobile" ref="activeRunsRef" class="relative inline-flex shrink-0">
+                    <div ref="activeRunsRef" class="relative inline-flex shrink-0">
                         <button
                             type="button"
                             class="relative -my-0.5 rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary dark:hover:bg-gray-800"
@@ -340,45 +343,6 @@
                   打开服务端浏览器
                 </div>
               </div>
-            </div>
-
-            <!-- 移动端「进行中的会话」：与桌面同一个入口，但收在「更多」里的话，用户得点开
-                 菜单才知道有没有会话在跑，所以提到「更多」之前独立成一个图标按钮。
-                 复用同一个 showActiveRuns / toggleActiveRuns，浮层走下方 v-if="isMobile" 的
-                 modal 变体（打开时顺带把轮询切到 3s，见 watch(showActiveRuns)）。 -->
-            <div v-if="isMobile" class="relative inline-flex items-center">
-              <button
-                type="button"
-                @click="toggleActiveRuns"
-                class="relative flex min-h-11 min-w-11 items-center justify-center rounded-lg transition-all hover:bg-gray-100 hover:text-primary dark:hover:bg-gray-800"
-                :class="showActiveRuns ? 'text-primary bg-gray-100 dark:bg-gray-700' : 'text-gray-400'"
-                :aria-label="activeRunsAriaLabel"
-                :aria-expanded="showActiveRuns"
-              >
-                <template v-if="activeRunsCount">
-                    <!-- 有会话在跑：Loader 旋转，用动效表达「正在运行」。 -->
-                    <svg class="h-4 w-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 12a9 9 0 1 1-6.219-8.56" />
-                    </svg>
-                </template>
-                <template v-else>
-                    <!-- 空闲：Radio 信号波，静态。 -->
-                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
-                    <circle cx="12" cy="12" r="2" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.1 4.9C23 8.8 23 15.1 19.1 19" />
-                    </svg>
-                </template>
-                <span
-                  v-if="activeRunsCount"
-                  class="absolute right-1.5 top-1.5 flex h-3.5 min-w-[0.875rem] items-center justify-center rounded-full px-0.5 text-[8px] font-semibold leading-none text-white ring-1 ring-white dark:ring-gray-900"
-                  :class="activeRunsStaleCount ? 'bg-amber-500' : 'bg-primary'"
-                >
-                  {{ activeRunsCount > 99 ? '99+' : activeRunsCount }}
-                </span>
-              </button>
             </div>
 
             <!-- 移动端「更多」：锚定弹层（与输入区「+」弹层同形态，不用底部抽屉）。

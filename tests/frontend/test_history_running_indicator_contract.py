@@ -82,32 +82,33 @@ def test_current_conversation_is_marked_running_without_waiting_for_the_poll():
     assert "if (conversationId.value && remoteRunActive.value) ids.add(conversationId.value);" in body
 
 
-def test_mobile_shows_the_entry_before_the_more_button():
-    """移动端此前只能从「更多」菜单进入，用户点开才知道有没有会话在跑。"""
+def test_mobile_reuses_the_subtitle_entry_instead_of_a_separate_button():
+    """移动端不再单独占一个 44px 按钮。
+
+    原设计把入口放在「更多」之前，但它和「更多」都是 44px 热区，16px 图标被两圈 padding
+    撑出约 36px 视觉空白，看起来「离得远」。现在并入副标题行，与桌面共用同一个入口。
+    """
     source = _embed()
-    icon = source.index('v-if="isMobile" class="relative inline-flex items-center"')
-    more = source.index('ref="headerMoreRef"')
-    assert icon < more, "移动端入口必须排在「更多」之前"
-    mobile_block = source[icon:more]
-    assert "toggleActiveRuns" in mobile_block
-    assert ":aria-label=\"activeRunsAriaLabel\"" in mobile_block
-    # 触控热区下限 44px，与「更多」一致。
-    assert "min-h-11 min-w-11" in mobile_block
+    ref = source.index('ref="activeRunsRef"')
+    entry_tag = source[source.rindex("<div", 0, ref) : source.index(">", ref)]
+    assert "!isMobile" not in entry_tag, "副标题行入口仍在排除移动端"
+    hits = source.count('@click="toggleActiveRuns"')
+    assert hits == 1, f"除副标题行外还有第二处触发入口（{hits} 处）"
 
 
 def test_mobile_entry_reuses_the_same_open_state_and_modal_popover():
     """复用同一个 showActiveRuns：否则点图标与点菜单项会各开一层浮层。"""
     source = _embed()
-    icon = source.index('v-if="isMobile" class="relative inline-flex items-center"')
-    mobile_block = source[icon : source.index('ref="headerMoreRef"')]
-    assert "showActiveRuns" in mobile_block
+    start = source.index('ref="activeRunsRef"')
+    assert "showActiveRuns" in source[start : start + 2000]
     assert re.search(r'v-if="isMobile"[\s\S]{0,600}?variant="modal"', source), "移动端浮层不是 modal 变体"
     assert re.search(r'v-if="isMobile"[\s\S]{0,400}?:open="showActiveRuns"', source), "移动端浮层没有接同一个 open 状态"
 
 
 def test_mobile_entry_keeps_a_count_badge():
+    """角标随入口一起并进副标题行，数量提示不能丢。"""
     source = _embed()
-    icon = source.index('v-if="isMobile" class="relative inline-flex items-center"')
-    mobile_block = source[icon : source.index('ref="headerMoreRef"')]
-    assert 'v-if="activeRunsCount"' in mobile_block
-    assert "activeRunsStaleCount ? 'bg-amber-500' : 'bg-primary'" in mobile_block
+    start = source.index('ref="activeRunsRef"')
+    block = source[start : source.index("</button>", start)]  # 角标在按钮内
+    assert 'v-if="activeRunsCount"' in block
+    assert "activeRunsStaleCount ? 'bg-amber-500' : 'bg-primary'" in block
