@@ -166,9 +166,22 @@
                             :aria-expanded="showActiveRuns"
                             @click="toggleActiveRuns"
                         >
-                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                            </svg>
+                            <template v-if="activeRunsCount">
+                                <!-- 有会话在跑：Loader 旋转，用动效表达「正在运行」。 -->
+                                <svg class="h-3.5 w-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 12a9 9 0 1 1-6.219-8.56" />
+                                </svg>
+                            </template>
+                            <template v-else>
+                                <!-- 空闲：Radio 信号波，静态。 -->
+                                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+                                <circle cx="12" cy="12" r="2" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.1 4.9C23 8.8 23 15.1 19.1 19" />
+                                </svg>
+                            </template>
                             <span
                                 v-if="activeRunsCount"
                                 class="absolute -right-1 -top-1 flex h-3.5 min-w-[0.875rem] items-center justify-center rounded-full px-0.5 text-[8px] font-semibold leading-none text-white ring-1 ring-white dark:ring-gray-900"
@@ -342,9 +355,22 @@
                 :aria-label="activeRunsAriaLabel"
                 :aria-expanded="showActiveRuns"
               >
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                </svg>
+                <template v-if="activeRunsCount">
+                    <!-- 有会话在跑：Loader 旋转，用动效表达「正在运行」。 -->
+                    <svg class="h-4 w-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                </template>
+                <template v-else>
+                    <!-- 空闲：Radio 信号波，静态。 -->
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+                    <circle cx="12" cy="12" r="2" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.1 4.9C23 8.8 23 15.1 19.1 19" />
+                    </svg>
+                </template>
                 <span
                   v-if="activeRunsCount"
                   class="absolute right-1.5 top-1.5 flex h-3.5 min-w-[0.875rem] items-center justify-center rounded-full px-0.5 text-[8px] font-semibold leading-none text-white ring-1 ring-white dark:ring-gray-900"
@@ -428,7 +454,12 @@
                       class="flex w-full items-center gap-3 px-3 py-2 text-sm text-gray-700 transition-all duration-150 hover:bg-primary/10 hover:text-primary dark:text-gray-200 dark:hover:bg-primary/20"
                       @click="runHeaderMoreActiveRuns"
                     >
-                      <svg class="h-5 w-5 shrink-0 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+                      <template v-if="activeRunsCount"><svg class="h-5 w-5 shrink-0 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 12a9 9 0 1 1-6.219-8.56" /></svg></template><template v-else><svg class="h-5 w-5 shrink-0 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+<circle cx="12" cy="12" r="2" />
+<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.1 4.9C23 8.8 23 15.1 19.1 19" />
+</svg></template>
                       <span class="flex-1 text-left font-medium">进行中的会话</span>
                       <span v-if="activeRunsCount" class="shrink-0 rounded-full px-1.5 text-[10px] font-semibold text-white" :class="activeRunsStaleCount ? 'bg-amber-500' : 'bg-primary'">{{ activeRunsCount > 99 ? '99+' : activeRunsCount }}</span>
                     </button>
@@ -6397,6 +6428,22 @@ const {
   setOpen: setActiveRunsOpen,
 } = createActiveRunsController(fetchActiveRuns);
 
+// 「进行中的会话」角标原本只靠轮询（浮层关闭时 15s），刚发消息、刚答完都会滞后，
+// 而这两个时刻恰恰是用户最会抬头看角标的时刻。这里监听本会话「是否在处理」的翻转，
+// 延迟 500ms 补一次刷新：开始 → 角标 +1，结束 → 角标 -1。
+// 监听 isProcessing（而不是在各处收尾点插调用）是因为它的翻转覆盖了发送、权限确认、
+// 固化报表、中止、错误等全部路径；延迟则是因为后端运行锁的建立/释放与前端状态不同步，
+// 立刻查会拿到旧值。轮询仍然保留——别的会话的起落只能靠它。
+let activeRunsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleActiveRunsRefresh(delayMs = 500) {
+  if (activeRunsRefreshTimer !== null) clearTimeout(activeRunsRefreshTimer);
+  activeRunsRefreshTimer = setTimeout(() => {
+    activeRunsRefreshTimer = null;
+    void refreshActiveRuns();
+  }, delayMs);
+}
+watch(isProcessing, () => scheduleActiveRunsRefresh());
+
 // 标题尽力映射：活跃会话通常就在已加载的会话列表里；映射不到则退化为 ID 短码，
 // 至少让用户能靠会话 ID 与「当前会话」标记定位。
 const activeRunTitleIndex = computed(() => {
@@ -11492,6 +11539,7 @@ onMounted(() => {
   (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onVisibilityChange, clearVisibilitySyncTimer, clearRunRecoveryTimer, clearStreamReplayTimer };
 });
 onUnmounted(() => {
+  if (activeRunsRefreshTimer !== null) clearTimeout(activeRunsRefreshTimer);
   stopActiveRunsWatch();
   // 卸载前把在途草稿强制落盘：重建后先还原已输出的思考与正文，等落库终态再覆盖。
   maybePersistStreamSnapshot(true);
