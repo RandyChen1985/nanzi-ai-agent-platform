@@ -1,0 +1,392 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.19.0
+  风格：深蓝渐变科技风 / 现代化精编版（卡片式阴影、微渐变、导读浅析）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等排版工具）
+  2. 封面图可在微信公众号后台直接使用 docs/release/1.0.19/release-cover-info.md 中的素材生成
+  3. 全部采用内联 style 样式，兼容微信图文排版规范
+-->
+
+<section style="box-sizing:border-box;max-width:760px;margin:0 auto;padding:0 2px;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;word-break:break-word;overflow-wrap:break-word;">
+
+  <!-- 标题区：科技感深蓝微渐变 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:linear-gradient(135deg,#060c1f 0%,#0f172a 48%,#1e293b 100%);box-shadow:0 4px 24px rgba(6,182,212,0.15);border-radius:6px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#38bdf8;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.19.0</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#cbd5e1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">细粒度资源限定 · 微信小程序微端 · 沙箱孤儿自动对账 · 多会话并行防串台 · cURL 导入向导 · 全站 File Viewer 预览</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#0f172a;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#0f172a;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与商用。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、持续打磨生产级 AI 智能体技术栈。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #0284c7;background:#f0f9ff;border-radius:0 4px 4px 0;">
+    <p style="margin:0;font-size:14px;color:#0369a1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#0c4a6e;">GitHub 仓库：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 24px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#0f172a;">v1.0.19.0</strong> 里程碑版本！这是一次以<strong>智能体级细粒度资源限定（用户/角色 × 智能体排除机制）、微信小程序微端生态（静默开户 / 内嵌 EmbedChat）、沙箱孤儿后台自动对账与技能生命周期治理、多会话并发防串台与死锁自愈机制、API 工具向导模式（cURL 导入与业务分组治理）、全站 File Viewer 预览与产物确定性签名下载</strong>为核心驱动，并全面完成<strong>全站 27 处悬浮遮罩规范化收敛、模型手动切换白名单管控、会话硬超时看门狗系统配置化及 ECharts 窄容器图例自适应</strong>的生产级加固版本。
+    </p>
+    <p style="margin:0;font-size:14px;color:#64748b;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">8edb8107</code> 至 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">eff02898</code>，共 <strong>143 个提交</strong>（120 个非 Merge 提交），变更 <strong>526 个文件</strong>，<strong>98,137 行新增</strong>、<strong>6,211 行删除</strong>。
+    </p>
+  </section>
+
+  <!-- 升级提示 -->
+  <section style="margin:0 0 28px 0;padding:14px 16px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 4px 4px 0;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#92400e;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      ⚠️ 升级核心须知 (Upgrade Notes)
+    </p>
+    <ul style="margin:0;padding-left:18px;font-size:13px;color:#78350f;line-height:1.8;">
+      <li style="margin-bottom:6px;"><strong>数据库迁移必跑</strong>：新增 8 组数据库迁移（MySQL <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">V165 ~ V172</code> / PostgreSQL <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">V66 ~ V73</code>），涉及 API 工具业务分组、版本模型锁、权限表字段扩列、智能体级权限作用域、沙箱孤儿对账配置、微信小程序绑定表、微端角色与开关、会话生产看门狗超时配置。</li>
+      <li style="margin-bottom:6px;"><strong>沙箱孤儿对账说明</strong>：新增 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">sandbox_orphan_reconcile</code> 开关（默认开启），适用于单副本环境自动回收超 30 分钟无主遗留容器/Pod；多副本集群部署必须关闭，以防副本间误判互删。</li>
+      <li style="margin-bottom:6px;"><strong>微信小程序端点接入</strong>：如需开启小程序微端，请在系统配置中开启 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">miniprogram_enabled</code>，并在后台「角色管理」为 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">miniprogram_user</code> 角色勾选允许访问的智能体。</li>
+      <li><strong>权限缓存平滑更新</strong>：修改禁用资源权限后将自动增量失效本地权限缓存，无须像旧版本一样强制注销用户会话。</li>
+    </ul>
+  </section>
+
+  <!-- 章节一：核心特性 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心特性 (Key Features)
+    </p>
+
+    <!-- 特性卡片 1 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #0284c7;padding-left:10px;">
+        01 · 智能体级细粒度资源限定与防御加固
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        告别“一刀切”的粗放授权，构建严密的维度排除矩阵：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>智能体级排除机制</strong>：在既有全局禁用的基础上，支持「用户/角色 × 特定智能体」的作用域组合。管理员可精准限定某个角色仅在指定智能体内禁用特定工具（系统工具、API 工具、MCP 工具）或公共技能，未配置则全局兜底生效。</li>
+        <li><strong>「禁用资源」管理端全面升级</strong>：整合系统工具、API 工具、MCP 工具及公共技能四页签结构；分组卡片引入黑名单高亮（有黑名单项即红色提示），一眼定位被拉黑分组；弹窗增加候选来源版本解析与分条高亮说明。</li>
+        <li><strong>底层命令与技能安全加固</strong>：统一沙箱 MCP shell 与交互终端命令禁用的单一策略源，彻底封堵只读绕过旁路；权限表资源字段扩宽至 255 字符，根除 422 报错；被禁公共技能在技能入口直观置灰只读并标明原因。</li>
+        <li><strong>模型切换权限管控</strong>：版本配置新增「允许在输入框手动切换模型」开关，关闭后彻底隐藏切换入口；支持角色/用户级「模型白名单」；模型下拉框支持快速实时搜索。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：权限管理后台「禁用资源」四页签界面、分组卡片红色命中状态、智能体版本「允许手动切换模型」配置项与模型搜索下拉框</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 2 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #3b82f6;padding-left:10px;">
+        02 · 微信小程序微端生态与移动端体验进阶
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        端到端打通移动场景与微信生态，体验如原生 App 般丝滑：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>小程序无感静默开户</strong>：提供开箱即用的小程序微端集成方案，基于微信 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">wx.login</code> 实现静默鉴权与自动开户；新增身份绑定表保证唯一性并支持 unionid 跨应用关联。</li>
+        <li><strong>微端角色安全隔离</strong>：预置 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">miniprogram_user</code> 角色种子与功能开关，智能体可见性基于白名单安全隔离，未勾选默认不可见。</li>
+        <li><strong>移动端头部收纳与紧凑弹层</strong>：移动端顶部菜单重构为紧凑弹层，无缝融入个人中心；个人中心返回浮标支持触摸拖动手势定位与边缘方向感知收起。</li>
+        <li><strong>统一底部操作抽屉</strong>：移动端聊天界面重排操作栏，外露「数据调用统计」与「上传附件」快捷入口，四组功能分组呈现，点击动作后自动平滑收起。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：微信小程序 EmbedChat 界面、移动端紧凑菜单弹层、可拖拽返回浮标与统一底部操作抽屉</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 3 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #10b981;padding-left:10px;">
+        03 · 沙箱架构韧性、技能生命周期与孤儿自动对账
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        深入容器运行底座，全面攻克容器残留与技能模板一致性：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>沙箱孤儿后台自动对账</strong>：新增系统配置 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">sandbox_orphan_reconcile</code>，后台定时扫描 Docker 容器与 K8s Pod 标签，自动回收脱离注册表且超 30 分钟的遗留沙箱，根治 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">sleep infinity</code> 容器泄漏。</li>
+        <li><strong>技能沙箱 .seed 模板隔离</strong>：会话技能快照统一收敛至平台维护的 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">.seed</code> 隐藏目录，彻底消除硬编码死路径；公共技能变更后基于指纹自动重建模板；个人技能源目录只读挂载防篡改。</li>
+        <li><strong>K8s 与 Docker 环境同构对齐</strong>：对齐 K8s 沙箱技能挂载路径与口径，补齐技能集合令牌透传与心跳守护；沙箱空闲回收时长与后端回收器统一同源，UI 浮标不再硬编码。</li>
+        <li><strong>解压防爆包与覆写安全护栏</strong>：技能压缩包解压强制校验总大小与文件数上限；打通个人技能创建覆写、审核预览与导出改名全流程。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：沙箱孤儿后台对账回收日志、沙箱技能 .seed 快照目录树、个人技能详情抽屉视口铺满效果</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 4 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #6366f1;padding-left:10px;">
+        04 · 高并发多会话防串台、运行态看板与死锁自愈
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>多会话隔离防串台</strong>：聊天端全面实现多角色会话自隔离，用户切换登录不再串台，审计改走独立端点；调试页会话指针严格绑定会话归属人。</li>
+        <li><strong>「进行中的会话」看板与强制复位</strong>：EmbedChat 顶部新增进行中会话面板与数量徽标，实时识别进行中与疑似僵死任务，支持一键切换与强制终止；历史会话点击当前会话不再重复重载，消灭在途内容冻结。</li>
+        <li><strong>看门狗硬超时系统配置化</strong>：新增 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">agent_chat_producer_hard_timeout_seconds</code> 配置（默认 600 秒），消除整轮超时与单工具超时的隐式冲突。</li>
+        <li><strong>会话交互体验进化</strong>：历史面板引入全新引导式空状态组件；空会话直接新建免弹确认框；新建会话自动中止在途生成并释放会话锁；上下文浮标在生成中保持可点击。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：EmbedChat 顶部「进行中的会话」悬浮看板、强制终止会话按钮与操作反馈、历史面板空状态引导组件</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 5 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #06b6d4;padding-left:10px;">
+        05 · API 工具向导模式、分组治理与 Schema 净化
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>添加工具「向导模式」</strong>：支持直接粘贴 cURL 命令行，系统自动解析 URL、方法、Header 及参数生成标准 Schema，支持在线填参“先试跑”，联调成功一键入库。</li>
+        <li><strong>API 工具业务分组治理</strong>：数据库新增 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">group_name</code> 字段，智能体编排「工具能力」步骤支持分组视图、批量展开/折叠与分组治理入口，告别所有自定义工具堆积在「其他扩展」的混乱。</li>
+        <li><strong>参数可视化编辑与坏 Schema 净化</strong>：参数定义支持可视化表格编辑；Schema 净化器自动补齐根层 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">required</code> 字段，修复坏 Schema 废掉整个大模型请求的问题。</li>
+        <li><strong>MCP 编辑态凭据复用与 SSE 状态防护</strong>：编辑 MCP 工具连接测试时自动复用已保存凭据（地址变更才重输）；SSE 握手成功前不提前发布会话。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：添加工具向导模式（粘贴 cURL 自动解析、在线试跑）、API 工具业务分组折叠视图与参数可视化编辑表格</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 6 -->
+    <section style="margin:0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #f59e0b;padding-left:10px;">
+        06 · 全站 File Viewer 预览、产物签名与弹层规范化
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>全站统一接入 File Viewer</strong>：覆盖工作空间、画布、知识库文档列表与 RAG 引用详情；支持代码与文档一键预览，保留源码标签页自由切换；工作空间支持大文件分块流式上传与优雅进度浮层。</li>
+        <li><strong>产物（Artifacts）确定性签名下载</strong>：生成的代码、表格、文档等产物支持在线预览与下载；下载 Token 采用确定性签名，修复裸文件名被误当域名的正则问题。</li>
+        <li><strong>全站弹层遮罩 Teleport 治理</strong>：全面清理历史遗留的 6 处悬浮 overlay 和 21 处原生弹窗，两份棘轮清单清零；统一挂载至 body 消除容器裁剪错乱；通用 Modal 新增全屏最大化能力。</li>
+        <li><strong>视觉与图表细节打磨</strong>：深度思考步骤折叠态增加摘要与字数胶囊；ECharts 图例默认开启滚动布局并优化居中，彻底消除窄容器下遮挡 X 轴刻度的问题；时间线入参独立折叠并前置。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：画布与知识库 File Viewer 文档预览界面、工作空间分块上传浮层、深度思考字数胶囊与全屏最大化 Modal</p>
+      </section>
+    </section>
+  </section>
+
+  <!-- 章节二：Bug Fixes -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🐛 重点缺陷修复 (Bug Fixes)
+    </p>
+
+    <!-- 缺陷分类 1 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🧠 AI 编排 / 权限 / 运行时
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">MCP 工具调用名口径不一致</strong>：统一全链路 MCP 工具调用名称解析，修复「未在本智能体注册」误拦截。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">工具坏 Schema 废掉整轮请求</strong>：增加 Schema 自动净化器，自动补齐根层 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">required</code> 并聚合警告日志。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">模型调用失败无原始错误记录</strong>：补全非 2xx 与流式中断时的原始错误留痕，便于精准排查供应商故障。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">跨用例 Redis 事件循环泄漏</strong>：修复 runtime 与 executors 合跑时跨 event loop 导致的连接污染。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">RAG 引用详情刷新丢失</strong>：知识库引用详情写入 Redis 旁路存储，刷新后仍可展开。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">委派场景引用信息丢失</strong>：修复委派场景下引用详情被过滤白名单误丢的问题，双路径补全 citation 转发。</p>
+    </section>
+
+    <!-- 缺陷分类 2 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        ⚡ 会话并发 / 隔离 / 稳定性
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">跨用户登录会话串台</strong>：聊天端全面实现多角色会话自隔离，管理员审计走独立端点，杜绝会话混用。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">多会话切换导致死锁与冻结</strong>：重构会话切换与响应信封判定状态机，点击当前历史会话不再重复重载，修复在途内容冻结。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">新会话输入框被旧生成锁定</strong>：新建会话时主动停掉在途流式任务并释放会话锁，免去确认弹窗即刻进入输入态。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">看门狗与单工具超时隐式冲突</strong>：将 producer 硬超时看门狗外化为系统配置，并消除二次范围判定的边界缺陷。</p>
+    </section>
+
+    <!-- 缺陷分类 3 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        📦 沙箱环境 / 技能系统
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">沙箱孤儿僵死容器累积</strong>：实现容器/Pod 标签后台对账回收，自动清理脱离注册表的孤儿沙箱。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">沙箱技能硬编码路径失效</strong>：重构为平台维护的 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">.seed</code> 快照目录，公共技能变更后基于指纹自动重建模板。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">K8s 沙箱配置与 Docker 脱节</strong>：拉平 K8s 技能集合令牌传递、挂载路径与执行期心跳守护。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">技能解压风险防御</strong>：解压流程强制校验总文件大小上限与文件数上限，防御恶意解压炸弹。</p>
+    </section>
+
+    <!-- 缺陷分类 4 -->
+    <section style="margin:0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        💻 前端交互 / 弹层 / 图表
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">全站 27 处弹层遮罩受局部容器限制</strong>：收敛 6 处 overlay 与 21 处原生弹窗，统一 Teleport 挂载到 body 铺满视口。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">ECharts 窄容器底部图例遮挡 X 轴</strong>：默认启用滚动图例，校准 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">legend.top="bottom"</code> 布局判定。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">雪花 ID 精度在前端丢失</strong>：用户扩展数据字段中的长整型与雪花 ID 统一序列化为字符串处理。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">内嵌网页预览被名单误拦截</strong>：内嵌可行性改为由服务端实测 HTTP 响应头判定，放行正常页面。</p>
+    </section>
+  </section>
+
+  <!-- 章节三：数据库与配置变更 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库迁移清单
+    </p>
+
+    <!-- 数据库迁移对照表格 -->
+    <p style="margin:0 0 10px 0;font-size:12px;color:#94a3b8;line-height:1.6;">📱 下方表格较宽，移动端可<b>左右滑动</b>查看完整内容</p>
+    <section style="margin:0 0 18px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #e2e8f0;border-radius:4px;">
+      <table style="width:100%;min-width:680px;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:1.7;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <colgroup>
+          <col style="width:120px;">
+          <col style="width:320px;">
+          <col style="width:240px;">
+        </colgroup>
+        <thead>
+          <tr style="background:#f1f5f9;">
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">版本号 (MySQL / PG)</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">变更核心说明与影响</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">涉及脚本文件</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V165 / V66</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">sys_api_tools</code> 新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">group_name</code> 业务分组字段，支持自定义 API 工具按业务域归类管理</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V165-add_api_tool_group_name.sql<br>
+              PG: V66-add_api_tool_group_name.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V166 / V67</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">ai_agent_versions</code> 新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">allow_model_switch</code> 开关，支持锁定版本编排模型并隐藏前端切换入口</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V166-add_allow_model_switch_to_agent_versions.sql<br>
+              PG: V67-add_allow_model_switch_to_agent_versions.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V167 / V68</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">ai_agent_resource_permissions</code> 表 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">resource_id</code> 扩宽至 VARCHAR(255)，根除超长名称 422 校验报错</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V167-widen_resource_permission_resource_id.sql<br>
+              PG: V68-widen_resource_permission_resource_id.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V168 / V69</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">ai_agent_resource_permissions</code> 新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">agent_id</code> 作用域列及复合索引，实现「用户/角色 × 智能体」排除机制</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V168-add_agent_scope_to_resource_permissions.sql<br>
+              PG: V69-add_agent_scope_to_resource_permissions.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V169 / V70</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">sandbox_orphan_reconcile</code> 开关（默认开启），支持 Docker/K8s 沙箱孤儿定时自动对账回收</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V169-add-sandbox-orphan-reconcile-config.sql<br>
+              PG: V70-add-sandbox-orphan-reconcile-config.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V170 / V71</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新建 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">ai_agent_wechat_bindings</code> 微信身份绑定表，建立 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">(appid, openid)</code> 唯一映射</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V170-create_wechat_bindings.sql<br>
+              PG: V71-create_wechat_bindings.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V171 / V72</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">预置 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">miniprogram_user</code> 角色种子，并在系统配置新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">miniprogram_enabled</code> 功能开关</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V171-seed_miniprogram_role_and_config.sql<br>
+              PG: V72-seed_miniprogram_role_and_config.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V172 / V73</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">agent_chat_producer_hard_timeout_seconds</code> 配置（默认 600 秒），整轮看门狗硬超时外化为系统配置</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V172-add-producer-hard-timeout-config.sql<br>
+              PG: V73-add-producer-hard-timeout-config.sql
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7;">
+      💡 升级提示：MySQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod/apply-sql.sh</code>，PostgreSQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod-pg/apply-sql.sh</code>，具备完整的幂等性检查、断点续跑与结构校验。
+    </p>
+  </section>
+
+  <!-- 章节四：平滑升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📖 平滑升级指南 (Upgrade Guide)
+    </p>
+    <p style="margin:0 0 14px 0;font-size:14px;color:#334155;line-height:1.8;">
+      遵循以下标准步骤即可平滑无缝升级至 <strong style="color:#0f172a;">v1.0.19.0</strong>。请务必注意：本版本新增 8 组数据库迁移必须执行。
+    </p>
+
+    <!-- 方式一：源码拉取升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式一：源码拉取升级（开发与虚机部署）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 同步拉取主分支最新代码</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">git fetch origin &amp;&amp; git checkout main &amp;&amp; git pull origin main</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 执行数据库结构平滑迁移 (MySQL / PG)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 更新依赖环境并启动本地服务</p>
+        <p style="margin:0;color:#38bdf8;">poetry install --no-root &amp;&amp; ./dev.sh</p>
+      </section>
+    </section>
+
+    <!-- 方式二：Docker 容器化升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式二：Docker 容器化升级（生产环境推荐）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 执行数据库增量升级 (宿主或临时容器)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 导入官方 Release 镜像归档（x86_64 / ARM64 按架构选择）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.19.0_linux-amd64_*.tar</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.19.0_linux-arm64_*.tar</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 重启容器服务</p>
+        <p style="margin:0;color:#38bdf8;">cd docker &amp;&amp; ./start-nanzi-ai-agent.sh</p>
+      </section>
+    </section>
+
+    <!-- 方式三：沙箱构建与运维 CLI -->
+    <section style="margin:0 0 12px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式三：沙箱构建与运维 CLI（若启用沙箱）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># Docker 沙箱：环境预检与镜像构建</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash sandbox/docker/build-docker-sandbox-image.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：集群就绪与 RBAC 权限健康检查</p>
+        <p style="margin:0;color:#38bdf8;">bash k8s_deploy/nanzi-k8s.sh health</p>
+      </section>
+    </section>
+  </section>
+
+  <!-- 结语 -->
+  <section style="margin:24px 0 10px 0;text-align:center;">
+    <p style="margin:0 0 8px 0;font-size:15px;color:#0f172a;font-weight:bold;">
+      致敬每一位在生产级 AI 道路上砥砺前行的开发者！
+    </p>
+    <p style="margin:0;font-size:13.5px;color:#64748b;line-height:1.8;">
+      欢迎在 GitHub Star 关注我们，参与社群交流与代码共建。
+    </p>
+  </section>
+
+</section>
