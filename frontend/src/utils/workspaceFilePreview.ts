@@ -1,6 +1,7 @@
 import axios from '@/utils/axios'
 import { copyToClipboard } from './clipboard'
 import { buildWorkspaceDownloadUrl } from './workspaceDownloadUrl'
+import { readErrorDetail } from './httpErrorDetail'
 import type { CanvasPanelData, WorkspaceCanvasType } from '@/types/canvas'
 import {
   IMAGE_EXTENSIONS,
@@ -323,14 +324,16 @@ export async function downloadWorkspaceFile(options: {
   } catch (err: any) {
     console.error('下载工作空间文件失败:', err)
     let errMsg = '下载文件失败'
-    if (err.response?.data?.detail) {
-      errMsg = err.response.data.detail
+    // responseType=blob 时错误体也是 Blob，先还原文本，否则 detail 永远是 undefined。
+    const detail = await readErrorDetail(err.response?.data)
+    if (detail) {
+      errMsg = detail
     } else if (err.response?.status === 404) {
       errMsg = '文件不存在，请确认路径是否正确。'
     } else if (err.response?.status === 403) {
       errMsg = '安全拦截：无权访问该服务器文件。'
     } else if (err.response?.status === 400) {
-      errMsg = err.response?.data?.detail || '下载请求被拒绝。'
+      errMsg = '下载请求被拒绝。'
     }
     showToast(errMsg, 'error')
   }

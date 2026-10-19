@@ -119,6 +119,8 @@ async def test_list_recent_conversations_scopes_to_user_and_chat_scope():
     assert "GROUP BY coalesce(ai_agent_execution_history.conversation_id, ai_agent_execution_history.trace_id)" in sql
     assert "ai_agent_execution_history.user_id = '7'" in sql
     assert "ai_agent_execution_history.conversation_id IS NOT NULL" in sql
+    # 空串/纯空白也会占一个分组名额，必须在 SQL 层排除
+    assert "trim(ai_agent_execution_history.conversation_id) != ''" in sql
     assert "NOT LIKE" in sql and "task_conv_" in sql
     # 不再按 data_query 能力过滤智能体：全部智能体的普通对话都要出现
     assert "data_query" not in sql

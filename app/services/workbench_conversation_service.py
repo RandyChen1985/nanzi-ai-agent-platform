@@ -128,6 +128,9 @@ async def list_recent_conversations(
     filters = [
         History.user_id == str(user_id),
         History.conversation_id.isnot(None),
+        # 空串/纯空白不是有效会话：它们会在分组后占一个 limit 名额，
+        # 再在 Python 里被 strip 掉，等于白丢一条最近会话。
+        func.trim(History.conversation_id) != "",
     ]
     source_scope = scope_condition("chat")
     if source_scope is not None:

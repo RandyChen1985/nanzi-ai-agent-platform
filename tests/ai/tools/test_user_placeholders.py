@@ -265,6 +265,42 @@ async def test_tool_ainvoke_fills_placeholder_default_from_current_user():
 
 
 @pytest.mark.asyncio
+async def test_required_placeholder_parameter_is_filled_when_model_omits_it():
+    """必填只约束模型，不是运行时硬校验；手写 required + 占位符默认值也应能兜底。"""
+    config = SysApiTool(
+        name="required-whoami",
+        method="GET",
+        url_template="http://api.example.com/users/{user_id}",
+        parameter_schema={
+            "properties": {
+                "user_id": {
+                    "type": "integer",
+                    "required": True,
+                    "default": "{user.id}",
+                },
+            }
+        },
+    )
+    tool = GenericApiToolFactory.create_tool(config)
+    assert tool.args_schema.model_fields["user_id"].is_required()
+
+    token_ctx = agent_context.set(None)
+    token_user = current_user_info.set(USER_INFO)
+    try:
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = httpx.Response(200, json={"ok": True})
+            result = await tool.ainvoke({})
+            args, kwargs = mock_get.call_args
+    finally:
+        current_user_info.reset(token_user)
+        agent_context.reset(token_ctx)
+
+    assert json.loads(result) == {"ok": True}
+    assert args[0] == "http://api.example.com/users/42"
+    assert kwargs["params"] == {}
+
+
+@pytest.mark.asyncio
 async def test_execute_request_returns_explicit_error_for_unknown_variable():
     config = SysApiTool(
         name="search",

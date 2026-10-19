@@ -111,6 +111,20 @@ def test_row_and_context_menu_share_single_entries_source():
     assert '@close="closeActionMenu"' in source
 
 
+def test_row_menu_trigger_stops_mousedown_so_second_click_can_close():
+    """菜单挂在 body 上并在 document 的 mousedown 里点外关闭。
+
+    如果 ⋮ 不拦 mousedown，第二次点击会先被 document 关闭、再被 click 重新打开，
+    表现为「怎么点都收不起来」。这里锁住 @mousedown.stop 与 click 的分工。
+    """
+    source = _source(DRAWER)
+
+    assert re.search(
+        r'@mousedown\.stop\s+@click\.stop="toggleRowActionMenu\(\$event, item\)"',
+        source,
+    )
+
+
 def test_action_menu_closes_when_list_scrolls_or_selection_changes():
     source = _source(DRAWER)
 

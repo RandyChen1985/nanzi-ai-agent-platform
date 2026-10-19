@@ -2263,6 +2263,7 @@ onUnmounted(() => {
                             aria-label="更多操作"
                             :aria-expanded="isRowActionMenuOpen(item) ? 'true' : 'false'"
                             :title="`${resolveItemDisplayName(item)} 的更多操作`"
+                            @mousedown.stop
                             @click.stop="toggleRowActionMenu($event, item)"
                           >
                             <EllipsisVerticalIcon class="h-4 w-4" aria-hidden="true" />

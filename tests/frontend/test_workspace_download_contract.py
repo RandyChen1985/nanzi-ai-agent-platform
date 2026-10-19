@@ -63,3 +63,26 @@ def test_download_uses_dedicated_endpoint_while_preview_keeps_whitelist_semantic
     assert "buildWorkspaceDownloadUrl" in download_body
     # 出错提示不能再把 400「不支持预览」透出来误导用户
     assert "不支持预览该类型的文件" not in download_body
+
+
+def test_download_reads_backend_detail_from_blob_errors():
+    source = _source("frontend/src/utils/workspaceFilePreview.ts")
+    download_body = source[source.index("export async function downloadWorkspaceFile("):]
+    assert "readErrorDetail(err.response?.data)" in download_body
+    # responseType=blob 时 data 是 Blob，直接读 .detail 永远是 undefined
+    assert ".data?.detail" not in download_body
+
+    helper = _source("frontend/src/utils/httpErrorDetail.ts")
+    assert "instanceof Blob" in helper
+    assert "await payload.text()" in helper
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="需要 node 才能执行 Blob 行为测试")
+def test_blob_error_detail_behaviour_via_node():
+    proc = subprocess.run(
+        ["node", "--experimental-strip-types", "--no-warnings", "tests/frontend/http_error_detail.mjs"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "HTTP 错误详情提取测试全部通过" in proc.stdout
