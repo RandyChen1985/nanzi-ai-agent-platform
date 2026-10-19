@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any
 from sqlalchemy import select, or_, and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 import re
@@ -30,6 +31,14 @@ from app.services.ai.tools.forbidden_catalog import (
     merge_forbidden_tool_candidates,
 )
 from app.services.ai.tools.generic_api import GenericApiToolFactory, UnsupportedMethodError
+from app.services.ai.tools.request_signing import (
+    SIGNATURE_ALGORITHM,
+    SigningConfigError,
+    encrypt_signing_secret,
+    validate_no_reserved_signing_headers,
+    validate_signing_key_id,
+    validate_signing_secret,
+)
 from app.services.ai.tools.system_params import SystemParamConfigError, validate_system_params
 from app.services.ai.tools.user_placeholders import UserPlaceholderError
 from app.utils.masking import mask_sensitive_data
@@ -40,6 +49,155 @@ logger = logging.getLogger(__name__)
 
 # 注册表写操作所需的权限依赖抽成具名对象：避免同一字符串散落多处，也便于测试覆盖。
 SYSTEM_CONFIG_SAVE_PERMISSION = require_permission("element", "element:system:config_save")
+
+
+def _validate_signing_algorithm(value: Any) -> str:
+    algorithm = str(value or SIGNATURE_ALGORITHM).strip().lower()
+    if algorithm != SIGNATURE_ALGORITHM:
+        raise SigningConfigError(f"不支持的签名算法：{algorithm}")
+    return algorithm
+
+
+async def _ensure_signing_key_id_available(
+    db: AsyncSession,
+    key_id: str | None,
+    *,
+    exclude_tool_id: str | None = None,
+) -> None:
+    """提前给出可读错误；最终唯一性由数据库唯一索引兜底。"""
+    if not key_id:
+        return
+    stmt = select(SysApiTool).where(SysApiTool.signing_key_id == key_id)
+    if exclude_tool_id:
+        stmt = stmt.where(SysApiTool.id != exclude_tool_id)
+    existing = (await db.execute(stmt)).scalars().first()
+    if existing:
+        raise SigningConfigError(f"签名 Key-Id 已被工具「{existing.name}」使用，请重新生成")
+
+
+def _prepare_signing_for_create(payload: SysApiToolCreate) -> dict[str, Any]:
+    data = payload.model_dump()
+    secret = data.pop("signing_secret", None)
+    algorithm = _validate_signing_algorithm(data.get("signing_algorithm"))
+
+    if data.get("signing_enabled"):
+        key_id = validate_signing_key_id(data.get("signing_key_id"))
+        secret = validate_signing_secret(secret)
+        data["signing_key_id"] = key_id
+        data["signing_algorithm"] = algorithm
+        data["signing_secret_encrypted"] = encrypt_signing_secret(secret)
+    else:
+        # 关闭签名时忽略密钥配置：不加密、不落库，也不因为前端回传了旧字段而拒绝保存。
+        data["signing_key_id"] = None
+        data["signing_secret_encrypted"] = None
+        data["signing_algorithm"] = algorithm
+
+    validate_no_reserved_signing_headers(payload.headers)
+    return data
+
+
+def _apply_signing_for_update(tool: SysApiTool, payload: SysApiToolUpdate) -> dict[str, Any]:
+    update_data = payload.model_dump(exclude_unset=True)
+    secret = update_data.pop("signing_secret", None)
+    # 显式关闭时忽略密钥字段，但保留已保存密钥（重新开启即可复用）。
+    if "signing_enabled" in update_data and not update_data["signing_enabled"]:
+        update_data.pop("signing_key_id", None)
+        update_data["signing_secret_encrypted"] = tool.signing_secret_encrypted
+        if "signing_algorithm" in update_data:
+            update_data["signing_algorithm"] = _validate_signing_algorithm(
+                update_data.get("signing_algorithm")
+            )
+        if "headers" in update_data:
+            validate_no_reserved_signing_headers(update_data.get("headers"))
+        return update_data
+
+    has_secret = bool(secret)
+    has_key_id = "signing_key_id" in update_data
+
+    if has_secret or has_key_id:
+        if not update_data.get("signing_key_id"):
+            raise SigningConfigError("轮换签名密钥必须同时提供新的 Key-Id 和密钥")
+        key_id = validate_signing_key_id(update_data["signing_key_id"])
+        update_data["signing_key_id"] = key_id
+        if has_secret:
+            if key_id == str(tool.signing_key_id or ""):
+                # Key-Id 是业务方选密钥的版本标识；换了密钥却沿用旧 Key-Id，
+                # 业务方无法灰度/区分新旧密钥，因此轮换必须同时换版本。
+                raise SigningConfigError("轮换签名密钥必须同时提供新的 Key-Id 和密钥")
+            update_data["signing_secret_encrypted"] = encrypt_signing_secret(
+                validate_signing_secret(secret)
+            )
+        elif key_id != str(tool.signing_key_id or ""):
+            # 只改 Key-Id 不改密钥会让业务方拿到一把对不上的 key，必须拦住；
+            # 同一个 Key-Id 随表单回传是正常保存，不算轮换。
+            raise SigningConfigError("轮换签名密钥必须同时提供新的 Key-Id 和密钥")
+
+    if "signing_algorithm" in update_data:
+        update_data["signing_algorithm"] = _validate_signing_algorithm(
+            update_data.get("signing_algorithm")
+        )
+
+    effective_enabled = (
+        update_data["signing_enabled"]
+        if "signing_enabled" in update_data and update_data["signing_enabled"] is not None
+        else bool(tool.signing_enabled)
+    )
+    if effective_enabled:
+        effective_key_id = update_data.get("signing_key_id", tool.signing_key_id)
+        effective_secret = update_data.get(
+            "signing_secret_encrypted", tool.signing_secret_encrypted
+        )
+        validate_signing_key_id(effective_key_id)
+        if not effective_secret:
+            raise SigningConfigError("已开启请求签名，但没有配置签名密钥")
+
+    if "headers" in update_data:
+        validate_no_reserved_signing_headers(update_data.get("headers"))
+    return update_data
+
+
+async def _resolve_preview_signing(
+    payload: SysApiToolPreviewRequest,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """解析试跑草稿的签名配置：新草稿用本次密钥，已保存工具读库解密。"""
+    if not payload.signing_enabled:
+        return {
+            "signing_enabled": False,
+            "signing_key_id": None,
+            "signing_algorithm": SIGNATURE_ALGORITHM,
+            "signing_secret_encrypted": None,
+        }
+
+    algorithm = _validate_signing_algorithm(payload.signing_algorithm)
+    if payload.signing_secret:
+        key_id = validate_signing_key_id(payload.signing_key_id)
+        return {
+            "signing_enabled": True,
+            "signing_key_id": key_id,
+            "signing_algorithm": algorithm,
+            "signing_secret_encrypted": encrypt_signing_secret(
+                validate_signing_secret(payload.signing_secret)
+            ),
+        }
+
+    if not payload.tool_id:
+        raise SigningConfigError("已开启请求签名，但没有提供签名密钥或已保存的工具 ID")
+
+    tool = await db.get(SysApiTool, payload.tool_id)
+    if not tool:
+        raise SigningConfigError("要试跑的工具不存在，无法读取已保存的签名密钥")
+    if not tool.signing_secret_encrypted:
+        raise SigningConfigError("该工具没有已保存的签名密钥，请先填写或重新生成密钥")
+    saved_key_id = validate_signing_key_id(tool.signing_key_id)
+    if payload.signing_key_id and payload.signing_key_id != saved_key_id:
+        raise SigningConfigError("试跑提交的 Key-Id 与工具已保存的 Key-Id 不一致")
+    return {
+        "signing_enabled": True,
+        "signing_key_id": saved_key_id,
+        "signing_algorithm": algorithm,
+        "signing_secret_encrypted": tool.signing_secret_encrypted,
+    }
 
 def _visible_published_mcp_tool_stmt(user: Dict[str, Any]):
     """已发布且可用的 MCP 工具：平台公共服务 + 当前登录用户的个人私有服务。"""
@@ -217,11 +375,14 @@ async def create_tool(
 
     try:
         validate_system_params(tool_in.parameter_schema)
+        data = _prepare_signing_for_create(tool_in)
+        await _ensure_signing_key_id_available(db, data.get("signing_key_id"))
     except SystemParamConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SigningConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     
     # Dump Dicts to JSON strings for DB
-    data = tool_in.model_dump()
     if data.get("headers") is not None:
         data["headers"] = json.dumps(data["headers"], ensure_ascii=False)
     if data.get("parameter_schema") is not None:
@@ -232,7 +393,11 @@ async def create_tool(
         **data
     )
     db.add(new_tool)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="签名 Key-Id 已被其他工具使用") from exc
     await db.refresh(new_tool)
     return new_tool
 
@@ -256,7 +421,13 @@ async def update_tool(
         except SystemParamConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    update_data = tool_in.model_dump(exclude_unset=True)
+    try:
+        update_data = _apply_signing_for_update(tool, tool_in)
+        await _ensure_signing_key_id_available(
+            db, update_data.get("signing_key_id"), exclude_tool_id=tool.id
+        )
+    except SigningConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     
     # Dump Dicts to JSON strings for DB
     if "headers" in update_data:
@@ -270,7 +441,11 @@ async def update_tool(
     for field, value in update_data.items():
         setattr(tool, field, value)
         
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="签名 Key-Id 已被其他工具使用") from exc
     await db.refresh(tool)
     return tool
 
@@ -327,6 +502,7 @@ _RUNTIME_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 @router.post("/preview", response_model=SysApiToolPreviewResponse)
 async def preview_tool(
     payload: SysApiToolPreviewRequest,
+    db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(SYSTEM_CONFIG_SAVE_PERMISSION),
 ):
     """保存前试跑一次（不落库、不新增权限）。
@@ -379,6 +555,16 @@ async def preview_tool(
             message=f"平台运行时不支持 {method} 方法，可用的只有 {supported}",
         )
 
+    try:
+        validate_no_reserved_signing_headers(payload.headers)
+        signing_fields = await _resolve_preview_signing(payload, db)
+    except SigningConfigError as exc:
+        return SysApiToolPreviewResponse(
+            ok=False,
+            error_kind="invalid_signing_config",
+            message=str(exc),
+        )
+
     # 内存草稿：与运行时拿到的 SysApiTool 同形（headers / schema 都是 JSON 字符串）
     draft = SysApiTool(
         id="__preview__",
@@ -388,6 +574,7 @@ async def preview_tool(
         headers=json.dumps(payload.headers or {}, ensure_ascii=False),
         parameter_schema=json.dumps(payload.parameter_schema or {}, ensure_ascii=False),
         is_active=False,
+        **signing_fields,
     )
     capture: dict[str, Any] = {}
 
@@ -428,6 +615,11 @@ async def preview_tool(
             ok=False, error_kind="invalid_parameter_schema", message=str(exc),
             request=request_info(),
         )
+    except SigningConfigError as exc:
+        return SysApiToolPreviewResponse(
+            ok=False, error_kind="invalid_signing_config", message=str(exc),
+            request=request_info(),
+        )
     except httpx.TimeoutException:
         return SysApiToolPreviewResponse(
             ok=False,
@@ -465,6 +657,7 @@ async def preview_tool(
             elapsed_ms=elapsed_ms,
             body=body_text,
             body_truncated=truncated,
+            response_headers=mask_sensitive_data(dict(response.headers)) or {},
             request=request_info(),
             message=f"HTTP {response.status_code}",
         )
@@ -475,6 +668,7 @@ async def preview_tool(
         elapsed_ms=elapsed_ms,
         body=body_text,
         body_truncated=truncated,
+        response_headers=mask_sensitive_data(dict(response.headers)) or {},
         request=request_info(),
         error_kind="http_error",
         message=f"接口返回 HTTP {response.status_code}——地址是通的，但目标接口拒绝了这次请求",

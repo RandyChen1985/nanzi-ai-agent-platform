@@ -1716,7 +1716,7 @@
       v-model:keep-open-on-select="workspaceKeepOpenOnSelect"
       v-model:pinned="workspacePinned"
       v-model:drawer-width="workspaceDrawerWidthReactive"
-      :pinned-dock-class="workspacePinnedDockClass"
+      :pinned-dock-right="workspacePinnedDockRightPx"
       :conversation-id="conversationId"
       :session-started="messages.length > 0"
       @select="handleSelectLocalFs"
@@ -1739,7 +1739,7 @@
       v-model="showMemoryDrawer"
       v-model:keep-open-on-select="memoryKeepOpenOnSelect"
       v-model:pinned="memoryPinned"
-      :pinned-dock-class="memoryPinnedDockClass"
+      :pinned-dock-right="memoryPinnedDockRightPx"
       :attached-conversation-ids="attachedMemoryConversationIds"
       @mount="handleMemoryMount"
       @cleared="handleMemoryCleared"
@@ -2503,6 +2503,7 @@ import { shouldStartConversationHistoryLoad } from "@/utils/conversationHistoryR
 import { isApiSuccess } from "@/utils/apiEnvelope";
 import { isSkillForbidden } from "@/utils/skillForbidden";
 import { planHistorySync, shouldKeepRecoverySync } from "@/utils/runRecoverySync";
+import { computePinnedDrawerLayout } from "@/utils/pinnedDrawerLayout";
 import { planRecoveryCard, type RecoveryCardState } from "@/utils/recoveryCard";
 import {
   planStreamReplay,
@@ -10217,30 +10218,10 @@ watch(
 
 
 
-const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "knowledge" | "browser" | "webPreview") => {
-  let rem = 0;
-  if (exclude !== "portal" && showPortalDrawer.value && portalPinned.value) rem += 28;
-  if (exclude !== "knowledge" && showKnowledgePortal.value && knowledgePinned.value) rem += 28;
-  if (exclude !== "workspace" && showWorkspaceDrawer.value && workspacePinned.value) rem += 28;
-  if (exclude !== "memory" && showMemoryDrawer.value && memoryPinned.value) rem += 28;
-  if (exclude !== "browser" && browserPanelVisible.value && browserPinned.value && !isMobile.value) {
-    rem += browserPanelWidthReactive.value / 16;
-  }
-  if (exclude !== "webPreview" && webPreviewVisible.value && webPreviewPinned.value && !isMobile.value) {
-    rem += webPreviewPanelWidthReactive.value / 16;
-  }
-  return rem;
-};
-
-const pinnedDrawerRightRem = computed(() => pinnedDrawerDockOffsetRem());
-const saveReportModalOverlayStyle = computed(() => {
-  const rem = pinnedDrawerRightRem.value;
-  return { right: rem > 0 ? `${rem}rem` : "0" };
-});
-const saveReportModalOverlayClass = computed(() => {
-  const isPinned = (showPortalDrawer.value && portalPinned.value) || (showKnowledgePortal.value && knowledgePinned.value);
-  return isPinned ? 'right-[28rem]' : 'right-0';
-});
+// 钉住面板的让位宽度与右侧偏移统一由下方 pinnedDrawerLayout 计算。
+// 这里不再保留「各面板宽度 / 16 累加成 rem」的第二套真源：那套算法既没有上限
+// （两个面板就能把对话区挤成 0），又要临时拼一个 Tailwind 工具类交给模板——
+// 运行时拼出来的类名不会被静态扫描，构建产物里并不存在这条规则。
 
 // 响应式抽屉宽度 refs（由各抽屉组件通过 v-model:drawerWidth / v-model:canvasWidth 实时同步）
 const portalDrawerWidthReactive = ref(448);
@@ -10271,7 +10252,7 @@ const canvasPinnedWidthPx = computed(() => {
  *
  * `canvasFromWorkspace` 为真（工作空间预览）时，EmbedChat 传 `dock-side="left"`，
  * ChatCanvas 用 `fixed left-0 right-auto`：面板贴在视口左侧、不占布局空间。
- * 此时若把画布宽度加进 `totalPinnedDrawerPx`（它只被当作 `marginRight` 用），
+ * 此时若把画布宽度加进 `pinnedDrawerLayout` 的右侧让位（它只被当作 `marginRight` 用），
  * 对话列的左边界仍停在 x=0，会被画布从左边切掉「画布宽」那一条，右侧还空出
  * 等宽的死空白；把画布拖窄时最明显。
  *
@@ -10299,40 +10280,101 @@ const webPreviewPanelWidthPx = computed(() => {
   return webPreviewPanelWidthReactive.value;
 });
 
-const webPreviewDockRightPx = computed(() => pinnedDrawerDockOffsetRem("webPreview") * 16);
+/**
+ * 钉住面板从右到左的顺序：多面板并排时，排在前面的更贴右边缘。
+ *
+ * 排序不是随意的：数据门户 / 知识库 / 画布 / 服务端浏览器目前把自己固定在
+ * `right-0`，不消费 pinnedDockRight，所以必须排在右侧；工作空间 / 记忆 /
+ * 网页预览吃 pinnedDockRight，排到它们左边，偏移会自然累加，谁也不会压住谁。
+ */
+const PINNED_DRAWER_ORDER = [
+  "portal",
+  "knowledge",
+  "canvas",
+  "browser",
+  "memory",
+  "workspace",
+  "webPreview",
+] as const;
 
-const totalPinnedDrawerPx = computed(() => {
-  if (isMobile.value || windowWidth.value < 768) return 0;
-  let px = 0;
-  px += portalDrawerWidthPx.value;
-  px += knowledgeDrawerWidthPx.value;
-  px += workspaceDrawerWidthPx.value;
-  // 只有右停靠画布才需要右侧让位；左停靠（工作空间预览）走 canvasLeftDockWidthPx
-  px += canvasRightDockWidthPx.value;
-  px += browserPanelWidthPx.value;
-  px += webPreviewPanelWidthPx.value;
-  if (showMemoryDrawer.value && memoryPinned.value) px += 448;
-  return px;
+const pinnedDrawerPanelWidths = computed<Record<string, number>>(() => ({
+  webPreview: webPreviewPanelWidthPx.value,
+  browser: browserPanelWidthPx.value,
+  canvas: canvasRightDockWidthPx.value,
+  memory: showMemoryDrawer.value && memoryPinned.value && !isMobile.value ? 448 : 0,
+  workspace: workspaceDrawerWidthPx.value,
+  knowledge: knowledgeDrawerWidthPx.value,
+  portal: portalDrawerWidthPx.value,
+}));
+
+const pinnedDrawerLayout = computed(() =>
+  computePinnedDrawerLayout({
+    availableWidthPx: windowWidth.value,
+    panels: PINNED_DRAWER_ORDER.map((key) => ({
+      key,
+      widthPx: pinnedDrawerPanelWidths.value[key] ?? 0,
+    })),
+  }),
+);
+
+/** 各钉住面板的 right 偏移（px），直接进内联样式，不再拼 Tailwind 类名。 */
+const webPreviewDockRightPx = computed(
+  () => pinnedDrawerLayout.value.rightOffsetPx.webPreview ?? 0,
+);
+const workspacePinnedDockRightPx = computed(
+  () => pinnedDrawerLayout.value.rightOffsetPx.workspace ?? 0,
+);
+const memoryPinnedDockRightPx = computed(
+  () => pinnedDrawerLayout.value.rightOffsetPx.memory ?? 0,
+);
+
+const saveReportModalOverlayStyle = computed(() => ({
+  right: `${pinnedDrawerLayout.value.marginRightPx}px`,
+}));
+const saveReportModalOverlayClass = computed(() => {
+  const isPinned = (showPortalDrawer.value && portalPinned.value) || (showKnowledgePortal.value && knowledgePinned.value);
+  return isPinned ? 'right-[28rem]' : 'right-0';
 });
 
+/**
+ * 空间不足时把被挤掉的面板自动取消钉住（面板本身保持打开，退化为覆盖式）。
+ * 让位宽度已经按 kept 计算，若不取消，dropped 面板会压在被让位出来的对话区上。
+ */
+watch(
+  () => pinnedDrawerLayout.value.droppedKeys.join(","),
+  (joined) => {
+    if (!joined) return;
+    const dropped = new Set(joined.split(","));
+    const releases: Array<[key: string, label: string, state: { value: boolean }]> = [
+      ["webPreview", "网页预览", webPreviewPinned],
+      ["browser", "服务端浏览器", browserPinned],
+      ["canvas", "画布", canvasPinned],
+      ["memory", "记忆", memoryPinned],
+      ["workspace", "工作空间", workspacePinned],
+      ["knowledge", "知识库", knowledgePinned],
+      ["portal", "数据门户", portalPinned],
+    ];
+    const released: string[] = [];
+    for (const [key, label, state] of releases) {
+      if (state.value && dropped.has(key)) {
+        state.value = false;
+        released.push(label);
+      }
+    }
+    if (released.length > 0) {
+      showToast(`窗口宽度不足，已取消钉住：${released.join("、")}`, "info");
+    }
+  },
+);
+
 const pinnedDrawerMarginStyle = computed(() => {
-  const px = totalPinnedDrawerPx.value;
+  const gutter = pinnedDrawerLayout.value.marginRightPx;
   const leftPx = canvasLeftDockWidthPx.value;
   const style: Record<string, string> = {};
-  if (px > 0) style.marginRight = `min(${px}px, 100vw)`;
+  if (gutter > 0) style.marginRight = `${gutter}px`;
   // 左停靠画布贴在视口左侧，必须用 marginLeft 让位，否则对话会被它从左边切掉
   if (leftPx > 0) style.marginLeft = `min(${leftPx}px, 100vw)`;
   return style;
-});
-
-const workspacePinnedDockClass = computed(() => {
-  const rem = pinnedDrawerDockOffsetRem("workspace");
-  return rem > 0 ? `right-[${rem}rem]` : "right-0";
-});
-
-const memoryPinnedDockClass = computed(() => {
-  const rem = pinnedDrawerDockOffsetRem("memory");
-  return rem > 0 ? `right-[${rem}rem]` : "right-0";
 });
 
 const refreshDatasetMenuNavigation = async (msg: Message) => {

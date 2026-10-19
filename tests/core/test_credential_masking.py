@@ -35,6 +35,7 @@ pytestmark = pytest.mark.no_infrastructure
         "api_key",
         # 旧名：历史日志里已存在该键，重新脱敏时仍需覆盖
         "admin_token",
+        "set_cookie",
     ],
 )
 def test_credential_keys_are_masked(key):
@@ -150,3 +151,20 @@ def test_header_style_keys_masked_inside_a_full_request_body():
     assert masked["headers"]["X-Api-Key"] == "******"
     assert masked["headers"]["Content-Type"] == "application/json"
     assert masked["params"] == {"id": "7"}
+
+
+
+@pytest.mark.parametrize("key", ["signing_secret", "signingSecret"])
+def test_signing_secret_is_masked_in_audit_payload(key):
+    """工具创建/试跑请求体里的签名密钥不能以明文进审计库。"""
+    secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    masked = mask_sensitive_data({"data": {key: secret}})
+
+    assert masked["data"][key] == "******"
+
+
+def test_set_cookie_response_header_is_masked_with_http_spelling():
+    """试跑响应头会展示 Set-Cookie；连字符写法也必须按凭据抹掉。"""
+    masked = mask_sensitive_data({"Set-Cookie": "session=abc123"})
+
+    assert masked["Set-Cookie"] == "******"

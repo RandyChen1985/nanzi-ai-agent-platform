@@ -11,11 +11,12 @@ const pinned = defineModel<boolean>('pinned', { default: false })
 
 const props = withDefaults(
   defineProps<{
-    pinnedDockClass?: string
+    /** 与其它钉住面板并排时距视口右边的像素偏移（内联 style，不能拼 Tailwind 类名） */
+    pinnedDockRight?: number
     /** 已挂载到输入框的记忆会话 ID，逗号分隔 */
     attachedConversationIds?: string
   }>(),
-  { pinnedDockClass: 'right-0', attachedConversationIds: '' },
+  { pinnedDockRight: 0, attachedConversationIds: '' },
 )
 
 const emit = defineEmits<{
@@ -190,7 +191,12 @@ const pinnedContainerClass = computed(() => {
   if (!pinned.value) return ''
   return isMobile.value
     ? 'fixed inset-x-0 bottom-0 max-w-full flex flex-col justify-end pointer-events-none'
-    : `fixed inset-y-0 ${props.pinnedDockClass} max-w-full flex pointer-events-none`
+    : 'fixed inset-y-0 right-0 max-w-full flex pointer-events-none'
+})
+
+const pinnedContainerStyle = computed(() => {
+  if (!pinned.value || isMobile.value) return undefined
+  return { right: `${Math.max(0, props.pinnedDockRight || 0)}px` }
 })
 
 watch(
@@ -245,6 +251,7 @@ onUnmounted(() => {
   <teleport to="body">
     <div
       v-show="modelValue"
+      :style="pinnedContainerStyle"
       :class="[
         'z-[125]',
         pinned

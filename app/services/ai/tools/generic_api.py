@@ -4,6 +4,11 @@ import httpx
 import json
 from typing import Dict, Any, Mapping, Type
 from pydantic import create_model, Field
+from app.services.ai.tools.request_signing import (
+    parse_signing_config,
+    sign_request,
+    validate_no_reserved_signing_headers,
+)
 from app.services.ai.tools.system_params import apply_system_params
 from app.services.ai.tools.tool_compat import StructuredTool
 from app.services.ai.tools.user_placeholders import (
@@ -301,7 +306,11 @@ class GenericApiToolFactory:
         if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
             raise UnsupportedMethodError(method)
 
-        if capture is not None:
+        signing = parse_signing_config(config)
+        if signing.enabled:
+            validate_no_reserved_signing_headers(headers)
+
+        if capture is not None and not signing.enabled:
             if method == "GET":
                 query = remaining_params
                 body = None
@@ -324,7 +333,46 @@ class GenericApiToolFactory:
         # We disable trust_env=True to avoid SOCKS proxy issues if dependency is missing
         # If explicit proxy is needed, it should be configured in settings or handled via specific client config.
         async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
-            if method == "GET":
+            if signing.enabled:
+                # 先让 httpx 构造最终请求，再对**实际会发出去的** path/query/body
+                # 签名；不能拿 json= 序列化前的 dict 另算一份。
+                request = client.build_request(
+                    method,
+                    url,
+                    params=remaining_params if method == "GET" else None,
+                    json=remaining_params if method != "GET" else None,
+                    headers=headers,
+                )
+                raw_path = request.url.raw_path.split(b"?", 1)[0].decode("ascii")
+                raw_query = request.url.query.decode("ascii")
+                signature_headers = sign_request(
+                    method=method,
+                    raw_path=raw_path,
+                    raw_query=raw_query,
+                    body=request.content,
+                    secret=signing.secret or "",
+                    key_id=signing.key_id or "",
+                )
+                request.headers.update(signature_headers)
+                headers = dict(request.headers)
+                if capture is not None:
+                    capture.update({
+                        "method": method,
+                        "url": str(request.url),
+                        "headers": dict(headers),
+                        "query": dict(remaining_params) if method == "GET" else {},
+                        "body": remaining_params if method != "GET" else None,
+                    })
+                if method == "GET":
+                    response = await client.get(str(request.url), headers=headers)
+                else:
+                    response = await client.request(
+                        method,
+                        str(request.url),
+                        content=request.content,
+                        headers=headers,
+                    )
+            elif method == "GET":
                 response = await client.get(url, params=remaining_params, headers=headers)
             elif method in ["POST", "PUT", "PATCH", "DELETE"]:
                 # Default to JSON body for non-GET

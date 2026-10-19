@@ -19,6 +19,18 @@ def test_param_editor_embeds_system_param_editor():
     assert "validateSystemParams" in source
 
 
+def test_system_param_editor_renders_before_normal_params():
+    """系统级参数由平台强制注入，配置时应排在普通参数前面，避免用户先配错普通参数。"""
+    source = _source(PARAM_EDITOR)
+    system_pos = source.index("<ToolSystemParamEditor")
+    normal_pos = source.index('v-for="(p, index) in visualParams"')
+    assert system_pos < normal_pos
+    assert "还没有普通参数" in source
+    assert "请用上方「系统级参数」" in source
+    # 顶部帮助浮层自己的下方就是系统级参数区，这里的方位词不能跟着一起改。
+    assert "请使用下方「系统级参数」" in source
+
+
 def test_system_editor_has_name_type_value_description_and_variable_picker():
     source = _source(SYSTEM_EDITOR)
     for field in ("p.name", "p.type", "p.value", "p.description"):

@@ -6,10 +6,14 @@ from typing import Any, Dict, List, Union
 SENSITIVE_KEYS_FULL = {
     "authorization", "auth", "password", "passwd", "pwd", "token", 
     "api_key", "apikey", "secret", "sk", "private_key",
+    # 请求签名密钥：只在创建/更新/试跑请求体里出现，绝不能进审计库
+    "signing_secret", "signingsecret",
     # 会话 / 票据类凭据：签发接口会把它们放在**响应体**里
     # （user_apikey 与 ticket 兑换都返回 session_token），漏了就明文落进审计表。
     # `ticket` 只做精确匹配——`ticket_id` 之类业务字段不是凭据，不应被误伤。
     "session_token", "portal_session", "embed_session", "ticket",
+    # 响应头里的会话票据：试跑会把响应头展示到界面/审计里，不能明文带出。
+    "set_cookie",
     # 旧名保留：历史日志里已存在该键，重新脱敏时不应对它视而不见。
     "admin_token",
 }
@@ -23,6 +27,7 @@ SENSITIVE_KEYS_SUB = {
     "auth_token", "authtoken",
     "api_key", "apikey",
     "client_secret", "app_secret",
+    "signing_secret", "signingsecret",
     # 覆盖 session_token / sessionToken(camel) / portal_session / embed_session 及其变体
     "session_token", "sessiontoken",
     "portal_session", "portalsession",

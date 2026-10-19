@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { toolApi, type SysApiToolPreviewResult } from '../../api/tool'
 import { parseToolSchema } from '../../utils/toolSchema'
 import CopyButton from '../common/CopyButton.vue'
@@ -10,11 +10,26 @@ const props = defineProps<{
   urlTemplate: string
   headersStr: string
   schemaStr: string
+  signingEnabled?: boolean
+  signingAlgorithm?: string
+  signingKeyId?: string | null
+  signingSecret?: string
+  toolId?: string | null
+  /** 从列表快捷试跑时自动拉开抽屉 */
+  autoOpen?: boolean
+  /** 快捷试跑时不渲染“打开试跑”卡片，只保留抽屉 */
+  hideTrigger?: boolean
+  /** 抽屉里标识当前工具，避免从列表进来时不知道在试哪个工具 */
+  toolLabel?: string
 }>()
+
+const emit = defineEmits<{ (e: 'closed'): void }>()
 
 const values = ref<Record<string, string>>({})
 const loading = ref(false)
 const result = ref<SysApiToolPreviewResult | null>(null)
+const resultStale = ref(false)
+const bodyView = ref<'pretty' | 'raw'>('pretty')
 const failure = ref<string>('')
 const showDrawer = ref(false)
 const triggerButton = ref<HTMLButtonElement | null>(null)
@@ -42,15 +57,35 @@ const isPrivateTarget = computed(() => {
 })
 
 /** 换工具、换地址、换参数定义都要清掉旧结论：留着上一次的 200 会误导。 */
-watch(() => [props.method, props.urlTemplate, props.headersStr, props.schemaStr], () => {
+watch(() => [props.method, props.urlTemplate, props.headersStr, props.schemaStr, props.toolId], () => {
   const next: Record<string, string> = {}
   for (const param of params.value) {
     if (!param.required && param.defaultValue) next[param.name] = param.defaultValue
   }
   values.value = next
   result.value = null
+  resultStale.value = false
   failure.value = ''
 }, { immediate: true })
+
+// 测试值、签名配置变了，上一次结果仍然有参考价值，但必须明确标成「过期」，
+// 不能让用户把旧的 200 当成当前配置的结论。
+watch(values, () => {
+  failure.value = ''
+  if (result.value) resultStale.value = true
+}, { deep: true })
+
+watch(
+  () => [props.signingEnabled, props.signingKeyId, props.signingSecret, props.signingAlgorithm],
+  () => {
+    failure.value = ''
+    if (result.value) resultStale.value = true
+  },
+)
+
+watch(result, (value) => {
+  if (value) bodyView.value = 'pretty'
+})
 
 const missingRequired = computed(() => params.value
   .filter((param) => param.required && !String(values.value[param.name] ?? '').trim())
@@ -71,6 +106,7 @@ const closeDrawer = async () => {
   document.body.style.overflow = previousBodyOverflow
   await nextTick()
   triggerButton.value?.focus()
+  emit('closed')
 }
 
 const handleDrawerKeydown = (event: KeyboardEvent) => {
@@ -89,9 +125,14 @@ onBeforeUnmount(() => {
   if (showDrawer.value) document.body.style.overflow = previousBodyOverflow
 })
 
+onMounted(() => {
+  if (props.autoOpen) void openDrawer()
+})
+
 const runPreview = async () => {
   failure.value = ''
   result.value = null
+  resultStale.value = false
 
   if (!props.urlTemplate.trim()) {
     failure.value = '还没有填请求地址'
@@ -100,6 +141,10 @@ const runPreview = async () => {
   if (missingRequired.value.length > 0) {
     // 后端也会拦一次，但先在本地说清楚缺哪个，避免一次无谓往返
     failure.value = `请先填写必填参数：${missingRequired.value.join('、')}`
+    return
+  }
+  if (props.signingEnabled && !props.signingSecret && !props.toolId) {
+    failure.value = '请求签名已开启，但没有可用的签名密钥；请先生成密钥，或先保存工具再试跑'
     return
   }
 
@@ -126,8 +171,14 @@ const runPreview = async () => {
       headers,
       parameter_schema: schema,
       params: { ...values.value },
+      signing_enabled: !!props.signingEnabled,
+      signing_algorithm: props.signingAlgorithm || 'hmac-sha256',
+      signing_key_id: props.signingKeyId || null,
+      ...(props.signingSecret ? { signing_secret: props.signingSecret } : {}),
+      tool_id: props.toolId || null,
     })
     result.value = res.data
+    resultStale.value = false
   } catch (e: any) {
     failure.value = '试跑请求失败：' + (e.response?.data?.detail || e.message)
   } finally {
@@ -146,6 +197,21 @@ const headline = computed(() => {
 const hasKeys = (value: Record<string, any> | null | undefined): boolean =>
   !!value && Object.keys(value).length > 0
 
+const signingHeaderEntries = computed(() => {
+  const headers = result.value?.request?.headers || {}
+  const wanted = [
+    'X-Nanzi-Signature-Version',
+    'X-Nanzi-Key-Id',
+    'X-Nanzi-Timestamp',
+    'X-Nanzi-Nonce',
+    'X-Nanzi-Signature',
+  ]
+  const lower = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]))
+  return wanted
+    .map((name) => [name, lower.get(name.toLowerCase())] as const)
+    .filter((entry): entry is readonly [string, any] => entry[1] !== undefined)
+})
+
 const prettyJson = (value: any): string => {
   if (value === undefined || value === null) return ''
   try {
@@ -154,11 +220,49 @@ const prettyJson = (value: any): string => {
     return String(value)
   }
 }
+
+const responseBody = computed(() => {
+  const body = result.value?.body || ''
+  if (bodyView.value === 'raw') return body
+  try {
+    return JSON.stringify(JSON.parse(body), null, 2)
+  } catch {
+    return body
+  }
+})
+
+const responseBodyIsJson = computed(() => {
+  const body = result.value?.body || ''
+  if (!body.trim()) return false
+  try {
+    JSON.parse(body)
+    return true
+  } catch {
+    return false
+  }
+})
+
+/** cURL 单引号转义：把内部的 ' 变成 '\''，保证复制到 shell 可直接执行。 */
+const shellQuote = (value: string): string => `'${String(value).replace(/'/g, `'\\''`)}'`
+
+const curlCommand = computed(() => {
+  const request = result.value?.request
+  if (!request) return ''
+  const lines = [`curl -X ${request.method}`, `  ${shellQuote(request.url)}`]
+  for (const [key, value] of Object.entries(request.headers || {})) {
+    lines.push(`  -H ${shellQuote(`${key}: ${value}`)}`)
+  }
+  if (request.body !== null && request.body !== undefined) {
+    const body = typeof request.body === 'string' ? request.body : JSON.stringify(request.body)
+    lines.push(`  --data-raw ${shellQuote(body)}`)
+  }
+  return lines.join(' \\\n')
+})
 </script>
 
 <template>
   <div class="space-y-3">
-    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gradient-to-r from-slate-50 to-white px-3.5 py-3">
+    <div v-if="!hideTrigger" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gradient-to-r from-slate-50 to-white px-3.5 py-3">
       <div class="flex min-w-0 items-start gap-2.5">
         <span class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <PlayIcon class="h-4 w-4" />
@@ -217,6 +321,7 @@ const prettyJson = (value: any): string => {
                     <PlayIcon class="h-4 w-4 text-primary" />
                     试跑一次
                     <span class="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">真实请求</span>
+                    <span v-if="toolLabel" class="truncate font-mono text-[11px] font-normal text-gray-500">{{ toolLabel }}</span>
                   </div>
                   <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
                     测试值只用于这一次请求，不会保存到工具配置。
@@ -265,10 +370,23 @@ const prettyJson = (value: any): string => {
                   （平台自动注入，无需填写）
                 </p>
 
-                <p v-if="failure" class="relative rounded-lg border border-red-200 bg-red-50 px-3 py-2 pr-20 text-xs text-red-700">
-                  {{ failure }}
-                  <CopyButton :text="failure" label="失败信息" class="absolute right-2 top-2" />
+                <p
+                  v-if="signingEnabled"
+                  class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] leading-relaxed text-emerald-700"
+                >
+                  请求签名已开启：平台会对最终发出的请求附加 <code class="font-mono">X-Nanzi-*</code> 签名 Header。
+                  <span v-if="toolId && !signingSecret">本次使用已保存的密钥。</span>
+                  <span v-else-if="signingSecret">本次使用草稿里生成的新密钥。</span>
                 </p>
+
+                <div v-if="failure" class="flex items-start justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <p class="min-w-0">{{ failure }}</p>
+                  <CopyButton :text="failure" label="失败信息" />
+                </div>
+
+                <div v-if="resultStale" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                  测试值或签名配置已修改。下面仍是上一次试跑的结果，请重新试跑后再下结论。
+                </div>
 
                 <div v-if="result" class="overflow-hidden rounded-lg border" :class="result.ok ? 'border-green-200' : 'border-amber-200'">
                   <div class="flex flex-wrap items-center gap-2 border-b px-3 py-2" :class="result.ok ? 'border-green-100 bg-green-50' : 'border-amber-100 bg-amber-50'">
@@ -302,56 +420,60 @@ const prettyJson = (value: any): string => {
                     <span v-else-if="result.error_kind === 'invalid_parameter_schema'">
                       {{ result.message }}
                     </span>
+                    <span v-else-if="result.error_kind === 'invalid_signing_config'">
+                      {{ result.message }}
+                    </span>
                     <span v-else>
                       根本没连上目标接口（DNS 解析失败、连接被拒或证书问题）。这类问题与「接口拒绝请求」的排查方向不同。
                     </span>
                   </p>
-                  <p v-if="result.message && !result.ok && result.error_kind !== 'missing_param' && result.error_kind !== 'unsupported_method' && result.error_kind !== 'missing_user_variable' && result.error_kind !== 'invalid_parameter_schema'" class="px-3 pb-2 text-[11px] text-gray-500">
+                  <p v-if="result.message && !result.ok && result.error_kind !== 'missing_param' && result.error_kind !== 'unsupported_method' && result.error_kind !== 'missing_user_variable' && result.error_kind !== 'invalid_parameter_schema' && result.error_kind !== 'invalid_signing_config'" class="px-3 pb-2 text-[11px] text-gray-500">
                     {{ result.message }}
                   </p>
 
                   <details v-if="result.request" open class="border-t border-gray-100 bg-slate-50 px-3 py-2">
-                    <summary class="cursor-pointer text-[11px] font-medium text-gray-700">
-                      实际发出的请求（含系统级参数）
+                    <summary class="flex cursor-pointer flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-gray-700">
+                      <span>实际发出的请求（含系统级参数）</span>
+                      <CopyButton v-if="curlCommand" :text="curlCommand" label="cURL" />
                     </summary>
                     <div class="mt-2 space-y-2">
-                      <div class="relative rounded bg-white px-2 py-1.5 pr-20 font-mono text-[11px] text-gray-800 ring-1 ring-gray-100">
-                        <div class="break-all">
+                      <div class="flex items-start gap-2 rounded bg-white px-2 py-1.5 font-mono text-[11px] text-gray-800 ring-1 ring-gray-100">
+                        <div class="min-w-0 break-all">
                           <span class="font-bold text-primary">{{ result.request.method }}</span>
                           {{ result.request.url }}
                         </div>
-                        <CopyButton
-                          :text="result.request.url"
-                          label="最终 URL"
-                          class="absolute right-2 top-2"
-                        />
+                        <CopyButton :text="result.request.url" label="最终 URL" />
                       </div>
-                      <div v-if="hasKeys(result.request.query)" class="relative">
-                        <p class="text-[11px] font-medium text-gray-600">Query 参数</p>
-                        <CopyButton
-                          :text="prettyJson(result.request.query)"
-                          label="Query 参数"
-                          class="absolute right-0 top-0"
-                        />
-                        <pre class="mt-1 max-h-36 overflow-auto rounded bg-white px-2 py-1.5 pr-20 font-mono text-[11px] text-gray-700 ring-1 ring-gray-100">{{ prettyJson(result.request.query) }}</pre>
+                      <div v-if="hasKeys(result.request.query)">
+                        <div class="flex items-center gap-2">
+                          <p class="text-[11px] font-medium text-gray-600">Query 参数</p>
+                          <CopyButton :text="prettyJson(result.request.query)" label="Query 参数" />
+                        </div>
+                        <pre class="mt-1 max-h-36 overflow-auto rounded bg-white px-2 py-1.5 font-mono text-[11px] text-gray-700 ring-1 ring-gray-100">{{ prettyJson(result.request.query) }}</pre>
                       </div>
-                      <div v-if="result.request.body !== null && result.request.body !== undefined" class="relative">
-                        <p class="text-[11px] font-medium text-gray-600">请求体</p>
-                        <CopyButton
-                          :text="prettyJson(result.request.body)"
-                          label="请求体"
-                          class="absolute right-0 top-0"
-                        />
-                        <pre class="mt-1 max-h-36 overflow-auto rounded bg-white px-2 py-1.5 pr-20 font-mono text-[11px] text-gray-700 ring-1 ring-gray-100">{{ prettyJson(result.request.body) }}</pre>
+                      <div v-if="result.request.body !== null && result.request.body !== undefined">
+                        <div class="flex items-center gap-2">
+                          <p class="text-[11px] font-medium text-gray-600">请求体</p>
+                          <CopyButton :text="prettyJson(result.request.body)" label="请求体" />
+                        </div>
+                        <pre class="mt-1 max-h-36 overflow-auto rounded bg-white px-2 py-1.5 font-mono text-[11px] text-gray-700 ring-1 ring-gray-100">{{ prettyJson(result.request.body) }}</pre>
                       </div>
-                      <div v-if="hasKeys(result.request.headers)" class="relative">
-                        <p class="text-[11px] font-medium text-gray-600">Headers（已脱敏）</p>
-                        <CopyButton
-                          :text="prettyJson(result.request.headers)"
-                          label="Headers"
-                          class="absolute right-0 top-0"
-                        />
-                        <pre class="mt-1 max-h-36 overflow-auto rounded bg-white px-2 py-1.5 pr-20 font-mono text-[11px] text-gray-700 ring-1 ring-gray-100">{{ prettyJson(result.request.headers) }}</pre>
+                      <div v-if="signingHeaderEntries.length">
+                        <div class="flex items-center gap-2">
+                          <p class="text-[11px] font-medium text-gray-600">签名 Header（已脱敏）</p>
+                          <CopyButton
+                            :text="JSON.stringify(Object.fromEntries(signingHeaderEntries), null, 2)"
+                            label="签名 Header"
+                          />
+                        </div>
+                        <pre class="mt-1 max-h-36 overflow-auto rounded bg-white px-2 py-1.5 font-mono text-[11px] text-gray-700 ring-1 ring-gray-100">{{ prettyJson(Object.fromEntries(signingHeaderEntries)) }}</pre>
+                      </div>
+                      <div v-if="hasKeys(result.request.headers)">
+                        <div class="flex items-center gap-2">
+                          <p class="text-[11px] font-medium text-gray-600">Headers（已脱敏）</p>
+                          <CopyButton :text="prettyJson(result.request.headers)" label="Headers" />
+                        </div>
+                        <pre class="mt-1 max-h-36 overflow-auto rounded bg-white px-2 py-1.5 font-mono text-[11px] text-gray-700 ring-1 ring-gray-100">{{ prettyJson(result.request.headers) }}</pre>
                       </div>
                       <p class="text-[10px] leading-relaxed text-gray-400">
                         系统级参数由平台按当前登录用户注入；这里展示的是请求内核最终实际发送的内容，敏感 Header 已脱敏。
@@ -359,14 +481,37 @@ const prettyJson = (value: any): string => {
                     </div>
                   </details>
 
-                  <div v-if="result.body" class="relative bg-slate-900">
-                    <pre class="max-h-56 overflow-auto px-3 py-2.5 pr-20 text-[11px] leading-relaxed text-slate-200">{{ result.body }}</pre>
-                    <CopyButton
-                      :text="result.body"
-                      label="响应体"
-                      dark
-                      class="absolute right-2 top-2"
-                    />
+                  <details v-if="hasKeys(result.response_headers)" class="border-t border-gray-100 bg-slate-50 px-3 py-2">
+                    <summary class="cursor-pointer text-[11px] font-medium text-gray-700">响应 Headers（已脱敏）</summary>
+                    <div class="mt-2">
+                      <div class="flex items-center gap-2">
+                        <p class="text-[11px] text-gray-500">目标接口返回的响应头</p>
+                        <CopyButton :text="prettyJson(result.response_headers)" label="响应 Headers" />
+                      </div>
+                      <pre class="mt-1 max-h-36 overflow-auto rounded bg-white px-2 py-1.5 font-mono text-[11px] text-gray-700 ring-1 ring-gray-100">{{ prettyJson(result.response_headers) }}</pre>
+                    </div>
+                  </details>
+
+                  <div v-if="result.body" class="bg-slate-900">
+                    <div class="flex flex-wrap items-center gap-2 border-b border-slate-700 px-3 py-1.5">
+                      <span class="text-[11px] font-medium text-slate-300">响应体</span>
+                      <div v-if="responseBodyIsJson" class="flex rounded bg-slate-800 p-0.5 text-[10px] ring-1 ring-slate-700">
+                        <button
+                          type="button"
+                          class="rounded px-1.5 py-0.5 font-medium"
+                          :class="bodyView === 'pretty' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                          @click="bodyView = 'pretty'"
+                        >美化</button>
+                        <button
+                          type="button"
+                          class="rounded px-1.5 py-0.5 font-medium"
+                          :class="bodyView === 'raw' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                          @click="bodyView = 'raw'"
+                        >原文</button>
+                      </div>
+                      <CopyButton :text="result.body" label="响应体" dark />
+                    </div>
+                    <pre class="max-h-56 overflow-auto px-3 py-2.5 text-[11px] leading-relaxed text-slate-200">{{ responseBody }}</pre>
                   </div>
                   <p v-if="result.body_truncated" class="border-t border-gray-100 bg-gray-50 px-3 py-1.5 text-[11px] text-gray-500">
                     响应过大，仅显示前 2000 字符。

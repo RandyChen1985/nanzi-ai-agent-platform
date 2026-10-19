@@ -8,6 +8,12 @@ export interface SysApiTool {
   url_template: string
   headers?: Record<string, string>
   parameter_schema?: Record<string, any>
+  /** 请求签名：关闭时运行时完全忽略签名配置 */
+  signing_enabled?: boolean
+  signing_key_id?: string | null
+  signing_algorithm?: string
+  /** 只读状态：服务端是否已保存密钥；响应不会返回密钥本身 */
+  signing_secret_configured?: boolean
   is_active: boolean
   /** 业务分组名：智能体配置的「工具能力」步骤按它归组；为空表示未分组 */
   group_name?: string | null
@@ -22,6 +28,10 @@ export interface SysApiToolCreate {
   url_template: string
   headers?: Record<string, string>
   parameter_schema?: Record<string, any>
+  signing_enabled?: boolean
+  signing_key_id?: string | null
+  signing_algorithm?: string
+  signing_secret?: string
   is_active?: boolean
   group_name?: string | null
 }
@@ -33,6 +43,10 @@ export interface SysApiToolUpdate {
   url_template?: string
   headers?: Record<string, string>
   parameter_schema?: Record<string, any>
+  signing_enabled?: boolean
+  signing_key_id?: string | null
+  signing_algorithm?: string
+  signing_secret?: string
   is_active?: boolean
   group_name?: string | null
 }
@@ -44,6 +58,12 @@ export interface SysApiToolPreviewPayload {
   headers?: Record<string, string>
   parameter_schema?: Record<string, any>
   params: Record<string, any>
+  signing_enabled?: boolean
+  signing_algorithm?: string
+  signing_key_id?: string | null
+  signing_secret?: string
+  /** 已保存工具试跑时传 id，服务端据此读取已加密的签名密钥 */
+  tool_id?: string | null
 }
 
 export type PreviewErrorKind =
@@ -55,6 +75,7 @@ export type PreviewErrorKind =
   | 'missing_param'
   | 'invalid_parameter_schema'
   | 'missing_user_variable'
+  | 'invalid_signing_config'
 
 export interface SysApiToolPreviewRequestInfo {
   method: string
@@ -70,6 +91,7 @@ export interface SysApiToolPreviewResult {
   elapsed_ms: number
   body: string
   body_truncated: boolean
+  response_headers?: Record<string, string>
   request?: SysApiToolPreviewRequestInfo | null
   error_kind?: PreviewErrorKind | null
   message: string

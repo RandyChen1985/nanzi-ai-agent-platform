@@ -69,10 +69,11 @@ def test_left_docked_canvas_offsets_chat_on_the_left():
     assert "canvasFromWorkspace.value ? 0 : canvasPinnedWidthPx.value" in embed_chat
     assert "canvasFromWorkspace.value ? canvasPinnedWidthPx.value : 0" in embed_chat
 
-    # 右侧总和只能加「右停靠」那份，绝不能再直接加画布宽度
-    total_block = embed_chat.split("const totalPinnedDrawerPx = computed(")[1].split("});")[0]
-    assert "canvasRightDockWidthPx.value" in total_block
-    assert "canvasPinnedWidthPx.value" not in total_block, (
+    # 右侧面板宽度表只能取「右停靠」那份，绝不能再直接加画布宽度。
+    # （宽度表由 pinnedDrawerPanelWidths 汇总，交给 computePinnedDrawerLayout 封顶。）
+    widths_block = embed_chat.split("const pinnedDrawerPanelWidths = computed")[1].split("}))")[0]
+    assert "canvas: canvasRightDockWidthPx.value" in widths_block
+    assert "canvasPinnedWidthPx.value" not in widths_block, (
         "画布宽度又被无条件加进右侧总和了：左停靠时会让对话列左边界停在 x=0，"
         "被画布从左侧切掉一截，右侧还留等宽死空白"
     )

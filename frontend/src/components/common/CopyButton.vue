@@ -42,7 +42,7 @@ onBeforeUnmount(clearResetTimer)
 <template>
   <button
     type="button"
-    class="inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[10px] font-medium shadow-sm backdrop-blur-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+    class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-1 text-[10px] font-medium shadow-sm backdrop-blur-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
     :class="dark
       ? 'border-white/15 bg-slate-800/85 text-slate-200 hover:bg-slate-700'
       : 'border-gray-200 bg-white/95 text-gray-500 hover:border-primary/40 hover:text-primary'"
