@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 
 from app.models.tool import SysApiTool
 from app.services.ai.tools.generic_api import GenericApiToolFactory, UnsupportedMethodError
+from app.services.ai.tools.user_placeholders import UserPlaceholderError
 
 PREVIEW_URL = "/api/portal/tools/preview"
 
@@ -287,6 +288,24 @@ async def test_preview_passes_in_memory_draft_shaped_like_runtime(client, admin_
     assert captured["params"] == {"id": "7"}
     # 试跑必须拿到非 2xx 的原始响应用于分类展示，而不是让它抛异常
     assert captured["kwargs"].get("raise_on_http_error") is False
+    # 试跑没有 AgentContext，必须显式把当前登录用户交给内核替换 {user.xxx}
+    assert captured["kwargs"].get("user_info", {}).get("user_name")
+
+
+@pytest.mark.asyncio
+async def test_preview_classifies_missing_user_variable(client, admin_api_key):
+    with patch.object(
+        GenericApiToolFactory, "_perform_request",
+        new=AsyncMock(side_effect=UserPlaceholderError(["dept_code"])),
+    ):
+        response = await client.post(
+            PREVIEW_URL, json=_payload(), headers={"X-API-Key": admin_api_key},
+        )
+
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error_kind"] == "missing_user_variable"
+    assert "{user.dept_code}" in body["message"]
 
 
 @pytest.mark.asyncio

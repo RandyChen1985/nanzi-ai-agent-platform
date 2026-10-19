@@ -15,6 +15,7 @@ import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
 import { createSseLineParser } from '../utils/chartRenderer'
+import { BUILTIN_USER_VARIABLES, collectExtraDataVariables } from '../utils/userVariables'
 import {
   CircleStackIcon,
   CpuChipIcon,
@@ -200,79 +201,7 @@ const OPERATORS = [
   { label: '小于 (<)', value: '<' }
 ]
 
-const BUILTIN_USER_VARIABLES = [
-  { label: '用户 ID', value: '{user.id}' },
-  { label: '用户名', value: '{user.user_name}' },
-  { label: '真实姓名', value: '{user.real_name}' },
-  { label: '部门代码', value: '{user.dept_code}' },
-  { label: '组织全路径', value: '{user.org_path}' },
-  { label: '角色', value: '{user.role}' },
-] as const
-
-const CORE_USER_DIMENSION_KEYS = new Set([
-  'id', 'user_id', 'user_name', 'real_name', 'dept_code', 'org_path', 'role', 'extra_data',
-])
-
-const parseUserExtraDataObject = (raw: unknown): Record<string, unknown> => {
-  if (!raw) return {}
-  if (typeof raw === 'string') {
-    const text = raw.trim()
-    if (!text) return {}
-    try {
-      const parsed = JSON.parse(text)
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-    } catch {
-      return {}
-    }
-  }
-  if (typeof raw === 'object' && !Array.isArray(raw)) {
-    return raw as Record<string, unknown>
-  }
-  return {}
-}
-
-const formatExtraDataSample = (value: unknown): string | undefined => {
-  if (value == null) return undefined
-  const text = typeof value === 'object' ? JSON.stringify(value) : String(value).trim()
-  if (!text) return undefined
-  return text.length > 40 ? `${text.slice(0, 37)}...` : text
-}
-
-const EXTRA_DATA_USER_VARIABLES = computed(() => {
-  const keySamples = new Map<string, string | undefined>()
-
-  const collectFromExtraData = (extraData: unknown) => {
-    const extra = parseUserExtraDataObject(extraData)
-    for (const [key, value] of Object.entries(extra)) {
-      if (CORE_USER_DIMENSION_KEYS.has(key)) continue
-      if (!keySamples.has(key)) {
-        keySamples.set(key, formatExtraDataSample(value))
-      }
-    }
-  }
-
-  for (const user of allUsers.value) {
-    collectFromExtraData(user.extra_data)
-  }
-
-  // 兜底：当前登录用户 localStorage 中的 extra_data
-  try {
-    const userInfoStr = localStorage.getItem('user_info')
-    if (userInfoStr) {
-      collectFromExtraData(JSON.parse(userInfoStr)?.extra_data)
-    }
-  } catch {
-    // ignore
-  }
-
-  return Array.from(keySamples.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, sample]) => ({
-      label: key,
-      value: `{user.${key}}`,
-      sample,
-    }))
-})
+const EXTRA_DATA_USER_VARIABLES = computed(() => collectExtraDataVariables(allUsers.value))
 const syncingId = ref<number | null>(null)
 const syncLogOpen = ref(false)
 const syncLogDataset = ref<Dataset | null>(null)

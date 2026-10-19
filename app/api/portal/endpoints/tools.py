@@ -29,6 +29,7 @@ from app.services.ai.tools.forbidden_catalog import (
     merge_forbidden_tool_candidates,
 )
 from app.services.ai.tools.generic_api import GenericApiToolFactory, UnsupportedMethodError
+from app.services.ai.tools.user_placeholders import UserPlaceholderError
 
 router = APIRouter()
 
@@ -370,10 +371,16 @@ async def preview_tool(
             dict(payload.params or {}),
             # 非 2xx 也要拿到原始响应，用于区分「接口通了但拒绝」与「根本没连上」
             raise_on_http_error=False,
+            # 试跑没有 AgentContext，显式传入当前登录用户
+            user_info=user,
         )
     except UnsupportedMethodError as exc:
         return SysApiToolPreviewResponse(
             ok=False, error_kind="unsupported_method", message=str(exc),
+        )
+    except UserPlaceholderError as exc:
+        return SysApiToolPreviewResponse(
+            ok=False, error_kind="missing_user_variable", message=str(exc),
         )
     except httpx.TimeoutException:
         return SysApiToolPreviewResponse(

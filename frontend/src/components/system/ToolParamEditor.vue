@@ -12,7 +12,7 @@
  * 组件对 ``modelValue`` 是受控的：JSON 模式直接写回文本，可视化模式经
  * ``serializeToolSchema`` 写回——**绝不自己拼 JSON**（顶层扩展键与嵌套子结构会被抹掉）。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
     PARAM_TYPE_OPTIONS,
     parseToolSchema,
@@ -21,6 +21,8 @@ import {
     type SchemaParam,
 } from '../../utils/toolSchema'
 import type { ParamLocation } from '../../utils/toolDraft'
+import PermissionVariableMenu from '../metadata/PermissionVariableMenu.vue'
+import { BUILTIN_USER_VARIABLES, collectExtraDataVariables, type UserVariable } from '../../utils/userVariables'
 
 const props = withDefaults(defineProps<{
     modelValue: string
@@ -47,6 +49,30 @@ const nextVisualParamKey = () => {
     visualParamSeed += 1
     return `param-${visualParamSeed}`
 }
+
+// 用户变量候选：内置字段 + 当前登录用户 extra_data 里的扩展键。运行时取值与
+// 元数据行级权限共用同一套口径，见 utils/userVariables.ts。
+const extraDataVariables = ref<UserVariable[]>(
+    collectExtraDataVariables([], { excludeSensitive: true }),
+)
+const openVariableMenuKey = ref<string | null>(null)
+
+const closeVariableMenu = () => {
+    openVariableMenuKey.value = null
+}
+
+const toggleVariableMenu = (paramKey: string) => {
+    openVariableMenuKey.value = openVariableMenuKey.value === paramKey ? null : paramKey
+}
+
+const applyUserVariable = (param: VisualParam, value: string) => {
+    param.defaultValue = value
+    closeVariableMenu()
+}
+
+const onDocumentClick = () => closeVariableMenu()
+onMounted(() => document.addEventListener('click', onDocumentClick))
+onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
 // 嵌套参数（带 items / properties 子结构）在可视化里只能改类型、描述与必填，
 // 子结构本身请回 JSON 模式编辑——这里只做提示。
@@ -99,6 +125,7 @@ const addVisualParam = () => {
 }
 
 const removeVisualParam = (index: number) => {
+    closeVariableMenu()
     visualParams.value = visualParams.value.filter((_, i) => i !== index)
 }
 
@@ -184,7 +211,26 @@ const locationLabel = (name: string): string => {
           必填
         </label>
         <input v-model="p.description" class="min-w-[10rem] flex-1 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs" placeholder="描述（给 LLM 看）" />
-        <input v-model="p.defaultValue" :disabled="p.required" class="w-32 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono disabled:bg-gray-100" :placeholder="p.required ? '默认值（需非必填）' : '默认值'" />
+        <div class="relative flex items-center gap-1">
+          <input v-model="p.defaultValue" :disabled="p.required" class="w-32 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono disabled:bg-gray-100" :placeholder="p.required ? '默认值（需非必填）' : '默认值'" />
+          <button
+            type="button"
+            class="flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 bg-white font-mono text-[11px] font-bold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="p.required"
+            :title="p.required ? '默认值仅在非必填时生效' : '插入用户变量'"
+            :aria-label="`为参数 ${p.name || index + 1} 插入用户变量`"
+            :aria-expanded="openVariableMenuKey === p.key"
+            @click.stop="toggleVariableMenu(p.key)"
+          >{{ '{}' }}</button>
+          <PermissionVariableMenu
+            v-if="openVariableMenuKey === p.key"
+            :builtin-variables="BUILTIN_USER_VARIABLES"
+            :extra-data-variables="extraDataVariables"
+            accent="slate"
+            @click.stop
+            @select="applyUserVariable(p, $event)"
+          />
+        </div>
         <span v-if="p.extra.items || p.extra.properties" class="rounded-full bg-amber-50 px-2 text-xs leading-5 text-amber-700" title="嵌套子结构请用 JSON 模式编辑">嵌套</span>
         <button
           type="button"
@@ -203,10 +249,10 @@ const locationLabel = (name: string): string => {
         class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
         @click="addVisualParam"
       >+ 添加参数</button>
-      <p class="text-xs text-gray-500">未勾选「必填」的参数会写成 <code class="font-mono">required: false</code>（运行时缺省按必填处理，默认值只在非必填时生效）</p>
+      <p class="text-xs text-gray-500">未勾选「必填」的参数会写成 <code class="font-mono">required: false</code>（运行时缺省按必填处理）。想让参数固定取当前用户：取消「必填」，把默认值设为 <code class="font-mono">{user.user_name}</code> 等变量，调用时自动替换。</p>
     </div>
 
     <p v-if="jsonHint" class="mt-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{{ jsonHint }}</p>
-    <p class="text-xs text-gray-500 mt-1">定义参数类型和描述，用于 LLM 理解</p>
+    <p class="text-xs text-gray-500 mt-1">定义参数类型和描述，用于 LLM 理解；参数值支持 <code class="font-mono">{user.user_name}</code>、<code class="font-mono">{user.dept_code}</code> 等用户变量。</p>
   </div>
 </template>

@@ -2,13 +2,104 @@ import logging
 import time
 import httpx
 import json
-from typing import Dict, Any, Type
+from typing import Dict, Any, Mapping, Type
 from pydantic import create_model, Field
 from app.services.ai.tools.tool_compat import StructuredTool
+from app.services.ai.tools.user_placeholders import (
+    contains_user_placeholder,
+    current_user_variables,
+    replace_headers_user_placeholders,
+    replace_user_placeholders,
+    resolve_user_variables,
+)
 from app.models.tool import SysApiTool
 from app.services.ai.grounding.models import EvidenceType
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_parameter_schema(
+    schema_def: Any,
+    *,
+    tool_name: str = "",
+) -> tuple[Dict[str, Any], Dict[str, Any], set[str]]:
+    """兼容三种 schema 写法，返回 ``(顶层, 参数表, 必填集合)``。
+
+    标准 JSON Schema（``properties`` + ``required``）、扁平 map、极简
+    ``"param": "描述"`` 都由 ``create_tool`` 与运行时占位符替换共用，
+    避免两处各解析一遍导致口径漂移。
+    """
+    if isinstance(schema_def, str):
+        try:
+            schema_def = json.loads(schema_def)
+        except Exception as e:
+            logger.warning(f"Failed to parse parameter_schema for tool {tool_name}: {e}")
+            schema_def = {}
+    if not isinstance(schema_def, dict):
+        schema_def = {}
+
+    properties = schema_def
+    required_fields: set[str] = set()
+    if "properties" in schema_def and isinstance(schema_def["properties"], dict):
+        properties = schema_def["properties"]
+        if "required" in schema_def and isinstance(schema_def["required"], list):
+            required_fields = set(schema_def["required"])
+    return schema_def, properties, required_fields
+
+
+def _apply_user_placeholders(
+    config: SysApiTool,
+    params: Dict[str, Any],
+    variables: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """替换参数值里的 ``{user.xxx}``，并补上含占位符的默认值。
+
+    模型没传某个参数时，标准 JSON Schema 的 ``default`` 不会自动落进
+    ``kwargs``（``StructuredTool`` 不做 pydantic 校验）；含占位符的默认值
+    在这里补，运行时才能真正按当前用户取值。
+    """
+    _schema_def, properties, _required_fields = _parse_parameter_schema(
+        config.parameter_schema,
+        tool_name=config.name,
+    )
+    prepared = dict(params)
+
+    for name, definition in properties.items():
+        param_type = definition.get("type") if isinstance(definition, dict) else None
+        default = definition.get("default") if isinstance(definition, dict) else None
+        has_placeholder_default = contains_user_placeholder(default)
+
+        missing = name not in prepared or prepared[name] is None
+        if (
+            not missing
+            and has_placeholder_default
+            and isinstance(prepared[name], str)
+            and not prepared[name].strip()
+        ):
+            # 模型偶尔会回一个空串而不是省略参数；有占位符默认值时按「没填」处理，
+            # 否则会把空条件发给外部接口。
+            missing = True
+
+        if missing:
+            if has_placeholder_default:
+                prepared[name] = replace_user_placeholders(
+                    default,
+                    variables,
+                    expected_type=param_type,
+                )
+            continue
+        prepared[name] = replace_user_placeholders(
+            prepared[name],
+            variables,
+            expected_type=param_type,
+        )
+
+    for name in list(prepared):
+        if name in properties:
+            continue
+        prepared[name] = replace_user_placeholders(prepared[name], variables)
+    return prepared
+
 
 class UnsupportedMethodError(Exception):
     """运行时遇到不支持的方法时抛出。
@@ -35,26 +126,10 @@ class GenericApiToolFactory:
         fields = {}
         
         # Parse schema from JSON string if necessary
-        schema_def = tool_config.parameter_schema
-        if isinstance(schema_def, str):
-            try:
-                schema_def = json.loads(schema_def)
-            except Exception as e:
-                logger.warning(f"Failed to parse parameter_schema for tool {tool_config.name}: {e}")
-                schema_def = {}
-        
-        if not schema_def:
-            schema_def = {}
-            
-        # If schema follows JSON Schema structure with 'properties', use that
-        properties = schema_def
-        required_fields = set()
-        
-        if "properties" in schema_def and isinstance(schema_def["properties"], dict):
-            properties = schema_def["properties"]
-            # Handle required fields list from JSON Schema
-            if "required" in schema_def and isinstance(schema_def["required"], list):
-                required_fields = set(schema_def["required"])
+        schema_def, properties, required_fields = _parse_parameter_schema(
+            tool_config.parameter_schema,
+            tool_name=tool_config.name,
+        )
 
         for param_name, param_def in properties.items():
             # Skip keys that are clearly not parameters if we were passed a raw schema but misses checks
@@ -92,8 +167,16 @@ class GenericApiToolFactory:
                     if not param_def.get("required", True):
                         is_required = False
                 
-                if not is_required:
-                    p_default = param_def.get("default", None)
+                default_value = param_def.get("default", None)
+                if contains_user_placeholder(default_value):
+                    # 不把 {user.xxx} 原样当作默认值写进工具 schema 给模型看：
+                    # 模型很可能照抄这段文本，且它本来就不是可用的字面量。
+                    # 真正的替换在 _perform_request 里按当前用户完成。
+                    p_desc = f"{p_desc}（未提供时按当前用户信息自动填充）".strip()
+                    if not is_required:
+                        p_default = None
+                elif not is_required:
+                    p_default = default_value
             else:
                 # Simple case: "param_name": "description"
                 p_desc = str(param_def)
@@ -146,17 +229,30 @@ class GenericApiToolFactory:
         params: Dict[str, Any],
         *,
         raise_on_http_error: bool = True,
+        user_info: Mapping[str, Any] | None = None,
     ) -> tuple[Any, int, str]:
-        """发一次请求的公共内核：路径替换 + 参数落位 + headers + 超时。
+        """发一次请求的公共内核：用户变量替换 + 路径替换 + 参数落位 + headers + 超时。
 
         抽出来的唯一目的，是让「保存前试跑」与智能体运行时**走同一段代码**，
         避免出现「试跑通过、运行时却失败」的口径分裂。
+
+        ``user_info`` 只在试跑等 HTTP 入口显式传入（当前登录用户）；运行时
+        不传，从 ``AgentContext`` / ``current_user_info`` 读取。
 
         返回 ``(response, elapsed_ms, final_url)``。
         ``raise_on_http_error=True``（运行时默认）时，非 2xx 抛 ``RuntimeError``，
         文案与历史行为逐字节一致；试跑传 ``False``，以取得原始 status 与 body
         用于分类展示。连接层异常一律原样抛出，由调用方决定怎么呈现。
         """
+        # 0. 用户变量：必须先于路径替换，否则默认值里的 {user.id} 会被原样
+        #    拼进 URL。变量取不到时抛 UserPlaceholderError，由调用方呈现。
+        variables = (
+            resolve_user_variables(user_info)
+            if user_info is not None
+            else current_user_variables()
+        )
+        params = _apply_user_placeholders(config, params, variables)
+
         url = config.url_template
 
         # 1. Path Substitution
@@ -181,6 +277,8 @@ class GenericApiToolFactory:
                     h_config = {}
             if isinstance(h_config, dict):
                 headers.update(h_config)
+        if headers:
+            headers = replace_headers_user_placeholders(headers, variables)
 
         # 3. Request
         method = config.method.upper()

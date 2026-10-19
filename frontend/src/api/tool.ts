@@ -53,6 +53,7 @@ export type PreviewErrorKind =
   | 'invalid_url'
   | 'unsupported_method'
   | 'missing_param'
+  | 'missing_user_variable'
 
 export interface SysApiToolPreviewResult {
   ok: boolean
