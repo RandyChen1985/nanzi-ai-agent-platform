@@ -134,3 +134,11 @@ def test_input_placeholder_mentions_files_for_at_trigger():
     assert "@ 选择专家或文件" in text, "占位文案要说明 @ 也能选文件"
     assert "@ 选择智能体专家" not in text, "旧文案只说切专家，已过期"
     assert "@ 选择文件" in text, "锁定专家时 @ 仍能选文件，文案不能漏"
+
+
+def test_mention_list_header_title_follows_active_tab():
+    text = _read(MENTION_LIST)
+    assert "panelTitle" in text, "标题应由当前 tab 派生，不能写死"
+    assert "选择文件" in text, "文件 tab 的标题不能仍显示「选择专家」"
+    assert "activeTab.value === 'file' ? '选择文件' : '选择专家'" in text
+    assert 'aria-label="选择专家"' not in text, "aria-label 也要跟随 tab，不能写死"

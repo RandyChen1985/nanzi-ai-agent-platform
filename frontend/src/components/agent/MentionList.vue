@@ -59,6 +59,9 @@ const emit = defineEmits<{
 const activeTab = ref<"expert" | "file">(props.initialTab);
 const pickerRef = ref<any>(null);
 
+/** 浮层标题与 aria-label 跟随当前 tab，文件 tab 下不能仍写「选择专家」 */
+const panelTitle = computed(() => (activeTab.value === 'file' ? '选择文件' : '选择专家'));
+
 const onPickerSwitchTab = (direction: "left" | "right") => {
   if (direction === "left") activeTab.value = "expert";
 };
@@ -216,12 +219,12 @@ defineExpose({ handleKeydown });
       maxHeight: windowWidth < 640 ? '40vh' : '18rem',
     }"
     role="listbox"
-    aria-label="选择专家"
+    :aria-label="panelTitle"
   >
     <div class="px-2.5 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shrink-0 bg-white dark:bg-gray-800">
       <div class="flex items-center gap-1.5 min-w-0">
         <span class="w-1 h-3.5 bg-primary rounded-full shrink-0" />
-        <span class="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">选择专家</span>
+        <span class="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">{{ panelTitle }}</span>
         <div class="flex items-center gap-0.5 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-700/60 shrink-0">
           <button
             type="button"
