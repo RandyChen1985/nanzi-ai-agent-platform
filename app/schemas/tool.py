@@ -106,17 +106,32 @@ class SysApiToolPreviewRequest(BaseModel):
     )
 
 
+class SysApiToolPreviewRequestInfo(BaseModel):
+    """试跑实际发出的 HTTP 请求快照（用于界面核对最终 URL 与参数）。"""
+
+    method: str
+    url: str
+    headers: Dict[str, str] = Field(default_factory=dict)
+    query: Dict[str, Any] = Field(default_factory=dict)
+    body: Any = None
+
+
 class SysApiToolPreviewResponse(BaseModel):
     ok: bool
     status_code: Optional[int] = None
     elapsed_ms: int = 0
     body: str = ""
     body_truncated: bool = False
+    request: Optional[SysApiToolPreviewRequestInfo] = Field(
+        None,
+        description="实际发出请求的最终 URL、Query、Body 与脱敏后的 Headers；预检失败时为空",
+    )
     error_kind: Optional[str] = Field(
         None,
         description=(
             "http_error（接口通了但拒绝）/ connection（根本没连上）/ timeout / "
             "invalid_url / unsupported_method / missing_param / "
+            "invalid_parameter_schema（系统级参数配置不合法）/ "
             "missing_user_variable（{user.xxx} 取不到值）"
         ),
     )

@@ -53,7 +53,16 @@ export type PreviewErrorKind =
   | 'invalid_url'
   | 'unsupported_method'
   | 'missing_param'
+  | 'invalid_parameter_schema'
   | 'missing_user_variable'
+
+export interface SysApiToolPreviewRequestInfo {
+  method: string
+  url: string
+  headers: Record<string, string>
+  query: Record<string, any>
+  body: any
+}
 
 export interface SysApiToolPreviewResult {
   ok: boolean
@@ -61,6 +70,7 @@ export interface SysApiToolPreviewResult {
   elapsed_ms: number
   body: string
   body_truncated: boolean
+  request?: SysApiToolPreviewRequestInfo | null
   error_kind?: PreviewErrorKind | null
   message: string
 }

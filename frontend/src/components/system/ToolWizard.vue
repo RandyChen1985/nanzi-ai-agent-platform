@@ -55,9 +55,13 @@ const EXAMPLE_CURL = `curl -X POST 'https://api.example.com/v1/orders/{order_id}
   -H 'Content-Type: application/json' \\
   -d '{"amount": 100, "reason": "客户申请退款"}'`
 
+const existingSystemParams = () =>
+    parseToolSchema(props.toolForm.parameter_schema_str)?.systemParams ?? []
+
 const writeDraftParams = (params: DraftParam[]) => {
     draftParams.value = params
-    props.toolForm.parameter_schema_str = buildDraftSchema(params)
+    // 重新生成普通参数时不能丢掉用户已配置的系统级参数（它们不在 properties 里）
+    props.toolForm.parameter_schema_str = buildDraftSchema(params, existingSystemParams())
     staleParams.value = false
 }
 

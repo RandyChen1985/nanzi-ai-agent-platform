@@ -2,9 +2,11 @@
 import { ref, onMounted, computed } from 'vue'
 import { toolApi, type SysApiTool, type SysApiToolCreate } from '../../api/tool'
 import { SUPPORTED_HTTP_METHODS } from '../../utils/toolMethods'
+import { parseToolSchema, validateSystemParams } from '../../utils/toolSchema'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
 import ConfirmModal from '../ConfirmModal.vue'
+import ApiToolTester from './ApiToolTester.vue'
 import ToolParamEditor from './ToolParamEditor.vue'
 import ToolWizard from './ToolWizard.vue'
 import { 
@@ -294,6 +296,19 @@ const saveTool = async () => {
         } catch (e) {
             showToast('参数定义格式错误 (非 JSON)', 'error')
             return
+        }
+
+        const parsedSchema = parseToolSchema(toolForm.value.parameter_schema_str)
+        if (parsedSchema) {
+            const systemParamErrors = validateSystemParams(
+                parsedSchema.systemParams,
+                parsedSchema.params,
+            )
+            const firstError = systemParamErrors[0]
+            if (firstError) {
+                showToast(firstError, 'error')
+                return
+            }
         }
         
         const payload: any = {
@@ -636,6 +651,15 @@ onMounted(() => {
                     <div>
                        <label class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
                        <textarea v-model="toolForm.headers_str" rows="3" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "Authorization": "Bearer token" }'></textarea>
+                    </div>
+
+                    <div class="border-t border-gray-100 pt-4">
+                        <ApiToolTester
+                            :method="toolForm.method || 'GET'"
+                            :url-template="toolForm.url_template || ''"
+                            :headers-str="toolForm.headers_str || '{}'"
+                            :schema-str="toolForm.parameter_schema_str || '{}'"
+                        />
                     </div>
 
                     <div class="flex items-center">

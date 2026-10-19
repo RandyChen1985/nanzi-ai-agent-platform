@@ -17,11 +17,14 @@ import {
     PARAM_TYPE_OPTIONS,
     parseToolSchema,
     serializeToolSchema,
+    validateSystemParams,
     type ParsedToolSchema,
     type SchemaParam,
+    type SystemParam,
 } from '../../utils/toolSchema'
 import type { ParamLocation } from '../../utils/toolDraft'
 import PermissionVariableMenu from '../metadata/PermissionVariableMenu.vue'
+import ToolSystemParamEditor from './ToolSystemParamEditor.vue'
 import { BUILTIN_USER_VARIABLES, collectExtraDataVariables, type UserVariable } from '../../utils/userVariables'
 
 const props = withDefaults(defineProps<{
@@ -41,7 +44,14 @@ type VisualParam = SchemaParam & { key: string }
 
 const schemaEditorMode = ref<'json' | 'visual'>('json')
 const visualParams = ref<VisualParam[]>([])
-const parsedSchema = ref<ParsedToolSchema>({ shape: 'flat', hadRequiredList: false, rest: {}, params: [] })
+const systemParams = ref<SystemParam[]>([])
+const parsedSchema = ref<ParsedToolSchema>({
+    shape: 'flat',
+    hadRequiredList: false,
+    rest: {},
+    params: [],
+    systemParams: [],
+})
 const jsonHint = ref('')
 let visualParamSeed = 0
 
@@ -90,12 +100,15 @@ const visualNestedCount = computed(() => visualParams.value.filter(
     (param) => param.extra.items || param.extra.properties
 ).length)
 
+const systemParamErrors = computed(() => validateSystemParams(systemParams.value, visualParams.value))
+
 const buildSchemaJson = (): string => serializeToolSchema({
     shape: parsedSchema.value.shape,
     hadRequiredList: parsedSchema.value.hadRequiredList,
     rest: parsedSchema.value.rest,
     // 剥掉仅用于 v-for 的 key：它不属于 schema 数据
     params: visualParams.value.map(({ key, ...param }) => param),
+    systemParams: systemParams.value,
 })
 
 const loadVisualFromJson = (): boolean => {
@@ -108,6 +121,7 @@ const loadVisualFromJson = (): boolean => {
     jsonHint.value = ''
     parsedSchema.value = parsed
     visualParams.value = parsed.params.map((param) => ({ ...param, key: nextVisualParamKey() }))
+    systemParams.value = parsed.systemParams.map((param) => ({ ...param }))
     return true
 }
 
@@ -146,6 +160,12 @@ const onJsonInput = (event: Event) => {
 
 // 可视化行改动 → 写回受控值。比较一次是为了避免「自己写出去的又触发回解析」的死循环。
 watch(visualParams, () => {
+    if (schemaEditorMode.value !== 'visual') return
+    const next = buildSchemaJson()
+    if (next !== props.modelValue) emit('update:modelValue', next)
+}, { deep: true })
+
+watch(systemParams, () => {
     if (schemaEditorMode.value !== 'visual') return
     const next = buildSchemaJson()
     if (next !== props.modelValue) emit('update:modelValue', next)
@@ -202,7 +222,8 @@ const locationLabel = (name: string): string => {
             </li>
           </ul>
           <p class="mt-2 rounded bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700">
-            想让参数固定取当前用户：取消「必填」，再把默认值设为用户变量。必填目前主要用于约束模型和试跑提示，不是运行时的硬校验。
+            需要模型绝对不能改的值（申请人、操作人），请使用下方「系统级参数」；
+            普通参数的默认值只是兜底，模型显式传值时仍会覆盖。必填目前主要用于约束模型和试跑提示，不是运行时的硬校验。
           </p>
         </div>
       </div>
@@ -293,7 +314,18 @@ const locationLabel = (name: string): string => {
         class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
         @click="addVisualParam"
       >+ 添加参数</button>
-      <p class="text-xs text-gray-500">未勾选「必填」的参数会写成 <code class="font-mono">required: false</code>；默认值可填 <code class="font-mono">{user.user_name}</code> 等用户变量，调用时自动替换。</p>
+      <ToolSystemParamEditor
+        v-model="systemParams"
+        :builtin-variables="BUILTIN_USER_VARIABLES"
+        :extra-data-variables="extraDataVariables"
+      />
+      <p v-if="systemParamErrors.length" class="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
+        {{ systemParamErrors[0] }}
+      </p>
+      <p class="text-xs text-gray-500">
+        普通参数的 <code class="font-mono">default</code> 只是兜底，模型显式给值时会覆盖；
+        申请人、操作人等不能由模型决定的值，请用下方「系统级参数」。
+      </p>
     </div>
 
     <p v-if="jsonHint" class="mt-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{{ jsonHint }}</p>
