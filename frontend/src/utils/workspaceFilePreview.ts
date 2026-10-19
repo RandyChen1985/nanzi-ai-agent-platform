@@ -1,5 +1,6 @@
 import axios from '@/utils/axios'
 import { copyToClipboard } from './clipboard'
+import { buildWorkspaceDownloadUrl } from './workspaceDownloadUrl'
 import type { CanvasPanelData, WorkspaceCanvasType } from '@/types/canvas'
 import {
   IMAGE_EXTENSIONS,
@@ -298,7 +299,14 @@ export async function downloadWorkspaceFile(options: {
   showToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void
 }) {
   const { path, name, conversationId, showToast } = options
-  const resolvedUrl = resolveFsPreviewUrl(path, conversationId)
+  // 下载走独立端点：预览接口的白名单只约束「能否在画布渲染」，
+  // 复用它会把 zip / 7z / 无扩展名文件一起挡在门外。
+  const resolvedUrl = buildWorkspaceDownloadUrl(path, conversationId)
+
+  if (!resolvedUrl) {
+    showToast('文件路径无效，无法下载', 'error')
+    return
+  }
 
   try {
     const response = await axios.get(resolvedUrl, { responseType: 'blob' })
@@ -322,7 +330,7 @@ export async function downloadWorkspaceFile(options: {
     } else if (err.response?.status === 403) {
       errMsg = '安全拦截：无权访问该服务器文件。'
     } else if (err.response?.status === 400) {
-      errMsg = err.response?.data?.detail || '不支持下载该类型的文件。'
+      errMsg = err.response?.data?.detail || '下载请求被拒绝。'
     }
     showToast(errMsg, 'error')
   }

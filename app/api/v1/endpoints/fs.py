@@ -577,6 +577,37 @@ async def preview_file(
     raise HTTPException(status_code=400, detail="不支持预览该类型的文件。")
 
 
+@router.get(
+    "/download",
+    summary="下载工作空间文件（不限文件格式）",
+    description=(
+        "与 /preview 共用路径归属校验，但不做扩展名白名单：zip 等二进制文件、"
+        "无扩展名文件都以 attachment 原样返回。预览白名单只约束「能否在画布渲染」，"
+        "不应连带剥夺用户下载自己工作区文件的能力。"
+    ),
+)
+async def download_file(
+    path: str = Query(..., description="文件绝对路径，须在安全根目录内"),
+    conversation_id: Optional[str] = Query(None, description="所属会话 ID"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.ai.runtime.agentscope.workspace import resolve_workspace_root
+
+    workspace_root = await resolve_workspace_root()
+    safe_path = _resolve_fs_file_path(
+        path, conversation_id, user_info, workspace_root=workspace_root, must_exist=True,
+    )
+    if not os.path.isfile(safe_path):
+        raise HTTPException(status_code=400, detail="目标不是文件，无法下载。")
+
+    return FileResponse(
+        safe_path,
+        media_type="application/octet-stream",
+        filename=os.path.basename(safe_path),
+        content_disposition_type="attachment",
+    )
+
+
 @router.put(
     "/write",
     response_model=StandardResponse[FileWriteResponse],
