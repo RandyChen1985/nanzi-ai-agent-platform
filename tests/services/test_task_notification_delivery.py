@@ -36,12 +36,16 @@ def test_channels_missing_delivery():
     assert channels_missing_delivery(["portal"], delivered) == []
 
 
-def test_build_task_notification_body_truncates_and_marks_scheduler_delivery():
+def test_build_task_notification_body_truncates_without_meta_prefix():
+    """正文不再拼「📨 以下为 TaskCenter 统一投递…」，来源标识由通知标题承载。"""
     long_text = "x" * 7000
-    body = build_task_notification_body(long_text, fallback=True)
-    assert "TaskCenter 统一投递" in body
+    body = build_task_notification_body(long_text)
+    assert "TaskCenter" not in body
+    assert "统一投递" not in body
+    assert not body.startswith("📨")
     assert "自动补发" not in body
     assert len(body) <= 6100
+    assert body.endswith("…（内容已截断）")
 
 
 def test_strip_thinking_blocks_from_notification_content():
@@ -58,9 +62,10 @@ def test_strip_thinking_blocks_from_notification_content():
     assert "SQL 计划推演" not in cleaned
     assert "最终结论：订单量环比上升。" in cleaned
 
-    body = build_task_notification_body(raw, fallback=True)
+    body = build_task_notification_body(raw)
     assert "长思考链" not in body
     assert "最终结论：订单量环比上升。" in body
+    assert "统一投递" not in body
 
 
 def test_strip_embedchat_reasoning_panel_leak_from_notification():
@@ -76,11 +81,11 @@ def test_strip_embedchat_reasoning_panel_leak_from_notification():
 
     body = build_task_notification_body(
         answer,
-        fallback=True,
         reasoning_content=reasoning,
     )
     assert "先看订单表结构" not in body
     assert "本周订单 GMV 环比上升 12%。" in body
+    assert "统一投递" not in body
 
 
 def test_compose_strips_think_without_appending_sql():
@@ -205,7 +210,9 @@ async def test_ensure_scheduler_delivers_portal_and_dingtalk():
     portal_create.assert_awaited_once()
     send_dingtalk.assert_awaited_once()
     body = portal_create.await_args.kwargs["content"]
-    assert "统一投递" in body
+    assert "统一投递" not in body
+    assert "TaskCenter" not in body
+    assert not body.startswith("📨")
     assert "巡检结论完整" in body
 
 
