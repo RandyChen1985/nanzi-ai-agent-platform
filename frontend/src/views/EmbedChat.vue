@@ -1774,6 +1774,17 @@
                       </div>
 
                       <h3 class="text-sm sm:text-lg font-black text-gray-800 dark:text-gray-100 truncate">会话回溯详情</h3>
+                      <!-- 排查「两个窗口是不是同一个会话」时，界面上必须有个地方能看到会话 ID；
+                           只露前 8 位（完整 UUID 会挤爆标题行），title 给全文，点击复制完整值。 -->
+                      <button
+                          v-if="traceLogData?.history?.conversation_id"
+                          type="button"
+                          class="text-[9px] sm:text-xs text-gray-400 font-mono bg-white dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-600 flex-shrink-0 hover:text-primary hover:border-primary/40"
+                          :title="`点击复制完整会话 ID：${traceLogData.history.conversation_id}`"
+                          @click.stop="copyToClipboard(traceLogData.history.conversation_id, 'conversation_id')"
+                      >
+                          ID {{ String(traceLogData.history.conversation_id).slice(0, 8) }}
+                      </button>
                       <span v-if="traceLogData?.history?.created_at" class="text-[9px] sm:text-xs text-gray-400 font-mono bg-white dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-600 flex-shrink-0">
                           {{ formatDate(traceLogData.history.created_at).split(' ')[0] }}
                       </span>
@@ -4180,8 +4191,12 @@ const loadConversationRouting = async (cid: string) => {
     if (sequence !== conversationRoutingLoadSequence) return;
     if (conversationId.value !== normalized) return;
     const routing = res.data?.data;
-    if (!routing) return;
-    if (routing.routing_mode === "expert" && routing.expert_agent_id) {
+    if (!routing) {
+      // 该会话没有任何记录：按「智能委派」处理，绝不回落账号默认。
+      // 账号默认会被「另一个会话里的切换」改写，回落它等于让本会话被动跟随别人。
+      config.routingMode = "auto";
+      config.expertAgentId = "";
+    } else if (routing.routing_mode === "expert" && routing.expert_agent_id) {
       config.routingMode = "expert";
       config.expertAgentId = String(routing.expert_agent_id);
     } else {
@@ -4939,8 +4954,36 @@ const conversationStorageKey = (): string => {
     : `${INSTANCE_CONVERSATION_STORAGE_PREFIX}${scope}`;
 };
 
+/** 本标签页自己的会话指针前缀（sessionStorage）。 */
+const TAB_CONVERSATION_STORAGE_PREFIX = "nzi_embed_tab_conv_id:";
+
+/**
+ * 当前标签页的会话指针键。
+ *
+ * localStorage 是**跨标签共享**的：只写它的话，A 标签切到会话 X 后，B 标签刷新会读到
+ * 同一条指针，直接进到 A 的会话——表现为「两个窗口明明是不同会话，刷新后变成一个」。
+ * 会话都成了同一个，会话级配置（专家、资源范围）自然也就一致了。
+ *
+ * sessionStorage 的边界是「tab + origin」，正好是标签级隔离；同标签刷新后仍然保留，
+ * 所以既不会串标签，也不影响「刷新续接」。身份与实例维度沿用 localStorage 那套分桶。
+ */
+const tabConversationStorageKey = (): string => {
+  const identity = currentIdentityKey();
+  if (!identity) return "";
+  const scope = `${USER_SCOPED_STORAGE_SEGMENT}:${encodeURIComponent(identity)}`;
+  const instanceId = normalizeEmbedInstanceId(config.instanceId);
+  return instanceId
+    ? `${TAB_CONVERSATION_STORAGE_PREFIX}${scope}:${encodeURIComponent(instanceId)}`
+    : `${TAB_CONVERSATION_STORAGE_PREFIX}${scope}`;
+};
+
 const readStoredConversationId = (): string => {
   try {
+    // 本标签的指针优先：它代表「这个窗口正在看哪个会话」，不能被别的标签覆盖。
+    const tabKey = tabConversationStorageKey();
+    const tabValue = tabKey ? (sessionStorage.getItem(tabKey) || "").trim() : "";
+    if (tabValue) return tabValue;
+    // 新标签没有自己的指针时，退回跨标签共享的那条，保留「新开窗口续接上次会话」的体验。
     const key = conversationStorageKey();
     return key ? (localStorage.getItem(key) || "").trim() : "";
   } catch {
@@ -4950,6 +4993,8 @@ const readStoredConversationId = (): string => {
 
 const clearStoredConversationId = () => {
   try {
+    const tabKey = tabConversationStorageKey();
+    if (tabKey) sessionStorage.removeItem(tabKey);
     const key = conversationStorageKey();
     if (key) localStorage.removeItem(key);
   } catch {
@@ -4960,6 +5005,9 @@ const clearStoredConversationId = () => {
 const persistConversationId = (cid: string) => {
   if (!cid) return;
   try {
+    // 既写本标签（隔离用），也写共享那份（新标签续接用）。
+    const tabKey = tabConversationStorageKey();
+    if (tabKey) sessionStorage.setItem(tabKey, cid);
     const key = conversationStorageKey();
     if (key) localStorage.setItem(key, cid);
   } catch {
@@ -6626,10 +6674,51 @@ const activeRunTitleIndex = computed(() => {
   return index;
 });
 
+// 运行锁里只存了一个 trace_id，智能体信息得从会话级 routing 记录里补：
+// 专家模式能确定是谁在跑，自动模式就如实写「自动委派」——不去猜一个可能错的专家名，
+// 毕竟 auto 模式下真正执行的是路由器选出来的。
+const activeRunAgentLabels = ref<Record<string, string>>({});
+/** 已尝试过的会话：失败时不要每轮轮询都重试一次。 */
+const activeRunAgentLabelAttempted = new Set<string>();
+
+const resolveActiveRunAgentLabels = async (items: readonly { conversation_id: string }[]) => {
+  const targets = items
+    .map((item) => String(item?.conversation_id || ""))
+    .filter((cid) => cid && !activeRunAgentLabelAttempted.has(cid));
+  if (!targets.length) return;
+  await Promise.all(
+    targets.map(async (cid) => {
+      activeRunAgentLabelAttempted.add(cid);
+      try {
+        const res = await axios.get(
+          `/api/v1/chat/conversation/${encodeURIComponent(cid)}/routing`,
+          { headers: embedAuthHeaders() },
+        );
+        const routing = res.data?.data;
+        let label = "自动委派";
+        if (routing?.routing_mode === "expert" && routing.expert_agent_id) {
+          const agentId = String(routing.expert_agent_id);
+          const agent = allowedAgents.value.find((a: any) => String(a.id) === agentId);
+          label = String(agent?.display_name || agent?.name || `专家 ${agentId.slice(0, 8)}`);
+        }
+        activeRunAgentLabels.value = { ...activeRunAgentLabels.value, [cid]: label };
+      } catch (e) {
+        // 查不到就不显示这一段：面板的标题、剩余时间与「终止」必须始终可用。
+        console.warn("[ActiveRuns] Failed to resolve agent label:", e);
+      }
+    }),
+  );
+};
+
+watch(activeRunItems, (items) => {
+  void resolveActiveRunAgentLabels(items);
+}, { immediate: true });
+
 const activeRunViews = computed(() =>
   activeRunItems.value.map((item) => ({
     ...item,
     title: activeRunTitleIndex.value.get(item.conversation_id) || `会话 ${item.conversation_id.slice(0, 8)}`,
+    agent_label: activeRunAgentLabels.value[item.conversation_id] || "",
   }))
 );
 
@@ -9039,6 +9128,8 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       if (initGeneration !== conversationInitializationGeneration) return;
       if (savedId && savedAdoption === 'adoptable') {
         conversationId.value = savedId;
+        // 认领到本标签：否则本标签的指针一直为空，下次刷新又会读到被别人覆盖的共享指针。
+        persistConversationId(savedId);
         updateActiveConversationOnServer(savedId);
         loadedCid = true;
       } else if (savedId && savedAdoption === 'foreign') {
