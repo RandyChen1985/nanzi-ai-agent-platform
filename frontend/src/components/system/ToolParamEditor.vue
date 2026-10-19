@@ -56,6 +56,7 @@ const extraDataVariables = ref<UserVariable[]>(
     collectExtraDataVariables([], { excludeSensitive: true }),
 )
 const openVariableMenuKey = ref<string | null>(null)
+const showParamHelp = ref(false)
 
 const closeVariableMenu = () => {
     openVariableMenuKey.value = null
@@ -63,6 +64,12 @@ const closeVariableMenu = () => {
 
 const toggleVariableMenu = (paramKey: string) => {
     openVariableMenuKey.value = openVariableMenuKey.value === paramKey ? null : paramKey
+    if (openVariableMenuKey.value) showParamHelp.value = false
+}
+
+const toggleParamHelp = () => {
+    showParamHelp.value = !showParamHelp.value
+    if (showParamHelp.value) closeVariableMenu()
 }
 
 const applyUserVariable = (param: VisualParam, value: string) => {
@@ -70,7 +77,10 @@ const applyUserVariable = (param: VisualParam, value: string) => {
     closeVariableMenu()
 }
 
-const onDocumentClick = () => closeVariableMenu()
+const onDocumentClick = () => {
+    closeVariableMenu()
+    showParamHelp.value = false
+}
 onMounted(() => document.addEventListener('click', onDocumentClick))
 onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
@@ -162,6 +172,40 @@ const locationLabel = (name: string): string => {
   <div>
     <div class="flex flex-wrap items-center gap-2">
       <label class="block text-sm font-medium text-gray-700">参数定义 (JSON Schema)</label>
+      <div class="relative">
+        <button
+          type="button"
+          class="flex h-5 w-5 items-center justify-center rounded-full border border-gray-300 bg-white text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+          title="必填与默认值说明"
+          aria-label="必填与默认值说明"
+          :aria-expanded="showParamHelp"
+          @click.stop="toggleParamHelp"
+        >?</button>
+        <div
+          v-if="showParamHelp"
+          class="absolute left-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white p-3 text-left shadow-xl"
+          role="dialog"
+          aria-label="必填与默认值说明"
+          @click.stop
+        >
+          <p class="text-xs font-semibold text-gray-800">必填与默认值怎么配合？</p>
+          <ul class="mt-2 space-y-1.5 text-[11px] leading-relaxed text-gray-600">
+            <li>
+              <span class="font-medium text-gray-800">必填</span>：告诉模型「这个参数必须提供」，并写进工具 schema 的
+              <code class="font-mono">required</code>；所以可视化模式下必填参数不允许配默认值。
+            </li>
+            <li>
+              <span class="font-medium text-gray-800">非必填 + 默认值</span>：模型不传、传 <code class="font-mono">null</code> 或空串时，自动使用默认值。
+            </li>
+            <li>
+              <span class="font-medium text-gray-800">默认值写 <code class="font-mono">{user.user_name}</code></span>：调用时按当前登录用户替换，适合申请人、部门这类由平台注入的值。
+            </li>
+          </ul>
+          <p class="mt-2 rounded bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700">
+            想让参数固定取当前用户：取消「必填」，再把默认值设为用户变量。必填目前主要用于约束模型和试跑提示，不是运行时的硬校验。
+          </p>
+        </div>
+      </div>
       <div class="flex bg-gray-100 p-0.5 rounded-lg text-xs" role="group" aria-label="参数定义编辑模式">
         <button
           type="button"
@@ -249,7 +293,7 @@ const locationLabel = (name: string): string => {
         class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
         @click="addVisualParam"
       >+ 添加参数</button>
-      <p class="text-xs text-gray-500">未勾选「必填」的参数会写成 <code class="font-mono">required: false</code>（运行时缺省按必填处理）。想让参数固定取当前用户：取消「必填」，把默认值设为 <code class="font-mono">{user.user_name}</code> 等变量，调用时自动替换。</p>
+      <p class="text-xs text-gray-500">未勾选「必填」的参数会写成 <code class="font-mono">required: false</code>；默认值可填 <code class="font-mono">{user.user_name}</code> 等用户变量，调用时自动替换。</p>
     </div>
 
     <p v-if="jsonHint" class="mt-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{{ jsonHint }}</p>

@@ -75,6 +75,15 @@ def test_tool_variable_menu_hides_sensitive_extra_data_keys():
     assert "excludeSensitive: true" in _read(PARAM_EDITOR)
 
 
+def test_param_editor_explains_required_vs_default():
+    source = _read(PARAM_EDITOR)
+
+    # 用户反馈「必填与默认值的逻辑不容易理解」：标题旁提供 ? 说明入口
+    assert "必填与默认值说明" in source
+    assert "必填与默认值怎么配合" in source
+    assert "不是运行时的硬校验" in source
+
+
 def test_metadata_and_tool_share_one_variable_catalog():
     metadata = _read(METADATA_PAGE)
 
