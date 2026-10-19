@@ -34,10 +34,14 @@ def test_embed_chat_url_agent_lock_and_status_label():
     assert "clearUrlAgentPinAndReload" not in text
 
 
-def test_chat_input_hides_expert_and_at_when_locked():
+def test_chat_input_hides_expert_switch_but_keeps_at_for_files_when_locked():
+    """链接锁定专家时，专家切换入口仍要隐藏；但 `@` 不能整体失效——
+    文件 tab 与「由谁切专家」无关，锁定的只是专家切换。"""
     text = CHAT_INPUT.read_text(encoding="utf-8")
     assert "lockExpertAgent" in text
     assert "v-if=\"!lockExpertAgent\"" in text or "v-if='!lockExpertAgent'" in text
     assert "!isMobileViewport && !lockExpertAgent" in text
-    assert "if (atMatch && !props.lockExpertAgent)" in text
+    # 旧行为：锁定后 @ 完全不响应；现在 @ 仍弹层，由 MentionList 把专家 tab 换成锁定提示
+    assert "if (atMatch && !props.lockExpertAgent)" not in text
+    assert ':expert-locked="lockExpertAgent"' in text
     assert "sys_knowledge_portal" in text

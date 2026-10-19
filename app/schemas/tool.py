@@ -116,7 +116,8 @@ class SysApiToolPreviewResponse(BaseModel):
         None,
         description=(
             "http_error（接口通了但拒绝）/ connection（根本没连上）/ timeout / "
-            "invalid_url / unsupported_method / missing_param"
+            "invalid_url / unsupported_method / missing_param / "
+            "missing_user_variable（{user.xxx} 取不到值）"
         ),
     )
     message: str = ""

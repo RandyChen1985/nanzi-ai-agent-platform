@@ -11,9 +11,12 @@ const props = withDefaults(defineProps<{
   importedTableNames?: string[]
   /** 追加导入时锁定为数据集已绑定的数据源 name，跳过选数据源步骤 */
   lockedDataSourceName?: string
+  /** 遮罩层 z-index 类名，用于在更高层弹窗（如智能导入向导）内打开时覆盖默认层级 */
+  overlayZIndexClass?: string
 }>(), {
   importedTableNames: () => [],
   lockedDataSourceName: '',
+  overlayZIndexClass: 'z-[60]',
 })
 
 const emit = defineEmits(['close', 'confirm', 'confirm-profile'])
@@ -724,7 +727,7 @@ const dbTypeColor = (type: string) => {
 </script>
 
 <template>
-  <div v-if="show" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+  <div v-if="show" class="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" :class="overlayZIndexClass">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl overflow-hidden border border-gray-100 flex flex-col max-h-[92vh] animate-fade-in-up">
 
       <!-- Header -->

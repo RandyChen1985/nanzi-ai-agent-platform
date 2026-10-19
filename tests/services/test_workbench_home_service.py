@@ -534,3 +534,97 @@ async def test_load_recent_task_runs_uses_execution_history(monkeypatch):
     assert len(items) == 1
     assert items[0]["title"] == "周报"
     assert items[0]["action"] == "open_task_run"
+
+@pytest.mark.asyncio
+async def test_portal_activity_excludes_chatbi_conversations(monkeypatch):
+    """门户活动只留报表类条目；会话改由工作台自己的全智能体查询提供。"""
+    from app.services import workbench_home_service as svc
+
+    captured = {}
+
+    async def fake_build(db, **kwargs):
+        captured.update(kwargs)
+        return {
+            "recent_analysis": [
+                {
+                    "type": "conversation",
+                    "id": 1,
+                    "conversation_id": "c1",
+                    "title": "查一下费用趋势",
+                    "occurred_at": "2026-10-15T10:00:00",
+                    "status": "success",
+                },
+                {
+                    "type": "report_run",
+                    "id": 2,
+                    "report_id": "r1",
+                    "run_id": 2,
+                    "title": "经营日报",
+                    "occurred_at": "2026-10-15T09:00:00",
+                    "status": "success",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(
+        "app.services.data_portal_home_service.DataPortalHomeService.build", fake_build
+    )
+
+    payload = await svc._load_portal_activity(
+        AsyncMock(), 7, [1], datetime(2026, 7, 18, 10, 0)
+    )
+
+    assert captured["include_conversations"] is False
+    assert [item["type"] for item in payload["reports"]] == ["report_run"]
+    assert payload["reports"][0]["id"] == "report_run:2"
+    assert "conversations" not in payload
+
+
+@pytest.mark.asyncio
+async def test_build_resume_items_come_from_workbench_conversations(monkeypatch):
+    """resume_items 来自全智能体会话装载器，不再取自数据门户。"""
+    from app.services import workbench_home_service as svc
+
+    async def _empty_list(*args, **kwargs):
+        return []
+
+    async def _empty_portal(*args, **kwargs):
+        return {"reports": []}
+
+    async def _running(*args, **kwargs):
+        return [], "empty"
+
+    async def _conversations(*args, **kwargs):
+        return [
+            {
+                "id": "conversation:1",
+                "business_key": "conversation:c1",
+                "type": "conversation",
+                "title": "我有哪些技能",
+                "subtitle": "数据智能助手",
+                "occurred_at": "2026-10-15T10:00:00",
+                "status": "success",
+                "action": "open_conversation",
+                "target": {"conversation_id": "c1", "agent_id": "agent-data"},
+            }
+        ]
+
+    monkeypatch.setattr(svc, "_load_notifications", _empty_list)
+    monkeypatch.setattr(svc, "_load_tasks", _empty_list)
+    monkeypatch.setattr(svc, "_load_recent_task_runs", _empty_list)
+    monkeypatch.setattr(svc, "_load_portal_activity", _empty_portal)
+    monkeypatch.setattr(svc, "_load_conversations", _conversations)
+    monkeypatch.setattr(svc, "_load_running_items", _running)
+    monkeypatch.setattr(svc, "_load_agents", _empty_list)
+    monkeypatch.setattr(svc, "_load_scenarios", lambda user: [])
+    monkeypatch.setattr(svc, "_load_personal_resources", _empty_list)
+
+    payload = await svc.WorkbenchHomeService.build(
+        AsyncMock(), user_id=7, user={"role": "user", "user_name": "alice"}
+    )
+
+    assert len(payload["resume_items"]) == 1
+    assert payload["resume_items"][0]["subtitle"] == "数据智能助手"
+    assert payload["resume_items"][0]["target"]["conversation_id"] == "c1"
+    assert payload["source_status"]["conversations"] == "ok"
+    assert payload["latest_results"] == []

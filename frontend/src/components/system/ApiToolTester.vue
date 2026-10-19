@@ -172,11 +172,14 @@ const headline = computed(() => {
         <span v-else-if="result.error_kind === 'unsupported_method'">
           {{ result.message }}
         </span>
+        <span v-else-if="result.error_kind === 'missing_user_variable'">
+          {{ result.message }}
+        </span>
         <span v-else>
           根本没连上目标接口（DNS 解析失败、连接被拒或证书问题）。这类问题与「接口拒绝请求」的排查方向不同。
         </span>
       </p>
-      <p v-if="result.message && !result.ok && result.error_kind !== 'missing_param' && result.error_kind !== 'unsupported_method'" class="px-3 pb-2 text-[11px] text-gray-500">
+      <p v-if="result.message && !result.ok && result.error_kind !== 'missing_param' && result.error_kind !== 'unsupported_method' && result.error_kind !== 'missing_user_variable'" class="px-3 pb-2 text-[11px] text-gray-500">
         {{ result.message }}
       </p>
       <pre
@@ -197,6 +200,9 @@ const headline = computed(() => {
       </li>
       <li class="text-[11px] leading-relaxed text-gray-500">
         · 测试值不落库；每次试跑都会记审计日志。目标地址若是内网，这里会提示但不会阻止你试跑。
+      </li>
+      <li class="text-[11px] leading-relaxed text-gray-500">
+        · 参数值里的 <code class="font-mono text-gray-600">{user.user_name}</code> 等用户变量会按当前登录用户替换；取不到值时会明确提示，不会发空值。
       </li>
     </ul>
   </div>

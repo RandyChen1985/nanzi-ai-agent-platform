@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { agentOwnAvatarUrl } from '@/utils/agentAvatar';
+import WorkspaceFilePicker from '@/components/embed/WorkspaceFilePicker.vue';
 
 interface AgentOption {
   id: string;
@@ -24,10 +25,19 @@ const props = withDefaults(
     /** 当前委派模式，用于高亮「智能委派 / 当前专家」 */
     routingMode?: string;
     expertAgentId?: string;
+    /** 每次打开时停留的 tab；没有可切换专家时由父组件传 "file" */
+    initialTab?: "expert" | "file";
+    /** 已挂到输入框的文件路径，用于置灰 */
+    mountedFilePaths?: string[];
+    /** 链接锁定了指定智能体时，专家 tab 只显示提示 */
+    expertLocked?: boolean;
   }>(),
   {
     routingMode: 'auto',
     expertAgentId: '',
+    initialTab: "expert",
+    mountedFilePaths: () => [],
+    expertLocked: false,
   },
 );
 
@@ -35,7 +45,41 @@ const emit = defineEmits<{
   (e: 'select', agent: AgentOption): void;
   (e: 'select-auto'): void;
   (e: 'close'): void;
+  (e: 'select-file', payload: {
+    type: 'local_file';
+    path: string;
+    name: string;
+    size: number;
+    ext: string;
+  }): void;
+  (e: 'open-workspace'): void;
+  (e: 'tab-change', tab: "expert" | "file"): void;
 }>();
+
+const activeTab = ref<"expert" | "file">(props.initialTab);
+const pickerRef = ref<any>(null);
+
+/** 浮层标题与 aria-label 跟随当前 tab，文件 tab 下不能仍写「选择专家」 */
+const panelTitle = computed(() => (activeTab.value === 'file' ? '选择文件' : '选择专家'));
+
+const onPickerSwitchTab = (direction: "left" | "right") => {
+  if (direction === "left") activeTab.value = "expert";
+};
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible) {
+      activeTab.value = props.initialTab;
+    }
+  },
+);
+
+watch(activeTab, (tab) => {
+  // 切到文件 tab 把焦点交给搜索框；切回专家 tab 由父组件把焦点还给输入框
+  if (tab === "file") nextTick(() => pickerRef.value?.focusSearch?.());
+  emit("tab-change", tab);
+});
 
 const selectedIndex = ref(0);
 const listContainer = ref<HTMLElement | null>(null);
@@ -113,7 +157,28 @@ const handleSelectRow = (row: MentionRow) => {
 };
 
 const handleKeydown = (e: KeyboardEvent) => {
-  if (!props.visible || rows.value.length === 0) return false;
+  if (!props.visible) return false;
+  // 左右切 tab 优先于列表导航：专家 → 文件，文件 ← 专家（文件已是最右，→ 不处理）
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    const force = e.metaKey || e.ctrlKey || e.altKey;
+    if (activeTab.value === "file") {
+      if (e.key === "ArrowRight") return false;
+      // 搜索框有字时左右键留给光标，⌘/Ctrl/Alt + ← 可强制切走
+      if (!force && pickerRef.value?.canLeaveByArrow === false) return false;
+      activeTab.value = "expert";
+      e.preventDefault();
+      return true;
+    }
+    if (e.key === "ArrowLeft") return false;
+    activeTab.value = "file";
+    e.preventDefault();
+    return true;
+  }
+  // 文件 tab 的键盘语义归 picker（搜索框 + 网络结果），这里只做转发
+  if (activeTab.value === "file") {
+    return pickerRef.value?.handleKeydown?.(e) ?? false;
+  }
+  if (rows.value.length === 0) return false;
 
   if (e.key === 'ArrowDown') {
     e.preventDefault();
@@ -144,7 +209,7 @@ defineExpose({ handleKeydown });
 
 <template>
   <div
-    v-if="visible && rows.length > 0"
+    v-if="visible && (activeTab === 'file' || rows.length > 0)"
     class="fixed z-[100] bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col animate-fade-in-up"
     :class="['w-[calc(100vw-2rem)] sm:w-[17.5rem]']"
     :style="{
@@ -154,20 +219,46 @@ defineExpose({ handleKeydown });
       maxHeight: windowWidth < 640 ? '40vh' : '18rem',
     }"
     role="listbox"
-    aria-label="选择专家"
+    :aria-label="panelTitle"
   >
     <div class="px-2.5 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shrink-0 bg-white dark:bg-gray-800">
       <div class="flex items-center gap-1.5 min-w-0">
         <span class="w-1 h-3.5 bg-primary rounded-full shrink-0" />
-        <span class="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">选择专家</span>
-        <span class="px-1.5 py-0.5 bg-primary/10 text-primary text-[9px] font-bold rounded-md shrink-0">
-          {{ filteredAgents.length }} 匹配
-        </span>
+        <span class="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">{{ panelTitle }}</span>
+        <div class="flex items-center gap-0.5 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-700/60 shrink-0">
+          <button
+            type="button"
+            class="px-1.5 py-0.5 text-[10px] rounded-md transition-colors"
+            :class="activeTab === 'expert'
+              ? 'bg-white dark:bg-gray-800 text-primary shadow-sm'
+              : 'text-gray-500 dark:text-gray-400'"
+            @click="activeTab = 'expert'"
+          >专家</button>
+          <button
+            type="button"
+            class="px-1.5 py-0.5 text-[10px] rounded-md transition-colors"
+            :class="activeTab === 'file'
+              ? 'bg-white dark:bg-gray-800 text-primary shadow-sm'
+              : 'text-gray-500 dark:text-gray-400'"
+            @click="activeTab = 'file'"
+          >文件</button>
+        </div>
       </div>
-      <span class="text-[9px] text-gray-400 hidden sm:inline shrink-0">Enter 选择 · Esc 关闭</span>
+      <span class="text-[9px] text-gray-400 hidden sm:inline shrink-0">
+        {{ activeTab === 'expert' ? 'Enter 选择 · Esc 关闭' : 'Esc 关闭' }}
+      </span>
     </div>
 
-    <div ref="listContainer" class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-1.5 space-y-0.5 bg-white dark:bg-gray-800">
+    <div
+      v-show="activeTab === 'expert'"
+      ref="listContainer"
+      class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-1.5 space-y-0.5 bg-white dark:bg-gray-800"
+    >
+      <div
+        v-if="expertLocked"
+        class="px-2.5 py-6 text-center text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed"
+      >当前链接已锁定指定智能体，无法切换其他专家</div>
+      <template v-else>
       <template v-for="(row, index) in rows" :key="row.kind === 'auto' ? 'auto' : `${row.agent.id}_${index}`">
         <!-- 智能委派 -->
         <button
@@ -281,9 +372,24 @@ defineExpose({ handleKeydown });
           </div>
         </button>
       </template>
+      </template>
     </div>
 
-    <div class="px-2.5 py-1.5 border-t border-gray-200 dark:border-gray-700 text-center shrink-0 bg-gray-50 dark:bg-gray-900/80">
+    <WorkspaceFilePicker
+      v-if="activeTab === 'file'"
+      ref="pickerRef"
+      :initial-keyword="keyword"
+      :mounted-paths="mountedFilePaths"
+      @select="(payload) => emit('select-file', payload)"
+      @open-workspace="emit('open-workspace')"
+      @switch-tab="onPickerSwitchTab"
+      @close="emit('close')"
+    />
+
+    <div
+      v-if="activeTab === 'expert'"
+      class="px-2.5 py-1.5 border-t border-gray-200 dark:border-gray-700 text-center shrink-0 bg-gray-50 dark:bg-gray-900/80"
+    >
       <span class="text-[10px] text-gray-500 dark:text-gray-400">共 {{ filteredAgents.length }} 个专家</span>
     </div>
   </div>

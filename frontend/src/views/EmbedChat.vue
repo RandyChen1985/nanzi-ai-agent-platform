@@ -3323,18 +3323,8 @@ const { appendAttachmentContext } = useChatAttachments({
 });
 
 const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: string; name: string; size: number; ext: string }) => {
-  if (!chatInputRef.value) return;
-  const files = chatInputRef.value.uploadedFiles || [];
-  const exists = files.some((f: any) => f.type === payload.type && f.url === payload.path);
-  if (!exists) {
-    chatInputRef.value.uploadedFiles.push({
-      type: payload.type,
-      url: payload.path,
-      filename: payload.name,
-      size: payload.size,
-      ext: payload.ext
-    });
-  }
+  // 入列与去重统一在 ChatInput：@ 文件 tab 与工作区抽屉共用同一份逻辑
+  chatInputRef.value?.pushLocalFile?.(payload);
 };
 
 const handleWorkspaceContentSaved = (payload: { path: string }) => {
