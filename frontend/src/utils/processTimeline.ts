@@ -167,9 +167,9 @@ export interface PendingHint {
    * 该行用哪种指示器。
    *
    * 沙箱保留既有的横向进度条（亮蓝横条是「正在创建工作区」的专属签名），
-   * 其余类别用石板灰波形——形状与颜色都与沙箱拉开，避免被读成同一件事。
+   * 其余类别用石板灰转圈——形状与颜色都与沙箱拉开，避免被读成同一件事。
    */
-  indicator: "bar" | "wave";
+  indicator: "bar" | "spinner";
 }
 
 /** 各类别挂起项的安抚文案档位（通用类别 3s / 10s / 20s）；沙箱档直接引用既有常量，避免文案出现第二份副本。 */
@@ -238,7 +238,7 @@ export function resolvePendingHint(
     label,
     elapsedSeconds: Math.max(0, Math.floor(elapsedMs / 1000)),
     showElapsed: !isLiveTimer,
-    indicator: isSandbox ? "bar" : "wave",
+    indicator: isSandbox ? "bar" : "spinner",
   };
 }
 

@@ -1970,8 +1970,8 @@ return {
     assert result["rewindSeconds"] == 0, "时钟回拨不得出现负数"
     assert result["rewindShowElapsed"] is True
     assert result["sandboxIndicator"] == "bar", "沙箱仍用既有的横向进度条（它的专属签名）"
-    assert result["modelIndicator"] == "wave", "通用步骤改用波形，与沙箱的横条在形状与颜色上都区分开"
-    assert result["knowledgeIndicator"] == "wave"
+    assert result["modelIndicator"] == "spinner", "通用步骤改用转圈，与沙箱的横条在形状与颜色上都区分开"
+    assert result["knowledgeIndicator"] == "spinner"
 
 
 def test_timeline_pending_hint_component_owns_label_and_indicator_style():
@@ -1988,11 +1988,14 @@ def test_timeline_pending_hint_component_owns_label_and_indicator_style():
     # 样式随组件走：缺了这两条，动效条会没有宽度与动画
     assert ".workspace-prewarm-bar {" in hint
     assert "@keyframes workspace-prewarm-slide" in hint
-    # 指示器按纯函数给出的 indicator 切换：沙箱保留横条，其余走波形
+    # 指示器按纯函数给出的 indicator 切换：沙箱保留横条，其余走转圈
     assert "hint.indicator === 'bar'" in hint, "指示器类型必须来自纯函数，不在组件里重写判断"
-    assert "pending-hint-wave" in hint
-    assert ".pending-hint-wave {" in hint
-    assert "@keyframes pending-hint-wave" in hint
-    assert "scaleY" in hint, "竖条起伏用 scaleY，height 动画会每帧触发布局"
-    assert "text-slate-400 dark:text-slate-500" in hint, "波形用石板灰，避开沙箱进度条的亮蓝"
-    assert "scaleY(0.72)" in hint, "减弱动效时给中等静态高度，否则停在最矮的基线帧"
+    assert "pending-hint-spinner" in hint
+    assert ".pending-hint-spinner {" in hint
+    assert "@keyframes pending-hint-spin" in hint
+    assert "pending-hint-wave" not in hint, "波形已替换为转圈，不得残留旧指示器"
+    assert "text-slate-400 dark:text-slate-500" in hint, "转圈用石板灰，避开沙箱进度条的亮蓝"
+    assert "text-slate-500 dark:text-slate-400" in hint, "安抚文案也用浅灰，不再用 sky 强调色抢状态语义"
+    assert "text-sky-600" not in hint, "文案已改浅灰，不得回退到强调蓝"
+    assert "border-top-color: transparent" in hint, "缺口圆环靠透明上边框形成"
+    assert "border-top-color: currentColor" in hint, "减弱动效时补成完整圆环，避免停在「坏掉的圆」"

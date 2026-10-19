@@ -103,9 +103,9 @@ def strip_thinking_from_notification_content(
 def build_task_notification_body(
     content: str,
     *,
-    fallback: bool,
     reasoning_content: str | None = None,
 ) -> str:
+    """投递正文只保留可读内容：来源标识由通知标题（TaskCenter：任务名）承载，不写进正文。"""
     body = strip_thinking_from_notification_content(
         content,
         reasoning_content=reasoning_content,
@@ -114,11 +114,6 @@ def build_task_notification_body(
         body = "（任务已执行，但无可展示的文本摘要。）"
     if len(body) > MAX_NOTIFICATION_BODY_CHARS:
         body = body[: MAX_NOTIFICATION_BODY_CHARS - 20] + "\n\n…（内容已截断）"
-    if fallback:
-        return (
-            "📨 以下为 TaskCenter 统一投递的任务结果。\n\n"
-            f"{body}"
-        )
     return body
 
 
@@ -486,7 +481,6 @@ async def ensure_task_notification_deliveries(
     title = build_task_notification_title(task_name)
     body = build_task_notification_body(
         composed,
-        fallback=True,
         reasoning_content=reasoning_content,
     )
 

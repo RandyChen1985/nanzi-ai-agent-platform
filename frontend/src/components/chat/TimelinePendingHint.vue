@@ -19,7 +19,7 @@ const prefix = computed(() =>
 <template>
   <div
     v-if="hint"
-    class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+    class="shrink-0 flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400"
     aria-live="polite"
     aria-busy="true"
   >
@@ -28,16 +28,15 @@ const prefix = computed(() =>
       class="workspace-prewarm-bar shrink-0"
       aria-hidden="true"
     ></span>
-    <!-- 波形取色用 currentColor，颜色交给这里的 text-* 决定；
+    <!-- 转圈取色用 currentColor，自带比文案再淡一档的 slate；
+         文案本身也是浅灰（不用 sky 强调色），这行只是安抚提示，不该抢状态语义。
          深色用 Tailwind 的 dark: 变体而不是手写 .dark 选择器——后者在 scoped
          样式里会命中所有带 .dark 的祖先（同类坑见 GeneratingWalker.vue 注释）。 -->
     <span
       v-else
-      class="pending-hint-wave shrink-0 text-slate-400 dark:text-slate-500"
+      class="pending-hint-spinner shrink-0 text-slate-400 dark:text-slate-500"
       aria-hidden="true"
-    >
-      <i></i><i></i><i></i>
-    </span>
+    ></span>
     <span
       class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
       :title="prefix + hint.label"
@@ -72,29 +71,19 @@ const prefix = computed(() =>
   100% { left: 100%; }
 }
 
-/* 挂起步骤的波形：三根竖条此起彼伏，示意后台仍在推进。
+/* 挂起步骤的转圈：一个缺口圆环匀速旋转，示意后台仍在推进。
    与沙箱那条横向亮蓝进度条在形状与颜色上都区分开。
-   起伏用 scaleY 而不是 height：只走合成层，不每帧触发布局。 */
-.pending-hint-wave {
-  display: inline-flex;
-  align-items: flex-end;
-  gap: 2px;
+   尺寸沿用原波形的 0.6875rem，行高不因换动画而跳动。 */
+.pending-hint-spinner {
+  width: 0.6875rem;
   height: 0.6875rem;
+  border-radius: 9999px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: pending-hint-spin 0.9s linear infinite;
 }
-.pending-hint-wave i {
-  width: 2px;
-  height: 100%;
-  border-radius: 1px;
-  background: currentColor;
-  transform-origin: bottom;
-  transform: scaleY(0.27);
-  animation: pending-hint-wave 1.1s ease-in-out infinite;
-}
-.pending-hint-wave i:nth-child(2) { animation-delay: 0.18s; }
-.pending-hint-wave i:nth-child(3) { animation-delay: 0.36s; }
-@keyframes pending-hint-wave {
-  0%, 100% { transform: scaleY(0.27); opacity: 0.45; }
-  50% { transform: scaleY(1); opacity: 1; }
+@keyframes pending-hint-spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -104,10 +93,10 @@ const prefix = computed(() =>
     width: 100%;
     opacity: 0.5;
   }
-  /* 静止时给一个中等高度，否则会停在最矮的基线帧上 */
-  .pending-hint-wave i {
+  /* 静止时补成完整圆环：留缺口会像个坏掉的圆，反而更像出错了 */
+  .pending-hint-spinner {
     animation: none;
-    transform: scaleY(0.72);
+    border-top-color: currentColor;
     opacity: 0.6;
   }
 }
