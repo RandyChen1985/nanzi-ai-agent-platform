@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_PINNED_GROUPS = 50  # 最多允许置顶的卡片数，防止滥用
+MAX_PINNED_CONVERSATIONS = 20  # 最多允许置顶的会话数，防止置顶区挤掉整个列表
 MAX_CARD_ORDER = 200   # 最多记录排序的卡片数
 MAX_QUESTION_CLICKS = 500  # 最多记录的问题点击 key 数
 GLOBAL_AGENT_AVATAR_KEY = "agent:branding:default_agent_avatar"
@@ -47,17 +48,35 @@ def _decode_redis_text(raw: Any) -> str:
     return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
 
 
+class PinnedConversation(BaseModel):
+    """置顶会话的快照。
+
+    只存 ID 不够：历史侧栏首屏只加载 20 条会话，置顶的会话很可能不在当前分页里，
+    刷新后就没有数据可渲染，表现为「置顶凭空消失」。快照让置顶区在任何分页窗口下
+    都能稳定展示；会话重新出现在列表时前端会用最新数据覆盖这些字段。
+    """
+
+    conversation_id: str
+    title: str = ""
+    created_at: str = ""
+    agent_name: str = ""
+    turn_count: int = 0
+
+
 class PortalPrefs(BaseModel):
     pinned_group_ids: List[str] = Field(default_factory=list, description="已置顶的数据门户卡片 ID 列表，保持插入顺序")
     card_order: List[str] = Field(default_factory=list, description="拖拽自定义排序的卡片 ID 全量列表")
     expanded_group_ids: List[str] = Field(default_factory=list, description="已展开相关数据面板的卡片 ID 列表")
     question_clicks: Dict[str, int] = Field(default_factory=dict, description="本地问题点击次数备份（query → count），用于跨 session 保留常问数据")
     pinned_kb_dataset_ids: List[str] = Field(default_factory=list, description="已置顶的知识库数据集 ID 列表")
+    pinned_conversations: List[PinnedConversation] = Field(default_factory=list, description="已置顶的会话快照列表，首位为最近置顶")
     markdown_theme: str = Field(default="", description="用户自定义的 AI 消息排版样式偏好")
     agent_avatar: str = Field(default="", description="[历史保留] 旧版个人头像偏好；读取时一律以全局键 agent:branding:default_agent_avatar 为准，写入时恒为空")
     routing_mode: Literal["auto", "expert"] = Field(default="auto", description="Embed 路由模式")
     expert_agent_id: str = Field(default="", description="Embed 默认智能体 ID")
     routing_configured: bool = Field(default=False, description="用户是否明确设置过 Embed 路由模式")
+    history_sidebar_open: bool = Field(default=False, description="会话历史侧栏是否展开（账号级，跨设备）")
+    left_sidebar_collapsed: bool = Field(default=False, description="左侧主导航是否折叠（账号级，跨设备）")
 
 
 class PortalPrefsUpdate(BaseModel):
@@ -66,15 +85,35 @@ class PortalPrefsUpdate(BaseModel):
     expanded_group_ids: List[str] = Field(default_factory=list)
     question_clicks: Dict[str, int] = Field(default_factory=dict)
     pinned_kb_dataset_ids: List[str] = Field(default_factory=list)
+    # None = 本次请求不改置顶。数据门户等旧调用方全量回写时不带该字段，
+    # 若按默认空列表处理会把用户的置顶静默清空。
+    pinned_conversations: Optional[List[PinnedConversation]] = None
     markdown_theme: Optional[str] = None
+    # None = 本次请求不改侧栏开关；旧页面全量回写时不带该字段，不能把用户的
+    # 账号级展开偏好重置为默认关闭。
+    history_sidebar_open: Optional[bool] = None
+    # 左侧主导航折叠状态同理：旧页面全量回写时不带该字段，必须保留账号现值。
+    left_sidebar_collapsed: Optional[bool] = None
     # 注意：agent_avatar 已从全量偏好入口移除。AI 助手头像是全局权威资产，
     # 只允许通过专用的 PUT /agent-avatar 端点写入全局键；全量偏好 PUT 曾经
     # 会被旧页面的陈旧副本携带回写，是"旧头像倒灌覆盖"的入口之一，故彻底拔除。
 
 
+class PinnedConversationsUpdate(BaseModel):
+    conversations: List[PinnedConversation] = Field(default_factory=list)
+
+
 class RoutingPreferenceUpdate(BaseModel):
     routing_mode: Literal["auto", "expert"] = "auto"
     expert_agent_id: str = ""
+
+
+class HistorySidebarPreferenceUpdate(BaseModel):
+    open: bool
+
+
+class LeftSidebarPreferenceUpdate(BaseModel):
+    collapsed: bool
 
 
 def _parse_portal_prefs(raw: Any) -> PortalPrefs:
@@ -88,6 +127,40 @@ def _parse_portal_prefs(raw: Any) -> PortalPrefs:
             "routing_mode" in parsed or "expert_agent_id" in parsed
         )
     return PortalPrefs.model_validate(parsed)
+
+
+def _normalize_pinned_conversations(
+    items: List[PinnedConversation],
+) -> List[PinnedConversation]:
+    """清洗置顶会话：丢弃空 ID、按 ID 去重（保留首次出现）、截断字段、限制条数。
+
+    列表顺序就是置顶顺序（首位为最近置顶），因此去重必须保留首次出现，
+    不能用 dict 反复赋值把顺序弄乱。
+    """
+
+    seen: set = set()
+    normalized: List[PinnedConversation] = []
+    for item in items or []:
+        cid = (item.conversation_id or "").strip()
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        try:
+            turn_count = max(0, int(item.turn_count or 0))
+        except (TypeError, ValueError):
+            turn_count = 0
+        normalized.append(
+            PinnedConversation(
+                conversation_id=cid,
+                title=(item.title or "").strip()[:200],
+                created_at=(item.created_at or "").strip()[:40],
+                agent_name=(item.agent_name or "").strip()[:100],
+                turn_count=turn_count,
+            )
+        )
+        if len(normalized) >= MAX_PINNED_CONVERSATIONS:
+            break
+    return normalized
 
 
 @router.get(
@@ -218,6 +291,24 @@ async def update_portal_prefs(
         routing_mode=existing.routing_mode,
         expert_agent_id=existing.expert_agent_id if existing.routing_mode == "expert" else "",
         routing_configured=existing.routing_configured,
+        # 置顶会话：仅在请求显式携带时替换。数据门户等旧调用方全量回写时
+        # 不带该字段（None），必须原样保留，否则会静默清空用户置顶。
+        pinned_conversations=(
+            existing.pinned_conversations
+            if body.pinned_conversations is None
+            else _normalize_pinned_conversations(body.pinned_conversations)
+        ),
+        # 侧栏开关同样只在显式携带时替换，旧调用方全量回写时保留账号现值。
+        history_sidebar_open=(
+            existing.history_sidebar_open
+            if body.history_sidebar_open is None
+            else body.history_sidebar_open
+        ),
+        left_sidebar_collapsed=(
+            existing.left_sidebar_collapsed
+            if body.left_sidebar_collapsed is None
+            else body.left_sidebar_collapsed
+        ),
     )
 
     try:
@@ -231,6 +322,169 @@ async def update_portal_prefs(
         )
 
     return {"code": 0, "data": prefs.model_dump(), "message": "偏好已保存"}
+
+
+@router.put(
+    "/pinned-conversations",
+    response_model=Dict[str, Any],
+    summary="更新当前用户的会话置顶列表",
+)
+async def update_pinned_conversations(
+    body: PinnedConversationsUpdate,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """只替换置顶字段。
+
+    走专用端点而不是全量 PUT：后者需要先读全量、再整体回写，任何一份陈旧副本
+    都会把其它偏好（数据门户卡片、知识库置顶、排版样式）覆盖回旧值。
+    """
+
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis 服务不可用",
+        )
+
+    user_id = int(user_info["user_id"])
+    key = _redis_key(user_id)
+    prefs = PortalPrefs()
+    try:
+        raw = await redis.get(key)
+        if raw:
+            prefs = _parse_portal_prefs(raw)
+    except Exception as e:
+        logger.warning("Failed to read existing portal prefs before pin update: %s", e)
+
+    prefs.pinned_conversations = _normalize_pinned_conversations(body.conversations)
+
+    try:
+        # 与全量偏好一致：不设 TTL，长期保留
+        await redis.set(key, prefs.model_dump_json())
+    except Exception as e:
+        logger.error("Failed to save pinned conversations to Redis: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="保存置顶失败",
+        ) from e
+
+    return {
+        "code": 0,
+        "data": {
+            "pinned_conversations": [
+                item.model_dump() for item in prefs.pinned_conversations
+            ]
+        },
+        "message": "置顶已保存",
+    }
+
+
+@router.put(
+    "/history-sidebar",
+    response_model=Dict[str, Any],
+    summary="更新当前用户的会话历史侧栏展开偏好",
+)
+async def update_history_sidebar_preference(
+    body: HistorySidebarPreferenceUpdate,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """只替换侧栏开关。
+
+    侧栏开关是账号级 UI 偏好，存 Redis 以支持跨设备；走专用端点避免全量偏好
+    的陈旧副本把其他字段覆盖回旧值。
+    """
+
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis 服务不可用",
+        )
+
+    user_id = int(user_info["user_id"])
+    key = _redis_key(user_id)
+    prefs = PortalPrefs()
+    try:
+        raw = await redis.get(key)
+        if raw:
+            prefs = _parse_portal_prefs(raw)
+    except Exception as e:
+        logger.warning(
+            "Failed to read existing portal prefs before history sidebar update: %s",
+            e,
+        )
+
+    prefs.history_sidebar_open = bool(body.open)
+
+    try:
+        # 与全量偏好一致：不设 TTL，长期保留
+        await redis.set(key, prefs.model_dump_json())
+    except Exception as e:
+        logger.error("Failed to save history sidebar preference to Redis: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="保存侧栏偏好失败",
+        ) from e
+
+    return {
+        "code": 0,
+        "data": {"history_sidebar_open": prefs.history_sidebar_open},
+        "message": "侧栏偏好已保存",
+    }
+
+
+@router.put(
+    "/left-sidebar",
+    response_model=Dict[str, Any],
+    summary="更新当前用户的左侧主导航折叠偏好",
+)
+async def update_left_sidebar_preference(
+    body: LeftSidebarPreferenceUpdate,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """只替换左侧主导航折叠状态。
+
+    与历史侧栏一样是账号级 UI 偏好，存 Redis 以支持跨设备；走专用端点避免
+    全量偏好写回时覆盖其它字段。
+    """
+
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis 服务不可用",
+        )
+
+    user_id = int(user_info["user_id"])
+    key = _redis_key(user_id)
+    prefs = PortalPrefs()
+    try:
+        raw = await redis.get(key)
+        if raw:
+            prefs = _parse_portal_prefs(raw)
+    except Exception as e:
+        logger.warning(
+            "Failed to read existing portal prefs before left sidebar update: %s",
+            e,
+        )
+
+    prefs.left_sidebar_collapsed = bool(body.collapsed)
+
+    try:
+        # 与全量偏好一致：不设 TTL，长期保留
+        await redis.set(key, prefs.model_dump_json())
+    except Exception as e:
+        logger.error("Failed to save left sidebar preference to Redis: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="保存左侧导航偏好失败",
+        ) from e
+
+    return {
+        "code": 0,
+        "data": {"left_sidebar_collapsed": prefs.left_sidebar_collapsed},
+        "message": "左侧导航偏好已保存",
+    }
 
 
 @router.put(

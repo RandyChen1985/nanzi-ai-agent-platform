@@ -86,3 +86,20 @@ export function buildHistoryFilterParams(
   Object.assign(params, buildHistoryTimeRange(filters, now));
   return params;
 }
+
+/**
+ * 是否处于「默认视图」（没有任何筛选）。
+ *
+ * 置顶区在默认视图下允许用快照渲染不在当前分页的会话；一旦用户搜索或筛选，
+ * 就只能显示真正命中的会话，否则会出现「搜 A 却冒出 B」的误导。
+ */
+export function isDefaultHistoryFilters(filters: ChatHistoryFilters): boolean {
+  return (
+    filters.scope === DEFAULT_HISTORY_FILTERS.scope &&
+    filters.agentId === DEFAULT_HISTORY_FILTERS.agentId &&
+    filters.status === DEFAULT_HISTORY_FILTERS.status &&
+    filters.timeRange === DEFAULT_HISTORY_FILTERS.timeRange &&
+    filters.startDate === DEFAULT_HISTORY_FILTERS.startDate &&
+    filters.endDate === DEFAULT_HISTORY_FILTERS.endDate
+  );
+}

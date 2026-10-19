@@ -156,6 +156,116 @@ async def test_legacy_full_preference_update_does_not_wipe_routing(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_update_history_sidebar_preference_preserves_other_fields(monkeypatch):
+    redis = FakeRedis(
+        json.dumps(
+            {
+                "pinned_group_ids": ["group-1"],
+                "markdown_theme": "academic",
+                "history_sidebar_open": False,
+            }
+        )
+    )
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    result = await portal_prefs.update_history_sidebar_preference(
+        portal_prefs.HistorySidebarPreferenceUpdate(open=True),
+        user_info(),
+    )
+
+    saved = json.loads(redis.saved)
+    assert result["data"]["history_sidebar_open"] is True
+    assert saved["history_sidebar_open"] is True
+    assert saved["pinned_group_ids"] == ["group-1"]
+    assert saved["markdown_theme"] == "academic"
+
+
+@pytest.mark.asyncio
+async def test_update_left_sidebar_preference_preserves_other_fields(monkeypatch):
+    redis = FakeRedis(
+        json.dumps(
+            {
+                "pinned_group_ids": ["group-1"],
+                "markdown_theme": "academic",
+                "left_sidebar_collapsed": False,
+            }
+        )
+    )
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    result = await portal_prefs.update_left_sidebar_preference(
+        portal_prefs.LeftSidebarPreferenceUpdate(collapsed=True),
+        user_info(),
+    )
+
+    saved = json.loads(redis.saved)
+    assert result["data"]["left_sidebar_collapsed"] is True
+    assert saved["left_sidebar_collapsed"] is True
+    assert saved["pinned_group_ids"] == ["group-1"]
+    assert saved["markdown_theme"] == "academic"
+
+
+@pytest.mark.asyncio
+async def test_legacy_full_preference_update_does_not_wipe_left_sidebar(monkeypatch):
+    redis = FakeRedis(
+        json.dumps(
+            {
+                "left_sidebar_collapsed": True,
+                "markdown_theme": "academic",
+            }
+        )
+    )
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    await portal_prefs.update_portal_prefs(
+        portal_prefs.PortalPrefsUpdate(pinned_group_ids=["group-2"]),
+        user_info(),
+    )
+
+    saved = json.loads(redis.saved)
+    assert saved["left_sidebar_collapsed"] is True
+    assert saved["markdown_theme"] == "academic"
+
+
+@pytest.mark.asyncio
+async def test_legacy_full_preference_update_does_not_wipe_history_sidebar(monkeypatch):
+    redis = FakeRedis(
+        json.dumps(
+            {
+                "history_sidebar_open": True,
+                "markdown_theme": "academic",
+            }
+        )
+    )
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    await portal_prefs.update_portal_prefs(
+        portal_prefs.PortalPrefsUpdate(pinned_group_ids=["group-2"]),
+        user_info(),
+    )
+
+    saved = json.loads(redis.saved)
+    assert saved["history_sidebar_open"] is True
+    assert saved["markdown_theme"] == "academic"
+
+
+@pytest.mark.asyncio
+async def test_history_sidebar_preference_is_scoped_per_user(monkeypatch):
+    redis = FakeRedis()
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    await portal_prefs.update_history_sidebar_preference(
+        portal_prefs.HistorySidebarPreferenceUpdate(open=True),
+        user_info(user_id=7),
+    )
+
+    mine = await portal_prefs.get_portal_prefs(user_info(user_id=7))
+    other = await portal_prefs.get_portal_prefs(user_info(user_id=8))
+    assert mine["data"]["history_sidebar_open"] is True
+    assert other["data"]["history_sidebar_open"] is False
+
+
+@pytest.mark.asyncio
 async def test_full_preference_update_cannot_bypass_routing_access_check(monkeypatch):
     redis = FakeRedis(json.dumps({"routing_mode": "auto", "expert_agent_id": ""}))
     monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))

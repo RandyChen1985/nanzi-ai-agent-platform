@@ -8,6 +8,7 @@ import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import {
   DEFAULT_HISTORY_FILTERS,
   buildHistoryFilterParams,
+  isDefaultHistoryFilters,
   type ChatHistoryFilters,
 } from "@/composables/chat/useHistoryFilters";
 import MessageRenderer from "@/components/MessageRenderer.vue";
@@ -163,7 +164,8 @@ import {
   splitUserMessageContent,
   useChatAttachments,
 } from "@/composables/chat/useChatAttachments";
-import { groupChatHistoryByDate } from "@/composables/chat/useChatHistoryGroups";
+import { splitHistoryByPin } from "@/composables/chat/useChatHistoryGroups";
+import { usePinnedConversations } from "@/composables/chat/usePinnedConversations";
 
 const route = useRoute();
 const router = useRouter();
@@ -212,7 +214,33 @@ const aggregatedHistoryList = computed(() => {
   }).filter(Boolean);
 });
 
-const groupedHistoryList = computed(() => groupChatHistoryByDate(aggregatedHistoryList.value));
+/** 会话置顶（账号级偏好，与聊天页共用同一份实现）。 */
+const {
+  pinned: pinnedConversations,
+  load: loadPinnedConversations,
+  toggle: togglePinnedConversation,
+} = usePinnedConversations();
+
+const handleTogglePin = async (item: any) => {
+  const result = await togglePinnedConversation(item);
+  if (!result.ok) {
+    showToast(result.message || "置顶失败，请稍后重试", "warning");
+    return;
+  }
+  showToast(result.pinned ? "已置顶该会话" : "已取消置顶", "success");
+};
+
+const groupedHistoryList = computed(() => {
+  const { pinnedGroup, dateGroups } = splitHistoryByPin(
+    aggregatedHistoryList.value,
+    pinnedConversations.value,
+    {
+      includeMissingPins:
+        !historyKeyword.value.trim() && isDefaultHistoryFilters(historyFilters.value),
+    },
+  );
+  return pinnedGroup ? [pinnedGroup, ...dateGroups] : dateGroups;
+});
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return "-";
@@ -894,6 +922,8 @@ const bootstrapDebugConversation = async () => {
     generateNewConversation(false, { persist: false });
     return;
   }
+  // 身份已就绪：拉取账号级会话置顶（失败只降级为空，不影响调试会话加载）。
+  void loadPinnedConversations();
   if (!savedId) {
     generateNewConversation();
     return;
@@ -4367,6 +4397,7 @@ onUnmounted(() => {
       @fetch-history="fetchHistory"
       @load-chat="openSessionPreview"
       @open-full-logs="openSessionPreview"
+      @toggle-pin="handleTogglePin"
     />
 
     <!-- Center: Main Chat Area -->

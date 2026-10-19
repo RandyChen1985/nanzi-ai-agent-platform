@@ -56,10 +56,16 @@ const emit = defineEmits<{
   (e: "delete-group", group: any): void;
   (e: "new-chat"): void;
   (e: "export-chat", item: any): void;
+  (e: "toggle-pin", item: any): void;
 }>();
 
 const windowWidth = ref(window.innerWidth);
 const isMobile = computed(() => windowWidth.value < 640);
+
+/** 条目操作区的显隐：桌面端 hover 显示；触屏没有 hover 语义，必须常显否则点不到。 */
+const actionVisibilityClass = computed(() =>
+  isMobile.value ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+);
 
 const handleResize = () => {
   windowWidth.value = window.innerWidth;
@@ -627,8 +633,9 @@ const confirmDelete = (item: any) => {
                 </span>
               </div>
 
-              <!-- Delete Entire Group Action -->
+              <!-- Delete Entire Group Action（置顶组不提供：删掉整组会连置顶一起清掉） -->
               <button
+                v-if="group.id !== 'pinned'"
                 @click.stop="emit('delete-group', group)"
                 class="p-1 opacity-0 group-hover/header:opacity-100 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/40 rounded-lg text-gray-400 transition-all"
                 title="清空此组全部会话"
@@ -674,11 +681,33 @@ const confirmDelete = (item: any) => {
                   </div>
 
                   <!-- Hover Action Buttons -->
-                  <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div class="flex items-center gap-0.5 transition-opacity">
+                    <!-- Pin / Unpin：已置顶时实心且常显，不再依赖 hover -->
+                    <button
+                      @click.stop="emit('toggle-pin', item)"
+                      class="p-1 rounded-md transition-opacity"
+                      :class="item.__pinned
+                        ? 'opacity-100 text-primary'
+                        : `${actionVisibilityClass} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`"
+                      :title="item.__pinned ? '取消置顶' : '置顶该会话'"
+                      :aria-pressed="item.__pinned ? 'true' : 'false'"
+                    >
+                      <svg
+                        class="w-3.5 h-3.5"
+                        viewBox="0 0 24 24"
+                        :fill="item.__pinned ? 'currentColor' : 'none'"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 4h6l-1 6 4 4H6l4-4-1-6zM12 14v6" />
+                      </svg>
+                    </button>
+
                     <!-- Export Chat -->
                     <button
                       @click.stop="emit('export-chat', item)"
                       class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                      :class="actionVisibilityClass"
                       title="导出 Markdown 对话记录"
                     >
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -691,6 +720,7 @@ const confirmDelete = (item: any) => {
                       v-if="item.trace_id"
                       @click.stop="emit('open-full-logs', item.trace_id)"
                       class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md text-gray-400 hover:text-primary transition-colors"
+                      :class="actionVisibilityClass"
                       title="查看回溯日志"
                     >
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -702,6 +732,7 @@ const confirmDelete = (item: any) => {
                     <button
                       @click.stop="triggerDelete(item)"
                       class="p-1 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/40 rounded-md text-gray-400 transition-colors"
+                      :class="actionVisibilityClass"
                       title="删除此会话"
                     >
                       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

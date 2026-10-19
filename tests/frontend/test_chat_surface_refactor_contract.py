@@ -176,8 +176,13 @@ def test_both_chat_surfaces_use_shared_history_date_grouping():
     assert "export const groupChatHistoryByDate" in shared
     assert 'title: "今天"' in shared
     assert 'title: "更早"' in shared
+    # 两个聊天面都改用共享的「置顶 + 日期」分组入口；日期分组仍由
+    # groupChatHistoryByDate 在共享模块内部完成，不允许各自手写一份分组逻辑。
+    assert "export const splitHistoryByPin" in shared
+    assert "groupChatHistoryByDate(rest" in shared
     for source in (embed, debug):
-        assert "groupChatHistoryByDate" in source
+        assert "splitHistoryByPin" in source
+        assert "groupChatHistoryByDate" not in source
         assert "const groupedHistoryList = computed(() =>" in source
         assert 'today: { title: "今天"' not in source
 

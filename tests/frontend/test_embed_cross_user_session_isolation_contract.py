@@ -185,11 +185,13 @@ def test_history_sidebar_click_validates_ownership_before_switching():
         source.index("const handleDeleteHistory = async (traceId: string) => {")
     ]
 
-    assert "const adoption = await checkConversationAdoption(target);" in handler
+    # 归属校验可以带 AbortSignal（连点只保留最后一次），但必须在采用之前发生。
+    assert "const adoption = await checkConversationAdoption(" in handler
+    assert "target, adoptionAbortController.signal" in handler
     assert "if (adoptionSequence !== historyAdoptionSequence) return;" in handler
     assert "if (adoption !== 'adoptable') {" in handler
     # 采用动作必须发生在校验通过之后。
-    assert handler.index("checkConversationAdoption(target)") < handler.index("conversationId.value = target;")
+    assert handler.index("const adoption = await checkConversationAdoption(") < handler.index("conversationId.value = target;")
 
 
 def test_host_supplied_conversation_id_is_not_persisted_before_the_check():

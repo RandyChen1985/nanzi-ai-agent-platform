@@ -27,6 +27,7 @@
       @delete-group="handleDeleteGroup"
       @new-chat="handleNewChatFromSidebar"
       @export-chat="handleExportChatFromSidebar"
+      @toggle-pin="handleTogglePin"
       class="border-r border-gray-200 dark:border-gray-800"
     />
 
@@ -2487,6 +2488,7 @@ import ActiveRunsPopover from "@/components/chat/ActiveRunsPopover.vue";
 import { createActiveRunsController, type ActiveRunItem } from "@/composables/chat/useActiveRuns";
 import { cancelConversationRun, cancelConversationRunDetailed } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
+import { shouldStartConversationHistoryLoad } from "@/utils/conversationHistoryRequest";
 import { isApiSuccess } from "@/utils/apiEnvelope";
 import { isSkillForbidden } from "@/utils/skillForbidden";
 import { planHistorySync, shouldKeepRecoverySync } from "@/utils/runRecoverySync";
@@ -2573,6 +2575,7 @@ const {
   ensureCanSend,
 } = useTokenQuota();
 const showToast = toast.showToast;
+const removeToast = toast.removeToast;
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import ToolPermissionCard from "@/components/chat/ToolPermissionCard.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
@@ -2618,6 +2621,7 @@ import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import {
   DEFAULT_HISTORY_FILTERS,
   buildHistoryFilterParams,
+  isDefaultHistoryFilters,
   type ChatHistoryFilters,
 } from "@/composables/chat/useHistoryFilters";
 import { downloadMarkdownFile } from "@/utils/chatSessionExport";
@@ -2713,7 +2717,8 @@ import {
   splitUserMessageContent,
   useChatAttachments,
 } from "@/composables/chat/useChatAttachments";
-import { groupChatHistoryByDate } from "@/composables/chat/useChatHistoryGroups";
+import { splitHistoryByPin } from "@/composables/chat/useChatHistoryGroups";
+import { usePinnedConversations } from "@/composables/chat/usePinnedConversations";
 import {
   applyStreamTraceId,
   appendAssistantBodyDelta,
@@ -5614,17 +5619,20 @@ watch(conversationId, () => {
  */
 const checkConversationAdoption = async (
   cid: string,
+  signal?: AbortSignal,
 ): Promise<'adoptable' | 'foreign' | 'unknown'> => {
   const normalized = String(cid || "").trim();
   if (!normalized) return 'unknown';
   // 接口抖动不该被当成「别人的会话」（unknown 会保留指针，但也不会采用），重试一次再下结论。
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (signal?.aborted) return 'unknown';
     try {
       const res = await axios.get(
         `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/ownership`,
         {
           params: activeConversationRequestParams(),
           headers: embedAuthHeaders(),
+          signal,
         },
       );
       // 聊天面是 StandardResponse（`code: 200`），**没有** `status` 字段；按遗留门户信封
@@ -5647,6 +5655,7 @@ const checkConversationAdoption = async (
       }
       return 'adoptable';
     } catch (e: any) {
+      if (signal?.aborted) return 'unknown';
       console.warn("[Session] Conversation ownership check failed; not adopting it:", e?.message || e);
     }
   }
@@ -5737,6 +5746,11 @@ const resetSessionForIdentityChange = (
   Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
   resourceScopeLoadSequence += 1;
   historyRequestSequence += 1;
+  historyAbortController?.abort();
+  historyAbortController = null;
+  historyAdoptionAbortController?.abort();
+  historyAdoptionAbortController = null;
+  historyLoadingConversationId = "";
   historyOffset.value = 0;
   hasMoreHistory.value = true;
   isLoadingHistory.value = false;
@@ -5752,6 +5766,14 @@ const resetSessionForIdentityChange = (
   loadingMoreHistory.value = false;
   historyKeyword.value = "";
   historyFilters.value = { ...DEFAULT_HISTORY_FILTERS };
+  // 置顶同样是上一位用户的账号级偏好：先清空，等 initChat 拿到新身份后再加载。
+  pinnedConversations.value = [];
+  // 侧栏开关也按账号读取：换人后重新应用新账号的值，并取消上一位用户尚未提交的保存。
+  if (historySidebarSaveTimer) {
+    clearTimeout(historySidebarSaveTimer);
+    historySidebarSaveTimer = null;
+  }
+  historySidebarPreferenceApplied = false;
   // 浏览器面板/网页预览：面板靠 session-id + viewer-token 保持实时画面（服务端 token 是
   // 会话级凭证、不绑用户），换人后既会继续显示对方画面，还能把输入转发过去。必须断开。
   browserOpenGeneration += 1;
@@ -5844,6 +5866,13 @@ const fetchUserPortalPreferences = async () => {
         expert_agent_id: String(prefs.expert_agent_id || "").trim(),
         routing_configured: prefs.routing_configured === true,
       };
+        // 账号级侧栏开关：跨设备保持一致；只应用一次，避免后台刷新覆盖用户刚做的操作。
+        if (!historySidebarPreferenceApplied) {
+          historySidebarPreferenceApplied = true;
+          if (isHistorySidebarDesktop()) {
+            applyHistorySidebarPreference(prefs.history_sidebar_open === true);
+          }
+        }
     } catch (error) {
         console.warn("Failed to fetch user portal preferences from Redis", error);
         savedRoutingPreference.value = {
@@ -5851,6 +5880,11 @@ const fetchUserPortalPreferences = async () => {
           expert_agent_id: "",
           routing_configured: false,
         };
+        // 偏好接口不可用时退回本地缓存，至少保证本机刷新不丢状态。
+        if (!historySidebarPreferenceApplied) {
+          historySidebarPreferenceApplied = true;
+          restoreHistorySidebarPreference();
+        }
     }
 };
 
@@ -6222,7 +6256,50 @@ const showCommandMenu = ref(false);
 const isKnowledgeEnabled = ref(true);
 const slashCommands = ref<any[]>([...SYSTEM_SLASH_COMMANDS]);
 // History Sidebar State
+const HISTORY_SIDEBAR_OPEN_KEY = "embed_history_sidebar_open";
 const showHistorySidebar = ref(false);
+// 账号偏好只应用一次：避免切换智能体等后台刷新把用户刚关掉的侧栏又重新打开。
+let historySidebarPreferenceApplied = false;
+let historySidebarSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 桌面端才恢复/保存侧栏开关；窄屏下它是带遮罩的浮层，刷新后自动弹开会挡住内容。 */
+const isHistorySidebarDesktop = () =>
+  typeof window !== "undefined" &&
+  !window.matchMedia("(max-width: 639px)").matches;
+
+const restoreHistorySidebarPreference = () => {
+  if (!isHistorySidebarDesktop()) return;
+  try {
+    showHistorySidebar.value = localStorage.getItem(HISTORY_SIDEBAR_OPEN_KEY) === "1";
+  } catch {
+    // localStorage 不可用（隐私模式/跨域限制）时保持默认关闭
+  }
+};
+
+const applyHistorySidebarPreference = (open: boolean) => {
+  if (!isHistorySidebarDesktop()) return;
+  showHistorySidebar.value = open;
+  try {
+    localStorage.setItem(HISTORY_SIDEBAR_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    // 本地缓存失败不影响已应用的账号偏好
+  }
+};
+
+const scheduleHistorySidebarPreferenceSave = (open: boolean) => {
+  if (!isHistorySidebarDesktop()) return;
+  // 连续开关只提交最后一次，避免两次 PUT 乱序后把状态写反。
+  if (historySidebarSaveTimer) clearTimeout(historySidebarSaveTimer);
+  historySidebarSaveTimer = setTimeout(() => {
+    historySidebarSaveTimer = null;
+    void axios
+      .put("/api/portal/portal-prefs/history-sidebar", { open })
+      .catch((error) => {
+        console.warn("Failed to save history sidebar preference", error);
+      });
+  }, 200);
+};
+
 const historyList = ref<any[]>([]);
 const historyPage = ref(1);
 const historyHasMore = ref(true);
@@ -6277,7 +6354,35 @@ const aggregatedHistoryList = computed(() => {
   return orderedKeys.map(key => groups[key]);
 });
 
-const groupedHistoryList = computed(() => groupChatHistoryByDate(aggregatedHistoryList.value));
+/** 会话置顶（账号级偏好）：加载失败只降级，不影响聊天。 */
+const {
+  pinned: pinnedConversations,
+  load: loadPinnedConversations,
+  toggle: togglePinnedConversation,
+  removeMany: removePinnedConversations,
+} = usePinnedConversations({ headers: embedAuthHeaders });
+
+const handleTogglePin = async (item: any) => {
+  const result = await togglePinnedConversation(item);
+  if (!result.ok) {
+    showToast(result.message || "置顶失败，请稍后重试", "warning");
+    return;
+  }
+  showToast(result.pinned ? "已置顶该会话" : "已取消置顶", "success");
+};
+
+const groupedHistoryList = computed(() => {
+  const { pinnedGroup, dateGroups } = splitHistoryByPin(
+    aggregatedHistoryList.value,
+    pinnedConversations.value,
+    {
+      // 搜索/筛选时不允许快照项凭空出现（会让人以为它命中了关键词）
+      includeMissingPins:
+        !historyKeyword.value.trim() && isDefaultHistoryFilters(historyFilters.value),
+    },
+  );
+  return pinnedGroup ? [pinnedGroup, ...dateGroups] : dateGroups;
+});
 
 const copiedId = ref("");
 const copyToClipboard = async (text: string, id?: string) => {
@@ -6345,6 +6450,7 @@ const fetchHistory = async (isLoadMore = false) => {
 };
 /** 侧栏连续点击的采用序列：只让最后一次点击生效。 */
 let historyAdoptionSequence = 0;
+let historyAdoptionAbortController: AbortController | null = null;
 
 // —— 顶部「进行中的会话」：跨标签/跨设备的运行态唯一入口 ——
 // 兜住「会话还在跑，但界面已经没有停止按钮」的僵死场景：这里能看到全部
@@ -6498,8 +6604,14 @@ const handleHistoryClick = async (item: any) => {
     // 但后续提问会被后端 403 拦住，变成一个说不清的僵局。
     const target = String(item.conversation_id);
     const adoptionSequence = ++historyAdoptionSequence;
-    const adoption = await checkConversationAdoption(target);
+    // 连续点击只保留最后一次校验：旧请求立即取消，避免它们占满浏览器同源连接数，
+    // 把最后一次的归属校验/历史加载排到队列后面。
+    historyAdoptionAbortController?.abort();
+    const adoptionAbortController = new AbortController();
+    historyAdoptionAbortController = adoptionAbortController;
+    const adoption = await checkConversationAdoption(target, adoptionAbortController.signal);
     if (adoptionSequence !== historyAdoptionSequence) return;
+    if (historyAdoptionAbortController === adoptionAbortController) historyAdoptionAbortController = null;
     if (adoption !== 'adoptable') {
         showToast(
             adoption === 'foreign'
@@ -6614,6 +6726,9 @@ const confirmDeleteGroup = async () => {
       generateNewConversation();
     }
 
+    // 被删掉的会话若在置顶里，同步移除（否则置顶区会留下点开为空的条目）。
+    void removePinnedConversations(convIds);
+
     await fetchHistory();
   } catch (e) {
     console.error("Failed to batch delete group history", e);
@@ -6653,6 +6768,8 @@ const handleDeleteSingleHistory = async (item: any) => {
     historyList.value = historyList.value.filter(
       (h) => h.conversation_id !== targetConvId
     );
+    // 会话已不存在，置顶条目必须同步移除，否则会留下点击必然为空的僵尸置顶。
+    void removePinnedConversations([targetConvId]);
     showToast("会话已删除", "success");
     if (conversationId.value === targetConvId) {
       resetSession();
@@ -6664,33 +6781,87 @@ const handleDeleteSingleHistory = async (item: any) => {
 };
 
 const handleExportChatFromSidebar = async (item: any) => {
-  const targetConvId = item.conversation_id;
-  if (!targetConvId) return;
+  const targetConvId = String(item?.conversation_id || "");
+  if (!targetConvId) {
+    // 按单轮 trace 聚合的条目没有会话 ID：没有可枚举的完整会话，明确告知而不是静默失败。
+    showToast("该记录没有会话 ID，暂不支持导出", "warning");
+    return;
+  }
+  // 导出可能分页拉取多页，先给一个不自动消失的进度 toast；
+  // 完成/失败时先移除它，避免和结果 toast 同屏出现两个。
+  const loadingToastId = showToast("正在导出对话记录...", "info", 0);
   try {
-    showToast("正在导出对话记录...", "info");
     const headers: any = {};
     if (config.token) {
       headers["Authorization"] = `Bearer ${config.token}`;
       headers["X-API-Key"] = config.token;
     }
-    const res = await axios.get(`/api/v1/chat/conversation/${targetConvId}/history`, { headers });
-    const historyMsgs = res.data?.data?.messages || [];
-    let md = `# 会话导出记录\n\n- **会话 ID**: \`${targetConvId}\`\n- **导出时间**: ${new Date().toLocaleString()}\n\n---\n\n`;
-    if (historyMsgs.length === 0 && targetConvId === conversationId.value && messages.value.length > 0) {
-      messages.value.forEach((m: any) => {
-        const role = m.role === "user" ? "👤 **用户**" : "🤖 **AI 助手**";
-        md += `### ${role}\n\n${m.content || ""}\n\n---\n\n`;
+
+    // 取数必须走 `/chat/history`：后端没有 `/chat/conversation/{id}/history`
+    // 这个路由（会话详情是 `/chat/conversation/{id}`，且以 Redis 为主、默认只回
+    // 50 条），沿用旧路径会稳定 404，于是「导出对话失败」。
+    // 这里按 conversation_id 分页拉全，保证导出的轮次与界面历史一致。
+    const pageSize = 100;
+    const turns: Array<{ role: "user" | "agent"; content: string; createdAt?: string }> = [];
+    let page = 1;
+    let collected = 0;
+    let total = 0;
+    do {
+      const res = await axios.get("/api/v1/chat/history", {
+        params: { conversation_id: targetConvId, page, page_size: pageSize },
+        headers,
       });
-    } else {
-      historyMsgs.forEach((msg: any) => {
-        const role = msg.role === "user" ? "👤 **用户**" : "🤖 **AI 助手**";
-        md += `### ${role}\n\n${msg.content || ""}\n\n---\n\n`;
+      const batch: any[] = res.data?.data?.items || [];
+      total = Number(res.data?.data?.total ?? batch.length) || 0;
+      collected += batch.length;
+      // 接口按时间倒序返回，逐页 reverse 后即与页面渲染顺序（旧 → 新）一致。
+      [...batch].reverse().forEach((turn: any) => {
+        const question = String(turn?.query || "").trim();
+        if (question) {
+          turns.push({ role: "user", content: question, createdAt: turn?.created_at });
+        }
+        const answer = String(turn?.summary || "").trim();
+        if (answer) {
+          turns.push({ role: "agent", content: answer, createdAt: turn?.created_at });
+        }
+      });
+      if (batch.length < pageSize || collected >= total) break;
+      page += 1;
+    } while (page <= 50);
+
+    // 服务端还没有落库（例如刚发出、仍在流式输出）时，退回当前界面的消息，
+    // 避免「文件里什么都没有」。
+    if (turns.length === 0 && targetConvId === conversationId.value) {
+      messages.value.forEach((m: any) => {
+        if (m.role !== "user" && m.role !== "agent" && m.role !== "assistant") return;
+        const content = String(m.content || "").trim();
+        if (!content) return;
+        turns.push({
+          role: m.role === "user" ? "user" : "agent",
+          content,
+          createdAt: m.timestamp,
+        });
       });
     }
+
+    if (turns.length === 0) {
+      removeToast(loadingToastId);
+      showToast("该会话暂无可导出的消息", "warning");
+      return;
+    }
+
+    let md = `# 会话导出记录\n\n- **会话 ID**: \`${targetConvId}\`\n- **导出时间**: ${new Date().toLocaleString()}\n- **消息条数**: ${turns.length}\n\n---\n\n`;
+    turns.forEach((turn) => {
+      const role = turn.role === "user" ? "👤 **用户**" : "🤖 **AI 助手**";
+      const time = turn.createdAt ? ` _(${new Date(turn.createdAt).toLocaleString()})_` : "";
+      md += `### ${role}${time}\n\n${turn.content}\n\n---\n\n`;
+    });
     const filename = `chat_session_${targetConvId.slice(0, 8)}_${Date.now()}.md`;
     downloadMarkdownFile(filename, md);
-    showToast("导出成功", "success");
+    removeToast(loadingToastId);
+    showToast(`导出成功（${turns.length} 条消息）`, "success");
   } catch (e) {
+    removeToast(loadingToastId);
     console.error("Export conversation failed", e);
     showToast("导出对话失败", "error");
   }
@@ -7011,6 +7182,17 @@ const executeDeleteCommand = async () => {
 };
 
 watch(showHistorySidebar, (val) => {
+    // 桌面端记住开关；窄屏浮层是临时态，不覆盖桌面偏好。
+    if (isHistorySidebarDesktop()) {
+      try {
+        localStorage.setItem(HISTORY_SIDEBAR_OPEN_KEY, val ? "1" : "0");
+      } catch {
+        // localStorage 不可用时仅本次生效
+      }
+      if (historySidebarPreferenceApplied) {
+        scheduleHistorySidebarPreferenceSave(val);
+      }
+    }
     if (!val) return;
     // 打开面板总是取最新。此前这里带了「列表为空」的条件，首次拉取之后列表就非空了，于是
     // 后续每次打开都只显示那份旧快照——新会话不出现、当前会话的轮次数 / 摘要 / 时间全部
@@ -7869,6 +8051,11 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
     messages.value = [];
     resourceScope.value = emptyResourceScopeState();
     historyRequestSequence += 1;
+    historyAbortController?.abort();
+    historyAbortController = null;
+    historyAdoptionAbortController?.abort();
+    historyAdoptionAbortController = null;
+    historyLoadingConversationId = "";
     historyOffset.value = 0;
     hasMoreHistory.value = true;
     isLoadingHistory.value = false;
@@ -8661,6 +8848,8 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       console.log("[Session] Identity changed; resetting the previous user's session view.");
       resetSessionForIdentityChange(identityKey, { preserveRequestedConversationId: true });
     }
+    // 会话置顶是账号级偏好：身份确定后再加载（上面的 reset 已清掉上一位用户的置顶）。
+    void loadPinnedConversations();
     // 2. Clear skeleton as soon as auth is confirmed
     isInitialLoading.value = false;
     // 3. Set default welcome message if not provided
@@ -8809,15 +8998,27 @@ const hasMoreHistory = ref(true);
 const HISTORY_LIMIT = 20;
 const isLoadingHistory = ref(false);
 let historyRequestSequence = 0;
+let historyLoadingConversationId = "";
+let historyAbortController: AbortController | null = null;
 const fetchConversationHistory = async (
   isLoadMore = false,
   expectedInitializationGeneration = conversationInitializationGeneration,
 ) => {
-  if (!conversationId.value) return;
-  if (isLoadMore && !hasMoreHistory.value) return;
-  if (isLoadingHistory.value) return;
-  const requestSequence = ++historyRequestSequence;
   const historyConversationId = conversationId.value;
+  if (!shouldStartConversationHistoryLoad({
+    targetConversationId: historyConversationId,
+    isLoadMore,
+    hasMore: hasMoreHistory.value,
+    isLoading: isLoadingHistory.value,
+    loadingConversationId: historyLoadingConversationId,
+  })) return;
+
+  const requestSequence = ++historyRequestSequence;
+  // 切换会话时抢占：旧请求立即作废，避免它在浏览器连接队列里继续占位。
+  historyAbortController?.abort();
+  const abortController = new AbortController();
+  historyAbortController = abortController;
+  historyLoadingConversationId = historyConversationId;
   isLoadingHistory.value = true;
   // Save current scroll height to maintain position after loading
   const container = messagesContainer.value;
@@ -8834,7 +9035,8 @@ const fetchConversationHistory = async (
       `/api/v1/chat/history`,
       {
           params: { conversation_id: historyConversationId, page: page, page_size: HISTORY_LIMIT },
-          headers
+          headers,
+          signal: abortController.signal,
       }
     );
     if (
@@ -8971,9 +9173,16 @@ const fetchConversationHistory = async (
       }
     }
   } catch (e) {
-    console.warn("Failed to load session history", e);
+    // 主动抢占/卸载时的取消不是错误，不刷告警。
+    if ((e as any)?.code !== "ERR_CANCELED") {
+      console.warn("Failed to load session history", e);
+    }
   } finally {
-    if (requestSequence === historyRequestSequence) isLoadingHistory.value = false;
+    if (requestSequence === historyRequestSequence) {
+      isLoadingHistory.value = false;
+      historyLoadingConversationId = "";
+      if (historyAbortController === abortController) historyAbortController = null;
+    }
   }
 };
 
