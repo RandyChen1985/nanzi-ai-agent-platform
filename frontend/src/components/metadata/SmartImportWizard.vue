@@ -1038,14 +1038,18 @@ const normalizeType = (rawType: string): string => {
     :trace-id="currentTraceId" 
     @close="showLogs = false" 
   />
-  <DatabaseImportModal 
-    :show="showDbImportModal"
-    :imported-table-names="props.datasetId ? (props.importedTableNames || []) : []"
-    :locked-data-source-name="props.datasetId ? (props.datasetDataSource || '') : ''"
-    @close="showDbImportModal = false"
-    @confirm="handleDbDdlConfirm"
-    @confirm-profile="handleProfileImportConfirm"
-  />
+  <!-- 数据库加载弹层需高于本向导（z-[100]），否则会被向导遮罩盖住无法操作 -->
+  <Teleport to="body">
+    <DatabaseImportModal
+      :show="showDbImportModal"
+      :imported-table-names="props.datasetId ? (props.importedTableNames || []) : []"
+      :locked-data-source-name="props.datasetId ? (props.datasetDataSource || '') : ''"
+      overlay-z-index-class="z-[120]"
+      @close="showDbImportModal = false"
+      @confirm="handleDbDdlConfirm"
+      @confirm-profile="handleProfileImportConfirm"
+    />
+  </Teleport>
 </template>
 
 <style scoped>
