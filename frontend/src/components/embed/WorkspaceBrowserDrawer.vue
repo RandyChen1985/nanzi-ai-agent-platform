@@ -7,6 +7,9 @@ import {
   type FileTypeCategory,
 } from '@/utils/fileTypeVisual'
 import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash } from '@/utils/workspaceFilePreview'
+import WorkspaceActionMenu from '@/components/embed/WorkspaceActionMenu.vue'
+import { buildWorkspaceActionEntries } from '@/utils/workspaceActionEntries'
+import type { WorkspaceActionKey, WorkspaceActionTarget, WorkspaceMenuContext } from '@/utils/workspaceActionEntries'
 import { useWorkspaceUploadQueue } from '@/composables/useWorkspaceUploadQueue'
 import { shouldAutoDismissUploads } from '@/utils/workspaceUploadQueue'
 import {
@@ -17,7 +20,7 @@ import {
   ClockIcon,
   ComputerDesktopIcon,
   DocumentTextIcon,
-  FolderIcon,
+  EllipsisVerticalIcon,
   HomeIcon,
   ListBulletIcon,
   Squares2X2Icon,
@@ -64,7 +67,6 @@ const baseDir = ref<string>('')
 const currentPathWritable = ref(false)
 const userWorkspaceRoot = ref<string>('')
 
-const contextMenu = ref<{ x: number; y: number; parentPath: string; item?: { path: string; name: string; is_dir: boolean } } | null>(null)
 const createDialog = ref<{ kind: 'file' | 'dir'; parentPath: string; name: string } | null>(null)
 const createSubmitting = ref(false)
 const renameDialog = ref<{ path: string; name: string; isDir: boolean } | null>(null)
@@ -808,54 +810,74 @@ const canUseCreateMenu = computed(
   () => !isRecursiveListingActive.value && !loading.value && !searchLoading.value,
 )
 
-const closeContextMenu = () => {
-  contextMenu.value = null
+type WorkspaceItemLike = {
+  path: string
+  name: string
+  is_dir: boolean
+  is_public?: boolean
+  is_user_workspace?: boolean
+  size?: number
+  mtime?: number
 }
 
-// 菜单用 fixed 定位 + Teleport 到 body，不会被抽屉裁切，但会溢出**视口**——
-// 在列表靠下处右键时菜单向下展开，底部的项直接看不见。这里按实测尺寸决定落点：
-// 下方放不下就向上翻，右侧放不下就向左收，最后再夹到视口内。
-const CONTEXT_MENU_MARGIN = 8
-const contextMenuRef = ref<HTMLElement | null>(null)
-const contextMenuPosition = ref<{ left: number; top: number }>({ left: 0, top: 0 })
-const contextMenuMaxHeight = ref(typeof window === 'undefined' ? 0 : window.innerHeight)
-
-const adjustContextMenuPosition = () => {
-  const element = contextMenuRef.value
-  if (!element || !contextMenu.value) return
-  const margin = CONTEXT_MENU_MARGIN
-  const { width } = element.getBoundingClientRect()
-  // 关键：先把菜单高度限制在可视区之内（项多时内部滚动）。
-  // 只翻转是不够的——菜单本身高于剩余空间时，翻上去照样露不全。
-  const available = Math.max(120, window.innerHeight - margin * 2)
-  const height = Math.min(element.scrollHeight, available)
-  contextMenuMaxHeight.value = height
-
-  let left = contextMenu.value.x
-  let top = contextMenu.value.y
-  if (left + width > window.innerWidth - margin) {
-    left = Math.max(margin, window.innerWidth - width - margin)
-  }
-  // 下方放不下就向上翻转：贴住点击点上方展开
-  if (top + height > window.innerHeight - margin) {
-    top = contextMenu.value.y - height
-  }
-  if (top < margin) top = margin
-  if (top + height > window.innerHeight - margin) {
-    top = Math.max(margin, window.innerHeight - height - margin)
-  }
-  contextMenuPosition.value = { left, top }
+type WorkspaceActionMenuState = {
+  ctx: WorkspaceMenuContext
+  anchor: { x: number; y: number }
+  parentPath: string
+  item?: WorkspaceItemLike
+  source: 'row' | 'context'
 }
 
-const openContextMenu = (event: MouseEvent, parentPath: string, item?: { path: string; name: string; is_dir: boolean; is_public?: boolean; is_user_workspace?: boolean }) => {
-  const itemAllowed = item && (canManageItem(item) || isTrashListItem(item) || isTrashRootItem(item) || isPublicItem(item))
-  if (!canUseCreateMenu.value && !itemAllowed) return
-  if (!canCreateInPath(parentPath) && !itemAllowed) return
+const actionMenu = ref<WorkspaceActionMenuState | null>(null)
+const actionMenuEntries = computed(() =>
+  actionMenu.value ? buildWorkspaceActionEntries(actionMenu.value.ctx) : [],
+)
+
+const closeActionMenu = () => {
+  actionMenu.value = null
+}
+
+/** 把一条文件记录翻译成纯函数需要的场景描述（⋮ 与右键共用同一套判定）。 */
+const buildItemMenuContext = (item: WorkspaceItemLike): WorkspaceMenuContext => {
+  const target: WorkspaceActionTarget = {
+    name: resolveItemDisplayName(item),
+    path: item.path,
+    isDir: !!item.is_dir,
+    isPreviewable: item.is_dir ? undefined : canPreviewWorkspaceFile(item.name),
+  }
+  if (isTrashRootItem(item)) return { scene: 'trash-root', target }
+  if (isTrashListItem(item)) return { scene: 'trash-item', target }
+  if (isPublicItem(item)) {
+    return {
+      scene: 'public-item',
+      target,
+      isAdminScope: isAdminScope.value,
+      isSystemProtected: isSystemProtectedDir(item),
+    }
+  }
+  return { scene: 'regular-item', target, canManage: canManageItem(item) }
+}
+
+const openContextMenu = (
+  event: MouseEvent,
+  parentPath: string,
+  item?: WorkspaceItemLike,
+) => {
+  if (!canUseCreateMenu.value && !item) return
+  const ctx: WorkspaceMenuContext = item
+    ? buildItemMenuContext(item)
+    : { scene: 'empty-area', canCreateHere: canCreateInPath(parentPath) }
+  // 「能不能开菜单」与「菜单里有几项」用同一个判定，行内 ⋮ 和右键才不会一个能开一个不能
+  if (!buildWorkspaceActionEntries(ctx).length) return
   event.preventDefault()
   event.stopPropagation()
-  contextMenu.value = { x: event.clientX, y: event.clientY, parentPath, item }
-  contextMenuPosition.value = { left: event.clientX, top: event.clientY }
-  void nextTick(adjustContextMenuPosition)
+  actionMenu.value = {
+    ctx,
+    anchor: { x: event.clientX, y: event.clientY },
+    parentPath,
+    item,
+    source: 'context',
+  }
 }
 
 const handleListContextMenu = (event: MouseEvent) => {
@@ -863,20 +885,93 @@ const handleListContextMenu = (event: MouseEvent) => {
   openContextMenu(event, currentPath.value)
 }
 
-const handleItemContextMenu = (event: MouseEvent, item: { path: string; name: string; is_dir: boolean }) => {
+const handleItemContextMenu = (event: MouseEvent, item: WorkspaceItemLike) => {
   const parentPath = item.is_dir ? item.path : currentPath.value
   if (!parentPath) return
   openContextMenu(event, parentPath, item)
 }
 
-const startCreateEntry = (kind: 'file' | 'dir') => {
-  if (!contextMenu.value) return
+const isRowActionMenuOpen = (item: { path: string }) =>
+  actionMenu.value?.source === 'row' && actionMenu.value.item?.path === item.path
+
+/** 行尾 ⋮：锚在按钮左下角，再由菜单组件按视口夹取/翻转。 */
+const toggleRowActionMenu = (event: MouseEvent, item: WorkspaceItemLike) => {
+  event.stopPropagation()
+  if (actionMenu.value?.source === 'row' && actionMenu.value.item?.path === item.path) {
+    closeActionMenu()
+    return
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  actionMenu.value = {
+    ctx: buildItemMenuContext(item),
+    anchor: { x: rect.left, y: rect.bottom + 4 },
+    parentPath: item.is_dir ? item.path : currentPath.value,
+    item,
+    source: 'row',
+  }
+}
+
+/** 菜单项 key → 既有动作函数。菜单项由纯函数生成，这里只做派发。 */
+const runWorkspaceAction = (key: WorkspaceActionKey) => {
+  const state = actionMenu.value
+  if (!state) return
+  const item = state.item
+  const parentPath = state.parentPath
+  closeActionMenu()
+
+  switch (key) {
+    case 'preview':
+      if (item) previewItem(item)
+      break
+    case 'download':
+      if (item) void downloadItem(item)
+      break
+    case 'copy-path':
+      if (item) void copyItemPath(item.path)
+      break
+    case 'mount':
+      if (item) mountItemToSession(item)
+      break
+    case 'open-dir':
+      if (item) void fetchDirectory(item.path)
+      break
+    case 'rename':
+      if (item) startRenameEntry(item)
+      break
+    case 'delete':
+      if (item) confirmDeleteEntry(item)
+      break
+    case 'purge':
+      if (item) confirmPurgeEntry(item)
+      break
+    case 'restore':
+      if (item) void restoreTrashItem(item)
+      break
+    case 'empty-trash':
+      confirmEmptyTrash()
+      break
+    case 'create-file':
+      startCreateEntry('file', parentPath)
+      break
+    case 'create-dir':
+      startCreateEntry('dir', parentPath)
+      break
+    case 'upload':
+      openUploadPicker(parentPath)
+      break
+    case 'header':
+    default:
+      break
+  }
+}
+
+const startCreateEntry = (kind: 'file' | 'dir', parentPath: string) => {
   createDialog.value = {
     kind,
-    parentPath: contextMenu.value.parentPath,
+    parentPath,
     name: kind === 'file' ? '未命名.md' : '新建文件夹',
   }
-  closeContextMenu()
+  closeActionMenu()
 }
 
 const cancelCreateEntry = () => {
@@ -928,7 +1023,7 @@ const submitCreateEntry = async () => {
 const fetchDirectory = async (pathUrl: string = '', options?: { preserveSearch?: boolean }) => {
   loading.value = true
   selectedItem.value = null
-  closeContextMenu()
+  closeActionMenu()
   closeRecentFilesMenu()
   if (!options?.preserveSearch) {
     resetSearchState()
@@ -981,7 +1076,7 @@ const onGlobalKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') {
     closeQuickNavMenu()
     closeRecentFilesMenu()
-    closeContextMenu()
+    closeActionMenu()
     if (createDialog.value && !createSubmitting.value) {
       createDialog.value = null
     }
@@ -993,7 +1088,7 @@ const onGlobalKeydown = (event: KeyboardEvent) => {
 }
 
 const onDocumentClick = (event: MouseEvent) => {
-  closeContextMenu()
+  closeActionMenu()
   const target = event.target as Node
   if (quickNavOpen.value) {
     if (!quickNavMenuRef.value?.contains(target) && !quickNavTriggerRef.value?.contains(target)) {
@@ -1190,6 +1285,7 @@ const downloadItem = async (item: { path: string; name: string }) => {
 }
 
 const handleSelectRow = (item: any) => {
+  closeActionMenu()
   selectedItem.value = item
 }
 
@@ -1213,6 +1309,7 @@ const toggleMultiSelectMode = () => {
 }
 
 const handleRowClick = (item: any) => {
+  closeActionMenu()
   if (isMobile.value && item.is_dir) {
     fetchDirectory(item.path)
     selectedItem.value = null
@@ -1383,12 +1480,12 @@ const copyItemPath = async (path: string) => {
   } catch {
     showToast('复制失败', 'error')
   }
-  closeContextMenu()
+  closeActionMenu()
 }
 
 const startRenameEntry = (item: { path: string; name: string; is_dir: boolean }) => {
   renameDialog.value = { path: item.path, name: item.name, isDir: item.is_dir }
-  closeContextMenu()
+  closeActionMenu()
 }
 
 const submitRename = async () => {
@@ -1405,7 +1502,7 @@ const submitRename = async () => {
 
 const confirmDeleteEntry = (item: { path: string; name: string; is_dir: boolean; is_public?: boolean }) => {
   deleteTarget.value = { path: item.path, name: item.name, isDir: item.is_dir, isPublic: isAdminScope.value && !!item.is_public }
-  closeContextMenu()
+  closeActionMenu()
 }
 
 const submitDelete = async () => {
@@ -1434,7 +1531,7 @@ const restoreTrashItem = async (item: { path: string; name: string }) => {
 
 const confirmPurgeEntry = (item: { path: string; name: string; is_dir: boolean }) => {
   purgeTarget.value = { path: item.path, name: item.name, isDir: item.is_dir }
-  closeContextMenu()
+  closeActionMenu()
 }
 
 const submitPurge = async () => {
@@ -1452,7 +1549,7 @@ const submitPurge = async () => {
 
 const confirmEmptyTrash = () => {
   emptyTrashConfirm.value = true
-  closeContextMenu()
+  closeActionMenu()
 }
 
 const submitEmptyTrash = async () => {
@@ -1470,11 +1567,6 @@ const submitEmptyTrash = async () => {
   } finally {
     emptyTrashSubmitting.value = false
   }
-}
-
-const openTrashFolder = async (item: { path: string }) => {
-  closeContextMenu()
-  await fetchDirectory(item.path)
 }
 
 /**
@@ -2061,7 +2153,7 @@ onUnmounted(() => {
                     </div>
                   </div>
 
-                  <div v-if="viewMode === 'list'" class="flex-1 overflow-y-auto custom-scrollbar p-1 pb-16 min-h-0" @contextmenu="handleListContextMenu">
+                  <div v-if="viewMode === 'list'" class="flex-1 overflow-y-auto custom-scrollbar p-1 pb-16 min-h-0" @contextmenu="handleListContextMenu" @scroll.passive="closeActionMenu">
                     <div v-if="displayItems.length === 0 && !searchLoading" class="h-full flex flex-col items-center justify-center text-gray-400 py-12 px-4">
                       <span class="text-4xl mb-2">{{ isRecursiveListingActive || isSearchActive ? '🔍' : '📂' }}</span>
                       <span class="text-xs font-bold">{{ displayEmptyHint }}</span>
@@ -2150,104 +2242,31 @@ onUnmounted(() => {
                             </span>
                           </div>
                         </template>
-                        <div class="col-span-5 sm:col-span-4 text-right text-[10px] font-mono text-gray-400 dark:text-gray-500 leading-tight">
-                          <div>{{ item.is_dir ? '—' : formatSize(item.size) }}</div>
-                          <div class="text-[9px] text-gray-400/80 dark:text-gray-500/80">{{ formatTime(item.mtime) }}</div>
-                          <div
-                            v-if="shouldShowRowActions(item)"
-                            class="mt-1.5 flex flex-wrap items-center justify-end gap-x-1 gap-y-0.5 text-[10px] font-sans font-bold"
-                            @click.stop
-                          >
-                            <template v-if="isTrashListItem(item)">
-                              <button
-                                type="button"
-                                class="text-emerald-600 hover:text-emerald-500 transition-colors focus:outline-none whitespace-nowrap"
-                                title="恢复至我的目录"
-                                @click="restoreTrashItem(item)"
-                              >
-                                恢复
-                              </button>
-                              <span class="text-gray-300 dark:text-gray-600 font-normal">|</span>
-                              <button
-                                type="button"
-                                class="text-red-600 hover:text-red-500 transition-colors focus:outline-none whitespace-nowrap"
-                                title="永久删除，无法找回"
-                                @click="confirmPurgeEntry(item)"
-                              >
-                                永久删除
-                              </button>
-                              <template v-if="!item.is_dir && canPreviewWorkspaceFile(resolveItemDisplayName(item))">
-                                <span class="text-gray-300 dark:text-gray-600 font-normal">|</span>
-                                <button
-                                  type="button"
-                                  class="text-primary hover:text-primary/80 transition-colors focus:outline-none"
-                                  @click="previewItem(item)"
-                                >
-                                  画布打开
-                                </button>
-                              </template>
-                            </template>
-                            <template v-else-if="isTrashRootItem(item)">
-                              <button
-                                type="button"
-                                class="text-primary hover:text-primary/80 transition-colors focus:outline-none whitespace-nowrap"
-                                @click="openTrashFolder(item)"
-                              >
-                                打开
-                              </button>
-                              <span class="text-gray-300 dark:text-gray-600 font-normal">|</span>
-                              <button
-                                type="button"
-                                class="text-red-600 hover:text-red-500 transition-colors focus:outline-none whitespace-nowrap"
-                                @click="confirmEmptyTrash"
-                              >
-                                清空回收站
-                              </button>
-                            </template>
-                            <template v-else>
-                              <template v-if="!item.is_dir">
-                                <button
-                                  type="button"
-                                  class="transition-colors focus:outline-none"
-                                  :class="canPreviewWorkspaceFile(item.name)
-                                    ? 'text-primary hover:text-primary/80'
-                                    : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'"
-                                  :disabled="!canPreviewWorkspaceFile(item.name)"
-                                  title="在左侧画布中打开"
-                                  @click="previewItem(item)"
-                                >
-                                  画布打开
-                                </button>
-                                <span class="text-gray-300 dark:text-gray-600 font-normal">|</span>
-                                <button
-                                  type="button"
-                                  class="text-gray-600 dark:text-gray-300 hover:text-primary transition-colors focus:outline-none"
-                                  title="下载到本地"
-                                  @click="downloadItem(item)"
-                                >
-                                  下载
-                                </button>
-                                <span class="text-gray-300 dark:text-gray-600 font-normal">|</span>
-                              </template>
-                              <button
-                                type="button"
-                                class="text-gray-600 dark:text-gray-300 hover:text-primary transition-colors focus:outline-none whitespace-nowrap"
-                                title="复制文件在工作空间中的路径"
-                                @click="copyItemPath(item.path)"
-                              >
-                                复制路径
-                              </button>
-                              <span class="text-gray-300 dark:text-gray-600 font-normal">|</span>
-                              <button
-                                type="button"
-                                class="text-primary hover:text-primary/80 transition-colors focus:outline-none whitespace-nowrap"
-                                :title="item.is_dir ? '挂载文件夹到 AI 会话，随下一条消息发送' : '挂载文件到 AI 会话，随下一条消息发送'"
-                                @click="mountItemToSession(item)"
-                              >
-                                {{ item.is_dir ? '挂载文件夹' : '挂载文件' }}
-                              </button>
-                            </template>
+                        <div class="col-span-5 sm:col-span-4 flex items-center justify-end gap-1.5">
+                          <div class="text-right text-[10px] font-mono text-gray-400 dark:text-gray-500 leading-tight whitespace-nowrap">
+                            <div>{{ item.is_dir ? '—' : formatSize(item.size) }}</div>
+                            <div class="text-[9px] text-gray-400/80 dark:text-gray-500/80">{{ formatTime(item.mtime) }}</div>
                           </div>
+                          <button
+                            v-if="!multiSelectMode && (shouldShowRowActions(item) || !isMobile)"
+                            type="button"
+                            class="relative p-1 rounded-md border shadow-sm transition-colors before:absolute before:-inset-1.5 before:content-[''] focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary/40"
+                            :class="[
+                              isRowActionMenuOpen(item)
+                                ? 'border-primary/60 bg-primary/10 text-primary opacity-100'
+                                : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400 hover:border-primary/50 hover:bg-primary/5 hover:text-primary',
+                              shouldShowRowActions(item)
+                                ? 'opacity-100'
+                                : 'opacity-40 group-hover:opacity-100 group-focus-within:opacity-100',
+                            ]"
+                            aria-haspopup="menu"
+                            aria-label="更多操作"
+                            :aria-expanded="isRowActionMenuOpen(item) ? 'true' : 'false'"
+                            :title="`${resolveItemDisplayName(item)} 的更多操作`"
+                            @click.stop="toggleRowActionMenu($event, item)"
+                          >
+                            <EllipsisVerticalIcon class="h-4 w-4" aria-hidden="true" />
+                          </button>
                         </div>
                       </div>
                       <div v-if="hasMoreListItems" class="py-3 text-center">
@@ -2258,7 +2277,7 @@ onUnmounted(() => {
                     </div>
                   </div>
 
-                  <div v-else class="flex-1 overflow-y-auto custom-scrollbar p-2 pb-16 min-h-0" @contextmenu="handleListContextMenu">
+                  <div v-else class="flex-1 overflow-y-auto custom-scrollbar p-2 pb-16 min-h-0" @contextmenu="handleListContextMenu" @scroll.passive="closeActionMenu">
                     <div v-if="displayItems.length === 0 && !searchLoading" class="h-full flex flex-col items-center justify-center text-gray-400 py-12 px-4">
                       <span class="text-4xl mb-2">{{ isRecursiveListingActive || isSearchActive ? '🔍' : '📂' }}</span>
                       <span class="text-xs font-bold">{{ displayEmptyHint }}</span>
@@ -2568,88 +2587,13 @@ onUnmounted(() => {
     </div>
   </Teleport>
 
-  <Teleport to="body">
-    <div
-      v-if="contextMenu"
-      class="fixed z-[130] min-w-[10rem] py-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl ring-1 ring-black/5 text-xs font-bold text-gray-700 dark:text-gray-200 overflow-y-auto custom-scrollbar"
-      ref="contextMenuRef"
-      :style="{ left: `${contextMenuPosition.left}px`, top: `${contextMenuPosition.top}px`, maxHeight: `${contextMenuMaxHeight}px` }"
-      @click.stop
-      @contextmenu.prevent.stop
-    >
-      <template v-if="canCreateInPath(contextMenu.parentPath)">
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startCreateEntry('file')">📄 新建文件</button>
-        <button type="button" class="w-full inline-flex items-center gap-1.5 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startCreateEntry('dir')"><FolderIcon class="h-4 w-4 text-amber-500" aria-hidden="true" />新建文件夹</button>
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="openUploadPicker(contextMenu.parentPath); closeContextMenu()">⬆️ 上传到此目录</button>
-      </template>
-      <template v-if="contextMenu.item && isTrashRootItem(contextMenu.item)">
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="openTrashFolder(contextMenu.item!)">📂 打开</button>
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 transition-colors focus:outline-none" @click="confirmEmptyTrash">🗑️ 清空回收站</button>
-      </template>
-      <template v-if="contextMenu.item && canManageItem(contextMenu.item)">
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="copyItemPath(contextMenu.item!.path)">📋 复制路径</button>
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startRenameEntry(contextMenu.item!)">✏️ 重命名</button>
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 transition-colors focus:outline-none" @click="confirmDeleteEntry(contextMenu.item!)">🗑️ 删除</button>
-      </template>
-      <template v-else-if="contextMenu.item && isPublicItem(contextMenu.item)">
-        <div class="px-3 py-1.5 text-[10px] font-bold border-b border-gray-100 dark:border-gray-800 flex items-center gap-1 select-none"
-          :class="isAdminScope ? 'text-primary/80 dark:text-primary/70' : 'text-amber-600 dark:text-amber-400'"
-        >
-          <span>{{ isAdminScope ? '🗂️' : '🔒' }}</span>
-          <span>{{ isAdminScope ? '公共目录（管理员）' : '公共只读资源' }}</span>
-        </div>
-        <button
-          v-if="contextMenu.item.is_dir"
-          type="button"
-          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
-          @click="fetchDirectory(contextMenu.item!.path); closeContextMenu()"
-        >
-          📂 打开目录
-        </button>
-        <button
-          v-if="!contextMenu.item.is_dir && canPreviewWorkspaceFile(contextMenu.item.name)"
-          type="button"
-          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
-          @click="previewItem(contextMenu.item!); closeContextMenu()"
-        >
-          👁️ 画布打开预览
-        </button>
-        <button
-          v-if="!contextMenu.item.is_dir"
-          type="button"
-          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
-          @click="downloadItem(contextMenu.item!); closeContextMenu()"
-        >
-          ⬇️ 下载文件
-        </button>
-        <button
-          type="button"
-          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
-          @click="mountItemToSession(contextMenu.item!); closeContextMenu()"
-        >
-          📎 {{ contextMenu.item.is_dir ? '挂载文件夹到会话' : '挂载文件到会话' }}
-        </button>
-        <button
-          type="button"
-          class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none"
-          @click="copyItemPath(contextMenu.item!.path); closeContextMenu()"
-        >
-          📋 复制路径
-        </button>
-        <!-- 管理员可对普通公共目录执行重命名和删除，系统保护目录（docs/skills/branding/agent_workspaces）除外 -->
-        <template v-if="isAdminScope && !isSystemProtectedDir(contextMenu.item!)">
-          <div class="mx-3 my-1 border-t border-gray-100 dark:border-gray-800" />
-          <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startRenameEntry(contextMenu.item!)">✏️ 重命名</button>
-          <button type="button" class="w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 transition-colors focus:outline-none" @click="confirmDeleteEntry(contextMenu.item!)">🗑️ 永久删除</button>
-        </template>
-      </template>
-      <template v-if="contextMenu.item && isTrashListItem(contextMenu.item)">
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 transition-colors focus:outline-none" @click="restoreTrashItem(contextMenu.item!); closeContextMenu()">♻️ 恢复</button>
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 transition-colors focus:outline-none" @click="confirmPurgeEntry(contextMenu.item!)">🗑️ 永久删除</button>
-        <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="copyItemPath(contextMenu.item!.path)">📋 复制路径</button>
-      </template>
-    </div>
-  </Teleport>
+  <WorkspaceActionMenu
+    :open="!!actionMenu"
+    :entries="actionMenuEntries"
+    :anchor="actionMenu?.anchor ?? null"
+    @select="runWorkspaceAction"
+    @close="closeActionMenu"
+  />
 
   <Teleport to="body">
     <div
