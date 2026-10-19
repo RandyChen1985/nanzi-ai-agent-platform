@@ -536,6 +536,7 @@ const inputRef = ref<HTMLTextAreaElement | null>(null);
 const isComposing = ref(false);
 const showMentionList = ref(false);
 const mentionKeyword = ref("");
+const mentionInitialTab = ref<"expert" | "file">("expert");
 const mentionPosition = reactive({ top: 0, left: 0 });
 const showCommandMenu = ref(false);
 const showNewConversationMenu = ref(false);
@@ -779,12 +780,14 @@ const handleInput = (e: Event) => {
     showCommandMenu.value = false;
   }
   const atMatch = val.slice(0, cursor).match(/[@＠]([^\s@＠]*)$/);
-  if (atMatch && !props.lockExpertAgent) {
+  // 组合态不弹层：中文输入法打全角 ＠ 时会先经过组合态，误弹会打断输入
+  if (atMatch && !isComposing.value) {
     const atIndex = val.slice(0, cursor).lastIndexOf(atMatch[0][0] || '@');
     const isStartOfWord = atIndex === 0 || val[atIndex - 1] === ' ' || val[atIndex - 1] === '\n';
-    const query = atMatch[1] || '';
-    if (isStartOfWord && props.allowedAgents.length > 0) {
-        mentionKeyword.value = query;
+    if (isStartOfWord) {
+        mentionKeyword.value = atMatch[1] || '';
+        // 没有可切换的专家（或链接锁定专家）时直接落在文件 tab，避免弹出只有空壳的专家列表
+        mentionInitialTab.value = props.allowedAgents.length > 0 ? 'expert' : 'file';
         showMentionList.value = true;
         const rect = target.getBoundingClientRect();
         mentionPosition.top = rect.top - 220; 
@@ -852,6 +855,63 @@ const handleMentionSelect = (agent: any) => {
 const handleMentionSelectAuto = () => {
   if (clearMentionTrigger()) emit('switch-to-auto');
   showMentionList.value = false;
+};
+
+/** 把一个「服务器本地文件」挂到输入框附件区；抽屉与 @ 文件 tab 共用这一处去重。 */
+const pushLocalFile = (payload: {
+  type: 'local_file' | 'local_dir';
+  path: string;
+  name: string;
+  size: number;
+  ext: string;
+}) => {
+  if (!payload?.path) return false;
+  const exists = uploadedFiles.value.some(
+    (file: any) => file.type === payload.type && file.url === payload.path,
+  );
+  if (exists) return false;
+  uploadedFiles.value.push({
+    type: payload.type,
+    url: payload.path,
+    filename: payload.name,
+    size: payload.size,
+    ext: payload.ext,
+  });
+  return true;
+};
+
+const mountedFilePaths = computed(() =>
+  uploadedFiles.value
+    .filter((file: any) => file.type === 'local_file' || file.type === 'local_dir')
+    .map((file: any) => String(file.url || '')),
+);
+
+const handleMentionFileSelect = (payload: {
+  type: 'local_file';
+  path: string;
+  name: string;
+  size: number;
+  ext: string;
+}) => {
+  clearMentionTrigger();
+  pushLocalFile(payload);
+  handleMentionClose();
+};
+
+const handleMentionClose = () => {
+  showMentionList.value = false;
+  nextTick(() => inputRef.value?.focus());
+};
+
+/** 左右键切 tab 后把焦点带回去：文件 tab 由 picker 自己聚焦搜索框，回到专家 tab 时焦点要给输入框 */
+const handleMentionTabChange = (tab: 'expert' | 'file') => {
+  if (tab === 'expert') nextTick(() => inputRef.value?.focus());
+};
+
+const handleOpenWorkspaceFromMention = () => {
+  showMentionList.value = false;
+  // 复用加号菜单里「工作区文件」的既有事件，落地是同一个抽屉
+  emit('select-local-fs');
 };
 
 /** 生成中也保持可用的快捷指令。
@@ -1863,6 +1923,8 @@ defineExpose({
   focus,
   openCommandDrawer,
   closeCommandDrawer,
+  pushLocalFile,
+  mountedFilePaths,
 });
 </script>
 
@@ -3661,9 +3723,15 @@ defineExpose({
         :position="mentionPosition"
         :routing-mode="routingMode"
         :expert-agent-id="expertAgentId"
+        :initial-tab="mentionInitialTab"
+        :mounted-file-paths="mountedFilePaths"
+        :expert-locked="lockExpertAgent"
         @select="handleMentionSelect"
         @select-auto="handleMentionSelectAuto"
-        @close="showMentionList = false"
+        @select-file="handleMentionFileSelect"
+        @open-workspace="handleOpenWorkspaceFromMention"
+        @tab-change="handleMentionTabChange"
+        @close="handleMentionClose"
       />
 
       <!-- Mobile command drawer (opened from header shortcut button) -->
