@@ -4115,6 +4115,12 @@ const saveRoutingSettings = () => {
 const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
     if (isRoutingSettingsLocked.value) return;
     const normalizedAgentId = mode === "expert" ? String(agentId || "").trim() : "";
+    // 新建会话要沿用账号默认，本地缓存必须先同步，否则会拿到上一次的旧值。
+    savedRoutingPreference.value = {
+        routing_mode: mode,
+        expert_agent_id: normalizedAgentId,
+        routing_configured: true,
+    };
     try {
         await axios.put("/api/portal/portal-prefs/routing", {
             routing_mode: mode,
@@ -4149,6 +4155,79 @@ const resetEmbedThinkingOverrides = () => {
     reasoningEffortOverride.value = null;
     temperatureOverride.value = null;
 };
+/** 会话级专家读取序号：连续切会话时只认最后一次响应，避免旧响应覆盖新会话。 */
+let conversationRoutingLoadSequence = 0;
+
+/**
+ * 是否已按「该会话自己的记录」恢复过专家。
+ *
+ * 初始化里 `fetchAllowedAgents()` 与 `loadConversationRouting()` 是两条并发链路：
+ * 前者拿到列表后会把 config 覆盖成账号默认，后者恢复会话自己的专家。谁先到不确定，
+ * 若账号默认后到就会把刚恢复的会话专家盖掉。立起这个标志后，账号默认只做兜底。
+ */
+const conversationRoutingRestored = ref(false);
+
+/** 读取会话自己的专家选择；无记录（data=null）时保持当前值，即账号默认。 */
+const loadConversationRouting = async (cid: string) => {
+  const normalized = String(cid || "").trim();
+  if (!normalized || isRoutingSettingsLocked.value) return;
+  const sequence = ++conversationRoutingLoadSequence;
+  try {
+    const res = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/routing`,
+      { headers: embedAuthHeaders() },
+    );
+    if (sequence !== conversationRoutingLoadSequence) return;
+    if (conversationId.value !== normalized) return;
+    const routing = res.data?.data;
+    if (!routing) return;
+    if (routing.routing_mode === "expert" && routing.expert_agent_id) {
+      config.routingMode = "expert";
+      config.expertAgentId = String(routing.expert_agent_id);
+    } else {
+      config.routingMode = "auto";
+      config.expertAgentId = "";
+    }
+    // 列表已就绪时当场校正：会话记录的专家可能已被停用或收回权限，
+    // 不校正就会在标题上显示一串裸 ID。
+    if (
+      allowedAgents.value.length > 0
+      && config.routingMode === "expert"
+      && config.expertAgentId
+      && !allowedAgents.value.some((a: any) => a.id === config.expertAgentId)
+    ) {
+      config.routingMode = "auto";
+      config.expertAgentId = "";
+    }
+    // 恢复成功：此后账号默认只做兜底，不能再覆盖该会话自己的选择。
+    conversationRoutingRestored.value = true;
+  } catch (e) {
+    console.warn("[Routing] Failed to load conversation routing:", e);
+  }
+};
+
+/** 写入会话自己的专家选择；失败只告警——本地切换已经生效，不打断用户。 */
+const saveConversationRouting = async (
+  cid: string,
+  mode: "auto" | "expert",
+  agentId = "",
+) => {
+  const normalized = String(cid || "").trim();
+  if (!normalized || isRoutingSettingsLocked.value) return;
+  try {
+    await axios.put(
+      `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/routing`,
+      {
+        routing_mode: mode,
+        expert_agent_id: mode === "expert" ? String(agentId || "").trim() : "",
+      },
+      { headers: embedAuthHeaders() },
+    );
+  } catch (e) {
+    console.warn("[Routing] Failed to save conversation routing:", e);
+  }
+};
+
 const switchToAuto = () => {
     if (isRoutingSettingsLocked.value) {
       showToast("当前链接已锁定指定智能体，无法切换到智能委派", "warning");
@@ -4157,6 +4236,7 @@ const switchToAuto = () => {
     config.routingMode = "auto";
     config.expertAgentId = "";
     void saveRoutingPreference("auto");
+    void saveConversationRouting(conversationId.value, "auto");
     showToast("已切换为智能委派模式", "success");
 };
 const switchToExpert = (agentId: string) => {
@@ -4169,6 +4249,7 @@ const switchToExpert = (agentId: string) => {
     config.expertAgentId = normalizedAgentId;
     config.routingMode = "expert";
     void saveRoutingPreference("expert", normalizedAgentId);
+    void saveConversationRouting(conversationId.value, "expert", normalizedAgentId);
     // URL 深链锁定初始化时不提示，避免首屏弹出
     if (!isRoutingSettingsLocked.value) {
       const agent = allowedAgents.value.find((a: any) => a.id === normalizedAgentId) || pinnedAgent.value;
@@ -5741,6 +5822,8 @@ const resetSessionForIdentityChange = (
   resetConversationScopedState();
   messages.value = [];
   conversationId.value = "";
+  // 新身份没有「已恢复会话专家」这回事：不重置会让新用户的账号默认永不生效。
+  conversationRoutingRestored.value = false;
   if (!options?.preserveRequestedConversationId) requestedConversationId = "";
   resourceScope.value = emptyResourceScopeState();
   Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
@@ -5824,6 +5907,17 @@ const generateNewConversation = (options: { persist?: boolean } = {}) => {
   if (options.persist !== false) {
     persistConversationId(conversationId.value);
     updateActiveConversationOnServer(conversationId.value);
+    // 新会话从第一天起就有自己的专家记录：用账号默认，而不是上一个会话恢复出来的专家。
+    const accountRouting = savedRoutingPreference.value;
+    const accountMode: RoutingMode =
+      accountRouting.routing_mode === "expert" && accountRouting.expert_agent_id
+        ? "expert"
+        : "auto";
+    void saveConversationRouting(
+      conversationId.value,
+      accountMode,
+      accountMode === "expert" ? accountRouting.expert_agent_id : "",
+    );
   }
   loadResourceScope();
 };
@@ -5927,15 +6021,30 @@ const fetchAllowedAgents = async (force = false) => {
 
             // 集成锁定优先于用户 Redis 偏好；普通 Embed 只应用当前用户有权限的默认智能体。
             if (!isRoutingSettingsLocked.value) {
-                const saved = savedRoutingPreference.value;
-                const savedAgentAllowed = saved.expert_agent_id
-                    && res.data.some((agent: any) => String(agent.id) === saved.expert_agent_id);
-                if (saved.routing_configured && saved.routing_mode === "expert" && savedAgentAllowed) {
-                    config.routingMode = "expert";
-                    config.expertAgentId = saved.expert_agent_id;
+                if (conversationRoutingRestored.value) {
+                    // 已按该会话自己的记录恢复过专家：账号默认只能兜底，不能反过来覆盖。
+                    if (config.routingMode === "expert" && config.expertAgentId) {
+                        // 该专家可能随后被停用/收权：列表就绪时校正一次，
+                        // 否则标题会显示一串裸 ID。
+                        const usable = res.data.some(
+                            (agent: any) => String(agent.id) === config.expertAgentId,
+                        );
+                        if (!usable) {
+                            config.routingMode = "auto";
+                            config.expertAgentId = "";
+                        }
+                    }
                 } else {
-                    config.routingMode = "auto";
-                    config.expertAgentId = "";
+                    const saved = savedRoutingPreference.value;
+                    const savedAgentAllowed = saved.expert_agent_id
+                        && res.data.some((agent: any) => String(agent.id) === saved.expert_agent_id);
+                    if (saved.routing_configured && saved.routing_mode === "expert" && savedAgentAllowed) {
+                        config.routingMode = "expert";
+                        config.expertAgentId = saved.expert_agent_id;
+                    } else {
+                        config.routingMode = "auto";
+                        config.expertAgentId = "";
+                    }
                 }
             }
             
@@ -6655,6 +6764,8 @@ const handleHistoryClick = async (item: any) => {
     conversationId.value = target;
     persistConversationId(target);
     updateActiveConversationOnServer(target);
+    // 恢复该会话自己的专家选择；无记录时 loadConversationRouting 会保持账号默认。
+    void loadConversationRouting(target);
 
     // Reset message list and history state
     messages.value = [];
@@ -8980,7 +9091,12 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       }
     }
 
-    // 7. Load history if exists
+    // 7. 恢复该会话自己的专家选择（无记录时保持账号默认），再加载历史
+    if (conversationId.value) {
+      await loadConversationRouting(conversationId.value);
+    }
+
+    // 8. Load history if exists
     if (conversationId.value) {
       fetchConversationHistory(false, initGeneration)
         // 历史加载完成后再还原流式草稿：已有落库终态时草稿会被丢弃，不会被重复注入。
