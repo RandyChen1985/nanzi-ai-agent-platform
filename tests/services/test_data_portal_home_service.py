@@ -119,3 +119,38 @@ def test_build_home_payload_includes_latest_chatbi_conversation_once():
         "type": "conversation", "id": 31, "conversation_id": "conv-1", "title": "查询最近六个月用报表",
         "subtitle": "ChatBI · 黄金报表", "status": "success", "occurred_at": "2026-07-15T09:20:00", "action": "open_conversation",
     }]
+
+
+@pytest.mark.asyncio
+async def test_data_portal_build_can_skip_chatbi_conversation_query(monkeypatch):
+    """工作台传 include_conversations=False，门户首页仍默认查询 ChatBI 会话。"""
+    from unittest.mock import AsyncMock
+
+    from app.services import data_portal_home_service as svc
+
+    called = []
+
+    async def fake_load(db, user_id):
+        called.append(user_id)
+        return []
+
+    monkeypatch.setattr(svc, "_load_chatbi_conversations", fake_load)
+
+    class _EmptyResult:
+        def scalars(self):
+            return self
+
+        def unique(self):
+            return self
+
+        def all(self):
+            return []
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_EmptyResult())
+
+    await svc.DataPortalHomeService.build(db, user_id=7, include_conversations=False)
+    assert called == []
+
+    await svc.DataPortalHomeService.build(db, user_id=7)
+    assert called == [7]

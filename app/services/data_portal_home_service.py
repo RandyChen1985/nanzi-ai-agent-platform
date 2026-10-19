@@ -195,7 +195,15 @@ class DataPortalHomeService:
         user_id: int,
         role_ids: Optional[Iterable[int]] = None,
         now: Optional[datetime] = None,
+        include_conversations: bool = True,
     ) -> Dict[str, Any]:
+        """组装数据门户首页数据。
+
+        ``include_conversations=False`` 让调用方跳过 ChatBI 会话查询与智能体扫描：
+        工作台要的是「全部智能体的普通对话」，由
+        :mod:`app.services.workbench_conversation_service` 单独提供，门户首页语义
+        仍然锁死在数据分析上。
+        """
         role_ids = [int(value) for value in (role_ids or [])]
         visible_conditions = [PortalSavedReport.owner_user_id == user_id]
         visible_conditions.append(
@@ -275,28 +283,9 @@ class DataPortalHomeService:
             )
             deliveries = list(delivery_result.scalars().all())
 
-        agent_result = await db.execute(select(AIAgent).where(AIAgent.is_enabled.is_(True)))
-        data_agents = {
-            str(agent.id): agent
-            for agent in agent_result.scalars().all()
-            if "data_query" in {str(value).lower() for value in (agent.capabilities or [])}
-        }
-        conversations = []
-        if data_agents:
-            conversation_result = await db.execute(
-                select(AgentExecutionHistory)
-                .where(
-                    AgentExecutionHistory.user_id == str(user_id),
-                    AgentExecutionHistory.agent_id.in_(list(data_agents)),
-                    AgentExecutionHistory.conversation_id.isnot(None),
-                )
-                .order_by(desc(AgentExecutionHistory.created_at))
-                .limit(30)
-            )
-            conversations = list(conversation_result.scalars().all())
-            for conversation in conversations:
-                agent = data_agents.get(str(conversation.agent_id))
-                conversation.agent_display_name = agent.display_name if agent else "数据分析"
+        conversations = (
+            await _load_chatbi_conversations(db, user_id) if include_conversations else []
+        )
 
         return build_home_payload(
             user_id=user_id,
@@ -307,3 +296,37 @@ class DataPortalHomeService:
             conversations=conversations,
             now=now or datetime.now(),
         )
+
+
+async def _load_chatbi_conversations(
+    db: AsyncSession,
+    user_id: int,
+) -> List[Any]:
+    """当前用户与 ChatBI（具备 data_query 能力）智能体的最近会话。
+
+    门户首页「最近分析」的语义就是数据分析，故这里保留能力过滤；
+    工作台需要全智能体视图时走 ``workbench_conversation_service``。
+    """
+    agent_result = await db.execute(select(AIAgent).where(AIAgent.is_enabled.is_(True)))
+    data_agents = {
+        str(agent.id): agent
+        for agent in agent_result.scalars().all()
+        if "data_query" in {str(value).lower() for value in (agent.capabilities or [])}
+    }
+    if not data_agents:
+        return []
+    conversation_result = await db.execute(
+        select(AgentExecutionHistory)
+        .where(
+            AgentExecutionHistory.user_id == str(user_id),
+            AgentExecutionHistory.agent_id.in_(list(data_agents)),
+            AgentExecutionHistory.conversation_id.isnot(None),
+        )
+        .order_by(desc(AgentExecutionHistory.created_at))
+        .limit(30)
+    )
+    conversations = list(conversation_result.scalars().all())
+    for conversation in conversations:
+        agent = data_agents.get(str(conversation.agent_id))
+        conversation.agent_display_name = agent.display_name if agent else "数据分析"
+    return conversations

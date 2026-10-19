@@ -411,14 +411,24 @@ async def _load_portal_activity(
     role_ids: Sequence[int],
     now: datetime,
 ) -> Dict[str, List[Dict[str, Any]]]:
+    """数据门户侧的报表活动（最近产出 / 运行记录）。
+
+    会话刻意不从门户取：门户首页「最近分析」只认 ChatBI 会话，工作台要覆盖
+    全部智能体的普通对话，见 :func:`_load_conversations`。
+    """
     from app.services.data_portal_home_service import DataPortalHomeService
 
     payload = await DataPortalHomeService.build(
-        db, user_id=user_id, role_ids=role_ids, now=now
+        db,
+        user_id=user_id,
+        role_ids=role_ids,
+        now=now,
+        include_conversations=False,
     )
     reports: List[Dict[str, Any]] = []
-    conversations: List[Dict[str, Any]] = []
     for raw in payload.get("recent_analysis", []):
+        if raw.get("type") == "conversation":
+            continue
         item = dict(raw)
         item["business_key"] = (
             f"report-run:{item.get('run_id')}"
@@ -431,11 +441,18 @@ async def _load_portal_activity(
             if item.get(key) is not None
         }
         item["id"] = f"{item.get('type')}:{item.get('id')}"
-        if item.get("type") == "conversation":
-            conversations.append(item)
-        else:
-            reports.append(item)
-    return {"reports": reports, "conversations": conversations}
+        reports.append(item)
+    return {"reports": reports}
+
+
+async def _load_conversations(db: AsyncSession, user_id: int) -> List[Dict[str, Any]]:
+    """工作台「最近会话」：当前用户与全部智能体的普通对话。
+
+    与「智能助手」历史列表同语义：按会话去重、排除 task_conv_ 定时任务会话。
+    """
+    from app.services.workbench_conversation_service import list_recent_conversations
+
+    return await list_recent_conversations(db, user_id=user_id)
 
 
 async def _load_saved_report_running_items(
@@ -720,6 +737,9 @@ class WorkbenchHomeService:
             "reports",
             lambda: _load_portal_activity(db, user_id, role_ids, current_time),
         )
+        conversations, conversation_status = await _safe_load(
+            "conversations", lambda: _load_conversations(db, user_id)
+        )
         running_items, running_status = await _load_running_items(db, user_id)
         agents, agent_status = await _safe_load("agents", lambda: _load_agents(db, user))
         scenarios, scenario_status = await _safe_load("scenarios", lambda: _load_scenarios(user))
@@ -732,7 +752,6 @@ class WorkbenchHomeService:
         )
         portal = portal if isinstance(portal, dict) else {}
         reports = portal.get("reports", [])
-        conversations = portal.get("conversations", [])
 
         # 任务来源：配置列表失败态 + 执行历史；任一失败则标 error
         combined_task_status = (
@@ -756,7 +775,7 @@ class WorkbenchHomeService:
                 "notifications": notification_status,
                 "tasks": combined_task_status,
                 "reports": portal_status if reports else ("error" if portal_status == "error" else "empty"),
-                "conversations": portal_status if conversations else ("error" if portal_status == "error" else "empty"),
+                "conversations": conversation_status,
                 "agents": agent_status,
                 "scenarios": scenario_status,
                 "running": running_status,
