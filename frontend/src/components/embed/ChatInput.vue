@@ -1647,11 +1647,12 @@ const approvalCapsuleLabel = computed(() => activeApprovalLabel.value);
 
 const inputPlaceholder = computed(() => {
   if (isInteractionLocked.value) return "";
-  if (props.lockExpertAgent) {
-    return isMobileViewport.value ? "今天帮你做些什么？" : "今天帮你做些什么？ / 调用技能与指令";
-  }
   if (isMobileViewport.value) return "今天帮你做些什么？";
-  return "今天帮你做些什么？ @ 选择智能体专家， / 调用技能与指令";
+  if (props.lockExpertAgent) {
+    // 锁定专家时 @ 仍可用，只是不能切专家——文案不能再写「选择专家」
+    return "今天帮你做些什么？ @ 选择文件， / 调用技能与指令";
+  }
+  return "今天帮你做些什么？ @ 选择专家或文件， / 调用技能与指令";
 });
 
 const togglePlusMenu = () => {
