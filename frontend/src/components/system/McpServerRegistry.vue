@@ -54,7 +54,15 @@ const emit = defineEmits<{
 }>()
 
 const { showToast } = useToast()
-const { userInfo } = useUser()
+const { userInfo, hasPermission } = useUser()
+
+// MCP 写操作已按动作分码校验（见 app/api/portal/endpoints/mcp.py），
+// 按钮跟着收起来，避免「点了才知道没权限」。
+const canCreateMcp = computed(() => hasPermission('element:mcp_management:create'))
+const canEditMcp = computed(() => hasPermission('element:mcp_management:edit'))
+const canDeleteMcp = computed(() => hasPermission('element:mcp_management:delete'))
+const canSyncMcp = computed(() => hasPermission('element:mcp_management:sync'))
+const canPublishMcp = computed(() => hasPermission('element:mcp_management:publish'))
 const canSave = computed(() => {
   if (props.scope === 'personal') return true
   return userInfo.value?.role === 'admin'
@@ -1284,7 +1292,7 @@ onMounted(fetchServers)
         <div v-if="canSave" class="relative flex shrink-0 items-center">
           <!-- 个人 MCP: 仅单一添加按钮 -->
           <button
-            v-if="props.scope === 'personal'"
+            v-if="props.scope === 'personal' && canCreateMcp"
             type="button"
             @click="resetWizard(); showAddModal = true"
             class="inline-flex h-7 items-center justify-center rounded-md bg-emerald-600 px-2.5 text-[11px] font-bold leading-none text-white shadow-sm transition-all hover:bg-emerald-700 sm:px-3"
@@ -1294,7 +1302,7 @@ onMounted(fetchServers)
           </button>
 
           <!-- 平台 MCP: 分裂式添加按钮 + 更多操作下拉 -->
-          <div v-else class="relative inline-flex h-7 items-stretch rounded-md shadow-sm">
+          <div v-else-if="canCreateMcp || canEditMcp" class="relative inline-flex h-7 items-stretch rounded-md shadow-sm">
             <button
               type="button"
               @click="resetWizard(); showAddModal = true"
@@ -1326,6 +1334,7 @@ onMounted(fetchServers)
               @click.stop
             >
               <button
+                v-if="canCreateMcp"
                 type="button"
                 @click="showAddDropdown = false; resetWizard(); showAddModal = true"
                 class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
@@ -1338,6 +1347,7 @@ onMounted(fetchServers)
               </button>
 
               <button
+                v-if="canEditMcp"
                 type="button"
                 @click="showAddDropdown = false; createEchoTestMcp()"
                 class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
@@ -1401,7 +1411,7 @@ onMounted(fetchServers)
                 </span>
                 <Switch
                   :model-value="server.enabled_status === 1"
-                  :disabled="!canSave || statusLoading[server.id]"
+                  :disabled="!canSave || !canEditMcp || statusLoading[server.id]"
                   :loading="statusLoading[server.id]"
                   :aria-label="`${server.server_name}${server.enabled_status === 1 ? '禁用' : '启用'}`"
                   @update:model-value="handleServerStatusChange(server, $event)"
@@ -1426,13 +1436,13 @@ onMounted(fetchServers)
                     <DocumentTextIcon class="h-4 w-4" />
                   </button>
                   <template v-if="canSave">
-                    <button type="button" @click="openEditModal(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-blue-500" title="编辑配置">
+                    <button v-if="canEditMcp" type="button" @click="openEditModal(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-blue-500" title="编辑配置">
                       <PencilSquareIcon class="h-4 w-4" />
                     </button>
-                    <button type="button" @click="syncTools(server.id)" :disabled="syncLoading[server.id]" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-primary" title="同步工具">
+                    <button v-if="canSyncMcp" type="button" @click="syncTools(server.id)" :disabled="syncLoading[server.id]" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-primary" title="同步工具">
                       <CloudArrowDownIcon class="h-4 w-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
                     </button>
-                    <button type="button" @click="confirmDeleteServer(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-red-500" title="删除服务">
+                    <button v-if="canDeleteMcp" type="button" @click="confirmDeleteServer(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-red-500" title="删除服务">
                       <TrashIcon class="h-4 w-4" />
                     </button>
                   </template>
@@ -1497,11 +1507,11 @@ onMounted(fetchServers)
               <DocumentTextIcon class="mr-1 h-3.5 w-3.5 text-indigo-500" />
               调用日志
             </button>
-            <div v-if="canSave && selectedToolIds.size > 0" class="flex items-center space-x-2 rounded-lg border border-gray-200 bg-white p-1 shadow-sm animate-fade-in">
+            <div v-if="canSave && canPublishMcp && selectedToolIds.size > 0" class="flex items-center space-x-2 rounded-lg border border-gray-200 bg-white p-1 shadow-sm animate-fade-in">
               <button @click="batchUpdateStatus(true)" :disabled="!canManageSelectedTools" class="rounded bg-green-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50">批量发布</button>
               <button @click="batchUpdateStatus(false)" :disabled="!canManageSelectedTools" class="rounded bg-slate-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">批量下线</button>
             </div>
-            <button v-if="canSave" @click="syncTools(selectedServer.id)" :disabled="syncLoading[selectedServer.id]" class="flex items-center rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-primary hover:underline">
+            <button v-if="canSave && canSyncMcp" @click="syncTools(selectedServer.id)" :disabled="syncLoading[selectedServer.id]" class="flex items-center rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-primary hover:underline">
               <ArrowPathIcon class="mr-1 h-3.5 w-3.5" :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''" />
               刷新
             </button>
@@ -1520,7 +1530,7 @@ onMounted(fetchServers)
             </span>
           </div>
           <button
-            v-if="canManageSelectedTools"
+            v-if="canManageSelectedTools && canPublishMcp"
             @click="publishAllCurrentServerTools"
             :disabled="isPublishingAllCurrent"
             class="inline-flex shrink-0 items-center justify-center rounded-md bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-amber-700 active:scale-95 disabled:opacity-50"
@@ -1589,7 +1599,7 @@ onMounted(fetchServers)
                 </button>
                 <button 
                   @click.stop="togglePublish(tool)"
-                  :disabled="!canManageTool(tool)"
+                  :disabled="!canManageTool(tool) || !canPublishMcp"
                   class="flex items-center rounded-md border px-3 py-1.5 text-[11px] font-bold shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
                   :class="tool.is_published ? 'border-gray-200 bg-white text-gray-600 hover:text-red-600' : 'border-transparent bg-primary text-white hover:bg-primary-dark'"
                 >
@@ -2078,6 +2088,7 @@ onMounted(fetchServers)
                 前往工具列表
               </button>
               <button
+                v-if="canPublishMcp"
                 @click="publishAllCreatedTools"
                 :disabled="publishAllLoading"
                 class="flex items-center justify-center rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 active:scale-95 disabled:opacity-50 sm:px-6 sm:py-2"
