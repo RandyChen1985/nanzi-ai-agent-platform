@@ -72,21 +72,28 @@ def _compiled(stmt) -> str:
 
 
 async def test_role_user_count_does_not_count_orphan_relations():
-    """`user_count` 的计数语句必须 join 用户表，不能只数关系行。"""
+    """`user_count` 的计数语句必须 join 用户表，不能只数关系行。
+
+    用户数现在由列表主查询里的分组子查询一并带出（用于排序 + 返回，顺带去掉
+    N+1），所以这里直接检查页面查询的 SQL 结构，而不是逐角色回查的那条语句。
+    """
     role = Role(id=563, code="miniprogram_user", name="小程序用户")
     session = _RecordingSession([
         _Result([], scalar_value=1),     # 角色总数
-        _Result([role]),                 # 当前页角色
-        _Result([], scalar_value=0),     # 该角色的 user_count
+        _Result([(role, 0)]),            # 当前页角色 + user_count
     ])
 
-    await list_roles(page=1, size=20, search=None, admin={"role": "admin"}, db=session)
+    result = await list_roles(page=1, size=20, search=None, admin={"role": "admin"}, db=session)
 
-    count_sql = _compiled(session.executed[-1])
-    assert "ai_agent_user_role_relations" in count_sql
-    assert "JOIN ai_agent_users" in count_sql, (
+    page_sql = _compiled(session.executed[-1])
+    assert "ai_agent_user_role_relations" in page_sql
+    assert "JOIN ai_agent_users" in page_sql, (
         "user_count 必须与成员列表同口径（join 用户表），否则悬挂关系会让数字虚高"
     )
+    assert "GROUP BY" in page_sql.upper()
+    # 用户数随主查询返回，不再为每个角色各查一次
+    assert len(session.executed) == 2
+    assert result["items"][0]["user_count"] == 0
 
 
 async def test_role_member_ids_exclude_orphan_relations():
