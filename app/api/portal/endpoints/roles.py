@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, desc, func, or_
-from app.core.dependencies import require_admin, require_permission
+from app.core.dependencies import require_admin, require_any_permission, require_permission
 from app.core.orm import get_db_session
 from app.models.user import User
 from app.models.permission import Role, ResourcePermission, UserRoleRelation
@@ -50,7 +50,12 @@ async def list_roles(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=1000),
     search: Optional[str] = None,
-    admin: dict = Depends(require_permission("menu", "menu:system:roles")),
+    # 读列表放开给「用户新增/编辑」：分配业务角色是编辑用户的一部分，不该再要求
+    # 角色管理的查看权限。写操作仍各自绑定 element:role:edit / element:role:delete。
+    admin: dict = Depends(require_any_permission(
+        ("menu", "menu:system:roles"),
+        ("element", "element:user:edit"),
+    )),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
