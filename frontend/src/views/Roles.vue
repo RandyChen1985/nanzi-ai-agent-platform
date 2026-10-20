@@ -43,6 +43,7 @@
         </button>
 
         <button
+          v-if="canEditRole"
           @click="openCreateDialog"
           class="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg shadow-sm hover:bg-primary-dark transition-all font-medium text-sm shrink-0"
         >
@@ -117,6 +118,7 @@
         <p class="text-sm text-gray-500 mt-4 font-semibold">暂无角色</p>
         <p class="text-xs text-gray-400 mt-1">创建角色后可为用户分配权限与菜单能力</p>
         <button
+          v-if="canEditRole"
           type="button"
           @click="openCreateDialog"
           class="mt-5 px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary-dark rounded-lg transition-colors"
@@ -180,6 +182,7 @@
                 <td class="px-5 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <div class="flex justify-end items-center gap-1">
                     <button
+                      v-if="canEditRole"
                       @click="editRole(role)"
                       class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
                       title="编辑角色"
@@ -187,6 +190,7 @@
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                     </button>
                     <button
+                      v-if="canEditRole"
                       @click="openPermissionDialog(role)"
                       class="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors"
                       title="分配权限"
@@ -194,6 +198,7 @@
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
                     </button>
                     <button
+                      v-if="canEditRole"
                       @click="openUserAssignmentDialog(role)"
                       class="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors"
                       title="分配用户"
@@ -201,12 +206,18 @@
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
                     </button>
                     <button
+                      v-if="canDeleteRole && !isSystemRole(role)"
                       @click="confirmDelete(role)"
                       class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
                       title="删除角色"
                     >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     </button>
+                    <span
+                      v-if="!canEditRole && !canDeleteRole"
+                      class="text-xs text-gray-300 px-1"
+                      title="当前账号没有角色编辑或删除权限"
+                    >—</span>
                   </div>
                 </td>
               </tr>
@@ -262,18 +273,19 @@
           <div class="flex justify-between items-center pt-3 mt-3 border-t border-gray-100">
             <span class="text-[10px] text-gray-400 font-mono">#{{ role.id }} · {{ formatDate(role.created_at).split(' ')[0] }}</span>
             <div class="flex items-center gap-1">
-              <button @click="editRole(role)" class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50" title="编辑">
+              <button v-if="canEditRole" @click="editRole(role)" class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50" title="编辑">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
               </button>
-              <button @click="openPermissionDialog(role)" class="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50" title="权限">
+              <button v-if="canEditRole" @click="openPermissionDialog(role)" class="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50" title="权限">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
               </button>
-              <button @click="openUserAssignmentDialog(role)" class="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50" title="用户">
+              <button v-if="canEditRole" @click="openUserAssignmentDialog(role)" class="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50" title="用户">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
               </button>
-              <button @click="confirmDelete(role)" class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" title="删除">
+              <button v-if="canDeleteRole && !isSystemRole(role)" @click="confirmDelete(role)" class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" title="删除">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
               </button>
+              <span v-if="!canEditRole && !canDeleteRole" class="text-xs text-gray-300 px-1">—</span>
             </div>
           </div>
         </div>
@@ -1123,6 +1135,7 @@ import axios from '../utils/axios'
 import { modelApi } from '../api/model'
 import { shouldShowModelSearch, groupPermissionModels } from '../utils/modelSelect'
 import { useToast } from '../composables/useToast'
+import { useUser } from '../composables/useUser'
 import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
 import ForbiddenResourceTabs from '../components/system/ForbiddenResourceTabs.vue'
@@ -1144,6 +1157,12 @@ import {
 import { extractApiErrorDetail } from "../utils/apiErrorDetail"
 
 const { showToast } = useToast()
+
+// menu:* 控菜单、element:* 控功能。本页所有写操作入口都必须按 element 权限收敛，
+// 权限码与后端 app/api/portal/endpoints/roles.py 的 require_permission 一一对应。
+const { hasPermission } = useUser()
+const canEditRole = computed(() => hasPermission('element:role:edit'))
+const canDeleteRole = computed(() => hasPermission('element:role:delete'))
 
 const windowWidth = ref(window.innerWidth)
 const isMobile = computed(() => windowWidth.value < 768)

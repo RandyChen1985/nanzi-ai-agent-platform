@@ -12,6 +12,9 @@ from app.services.permission_service import PermissionService
 
 router = APIRouter()
 
+# 系统角色：一律拒绝删除。与前端 frontend/src/views/Roles.vue 的 isSystemRole() 同口径。
+SYSTEM_ROLE_CODES = {"default", "admin", "system"}
+
 # --- Request Models ---
 
 class CreateRoleRequest(BaseModel):
@@ -153,15 +156,25 @@ async def update_role(
 @router.delete("/{role_id}")
 async def delete_role(
     role_id: int,
-    admin: dict = Depends(require_permission("element", "element:role:edit")),
+    admin: dict = Depends(require_permission("element", "element:role:delete")),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Delete a role.
+
+    权限码用 element:role:delete（「删除角色」）而不是 element:role:edit：
+    权限树里这两个码是分开的，删除能力不该顺带绑死在编辑权限上。
     """
     role = await db.get(Role, role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
+
+    # 系统角色保护：必须在清理权限/成员关系之前拒绝，避免「关系删了、角色还在」。
+    if (role.code or "").strip().lower() in SYSTEM_ROLE_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"系统角色「{role.code}」不可删除",
+        )
 
     users_stmt = select(UserRoleRelation.user_id).where(UserRoleRelation.role_id == role_id)
     users_result = await db.execute(users_stmt)
