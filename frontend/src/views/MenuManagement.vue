@@ -10,24 +10,31 @@
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-          :disabled="!canEdit || busy || !tableReady"
-          @click="startCreate('group')"
-        >新建分组</button>
-        <button
-          type="button"
-          class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-          :disabled="!canEdit || busy || !tableReady"
-          @click="startCreate('external')"
-        >新建外链菜单</button>
-        <button
-          type="button"
-          class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-          :disabled="!canEdit || busy || !tableReady"
-          @click="showResetConfirm = true"
-        >恢复默认</button>
+        <template v-if="canEdit">
+          <button
+            type="button"
+            class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+            :disabled="busy || !tableReady"
+            @click="startCreate('group')"
+          >新建分组</button>
+          <button
+            type="button"
+            class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+            :disabled="busy || !tableReady"
+            @click="startCreate('external')"
+          >新建外链菜单</button>
+          <button
+            type="button"
+            class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+            :disabled="busy || !tableReady"
+            @click="showResetConfirm = true"
+          >恢复默认</button>
+        </template>
+        <span
+          v-else
+          class="rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-[11px] font-bold text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
+          title="菜单的增删改需要 element:menu:edit 权限，可在「角色管理」里授予"
+        >只读模式 · 无菜单编辑权限</span>
       </div>
     </div>
 
@@ -70,7 +77,7 @@
         <div
           v-else
           class="max-h-[calc(100vh-260px)] overflow-y-auto p-2"
-          @contextmenu.prevent="openContextMenu($event, null)"
+          @contextmenu="onNodeContextMenu($event, null)"
         >
           <div v-for="group in tree" :key="group.code" class="mb-1">
             <!-- 分组行 -->
@@ -82,26 +89,26 @@
                   ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
                   : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800'"
                 @click="selectNode(group)"
-                @contextmenu.prevent.stop="openContextMenu($event, group)"
+                @contextmenu="onNodeContextMenu($event, group)"
               >
                 <MenuIcon :name="group.icon || 'menu'" class="h-4 w-4 opacity-70" />
                 <span class="truncate">{{ group.label }}</span>
                 <span v-if="!group.enabled" class="rounded bg-gray-100 px-1 text-[10px] text-gray-500 dark:bg-gray-800">已停用</span>
               </button>
-              <button
-                type="button"
-                class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                title="上移"
-                :disabled="!canEdit"
-                @click="moveNode(group, -1)"
-              >↑</button>
-              <button
-                type="button"
-                class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                title="下移"
-                :disabled="!canEdit"
-                @click="moveNode(group, 1)"
-              >↓</button>
+              <template v-if="canEdit">
+                <button
+                  type="button"
+                  class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  title="上移"
+                  @click="moveNode(group, -1)"
+                >↑</button>
+                <button
+                  type="button"
+                  class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  title="下移"
+                  @click="moveNode(group, 1)"
+                >↓</button>
+              </template>
             </div>
 
             <!-- 菜单项行 -->
@@ -115,7 +122,7 @@
                       ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
                       : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800'"
                     @click="selectNode(item)"
-                    @contextmenu.prevent.stop="openContextMenu($event, item)"
+                    @contextmenu="onNodeContextMenu($event, item)"
                   >
                     <MenuIcon :name="item.icon || 'menu'" class="h-3.5 w-3.5 opacity-60" />
                     <span class="truncate">{{ item.label }}</span>
@@ -125,20 +132,20 @@
                     >{{ item.open_mode === 'embed' ? '内嵌' : '外链' }}</span>
                     <span v-if="!item.enabled" class="rounded bg-gray-100 px-1 text-[10px] text-gray-500 dark:bg-gray-800">已停用</span>
                   </button>
-                  <button
-                    type="button"
-                    class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                    title="上移"
-                    :disabled="!canEdit"
-                    @click="moveNode(item, -1)"
-                  >↑</button>
-                  <button
-                    type="button"
-                    class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                    title="下移"
-                    :disabled="!canEdit"
-                    @click="moveNode(item, 1)"
-                  >↓</button>
+                  <template v-if="canEdit">
+                    <button
+                      type="button"
+                      class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                      title="上移"
+                      @click="moveNode(item, -1)"
+                    >↑</button>
+                    <button
+                      type="button"
+                      class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                      title="下移"
+                      @click="moveNode(item, 1)"
+                    >↓</button>
+                  </template>
                 </div>
 
                 <!-- 功能点：只读展开 -->
@@ -321,26 +328,29 @@
           </div>
 
           <div class="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3 dark:border-gray-800">
-            <button
-              type="button"
-              class="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
-              :disabled="!canEdit || busy || draft.node_type === 'element'"
-              @click="save"
-            >{{ isCreating ? '创建' : '保存' }}</button>
-            <button
-              type="button"
-              class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-              @click="cancelCreate"
-            >{{ isCreating ? '取消' : '重置' }}</button>
-            <button
-              v-if="canDeleteDraft"
-              type="button"
-              class="ml-auto rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-500/30 dark:hover:bg-red-500/10"
-              :disabled="!canEdit || busy || !tableReady"
-              @click="showDeleteConfirm = true"
-            >{{ draft.node_type === 'group' ? '删除分组' : '删除' }}</button>
-            <span v-else-if="draft.builtin" class="ml-auto text-[10px] text-gray-400">内置项不可删除，可停用</span>
-            <span v-else-if="draft.node_type === 'group'" class="ml-auto text-[10px] text-gray-400">分组下还有菜单，先移走子项再删</span>
+            <template v-if="canEdit">
+              <button
+                type="button"
+                class="rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+                :disabled="busy || draft.node_type === 'element'"
+                @click="save"
+              >{{ isCreating ? '创建' : '保存' }}</button>
+              <button
+                type="button"
+                class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                @click="cancelCreate"
+              >{{ isCreating ? '取消' : '重置' }}</button>
+              <button
+                v-if="canDeleteDraft"
+                type="button"
+                class="ml-auto rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-500/30 dark:hover:bg-red-500/10"
+                :disabled="busy || !tableReady"
+                @click="showDeleteConfirm = true"
+              >{{ draft.node_type === 'group' ? '删除分组' : '删除' }}</button>
+              <span v-else-if="draft.builtin" class="ml-auto text-[10px] text-gray-400">内置项不可删除，可停用</span>
+              <span v-else-if="draft.node_type === 'group'" class="ml-auto text-[10px] text-gray-400">分组下还有菜单，先移走子项再删</span>
+            </template>
+            <span v-else class="ml-auto text-[10px] text-gray-400">只读模式：可查看但不能修改</span>
           </div>
         </div>
       </section>
@@ -366,7 +376,7 @@
         :class="action.danger
           ? 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10'
           : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800'"
-        :disabled="!canEdit || busy || !tableReady"
+        :disabled="busy || !tableReady"
         @click="runContextAction(action.key)"
       >{{ action.label }}</button>
     </div>
@@ -396,6 +406,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import axios from '../utils/axios'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import MenuIcon from '../components/menu/MenuIcon.vue'
+import { useUser } from '../composables/useUser'
 import MenuIconPicker from '../components/menu/MenuIconPicker.vue'
 import { refreshNavigation } from '../composables/useNavigation'
 
@@ -431,7 +442,11 @@ interface AdminMenuNode {
   children?: AdminMenuNode[]
 }
 
-const canEdit = ref(true)
+/** 写操作权限：与角色/用户管理同口径，按 element 码判定。 */
+const { hasPermission } = useUser()
+/** 后端返回过 403 时也降级为只读（本地权限快照可能已过期）。 */
+const editDenied = ref(false)
+const canEdit = computed(() => hasPermission('element:menu:edit') && !editDenied.value)
 const loading = ref(true)
 const busy = ref(false)
 const loadError = ref('')
@@ -497,6 +512,19 @@ const contextMenuStyle = computed(() => {
   return { left: `${left}px`, top: `${top}px` }
 })
 
+/**
+ * 右键菜单入口。
+ *
+ * 只读用户不拦截默认菜单：原来直接 `.prevent` 吃掉事件，没有权限时会变成
+ * 「右键毫无反应」的死角；交给浏览器处理更符合预期。
+ */
+function onNodeContextMenu(event: MouseEvent, node: AdminMenuNode | null) {
+  if (!canEdit.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  openContextMenu(event, node)
+}
+
 function openContextMenu(event: MouseEvent, node: AdminMenuNode | null) {
   contextMenu.value = { x: event.clientX, y: event.clientY, node }
 }
@@ -552,7 +580,7 @@ const groupOptions = computed(() => flatNodes.value.filter((node) => node.node_t
 
 const canDeleteDraft = computed(() => {
   const node = draft.value
-  if (!node || isCreating.value || node.builtin) return false
+  if (!node || isCreating.value || !canEdit.value || node.builtin) return false
   if (node.node_type === 'external') return true
   // 自建空分组：误建的分组总得能清掉，但绝不能连带删子树
   return node.node_type === 'group' && !hasChildren(node.code)
@@ -574,6 +602,13 @@ const isCreating = computed(() => Boolean(createMode.value))
 const readonlyFields = computed((): Record<string, boolean> => {
   const node = draft.value
   if (!node) return {}
+  if (!canEdit.value) {
+    // 只读模式：按钮已隐藏，输入框也必须锁死，否则改了也存不下去
+    return {
+      label: true, icon: true, enabled: true, desktop_only: true, sort_order: true,
+      description: true, url: true, open_mode: true, slug: true, is_landing: true,
+    }
+  }
   if (node.node_type === 'element') {
     return { label: true, icon: true, enabled: true, desktop_only: true, sort_order: true, description: true }
   }
@@ -600,7 +635,7 @@ async function loadNodes() {
     }
   } catch (error: any) {
     loadError.value = error?.response?.data?.detail || error?.message || '请求失败'
-    if (error?.response?.status === 403) canEdit.value = false
+    if (error?.response?.status === 403) editDenied.value = true
   } finally {
     loading.value = false
   }
@@ -691,7 +726,7 @@ function payloadFromDraft() {
 }
 
 async function save() {
-  if (!draft.value) return
+  if (!canEdit.value || !draft.value) return
   busy.value = true
   try {
     if (createMode.value) {
@@ -719,7 +754,7 @@ async function save() {
 
 async function deleteSelected() {
   showDeleteConfirm.value = false
-  if (!draft.value) return
+  if (!canEdit.value || !draft.value) return
   busy.value = true
   try {
     await axios.delete(`/api/portal/menus/${draft.value.id}`)
@@ -737,6 +772,7 @@ async function deleteSelected() {
 
 async function resetBuiltin() {
   showResetConfirm.value = false
+  if (!canEdit.value) return
   busy.value = true
   try {
     const response = await axios.post('/api/portal/menus/reset')

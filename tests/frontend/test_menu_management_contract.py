@@ -128,9 +128,11 @@ def test_tree_supports_right_click_shortcuts():
     source = _read(MANAGEMENT)
 
     # 容器与节点都要绑定，且节点上阻止冒泡（否则会同时弹出两个菜单）
-    assert '@contextmenu.prevent="openContextMenu($event, null)"' in source
-    assert '@contextmenu.prevent.stop="openContextMenu($event, group)"' in source
-    assert '@contextmenu.prevent.stop="openContextMenu($event, item)"' in source
+    assert '@contextmenu="onNodeContextMenu($event, null)"' in source
+    assert '@contextmenu="onNodeContextMenu($event, group)"' in source
+    assert '@contextmenu="onNodeContextMenu($event, item)"' in source
+    # 只读用户不该被"吃掉"右键：交给浏览器默认菜单
+    assert "if (!canEdit.value) return" in source
 
     for label in ('新建分组', '设为默认落地页', '停用', '启用', '删除外链菜单'):
         assert label in source, f"右键菜单缺少动作：{label}"
@@ -235,3 +237,34 @@ def test_embedded_external_page_fills_the_content_area():
     # iframe 自身满宽满高，不依赖父级 padding 撑开
     assert 'class="h-full w-full border-0"' in view
     assert 'class="flex h-full min-h-0 flex-col"' in view
+
+
+def test_write_entry_points_are_hidden_when_the_user_cannot_edit():
+    """无 element:menu:edit 时应是「整页只读」，而不是一排灰按钮。
+
+    灰按钮会让人以为"点一下就能用"，而实际是权限不足；项目里角色管理、数据源、
+    MCP 入口都是这个口径：无权限就不渲染入口。
+    """
+    source = _read(MANAGEMENT)
+
+    # 首屏即按 element 码判定，不依赖"点了才 403"
+    assert "import { useUser }" in source
+    assert "hasPermission('element:menu:edit')" in source
+    assert "const editDenied = ref(false)" in source
+    # 本地权限快照可能过期，后端 403 时也要降级为只读
+    assert "if (error?.response?.status === 403) editDenied.value = true" in source
+
+    # 三组入口（工具栏 / 排序 / 保存删除）都在 canEdit 之下
+    assert source.count('v-if="canEdit"') >= 4
+    # 不再用置灰代替隐藏
+    assert ':disabled="!canEdit' not in source
+    # 只读时字段全部锁死：否则能改、却存不下去
+    readonly_block = source[source.index("const readonlyFields"):]
+    readonly_block = readonly_block[: readonly_block.index("async function loadNodes")]
+    assert "if (!canEdit.value) {" in readonly_block
+    for field in ("label", "icon", "url", "open_mode", "slug", "sort_order", "is_landing"):
+        assert f"{field}: true" in readonly_block
+
+    # 只读态要有明确说明，别让人以为页面坏了
+    assert "只读模式 · 无菜单编辑权限" in source
+    assert "只读模式：可查看但不能修改" in source
