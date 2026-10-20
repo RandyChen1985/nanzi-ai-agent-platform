@@ -596,7 +596,15 @@
                   <template v-else-if="activeMainTab === 'ui'">
                       <div class="flex-1 overflow-y-auto bg-gray-50 p-3 sm:p-6 rounded-xl border border-gray-200">
                           <div class="space-y-4">
+                              <div
+                                  v-if="permissionTreeError"
+                                  class="mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800"
+                              >
+                                  <span>权限树加载失败，已禁用保存（空树提交会清空该角色的全部菜单权限）。</span>
+                                  <button type="button" class="rounded-md bg-amber-600 px-2 py-0.5 font-bold text-white" @click="loadPermissionTree">重试</button>
+                              </div>
                               <MenuAccessTree
+                                  :tree="permissionTree"
                                   :menus="permissionData.menus"
                                   :elements="permissionData.elements"
                                   :inherited-menus="[]"
@@ -631,7 +639,7 @@
                   <button
                       v-if="activeMainTab !== 'quota'"
                       @click="savePermissions"
-                      :disabled="submittingPerms"
+                      :disabled="submittingPerms || !permissionTreeReady"
                       class="order-1 sm:order-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-lg shadow-blue-200"
                   >
                       {{ submittingPerms ? '...' : '确认并保存配置' }}
@@ -1099,7 +1107,7 @@ import { modelApi } from '../api/model'
 import { shouldShowModelSearch, groupPermissionModels } from '../utils/modelSelect'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
-import { getMenuDescendantIds } from '../constants/permissions'
+import { getMenuDescendantIds, type PermissionNode } from '../constants/permissions'
 import {
     applyMenuCascadeToggle,
     applyMenuEntryToggle,
@@ -1522,7 +1530,7 @@ const toggleTreeItem = (itemId: string) => {
         permissionData.value.menus,
         permissionData.value.elements,
         itemId,
-        getMenuDescendantIds(itemId),
+        getMenuDescendantIds(permissionTree.value, itemId),
         [],
         [],
     );
@@ -1536,7 +1544,7 @@ const toggleMenuDescendants = (menuId: string, mode: MenuCascadeMode) => {
         permissionData.value.menus,
         permissionData.value.elements,
         menuId,
-        getMenuDescendantIds(menuId),
+        getMenuDescendantIds(permissionTree.value, menuId),
         mode,
         [],
         [],
@@ -2222,6 +2230,38 @@ const deleteRole = async () => {
 }
 
 const loadingPermissions = ref(false)
+// 权限树来自接口：加载失败时不能退化成空树，否则保存会把角色权限整体清空。
+const permissionTree = ref<PermissionNode[]>([])
+const permissionTreeReady = ref(false)
+const permissionTreeError = ref('')
+const loadingPermissionTree = ref(false)
+
+const loadPermissionTree = async () => {
+    if (loadingPermissionTree.value) return
+    loadingPermissionTree.value = true
+    permissionTreeError.value = ''
+    try {
+        const response = await axios.get('/api/portal/menus/tree')
+        const nodes = response.data?.nodes
+        if (!Array.isArray(nodes) || nodes.length === 0) {
+            throw new Error('权限树为空')
+        }
+        permissionTree.value = nodes.map(toPermissionNode)
+        permissionTreeReady.value = true
+    } catch (error: any) {
+        permissionTreeReady.value = false
+        permissionTreeError.value = error?.response?.data?.detail || error?.message || '加载失败'
+    } finally {
+        loadingPermissionTree.value = false
+    }
+}
+
+/** 接口节点 → 权限树节点：`permission_code` 是唯一可提交 id，无码节点用 `code` */
+const toPermissionNode = (node: any): PermissionNode => ({
+    id: node.permission_code || node.code,
+    label: node.label,
+    children: (node.children || []).map(toPermissionNode),
+})
 
 const openPermissionDialog = async (role: any) => {
     currentRole.value = role
@@ -2235,7 +2275,8 @@ const openPermissionDialog = async (role: any) => {
     try {
         await Promise.all([
             fetchResources(),
-            fetchRolePermissions(role.id)
+            fetchRolePermissions(role.id),
+            loadPermissionTree()
         ])
     } finally {
         loadingPermissions.value = false

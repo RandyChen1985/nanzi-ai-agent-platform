@@ -58,6 +58,15 @@ def is_menu_permission_id(resource_id: object) -> bool:
     return str(resource_id or "").strip().startswith("menu:")
 
 
+#: 菜单分组码前缀。分组只是侧栏/权限树的展示容器，本身不是可授权资源：
+#: 授权表里出现 `group:*` 行不会让任何菜单变可见，只会污染角色权限页的勾选状态。
+MENU_GROUP_ID_PREFIX = "group:"
+
+
+def is_menu_group_id(resource_id: object) -> bool:
+    return str(resource_id or "").strip().startswith(MENU_GROUP_ID_PREFIX)
+
+
 def normalize_permission_resource_type(resource_id: object, default_type: str) -> str:
     """按 id 前缀纠正 resource_type；前缀不认识时沿用字段默认类型。"""
     rid = str(resource_id or "").strip()
@@ -625,6 +634,23 @@ class PermissionService:
         datasets.sort(key=lambda x: x.get("ragflow_meta_id") or "")
         return datasets
 
+    async def _load_menu_display_names(self) -> dict[str, str]:
+        """权限码 → 菜单显示名，数据源是 `ai_agent_menus`。
+
+        单独一个方法是为了把「读菜单表」的失败面收敛在调用处：菜单表是后加的，
+        老库上可能还不存在，权限详情查询不能因此整条失败。
+        """
+        from app.services.menu_service import MenuService
+
+        nodes = await MenuService(self.db).get_nodes()
+        names: dict[str, str] = {}
+        for node in nodes:
+            code = (node.get("permission_code") or "").strip()
+            label = (node.get("label") or "").strip()
+            if code and label:
+                names[code] = label
+        return names
+
     async def _fetch_permission_details(self, perm_set: PermissionSet) -> PermissionSetDetail:
         details = PermissionSetDetail()
 
@@ -701,6 +727,13 @@ class PermissionService:
             "element:chatbi_example:sync": "案例集管理-同步至RAGFlow",
             "element:chatbi_example:delete": "案例集管理-废弃删除",
         }
+
+        # 菜单名以菜单表为准：管理员在「菜单管理」里改名后，个人中心的权限展示要跟着变。
+        # 表不存在时 get_nodes() 会回退内置种子，这里的合并是幂等的，不会让展示名缺项。
+        try:
+            exact_permission_mapping.update(await self._load_menu_display_names())
+        except Exception:  # noqa: BLE001 - 展示名永远不该打断权限查询
+            logger.warning("加载菜单显示名失败，回退内置映射", exc_info=True)
 
         # 中文映射字典 (支持多种可能的键名格式)
         menu_name_mapping = {
@@ -1068,6 +1101,9 @@ class PermissionService:
             # 归一后类型相同，必须去重，否则一次保存会写出两条一样的授权行。
             seen_menu_element_ids: set[str] = set()
             for menu_id in updates.menus:
+                if is_menu_group_id(menu_id):
+                    # 旧前端/脚本会把分组码一起提交上来，这里丢弃而不是落库
+                    continue
                 if menu_id in seen_menu_element_ids:
                     continue
                 seen_menu_element_ids.add(menu_id)
@@ -1077,6 +1113,8 @@ class PermissionService:
                     resource_id=menu_id,
                 ))
             for element_id in updates.elements:
+                if is_menu_group_id(element_id):
+                    continue
                 if element_id in seen_menu_element_ids:
                     continue
                 seen_menu_element_ids.add(element_id)
@@ -1201,6 +1239,9 @@ class PermissionService:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="metadata", resource_id=str(meta_id)))
             seen_menu_element_ids: set[str] = set()
             for menu_id in updates.menus:
+                if is_menu_group_id(menu_id):
+                    # 旧前端/脚本会把分组码一起提交上来，这里丢弃而不是落库
+                    continue
                 if menu_id in seen_menu_element_ids:
                     continue
                 seen_menu_element_ids.add(menu_id)
@@ -1210,6 +1251,8 @@ class PermissionService:
                     resource_id=menu_id,
                 ))
             for element_id in updates.elements:
+                if is_menu_group_id(element_id):
+                    continue
                 if element_id in seen_menu_element_ids:
                     continue
                 seen_menu_element_ids.add(element_id)
@@ -1245,6 +1288,33 @@ class PermissionService:
             await self.db.rollback()
             logger.error(f"Failed to update permissions for role {role_id}: {e}")
             raise e
+
+    @staticmethod
+    async def purge_all_permission_cache() -> int:
+        """清空所有用户的权限缓存（含各智能体作用域键）。
+
+        只用于「权限码本身改名」这类全局性变更：外链菜单改 slug 时 `menu:ext:<slug>`
+        跟着改名，授权行已一并迁移，但每个用户缓存里的 `menus` 仍是旧码，残留到 TTL
+        过期（1 小时）就会表现为「改完 slug，普通用户侧栏里的菜单凭空消失」。
+        这里无法低成本枚举"谁持有这条授权"，因此整体清空——改 slug 是低频管理操作，
+        每人重建一次缓存（一条 SQL）的比重建一个错误状态划算。
+        """
+        redis = await get_redis()
+        if not redis:
+            return 0
+        deleted = 0
+        for pattern in (
+            "sys:auth:permissions:v7:user:*",
+            "sys:auth:permissions:v6:user:*",
+            "sys:auth:permissions:v5:user:*",
+            "sys:auth:permissions:v4:user:*",
+            "sys:auth:permissions:v2:user:*",
+        ):
+            # SCAN 而非 KEYS：大 key 空间下 KEYS 会阻塞 Redis
+            async for key in redis.scan_iter(match=pattern, count=500):
+                await redis.delete(key)
+                deleted += 1
+        return deleted
 
     async def _invalidate_user_cache(self, user_id: int):
         redis = await self._get_redis()

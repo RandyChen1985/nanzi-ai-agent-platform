@@ -9,7 +9,9 @@ import { copyToClipboard } from '../utils/clipboard'
 import { generateQRCodeDataUrl } from '../utils/qrcode'
 import { checkPasswordPolicy } from '../utils/passwordPolicy'
 import { clearUserSession } from '../utils/userSession'
-import { MENU_TREE } from '../constants/permissions'
+import PermissionSectionCard from '../components/personal/PermissionSectionCard.vue'
+import type { PermissionNode } from '../constants/permissions'
+import PersonalPermissionTree from '../components/personal/PersonalPermissionTree.vue'
 
 const { branding, loadBranding } = useBranding()
 
@@ -678,11 +680,29 @@ const permissions = ref<{
     }
 }>({})
 
+// 「我的权限」的菜单骨架：来自接口。加载失败只影响层级展示，标签会退回后端 display_name。
+const permissionTree = ref<PermissionNode[]>([])
+const toPermissionNode = (node: any): PermissionNode => ({
+    id: node.permission_code || node.code,
+    label: node.label,
+    children: (node.children || []).map(toPermissionNode),
+})
+const fetchPermissionTree = async () => {
+    try {
+        const response = await axios.get('/api/portal/menus/catalog')
+        const nodes = response.data?.nodes
+        if (Array.isArray(nodes)) permissionTree.value = nodes.map(toPermissionNode)
+    } catch (error) {
+        console.warn('[PersonalCenter] 权限树加载失败，使用后端展示名兜底', error)
+    }
+}
+
 const fetchPermissions = async () => {
     loadingPermissions.value = true
     try {
         const permRes = await axios.get('/api/portal/auth/permissions')
         permissions.value = permRes.data || {}
+        await fetchPermissionTree()
     } catch (e) {
         console.error("Failed to fetch permissions", e)
         showToast('获取权限列表失败', 'error')
@@ -691,30 +711,24 @@ const fetchPermissions = async () => {
     }
 }
 
-// 建立 MENU_TREE 权限 ID 到标准中文标签的扁平化字典映射
-const permissionLabelMap = computed(() => {
-    const map = new Map<string, string>()
-    const traverse = (nodes: any[]) => {
-        if (!nodes || !Array.isArray(nodes)) return
-        for (const node of nodes) {
-            if (node.id && node.label) {
-                map.set(node.id, node.label)
-            }
-            if (node.children && Array.isArray(node.children)) {
-                traverse(node.children)
-            }
-        }
-    }
-    traverse(MENU_TREE)
-    return map
-})
-
-const getPermissionDisplayName = (item: any): string => {
-    if (!item) return ''
-    if (item.id && permissionLabelMap.value.has(item.id)) {
-        return permissionLabelMap.value.get(item.id)!
-    }
-    return item.display_name || item.name || item.id || ''
+/** 「我的权限」分类卡片：默认全展开，只记下已折叠的 key，刷新即复位。 */
+type PermissionSectionKey = 'agents' | 'datasets' | 'metadata' | 'access'
+const permissionSectionKeys: PermissionSectionKey[] = ['agents', 'datasets', 'metadata', 'access']
+const collapsedPermissionSections = ref<PermissionSectionKey[]>([])
+const isPermissionSectionCollapsed = (key: PermissionSectionKey) =>
+    collapsedPermissionSections.value.includes(key)
+const togglePermissionSection = (key: PermissionSectionKey) => {
+    collapsedPermissionSections.value = isPermissionSectionCollapsed(key)
+        ? collapsedPermissionSections.value.filter((item) => item !== key)
+        : [...collapsedPermissionSections.value, key]
+}
+const allPermissionSectionsCollapsed = computed(() =>
+    permissionSectionKeys.every((key) => isPermissionSectionCollapsed(key)),
+)
+const toggleAllPermissionSections = () => {
+    collapsedPermissionSections.value = allPermissionSectionsCollapsed.value
+        ? []
+        : [...permissionSectionKeys]
 }
 
 watch(activeTab, (val) => {
@@ -1425,103 +1439,113 @@ onMounted(() => {
                     </div>
                 </div>
 
-                <!-- Section Grid (Mobile Friendly) -->
-                <div v-if="userInfo.role !== 'admin'" class="grid grid-cols-1 gap-4">
+                <!-- 分类卡片：标题栏即折叠开关；默认全展开，折叠状态本次会话内保留 -->
+                <div v-if="userInfo.role !== 'admin'" class="space-y-3">
+                    <div class="flex items-center justify-between gap-3 px-1">
+                        <p class="text-[10px] text-gray-400">点击分类标题可折叠；折叠状态在本次会话内保留，刷新后恢复全展开。</p>
+                        <button
+                            type="button"
+                            class="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-600 transition-colors hover:border-blue-300 hover:text-blue-600"
+                            @click="toggleAllPermissionSections"
+                        >
+                            <svg class="h-3 w-3 transition-transform" :class="allPermissionSectionsCollapsed ? '' : 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            </svg>
+                            {{ allPermissionSectionsCollapsed ? '全部展开' : '全部折叠' }}
+                        </button>
+                    </div>
+
                     <!-- Agents -->
-                    <div class="border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm">
-                        <div class="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
-                            <h3 class="text-xs sm:text-sm font-bold text-gray-900 flex items-center gap-2">
-                                <span class="p-1 bg-blue-100 text-blue-600 rounded">
-                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                                </span>
-                                智能体 (Agents)
-                            </h3>
-                            <span class="text-[10px] font-bold text-gray-400 bg-white px-2 py-0.5 rounded-full border">
-                                {{ permissions.details?.agents?.length || 0 }}
+                    <PermissionSectionCard
+                        title="智能体 (Agents)"
+                        :collapsed="isPermissionSectionCollapsed('agents')"
+                        @toggle="togglePermissionSection('agents')"
+                    >
+                        <template #icon>
+                            <span class="p-1 bg-blue-100 text-blue-600 rounded">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                             </span>
-                        </div>
-                        <div class="p-3">
-                            <div v-if="!permissions.details?.agents?.length" class="text-center text-gray-400 py-4 text-xs italic">（暂无授权）</div>
-                            <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
-                                <div v-for="item in permissions.details.agents" :key="item.id" class="flex flex-col p-2.5 rounded-lg border border-gray-100 bg-white hover:border-blue-200 transition-all shadow-sm">
-                                    <span class="font-bold text-gray-800 truncate text-xs">{{ item.display_name || item.name }}</span>
-                                    <span class="text-[9px] text-gray-400 font-mono truncate mt-0.5">{{ item.name }}</span>
-                                </div>
+                        </template>
+                        <template #count>
+                            <span class="bg-white px-2 py-0.5 rounded-full border">{{ permissions.details?.agents?.length || 0 }}</span>
+                        </template>
+                        <div v-if="!permissions.details?.agents?.length" class="text-center text-gray-400 py-4 text-xs italic">（暂无授权）</div>
+                        <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
+                            <div v-for="item in permissions.details.agents" :key="item.id" class="flex flex-col p-2.5 rounded-lg border border-gray-100 bg-white hover:border-blue-200 transition-all shadow-sm">
+                                <span class="font-bold text-gray-800 truncate text-xs">{{ item.display_name || item.name }}</span>
+                                <span class="text-[9px] text-gray-400 font-mono truncate mt-0.5">{{ item.name }}</span>
                             </div>
                         </div>
-                    </div>
+                    </PermissionSectionCard>
 
                     <!-- Knowledge bases (RAGFlow datasets) -->
-                    <div class="border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm">
-                        <div class="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
-                            <h3 class="text-xs sm:text-sm font-bold text-gray-900 flex items-center gap-2">
-                                <span class="p-1 bg-green-100 text-green-600 rounded">
-                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
-                                </span>
-                                知识库
-                            </h3>
-                            <span class="text-[10px] font-bold text-gray-400 bg-white px-2 py-0.5 rounded-full border">
-                                {{ permissions.details?.datasets?.length || 0 }}
+                    <PermissionSectionCard
+                        title="知识库"
+                        :collapsed="isPermissionSectionCollapsed('datasets')"
+                        @toggle="togglePermissionSection('datasets')"
+                    >
+                        <template #icon>
+                            <span class="p-1 bg-green-100 text-green-600 rounded">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
                             </span>
-                        </div>
-                        <div class="p-3">
-                            <div v-if="!permissions.details?.datasets?.length" class="text-center text-gray-400 py-4 text-xs italic">（暂无授权）</div>
-                            <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
-                                <div v-for="item in permissions.details.datasets" :key="item.id" class="flex flex-col p-2.5 rounded-lg border border-gray-100 bg-white hover:border-green-200 transition-all shadow-sm">
-                                    <span class="font-bold text-gray-800 truncate text-xs">{{ item.display_name || item.name }}</span>
-                                    <span class="text-[9px] text-gray-400 font-mono truncate mt-0.5">{{ item.id }}</span>
-                                </div>
+                        </template>
+                        <template #count>
+                            <span class="bg-white px-2 py-0.5 rounded-full border">{{ permissions.details?.datasets?.length || 0 }}</span>
+                        </template>
+                        <div v-if="!permissions.details?.datasets?.length" class="text-center text-gray-400 py-4 text-xs italic">（暂无授权）</div>
+                        <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
+                            <div v-for="item in permissions.details.datasets" :key="item.id" class="flex flex-col p-2.5 rounded-lg border border-gray-100 bg-white hover:border-green-200 transition-all shadow-sm">
+                                <span class="font-bold text-gray-800 truncate text-xs">{{ item.display_name || item.name }}</span>
+                                <span class="text-[9px] text-gray-400 font-mono truncate mt-0.5">{{ item.id }}</span>
                             </div>
                         </div>
-                    </div>
+                    </PermissionSectionCard>
 
                     <!-- ChatBI metadata datasets -->
-                    <div class="border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm">
-                        <div class="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
-                            <h3 class="text-xs sm:text-sm font-bold text-gray-900 flex items-center gap-2">
-                                <span class="p-1 bg-orange-100 text-orange-600 rounded">
-                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
-                                </span>
-                                数据集
-                            </h3>
-                            <span class="text-[10px] font-bold text-gray-400 bg-white px-2 py-0.5 rounded-full border">
-                                {{ permissions.details?.metadata?.length || 0 }}
+                    <PermissionSectionCard
+                        title="数据集"
+                        :collapsed="isPermissionSectionCollapsed('metadata')"
+                        @toggle="togglePermissionSection('metadata')"
+                    >
+                        <template #icon>
+                            <span class="p-1 bg-orange-100 text-orange-600 rounded">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
                             </span>
-                        </div>
-                        <div class="p-3">
-                            <div v-if="!permissions.details?.metadata?.length" class="text-center text-gray-400 py-4 text-xs italic">（暂无授权）</div>
-                            <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
-                                <div v-for="item in permissions.details.metadata" :key="item.id" class="flex flex-col p-2.5 rounded-lg border border-gray-100 bg-white hover:border-orange-200 transition-all shadow-sm">
-                                    <span class="font-bold text-gray-800 truncate text-xs">{{ item.display_name || item.name }}</span>
-                                    <span class="text-[9px] text-gray-400 font-mono truncate mt-0.5">ID: {{ item.id }}</span>
-                                </div>
+                        </template>
+                        <template #count>
+                            <span class="bg-white px-2 py-0.5 rounded-full border">{{ permissions.details?.metadata?.length || 0 }}</span>
+                        </template>
+                        <div v-if="!permissions.details?.metadata?.length" class="text-center text-gray-400 py-4 text-xs italic">（暂无授权）</div>
+                        <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
+                            <div v-for="item in permissions.details.metadata" :key="item.id" class="flex flex-col p-2.5 rounded-lg border border-gray-100 bg-white hover:border-orange-200 transition-all shadow-sm">
+                                <span class="font-bold text-gray-800 truncate text-xs">{{ item.display_name || item.name }}</span>
+                                <span class="text-[9px] text-gray-400 font-mono truncate mt-0.5">ID: {{ item.id }}</span>
                             </div>
                         </div>
-                    </div>
+                    </PermissionSectionCard>
 
-                    <!-- Other resources (Menus, Elements) -->
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                         <!-- Menus -->
-                        <div class="border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm">
-                            <div class="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
-                                <h3 class="text-xs font-bold text-gray-900 flex items-center gap-2">界面菜单</h3>
-                                <span class="text-[10px] font-bold text-gray-400">{{ permissions.details?.menus?.length || 0 }}</span>
-                            </div>
-                            <div class="p-3 flex flex-wrap gap-1.5">
-                                <span v-for="item in permissions.details?.menus" :key="item.id" class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-[10px] font-bold border border-indigo-100">{{ getPermissionDisplayName(item) }}</span>
-                            </div>
-                        </div>
-                         <!-- Elements -->
-                        <div class="border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm">
-                            <div class="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
-                                <h3 class="text-xs font-bold text-gray-900 flex items-center gap-2">功能点</h3>
-                                <span class="text-[10px] font-bold text-gray-400">{{ permissions.details?.elements?.length || 0 }}</span>
-                            </div>
-                            <div class="p-3 flex flex-wrap gap-1.5">
-                                <span v-for="item in permissions.details?.elements" :key="item.id" class="px-2 py-1 bg-rose-50 text-rose-700 rounded text-[10px] font-bold border border-rose-100">{{ getPermissionDisplayName(item) }}</span>
-                            </div>
-                        </div>
-                    </div>
+                    <!-- Menus + Elements：按菜单层级合成一棵只读树 -->
+                    <PermissionSectionCard
+                        title="平台功能权限"
+                        :collapsed="isPermissionSectionCollapsed('access')"
+                        @toggle="togglePermissionSection('access')"
+                    >
+                        <template #icon>
+                            <span class="p-1 bg-indigo-100 text-indigo-600 rounded">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                            </span>
+                        </template>
+                        <template #count>
+                            <span>菜单 {{ permissions.details?.menus?.length || 0 }}</span>
+                            <span class="text-gray-300">·</span>
+                            <span>功能点 {{ permissions.details?.elements?.length || 0 }}</span>
+                        </template>
+                        <PersonalPermissionTree
+                            :tree="permissionTree"
+                            :menus="permissions.details?.menus || []"
+                            :elements="permissions.details?.elements || []"
+                        />
+                    </PermissionSectionCard>
                 </div>
                 </template>
             </div>

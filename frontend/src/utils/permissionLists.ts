@@ -203,6 +203,17 @@ export interface MenuToggleResult {
  *
  * 自身由角色授予时不做任何改动：继承项无法在「用户直配」这一侧取消（由 UI 先拦截）。
  */
+/**
+ * 菜单分组码前缀。
+ *
+ * 分组（「系统管理」「智能体开发平台」…）在权限树里只是展示容器，没有可授权语义：
+ * 一旦 `group:*` 被写进授权表，它既不会让任何菜单变可见，又会让角色权限页的
+ * 勾选/半选状态失真。后端保存时同样会丢弃这类 id，这里是第一道拦截。
+ */
+const MENU_GROUP_ID_PREFIX = 'group:'
+
+const isMenuGroupId = (id: string) => id.startsWith(MENU_GROUP_ID_PREFIX)
+
 export function applyMenuEntryToggle(
   menus: readonly string[] | null | undefined,
   elements: readonly string[] | null | undefined,
@@ -213,6 +224,10 @@ export function applyMenuEntryToggle(
 ): MenuToggleResult {
   const nextMenus = [...(menus || [])]
   const nextElements = [...(elements || [])]
+  if (isMenuGroupId(menuId)) {
+    // 分组自身不可勾选：直接返回，避免静默写入无意义授权
+    return { menus: nextMenus, elements: nextElements }
+  }
   const descendants = normalizeIds(descendantIds)
   const inherited = new Set([...normalizeIds(inheritedMenus), ...normalizeIds(inheritedElements)])
   const menuSet = new Set(normalizeIds(nextMenus))
@@ -259,7 +274,7 @@ export function applyMenuCascadeToggle(
   const nextMenus = [...(menus || [])]
   const nextElements = [...(elements || [])]
   const descendants = normalizeIds(descendantIds)
-  // MENU_TREE 的子项混有两类 id：`menu:*` 子菜单（用户管理/角色管理/系统配置/审计日志）
+  // 权限树的子项混有两类 id：`menu:*` 子菜单（用户管理/角色管理/系统配置/审计日志）
   // 与 `element:*` 功能点。它们必须各回各家——旧实现一律推进 elements，导致子菜单
   // 存成 element 记录：勾了父菜单，子菜单仍显示未勾选，后端按 menu 类型校验也查不到。
   const inherited = new Set([...normalizeIds(inheritedMenus), ...normalizeIds(inheritedElements)])
@@ -272,7 +287,13 @@ export function applyMenuCascadeToggle(
     }
   }
 
-  if (!nextMenus.includes(menuId) && !nextElements.includes(menuId) && !inherited.has(menuId)) {
+  // 分组只级联其下子孙，绝不把 `group:*` 自身推进授权集合
+  if (
+    !isMenuGroupId(menuId)
+    && !nextMenus.includes(menuId)
+    && !nextElements.includes(menuId)
+    && !inherited.has(menuId)
+  ) {
     nextMenus.push(menuId)
   }
   descendants.forEach((id) => {

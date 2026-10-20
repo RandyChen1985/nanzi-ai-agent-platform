@@ -1,9 +1,10 @@
-"""三层权限树的行为测试：真实 MENU_TREE 数据下的后代 id、勾选语义与三态判定。
+"""三层权限树的行为测试：真实菜单数据下的后代 id、勾选语义与三态判定。
 
 为什么单独打一层：`getMenuDescendantIds()` 过去只取直接子项，三层之后「全选用户管理」
 必须能覆盖到它自己的 4 个功能点。2026-10-20 起「勾菜单」与「全选」拆成两个动作，
 这里同时钉住：勾入口只收菜单、点「全选」才级联、只授入口不算整棵子树全选。
-这里直接加载真实的 `constants/permissions.ts`，不复制一份树。
+菜单数据已入库，树由 `app/services/menu_seed.py` 转换后注入（见 menu_tree_fixture.py），
+不复制一份树到测试里。
 """
 
 import json
@@ -15,45 +16,17 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.no_infrastructure
 
+from menu_tree_fixture import run_node  # noqa: E402  (需要在 rootdir 判定后导入)
+
 
 def _run(expression: str):
-    """加载 constants + permissionLists 两个模块，执行一段表达式。"""
-    script = f"""
-(async () => {{
-const ts = require('./frontend/node_modules/typescript');
-const fs = require('fs');
-const load = (file) => {{
-  const source = fs.readFileSync(file, 'utf8');
-  const code = ts.transpileModule(source, {{
-    compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }}
-  }}).outputText;
-  const moduleRef = {{ exports: {{}} }};
-  new Function('module', 'exports', 'require', code)(moduleRef, moduleRef.exports, require);
-  return moduleRef.exports;
-}};
-const api = Object.assign(
-  {{}},
-  load('frontend/src/constants/permissions.ts'),
-  load('frontend/src/utils/permissionLists.ts'),
-);
-const result = await (async () => {{ {expression} }})();
-process.stdout.write(JSON.stringify(result));
-}})().catch(error => {{ console.error(error); process.exit(1); }});
-"""
-    completed = subprocess.run(
-        ["node", "-e", script],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    assert completed.returncode == 0, completed.stderr
-    return json.loads(completed.stdout)
+    return run_node(expression)
 
 
 def test_submenu_descendants_include_its_own_elements_only():
     """「用户管理」的后代 = 它的 4 个功能点，不含兄弟页面。"""
     result = _run("""
-const ids = api.getMenuDescendantIds('menu:system:users');
+const ids = api.getMenuDescendantIds(TREE, 'menu:system:users');
 return { ids, sorted: [...ids].sort() }
 """)
 
@@ -68,26 +41,32 @@ return { ids, sorted: [...ids].sort() }
 
 
 def test_menu_descendants_cover_both_submenus_and_their_elements():
-    """「系统管理」的后代要同时覆盖 4 个子菜单与 8 个功能点。"""
+    """「系统管理」的后代 = 4 个子菜单 + 9 个功能点。
+
+    2026-10-20 菜单入库带来两处结构变化，都在这里钉住：
+    - 新增「菜单管理」子菜单（`menu:system:menus`）与它的写权限（`element:menu:edit`）；
+    - 「审计日志」按侧栏分组归到「日志&TOKEN分析」下，不再是系统管理的子菜单。
+    """
     result = _run("""
-const ids = api.getMenuDescendantIds('menu:system');
+const ids = api.getMenuDescendantIds(TREE, 'menu:system');
 return { count: ids.length, submenus: ids.filter(id => id.startsWith('menu:')), elements: ids.filter(id => id.startsWith('element:')) }
 """)
 
-    assert result["count"] == 12, result
+    assert result["count"] == 13, result
     assert sorted(result["submenus"]) == [
-        "menu:system:audit",
         "menu:system:config",
+        "menu:system:menus",
         "menu:system:roles",
         "menu:system:users",
     ]
-    assert len(result["elements"]) == 8
+    assert "menu:system:audit" not in result["submenus"]
+    assert len(result["elements"]) == 9
 
 
 def test_flat_menu_descendants_are_unchanged():
     """没有子菜单的菜单（如元数据管理）行为不变：直接是它的功能点。"""
     result = _run("""
-return { ids: api.getMenuDescendantIds('menu:metadata'), leafCount: api.getMenuDescendantIds('menu:metadata').length }
+return { ids: api.getMenuDescendantIds(TREE, 'menu:metadata'), leafCount: api.getMenuDescendantIds(TREE, 'menu:metadata').length }
 """)
 
     assert result["leafCount"] == 7
@@ -97,7 +76,7 @@ return { ids: api.getMenuDescendantIds('menu:metadata'), leafCount: api.getMenuD
 def test_entry_toggle_grants_only_the_submenu_itself():
     """勾「用户管理」只授予页面入口，不再自动勾它的功能点（解耦）。"""
     result = _run("""
-const descendants = api.getMenuDescendantIds('menu:system:users');
+const descendants = api.getMenuDescendantIds(TREE, 'menu:system:users');
 const out = api.applyMenuEntryToggle([], [], 'menu:system:users', descendants);
 return { menus: out.menus, elements: out.elements }
 """)
@@ -109,7 +88,7 @@ return { menus: out.menus, elements: out.elements }
 def test_cascading_submenu_grants_its_elements_but_not_siblings():
     """「全选」用户管理 → menus 收自己、elements 收它的功能点；「角色管理」不受影响。"""
     result = _run("""
-const descendants = api.getMenuDescendantIds('menu:system:users');
+const descendants = api.getMenuDescendantIds(TREE, 'menu:system:users');
 const out = api.applyMenuCascadeToggle([], [], 'menu:system:users', descendants, 'select');
 return { menus: out.menus, elements: out.elements }
 """)

@@ -29,7 +29,7 @@
     </p>
 
     <div
-      v-for="menu in MENUS"
+      v-for="menu in tree"
       :key="menu.id"
       class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"
     >
@@ -61,16 +61,22 @@
 
         <div
           class="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-2 rounded"
-          role="checkbox"
-          :aria-checked="isSelfGranted(menu) ? 'true' : isPartial(menu) ? 'mixed' : 'false'"
-          :aria-disabled="disabled"
-          :tabindex="disabled ? -1 : 0"
-          :title="isSelfInherited(menu) ? '该权限来自所属角色，需到角色管理调整' : `${menu.label}：勾选只授予菜单入口；取消会一并清空其下已配的功能点`"
-          @click="onMenuToggle(menu)"
-          @keydown.space.prevent="onMenuToggle(menu)"
-          @keydown.enter.prevent="onMenuToggle(menu)"
+          :role="isGroupNode(menu) ? 'button' : 'checkbox'"
+          :aria-checked="isGroupNode(menu) ? undefined : (isSelfGranted(menu) ? 'true' : isPartial(menu) ? 'mixed' : 'false')"
+          :aria-disabled="isGroupNode(menu) ? undefined : disabled"
+          :tabindex="disabled && !isGroupNode(menu) ? -1 : 0"
+          :title="headerTitle(menu)"
+          @click="onHeaderClick(menu)"
+          @keydown.space.prevent="onHeaderClick(menu)"
+          @keydown.enter.prevent="onHeaderClick(menu)"
         >
+          <span v-if="isGroupNode(menu)" class="flex h-4 w-4 shrink-0 items-center justify-center text-gray-400">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </span>
           <input
+            v-else
             type="checkbox"
             class="pointer-events-none h-4 w-4 shrink-0 rounded border-gray-300 focus:ring-blue-500"
             :class="isSelfInherited(menu) ? 'accent-slate-400' : 'accent-blue-600'"
@@ -81,6 +87,7 @@
             aria-hidden="true"
           />
           <svg
+            v-if="!isGroupNode(menu)"
             class="h-4 w-4 shrink-0"
             :class="isSelfInherited(menu) ? 'text-slate-400' : 'text-blue-600'"
             fill="none"
@@ -95,7 +102,12 @@
             :class="isSelfInherited(menu) ? 'text-slate-600' : 'text-gray-800'"
           >{{ menu.label }}</span>
           <span
-            v-if="isSelfInherited(menu)"
+            v-if="isGroupNode(menu)"
+            class="shrink-0 rounded-full bg-gray-200 px-1.5 py-0.5 text-[9px] font-bold text-gray-500"
+            title="分组只作展示容器，本身不可勾选"
+          >分组</span>
+          <span
+            v-else-if="isSelfInherited(menu)"
             class="shrink-0 rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-600"
             title="该权限来自所属角色，需到角色管理调整"
           >角色</span>
@@ -145,7 +157,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { MENU_TREE, type PermissionNode } from '../../constants/permissions'
+import type { PermissionNode } from '../../constants/permissions'
 import {
   countGrantedLeafElements,
   countLeafElements,
@@ -158,10 +170,10 @@ import {
 } from '../../utils/permissionLists'
 import MenuTreeNode from './MenuTreeNode.vue'
 
-const MENUS = MENU_TREE as PermissionNode[]
-
 const props = withDefaults(
   defineProps<{
+    /** 权限树（由父层从菜单接口取回后传入；菜单已入库，组件不再内置数据） */
+    tree: PermissionNode[]
     /** 用户直配的菜单（唯一可提交集合） */
     menus: string[]
     /** 用户直配的功能点（唯一可提交集合） */
@@ -202,6 +214,29 @@ const grantSets = (): PermissionGrantSets => ({
 })
 
 const hasChildren = (node: PermissionNode) => (node.children || []).length > 0
+
+/**
+ * 分组节点（「系统管理」「智能体开发平台」…）。
+ *
+ * 分组在侧栏里是一级标题，但在权限树里只是展示容器：它没有可授权语义，
+ * 勾选只会往授权表写一条 `group:*` 垃圾行。因此分组不渲染复选框，
+ * 点标题只折叠/展开，批量授权走它右侧的「全选」。
+ */
+const isGroupNode = (node: PermissionNode) => node.id.startsWith('group:')
+
+const headerTitle = (node: PermissionNode) => {
+  if (isGroupNode(node)) return '分组只作展示容器，本身不可勾选；可点右侧「全选」授予其下全部功能点'
+  if (isSelfInherited(node)) return '该权限来自所属角色，需到角色管理调整'
+  return `${node.label}：勾选只授予菜单入口；取消会一并清空其下已配的功能点`
+}
+
+const onHeaderClick = (menu: PermissionNode) => {
+  if (isGroupNode(menu)) {
+    toggleCollapse(menu.id)
+    return
+  }
+  onMenuToggle(menu)
+}
 
 /** 复选框只看节点自身：勾菜单 = 授予入口，不再代表整棵子树。 */
 const isSelfGranted = (node: PermissionNode) => isPermissionNodeSelfGranted(node, grantSets())

@@ -21,45 +21,18 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.no_infrastructure
 
+from menu_tree_fixture import run_node  # noqa: E402  (需要在 rootdir 判定后导入)
+
 
 def _run(expression: str):
-    script = f"""
-(async () => {{
-const ts = require('./frontend/node_modules/typescript');
-const fs = require('fs');
-const load = (file) => {{
-  const source = fs.readFileSync(file, 'utf8');
-  const code = ts.transpileModule(source, {{
-    compilerOptions: {{ module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }}
-  }}).outputText;
-  const moduleRef = {{ exports: {{}} }};
-  new Function('module', 'exports', 'require', code)(moduleRef, moduleRef.exports, require);
-  return moduleRef.exports;
-}};
-const api = Object.assign(
-  {{}},
-  load('frontend/src/constants/permissions.ts'),
-  load('frontend/src/utils/permissionLists.ts'),
-);
-const result = await (async () => {{ return await (async () => {{ {expression} }})(); }})();
-process.stdout.write(JSON.stringify(result));
-}})().catch(error => {{ console.error(error); process.exit(1); }});
-"""
-    completed = subprocess.run(
-        ["node", "-e", script],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    assert completed.returncode == 0, completed.stderr
-    return json.loads(completed.stdout)
+    return run_node(expression)
 
 
 def _tree_element_ids() -> list[str]:
     return _run("""
 const ids = [];
 const walk = (nodes) => { for (const n of nodes || []) { if (n.id.startsWith('element:')) ids.push(n.id); walk(n.children || []); } };
-walk(api.MENU_TREE);
+walk(TREE);
 return { ids }
 """)["ids"]
 
@@ -71,7 +44,7 @@ def test_data_sources_menu_exposes_its_own_permission_codes():
     只留给「元数据管理 → 智能导入数据」。
     """
     result = _run("""
-return { ids: api.getMenuDescendantIds('menu:data_sources') }
+return { ids: api.getMenuDescendantIds(TREE, 'menu:data_sources') }
 """)
 
     ids = result["ids"]
@@ -91,7 +64,7 @@ def test_data_sources_entry_can_be_granted_without_its_codes():
     """
     result = _run("""
 const menuId = 'menu:data_sources';
-const out = api.applyMenuEntryToggle([], [], menuId, api.getMenuDescendantIds(menuId), [], []);
+const out = api.applyMenuEntryToggle([], [], menuId, api.getMenuDescendantIds(TREE, menuId), [], []);
 return { menus: out.menus, elements: out.elements }
 """)
 
@@ -103,7 +76,7 @@ def test_cascading_data_sources_grants_its_own_codes():
     """「全选」数据源管理要把它自己的两个码一起授出。"""
     result = _run("""
 const menuId = 'menu:data_sources';
-const out = api.applyMenuCascadeToggle([], [], menuId, api.getMenuDescendantIds(menuId), 'select', [], []);
+const out = api.applyMenuCascadeToggle([], [], menuId, api.getMenuDescendantIds(TREE, menuId), 'select', [], []);
 return { menus: out.menus, elements: out.elements }
 """)
 
@@ -117,7 +90,7 @@ return { menus: out.menus, elements: out.elements }
 def test_mcp_toolkit_menu_exposes_write_permission_codes():
     """MCP 工具集的写操作要能在树上授权，否则后端加了校验就成了「谁都授不进去」。"""
     result = _run("""
-return { ids: api.getMenuDescendantIds('menu:mcp_management') }
+return { ids: api.getMenuDescendantIds(TREE, 'menu:mcp_management') }
 """)
 
     assert sorted(result["ids"]) == [
@@ -133,7 +106,7 @@ return { ids: api.getMenuDescendantIds('menu:mcp_management') }
 def test_prompts_menu_exposes_save_permission():
     """「提示词工坊」要能授出「保存提示词」，否则后端那个端点对非 admin 永远 403。"""
     result = _run("""
-return { ids: api.getMenuDescendantIds('menu:prompts') }
+return { ids: api.getMenuDescendantIds(TREE, 'menu:prompts') }
 """)
 
     assert "element:prompts:edit" in result["ids"]
@@ -149,7 +122,7 @@ def test_only_registered_elements_are_shared_between_menus():
     result = _run("""
 const owners = new Map();
 const walk = (nodes) => { for (const n of nodes || []) { if (n.id.startsWith('element:')) owners.set(n.id, (owners.get(n.id) || 0) + 1); walk(n.children || []); } };
-walk(api.MENU_TREE);
+walk(TREE);
 return {
   duplicated: [...owners].filter(([, count]) => count > 1).map(([id]) => id).sort(),
   registered: [...api.SHARED_ELEMENT_IDS].sort(),
@@ -175,7 +148,7 @@ def test_backend_required_permissions_are_grantable_from_the_tree():
         _run("""
 const ids = [];
 const walk = (nodes) => { for (const n of nodes || []) { if (n.id.startsWith('menu:')) ids.push(n.id); walk(n.children || []); } };
-walk(api.MENU_TREE);
+walk(TREE);
 return { ids }
 """)["ids"]
     )

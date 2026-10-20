@@ -1551,6 +1551,7 @@
                     </div>
 
                     <MenuAccessTree
+                      :tree="permissionTree"
                       :menus="permissionData.menus"
                       :elements="permissionData.elements"
                       :inherited-menus="inheritedMenus"
@@ -2398,7 +2399,7 @@ import { persistUserInfo } from "../utils/userSession";
 import { useToast } from "../composables/useToast";
 import { useBranding } from "../composables/useBranding";
 import { useUser } from "../composables/useUser";
-import { getMenuDescendantIds } from "../constants/permissions";
+import { getMenuDescendantIds, type PermissionNode } from "../constants/permissions";
 import { filterBusinessRoles, summarizeSelectedRoles } from "../utils/roleFilter";
 import { copyToClipboard } from "../utils/clipboard";
 import { checkPasswordPolicy } from "../utils/passwordPolicy";
@@ -3095,6 +3096,24 @@ const resourceTabCount = (type: string) =>
 const permissionSubjectRole = ref("");
 /** 权限是否已成功加载：没加载成功就禁止提交，否则一次网络抖动会把真实配置整体清掉。 */
 const permissionsLoaded = ref(false);
+/** 权限树来自接口（菜单已入库）；加载失败时禁止提交，避免空树把用户权限清空 */
+const permissionTree = ref<PermissionNode[]>([]);
+
+/** 接口节点 → 权限树节点：`permission_code` 是唯一可提交 id，无码节点用 `code`（分组容器） */
+const toPermissionNode = (node: any): PermissionNode => ({
+  id: node.permission_code || node.code,
+  label: node.label,
+  children: (node.children || []).map(toPermissionNode),
+});
+
+const loadPermissionTree = async () => {
+  const response = await axios.get("/api/portal/menus/tree");
+  const nodes = response.data?.nodes;
+  if (!Array.isArray(nodes) || nodes.length === 0) {
+    throw new Error("权限树为空");
+  }
+  permissionTree.value = nodes.map(toPermissionNode);
+};
 const permissionsLoadError = ref("");
 const canEditPermissions = computed(
   () => showEditDialog.value && permissionSubjectRole.value === "user",
@@ -3216,7 +3235,7 @@ const toggleTreeItem = (itemId: string) => {
       permissionData.value.menus,
       permissionData.value.elements,
       itemId,
-      getMenuDescendantIds(itemId),
+      getMenuDescendantIds(permissionTree.value, itemId),
       inheritedMenus.value,
       inheritedElements.value,
     );
@@ -3245,7 +3264,7 @@ const toggleMenuDescendants = (menuId: string, mode: MenuCascadeMode) => {
     permissionData.value.menus,
     permissionData.value.elements,
     menuId,
-    getMenuDescendantIds(menuId),
+    getMenuDescendantIds(permissionTree.value, menuId),
     mode,
     inheritedMenus.value,
     inheritedElements.value,
@@ -3633,9 +3652,11 @@ const fetchUserPermissions = async (userId: number) => {
   permissionsLoaded.value = false;
   permissionsLoadError.value = "";
   try {
-    const response = await axios.get(
-      `/api/portal/management/users/${userId}/permissions`,
-    );
+    const [response] = await Promise.all([
+      axios.get(`/api/portal/management/users/${userId}/permissions`),
+      // 树与授权并行拉取：树是勾选的必需上下文，失败就走统一的错误分支并禁止提交
+      loadPermissionTree(),
+    ]);
     // 回显取「直配」，并集（permissions）只用来算角色来源项。
     // 直接拿并集回显再整份 PUT，会把角色级禁用固化成用户级记录：角色页之后取消禁用，
     // 该用户仍被禁；反方向在用户页取消角色级禁用也无效，却提示成功。

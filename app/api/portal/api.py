@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview
+from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview
 
 portal_router = APIRouter()
 
@@ -44,6 +44,9 @@ portal_router.include_router(management.router, prefix="/management", tags=["用
 
 # 8.2 角色管理 (Roles)
 portal_router.include_router(roles.router, prefix="/roles", tags=["角色管理"], dependencies=[Depends(require_api_key)])
+
+# 8.1 菜单与权限树（侧栏导航、角色管理勾选树、菜单管理页）
+portal_router.include_router(menus.router, prefix="/menus", tags=["菜单管理"], dependencies=[Depends(require_api_key)])
 
 # 9. 提示词工程 (需要登录)
 portal_router.include_router(prompts.router, prefix="/prompts", tags=["提示词管理"], dependencies=[Depends(require_api_key)])

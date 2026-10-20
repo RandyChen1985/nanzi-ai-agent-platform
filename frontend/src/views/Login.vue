@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
 import { useBranding } from '../composables/useBranding'
 import { persistUserInfo } from '../utils/userSession'
+import { clearNavigationSnapshot } from '../composables/useNavigation'
 import MagnifierTitle from '../components/login/MagnifierTitle.vue'
 import BrowserUpgradeModal from '../components/login/BrowserUpgradeModal.vue'
 import { detectBrowser, isBrowserUpgradeDismissed, dismissBrowserUpgrade } from '../utils/browserDetect'
@@ -176,6 +177,9 @@ const twoFactorUsername = ref('')
 const twoFactorCode = ref('')
 
 const handleLoginSuccess = (userData: any) => {
+    // 上一个身份可能留下了侧栏快照（同一浏览器直接换账号登录，或上次没走登出）：
+    // 先清掉，否则新用户首屏会先闪出别人的菜单，再被后台校验结果替换。
+    clearNavigationSnapshot()
     persistUserInfo(userData)
     // 凭据由后端下发的 HttpOnly Cookie 承载，不再写入 localStorage：
     // 落在 localStorage 的只是 JS 可读的副本，任何一次 XSS 都能带走它。

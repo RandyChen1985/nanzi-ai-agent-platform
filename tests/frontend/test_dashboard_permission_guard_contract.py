@@ -5,18 +5,26 @@ import pytest
 pytestmark = pytest.mark.no_infrastructure
 
 
-def test_router_falls_back_to_first_allowed_menu_instead_of_no_permission():
+def test_router_falls_back_to_the_users_landing_menu_instead_of_no_permission():
+    """落地页不再写死优先级清单，改由菜单表的 `is_landing` 下发。
+
+    改造前 `MENU_HOME_CANDIDATES` 把「智能助手 → 我的工作台」钉在代码里，菜单入库后
+    这个顺序是数据而不是代码：后端随 `/menus/nav` 下发 `landing_path`，守卫只读本地快照。
+    守卫必须同步返回，所以这里同时钉住"没有快照时的兜底"是工作台而不是白屏。
+    """
     source = Path("frontend/src/router/index.ts").read_text()
 
-    assert "resolveFirstAllowedRoute" in source
-    assert "MENU_HOME_CANDIDATES" in source
-    assert "{ perm: 'menu:ai_chat', name: 'PersonalWorkbench' }" in source
-    assert "缺目标页权限时落到第一个有权限的页面" in source
+    assert "resolveFallbackPath" in source
+    assert "getSnapshotLandingPath()" in source
+    assert "return '/dashboard/workbench'" in source
+    # 旧的写死清单必须彻底退场，否则两套规则会互相打架
+    assert "MENU_HOME_CANDIDATES" not in source
+    assert "resolveFirstAllowedRoute" not in source
     assert "next({ name: 'Overview' }) // Fallback to overview" not in source
-    assert "如果访问首页没权限，尝试重定向到第一个有权限的菜单" not in source
 
 
 def test_workbench_is_a_default_entry_without_menu_permission():
+    """「我的工作台」不带权限码，任何登录用户都能进——它仍是登录后的兜底落地页。"""
     router = Path("frontend/src/router/index.ts").read_text()
     dashboard = Path("frontend/src/views/Dashboard.vue").read_text()
     login = Path("frontend/src/views/Login.vue").read_text()
@@ -27,15 +35,30 @@ def test_workbench_is_a_default_entry_without_menu_permission():
     assert "if (userData.role !== 'admin')" in login
     assert "router.push('/dashboard/workbench')" in login
     assert "router.push('/dashboard')" in login
-    assert "{ name: '我的工作台', to: '/dashboard/workbench', icon: 'dashboard', activeNames: ['PersonalWorkbench'] }" in dashboard
-    assert "perm?: string" in dashboard
-    assert "if (!perm) return true" in dashboard
-    # 系统配置在移动端侧栏可见（不再 desktopOnly）
-    assert (
-        "{ name: '系统配置', to: '/dashboard/system', icon: 'system', "
-        "perm: 'menu:system:config', activeNames: ['System'] }"
-    ) in dashboard
-    assert "perm: 'menu:system:config', desktopOnly: true" not in dashboard
+
+    # 侧栏不再持有任何菜单文案：数据来自 /menus/nav
+    assert "useNavigation" in dashboard
+    assert "visibleNavNodes" in dashboard
+    assert "我的工作台" not in dashboard
+    assert "menuGroups" not in dashboard
+
+
+def test_mobile_visibility_comes_from_data_not_hardcoded_flags():
+    """移动端可见性由菜单表的 `desktop_only` 决定，前端只按字段过滤。
+
+    改造前这是 `desktopOnly: true` 常量；现在系统配置对移动端可见、数据源/元数据仍仅桌面端，
+    这些差异必须落在种子数据里，而不是散落在模板条件中。
+    """
+    from app.services.menu_seed import BUILTIN_BY_CODE
+
+    dashboard = Path("frontend/src/views/Dashboard.vue").read_text()
+
+    assert "desktopOnly" not in dashboard
+    assert "child.desktop_only && isMobile.value" in dashboard
+    assert BUILTIN_BY_CODE["menu:system:config"].desktop_only is False
+    assert BUILTIN_BY_CODE["menu:data_sources"].desktop_only is True
+    # 元数据管理在移动端仍可见（原侧栏就没有限制），只有数据源是纯桌面操作
+    assert BUILTIN_BY_CODE["menu:metadata"].desktop_only is False
 
 
 def test_no_permission_page_refetches_me_before_giving_up():

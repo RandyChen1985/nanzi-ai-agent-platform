@@ -9,6 +9,8 @@ import { persistUserInfo, clearUserSession } from "../utils/userSession";
 import { resolvePasswordExpiryNotice, passwordExpiryToastType, type PasswordInfo } from "../utils/passwordExpiry";
 import PortalNotificationBell from "../components/PortalNotificationBell.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
+import SidebarMenuLink from "../components/menu/SidebarMenuLink.vue";
+import { useNavigation, type NavNode } from "../composables/useNavigation";
 
 const router = useRouter();
 const route = useRoute();
@@ -49,6 +51,9 @@ const dashboardContentSpacing = computed(() => {
   // 分组设置（普通 Tab 有 px-4 sm:px-6，data/skills/mcp/tasks 全宽无内边距），这里再加
   // 一层只会白吃掉内容宽度——移动端 393px 视口下尤其明显，也与 /embed/personal 口径一致。
   if (route.name === "PersonalCenter") return "p-0";
+  // 外链内嵌：内容是要铺满的第三方应用，四周留白会把对方的界面挤成"卡片里的网页"，
+  // 也会在窄屏下白吃掉两侧宽度（对方站点常有最小宽度要求）。
+  if (route.name === "ExternalMenu") return "p-0";
   if (route.name === "PersonalWorkbench") return "p-0 sm:px-4 sm:pt-2.5 sm:pb-4 md:px-6 md:pt-3 md:pb-6 lg:px-8 lg:pt-3.5 lg:pb-6";
   return "p-0 sm:px-4 sm:pt-2.5 sm:pb-4 md:px-6 md:pt-3 md:pb-6 lg:px-8 lg:pt-3.5 lg:pb-6";
 });
@@ -105,7 +110,11 @@ const userInfo = ref({
   created_at: "",
   remark: "",
 });
-const homeRoute = computed(() => userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench');
+// 落地页已可在「菜单管理」里配置（is_landing），点 Logo 就该回那里；
+// 菜单数据还没到位时退回原有口径，避免首屏跳到一个空路由。
+const homeRoute = computed(
+  () => landingPath.value || (userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench'),
+);
 
 // 刷新时的会话校验策略：服务重启窗口期（超时/5xx/断网）保留本地会话并退避重试，
 // 只有确认是认证类失败（401/403）才清理凭据并回到登录页。
@@ -489,127 +498,61 @@ onUnmounted(() => {
   document.body.style.overflow = "";
 });
 
-// 权限辅助函数
-const hasMenuPerm = (perm?: string) => {
-  if (!perm) return true;
-  if (userInfo.value.role === 'admin') return true;
-  const userMenus = (userInfo.value.permissions as any)?.menus || [];
-  return userMenus.includes(perm);
-};
-
-interface MenuItem {
-  name: string;
-  to: string;
-  icon: string;
-  perm?: string;
-  desktopOnly?: boolean;
-  activeNames?: string[];
-}
-
-interface MenuGroup {
-  title: string;
-  items: MenuItem[];
-}
+// ---------------- 侧栏菜单：数据来自后端，已按当前用户权限过滤 ----------------
+// 改造前这里是一份写死的菜单常量 + 本地权限过滤；现在菜单全部入库，
+// 由 GET /api/portal/menus/nav 下发，前端只负责渲染，不再持有"全部菜单"的概念。
+const {
+  groups: navGroups,
+  isReady: navReady,
+  isStale: navStale,
+  error: navError,
+  landingPath,
+  ensureNavigation,
+} = useNavigation();
 
 const collapsedMenuGroups = ref<Record<string, boolean>>({});
 
-// 菜单组定义
-const menuGroups: MenuGroup[] = [
-  {
-    title: '',
-    items: [
-      { name: '概览', to: '/dashboard', icon: 'dashboard', perm: 'menu:dashboard', activeNames: ['Overview'] }
-    ]
-  },
-  {
-    title: '智能助手',
-    items: [
-      { name: '我的工作台', to: '/dashboard/workbench', icon: 'dashboard', activeNames: ['PersonalWorkbench'] },
-      { name: '智能助手', to: '/dashboard/chat', icon: 'chat', perm: 'menu:ai_chat', activeNames: ['AIChat'] }
-    ]
-  },
-  {
-    title: '智能体开发平台',
-    items: [
-      { name: '智能体中心', to: '/dashboard/agent-management', icon: 'agent_mgmt', perm: 'menu:agent_management', activeNames: ['AgentManagement'] },
-      { name: '技能工作台', to: '/dashboard/skills', icon: 'skills', perm: 'menu:skills_management', activeNames: ['SkillsManagement'] },
-      { name: 'MCP 工具集', to: '/dashboard/mcp', icon: 'mcp_tools', perm: 'menu:mcp_management', activeNames: ['McpManagement'] },
-      { name: 'MCP 服务台', to: '/dashboard/mcp-service', icon: 'mcp_service', perm: 'menu:mcp_service', activeNames: ['McpServiceDesk'] },
-      { name: '记忆工作台', to: '/dashboard/memory', icon: 'memory', perm: 'menu:memory_management', activeNames: ['MemoryManagement'] },
-      { name: '提示词工坊', to: '/dashboard/prompts', icon: 'prompts', perm: 'menu:prompts', desktopOnly: true, activeNames: ['PromptStudio'] },
+/** 移动端隐藏 `desktop_only` 菜单（与改造前一致），并丢掉因此变空的分组 */
+const visibleNavNodes = computed(() => {
+  const strip = (node: NavNode): NavNode => ({
+    ...node,
+    children: (node.children || [])
+      .filter((child) => !(child.desktop_only && isMobile.value))
+      .map(strip),
+  });
+  return navGroups.value
+    .filter((node) => !(node.desktop_only && isMobile.value))
+    .map(strip)
+    .filter((node) => node.node_type !== 'group' || (node.children || []).length > 0);
+});
 
-      { name: '任务调度台', to: '/dashboard/tasks', icon: 'tasks', perm: 'menu:task_center', activeNames: ['TaskCenter'] },
-      { name: '智能体调试', to: '/dashboard/agent-debug', icon: 'agent_debug', perm: 'menu:agent_debug', desktopOnly: true, activeNames: ['AgentDebug'] },
-      { name: '接口调试台', to: '/dashboard/playground', icon: 'playground', perm: 'menu:playground', desktopOnly: true, activeNames: ['Playground'] },
-      { name: '组件调试台', to: '/dashboard/widget-debug', icon: 'widget', perm: 'menu:widget_debug', desktopOnly: true, activeNames: ['WidgetDebugger'] }
-    ]
-  },
-  {
-    title: 'ChatBI 开发平台',
-    items: [
-      { name: '数据源管理', to: '/dashboard/data-sources', icon: 'data_source', perm: 'menu:data_sources', desktopOnly: true, activeNames: ['DataSourceManagement'] },
-      { name: '元数据管理', to: '/dashboard/metadata', icon: 'metadata', perm: 'menu:metadata', activeNames: ['Metadata', 'MetadataTables'] },
-      { name: '案例集管理', to: '/dashboard/examples', icon: 'chat_bubble_left_right', perm: 'menu:chatbi_examples', activeNames: ['ExampleManagement'] }
-    ]
-  },
-  {
-    title: '知识库开发平台',
-    items: [
-      { name: '知识库管理', to: '/dashboard/knowledge-bases', icon: 'knowledge_base', perm: 'menu:knowledge_management', desktopOnly: true, activeNames: ['KnowledgeBaseManagement'] },
-      { name: '检索测试', to: '/dashboard/knowledge-retrieval-test', icon: 'playground', perm: 'menu:knowledge_retrieval_test', desktopOnly: true, activeNames: ['KnowledgeRetrievalTest'] },
-      { name: '运营分析', to: '/dashboard/knowledge-metrics', icon: 'token_stats', perm: 'menu:knowledge_management', desktopOnly: true, activeNames: ['KnowledgeMetrics'] }
-    ]
-  },
-  {
-    title: '日志&TOKEN分析',
-    items: [
-      { name: '审计日志', to: '/dashboard/audit', icon: 'audit', perm: 'menu:system:audit', desktopOnly: true, activeNames: ['Audit'] },
-      { name: '聊天日志', to: '/dashboard/chat-logs', icon: 'chat_logs', perm: 'menu:chat_logs', desktopOnly: true, activeNames: ['ChatLogs'] },
-      { name: 'Token 统计', to: '/dashboard/token-stats', icon: 'token_stats', perm: 'menu:system:audit', desktopOnly: true, activeNames: ['TokenStats'] }
-    ]
-  },
-  {
-    title: '系统管理',
-    items: [
-      { name: '用户管理', to: '/dashboard/users', icon: 'users', perm: 'menu:system:users', activeNames: ['Users'] },
-      { name: '角色管理', to: '/dashboard/roles', icon: 'roles', perm: 'menu:system:roles', activeNames: ['Roles'] },
-      { name: '系统配置', to: '/dashboard/system', icon: 'system', perm: 'menu:system:config', activeNames: ['System'] }
-    ]
+const isNodeActive = (node: NavNode) => {
+  if (node.node_type === 'external') {
+    return node.open_mode === 'embed' && route.path === `/dashboard/external/${node.code}`;
   }
-];
-
-const isItemActive = (item: any) => {
-  if (route.path === item.to) return true;
-  if (item.activeNames && item.activeNames.includes(route.name)) return true;
-  return false;
+  if (node.path && route.path === node.path) return true;
+  return (node.active_route_names || []).includes(String(route.name || ''));
 };
 
-const isGroupActive = (group: MenuGroup) => {
-  return group.items.some(item => isItemActive(item));
-};
+const isGroupActive = (group: NavNode) => (group.children || []).some(isNodeActive);
 
-const isGroupCollapsed = (group: MenuGroup) => {
-  if (!group.title) return false;
+const isGroupCollapsed = (group: NavNode) => {
+  // 当前所在分组永远展开，避免"选中项被自己折叠起来"
   if (isGroupActive(group)) return false;
-  return Boolean(collapsedMenuGroups.value[group.title]);
+  return Boolean(collapsedMenuGroups.value[group.code]);
 };
 
-const toggleMenuGroup = (group: MenuGroup) => {
-  if (!group.title || isCollapsed.value) return;
-  collapsedMenuGroups.value[group.title] = !collapsedMenuGroups.value[group.title];
+const toggleMenuGroup = (group: NavNode) => {
+  if (isCollapsed.value) return;
+  collapsedMenuGroups.value[group.code] = !collapsedMenuGroups.value[group.code];
 };
 
-const filteredMenuGroups = computed(() => {
-  return menuGroups.map(group => ({
-    ...group,
-    items: group.items.filter(item => {
-      // 检查权限
-      if (!hasMenuPerm(item.perm)) return false;
-      // 检查移动端限制
-      if (item.desktopOnly && isMobile.value) return false;
-      return true;
-    })
-  })).filter(group => group.items.length > 0);
+const retryNavigation = () => {
+  void ensureNavigation(true);
+};
+
+onMounted(() => {
+  void ensureNavigation();
 });
 </script>
 
@@ -672,210 +615,99 @@ const filteredMenuGroups = computed(() => {
         class="flex-1 py-3 px-2 space-y-3 overflow-y-auto overflow-x-hidden custom-scrollbar"
         @click="isMobile ? showMobileSidebar = false : null"
       >
-        <div v-for="group in filteredMenuGroups" :key="group.title" class="space-y-1">
-          <!-- Group Title (Hierarchy Name) -->
-          <button 
-            v-if="!isCollapsed && group.title" 
+        <!-- 首次加载失败且本机无快照：必须给出可重试的错误态，不能渲染空侧栏 -->
+        <div
+          v-if="!navReady && navError"
+          class="mx-1 rounded-lg border px-2.5 py-3 text-xs"
+          :class="theme === 'light' ? 'border-red-200 bg-red-50 text-red-700' : 'border-red-400/30 bg-red-500/10 text-red-300'"
+        >
+          <p class="font-semibold">菜单加载失败</p>
+          <p class="mt-1 leading-snug opacity-80">请检查网络后重试，持续失败请联系管理员。</p>
+          <button
             type="button"
-            class="flex items-center justify-between gap-1.5 text-left tracking-wider select-none transition-colors group/header"
-            :class="[
-              isMobile 
-                ? 'w-[calc(100%-1rem)] mx-2 px-2.5 py-2.5 text-xs font-semibold' 
-                : 'w-[calc(100%-1rem)] mx-2 px-2 py-1.5 text-[11px] font-medium',
-              theme === 'light' ? 'text-gray-400 hover:text-gray-700' : 'text-slate-400 hover:text-slate-200',
-            ]"
-            :aria-expanded="!isGroupCollapsed(group)"
-            :aria-controls="`menu-group-${group.title}`"
-            @click.stop="toggleMenuGroup(group)"
-          >
-            <span class="truncate">{{ group.title }}</span>
-            <svg 
-              class="w-3.5 h-3.5 flex-shrink-0 opacity-60 group-hover/header:opacity-100 transition-all duration-200"
-              :class="isGroupCollapsed(group) ? '-rotate-90' : 'rotate-0'"
-              fill="none" 
-              stroke="currentColor" 
-              viewBox="0 0 24 24"
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-          <div
-            v-else-if="isCollapsed && group.title"
-            class="h-px mx-3 my-2"
-            :class="theme === 'light' ? 'bg-gray-200/80' : 'bg-white/[0.06]'"
-          ></div>
-
-          <!-- Group Items -->
-          <transition name="menu-group">
-            <div
-              :id="`menu-group-${group.title}`"
-              v-show="!isGroupCollapsed(group)"
-              class="space-y-1"
-            >
-              <router-link
-                v-for="item in group.items"
-                :key="item.to"
-                :to="item.to"
-                :title="isCollapsed ? item.name : undefined"
-                class="group relative flex items-center font-medium transition-all duration-150 whitespace-nowrap"
-                :class="[
-                  isItemActive(item)
-                    ? theme === 'light'
-                      ? 'bg-black/[0.05] text-gray-900 font-medium border border-black/[0.05]'
-                      : 'bg-white/[0.08] text-white font-medium border border-white/[0.08]'
-                    : theme === 'light'
-                      ? 'text-gray-500 hover:bg-black/[0.03] hover:text-gray-900 border border-transparent'
-                      : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent',
-                  isCollapsed 
-                    ? 'justify-center p-2.5 mx-auto w-10 h-10 rounded-lg text-sm' 
-                    : (isMobile ? 'py-2.5 px-3.5 mx-1 rounded-xl text-[15px]' : 'py-2 px-3 mx-1 rounded-lg text-sm'),
-                ]"
-              >
-                <!-- Icons (Crisp 18px line icons) -->
-                <svg
-                  v-if="item.icon === 'dashboard'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
-                <svg
-                  v-else-if="item.icon === 'chat'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'playground'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-                <svg
-                  v-else-if="item.icon === 'widget'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'agent_debug'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'data_source'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M4 7c0 1.657 3.582 3 8 3s8-1.343 8-3-3.582-3-8-3-8 1.343-8 3zm0 0v5c0 1.657 3.582 3 8 3s8-1.343 8-3V7M4 12v5c0 1.657 3.582 3 8 3s8-1.343 8-3v-5" /></svg>
-                <svg
-                  v-else-if="item.icon === 'metadata'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'knowledge_base'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'agent_mgmt'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'chat_bubble_left_right'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'prompts'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'skills'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
-                <svg
-                  v-else-if="item.icon === 'mcp_tools'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M3 13h18M10 13v2a1 1 0 001 1h2a1 1 0 001-1v-2" /></svg>
-                <svg
-                  v-else-if="item.icon === 'mcp_service' || item.icon === 'mcp'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" /></svg>
-                <svg
-                  v-else-if="item.icon === 'memory'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
-                <svg
-                  v-else-if="item.icon === 'tasks'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'audit'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'token_stats'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'chat_logs'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'users'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'roles'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                <svg
-                  v-else-if="item.icon === 'system'"
-                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
-                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-
-                <transition name="fade">
-                  <span 
-                    v-if="!isCollapsed" 
-                    class="truncate leading-tight"
-                    :class="isMobile ? 'ml-3 text-[15px]' : 'ml-2.5 text-sm'"
-                  >{{ item.name }}</span>
-                </transition>
-              </router-link>
-            </div>
-          </transition>
+            class="mt-2 rounded-md px-2 py-1 text-[11px] font-bold"
+            :class="theme === 'light' ? 'bg-red-600 text-white' : 'bg-white/15 text-white'"
+            @click.stop="retryNavigation"
+          >重试</button>
         </div>
+
+        <div v-else-if="!navReady" class="space-y-2 px-1" aria-hidden="true">
+          <div
+            v-for="index in 8"
+            :key="index"
+            class="h-8 animate-pulse rounded-lg"
+            :class="theme === 'light' ? 'bg-gray-100' : 'bg-white/[0.06]'"
+          ></div>
+        </div>
+
+        <template v-else>
+          <div v-for="node in visibleNavNodes" :key="node.code" class="space-y-1">
+            <!-- 分组：标题可折叠；收起侧栏时退化为分隔线 -->
+            <template v-if="node.node_type === 'group'">
+              <button
+                v-if="!isCollapsed"
+                type="button"
+                class="flex items-center justify-between gap-1.5 text-left tracking-wider select-none transition-colors group/header"
+                :class="[
+                  isMobile
+                    ? 'w-[calc(100%-1rem)] mx-2 px-2.5 py-2.5 text-xs font-semibold'
+                    : 'w-[calc(100%-1rem)] mx-2 px-2 py-1.5 text-[11px] font-medium',
+                  theme === 'light' ? 'text-gray-400 hover:text-gray-700' : 'text-slate-400 hover:text-slate-200',
+                ]"
+                :aria-expanded="!isGroupCollapsed(node)"
+                :aria-controls="`menu-group-${node.code}`"
+                @click.stop="toggleMenuGroup(node)"
+              >
+                <span class="truncate">{{ node.label }}</span>
+                <svg
+                  class="w-3.5 h-3.5 flex-shrink-0 opacity-60 group-hover/header:opacity-100 transition-all duration-200"
+                  :class="isGroupCollapsed(node) ? '-rotate-90' : 'rotate-0'"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div
+                v-else
+                class="h-px mx-3 my-2"
+                :class="theme === 'light' ? 'bg-gray-200/80' : 'bg-white/[0.06]'"
+              ></div>
+
+              <transition name="menu-group">
+                <div :id="`menu-group-${node.code}`" v-show="!isGroupCollapsed(node)" class="space-y-1">
+                  <SidebarMenuLink
+                    v-for="item in node.children"
+                    :key="item.code"
+                    :node="item"
+                    :collapsed="isCollapsed"
+                    :mobile="isMobile"
+                    :active="isNodeActive(item)"
+                    :light-theme="theme === 'light'"
+                  />
+                </div>
+              </transition>
+            </template>
+
+            <!-- 顶层页面（如「概览」）：不属于任何分组 -->
+            <SidebarMenuLink
+              v-else
+              :node="node"
+              :collapsed="isCollapsed"
+              :mobile="isMobile"
+              :active="isNodeActive(node)"
+              :light-theme="theme === 'light'"
+            />
+          </div>
+        </template>
+
+        <!-- 有快照但刷新失败：继续用旧菜单，同时提示可能不是最新 -->
+        <p
+          v-if="navReady && navStale"
+          class="mx-2 rounded-md px-2 py-1 text-[10px] leading-snug"
+          :class="theme === 'light' ? 'bg-amber-50 text-amber-700' : 'bg-amber-500/10 text-amber-300'"
+        >菜单数据可能不是最新，点击右上角刷新重试</p>
       </nav>
 
       <!-- User Profile (Clickable Card) -->
@@ -944,6 +776,7 @@ const filteredMenuGroups = computed(() => {
             </svg>
           </transition>
         </button>
+
 
         <!-- Version Footer -->
         <transition name="fade">

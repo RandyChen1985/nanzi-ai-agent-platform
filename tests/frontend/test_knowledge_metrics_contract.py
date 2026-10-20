@@ -90,15 +90,16 @@ def test_metrics_view_supports_knowledge_base_drilldown_and_export():
 
 
 def test_metrics_summary_endpoint_requires_knowledge_menu_permission():
-    """运营视图按「知识库管理」菜单权限放行：此前仅校验登录即可读取全平台知识库名与调用量。
+    """运营视图按「运营分析」菜单权限放行：此前仅校验登录即可读取全平台知识库名与调用量。
 
-    曾一度收紧为 `require_admin`，但前端菜单与路由仍按 `menu:knowledge_management` 放行，
-    于是持有该菜单权限的非管理员能进入页面、请求却必然 403「Admin access required」。
+    曾一度收紧为 `require_admin`，但前端菜单与路由仍按菜单权限放行，于是持有该菜单权限的
+    非管理员能进入页面、请求却必然 403「Admin access required」。
+    2026-10-20 拆码后使用独立权限点 `menu:knowledge_metrics`（迁移已复制旧授权），
     这里固定「后端 = 菜单权限」的口径，并由下一项断言锁死三处一致。
     """
     endpoint = _source("app/api/portal/endpoints/ragflow.py")
 
-    assert 'Depends(require_permission("menu", "menu:knowledge_management"))' in endpoint
+    assert 'Depends(require_permission("menu", "menu:knowledge_metrics"))' in endpoint
     # 反向护栏：不得退回管理员专属（会与前端菜单权限口径脱节）
     assert '@router.get("/metrics/summary", dependencies=[Depends(require_admin)])' not in endpoint
 
@@ -109,18 +110,19 @@ def test_metrics_permission_matches_frontend_menu_and_route():
     任一处单独改动都会造出「菜单可见但数据加载失败」或「有权限却被挡在门外」的页面，
     因此把一致性本身固化为契约，而不是只断言各自用了某个权限。
     """
-    perm = "menu:knowledge_management"
+    # 2026-10-20 菜单入库：运营分析从「知识库管理」共用码拆成独立码，三处必须同时改
+    perm = "menu:knowledge_metrics"
 
     router_source = _source("frontend/src/router/index.ts")
     route_start = router_source.index("path: 'knowledge-metrics'")
     route_block = router_source[route_start : route_start + 300]
     assert f"perm: '{perm}'" in route_block
 
-    dashboard = _source("frontend/src/views/Dashboard.vue")
-    menu_line = next(
-        line for line in dashboard.splitlines() if "'/dashboard/knowledge-metrics'" in line
-    )
-    assert f"perm: '{perm}'" in menu_line
+    from app.services.menu_seed import BUILTIN_BY_CODE
+
+    menu_node = BUILTIN_BY_CODE["menu:knowledge_metrics"]
+    assert menu_node.permission_code == perm
+    assert menu_node.path == "/dashboard/knowledge-metrics"
 
     endpoint = _source("app/api/portal/endpoints/ragflow.py")
     assert f'require_permission("menu", "{perm}")' in endpoint
