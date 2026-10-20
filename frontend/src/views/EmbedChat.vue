@@ -5900,12 +5900,8 @@ const resetSessionForIdentityChange = (
   historyFilters.value = { ...DEFAULT_HISTORY_FILTERS };
   // 置顶同样是上一位用户的账号级偏好：先清空，等 initChat 拿到新身份后再加载。
   pinnedConversations.value = [];
-  // 侧栏开关也按账号读取：换人后重新应用新账号的值，并取消上一位用户尚未提交的保存。
-  if (historySidebarSaveTimer) {
-    clearTimeout(historySidebarSaveTimer);
-    historySidebarSaveTimer = null;
-  }
-  historySidebarPreferenceApplied = false;
+  // 侧栏开关只存本机，但仍然按身份隔离：换人后允许重新从本机缓存恢复一次。
+  historySidebarRestored = false;
   // 浏览器面板/网页预览：面板靠 session-id + viewer-token 保持实时画面（服务端 token 是
   // 会话级凭证、不绑用户），换人后既会继续显示对方画面，还能把输入转发过去。必须断开。
   browserOpenGeneration += 1;
@@ -5988,6 +5984,11 @@ const savedRoutingPreference = ref<RoutingPreference>({
 });
 
 const fetchUserPortalPreferences = async () => {
+    // 侧栏开关只存本机：与账号偏好无关，也不受这个请求成败影响，初始化时读一次即可。
+    if (!historySidebarRestored) {
+        historySidebarRestored = true;
+        restoreHistorySidebarPreference();
+    }
     try {
         const res = await axios.get("/api/portal/portal-prefs");
         const prefs = res.data?.data || {};
@@ -6009,13 +6010,6 @@ const fetchUserPortalPreferences = async () => {
         expert_agent_id: String(prefs.expert_agent_id || "").trim(),
         routing_configured: prefs.routing_configured === true,
       };
-        // 账号级侧栏开关：跨设备保持一致；只应用一次，避免后台刷新覆盖用户刚做的操作。
-        if (!historySidebarPreferenceApplied) {
-          historySidebarPreferenceApplied = true;
-          if (isHistorySidebarDesktop()) {
-            applyHistorySidebarPreference(prefs.history_sidebar_open === true);
-          }
-        }
     } catch (error) {
         console.warn("Failed to fetch user portal preferences from Redis", error);
         savedRoutingPreference.value = {
@@ -6023,11 +6017,6 @@ const fetchUserPortalPreferences = async () => {
           expert_agent_id: "",
           routing_configured: false,
         };
-        // 偏好接口不可用时退回本地缓存，至少保证本机刷新不丢状态。
-        if (!historySidebarPreferenceApplied) {
-          historySidebarPreferenceApplied = true;
-          restoreHistorySidebarPreference();
-        }
     }
 };
 
@@ -6416,9 +6405,8 @@ const slashCommands = ref<any[]>([...SYSTEM_SLASH_COMMANDS]);
 // History Sidebar State
 const HISTORY_SIDEBAR_OPEN_KEY = "embed_history_sidebar_open";
 const showHistorySidebar = ref(false);
-// 账号偏好只应用一次：避免切换智能体等后台刷新把用户刚关掉的侧栏又重新打开。
-let historySidebarPreferenceApplied = false;
-let historySidebarSaveTimer: ReturnType<typeof setTimeout> | null = null;
+// 只从本机缓存恢复一次：避免切换智能体等后台刷新把用户刚关掉的侧栏又重新打开。
+let historySidebarRestored = false;
 
 /** 桌面端才恢复/保存侧栏开关；窄屏下它是带遮罩的浮层，刷新后自动弹开会挡住内容。 */
 const isHistorySidebarDesktop = () =>
@@ -6432,30 +6420,6 @@ const restoreHistorySidebarPreference = () => {
   } catch {
     // localStorage 不可用（隐私模式/跨域限制）时保持默认关闭
   }
-};
-
-const applyHistorySidebarPreference = (open: boolean) => {
-  if (!isHistorySidebarDesktop()) return;
-  showHistorySidebar.value = open;
-  try {
-    localStorage.setItem(HISTORY_SIDEBAR_OPEN_KEY, open ? "1" : "0");
-  } catch {
-    // 本地缓存失败不影响已应用的账号偏好
-  }
-};
-
-const scheduleHistorySidebarPreferenceSave = (open: boolean) => {
-  if (!isHistorySidebarDesktop()) return;
-  // 连续开关只提交最后一次，避免两次 PUT 乱序后把状态写反。
-  if (historySidebarSaveTimer) clearTimeout(historySidebarSaveTimer);
-  historySidebarSaveTimer = setTimeout(() => {
-    historySidebarSaveTimer = null;
-    void axios
-      .put("/api/portal/portal-prefs/history-sidebar", { open })
-      .catch((error) => {
-        console.warn("Failed to save history sidebar preference", error);
-      });
-  }, 200);
 };
 
 const historyList = ref<any[]>([]);
@@ -7383,15 +7347,12 @@ const executeDeleteCommand = async () => {
 };
 
 watch(showHistorySidebar, (val) => {
-    // 桌面端记住开关；窄屏浮层是临时态，不覆盖桌面偏好。
+    // 桌面端记住开关；窄屏浮层是临时态，不覆盖桌面偏好。只存本机，不与账号偏好同步。
     if (isHistorySidebarDesktop()) {
       try {
         localStorage.setItem(HISTORY_SIDEBAR_OPEN_KEY, val ? "1" : "0");
       } catch {
         // localStorage 不可用时仅本次生效
-      }
-      if (historySidebarPreferenceApplied) {
-        scheduleHistorySidebarPreferenceSave(val);
       }
     }
     if (!val) return;

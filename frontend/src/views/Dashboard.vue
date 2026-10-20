@@ -27,8 +27,6 @@ const readLeftSidebarCollapsedCache = () => {
 // 账号偏好加载前先用本机缓存占位，避免刷新时先展开再收起。
 const isCollapsed = ref(isDesktopSidebar() && readLeftSidebarCollapsedCache());
 const showMobileSidebar = ref(false);
-let leftSidebarPreferenceApplied = false;
-let leftSidebarSaveTimer: ReturnType<typeof setTimeout> | null = null;
 // 移动端抽屉打开时锁定背景滚动，避免背景跟随滑动
 watch(showMobileSidebar, (open) => {
   document.body.style.overflow = open ? "hidden" : "";
@@ -285,7 +283,7 @@ onMounted(async () => {
   loadBranding(true);
   window.addEventListener('user-info-updated', handleUserInfoUpdated);
   await fetchUserInfo();
-  await loadLeftSidebarPreference();
+  // 左侧主导航折叠状态只存本机：初始值已由 isCollapsed 的初始化表达式从缓存取好。
   // 在线人数仅管理员可见，普通用户不请求、不展示
   if (userInfo.value.role === "admin") {
     await fetchOnlineUsers();
@@ -455,56 +453,13 @@ watch(
   { immediate: true },
 );
 
-const applyLeftSidebarPreference = (collapsed: boolean) => {
-  if (!isDesktopSidebar()) return;
-  isCollapsed.value = collapsed;
-  try {
-    localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
-  } catch {
-    // 本地缓存失败不影响账号偏好
-  }
-};
-
-const scheduleLeftSidebarPreferenceSave = (collapsed: boolean) => {
-  if (!isDesktopSidebar()) return;
-  // 连续开关只提交最后一次，避免两次 PUT 乱序后把状态写反。
-  if (leftSidebarSaveTimer) clearTimeout(leftSidebarSaveTimer);
-  leftSidebarSaveTimer = setTimeout(() => {
-    leftSidebarSaveTimer = null;
-    void axios
-      .put("/api/portal/portal-prefs/left-sidebar", { collapsed })
-      .catch((error) => {
-        console.warn("Failed to save left sidebar preference", error);
-      });
-  }, 200);
-};
-
-const loadLeftSidebarPreference = async () => {
-  try {
-    const res = await axios.get("/api/portal/portal-prefs");
-    leftSidebarPreferenceApplied = true;
-    if (isDesktopSidebar()) {
-      applyLeftSidebarPreference(res.data?.data?.left_sidebar_collapsed === true);
-    }
-  } catch (error) {
-    console.warn("Failed to load left sidebar preference from Redis", error);
-    leftSidebarPreferenceApplied = true;
-    if (isDesktopSidebar()) {
-      applyLeftSidebarPreference(readLeftSidebarCollapsedCache());
-    }
-  }
-};
-
 watch(isCollapsed, (collapsed) => {
-  // 移动端抽屉是临时态，不覆盖桌面端的账号偏好。
+  // 移动端抽屉是临时态，不覆盖桌面端的本机偏好。只存本机，不与账号偏好同步。
   if (!isDesktopSidebar()) return;
   try {
     localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
   } catch {
     // localStorage 不可用时仅本次生效
-  }
-  if (leftSidebarPreferenceApplied) {
-    scheduleLeftSidebarPreferenceSave(collapsed);
   }
 });
 
@@ -530,10 +485,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   desktopMediaQuery.removeEventListener?.('change', handleBreakpointChange);
-  if (leftSidebarSaveTimer) {
-    clearTimeout(leftSidebarSaveTimer);
-    leftSidebarSaveTimer = null;
-  }
   // 兜底恢复，避免组件卸载后残留 body 滚动锁
   document.body.style.overflow = "";
 });
