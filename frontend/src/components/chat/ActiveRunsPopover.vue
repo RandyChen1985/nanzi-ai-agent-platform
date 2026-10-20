@@ -86,7 +86,7 @@
               >
                 <span class="block truncate text-[12px] text-gray-700 dark:text-gray-200">{{ item.title }}</span>
                 <span class="block truncate text-[10px] text-gray-400">
-                  {{ ttlText(item) }}<template v-if="item.conversation_id === activeConversationId"> · 当前会话</template>
+                  <template v-if="item.agent_label">{{ item.agent_label }} · </template>{{ ttlText(item) }}<template v-if="item.conversation_id === activeConversationId"> · 当前会话</template>
                 </span>
               </button>
               <button
@@ -114,7 +114,9 @@
                 @click="emit('select', item.conversation_id)"
               >
                 <span class="block truncate text-[12px] text-gray-700 dark:text-gray-200">{{ item.title }}</span>
-                <span class="block truncate text-[10px] text-amber-500">续约已停，{{ ttlText(item) }}</span>
+                <span class="block truncate text-[10px] text-amber-500">
+                  <template v-if="item.agent_label">{{ item.agent_label }} · </template>续约已停，{{ ttlText(item) }}
+                </span>
               </button>
               <button
                 type="button"
@@ -140,6 +142,8 @@ export interface ActiveRunView {
   ttl_seconds: number | null
   state: 'active' | 'stale'
   title: string
+  /** 正在执行这个会话的智能体名；auto 模式为「自动委派」，查不到时为空（整段不渲染）。 */
+  agent_label?: string
 }
 
 const props = withDefaults(

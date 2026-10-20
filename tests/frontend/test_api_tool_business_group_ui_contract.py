@@ -252,8 +252,8 @@ def test_registry_only_the_name_column_absorbs_spare_width():
         ">选择</span>": "w-12",
         ">Method</th>": "w-24",
         ">业务分组</th>": "w-32",
-        ">状态</th>": "w-24",
-        ">操作</th>": "w-32",
+        ">状态</th>": "w-32",
+        ">操作</th>": "w-44",
     }
     for marker, width in fixed_columns.items():
         tag = next(tag for tag in header.split("<th") if marker in tag)

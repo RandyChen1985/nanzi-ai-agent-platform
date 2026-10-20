@@ -23,6 +23,7 @@ from app.utils.fs_access import get_user_uploads_dir, open_upload_storage_file
 from app.utils.skill_metadata import normalize_skill_scope
 from app.services.permission_service import PermissionService
 from app.services.conversation_resource_service import ConversationResourceService
+from app.services.conversation_routing_service import ConversationRoutingService
 from app.services.resource_scope_normalizer import normalize_resource_scope_for_user
 from app.services.ai.business_context import sanitize_injected_context
 from app.services.ai.conversation_identity import MissingUserIdentityError, require_user_id
@@ -3258,3 +3259,69 @@ async def update_conversation_resource_scope(
     normalized = await _normalize_conversation_resource_scope(db, user_info, body.model_dump())
     scope = await ConversationResourceService.replace(user_id, conversation_id, normalized)
     return StandardResponse(data=scope)
+
+
+class ConversationRoutingUpdateRequest(BaseModel):
+    routing_mode: str = Field(default="auto", description="auto | expert")
+    expert_agent_id: Optional[str] = Field(default="", description="专家模式必填")
+
+
+@router.get(
+    "/conversation/{conversation_id}/routing",
+    summary="获取会话级专家选择",
+    description="无记录时返回 data=null，由前端回落账号默认。",
+)
+async def get_conversation_routing(
+    conversation_id: str,
+    user_info: dict = Depends(require_api_key),
+):
+    user_id = _require_chat_user_id(user_info)
+    routing = await ConversationRoutingService.get(user_id, conversation_id)
+    return StandardResponse(data=routing)
+
+
+@router.put(
+    "/conversation/{conversation_id}/routing",
+    summary="更新会话级专家选择",
+    description="专家模式会校验智能体可用性与当前用户权限，与账号级路由偏好保持一致。",
+)
+async def update_conversation_routing(
+    conversation_id: str,
+    body: ConversationRoutingUpdateRequest,
+    user_info: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = _require_chat_user_id(user_info)
+    mode = "expert" if body.routing_mode == "expert" else "auto"
+    agent_id = str(body.expert_agent_id or "").strip()
+
+    if mode == "expert":
+        if not agent_id:
+            raise HTTPException(
+                status_code=422,
+                detail="专家模式必须选择智能体",
+            )
+        try:
+            agent = await AgentManagerService.resolve_embed_agent_access(
+                db, agent_id, user_info
+            )
+            active_config = await AgentManagerService.get_active_agent_config(
+                db, agent_id=str(agent.id)
+            )
+            if not active_config:
+                raise LookupError("agent_not_ready")
+        except LookupError:
+            raise HTTPException(
+                status_code=404,
+                detail="智能体不存在、已停用或尚未发布",
+            ) from None
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="无权使用该智能体") from None
+        agent_id = str(agent.id)
+    else:
+        agent_id = ""
+
+    routing = await ConversationRoutingService.replace(
+        user_id, conversation_id, mode, agent_id
+    )
+    return StandardResponse(data=routing)

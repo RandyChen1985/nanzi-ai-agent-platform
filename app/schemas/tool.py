@@ -22,6 +22,19 @@ class SysApiToolBase(BaseModel):
     url_template: str = Field(..., description="Target API URL")
     headers: Optional[Dict[str, str]] = Field(default_factory=dict)
     parameter_schema: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    signing_enabled: bool = Field(
+        False,
+        description="是否开启请求签名；关闭时运行时完全忽略签名配置",
+    )
+    signing_key_id: Optional[str] = Field(
+        None,
+        max_length=64,
+        description="签名 Key-Id（16 位小写十六进制，全局唯一）",
+    )
+    signing_algorithm: str = Field(
+        "hmac-sha256",
+        description="签名算法；v1 只支持 hmac-sha256",
+    )
     is_active: bool = True
     group_name: Optional[str] = Field(
         None,
@@ -36,7 +49,10 @@ class SysApiToolBase(BaseModel):
 
 
 class SysApiToolCreate(SysApiToolBase):
-    pass
+    signing_secret: Optional[str] = Field(
+        None,
+        description="签名密钥（只写；服务端加密保存，任何响应都不回显）",
+    )
 
 
 class SysApiToolUpdate(BaseModel):
@@ -46,6 +62,13 @@ class SysApiToolUpdate(BaseModel):
     url_template: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
     parameter_schema: Optional[Dict[str, Any]] = None
+    signing_enabled: Optional[bool] = None
+    signing_key_id: Optional[str] = Field(None, max_length=64)
+    signing_algorithm: Optional[str] = None
+    signing_secret: Optional[str] = Field(
+        None,
+        description="轮换签名密钥时与新 Key-Id 一起提交；留空表示沿用已保存密钥",
+    )
     is_active: Optional[bool] = None
     group_name: Optional[str] = Field(None, max_length=64)
 
@@ -73,6 +96,7 @@ class SysApiToolBatchGroupRequest(BaseModel):
 
 class SysApiToolResponse(SysApiToolBase):
     id: str
+    signing_secret_configured: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -104,6 +128,27 @@ class SysApiToolPreviewRequest(BaseModel):
         default_factory=dict,
         description="试跑测试值：只用于这一次请求，绝不写入 sys_api_tools",
     )
+    signing_enabled: bool = False
+    signing_algorithm: str = "hmac-sha256"
+    signing_key_id: Optional[str] = Field(None, max_length=64)
+    signing_secret: Optional[str] = Field(
+        None,
+        description="新建草稿的签名密钥；只用于本次试跑，不落库",
+    )
+    tool_id: Optional[str] = Field(
+        None,
+        description="已保存工具试跑时传 id，服务端据此读取已加密的签名密钥",
+    )
+
+
+class SysApiToolPreviewRequestInfo(BaseModel):
+    """试跑实际发出的 HTTP 请求快照（用于界面核对最终 URL 与参数）。"""
+
+    method: str
+    url: str
+    headers: Dict[str, str] = Field(default_factory=dict)
+    query: Dict[str, Any] = Field(default_factory=dict)
+    body: Any = None
 
 
 class SysApiToolPreviewResponse(BaseModel):
@@ -112,12 +157,22 @@ class SysApiToolPreviewResponse(BaseModel):
     elapsed_ms: int = 0
     body: str = ""
     body_truncated: bool = False
+    response_headers: Dict[str, str] = Field(
+        default_factory=dict,
+        description="目标接口返回的响应头；凭据类字段已脱敏",
+    )
+    request: Optional[SysApiToolPreviewRequestInfo] = Field(
+        None,
+        description="实际发出请求的最终 URL、Query、Body 与脱敏后的 Headers；预检失败时为空",
+    )
     error_kind: Optional[str] = Field(
         None,
         description=(
             "http_error（接口通了但拒绝）/ connection（根本没连上）/ timeout / "
             "invalid_url / unsupported_method / missing_param / "
-            "missing_user_variable（{user.xxx} 取不到值）"
+            "invalid_parameter_schema（系统级参数配置不合法）/ "
+            "missing_user_variable（{user.xxx} 取不到值）/ "
+            "invalid_signing_config（签名配置不合法或密钥无法解密）"
         ),
     )
     message: str = ""

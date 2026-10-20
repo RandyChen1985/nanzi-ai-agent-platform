@@ -17,22 +17,29 @@ import {
     PARAM_TYPE_OPTIONS,
     parseToolSchema,
     serializeToolSchema,
+    validateSystemParams,
     type ParsedToolSchema,
     type SchemaParam,
+    type SystemParam,
 } from '../../utils/toolSchema'
-import type { ParamLocation } from '../../utils/toolDraft'
+import { resolveParamLocation, type ParamLocation } from '../../utils/toolDraft'
 import PermissionVariableMenu from '../metadata/PermissionVariableMenu.vue'
+import ToolSystemParamEditor from './ToolSystemParamEditor.vue'
 import { BUILTIN_USER_VARIABLES, collectExtraDataVariables, type UserVariable } from '../../utils/userVariables'
 
 const props = withDefaults(defineProps<{
     modelValue: string
     /** ``wizard`` 时每行额外显示参数落位标签（向导第 3 步用） */
     mode?: 'full' | 'wizard'
-    /** 参数名 → 落位；仅向导模式传入 */
+    /** 参数名 → 落位；向导模式显式传入，表单模式可由 method + urlTemplate 推导 */
     locations?: Record<string, ParamLocation>
+    method?: string
+    urlTemplate?: string
 }>(), {
     mode: 'full',
     locations: () => ({}),
+    method: 'GET',
+    urlTemplate: '',
 })
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
@@ -41,7 +48,14 @@ type VisualParam = SchemaParam & { key: string }
 
 const schemaEditorMode = ref<'json' | 'visual'>('json')
 const visualParams = ref<VisualParam[]>([])
-const parsedSchema = ref<ParsedToolSchema>({ shape: 'flat', hadRequiredList: false, rest: {}, params: [] })
+const systemParams = ref<SystemParam[]>([])
+const parsedSchema = ref<ParsedToolSchema>({
+    shape: 'flat',
+    hadRequiredList: false,
+    rest: {},
+    params: [],
+    systemParams: [],
+})
 const jsonHint = ref('')
 let visualParamSeed = 0
 
@@ -90,12 +104,15 @@ const visualNestedCount = computed(() => visualParams.value.filter(
     (param) => param.extra.items || param.extra.properties
 ).length)
 
+const systemParamErrors = computed(() => validateSystemParams(systemParams.value, visualParams.value))
+
 const buildSchemaJson = (): string => serializeToolSchema({
     shape: parsedSchema.value.shape,
     hadRequiredList: parsedSchema.value.hadRequiredList,
     rest: parsedSchema.value.rest,
     // 剥掉仅用于 v-for 的 key：它不属于 schema 数据
     params: visualParams.value.map(({ key, ...param }) => param),
+    systemParams: systemParams.value,
 })
 
 const loadVisualFromJson = (): boolean => {
@@ -108,6 +125,7 @@ const loadVisualFromJson = (): boolean => {
     jsonHint.value = ''
     parsedSchema.value = parsed
     visualParams.value = parsed.params.map((param) => ({ ...param, key: nextVisualParamKey() }))
+    systemParams.value = parsed.systemParams.map((param) => ({ ...param }))
     return true
 }
 
@@ -151,6 +169,12 @@ watch(visualParams, () => {
     if (next !== props.modelValue) emit('update:modelValue', next)
 }, { deep: true })
 
+watch(systemParams, () => {
+    if (schemaEditorMode.value !== 'visual') return
+    const next = buildSchemaJson()
+    if (next !== props.modelValue) emit('update:modelValue', next)
+}, { deep: true })
+
 // 外部改写文本（换工具、向导重新生成参数、编辑已有工具）时，可视化行必须跟着重解析，
 // 否则下一次行内改动会把外部刚写进来的内容整个覆盖掉。
 watch(() => props.modelValue, (next) => {
@@ -159,8 +183,13 @@ watch(() => props.modelValue, (next) => {
     loadVisualFromJson()
 })
 
+const locationOf = (name: string): ParamLocation | undefined => {
+    if (!name) return undefined
+    return props.locations?.[name] || resolveParamLocation(props.method, props.urlTemplate, name)
+}
+
 const locationLabel = (name: string): string => {
-    const location = props.locations?.[name]
+    const location = locationOf(name)
     if (location === 'path') return '路径参数'
     if (location === 'query') return '查询参数'
     if (location === 'body') return '请求体'
@@ -202,7 +231,8 @@ const locationLabel = (name: string): string => {
             </li>
           </ul>
           <p class="mt-2 rounded bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700">
-            想让参数固定取当前用户：取消「必填」，再把默认值设为用户变量。必填目前主要用于约束模型和试跑提示，不是运行时的硬校验。
+            需要模型绝对不能改的值（申请人、操作人），请使用下方「系统级参数」；
+            普通参数的默认值只是兜底，模型显式传值时仍会覆盖。必填目前主要用于约束模型和试跑提示，不是运行时的硬校验。
           </p>
         </div>
       </div>
@@ -235,15 +265,24 @@ const locationLabel = (name: string): string => {
     ></textarea>
 
     <div v-else class="mt-1 space-y-2 rounded-md border border-gray-200 bg-gray-50/60 p-2">
-      <p v-if="visualParams.length === 0" class="px-1 py-1 text-xs text-gray-400">还没有参数，点下面的「+ 添加参数」开始</p>
+      <!-- 系统级参数优先级高于普通参数：它们由平台强制注入、模型不可见，放在最前面让配置者先看到。 -->
+      <ToolSystemParamEditor
+        v-model="systemParams"
+        :builtin-variables="BUILTIN_USER_VARIABLES"
+        :extra-data-variables="extraDataVariables"
+      />
+      <p v-if="systemParamErrors.length" class="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">
+        {{ systemParamErrors[0] }}
+      </p>
+      <p v-if="visualParams.length === 0" class="px-1 py-1 text-xs text-gray-400">还没有普通参数，点下面的「+ 添加参数」开始</p>
       <div v-for="(p, index) in visualParams" :key="p.key" class="flex flex-wrap items-center gap-2 rounded-md bg-white p-2 shadow-sm">
         <span
-          v-if="mode === 'wizard' && locationLabel(p.name)"
+          v-if="locationOf(p.name)"
           class="rounded px-1.5 py-0.5 text-[11px] font-medium"
           :class="{
-            'bg-purple-50 text-purple-700': locations[p.name] === 'path',
-            'bg-blue-50 text-blue-700': locations[p.name] === 'query',
-            'bg-green-50 text-green-700': locations[p.name] === 'body',
+            'bg-purple-50 text-purple-700': locationOf(p.name) === 'path',
+            'bg-blue-50 text-blue-700': locationOf(p.name) === 'query',
+            'bg-green-50 text-green-700': locationOf(p.name) === 'body',
           }"
         >{{ locationLabel(p.name) }}</span>
         <input v-model="p.name" class="w-40 border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary text-xs font-mono" placeholder="参数名" />
@@ -293,7 +332,10 @@ const locationLabel = (name: string): string => {
         class="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
         @click="addVisualParam"
       >+ 添加参数</button>
-      <p class="text-xs text-gray-500">未勾选「必填」的参数会写成 <code class="font-mono">required: false</code>；默认值可填 <code class="font-mono">{user.user_name}</code> 等用户变量，调用时自动替换。</p>
+      <p class="text-xs text-gray-500">
+        普通参数的 <code class="font-mono">default</code> 只是兜底，模型显式给值时会覆盖；
+        申请人、操作人等不能由模型决定的值，请用上方「系统级参数」。
+      </p>
     </div>
 
     <p v-if="jsonHint" class="mt-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{{ jsonHint }}</p>

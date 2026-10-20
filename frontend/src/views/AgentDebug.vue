@@ -3073,15 +3073,8 @@ const hasPinnedDrawer = computed(() => {
   return pinnedDrawerRightRem.value > 0;
 });
 
-const workspacePinnedDockClass = computed(() => {
-  const rem = pinnedDrawerDockOffsetRem("workspace");
-  return rem > 0 ? `right-[${rem}rem]` : "right-0";
-});
-
-const memoryPinnedDockClass = computed(() => {
-  const rem = pinnedDrawerDockOffsetRem("memory");
-  return rem > 0 ? `right-[${rem}rem]` : "right-0";
-});
+const workspacePinnedDockRightPx = computed(() => pinnedDrawerDockOffsetRem("workspace") * 16);
+const memoryPinnedDockRightPx = computed(() => pinnedDrawerDockOffsetRem("memory") * 16);
 
 const INLINE_DATASET_MENU_EMPTY =
   "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
@@ -5626,7 +5619,7 @@ onUnmounted(() => {
     v-model="showWorkspaceDrawer"
     v-model:keep-open-on-select="workspaceKeepOpenOnSelect"
     v-model:pinned="workspacePinned"
-    :pinned-dock-class="workspacePinnedDockClass"
+    :pinned-dock-right="workspacePinnedDockRightPx"
     @select="handleSelectLocalFs"
     @preview="handleWorkspaceFilePreview"
   />
@@ -5635,7 +5628,7 @@ onUnmounted(() => {
     v-model="showMemoryDrawer"
     v-model:keep-open-on-select="memoryKeepOpenOnSelect"
     v-model:pinned="memoryPinned"
-    :pinned-dock-class="memoryPinnedDockClass"
+    :pinned-dock-right="memoryPinnedDockRightPx"
     :attached-conversation-ids="attachedMemoryConversationIds"
     @mount="handleMemoryMount"
     @cleared="handleMemoryCleared"

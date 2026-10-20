@@ -41,13 +41,19 @@ const drawerWidth = defineModel<number>('drawerWidth', { default: 448 })
 
 const props = withDefaults(
   defineProps<{
-    /** 与数据门户等同侧钉住时的水平偏移（如 right-[28rem]） */
-    pinnedDockClass?: string
+    /**
+     * 与其它钉住面板并排时距视口右边的像素偏移。
+     *
+     * 必须收 number 走内联 style，不能收 Tailwind 类名：父级曾用
+     * `right-[${rem}rem]` 拼字符串传进来，而 Tailwind 只做静态扫描，构建产物里
+     * 根本没有这些规则，多个面板并排时偏移失效、直接叠在同一位置。
+     */
+    pinnedDockRight?: number
     conversationId?: string | null
     /** 当前会话是否已开始（有消息往来）；未开始时「本会话目录」不可用 */
     sessionStarted?: boolean
   }>(),
-  { pinnedDockClass: 'right-0', conversationId: null, sessionStarted: false },
+  { pinnedDockRight: 0, conversationId: null, sessionStarted: false },
 )
 
 const emit = defineEmits<{
@@ -1640,7 +1646,12 @@ const pinnedContainerClass = computed(() => {
   if (!pinned.value) return ''
   return isMobile.value
     ? 'fixed inset-x-0 bottom-0 max-w-full flex flex-col justify-end pointer-events-none'
-    : `fixed inset-y-0 ${props.pinnedDockClass} max-w-full flex pointer-events-none`
+    : 'fixed inset-y-0 right-0 max-w-full flex pointer-events-none'
+})
+
+const pinnedContainerStyle = computed(() => {
+  if (!pinned.value || isMobile.value) return undefined
+  return { right: `${Math.max(0, props.pinnedDockRight || 0)}px` }
 })
 
 const closeDrawer = () => {
@@ -1724,6 +1735,7 @@ onUnmounted(() => {
   <teleport to="body">
     <div
       v-show="modelValue"
+      :style="pinnedContainerStyle"
       :class="[
         'z-[125]',
         pinned

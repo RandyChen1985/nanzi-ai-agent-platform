@@ -1,8 +1,8 @@
-"""会话历史侧栏开关要按账号持久化并支持跨设备。
+"""会话历史侧栏开关只存本机（localStorage）。
 
-开关主存后端 Redis（``/api/portal/portal-prefs`` 的 ``history_sidebar_open``），
-localStorage 只在偏好接口不可用时做本机兜底。窄屏下侧栏是带遮罩的浮层，
-不能自动弹开挡住内容，所以桌面端才恢复/保存。
+刻意**不再**同步到账号偏好：这个开关是「我这台设备上此刻想不想看侧栏」的临时布局偏好，
+跨设备继承反而别扭——在窄屏或小窗口上被强制展开会直接压掉正文。窄屏下侧栏还是带遮罩的
+浮层，刷新后自动弹开会挡住内容，所以只有桌面端恢复/保存。
 """
 
 from pathlib import Path
@@ -25,58 +25,27 @@ def _section(start: str, end: str) -> str:
     return source[source.index(start):source.index(end)]
 
 
-def test_history_sidebar_open_state_is_saved_to_the_account_preference():
+def test_history_sidebar_state_is_local_only():
     source = _source()
     assert 'const HISTORY_SIDEBAR_OPEN_KEY = "embed_history_sidebar_open";' in source
-    assert "let historySidebarPreferenceApplied = false;" in source
-    assert "prefs.history_sidebar_open === true" in source
-    assert "applyHistorySidebarPreference(" in source
-
-    fetch_prefs = _section(
-        "const fetchUserPortalPreferences",
-        "const hasCustomMessageBorderPreference",
-    )
-    assert "historySidebarPreferenceApplied" in fetch_prefs
-    assert "restoreHistorySidebarPreference();" in fetch_prefs
-
-    save = _section(
-        "const scheduleHistorySidebarPreferenceSave",
-        "const historyList",
-    )
-    assert '"/api/portal/portal-prefs/history-sidebar"' in save
-    assert "open" in save
+    # 不再写账号偏好：既没有 PUT，也不读 prefs 里的同名字段
+    assert '"/api/portal/portal-prefs/history-sidebar"' not in source
+    assert "prefs.history_sidebar_open" not in source
 
 
-def test_history_sidebar_toggle_triggers_the_account_save():
-    watch = _section("watch(showHistorySidebar, (val) => {", "watch(historyKeyword")
-    assert "scheduleHistorySidebarPreferenceSave(val)" in watch
-    # 结果返回前先更新本地缓存，至少本机交互不丢
-    assert watch.index("localStorage.setItem") < watch.index(
-        "scheduleHistorySidebarPreferenceSave"
-    )
+def test_history_sidebar_restores_from_local_cache():
+    source = _source()
+    assert "restoreHistorySidebarPreference()" in source
+    assert "localStorage.getItem(HISTORY_SIDEBAR_OPEN_KEY)" in source
+
+
+def test_history_sidebar_toggle_writes_local_cache():
+    watch = _section("watch(showHistorySidebar, (val) => {", "if (!val) return;")
+    assert "localStorage.setItem(HISTORY_SIDEBAR_OPEN_KEY" in watch
+    # 开关翻转只落本地，不该再发任何请求
+    assert "axios" not in watch
 
 
 def test_history_sidebar_persistence_skips_mobile_overlay():
-    helper = _section(
-        "const isHistorySidebarDesktop = () =>",
-        "const restoreHistorySidebarPreference",
-    )
-    assert '!window.matchMedia("(max-width: 639px)").matches' in helper
-
-    save = _section(
-        "const scheduleHistorySidebarPreferenceSave",
-        "const historyList",
-    )
-    assert "if (!isHistorySidebarDesktop()) return;" in save
-    assert '"/api/portal/portal-prefs/history-sidebar"' in save
-
-
-def test_history_sidebar_local_cache_is_only_a_fallback():
-    fetch_prefs = _section(
-        "const fetchUserPortalPreferences",
-        "const hasCustomMessageBorderPreference",
-    )
-    # 成功路径应用账号值；catch 才回退 localStorage
-    assert fetch_prefs.index("prefs.history_sidebar_open === true") < fetch_prefs.index(
-        "restoreHistorySidebarPreference();"
-    )
+    source = _source()
+    assert '!window.matchMedia("(max-width: 639px)").matches' in source

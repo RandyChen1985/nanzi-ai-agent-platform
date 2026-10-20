@@ -17,15 +17,24 @@ import { buildLocationMap, buildDraftParams, buildDraftSchema, type DraftParam }
 import { parseToolSchema } from '../../utils/toolSchema'
 import ToolParamEditor from './ToolParamEditor.vue'
 import ApiToolTester from './ApiToolTester.vue'
+import ToolSigningEditor from './ToolSigningEditor.vue'
+
+const emit = defineEmits<{ (e: 'dirty-change', value: boolean): void }>()
 
 const props = defineProps<{
     toolForm: {
+        id?: string
         name: string
         description: string
         method: string
         url_template: string
         headers_str: string
         parameter_schema_str: string
+        signing_enabled?: boolean
+        signing_key_id?: string | null
+        signing_algorithm?: string
+        signing_secret?: string
+        signing_secret_configured?: boolean
         is_active: boolean
         group_name: string
     }
@@ -55,9 +64,13 @@ const EXAMPLE_CURL = `curl -X POST 'https://api.example.com/v1/orders/{order_id}
   -H 'Content-Type: application/json' \\
   -d '{"amount": 100, "reason": "客户申请退款"}'`
 
+const existingSystemParams = () =>
+    parseToolSchema(props.toolForm.parameter_schema_str)?.systemParams ?? []
+
 const writeDraftParams = (params: DraftParam[]) => {
     draftParams.value = params
-    props.toolForm.parameter_schema_str = buildDraftSchema(params)
+    // 重新生成普通参数时不能丢掉用户已配置的系统级参数（它们不在 properties 里）
+    props.toolForm.parameter_schema_str = buildDraftSchema(params, existingSystemParams())
     staleParams.value = false
 }
 
@@ -100,6 +113,11 @@ watch(pasteText, (value) => {
     // 只标记「可能过期」，且只在内容**真的变了**时标记：这里若自动重算，
     // 用户在第 3 步手改过的描述/默认值就被悄悄抹掉了。
     if (parsed.value && value !== parsedFromText.value) staleParams.value = true
+})
+
+// 向导内部的粘贴文本不属于 toolForm；单独上报，父组件的未保存保护才能覆盖它。
+watch(pasteText, (value) => {
+    emit('dirty-change', Boolean(value.trim()) || step.value > 1)
 })
 
 const locationMap = computed(() => buildLocationMap(draftParams.value))
@@ -320,11 +338,22 @@ const goToStep = (target: number) => {
 
     <!-- ④ 试跑一次 -->
     <section v-else class="space-y-3">
+      <ToolSigningEditor
+        v-model:enabled="toolForm.signing_enabled"
+        v-model:key-id="toolForm.signing_key_id"
+        v-model:secret="toolForm.signing_secret"
+        :configured="!!toolForm.signing_secret_configured"
+      />
       <ApiToolTester
         :method="toolForm.method"
         :url-template="toolForm.url_template"
         :headers-str="toolForm.headers_str"
         :schema-str="toolForm.parameter_schema_str"
+        :signing-enabled="!!toolForm.signing_enabled"
+        :signing-algorithm="toolForm.signing_algorithm || 'hmac-sha256'"
+        :signing-key-id="toolForm.signing_key_id"
+        :signing-secret="toolForm.signing_secret || ''"
+        :tool-id="toolForm.id"
       />
       <p class="rounded-lg border border-gray-100 bg-white px-3 py-2 text-[11px] leading-relaxed text-gray-500">
         试跑通过后，点弹窗右下角的「保存」正式创建。保存后还需要到智能体配置里把这个工具挂给对应的智能体，它才会生效。

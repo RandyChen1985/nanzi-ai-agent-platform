@@ -16,7 +16,7 @@
  * 「全部可选」（空数组是 falsy，运行时掉回默认必填分支）。
  */
 import type { ParsedRequest } from './toolImport.ts'
-import { serializeToolSchema } from './toolSchema.ts'
+import { serializeToolSchema, type SystemParam } from './toolSchema.ts'
 
 export type ParamLocation = 'path' | 'query' | 'body'
 
@@ -94,7 +94,10 @@ export const buildDraftParams = (parsed: ParsedRequest): DraftParam[] => {
 }
 
 /** 参数清单 → ``parameter_schema`` 文本（扁平形态，非必填落成内联 required:false）。 */
-export const buildDraftSchema = (params: DraftParam[]): string => serializeToolSchema({
+export const buildDraftSchema = (
+    params: DraftParam[],
+    systemParams: SystemParam[] = [],
+): string => serializeToolSchema({
     shape: 'flat',
     hadRequiredList: false,
     rest: {},
@@ -106,6 +109,7 @@ export const buildDraftSchema = (params: DraftParam[]): string => serializeToolS
         defaultValue: param.defaultValue,
         extra: {},
     })),
+    systemParams,
 })
 
 /** 参数清单 → 落位映射，供 ``ToolParamEditor`` 在向导模式里显示标签。 */

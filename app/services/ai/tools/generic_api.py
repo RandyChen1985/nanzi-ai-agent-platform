@@ -4,6 +4,12 @@ import httpx
 import json
 from typing import Dict, Any, Mapping, Type
 from pydantic import create_model, Field
+from app.services.ai.tools.request_signing import (
+    parse_signing_config,
+    sign_request,
+    validate_no_reserved_signing_headers,
+)
+from app.services.ai.tools.system_params import apply_system_params
 from app.services.ai.tools.tool_compat import StructuredTool
 from app.services.ai.tools.user_placeholders import (
     contains_user_placeholder,
@@ -44,6 +50,15 @@ def _parse_parameter_schema(
         properties = schema_def["properties"]
         if "required" in schema_def and isinstance(schema_def["required"], list):
             required_fields = set(schema_def["required"])
+    else:
+        # 扁平形态下顶层就是参数表；x-* 是平台扩展（如 x-nanzi-system-params），
+        # 不能被当成普通参数交给模型。
+        properties = {
+            str(key): value
+            for key, value in schema_def.items()
+            if not str(key).startswith("x-")
+            and str(key) not in {"type", "required", "$schema", "description"}
+        }
     return schema_def, properties, required_fields
 
 
@@ -230,6 +245,7 @@ class GenericApiToolFactory:
         *,
         raise_on_http_error: bool = True,
         user_info: Mapping[str, Any] | None = None,
+        capture: dict[str, Any] | None = None,
     ) -> tuple[Any, int, str]:
         """发一次请求的公共内核：用户变量替换 + 路径替换 + 参数落位 + headers + 超时。
 
@@ -238,6 +254,10 @@ class GenericApiToolFactory:
 
         ``user_info`` 只在试跑等 HTTP 入口显式传入（当前登录用户）；运行时
         不传，从 ``AgentContext`` / ``current_user_info`` 读取。
+
+        ``capture`` 仅试跑传入：在真正发出请求前写入最终 method / URL / query /
+        body / headers，供界面展示「实际请求」。它不影响运行时路径，也不代替
+        正常日志；调用方负责对 headers 等敏感值脱敏后再返回给前端。
 
         返回 ``(response, elapsed_ms, final_url)``。
         ``raise_on_http_error=True``（运行时默认）时，非 2xx 抛 ``RuntimeError``，
@@ -252,6 +272,7 @@ class GenericApiToolFactory:
             else current_user_variables()
         )
         params = _apply_user_placeholders(config, params, variables)
+        params = apply_system_params(config.parameter_schema, params, variables)
 
         url = config.url_template
 
@@ -282,6 +303,29 @@ class GenericApiToolFactory:
 
         # 3. Request
         method = config.method.upper()
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+            raise UnsupportedMethodError(method)
+
+        signing = parse_signing_config(config)
+        if signing.enabled:
+            validate_no_reserved_signing_headers(headers)
+
+        if capture is not None and not signing.enabled:
+            if method == "GET":
+                query = remaining_params
+                body = None
+                final_url = str(httpx.URL(url, params=remaining_params))
+            else:
+                query = {}
+                body = remaining_params
+                final_url = url
+            capture.update({
+                "method": method,
+                "url": final_url,
+                "headers": dict(headers),
+                "query": query,
+                "body": body,
+            })
 
         logger.info(f"[GenericTool] Executing {config.name} ({method} {url}) with params: {remaining_params}")
 
@@ -289,7 +333,46 @@ class GenericApiToolFactory:
         # We disable trust_env=True to avoid SOCKS proxy issues if dependency is missing
         # If explicit proxy is needed, it should be configured in settings or handled via specific client config.
         async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
-            if method == "GET":
+            if signing.enabled:
+                # 先让 httpx 构造最终请求，再对**实际会发出去的** path/query/body
+                # 签名；不能拿 json= 序列化前的 dict 另算一份。
+                request = client.build_request(
+                    method,
+                    url,
+                    params=remaining_params if method == "GET" else None,
+                    json=remaining_params if method != "GET" else None,
+                    headers=headers,
+                )
+                raw_path = request.url.raw_path.split(b"?", 1)[0].decode("ascii")
+                raw_query = request.url.query.decode("ascii")
+                signature_headers = sign_request(
+                    method=method,
+                    raw_path=raw_path,
+                    raw_query=raw_query,
+                    body=request.content,
+                    secret=signing.secret or "",
+                    key_id=signing.key_id or "",
+                )
+                request.headers.update(signature_headers)
+                headers = dict(request.headers)
+                if capture is not None:
+                    capture.update({
+                        "method": method,
+                        "url": str(request.url),
+                        "headers": dict(headers),
+                        "query": dict(remaining_params) if method == "GET" else {},
+                        "body": remaining_params if method != "GET" else None,
+                    })
+                if method == "GET":
+                    response = await client.get(str(request.url), headers=headers)
+                else:
+                    response = await client.request(
+                        method,
+                        str(request.url),
+                        content=request.content,
+                        headers=headers,
+                    )
+            elif method == "GET":
                 response = await client.get(url, params=remaining_params, headers=headers)
             elif method in ["POST", "PUT", "PATCH", "DELETE"]:
                 # Default to JSON body for non-GET
@@ -298,6 +381,17 @@ class GenericApiToolFactory:
                 raise UnsupportedMethodError(method)
 
         elapsed_ms = int((time.monotonic() - started) * 1000)
+
+        if capture is not None:
+            # 请求成功后用 httpx 真正构造出的 URL/Headers 覆盖预捕获值：
+            # 这样连 httpx 自动补的 Content-Type、query 编码也能在试跑详情里看到。
+            try:
+                actual_request = response.request
+            except Exception:
+                actual_request = None
+            if actual_request is not None:
+                capture["url"] = str(actual_request.url)
+                capture["headers"] = dict(actual_request.headers)
 
         if raise_on_http_error and not 200 <= response.status_code < 300:
             raise RuntimeError(

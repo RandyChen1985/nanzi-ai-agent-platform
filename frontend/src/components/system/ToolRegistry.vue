@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import { toolApi, type SysApiTool, type SysApiToolCreate } from '../../api/tool'
+import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch } from 'vue'
+import { toolApi, type SysApiTool } from '../../api/tool'
 import { SUPPORTED_HTTP_METHODS } from '../../utils/toolMethods'
+import { parseToolSchema, validateSystemParams } from '../../utils/toolSchema'
+import { isValidSigningKeyId, isValidSigningSecret } from '../../utils/requestSigning'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
 import ConfirmModal from '../ConfirmModal.vue'
+import ApiToolTester from './ApiToolTester.vue'
+import ToolHeadersEditor from './ToolHeadersEditor.vue'
 import ToolParamEditor from './ToolParamEditor.vue'
 import ToolWizard from './ToolWizard.vue'
+import ToolSigningEditor from './ToolSigningEditor.vue'
 import { 
   PencilSquareIcon,
   TrashIcon,
-  DocumentDuplicateIcon
+  DocumentDuplicateIcon,
+  PlayIcon
 } from '@heroicons/vue/24/outline'
 
 const { showToast } = useToast()
@@ -26,25 +32,132 @@ const showModal = ref(false)
 const isEditing = ref(false)
 const showDeleteConfirm = ref(false)
 const deletingTool = ref<SysApiTool | null>(null)
+const showDiscardConfirm = ref(false)
+const saving = ref(false)
+const formError = ref('')
+const fieldErrors = ref<Partial<Record<'name' | 'url_template' | 'headers_str' | 'parameter_schema_str' | 'signing', string>>>({})
+const suppressFormWatch = ref(false)
+const wizardDirty = ref(false)
+const initialFormSnapshot = ref('')
 const groupFilter = ref('all')
 const selectedToolIds = ref<Set<string>>(new Set())
 const showBatchGroupModal = ref(false)
 const batchGroupName = ref('')
+const showGroupManager = ref(false)
+const groupManagerSource = ref('')
+const groupManagerTarget = ref('')
+const groupManagerSaving = ref(false)
+const showGroupClearConfirm = ref(false)
+const quickTestTool = ref<SysApiTool | null>(null)
+const advancedOpen = ref(false)
+const toggleTarget = ref<{ tool: SysApiTool; active: boolean } | null>(null)
+const toggleSaving = ref(false)
 // 筛选下拉里代表「没有业务分组」的哨兵值
 const UNGROUPED_FILTER = '__ungrouped__'
 // 列表视图（扁平行）/ 分组视图（按业务分组折叠）
 const viewMode = ref<'list' | 'group'>('list')
 const collapsedRegistryGroups = ref<Set<string>>(new Set())
 
-const toolForm = ref<Partial<SysApiToolCreate> & { id?: string; parameter_schema_str: string; headers_str: string }>({
+type ToolForm = {
+  id?: string
+  name: string
+  description: string
+  method: string
+  url_template: string
+  headers_str: string
+  parameter_schema_str: string
+  signing_enabled: boolean
+  signing_key_id: string | null
+  signing_algorithm: string
+  signing_secret: string
+  signing_secret_configured: boolean
+  is_active: boolean
+  group_name: string
+}
+
+const toolForm = ref<ToolForm>({
   name: '',
   description: '',
   method: 'GET',
   url_template: '',
   headers_str: '{}',
   parameter_schema_str: '{}',
+  signing_enabled: false,
+  signing_key_id: null,
+  signing_algorithm: 'hmac-sha256',
+  signing_secret: '',
+  signing_secret_configured: false,
   is_active: true,
   group_name: ''
+})
+
+const snapshotForm = () => JSON.stringify(toolForm.value)
+
+const isDirty = computed(() => showModal.value && (
+    wizardDirty.value || snapshotForm() !== initialFormSnapshot.value
+))
+
+const clearFormErrors = () => {
+    formError.value = ''
+    fieldErrors.value = {}
+}
+
+const fieldElement = (key: string): HTMLElement | null => (
+    document.querySelector(`[data-tool-field="${key}"]`) as HTMLElement | null
+)
+
+const focusField = async (key: string) => {
+    if (key === 'headers_str' || key === 'signing') advancedOpen.value = true
+    await nextTick()
+    const element = fieldElement(key)
+    element?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    element?.focus()
+}
+
+const requestCloseModal = () => {
+    if (saving.value) return
+    if (isDirty.value) {
+        showDiscardConfirm.value = true
+        return
+    }
+    showModal.value = false
+}
+
+const confirmDiscard = () => {
+    showDiscardConfirm.value = false
+    showModal.value = false
+    clearFormErrors()
+}
+
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+    if (!isDirty.value) return
+    event.preventDefault()
+    event.returnValue = ''
+}
+
+// 用户重新编辑时收起上一轮的行内错误；保存/校验期间不要清掉刚设置的错误。
+watch(toolForm, () => {
+    if (!suppressFormWatch.value) clearFormErrors()
+}, { deep: true })
+
+const headerCount = computed(() => {
+    try {
+        const parsed = JSON.parse(toolForm.value.headers_str || '{}')
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? Object.keys(parsed).length
+            : 0
+    } catch {
+        return 0
+    }
+})
+
+const urlPlaceholders = computed(() => {
+    const names = new Set<string>()
+    for (const match of toolForm.value.url_template.matchAll(/\{([^{}]+)\}/g)) {
+        const name = match[1]
+        if (name) names.add(name)
+    }
+    return Array.from(names)
 })
 
 const filteredTools = computed(() => {
@@ -242,12 +355,22 @@ const openModal = (tool?: SysApiTool, isClone = false) => {
     if (tool) {
         isEditing.value = !isClone
         // If clone, reset ID and append copy to name
-        const initialForm = { 
-            ...tool, 
+        const initialForm: ToolForm = {
             id: isClone ? undefined : tool.id,
             name: isClone ? `${tool.name}_copy` : tool.name,
+            description: tool.description || '',
+            method: tool.method || 'GET',
+            url_template: tool.url_template || '',
             headers_str: JSON.stringify(tool.headers || {}, null, 2),
-            parameter_schema_str: JSON.stringify(tool.parameter_schema || {}, null, 2)
+            parameter_schema_str: JSON.stringify(tool.parameter_schema || {}, null, 2),
+            signing_enabled: !!tool.signing_enabled,
+            // 密钥永远不回显：编辑时留空表示沿用，克隆时必须重新生成
+            signing_secret: '',
+            signing_key_id: isClone ? null : (tool.signing_key_id || null),
+            signing_algorithm: tool.signing_algorithm || 'hmac-sha256',
+            signing_secret_configured: isClone ? false : !!tool.signing_secret_configured,
+            is_active: !!tool.is_active,
+            group_name: tool.group_name || '',
         }
         toolForm.value = initialForm
     } else {
@@ -259,12 +382,22 @@ const openModal = (tool?: SysApiTool, isClone = false) => {
             url_template: '',
             headers_str: '{}',
             parameter_schema_str: '{}',
+            signing_enabled: false,
+            signing_key_id: null,
+            signing_algorithm: 'hmac-sha256',
+            signing_secret: '',
+            signing_secret_configured: false,
             is_active: true,
             group_name: ''
         }
     }
-    // 默认进表单模式，保持既有操作路径；向导由用户主动切换
-    editorMode.value = 'form'
+    // 新建优先走向导；编辑已有工具走完整表单，避免用户每次都被迫从第 1 步开始。
+    editorMode.value = tool && !isClone ? 'form' : 'wizard'
+    clearFormErrors()
+    advancedOpen.value = false
+    wizardDirty.value = false
+    suppressFormWatch.value = false
+    initialFormSnapshot.value = snapshotForm()
     showModal.value = true
 }
 
@@ -272,37 +405,208 @@ const cloneTool = (tool: SysApiTool) => {
     openModal(tool, true)
 }
 
-const saveTool = async () => {
-    if (!toolForm.value.name || !toolForm.value.url_template) {
-        showToast('请填写名称和 URL 模板', 'warning')
+const validateForm = (): { headers: Record<string, any>; schema: Record<string, any> } | null => {
+    clearFormErrors()
+    const name = toolForm.value.name.trim()
+    const urlTemplate = toolForm.value.url_template.trim()
+    if (!name) {
+        fieldErrors.value.name = '请填写工具名称'
+        formError.value = editorMode.value === 'wizard'
+            ? '请先在向导第 2 步填写工具名称，再保存。'
+            : '请先修正表单里的错误，再保存。'
+        if (editorMode.value !== 'wizard') void focusField('name')
+        return null
+    }
+    if (!urlTemplate) {
+        fieldErrors.value.url_template = '请填写 URL 模板'
+        formError.value = editorMode.value === 'wizard'
+            ? '请先在向导第 1 步粘贴请求地址并解析，再保存。'
+            : '请先修正表单里的错误，再保存。'
+        if (editorMode.value !== 'wizard') void focusField('url_template')
+        return null
+    }
+    toolForm.value.name = name
+    toolForm.value.url_template = urlTemplate
+
+    let headers: Record<string, any>
+    try {
+        const parsed = JSON.parse(toolForm.value.headers_str || '{}')
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Headers 必须是 JSON 对象')
+        }
+        headers = parsed
+    } catch (e: any) {
+        fieldErrors.value.headers_str = e?.message?.includes('必须是 JSON 对象')
+            ? e.message
+            : 'Headers 格式错误（非 JSON）'
+        formError.value = 'Headers 配置有误，请先修正。'
+        void focusField('headers_str')
+        return null
+    }
+
+    let schema: Record<string, any>
+    try {
+        const parsed = JSON.parse(toolForm.value.parameter_schema_str || '{}')
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('参数定义必须是 JSON 对象')
+        }
+        schema = parsed
+    } catch (e: any) {
+        fieldErrors.value.parameter_schema_str = e?.message?.includes('必须是 JSON 对象')
+            ? e.message
+            : '参数定义格式错误（非 JSON）'
+        formError.value = '参数定义有误，请先修正。'
+        void focusField('parameter_schema_str')
+        return null
+    }
+
+    const parsedSchema = parseToolSchema(toolForm.value.parameter_schema_str)
+    if (parsedSchema) {
+        const systemParamErrors = validateSystemParams(
+            parsedSchema.systemParams,
+            parsedSchema.params,
+        )
+        const firstError = systemParamErrors[0]
+        if (firstError) {
+            fieldErrors.value.parameter_schema_str = firstError
+            formError.value = firstError
+            void focusField('parameter_schema_str')
+            return null
+        }
+    }
+
+    const signingEnabled = !!toolForm.value.signing_enabled
+    const signingKeyId = String(toolForm.value.signing_key_id || '').trim()
+    const signingSecret = toolForm.value.signing_secret || ''
+    if (signingEnabled) {
+        if (!isValidSigningKeyId(signingKeyId)) {
+            const message = '请求签名已开启：Key-Id 必须是 16 位小写十六进制，请重新生成'
+            formError.value = message
+            fieldErrors.value.signing = message
+            void focusField('signing')
+            return null
+        }
+        if (!signingSecret && !toolForm.value.signing_secret_configured) {
+            const message = '请求签名已开启：请先生成或填写签名密钥'
+            formError.value = message
+            fieldErrors.value.signing = message
+            void focusField('signing')
+            return null
+        }
+        if (signingSecret && !isValidSigningSecret(signingSecret)) {
+            const message = '签名密钥必须是 32-128 个可打印 ASCII 字符'
+            formError.value = message
+            fieldErrors.value.signing = message
+            void focusField('signing')
+            return null
+        }
+    }
+    return { headers, schema }
+}
+
+const requestToggleActive = (tool: SysApiTool) => {
+    if (toggleSaving.value) return
+    toggleTarget.value = { tool, active: !tool.is_active }
+}
+
+const confirmToggleActive = async () => {
+    const target = toggleTarget.value
+    if (!target || toggleSaving.value) return
+    toggleSaving.value = true
+    try {
+        await toolApi.update(target.tool.id, { is_active: target.active })
+        target.tool.is_active = target.active
+        showToast(target.active ? '工具已启用' : '工具已停用', 'success')
+        toggleTarget.value = null
+    } catch (e: any) {
+        showToast('更新状态失败: ' + (e.response?.data?.detail || e.message), 'error')
+    } finally {
+        toggleSaving.value = false
+    }
+}
+
+const groupManagerTools = computed(() => {
+    if (!groupManagerSource.value) return []
+    if (groupManagerSource.value === UNGROUPED_FILTER) {
+        return tools.value.filter((tool) => !String(tool.group_name || '').trim())
+    }
+    return tools.value.filter((tool) => String(tool.group_name || '').trim() === groupManagerSource.value)
+})
+
+const openGroupManager = () => {
+    const firstGroup = groupFilterOptions.value.groups[0]?.[0] || ''
+    groupManagerSource.value = firstGroup || (groupFilterOptions.value.ungrouped ? UNGROUPED_FILTER : '')
+    groupManagerTarget.value = groupManagerSource.value === UNGROUPED_FILTER ? '' : groupManagerSource.value
+    showGroupManager.value = true
+}
+
+const onGroupManagerSourceChange = () => {
+    groupManagerTarget.value = groupManagerSource.value === UNGROUPED_FILTER ? '' : groupManagerSource.value
+}
+
+const applyGroupChange = async (groupName: string | null) => {
+    if (groupManagerSaving.value) return
+    const ids = groupManagerTools.value.map((tool) => tool.id)
+    if (ids.length === 0) return
+    groupManagerSaving.value = true
+    try {
+        await toolApi.batchSetGroup(ids, groupName)
+        showToast(groupName ? `已更新 ${ids.length} 个工具的分组` : `已清空 ${ids.length} 个工具的分组`, 'success')
+        showGroupManager.value = false
+        showGroupClearConfirm.value = false
+        fetchTools()
+    } catch (e: any) {
+        showToast('更新分组失败: ' + (e.response?.data?.detail || e.message), 'error')
+    } finally {
+        groupManagerSaving.value = false
+    }
+}
+
+const renameOrMergeGroup = () => {
+    const target = groupManagerTarget.value.trim()
+    if (!target) {
+        showToast('请填写新的分组名称，留空请使用「清空分组」', 'warning')
         return
     }
-    
+    if (target === groupManagerSource.value) {
+        showToast('分组名称没有变化', 'warning')
+        return
+    }
+    void applyGroupChange(target)
+}
+
+const clearSelectedGroup = () => {
+    showGroupClearConfirm.value = true
+}
+
+const saveTool = async () => {
+    if (saving.value) return
+    saving.value = true
+    suppressFormWatch.value = true
+    const validated = validateForm()
+    if (!validated) {
+        saving.value = false
+        void nextTick(() => { suppressFormWatch.value = false })
+        return
+    }
+
     try {
-        let headers = {}
-        let schema = {}
-        
-        try {
-            headers = JSON.parse(toolForm.value.headers_str || '{}')
-        } catch (e) {
-            showToast('Headers 格式错误 (非 JSON)', 'error')
-            return
-        }
-        
-        try {
-            schema = JSON.parse(toolForm.value.parameter_schema_str || '{}')
-        } catch (e) {
-            showToast('参数定义格式错误 (非 JSON)', 'error')
-            return
-        }
-        
+        const signingEnabled = !!toolForm.value.signing_enabled
+        const signingKeyId = String(toolForm.value.signing_key_id || '').trim()
+        const signingSecret = toolForm.value.signing_secret || ''
         const payload: any = {
             name: toolForm.value.name,
             description: toolForm.value.description,
             method: toolForm.value.method,
             url_template: toolForm.value.url_template,
-            headers: headers,
-            parameter_schema: schema,
+            headers: validated.headers,
+            parameter_schema: validated.schema,
+            signing_enabled: signingEnabled,
+            ...(signingEnabled ? {
+                signing_key_id: signingKeyId,
+                signing_algorithm: 'hmac-sha256',
+            } : {}),
+            ...(signingEnabled && signingSecret ? { signing_secret: signingSecret } : {}),
             is_active: toolForm.value.is_active,
             group_name: (toolForm.value.group_name || '').trim() || null
         }
@@ -314,10 +618,19 @@ const saveTool = async () => {
             await toolApi.create(payload)
             showToast('创建成功', 'success')
         }
+        // 密钥已经交给服务端加密保存，前端不再保留明文
+        toolForm.value.signing_secret = ''
+        if (signingEnabled) toolForm.value.signing_secret_configured = true
+        initialFormSnapshot.value = snapshotForm()
+        wizardDirty.value = false
         showModal.value = false
         fetchTools()
     } catch (e: any) {
-        showToast('保存失败: ' + (e.response?.data?.detail || e.message), 'error')
+        formError.value = '保存失败: ' + (e.response?.data?.detail || e.message)
+        showToast(formError.value, 'error')
+    } finally {
+        saving.value = false
+        void nextTick(() => { suppressFormWatch.value = false })
     }
 }
 
@@ -345,6 +658,11 @@ defineExpose({ refresh: fetchTools })
 
 onMounted(() => {
   fetchTools()
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 </script>
 
@@ -353,15 +671,23 @@ onMounted(() => {
       <div class="bg-white shadow rounded-lg overflow-hidden">
          <div class="p-4 border-b border-gray-100 space-y-3">
             <!-- 第一行：标题与主操作分开，标题永不折行 -->
-            <div class="flex items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-3">
                 <h3 class="text-lg font-medium text-gray-900 whitespace-nowrap">API 工具注册表</h3>
-                <button
-                    v-if="canSave"
-                    @click="openModal()"
-                    class="shrink-0 px-3 py-2 bg-primary text-white text-sm rounded-md hover:bg-primary-dark transition-colors"
-                >
-                    + 添加工具
-                </button>
+                <div class="flex items-center gap-2">
+                    <button
+                        v-if="canSave"
+                        type="button"
+                        class="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        @click="openGroupManager"
+                    >分组管理</button>
+                    <button
+                        v-if="canSave"
+                        @click="openModal()"
+                        class="shrink-0 px-3 py-2 bg-primary text-white text-sm rounded-md hover:bg-primary-dark transition-colors"
+                    >
+                        + 添加工具
+                    </button>
+                </div>
             </div>
             <!-- 第二行：筛选与视图控件独占一行（搜索框自适应吃掉剩余宽度），不再挤标题 -->
             <div class="flex flex-wrap items-center gap-2">
@@ -478,8 +804,8 @@ onMounted(() => {
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">名称</th>
                     <th class="w-24 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Method</th>
                     <th class="w-32 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">业务分组</th>
-                    <th class="w-24 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">状态</th>
-                    <th class="w-32 px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">操作</th>
+                    <th class="w-32 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">状态</th>
+                    <th class="w-44 px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">操作</th>
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
@@ -517,31 +843,69 @@ onMounted(() => {
                         >{{ t.group_name }}</button>
                         <span v-else class="text-gray-300">—</span>
                     </td>
-                     <td class="px-6 py-4 whitespace-nowrap">
-                        <span v-if="t.is_active" class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">启用</span>
-                        <span v-else class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">停用</span>
+                     <td class="w-32 px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center gap-2">
+                            <span v-if="t.is_active" class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">启用</span>
+                            <span v-else class="px-2 inline-flex whitespace-nowrap text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">停用</span>
+                            <button
+                                v-if="canSave"
+                                type="button"
+                                role="switch"
+                                :aria-checked="t.is_active"
+                                :aria-label="`${t.is_active ? '停用' : '启用'}工具 ${t.name}`"
+                                :title="`${t.is_active ? '停用' : '启用'}工具`"
+                                class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                                :class="t.is_active ? 'bg-primary' : 'bg-gray-300'"
+                                @click="requestToggleActive(t)"
+                            >
+                                <span
+                                    class="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform"
+                                    :class="t.is_active ? 'translate-x-[18px]' : 'translate-x-[3px]'"
+                                ></span>
+                            </button>
+                        </div>
                      </td>
-                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div v-if="canSave" class="flex items-center justify-end space-x-2">
+                     <td class="w-44 px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div v-if="canSave" class="flex items-center justify-end space-x-1.5">
+                            <button
+                                v-if="canSave"
+                                type="button"
+                                @click="quickTestTool = t"
+                                title="试跑"
+                                aria-label="试跑工具"
+                                class="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors"
+                            >
+                                <PlayIcon class="h-4 w-4" />
+                            </button>
+
                             <button 
+                                v-if="canSave"
+                                type="button"
                                 @click="openModal(t)" 
                                 title="编辑"
+                                aria-label="编辑工具"
                                 class="p-1.5 text-primary hover:bg-blue-50 rounded-md transition-colors"
                             >
                                 <PencilSquareIcon class="h-4 w-4" />
                             </button>
 
                             <button 
+                                v-if="canSave"
+                                type="button"
                                 @click="cloneTool(t)" 
                                 title="复制"
+                                aria-label="复制工具"
                                 class="p-1.5 text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
                             >
                                 <DocumentDuplicateIcon class="h-4 w-4" />
                             </button>
                             
                             <button 
+                                v-if="canSave"
+                                type="button"
                                 @click="deleteTool(t)" 
                                 title="删除"
+                                aria-label="删除工具"
                                 class="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
                             >
                                 <TrashIcon class="h-4 w-4" />
@@ -566,7 +930,7 @@ onMounted(() => {
       <!-- Modal -->
       <Teleport to="body">
         <div v-if="showModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm">
-            <div class="bg-white rounded-xl shadow-xl max-w-5xl w-full p-6 space-y-4 text-left max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <div class="bg-white rounded-xl shadow-xl max-w-5xl w-full p-4 sm:p-6 space-y-4 text-left max-h-[90vh] overflow-y-auto custom-scrollbar">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <h3 class="text-lg font-bold text-gray-900">{{ isEditing ? '编辑工具' : '添加新工具' }}</h3>
                     <!-- 两种填写方式：选中态给足对比（白底 + 蓝字 + 蓝描边），未选中压到灰底上 -->
@@ -594,48 +958,111 @@ onMounted(() => {
                         >推荐小白使用</span></button>
                     </div>
                 </div>
+
+                <div v-if="formError" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                    {{ formError }}
+                </div>
               
                 <!-- 向导模式：4 步引导，写的是同一份 toolForm -->
                 <ToolWizard
                     v-if="editorMode === 'wizard'"
                     :tool-form="toolForm"
+                    @dirty-change="wizardDirty = $event"
                 />
 
                 <div v-else class="space-y-4">
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
-                           <label class="block text-sm font-medium text-gray-700">工具名称 (唯一标识)</label>
-                           <input v-model="toolForm.name" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. search_weather" />
+                           <label for="tool-name" class="block text-sm font-medium text-gray-700">工具名称 (唯一标识)</label>
+                           <input id="tool-name" v-model="toolForm.name" data-tool-field="name" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. search_weather" />
+                           <p v-if="fieldErrors.name" class="mt-1 text-xs text-red-600">{{ fieldErrors.name }}</p>
                         </div>
                         <div>
-                           <label class="block text-sm font-medium text-gray-700">HTTP 方法</label>
-                           <select v-model="toolForm.method" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
+                           <label for="tool-method" class="block text-sm font-medium text-gray-700">HTTP 方法</label>
+                           <select id="tool-method" v-model="toolForm.method" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
                                <option v-for="method in SUPPORTED_HTTP_METHODS" :key="method" :value="method">{{ method }}</option>
                            </select>
                         </div>
                     </div>
                   
                     <div>
-                       <label class="block text-sm font-medium text-gray-700">URL 模板</label>
-                       <input v-model="toolForm.url_template" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono" placeholder="https://api.example.com/v1/weather?city={city}" />
-                       <p class="text-xs text-gray-500 mt-1">使用 {param} 标记需要替换的参数</p>
+                       <label for="tool-url-template" class="block text-sm font-medium text-gray-700">URL 模板</label>
+                       <input id="tool-url-template" v-model="toolForm.url_template" data-tool-field="url_template" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono" placeholder="https://api.example.com/v1/weather?city={city}" />
+                       <p v-if="fieldErrors.url_template" class="mt-1 text-xs text-red-600">{{ fieldErrors.url_template }}</p>
+                       <div class="mt-1 flex flex-wrap items-center justify-between gap-2">
+                           <p class="text-xs text-gray-500">使用 {param} 标记需要替换的参数；路径中的参数最终会做路径替换，其余参数按方法落到 query/body。</p>
+                           <button type="button" class="shrink-0 text-xs font-medium text-primary hover:underline" @click="editorMode = 'wizard'">从请求重新识别参数</button>
+                       </div>
+                       <div v-if="urlPlaceholders.length" class="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
+                           <span>地址中的占位符：</span>
+                           <code v-for="name in urlPlaceholders" :key="name" class="rounded bg-blue-50 px-1.5 py-0.5 font-mono text-blue-700">{{ '{' + name + '}' }}</code>
+                       </div>
                     </div>
                   
                     <div>
-                       <label class="block text-sm font-medium text-gray-700">描述</label>
-                       <textarea v-model="toolForm.description" rows="2" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="描述工具的功能..."></textarea>
+                       <label for="tool-description" class="block text-sm font-medium text-gray-700">描述</label>
+                       <textarea id="tool-description" v-model="toolForm.description" rows="2" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="描述工具的功能..."></textarea>
+                       <p class="text-xs text-gray-500 mt-1">这段描述会直接交给模型，用来判断「什么场景该调用它」。</p>
                     </div>
-                  
-                    <ToolParamEditor v-model="toolForm.parameter_schema_str" />
-                    <div>
-                       <label class="block text-sm font-medium text-gray-700">业务分组</label>
-                       <input v-model="toolForm.group_name" list="tool-group-options" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. 履约罚款（留空表示未分组）" />
-                       <p class="text-xs text-gray-500 mt-1">智能体配置的「工具能力」步骤会按它归组；留空则该工具落在「其他扩展工具」</p>
+
+                    <div data-tool-field="parameter_schema_str" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
+                        <ToolParamEditor
+                            v-model="toolForm.parameter_schema_str"
+                            :method="toolForm.method"
+                            :url-template="toolForm.url_template"
+                        />
+                        <p v-if="fieldErrors.parameter_schema_str" class="mt-1 text-xs text-red-600">{{ fieldErrors.parameter_schema_str }}</p>
                     </div>
 
                     <div>
-                       <label class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
-                       <textarea v-model="toolForm.headers_str" rows="3" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "Authorization": "Bearer token" }'></textarea>
+                       <label for="tool-group" class="block text-sm font-medium text-gray-700">业务分组</label>
+                       <input id="tool-group" v-model="toolForm.group_name" list="tool-group-options" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. 履约罚款（留空表示未分组）" />
+                       <p class="text-xs text-gray-500 mt-1">智能体配置的「工具能力」步骤会按它归组；留空则该工具落在「其他扩展工具」</p>
+                    </div>
+
+                    <details
+                        :open="advancedOpen"
+                        class="rounded-lg border border-gray-200 bg-gray-50/40"
+                        @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
+                    >
+                        <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-gray-700">
+                            <span>高级请求配置：Headers 与请求签名</span>
+                            <span v-if="headerCount" class="ml-2 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">{{ headerCount }} 个 Header</span>
+                            <span v-if="toolForm.signing_enabled" class="ml-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">签名已开启</span>
+                            <span class="ml-1 text-xs font-normal text-gray-400">需要鉴权或验签时展开</span>
+                        </summary>
+                        <div class="space-y-4 border-t border-gray-200 px-3 py-3">
+                            <div data-tool-field="headers_str" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
+                                <ToolHeadersEditor
+                                    v-model="toolForm.headers_str"
+                                    :error="fieldErrors.headers_str"
+                                />
+                            </div>
+
+                            <div data-tool-field="signing" class="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30" tabindex="-1">
+                                <p v-if="fieldErrors.signing" class="mb-1 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-700">{{ fieldErrors.signing }}</p>
+                                <ToolSigningEditor
+                                    v-model:enabled="toolForm.signing_enabled"
+                                    v-model:key-id="toolForm.signing_key_id"
+                                    v-model:secret="toolForm.signing_secret"
+                                    :configured="!!toolForm.signing_secret_configured"
+                                />
+                            </div>
+                        </div>
+                    </details>
+
+                    <div class="border-t border-gray-100 pt-4">
+                        <ApiToolTester
+                            :method="toolForm.method || 'GET'"
+                            :url-template="toolForm.url_template || ''"
+                            :headers-str="toolForm.headers_str || '{}'"
+                            :schema-str="toolForm.parameter_schema_str || '{}'"
+                            :signing-enabled="!!toolForm.signing_enabled"
+                            :signing-algorithm="toolForm.signing_algorithm || 'hmac-sha256'"
+                            :signing-key-id="toolForm.signing_key_id"
+                            :signing-secret="toolForm.signing_secret || ''"
+                            :tool-id="toolForm.id"
+                        />
                     </div>
 
                     <div class="flex items-center">
@@ -644,9 +1071,22 @@ onMounted(() => {
                     </div>
                 </div>
               
-                <div class="flex justify-end space-x-3 mt-6">
-                    <button @click="showModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
-                    <button @click="saveTool" class="px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark">保存</button>
+                <div class="sticky bottom-0 z-10 -mx-4 -mb-4 mt-6 flex flex-wrap justify-end gap-3 border-t border-gray-100 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:-mb-6 sm:px-6">
+                    <button
+                        type="button"
+                        :disabled="saving"
+                        class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        @click="requestCloseModal"
+                    >取消</button>
+                    <button
+                        type="button"
+                        :disabled="saving"
+                        class="inline-flex items-center gap-2 px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+                        @click="saveTool"
+                    >
+                        <span v-if="saving" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"></span>
+                        {{ saving ? '保存中...' : '保存' }}
+                    </button>
                 </div>
             </div>
         </div>
@@ -668,6 +1108,89 @@ onMounted(() => {
             </div>
         </div>
       </Teleport>
+
+      <Teleport to="body">
+        <div v-if="showGroupManager" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm">
+          <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-lg font-bold text-gray-900">分组管理</h3>
+                <p class="mt-1 text-xs leading-relaxed text-gray-500">重命名会更新该组全部工具；输入已有分组名会自动合并。</p>
+              </div>
+              <button type="button" class="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" aria-label="关闭分组管理" @click="showGroupManager = false">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div v-if="groupFilterOptions.groups.length || groupFilterOptions.ungrouped" class="mt-4 space-y-4">
+              <div>
+                <label for="group-manager-source" class="block text-sm font-medium text-gray-700">选择分组</label>
+                <select id="group-manager-source" v-model="groupManagerSource" :disabled="groupManagerSaving" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary" @change="onGroupManagerSourceChange">
+                  <option v-for="[name, count] in groupFilterOptions.groups" :key="name" :value="name">{{ name }} ({{ count }})</option>
+                  <option v-if="groupFilterOptions.ungrouped" :value="UNGROUPED_FILTER">未分组 ({{ groupFilterOptions.ungrouped }})</option>
+                </select>
+                <p class="mt-1 text-xs text-gray-400">当前组共 {{ groupManagerTools.length }} 个工具</p>
+              </div>
+
+              <div v-if="groupManagerTools.length">
+                <label for="group-manager-target" class="block text-sm font-medium text-gray-700">新名称</label>
+                <input id="group-manager-target" v-model="groupManagerTarget" list="tool-group-options" :disabled="groupManagerSaving" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary" placeholder="输入新名称，或选择已有分组进行合并" />
+                <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <button type="button" :disabled="groupManagerSaving || groupManagerSource === UNGROUPED_FILTER" class="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50" @click="clearSelectedGroup">清空分组</button>
+                  <button type="button" :disabled="groupManagerSaving" class="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50" @click="renameOrMergeGroup">
+                    {{ groupManagerSaving ? '处理中...' : '重命名 / 合并' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p v-else class="mt-4 rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-400">还没有可管理的分组。</p>
+          </div>
+        </div>
+      </Teleport>
+
+      <ApiToolTester
+        v-if="quickTestTool"
+        :method="quickTestTool.method || 'GET'"
+        :url-template="quickTestTool.url_template || ''"
+        :headers-str="JSON.stringify(quickTestTool.headers || {})"
+        :schema-str="JSON.stringify(quickTestTool.parameter_schema || {})"
+        :signing-enabled="!!quickTestTool.signing_enabled"
+        :signing-algorithm="quickTestTool.signing_algorithm || 'hmac-sha256'"
+        :signing-key-id="quickTestTool.signing_key_id"
+        :signing-secret="''"
+        :tool-id="quickTestTool.id"
+        :tool-label="quickTestTool.name"
+        auto-open
+        hide-trigger
+        @closed="quickTestTool = null"
+      />
+
+      <ConfirmModal
+          v-if="toggleTarget"
+          :title="toggleTarget.active ? '启用工具' : '停用工具'"
+          :message="toggleTarget.active ? `启用「${toggleTarget.tool.name}」后，智能体可以立即调用它。` : `停用「${toggleTarget.tool.name}」后，智能体将不再调用它，但配置会保留。`"
+          :confirm-text="toggleTarget.active ? '确认启用' : '确认停用'"
+          @confirm="confirmToggleActive"
+          @cancel="toggleTarget = null"
+      />
+
+      <ConfirmModal
+          v-if="showGroupClearConfirm"
+          title="清空分组"
+          :message="`确定要把「${groupManagerSource === UNGROUPED_FILTER ? '未分组' : groupManagerSource}」里的 ${groupManagerTools.length} 个工具移出分组吗？工具本身不会被删除。`"
+          confirm-text="清空分组"
+          @confirm="applyGroupChange(null)"
+          @cancel="showGroupClearConfirm = false"
+      />
+
+      <ConfirmModal
+          v-if="showDiscardConfirm"
+          title="放弃未保存的修改？"
+          message="关闭后，本次修改的名称、参数、Headers 和签名配置都会丢失。"
+          confirm-text="放弃修改"
+          @confirm="confirmDiscard"
+          @cancel="showDiscardConfirm = false"
+      />
 
       <ConfirmModal
           v-if="showDeleteConfirm"

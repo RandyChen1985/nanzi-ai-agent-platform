@@ -1716,7 +1716,7 @@
       v-model:keep-open-on-select="workspaceKeepOpenOnSelect"
       v-model:pinned="workspacePinned"
       v-model:drawer-width="workspaceDrawerWidthReactive"
-      :pinned-dock-class="workspacePinnedDockClass"
+      :pinned-dock-right="workspacePinnedDockRightPx"
       :conversation-id="conversationId"
       :session-started="messages.length > 0"
       @select="handleSelectLocalFs"
@@ -1739,7 +1739,7 @@
       v-model="showMemoryDrawer"
       v-model:keep-open-on-select="memoryKeepOpenOnSelect"
       v-model:pinned="memoryPinned"
-      :pinned-dock-class="memoryPinnedDockClass"
+      :pinned-dock-right="memoryPinnedDockRightPx"
       :attached-conversation-ids="attachedMemoryConversationIds"
       @mount="handleMemoryMount"
       @cleared="handleMemoryCleared"
@@ -1774,6 +1774,17 @@
                       </div>
 
                       <h3 class="text-sm sm:text-lg font-black text-gray-800 dark:text-gray-100 truncate">会话回溯详情</h3>
+                      <!-- 排查「两个窗口是不是同一个会话」时，界面上必须有个地方能看到会话 ID；
+                           只露前 8 位（完整 UUID 会挤爆标题行），title 给全文，点击复制完整值。 -->
+                      <button
+                          v-if="traceLogData?.history?.conversation_id"
+                          type="button"
+                          class="text-[9px] sm:text-xs text-gray-400 font-mono bg-white dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-600 flex-shrink-0 hover:text-primary hover:border-primary/40"
+                          :title="`点击复制完整会话 ID：${traceLogData.history.conversation_id}`"
+                          @click.stop="copyToClipboard(traceLogData.history.conversation_id, 'conversation_id')"
+                      >
+                          ID {{ String(traceLogData.history.conversation_id).slice(0, 8) }}
+                      </button>
                       <span v-if="traceLogData?.history?.created_at" class="text-[9px] sm:text-xs text-gray-400 font-mono bg-white dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-600 flex-shrink-0">
                           {{ formatDate(traceLogData.history.created_at).split(' ')[0] }}
                       </span>
@@ -2492,6 +2503,7 @@ import { shouldStartConversationHistoryLoad } from "@/utils/conversationHistoryR
 import { isApiSuccess } from "@/utils/apiEnvelope";
 import { isSkillForbidden } from "@/utils/skillForbidden";
 import { planHistorySync, shouldKeepRecoverySync } from "@/utils/runRecoverySync";
+import { computePinnedDrawerLayout } from "@/utils/pinnedDrawerLayout";
 import { planRecoveryCard, type RecoveryCardState } from "@/utils/recoveryCard";
 import {
   planStreamReplay,
@@ -4115,6 +4127,12 @@ const saveRoutingSettings = () => {
 const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
     if (isRoutingSettingsLocked.value) return;
     const normalizedAgentId = mode === "expert" ? String(agentId || "").trim() : "";
+    // 新建会话要沿用账号默认，本地缓存必须先同步，否则会拿到上一次的旧值。
+    savedRoutingPreference.value = {
+        routing_mode: mode,
+        expert_agent_id: normalizedAgentId,
+        routing_configured: true,
+    };
     try {
         await axios.put("/api/portal/portal-prefs/routing", {
             routing_mode: mode,
@@ -4149,6 +4167,83 @@ const resetEmbedThinkingOverrides = () => {
     reasoningEffortOverride.value = null;
     temperatureOverride.value = null;
 };
+/** 会话级专家读取序号：连续切会话时只认最后一次响应，避免旧响应覆盖新会话。 */
+let conversationRoutingLoadSequence = 0;
+
+/**
+ * 是否已按「该会话自己的记录」恢复过专家。
+ *
+ * 初始化里 `fetchAllowedAgents()` 与 `loadConversationRouting()` 是两条并发链路：
+ * 前者拿到列表后会把 config 覆盖成账号默认，后者恢复会话自己的专家。谁先到不确定，
+ * 若账号默认后到就会把刚恢复的会话专家盖掉。立起这个标志后，账号默认只做兜底。
+ */
+const conversationRoutingRestored = ref(false);
+
+/** 读取会话自己的专家选择；无记录（data=null）时保持当前值，即账号默认。 */
+const loadConversationRouting = async (cid: string) => {
+  const normalized = String(cid || "").trim();
+  if (!normalized || isRoutingSettingsLocked.value) return;
+  const sequence = ++conversationRoutingLoadSequence;
+  try {
+    const res = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/routing`,
+      { headers: embedAuthHeaders() },
+    );
+    if (sequence !== conversationRoutingLoadSequence) return;
+    if (conversationId.value !== normalized) return;
+    const routing = res.data?.data;
+    if (!routing) {
+      // 该会话没有任何记录：按「智能委派」处理，绝不回落账号默认。
+      // 账号默认会被「另一个会话里的切换」改写，回落它等于让本会话被动跟随别人。
+      config.routingMode = "auto";
+      config.expertAgentId = "";
+    } else if (routing.routing_mode === "expert" && routing.expert_agent_id) {
+      config.routingMode = "expert";
+      config.expertAgentId = String(routing.expert_agent_id);
+    } else {
+      config.routingMode = "auto";
+      config.expertAgentId = "";
+    }
+    // 列表已就绪时当场校正：会话记录的专家可能已被停用或收回权限，
+    // 不校正就会在标题上显示一串裸 ID。
+    if (
+      allowedAgents.value.length > 0
+      && config.routingMode === "expert"
+      && config.expertAgentId
+      && !allowedAgents.value.some((a: any) => a.id === config.expertAgentId)
+    ) {
+      config.routingMode = "auto";
+      config.expertAgentId = "";
+    }
+    // 恢复成功：此后账号默认只做兜底，不能再覆盖该会话自己的选择。
+    conversationRoutingRestored.value = true;
+  } catch (e) {
+    console.warn("[Routing] Failed to load conversation routing:", e);
+  }
+};
+
+/** 写入会话自己的专家选择；失败只告警——本地切换已经生效，不打断用户。 */
+const saveConversationRouting = async (
+  cid: string,
+  mode: "auto" | "expert",
+  agentId = "",
+) => {
+  const normalized = String(cid || "").trim();
+  if (!normalized || isRoutingSettingsLocked.value) return;
+  try {
+    await axios.put(
+      `/api/v1/chat/conversation/${encodeURIComponent(normalized)}/routing`,
+      {
+        routing_mode: mode,
+        expert_agent_id: mode === "expert" ? String(agentId || "").trim() : "",
+      },
+      { headers: embedAuthHeaders() },
+    );
+  } catch (e) {
+    console.warn("[Routing] Failed to save conversation routing:", e);
+  }
+};
+
 const switchToAuto = () => {
     if (isRoutingSettingsLocked.value) {
       showToast("当前链接已锁定指定智能体，无法切换到智能委派", "warning");
@@ -4157,6 +4252,7 @@ const switchToAuto = () => {
     config.routingMode = "auto";
     config.expertAgentId = "";
     void saveRoutingPreference("auto");
+    void saveConversationRouting(conversationId.value, "auto");
     showToast("已切换为智能委派模式", "success");
 };
 const switchToExpert = (agentId: string) => {
@@ -4169,6 +4265,7 @@ const switchToExpert = (agentId: string) => {
     config.expertAgentId = normalizedAgentId;
     config.routingMode = "expert";
     void saveRoutingPreference("expert", normalizedAgentId);
+    void saveConversationRouting(conversationId.value, "expert", normalizedAgentId);
     // URL 深链锁定初始化时不提示，避免首屏弹出
     if (!isRoutingSettingsLocked.value) {
       const agent = allowedAgents.value.find((a: any) => a.id === normalizedAgentId) || pinnedAgent.value;
@@ -4858,8 +4955,36 @@ const conversationStorageKey = (): string => {
     : `${INSTANCE_CONVERSATION_STORAGE_PREFIX}${scope}`;
 };
 
+/** 本标签页自己的会话指针前缀（sessionStorage）。 */
+const TAB_CONVERSATION_STORAGE_PREFIX = "nzi_embed_tab_conv_id:";
+
+/**
+ * 当前标签页的会话指针键。
+ *
+ * localStorage 是**跨标签共享**的：只写它的话，A 标签切到会话 X 后，B 标签刷新会读到
+ * 同一条指针，直接进到 A 的会话——表现为「两个窗口明明是不同会话，刷新后变成一个」。
+ * 会话都成了同一个，会话级配置（专家、资源范围）自然也就一致了。
+ *
+ * sessionStorage 的边界是「tab + origin」，正好是标签级隔离；同标签刷新后仍然保留，
+ * 所以既不会串标签，也不影响「刷新续接」。身份与实例维度沿用 localStorage 那套分桶。
+ */
+const tabConversationStorageKey = (): string => {
+  const identity = currentIdentityKey();
+  if (!identity) return "";
+  const scope = `${USER_SCOPED_STORAGE_SEGMENT}:${encodeURIComponent(identity)}`;
+  const instanceId = normalizeEmbedInstanceId(config.instanceId);
+  return instanceId
+    ? `${TAB_CONVERSATION_STORAGE_PREFIX}${scope}:${encodeURIComponent(instanceId)}`
+    : `${TAB_CONVERSATION_STORAGE_PREFIX}${scope}`;
+};
+
 const readStoredConversationId = (): string => {
   try {
+    // 本标签的指针优先：它代表「这个窗口正在看哪个会话」，不能被别的标签覆盖。
+    const tabKey = tabConversationStorageKey();
+    const tabValue = tabKey ? (sessionStorage.getItem(tabKey) || "").trim() : "";
+    if (tabValue) return tabValue;
+    // 新标签没有自己的指针时，退回跨标签共享的那条，保留「新开窗口续接上次会话」的体验。
     const key = conversationStorageKey();
     return key ? (localStorage.getItem(key) || "").trim() : "";
   } catch {
@@ -4869,6 +4994,8 @@ const readStoredConversationId = (): string => {
 
 const clearStoredConversationId = () => {
   try {
+    const tabKey = tabConversationStorageKey();
+    if (tabKey) sessionStorage.removeItem(tabKey);
     const key = conversationStorageKey();
     if (key) localStorage.removeItem(key);
   } catch {
@@ -4879,6 +5006,9 @@ const clearStoredConversationId = () => {
 const persistConversationId = (cid: string) => {
   if (!cid) return;
   try {
+    // 既写本标签（隔离用），也写共享那份（新标签续接用）。
+    const tabKey = tabConversationStorageKey();
+    if (tabKey) sessionStorage.setItem(tabKey, cid);
     const key = conversationStorageKey();
     if (key) localStorage.setItem(key, cid);
   } catch {
@@ -5741,6 +5871,8 @@ const resetSessionForIdentityChange = (
   resetConversationScopedState();
   messages.value = [];
   conversationId.value = "";
+  // 新身份没有「已恢复会话专家」这回事：不重置会让新用户的账号默认永不生效。
+  conversationRoutingRestored.value = false;
   if (!options?.preserveRequestedConversationId) requestedConversationId = "";
   resourceScope.value = emptyResourceScopeState();
   Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
@@ -5768,12 +5900,8 @@ const resetSessionForIdentityChange = (
   historyFilters.value = { ...DEFAULT_HISTORY_FILTERS };
   // 置顶同样是上一位用户的账号级偏好：先清空，等 initChat 拿到新身份后再加载。
   pinnedConversations.value = [];
-  // 侧栏开关也按账号读取：换人后重新应用新账号的值，并取消上一位用户尚未提交的保存。
-  if (historySidebarSaveTimer) {
-    clearTimeout(historySidebarSaveTimer);
-    historySidebarSaveTimer = null;
-  }
-  historySidebarPreferenceApplied = false;
+  // 侧栏开关只存本机，但仍然按身份隔离：换人后允许重新从本机缓存恢复一次。
+  historySidebarRestored = false;
   // 浏览器面板/网页预览：面板靠 session-id + viewer-token 保持实时画面（服务端 token 是
   // 会话级凭证、不绑用户），换人后既会继续显示对方画面，还能把输入转发过去。必须断开。
   browserOpenGeneration += 1;
@@ -5824,6 +5952,17 @@ const generateNewConversation = (options: { persist?: boolean } = {}) => {
   if (options.persist !== false) {
     persistConversationId(conversationId.value);
     updateActiveConversationOnServer(conversationId.value);
+    // 新会话从第一天起就有自己的专家记录：用账号默认，而不是上一个会话恢复出来的专家。
+    const accountRouting = savedRoutingPreference.value;
+    const accountMode: RoutingMode =
+      accountRouting.routing_mode === "expert" && accountRouting.expert_agent_id
+        ? "expert"
+        : "auto";
+    void saveConversationRouting(
+      conversationId.value,
+      accountMode,
+      accountMode === "expert" ? accountRouting.expert_agent_id : "",
+    );
   }
   loadResourceScope();
 };
@@ -5845,6 +5984,11 @@ const savedRoutingPreference = ref<RoutingPreference>({
 });
 
 const fetchUserPortalPreferences = async () => {
+    // 侧栏开关只存本机：与账号偏好无关，也不受这个请求成败影响，初始化时读一次即可。
+    if (!historySidebarRestored) {
+        historySidebarRestored = true;
+        restoreHistorySidebarPreference();
+    }
     try {
         const res = await axios.get("/api/portal/portal-prefs");
         const prefs = res.data?.data || {};
@@ -5866,13 +6010,6 @@ const fetchUserPortalPreferences = async () => {
         expert_agent_id: String(prefs.expert_agent_id || "").trim(),
         routing_configured: prefs.routing_configured === true,
       };
-        // 账号级侧栏开关：跨设备保持一致；只应用一次，避免后台刷新覆盖用户刚做的操作。
-        if (!historySidebarPreferenceApplied) {
-          historySidebarPreferenceApplied = true;
-          if (isHistorySidebarDesktop()) {
-            applyHistorySidebarPreference(prefs.history_sidebar_open === true);
-          }
-        }
     } catch (error) {
         console.warn("Failed to fetch user portal preferences from Redis", error);
         savedRoutingPreference.value = {
@@ -5880,11 +6017,6 @@ const fetchUserPortalPreferences = async () => {
           expert_agent_id: "",
           routing_configured: false,
         };
-        // 偏好接口不可用时退回本地缓存，至少保证本机刷新不丢状态。
-        if (!historySidebarPreferenceApplied) {
-          historySidebarPreferenceApplied = true;
-          restoreHistorySidebarPreference();
-        }
     }
 };
 
@@ -5927,15 +6059,30 @@ const fetchAllowedAgents = async (force = false) => {
 
             // 集成锁定优先于用户 Redis 偏好；普通 Embed 只应用当前用户有权限的默认智能体。
             if (!isRoutingSettingsLocked.value) {
-                const saved = savedRoutingPreference.value;
-                const savedAgentAllowed = saved.expert_agent_id
-                    && res.data.some((agent: any) => String(agent.id) === saved.expert_agent_id);
-                if (saved.routing_configured && saved.routing_mode === "expert" && savedAgentAllowed) {
-                    config.routingMode = "expert";
-                    config.expertAgentId = saved.expert_agent_id;
+                if (conversationRoutingRestored.value) {
+                    // 已按该会话自己的记录恢复过专家：账号默认只能兜底，不能反过来覆盖。
+                    if (config.routingMode === "expert" && config.expertAgentId) {
+                        // 该专家可能随后被停用/收权：列表就绪时校正一次，
+                        // 否则标题会显示一串裸 ID。
+                        const usable = res.data.some(
+                            (agent: any) => String(agent.id) === config.expertAgentId,
+                        );
+                        if (!usable) {
+                            config.routingMode = "auto";
+                            config.expertAgentId = "";
+                        }
+                    }
                 } else {
-                    config.routingMode = "auto";
-                    config.expertAgentId = "";
+                    const saved = savedRoutingPreference.value;
+                    const savedAgentAllowed = saved.expert_agent_id
+                        && res.data.some((agent: any) => String(agent.id) === saved.expert_agent_id);
+                    if (saved.routing_configured && saved.routing_mode === "expert" && savedAgentAllowed) {
+                        config.routingMode = "expert";
+                        config.expertAgentId = saved.expert_agent_id;
+                    } else {
+                        config.routingMode = "auto";
+                        config.expertAgentId = "";
+                    }
                 }
             }
             
@@ -6258,9 +6405,8 @@ const slashCommands = ref<any[]>([...SYSTEM_SLASH_COMMANDS]);
 // History Sidebar State
 const HISTORY_SIDEBAR_OPEN_KEY = "embed_history_sidebar_open";
 const showHistorySidebar = ref(false);
-// 账号偏好只应用一次：避免切换智能体等后台刷新把用户刚关掉的侧栏又重新打开。
-let historySidebarPreferenceApplied = false;
-let historySidebarSaveTimer: ReturnType<typeof setTimeout> | null = null;
+// 只从本机缓存恢复一次：避免切换智能体等后台刷新把用户刚关掉的侧栏又重新打开。
+let historySidebarRestored = false;
 
 /** 桌面端才恢复/保存侧栏开关；窄屏下它是带遮罩的浮层，刷新后自动弹开会挡住内容。 */
 const isHistorySidebarDesktop = () =>
@@ -6274,30 +6420,6 @@ const restoreHistorySidebarPreference = () => {
   } catch {
     // localStorage 不可用（隐私模式/跨域限制）时保持默认关闭
   }
-};
-
-const applyHistorySidebarPreference = (open: boolean) => {
-  if (!isHistorySidebarDesktop()) return;
-  showHistorySidebar.value = open;
-  try {
-    localStorage.setItem(HISTORY_SIDEBAR_OPEN_KEY, open ? "1" : "0");
-  } catch {
-    // 本地缓存失败不影响已应用的账号偏好
-  }
-};
-
-const scheduleHistorySidebarPreferenceSave = (open: boolean) => {
-  if (!isHistorySidebarDesktop()) return;
-  // 连续开关只提交最后一次，避免两次 PUT 乱序后把状态写反。
-  if (historySidebarSaveTimer) clearTimeout(historySidebarSaveTimer);
-  historySidebarSaveTimer = setTimeout(() => {
-    historySidebarSaveTimer = null;
-    void axios
-      .put("/api/portal/portal-prefs/history-sidebar", { open })
-      .catch((error) => {
-        console.warn("Failed to save history sidebar preference", error);
-      });
-  }, 200);
 };
 
 const historyList = ref<any[]>([]);
@@ -6517,10 +6639,51 @@ const activeRunTitleIndex = computed(() => {
   return index;
 });
 
+// 运行锁里只存了一个 trace_id，智能体信息得从会话级 routing 记录里补：
+// 专家模式能确定是谁在跑，自动模式就如实写「自动委派」——不去猜一个可能错的专家名，
+// 毕竟 auto 模式下真正执行的是路由器选出来的。
+const activeRunAgentLabels = ref<Record<string, string>>({});
+/** 已尝试过的会话：失败时不要每轮轮询都重试一次。 */
+const activeRunAgentLabelAttempted = new Set<string>();
+
+const resolveActiveRunAgentLabels = async (items: readonly { conversation_id: string }[]) => {
+  const targets = items
+    .map((item) => String(item?.conversation_id || ""))
+    .filter((cid) => cid && !activeRunAgentLabelAttempted.has(cid));
+  if (!targets.length) return;
+  await Promise.all(
+    targets.map(async (cid) => {
+      activeRunAgentLabelAttempted.add(cid);
+      try {
+        const res = await axios.get(
+          `/api/v1/chat/conversation/${encodeURIComponent(cid)}/routing`,
+          { headers: embedAuthHeaders() },
+        );
+        const routing = res.data?.data;
+        let label = "自动委派";
+        if (routing?.routing_mode === "expert" && routing.expert_agent_id) {
+          const agentId = String(routing.expert_agent_id);
+          const agent = allowedAgents.value.find((a: any) => String(a.id) === agentId);
+          label = String(agent?.display_name || agent?.name || `专家 ${agentId.slice(0, 8)}`);
+        }
+        activeRunAgentLabels.value = { ...activeRunAgentLabels.value, [cid]: label };
+      } catch (e) {
+        // 查不到就不显示这一段：面板的标题、剩余时间与「终止」必须始终可用。
+        console.warn("[ActiveRuns] Failed to resolve agent label:", e);
+      }
+    }),
+  );
+};
+
+watch(activeRunItems, (items) => {
+  void resolveActiveRunAgentLabels(items);
+}, { immediate: true });
+
 const activeRunViews = computed(() =>
   activeRunItems.value.map((item) => ({
     ...item,
     title: activeRunTitleIndex.value.get(item.conversation_id) || `会话 ${item.conversation_id.slice(0, 8)}`,
+    agent_label: activeRunAgentLabels.value[item.conversation_id] || "",
   }))
 );
 
@@ -6655,6 +6818,8 @@ const handleHistoryClick = async (item: any) => {
     conversationId.value = target;
     persistConversationId(target);
     updateActiveConversationOnServer(target);
+    // 恢复该会话自己的专家选择；无记录时 loadConversationRouting 会保持账号默认。
+    void loadConversationRouting(target);
 
     // Reset message list and history state
     messages.value = [];
@@ -7182,15 +7347,12 @@ const executeDeleteCommand = async () => {
 };
 
 watch(showHistorySidebar, (val) => {
-    // 桌面端记住开关；窄屏浮层是临时态，不覆盖桌面偏好。
+    // 桌面端记住开关；窄屏浮层是临时态，不覆盖桌面偏好。只存本机，不与账号偏好同步。
     if (isHistorySidebarDesktop()) {
       try {
         localStorage.setItem(HISTORY_SIDEBAR_OPEN_KEY, val ? "1" : "0");
       } catch {
         // localStorage 不可用时仅本次生效
-      }
-      if (historySidebarPreferenceApplied) {
-        scheduleHistorySidebarPreferenceSave(val);
       }
     }
     if (!val) return;
@@ -8928,6 +9090,8 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       if (initGeneration !== conversationInitializationGeneration) return;
       if (savedId && savedAdoption === 'adoptable') {
         conversationId.value = savedId;
+        // 认领到本标签：否则本标签的指针一直为空，下次刷新又会读到被别人覆盖的共享指针。
+        persistConversationId(savedId);
         updateActiveConversationOnServer(savedId);
         loadedCid = true;
       } else if (savedId && savedAdoption === 'foreign') {
@@ -8980,7 +9144,12 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       }
     }
 
-    // 7. Load history if exists
+    // 7. 恢复该会话自己的专家选择（无记录时保持账号默认），再加载历史
+    if (conversationId.value) {
+      await loadConversationRouting(conversationId.value);
+    }
+
+    // 8. Load history if exists
     if (conversationId.value) {
       fetchConversationHistory(false, initGeneration)
         // 历史加载完成后再还原流式草稿：已有落库终态时草稿会被丢弃，不会被重复注入。
@@ -10010,30 +10179,10 @@ watch(
 
 
 
-const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "knowledge" | "browser" | "webPreview") => {
-  let rem = 0;
-  if (exclude !== "portal" && showPortalDrawer.value && portalPinned.value) rem += 28;
-  if (exclude !== "knowledge" && showKnowledgePortal.value && knowledgePinned.value) rem += 28;
-  if (exclude !== "workspace" && showWorkspaceDrawer.value && workspacePinned.value) rem += 28;
-  if (exclude !== "memory" && showMemoryDrawer.value && memoryPinned.value) rem += 28;
-  if (exclude !== "browser" && browserPanelVisible.value && browserPinned.value && !isMobile.value) {
-    rem += browserPanelWidthReactive.value / 16;
-  }
-  if (exclude !== "webPreview" && webPreviewVisible.value && webPreviewPinned.value && !isMobile.value) {
-    rem += webPreviewPanelWidthReactive.value / 16;
-  }
-  return rem;
-};
-
-const pinnedDrawerRightRem = computed(() => pinnedDrawerDockOffsetRem());
-const saveReportModalOverlayStyle = computed(() => {
-  const rem = pinnedDrawerRightRem.value;
-  return { right: rem > 0 ? `${rem}rem` : "0" };
-});
-const saveReportModalOverlayClass = computed(() => {
-  const isPinned = (showPortalDrawer.value && portalPinned.value) || (showKnowledgePortal.value && knowledgePinned.value);
-  return isPinned ? 'right-[28rem]' : 'right-0';
-});
+// 钉住面板的让位宽度与右侧偏移统一由下方 pinnedDrawerLayout 计算。
+// 这里不再保留「各面板宽度 / 16 累加成 rem」的第二套真源：那套算法既没有上限
+// （两个面板就能把对话区挤成 0），又要临时拼一个 Tailwind 工具类交给模板——
+// 运行时拼出来的类名不会被静态扫描，构建产物里并不存在这条规则。
 
 // 响应式抽屉宽度 refs（由各抽屉组件通过 v-model:drawerWidth / v-model:canvasWidth 实时同步）
 const portalDrawerWidthReactive = ref(448);
@@ -10064,7 +10213,7 @@ const canvasPinnedWidthPx = computed(() => {
  *
  * `canvasFromWorkspace` 为真（工作空间预览）时，EmbedChat 传 `dock-side="left"`，
  * ChatCanvas 用 `fixed left-0 right-auto`：面板贴在视口左侧、不占布局空间。
- * 此时若把画布宽度加进 `totalPinnedDrawerPx`（它只被当作 `marginRight` 用），
+ * 此时若把画布宽度加进 `pinnedDrawerLayout` 的右侧让位（它只被当作 `marginRight` 用），
  * 对话列的左边界仍停在 x=0，会被画布从左边切掉「画布宽」那一条，右侧还空出
  * 等宽的死空白；把画布拖窄时最明显。
  *
@@ -10092,40 +10241,101 @@ const webPreviewPanelWidthPx = computed(() => {
   return webPreviewPanelWidthReactive.value;
 });
 
-const webPreviewDockRightPx = computed(() => pinnedDrawerDockOffsetRem("webPreview") * 16);
+/**
+ * 钉住面板从右到左的顺序：多面板并排时，排在前面的更贴右边缘。
+ *
+ * 排序不是随意的：数据门户 / 知识库 / 画布 / 服务端浏览器目前把自己固定在
+ * `right-0`，不消费 pinnedDockRight，所以必须排在右侧；工作空间 / 记忆 /
+ * 网页预览吃 pinnedDockRight，排到它们左边，偏移会自然累加，谁也不会压住谁。
+ */
+const PINNED_DRAWER_ORDER = [
+  "portal",
+  "knowledge",
+  "canvas",
+  "browser",
+  "memory",
+  "workspace",
+  "webPreview",
+] as const;
 
-const totalPinnedDrawerPx = computed(() => {
-  if (isMobile.value || windowWidth.value < 768) return 0;
-  let px = 0;
-  px += portalDrawerWidthPx.value;
-  px += knowledgeDrawerWidthPx.value;
-  px += workspaceDrawerWidthPx.value;
-  // 只有右停靠画布才需要右侧让位；左停靠（工作空间预览）走 canvasLeftDockWidthPx
-  px += canvasRightDockWidthPx.value;
-  px += browserPanelWidthPx.value;
-  px += webPreviewPanelWidthPx.value;
-  if (showMemoryDrawer.value && memoryPinned.value) px += 448;
-  return px;
+const pinnedDrawerPanelWidths = computed<Record<string, number>>(() => ({
+  webPreview: webPreviewPanelWidthPx.value,
+  browser: browserPanelWidthPx.value,
+  canvas: canvasRightDockWidthPx.value,
+  memory: showMemoryDrawer.value && memoryPinned.value && !isMobile.value ? 448 : 0,
+  workspace: workspaceDrawerWidthPx.value,
+  knowledge: knowledgeDrawerWidthPx.value,
+  portal: portalDrawerWidthPx.value,
+}));
+
+const pinnedDrawerLayout = computed(() =>
+  computePinnedDrawerLayout({
+    availableWidthPx: windowWidth.value,
+    panels: PINNED_DRAWER_ORDER.map((key) => ({
+      key,
+      widthPx: pinnedDrawerPanelWidths.value[key] ?? 0,
+    })),
+  }),
+);
+
+/** 各钉住面板的 right 偏移（px），直接进内联样式，不再拼 Tailwind 类名。 */
+const webPreviewDockRightPx = computed(
+  () => pinnedDrawerLayout.value.rightOffsetPx.webPreview ?? 0,
+);
+const workspacePinnedDockRightPx = computed(
+  () => pinnedDrawerLayout.value.rightOffsetPx.workspace ?? 0,
+);
+const memoryPinnedDockRightPx = computed(
+  () => pinnedDrawerLayout.value.rightOffsetPx.memory ?? 0,
+);
+
+const saveReportModalOverlayStyle = computed(() => ({
+  right: `${pinnedDrawerLayout.value.marginRightPx}px`,
+}));
+const saveReportModalOverlayClass = computed(() => {
+  const isPinned = (showPortalDrawer.value && portalPinned.value) || (showKnowledgePortal.value && knowledgePinned.value);
+  return isPinned ? 'right-[28rem]' : 'right-0';
 });
 
+/**
+ * 空间不足时把被挤掉的面板自动取消钉住（面板本身保持打开，退化为覆盖式）。
+ * 让位宽度已经按 kept 计算，若不取消，dropped 面板会压在被让位出来的对话区上。
+ */
+watch(
+  () => pinnedDrawerLayout.value.droppedKeys.join(","),
+  (joined) => {
+    if (!joined) return;
+    const dropped = new Set(joined.split(","));
+    const releases: Array<[key: string, label: string, state: { value: boolean }]> = [
+      ["webPreview", "网页预览", webPreviewPinned],
+      ["browser", "服务端浏览器", browserPinned],
+      ["canvas", "画布", canvasPinned],
+      ["memory", "记忆", memoryPinned],
+      ["workspace", "工作空间", workspacePinned],
+      ["knowledge", "知识库", knowledgePinned],
+      ["portal", "数据门户", portalPinned],
+    ];
+    const released: string[] = [];
+    for (const [key, label, state] of releases) {
+      if (state.value && dropped.has(key)) {
+        state.value = false;
+        released.push(label);
+      }
+    }
+    if (released.length > 0) {
+      showToast(`窗口宽度不足，已取消钉住：${released.join("、")}`, "info");
+    }
+  },
+);
+
 const pinnedDrawerMarginStyle = computed(() => {
-  const px = totalPinnedDrawerPx.value;
+  const gutter = pinnedDrawerLayout.value.marginRightPx;
   const leftPx = canvasLeftDockWidthPx.value;
   const style: Record<string, string> = {};
-  if (px > 0) style.marginRight = `min(${px}px, 100vw)`;
+  if (gutter > 0) style.marginRight = `${gutter}px`;
   // 左停靠画布贴在视口左侧，必须用 marginLeft 让位，否则对话会被它从左边切掉
   if (leftPx > 0) style.marginLeft = `min(${leftPx}px, 100vw)`;
   return style;
-});
-
-const workspacePinnedDockClass = computed(() => {
-  const rem = pinnedDrawerDockOffsetRem("workspace");
-  return rem > 0 ? `right-[${rem}rem]` : "right-0";
-});
-
-const memoryPinnedDockClass = computed(() => {
-  const rem = pinnedDrawerDockOffsetRem("memory");
-  return rem > 0 ? `right-[${rem}rem]` : "right-0";
 });
 
 const refreshDatasetMenuNavigation = async (msg: Message) => {

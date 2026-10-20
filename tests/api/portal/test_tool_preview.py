@@ -34,12 +34,13 @@ def _payload(**overrides):
     return payload
 
 
-def _response(status_code=200, *, json_body=None, text=None, content=None):
+def _response(status_code=200, *, json_body=None, text=None, content=None, headers=None):
     return httpx.Response(
         status_code=status_code,
         json=json_body,
         text=None if json_body is not None else text,
         content=content,
+        headers=headers,
         request=httpx.Request("GET", "https://api.test/v1/items"),
     )
 
@@ -252,6 +253,33 @@ async def test_preview_classifies_unsupported_method_from_kernel(client, admin_a
     body = response.json()
     assert body["ok"] is False
     assert body["error_kind"] == "unsupported_method"
+
+
+@pytest.mark.asyncio
+async def test_preview_returns_masked_response_headers(client, admin_api_key):
+    with patch.object(
+        GenericApiToolFactory, "_perform_request",
+        new=AsyncMock(return_value=(
+            _response(
+                200,
+                json_body={"ok": True},
+                headers={
+                    "X-Request-Id": "req-123",
+                    "Authorization": "Bearer upstream-secret",
+                    "Set-Cookie": "session=abc",
+                },
+            ),
+            8,
+            "https://api.test/v1/items",
+        )),
+    ):
+        response = await client.post(
+            PREVIEW_URL, json=_payload(), headers={"X-API-Key": admin_api_key},
+        )
+    body = response.json()
+    assert body["response_headers"]["x-request-id"] == "req-123"
+    assert "upstream-secret" not in str(body["response_headers"])
+    assert body["response_headers"]["set-cookie"] == "******"
 
 
 @pytest.mark.asyncio
