@@ -162,6 +162,13 @@
                   v-if="canEditUser"
                   type="button"
                   class="rounded px-1.5 py-0.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+                  title="到用户管理编辑该用户"
+                  @click="openUserEditor(member)"
+                >编辑</button>
+                <button
+                  v-if="canEditUser"
+                  type="button"
+                  class="rounded px-1.5 py-0.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-700 dark:hover:text-gray-100"
                   @click="openPasswordDialog(member)"
                 >密码</button>
                 <button
@@ -755,6 +762,18 @@ const submitPassword = async (password: string) => {
 
 const jumpToUser = (member: any) => {
   router.push({ path: '/dashboard/users', query: { q: member.user_name } })
+}
+
+/** 直接进入该用户的编辑界面：带上 edit，用户页落地后自动打开那一行的编辑框。
+ *
+ * 不在本页内嵌编辑弹窗——用户编辑表单牵着权限、额度、Agent 限定一大串状态，
+ * 抽成公用组件等于把用户管理重写一遍，还会长出两套逐渐分叉的编辑逻辑。
+ */
+const openUserEditor = (member: any) => {
+  router.push({
+    path: '/dashboard/users',
+    query: { q: member.user_name, edit: String(member.id) },
+  })
 }
 
 defineExpose({ fetchMembers })

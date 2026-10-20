@@ -2355,7 +2355,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import axios from "../utils/axios";
 import { modelApi } from "../api/model";
 import {
@@ -2669,6 +2669,7 @@ const rejectUser = async () => {
 const searchQuery = ref("");
 // 角色成员抽屉里的「↗」会带 ?q=<user_name> 跳过来，这里只做搜索预填
 const route = useRoute();
+const router = useRouter();
 const roleFilter = ref("");
 const statusFilter = ref("");
 // 部门维度筛选：deptFilter 为空表示不限；includeSub 决定是否含子部门
@@ -4251,17 +4252,30 @@ const onThirdPartySynced = () => {
   fetchUsers();
 };
 
-onMounted(() => {
-  // 深链 ?q= 来自角色成员抽屉的「↗」：先落搜索词再拉列表，避免先请求一次全量再搜
+onMounted(async () => {
+  // 深链 ?q= 来自角色成员抽屉 / 部门成员列表的「↗」：先落搜索词再拉列表，
+  // 避免先请求一次全量再搜
   const deepLinkQuery = typeof route.query.q === "string" ? route.query.q.trim() : "";
   if (deepLinkQuery) {
     searchQuery.value = deepLinkQuery;
   }
+  // 深链 ?edit= 来自部门成员列表的「编辑」：等列表回来再从里面取那一行打开，
+  // 这样拿到的就是列表同款完整字段（dept_ids / role_ids 等），不必另开一个详情接口。
+  const deepLinkEditId = typeof route.query.edit === "string" ? route.query.edit.trim() : "";
   loadDeptOptions();
-  fetchUsers();
+  await fetchUsers();
   fetchBusinessRoles();
   fetchPublicConfig();
   fetchPendingCount();
+  if (deepLinkEditId) {
+    const target = users.value.find((item: any) => String(item.id) === deepLinkEditId);
+    if (target) {
+      await editUser(target);
+    }
+    // 打开后立刻抹掉 query：否则刷新页面会再弹一次，返回上一页也会被它拽回来
+    const { edit: _edit, ...restQuery } = route.query;
+    router.replace({ query: restQuery });
+  }
 });
 </script>
 
