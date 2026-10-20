@@ -52,9 +52,12 @@ def test_all_identity_producers_attach_the_label():
 def test_service_builds_label_with_secondary_departments():
     """一个人可能兼属多个部门，只报主部门会漏掉兼职部门。"""
     assert "department_label_for_user" in SERVICE
-    segment = SERVICE.split("async def department_label_for_user", 1)[1].split("async def ", 1)[0]
-    assert "兼" in segment
-    assert "is_primary" in segment
+    label = SERVICE.split("async def department_label_for_user", 1)[1].split("async def ", 1)[0]
+    assert "兼" in label
+    # 标签复用名字列表，避免个人中心与模型上下文各写一套查询
+    assert "department_names_for_user" in label
+    names = SERVICE.split("async def department_names_for_user", 1)[1].split("async def ", 1)[0]
+    assert "is_primary" in names, "主部门排第一靠 is_primary 排序"
 
 
 def test_label_lookup_degrades_instead_of_breaking_auth():

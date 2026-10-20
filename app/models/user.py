@@ -27,7 +27,7 @@ class User(Base):
     org_path = Column(
         String(255),
         nullable=True,
-        comment='主部门物化路径快照（id 形式，如 /1/2/；不可直接当部门名展示）',
+        comment='主部门编码路径快照（如 /main/dev/；由主部门派生，可直接对外展示）',
     )
     extra_data = Column(Text, nullable=True, comment='预留扩展字段 (存储 JSON 格式信息)')
     api_key_encrypted = Column(Text, nullable=True)

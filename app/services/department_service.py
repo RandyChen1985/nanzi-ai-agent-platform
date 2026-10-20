@@ -208,6 +208,22 @@ class DepartmentService:
         return bool((await self.db.execute(stmt)).scalar())
 
     @staticmethod
+    async def department_names_for_user(db: AsyncSession, user_id: int) -> List[str]:
+        """当前用户的部门名列表，**主部门排第一**。
+
+        给"人看"的位置（个人中心资料、模型上下文）一律用名字：`dept_code` 是英文
+        业务键、`org_path` 是 `/main/dev/` 这样的机器路径，都不适合直接展示。
+        """
+        rows = await db.execute(
+            select(Department.name)
+            .select_from(UserDepartment)
+            .join(Department, Department.id == UserDepartment.dept_id)
+            .where(UserDepartment.user_id == int(user_id))
+            .order_by(UserDepartment.is_primary.desc(), Department.path.asc())
+        )
+        return [str(name) for (name,) in rows.all()]
+
+    @staticmethod
     async def department_label_for_user(db: AsyncSession, user_id: int) -> str:
         """当前用户的部门可读标签，如「总部」或「总部（兼：开发部、运维部）」。
 
@@ -217,23 +233,12 @@ class DepartmentService:
         兼属多个部门时把其余部门一并列出：只报主部门会让"我还属于哪些部门"这类
         追问落空，而多部门正是本功能的重点。
         """
-        rows = await db.execute(
-            select(Department.name, UserDepartment.is_primary)
-            .join(Department, Department.id == UserDepartment.dept_id)
-            .where(UserDepartment.user_id == int(user_id))
-            .order_by(UserDepartment.is_primary.desc(), Department.path.asc())
-        )
-        pairs = rows.all()
-        if not pairs:
+        names = await DepartmentService.department_names_for_user(db, user_id)
+        if not names:
             return ""
-        primary = next(
-            (str(name) for name, is_primary in pairs if int(is_primary or 0) == 1),
-            str(pairs[0][0]),
-        )
-        others = [str(name) for name, _ in pairs if str(name) != primary]
-        if not others:
-            return primary
-        return f"{primary}（兼：{'、'.join(others)}）"
+        if len(names) == 1:
+            return names[0]
+        return f"{names[0]}（兼：{'、'.join(names[1:])}）"
 
     async def count_unique_members(self) -> int:
         """去重后的成员人数。
@@ -368,6 +373,18 @@ class DepartmentService:
                     )
                     .values(dept_code=clean_code)
                 )
+                # org_path 是**编码路径**快照（/main/dev/），所以本部门或任一子孙部门
+                # 改编码，都会改变树内所有用户的前缀 —— 只刷本部门成员会留下半截旧路径。
+                affected = await self.db.execute(
+                    select(UserDepartment.user_id)
+                    .join(Department, Department.id == UserDepartment.dept_id)
+                    .where(
+                        UserDepartment.is_primary == 1,
+                        Department.path.like(subtree_like_prefix(dept.path)),
+                    )
+                )
+                for (affected_user_id,) in affected.all():
+                    await self.sync_primary_snapshot(int(affected_user_id))
 
         if description is not None:
             dept.description = description
@@ -655,7 +672,12 @@ class DepartmentService:
     # ---------------- 快照同步 ----------------
 
     async def sync_primary_snapshot(self, user_id: int) -> None:
-        """把主部门的 code / path 写回 users，供既有单值消费方读取。"""
+        """把主部门的 code / **编码路径**写回 users，供既有单值消费方读取。
+
+        `org_path` 写的是 `/main/dev/` 而不是 `/1/2/`：id 路径是内部结构标识，
+        人读不懂、模型只能照搬、跨系统迁移时 id 还会变；部门 code 是业务键，
+        本来就是为对接设计的。树的内部结构仍用 id 路径（见 `path`），两者不要混。
+        """
         row = (await self.db.execute(
             select(Department.code, Department.path)
             .select_from(UserDepartment)
@@ -674,9 +696,11 @@ class DepartmentService:
                 )
             )
         else:
+            # 编码路径在返回时派生（不落库），这里落库的是派生结果，供外部系统与旧字段消费方读
+            code_path = (await self.code_path_map([row[1]])).get(row[1], "")
             await self.db.execute(
                 update(User).where(User.id == int(user_id)).values(
-                    dept_code=row[0], org_path=row[1]
+                    dept_code=row[0], org_path=code_path or None
                 )
             )
         await self.db.flush()

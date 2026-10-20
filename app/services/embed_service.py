@@ -283,6 +283,9 @@ class EmbedService:
             "role": user.get("role", "user"),
             "dept_code": user.get("dept_code") or "",
             "org_path": user.get("org_path") or "",
+            # 可读部门名：鉴权缓存靠这个键是否存在判断"是否需要回源补齐"，
+            # 少了它，embed 会话每次校验都会多查一次库。
+            "dept_name": user.get("dept_name") or "",
             "extra_data": user.get("extra_data") or "",
             "remark": "Embed Session",
             "status": "1",

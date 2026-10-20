@@ -953,6 +953,23 @@ onMounted(() => {
                                     >
                                         {{ userInfo.role === 'admin' ? '管理员' : '普通用户' }}
                                     </span>
+                                    <!-- 部门：显示名字，不显示 dept_code / org_path 这类机器格式。
+                                         主部门用主色区分，兼职部门用中性色——多部门时人最关心"主"是哪个。
+                                         直接列出来而不是折叠成 +N：移动端 hover 不出来，看不到就等于没有。 -->
+                                    <template v-if="userInfo.dept_names && userInfo.dept_names.length">
+                                        <span
+                                            v-for="(name, idx) in userInfo.dept_names"
+                                            :key="name"
+                                            class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium"
+                                            :class="idx === 0
+                                                ? 'bg-primary/10 text-primary border border-primary/20'
+                                                : 'bg-gray-100 text-gray-600'"
+                                        >{{ name }}</span>
+                                    </template>
+                                    <span
+                                        v-else
+                                        class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-gray-100 text-gray-400"
+                                    >未设置部门</span>
                                 </div>
                             </div>
                         </div>
