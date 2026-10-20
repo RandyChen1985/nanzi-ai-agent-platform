@@ -10,6 +10,7 @@ import { generateQRCodeDataUrl } from '../utils/qrcode'
 import { checkPasswordPolicy } from '../utils/passwordPolicy'
 import { clearUserSession } from '../utils/userSession'
 import PermissionSectionCard from '../components/personal/PermissionSectionCard.vue'
+import type { PermissionNode } from '../constants/permissions'
 import PersonalPermissionTree from '../components/personal/PersonalPermissionTree.vue'
 
 const { branding, loadBranding } = useBranding()
@@ -679,11 +680,29 @@ const permissions = ref<{
     }
 }>({})
 
+// 「我的权限」的菜单骨架：来自接口。加载失败只影响层级展示，标签会退回后端 display_name。
+const permissionTree = ref<PermissionNode[]>([])
+const toPermissionNode = (node: any): PermissionNode => ({
+    id: node.permission_code || node.code,
+    label: node.label,
+    children: (node.children || []).map(toPermissionNode),
+})
+const fetchPermissionTree = async () => {
+    try {
+        const response = await axios.get('/api/portal/menus/catalog')
+        const nodes = response.data?.nodes
+        if (Array.isArray(nodes)) permissionTree.value = nodes.map(toPermissionNode)
+    } catch (error) {
+        console.warn('[PersonalCenter] 权限树加载失败，使用后端展示名兜底', error)
+    }
+}
+
 const fetchPermissions = async () => {
     loadingPermissions.value = true
     try {
         const permRes = await axios.get('/api/portal/auth/permissions')
         permissions.value = permRes.data || {}
+        await fetchPermissionTree()
     } catch (e) {
         console.error("Failed to fetch permissions", e)
         showToast('获取权限列表失败', 'error')
@@ -1522,6 +1541,7 @@ onMounted(() => {
                             <span>功能点 {{ permissions.details?.elements?.length || 0 }}</span>
                         </template>
                         <PersonalPermissionTree
+                            :tree="permissionTree"
                             :menus="permissions.details?.menus || []"
                             :elements="permissions.details?.elements || []"
                         />

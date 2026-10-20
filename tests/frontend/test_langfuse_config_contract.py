@@ -102,8 +102,10 @@ def test_component_handles_api_failure(component_source):
 
 
 def test_permission_is_registered_in_catalog():
-    source = PERMISSIONS.read_text(encoding="utf-8")
-    assert PERMISSION_ID in source
+    """权限码的注册地是后端菜单种子（`ai_agent_menus` 的 element 行）。"""
+    from app.services.menu_seed import builtin_element_permission_codes
+
+    assert PERMISSION_ID in builtin_element_permission_codes()
 
 
 def test_config_fields_are_hidden_when_switch_is_off(component_source):

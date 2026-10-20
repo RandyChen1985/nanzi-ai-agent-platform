@@ -14,9 +14,14 @@ def test_mcp_service_desk_has_independent_route_menu_and_read_only_copy_fields()
     dashboard = (ROOT / "frontend/src/views/Dashboard.vue").read_text(encoding="utf-8")
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
+    from app.services.menu_seed import BUILTIN_BY_CODE
+
     assert "mcp-service" in router
     assert "menu:mcp_service" in router
-    assert "MCP 服务台" in dashboard
+    # 侧栏文案已入库：这里打真实种子，而不是找 Dashboard 里的硬编码字符串
+    assert BUILTIN_BY_CODE["menu:mcp_service"].label == "MCP 服务台"
+    assert BUILTIN_BY_CODE["menu:mcp_service"].permission_code == "menu:mcp_service"
+    assert "SidebarMenuLink" in dashboard
     assert "复制" in view
     assert "/api/portal/mcp-service/overview" in view
     assert "element:mcp_service:capability:manage" in view

@@ -10,6 +10,7 @@
 """
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,6 +23,8 @@ TREE_NODE = ROOT / "frontend/src/components/user/MenuTreeNode.vue"
 CONSTANTS = ROOT / "frontend/src/constants/permissions.ts"
 USERS = ROOT / "frontend/src/views/Users.vue"
 SSR_SCRIPT = ROOT / "tests/frontend/menu_access_tree_ssr.cjs"
+
+from menu_tree_fixture import frontend_permission_tree  # noqa: E402
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -68,10 +71,14 @@ def test_component_only_emits_and_never_writes():
 
 
 def test_component_renders_collapsible_indented_tree():
-    """缩进树：菜单行带折叠按钮与 aria-expanded，子层用竖线表达父子关系。"""
+    """缩进树：菜单行带折叠按钮与 aria-expanded，子层用竖线表达父子关系。
+
+    树数据已入库，组件不再 import 常量，改由 `tree` prop 接收父层取回的结构。
+    """
     source = _component()
 
-    assert "MENU_TREE" in source
+    assert "MENU_TREE" not in source, "组件不得再内置菜单数据"
+    assert "tree: PermissionNode[]" in source
     assert "menu.children" in source, "子层必须遍历 menu.children"
     assert "aria-expanded" in source, "折叠按钮要有可访问状态"
     assert "collapsed" in source
@@ -89,10 +96,17 @@ def test_tree_renders_submenu_level_between_menu_and_elements():
     assert "页面" in node, "子菜单行要有「页面」标识，和功能点区分开"
     assert "countLeafElements" in component, "卡片右上角要能显示功能点数量（子菜单不计数）"
 
-    # 数据结构层面：子菜单自己挂功能点，而不是和功能点平铺
-    assert "children: [" in constants
-    assert "menu:system:users" in constants
-    assert "label: '用户管理'" in constants
+    # 数据结构层面：子菜单自己挂功能点，而不是和功能点平铺。
+    # 数据源已从 constants 迁到后端种子（app/services/menu_seed.py），这里打真实种子。
+    from app.services.menu_seed import BUILTIN_BY_CODE, BUILTIN_MENU_SEED
+
+    assert "children: [" not in constants, "菜单数据不该再写在 constants 里"
+    users = BUILTIN_BY_CODE["menu:system:users"]
+    assert users.label == "用户管理"
+    # 分组节点用 group:* 作为 code，menu:system 是它的权限码（授权仍按 menu:system 走）
+    assert users.parent_code == "group:system"
+    assert BUILTIN_BY_CODE["group:system"].permission_code == "menu:system"
+    assert any(item.parent_code == "menu:system:users" for item in BUILTIN_MENU_SEED)
 
 
 def test_component_marks_inherited_nodes_as_read_only():
@@ -147,6 +161,7 @@ def test_rendered_tree_marks_inherited_nodes_and_keeps_three_states():
         cwd=ROOT / "frontend",
         capture_output=True,
         text=True,
+        env={**os.environ, "MENU_TREE_JSON": json.dumps(frontend_permission_tree(), ensure_ascii=False)},
     )
     assert proc.returncode == 0, proc.stderr
 
@@ -159,7 +174,7 @@ def test_rendered_tree_marks_inherited_nodes_and_keeps_three_states():
     assert checks["inheritedMenuRowIsDimmed"], "纯继承的菜单行要淡化，和可编辑行区分开"
     assert checks["inheritedElementIsDimmed"], "纯继承的功能点要淡化"
     assert checks["directElementIsChecked"], "直配的功能点仍要正常显示为已勾选"
-    assert checks["rendersSubmenuPageBadges"], "4 个子菜单都要带「页面」标识：%s" % payload["pageBadgeCount"]
+    assert checks["rendersSubmenuPageBadges"], "页面行都要带「页面」标识：%s" % payload["pageBadgeCount"]
     assert checks["indentsThirdLevel"], "子菜单下的功能点要再缩进一层"
     assert checks["showsGrantedLeafCounters"], "菜单行要显示「功能点 M/N」，只给入口时不能看起来像全选"
     assert checks["entryOnlyCounterIsZeroOfTwo"], "数据源管理只直配入口，计数必须是 0/2"

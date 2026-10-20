@@ -38,7 +38,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { MENU_TREE } from '../../constants/permissions'
+import type { PermissionNode } from '../../constants/permissions'
 import { buildGrantedPermissionView } from '../../utils/permissionTreeView'
 import PersonalPermissionTreeNode from './PersonalPermissionTreeNode.vue'
 
@@ -51,12 +51,14 @@ interface PermissionDetailItem {
 
 const props = withDefaults(
   defineProps<{
+    /** 菜单骨架（GET /api/portal/menus/catalog）：菜单已入库，组件不再内置数据 */
+    tree?: PermissionNode[]
     /** 已授权的界面菜单（details.menus） */
     menus?: PermissionDetailItem[]
     /** 已授权的功能点（details.elements） */
     elements?: PermissionDetailItem[]
   }>(),
-  { menus: () => [], elements: () => [] },
+  { tree: () => [], menus: () => [], elements: () => [] },
 )
 
 const menuIds = computed(() =>
@@ -67,7 +69,7 @@ const elementIds = computed(() =>
 )
 
 const view = computed(() =>
-  buildGrantedPermissionView(MENU_TREE, menuIds.value, elementIds.value),
+  buildGrantedPermissionView(props.tree, menuIds.value, elementIds.value),
 )
 
 /** 后端展示名兜底：树里没登记的新权限码也要能读懂，不能只露一个 id。 */

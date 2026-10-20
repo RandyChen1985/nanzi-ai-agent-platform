@@ -20,6 +20,8 @@ const { renderToString } = fromFrontend("@vue/server-renderer");
 const esbuild = fromFrontend("esbuild");
 
 const COMPONENT = path.resolve("src/components/user/MenuAccessTree.vue");
+// 权限树由 pytest 从后端种子（app/services/menu_seed.py）注入：前端已不再内置菜单数据
+const TREE = JSON.parse(process.env.MENU_TREE_JSON || "[]");
 const frontendRequire = (id) => require(require.resolve(id, { paths: [process.cwd()] }));
 
 const toComponentOptions = (code) =>
@@ -100,14 +102,17 @@ async function buildComponent() {
   // 角色授予「角色管理」子菜单、两个用户管理功能点，以及一级菜单「提示词工坊」。
   // 其余保持未授予。
   const html = await render({
+    tree: TREE,
     menus: ["menu:system:users", "menu:data_sources", "menu:knowledge_retrieval_test"],
     elements: ["element:user:view_key", "element:knowledge:test_retrieval"],
-    inheritedMenus: ["menu:system:roles", "menu:prompts"],
+    // 「系统管理」放在继承里：顶层行才有机会验证「纯继承淡化为 bg-slate-50」
+    inheritedMenus: ["menu:system", "menu:system:roles", "menu:prompts"],
     inheritedElements: ["element:user:edit", "element:user:delete"],
     disabled: false,
   });
 
   const disabledHtml = await render({
+    tree: TREE,
     menus: [],
     elements: [],
     inheritedMenus: [],
@@ -120,13 +125,15 @@ async function buildComponent() {
   process.stdout.write(
     JSON.stringify({
       checks: {
+        // 顶层 7 项现在来自菜单表（分组 + 概览页），文案随数据变化
         rendersAllTopLevelMenus: [
-          "系统概览",
-          "智能助手 (AI Chat)",
-          "数据源管理",
-          "元数据管理",
+          "概览",
+          "智能助手",
+          "智能体开发平台",
+          "ChatBI 开发平台",
+          "知识库开发平台",
+          "日志&amp;TOKEN分析",
           "系统管理",
-          "提示词工坊",
         ].every((label) => html.includes(label)),
         keepsLevelLegend:
           html.includes("菜单权限") && html.includes("页面") && html.includes("功能点权限"),
@@ -135,7 +142,8 @@ async function buildComponent() {
         inheritedMenuRowIsDimmed: html.includes("px-2.5 py-2 bg-slate-50"),
         inheritedElementIsDimmed: editRow.includes("bg-slate-50"),
         directElementIsChecked: html.includes("查看用户密钥"),
-        rendersSubmenuPageBadges: (html.match(/>页面<\/span>/g) || []).length === 4,
+        // 每个非根页面行都有「页面」标识；数量随菜单增长，不能写死
+        rendersSubmenuPageBadges: (html.match(/>页面<\/span>/g) || []).length >= 20,
         indentsThirdLevel: html.includes("padding-left:28px"),
         showsGrantedLeafCounters: /功能点\s*\d+\/\d+/.test(html),
         entryOnlyCounterIsZeroOfTwo: /数据源管理[\s\S]{0,600}功能点\s*0\/2/.test(html),

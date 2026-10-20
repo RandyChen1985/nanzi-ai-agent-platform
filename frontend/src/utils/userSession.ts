@@ -9,6 +9,8 @@
  * 本模块只负责身份快照与统一的登出清理。
  */
 
+import { clearNavigationSnapshot } from '../composables/useNavigation'
+
 type UserInfoLike = Record<string, any>
 
 /** 写入 user_info 快照（自动剔除 API Key 字段），返回真正落盘的字段。 */
@@ -49,5 +51,7 @@ export function clearUserSession(): void {
   localStorage.removeItem('admin_token')
   localStorage.removeItem('yovole_token')
   localStorage.removeItem('yovole_embed_agent_avatar')
+  // 侧栏菜单快照属于「上一个身份」的数据：换账号登录后若不清，会先闪出别人的菜单
+  clearNavigationSnapshot()
 }
 

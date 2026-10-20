@@ -17,10 +17,12 @@ def test_skill_platform_endpoints_use_dedicated_element_permission():
 
 
 def test_skill_workbench_exposes_dedicated_element_permission():
-    permissions = (ROOT / "frontend/src/constants/permissions.ts").read_text(encoding="utf-8")
+    """权限码的注册地是后端菜单种子（前端常量已只剩类型与纯函数）。"""
+    from app.services.menu_seed import builtin_element_permission_codes
+
     view = (ROOT / "frontend/src/views/SkillsManagement.vue").read_text(encoding="utf-8")
 
-    assert "element:skills:admin" in permissions
+    assert "element:skills:admin" in builtin_element_permission_codes()
     assert "element:skills:admin" in view
 
 

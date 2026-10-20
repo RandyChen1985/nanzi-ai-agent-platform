@@ -13,6 +13,7 @@
 """
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,6 +26,8 @@ CARD = ROOT / "frontend/src/components/personal/PermissionSectionCard.vue"
 TREE = ROOT / "frontend/src/components/personal/PersonalPermissionTree.vue"
 TREE_NODE = ROOT / "frontend/src/components/personal/PersonalPermissionTreeNode.vue"
 SSR_SCRIPT = ROOT / "tests/frontend/personal_permission_tree_ssr.cjs"
+
+from menu_tree_fixture import frontend_permission_tree  # noqa: E402
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -64,6 +67,7 @@ def ssr_result() -> dict:
         check=True,
         capture_output=True,
         text=True,
+        env={**os.environ, "MENU_TREE_JSON": json.dumps(frontend_permission_tree(), ensure_ascii=False)},
     )
     return json.loads(completed.stdout)
 
@@ -112,7 +116,8 @@ def test_collapse_defaults_to_all_expanded_and_is_not_persisted():
 def test_tree_component_is_read_only_and_follows_menu_tree():
     tree = TREE.read_text(encoding="utf-8")
 
-    assert "MENU_TREE" in tree
+    assert "MENU_TREE" not in tree, "组件不得再内置菜单数据"
+    assert "tree: PermissionNode[]" in tree or "tree?: PermissionNode[]" in tree
     assert "buildGrantedPermissionView" in tree
     assert "PersonalPermissionTreeNode" in tree
     assert "axios" not in tree and "fetch(" not in tree, "只读展示组件不得自己拉数据"

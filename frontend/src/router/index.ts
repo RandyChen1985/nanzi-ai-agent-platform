@@ -16,6 +16,7 @@ import PromptStudio from '../views/PromptStudio.vue'
 import ChatLogs from '../views/ChatLogs.vue'
 
 import NoPermission from '../views/NoPermission.vue'
+import { getSnapshotLandingPath } from '../composables/useNavigation'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -92,6 +93,20 @@ const router = createRouter({
           meta: { perm: 'menu:system:config', title: '系统配置' }
         },
         {
+          path: 'menus',
+          name: 'MenuManagement',
+          component: () => import('../views/MenuManagement.vue'),
+          meta: { perm: 'menu:system:menus', title: '菜单管理' }
+        },
+        {
+          // 外链菜单的内嵌容器。URL 由菜单表决定，因此这里不设静态 meta.perm：
+          // 可见性已由 GET /menus/nav 过滤，页面再从导航树里反查地址（查不到就不渲染 iframe）。
+          path: 'external/:code',
+          name: 'ExternalMenu',
+          component: () => import('../views/ExternalMenuView.vue'),
+          meta: { title: '外链菜单' }
+        },
+        {
           path: 'audit',
           name: 'Audit',
           component: AuditLogs,
@@ -101,7 +116,7 @@ const router = createRouter({
           path: 'token-stats',
           name: 'TokenStats',
           component: () => import('../views/TokenStats.vue'),
-          meta: { perm: 'menu:system:audit', title: 'Token 统计' }
+          meta: { perm: 'menu:token_stats', title: 'Token 统计' }
         },
         {
           path: 'chat-logs',
@@ -203,7 +218,7 @@ const router = createRouter({
           path: 'knowledge-metrics',
           name: 'KnowledgeMetrics',
           component: () => import('../views/KnowledgeMetrics.vue'),
-          meta: { perm: 'menu:knowledge_management', title: '运营分析' }
+          meta: { perm: 'menu:knowledge_metrics', title: '运营分析' }
         },
         {
           path: 'prompts',
@@ -290,15 +305,15 @@ router.beforeEach((to: any, _from: any, next: any) => {
         return
       }
 
-      // 2. 缺目标页权限时落到第一个有权限的页面，避免误送无权限页
+      // 2. 缺目标页权限时落到当前用户实际可见的落地页，避免误送无权限页
       const requiredPerm = to.meta.perm
       if (requiredPerm && !userMenus.includes(requiredPerm)) {
         console.warn(`[Guard] Access denied to ${to.path}. Missing ${requiredPerm}`)
-        const fallback = resolveFirstAllowedRoute(userMenus)
-        if (fallback.name === to.name) {
+        const fallbackPath = resolveFallbackPath()
+        if (fallbackPath === to.path) {
           next({ name: 'NoPermission' })
         } else {
-          next(fallback)
+          next(fallbackPath)
         }
         return
       }
@@ -310,26 +325,17 @@ router.beforeEach((to: any, _from: any, next: any) => {
   next()
 })
 
-/** 菜单权限 → 默认落地路由（按业务优先级） */
-const MENU_HOME_CANDIDATES: Array<{ perm: string; name: string }> = [
-  { perm: 'menu:ai_chat', name: 'PersonalWorkbench' },
-  { perm: 'menu:dashboard', name: 'Overview' },
-  { perm: 'menu:agent_management', name: 'AgentManagement' },
-  { perm: 'menu:skills_management', name: 'SkillsManagement' },
-  { perm: 'menu:mcp_management', name: 'McpManagement' },
-  { perm: 'menu:mcp_service', name: 'McpServiceDesk' },
-  { perm: 'menu:chat_logs', name: 'ChatLogs' },
-  { perm: 'menu:metadata', name: 'Metadata' },
-  { perm: 'menu:task_center', name: 'TaskCenter' },
-]
-
-const resolveFirstAllowedRoute = (userMenus: string[]) => {
-  for (const item of MENU_HOME_CANDIDATES) {
-    if (userMenus.includes(item.perm)) {
-      return { name: item.name }
-    }
-  }
-  return { name: 'PersonalCenter' }
+/**
+ * 兜底落地页。
+ *
+ * 改造前是一份写死的落地页优先级清单；现在由菜单表的 `is_landing` 决定，
+ * 后端随导航树一起下发并缓存在本机快照里。守卫必须同步返回，因此只读快照不请求接口。
+ * 快照还没有时退回「我的工作台」——它不带权限码，任何登录用户都可进入。
+ */
+const resolveFallbackPath = (): string => {
+  const landing = getSnapshotLandingPath()
+  if (landing) return landing
+  return '/dashboard/workbench'
 }
 
 export default router

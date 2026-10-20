@@ -78,9 +78,15 @@ def test_workbench_route_navigation_and_actions_are_closed():
     page = _read("frontend/src/views/PersonalWorkbench.vue")
     login = _read("frontend/src/views/Login.vue")
 
+    from app.services.menu_seed import BUILTIN_BY_CODE
+
     assert "path: 'workbench'" in router
     assert "name: 'PersonalWorkbench'" in router
-    assert "我的工作台" in dashboard
+    # 侧栏入口已入库：文案与「无权限码、人人可见」都由菜单数据决定，不再写死在 Dashboard
+    workbench = BUILTIN_BY_CODE["menu:workbench"]
+    assert workbench.label == "我的工作台"
+    assert workbench.permission_code is None
+    assert "SidebarMenuLink" in dashboard
     assert 'if (route.name === "PersonalWorkbench") return "p-0 sm:px-4 sm:pt-2.5 sm:pb-4 md:px-6 md:pt-3 md:pb-6 lg:px-8 lg:pt-3.5 lg:pb-6"' in dashboard
     assert "const homeRoute = computed(() => userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench')" in dashboard
     assert ':to="homeRoute"' in dashboard

@@ -1,7 +1,7 @@
 /**
  * 「我的权限」只读树的数据构建。
  *
- * 权限清单页展示的是**用户实际拥有**的权限，而 `MENU_TREE` 是全量菜单定义。
+ * 权限清单页展示的是**用户实际拥有**的权限，而权限树（`GET /menus/catalog`）是全量菜单定义。
  * 所以这里做的是「取交集并保留层级」：只留下自身已授权、或后代有授权的节点。
  *
  * 父级未授权却仍然出现在树里是刻意的：只授 `menu:system:users` 而不授
@@ -26,7 +26,7 @@ export interface GrantedPermissionNode {
 
 export interface GrantedPermissionView {
   nodes: GrantedPermissionNode[]
-  /** 已授权、但 MENU_TREE 未收录的 id：后端新增权限码而树还没同步时不能丢项 */
+  /** 已授权、但权限树未收录的 id：后端新增权限码而树还没同步时不能丢项 */
   unmatchedMenus: string[]
   unmatchedElements: string[]
 }
@@ -34,9 +34,9 @@ export interface GrantedPermissionView {
 const isEmptyId = (value: unknown): boolean => typeof value !== 'string' || !value.trim()
 
 /**
- * 按 MENU_TREE 的层级把授权 id 折叠成可见树。
+ * 按权限树的层级把授权 id 折叠成可见树。
  *
- * 纯函数、不修改入参，便于用 Node 直接跑行为断言；标签一律取自 MENU_TREE，
+ * 纯函数、不修改入参，便于用 Node 直接跑行为断言；标签一律取自传入的树，
  * 未知 id 交给调用方用后端返回的 display_name 兜底。
  */
 export function buildGrantedPermissionView(

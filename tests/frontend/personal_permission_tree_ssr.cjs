@@ -95,11 +95,13 @@ export { Tree, SectionCard };`,
     return renderToString(app);
   };
 
+  const TREE = JSON.parse(process.env.MENU_TREE_JSON || "[]");
   const menu = (id, displayName) => ({ id, name: id, display_name: displayName });
 
   // 场景 1：只授「用户管理」子页面 + 两个功能点，父菜单「系统管理」未授 → 容器；
   // 另授「数据源管理」入口但不授功能点（验证只给入口）；带两个后端新增的未知权限码。
   const html = await render(Tree, {
+    tree: TREE,
     menus: [
       menu("menu:system:users", "用户管理"),
       menu("menu:data_sources", "数据源管理"),
@@ -114,11 +116,12 @@ export { Tree, SectionCard };`,
 
   // 场景 2：只授一个深层功能点，父链两级都只是分组容器。
   const deepOnlyHtml = await render(Tree, {
+    tree: TREE,
     menus: [],
     elements: [menu("element:system:config_save", "保存系统配置")],
   });
 
-  const emptyHtml = await render(Tree, { menus: [], elements: [] });
+  const emptyHtml = await render(Tree, { tree: TREE, menus: [], elements: [] });
 
   const expandedCard = await render(
     SectionCard,
@@ -148,9 +151,11 @@ export { Tree, SectionCard };`,
           !html.includes("审计日志") &&
           !html.includes("元数据管理") &&
           !html.includes("系统概览"),
+        // 菜单入库后多了一层「分组」容器（如 ChatBI 开发平台），容器数量不再固定为 1；
+        // 这里只钉「未授权的父菜单渲染成容器而不是已授权节点」这一语义。
         ungrantedParentIsContainer:
           html.includes('data-permission-id="menu:system" data-granted="false"') &&
-          countMatches(html) === 1,
+          countMatches(html) >= 1,
         pageBadgeOnlyOnGrantedSubmenu: /用户管理[\s\S]{0,400}页面/.test(html),
         indentsThreeLevels:
           /padding-left:\s*8px/.test(html) &&
