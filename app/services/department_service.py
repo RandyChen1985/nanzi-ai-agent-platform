@@ -207,6 +207,34 @@ class DepartmentService:
             stmt = stmt.where(Department.id != exclude_id)
         return bool((await self.db.execute(stmt)).scalar())
 
+    @staticmethod
+    async def department_label_for_user(db: AsyncSession, user_id: int) -> str:
+        """当前用户的部门可读标签，如「总部」或「总部（兼：开发部、运维部）」。
+
+        `users.dept_code` / `org_path` 都是机器标识（`main` / `/1/`），模型答
+        "我是什么部门的"时只能照搬，因为它手上没有任何中文名。这里给出人话版本。
+
+        兼属多个部门时把其余部门一并列出：只报主部门会让"我还属于哪些部门"这类
+        追问落空，而多部门正是本功能的重点。
+        """
+        rows = await db.execute(
+            select(Department.name, UserDepartment.is_primary)
+            .join(Department, Department.id == UserDepartment.dept_id)
+            .where(UserDepartment.user_id == int(user_id))
+            .order_by(UserDepartment.is_primary.desc(), Department.path.asc())
+        )
+        pairs = rows.all()
+        if not pairs:
+            return ""
+        primary = next(
+            (str(name) for name, is_primary in pairs if int(is_primary or 0) == 1),
+            str(pairs[0][0]),
+        )
+        others = [str(name) for name, _ in pairs if str(name) != primary]
+        if not others:
+            return primary
+        return f"{primary}（兼：{'、'.join(others)}）"
+
     async def count_unique_members(self) -> int:
         """去重后的成员人数。
 

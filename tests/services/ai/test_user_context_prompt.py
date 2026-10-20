@@ -14,7 +14,8 @@ async def test_user_context_prompt_uses_verified_identity_fields():
             "user_id": "42",
             "user_name": "tester",
             "real_name": "测试员",
-            "org_path": "yovole/sh/dc1",
+            "dept_name": "总部/研发部",
+            "org_path": "/1/2/",
             "role": "admin",
         }
     )
@@ -24,8 +25,46 @@ async def test_user_context_prompt_uses_verified_identity_fields():
     assert "只读" in content
     assert "tester" in content
     assert "测试员" in content
-    assert "yovole/sh/dc1" in content
+    assert "总部/研发部" in content
     assert "Smart Addressing" in content
+
+
+@pytest.mark.asyncio
+async def test_user_context_prompt_does_not_leak_internal_department_path():
+    """`org_path` 是 id 物化路径（`/1/`），对模型没有信息价值，反而会被照搬进回答。
+
+    线上就是这样：只给了 `org_path='/1/'`，模型答"部门路径 `/1/`，没有部门名称"。
+    没有可读部门名时宁可空着，也不要给一串编号让模型去猜。
+    """
+    msg = await AgentService()._build_user_context_msg(
+        {
+            "user_id": "1",
+            "user_name": "admin",
+            "org_path": "/1/",
+            "dept_code": "main",
+            "role": "admin",
+        }
+    )
+    content = msg["content"]
+    assert "/1/" not in content
+    assert "main" in content  # 退而求其次给出业务代码，仍是稳定标识
+
+
+@pytest.mark.asyncio
+async def test_readable_department_name_wins_over_code():
+    msg = await AgentService()._build_user_context_msg(
+        {
+            "user_id": "1",
+            "user_name": "admin",
+            "dept_name": "总部",
+            "dept_code": "main",
+            "org_path": "/1/",
+            "role": "admin",
+        }
+    )
+    content = msg["content"]
+    assert "总部" in content
+    assert "Department Code" not in content  # 有中文名就不再重复给代码
 
 
 def test_user_context_prompt_treats_profile_as_advisory_not_authorization():
