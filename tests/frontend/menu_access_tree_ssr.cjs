@@ -1,10 +1,11 @@
 /**
- * 真渲染 MenuAccessTree.vue：验证树结构、三态勾选、折叠属性与「角色」只读标注。
+ * 真渲染 MenuAccessTree.vue（含递归子节点 MenuTreeNode.vue）：
+ * 验证三层结构（菜单 → 页面 → 功能点）、三态勾选、折叠属性与「角色」只读标注。
  *
  * 为什么用真编译而不是字符串断言：这是单文件组件，Node 不能直接 require。
- * 这里用 vue/compiler-sfc 编译真实源码、esbuild 剥 TS、@vue/server-renderer 真渲染，
- * 不复制任何模板逻辑。交互（点击折叠、只读拦截）SSR 渲染不出来，由
- * test_user_menu_inherited_scope_behavior.py（纯函数）与
+ * 这里用 vue/compiler-sfc 编译真实源码、esbuild（自定义 .vue loader）剥 TS、
+ * @vue/server-renderer 真渲染，不复制任何模板逻辑。交互（点击折叠、只读拦截）SSR
+ * 渲染不出来，由 test_user_menu_inherited_scope_behavior.py（纯函数）与
  * test_menu_access_tree_contract.py（源码契约）覆盖。
  *
  * 输出 JSON（断言交给 pytest）。cwd 必须是 frontend。
@@ -21,30 +22,47 @@ const esbuild = fromFrontend("esbuild");
 const COMPONENT = path.resolve("src/components/user/MenuAccessTree.vue");
 const frontendRequire = (id) => require(require.resolve(id, { paths: [process.cwd()] }));
 
-function buildComponent(source) {
-  const { descriptor, errors } = parse(source, { filename: COMPONENT });
+const toComponentOptions = (code) =>
+  code.replace("export default", "const __sfc =").replace("export function render", "function render");
+
+/** 编译任意 .vue（含自引用的 MenuTreeNode.vue），输出可直接被 esbuild 打包的 TS。 */
+function compileVueFile(filename) {
+  const source = fs.readFileSync(filename, "utf8");
+  const { descriptor, errors } = parse(source, { filename });
   if (errors.length) throw new Error("parse: " + errors.map(String).join("; "));
 
   const script = compileScript(descriptor, { id: "menu-access-tree" });
   const tpl = compileTemplate({
     source: descriptor.template.content,
-    filename: COMPONENT,
+    filename,
     id: "menu-access-tree",
     compilerOptions: { bindingMetadata: script.bindings },
   });
   if (tpl.errors.length) throw new Error("template: " + tpl.errors.map(String).join("; "));
 
-  const toComponentOptions = (code) =>
-    code.replace("export default", "const __sfc =").replace("export function render", "function render");
+  return [
+    toComponentOptions(script.content),
+    toComponentOptions(tpl.code),
+    "__sfc.render = render;",
+    "export default __sfc;",
+  ].join("\n");
+}
 
-  const bundled = esbuild.buildSync({
+const vueSfcPlugin = {
+  name: "vue-sfc",
+  setup(build) {
+    build.onLoad({ filter: /\.vue$/ }, (args) => ({
+      contents: compileVueFile(args.path),
+      loader: "ts",
+      resolveDir: path.dirname(args.path),
+    }));
+  },
+};
+
+async function buildComponent() {
+  const bundled = await esbuild.build({
     stdin: {
-      contents: [
-        toComponentOptions(script.content),
-        toComponentOptions(tpl.code),
-        "__sfc.render = render;",
-        "export default __sfc;",
-      ].join("\n"),
+      contents: `import MenuAccessTree from ${JSON.stringify(COMPONENT)}; export default MenuAccessTree;`,
       loader: "ts",
       resolveDir: path.dirname(COMPONENT),
       sourcefile: "MenuAccessTree.entry.ts",
@@ -55,6 +73,7 @@ function buildComponent(source) {
     platform: "node",
     target: "node18",
     external: ["vue"],
+    plugins: [vueSfcPlugin],
     logLevel: "silent",
   });
 
@@ -67,26 +86,25 @@ function buildComponent(source) {
   return moduleRef.exports.default || moduleRef.exports;
 }
 
-async function render(source, props) {
-  const app = Vue.createSSRApp({ render: () => Vue.h(buildComponent(source), props) });
-  return renderToString(app);
-}
-
 (async () => {
-  const source = fs.readFileSync(COMPONENT, "utf8");
+  const App = await buildComponent();
 
-  // 场景：系统管理菜单由角色授予；用户直配了「用户管理」+「查看用户密钥」；
-  // 「编辑用户信息 / 注销用户」由角色授予（应显示灰勾 + 角色徽标）；
-  // 其余功能点既未直配也未继承（应显示空框）。
-  const html = await render(source, {
+  const render = async (props) => {
+    const app = Vue.createSSRApp({ render: () => Vue.h(App, props) });
+    return renderToString(app);
+  };
+
+  // 场景：直配「用户管理」子菜单 + 它的一个功能点；角色授予「角色管理」子菜单、
+  // 两个功能点，以及一级菜单「提示词工坊」。其余保持未授予。
+  const html = await render({
     menus: ["menu:system:users"],
     elements: ["element:user:view_key"],
-    inheritedMenus: ["menu:system:audit", "menu:prompts"],
+    inheritedMenus: ["menu:system:roles", "menu:prompts"],
     inheritedElements: ["element:user:edit", "element:user:delete"],
     disabled: false,
   });
 
-  const disabledHtml = await render(source, {
+  const disabledHtml = await render({
     menus: [],
     elements: [],
     inheritedMenus: [],
@@ -107,17 +125,21 @@ async function render(source, props) {
           "系统管理",
           "提示词工坊",
         ].every((label) => html.includes(label)),
-        keepsLevelLegend: html.includes("菜单权限") && html.includes("功能点权限"),
+        keepsLevelLegend:
+          html.includes("菜单权限") && html.includes("页面") && html.includes("功能点权限"),
         collapseButtonsMatchMenusWithChildren: (html.match(/aria-expanded="true"/g) || []).length >= 10,
         rendersRoleBadges: (html.match(/>角色</g) || []).length >= 3,
         inheritedMenuRowIsDimmed: html.includes("px-2.5 py-2 bg-slate-50"),
-        inheritedElementIsDimmed: editRow.includes("bg-slate-50/60"),
-        directElementIsChecked: /element:user:view_key/.test(html) || html.includes("查看用户密钥"),
+        inheritedElementIsDimmed: editRow.includes("bg-slate-50"),
+        directElementIsChecked: html.includes("查看用户密钥"),
+        rendersSubmenuPageBadges: (html.match(/>页面<\/span>/g) || []).length === 4,
+        indentsThirdLevel: html.includes("padding-left:28px"),
         disabledPropagates: disabledHtml.includes('aria-disabled="true"'),
         noWriteChannelInMarkup: !html.includes("permissionData"),
       },
       html,
       roleBadgeCount: (html.match(/>角色</g) || []).length,
+      pageBadgeCount: (html.match(/>页面<\/span>/g) || []).length,
       collapseCount: (html.match(/aria-expanded="true"/g) || []).length,
     }),
   );

@@ -1099,8 +1099,29 @@
                   />
                 </div>
                 <div
+                  v-if="roleListError && businessRoles.length === 0"
+                  class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800"
+                >
+                  获取角色列表失败<template v-if="roleListErrorStatus">（HTTP {{ roleListErrorStatus }}）</template>，暂时无法分配业务角色。请确认当前账号拥有「角色管理」查看权限或「编辑用户信息」权限，或关闭后重新打开本弹窗重试。
+                </div>
+                <div
+                  v-else-if="businessRoles.length === 0"
+                  class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs text-gray-500"
+                >
+                  暂无可分配的业务角色。请先在「角色管理」里创建角色。
+                </div>
+                <div
+                  v-else
                   class="border border-gray-300 rounded-lg p-3 max-h-40 overflow-y-auto bg-gray-50 grid grid-cols-1 sm:grid-cols-2 gap-2"
                 >
+                  <!-- 有角色但搜不到时给明确反馈，否则空框看起来像「角色不存在」 -->
+                  <p
+                    v-if="filteredBusinessRoles.length === 0"
+                    class="col-span-full px-1 py-2 text-xs text-gray-500"
+                  >
+                    没有匹配「{{ roleSearchQuery }}」的角色，可清空搜索查看全部
+                    {{ businessRoles.length }} 个。
+                  </p>
                   <label
                     v-for="role in filteredBusinessRoles"
                     :key="role.id"
@@ -2358,6 +2379,7 @@ import { useToast } from "../composables/useToast";
 import { useBranding } from "../composables/useBranding";
 import { useUser } from "../composables/useUser";
 import { getMenuDescendantIds } from "../constants/permissions";
+import { filterBusinessRoles } from "../utils/roleFilter";
 import { copyToClipboard } from "../utils/clipboard";
 import { checkPasswordPolicy } from "../utils/passwordPolicy";
 import {
@@ -2452,6 +2474,15 @@ const showSsoSync = computed(
 );
 const users = ref<any[]>([]);
 const businessRoles = ref<any[]>([]);
+/**
+ * 业务角色是否加载失败。
+ *
+ * 角色列表走独立的 `/api/portal/roles`（需要「角色管理」查看权限）。失败时如果只
+ * `console.error`，界面就是一个空网格——看起来像「系统里没有这个角色」，而实际上
+ * 可能只是这一次请求没成功（用户反馈过：角色管理里明明有 default，编辑用户却搜不到）。
+ */
+const roleListError = ref(false);
+const roleListErrorStatus = ref<number | null>(null);
 const loading = ref(false);
 const total = ref(0);
 const page = ref(1);
@@ -3353,12 +3384,11 @@ const isAllSelected = computed(
   },
 );
 
-const filteredBusinessRoles = computed(() => {
-  if (!roleSearchQuery.value) return businessRoles.value;
-  return businessRoles.value.filter((r) =>
-    r.name.toLowerCase().includes(roleSearchQuery.value.toLowerCase()),
-  );
-});
+// 角色按 name 或 code 过滤：老库的 default 角色 name 是「默认用户」之类，
+// 只匹配 name 会让搜 "de" 的结果为空（角色管理页能搜到是因为后端两列都查）。
+const filteredBusinessRoles = computed(() =>
+  filterBusinessRoles(businessRoles.value, roleSearchQuery.value),
+);
 
 // Actions
 const fetchUsers = async () => {
@@ -3433,10 +3463,30 @@ const fetchBusinessRoles = async () => {
     const response = await axios.get("/api/portal/roles", {
       params: { page: 1, size: 100 },
     });
-    businessRoles.value = response.data.items;
-  } catch (e) {
+    businessRoles.value = response.data.items || [];
+    roleListError.value = false;
+    roleListErrorStatus.value = null;
+  } catch (e: any) {
     console.error(e);
+    roleListError.value = true;
+    // 带上状态码：403 是权限问题、其他是服务端问题，用户能据此自助判断
+    roleListErrorStatus.value = e?.response?.status ?? null;
+    showToast(
+      `获取角色列表失败${roleListErrorStatus.value ? `（HTTP ${roleListErrorStatus.value}）` : ""}，请确认当前账号有角色管理查看权限或编辑用户权限`,
+      "error",
+    );
   }
+};
+
+/**
+ * 「确保角色列表已加载」的唯一入口。
+ *
+ * onMounted 那次请求可能因为权限/网络失败，之后弹窗必须能重试；新建与编辑走同一个
+ * 入口，避免两条路径各自判断、各自漂移。
+ */
+const ensureBusinessRoles = async () => {
+  if (businessRoles.value.length > 0) return;
+  await fetchBusinessRoles();
 };
 
 const fetchResources = async () => {
@@ -3896,10 +3946,8 @@ const findAutoCheckedRoleIds = (): number[] => {
 };
 
 const openCreateDialog = async () => {
-  // 首次进入页面时角色列表可能尚未返回，这里补齐后再做默认勾选
-  if (businessRoles.value.length === 0) {
-    await fetchBusinessRoles();
-  }
+  // 首次进入页面时角色列表可能尚未返回，补齐后再做默认勾选
+  await ensureBusinessRoles();
   showCreateDialog.value = true;
   formData.value = {
     user_name: "",
@@ -3944,9 +3992,12 @@ const editUser = async (user: any) => {
   // 否则「管理员改成普通用户再保存」会拿空的/残缺的缓冲整表覆盖权限。
   permissionSubjectRole.value = String(user.role || "");
   resetPermissionBuffers();
+  // 角色列表与权限数据一起补齐：只靠 onMounted 那一次，失败后弹窗里会一直是空列表
+  const pending: Promise<unknown>[] = [ensureBusinessRoles()];
   if (canEditPermissions.value) {
-    await Promise.all([fetchResources(), fetchUserPermissions(user.id)]);
+    pending.push(fetchResources(), fetchUserPermissions(user.id));
   }
+  await Promise.all(pending);
 };
 const closeDialogs = () => {
   showCreateDialog.value = false;

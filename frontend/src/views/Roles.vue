@@ -596,53 +596,15 @@
                   <template v-else-if="activeMainTab === 'ui'">
                       <div class="flex-1 overflow-y-auto bg-gray-50 p-3 sm:p-6 rounded-xl border border-gray-200">
                           <div class="space-y-4">
-                              <div v-for="menu in MENU_TREE" :key="menu.id" class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                                  <!-- Menu Parent -->
-                                  <div class="px-3 py-2.5 bg-gray-50 flex items-center justify-between border-b border-gray-100">
-                                      <div class="flex items-center gap-2">
-                                          <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
-                                          </svg>
-                                          <span class="text-[10px] font-bold text-blue-600">菜单权限</span>
-                                          <input
-                                              type="checkbox"
-                                              :checked="isItemSelected(menu.id)"
-                                              :indeterminate="isMenuPartiallySelected(menu.id)"
-                                              @change="toggleTreeItem(menu.id)"
-                                              class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
-                                          />
-                                          <span class="font-black text-gray-800 text-xs sm:text-sm">{{ menu.label }}</span>
-                                      </div>
-                                  </div>
-
-                                  <!-- Children Elements -->
-                                  <div v-if="menu.children && menu.children.length > 0" class="p-3">
-                                      <div class="flex items-center gap-1.5 mb-2 text-[10px] font-bold text-gray-500">
-                                          <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5h6M9 9h6M9 13h6M9 17h4M5 5.5A1.5 1.5 0 016.5 4h11A1.5 1.5 0 0119 5.5v13a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 015 18.5v-13z" />
-                                          </svg>
-                                          <span>功能点权限</span>
-                                          <span class="font-normal text-gray-400">控制页面内按钮和操作</span>
-                                      </div>
-                                      <div class="grid grid-cols-1 xs:grid-cols-2 gap-2">
-                                      <div
-                                          v-for="child in menu.children"
-                                          :key="child.id"
-                                          @click="toggleTreeItem(child.id)"
-                                          class="flex items-center gap-2.5 p-2 rounded-lg border border-transparent hover:bg-blue-50 transition-all cursor-pointer group"
-                                          :class="isItemSelected(child.id) ? 'bg-blue-50/50 border-blue-100 shadow-inner' : ''"
-                                      >
-                                          <div
-                                              class="w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-all"
-                                              :class="isItemSelected(child.id) ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'"
-                                          >
-                                              <svg v-if="isItemSelected(child.id)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                                          </div>
-                                          <span class="text-[11px] font-medium text-gray-700 leading-tight">{{ child.label }}</span>
-                                      </div>
-                                      </div>
-                                  </div>
-                              </div>
+                              <MenuAccessTree
+                                  :menus="permissionData.menus"
+                                  :elements="permissionData.elements"
+                                  :inherited-menus="[]"
+                                  :inherited-elements="[]"
+                                  :disabled="loadingPermissions"
+                                  @toggle-menu="toggleTreeItem"
+                                  @toggle-element="toggleTreeItem"
+                              />
                           </div>
                       </div>
                       <div class="mt-2 mb-2 text-[10px] text-gray-400 italic px-1 flex justify-between">
@@ -1136,8 +1098,10 @@ import { modelApi } from '../api/model'
 import { shouldShowModelSearch, groupPermissionModels } from '../utils/modelSelect'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
-import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
+import { getMenuDescendantIds } from '../constants/permissions'
+import { applyMenuToggle } from '../utils/permissionLists'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
+import MenuAccessTree from '../components/user/MenuAccessTree.vue'
 import ForbiddenResourceTabs from '../components/system/ForbiddenResourceTabs.vue'
 import AgentRestrictionDialog from '../components/system/AgentRestrictionDialog.vue'
 import { parseForbiddenCommands } from "../utils/forbiddenCommands"
@@ -1542,44 +1506,21 @@ const resCheckboxClass = () => {
 }
 
 // UI Tree Logic
+/**
+ * 权限树的勾选：与用户页共用 `applyMenuToggle()`，保证「勾父菜单级联到它的功能点、
+ * 取消时清空该菜单下的直配」在两处是同一套语义。角色没有「继承」概念，两个继承集合传空。
+ */
 const toggleTreeItem = (itemId: string) => {
-    const isMenu = itemId.startsWith('menu:');
-    const targetArray = isMenu ? permissionData.value.menus : permissionData.value.elements;
-
-    if (isMenu) {
-        const descendantIds = getMenuDescendantIds(itemId);
-        const shouldSelect = !targetArray.includes(itemId);
-        if (shouldSelect) {
-            if (!targetArray.includes(itemId)) targetArray.push(itemId);
-            descendantIds.forEach(id => {
-                if (!permissionData.value.elements.includes(id)) permissionData.value.elements.push(id);
-            });
-        } else {
-            const nextMenus = targetArray.filter(id => id !== itemId);
-            permissionData.value.menus = nextMenus;
-            permissionData.value.elements = permissionData.value.elements.filter(id => !descendantIds.includes(id));
-        }
-        return;
-    }
-
-    const idx = targetArray.indexOf(itemId);
-    if (idx > -1) {
-        targetArray.splice(idx, 1);
-    } else {
-        targetArray.push(itemId);
-    }
-}
-
-const isMenuPartiallySelected = (menuId: string) => {
-    const descendantIds = getMenuDescendantIds(menuId);
-    const selectedCount = descendantIds.filter(id => permissionData.value.elements.includes(id)).length;
-    return selectedCount > 0 && selectedCount < descendantIds.length;
-}
-
-const isItemSelected = (itemId: string) => {
-    const isMenu = itemId.startsWith('menu:');
-    const targetArray = isMenu ? permissionData.value.menus : permissionData.value.elements;
-    return targetArray.includes(itemId);
+    const result = applyMenuToggle(
+        permissionData.value.menus,
+        permissionData.value.elements,
+        itemId,
+        getMenuDescendantIds(itemId),
+        [],
+        [],
+    );
+    permissionData.value.menus = result.menus;
+    permissionData.value.elements = result.elements;
 }
 
 // User Assignment Logic
@@ -2258,6 +2199,8 @@ const deleteRole = async () => {
     }
 }
 
+const loadingPermissions = ref(false)
+
 const openPermissionDialog = async (role: any) => {
     currentRole.value = role
     showPermissionDialog.value = true
@@ -2265,10 +2208,16 @@ const openPermissionDialog = async (role: any) => {
     // 上一个角色的智能体级限制计数与弹框目标必须复位，否则角标会跨角色残留
     agentRestrictionCounts.value = {}
     agentRestrictionTarget.value = null
-    await Promise.all([
-        fetchResources(),
-        fetchRolePermissions(role.id)
-    ])
+    // 权限到位前禁止勾选：空树被点一下就会写进缓冲，保存时把角色权限清掉
+    loadingPermissions.value = true
+    try {
+        await Promise.all([
+            fetchResources(),
+            fetchRolePermissions(role.id)
+        ])
+    } finally {
+        loadingPermissions.value = false
+    }
 }
 
 const fetchResources = async () => {

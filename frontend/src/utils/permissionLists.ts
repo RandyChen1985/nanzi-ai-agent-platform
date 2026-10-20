@@ -15,6 +15,8 @@
  * 不该让整页白屏，更不该让下一次保存把线上配置写坏。
  */
 
+import type { PermissionNode } from '../constants/permissions'
+
 /** 与后端 `PermissionUpdate` 字段一一对应；顺序固定，便于测试与 payload 比对。 */
 export interface PermissionLists {
   agents: string[]
@@ -278,4 +280,72 @@ export function buildUserPermissionPayload(
     forbidden_skills: [...(direct.forbidden_skills || [])],
     models: [...(direct.models || [])],
   }
+}
+
+// ---------------------------------------------------------------- 权限树的授予状态
+
+/** 一组「直配 / 角色继承」集合，供树节点的三态判定使用。 */
+export interface PermissionGrantSets {
+  menus: readonly string[]
+  elements: readonly string[]
+  inheritedMenus: readonly string[]
+  inheritedElements: readonly string[]
+}
+
+const includesAny = (ids: readonly string[] | null | undefined, id: string) =>
+  Array.isArray(ids) && ids.includes(id)
+
+/**
+ * 节点是否「已授予」：自己直配 / 自己由角色授予 / 全部子节点都已授予。
+ *
+ * 递归到最深一层，所以勾一级菜单时视觉上能正确覆盖「子菜单 + 它的功能点」。
+ */
+export function isPermissionNodeGranted(
+  node: PermissionNode,
+  sets: PermissionGrantSets,
+): boolean {
+  if (
+    includesAny(sets.menus, node.id) ||
+    includesAny(sets.elements, node.id) ||
+    includesAny(sets.inheritedMenus, node.id) ||
+    includesAny(sets.inheritedElements, node.id)
+  ) {
+    return true
+  }
+  const children = node.children || []
+  return children.length > 0 && children.every((child) => isPermissionNodeGranted(child, sets))
+}
+
+/** 节点自身或任意后代是否存在用户直配（决定「可编辑」还是「只读」）。 */
+export function hasDirectGrantIn(node: PermissionNode, sets: PermissionGrantSets): boolean {
+  if (includesAny(sets.menus, node.id) || includesAny(sets.elements, node.id)) return true
+  return (node.children || []).some((child) => hasDirectGrantIn(child, sets))
+}
+
+/** 节点自身或任意后代是否来自角色授予。 */
+export function hasInheritedGrantIn(node: PermissionNode, sets: PermissionGrantSets): boolean {
+  if (includesAny(sets.inheritedMenus, node.id) || includesAny(sets.inheritedElements, node.id)) {
+    return true
+  }
+  return (node.children || []).some((child) => hasInheritedGrantIn(child, sets))
+}
+
+/** 部分选中：整体未勾选，但至少有一个子节点已授予。 */
+export function isPermissionNodePartiallySelected(
+  node: PermissionNode,
+  sets: PermissionGrantSets,
+): boolean {
+  const children = node.children || []
+  if (children.length === 0) return false
+  if (isPermissionNodeGranted(node, sets)) return false
+  return children.some((child) => isPermissionNodeGranted(child, sets))
+}
+
+/** 叶子功能点数量（子菜单不计数），用于卡片右上角的「N 个功能点」。 */
+export function countLeafElements(node: PermissionNode): number {
+  return (node.children || []).reduce(
+    (total, child) =>
+      total + (child.id.startsWith('element:') ? 1 : countLeafElements(child)),
+    0,
+  )
 }
