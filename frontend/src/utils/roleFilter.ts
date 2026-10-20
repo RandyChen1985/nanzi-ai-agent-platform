@@ -28,3 +28,27 @@ export function filterBusinessRoles<T extends SearchableRole>(
     return name.includes(query) || code.includes(query)
   })
 }
+
+export interface SelectedRoleSummary {
+  /** 已勾选的角色数（以表单里的 id 为准，与当前搜索结果无关） */
+  selectedCount: number
+  /** 已勾选但不在当前列表里的数量：保存时会保留，界面上要说明，否则像是丢了 */
+  missingCount: number
+}
+
+/**
+ * 统计「已选角色」与「当前列表能看到多少」。
+ *
+ * 角色列表按创建时间倒序只回一页，老角色（如 default）经常不在第一页；
+ * 编辑已有用户时，他的角色很可能一个都不在列表里，必须让界面说清楚。
+ */
+export function summarizeSelectedRoles(
+  selectedIds: readonly (string | number)[] | null | undefined,
+  roles: readonly { id?: string | number | null }[] | null | undefined,
+): SelectedRoleSummary {
+  const selected = Array.isArray(selectedIds) ? selectedIds : []
+  const list = Array.isArray(roles) ? roles : []
+  const visibleIds = new Set(list.map((role) => role?.id))
+  const missingCount = selected.filter((id) => !visibleIds.has(id)).length
+  return { selectedCount: selected.length, missingCount }
+}

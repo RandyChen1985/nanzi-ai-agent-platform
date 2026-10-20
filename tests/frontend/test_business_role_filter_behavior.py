@@ -124,3 +124,30 @@ return { ids: api.filterBusinessRoles(roles, 'zzz').map(r => r.id) }
 """)
 
     assert result["ids"] == []
+
+
+def test_selected_summary_counts_roles_outside_current_result():
+    """搜索只回一段结果时，已勾选但不在列表里的角色要能被计数出来。
+
+    编辑用户时，用户的角色可能不在当前搜索结果里（默认按创建时间倒序只回前 100 条），
+    界面若只显示网格，会让人以为「这个用户没有角色」。
+    """
+    result = _run("""
+const roles = [{ id: 1, code: 'a', name: '甲' }];
+return api.summarizeSelectedRoles([1, 2, 3], roles)
+""")
+
+    assert result == {"selectedCount": 3, "missingCount": 2}
+
+
+def test_selected_summary_handles_empty_and_dirty_input():
+    """没有已选项、或返回 null 时不能抛错。"""
+    result = _run("""
+return {
+  empty: api.summarizeSelectedRoles([], []),
+  nulls: api.summarizeSelectedRoles(null, null),
+}
+""")
+
+    assert result["empty"] == {"selectedCount": 0, "missingCount": 0}
+    assert result["nulls"] == {"selectedCount": 0, "missingCount": 0}

@@ -47,3 +47,33 @@ def test_role_picker_distinguishes_three_empty_states():
     assert "暂无可分配的业务角色" in source, "一个角色都没有时不能留个空框"
     assert "没有匹配" in source, "搜不到时要说明是搜索无匹配，而不是让人以为角色不存在"
     assert "businessRoles.length" in source, "提示里要带上总数量，便于判断是不是搜索条件太窄"
+
+
+def test_role_search_goes_through_the_backend():
+    """关键词必须传给后端 `search`。
+
+    列表按创建时间倒序只回一页，`default` 这类最早创建的角色被截断在最后一页——
+    本地过滤再怎么改都搜不到，只有后端全表匹配才行（角色管理页就是这么做的）。
+    """
+    source = _users()
+    fetch = source.split("const fetchBusinessRoles = async", 1)[1].split("/** 输入即搜", 1)[0]
+
+    assert "search: keyword.trim() || undefined" in fetch, "关键词没有传给后端"
+    assert "roleFetchSeq" in fetch, "快速输入时旧响应可能后到，必须丢弃过期结果"
+
+
+def test_search_is_debounced_and_only_runs_while_dialog_open():
+    """输入即搜要防抖，且弹窗关闭后不再空打接口。"""
+    source = _users()
+
+    assert "setTimeout(" in source
+    assert "showCreateDialog.value && !showEditDialog.value" in source
+
+
+def test_selected_roles_are_summarized_outside_the_current_page():
+    """已选角色数要以表单为准并标明「不在当前列表」，否则编辑时会以为角色丢了。"""
+    source = _users()
+
+    assert "selectedRoleSummary" in source
+    assert "已选" in source
+    assert "保存时保留" in source

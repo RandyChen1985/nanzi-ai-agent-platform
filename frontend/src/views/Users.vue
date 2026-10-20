@@ -1087,15 +1087,26 @@
               </div>
 
               <div v-if="formData.role === 'user'">
-                <div class="flex justify-between items-center mb-1">
-                  <label class="block text-xs font-bold text-gray-400 uppercase"
-                    >业务角色</label
-                  >
+                <div class="mb-1 flex items-center justify-between gap-2">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <label class="block text-xs font-bold text-gray-400 uppercase"
+                      >业务角色</label
+                    >
+                    <span
+                      v-if="selectedRoleSummary.selectedCount > 0"
+                      class="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600"
+                    >已选 {{ selectedRoleSummary.selectedCount }} 个</span>
+                    <span
+                      v-if="selectedRoleSummary.missingCount > 0"
+                      class="truncate text-[10px] text-gray-400"
+                      title="不在当前搜索/分页结果中，保存时仍会保留"
+                    >其中 {{ selectedRoleSummary.missingCount }} 个不在当前列表，保存时保留</span>
+                  </div>
                   <input
                     v-model="roleSearchQuery"
                     type="search"
-                    placeholder="搜索角色..."
-                    class="text-xs border border-gray-200 rounded px-2 py-0.5 w-32 focus:outline-none focus:border-blue-400"
+                    placeholder="搜索角色（支持编码）..."
+                    class="text-xs border border-gray-200 rounded px-2 py-0.5 w-40 focus:outline-none focus:border-blue-400"
                   />
                 </div>
                 <div
@@ -1119,8 +1130,10 @@
                     v-if="filteredBusinessRoles.length === 0"
                     class="col-span-full px-1 py-2 text-xs text-gray-500"
                   >
-                    没有匹配「{{ roleSearchQuery }}」的角色，可清空搜索查看全部
-                    {{ businessRoles.length }} 个。
+                    没有匹配「{{ roleSearchQuery }}」的角色。
+                    <template v-if="businessRolesTotal > businessRoles.length"
+                      >共 {{ businessRolesTotal }} 个角色，搜索会在全部角色中查找。</template
+                    >
                   </p>
                   <label
                     v-for="role in filteredBusinessRoles"
@@ -1137,6 +1150,12 @@
                       role.name
                     }}</span>
                   </label>
+                  <p
+                    v-if="businessRolesTotal > businessRoles.length"
+                    class="col-span-full px-1 text-[10px] text-gray-400"
+                  >
+                    共 {{ businessRolesTotal }} 个角色，仅显示前 {{ businessRoles.length }} 个，输入关键词可搜索全部。
+                  </p>
                 </div>
               </div>
 
@@ -2379,7 +2398,7 @@ import { useToast } from "../composables/useToast";
 import { useBranding } from "../composables/useBranding";
 import { useUser } from "../composables/useUser";
 import { getMenuDescendantIds } from "../constants/permissions";
-import { filterBusinessRoles } from "../utils/roleFilter";
+import { filterBusinessRoles, summarizeSelectedRoles } from "../utils/roleFilter";
 import { copyToClipboard } from "../utils/clipboard";
 import { checkPasswordPolicy } from "../utils/passwordPolicy";
 import {
@@ -3458,15 +3477,30 @@ const copyBindingIdentity = async (row: any) => {
   }
 };
 
-const fetchBusinessRoles = async () => {
+const businessRolesTotal = ref(0);
+/** 只认最后一次请求的响应：快速输入时旧响应可能后到，会把结果覆盖回上一个关键词 */
+let roleFetchSeq = 0;
+
+/**
+ * 拉业务角色，关键词交给后端 `search`。
+ *
+ * 为什么必须走后端：列表按 created_at 倒序只回一页，而 `default` 这类默认角色创建得
+ * 最早、必然排在最后一页——本地再怎么过滤也搜不到它（角色管理页能搜到，是因为它把
+ * 关键词传给了后端，在后端做全表匹配）。这里与角色管理页对齐。
+ */
+const fetchBusinessRoles = async (keyword = "") => {
+  const seq = ++roleFetchSeq;
   try {
     const response = await axios.get("/api/portal/roles", {
-      params: { page: 1, size: 100 },
+      params: { page: 1, size: 100, search: keyword.trim() || undefined },
     });
+    if (seq !== roleFetchSeq) return; // 过期响应直接丢弃
     businessRoles.value = response.data.items || [];
+    businessRolesTotal.value = response.data.total ?? businessRoles.value.length;
     roleListError.value = false;
     roleListErrorStatus.value = null;
   } catch (e: any) {
+    if (seq !== roleFetchSeq) return;
     console.error(e);
     roleListError.value = true;
     // 带上状态码：403 是权限问题、其他是服务端问题，用户能据此自助判断
@@ -3477,6 +3511,21 @@ const fetchBusinessRoles = async () => {
     );
   }
 };
+
+/** 输入即搜（300ms 防抖）；只在弹窗真的打开时请求，关闭后不空打接口。 */
+let roleSearchTimer: ReturnType<typeof setTimeout> | null = null;
+watch(roleSearchQuery, (value) => {
+  if (!showCreateDialog.value && !showEditDialog.value) return;
+  if (roleSearchTimer) clearTimeout(roleSearchTimer);
+  roleSearchTimer = setTimeout(() => {
+    void fetchBusinessRoles(value);
+  }, 300);
+});
+
+// 已选角色数按表单里的 id 算：老角色常不在当前一页里，界面要说明它没丢
+const selectedRoleSummary = computed(() =>
+  summarizeSelectedRoles(formData.value.role_ids, businessRoles.value),
+);
 
 /**
  * 「确保角色列表已加载」的唯一入口。
