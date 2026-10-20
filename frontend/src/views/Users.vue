@@ -1087,20 +1087,54 @@
               </div>
 
               <div v-if="formData.role === 'user'">
-                <div class="flex justify-between items-center mb-1">
-                  <label class="block text-xs font-bold text-gray-400 uppercase"
-                    >业务角色</label
-                  >
+                <div class="mb-1 flex items-center justify-between gap-2">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <label class="block text-xs font-bold text-gray-400 uppercase"
+                      >业务角色</label
+                    >
+                    <span
+                      v-if="selectedRoleSummary.selectedCount > 0"
+                      class="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600"
+                    >已选 {{ selectedRoleSummary.selectedCount }} 个</span>
+                    <span
+                      v-if="selectedRoleSummary.missingCount > 0"
+                      class="truncate text-[10px] text-gray-400"
+                      title="不在当前搜索/分页结果中，保存时仍会保留"
+                    >其中 {{ selectedRoleSummary.missingCount }} 个不在当前列表，保存时保留</span>
+                  </div>
                   <input
                     v-model="roleSearchQuery"
                     type="search"
-                    placeholder="搜索角色..."
-                    class="text-xs border border-gray-200 rounded px-2 py-0.5 w-32 focus:outline-none focus:border-blue-400"
+                    placeholder="搜索角色（支持编码）..."
+                    class="text-xs border border-gray-200 rounded px-2 py-0.5 w-40 focus:outline-none focus:border-blue-400"
                   />
                 </div>
                 <div
+                  v-if="roleListError && businessRoles.length === 0"
+                  class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800"
+                >
+                  获取角色列表失败<template v-if="roleListErrorStatus">（HTTP {{ roleListErrorStatus }}）</template>，暂时无法分配业务角色。请确认当前账号拥有「角色管理」查看权限或「编辑用户信息」权限，或关闭后重新打开本弹窗重试。
+                </div>
+                <div
+                  v-else-if="businessRoles.length === 0"
+                  class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs text-gray-500"
+                >
+                  暂无可分配的业务角色。请先在「角色管理」里创建角色。
+                </div>
+                <div
+                  v-else
                   class="border border-gray-300 rounded-lg p-3 max-h-40 overflow-y-auto bg-gray-50 grid grid-cols-1 sm:grid-cols-2 gap-2"
                 >
+                  <!-- 有角色但搜不到时给明确反馈，否则空框看起来像「角色不存在」 -->
+                  <p
+                    v-if="filteredBusinessRoles.length === 0"
+                    class="col-span-full px-1 py-2 text-xs text-gray-500"
+                  >
+                    没有匹配「{{ roleSearchQuery }}」的角色。
+                    <template v-if="businessRolesTotal > businessRoles.length"
+                      >共 {{ businessRolesTotal }} 个角色，搜索会在全部角色中查找。</template
+                    >
+                  </p>
                   <label
                     v-for="role in filteredBusinessRoles"
                     :key="role.id"
@@ -1116,6 +1150,12 @@
                       role.name
                     }}</span>
                   </label>
+                  <p
+                    v-if="businessRolesTotal > businessRoles.length"
+                    class="col-span-full px-1 text-[10px] text-gray-400"
+                  >
+                    共 {{ businessRolesTotal }} 个角色，仅显示前 {{ businessRoles.length }} 个，输入关键词可搜索全部。
+                  </p>
                 </div>
               </div>
 
@@ -1489,79 +1529,37 @@
                   class="flex-1 overflow-y-auto bg-gray-50 p-2 sm:p-4 rounded-lg border border-gray-200"
                 >
                   <div class="space-y-3">
+                    <!-- 汇总条：一眼看出「直配 + 角色授予」的总量与来源构成 -->
                     <div
-                      v-for="menu in MENU_TREE"
-                      :key="menu.id"
-                      class="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm"
+                      class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] text-gray-500"
                     >
-                      <div
-                        class="px-3 py-2 bg-gray-50 flex items-center gap-2 border-b border-gray-100"
+                      <span>
+                        已授予
+                        <b class="text-gray-800">{{ grantedMenuCount }}</b> 个菜单 ·
+                        <b class="text-gray-800">{{ grantedElementCount }}</b> 个功能点
+                      </span>
+                      <span
+                        v-if="inheritedMenus.length || inheritedElements.length"
+                        class="inline-flex items-center gap-1"
                       >
-                        <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
-                        </svg>
-                        <span class="text-[10px] font-bold text-blue-600">菜单权限</span>
-                        <input
-                          type="checkbox"
-                          :checked="isItemSelected(menu.id)"
-                          :indeterminate="isMenuPartiallySelected(menu.id)"
-                          @change="toggleTreeItem(menu.id)"
-                          class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                        />
-                        <span
-                          class="text-xs sm:text-sm font-black text-gray-800"
-                          >{{ menu.label }}</span
-                        >
-                      </div>
-                      <div
-                        v-if="menu.children.length > 0"
-                        class="p-2"
-                      >
-                        <div class="flex items-center gap-1.5 mb-2 text-[10px] font-bold text-gray-500">
-                          <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5h6M9 9h6M9 13h6M9 17h4M5 5.5A1.5 1.5 0 016.5 4h11A1.5 1.5 0 0119 5.5v13a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 015 18.5v-13z" />
-                          </svg>
-                          <span>功能点权限</span>
-                          <span class="font-normal text-gray-400">控制页面内按钮和操作</span>
-                        </div>
-                        <div class="grid grid-cols-1 xs:grid-cols-2 gap-1.5">
-                        <div
-                          v-for="child in menu.children"
-                          :key="child.id"
-                          @click="toggleTreeItem(child.id)"
-                          class="flex items-center gap-2 p-1.5 rounded hover:bg-blue-50 cursor-pointer transition-colors"
-                          :class="isItemSelected(child.id) ? 'bg-blue-50' : ''"
-                        >
-                          <div
-                            class="w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center"
-                            :class="
-                              isItemSelected(child.id)
-                                ? 'bg-blue-600 border-blue-600'
-                                : 'bg-white border-gray-300'
-                            "
-                          >
-                            <svg
-                              v-if="isItemSelected(child.id)"
-                              class="w-2.5 h-2.5 text-white"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="3"
-                                d="M5 13l4 4L19 7"
-                              />
-                            </svg>
-                          </div>
-                          <span class="text-[11px] text-gray-600 leading-tight">{{
-                            child.label
-                          }}</span>
-                        </div>
-                        </div>
-                      </div>
+                        <span class="rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">角色</span>
+                        其中角色授予
+                        <b class="text-slate-600">{{ inheritedMenus.length }}</b> 个菜单 /
+                        <b class="text-slate-600">{{ inheritedElements.length }}</b> 个功能点
+                      </span>
+                      <span v-else class="text-gray-400">当前角色未额外授予页面权限</span>
                     </div>
+
+                    <MenuAccessTree
+                      :menus="permissionData.menus"
+                      :elements="permissionData.elements"
+                      :inherited-menus="inheritedMenus"
+                      :inherited-elements="inheritedElements"
+                      :disabled="!permissionsLoaded"
+                      @toggle-menu="toggleTreeItem"
+                      @toggle-element="toggleTreeItem"
+                      @inherited-blocked="onInheritedBlocked"
+                    />
                   </div>
                 </div>
               </div>
@@ -2399,7 +2397,8 @@ import { persistUserInfo } from "../utils/userSession";
 import { useToast } from "../composables/useToast";
 import { useBranding } from "../composables/useBranding";
 import { useUser } from "../composables/useUser";
-import { MENU_TREE, getMenuDescendantIds } from "../constants/permissions";
+import { getMenuDescendantIds } from "../constants/permissions";
+import { filterBusinessRoles, summarizeSelectedRoles } from "../utils/roleFilter";
 import { copyToClipboard } from "../utils/clipboard";
 import { checkPasswordPolicy } from "../utils/passwordPolicy";
 import {
@@ -2426,12 +2425,14 @@ import {
   type ForbiddenCatalogSnapshot,
 } from "../utils/forbiddenCatalogCache";
 import {
+  applyMenuToggle,
   buildUserPermissionPayload,
   emptyPermissionLists,
   resolveUserPermissionEditState,
   type InheritedForbiddenLists,
 } from "../utils/permissionLists";
 import { extractApiErrorDetail } from "../utils/apiErrorDetail";
+import MenuAccessTree from "../components/user/MenuAccessTree.vue";
 import RoleList from "../components/RoleList.vue";
 import ThirdPartyUserSyncDrawer from "../components/ThirdPartyUserSyncDrawer.vue";
 import QuotaPolicyPanel from "../components/admin/QuotaPolicyPanel.vue";
@@ -2492,6 +2493,15 @@ const showSsoSync = computed(
 );
 const users = ref<any[]>([]);
 const businessRoles = ref<any[]>([]);
+/**
+ * 业务角色是否加载失败。
+ *
+ * 角色列表走独立的 `/api/portal/roles`（需要「角色管理」查看权限）。失败时如果只
+ * `console.error`，界面就是一个空网格——看起来像「系统里没有这个角色」，而实际上
+ * 可能只是这一次请求没成功（用户反馈过：角色管理里明明有 default，编辑用户却搜不到）。
+ */
+const roleListError = ref(false);
+const roleListErrorStatus = ref<number | null>(null);
 const loading = ref(false);
 const total = ref(0);
 const page = ref(1);
@@ -2995,6 +3005,23 @@ const inheritedForbidden = ref<InheritedForbiddenLists>({
   forbidden_skills: [],
 });
 
+/**
+ * 角色授予的菜单 / 功能点（只读）：并集里有、直配里没有的部分。
+ *
+ * 这是「编辑用户时看不出角色已给了哪些页面」的修法：后端已同时返回并集与直配，
+ * 差集在这里算，树里以灰勾 + 「角色」徽标呈现，永不进入 PUT payload。
+ */
+const inheritedMenus = ref<string[]>([]);
+const inheritedElements = ref<string[]>([]);
+
+/** 汇总条：直配与角色来源不重叠（后者是差集），直接相加即去重后的授予总数。 */
+const grantedMenuCount = computed(
+  () => permissionData.value.menus.length + inheritedMenus.value.length,
+);
+const grantedElementCount = computed(
+  () => permissionData.value.elements.length + inheritedElements.value.length,
+);
+
 /** 只读区展示用：按「工具 / 命令 / 技能」三行渲染，没有内容不占位。 */
 const inheritedForbiddenRows = computed(() =>
   [
@@ -3078,6 +3105,8 @@ const resetPermissionBuffers = () => {
     forbidden_commands: [],
     forbidden_skills: [],
   };
+  inheritedMenus.value = [];
+  inheritedElements.value = [];
   forbiddenCommandsText.value = "";
   permissionsLoaded.value = false;
   permissionsLoadError.value = "";
@@ -3173,43 +3202,43 @@ const loadAgentRestrictionCounts = async () => {
 };
 
 // Tree Logic
+/**
+ * 树的勾选写入：菜单级联走共享纯函数（勾选时跳过角色已授予的子项），功能点直接翻转。
+ * 只写直配缓冲；角色来源项没有任何写入通道。
+ */
 const toggleTreeItem = (itemId: string) => {
-  const isMenu = itemId.startsWith("menu:");
-  const targetArray = isMenu
-    ? permissionData.value.menus
-    : permissionData.value.elements;
-  if (isMenu) {
-    const descendantIds = getMenuDescendantIds(itemId);
-    const shouldSelect = !targetArray.includes(itemId);
-    if (shouldSelect) {
-      if (!targetArray.includes(itemId)) targetArray.push(itemId);
-      descendantIds.forEach((id) => {
-        if (!permissionData.value.elements.includes(id)) permissionData.value.elements.push(id);
-      });
-    } else {
-      permissionData.value.menus = targetArray.filter((id) => id !== itemId);
-      permissionData.value.elements = permissionData.value.elements.filter(
-        (id) => !descendantIds.includes(id),
-      );
-    }
+  if (itemId.startsWith("menu:")) {
+    const result = applyMenuToggle(
+      permissionData.value.menus,
+      permissionData.value.elements,
+      itemId,
+      getMenuDescendantIds(itemId),
+      inheritedElements.value,
+      inheritedMenus.value,
+    );
+    permissionData.value.menus = result.menus;
+    permissionData.value.elements = result.elements;
     return;
   }
 
-  const idx = targetArray.indexOf(itemId);
-  if (idx > -1) targetArray.splice(idx, 1);
-  else targetArray.push(itemId);
+  // 双重保险：树里已拦截，这里再兜一层，避免别的入口把继承项写成直配。
+  if (
+    !permissionData.value.elements.includes(itemId) &&
+    inheritedElements.value.includes(itemId)
+  ) {
+    showToast("该权限来自所属角色，需到角色管理调整", "warning");
+    return;
+  }
+
+  const idx = permissionData.value.elements.indexOf(itemId);
+  if (idx > -1) permissionData.value.elements.splice(idx, 1);
+  else permissionData.value.elements.push(itemId);
 };
-const isMenuPartiallySelected = (menuId: string) => {
-  const descendantIds = getMenuDescendantIds(menuId);
-  const selectedCount = descendantIds.filter((id) => permissionData.value.elements.includes(id)).length;
-  return selectedCount > 0 && selectedCount < descendantIds.length;
-};
-const isItemSelected = (itemId: string) => {
-  const isMenu = itemId.startsWith("menu:");
-  const targetArray = isMenu
-    ? permissionData.value.menus || []
-    : permissionData.value.elements || [];
-  return targetArray.includes(itemId);
+
+/** 树里点到「仅角色来源」的节点：只提示，不修改——直配区不该出现继承项。 */
+const onInheritedBlocked = (itemId: string) => {
+  void itemId;
+  showToast("该权限来自所属角色，需到角色管理调整", "warning");
 };
 
 // Computed
@@ -3374,12 +3403,11 @@ const isAllSelected = computed(
   },
 );
 
-const filteredBusinessRoles = computed(() => {
-  if (!roleSearchQuery.value) return businessRoles.value;
-  return businessRoles.value.filter((r) =>
-    r.name.toLowerCase().includes(roleSearchQuery.value.toLowerCase()),
-  );
-});
+// 角色按 name 或 code 过滤：老库的 default 角色 name 是「默认用户」之类，
+// 只匹配 name 会让搜 "de" 的结果为空（角色管理页能搜到是因为后端两列都查）。
+const filteredBusinessRoles = computed(() =>
+  filterBusinessRoles(businessRoles.value, roleSearchQuery.value),
+);
 
 // Actions
 const fetchUsers = async () => {
@@ -3449,15 +3477,65 @@ const copyBindingIdentity = async (row: any) => {
   }
 };
 
-const fetchBusinessRoles = async () => {
+const businessRolesTotal = ref(0);
+/** 只认最后一次请求的响应：快速输入时旧响应可能后到，会把结果覆盖回上一个关键词 */
+let roleFetchSeq = 0;
+
+/**
+ * 拉业务角色，关键词交给后端 `search`。
+ *
+ * 为什么必须走后端：列表按 created_at 倒序只回一页，而 `default` 这类默认角色创建得
+ * 最早、必然排在最后一页——本地再怎么过滤也搜不到它（角色管理页能搜到，是因为它把
+ * 关键词传给了后端，在后端做全表匹配）。这里与角色管理页对齐。
+ */
+const fetchBusinessRoles = async (keyword = "") => {
+  const seq = ++roleFetchSeq;
   try {
     const response = await axios.get("/api/portal/roles", {
-      params: { page: 1, size: 100 },
+      params: { page: 1, size: 100, search: keyword.trim() || undefined },
     });
-    businessRoles.value = response.data.items;
-  } catch (e) {
+    if (seq !== roleFetchSeq) return; // 过期响应直接丢弃
+    businessRoles.value = response.data.items || [];
+    businessRolesTotal.value = response.data.total ?? businessRoles.value.length;
+    roleListError.value = false;
+    roleListErrorStatus.value = null;
+  } catch (e: any) {
+    if (seq !== roleFetchSeq) return;
     console.error(e);
+    roleListError.value = true;
+    // 带上状态码：403 是权限问题、其他是服务端问题，用户能据此自助判断
+    roleListErrorStatus.value = e?.response?.status ?? null;
+    showToast(
+      `获取角色列表失败${roleListErrorStatus.value ? `（HTTP ${roleListErrorStatus.value}）` : ""}，请确认当前账号有角色管理查看权限或编辑用户权限`,
+      "error",
+    );
   }
+};
+
+/** 输入即搜（300ms 防抖）；只在弹窗真的打开时请求，关闭后不空打接口。 */
+let roleSearchTimer: ReturnType<typeof setTimeout> | null = null;
+watch(roleSearchQuery, (value) => {
+  if (!showCreateDialog.value && !showEditDialog.value) return;
+  if (roleSearchTimer) clearTimeout(roleSearchTimer);
+  roleSearchTimer = setTimeout(() => {
+    void fetchBusinessRoles(value);
+  }, 300);
+});
+
+// 已选角色数按表单里的 id 算：老角色常不在当前一页里，界面要说明它没丢
+const selectedRoleSummary = computed(() =>
+  summarizeSelectedRoles(formData.value.role_ids, businessRoles.value),
+);
+
+/**
+ * 「确保角色列表已加载」的唯一入口。
+ *
+ * onMounted 那次请求可能因为权限/网络失败，之后弹窗必须能重试；新建与编辑走同一个
+ * 入口，避免两条路径各自判断、各自漂移。
+ */
+const ensureBusinessRoles = async () => {
+  if (businessRoles.value.length > 0) return;
+  await fetchBusinessRoles();
 };
 
 const fetchResources = async () => {
@@ -3549,6 +3627,8 @@ const fetchUserPermissions = async (userId: number) => {
       datasets: state.direct.datasets.filter((id: string) => !missingIds.has(id)),
     };
     inheritedForbidden.value = state.inherited;
+    inheritedMenus.value = state.inheritedMenus;
+    inheritedElements.value = state.inheritedElements;
     forbiddenCommandsText.value = (state.direct.forbidden_commands || []).join(", ");
     permissionsLoaded.value = true;
   } catch (e: any) {
@@ -3915,10 +3995,8 @@ const findAutoCheckedRoleIds = (): number[] => {
 };
 
 const openCreateDialog = async () => {
-  // 首次进入页面时角色列表可能尚未返回，这里补齐后再做默认勾选
-  if (businessRoles.value.length === 0) {
-    await fetchBusinessRoles();
-  }
+  // 首次进入页面时角色列表可能尚未返回，补齐后再做默认勾选
+  await ensureBusinessRoles();
   showCreateDialog.value = true;
   formData.value = {
     user_name: "",
@@ -3963,9 +4041,12 @@ const editUser = async (user: any) => {
   // 否则「管理员改成普通用户再保存」会拿空的/残缺的缓冲整表覆盖权限。
   permissionSubjectRole.value = String(user.role || "");
   resetPermissionBuffers();
+  // 角色列表与权限数据一起补齐：只靠 onMounted 那一次，失败后弹窗里会一直是空列表
+  const pending: Promise<unknown>[] = [ensureBusinessRoles()];
   if (canEditPermissions.value) {
-    await Promise.all([fetchResources(), fetchUserPermissions(user.id)]);
+    pending.push(fetchResources(), fetchUserPermissions(user.id));
   }
+  await Promise.all(pending);
 };
 const closeDialogs = () => {
   showCreateDialog.value = false;

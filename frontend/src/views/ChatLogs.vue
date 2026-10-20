@@ -24,6 +24,7 @@ import { zhCN } from 'date-fns/locale'
 import { renderMarkdown } from '@/utils/markdown'
 import { useToast } from '@/composables/useToast'
 import { useUser } from '@/composables/useUser'
+import { parsePageInput } from '../utils/pagination'
 import {
   buildChatSessionMarkdown,
   buildSessionExportFilename,
@@ -81,6 +82,17 @@ const agents = ref<AIAgent[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(15)
+
+// 会话常达数百上千条，只靠上一页/下一页要翻几十次；这里支持直接输入页码跳转
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const pageInput = ref('')
+watch(page, (value) => { pageInput.value = String(value) }, { immediate: true })
+
+const applyPageInput = () => {
+  const target = parsePageInput(pageInput.value, page.value, totalPages.value)
+  pageInput.value = String(target)
+  if (target !== page.value) page.value = target  // watch([page, pageSize]) 负责重新拉取
+}
 const loading = ref(false)
 const showFilters = ref(false)
 
@@ -1002,7 +1014,16 @@ onMounted(() => {
             >
               <ChevronLeftIcon class="w-4 h-4" />
             </button>
-            <span class="text-xs font-medium text-gray-600 px-1.5">{{ page }}</span>
+            <input
+              v-model="pageInput"
+              type="text"
+              inputmode="numeric"
+              :title="`共 ${totalPages} 页，输入页码后回车跳转`"
+              class="w-11 text-center text-xs font-medium text-gray-600 px-1 py-0.5 border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/40"
+              @keyup.enter="applyPageInput"
+              @blur="applyPageInput"
+            />
+            <span class="text-[10px] text-gray-400">/ {{ totalPages }}</span>
             <button
               type="button"
               class="p-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-30"

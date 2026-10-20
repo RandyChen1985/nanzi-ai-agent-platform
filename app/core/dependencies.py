@@ -163,6 +163,36 @@ def require_permission(resource_type: str, resource_id: str):
         return user
     return _check_perm
 
+def require_any_permission(*checks: tuple[str, str]):
+    """
+    任一 (resource_type, resource_id) 命中即放行。Admins bypass this check.
+
+    只用于**读取**类端点。典型场景：分配业务角色时要读取角色列表，而「角色管理」与
+    「用户新增/编辑」是两套互不包含的权限——只给用户管理权限的管理员打开编辑弹窗时，
+    读列表不该 403。写操作仍必须用 require_permission 绑定单一权限码。
+    """
+    async def _check_any_perm(
+        user: Dict = Depends(require_api_key),
+        db: AsyncSession = Depends(get_db_session)
+    ) -> Dict:
+        if user.get("role") == "admin":
+            return user
+
+        from app.services.permission_service import PermissionService
+        service = PermissionService(db)
+        user_id = int(user["user_id"])
+
+        for resource_type, resource_id in checks:
+            if await service.check_permission(user_id, resource_type, resource_id):
+                return user
+
+        required = " 或 ".join(resource_id for _, resource_id in checks)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission required: {required}"
+        )
+    return _check_any_perm
+
 # Alias for consistent naming
 get_current_user = require_api_key
 

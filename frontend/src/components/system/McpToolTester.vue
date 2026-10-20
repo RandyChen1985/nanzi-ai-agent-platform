@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import axios from '@/utils/axios'
 import { copyToClipboard } from '@/utils/clipboard'
 import { useToast } from '@/composables/useToast'
+import { useUser } from '@/composables/useUser'
 import { renderSafeMarkdownPreview } from '@/utils/safeMarkdown'
 import hljs from 'highlight.js'
 import {
@@ -30,6 +31,10 @@ const props = defineProps<{
 
 const emit = defineEmits(['close'])
 const { showToast } = useToast()
+
+const { hasPermission } = useUser()
+// 执行工具对应后端 element:mcp_management:execute，没权限时不给「运行测试」按钮
+const canExecuteMcp = computed(() => hasPermission('element:mcp_management:execute'))
 
 const loading = ref(false)
 const result = ref<unknown>(null)
@@ -456,6 +461,7 @@ const executeTool = async () => {
 
       <div class="p-4 border-t border-gray-100 bg-gray-50 flex justify-end">
         <button
+          v-if="canExecuteMcp"
           @click="executeTool"
           :disabled="loading"
           class="w-full px-4 py-2 bg-primary text-white rounded-lg shadow-lg shadow-primary/20 hover:bg-primary-dark transition-all flex justify-center items-center font-bold text-sm disabled:opacity-70 disabled:cursor-not-allowed"

@@ -144,7 +144,19 @@
       <!-- Footer/Pagination -->
       <div class="bg-gray-50 px-4 py-3 border-t border-gray-200 flex items-center justify-between sm:px-6">
         <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-          <div><p class="text-sm text-gray-700">第 <span class="font-medium">{{ page }}</span> 页，共 <span class="font-medium">{{ total }}</span> 条结果</p></div>
+          <div class="flex items-center gap-1.5">
+            <p class="text-sm text-gray-700">第</p>
+            <input
+              v-model="pageInput"
+              type="text"
+              inputmode="numeric"
+              :title="`共 ${totalPages} 页，输入页码后回车跳转`"
+              class="w-12 text-center text-sm font-medium text-gray-700 border border-gray-300 rounded-md px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              @keyup.enter="applyPageInput"
+              @blur="applyPageInput"
+            />
+            <p class="text-sm text-gray-700">/ {{ totalPages }} 页，共 <span class="font-medium">{{ total }}</span> 条结果</p>
+          </div>
           <div>
             <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
               <button :disabled="page <= 1" @click="page--; fetchLogs();" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg></button>
@@ -164,7 +176,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive } from "vue";
+import { ref, onMounted, reactive, computed, watch } from "vue";
+import { parsePageInput } from "../utils/pagination";
 import axios from "axios";
 import { useToast } from "../composables/useToast";
 
@@ -182,6 +195,17 @@ const availableFeatures = ref<string[]>([]);
 const page = ref(1);
 const size = ref(20);
 const total = ref(0);
+
+// 审计日志动辄上千条，支持直接输入页码跳转
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size.value)));
+const pageInput = ref("");
+watch(page, (value) => { pageInput.value = String(value); }, { immediate: true });
+
+const applyPageInput = () => {
+  const target = parsePageInput(pageInput.value, page.value, totalPages.value);
+  pageInput.value = String(target);
+  if (target !== page.value) { page.value = target; fetchLogs(); }
+};
 const loading = ref(false);
 const statistics = ref<Statistics | null>(null);
 const showFilters = ref(false);

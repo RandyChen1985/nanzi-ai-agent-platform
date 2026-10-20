@@ -43,6 +43,7 @@
         </button>
 
         <button
+          v-if="canEditRole"
           @click="openCreateDialog"
           class="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg shadow-sm hover:bg-primary-dark transition-all font-medium text-sm shrink-0"
         >
@@ -117,6 +118,7 @@
         <p class="text-sm text-gray-500 mt-4 font-semibold">暂无角色</p>
         <p class="text-xs text-gray-400 mt-1">创建角色后可为用户分配权限与菜单能力</p>
         <button
+          v-if="canEditRole"
           type="button"
           @click="openCreateDialog"
           class="mt-5 px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary-dark rounded-lg transition-colors"
@@ -180,6 +182,7 @@
                 <td class="px-5 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <div class="flex justify-end items-center gap-1">
                     <button
+                      v-if="canEditRole"
                       @click="editRole(role)"
                       class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
                       title="编辑角色"
@@ -187,6 +190,7 @@
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                     </button>
                     <button
+                      v-if="canEditRole"
                       @click="openPermissionDialog(role)"
                       class="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors"
                       title="分配权限"
@@ -194,6 +198,7 @@
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
                     </button>
                     <button
+                      v-if="canEditRole"
                       @click="openUserAssignmentDialog(role)"
                       class="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors"
                       title="分配用户"
@@ -201,12 +206,18 @@
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
                     </button>
                     <button
+                      v-if="canDeleteRole && !isSystemRole(role)"
                       @click="confirmDelete(role)"
                       class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
                       title="删除角色"
                     >
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     </button>
+                    <span
+                      v-if="!canEditRole && !canDeleteRole"
+                      class="text-xs text-gray-300 px-1"
+                      title="当前账号没有角色编辑或删除权限"
+                    >—</span>
                   </div>
                 </td>
               </tr>
@@ -262,18 +273,19 @@
           <div class="flex justify-between items-center pt-3 mt-3 border-t border-gray-100">
             <span class="text-[10px] text-gray-400 font-mono">#{{ role.id }} · {{ formatDate(role.created_at).split(' ')[0] }}</span>
             <div class="flex items-center gap-1">
-              <button @click="editRole(role)" class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50" title="编辑">
+              <button v-if="canEditRole" @click="editRole(role)" class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50" title="编辑">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
               </button>
-              <button @click="openPermissionDialog(role)" class="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50" title="权限">
+              <button v-if="canEditRole" @click="openPermissionDialog(role)" class="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50" title="权限">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
               </button>
-              <button @click="openUserAssignmentDialog(role)" class="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50" title="用户">
+              <button v-if="canEditRole" @click="openUserAssignmentDialog(role)" class="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50" title="用户">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
               </button>
-              <button @click="confirmDelete(role)" class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" title="删除">
+              <button v-if="canDeleteRole && !isSystemRole(role)" @click="confirmDelete(role)" class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" title="删除">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
               </button>
+              <span v-if="!canEditRole && !canDeleteRole" class="text-xs text-gray-300 px-1">—</span>
             </div>
           </div>
         </div>
@@ -584,53 +596,15 @@
                   <template v-else-if="activeMainTab === 'ui'">
                       <div class="flex-1 overflow-y-auto bg-gray-50 p-3 sm:p-6 rounded-xl border border-gray-200">
                           <div class="space-y-4">
-                              <div v-for="menu in MENU_TREE" :key="menu.id" class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                                  <!-- Menu Parent -->
-                                  <div class="px-3 py-2.5 bg-gray-50 flex items-center justify-between border-b border-gray-100">
-                                      <div class="flex items-center gap-2">
-                                          <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
-                                          </svg>
-                                          <span class="text-[10px] font-bold text-blue-600">菜单权限</span>
-                                          <input
-                                              type="checkbox"
-                                              :checked="isItemSelected(menu.id)"
-                                              :indeterminate="isMenuPartiallySelected(menu.id)"
-                                              @change="toggleTreeItem(menu.id)"
-                                              class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
-                                          />
-                                          <span class="font-black text-gray-800 text-xs sm:text-sm">{{ menu.label }}</span>
-                                      </div>
-                                  </div>
-
-                                  <!-- Children Elements -->
-                                  <div v-if="menu.children && menu.children.length > 0" class="p-3">
-                                      <div class="flex items-center gap-1.5 mb-2 text-[10px] font-bold text-gray-500">
-                                          <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5h6M9 9h6M9 13h6M9 17h4M5 5.5A1.5 1.5 0 016.5 4h11A1.5 1.5 0 0119 5.5v13a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 015 18.5v-13z" />
-                                          </svg>
-                                          <span>功能点权限</span>
-                                          <span class="font-normal text-gray-400">控制页面内按钮和操作</span>
-                                      </div>
-                                      <div class="grid grid-cols-1 xs:grid-cols-2 gap-2">
-                                      <div
-                                          v-for="child in menu.children"
-                                          :key="child.id"
-                                          @click="toggleTreeItem(child.id)"
-                                          class="flex items-center gap-2.5 p-2 rounded-lg border border-transparent hover:bg-blue-50 transition-all cursor-pointer group"
-                                          :class="isItemSelected(child.id) ? 'bg-blue-50/50 border-blue-100 shadow-inner' : ''"
-                                      >
-                                          <div
-                                              class="w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-all"
-                                              :class="isItemSelected(child.id) ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'"
-                                          >
-                                              <svg v-if="isItemSelected(child.id)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                                          </div>
-                                          <span class="text-[11px] font-medium text-gray-700 leading-tight">{{ child.label }}</span>
-                                      </div>
-                                      </div>
-                                  </div>
-                              </div>
+                              <MenuAccessTree
+                                  :menus="permissionData.menus"
+                                  :elements="permissionData.elements"
+                                  :inherited-menus="[]"
+                                  :inherited-elements="[]"
+                                  :disabled="loadingPermissions"
+                                  @toggle-menu="toggleTreeItem"
+                                  @toggle-element="toggleTreeItem"
+                              />
                           </div>
                       </div>
                       <div class="mt-2 mb-2 text-[10px] text-gray-400 italic px-1 flex justify-between">
@@ -1123,8 +1097,11 @@ import axios from '../utils/axios'
 import { modelApi } from '../api/model'
 import { shouldShowModelSearch, groupPermissionModels } from '../utils/modelSelect'
 import { useToast } from '../composables/useToast'
-import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
+import { useUser } from '../composables/useUser'
+import { getMenuDescendantIds } from '../constants/permissions'
+import { applyMenuToggle } from '../utils/permissionLists'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
+import MenuAccessTree from '../components/user/MenuAccessTree.vue'
 import ForbiddenResourceTabs from '../components/system/ForbiddenResourceTabs.vue'
 import AgentRestrictionDialog from '../components/system/AgentRestrictionDialog.vue'
 import { parseForbiddenCommands } from "../utils/forbiddenCommands"
@@ -1144,6 +1121,12 @@ import {
 import { extractApiErrorDetail } from "../utils/apiErrorDetail"
 
 const { showToast } = useToast()
+
+// menu:* 控菜单、element:* 控功能。本页所有写操作入口都必须按 element 权限收敛，
+// 权限码与后端 app/api/portal/endpoints/roles.py 的 require_permission 一一对应。
+const { hasPermission } = useUser()
+const canEditRole = computed(() => hasPermission('element:role:edit'))
+const canDeleteRole = computed(() => hasPermission('element:role:delete'))
 
 const windowWidth = ref(window.innerWidth)
 const isMobile = computed(() => windowWidth.value < 768)
@@ -1523,44 +1506,21 @@ const resCheckboxClass = () => {
 }
 
 // UI Tree Logic
+/**
+ * 权限树的勾选：与用户页共用 `applyMenuToggle()`，保证「勾父菜单级联到它的功能点、
+ * 取消时清空该菜单下的直配」在两处是同一套语义。角色没有「继承」概念，两个继承集合传空。
+ */
 const toggleTreeItem = (itemId: string) => {
-    const isMenu = itemId.startsWith('menu:');
-    const targetArray = isMenu ? permissionData.value.menus : permissionData.value.elements;
-
-    if (isMenu) {
-        const descendantIds = getMenuDescendantIds(itemId);
-        const shouldSelect = !targetArray.includes(itemId);
-        if (shouldSelect) {
-            if (!targetArray.includes(itemId)) targetArray.push(itemId);
-            descendantIds.forEach(id => {
-                if (!permissionData.value.elements.includes(id)) permissionData.value.elements.push(id);
-            });
-        } else {
-            const nextMenus = targetArray.filter(id => id !== itemId);
-            permissionData.value.menus = nextMenus;
-            permissionData.value.elements = permissionData.value.elements.filter(id => !descendantIds.includes(id));
-        }
-        return;
-    }
-
-    const idx = targetArray.indexOf(itemId);
-    if (idx > -1) {
-        targetArray.splice(idx, 1);
-    } else {
-        targetArray.push(itemId);
-    }
-}
-
-const isMenuPartiallySelected = (menuId: string) => {
-    const descendantIds = getMenuDescendantIds(menuId);
-    const selectedCount = descendantIds.filter(id => permissionData.value.elements.includes(id)).length;
-    return selectedCount > 0 && selectedCount < descendantIds.length;
-}
-
-const isItemSelected = (itemId: string) => {
-    const isMenu = itemId.startsWith('menu:');
-    const targetArray = isMenu ? permissionData.value.menus : permissionData.value.elements;
-    return targetArray.includes(itemId);
+    const result = applyMenuToggle(
+        permissionData.value.menus,
+        permissionData.value.elements,
+        itemId,
+        getMenuDescendantIds(itemId),
+        [],
+        [],
+    );
+    permissionData.value.menus = result.menus;
+    permissionData.value.elements = result.elements;
 }
 
 // User Assignment Logic
@@ -2239,6 +2199,8 @@ const deleteRole = async () => {
     }
 }
 
+const loadingPermissions = ref(false)
+
 const openPermissionDialog = async (role: any) => {
     currentRole.value = role
     showPermissionDialog.value = true
@@ -2246,10 +2208,16 @@ const openPermissionDialog = async (role: any) => {
     // 上一个角色的智能体级限制计数与弹框目标必须复位，否则角标会跨角色残留
     agentRestrictionCounts.value = {}
     agentRestrictionTarget.value = null
-    await Promise.all([
-        fetchResources(),
-        fetchRolePermissions(role.id)
-    ])
+    // 权限到位前禁止勾选：空树被点一下就会写进缓冲，保存时把角色权限清掉
+    loadingPermissions.value = true
+    try {
+        await Promise.all([
+            fetchResources(),
+            fetchRolePermissions(role.id)
+        ])
+    } finally {
+        loadingPermissions.value = false
+    }
 }
 
 const fetchResources = async () => {

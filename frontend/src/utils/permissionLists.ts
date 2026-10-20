@@ -15,6 +15,8 @@
  * 不该让整页白屏，更不该让下一次保存把线上配置写坏。
  */
 
+import type { PermissionNode } from '../constants/permissions'
+
 /** 与后端 `PermissionUpdate` 字段一一对应；顺序固定，便于测试与 payload 比对。 */
 export interface PermissionLists {
   agents: string[]
@@ -59,6 +61,10 @@ export interface UserPermissionEditState {
   direct: PermissionLists
   /** 并集里有、直配里没有的禁用项（「来自角色」） */
   inherited: InheritedForbiddenLists
+  /** 并集里有、直配里没有的菜单（「来自角色」，只读展示） */
+  inheritedMenus: string[]
+  /** 并集里有、直配里没有的功能点（「来自角色」，只读展示） */
+  inheritedElements: string[]
   /** true = 后端没给可用的 `direct_permissions`，已回退成并集，此时无法区分继承 */
   usingEffectiveFallback: boolean
 }
@@ -97,6 +103,23 @@ export function normalizePermissionLists(raw: unknown): PermissionLists {
   return result
 }
 
+/** 单个列表的「并集 − 直配」：保序去重，空串丢弃，直配里没有的并集项就是「来自角色」。 */
+export function diffInheritedIds(
+  effective: readonly string[] | null | undefined,
+  direct: readonly string[] | null | undefined,
+): string[] {
+  const directSet = new Set((direct || []).map((item) => String(item ?? '')))
+  const seen = new Set<string>()
+  const inherited: string[] = []
+  ;(effective || []).forEach((item) => {
+    const id = String(item ?? '')
+    if (!id || directSet.has(id) || seen.has(id)) return
+    seen.add(id)
+    inherited.push(id)
+  })
+  return inherited
+}
+
 /** 并集 − 直配，保序去重：直配里没有的并集项就是「来自角色」。 */
 export function diffInheritedForbidden(
   effective: PermissionLists,
@@ -104,14 +127,7 @@ export function diffInheritedForbidden(
 ): InheritedForbiddenLists {
   const inherited = emptyInheritedForbidden()
   FORBIDDEN_LIST_KEYS.forEach((key) => {
-    const directSet = new Set(direct?.[key] || [])
-    const seen = new Set<string>()
-    inherited[key] = (effective?.[key] || []).filter((item) => {
-      const name = String(item ?? '')
-      if (!name || directSet.has(name) || seen.has(name)) return false
-      seen.add(name)
-      return true
-    })
+    inherited[key] = diffInheritedIds(effective?.[key], direct?.[key])
   })
   return inherited
 }
@@ -152,14 +168,87 @@ export function resolveUserPermissionEditState(payload: unknown): UserPermission
   const directRaw = source.direct_permissions
   const hasDirect = typeof directRaw === 'object' && directRaw !== null && !Array.isArray(directRaw)
   if (!hasDirect) {
-    return { direct: effective, inherited: emptyInheritedForbidden(), usingEffectiveFallback: true }
+    return {
+      direct: effective,
+      inherited: emptyInheritedForbidden(),
+      inheritedMenus: [],
+      inheritedElements: [],
+      usingEffectiveFallback: true,
+    }
   }
   const direct = normalizePermissionLists(directRaw)
   return {
     direct,
     inherited: diffInheritedForbidden(effective, direct),
+    inheritedMenus: diffInheritedIds(effective.menus, direct.menus),
+    inheritedElements: diffInheritedIds(effective.elements, direct.elements),
     usingEffectiveFallback: false,
   }
+}
+
+export interface MenuToggleResult {
+  menus: string[]
+  elements: string[]
+}
+
+/**
+ * 菜单勾选级联（纯函数，不修改入参）。
+ *
+ * 与旧实现的唯一区别：**勾选时跳过已由角色授予的子项**。后端对 menus / elements 不做
+ * 角色派生剔除（只对 forbidden_* 做），若把继承项一起写成用户直配，角色侧日后取消该权限，
+ * 这个用户仍会保留——而且管理员会误以为是自己配的。
+ *
+ * 取消时则清掉该菜单下所有直配子项：取消的语义是「这里不再有直配」，继承项本来就不在直配里。
+ */
+export function applyMenuToggle(
+  menus: readonly string[] | null | undefined,
+  elements: readonly string[] | null | undefined,
+  menuId: string,
+  descendantIds: readonly string[] | null | undefined,
+  inheritedElements: readonly string[] | null | undefined = [],
+  inheritedMenus: readonly string[] | null | undefined = [],
+): MenuToggleResult {
+  const nextMenus = [...(menus || [])]
+  const nextElements = [...(elements || [])]
+  const descendants = (descendantIds || []).map((id) => String(id ?? '')).filter(Boolean)
+  // MENU_TREE 的子项混有两类 id：`menu:*` 子菜单（用户管理/角色管理/系统配置/审计日志）
+  // 与 `element:*` 功能点。它们必须各回各家——旧实现一律推进 elements，导致子菜单
+  // 存成 element 记录：勾了父菜单，子菜单仍显示未勾选，后端按 menu 类型校验也查不到。
+  const inheritedSet = new Set(
+    [...(inheritedElements || []), ...(inheritedMenus || [])]
+      .map((id) => String(id ?? ''))
+      .filter(Boolean),
+  )
+  const menuSet = new Set(nextMenus.map((id) => String(id ?? '')))
+  const inheritedMenuSet = new Set(
+    (inheritedMenus || []).map((id) => String(id ?? '')).filter(Boolean),
+  )
+
+  // 视觉上的「已授予」= 菜单直配 / 菜单由角色授予 / 全部子项都已授予（直配或继承）。
+  // 三者任一成立时点击都必须是「取消」，否则会出现「看起来已勾选、点一下反而全选」的错位。
+  const allChildrenGranted =
+    descendants.length > 0 &&
+    descendants.every((id) => nextElements.includes(id) || menuSet.has(id) || inheritedSet.has(id))
+  const granted = menuSet.has(menuId) || inheritedMenuSet.has(menuId) || allChildrenGranted
+
+  if (granted) {
+    const descendantsSet = new Set(descendants)
+    return {
+      menus: nextMenus.filter((id) => id !== menuId && !descendantsSet.has(id)),
+      elements: nextElements.filter((id) => !descendantsSet.has(id)),
+    }
+  }
+
+  if (!menuSet.has(menuId)) nextMenus.push(menuId)
+  descendants.forEach((id) => {
+    if (inheritedSet.has(id)) return
+    if (id.startsWith("menu:")) {
+      if (!nextMenus.includes(id)) nextMenus.push(id)
+      return
+    }
+    if (!nextElements.includes(id)) nextElements.push(id)
+  })
+  return { menus: nextMenus, elements: nextElements }
 }
 
 export interface UserPermissionPayloadOptions {
@@ -191,4 +280,72 @@ export function buildUserPermissionPayload(
     forbidden_skills: [...(direct.forbidden_skills || [])],
     models: [...(direct.models || [])],
   }
+}
+
+// ---------------------------------------------------------------- 权限树的授予状态
+
+/** 一组「直配 / 角色继承」集合，供树节点的三态判定使用。 */
+export interface PermissionGrantSets {
+  menus: readonly string[]
+  elements: readonly string[]
+  inheritedMenus: readonly string[]
+  inheritedElements: readonly string[]
+}
+
+const includesAny = (ids: readonly string[] | null | undefined, id: string) =>
+  Array.isArray(ids) && ids.includes(id)
+
+/**
+ * 节点是否「已授予」：自己直配 / 自己由角色授予 / 全部子节点都已授予。
+ *
+ * 递归到最深一层，所以勾一级菜单时视觉上能正确覆盖「子菜单 + 它的功能点」。
+ */
+export function isPermissionNodeGranted(
+  node: PermissionNode,
+  sets: PermissionGrantSets,
+): boolean {
+  if (
+    includesAny(sets.menus, node.id) ||
+    includesAny(sets.elements, node.id) ||
+    includesAny(sets.inheritedMenus, node.id) ||
+    includesAny(sets.inheritedElements, node.id)
+  ) {
+    return true
+  }
+  const children = node.children || []
+  return children.length > 0 && children.every((child) => isPermissionNodeGranted(child, sets))
+}
+
+/** 节点自身或任意后代是否存在用户直配（决定「可编辑」还是「只读」）。 */
+export function hasDirectGrantIn(node: PermissionNode, sets: PermissionGrantSets): boolean {
+  if (includesAny(sets.menus, node.id) || includesAny(sets.elements, node.id)) return true
+  return (node.children || []).some((child) => hasDirectGrantIn(child, sets))
+}
+
+/** 节点自身或任意后代是否来自角色授予。 */
+export function hasInheritedGrantIn(node: PermissionNode, sets: PermissionGrantSets): boolean {
+  if (includesAny(sets.inheritedMenus, node.id) || includesAny(sets.inheritedElements, node.id)) {
+    return true
+  }
+  return (node.children || []).some((child) => hasInheritedGrantIn(child, sets))
+}
+
+/** 部分选中：整体未勾选，但至少有一个子节点已授予。 */
+export function isPermissionNodePartiallySelected(
+  node: PermissionNode,
+  sets: PermissionGrantSets,
+): boolean {
+  const children = node.children || []
+  if (children.length === 0) return false
+  if (isPermissionNodeGranted(node, sets)) return false
+  return children.some((child) => isPermissionNodeGranted(child, sets))
+}
+
+/** 叶子功能点数量（子菜单不计数），用于卡片右上角的「N 个功能点」。 */
+export function countLeafElements(node: PermissionNode): number {
+  return (node.children || []).reduce(
+    (total, child) =>
+      total + (child.id.startsWith('element:') ? 1 : countLeafElements(child)),
+    0,
+  )
 }

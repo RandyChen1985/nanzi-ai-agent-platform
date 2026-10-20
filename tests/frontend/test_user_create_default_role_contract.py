@@ -66,8 +66,10 @@ def test_create_dialog_loads_roles_before_preselecting():
     """角色列表为空时先拉取，保证首次进入页面立刻点「新增」也能勾上默认角色。"""
     opener = _create_dialog_opener()
 
-    assert "if (businessRoles.value.length === 0)" in opener
-    assert "await fetchBusinessRoles();" in opener
+    assert "await ensureBusinessRoles();" in opener, "新增弹窗打开前没有确保角色列表已加载"
+    assert opener.index("await ensureBusinessRoles();") < opener.index(
+        "role_ids: findAutoCheckedRoleIds()"
+    ), "必须先把角色列表拉回来再算默认勾选，否则首次进入页面点「新增」会勾不上 default"
 
 
 def test_edit_user_keeps_existing_role_ids():

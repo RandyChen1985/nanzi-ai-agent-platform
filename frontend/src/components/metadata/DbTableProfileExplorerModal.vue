@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { metadataApi, type DbConnectionConfig } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
+import { useUser } from '../../composables/useUser'
 import { CpuChipIcon } from '@heroicons/vue/24/outline'
 
 export type ProfilingTaskInfo = {
@@ -23,6 +24,11 @@ const emit = defineEmits<{
 }>()
 
 const { showToast } = useToast()
+
+const { hasPermission } = useUser()
+// 「忽略表」是写操作（element:data_sources:edit）；只读用户能看画像、能预览数据，
+// 但不能改忽略状态，所以开关置灰而不是消失（状态本身要可见）。
+const canEditProfiles = computed(() => hasPermission('element:data_sources:edit'))
 
 const profileStats = ref<any>(null)
 const items = ref<any[]>([])
@@ -553,9 +559,9 @@ defineExpose({ refresh })
                   <div class="shrink-0 pt-0.5" @click.stop>
                     <button
                       type="button"
-                      :disabled="togglingIgnore[profile.table_name]"
+                      :disabled="togglingIgnore[profile.table_name] || !canEditProfiles"
                       class="relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors"
-                      :class="profile.is_ignored === 1 ? 'bg-red-500' : 'bg-emerald-500'"
+                      :class="[profile.is_ignored === 1 ? 'bg-red-500' : 'bg-emerald-500', { 'cursor-not-allowed opacity-60': !canEditProfiles }]"
                       :title="profile.is_ignored === 1 ? '点击恢复启用' : '点击忽略'"
                       @click="toggleProfileIgnore(profile)"
                     >

@@ -2,10 +2,17 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { metadataApi, type DbConnectionConfig } from '../api/metadata'
 import { useToast } from '../composables/useToast'
+import { useUser } from '../composables/useUser'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import DbTableProfileExplorerModal from '../components/metadata/DbTableProfileExplorerModal.vue'
 
 const { showToast } = useToast()
+
+const { hasPermission } = useUser()
+// 后端按 view / edit / delete 分码校验，这里把写操作按钮对齐隐藏，
+// 否则没权限的人点下去只会收到 403，界面上看不出「能做什么」。
+const canEditDataSource = computed(() => hasPermission('element:data_sources:edit'))
+const canDeleteDataSource = computed(() => hasPermission('element:data_sources:delete'))
 
 const dbTypes = [
   { id: 'mysql', name: 'MySQL', icon: '🐬', defaultPort: 3306 },
@@ -574,6 +581,7 @@ onUnmounted(() => {
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <button
+          v-if="canEditDataSource"
           @click="openCreateForm"
           class="px-4 py-2 rounded-lg bg-primary hover:bg-primary-dark text-white text-sm font-bold shadow-lg shadow-primary/20 transition-all flex items-center gap-1.5"
         >
@@ -829,7 +837,7 @@ onUnmounted(() => {
                   <span>{{ viewProfilesButtonLabel(item) }}</span>
                 </button>
 
-                <div class="relative">
+                <div v-if="canEditDataSource" class="relative">
                   <button
                     @click.stop="toggleActionMenu(item.id, 'profile')"
                     class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-50"
@@ -847,6 +855,7 @@ onUnmounted(() => {
                   >
                     <template v-if="profilingTasks[item.id]?.status === 1">
                       <button
+                        v-if="canEditDataSource"
                         @click="handleProfileMenuAction(item, 'cancel')"
                         :disabled="cancellingProfilingId === item.id"
                         class="w-full text-left px-3 py-2 text-red-600 hover:bg-red-50 font-bold disabled:opacity-50"
@@ -856,6 +865,7 @@ onUnmounted(() => {
                     </template>
                     <template v-else>
                       <button
+                        v-if="canEditDataSource"
                         @click="handleProfileMenuAction(item, 'incremental')"
                         class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50"
                       >
@@ -863,7 +873,7 @@ onUnmounted(() => {
                         <div class="text-[10px] text-gray-400 mt-0.5">仅处理未完成及新增表</div>
                       </button>
                       <button
-                        v-if="[2, 3, 4].includes(profilingTasks[item.id]?.status || 0)"
+                        v-if="canEditDataSource && [2, 3, 4].includes(profilingTasks[item.id]?.status || 0)"
                         @click="handleProfileMenuAction(item, 'full')"
                         class="w-full text-left px-3 py-2 text-orange-600 hover:bg-orange-50 font-bold border-t border-gray-100"
                       >
@@ -875,6 +885,7 @@ onUnmounted(() => {
                 </div>
 
                 <button
+                  v-if="canEditDataSource"
                   @click="testSavedConnection(item)"
                   :disabled="testingConnectionId === item.id"
                   class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-xs font-bold transition-all disabled:opacity-50"
@@ -883,6 +894,7 @@ onUnmounted(() => {
                 </button>
 
                 <button
+                  v-if="canEditDataSource"
                   @click="editConfig(item)"
                   class="px-3 py-1.5 rounded-lg border text-xs font-bold transition-all"
                   :class="editingId === item.id
@@ -894,6 +906,7 @@ onUnmounted(() => {
 
                 <div class="relative">
                   <button
+                    v-if="canEditDataSource || canDeleteDataSource"
                     @click.stop="toggleActionMenu(item.id, 'more')"
                     class="w-8 h-8 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 text-base font-bold transition-all flex items-center justify-center"
                     title="更多操作"
@@ -905,10 +918,11 @@ onUnmounted(() => {
                     class="absolute right-0 top-full mt-1 w-36 rounded-xl border border-gray-200 bg-white shadow-lg z-50 py-1 text-xs"
                     @click.stop
                   >
-                    <button @click="handleMoreMenuAction(item, 'debug')" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50">SQL 调试</button>
-                    <button @click="handleMoreMenuAction(item, 'copy')" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50">复制</button>
+                    <button v-if="canEditDataSource" @click="handleMoreMenuAction(item, 'debug')" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50">SQL 调试</button>
+                    <button v-if="canEditDataSource" @click="handleMoreMenuAction(item, 'copy')" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50">复制</button>
                     <div class="border-t border-gray-100 my-1"></div>
                     <button
+                      v-if="canDeleteDataSource"
                       @click="handleMoreMenuAction(item, 'delete')"
                       :disabled="deletingId === item.id"
                       class="w-full text-left px-3 py-2 text-red-600 hover:bg-red-50 font-bold disabled:opacity-50"

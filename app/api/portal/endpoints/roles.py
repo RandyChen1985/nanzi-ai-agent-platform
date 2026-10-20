@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, desc, func, or_
-from app.core.dependencies import require_admin, require_permission
+from app.core.dependencies import require_admin, require_any_permission, require_permission
 from app.core.orm import get_db_session
 from app.models.user import User
 from app.models.permission import Role, ResourcePermission, UserRoleRelation
@@ -11,6 +11,9 @@ from app.schemas.permission import PermissionUpdate
 from app.services.permission_service import PermissionService
 
 router = APIRouter()
+
+# 系统角色：一律拒绝删除。与前端 frontend/src/views/Roles.vue 的 isSystemRole() 同口径。
+SYSTEM_ROLE_CODES = {"default", "admin", "system"}
 
 # --- Request Models ---
 
@@ -47,7 +50,12 @@ async def list_roles(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=1000),
     search: Optional[str] = None,
-    admin: dict = Depends(require_permission("menu", "menu:system:roles")),
+    # 读列表放开给「用户新增/编辑」：分配业务角色是编辑用户的一部分，不该再要求
+    # 角色管理的查看权限。写操作仍各自绑定 element:role:edit / element:role:delete。
+    admin: dict = Depends(require_any_permission(
+        ("menu", "menu:system:roles"),
+        ("element", "element:user:edit"),
+    )),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -153,15 +161,25 @@ async def update_role(
 @router.delete("/{role_id}")
 async def delete_role(
     role_id: int,
-    admin: dict = Depends(require_permission("element", "element:role:edit")),
+    admin: dict = Depends(require_permission("element", "element:role:delete")),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Delete a role.
+
+    权限码用 element:role:delete（「删除角色」）而不是 element:role:edit：
+    权限树里这两个码是分开的，删除能力不该顺带绑死在编辑权限上。
     """
     role = await db.get(Role, role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
+
+    # 系统角色保护：必须在清理权限/成员关系之前拒绝，避免「关系删了、角色还在」。
+    if (role.code or "").strip().lower() in SYSTEM_ROLE_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"系统角色「{role.code}」不可删除",
+        )
 
     users_stmt = select(UserRoleRelation.user_id).where(UserRoleRelation.role_id == role_id)
     users_result = await db.execute(users_stmt)
