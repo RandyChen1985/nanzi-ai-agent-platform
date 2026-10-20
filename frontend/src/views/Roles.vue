@@ -172,9 +172,18 @@
                   {{ role.description || '—' }}
                 </td>
                 <td class="px-5 py-4 whitespace-nowrap">
-                  <span class="inline-flex items-center bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full text-xs font-medium">
+                  <!-- 用户数是入口：点开右侧抽屉就地看成员、移出、启停 -->
+                  <button
+                    type="button"
+                    @click="openMembersDrawer(role)"
+                    class="inline-flex items-center gap-1 bg-gray-100 hover:bg-blue-50 hover:text-blue-700 text-gray-700 px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+                    :title="`查看并管理「${role.name}」的成员`"
+                  >
                     {{ role.user_count }}
-                  </span>
+                    <svg class="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
                 </td>
                 <td class="px-5 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
                   {{ formatDate(role.created_at) }}
@@ -261,9 +270,14 @@
                 <p class="text-xs font-mono text-gray-500 mt-0.5">{{ role.code }}</p>
               </div>
             </div>
-            <span class="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0">
+            <button
+              type="button"
+              @click="openMembersDrawer(role)"
+              class="bg-gray-100 hover:bg-blue-50 hover:text-blue-700 text-gray-700 px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0"
+              :title="`查看并管理「${role.name}」的成员`"
+            >
               {{ role.user_count }} 用户
-            </span>
+            </button>
           </div>
 
           <p class="mt-3 text-xs text-gray-500 line-clamp-2 leading-relaxed">
@@ -1097,6 +1111,14 @@
       </div>
     </Teleport>
 
+    <!-- Role Members Drawer：点「用户数」就地看成员并做单点操作 -->
+    <RoleMembersDrawer
+      v-model="showMembersDrawer"
+      :role="membersRole"
+      @changed="fetchRoles"
+      @add-members="handleAddMembersFromDrawer"
+    />
+
   </div>
 </template>
 
@@ -1115,6 +1137,7 @@ import {
 } from '../utils/permissionLists'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
 import MenuAccessTree from '../components/user/MenuAccessTree.vue'
+import RoleMembersDrawer from '../components/system/RoleMembersDrawer.vue'
 import ForbiddenResourceTabs from '../components/system/ForbiddenResourceTabs.vue'
 import AgentRestrictionDialog from '../components/system/AgentRestrictionDialog.vue'
 import { parseForbiddenCommands } from "../utils/forbiddenCommands"
@@ -1140,6 +1163,26 @@ const { showToast } = useToast()
 const { hasPermission } = useUser()
 const canEditRole = computed(() => hasPermission('element:role:edit'))
 const canDeleteRole = computed(() => hasPermission('element:role:delete'))
+
+// 角色成员抽屉：入口是列表里的「用户数」
+const showMembersDrawer = ref(false)
+const membersRole = ref<any>(null)
+
+function openMembersDrawer(role: any) {
+  membersRole.value = role
+  showMembersDrawer.value = true
+}
+
+/**
+ * 抽屉里的「添加成员」交回本页现有的双栏弹窗。
+ *
+ * 添加是"多选后整集提交"，与抽屉里"点一下立即移出"是两种语义；在抽屉里再实现一套
+ * 添加流程会让两处漂移，所以这里只做转交。两个浮层同层（z-9990），因此先关抽屉。
+ */
+const handleAddMembersFromDrawer = (role: any) => {
+  showMembersDrawer.value = false
+  if (role) openUserAssignmentDialog(role)
+}
 
 const windowWidth = ref(window.innerWidth)
 const isMobile = computed(() => windowWidth.value < 768)

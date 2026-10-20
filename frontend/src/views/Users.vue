@@ -2389,6 +2389,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted, watch } from "vue";
+import { useRoute } from "vue-router";
 import axios from "../utils/axios";
 import { modelApi } from "../api/model";
 import {
@@ -2699,6 +2700,8 @@ const rejectUser = async () => {
 
 // Filters
 const searchQuery = ref("");
+// 角色成员抽屉里的「↗」会带 ?q=<user_name> 跳过来，这里只做搜索预填
+const route = useRoute();
 const roleFilter = ref("");
 const statusFilter = ref("");
 const roleSearchQuery = ref("");
@@ -4174,6 +4177,11 @@ const onThirdPartySynced = () => {
 };
 
 onMounted(() => {
+  // 深链 ?q= 来自角色成员抽屉的「↗」：先落搜索词再拉列表，避免先请求一次全量再搜
+  const deepLinkQuery = typeof route.query.q === "string" ? route.query.q.trim() : "";
+  if (deepLinkQuery) {
+    searchQuery.value = deepLinkQuery;
+  }
   fetchUsers();
   fetchBusinessRoles();
   fetchPublicConfig();

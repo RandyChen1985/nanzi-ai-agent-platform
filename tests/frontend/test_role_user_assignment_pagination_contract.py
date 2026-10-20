@@ -79,9 +79,15 @@ def test_user_ids_query_is_not_affected_by_search():
     """全量 ID 查询必须在 search 过滤之前独立执行，避免保存丢成员。"""
     endpoint = _get_role_users_endpoint()
 
-    ids_query = _segment(endpoint, "id_stmt = select(UserRoleRelation.user_id)", "stmt = (")
+    # 查询本身允许多行书写（现在要 join 用户表剔除悬挂关系），但必须：
+    # 只按 role_id 过滤、不带 search、不带分页。
+    ids_query = _segment(endpoint, "id_stmt = (", "stmt = (")
     assert "search" not in ids_query
-    assert "id_stmt = select(UserRoleRelation.user_id).where(UserRoleRelation.role_id == role_id)" in endpoint
+    assert "UserRoleRelation.role_id == role_id" in ids_query
+    assert "limit(" not in ids_query and "offset(" not in ids_query
+    assert "User.id == UserRoleRelation.user_id" in ids_query, (
+        "user_ids 必须剔除指向已删除用户的悬挂关系，否则整集替换会把它写回"
+    )
     # 全量语义必须在接口里写明，防止后人“顺手”给它加上分页
     assert "不受 search / page 影响" in endpoint
 

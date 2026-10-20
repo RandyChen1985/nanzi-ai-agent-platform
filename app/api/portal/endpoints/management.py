@@ -1081,6 +1081,11 @@ async def delete_user(
     # This avoids StaleDataError because SQLAlchemy will track the deletion
     user.roles = []
     await db.flush()
+
+    # 兜底再按 user_id 显式删一次：上面依赖 roles 集合已被完整加载，而 MySQL 侧这张表
+    # 没有外键约束（见 db-prod/V27），漏删就会留下指向不存在用户的悬挂行——
+    # 线上出现过「角色列表显示 1 人、点开抽屉 0 位成员」正是这类数据。
+    await db.execute(delete(UserRoleRelation).where(UserRoleRelation.user_id == user_id))
     
     # 3. Finally delete the user
     await db.delete(user)
