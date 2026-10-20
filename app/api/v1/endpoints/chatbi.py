@@ -16,6 +16,7 @@ from app.services.ai.chatbi_sql_query_binding import (
     resolve_table_bindings_from_db,
 )
 from app.services.metadata_service import MetadataService
+from app.services.user_dimension_service import build_sql_user_dimensions
 from app.services.sql_query_execution_service import (
     attach_permission_notice_to_payload,
     dialect_from_data_source,
@@ -78,18 +79,6 @@ def _map_sql_tool_error_to_http(result: str) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=result)
     if result.startswith("[TOOL_ERROR]"):
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result)
-
-
-def _chatbi_user_dimensions(user_info: Dict[str, Any], user_id: int) -> Dict[str, Any]:
-    return {
-        "id": user_id,
-        "user_name": user_info.get("user_name"),
-        "real_name": user_info.get("real_name"),
-        "role": user_info.get("role"),
-        "dept_code": user_info.get("dept_code"),
-        "org_path": user_info.get("org_path"),
-        "extra_data": user_info.get("extra_data"),
-    }
 
 
 def _attach_permission_notice(payload: Dict[str, Any], permission_notice: Dict[str, Any]) -> Dict[str, Any]:
@@ -240,13 +229,15 @@ async def _enforce_openclaw_session_sql_auth(
         explicit_dataset_name=body.dataset_name,
     )
     permission_notice: Dict[str, Any] = {}
+    # 一次查库算好多部门维度，行级规则可按 IN ({user.dept_codes}) 匹配
+    chatbi_dims = await build_sql_user_dimensions(db, session_user_info, session_user_id)
     result_str = await execute_sql_query_core(
         db,
         sql=body.sql,
         data_source=body.data_source,
         dataset_name=dataset_name,
         user_id=session_user_id,
-        user_dimensions=_chatbi_user_dimensions(session_user_info, session_user_id),
+        user_dimensions=chatbi_dims,
         trace_logs=None,
         api_key=None,
         agent_context=None,
@@ -290,12 +281,12 @@ async def chatbi_sql_execute(
     from app.services.config_service import ConfigService
 
     user_id = int(user_info["user_id"])
-    user_dimensions = _chatbi_user_dimensions(user_info, user_id)
+    user_dimensions = await build_sql_user_dimensions(db, user_info, user_id)
 
     session_user_info = await _enforce_openclaw_session_sql_auth(db, body)
     if session_user_info:
         user_id = int(session_user_info["user_id"])
-        user_dimensions = _chatbi_user_dimensions(session_user_info, user_id)
+        user_dimensions = await build_sql_user_dimensions(db, session_user_info, user_id)
 
     is_openclaw_user = bool(_openclaw_openai_username_from_sessionid(body.sessionid))
     bypass_table_auth = not is_openclaw_user
@@ -386,7 +377,7 @@ async def chatbi_sql_checkauth(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在或已禁用")
 
     user_id = int(user_info["user_id"])
-    user_dimensions = _chatbi_user_dimensions(user_info, user_id)
+    user_dimensions = await build_sql_user_dimensions(db, user_info, user_id)
     dataset_name = await _resolve_direct_sql_dataset_name(
         db,
         sql=body.sql,

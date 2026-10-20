@@ -5,8 +5,8 @@
       <div>
         <h1 class="text-lg font-bold text-gray-900 dark:text-gray-100">菜单管理</h1>
         <p class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-          侧栏菜单、权限树与落地页都由这里的数据驱动。内置页面的路由与权限码不可改（会与代码里的权限校验脱钩），
-          可改名称、图标、排序与显隐；外链菜单可自由新增与删除。<span class="text-gray-400 dark:text-gray-500">在左侧树上右键可快速新建外链、停用或删除。</span>
+          侧栏、权限树与落地页都由这里驱动。内置页面的路由与权限码由代码锁定，名称、图标、排序、显隐可改。
+          <span class="text-gray-400 dark:text-gray-500">外链可自由增删；左树右键可快速操作。</span>
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">

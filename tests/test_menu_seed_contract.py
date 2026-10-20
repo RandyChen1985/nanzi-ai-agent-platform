@@ -26,11 +26,12 @@ def test_seed_has_expected_shape_and_unique_codes():
 
     assert Counter(node.node_type for node in nodes) == {
         "group": 6,
-        "page": 26,
-        "element": 60,
+        "page": 27,
+        "element": 62,
     }
     codes = [node.code for node in nodes]
-    assert len(codes) == len(set(codes)) == 92
+    # 2026-10-20 部门管理：+1 页面（menu:system:departments）+2 功能点（dept:edit/delete）
+    assert len(codes) == len(set(codes)) == 95
 
     permission_codes = [node.permission_code for node in nodes if node.permission_code]
     # 权限码必须唯一：复用会让「授予 A 菜单」连带授予 B，取消时又一起清掉

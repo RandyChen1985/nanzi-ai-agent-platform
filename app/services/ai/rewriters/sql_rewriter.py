@@ -373,14 +373,24 @@ class SQLRewriter:
                 column.set("table", exp.to_identifier(alias))
 
     def _replace_user_variables(self, condition: str, context: Dict[str, Any]) -> str:
-        """替换用户变量占位符"""
+        """替换用户变量占位符
+
+        支持两类值：
+        - 标量（字符串 / 数字）：直接代入，字符串自动加引号。`{user.dept_code}` 走这里，
+          对应主部门，旧规则零改动；
+        - 序列：渲染成 `'A', 'B'`（**不带括号**），供模板写成 `IN ({user.dept_codes})`。
+          空序列渲染成 `NULL`——`IN ()` 是语法错误，而"没有任何部门"的正确语义是
+          条件恒假：既不能放行，也不能让整条查询炸掉。
+        """
         placeholders = re.findall(r"\{user\.(\w+)\}", condition)
         temp_cond = condition
-        
+
         for key in placeholders:
             val = context.get(key)
-            
-            if isinstance(val, str):
+
+            if isinstance(val, (list, tuple, set, frozenset)):
+                temp_cond = temp_cond.replace(f"{{user.{key}}}", self._render_sql_value_list(val))
+            elif isinstance(val, str):
                 pattern_with_quotes = f"'{{user.{key}}}'"
                 safe_val = self._quote_sql_string_value(val)
                 if pattern_with_quotes in temp_cond:
@@ -392,6 +402,18 @@ class SQLRewriter:
                 temp_cond = temp_cond.replace(f"{{user.{key}}}", repl_val)
         
         return temp_cond
+
+    def _render_sql_value_list(self, values) -> str:
+        """把一组值渲染成 `'A', 'B'`；去重保序、过滤空白、转义单引号。"""
+        seen = set()
+        rendered: List[str] = []
+        for raw in values:
+            text = str(raw).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            rendered.append(f"'{self._quote_sql_string_value(text)}'")
+        return ", ".join(rendered) if rendered else "NULL"
 
     @staticmethod
     def _quote_sql_string_value(value: str) -> str:

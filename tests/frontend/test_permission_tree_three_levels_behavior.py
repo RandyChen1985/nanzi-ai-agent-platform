@@ -41,26 +41,29 @@ return { ids, sorted: [...ids].sort() }
 
 
 def test_menu_descendants_cover_both_submenus_and_their_elements():
-    """「系统管理」的后代 = 4 个子菜单 + 9 个功能点。
+    """「系统管理」的后代 = 5 个子菜单 + 11 个功能点。
 
     2026-10-20 菜单入库带来两处结构变化，都在这里钉住：
     - 新增「菜单管理」子菜单（`menu:system:menus`）与它的写权限（`element:menu:edit`）；
-    - 「审计日志」按侧栏分组归到「日志&TOKEN分析」下，不再是系统管理的子菜单。
+    - 「审计日志」按侧栏分组归到「日志&TOKEN分析」下，不再是系统管理的子菜单；
+    - 新增「部门管理」子菜单（`menu:system:departments`）与两个功能点
+      （`element:dept:edit` / `element:dept:delete`）。
     """
     result = _run("""
 const ids = api.getMenuDescendantIds(TREE, 'menu:system');
 return { count: ids.length, submenus: ids.filter(id => id.startsWith('menu:')), elements: ids.filter(id => id.startsWith('element:')) }
 """)
 
-    assert result["count"] == 13, result
+    assert result["count"] == 16, result
     assert sorted(result["submenus"]) == [
         "menu:system:config",
+        "menu:system:departments",
         "menu:system:menus",
         "menu:system:roles",
         "menu:system:users",
     ]
     assert "menu:system:audit" not in result["submenus"]
-    assert len(result["elements"]) == 9
+    assert len(result["elements"]) == 11
 
 
 def test_flat_menu_descendants_are_unchanged():

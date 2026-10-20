@@ -87,6 +87,12 @@ const router = createRouter({
           meta: { perm: 'menu:system:roles', title: '角色管理' }
         },
         {
+          path: 'departments',
+          name: 'DepartmentManagement',
+          component: () => import('../views/DepartmentManagement.vue'),
+          meta: { perm: 'menu:system:departments', title: '部门管理' }
+        },
+        {
           path: 'system',
           name: 'System',
           component: SystemConfig,

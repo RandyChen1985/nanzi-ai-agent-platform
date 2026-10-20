@@ -32,6 +32,7 @@ from app.schemas.response import StandardResponse
 from app.services.ai.chatbi_sql_user_messages import map_sql_tool_error_for_user
 from app.services.db_connection_service import DbConnectionService
 from app.services.metadata_service import MetadataService
+from app.services.user_dimension_service import build_sql_user_dimensions
 from app.services.permission_service import PermissionService
 from app.services.sql_query_execution_service import (
     attach_permission_notice_to_payload,
@@ -378,18 +379,6 @@ def _finish_saved_report_run_success(
     run.finished_at = datetime.now()
 
 
-def _chatbi_user_dimensions(user_info: Dict[str, Any], user_id: int) -> Dict[str, Any]:
-    return {
-        "id": user_id,
-        "user_name": user_info.get("user_name"),
-        "real_name": user_info.get("real_name"),
-        "role": user_info.get("role"),
-        "dept_code": user_info.get("dept_code"),
-        "org_path": user_info.get("org_path"),
-        "extra_data": user_info.get("extra_data"),
-    }
-
-
 async def _dataset_name_from_id(db: AsyncSession, dataset_id: Optional[int]) -> Optional[str]:
     if not dataset_id:
         return None
@@ -480,13 +469,14 @@ async def _precheck_saved_report_sql_access(
 ) -> None:
     try:
         dataset_name = await _dataset_name_from_id(db, dataset_id)
+        user_dimensions = await build_sql_user_dimensions(db, user_info, user_id)
         result_str = await execute_sql_query_core(
             db,
             sql=sql,
             data_source=data_source,
             dataset_name=dataset_name,
             user_id=user_id,
-            user_dimensions=_chatbi_user_dimensions(user_info, user_id),
+            user_dimensions=user_dimensions,
             trace_logs=None,
             api_key=None,
             agent_context=None,
@@ -1519,13 +1509,14 @@ async def preview_new_saved_report_sql(
             user_info=user_info,
             user_id=user_id,
         )
+        preview_dimensions = await build_sql_user_dimensions(db, user_info, user_id)
         result = await execute_sql_query_core(
             db,
             sql=body.sql.strip(),
             data_source=str(dataset.data_source or "default_clickhouse"),
             dataset_name=str(dataset.name),
             user_id=user_id,
-            user_dimensions=_chatbi_user_dimensions(user_info, user_id),
+            user_dimensions=preview_dimensions,
             trace_logs=None,
             api_key=None,
             agent_context=None,
@@ -2324,7 +2315,7 @@ async def _execute_saved_report_impl(
             report_row.dataset_id = inferred_dataset_id
             report_row.data_source = inferred_data_source
 
-    user_dimensions = _chatbi_user_dimensions(user_info, user_id)
+    user_dimensions = await build_sql_user_dimensions(db, user_info, user_id)
     is_admin = user_info.get("role") == "admin"
     request_body = body or ExecuteReportRequest()
 

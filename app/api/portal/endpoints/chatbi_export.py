@@ -27,6 +27,7 @@ from app.core.dependencies import require_api_key
 from app.core.orm import get_db_session
 from app.schemas.response import StandardResponse
 from app.services.ai.tools.data_api import MAX_EXPORT_SQL_ROWS
+from app.services.user_dimension_service import build_sql_user_dimensions
 
 logger = logging.getLogger(__name__)
 
@@ -43,18 +44,6 @@ class ChatBIExportRequest(BaseModel):
         description="执行方式，用于识别联邦查询：direct / repaired / federated",
     )
     result_id: Optional[str] = Field(default=None, description="ChatBI 结果 ID（可选，仅用于命名）")
-
-
-def _user_dimensions(user_info: Dict[str, Any], user_id: int) -> Dict[str, Any]:
-    return {
-        "id": user_id,
-        "user_name": user_info.get("user_name"),
-        "real_name": user_info.get("real_name"),
-        "role": user_info.get("role"),
-        "dept_code": user_info.get("dept_code"),
-        "org_path": user_info.get("org_path"),
-        "extra_data": user_info.get("extra_data"),
-    }
 
 
 def _extract_rows_columns(raw_payload: Any) -> tuple[list[str], list[list[Any]]]:
@@ -134,13 +123,14 @@ async def export_chatbi_detail(
     from app.services.sql_query_execution_service import execute_sql_query_core
 
     try:
+        export_dimensions = await build_sql_user_dimensions(db, user_info, user_id)
         result_str = await execute_sql_query_core(
             db,
             sql=raw_sql,
             data_source=body.data_source,
             dataset_name=body.dataset_name,
             user_id=user_id,
-            user_dimensions=_user_dimensions(user_info, user_id),
+            user_dimensions=export_dimensions,
             trace_logs=None,
             api_key=None,
             agent_context=None,

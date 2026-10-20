@@ -59,6 +59,32 @@
             <!-- 刻意不提供「待审核」：待审核账号只出现在「待审核」页签，
                  在用户列表里它们的操作按钮都用不了，列出来只会误导 -->
           </select>
+
+          <select
+            v-if="activeView === 'list' && deptOptions.length"
+            v-model="deptFilter"
+            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
+            @change="page = 1; fetchUsers()"
+          >
+            <option value="">部门：全部</option>
+            <option v-for="dept in deptOptions" :key="dept.id" :value="String(dept.id)">
+              {{ "\u3000".repeat(dept.depth) }}{{ dept.name }}
+            </option>
+          </select>
+
+          <label
+            v-if="activeView === 'list' && deptFilter"
+            class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs text-gray-600 shadow-sm"
+            title="勾选后把子部门的成员也列出来"
+          >
+            <input
+              v-model="includeSub"
+              type="checkbox"
+              class="h-3.5 w-3.5 rounded border-gray-300"
+              @change="page = 1; fetchUsers()"
+            />
+            含子部门
+          </label>
         </div>
 
         <div class="flex items-center gap-2">
@@ -506,6 +532,13 @@
                       <span>{{ user.real_name || "未设置姓名" }}</span>
                       <span class="text-gray-300">·</span>
                       <span class="font-mono">#{{ user.id }}</span>
+                      <template v-if="user.primary_dept_name">
+                        <span class="text-gray-300">·</span>
+                        <span
+                          class="truncate text-blue-500"
+                          :title="(user.dept_names || []).join('、')"
+                        >{{ user.primary_dept_name }}<template v-if="(user.dept_names || []).length > 1">+{{ user.dept_names.length - 1 }}</template></span>
+                      </template>
                     </div>
                   </div>
                 </td>
@@ -658,6 +691,9 @@
               </div>
               <p class="text-xs text-gray-500 mt-0.5">
                 {{ user.real_name || "未设置姓名" }} · #{{ user.id }}
+                <template v-if="user.primary_dept_name">
+                  · <span class="text-blue-500" :title="(user.dept_names || []).join('、')">{{ user.primary_dept_name }}<template v-if="(user.dept_names || []).length > 1">+{{ user.dept_names.length - 1 }}</template></span>
+                </template>
               </p>
               <p class="text-xs mt-0.5 truncate" :class="user.email ? 'text-gray-500' : 'text-gray-300'">
                 {{ user.email || "未设置邮箱" }}
@@ -959,25 +995,11 @@
                 <div>
                   <label
                     class="block text-xs font-bold text-gray-400 uppercase mb-1"
-                    >部门代码</label
+                    >所属部门</label
                   >
-                  <input
-                    v-model="formData.dept_code"
-                    type="text"
-                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    placeholder="部门代码 (如: DEPT001)"
-                  />
-                </div>
-                <div>
-                  <label
-                    class="block text-xs font-bold text-gray-400 uppercase mb-1"
-                    >组织全路径</label
-                  >
-                  <input
-                    v-model="formData.org_path"
-                    type="text"
-                    class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    placeholder="例如: yovole/sh/dc1"
+                  <DepartmentPicker
+                    v-model="formData.dept_ids"
+                    v-model:primary-id="formData.primary_dept_id"
                   />
                 </div>
                 <div class="sm:col-span-2">
@@ -1887,123 +1909,15 @@
       </div>
     </Teleport>
 
-    <!-- Set Password Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showSetPasswordDialog"
-        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
-        @click.self="closeSetPasswordDialog"
-      >
-        <div class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl space-y-4">
-          <div class="flex items-center justify-between">
-            <h2 class="text-lg font-bold text-emerald-700 flex items-center gap-1.5">
-              <span>设置密码</span>
-            </h2>
-            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-              <svg class="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-              </svg>
-              <span>等保三级规范</span>
-            </span>
-          </div>
-
-          <p class="text-xs text-gray-500">
-            为用户 <strong class="text-gray-800 font-semibold">{{ userToSetPassword?.user_name }}</strong> 设置登录密码
-          </p>
-
-          <!-- 等保密码复杂度规则文案说明 -->
-          <div class="p-3 bg-emerald-50/70 border border-emerald-100 rounded-lg text-xs space-y-1">
-            <div class="flex items-center gap-1.5 font-semibold text-emerald-900">
-              <svg class="w-4 h-4 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>密码复杂度规则说明</span>
-            </div>
-            <p class="text-emerald-800/90 leading-relaxed pl-5">
-              长度须为 <strong>8-32 位</strong>，至少包含<strong>大写字母</strong>、<strong>小写字母</strong>、<strong>数字</strong>、<strong>特殊符号</strong>中的 <strong>3 种</strong>，且不能包含空格或用户名。
-            </p>
-          </div>
-
-          <div class="space-y-3">
-            <div>
-              <label class="block text-xs font-medium text-gray-600 mb-1">新密码</label>
-              <input
-                v-model="setPasswordForm.password"
-                type="password"
-                placeholder="输入新密码（8-32位，含3种字符类别）"
-                class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-                :class="setPasswordForm.password ? (userSetPasswordPolicy.valid ? 'border-emerald-400 bg-emerald-50/20' : 'border-amber-300 bg-amber-50/20') : 'border-gray-300'"
-                @keyup.enter="executeSetPassword"
-              />
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-gray-600 mb-1">确认密码</label>
-              <input
-                v-model="setPasswordForm.confirm"
-                type="password"
-                placeholder="再次输入新密码"
-                class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-                :class="setPasswordForm.confirm ? (setPasswordForm.confirm === setPasswordForm.password ? 'border-emerald-400 bg-emerald-50/20' : 'border-red-300 bg-red-50/20') : 'border-gray-300'"
-                @keyup.enter="executeSetPassword"
-              />
-            </div>
-          </div>
-
-          <!-- 实时合规指标卡片 -->
-          <div v-if="setPasswordForm.password" class="p-2.5 bg-gray-50 border border-gray-200/80 rounded-lg space-y-1.5 text-xs">
-            <div class="flex items-center justify-between text-gray-600 gap-2">
-              <span class="font-medium whitespace-nowrap shrink-0">合规检测：</span>
-              <span class="truncate font-medium text-right" :class="userSetPasswordPolicy.valid ? 'text-emerald-600 font-semibold' : 'text-amber-600'">
-                {{ userSetPasswordPolicy.valid ? '✓ 符合等保要求' : userSetPasswordPolicy.shortMessage }}
-              </span>
-            </div>
-            <div class="grid grid-cols-3 gap-1.5 text-[11px]">
-              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasLength ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-                <span>{{ userSetPasswordPolicy.hasLength ? '✓' : '○' }}</span>
-                <span>8-32位</span>
-              </div>
-              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasUpper ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-                <span>{{ userSetPasswordPolicy.hasUpper ? '✓' : '○' }}</span>
-                <span>大写字母</span>
-              </div>
-              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasLower ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-                <span>{{ userSetPasswordPolicy.hasLower ? '✓' : '○' }}</span>
-                <span>小写字母</span>
-              </div>
-              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasDigit ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-                <span>{{ userSetPasswordPolicy.hasDigit ? '✓' : '○' }}</span>
-                <span>数字</span>
-              </div>
-              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.hasSpecial ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200/70 text-gray-500'">
-                <span>{{ userSetPasswordPolicy.hasSpecial ? '✓' : '○' }}</span>
-                <span>特殊符号</span>
-              </div>
-              <div class="flex items-center gap-1 px-1.5 py-0.5 rounded" :class="userSetPasswordPolicy.categoryCount >= 3 ? 'bg-emerald-100 text-emerald-800 font-semibold' : 'bg-gray-200/70 text-gray-500'">
-                <span>{{ userSetPasswordPolicy.categoryCount >= 3 ? '✓' : '○' }}</span>
-                <span>命中 {{ userSetPasswordPolicy.categoryCount }}/4 类</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="flex justify-end gap-3 pt-2">
-            <button
-              @click="closeSetPasswordDialog"
-              class="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium transition-colors cursor-pointer"
-              :disabled="settingPassword"
-            >
-              取消
-            </button>
-            <button
-              @click="executeSetPassword"
-              class="px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
-              :disabled="settingPassword || !setPasswordForm.password || !userSetPasswordPolicy.valid || setPasswordForm.password !== setPasswordForm.confirm"
-            >
-              {{ settingPassword ? "提交中..." : "确认设置" }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <!-- Set Password Dialog：与部门成员页共用同一组件，等保规则只有一份实现 -->
+    <PasswordResetDialog
+      v-if="showSetPasswordDialog && userToSetPassword"
+      title="设置密码"
+      :display-name="userToSetPassword.user_name"
+      :submitting="settingPassword"
+      @cancel="closeSetPasswordDialog"
+      @submit="executeSetPassword"
+    />
 
     <!-- Regenerate Key Dialog -->
     <Teleport to="body">
@@ -2403,7 +2317,6 @@ import { useUser } from "../composables/useUser";
 import { getMenuDescendantIds, type PermissionNode } from "../constants/permissions";
 import { filterBusinessRoles, summarizeSelectedRoles } from "../utils/roleFilter";
 import { copyToClipboard } from "../utils/clipboard";
-import { checkPasswordPolicy } from "../utils/passwordPolicy";
 import {
   extraDataJsonToPairs,
   isExtraDataJsonObject,
@@ -2440,6 +2353,7 @@ import { extractApiErrorDetail } from "../utils/apiErrorDetail";
 import MenuAccessTree from "../components/user/MenuAccessTree.vue";
 import RoleList from "../components/RoleList.vue";
 import ThirdPartyUserSyncDrawer from "../components/ThirdPartyUserSyncDrawer.vue";
+import DepartmentPicker from "../components/department/DepartmentPicker.vue";
 import QuotaPolicyPanel from "../components/admin/QuotaPolicyPanel.vue";
 import {
   KeyIcon,
@@ -2704,6 +2618,10 @@ const searchQuery = ref("");
 const route = useRoute();
 const roleFilter = ref("");
 const statusFilter = ref("");
+// 部门维度筛选：deptFilter 为空表示不限；includeSub 决定是否含子部门
+const deptFilter = ref("");
+const includeSub = ref(false);
+const deptOptions = ref<{ id: number; name: string; depth: number }[]>([]);
 const roleSearchQuery = ref("");
 const showMoreMenu = ref(false);
 const openRowMenuId = ref<number | null>(null);
@@ -2714,7 +2632,8 @@ const hasActiveFilters = computed(
   () =>
     Boolean(searchQuery.value.trim()) ||
     Boolean(roleFilter.value) ||
-    Boolean(statusFilter.value)
+    Boolean(statusFilter.value) ||
+    Boolean(deptFilter.value)
 );
 const isSearchEmpty = computed(
   () => hasActiveFilters.value && users.value.length === 0
@@ -2796,10 +2715,6 @@ const loadingViewKey = ref(false);
 const settingPassword = ref(false);
 const disabling2FA = ref(false);
 const viewedApiKey = ref("");
-const setPasswordForm = ref({ password: "", confirm: "" });
-const userSetPasswordPolicy = computed(() => {
-  return checkPasswordPolicy(setPasswordForm.value.password, userToSetPassword.value?.user_name);
-});
 
 // SSO Sync State
 const ssoUsers = ref<any[]>([]);
@@ -2896,8 +2811,10 @@ const formData = ref({
   real_name: "",
   email: "",
   role: "user",
-  dept_code: "",
-  org_path: "",
+  // 部门归属走独立的 PUT /users/{id}/departments（整集保存）；
+  // 部门代码 / 组织路径由后端按主部门派生，前端不再直接编辑
+  dept_ids: [] as number[],
+  primary_dept_id: null as number | null,
   extra_data: "",
   role_ids: [] as number[],
   remark: "",
@@ -3451,6 +3368,29 @@ const filteredBusinessRoles = computed(() =>
 );
 
 // Actions
+/**
+ * 部门筛选选项：扁平成「缩进 + 名称」交给原生 select。
+ * 没有部门读权限时静默降级为不显示筛选器——用户管理本身不该因此报错。
+ */
+const loadDeptOptions = async () => {
+  try {
+    const response = await axios.get("/api/portal/departments/tree", {
+      params: { include_disabled: false },
+    });
+    const flat: { id: number; name: string; depth: number }[] = [];
+    const walk = (nodes: any[], depth: number) => {
+      for (const node of nodes || []) {
+        flat.push({ id: Number(node.id), name: node.name, depth });
+        if (node.children?.length) walk(node.children, depth + 1);
+      }
+    };
+    walk(response.data?.items || [], 0);
+    deptOptions.value = flat;
+  } catch {
+    deptOptions.value = [];
+  }
+};
+
 const fetchUsers = async () => {
   loading.value = true;
   try {
@@ -3458,6 +3398,10 @@ const fetchUsers = async () => {
     if (searchQuery.value) params.search = searchQuery.value;
     if (roleFilter.value) params.role = roleFilter.value;
     if (statusFilter.value) params.status = statusFilter.value;
+    if (deptFilter.value) {
+      params.dept_id = Number(deptFilter.value);
+      if (includeSub.value) params.include_sub = true;
+    }
     // 「用户列表」不显示待审核账号：它们的审核/编辑等操作在列表里本来就用不了，
     // 只应出现在「待审核」页签。待审核视图自身按 status=2 拉取，不能再排除，
     // 所以这里连带判断 statusFilter，避免两个条件互斥导致列表空掉。
@@ -3705,8 +3649,6 @@ const saveUser = async () => {
         // 否则管理员永远删不掉一个填错的邮箱。
         email: formData.value.email || "",
         role: formData.value.role,
-        dept_code: formData.value.dept_code,
-        org_path: formData.value.org_path,
         extra_data: formData.value.extra_data,
         role_ids: formData.value.role_ids,
         remark: formData.value.remark,
@@ -3782,6 +3724,28 @@ const saveUser = async () => {
       } catch (syncErr) {
         console.warn('LocalStorage Sync Error:', syncErr);
       }
+      // 部门归属单独提交（整集语义）。失败不回滚资料：先把"已更新"如实告诉管理员，
+      // 再提示部门没存上，避免出现"提示失败但资料其实改了"的矛盾。
+      try {
+        await axios.put(
+          `/api/portal/management/users/${editingUserId.value}/departments`,
+          {
+            dept_ids: formData.value.dept_ids,
+            primary_dept_id: formData.value.primary_dept_id,
+          },
+        );
+      } catch (deptErr: any) {
+        showToast(
+          extractApiErrorDetail(
+            deptErr?.response?.data,
+            "资料已更新，但部门归属保存失败，请重新打开编辑再试",
+          ),
+          "warning",
+        );
+        closeDialogs();
+        fetchUsers();
+        return;
+      }
       showToast("更新成功", "success");
       closeDialogs();
       fetchUsers();
@@ -3790,6 +3754,27 @@ const saveUser = async () => {
         "/api/portal/management/users",
         formData.value,
       );
+      // 新建后补写部门归属：后端创建接口不接收部门集合，避免一个请求里混两种语义
+      const createdId = res.data?.id;
+      if (createdId && formData.value.dept_ids.length) {
+        try {
+          await axios.put(
+            `/api/portal/management/users/${createdId}/departments`,
+            {
+              dept_ids: formData.value.dept_ids,
+              primary_dept_id: formData.value.primary_dept_id,
+            },
+          );
+        } catch (deptErr: any) {
+          showToast(
+            extractApiErrorDetail(
+              deptErr?.response?.data,
+              "用户已创建，但部门归属保存失败，请编辑该用户重新设置",
+            ),
+            "warning",
+          );
+        }
+      }
       createdApiKey.value = res.data.api_key;
       fetchUsers();
 
@@ -3948,28 +3933,16 @@ const executeRegenerateApiKey = async () => {
 
 const openSetPasswordDialog = (user: any) => {
   userToSetPassword.value = user;
-  setPasswordForm.value = { password: "", confirm: "" };
   showSetPasswordDialog.value = true;
 };
 const closeSetPasswordDialog = () => {
   showSetPasswordDialog.value = false;
   userToSetPassword.value = null;
-  setPasswordForm.value = { password: "", confirm: "" };
   settingPassword.value = false;
 };
-const executeSetPassword = async () => {
+const executeSetPassword = async (password: string) => {
   if (!userToSetPassword.value?.id) {
     showToast("未选择用户，请重新打开设置密码", "warning");
-    return;
-  }
-  const password = setPasswordForm.value.password;
-  const policy = checkPasswordPolicy(password, userToSetPassword.value?.user_name);
-  if (!policy.valid) {
-    showToast(policy.message, "warning");
-    return;
-  }
-  if (password !== setPasswordForm.value.confirm) {
-    showToast("两次输入的密码不一致", "warning");
     return;
   }
   settingPassword.value = true;
@@ -4046,8 +4019,8 @@ const openCreateDialog = async () => {
     real_name: "",
     email: "",
     role: "user",
-    dept_code: "",
-    org_path: "",
+    dept_ids: [],
+    primary_dept_id: null,
     extra_data: "",
     role_ids: findAutoCheckedRoleIds(),
     remark: "",
@@ -4069,8 +4042,8 @@ const editUser = async (user: any) => {
     real_name: user.real_name || "",
     email: user.email || "",
     role: user.role,
-    dept_code: user.dept_code || "",
-    org_path: user.org_path || "",
+    dept_ids: Array.isArray(user.dept_ids) ? [...user.dept_ids] : [],
+    primary_dept_id: user.primary_dept_id ?? null,
     extra_data: user.extra_data || "",
     role_ids: user.role_ids || [],
     remark: user.remark || "",
@@ -4159,6 +4132,8 @@ const resetFilters = () => {
   searchQuery.value = "";
   roleFilter.value = "";
   statusFilter.value = "";
+  deptFilter.value = "";
+  includeSub.value = false;
   page.value = 1;
   fetchUsers();
 };
@@ -4182,6 +4157,7 @@ onMounted(() => {
   if (deepLinkQuery) {
     searchQuery.value = deepLinkQuery;
   }
+  loadDeptOptions();
   fetchUsers();
   fetchBusinessRoles();
   fetchPublicConfig();

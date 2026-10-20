@@ -18,6 +18,8 @@ from app.services.permission_service import PermissionService
 from app.models.agent import AIAgent
 from app.models.permission import ResourcePermission, Role, UserRoleRelation
 from app.models.wechat_binding import WechatBinding
+from app.models.department import Department, UserDepartment
+from app.services.department_service import DepartmentService, subtree_like_prefix
 from app.services.sso_user import LaplacePortalApiClient
 from app.services.db_connection_service import DbConnectionService
 import json
@@ -52,6 +54,8 @@ class CreateUserRequest(BaseModel):
     user_name: str
     real_name: Optional[str] = None
     role: str = "user"  # "admin" or "user"
+    # 已废弃：dept_code / org_path 是主部门派生快照，只能由 DepartmentService 维护。
+    # 字段保留是为了**显式拒绝**（400 + 指路），而不是让调用方以为写成功了。
     dept_code: Optional[str] = None
     org_path: Optional[str] = None
     extra_data: Optional[str] = None
@@ -299,9 +303,21 @@ async def run_third_party_sync(
         logger.error(f"Third-party sync run failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+class SetUserDepartmentsRequest(BaseModel):
+    """用户部门归属的整集提交：部门是用户属性，弹窗里就是"最终状态"。
+
+    `dept_ids` 与 `dept_codes` 二选一：前端手上有 id，外部系统迁移只有编码。
+    """
+    dept_ids: List[int] = []
+    dept_codes: List[str] = []
+    primary_dept_id: Optional[int] = None
+    primary_dept_code: Optional[str] = None
+
+
 class UpdateUserRequest(BaseModel):
     real_name: Optional[str] = None
     role: Optional[str] = None
+    # 已废弃：见 CreateUserRequest 的说明，收到即 400
     dept_code: Optional[str] = None
     org_path: Optional[str] = None
     extra_data: Optional[str] = None
@@ -408,6 +424,20 @@ async def list_users(
         ge=1,
         description="排除已属于该角色的用户，用于角色「分配用户」弹窗的候选列表",
     ),
+    dept_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description="按部门过滤：只看该部门的成员",
+    ),
+    include_sub: bool = Query(
+        False,
+        description="配合 dept_id 使用：是否包含子部门的成员（按物化路径前缀匹配）",
+    ),
+    exclude_dept_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description="排除已属于该部门的用户，用于部门「添加成员」弹窗的候选列表",
+    ),
     admin: dict = Depends(require_permission("menu", "menu:system:users")),
     db: AsyncSession = Depends(get_db_session)
 ):
@@ -438,6 +468,31 @@ async def list_users(
             UserRoleRelation.role_id == exclude_role_id
         )
         stmt = stmt.where(~User.id.in_(member_ids))
+
+    if exclude_dept_id is not None:
+        dept_member_ids = select(UserDepartment.user_id).where(
+            UserDepartment.dept_id == exclude_dept_id
+        )
+        stmt = stmt.where(~User.id.in_(dept_member_ids))
+
+    if dept_id is not None:
+        dept = await db.get(Department, int(dept_id))
+        if not dept:
+            raise HTTPException(status_code=404, detail="部门不存在")
+        # include_sub 用物化路径前缀，不做递归查询：子树在 path 上就是前缀关系
+        if include_sub:
+            dept_scope = select(Department.id).where(
+                Department.path.like(subtree_like_prefix(dept.path))
+            )
+        else:
+            dept_scope = select(Department.id).where(Department.id == int(dept.id))
+        stmt = stmt.where(
+            User.id.in_(
+                select(UserDepartment.user_id).where(
+                    UserDepartment.dept_id.in_(dept_scope)
+                )
+            )
+        )
         
     # Count
     count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -458,6 +513,31 @@ async def list_users(
         )
         bound_user_ids = {r[0] for r in bound_rows.all()}
 
+    # 本页用户的部门归属：一次 IN 查询，禁止逐行查（与 role_names 同处理）
+    dept_map: dict = {}
+    if page_user_ids:
+        dept_rows = await db.execute(
+            select(
+                UserDepartment.user_id,
+                UserDepartment.dept_id,
+                UserDepartment.is_primary,
+                Department.name,
+            )
+            .join(Department, Department.id == UserDepartment.dept_id)
+            .where(UserDepartment.user_id.in_(page_user_ids))
+            .order_by(Department.path.asc())
+        )
+        for uid, dept_pk, is_primary, dept_name in dept_rows.all():
+            entry = dept_map.setdefault(
+                int(uid),
+                {"ids": [], "names": [], "primary_id": None, "primary_name": None},
+            )
+            entry["ids"].append(int(dept_pk))
+            entry["names"].append(dept_name)
+            if int(is_primary or 0) == 1:
+                entry["primary_id"] = int(dept_pk)
+                entry["primary_name"] = dept_name
+
     items = []
     for row in rows:
         role_ids = [r.id for r in row.roles] if row.roles else []
@@ -471,6 +551,10 @@ async def list_users(
             "role": row.role,
             "dept_code": row.dept_code,
             "org_path": row.org_path,
+            "dept_ids": dept_map.get(row.id, {}).get("ids", []),
+            "dept_names": dept_map.get(row.id, {}).get("names", []),
+            "primary_dept_id": dept_map.get(row.id, {}).get("primary_id"),
+            "primary_dept_name": dept_map.get(row.id, {}).get("primary_name"),
             "extra_data": row.extra_data,
             "role_ids": role_ids,
             "role_names": role_names,
@@ -587,6 +671,14 @@ async def create_user(
     Create a new user with API key.
     Admin only.
     """
+    # 快照只能由部门归属派生：直接写会让 users.dept_code 与关系表分叉
+    if request.dept_code is not None or request.org_path is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="dept_code / org_path 已由主部门自动派生，请先创建用户，"
+                   "再用 PUT /management/users/{user_id}/departments 设置部门归属",
+        )
+
     # Validate role
     if request.role not in ["admin", "user"]:
         raise HTTPException(
@@ -674,6 +766,13 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
+    if request.dept_code is not None or request.org_path is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="dept_code / org_path 已由主部门自动派生，"
+                   "请改用 PUT /management/users/{user_id}/departments 设置部门归属",
+        )
+
     if request.role is not None:
         if request.role not in ["admin", "user"]:
              raise HTTPException(status_code=400, detail="Invalid role")
@@ -681,12 +780,6 @@ async def update_user(
     
     if request.real_name is not None:
         user.real_name = request.real_name
-        
-    if request.dept_code is not None:
-        user.dept_code = request.dept_code
-    
-    if request.org_path is not None:
-        user.org_path = request.org_path
         
     if request.extra_data is not None:
         user.extra_data = request.extra_data
@@ -782,6 +875,57 @@ async def _send_review_result_mail(user: User, approved: bool):
     if not ok:
         logger.warning("审核结果邮件发送失败: user=%s reason=%s", user.user_name, message)
     return ok, (None if ok else message)
+
+
+@router.put("/users/{user_id}/departments")
+async def set_user_departments(
+    user_id: int,
+    request: SetUserDepartmentsRequest,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """整集保存用户部门归属。
+
+    users.dept_code / org_path 是主部门快照，只能由 DepartmentService 统一维护；
+    接口层不得直接改这两列，否则快照会与 is_primary 关系脱节，行级过滤随之失效。
+    """
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    if request.dept_ids and request.dept_codes:
+        raise HTTPException(status_code=400, detail="dept_ids 与 dept_codes 只能给一种")
+
+    service = DepartmentService(db)
+    dept_ids = [int(i) for i in request.dept_ids]
+    if request.dept_codes:
+        dept_ids = []
+        for code in request.dept_codes:
+            dept = await service.get_by_code(code)
+            if dept is None:
+                raise HTTPException(status_code=400, detail=f"部门编码 {code} 不存在")
+            dept_ids.append(int(dept.id))
+
+    primary_dept_id = request.primary_dept_id
+    if request.primary_dept_code:
+        primary = await service.get_by_code(request.primary_dept_code)
+        if primary is None:
+            raise HTTPException(
+                status_code=400, detail=f"主部门编码 {request.primary_dept_code} 不存在"
+            )
+        primary_dept_id = int(primary.id)
+
+    try:
+        await service.set_user_departments(user_id, dept_ids, primary_dept_id)
+        await db.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "dept_ids": dept_ids,
+        "primary_dept_id": primary_dept_id,
+    }
 
 
 @router.patch("/users/{user_id}/status")
@@ -1081,6 +1225,9 @@ async def delete_user(
     # This avoids StaleDataError because SQLAlchemy will track the deletion
     user.roles = []
     await db.flush()
+
+    # 部门两张表同样没有外键（用户决策），必须显式清理，否则留下悬挂归属
+    await db.execute(delete(UserDepartment).where(UserDepartment.user_id == user_id))
 
     # 兜底再按 user_id 显式删一次：上面依赖 roles 集合已被完整加载，而 MySQL 侧这张表
     # 没有外键约束（见 db-prod/V27），漏删就会留下指向不存在用户的悬挂行——
