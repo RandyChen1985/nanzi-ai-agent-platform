@@ -1489,79 +1489,37 @@
                   class="flex-1 overflow-y-auto bg-gray-50 p-2 sm:p-4 rounded-lg border border-gray-200"
                 >
                   <div class="space-y-3">
+                    <!-- 汇总条：一眼看出「直配 + 角色授予」的总量与来源构成 -->
                     <div
-                      v-for="menu in MENU_TREE"
-                      :key="menu.id"
-                      class="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm"
+                      class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] text-gray-500"
                     >
-                      <div
-                        class="px-3 py-2 bg-gray-50 flex items-center gap-2 border-b border-gray-100"
+                      <span>
+                        已授予
+                        <b class="text-gray-800">{{ grantedMenuCount }}</b> 个菜单 ·
+                        <b class="text-gray-800">{{ grantedElementCount }}</b> 个功能点
+                      </span>
+                      <span
+                        v-if="inheritedMenus.length || inheritedElements.length"
+                        class="inline-flex items-center gap-1"
                       >
-                        <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13zM8 8h8M8 12h8M8 16h5" />
-                        </svg>
-                        <span class="text-[10px] font-bold text-blue-600">菜单权限</span>
-                        <input
-                          type="checkbox"
-                          :checked="isItemSelected(menu.id)"
-                          :indeterminate="isMenuPartiallySelected(menu.id)"
-                          @change="toggleTreeItem(menu.id)"
-                          class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                        />
-                        <span
-                          class="text-xs sm:text-sm font-black text-gray-800"
-                          >{{ menu.label }}</span
-                        >
-                      </div>
-                      <div
-                        v-if="menu.children.length > 0"
-                        class="p-2"
-                      >
-                        <div class="flex items-center gap-1.5 mb-2 text-[10px] font-bold text-gray-500">
-                          <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5h6M9 9h6M9 13h6M9 17h4M5 5.5A1.5 1.5 0 016.5 4h11A1.5 1.5 0 0119 5.5v13a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 015 18.5v-13z" />
-                          </svg>
-                          <span>功能点权限</span>
-                          <span class="font-normal text-gray-400">控制页面内按钮和操作</span>
-                        </div>
-                        <div class="grid grid-cols-1 xs:grid-cols-2 gap-1.5">
-                        <div
-                          v-for="child in menu.children"
-                          :key="child.id"
-                          @click="toggleTreeItem(child.id)"
-                          class="flex items-center gap-2 p-1.5 rounded hover:bg-blue-50 cursor-pointer transition-colors"
-                          :class="isItemSelected(child.id) ? 'bg-blue-50' : ''"
-                        >
-                          <div
-                            class="w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center"
-                            :class="
-                              isItemSelected(child.id)
-                                ? 'bg-blue-600 border-blue-600'
-                                : 'bg-white border-gray-300'
-                            "
-                          >
-                            <svg
-                              v-if="isItemSelected(child.id)"
-                              class="w-2.5 h-2.5 text-white"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="3"
-                                d="M5 13l4 4L19 7"
-                              />
-                            </svg>
-                          </div>
-                          <span class="text-[11px] text-gray-600 leading-tight">{{
-                            child.label
-                          }}</span>
-                        </div>
-                        </div>
-                      </div>
+                        <span class="rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">角色</span>
+                        其中角色授予
+                        <b class="text-slate-600">{{ inheritedMenus.length }}</b> 个菜单 /
+                        <b class="text-slate-600">{{ inheritedElements.length }}</b> 个功能点
+                      </span>
+                      <span v-else class="text-gray-400">当前角色未额外授予页面权限</span>
                     </div>
+
+                    <MenuAccessTree
+                      :menus="permissionData.menus"
+                      :elements="permissionData.elements"
+                      :inherited-menus="inheritedMenus"
+                      :inherited-elements="inheritedElements"
+                      :disabled="!permissionsLoaded"
+                      @toggle-menu="toggleTreeItem"
+                      @toggle-element="toggleTreeItem"
+                      @inherited-blocked="onInheritedBlocked"
+                    />
                   </div>
                 </div>
               </div>
@@ -2399,7 +2357,7 @@ import { persistUserInfo } from "../utils/userSession";
 import { useToast } from "../composables/useToast";
 import { useBranding } from "../composables/useBranding";
 import { useUser } from "../composables/useUser";
-import { MENU_TREE, getMenuDescendantIds } from "../constants/permissions";
+import { getMenuDescendantIds } from "../constants/permissions";
 import { copyToClipboard } from "../utils/clipboard";
 import { checkPasswordPolicy } from "../utils/passwordPolicy";
 import {
@@ -2426,12 +2384,14 @@ import {
   type ForbiddenCatalogSnapshot,
 } from "../utils/forbiddenCatalogCache";
 import {
+  applyMenuToggle,
   buildUserPermissionPayload,
   emptyPermissionLists,
   resolveUserPermissionEditState,
   type InheritedForbiddenLists,
 } from "../utils/permissionLists";
 import { extractApiErrorDetail } from "../utils/apiErrorDetail";
+import MenuAccessTree from "../components/user/MenuAccessTree.vue";
 import RoleList from "../components/RoleList.vue";
 import ThirdPartyUserSyncDrawer from "../components/ThirdPartyUserSyncDrawer.vue";
 import QuotaPolicyPanel from "../components/admin/QuotaPolicyPanel.vue";
@@ -2995,6 +2955,23 @@ const inheritedForbidden = ref<InheritedForbiddenLists>({
   forbidden_skills: [],
 });
 
+/**
+ * 角色授予的菜单 / 功能点（只读）：并集里有、直配里没有的部分。
+ *
+ * 这是「编辑用户时看不出角色已给了哪些页面」的修法：后端已同时返回并集与直配，
+ * 差集在这里算，树里以灰勾 + 「角色」徽标呈现，永不进入 PUT payload。
+ */
+const inheritedMenus = ref<string[]>([]);
+const inheritedElements = ref<string[]>([]);
+
+/** 汇总条：直配与角色来源不重叠（后者是差集），直接相加即去重后的授予总数。 */
+const grantedMenuCount = computed(
+  () => permissionData.value.menus.length + inheritedMenus.value.length,
+);
+const grantedElementCount = computed(
+  () => permissionData.value.elements.length + inheritedElements.value.length,
+);
+
 /** 只读区展示用：按「工具 / 命令 / 技能」三行渲染，没有内容不占位。 */
 const inheritedForbiddenRows = computed(() =>
   [
@@ -3078,6 +3055,8 @@ const resetPermissionBuffers = () => {
     forbidden_commands: [],
     forbidden_skills: [],
   };
+  inheritedMenus.value = [];
+  inheritedElements.value = [];
   forbiddenCommandsText.value = "";
   permissionsLoaded.value = false;
   permissionsLoadError.value = "";
@@ -3173,43 +3152,43 @@ const loadAgentRestrictionCounts = async () => {
 };
 
 // Tree Logic
+/**
+ * 树的勾选写入：菜单级联走共享纯函数（勾选时跳过角色已授予的子项），功能点直接翻转。
+ * 只写直配缓冲；角色来源项没有任何写入通道。
+ */
 const toggleTreeItem = (itemId: string) => {
-  const isMenu = itemId.startsWith("menu:");
-  const targetArray = isMenu
-    ? permissionData.value.menus
-    : permissionData.value.elements;
-  if (isMenu) {
-    const descendantIds = getMenuDescendantIds(itemId);
-    const shouldSelect = !targetArray.includes(itemId);
-    if (shouldSelect) {
-      if (!targetArray.includes(itemId)) targetArray.push(itemId);
-      descendantIds.forEach((id) => {
-        if (!permissionData.value.elements.includes(id)) permissionData.value.elements.push(id);
-      });
-    } else {
-      permissionData.value.menus = targetArray.filter((id) => id !== itemId);
-      permissionData.value.elements = permissionData.value.elements.filter(
-        (id) => !descendantIds.includes(id),
-      );
-    }
+  if (itemId.startsWith("menu:")) {
+    const result = applyMenuToggle(
+      permissionData.value.menus,
+      permissionData.value.elements,
+      itemId,
+      getMenuDescendantIds(itemId),
+      inheritedElements.value,
+      inheritedMenus.value,
+    );
+    permissionData.value.menus = result.menus;
+    permissionData.value.elements = result.elements;
     return;
   }
 
-  const idx = targetArray.indexOf(itemId);
-  if (idx > -1) targetArray.splice(idx, 1);
-  else targetArray.push(itemId);
+  // 双重保险：树里已拦截，这里再兜一层，避免别的入口把继承项写成直配。
+  if (
+    !permissionData.value.elements.includes(itemId) &&
+    inheritedElements.value.includes(itemId)
+  ) {
+    showToast("该权限来自所属角色，需到角色管理调整", "warning");
+    return;
+  }
+
+  const idx = permissionData.value.elements.indexOf(itemId);
+  if (idx > -1) permissionData.value.elements.splice(idx, 1);
+  else permissionData.value.elements.push(itemId);
 };
-const isMenuPartiallySelected = (menuId: string) => {
-  const descendantIds = getMenuDescendantIds(menuId);
-  const selectedCount = descendantIds.filter((id) => permissionData.value.elements.includes(id)).length;
-  return selectedCount > 0 && selectedCount < descendantIds.length;
-};
-const isItemSelected = (itemId: string) => {
-  const isMenu = itemId.startsWith("menu:");
-  const targetArray = isMenu
-    ? permissionData.value.menus || []
-    : permissionData.value.elements || [];
-  return targetArray.includes(itemId);
+
+/** 树里点到「仅角色来源」的节点：只提示，不修改——直配区不该出现继承项。 */
+const onInheritedBlocked = (itemId: string) => {
+  void itemId;
+  showToast("该权限来自所属角色，需到角色管理调整", "warning");
 };
 
 // Computed
@@ -3549,6 +3528,8 @@ const fetchUserPermissions = async (userId: number) => {
       datasets: state.direct.datasets.filter((id: string) => !missingIds.has(id)),
     };
     inheritedForbidden.value = state.inherited;
+    inheritedMenus.value = state.inheritedMenus;
+    inheritedElements.value = state.inheritedElements;
     forbiddenCommandsText.value = (state.direct.forbidden_commands || []).join(", ");
     permissionsLoaded.value = true;
   } catch (e: any) {
