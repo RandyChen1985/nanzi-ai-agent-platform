@@ -6,9 +6,11 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.department import Department
 from app.models.user import User
 from app.schemas.user_sync import (
     ThirdPartyUserSyncConfig,
+    ThirdPartyUserSyncDeptSync,
     ThirdPartyUserSyncExtraDataMapping,
     ThirdPartyUserSyncFieldMap,
 )
@@ -138,6 +140,7 @@ class UserSyncService:
         field_map: ThirdPartyUserSyncFieldMap,
         db_type: str,
         extra_data_mappings: Optional[List[ThirdPartyUserSyncExtraDataMapping]] = None,
+        dept_sync: Optional[ThirdPartyUserSyncDeptSync] = None,
     ) -> str:
         if not table_name:
             raise ValueError("未配置目标表")
@@ -165,6 +168,12 @@ class UserSyncService:
             alias = UserSyncService._extra_data_alias(json_key)
             selects.append(
                 f"{UserSyncService._quote_ident(source_column, db_type)} AS {alias}"
+            )
+
+        # 部门列只在启用部门同步时选：没启用就不该对来源表多一个列依赖
+        if dept_sync and dept_sync.enabled and dept_sync.source_column:
+            selects.append(
+                f"{UserSyncService._quote_ident(dept_sync.source_column, db_type)} AS dept_code"
             )
 
         table_sql = UserSyncService._quote_ident(table_name, db_type)
@@ -279,12 +288,15 @@ class UserSyncService:
         username = str(user_name).strip()
         if not username:
             return None
+        raw_dept = row.get("dept_code")
+        dept_code = str(raw_dept).strip() if raw_dept is not None else ""
         return {
             "user_name": username,
             "real_name": (str(row.get("real_name")).strip() if row.get("real_name") is not None else None),
             "remark": (str(row.get("remark")).strip() if row.get("remark") is not None else None),
             "email": (str(row.get("email")).strip() if row.get("email") is not None else None),
             "extra_data": UserSyncService._build_extra_data_json(row, extra_data_mappings or []),
+            "dept_code": dept_code or None,
         }
 
     @staticmethod
@@ -304,6 +316,7 @@ class UserSyncService:
             config.field_map,
             db_config.db_type,
             config.extra_data_mappings,
+            config.dept_sync,
         )
         result = await adapter.preview(sql, limit=limit)
         users: List[Dict[str, Any]] = []
@@ -382,7 +395,13 @@ class UserSyncService:
         db: AsyncSession,
         ext_user: Dict[str, Any],
         existing: Optional[User],
-    ) -> str:
+        need_user_id: bool = False,
+    ) -> tuple:
+        """写入账号字段，返回 `(created|updated, user_id)`。
+
+        `need_user_id` 只在要同步部门时为 True：创建分支拿不到自增 id，得多查一次；
+        不需要时不查，避免给原本的账号同步路径增加无谓查询。
+        """
         remark = UserSyncService._format_sync_remark(ext_user.get("remark"))
         # 邮箱：第三方未提供 / 非法 / 被占用都返回 None，此时保持用户现有邮箱不动。
         email = await UserSyncService._resolve_sync_email(ext_user, existing, db)
@@ -396,7 +415,7 @@ class UserSyncService:
             if ext_user.get("extra_data") is not None:
                 existing.extra_data = ext_user["extra_data"]
             await db.commit()
-            return "updated"
+            return "updated", int(existing.id)
 
         await AuthService.generate_api_key(
             user_name=ext_user["user_name"],
@@ -407,7 +426,33 @@ class UserSyncService:
             email=email,
             db=db,
         )
-        return "created"
+        if not need_user_id:
+            return "created", None
+        # generate_api_key 只回 api_key；部门同步需要用户 id，按用户名回查一次
+        created_id = (await db.execute(
+            select(User.id).where(User.user_name == ext_user["user_name"])
+        )).scalar()
+        return "created", (int(created_id) if created_id is not None else None)
+
+    @staticmethod
+    async def _link_departments(
+        db: AsyncSession,
+        user_id: int,
+        dept_id: int,
+        mode: str,
+    ) -> None:
+        """把用户挂到来源部门上。
+
+        必须经 `DepartmentService`：`is_primary` 唯一性与 `users.dept_code` / `org_path`
+        主部门快照都由它维护，直接写关系表会立刻制造不一致。
+        """
+        from app.services.department_service import DepartmentService
+
+        service = DepartmentService(db)
+        if mode == "replace":
+            await service.set_user_departments(int(user_id), [int(dept_id)])
+        else:
+            await service.add_members(int(dept_id), [int(user_id)])
 
     @staticmethod
     async def run_sync(
@@ -426,28 +471,72 @@ class UserSyncService:
             selected = {name.strip() for name in user_names if str(name).strip()}
             external_users = [u for u in external_users if u["user_name"] in selected]
 
+        dept_sync = cfg.dept_sync
+        dept_enabled = bool(dept_sync.enabled and dept_sync.source_column)
+        # 部门 code → 部门 id 一次批量解析，避免每个用户回查一次部门表
+        dept_code_to_id: Dict[str, int] = {}
+        if dept_enabled:
+            codes = {
+                str(u.get("dept_code")).strip()
+                for u in external_users
+                if u.get("dept_code")
+            }
+            if codes:
+                rows = await db.execute(
+                    select(Department.code, Department.id).where(
+                        Department.code.in_(codes)
+                    )
+                )
+                dept_code_to_id = {str(code): int(pk) for code, pk in rows.all()}
+
         created = 0
         updated = 0
         failed = 0
+        dept_linked = 0
+        dept_skipped = 0
 
         for ext_user in external_users:
             username = ext_user["user_name"]
+            raw_code = (ext_user.get("dept_code") or "").strip()
+            dept_id = dept_code_to_id.get(raw_code) if (dept_enabled and raw_code) else None
             try:
                 existing = (
                     await db.execute(select(User).where(User.user_name == username))
                 ).scalar_one_or_none()
-                action = await UserSyncService._apply_external_user_to_local(
+                action, user_id = await UserSyncService._apply_external_user_to_local(
                     db,
                     ext_user,
                     existing,
+                    need_user_id=dept_id is not None,
                 )
                 if action == "created":
                     created += 1
                 else:
                     updated += 1
+
+                if dept_id is not None and user_id is not None:
+                    await UserSyncService._link_departments(
+                        db, user_id, dept_id, dept_sync.mode
+                    )
+                    await db.commit()
+                    dept_linked += 1
+                elif dept_enabled and raw_code:
+                    # 平台没有这个部门 code：账号照常同步，只跳过部门归属
+                    dept_skipped += 1
+                    logger.warning(
+                        "第三方用户 %s 的部门编码 %s 在本平台不存在，已跳过部门归属",
+                        username,
+                        raw_code,
+                    )
             except Exception as exc:
                 await db.rollback()
                 logger.error("Failed to sync third-party user %s: %s", username, exc)
                 failed += 1
 
-        return {"created": created, "updated": updated, "failed": failed}
+        return {
+            "created": created,
+            "updated": updated,
+            "failed": failed,
+            "dept_linked": dept_linked,
+            "dept_skipped": dept_skipped,
+        }

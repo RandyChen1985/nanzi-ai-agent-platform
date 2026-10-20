@@ -69,6 +69,7 @@ def test_normalize_external_user():
         "remark": None,
         "email": None,
         "extra_data": None,
+        "dept_code": None,
     }
 
 
@@ -115,7 +116,10 @@ async def test_run_sync_creates_new_user_by_username():
          patch("app.services.user_sync_service.AuthService.generate_api_key", AsyncMock()) as mock_create:
         result = await UserSyncService.run_sync(db, config=config)
 
-    assert result == {"created": 1, "updated": 0, "failed": 0}
+    assert result == {
+        "created": 1, "updated": 0, "failed": 0,
+        "dept_linked": 0, "dept_skipped": 0,
+    }
     mock_create.assert_awaited_once()
     assert mock_create.await_args.kwargs["user_name"] == "alice"
     assert "user_id" not in mock_create.await_args.kwargs
@@ -141,7 +145,10 @@ async def test_run_sync_updates_existing_user_by_username():
          patch("app.services.user_sync_service.AuthService.generate_api_key", AsyncMock()) as mock_create:
         result = await UserSyncService.run_sync(db, config=config)
 
-    assert result == {"created": 0, "updated": 1, "failed": 0}
+    assert result == {
+        "created": 0, "updated": 1, "failed": 0,
+        "dept_linked": 0, "dept_skipped": 0,
+    }
     mock_create.assert_not_called()
     assert existing.real_name == "Alice"
     assert existing.remark == "第三方同步: 研发"

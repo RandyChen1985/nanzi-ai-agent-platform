@@ -295,6 +295,72 @@
             </p>
           </section>
 
+          <!-- 部门同步（可选）：只把人挂到已存在的部门上 -->
+          <section class="space-y-3">
+            <h3 class="text-sm font-bold text-gray-800 border-l-4 border-indigo-500 pl-2">部门同步</h3>
+
+            <label
+              class="flex items-start gap-3 rounded-xl border border-gray-200 px-4 py-3 transition-colors"
+              :class="config.enabled ? 'cursor-pointer hover:border-gray-300' : 'opacity-60 cursor-not-allowed'"
+            >
+              <input
+                v-model="config.dept_sync.enabled"
+                type="checkbox"
+                :disabled="!config.enabled"
+                class="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span class="min-w-0">
+                <span class="block text-sm font-semibold text-gray-800">同步部门归属</span>
+                <span class="block text-xs text-gray-500 mt-0.5">
+                  关闭时不同步部门：新账号按「无部门」创建，已有用户的部门归属保持不变
+                </span>
+              </span>
+            </label>
+
+            <div v-if="config.dept_sync.enabled" class="space-y-3">
+              <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1.5">来源部门列</label>
+                <select
+                  v-model="config.dept_sync.source_column"
+                  :disabled="!config.enabled"
+                  class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50"
+                >
+                  <option :value="null">请选择部门编码列</option>
+                  <option v-for="col in columns" :key="col.name" :value="col.name">
+                    {{ col.name }}<template v-if="col.comment"> · {{ col.comment }}</template>
+                  </option>
+                </select>
+                <p class="text-xs text-gray-400 mt-1">
+                  来源值需与本平台部门编码（Department.code）完全一致；找不到的部门会跳过该人的部门归属，账号仍照常同步
+                </p>
+                <p
+                  v-if="config.dept_sync.enabled && !config.dept_sync.source_column"
+                  class="text-xs text-amber-600 mt-1"
+                >
+                  还没选部门列：保存后也不会同步部门归属
+                </p>
+              </div>
+
+              <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-1.5">归属方式</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <button
+                    v-for="opt in deptModeOptions"
+                    :key="opt.value"
+                    type="button"
+                    :disabled="!config.enabled"
+                    class="px-3 py-2.5 rounded-xl border text-left transition-all disabled:cursor-not-allowed"
+                    :class="config.dept_sync.mode === opt.value ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'"
+                    @click="config.dept_sync.mode = opt.value"
+                  >
+                    <div class="text-sm font-medium" :class="config.dept_sync.mode === opt.value ? 'text-indigo-700' : 'text-gray-700'">{{ opt.label }}</div>
+                    <div class="text-xs text-gray-500 mt-0.5">{{ opt.desc }}</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <!-- 定时同步 -->
           <section class="space-y-3">
             <h3 class="text-sm font-bold text-gray-800 border-l-4 border-indigo-500 pl-2">定时同步</h3>
@@ -536,12 +602,26 @@ interface FieldMap {
   email: string | null
 }
 
+interface FieldMap {
+  user_name: string
+  real_name: string | null
+  remark: string | null
+  email: string | null
+}
+
+interface DeptSync {
+  enabled: boolean
+  source_column: string | null
+  mode: 'add' | 'replace'
+}
+
 interface SyncConfig {
   enabled: boolean
   connection_config_id: number | null
   table_name: string | null
   field_map: FieldMap
   extra_data_mappings: ExtraDataMapping[]
+  dept_sync: DeptSync
   schedule: 'off' | 'hourly' | 'daily' | 'weekly'
 }
 
@@ -554,6 +634,11 @@ const scheduleOptions = [
   { value: 'hourly' as const, label: '每小时', desc: '每小时整点执行' },
   { value: 'daily' as const, label: '每天', desc: '每天凌晨 2:00' },
   { value: 'weekly' as const, label: '每周', desc: '每周一凌晨 2:00' },
+]
+
+const deptModeOptions = [
+  { value: 'add' as const, label: '只增不减', desc: '保留手工加的部门，只补来源部门' },
+  { value: 'replace' as const, label: '以来源为准', desc: '移除来源里没有的部门' },
 ]
 
 const mappingFields = [
@@ -618,6 +703,7 @@ const defaultConfig = (): SyncConfig => ({
   table_name: null,
   field_map: { user_name: '', real_name: null, remark: null, email: null },
   extra_data_mappings: [],
+  dept_sync: { enabled: false, source_column: null, mode: 'add' },
   schedule: 'off',
 })
 
@@ -803,6 +889,11 @@ const loadConfig = async () => {
             source_column: item?.source_column || '',
           }))
         : [],
+      dept_sync: {
+        enabled: !!data?.dept_sync?.enabled,
+        source_column: data?.dept_sync?.source_column ?? null,
+        mode: data?.dept_sync?.mode === 'replace' ? 'replace' : 'add',
+      },
     }
   } catch {
     showToast('加载同步配置失败', 'error')

@@ -292,10 +292,15 @@ async def run_third_party_sync(
     try:
         cfg = request.config or await UserSyncService.get_config()
         result = await UserSyncService.run_sync(db, user_names=request.user_names, config=cfg)
+        dept_note = ""
+        if result.get("dept_linked"):
+            dept_note += f"，关联部门 {result['dept_linked']} 人"
+        if result.get("dept_skipped"):
+            dept_note += f"，{result['dept_skipped']} 人部门编码未匹配"
         return {
             "message": (
                 f"同步完成：新增 {result['created']} 人，更新 {result['updated']} 人，"
-                f"失败 {result['failed']} 人"
+                f"失败 {result['failed']} 人{dept_note}"
             ),
             **result,
         }

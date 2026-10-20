@@ -18,6 +18,21 @@ class ThirdPartyUserSyncFieldMap(BaseModel):
     email: Optional[str] = None
 
 
+class ThirdPartyUserSyncDeptSync(BaseModel):
+    """部门归属同步：可选、单列、默认只增不减。
+
+    平台部门树是本地维护的，同步只把人挂到**已存在**的部门上：来源部门编码找不到
+    就跳过该人的部门归属并计数（账号照常同步），不按 code 凭空建部门——来源只有编码，
+    没有父级信息，自动建只会堆出一层没有层级的部门。
+    """
+
+    enabled: bool = False
+    source_column: Optional[str] = Field(
+        None, description="来源表的部门编码列；与 Department.code 对齐"
+    )
+    mode: Literal["add", "replace"] = "add"
+
+
 class ThirdPartyUserSyncConfig(BaseModel):
     enabled: bool = False
     connection_config_id: Optional[int] = None
@@ -26,6 +41,7 @@ class ThirdPartyUserSyncConfig(BaseModel):
         default_factory=lambda: ThirdPartyUserSyncFieldMap(user_name="")
     )
     extra_data_mappings: List[ThirdPartyUserSyncExtraDataMapping] = Field(default_factory=list)
+    dept_sync: ThirdPartyUserSyncDeptSync = Field(default_factory=ThirdPartyUserSyncDeptSync)
     schedule: SchedulePreset = "off"
 
 
