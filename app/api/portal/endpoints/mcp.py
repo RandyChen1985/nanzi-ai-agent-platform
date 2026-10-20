@@ -374,7 +374,7 @@ def _build_verify_user_assertion_headers(
         raise HTTPException(status_code=400, detail=f"用户身份传递配置无效: {exc}")
 
 
-@router.post("/verify")
+@router.post("/verify", dependencies=[Depends(require_permission("element", "element:mcp_management:edit"))])
 async def verify_mcp_server(
     data: McpVerifyRequest,
     db: AsyncSession = Depends(get_db_session),
@@ -460,7 +460,7 @@ async def list_mcp_servers(
     return res
 
 
-@router.post("/servers/echo-test", response_model=McpServerResponse)
+@router.post("/servers/echo-test", response_model=McpServerResponse, dependencies=[Depends(require_permission("element", "element:mcp_management:edit"))])
 async def create_echo_test_mcp(
     request: Request,
     db: AsyncSession = Depends(get_db_session),
@@ -568,7 +568,7 @@ async def create_echo_test_mcp(
     response.authorization_configured, response.masked_auth_headers = mcp_auth_headers_summary(server)
     return response
 
-@router.post("/servers", response_model=McpServerResponse)
+@router.post("/servers", response_model=McpServerResponse, dependencies=[Depends(require_permission("element", "element:mcp_management:create"))])
 async def create_mcp_server(
     data: McpServerWrite,
     db: AsyncSession = Depends(get_db_session),
@@ -662,7 +662,7 @@ async def create_mcp_server(
         "stale_tool_count": 0,
     }
 
-@router.put("/servers/{server_id}", response_model=McpServerResponse)
+@router.put("/servers/{server_id}", response_model=McpServerResponse, dependencies=[Depends(require_permission("element", "element:mcp_management:edit"))])
 async def update_mcp_server(
     server_id: str,
     data: McpServerWrite,
@@ -771,7 +771,7 @@ async def update_mcp_server(
         "stale_tool_count": stale,
     }
 
-@router.delete("/servers/{server_id}")
+@router.delete("/servers/{server_id}", dependencies=[Depends(require_permission("element", "element:mcp_management:delete"))])
 async def delete_mcp_server(
     server_id: str,
     db: AsyncSession = Depends(get_db_session),
@@ -801,7 +801,7 @@ async def delete_mcp_server(
         logger.warning(f"Evicting session failed during delete for server {server_id}: {e}")
     return {"message": "Server and associated tools deleted"}
 
-@router.post("/servers/{server_id}/sync")
+@router.post("/servers/{server_id}/sync", dependencies=[Depends(require_permission("element", "element:mcp_management:sync"))])
 async def sync_mcp_tools(
     server_id: str,
     db: AsyncSession = Depends(get_db_session),
@@ -945,7 +945,7 @@ async def list_mcp_server_tools(
 class ToolExecutionRequest(BaseModel):
     arguments: Dict[str, Any]
 
-@router.post("/tools/{tool_id}/execute")
+@router.post("/tools/{tool_id}/execute", dependencies=[Depends(require_permission("element", "element:mcp_management:execute"))])
 async def execute_mcp_tool(
     tool_id: str,
     req: ToolExecutionRequest,
@@ -1017,7 +1017,7 @@ async def execute_mcp_tool(
     except Exception as e:
         return {"status": "error", "message": str(e), "mcp_auth": mcp_auth}
 
-@router.put("/tools/{tool_id}/publish")
+@router.put("/tools/{tool_id}/publish", dependencies=[Depends(require_permission("element", "element:mcp_management:publish"))])
 async def toggle_tool_publish(
     tool_id: str,
     published: bool,

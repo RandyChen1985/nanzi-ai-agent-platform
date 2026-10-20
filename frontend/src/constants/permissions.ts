@@ -6,6 +6,15 @@
  * 只有「系统管理」目前存在子菜单这一层；没有子菜单的菜单，children 直接是功能点。
  * 层级用 children 表达，不要靠 id 前缀去猜归属——展示与级联都以这个结构为准。
  */
+/**
+ * 与多个菜单共用的功能点（一个权限码被多个页面依赖）。
+ *
+ * 这是已知的粒度缺陷，不是刻意设计：拆分它需要同时改后端端点的依赖并迁移已有授权，
+ * 所以先显式登记，让 `test_permission_tree_ownership` 能拦住「新增的意外共用」。
+ * 目前没有共用项：数据源连接管理已拆成 element:data_sources:edit/delete（只读跟菜单走）。
+ */
+export const SHARED_ELEMENT_IDS: string[] = [];
+
 export interface PermissionNode {
     id: string;
     label: string;
@@ -27,9 +36,12 @@ export const MENU_TREE: PermissionNode[] = [
     {
         id: 'menu:data_sources',
         label: '数据源管理',
-        // 该页面没有功能点权限（DataSourceManagement.vue 无 hasPermission），
-        // 原先挂的 element:metadata:import 属于元数据页面，勾这里会越权级联。
-        children: []
+        // 只读能力跟菜单走：有「数据源管理」菜单就能看列表与表画像，
+        // 功能点只控制写操作（与 MCP 工具集的口径一致）。
+        children: [
+            { id: 'element:data_sources:edit', label: '新增/编辑数据源、测试连接与 SQL 预览' },
+            { id: 'element:data_sources:delete', label: '删除数据源' }
+        ]
     },
     {
         id: 'menu:metadata',
@@ -63,7 +75,15 @@ export const MENU_TREE: PermissionNode[] = [
     {
         id: 'menu:mcp_management',
         label: 'MCP 工具集',
-        children: []
+        // 后端 mcp.py 的写端点已加权限校验；读端点仍由菜单权限控制
+        children: [
+            { id: 'element:mcp_management:create', label: '创建 MCP 服务' },
+            { id: 'element:mcp_management:edit', label: '编辑服务配置与连接测试' },
+            { id: 'element:mcp_management:delete', label: '删除 MCP 服务' },
+            { id: 'element:mcp_management:sync', label: '同步服务工具清单' },
+            { id: 'element:mcp_management:execute', label: '执行（测试）工具' },
+            { id: 'element:mcp_management:publish', label: '发布 / 下线工具' }
+        ]
     },
     {
         id: 'menu:mcp_service',

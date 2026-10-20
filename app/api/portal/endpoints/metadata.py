@@ -26,7 +26,7 @@ from app.schemas.metadata import (
 from app.models.user import User
 from app.models.permission import Role
 from app.models.task import AgentScheduledTask
-from app.core.dependencies import require_admin, get_current_user, require_permission
+from app.core.dependencies import require_admin, get_current_user, require_any_permission, require_permission
 from app.core.errors import ErrorCode
 from app.services.permission_service import PermissionService
 from app.services.metadata_sync_log_service import metadata_sync_log_service
@@ -1722,7 +1722,7 @@ async def import_ddl(ddl: dict): # Expects {"ddl": "..."}
 from app.services.db_import_service import DBImportService
 from app.schemas.metadata import DBConnectionConfig, DDLRequest
 
-@router.post("/db/test-connection", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.post("/db/test-connection", dependencies=[Depends(require_any_permission(("element", "element:data_sources:edit"), ("element", "element:metadata:import")))])
 async def test_db_connection(config: DBConnectionConfig):
     """测试外部数据库连接"""
     try:
@@ -1797,7 +1797,7 @@ from app.schemas.db_connection import (
 )
 from app.services.db_connection_service import DbConnectionService
 
-@router.get("/db/connection-configs", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.get("/db/connection-configs", dependencies=[Depends(require_any_permission(("menu", "menu:data_sources"), ("element", "element:metadata:import")))])
 async def list_db_connection_configs(
     conn: AsyncSession = Depends(get_db_session)
 ):
@@ -1807,7 +1807,7 @@ async def list_db_connection_configs(
     return {"code": 200, "data": [r.model_dump() for r in result]}
 
 
-@router.post("/db/connection-configs", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.post("/db/connection-configs", dependencies=[Depends(require_permission("element", "element:data_sources:edit"))])
 async def create_db_connection_config(
     payload: DbConnectionConfigCreate,
     conn: AsyncSession = Depends(get_db_session),
@@ -1825,7 +1825,7 @@ async def create_db_connection_config(
     return {"code": 200, "data": DbConnectionConfigSafeResponse.model_validate(config).model_dump()}
 
 
-@router.put("/db/connection-configs/{config_id}", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.put("/db/connection-configs/{config_id}", dependencies=[Depends(require_permission("element", "element:data_sources:edit"))])
 async def update_db_connection_config(
     config_id: int,
     payload: DbConnectionConfigCreate,
@@ -1843,7 +1843,7 @@ async def update_db_connection_config(
     return {"code": 200, "data": DbConnectionConfigSafeResponse.model_validate(config).model_dump()}
 
 
-@router.delete("/db/connection-configs/{config_id}", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.delete("/db/connection-configs/{config_id}", dependencies=[Depends(require_permission("element", "element:data_sources:delete"))])
 async def delete_db_connection_config(
     config_id: int,
     conn: AsyncSession = Depends(get_db_session)
@@ -1863,7 +1863,7 @@ class DebugSqlRequest(BaseModel):
     include_total: bool = False
 
 
-@router.post("/db/connection-configs/{config_id}/preview", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.post("/db/connection-configs/{config_id}/preview", dependencies=[Depends(require_any_permission(("menu", "menu:data_sources"), ("element", "element:data_sources:edit"), ("element", "element:metadata:import")))])
 async def preview_db_connection_sql(
     config_id: int,
     payload: DebugSqlRequest,
@@ -1899,7 +1899,7 @@ async def preview_db_connection_sql(
 from fastapi import BackgroundTasks
 from app.services.db_profile_service import DbProfileService
 
-@router.post("/db/connection-configs/{config_id}/profile", response_model=DbProfileTaskResponse, dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.post("/db/connection-configs/{config_id}/profile", response_model=DbProfileTaskResponse, dependencies=[Depends(require_permission("element", "element:data_sources:edit"))])
 async def trigger_db_table_profiling(
     config_id: int,
     background_tasks: BackgroundTasks,
@@ -1919,7 +1919,7 @@ async def trigger_db_table_profiling(
         raise HTTPException(status_code=500, detail=f"触发任务失败: {str(e)}")
 
 
-@router.post("/db/connection-configs/{config_id}/profile/cancel", response_model=DbProfileTaskResponse, dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.post("/db/connection-configs/{config_id}/profile/cancel", response_model=DbProfileTaskResponse, dependencies=[Depends(require_permission("element", "element:data_sources:edit"))])
 async def cancel_db_table_profiling(
     config_id: int,
     conn: AsyncSession = Depends(get_db_session)
@@ -1935,7 +1935,7 @@ async def cancel_db_table_profiling(
         raise HTTPException(status_code=500, detail=f"中断任务失败: {str(e)}")
 
 
-@router.get("/db/connection-configs/{config_id}/profile-task", response_model=Optional[DbProfileTaskResponse], dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.get("/db/connection-configs/{config_id}/profile-task", response_model=Optional[DbProfileTaskResponse], dependencies=[Depends(require_permission("menu", "menu:data_sources"))])
 async def get_db_table_profiling_task(
     config_id: int,
     conn: AsyncSession = Depends(get_db_session)
@@ -1945,7 +1945,7 @@ async def get_db_table_profiling_task(
     return task
 
 
-@router.get("/db/connection-configs/{config_id}/table-profiles/stats", response_model=DbTableProfileStatsResponse, dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.get("/db/connection-configs/{config_id}/table-profiles/stats", response_model=DbTableProfileStatsResponse, dependencies=[Depends(require_permission("menu", "menu:data_sources"))])
 async def get_db_table_profile_stats(
     config_id: int,
     conn: AsyncSession = Depends(get_db_session)
@@ -1954,7 +1954,7 @@ async def get_db_table_profile_stats(
     return await DbProfileService.get_table_profile_stats(conn, config_id)
 
 
-@router.get("/db/connection-configs/{config_id}/table-profiles", response_model=DbTableProfilePageResponse, dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.get("/db/connection-configs/{config_id}/table-profiles", response_model=DbTableProfilePageResponse, dependencies=[Depends(require_permission("menu", "menu:data_sources"))])
 async def list_db_table_profiles(
     config_id: int,
     page: int = 1,
@@ -1982,7 +1982,7 @@ async def list_db_table_profiles(
     )
 
 
-@router.get("/db/connection-configs/{config_id}/table-profiles/related", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.get("/db/connection-configs/{config_id}/table-profiles/related", dependencies=[Depends(require_permission("menu", "menu:data_sources"))])
 async def get_db_table_profile_related(
     config_id: int,
     table: str,
@@ -1993,7 +1993,7 @@ async def get_db_table_profile_related(
     return await DbProfileService.get_related_tables(conn, config_id, table, limit)
 
 
-@router.get("/db/connection-configs/{config_id}/table-profiles/{table_name}", response_model=DbTableProfileResponse, dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.get("/db/connection-configs/{config_id}/table-profiles/{table_name}", response_model=DbTableProfileResponse, dependencies=[Depends(require_permission("menu", "menu:data_sources"))])
 async def get_db_table_profile_detail(
     config_id: int,
     table_name: str,
@@ -2006,7 +2006,7 @@ async def get_db_table_profile_detail(
     return profile
 
 
-@router.post("/db/connection-configs/{config_id}/import-preview-from-profiles", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.post("/db/connection-configs/{config_id}/import-preview-from-profiles", dependencies=[Depends(require_permission("element", "element:data_sources:edit"))])
 async def import_preview_from_profiles(
     config_id: int,
     payload: ProfileImportPreviewRequest,
@@ -2030,7 +2030,7 @@ class ToggleIgnoreRequest(BaseModel):
     is_ignored: int
 
 
-@router.put("/db/connection-configs/{config_id}/table-profiles/ignore", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+@router.put("/db/connection-configs/{config_id}/table-profiles/ignore", dependencies=[Depends(require_permission("element", "element:data_sources:edit"))])
 async def toggle_table_profile_ignore(
     config_id: int,
     payload: ToggleIgnoreRequest,

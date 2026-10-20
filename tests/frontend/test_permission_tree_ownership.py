@@ -64,17 +64,27 @@ return { ids }
 """)["ids"]
 
 
-def test_data_sources_menu_does_not_own_metadata_import():
-    """「数据源管理」下不该挂元数据导入：该页面只有菜单级权限。"""
+def test_data_sources_menu_exposes_its_own_permission_codes():
+    """数据源管理有独立的三级权限码，且不再与元数据导入共用。
+
+    后端 `/db/connection-configs` 系列按读 / 写 / 删分别校验；`element:metadata:import`
+    只留给「元数据管理 → 智能导入数据」。
+    """
     result = _run("""
 return { ids: api.getMenuDescendantIds('menu:data_sources') }
 """)
 
-    assert "element:metadata:import" not in result["ids"]
+    ids = result["ids"]
+    # 只读跟菜单走，功能点只留写操作
+    assert ids == [
+        "element:data_sources:edit",
+        "element:data_sources:delete",
+    ]
+    assert "element:metadata:import" not in ids, "拆分后不应再共用元数据导入的码"
 
 
-def test_toggling_data_sources_grants_only_the_menu_itself():
-    """勾「数据源管理」只授出菜单，不会顺带授出任何功能点。"""
+def test_toggling_data_sources_grants_all_three_codes():
+    """勾「数据源管理」要把它自己的三个码一起授出。"""
     result = _run("""
 const menuId = 'menu:data_sources';
 const out = api.applyMenuToggle([], [], menuId, api.getMenuDescendantIds(menuId), [], []);
@@ -82,7 +92,26 @@ return { menus: out.menus, elements: out.elements }
 """)
 
     assert result["menus"] == ["menu:data_sources"]
-    assert result["elements"] == []
+    assert sorted(result["elements"]) == [
+        "element:data_sources:delete",
+        "element:data_sources:edit",
+    ]
+
+
+def test_mcp_toolkit_menu_exposes_write_permission_codes():
+    """MCP 工具集的写操作要能在树上授权，否则后端加了校验就成了「谁都授不进去」。"""
+    result = _run("""
+return { ids: api.getMenuDescendantIds('menu:mcp_management') }
+""")
+
+    assert sorted(result["ids"]) == [
+        "element:mcp_management:create",
+        "element:mcp_management:delete",
+        "element:mcp_management:edit",
+        "element:mcp_management:execute",
+        "element:mcp_management:publish",
+        "element:mcp_management:sync",
+    ]
 
 
 def test_prompts_menu_exposes_save_permission():
@@ -95,16 +124,26 @@ return { ids: api.getMenuDescendantIds('menu:prompts') }
     assert "element:prompts:optimize" in result["ids"]
 
 
-def test_every_element_belongs_to_exactly_one_menu():
-    """同一 element 不能挂两个菜单，否则勾 A 菜单会连带授出 B 页面的权限。"""
+def test_only_registered_elements_are_shared_between_menus():
+    """一个功能点挂在多个菜单下时，必须是显式登记的共用项。
+
+    共用意味着勾 A 菜单会连带授出 B 页面的权限——新增共用要么是 bug，要么得先想清楚
+    并在 `SHARED_ELEMENT_IDS` 里登记原因。
+    """
     result = _run("""
 const owners = new Map();
 const walk = (nodes) => { for (const n of nodes || []) { if (n.id.startsWith('element:')) owners.set(n.id, (owners.get(n.id) || 0) + 1); walk(n.children || []); } };
 walk(api.MENU_TREE);
-return { duplicated: [...owners].filter(([, count]) => count > 1).map(([id]) => id) }
+return {
+  duplicated: [...owners].filter(([, count]) => count > 1).map(([id]) => id).sort(),
+  registered: [...api.SHARED_ELEMENT_IDS].sort(),
+}
 """)
 
-    assert result["duplicated"] == [], f"这些功能点被挂了多次：{result['duplicated']}"
+    assert result["duplicated"] == result["registered"], (
+        f"未登记的共用：{sorted(set(result['duplicated']) - set(result['registered']))}；"
+        f"已登记但实际没共用：{sorted(set(result['registered']) - set(result['duplicated']))}"
+    )
 
 
 def test_backend_required_permissions_are_grantable_from_the_tree():
