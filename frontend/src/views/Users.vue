@@ -12,153 +12,211 @@
       </div>
     </Teleport>
 
-    <!-- Header：标题一行；窄屏压缩筛选与操作，避免刷新/更多各占一行 -->
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <!-- Header：标题 + 主操作。筛选器不挤在这一行里，见下一条 -->
+    <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <h1 class="text-xl font-bold text-gray-900 sm:text-2xl">用户管理</h1>
         <p class="mt-1 text-sm text-gray-500">管理账号、身份角色与 API 访问凭证</p>
       </div>
 
-      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
-        <div class="relative w-full sm:w-52 lg:w-60">
-          <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </span>
-          <input
-            v-model="searchQuery"
-            type="search"
-            placeholder="搜索用户名、姓名或邮箱..."
-            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            @input="debouncedSearch"
+      <button
+        v-if="canEditUser && activeView === 'list'"
+        type="button"
+        class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-dark"
+        @click="openCreateDialog"
+      >
+        <PlusIcon class="h-4 w-4" />
+        <span class="hidden sm:inline">创建用户</span>
+        <span class="sm:hidden">创建</span>
+      </button>
+    </div>
+
+    <!-- 筛选条：独占一行。
+         之前和标题共用一行时，可用宽度只有约 900px，而控件总宽接近 1000px，
+         结果「清除/刷新/更多/创建用户」被挤到第二行、「含子部门」还溢出右边界。
+         把筛选器摘出来独占一行，比把每个控件越缩越小更稳——缩小只是把折行点往后推。 -->
+    <div class="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+      <div class="relative w-full sm:w-60">
+        <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+          <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </span>
+        <input
+          v-model="searchQuery"
+          type="search"
+          placeholder="搜索用户名、姓名或邮箱..."
+          class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          @input="debouncedSearch"
+        />
+      </div>
+
+      <!-- 筛选：身份 / 状态 / 部门合并进一个面板，组间用分隔线区分。
+           三个并排 select 会把「刷新/更多」挤到换行，视觉上也像三个同级开关；
+           合并后顶栏只剩「搜索 + 筛选 + 操作」，筛选条件用面板里的计数徽标提示。 -->
+      <div
+        v-if="activeView === 'list'"
+        class="relative shrink-0"
+        @click.stop
+        @keydown.esc="showFilterPanel = false"
+      >
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-sm font-medium shadow-sm transition-colors"
+          :class="activeFilterCount ? 'border-primary/40 text-gray-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'"
+          :aria-expanded="showFilterPanel"
+          aria-haspopup="true"
+          @click="toggleFilterPanel"
+        >
+          <FunnelIcon class="h-4 w-4" :class="activeFilterCount ? 'text-primary' : 'text-gray-400'" />
+          筛选
+          <span
+            v-if="activeFilterCount"
+            class="inline-flex min-w-[1.125rem] items-center justify-center rounded-full bg-primary/10 px-1 text-[10px] font-bold text-primary"
+          >{{ activeFilterCount }}</span>
+          <ChevronDownIcon
+            class="h-4 w-4 text-gray-400 transition-transform"
+            :class="{ 'rotate-180': showFilterPanel }"
           />
-        </div>
+        </button>
 
-        <div class="grid grid-cols-2 gap-2 sm:contents">
-          <select
-            v-if="activeView === 'list'"
-            v-model="roleFilter"
-            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
-            @change="page = 1; fetchUsers()"
-          >
-            <option value="">身份：全部</option>
-            <option value="admin">管理员</option>
-            <option value="user">普通用户</option>
-          </select>
-
-          <select
-            v-if="activeView === 'list'"
-            v-model="statusFilter"
-            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
-            @change="page = 1; fetchUsers()"
-          >
-            <option value="">状态：全部</option>
-            <option value="1">启用</option>
-            <option value="0">禁用</option>
-            <!-- 刻意不提供「待审核」：待审核账号只出现在「待审核」页签，
-                 在用户列表里它们的操作按钮都用不了，列出来只会误导 -->
-          </select>
-
-          <select
-            v-if="activeView === 'list' && deptOptions.length"
-            v-model="deptFilter"
-            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
-            @change="page = 1; fetchUsers()"
-          >
-            <option value="">部门：全部</option>
-            <option v-for="dept in deptOptions" :key="dept.id" :value="String(dept.id)">
-              {{ "\u3000".repeat(dept.depth) }}{{ dept.name }}
-            </option>
-          </select>
-
-          <label
-            v-if="activeView === 'list' && deptFilter"
-            class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs text-gray-600 shadow-sm"
-            title="勾选后把子部门的成员也列出来"
-          >
-            <input
-              v-model="includeSub"
-              type="checkbox"
-              class="h-3.5 w-3.5 rounded border-gray-300"
-              @change="page = 1; fetchUsers()"
-            />
-            含子部门
-          </label>
-        </div>
-
-        <div class="flex items-center gap-2">
-          <button
-            v-if="hasActiveFilters && activeView === 'list'"
-            type="button"
-            class="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-800"
-            @click="resetFilters"
-          >
-            清除
-          </button>
-
-          <button
-            type="button"
-            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
-            title="刷新列表"
-            @click="fetchUsers"
-          >
-            <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': loading }" />
-          </button>
-
-          <div v-if="showMoreMenuPanel" class="relative shrink-0" @click.stop>
-            <button
-              type="button"
-              class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
-              @click="showMoreMenu = !showMoreMenu; openRowMenuId = null"
-            >
-              更多
-              <ChevronDownIcon class="h-4 w-4 text-gray-400" :class="{ 'rotate-180': showMoreMenu }" />
-            </button>
-            <div
-              v-if="showMoreMenu"
-              class="absolute right-0 z-30 mt-1.5 w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
-            >
+        <div
+          v-if="showFilterPanel"
+          class="absolute left-0 z-30 mt-1.5 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-gray-200 bg-white p-3 shadow-lg"
+          role="group"
+          aria-label="筛选条件"
+        >
+          <div>
+            <p class="mb-1.5 text-xs font-semibold text-gray-500">身份</p>
+            <div class="flex flex-wrap gap-1.5">
               <button
-                v-if="showSsoSync && canEditUser"
+                v-for="opt in roleFilterOptions"
+                :key="`role-${opt.value}`"
                 type="button"
-                class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
-                @click="showMoreMenu = false; openSsoModal()"
-              >
-                <UserGroupIcon class="h-4 w-4 text-indigo-500" />
-                同步 SSO 用户
-              </button>
-              <button
-                v-if="canEditUser"
-                type="button"
-                class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
-                @click="showMoreMenu = false; showThirdPartyDrawer = true"
-              >
-                <ArrowPathIcon class="h-4 w-4 text-violet-500" />
-                同步第三方用户
-              </button>
-              <button
-                v-if="canOpenSystemQuota"
-                type="button"
-                class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
-                @click="showMoreMenu = false; showSystemQuotaModal = true"
-              >
-                <ChartBarIcon class="h-4 w-4 text-amber-500" />
-                系统默认额度
-              </button>
+                class="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+                :class="roleFilter === opt.value
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'"
+                :aria-pressed="roleFilter === opt.value"
+                @click="setRoleFilter(opt.value)"
+              >{{ opt.label }}</button>
             </div>
           </div>
 
+          <div class="my-3 border-t border-gray-100"></div>
+
+          <div>
+            <p class="mb-1.5 text-xs font-semibold text-gray-500">状态</p>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="opt in statusFilterOptions"
+                :key="`status-${opt.value}`"
+                type="button"
+                class="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+                :class="statusFilter === opt.value
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'"
+                :aria-pressed="statusFilter === opt.value"
+                @click="setStatusFilter(opt.value)"
+              >{{ opt.label }}</button>
+            </div>
+          </div>
+
+          <template v-if="deptOptions.length">
+            <div class="my-3 border-t border-gray-100"></div>
+            <div>
+              <p class="mb-1.5 text-xs font-semibold text-gray-500">部门</p>
+              <select
+                v-model="deptFilter"
+                class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                @change="applyFilters"
+              >
+                <option value="">全部部门</option>
+                <option v-for="dept in deptOptions" :key="dept.id" :value="String(dept.id)">
+                  {{ "\u3000".repeat(dept.depth) }}{{ dept.name }}
+                </option>
+              </select>
+              <label
+                v-if="deptFilter"
+                class="mt-2 inline-flex items-center gap-1.5 text-xs text-gray-600"
+                title="勾选后把子部门的成员也列出来"
+              >
+                <input
+                  v-model="includeSub"
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border-gray-300"
+                  @change="applyFilters"
+                />
+                含子部门
+              </label>
+            </div>
+          </template>
+
+          <div class="mt-3 flex items-center justify-between border-t border-gray-100 pt-2.5">
+            <span class="text-[11px] text-gray-400">
+              {{ activeFilterCount ? `已选 ${activeFilterCount} 项` : '未设置筛选' }}
+            </span>
+            <button
+              type="button"
+              class="text-xs font-medium text-primary transition-colors hover:text-primary-dark disabled:cursor-not-allowed disabled:text-gray-300"
+              :disabled="!hasActiveFilters"
+              @click="resetFilters"
+            >清除全部</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 sm:ml-auto">
+        <button
+          type="button"
+          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
+          title="刷新列表"
+          @click="fetchUsers"
+        >
+          <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': loading }" />
+        </button>
+
+        <div v-if="showMoreMenuPanel" class="relative shrink-0" @click.stop>
           <button
-            v-if="canEditUser && activeView === 'list'"
             type="button"
-            class="ml-auto flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-dark sm:ml-0 sm:flex-none"
-            @click="openCreateDialog"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+            @click="showMoreMenu = !showMoreMenu; openRowMenuId = null"
           >
-            <PlusIcon class="h-4 w-4" />
-            <span class="hidden sm:inline">创建用户</span>
-            <span class="sm:hidden">创建</span>
+            更多
+            <ChevronDownIcon class="h-4 w-4 text-gray-400" :class="{ 'rotate-180': showMoreMenu }" />
           </button>
+          <div
+            v-if="showMoreMenu"
+            class="absolute right-0 z-30 mt-1.5 w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
+          >
+            <button
+              v-if="showSsoSync && canEditUser"
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+              @click="showMoreMenu = false; openSsoModal()"
+            >
+              <UserGroupIcon class="h-4 w-4 text-indigo-500" />
+              同步 SSO 用户
+            </button>
+            <button
+              v-if="canEditUser"
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+              @click="showMoreMenu = false; showThirdPartyDrawer = true"
+            >
+              <ArrowPathIcon class="h-4 w-4 text-violet-500" />
+              同步第三方用户
+            </button>
+            <button
+              v-if="canOpenSystemQuota"
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+              @click="showMoreMenu = false; showSystemQuotaModal = true"
+            >
+              <ChartBarIcon class="h-4 w-4 text-amber-500" />
+              系统默认额度
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -437,7 +495,7 @@
       </svg>
       <template v-if="isSearchEmpty">
         <p class="text-sm text-gray-500 mt-4 font-semibold">没有符合当前筛选条件的用户</p>
-        <p class="text-xs text-gray-400 mt-1">可调整关键词、身份或状态后重试</p>
+        <p class="text-xs text-gray-400 mt-1">可调整关键词或筛选条件后重试</p>
         <button
           type="button"
           @click="resetFilters"
@@ -2366,6 +2424,7 @@ import {
   ChevronDownIcon,
   EllipsisHorizontalIcon,
   ChartBarIcon,
+  FunnelIcon,
 } from "@heroicons/vue/24/outline";
 
 const { showToast } = useToast();
@@ -2624,10 +2683,31 @@ const includeSub = ref(false);
 const deptOptions = ref<{ id: number; name: string; depth: number }[]>([]);
 const roleSearchQuery = ref("");
 const showMoreMenu = ref(false);
+
+// 身份 / 状态 / 部门合并进「筛选」面板：取值与接口参数保持不变
+const showFilterPanel = ref(false);
+const roleFilterOptions = [
+  { value: "", label: "全部" },
+  { value: "admin", label: "管理员" },
+  { value: "user", label: "普通用户" },
+] as const;
+// 刻意不提供「待审核」：待审核账号只出现在「待审核」页签，
+// 在用户列表里它们的操作按钮都用不了，列出来只会误导
+const statusFilterOptions = [
+  { value: "", label: "全部" },
+  { value: "1", label: "启用" },
+  { value: "0", label: "禁用" },
+] as const;
 const openRowMenuId = ref<number | null>(null);
 const openRowMenuUser = ref<any>(null);
 const rowMenuStyle = ref<Record<string, string>>({});
 
+const activeFilterCount = computed(
+  () =>
+    Number(Boolean(roleFilter.value)) +
+    Number(Boolean(statusFilter.value)) +
+    Number(Boolean(deptFilter.value))
+);
 const hasActiveFilters = computed(
   () =>
     Boolean(searchQuery.value.trim()) ||
@@ -2641,8 +2721,34 @@ const isSearchEmpty = computed(
 
 const closeMenus = () => {
   showMoreMenu.value = false;
+  showFilterPanel.value = false;
   openRowMenuId.value = null;
   openRowMenuUser.value = null;
+};
+
+// 筛选面板与「更多」菜单互斥，避免两个浮层叠在一起
+const toggleFilterPanel = () => {
+  showFilterPanel.value = !showFilterPanel.value;
+  if (showFilterPanel.value) {
+    showMoreMenu.value = false;
+    openRowMenuId.value = null;
+    openRowMenuUser.value = null;
+  }
+};
+const applyFilters = () => {
+  page.value = 1;
+  fetchUsers();
+};
+// 点当前已选项不重复请求；面板保持打开，方便连续调身份 + 状态
+const setRoleFilter = (value: string) => {
+  if (roleFilter.value === value) return;
+  roleFilter.value = value;
+  applyFilters();
+};
+const setStatusFilter = (value: string) => {
+  if (statusFilter.value === value) return;
+  statusFilter.value = value;
+  applyFilters();
 };
 const toggleRowMenu = (user: any, event?: MouseEvent) => {
   showMoreMenu.value = false;
