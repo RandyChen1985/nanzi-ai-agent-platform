@@ -224,8 +224,8 @@
           </div>
 
           <!-- 搜索 + 批量选择 -->
-          <div class="flex items-center gap-2 px-5 py-3">
-            <div class="relative flex-1">
+          <div class="flex flex-wrap items-center gap-2 px-5 py-3">
+            <div class="relative min-w-[180px] flex-1">
               <svg
                 class="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-gray-400"
                 fill="none"
@@ -241,6 +241,18 @@
                 class="w-full rounded-lg border border-gray-300 py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
               />
             </div>
+            <label
+              class="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-2 text-[11px] font-bold text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+              title="只显示尚未加入任何部门的用户"
+            >
+              <input
+                v-model="unassignedOnly"
+                type="checkbox"
+                class="h-3.5 w-3.5 rounded border-gray-300"
+                @change="onUnassignedOnlyChange"
+              />
+              仅未分配部门
+            </label>
             <button
               v-if="candidates.length"
               type="button"
@@ -264,8 +276,13 @@
                   d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4z"
                 />
               </svg>
-              <p class="text-sm font-bold text-gray-500 dark:text-gray-400">没有可添加的用户</p>
-              <p class="text-[11px] text-gray-400">换个关键词试试，或到用户管理里先创建账号</p>
+              <p class="text-sm font-bold text-gray-500 dark:text-gray-400">
+                {{ unassignedOnly ? '没有未分配部门的用户' : '没有可添加的用户' }}
+              </p>
+              <p v-if="unassignedOnly" class="text-[11px] text-gray-400">
+                候选里的人都已属于某个部门，取消勾选可查看全部
+              </p>
+              <p v-else class="text-[11px] text-gray-400">换个关键词试试，或到用户管理里先创建账号</p>
             </div>
             <template v-else>
               <label
@@ -420,6 +437,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
 // 添加成员
 const showAddDialog = ref(false)
 const candidateSearch = ref('')
+const unassignedOnly = ref(false)
 const candidates = ref<any[]>([])
 const candidateLoading = ref(false)
 const candidateSelected = ref<number[]>([])
@@ -616,7 +634,8 @@ const loadCandidates = async () => {
         page: 1,
         size: 50,
         search: candidateSearch.value.trim() || undefined,
-        exclude_dept_id: props.deptId
+        exclude_dept_id: props.deptId,
+        unassigned_only: unassignedOnly.value || undefined
       }
     })
     candidates.value = response.data.items || []
@@ -625,6 +644,12 @@ const loadCandidates = async () => {
   } finally {
     candidateLoading.value = false
   }
+}
+
+const onUnassignedOnlyChange = () => {
+  // 过滤条件变了，之前勾选的人可能已不在当前列表里：提交"看不见的人"比多选一次更糟
+  candidateSelected.value = []
+  loadCandidates()
 }
 
 // 候选列表的展示辅助：首字母头像 + 已属部门摘要
@@ -664,6 +689,7 @@ const toggleCandidateAll = () => {
 const openAddDialog = () => {
   showAddDialog.value = true
   candidateSearch.value = ''
+  unassignedOnly.value = false
   candidateSelected.value = []
   loadCandidates()
 }

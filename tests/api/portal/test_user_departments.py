@@ -215,3 +215,53 @@ async def test_unknown_dept_code_is_rejected():
         )
     assert exc.value.status_code == 400
     assert "NOPE" in exc.value.detail
+
+
+async def test_unassigned_only_filters_out_users_in_any_department():
+    """「仅显示未分配部门的用户」：NOT EXISTS 排除已属任何部门的用户。
+
+    候选列表原本只排除「本部门成员」，已分到别的部门的人照样出现（列表里标「已在 xx 部」）。
+    想优先把还没归属的人分下去时，这个开关比逐行看标记快得多。
+    用 EXISTS 子查询而不是把部门 id 全取回再 `NOT IN`：关系表变大后后者会退化成物化临时表。
+    """
+    from app.api.portal.endpoints.management import list_users
+
+    class _Result:
+        def scalar(self):
+            return 0
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _Recorder:
+        def __init__(self):
+            self.sql: list[str] = []
+
+        async def execute(self, stmt):
+            self.sql.append(str(stmt.compile(compile_kwargs={"literal_binds": True})))
+            return _Result()
+
+    session = _Recorder()
+    await list_users(
+        page=1,
+        size=20,
+        search=None,
+        role=None,
+        status_filter=None,
+        exclude_status=None,
+        exclude_role_id=None,
+        dept_id=None,
+        include_sub=False,
+        exclude_dept_id=None,
+        unassigned_only=True,
+        admin={"role": "admin"},
+        db=session,
+    )
+
+    assert session.sql, "list_users 至少要执行一次查询"
+    sql = session.sql[0].upper()
+    assert "EXISTS" in sql and "AI_AGENT_USER_DEPARTMENTS" in sql, sql
+    assert "NOT" in sql, "必须是 NOT EXISTS，否则语义反了"

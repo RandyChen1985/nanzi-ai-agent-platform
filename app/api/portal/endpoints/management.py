@@ -2,7 +2,7 @@ from fastapi import APIRouter, Body, Depends, Query, HTTPException, status, Requ
 from pydantic import BaseModel, Field, field_validator
 from typing import Any, Dict, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func, desc, or_
+from sqlalchemy import select, update, delete, func, desc, or_, exists
 from sqlalchemy.orm import selectinload
 from app.core.dependencies import require_admin, require_api_key, require_permission, require_permission
 from app.core.orm import get_db_session
@@ -438,6 +438,10 @@ async def list_users(
         ge=1,
         description="排除已属于该部门的用户，用于部门「添加成员」弹窗的候选列表",
     ),
+    unassigned_only: bool = Query(
+        False,
+        description="只返回尚未加入任何部门的用户，用于「添加成员」时优先分配新人",
+    ),
     admin: dict = Depends(require_permission("menu", "menu:system:users")),
     db: AsyncSession = Depends(get_db_session)
 ):
@@ -474,6 +478,13 @@ async def list_users(
             UserDepartment.dept_id == exclude_dept_id
         )
         stmt = stmt.where(~User.id.in_(dept_member_ids))
+
+    if unassigned_only:
+        # 「未分配部门」= 关系表里没有任何行。用 NOT EXISTS 而不是先取回全部 user_id
+        # 再 NOT IN：关系表变大后后者会退化成物化临时表。
+        stmt = stmt.where(
+            ~exists(select(1).where(UserDepartment.user_id == User.id))
+        )
 
     if dept_id is not None:
         dept = await db.get(Department, int(dept_id))

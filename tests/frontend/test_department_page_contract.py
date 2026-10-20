@@ -181,3 +181,19 @@ def test_add_member_dialog_keeps_incremental_payload():
     """美化不能顺手把增量语义改掉：这里仍然只提交本次勾选的 user_ids。"""
     members = MEMBERS.read_text(encoding="utf-8")
     assert "user_ids: candidateSelected.value" in members
+
+
+def test_members_panel_can_filter_unassigned_users():
+    """添加成员弹窗要能只看「还没分到任何部门」的人。
+
+    候选原本只排除本部门成员，已分到别的部门的人仍会出现（带「已在 xx 部」标记）。
+    批量分人时想优先看新人，这个开关比逐行读标记快。
+    """
+    members = MEMBERS.read_text(encoding="utf-8")
+    assert "unassignedOnly" in members
+    assert "unassigned_only" in members
+    assert "仅未分配部门" in members
+    # 切换过滤后已勾选的人可能已不在列表里，必须清空选择再拉取
+    toggle = members.split("const onUnassignedOnlyChange = () => {", 1)[1].split("}", 1)[0]
+    assert "candidateSelected.value = []" in toggle
+    assert "loadCandidates()" in toggle
