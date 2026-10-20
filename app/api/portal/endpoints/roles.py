@@ -13,7 +13,10 @@ from app.services.permission_service import PermissionService
 router = APIRouter()
 
 # 系统角色：一律拒绝删除。与前端 frontend/src/views/Roles.vue 的 isSystemRole() 同口径。
-SYSTEM_ROLE_CODES = {"default", "admin", "system"}
+# miniprogram_user 是微信小程序静默登录自动开户时按 code 分配的角色
+# （wechat_miniprogram_service.MINIPROGRAM_ROLE_CODE），删掉会让新用户开户直接失败，
+# 所以和 default/admin/system 一样按系统角色保护。
+SYSTEM_ROLE_CODES = {"default", "admin", "system", "miniprogram_user"}
 
 # --- Request Models ---
 

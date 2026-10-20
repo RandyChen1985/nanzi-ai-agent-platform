@@ -30,6 +30,16 @@ import {
 import { copyToClipboard as copyText } from "../utils/clipboard";
 
 const { hasPermission } = useUser();
+
+// 案例集三个功能点：审核（含编辑 / 智能增强）、同步、废弃删除。
+// 后端 examples.py 已按同一组码校验；前端这里只负责不把点了必然 403 的按钮摆出来。
+const canAuditExample = computed(() => hasPermission('element:chatbi_example:audit'));
+const canSyncExample = computed(() => hasPermission('element:chatbi_example:sync'));
+const canDeleteExample = computed(() => hasPermission('element:chatbi_example:delete'));
+const canEditExample = computed(() => canAuditExample.value);
+const canOpenRowMenu = computed(
+  () => canAuditExample.value || canSyncExample.value || canDeleteExample.value,
+);
 const { showToast } = useToast();
 const router = useRouter();
 const EXAMPLE_FLOW_GUIDE_KEY = 'nanzi_example_flow_guide_dismissed';
@@ -661,7 +671,7 @@ onMounted(async () => {
 
         <!-- 一键同步按钮 -->
         <button
-          v-if="hasPermission('element:chatbi_example:sync')"
+          v-if="canSyncExample"
           type="button"
           class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-sm font-medium text-indigo-700 shadow-sm transition-all hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           :disabled="loading || (!isLocalMode && !isEngineReady)"
@@ -862,9 +872,10 @@ onMounted(async () => {
                     </div>
                   </template>
 
-                  <!-- 更多操作下拉触发表 -->
+                  <!-- 更多操作下拉触发表（无任何案例操作权限时不显示空菜单） -->
                   <template v-else>
                     <button
+                      v-if="canOpenRowMenu"
                       type="button"
                       @click.stop="toggleRowMenu(ex, $event)"
                       class="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
@@ -928,7 +939,7 @@ onMounted(async () => {
               </div>
               <textarea
                 v-model="currentExample.user_query"
-                :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated'"
+                :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated' || !canEditExample"
                 rows="3"
                 placeholder="输入原始用户问题..."
                 class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-inner transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
@@ -945,7 +956,7 @@ onMounted(async () => {
                     <span v-else-if="currentExample.enhance_status === 'success'" class="text-[10px] text-green-500 font-medium">✅ AI 自动增强已完成</span>
                     
                     <button 
-                        v-if="currentExample.status !== 'rejected' && currentExample.status !== 'deprecated' && (currentExample.enhance_status !== 'pending' || isEnhanceTimedOut(currentExample))"
+                        v-if="currentExample.status !== 'rejected' && currentExample.status !== 'deprecated' && canEditExample && (currentExample.enhance_status !== 'pending' || isEnhanceTimedOut(currentExample))"
                         @click="manualEnhance" 
                         class="text-[10px] text-blue-500 hover:text-blue-700 underline decoration-dotted"
                         title="再次调用 AI 重新分析对话历史并提取意图"
@@ -957,7 +968,7 @@ onMounted(async () => {
               <input 
                 type="text" 
                 v-model="currentExample.refined_query" 
-                :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated'"
+                :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated' || !canEditExample"
                 placeholder="例如：查询2025年全年的销售总额"
                 class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-blue-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
               />
@@ -966,7 +977,7 @@ onMounted(async () => {
               <label class="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">🌐 业务背景/上下文摘要</label>
               <textarea 
                 v-model="currentExample.context_summary" 
-                :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated'"
+                :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated' || !canEditExample"
                 rows="3"
                 placeholder="简述对话脉络，例如：用户先查了分布，后追问对比。"
                 class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
@@ -979,7 +990,7 @@ onMounted(async () => {
               <label class="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">🛠 提取的 SQL (可微调优化/无 SQL 可留空)</label>
               <textarea 
                 v-model="currentExample.sql_text" 
-                :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated'"
+                :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated' || !canEditExample"
                 rows="8"
                 placeholder="请输入有效 SQL 语句"
                 class="w-full text-xs bg-gray-900 text-green-400 p-4 rounded-lg font-mono border border-gray-800 shadow-inner focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-80 disabled:cursor-not-allowed"
@@ -1035,7 +1046,7 @@ onMounted(async () => {
           <div class="flex space-x-3">
             <button @click="showDetailModal = false" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-all">关闭</button>
             
-            <template v-if="currentExample.status !== 'rejected' && currentExample.status !== 'deprecated'">
+            <template v-if="currentExample.status !== 'rejected' && currentExample.status !== 'deprecated' && canEditExample">
                 <button @click="updateExample" :disabled="isUpdating" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 shadow-md flex items-center transition-all active:scale-95">
                 <ArrowPathIcon v-if="isUpdating" class="w-4 h-4 mr-2 animate-spin" />
                 保存修改
@@ -1068,7 +1079,7 @@ onMounted(async () => {
         @click.stop
       >
         <button
-          v-if="openRowMenuExample.status !== 'approved'"
+          v-if="openRowMenuExample.status !== 'approved' && canAuditExample"
           type="button"
           class="w-full text-left px-3.5 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50/70 flex items-center gap-2 transition-colors"
           @click="auditExample(openRowMenuExample.id, 'approved'); closeMenus()"
@@ -1078,7 +1089,7 @@ onMounted(async () => {
         </button>
 
         <button
-          v-if="openRowMenuExample.status !== 'rejected'"
+          v-if="openRowMenuExample.status !== 'rejected' && canAuditExample"
           type="button"
           class="w-full text-left px-3.5 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50/70 flex items-center gap-2 transition-colors"
           @click="auditExample(openRowMenuExample.id, 'rejected'); closeMenus()"
@@ -1088,7 +1099,7 @@ onMounted(async () => {
         </button>
 
         <button
-          v-if="openRowMenuExample.status === 'approved'"
+          v-if="openRowMenuExample.status === 'approved' && canSyncExample"
           type="button"
           class="w-full text-left px-3.5 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50/70 flex items-center gap-2 transition-colors disabled:opacity-50"
           :disabled="!isLocalMode && !isEngineReady"
@@ -1101,7 +1112,7 @@ onMounted(async () => {
         <div class="my-1 border-t border-gray-100"></div>
 
         <button
-          v-if="openRowMenuExample.status !== 'deprecated'"
+          v-if="openRowMenuExample.status !== 'deprecated' && canDeleteExample"
           type="button"
           class="w-full text-left px-3.5 py-2 text-xs font-medium text-gray-600 hover:bg-gray-100 flex items-center gap-2 transition-colors"
           @click="auditExample(openRowMenuExample.id, 'deprecated'); closeMenus()"
@@ -1220,6 +1231,7 @@ onMounted(async () => {
                       </div>
                       <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
                          <button
+                            v-if="canSyncExample"
                             type="button"
                             @click="showHelp = false; showSyncAllConfirm = true"
                             class="text-xs text-teal-600 hover:text-teal-800 font-bold cursor-pointer"

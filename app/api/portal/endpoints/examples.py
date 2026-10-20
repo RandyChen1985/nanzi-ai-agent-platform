@@ -7,7 +7,7 @@ import time
 import logging
 
 from app.core.orm import get_db_session as get_db
-from app.core.dependencies import require_api_key
+from app.core.dependencies import require_api_key, require_permission
 from app.models.chatbi_example import ChatBIExample
 from app.models.user import User
 from app.models.agent import AIAgent
@@ -17,6 +17,18 @@ from app.services.config_service import ConfigService
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def permission_for_audit_status(status: str) -> str:
+    """审核动作对应的功能点权限码。
+
+    「废弃」在权限树里是独立的 `element:chatbi_example:delete`（「废弃/删除」），
+    通过/驳回归 `:audit`。抽成纯函数便于单测钉住这层映射，避免两个状态共用
+    审核码、让只有审核权的账号顺手删掉案例。
+    """
+    if status == "deprecated":
+        return "element:chatbi_example:delete"
+    return "element:chatbi_example:audit"
 
 
 def _chatbi_example_user_join():
@@ -56,7 +68,7 @@ async def trigger_manual_enhance(
     id: int,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_api_key)
+    _=Depends(require_permission("element", "element:chatbi_example:audit"))
 ):
     """
     手动触发 AI 智能增强（意图还原、背景总结）。
@@ -80,7 +92,7 @@ async def update_example(
     id: int,
     request: UpdateExampleRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_api_key)
+    _=Depends(require_permission("element", "element:chatbi_example:audit"))
 ):
     """
     更新 ChatBI 经验内容（支持手动微调提问、意图和上下文）。
@@ -122,7 +134,7 @@ async def list_examples(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_api_key)
+    _=Depends(require_permission("menu", "menu:chatbi_examples"))
 ):
     """
     获取 ChatBI 经验库列表（含用户与智能体信息）。
@@ -234,7 +246,7 @@ async def list_examples(
 async def sync_all_examples(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_api_key)
+    _=Depends(require_permission("element", "element:chatbi_example:sync"))
 ):
     """
     一键同步所有审核通过 (approved) 的案例。
@@ -264,14 +276,28 @@ async def sync_all_examples(
 async def audit_example(
     request: AuditRequest,
     background_tasks: BackgroundTasks,
+    user: dict = Depends(require_api_key),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_api_key)
 ):
     """
     审核 ChatBI 经验。
+
+    「废弃」按权限树归 element:chatbi_example:delete，通过/驳回归 :audit——
+    「废弃/删除」是独立功能点，不能让只有审核权的账号顺手删掉案例。
     """
     if request.status not in ["approved", "rejected", "deprecated"]:
         raise HTTPException(status_code=400, detail="Invalid status.")
+
+    required = permission_for_audit_status(request.status)
+    if user.get("role") != "admin":
+        from app.services.permission_service import PermissionService
+        if not await PermissionService(db).check_permission(
+            int(user["user_id"]), "element", required
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Permission required: {required}",
+            )
 
     try:
         success = await ExampleService.audit_example(db, request.id, request.status)
@@ -287,7 +313,7 @@ async def sync_example(
     example_id: int,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_api_key)
+    _=Depends(require_permission("element", "element:chatbi_example:sync"))
 ):
     """
     手动触发单条案例同步。
@@ -320,7 +346,7 @@ async def sync_example(
 @router.post("/search-test")
 async def search_test_examples(
     request: ExampleSearchTestRequest,
-    _=Depends(require_api_key)
+    _=Depends(require_permission("menu", "menu:chatbi_examples"))
 ):
     """
     案例集检索测试（只读模拟）：以与真实运行完全一致的链路在经验库中检索相似案例，

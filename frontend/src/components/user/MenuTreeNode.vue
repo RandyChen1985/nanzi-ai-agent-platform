@@ -30,10 +30,10 @@
       <div
         class="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-2 py-1.5"
         role="checkbox"
-        :aria-checked="isGranted"
+        :aria-checked="isSelfGranted ? 'true' : isPartial ? 'mixed' : 'false'"
         :aria-disabled="disabled"
         :tabindex="disabled ? -1 : 0"
-        :title="inheritedOnly ? '该权限来自所属角色，需到角色管理调整' : node.label"
+        :title="inheritedOnly ? '该权限来自所属角色，需到角色管理调整' : isMenu ? `${node.label}：勾选只授予本层入口；取消会一并清空其下已配的功能点` : node.label"
         @click="onToggle"
         @keydown.space.prevent="onToggle"
         @keydown.enter.prevent="onToggle"
@@ -42,7 +42,7 @@
           type="checkbox"
           class="pointer-events-none h-3.5 w-3.5 shrink-0 rounded border-gray-300 focus:ring-blue-500"
           :class="inheritedOnly ? 'accent-slate-400' : 'accent-blue-600'"
-          :checked="isGranted"
+          :checked="isSelfGranted"
           :indeterminate="isPartial"
           :disabled="disabled"
           tabindex="-1"
@@ -77,6 +77,19 @@
           title="该权限来自所属角色，需到角色管理调整"
         >角色</span>
       </div>
+
+      <template v-if="hasChildren">
+        <span class="shrink-0 text-[10px] text-gray-400">
+          功能点 {{ grantedLeafCount }}/{{ countLeafElements(node) }}
+        </span>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-600 transition-colors hover:bg-blue-100 disabled:opacity-40"
+          :disabled="disabled"
+          :title="isFullyGranted ? `清空「${node.label}」下的全部功能点` : `授予「${node.label}」下的全部功能点`"
+          @click.stop="emit('toggle-menu-descendants', node.id, isFullyGranted ? 'clear' : 'select')"
+        >{{ isFullyGranted ? '清空' : '全选' }}</button>
+      </template>
     </div>
 
     <!-- 子节点：用竖线表达从属关系 -->
@@ -98,6 +111,7 @@
         :collapsed-ids="collapsedIds"
         @toggle-menu="forwardToggleMenu"
         @toggle-element="forwardToggleElement"
+        @toggle-menu-descendants="forwardToggleMenuDescendants"
         @inherited-blocked="forwardInheritedBlocked"
         @toggle-collapse="forwardToggleCollapse"
       />
@@ -109,10 +123,13 @@
 import { computed } from 'vue'
 import type { PermissionNode } from '../../constants/permissions'
 import {
-  hasDirectGrantIn,
-  hasInheritedGrantIn,
+  countGrantedLeafElements,
+  countLeafElements,
   isPermissionNodeGranted,
   isPermissionNodePartiallySelected,
+  isPermissionNodeSelfGranted,
+  isPermissionNodeSelfInherited,
+  type MenuCascadeMode,
   type PermissionGrantSets,
 } from '../../utils/permissionLists'
 
@@ -136,6 +153,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'toggle-menu', menuId: string): void
   (e: 'toggle-element', elementId: string): void
+  (e: 'toggle-menu-descendants', menuId: string, mode: MenuCascadeMode): void
   (e: 'inherited-blocked', itemId: string): void
   (e: 'toggle-collapse', nodeId: string): void
 }>()
@@ -152,16 +170,29 @@ const grantSets = computed<PermissionGrantSets>(() => ({
   inheritedElements: props.inheritedElements,
 }))
 
-const isGranted = computed(() => isPermissionNodeGranted(props.node, grantSets.value))
-const isPartial = computed(() => isPermissionNodePartiallySelected(props.node, grantSets.value))
-/** 自己和整棵子树都没有直配、但至少有一项来自角色 → 整行只读。 */
-const inheritedOnly = computed(
-  () => !hasDirectGrantIn(props.node, grantSets.value) && hasInheritedGrantIn(props.node, grantSets.value),
+/** 复选框只看节点自身：勾菜单/页面 = 授予入口，不再代表整棵子树。 */
+const isSelfGranted = computed(() => isPermissionNodeSelfGranted(props.node, grantSets.value))
+/** 整棵子树是否全部授予，决定「全选 / 清空」按钮的文案。 */
+const isFullyGranted = computed(() => isPermissionNodeGranted(props.node, grantSets.value))
+/** 半选只出现在「自身未勾、但有后代已授予」时（含继承与历史脏数据）。 */
+const isPartial = computed(
+  () =>
+    !isSelfGranted.value &&
+    isPermissionNodePartiallySelected(props.node, grantSets.value),
+)
+/** 自身只由角色授予 → 该行只读；后代各自判定，不被父级锁死。 */
+const inheritedOnly = computed(() =>
+  isPermissionNodeSelfInherited(props.node, grantSets.value),
+)
+const grantedLeafCount = computed(() =>
+  countGrantedLeafElements(props.node, grantSets.value),
 )
 
 // 递归子节点要重新 emit，显式转发一次，避免在模板里写带类型注解的箭头函数
 const forwardToggleMenu = (id: string) => emit('toggle-menu', id)
 const forwardToggleElement = (id: string) => emit('toggle-element', id)
+const forwardToggleMenuDescendants = (id: string, mode: MenuCascadeMode) =>
+  emit('toggle-menu-descendants', id, mode)
 const forwardInheritedBlocked = (id: string) => emit('inherited-blocked', id)
 const forwardToggleCollapse = (id: string) => emit('toggle-collapse', id)
 

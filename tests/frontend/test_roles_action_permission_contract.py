@@ -12,7 +12,8 @@
    `canEditRole`（element:role:edit）、`canDeleteRole`（element:role:delete）；
 2. 创建 / 编辑 / 分配权限 / 分配用户 四个入口由 `canEditRole` 守卫，
    桌面表格与移动端卡片两处都要改（历史上多次只改一处）；
-3. 删除入口由 `canDeleteRole` 守卫，并额外排除系统角色（default/admin/system）；
+3. 删除入口由 `canDeleteRole` 守卫，并额外排除系统角色
+   （default/admin/system/miniprogram_user）；
 4. 无任何操作权限时不渲染空的操作列，显示占位符。
 """
 
@@ -118,7 +119,8 @@ def test_create_entry_points_are_guarded():
 
 
 def test_delete_is_not_offered_for_system_roles():
-    """系统角色（default/admin/system）不提供删除入口，避免误删登录默认角色。"""
+    """系统角色（default/admin/system/miniprogram_user）不提供删除入口，避免误删登录默认角色。"""
     source = _source()
-    assert "return code === 'default' || code === 'admin' || code === 'system'" in source
+    assert "code === 'miniprogram_user'" in source
+    assert "return code === 'default' || code === 'admin' || code === 'system' || code === 'miniprogram_user'" in source
     assert 'v-if="canDeleteRole && !isSystemRole(role)"' in source

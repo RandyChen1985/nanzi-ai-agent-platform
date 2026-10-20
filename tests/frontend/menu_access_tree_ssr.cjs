@@ -94,11 +94,14 @@ async function buildComponent() {
     return renderToString(app);
   };
 
-  // 场景：直配「用户管理」子菜单 + 它的一个功能点；角色授予「角色管理」子菜单、
-  // 两个功能点，以及一级菜单「提示词工坊」。其余保持未授予。
+  // 场景：直配「用户管理」子菜单 (menu:system:users) + 它的一个功能点 (view_key)，
+  // 直配「数据源管理」入口但不配它任何功能点（验证「只给入口」），
+  // 直配「检索测试」入口 + 它唯一的功能点（验证整棵子树全选 → 按钮变「清空」）；
+  // 角色授予「角色管理」子菜单、两个用户管理功能点，以及一级菜单「提示词工坊」。
+  // 其余保持未授予。
   const html = await render({
-    menus: ["menu:system:users"],
-    elements: ["element:user:view_key"],
+    menus: ["menu:system:users", "menu:data_sources", "menu:knowledge_retrieval_test"],
+    elements: ["element:user:view_key", "element:knowledge:test_retrieval"],
     inheritedMenus: ["menu:system:roles", "menu:prompts"],
     inheritedElements: ["element:user:edit", "element:user:delete"],
     disabled: false,
@@ -134,6 +137,12 @@ async function buildComponent() {
         directElementIsChecked: html.includes("查看用户密钥"),
         rendersSubmenuPageBadges: (html.match(/>页面<\/span>/g) || []).length === 4,
         indentsThirdLevel: html.includes("padding-left:28px"),
+        showsGrantedLeafCounters: /功能点\s*\d+\/\d+/.test(html),
+        entryOnlyCounterIsZeroOfTwo: /数据源管理[\s\S]{0,600}功能点\s*0\/2/.test(html),
+        partialCounterIsThreeOfFour: /功能点\s*3\/4/.test(html),
+        hasCascadeSelectButtons: html.includes("全选</button>"),
+        hasCascadeClearButtons: html.includes("清空</button>"),
+        explainsEntryOnlySemantics: html.includes("勾菜单只授予入口"),
         disabledPropagates: disabledHtml.includes('aria-disabled="true"'),
         noWriteChannelInMarkup: !html.includes("permissionData"),
       },

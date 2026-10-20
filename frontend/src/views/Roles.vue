@@ -604,11 +604,12 @@
                                   :disabled="loadingPermissions"
                                   @toggle-menu="toggleTreeItem"
                                   @toggle-element="toggleTreeItem"
+                                  @toggle-menu-descendants="toggleMenuDescendants"
                               />
                           </div>
                       </div>
                       <div class="mt-2 mb-2 text-[10px] text-gray-400 italic px-1 flex justify-between">
-                          <span>勾选菜单控制导航，勾选子项控制按钮</span>
+                          <span>勾菜单只授予入口；功能点单独勾选，或用行内「全选」批量授予</span>
                           <span class="text-blue-600 font-bold">已选菜单: {{ permissionData.menus.length }}</span>
                       </div>
                   </template>
@@ -1099,7 +1100,11 @@ import { shouldShowModelSearch, groupPermissionModels } from '../utils/modelSele
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { getMenuDescendantIds } from '../constants/permissions'
-import { applyMenuToggle } from '../utils/permissionLists'
+import {
+    applyMenuCascadeToggle,
+    applyMenuEntryToggle,
+    type MenuCascadeMode,
+} from '../utils/permissionLists'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
 import MenuAccessTree from '../components/user/MenuAccessTree.vue'
 import ForbiddenResourceTabs from '../components/system/ForbiddenResourceTabs.vue'
@@ -1154,7 +1159,9 @@ const isSearchEmpty = computed(
 
 const isSystemRole = (role: { code?: string }) => {
   const code = (role.code || '').toLowerCase()
-  return code === 'default' || code === 'admin' || code === 'system'
+  // 与后端 roles.py 的 SYSTEM_ROLE_CODES 同口径：miniprogram_user 是小程序静默登录
+  // 自动开户时按 code 分配的角色，删掉会导致新用户开户失败，所以同样禁删。
+  return code === 'default' || code === 'admin' || code === 'system' || code === 'miniprogram_user'
 }
 
 // 新增用户时会自动勾选 default 业务角色，这里负责探测其是否存在
@@ -1507,15 +1514,30 @@ const resCheckboxClass = () => {
 
 // UI Tree Logic
 /**
- * 权限树的勾选：与用户页共用 `applyMenuToggle()`，保证「勾父菜单级联到它的功能点、
- * 取消时清空该菜单下的直配」在两处是同一套语义。角色没有「继承」概念，两个继承集合传空。
+ * 权限树的勾选：与用户页共用纯函数。勾菜单只授予入口（解耦），菜单行的「全选 / 清空」
+ * 才级联后代。角色没有「继承」概念，两个继承集合传空。
  */
 const toggleTreeItem = (itemId: string) => {
-    const result = applyMenuToggle(
+    const result = applyMenuEntryToggle(
         permissionData.value.menus,
         permissionData.value.elements,
         itemId,
         getMenuDescendantIds(itemId),
+        [],
+        [],
+    );
+    permissionData.value.menus = result.menus;
+    permissionData.value.elements = result.elements;
+}
+
+/** 菜单行的「全选 / 清空」：显式级联它的全部后代。 */
+const toggleMenuDescendants = (menuId: string, mode: MenuCascadeMode) => {
+    const result = applyMenuCascadeToggle(
+        permissionData.value.menus,
+        permissionData.value.elements,
+        menuId,
+        getMenuDescendantIds(menuId),
+        mode,
         [],
         [],
     );

@@ -73,6 +73,8 @@ async def test_permission_invalidate_also_clears_auth_cache_and_legacy_v2_key():
 
     redis.delete.assert_any_await("sys:auth:permissions:v4:user:42")
     redis.delete.assert_any_await("sys:auth:permissions:v2:user:42")
+    # v6 是「菜单 id 混进 elements」的旧口径，升级后必须一并清掉，否则 TTL 内看起来没修好
+    redis.delete.assert_any_await("sys:auth:permissions:v6:user:42")
     invalidate_auth.assert_awaited_once()
     assert invalidate_auth.await_args.args[0] == 42
 

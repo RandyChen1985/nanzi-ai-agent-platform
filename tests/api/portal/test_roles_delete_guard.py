@@ -8,8 +8,10 @@
 
 1. 删除端点的权限码改成 `element:role:delete`，其余写端点（创建/更新/分配）保持
    `element:role:edit`，避免把删除能力顺带绑死在编辑权限上；
-2. 系统角色（default/admin/system）一律拒绝删除，且在清理权限/成员关系之前就拒绝，
-   否则会出现「关系删了、角色还在」的半残状态。
+2. 系统角色（default/admin/system/miniprogram_user）一律拒绝删除，且在清理权限/
+   成员关系之前就拒绝，否则会出现「关系删了、角色还在」的半残状态。
+   `miniprogram_user` 是微信小程序静默登录自动开户时按 code 分配的角色
+   （用户反馈「小程序默认角色也不能删除」），删掉会让新用户开户直接失败。
 """
 
 from __future__ import annotations
@@ -89,7 +91,13 @@ def test_update_endpoint_keeps_edit_permission():
     assert 'require_permission("element", "element:role:edit")' in segment
 
 
-@pytest.mark.parametrize("code", ["default", "admin", "system", "DEFAULT", " Admin "])
+@pytest.mark.parametrize(
+    "code",
+    [
+        "default", "admin", "system", "miniprogram_user",
+        "DEFAULT", " Admin ", "MiniProgram_User",
+    ],
+)
 async def test_system_role_cannot_be_deleted(code: str):
     """系统角色拒绝删除，且不产生任何副作用。"""
     role = Role(id=1, code=code, name="系统角色")

@@ -48,6 +48,26 @@ _AGENT_SCOPE_ABSENT_RETRY_SECONDS = 300.0
 # 各数据库「列不存在」的错误码：MySQL 1054 / PostgreSQL 42703。
 _AGENT_SCOPE_UNKNOWN_COLUMN_CODES = ("1054", "42703")
 
+# 权限 id 前缀决定 resource_type：`menu:*` 是菜单/页面入口，`element:*` 是页面内功能点。
+# 旧前端「勾菜单 = 全选子项」的级联把子菜单 id 也推进了 elements，于是库里出现
+# resource_type='element' + resource_id='menu:system:config' 这样的行：权限树按 id 查
+# 会显示「已勾选」，但侧栏 `hasMenuPerm()` 与后端 `require_permission("menu", ...)`
+# 只查 menus，结果是「勾了页面、菜单不显示、接口 403」。这里统一按前缀纠正，
+# 读取（_aggregate_permissions）与两次写入（用户/角色）共用同一判据。
+def is_menu_permission_id(resource_id: object) -> bool:
+    return str(resource_id or "").strip().startswith("menu:")
+
+
+def normalize_permission_resource_type(resource_id: object, default_type: str) -> str:
+    """按 id 前缀纠正 resource_type；前缀不认识时沿用字段默认类型。"""
+    rid = str(resource_id or "").strip()
+    if rid.startswith("menu:"):
+        return "menu"
+    if rid.startswith("element:"):
+        return "element"
+    return default_type
+
+
 class PermissionService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -59,13 +79,15 @@ class PermissionService:
         return self._redis
 
     async def _get_cache_key(self, user_id: int, agent_id: Optional[str] = None) -> str:
+        # v7: 修复「menu:* 被旧前端写成 element」的读取口径。旧缓存里 elements 混着菜单 id、
+        # menus 缺对应项，命中旧缓存会让侧栏继续缺菜单（TTL 内看起来像没修好），必须升版重建。
         # v6: 新增智能体级作用域（agent_id）。同一用户在不同智能体里的有效禁用集合不同，
         # 缓存键必须带上作用域，否则「在 A 智能体里禁了 X」会串到 B 智能体（或反之漏禁）。
         # v5 的理由同样成立：旧缓存缺 forbidden_skills 会解析成空列表 = 未禁用。
         # 版本沿革：v2（仍在失效列表里兼容清理）、v4（新增 models）、v5（新增禁用技能）、
-        # v6（新增智能体级作用域）。scope 段：全局用 "-"，智能体级用其 agent_id。
+        # v6（新增智能体级作用域）、v7（菜单 id 归位）。scope 段：全局用 "-"，智能体级用其 agent_id。
         scope = str(agent_id).strip() if agent_id is not None else ""
-        return f"sys:auth:permissions:v6:user:{user_id}:agent:{scope or '-'}"
+        return f"sys:auth:permissions:v7:user:{user_id}:agent:{scope or '-'}"
 
     async def _supports_agent_scope(self) -> bool:
         """``ai_agent_resource_permissions.agent_id`` 是否已由迁移加入（进程内缓存一次）。
@@ -935,7 +957,15 @@ class PermissionService:
                 if p.resource_id not in perm_set.menus:
                     perm_set.menus.append(p.resource_id)
             elif p.resource_type == "element":
-                if p.resource_id not in perm_set.elements:
+                # 历史脏数据兼容：旧前端「勾菜单 = 全选」的级联把子菜单 id
+                # （`menu:*`）一并写进了 elements。侧栏（`hasMenuPerm`）与后端
+                # `require_permission("menu", ...)` 都只查 menus，若不在这里归位，
+                # 就会「权限树里显示已勾选、菜单却不显示、接口 403」。
+                # 数据修复迁移（V175 / V76）执行前靠这一层兜底，执行后是空操作。
+                if is_menu_permission_id(p.resource_id):
+                    if p.resource_id not in perm_set.menus:
+                        perm_set.menus.append(p.resource_id)
+                elif p.resource_id not in perm_set.elements:
                     perm_set.elements.append(p.resource_id)
             elif p.resource_type == "forbidden_tool":
                 if p.resource_id not in perm_set.forbidden_tools:
@@ -1034,10 +1064,27 @@ class PermissionService:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="api", resource_id=api_id))
             for meta_id in updates.metadata:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="metadata", resource_id=str(meta_id)))
+            # 同一个 id 可能同时出现在 menus 与 elements（旧前端整份提交时会把并集都放进去），
+            # 归一后类型相同，必须去重，否则一次保存会写出两条一样的授权行。
+            seen_menu_element_ids: set[str] = set()
             for menu_id in updates.menus:
-                new_perms.append(ResourcePermission(user_id=user_id, resource_type="menu", resource_id=menu_id))
+                if menu_id in seen_menu_element_ids:
+                    continue
+                seen_menu_element_ids.add(menu_id)
+                new_perms.append(ResourcePermission(
+                    user_id=user_id,
+                    resource_type=normalize_permission_resource_type(menu_id, "menu"),
+                    resource_id=menu_id,
+                ))
             for element_id in updates.elements:
-                new_perms.append(ResourcePermission(user_id=user_id, resource_type="element", resource_id=element_id))
+                if element_id in seen_menu_element_ids:
+                    continue
+                seen_menu_element_ids.add(element_id)
+                new_perms.append(ResourcePermission(
+                    user_id=user_id,
+                    resource_type=normalize_permission_resource_type(element_id, "element"),
+                    resource_id=element_id,
+                ))
             # 防御旧前端：它回显「用户 ∪ 角色」的并集并整份提交，若不剔除角色级已有的项，
             # 角色级禁用会被固化成用户级记录（角色侧取消后用户仍被禁）。新前端只提交直配项，
             # 因此这里的剔除对它是空操作；对旧前端则是"不制造不可回收的黑名单"的兜底。
@@ -1152,10 +1199,25 @@ class PermissionService:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="api", resource_id=api_id))
             for meta_id in updates.metadata:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="metadata", resource_id=str(meta_id)))
+            seen_menu_element_ids: set[str] = set()
             for menu_id in updates.menus:
-                new_perms.append(ResourcePermission(role_id=role_id, resource_type="menu", resource_id=menu_id))
+                if menu_id in seen_menu_element_ids:
+                    continue
+                seen_menu_element_ids.add(menu_id)
+                new_perms.append(ResourcePermission(
+                    role_id=role_id,
+                    resource_type=normalize_permission_resource_type(menu_id, "menu"),
+                    resource_id=menu_id,
+                ))
             for element_id in updates.elements:
-                new_perms.append(ResourcePermission(role_id=role_id, resource_type="element", resource_id=element_id))
+                if element_id in seen_menu_element_ids:
+                    continue
+                seen_menu_element_ids.add(element_id)
+                new_perms.append(ResourcePermission(
+                    role_id=role_id,
+                    resource_type=normalize_permission_resource_type(element_id, "element"),
+                    resource_id=element_id,
+                ))
             for t_id in updates.forbidden_tools:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="forbidden_tool", resource_id=t_id))
             for cmd in updates.forbidden_commands:
@@ -1187,18 +1249,19 @@ class PermissionService:
     async def _invalidate_user_cache(self, user_id: int):
         redis = await self._get_redis()
         if redis:
-            # v6 全局键
+            # v7 全局键（v7 起：菜单 id 归位，旧缓存需重建）
             await redis.delete(await self._get_cache_key(user_id))
-            # v6 的智能体作用域键是一族（同一用户 × N 个智能体），必须整族清掉：
+            # v7 的智能体作用域键是一族（同一用户 × N 个智能体），必须整族清掉：
             # 只删全局键会让「某智能体里刚取消的禁用」在 TTL 内继续生效。
             # 用 SCAN 而不是 KEYS —— 后者在大 key 空间会阻塞 Redis。
-            pattern = f"sys:auth:permissions:v6:user:{user_id}:agent:*"
+            pattern = f"sys:auth:permissions:v7:user:{user_id}:agent:*"
             async for key in redis.scan_iter(match=pattern, count=200):
                 await redis.delete(key)
-            # 兼容历史版本 key，避免旧缓存继续命中
+            # 兼容历史版本 key，避免旧缓存继续命中（v6 里 elements 仍混着菜单 id）
             await redis.delete(f"sys:auth:permissions:v2:user:{user_id}")
             await redis.delete(f"sys:auth:permissions:v4:user:{user_id}")
             await redis.delete(f"sys:auth:permissions:v5:user:{user_id}")
+            await redis.delete(f"sys:auth:permissions:v6:user:{user_id}")
             try:
                 from app.services.ai.config import AgentConfigProvider
                 await AgentConfigProvider.invalidate_dataset_menu_cache(user_id=user_id)

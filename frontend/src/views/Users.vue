@@ -1558,6 +1558,7 @@
                       :disabled="!permissionsLoaded"
                       @toggle-menu="toggleTreeItem"
                       @toggle-element="toggleTreeItem"
+                      @toggle-menu-descendants="toggleMenuDescendants"
                       @inherited-blocked="onInheritedBlocked"
                     />
                   </div>
@@ -2425,11 +2426,13 @@ import {
   type ForbiddenCatalogSnapshot,
 } from "../utils/forbiddenCatalogCache";
 import {
-  applyMenuToggle,
+  applyMenuCascadeToggle,
+  applyMenuEntryToggle,
   buildUserPermissionPayload,
   emptyPermissionLists,
   resolveUserPermissionEditState,
   type InheritedForbiddenLists,
+  type MenuCascadeMode,
 } from "../utils/permissionLists";
 import { extractApiErrorDetail } from "../utils/apiErrorDetail";
 import MenuAccessTree from "../components/user/MenuAccessTree.vue";
@@ -3203,18 +3206,19 @@ const loadAgentRestrictionCounts = async () => {
 
 // Tree Logic
 /**
- * 树的勾选写入：菜单级联走共享纯函数（勾选时跳过角色已授予的子项），功能点直接翻转。
+ * 树的勾选写入：勾菜单只授予入口（解耦，不再级联功能点），功能点直接翻转。
+ * 菜单行的「全选 / 清空」走共享级联函数，并跳过角色已授予的子项。
  * 只写直配缓冲；角色来源项没有任何写入通道。
  */
 const toggleTreeItem = (itemId: string) => {
   if (itemId.startsWith("menu:")) {
-    const result = applyMenuToggle(
+    const result = applyMenuEntryToggle(
       permissionData.value.menus,
       permissionData.value.elements,
       itemId,
       getMenuDescendantIds(itemId),
-      inheritedElements.value,
       inheritedMenus.value,
+      inheritedElements.value,
     );
     permissionData.value.menus = result.menus;
     permissionData.value.elements = result.elements;
@@ -3233,6 +3237,21 @@ const toggleTreeItem = (itemId: string) => {
   const idx = permissionData.value.elements.indexOf(itemId);
   if (idx > -1) permissionData.value.elements.splice(idx, 1);
   else permissionData.value.elements.push(itemId);
+};
+
+/** 菜单行的「全选 / 清空」：显式级联它的全部后代，不改变入口以外的其他菜单。 */
+const toggleMenuDescendants = (menuId: string, mode: MenuCascadeMode) => {
+  const result = applyMenuCascadeToggle(
+    permissionData.value.menus,
+    permissionData.value.elements,
+    menuId,
+    getMenuDescendantIds(menuId),
+    mode,
+    inheritedMenus.value,
+    inheritedElements.value,
+  );
+  permissionData.value.menus = result.menus;
+  permissionData.value.elements = result.elements;
 };
 
 /** 树里点到「仅角色来源」的节点：只提示，不修改——直配区不该出现继承项。 */

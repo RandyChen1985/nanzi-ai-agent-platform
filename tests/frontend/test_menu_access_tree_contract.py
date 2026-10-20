@@ -96,13 +96,13 @@ def test_tree_renders_submenu_level_between_menu_and_elements():
 
 
 def test_component_marks_inherited_nodes_as_read_only():
-    """角色来源节点：灰勾 + 「角色」徽标 + 只读拦截事件。"""
+    """角色来源节点：灰勾 + 「角色」徽标 + 只读拦截事件；只读边界在节点自身。"""
     source = _component()
     node = _tree_node()
 
     assert "角色" in source or "角色" in node, "缺少「角色」来源徽标"
-    assert "hasDirectGrantIn" in node, "判定「可编辑」要看自己或子树有没有直配"
-    assert "hasInheritedGrantIn" in node, "判定「只读」要看自己或子树有没有继承"
+    assert "isPermissionNodeSelfInherited" in node, "只读只看节点自身：入口继承不该锁死可单独补的功能点"
+    assert "hasDirectGrantIn" not in node, "不得再用整棵子树的直配/继承判定把后代一起锁死"
     assert "inherited-blocked" in node, "点只读节点要能通知父层提示"
 
 
@@ -161,5 +161,11 @@ def test_rendered_tree_marks_inherited_nodes_and_keeps_three_states():
     assert checks["directElementIsChecked"], "直配的功能点仍要正常显示为已勾选"
     assert checks["rendersSubmenuPageBadges"], "4 个子菜单都要带「页面」标识：%s" % payload["pageBadgeCount"]
     assert checks["indentsThirdLevel"], "子菜单下的功能点要再缩进一层"
+    assert checks["showsGrantedLeafCounters"], "菜单行要显示「功能点 M/N」，只给入口时不能看起来像全选"
+    assert checks["entryOnlyCounterIsZeroOfTwo"], "数据源管理只直配入口，计数必须是 0/2"
+    assert checks["partialCounterIsThreeOfFour"], "用户管理 = 1 直配 + 2 继承，计数必须是 3/4"
+    assert checks["hasCascadeSelectButtons"], "未全选的菜单行要有「全选」按钮"
+    assert checks["hasCascadeClearButtons"], "已全选（含角色继承）的菜单行要有「清空」按钮"
+    assert checks["explainsEntryOnlySemantics"], "组件内要说明「勾菜单只授予入口」"
     assert checks["disabledPropagates"], "disabled 必须传到可访问状态上"
     assert checks["noWriteChannelInMarkup"], "渲染结果里不该出现父层的权限缓冲"

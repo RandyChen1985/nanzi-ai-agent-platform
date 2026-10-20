@@ -336,7 +336,8 @@ async def test_cache_key_carries_agent_scope(db_session):
     scoped_b = await service._get_cache_key(42, "agent-b")
 
     assert global_key != scoped_a != scoped_b
-    assert "v6" in global_key
+    # 版本段随权限结构升版（v6 加智能体作用域、v7 菜单 id 归位），这里钉住当前版本
+    assert "v7" in global_key
     assert scoped_a.endswith("agent-a")
     assert global_key.endswith("agent:-")
 

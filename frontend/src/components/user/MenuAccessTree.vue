@@ -24,6 +24,9 @@
         <span>页面内按钮与操作</span>
       </span>
     </div>
+    <p class="px-1 text-[10px] leading-tight text-gray-400">
+      勾菜单只授予入口，功能点需单独勾选；菜单行的「全选」可一次性授予其下全部功能点。
+    </p>
 
     <div
       v-for="menu in MENUS"
@@ -33,7 +36,7 @@
       <!-- 一级：菜单（侧栏入口） -->
       <div
         class="flex items-center gap-2 px-2.5 py-2"
-        :class="isInheritedOnly(menu) ? 'bg-slate-50' : 'bg-gray-50'"
+        :class="isSelfInherited(menu) ? 'bg-slate-50' : 'bg-gray-50'"
       >
         <button
           v-if="hasChildren(menu)"
@@ -59,10 +62,10 @@
         <div
           class="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-2 rounded"
           role="checkbox"
-          :aria-checked="isGranted(menu)"
+          :aria-checked="isSelfGranted(menu) ? 'true' : isPartial(menu) ? 'mixed' : 'false'"
           :aria-disabled="disabled"
           :tabindex="disabled ? -1 : 0"
-          :title="isInheritedOnly(menu) ? '该权限来自所属角色，需到角色管理调整' : menu.label"
+          :title="isSelfInherited(menu) ? '该权限来自所属角色，需到角色管理调整' : `${menu.label}：勾选只授予菜单入口；取消会一并清空其下已配的功能点`"
           @click="onMenuToggle(menu)"
           @keydown.space.prevent="onMenuToggle(menu)"
           @keydown.enter.prevent="onMenuToggle(menu)"
@@ -70,8 +73,8 @@
           <input
             type="checkbox"
             class="pointer-events-none h-4 w-4 shrink-0 rounded border-gray-300 focus:ring-blue-500"
-            :class="isInheritedOnly(menu) ? 'accent-slate-400' : 'accent-blue-600'"
-            :checked="isGranted(menu)"
+            :class="isSelfInherited(menu) ? 'accent-slate-400' : 'accent-blue-600'"
+            :checked="isSelfGranted(menu)"
             :indeterminate="isPartial(menu)"
             :disabled="disabled"
             tabindex="-1"
@@ -79,7 +82,7 @@
           />
           <svg
             class="h-4 w-4 shrink-0"
-            :class="isInheritedOnly(menu) ? 'text-slate-400' : 'text-blue-600'"
+            :class="isSelfInherited(menu) ? 'text-slate-400' : 'text-blue-600'"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -89,18 +92,27 @@
           </svg>
           <span
             class="min-w-0 truncate text-xs font-black sm:text-sm"
-            :class="isInheritedOnly(menu) ? 'text-slate-600' : 'text-gray-800'"
+            :class="isSelfInherited(menu) ? 'text-slate-600' : 'text-gray-800'"
           >{{ menu.label }}</span>
           <span
-            v-if="isInheritedOnly(menu)"
+            v-if="isSelfInherited(menu)"
             class="shrink-0 rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-600"
             title="该权限来自所属角色，需到角色管理调整"
           >角色</span>
         </div>
 
-        <span v-if="hasChildren(menu)" class="shrink-0 text-[10px] text-gray-400">
-          {{ countLeafElements(menu) }} 个功能点
-        </span>
+        <template v-if="hasChildren(menu)">
+          <span class="shrink-0 text-[10px] text-gray-400">
+            功能点 {{ grantedLeafCount(menu) }}/{{ countLeafElements(menu) }}
+          </span>
+          <button
+            type="button"
+            class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-600 transition-colors hover:bg-blue-100 disabled:opacity-40"
+            :disabled="disabled"
+            :title="isFullyGranted(menu) ? `清空「${menu.label}」下的全部功能点` : `授予「${menu.label}」下的全部功能点`"
+            @click.stop="onMenuCascade(menu)"
+          >{{ isFullyGranted(menu) ? '清空' : '全选' }}</button>
+        </template>
       </div>
 
       <!-- 二级及以下：子菜单（页面）与功能点，递归渲染 -->
@@ -122,6 +134,7 @@
           :collapsed-ids="collapsedIds"
           @toggle-menu="forwardToggleMenu"
           @toggle-element="forwardToggleElement"
+          @toggle-menu-descendants="forwardToggleMenuDescendants"
           @inherited-blocked="forwardInheritedBlocked"
           @toggle-collapse="toggleCollapse"
         />
@@ -134,11 +147,13 @@
 import { ref } from 'vue'
 import { MENU_TREE, type PermissionNode } from '../../constants/permissions'
 import {
+  countGrantedLeafElements,
   countLeafElements,
-  hasDirectGrantIn,
-  hasInheritedGrantIn,
   isPermissionNodeGranted,
   isPermissionNodePartiallySelected,
+  isPermissionNodeSelfGranted,
+  isPermissionNodeSelfInherited,
+  type MenuCascadeMode,
   type PermissionGrantSets,
 } from '../../utils/permissionLists'
 import MenuTreeNode from './MenuTreeNode.vue'
@@ -164,6 +179,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'toggle-menu', menuId: string): void
   (e: 'toggle-element', elementId: string): void
+  (e: 'toggle-menu-descendants', menuId: string, mode: MenuCascadeMode): void
   (e: 'inherited-blocked', itemId: string): void
 }>()
 
@@ -187,23 +203,37 @@ const grantSets = (): PermissionGrantSets => ({
 
 const hasChildren = (node: PermissionNode) => (node.children || []).length > 0
 
-const isGranted = (node: PermissionNode) => isPermissionNodeGranted(node, grantSets())
-const isPartial = (node: PermissionNode) => isPermissionNodePartiallySelected(node, grantSets())
-/** 自己和整棵子树都没有直配、但至少有一项来自角色 → 整行只读。 */
-const isInheritedOnly = (node: PermissionNode) =>
-  !hasDirectGrantIn(node, grantSets()) && hasInheritedGrantIn(node, grantSets())
+/** 复选框只看节点自身：勾菜单 = 授予入口，不再代表整棵子树。 */
+const isSelfGranted = (node: PermissionNode) => isPermissionNodeSelfGranted(node, grantSets())
+/** 整棵子树是否全部授予，决定「全选 / 清空」按钮的文案。 */
+const isFullyGranted = (node: PermissionNode) => isPermissionNodeGranted(node, grantSets())
+/** 半选只出现在「自身未勾、但有后代已授予」时（含继承与历史脏数据）。 */
+const isPartial = (node: PermissionNode) =>
+  !isSelfGranted(node) && isPermissionNodePartiallySelected(node, grantSets())
+/** 自身只由角色授予 → 该行只读；后代各自判定，不被父级锁死。 */
+const isSelfInherited = (node: PermissionNode) =>
+  isPermissionNodeSelfInherited(node, grantSets())
+
+const grantedLeafCount = (node: PermissionNode) => countGrantedLeafElements(node, grantSets())
 
 // 子节点的事件重新向外 emit，显式转发，避免在模板里写隐式 any 的箭头函数
 const forwardToggleMenu = (id: string) => emit('toggle-menu', id)
 const forwardToggleElement = (id: string) => emit('toggle-element', id)
+const forwardToggleMenuDescendants = (id: string, mode: MenuCascadeMode) =>
+  emit('toggle-menu-descendants', id, mode)
 const forwardInheritedBlocked = (id: string) => emit('inherited-blocked', id)
 
 const onMenuToggle = (menu: PermissionNode) => {
   if (props.disabled) return
-  if (isInheritedOnly(menu)) {
+  if (isSelfInherited(menu)) {
     emit('inherited-blocked', menu.id)
     return
   }
   emit('toggle-menu', menu.id)
+}
+
+const onMenuCascade = (menu: PermissionNode) => {
+  if (props.disabled) return
+  emit('toggle-menu-descendants', menu.id, isFullyGranted(menu) ? 'clear' : 'select')
 }
 </script>

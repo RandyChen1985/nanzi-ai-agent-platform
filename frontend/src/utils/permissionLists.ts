@@ -192,63 +192,102 @@ export interface MenuToggleResult {
 }
 
 /**
- * 菜单勾选级联（纯函数，不修改入参）。
+ * 菜单自身（入口）的勾选切换（纯函数，不修改入参）。
  *
- * 与旧实现的唯一区别：**勾选时跳过已由角色授予的子项**。后端对 menus / elements 不做
- * 角色派生剔除（只对 forbidden_* 做），若把继承项一起写成用户直配，角色侧日后取消该权限，
- * 这个用户仍会保留——而且管理员会误以为是自己配的。
+ * 菜单与功能点**解耦**：点菜单只授予「侧栏入口 / 页面入口」本身，不再自动把整棵子树的
+ * 功能点写进直配。这样才能表达「能进这个页面，但页面里所有按钮都不给」这种组合——
+ * 后端 `menu:*` 与 `element:*` 本来就是两个独立权限码，级联反而是前端强加的语义。
  *
- * 取消时则清掉该菜单下所有直配子项：取消的语义是「这里不再有直配」，继承项本来就不在直配里。
+ * 取消入口时同步清掉该菜单下所有直配子项：没有入口的孤儿功能点既不可见也无从管理，
+ * 留在直配里只会在下次编辑时变成看不见的残留。继承项本来就不在直配里，无需处理。
+ *
+ * 自身由角色授予时不做任何改动：继承项无法在「用户直配」这一侧取消（由 UI 先拦截）。
  */
-export function applyMenuToggle(
+export function applyMenuEntryToggle(
   menus: readonly string[] | null | undefined,
   elements: readonly string[] | null | undefined,
   menuId: string,
   descendantIds: readonly string[] | null | undefined,
-  inheritedElements: readonly string[] | null | undefined = [],
   inheritedMenus: readonly string[] | null | undefined = [],
+  inheritedElements: readonly string[] | null | undefined = [],
 ): MenuToggleResult {
   const nextMenus = [...(menus || [])]
   const nextElements = [...(elements || [])]
-  const descendants = (descendantIds || []).map((id) => String(id ?? '')).filter(Boolean)
-  // MENU_TREE 的子项混有两类 id：`menu:*` 子菜单（用户管理/角色管理/系统配置/审计日志）
-  // 与 `element:*` 功能点。它们必须各回各家——旧实现一律推进 elements，导致子菜单
-  // 存成 element 记录：勾了父菜单，子菜单仍显示未勾选，后端按 menu 类型校验也查不到。
-  const inheritedSet = new Set(
-    [...(inheritedElements || []), ...(inheritedMenus || [])]
-      .map((id) => String(id ?? ''))
-      .filter(Boolean),
-  )
-  const menuSet = new Set(nextMenus.map((id) => String(id ?? '')))
-  const inheritedMenuSet = new Set(
-    (inheritedMenus || []).map((id) => String(id ?? '')).filter(Boolean),
-  )
+  const descendants = normalizeIds(descendantIds)
+  const inherited = new Set([...normalizeIds(inheritedMenus), ...normalizeIds(inheritedElements)])
+  const menuSet = new Set(normalizeIds(nextMenus))
+  const elementSet = new Set(normalizeIds(nextElements))
 
-  // 视觉上的「已授予」= 菜单直配 / 菜单由角色授予 / 全部子项都已授予（直配或继承）。
-  // 三者任一成立时点击都必须是「取消」，否则会出现「看起来已勾选、点一下反而全选」的错位。
-  const allChildrenGranted =
-    descendants.length > 0 &&
-    descendants.every((id) => nextElements.includes(id) || menuSet.has(id) || inheritedSet.has(id))
-  const granted = menuSet.has(menuId) || inheritedMenuSet.has(menuId) || allChildrenGranted
+  // 自身已直配（菜单表或误存进 elements 的旧数据）→ 取消；自身由角色授予 → 无操作。
+  const selfDirect = menuSet.has(menuId) || elementSet.has(menuId)
+  if (!selfDirect && inherited.has(menuId)) {
+    return { menus: nextMenus, elements: nextElements }
+  }
 
-  if (granted) {
+  if (selfDirect) {
     const descendantsSet = new Set(descendants)
     return {
       menus: nextMenus.filter((id) => id !== menuId && !descendantsSet.has(id)),
+      elements: nextElements.filter((id) => id !== menuId && !descendantsSet.has(id)),
+    }
+  }
+
+  return { menus: [...nextMenus, menuId], elements: nextElements }
+}
+
+/** 「全选 / 清空」按钮的模式。 */
+export type MenuCascadeMode = 'select' | 'clear'
+
+/**
+ * 菜单下整棵子树的显式级联（纯函数，不修改入参）。
+ *
+ * 这是原来「勾菜单 = 全选」那套语义的显式化：只有点菜单行的「全选」按钮才级联，
+ * 点复选框只切入口。`select` 同时授予入口（没有入口的功能点没有意义），并**跳过
+ * 已由角色授予的子项**——后端对 menus / elements 不做角色派生剔除，把继承项写成
+ * 用户直配后，角色侧取消该权限时这个用户仍会保留，管理员还会误以为是自己配的。
+ * `clear` 只清后代直配，保留入口本身（取消入口是复选框的职责，两者不混）。
+ */
+export function applyMenuCascadeToggle(
+  menus: readonly string[] | null | undefined,
+  elements: readonly string[] | null | undefined,
+  menuId: string,
+  descendantIds: readonly string[] | null | undefined,
+  mode: MenuCascadeMode,
+  inheritedMenus: readonly string[] | null | undefined = [],
+  inheritedElements: readonly string[] | null | undefined = [],
+): MenuToggleResult {
+  const nextMenus = [...(menus || [])]
+  const nextElements = [...(elements || [])]
+  const descendants = normalizeIds(descendantIds)
+  // MENU_TREE 的子项混有两类 id：`menu:*` 子菜单（用户管理/角色管理/系统配置/审计日志）
+  // 与 `element:*` 功能点。它们必须各回各家——旧实现一律推进 elements，导致子菜单
+  // 存成 element 记录：勾了父菜单，子菜单仍显示未勾选，后端按 menu 类型校验也查不到。
+  const inherited = new Set([...normalizeIds(inheritedMenus), ...normalizeIds(inheritedElements)])
+  const descendantsSet = new Set(descendants)
+
+  if (mode === 'clear') {
+    return {
+      menus: nextMenus.filter((id) => !descendantsSet.has(id)),
       elements: nextElements.filter((id) => !descendantsSet.has(id)),
     }
   }
 
-  if (!menuSet.has(menuId)) nextMenus.push(menuId)
+  if (!nextMenus.includes(menuId) && !nextElements.includes(menuId) && !inherited.has(menuId)) {
+    nextMenus.push(menuId)
+  }
   descendants.forEach((id) => {
-    if (inheritedSet.has(id)) return
-    if (id.startsWith("menu:")) {
+    if (inherited.has(id)) return
+    if (id.startsWith('menu:')) {
       if (!nextMenus.includes(id)) nextMenus.push(id)
       return
     }
     if (!nextElements.includes(id)) nextElements.push(id)
   })
   return { menus: nextMenus, elements: nextElements }
+}
+
+function normalizeIds(ids: readonly string[] | null | undefined): string[] {
+  return (ids || []).map((id) => String(id ?? '')).filter(Boolean)
 }
 
 export interface UserPermissionPayloadOptions {
@@ -296,41 +335,62 @@ const includesAny = (ids: readonly string[] | null | undefined, id: string) =>
   Array.isArray(ids) && ids.includes(id)
 
 /**
- * 节点是否「已授予」：自己直配 / 自己由角色授予 / 全部子节点都已授予。
+ * 节点自身（不含后代）是否已授予：自己直配或由角色授予。
  *
- * 递归到最深一层，所以勾一级菜单时视觉上能正确覆盖「子菜单 + 它的功能点」。
+ * 这是复选框「勾上了没有」的唯一依据——菜单入口与功能点解耦后，勾菜单不再等于
+ * 勾上它的全部功能点，否则「只给入口」永远无法表达，取消单个功能点也会被父级
+ * 的「全选」状态掩盖（旧版父级因此看起来仍是全勾，点一下反而清空全部）。
+ */
+export function isPermissionNodeSelfGranted(
+  node: PermissionNode,
+  sets: PermissionGrantSets,
+): boolean {
+  return (
+    includesAny(sets.menus, node.id) ||
+    includesAny(sets.elements, node.id) ||
+    includesAny(sets.inheritedMenus, node.id) ||
+    includesAny(sets.inheritedElements, node.id)
+  )
+}
+
+/**
+ * 节点整棵子树（含自身）是否全部授予。
+ *
+ * 用于「全选 / 清空」按钮的文案与菜单行的覆盖度展示，**不再**作为复选框的勾选依据。
  */
 export function isPermissionNodeGranted(
   node: PermissionNode,
   sets: PermissionGrantSets,
 ): boolean {
-  if (
-    includesAny(sets.menus, node.id) ||
-    includesAny(sets.elements, node.id) ||
-    includesAny(sets.inheritedMenus, node.id) ||
-    includesAny(sets.inheritedElements, node.id)
-  ) {
-    return true
-  }
-  const children = node.children || []
-  return children.length > 0 && children.every((child) => isPermissionNodeGranted(child, sets))
+  if (!isPermissionNodeSelfGranted(node, sets)) return false
+  return (node.children || []).every((child) => isPermissionNodeGranted(child, sets))
 }
 
-/** 节点自身或任意后代是否存在用户直配（决定「可编辑」还是「只读」）。 */
-export function hasDirectGrantIn(node: PermissionNode, sets: PermissionGrantSets): boolean {
-  if (includesAny(sets.menus, node.id) || includesAny(sets.elements, node.id)) return true
-  return (node.children || []).some((child) => hasDirectGrantIn(child, sets))
+/** 节点自己或任意后代是否至少有一项授予（含继承）。 */
+function hasAnyGrantIn(node: PermissionNode, sets: PermissionGrantSets): boolean {
+  if (isPermissionNodeSelfGranted(node, sets)) return true
+  return (node.children || []).some((child) => hasAnyGrantIn(child, sets))
 }
 
-/** 节点自身或任意后代是否来自角色授予。 */
-export function hasInheritedGrantIn(node: PermissionNode, sets: PermissionGrantSets): boolean {
-  if (includesAny(sets.inheritedMenus, node.id) || includesAny(sets.inheritedElements, node.id)) {
-    return true
-  }
-  return (node.children || []).some((child) => hasInheritedGrantIn(child, sets))
+/**
+ * 节点自身是否「只由角色授予」（自身不在任何直配里）。
+ *
+ * 只读的边界必须收在**节点自身**：菜单入口由角色授予，不代表它的功能点也不可另配
+ * （后端 `menu:*` 与 `element:*` 是两个独立权限码）。旧实现按整棵子树判断，会把
+ * 「角色给了入口、想单独补一个按钮」这种正常配置一起锁死。
+ */
+export function isPermissionNodeSelfInherited(
+  node: PermissionNode,
+  sets: PermissionGrantSets,
+): boolean {
+  const selfDirect = includesAny(sets.menus, node.id) || includesAny(sets.elements, node.id)
+  if (selfDirect) return false
+  return (
+    includesAny(sets.inheritedMenus, node.id) || includesAny(sets.inheritedElements, node.id)
+  )
 }
 
-/** 部分选中：整体未勾选，但至少有一个子节点已授予。 */
+/** 部分选中：不是全选，但自己或某个后代已授予。 */
 export function isPermissionNodePartiallySelected(
   node: PermissionNode,
   sets: PermissionGrantSets,
@@ -338,7 +398,20 @@ export function isPermissionNodePartiallySelected(
   const children = node.children || []
   if (children.length === 0) return false
   if (isPermissionNodeGranted(node, sets)) return false
-  return children.some((child) => isPermissionNodeGranted(child, sets))
+  return hasAnyGrantIn(node, sets)
+}
+
+/** 已授予的叶子功能点数量（含角色继承），配 `countLeafElements` 展示「M/N」。 */
+export function countGrantedLeafElements(
+  node: PermissionNode,
+  sets: PermissionGrantSets,
+): number {
+  return (node.children || []).reduce((total, child) => {
+    if (child.id.startsWith('element:')) {
+      return total + (isPermissionNodeSelfGranted(child, sets) ? 1 : 0)
+    }
+    return total + countGrantedLeafElements(child, sets)
+  }, 0)
 }
 
 /** 叶子功能点数量（子菜单不计数），用于卡片右上角的「N 个功能点」。 */

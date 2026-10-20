@@ -114,10 +114,14 @@ async def _async_none():
 
 @pytest.mark.asyncio
 async def test_permission_cache_key_is_bumped_for_forbidden_skills():
-    """forbidden_skills 是 v4 之后加的：不升版会让旧缓存缺字段 = 未禁用，禁用不生效。"""
+    """缓存键必须随权限结构变化升版，否则旧缓存会按旧口径继续生效。
+
+    沿革：v4 加 models、v5 加 forbidden_skills、v6 加智能体作用域、
+    v7 修复「menu:* 被写成 element」的读取口径（旧缓存里 elements 混着菜单 id）。
+    """
     service = PermissionService(None)
     key = await service._get_cache_key(42)
-    assert key == "sys:auth:permissions:v6:user:42:agent:-"
+    assert key == "sys:auth:permissions:v7:user:42:agent:-"
 
 
 # ---------------------------------------------------------------- F2

@@ -83,11 +83,27 @@ return { ids: api.getMenuDescendantIds('menu:data_sources') }
     assert "element:metadata:import" not in ids, "拆分后不应再共用元数据导入的码"
 
 
-def test_toggling_data_sources_grants_all_three_codes():
-    """勾「数据源管理」要把它自己的三个码一起授出。"""
+def test_data_sources_entry_can_be_granted_without_its_codes():
+    """勾菜单只授予入口：数据源管理可以先只给「能进页面」，写操作仍留空。
+
+    后端 `/db/connection-configs` 的读端点只校验 `menu:data_sources`，写/删才校验
+    `element:data_sources:*`，所以这种组合是合法的（只读账号）。
+    """
     result = _run("""
 const menuId = 'menu:data_sources';
-const out = api.applyMenuToggle([], [], menuId, api.getMenuDescendantIds(menuId), [], []);
+const out = api.applyMenuEntryToggle([], [], menuId, api.getMenuDescendantIds(menuId), [], []);
+return { menus: out.menus, elements: out.elements }
+""")
+
+    assert result["menus"] == ["menu:data_sources"]
+    assert result["elements"] == [], "只勾入口时不得把任何写操作一起授出"
+
+
+def test_cascading_data_sources_grants_its_own_codes():
+    """「全选」数据源管理要把它自己的两个码一起授出。"""
+    result = _run("""
+const menuId = 'menu:data_sources';
+const out = api.applyMenuCascadeToggle([], [], menuId, api.getMenuDescendantIds(menuId), 'select', [], []);
 return { menus: out.menus, elements: out.elements }
 """)
 
