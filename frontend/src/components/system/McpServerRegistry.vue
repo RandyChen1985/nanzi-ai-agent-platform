@@ -766,6 +766,12 @@ const closeWizard = () => {
 }
 
 const openAddModal = (initialTab: 'manual' | 'json' = 'manual') => {
+  // 这条路径也被页面级引导入口（市场/JSON 粘贴）调用，不只是按钮点击，
+  // 所以权限在函数里再兜一次：没有 create 码直接提示，不打开向导。
+  if (!canCreateMcp.value) {
+    showToast('没有创建 MCP 服务的权限', 'error')
+    return
+  }
   resetWizard()
   connectionInputTab.value = initialTab
   showAddModal.value = true
@@ -1025,6 +1031,12 @@ const handleVerify = async () => {
 }
 
 const addServer = async () => {
+  // 新建走 POST /servers（后端要求 create 码）；编辑走 PUT（要求 edit 码）。
+  // 按钮隐藏 + openAddModal 守卫已挡一层，这里再兜底，避免任何入口绕到 403。
+  if (!isEditing.value && !canCreateMcp.value) {
+    showToast('没有创建 MCP 服务的权限', 'error')
+    return
+  }
   syncFullServerName()
   if (!normalizeMcpServerNameSuffix(serverNameSuffix.value)) {
     showToast('请填写服务名称后缀', 'warning')
@@ -1301,20 +1313,31 @@ onMounted(fetchServers)
             <span>添加</span>
           </button>
 
-          <!-- 平台 MCP: 分裂式添加按钮 + 更多操作下拉 -->
-          <div v-else-if="canCreateMcp || canEditMcp" class="relative inline-flex h-7 items-stretch rounded-md shadow-sm">
+          <!-- 平台 MCP: 分裂式添加按钮 + 更多操作下拉
+               主按钮只给 canCreateMcp：只有 edit 码的角色（如内置 Echo、改服务配置）
+               不该看到「添加」，否则能打开新建向导、填完才在 POST /servers 上撞 403。
+               箭头只给 canEditMcp：「添加 MCP 服务」需 create，Echo 测试需 edit，
+               没有 edit 时下拉里没有可选项，留一个空箭头等于噪音。 -->
+          <div
+            v-else-if="props.scope !== 'personal' && (canCreateMcp || canEditMcp)"
+            class="relative inline-flex h-7 items-stretch rounded-md shadow-sm"
+          >
             <button
+              v-if="canCreateMcp"
               type="button"
               @click="resetWizard(); showAddModal = true"
-              class="inline-flex h-full items-center justify-center rounded-l-md bg-primary px-2.5 text-[11px] font-bold leading-none text-white transition-all hover:bg-primary-dark sm:px-3"
+              class="inline-flex h-full items-center justify-center bg-primary px-2.5 text-[11px] font-bold leading-none text-white transition-all hover:bg-primary-dark sm:px-3"
+              :class="canEditMcp ? 'rounded-l-md' : 'rounded-md'"
             >
               <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
               <span>添加</span>
             </button>
             <button
+              v-if="canEditMcp"
               type="button"
               @click.stop="showAddDropdown = !showAddDropdown"
-              class="inline-flex h-full items-center justify-center rounded-r-md border-l border-white/20 bg-primary px-1.5 text-white transition-all hover:bg-primary-dark"
+              class="inline-flex h-full items-center justify-center bg-primary px-1.5 text-white transition-all hover:bg-primary-dark"
+              :class="canCreateMcp ? 'rounded-r-md border-l border-white/20' : 'rounded-md'"
               title="更多添加选项"
             >
               <ChevronDownIcon class="h-3.5 w-3.5 shrink-0 transition-transform duration-200" :class="{ 'rotate-180': showAddDropdown }" />
@@ -2075,7 +2098,8 @@ onMounted(fetchServers)
             <button 
               v-else-if="wizardStep === 2"
               @click="addServer" 
-              class="rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 active:scale-95 sm:px-6 sm:py-2"
+              :disabled="!isEditing && !canCreateMcp"
+              class="rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-green-600 sm:px-6 sm:py-2"
             >
               {{ isEditing ? '保存修改' : '确认并完成添加' }}
             </button>
