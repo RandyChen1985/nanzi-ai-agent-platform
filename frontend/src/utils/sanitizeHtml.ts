@@ -42,7 +42,20 @@ export function sanitizeRenderedHtml(html: string): string {
     USE_PROFILES: { html: true, mathMl: true },
     ADD_ATTR: ALLOWED_ATTR,
     // 画布/图表由组件自行渲染，模型正文不需要 iframe/form。
-    FORBID_TAGS: ['iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select'],
+    // `<style>` 标签也要禁：DOMPurify 的 html profile 是**包含**它的，模型输出
+    // `<style>body{display:none}</style>` 会原样生效、把整页搞乱。但 `style`
+    // **属性**必须留着——KaTeX 的 `katex-html` 那份完全靠内联 style 定位。
+    FORBID_TAGS: ['iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select', 'style'],
     FORBID_ATTR: ['srcdoc', 'formaction'],
+    // mathMl profile 不含 `semantics` / `annotation`，而 KaTeX 的 MathML 副本正需要
+    // 这对包装标签；缺了会让 `<annotation>` 里的 LaTeX 源码变成裸文本，读屏软件念出来。
+    ADD_TAGS: ['semantics', 'annotation'],
+    // DOMPurify 不只看标签/属性，还会按协议过滤**属性值**：不匹配 `ALLOWED_URI_REGEXP`
+    // 就把整个 `href` 删掉。markdown-it 那层早有 `validateLink` 放行 `quick:`，消毒层
+    // 不跟上就会出现「按钮渲染出来了但点了没反应」——点击处理读的是
+    // `href.startsWith('quick:')`，href 被删后整段跳过。`canvas://` 的预览链接同理。
+    // 以下是 DOMPurify 默认白名单 + 两个业务自定义协议（默认里本来就没有 javascript:）。
+    ALLOWED_URI_REGEXP:
+      /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|quick|canvas):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   })
 }
