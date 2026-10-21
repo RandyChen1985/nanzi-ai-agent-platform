@@ -14,10 +14,12 @@ from sqlalchemy import select, delete, update
 async def test_mcp_server_name_cannot_duplicate_between_global_and_personal(
     client: AsyncClient,
     admin_api_key: str,
-    valid_api_key: str,
 ):
     headers = {"Authorization": f"Bearer {admin_api_key}"}
-    personal_headers = {"Authorization": f"Bearer {valid_api_key}"}
+    # V174 之后个人 MCP 的写操作同样要求 element:mcp_management:create，而 conftest 的
+    # test_user 没有绑定任何业务角色（真实注册用户会绑 default 角色），拿不到该功能点。
+    # 本用例验证「名称跨 scope 唯一」，与操作者角色无关，故统一用管理员账号覆盖。
+    personal_headers = headers
     server_name = f"Shared MCP {uuid.uuid4().hex[:8]}"
 
     with patch(
@@ -55,10 +57,10 @@ async def test_mcp_server_name_cannot_duplicate_between_global_and_personal(
 async def test_mcp_server_update_rejects_name_used_by_other_scope(
     client: AsyncClient,
     admin_api_key: str,
-    valid_api_key: str,
 ):
     admin_headers = {"Authorization": f"Bearer {admin_api_key}"}
-    personal_headers = {"Authorization": f"Bearer {valid_api_key}"}
+    # 同上：个人 MCP 的创建/更新受 element:mcp_management:* 约束，测试账号无角色授权。
+    personal_headers = admin_headers
     existing_name = f"Existing MCP {uuid.uuid4().hex[:8]}"
 
     with patch(

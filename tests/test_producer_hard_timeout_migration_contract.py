@@ -76,6 +76,15 @@ def test_description_mentions_releasing_the_session_lock(migration):
     assert "会话锁" in migration.read_text(encoding="utf-8")
 
 
+# 历史遗留重号（登记于 2026-10-21）：`apply_sql.py` 逐文件执行、不按版本号去重，
+# 这些文件都已各自执行过，改名反而会与线上执行记录脱节；这里只负责拦住「新增」重号。
+# 维护规则：某组重号被清理后立刻删除对应条目（下面的反向断言会盯着）。
+LEGACY_DUPLICATE_VERSIONS: dict[str, set[int]] = {
+    "db-prod": {31, 100, 110},
+    "db-prod-pg": set(),
+}
+
+
 def _numeric_versions(directory: Path) -> list[int]:
     """取目录下 V<整数>-*.sql 的编号；历史小数版本（如 V3.1）不参与比较。"""
     versions: list[int] = []
@@ -87,7 +96,24 @@ def _numeric_versions(directory: Path) -> list[int]:
 
 
 def test_migration_versions_do_not_collide():
-    """两套迁移各自独立编号，写重了 apply 脚本会静默跳过其中一个。"""
+    """两套迁移各自独立编号，新写重了要报红（历史重号单独登记，见下）。
+
+    这里刻意不再把「当前最大版本号」写死——旧断言 ``[-1] == 172`` / ``== 73``
+    每新增一个迁移都要回来改数字，测试名说的是 collision 却实际在守版本进度。
+    """
     assert MYSQL_MIGRATION.exists() and PG_MIGRATION.exists()
-    assert _numeric_versions(ROOT / "db-prod")[-1] == 172
-    assert _numeric_versions(ROOT / "db-prod-pg")[-1] == 73
+    for directory in (ROOT / "db-prod", ROOT / "db-prod-pg"):
+        versions = _numeric_versions(directory)
+        assert versions, f"{directory.name} 下没有可识别的 V<整数>-*.sql 迁移"
+        duplicated = {version for version in versions if versions.count(version) > 1}
+
+        legacy = LEGACY_DUPLICATE_VERSIONS.get(directory.name, set())
+        unexpected = sorted(duplicated - legacy)
+        assert not unexpected, f"{directory.name} 存在新增的重复迁移编号: {unexpected}"
+
+        # 反向断言：历史重号被清理后必须同步删掉基线条目，否则白名单会越积越脏。
+        cleaned = sorted(legacy - duplicated)
+        assert not cleaned, (
+            f"{directory.name} 的 {cleaned} 已不再重号，"
+            "请从 LEGACY_DUPLICATE_VERSIONS 删除对应条目"
+        )

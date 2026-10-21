@@ -111,3 +111,22 @@ async def test_issued_embed_session_records_verified_at():
 
     mapping = redis.hset.await_args.kwargs["mapping"]
     assert mapping.get("verified_at"), "缺少 verified_at，回源复核间隔无法生效"
+
+
+def test_exchange_ticket_session_carries_department_label():
+    """兑换票据写进缓存的会话必须带 `dept_name` 键（空串也算）。
+
+    会话令牌的 hash 在 `users` 表里查不到（它不是真实 API Key），所以一旦
+    `verify_api_key` 因为「缓存缺 dept_name」回源查库，就必然查不到人而 401。
+    这条路径曾经漏掉：`issue_session_from_user` 补了，`exchange_ticket` 是另一处
+    手写会话字典，没补，于是 iframe 换到会话后调 `/me` 直接 401。
+    """
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / "app/services/embed_service.py"
+    ).read_text(encoding="utf-8")
+    session_block = source.split("user_session_data = {", 1)[1].split("}", 1)[0]
+    assert "dept_name" in session_block
+    ticket_block = source.split("ticket_payload = {", 1)[1].split("}", 1)[0]
+    assert "dept_name" in ticket_block
