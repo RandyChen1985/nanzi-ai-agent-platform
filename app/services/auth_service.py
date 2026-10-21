@@ -59,7 +59,19 @@ class AuthService:
         status 默认为「启用」，保持既有调用方行为不变；账号自主注册走
         status=USER_STATUS_PENDING_REVIEW，注册时不放行登录但预先签发 Key，
         否则审核通过后密码登录会因取不到 API Key 而 500。
+
+        `dept_code` / `org_path` 是主部门派生快照，**只能**由
+        `DepartmentService.sync_primary_snapshot()` 维护。这两个参数保留只为兼容既有
+        签名（仓库外可能还有脚本 import），实际传值一律拒绝：否则有人塞进外部系统的
+        部门标识，`users.org_path` 就会冒出第三种格式并与关系表分叉。
         """
+        if dept_code is not None or org_path is not None:
+            raise ValueError(
+                "dept_code / org_path 是主部门派生快照，只能由 "
+                "DepartmentService.sync_primary_snapshot() 维护；"
+                "建号后请调用 PUT /management/users/{user_id}/departments 设置部门归属"
+            )
+
         session, is_local = await AuthService._get_session(db)
         try:
             manager = get_api_key_manager()

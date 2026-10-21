@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, Fil
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_api_key
+from app.core.upload_limits import SKILL_PACKAGE_MAX_BYTES, SKILL_PACKAGE_MAX_MB
 from app.core.orm import get_db_session
 from app.services.ai.skill_resolver import (
     get_user_personal_skills_dir,
@@ -667,8 +668,11 @@ async def upload_personal_skill_archive(
         sub_dir = folder if folder else ""
         target_dir = _validate_personal_skill_path(user, skill_id, sub_dir)
         content = await file.read()
-        if len(content) > 20 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="上传的压缩文件大小不能超出 20MB 限制")
+        if len(content) > SKILL_PACKAGE_MAX_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"上传的压缩文件大小不能超出 {SKILL_PACKAGE_MAX_MB}MB 限制",
+            )
 
         file_name = file.filename if file.filename else "archive.zip"
         safe_extract_archive(content, file_name, target_dir)
@@ -855,8 +859,11 @@ async def import_personal_skill_package(
             )
 
         content = await file.read()
-        if len(content) > 20 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="导入文件大小超出 20MB 限制")
+        if len(content) > SKILL_PACKAGE_MAX_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"导入文件大小超出 {SKILL_PACKAGE_MAX_MB}MB 限制",
+            )
 
         atomic_import_skill_package(content, filename, skill_dir)
 

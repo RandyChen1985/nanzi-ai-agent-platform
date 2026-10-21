@@ -2406,6 +2406,8 @@ import MenuAccessTree from "../components/user/MenuAccessTree.vue";
 import RoleList from "../components/RoleList.vue";
 import ThirdPartyUserSyncDrawer from "../components/ThirdPartyUserSyncDrawer.vue";
 import DepartmentPicker from "../components/department/DepartmentPicker.vue";
+// 与部门成员页共用同一个密码弹窗：等保规则说明与实时合规指标只有一份实现
+import PasswordResetDialog from "../components/PasswordResetDialog.vue";
 import QuotaPolicyPanel from "../components/admin/QuotaPolicyPanel.vue";
 import {
   KeyIcon,
