@@ -670,9 +670,7 @@ def pytest_collection_modifyitems(config, items):
     if not known:
         return
 
-    gone = known_failures.missing_from_collection(
-        known, {item.nodeid for item in items}
-    )
+    gone = known_failures.stale_entries(known, {item.nodeid for item in items})
     if gone:
         preview = "、".join(gone[:5]) + (" ..." if len(gone) > 5 else "")
         _warnings.warn(
