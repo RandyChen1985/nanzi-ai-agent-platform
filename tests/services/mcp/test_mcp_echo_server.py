@@ -187,12 +187,83 @@ def test_echo_diagnostics_rejects_invalid_user_assertion():
 
 @pytest.mark.asyncio
 async def test_streamable_http_app_has_initialized_task_group_inside_host_lifespan():
+    from starlette.applications import Starlette
+
+    app = Starlette()
+    app.mount(
+        "/mcp/echo",
+        echo_server.EchoServerIdMiddleware(echo_mcp.streamable_http_app()),
+    )
+
     async with echo_mcp_lifespan():
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=echo_mcp.streamable_http_app()),
+            transport=httpx.ASGITransport(app=app),
             base_url="http://echo.test",
         ) as client:
-            response = await client.get("/mcp")
+            global_response = await client.get("/mcp/echo/mcp")
+            personal_response = await client.get("/mcp/echo/personal-1/mcp")
 
-    assert response.status_code != 500
-    assert "Task group is not initialized" not in response.text
+    assert global_response.status_code != 500
+    assert "Task group is not initialized" not in global_response.text
+    # 个人 Echo 的 /{server_id}/mcp 必须命中同一个 FastMCP 端点，而不是 404。
+    assert personal_response.status_code != 404
+    assert personal_response.status_code == global_response.status_code
+
+
+def test_echo_server_id_header_selects_instance():
+    assert echo_server.echo_server_id_from_headers({}) is None
+    assert echo_server.echo_server_id_from_headers(
+        {"X-Nanzi-Echo-Server": "personal-id"}
+    ) == "personal-id"
+
+
+@pytest.mark.asyncio
+async def test_echo_middleware_rewrites_personal_path_and_strips_forged_header():
+    captured = {}
+
+    async def app(scope, receive, send):
+        captured.update(scope)
+
+    middleware = echo_server.EchoServerIdMiddleware(app)
+    await middleware(
+        {
+            "type": "http",
+            "path": "/mcp/echo/personal-1/mcp",
+            "root_path": "/mcp/echo",
+            "headers": [
+                (b"x-nanzi-echo-server", b"forged"),
+                (b"authorization", b"Bearer t"),
+            ],
+        },
+        None,
+        None,
+    )
+
+    assert captured["path"] == "/mcp/echo/mcp"
+    assert captured["raw_path"] == b"/mcp/echo/mcp"
+    assert (b"x-nanzi-echo-server", b"personal-1") in captured["headers"]
+    assert (b"x-nanzi-echo-server", b"forged") not in captured["headers"]
+    assert (b"authorization", b"Bearer t") in captured["headers"]
+
+
+@pytest.mark.asyncio
+async def test_echo_middleware_keeps_global_path_without_injected_id():
+    captured = {}
+
+    async def app(scope, receive, send):
+        captured.update(scope)
+
+    middleware = echo_server.EchoServerIdMiddleware(app)
+    await middleware(
+        {
+            "type": "http",
+            "path": "/mcp/echo/mcp",
+            "root_path": "/mcp/echo",
+            "headers": [],
+        },
+        None,
+        None,
+    )
+
+    assert captured["path"] == "/mcp/echo/mcp"
+    assert captured["headers"] == []

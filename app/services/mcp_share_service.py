@@ -26,6 +26,7 @@ from app.models.mcp import McpServer, McpToolCache
 from app.models.mcp_share import McpServerShare
 from app.models.user import User
 from app.services.mcp.mcp_auth_policy import without_credential_headers
+from app.services.mcp.echo_server import is_echo_server_sse_url
 from app.services.portal_notification_service import PortalNotificationService
 
 # 与技能分享共用同一套「搜索接收人」实现（纯用户检索，与技能表无关）
@@ -316,6 +317,9 @@ async def share_server(
         raise McpShareConflictError(f"附言不能超过 {MAX_MESSAGE_LENGTH} 字")
 
     server = await _load_owned_server(session, user=user, server_id=server_id)
+    if is_echo_server_sse_url(server.sse_url):
+        # Echo 用 server_id 派生 audience 与固定 Token；复制到新服务后必然验签失败。
+        raise McpShareConflictError("Echo 测试 MCP 不支持分享，请让对方自行创建")
 
     # 接收人必须真实存在且处于启用状态：没有物理外键，脏 ID 会安静地写进分享表，
     # 还会朝一个不存在的人发通知。口径与技能分享一致（status != 1 一律视为不可接收）。
@@ -624,11 +628,19 @@ async def accept_share(
     for tool in tools:
         if not tool.get("tool_name"):
             continue
+        # 工具标识是 ``server_name:tool``：副本换了名字（冲突加 -2 / 接收人前缀），
+        # 工具名必须跟着换，否则同步后旧前缀的行会变成孤立记录、已挂载的会话失效。
+        snapshot_name = str(tool["tool_name"])
+        local_name = (
+            snapshot_name.split(":", 1)[1]
+            if ":" in snapshot_name
+            else snapshot_name
+        )
         session.add(
             McpToolCache(
                 id=str(uuid.uuid4()),
                 server_id=new_id,
-                tool_name=str(tool["tool_name"]),
+                tool_name=f"{final_name}:{local_name}",
                 tool_description=tool.get("tool_description"),
                 parameter_schema=tool.get("parameter_schema"),
                 is_published=bool(tool.get("is_published")),

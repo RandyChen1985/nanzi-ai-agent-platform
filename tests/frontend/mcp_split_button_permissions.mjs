@@ -55,7 +55,7 @@ const findByDirective = (node, name, includes) => {
 };
 
 // ---------------------------------------------------------------------------
-// 1. 分裂按钮容器：个人区不得落进这个分支（Echo 只支持平台区，点了会静默 return）
+// 1. 平台区分裂按钮容器不得落进个人区（个人区有自己的添加/Echo 下拉）
 // ---------------------------------------------------------------------------
 const container = findByDirective(ast, 'else-if', 'canCreateMcp || canEditMcp');
 check('找到分裂按钮容器', Boolean(container));

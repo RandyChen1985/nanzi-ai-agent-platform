@@ -206,3 +206,49 @@ async def test_rewrite_skill_mounts_rejects_bogus_owner_identity():
         )
     assert updated == 0
     assert redis.scanned_patterns == []
+
+
+@pytest.mark.asyncio
+async def test_rewrite_mcp_tool_name_matches_tool_id_not_same_name():
+    """同名平台工具不能被连带改名：只能按工具缓存 id 精确命中。"""
+    import json
+
+    mine = "conversation:7:conv-a:resource_scope_v1"
+    other = "conversation:8:conv-b:resource_scope_v1"
+    redis = _FakeScanRedis(
+        {
+            mine: json.dumps(
+                {
+                    "mcp_tools": [
+                        {"id": "tool-personal", "name": "NanZi Echo 测试 MCP:echo"},
+                        {"id": "tool-platform", "name": "NanZi Echo 测试 MCP:echo"},
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            other: json.dumps(
+                {"mcp_tools": [{"id": "tool-personal", "name": "NanZi Echo 测试 MCP:echo"}]},
+                ensure_ascii=False,
+            ),
+        }
+    )
+
+    with patch(
+        "app.services.conversation_resource_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=redis,
+    ):
+        updated = await ConversationResourceService.rewrite_mcp_tool_name(
+            owner_id=7,
+            tool_id="tool-personal",
+            new_name="mcp-private-admin-echo:echo",
+        )
+
+    assert updated == 1
+    assert redis.scanned_patterns == ["conversation:7:*:resource_scope_v1"]
+
+    rewritten = json.loads(redis.store[mine])["mcp_tools"]
+    assert rewritten[0]["name"] == "mcp-private-admin-echo:echo"
+    assert rewritten[1]["name"] == "NanZi Echo 测试 MCP:echo"
+    assert json.loads(redis.store[other])["mcp_tools"][0]["name"] == "NanZi Echo 测试 MCP:echo"
+    assert redis.sets[0][2] == TTL_SECONDS

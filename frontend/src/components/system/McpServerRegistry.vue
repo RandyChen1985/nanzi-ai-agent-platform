@@ -736,15 +736,35 @@ const fetchServers = async () => {
   }
 }
 
+/** Echo 测试 MCP 的地址带 /mcp/echo/ 前缀；Token 与 audience 绑定实例，不能分享。 */
+const isEchoTestServer = (server: any) =>
+  String(server?.sse_url || '').includes('/mcp/echo/')
+
 const createEchoTestMcp = async () => {
-  if (props.scope !== 'global' || !canSave.value) return
+  if (!canSave.value) return
+  if (props.scope === 'personal') {
+    if (!canCreateMcp.value) {
+      showToast('没有创建个人 MCP 服务的权限', 'error')
+      return
+    }
+  } else if (!canEditMcp.value) {
+    showToast('没有创建 Echo 测试 MCP 的权限', 'error')
+    return
+  }
 
   try {
-    const response = await axios.post('/api/portal/mcp/servers/echo-test')
+    const response = await axios.post('/api/portal/mcp/servers/echo-test', null, {
+      params: { scope: props.scope },
+    })
     await fetchServers()
     const created = servers.value.find((server: any) => server.id === response.data?.id)
     if (created) selectServer(created)
-    showToast('Echo 测试 MCP 已就绪，所有智能体都可以挂载', 'success')
+    showToast(
+      props.scope === 'personal'
+        ? '个人 Echo 测试 MCP 已就绪，可用于验证本人调用链路的用户身份透传'
+        : 'Echo 测试 MCP 已就绪，所有智能体都可以挂载',
+      'success',
+    )
   } catch (error: any) {
     showToast(getApiErrorMessage(error, '创建 Echo 测试 MCP 失败'), 'error')
   }
@@ -1419,16 +1439,65 @@ onMounted(fetchServers)
 
         <!-- 右侧操作区 -->
         <div v-if="canSave" class="relative ml-auto flex shrink-0 items-center">
-          <!-- 个人 MCP: 仅单一添加按钮 -->
-          <button
+          <!-- 个人 MCP: 添加 + 创建 Echo 测试（同一 create 码收敛） -->
+          <div
             v-if="props.scope === 'personal' && canCreateMcp"
-            type="button"
-            @click="resetWizard(); showAddModal = true"
-            class="inline-flex h-7 items-center justify-center rounded-md bg-emerald-600 px-2.5 text-[11px] font-bold leading-none text-white shadow-sm transition-all hover:bg-emerald-700 sm:px-3"
+            class="relative inline-flex h-7 items-stretch rounded-md shadow-sm"
           >
-            <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
-            <span>添加</span>
-          </button>
+            <button
+              type="button"
+              @click="resetWizard(); showAddModal = true"
+              class="inline-flex h-full items-center justify-center rounded-l-md bg-emerald-600 px-2.5 text-[11px] font-bold leading-none text-white transition-all hover:bg-emerald-700 sm:px-3"
+            >
+              <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
+              <span>添加</span>
+            </button>
+            <button
+              type="button"
+              @click.stop="showAddDropdown = !showAddDropdown"
+              class="inline-flex h-full items-center justify-center rounded-r-md border-l border-white/20 bg-emerald-600 px-1.5 text-white transition-all hover:bg-emerald-700"
+              title="更多添加选项"
+            >
+              <ChevronDownIcon class="h-3.5 w-3.5 shrink-0 transition-transform duration-200" :class="{ 'rotate-180': showAddDropdown }" />
+            </button>
+
+            <div
+              v-if="showAddDropdown"
+              class="fixed inset-0 z-20 cursor-default"
+              @click="showAddDropdown = false"
+            ></div>
+
+            <div
+              v-if="showAddDropdown"
+              class="absolute right-0 top-full z-30 mt-1.5 w-52 origin-top-right rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-800"
+              @click.stop
+            >
+              <button
+                type="button"
+                @click="showAddDropdown = false; resetWizard(); showAddModal = true"
+                class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                <PlusIcon class="h-4 w-4 text-primary shrink-0" />
+                <div class="min-w-0 flex-1">
+                  <div>添加 MCP 服务</div>
+                  <div class="text-[10px] font-normal text-gray-400">配置自定义工具服务</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                @click="showAddDropdown = false; createEchoTestMcp()"
+                class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+                title="创建个人 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
+              >
+                <BeakerIcon class="h-4 w-4 text-indigo-600 shrink-0" />
+                <div class="min-w-0 flex-1">
+                  <div>创建 Echo 测试 MCP</div>
+                  <div class="text-[10px] font-normal text-gray-400">个人联调诊断服务</div>
+                </div>
+              </button>
+            </div>
+          </div>
 
           <!-- 平台 MCP: 分裂式添加按钮 + 更多操作下拉
                主按钮只给 canCreateMcp：只有 edit 码的角色（如内置 Echo、改服务配置）
@@ -1587,7 +1656,7 @@ onMounted(fetchServers)
                 <span class="mr-1 hidden text-[9px] italic text-gray-400 sm:inline" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
                 <div class="flex items-center space-x-0.5" @click.stop>
                   <button
-                    v-if="props.scope === 'personal'"
+                    v-if="props.scope === 'personal' && !isEchoTestServer(server)"
                     type="button"
                     @click="emit('share-server', server)"
                     class="rounded p-1.5 text-emerald-500 transition-colors hover:bg-white hover:text-emerald-700"
@@ -2260,7 +2329,7 @@ onMounted(fetchServers)
             
             <button 
               v-else-if="wizardStep === 2"
-              @click="addServer" 
+              @click="addServer()" 
               :disabled="!isEditing && !canCreateMcp"
               class="rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-green-600 sm:px-6 sm:py-2"
             >

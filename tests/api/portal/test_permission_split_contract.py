@@ -132,7 +132,6 @@ def test_mcp_write_endpoints_are_gated_per_action():
     expected = {
         "create_mcp_server": "create",
         "verify_mcp_server": "edit",
-        "create_echo_test_mcp": "edit",
         "update_mcp_server": "edit",
         "delete_mcp_server": "delete",
         "sync_mcp_tools": "sync",
@@ -141,6 +140,21 @@ def test_mcp_write_endpoints_are_gated_per_action():
     }
     for func, action in expected.items():
         assert _single(f"element:mcp_management:{action}") in routes[func], func
+
+
+def test_mcp_echo_creation_checks_scope_specific_permissions_in_function():
+    """平台 Echo 仍只给管理员；个人 Echo 走 create 码，单一装饰器表达不了两种口径。"""
+    routes = _route_dependencies(MCP)
+    assert "require_permission" not in routes["create_echo_test_mcp"]
+
+    source = MCP.read_text(encoding="utf-8")
+    helper = source[
+        source.index("def _require_echo_scope_access"):
+        source.index('@router.post("/servers/echo-test"')
+    ]
+    assert "只有系统管理员才能创建平台 Echo 测试 MCP" in helper
+    assert "element:mcp_management:create" in helper
+    assert "PermissionService" in helper
 
 
 def test_mcp_read_endpoints_stay_on_menu_permission():

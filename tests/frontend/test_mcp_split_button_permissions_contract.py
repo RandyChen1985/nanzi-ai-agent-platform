@@ -26,7 +26,7 @@ def test_split_button_permissions_behaviour_via_node():
 
 
 def test_split_container_excludes_personal_scope():
-    """个人区没有创建权限时不能掉进平台样式分支：Echo 只支持平台区，点了会静默 return。"""
+    """平台区容器仍排除个人区：个人区有自己的添加/Echo 下拉，不走平台样式分支。"""
     source = _source()
 
     assert 'v-else-if="props.scope !== \'personal\' && (canCreateMcp || canEditMcp)"' in source

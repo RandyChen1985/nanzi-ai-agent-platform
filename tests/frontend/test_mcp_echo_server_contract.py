@@ -14,9 +14,8 @@ def test_global_mcp_registry_has_one_click_echo_entry_and_selects_created_server
 
     assert "创建 Echo 测试 MCP" in source
     assert "createEchoTestMcp" in source
-    assert "POST('/api/portal/mcp/servers/echo-test')" in source or \
-        'post("/api/portal/mcp/servers/echo-test")' in source or \
-        "post('/api/portal/mcp/servers/echo-test')" in source
+    assert "axios.post('/api/portal/mcp/servers/echo-test'" in source
+    assert "params: { scope: props.scope }" in source
     assert "所有智能体可挂载" in source
     assert "selectedServer" in source
 
