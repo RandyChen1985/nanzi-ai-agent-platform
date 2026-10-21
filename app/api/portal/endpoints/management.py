@@ -1249,7 +1249,102 @@ async def delete_user(
     # 没有外键约束（见 db-prod/V27），漏删就会留下指向不存在用户的悬挂行——
     # 线上出现过「角色列表显示 1 人、点开抽屉 0 位成员」正是这类数据。
     await db.execute(delete(UserRoleRelation).where(UserRoleRelation.user_id == user_id))
-    
+
+    # 技能分享：两个方向都要清（他分享出去的、别人分享给他的）。
+    # skill_shares 与部门两张表同一惯例——数据库层不建物理外键，漏删只会留下悬挂行；
+    # 但 PENDING 分享还占着一份快照目录，必须先把磁盘上的东西回收，再删数据库记录。
+    from app.models.skill_share import SkillShare
+    from app.services.skill_share_service import remove_share_snapshot
+
+    share_scope = or_(
+        SkillShare.source_user_id == user_id,
+        SkillShare.target_user_id == user_id,
+    )
+    share_rows = (await db.execute(select(SkillShare).where(share_scope))).scalars().all()
+    for share_row in share_rows:
+        remove_share_snapshot(share_row.snapshot_path)
+    await db.execute(delete(SkillShare).where(share_scope))
+
+    # 发布谱系：这里沿用「下架」语义而不是物理删记录。
+    # 删记录会毁掉审核轨迹（谁提交、谁审核、审核意见）并把 platform_skill_id（唯一索引）
+    # 永远对不上历史引用；因此 V180/V81 把 source_user_id / submitted_by 改为可空，
+    # 删除用户时：已发布的平台技能真的从公共库消失（删物化目录），记录只解绑作者。
+    from datetime import datetime
+
+    from app.models.skill_publication import SkillPublication, SkillPublicationVersion
+    from app.services.skill_publication_service import (
+        cleanup_publication_snapshot,
+        remove_materialized_skill,
+    )
+
+    now = datetime.now()
+    publication_rows = (
+        await db.execute(
+            select(SkillPublication).where(SkillPublication.source_user_id == user_id)
+        )
+    ).scalars().all()
+    for publication in publication_rows:
+        versions = (
+            await db.execute(
+                select(SkillPublicationVersion).where(
+                    SkillPublicationVersion.publication_id == publication.id
+                )
+            )
+        ).scalars().all()
+        for version in versions:
+            if version.status == "PENDING":
+                # 作者没了，待审版本不会再有人接，直接按「撤销」收尾（快照已无用）
+                version.status = "WITHDRAWN"
+                version.withdrawn_at = now
+                cleanup_publication_snapshot(version.snapshot_path)
+            elif version.status == "APPROVED":
+                # 保留 snapshot_path：与 revoke_published_version 一致，快照是物化来源
+                version.status = "REVOKED"
+                version.reviewed_at = now
+                version.materialized_path = None
+        if publication.status == "PUBLISHED":
+            if publication.platform_skill_id:
+                # 先落库再删目录：flush 失败时目录原样保留，DB 与磁盘不会互相打脸
+                await db.flush()
+                try:
+                    remove_materialized_skill(platform_skill_id=publication.platform_skill_id)
+                except Exception as exc:  # 脏数据不能反过来让删用户失败
+                    logger.warning(
+                        "[Users] 删除用户 %s 时移除平台技能 %s 失败: %s",
+                        user_id,
+                        publication.platform_skill_id,
+                        exc,
+                    )
+            publication.current_version = None
+            publication.revoked_at = now
+        if publication.status in {"PUBLISHED", "PENDING"}:
+            publication.status = "UNPUBLISHED"
+        publication.revoked_by = None
+        publication.source_user_id = None
+        publication.updated_at = now
+
+    # 他给别人留下的审核 / 撤销痕迹：只解绑，不动别人的发布记录
+    await db.execute(
+        update(SkillPublicationVersion)
+        .where(SkillPublicationVersion.submitted_by == user_id)
+        .values(submitted_by=None)
+    )
+    await db.execute(
+        update(SkillPublicationVersion)
+        .where(SkillPublicationVersion.reviewed_by == user_id)
+        .values(reviewed_by=None)
+    )
+    await db.execute(
+        update(SkillPublicationVersion)
+        .where(SkillPublicationVersion.withdrawn_by == user_id)
+        .values(withdrawn_by=None)
+    )
+    await db.execute(
+        update(SkillPublication)
+        .where(SkillPublication.revoked_by == user_id)
+        .values(revoked_by=None)
+    )
+
     # 3. Finally delete the user
     await db.delete(user)
     await db.commit()
