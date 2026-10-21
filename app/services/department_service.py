@@ -120,7 +120,14 @@ def choose_primary_after_removal(
     candidates = [(dept_id, path or "") for dept_id, path in remaining]
     if not candidates:
         return None
-    candidates.sort(key=lambda item: (item[1], item[0]))
+
+    def depth(path: str) -> int:
+        """路径层级数。`/1/2/` 是 2 层，`/15/` 是 1 层。"""
+        return len([part for part in str(path or "").split("/") if part])
+
+    # 必须按层级排，不能按路径字符串排：字典序下 "/1/2/" < "/15/"，会让二级部门压过
+    # 根部门——id 一到两位数就会真的踩到，结果和"往上走一级"的意图正好相反。
+    candidates.sort(key=lambda item: (depth(item[1]), item[0]))
     return candidates[0][0]
 
 

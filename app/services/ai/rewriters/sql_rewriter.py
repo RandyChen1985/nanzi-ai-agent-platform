@@ -389,7 +389,15 @@ class SQLRewriter:
             val = context.get(key)
 
             if isinstance(val, (list, tuple, set, frozenset)):
-                temp_cond = temp_cond.replace(f"{{user.{key}}}", self._render_sql_value_list(val))
+                rendered = self._render_sql_value_list(val)
+                # 列表也要容错外层引号：管理员可能照着标量的写法写成
+                # `dept_code IN ('{user.dept_codes}')`，直接替换会得到
+                # `IN (''A', 'B'')` 这种语法错误，排查起来极费劲。
+                quoted_list = f"'{{user.{key}}}'"
+                if quoted_list in temp_cond:
+                    temp_cond = temp_cond.replace(quoted_list, rendered)
+                else:
+                    temp_cond = temp_cond.replace(f"{{user.{key}}}", rendered)
             elif isinstance(val, str):
                 pattern_with_quotes = f"'{{user.{key}}}'"
                 safe_val = self._quote_sql_string_value(val)

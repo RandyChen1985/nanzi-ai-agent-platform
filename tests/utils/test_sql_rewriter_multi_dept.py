@@ -69,3 +69,24 @@ def test_subtree_list_works_in_in_clause():
 def test_list_with_blank_entries_is_filtered():
     sql = _rewrite("dept_code IN ({user.dept_codes})", {"dept_codes": ["EAST", "", "  ", "WEST"]})
     assert "IN ('EAST', 'WEST')" in sql
+
+
+def test_list_variable_tolerates_outer_quotes():
+    """管理员照标量写法写 `IN ('{user.dept_codes}')` 时不能拼出 ''A', 'B''。"""
+    from app.services.ai.rewriters.sql_rewriter import SQLRewriter
+
+    rendered = SQLRewriter()._replace_user_variables(
+        "dept_code IN ('{user.dept_codes}')", {"dept_codes": ["A", "B"]}
+    )
+
+    assert rendered == "dept_code IN ('A', 'B')"
+
+
+def test_empty_list_inside_quotes_still_becomes_null():
+    from app.services.ai.rewriters.sql_rewriter import SQLRewriter
+
+    rendered = SQLRewriter()._replace_user_variables(
+        "dept_code IN ('{user.dept_codes}')", {"dept_codes": []}
+    )
+
+    assert rendered == "dept_code IN (NULL)"

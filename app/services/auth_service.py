@@ -872,8 +872,10 @@ class AuthService:
 
         # 用库里的最新身份字段覆盖缓存，保留会话自有字段
         refreshed = AuthService._user_model_to_data(user)
-        if refreshed_label:
-            refreshed["dept_name"] = refreshed_label
+        # 与 `_attach_department_label` 保持一致：没有部门也落键（空串）。
+        # 注：此处写回用的是 HSET，它只覆盖给出的字段、不删未提及的字段，所以即便不落键
+        # 也不会造成缓存穿透；落键是为了让两支产出逻辑写法一致，避免以后改成整键重写时踩坑。
+        refreshed["dept_name"] = refreshed_label or ""
         for key in ("session_type", "agent_id", "created_by_user_id"):
             value = cached_user.get(key)
             if value is not None:

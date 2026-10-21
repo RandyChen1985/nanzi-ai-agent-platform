@@ -310,6 +310,9 @@ async def list_department_members(
     dept_names_map: dict[int, List[str]] = {}
     primary_name_map: dict[int, str] = {}
     in_scope_primary: set[int] = set()
+    # 直属本部门的用户：子树视图下混着子部门成员，而「设为主部门」「移出」都只对
+    # 直属成员成立（接口按当前 dept.id 校验）。前端据此决定是否给出这两个操作。
+    direct_user_ids: set[int] = set()
     if user_ids:
         rel_rows = await db.execute(
             select(
@@ -325,6 +328,8 @@ async def list_department_members(
         for uid, name, rel_dept_id, is_primary in rel_rows.all():
             uid = int(uid)
             dept_names_map.setdefault(uid, []).append(name)
+            if int(rel_dept_id) == int(dept.id):
+                direct_user_ids.add(uid)
             if int(is_primary or 0) == 1:
                 primary_name_map[uid] = name
                 if int(rel_dept_id) in dept_ids:
@@ -346,6 +351,8 @@ async def list_department_members(
             "status": user.status,
             "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
             "is_primary": is_primary,
+            # 是否直属当前部门（而非仅属于某个子部门）：决定「设为主部门」「移出」是否可用
+            "is_direct": uid in direct_user_ids if include_sub else True,
             "primary_dept_name": primary_name_map.get(uid, ""),
             "dept_names": dept_names_map.get(uid, []),
         })

@@ -136,8 +136,11 @@
             </td>
             <td class="px-3 py-2 text-right">
               <div class="inline-flex flex-wrap items-center justify-end gap-1">
+                <!-- 「设为主部门」「移出」只对**直属本部门**的成员成立：接口按当前部门 id
+                     校验归属，对子树里那些仅属于子部门的人调用会被后端拒绝，或者移出 0 行
+                     却因为「含子部门」还留在列表里。所以这两个操作在这里就不给出来。 -->
                 <button
-                  v-if="canEdit && !member.is_primary"
+                  v-if="canEdit && member.is_direct && !member.is_primary"
                   type="button"
                   class="rounded px-1.5 py-0.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-100"
                   :disabled="acting !== null"
@@ -145,7 +148,7 @@
                   @click="setPrimary(member)"
                 >设为主部门</button>
                 <button
-                  v-if="canEdit"
+                  v-if="canEdit && member.is_direct"
                   type="button"
                   class="rounded px-1.5 py-0.5 text-[11px] font-bold text-red-500 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-500/10"
                   :disabled="acting !== null"
@@ -592,7 +595,21 @@ const toggleStatus = async (member: any) => {
 
 const requestRemove = (ids: number[]) => {
   if (!props.deptId || !ids.length) return
-  pendingRemoveIds.value = Array.from(new Set(ids))
+  // 「含子部门」视图里勾进来的人可能只是子部门成员：移出接口按当前部门 id 校验，
+  // 对他们只会移出 0 行，还会因为列表仍包含子树而"看起来没反应"。先过滤掉并说明。
+  const directIds = Array.from(new Set(ids)).filter((id) => {
+    const member = members.value.find((item: any) => item.id === id)
+    return member ? member.is_direct !== false : true
+  })
+  const blocked = new Set(ids).size - directIds.length
+  if (!directIds.length) {
+    showToast('选中的成员都属于子部门，请到对应子部门里移出', 'info')
+    return
+  }
+  if (blocked > 0) {
+    showToast(`已跳过 ${blocked} 位属于子部门的成员，请到对应子部门操作`, 'info')
+  }
+  pendingRemoveIds.value = directIds
   showRemoveConfirm.value = true
 }
 
