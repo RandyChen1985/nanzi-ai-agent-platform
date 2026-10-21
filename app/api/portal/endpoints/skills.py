@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.upload_limits import SKILL_PACKAGE_MAX_BYTES, SKILL_PACKAGE_MAX_MB
 from app.core.dependencies import require_api_key, require_permission
 from app.core.orm import get_db_session
 from app.services.ai.agent_manager import AgentManagerService
@@ -811,9 +812,10 @@ async def delete_entire_skill(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-#: 压缩包解压后的总量与文件数上限。上传本身已限 20MB，但高压缩比归档（zip bomb）
+#: 压缩包解压后的总量与文件数上限。上传本身已限 100MB，但高压缩比归档（zip bomb）
 #: 可以把它膨胀成数 GB——个人技能上传是普通用户可用的入口，因此必须卡住解压侧。
-MAX_EXTRACTED_BYTES = 200 * 1024 * 1024
+#: 按上传上限的 5 倍留余量：正常技能包里压缩率本来就高，卡太紧会误伤。
+MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
 MAX_EXTRACTED_FILES = 2000
 
 
@@ -1040,15 +1042,18 @@ async def upload_skill_archive(
     user: Dict = Depends(skill_platform_admin)
 ):
     """
-    上传 zip/tar 压缩包并解压到指定技能的子目录下，单文件上限 20MB
+    上传 zip/tar 压缩包并解压到指定技能的子目录下，单个压缩包上限 100MB
     """
     try:
         sub_dir = folder if folder else ""
         target_dir = validate_secure_skill_path(skill_id, sub_dir)
         
         content = await file.read()
-        if len(content) > 20 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="上传的压缩文件大小不能超出 20MB 限制")
+        if len(content) > SKILL_PACKAGE_MAX_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"上传的压缩文件大小不能超出 {SKILL_PACKAGE_MAX_MB}MB 限制",
+            )
             
         file_name = file.filename if file.filename else "archive.zip"
         safe_extract_archive(content, file_name, target_dir)
@@ -1086,8 +1091,11 @@ async def import_skill_package(
             raise HTTPException(status_code=400, detail=f"技能 {skill_id} 已存在，请开启 overwrite 以覆盖导入")
             
         content = await file.read()
-        if len(content) > 20 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="导入文件大小超出 20MB 限制")
+        if len(content) > SKILL_PACKAGE_MAX_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"导入文件大小超出 {SKILL_PACKAGE_MAX_MB}MB 限制",
+            )
             
         atomic_import_skill_package(content, filename, skill_dir)
             

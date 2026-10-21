@@ -123,20 +123,42 @@ def test_upload_archive_tar_success(mock_skills_dir):
     assert (skill_dir / "scripts" / "data.txt").read_text(encoding="utf-8") == "hello tar"
 
 
-def test_upload_archive_size_limit(mock_skills_dir):
-    """测试文件大小超出 20MB 限制时直接拦截"""
+def test_skill_package_limit_is_100mb():
+    """技能包上限从 20MB 放宽到 100MB。
+
+    带脚本、模板与少量资源的技能包很轻松就几十 MB；20MB 的老限制逼着作者把
+    资源拆出去，反而更乱。上限只在常量里定义一次，两个端点共用。
+    """
+    assert skills.SKILL_PACKAGE_MAX_MB == 100
+    assert skills.SKILL_PACKAGE_MAX_BYTES == 100 * 1024 * 1024
+
+
+def test_personal_skill_endpoints_share_the_same_limit():
+    """个人技能与平台技能必须同一个上限，否则同一份包一边能传一边不能。"""
+    from app.api.portal.endpoints import personal_skills
+
+    assert personal_skills.SKILL_PACKAGE_MAX_BYTES == skills.SKILL_PACKAGE_MAX_BYTES
+
+
+def test_upload_archive_size_limit(mock_skills_dir, monkeypatch):
+    """测试文件大小超出上限时直接拦截。
+
+    真造 100MB 数据只会拖慢测试，这里把常量缩小到 1KB 测边界；文案按
+    `SKILL_PACKAGE_MAX_MB` 渲染，所以断言里带的是 100MB。
+    """
+    monkeypatch.setattr(skills, "SKILL_PACKAGE_MAX_BYTES", 1024)
     user = {"user_name": "admin", "role": "admin"}
     skill_dir = mock_skills_dir / "test-limit-skill"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
-    
-    # 大文件内容：20MB + 1字节
-    large_data = b"x" * (20 * 1024 * 1024 + 1)
+
+    # 大文件内容：超过被缩小的上限 1 字节
+    large_data = b"x" * 1025
     upload = UploadFile(
         filename="large.zip",
         file=BytesIO(large_data),
     )
-    
+
     with pytest.raises(HTTPException) as exc_info:
         run(
             skills.upload_skill_archive(
@@ -147,7 +169,7 @@ def test_upload_archive_size_limit(mock_skills_dir):
             )
         )
     assert exc_info.value.status_code == 400
-    assert "超出 20MB 限制" in exc_info.value.detail
+    assert "超出 100MB 限制" in exc_info.value.detail
 
 
 def test_zip_slip_path_traversal_protection(mock_skills_dir):

@@ -1525,7 +1525,27 @@ const handleFileUpload = async (event: Event) => {
   await uploadFiles(files)
 }
 
-// 物理上传执行 (单文件限 10MB / 压缩包限 20MB)
+// 技能包（zip / tar.gz / tgz）上限：与后端 app/core/upload_limits.py 对齐。
+// 只在这里定义一次——弹窗文案、点选、拖拽、批量预检都引用它，改上限不会漏改。
+const SKILL_PACKAGE_MAX_MB = 100
+const SKILL_PACKAGE_MAX_BYTES = SKILL_PACKAGE_MAX_MB * 1024 * 1024
+const ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.gz', '.tgz', '.bz2']
+
+/** 校验待导入技能包：格式与大小。点选与拖拽共用，避免两条路径规则漂移。 */
+const validateArchiveFile = (file: File): boolean => {
+  const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
+  if (!ARCHIVE_EXTENSIONS.includes(ext)) {
+    showToast('仅支持 .zip, .tar, .tar.gz, .tgz 等压缩包格式', 'warning')
+    return false
+  }
+  if (file.size > SKILL_PACKAGE_MAX_BYTES) {
+    showToast(`导入技能包不能超过 ${SKILL_PACKAGE_MAX_MB}MB`, 'warning')
+    return false
+  }
+  return true
+}
+
+// 物理上传执行 (单文件限 10MB / 压缩包限 100MB)
 const uploadFiles = async (files: FileList) => {
   uploading.value = true
   const failed: string[] = []
@@ -1533,9 +1553,9 @@ const uploadFiles = async (files: FileList) => {
   try {
     for (const file of Array.from(files)) {
       const isArchive = uploadType.value === 'archive'
-      const limit = isArchive ? 20 * 1024 * 1024 : 10 * 1024 * 1024
+      const limit = isArchive ? SKILL_PACKAGE_MAX_BYTES : 10 * 1024 * 1024
       if (file.size > limit) {
-        failed.push(`${file.name}（超过 ${isArchive ? '20MB' : '10MB'} 限制）`)
+        failed.push(`${file.name}（超过 ${isArchive ? `${SKILL_PACKAGE_MAX_MB}MB` : '10MB'} 限制）`)
         continue
       }
 
@@ -1796,15 +1816,7 @@ const handleImportFileChange = (e: Event) => {
   if (files && files.length > 0) {
     const file = files[0]
     if (!file) return
-    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
-    if (!['.zip', '.tar', '.gz', '.tgz', '.bz2'].includes(ext)) {
-      showToast('仅支持 .zip, .tar, .tar.gz, .tgz 等压缩包格式', 'warning')
-      return
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      showToast('导入技能包不能超过 20MB', 'warning')
-      return
-    }
+    if (!validateArchiveFile(file)) return
     importFile.value = file
   }
 }
@@ -1826,15 +1838,7 @@ const handleImportDrop = (e: DragEvent) => {
   if (files && files.length > 0) {
     const file = files[0]
     if (!file) return
-    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
-    if (!['.zip', '.tar', '.gz', '.tgz', '.bz2'].includes(ext)) {
-      showToast('仅支持 .zip, .tar, .tar.gz, .tgz 等压缩包格式', 'warning')
-      return
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      showToast('导入技能包不能超过 20MB', 'warning')
-      return
-    }
+    if (!validateArchiveFile(file)) return
     importFile.value = file
   }
 }
@@ -3566,7 +3570,7 @@ onUnmounted(() => {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
             <span class="text-xs text-gray-600 font-bold">拖拽压缩包至此，或点击选择文件</span>
-            <span class="text-[10px] text-gray-400 mt-1.5">仅支持 .zip, .tar, .tar.gz, .tgz 等压缩文件，最大 20MB</span>
+            <span class="text-[10px] text-gray-400 mt-1.5">仅支持 .zip, .tar, .tar.gz, .tgz 等压缩文件，最大 {{ SKILL_PACKAGE_MAX_MB }}MB</span>
           </template>
         
           <template v-else>

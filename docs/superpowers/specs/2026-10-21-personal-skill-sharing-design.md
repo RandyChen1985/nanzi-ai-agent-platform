@@ -114,7 +114,7 @@ PENDING --withdraw（仅分享人）-> WITHDRAWN responded_at，删除快照
 
 ### 7.2 生成（分享时）
 
-1. `validate_snapshot_tree(source_path)`：必须有 `SKILL.md`；禁止隐藏文件、符号链接；单文件 ≤20MB、总大小 ≤20MB
+1. `validate_snapshot_tree(source_path)`：必须有 `SKILL.md`；禁止隐藏文件、符号链接；单文件 ≤100MB、总大小 ≤500MB
 2. 复制到 `share_root/.{share_id}-{random}/` 临时目录
 3. 对临时目录再校验一次，sha256/文件数/总大小与源一致，否则视为复制期间被修改，失败退出
 4. `os.replace` 原子改名为 `share_root/{share_id}`
@@ -295,7 +295,7 @@ PENDING --withdraw（仅分享人）-> WITHDRAWN responded_at，删除快照
 ### 13.1 后端 `tests/api/test_personal_skill_shares.py`
 
 1. 分享成功后：记录为 PENDING、快照目录存在、接收人收到通知
-2. 缺 `SKILL.md`、含隐藏文件、含符号链接、超过 20MB → 400
+2. 缺 `SKILL.md`、含隐藏文件、含符号链接、超过上限（单文件 100MB / 总量 500MB）→ 400
 3. 分享给自己 / 接收人停用 / 接收人不存在 → 400
 4. 重复分享同一 PENDING → 记录数不变、附言与 `created_at` 更新、快照哈希变化
 5. 拒绝后再次分享 → 新建第二条记录
@@ -344,7 +344,7 @@ PENDING --withdraw（仅分享人）-> WITHDRAWN responded_at，删除快照
 
 ## 15. 风险与后续
 
-- **快照磁盘占用**：终态即删，仅 PENDING 记录占空间；单人单技能单接收人上限 20MB，正常规模可控
+- **快照磁盘占用**：终态即删，仅 PENDING 记录占空间；单人单技能单接收人上限 500MB，正常规模可控
 - **通知重复**：刷新 PENDING 会再发一条通知，接收人可能看到多条同技能邀请，可接受（内容可能已更新）
 - **并发接受**：同一 share 被并发接受两次，依靠 `status='PENDING'` 条件更新（`UPDATE ... WHERE status='PENDING'`）保证只有一次成功
 - **删除用户**：`skill_shares` 不建物理外键，`delete_user` 显式清两个方向的记录并先回收 PENDING 快照目录；

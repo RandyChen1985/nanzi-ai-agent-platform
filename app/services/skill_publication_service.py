@@ -18,6 +18,7 @@ from sqlalchemy import desc, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.upload_limits import SKILL_PACKAGE_MAX_BYTES, SKILL_PACKAGE_MAX_MB
 from app.models.permission import ResourcePermission, UserRoleRelation
 from app.models.skill_publication import SkillPublication, SkillPublicationVersion
 from app.models.user import User
@@ -31,8 +32,11 @@ from app.utils.skill_metadata import parse_skill_frontmatter
 
 logger = logging.getLogger(__name__)
 
-MAX_FILE_SIZE = 20 * 1024 * 1024
-MAX_SNAPSHOT_SIZE = 20 * 1024 * 1024
+# 发布/提交审核要对整个技能目录做快照：单文件上限跟导入包一致，
+# 总量按解压后 5 倍余量——技能包压缩比普遍很高，按压缩包大小卡会误伤。
+MAX_FILE_SIZE = SKILL_PACKAGE_MAX_BYTES
+MAX_SNAPSHOT_SIZE = 5 * SKILL_PACKAGE_MAX_BYTES
+MAX_SNAPSHOT_MB = MAX_SNAPSHOT_SIZE // (1024 * 1024)
 
 
 @dataclass(frozen=True)
@@ -135,10 +139,10 @@ def validate_snapshot_tree(root: str) -> SnapshotStats:
     for path in files:
         size = path.stat().st_size
         if size > MAX_FILE_SIZE:
-            raise ValueError("skill file exceeds 20MB")
+            raise ValueError(f"skill file exceeds {SKILL_PACKAGE_MAX_MB}MB")
         total_size += size
         if total_size > MAX_SNAPSHOT_SIZE:
-            raise ValueError("skill snapshot exceeds 20MB")
+            raise ValueError(f"skill snapshot exceeds {MAX_SNAPSHOT_MB}MB")
         relative = path.relative_to(root_path).as_posix().encode("utf-8")
         hasher.update(relative)
         hasher.update(b"\0")
