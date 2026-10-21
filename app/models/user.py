@@ -20,8 +20,15 @@ class User(Base):
     real_name = Column(String(50), nullable=True)
     email = Column(String(254), nullable=True, index=True, comment='邮箱（小写归一化存储，全局唯一；NULL=未填写）')
     role = Column(String(20), default="user") # admin, user
-    dept_code = Column(String(50), nullable=True, comment='部门代码')
-    org_path = Column(String(255), nullable=True, comment='组织结构全路径 (例如: yovole/sh/dc1)')
+    # 部门两列都是**主部门派生快照**，唯一真源是 ai_agent_user_departments / ai_agent_departments。
+    # 只能由 DepartmentService 维护；旧注释里的 "yovole/sh/dc1" 是早期外部组织树的遗留说明，
+    # 与实际值（id 物化路径 /1/2/）不符，已纠正——注释写错会让人（和模型）误解字段语义。
+    dept_code = Column(String(50), nullable=True, comment='主部门 code 快照（业务键，由主部门派生）')
+    org_path = Column(
+        String(255),
+        nullable=True,
+        comment='主部门编码路径快照（如 /main/dev/；由主部门派生，可直接对外展示）',
+    )
     extra_data = Column(Text, nullable=True, comment='预留扩展字段 (存储 JSON 格式信息)')
     api_key_encrypted = Column(Text, nullable=True)
     api_key_hash = Column(String(64), index=True, nullable=True)

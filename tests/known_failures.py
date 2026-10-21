@@ -79,6 +79,37 @@ def missing_from_collection(known: dict[str, str], collected: set[str]) -> list[
     return sorted(nodeid for nodeid in known if nodeid not in collected)
 
 
+def stale_entries(
+    known: dict[str, str],
+    collected: set[str],
+    *,
+    root: Path | None = None,
+) -> list[str]:
+    """返回清单里真正陈旧的条目（测试被删除或改名）。
+
+    与 :func:`missing_from_collection` 的区别在于「跑子集」不算陈旧：
+    只收集 ``tests/frontend`` 时，backend 的条目天然找不到，那是作用域之外，
+    每个子集运行都报一次 63 条噪音只会让人把警告当背景音。判定规则：
+
+    - 条目所属文件不存在 → 陈旧（文件被删了）；
+    - 文件存在、但该文件里一个用例都没被收集 → 不算（多半只跑了子集）；
+    - 文件里的用例被收集到了、唯独缺这一条 → 陈旧（改名或删除）。
+    """
+    base = root or DEFAULT_PATH.parent.parent
+    collected_files = {nodeid.split("::", 1)[0] for nodeid in collected}
+
+    gone: list[str] = []
+    for nodeid in known:
+        if nodeid in collected:
+            continue
+        file_part = nodeid.split("::", 1)[0]
+        if not (base / file_part).exists():
+            gone.append(nodeid)
+        elif file_part in collected_files:
+            gone.append(nodeid)
+    return sorted(gone)
+
+
 def mark_known_failures(items, known: dict[str, str], *, strict: bool) -> int:
     """给命中清单的用例打上 ``xfail`` 标记，返回命中数量。
 

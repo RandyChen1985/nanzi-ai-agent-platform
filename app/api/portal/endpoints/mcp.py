@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from typing import List, Optional, Dict, Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, update, func, case, or_
+from sqlalchemy import select, delete, update, func, case, or_, desc
 import uuid
 import json
 import time
@@ -23,6 +23,20 @@ from app.services.mcp.mcp_auth_policy import (
     mcp_auth_headers_configured,
     mcp_auth_headers_summary,
     resolve_mcp_auth_headers,
+)
+from app.services.mcp_share_service import (
+    McpShareConflictError,
+    McpShareNotFoundError,
+    McpSharePermissionError,
+    accept_share as accept_mcp_share,
+    annotate_personal_servers,
+    list_received_shares as list_received_mcp_shares,
+    list_sent_shares as list_sent_mcp_shares,
+    reject_share as reject_mcp_share,
+    search_share_targets,
+    share_menu_counts as mcp_share_menu_counts,
+    share_server as share_mcp_server,
+    withdraw_share as withdraw_mcp_share,
 )
 from app.services.mcp.echo_server import (
     ECHO_SERVER_ID,
@@ -95,6 +109,9 @@ class McpServerResponse(McpServerBase):
     tool_count: int = 0
     published_tool_count: int = 0
     stale_tool_count: int = 0
+    # 分享血缘：这条服务是不是从别人的分享安装来的、以及我把它分享出去过几次
+    shared_from: Optional[Dict[str, Any]] = None
+    share_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -430,7 +447,12 @@ async def list_mcp_servers(
 
     result = await db.execute(stmt)
     servers = result.scalars().all()
-    
+
+    # 「我的 MCP」额外带上分享血缘：谁分享给我的、我分享出去过几次
+    annotations: Dict[str, Any] = {"shared_from": {}, "share_counts": {}}
+    if scope == "personal":
+        annotations = await annotate_personal_servers(session=db, user=user)
+
     res = []
     for s in servers:
         # Total count
@@ -451,6 +473,8 @@ async def list_mcp_servers(
         pub_count = (await db.execute(pub_stmt)).scalar() or 0
         
         item = McpServerResponse.model_validate(s)
+        item.share_count = int(annotations["share_counts"].get(s.id, 0))
+        item.shared_from = annotations["shared_from"].get(s.id)
         item.auth_headers_configured = mcp_auth_headers_configured(s)
         item.authorization_configured, item.masked_auth_headers = mcp_auth_headers_summary(s)
         item.tool_count = total_count
@@ -1146,6 +1170,152 @@ async def get_mcp_server_outbound_logs(
     }
 
 
+@router.get("/outbound-summary/mine")
+async def get_my_mcp_outbound_summary(
+    range: str = "7d",
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+) -> Dict[str, Any]:
+    """「我的 MCP」调用概览：只统计本人名下的个人 MCP。
+
+    全平台审计（``/outbound-logs``）只给管理员，因为里面混着别人的调用明细；
+    普通用户需要的是「我的服务被调了多少次、哪个工具最热门、失败率多少」，
+    这部分只按 ``user_id = 自己`` 聚合，不返回任何他人调用的明细行。
+    """
+    user_id = _get_user_id(user)
+    window = range if range in {"24h", "7d", "30d"} else "7d"
+
+    server_rows = (
+        await db.execute(
+            select(McpServer.id, McpServer.server_name).where(
+                McpServer.scope == "personal",
+                McpServer.user_id == user_id,
+            )
+        )
+    ).all()
+    server_names = {row.id: row.server_name for row in server_rows}
+    server_ids = list(server_names)
+
+    empty_summary = {
+        "total_calls": 0,
+        "success_calls": 0,
+        "failed_calls": 0,
+        "success_rate": 100.0,
+        "avg_latency_ms": 0.0,
+    }
+    if not server_ids:
+        return {
+            "range": window,
+            "summary": empty_summary,
+            "servers": [],
+            "tools": [],
+            "daily": [],
+        }
+
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+    if window == "24h":
+        start_time = now - timedelta(hours=24)
+    elif window == "30d":
+        start_time = now - timedelta(days=30)
+    else:
+        start_time = now - timedelta(days=7)
+
+    scope_filters = (
+        McpOutboundAuditLog.server_id.in_(server_ids),
+        McpOutboundAuditLog.created_at >= start_time,
+    )
+
+    summary_row = (
+        await db.execute(
+            select(
+                func.count().label("total"),
+                func.sum(case((McpOutboundAuditLog.status == "success", 1), else_=0)).label("success_count"),
+                func.sum(case((McpOutboundAuditLog.status != "success", 1), else_=0)).label("failed_count"),
+                func.avg(McpOutboundAuditLog.latency_ms).label("avg_latency"),
+            ).where(*scope_filters)
+        )
+    ).one()
+
+    total_calls = int(summary_row.total or 0)
+    success_calls = int(summary_row.success_count or 0)
+    failed_calls = int(summary_row.failed_count or 0)
+    summary = {
+        "total_calls": total_calls,
+        "success_calls": success_calls,
+        "failed_calls": failed_calls,
+        "success_rate": round(success_calls / total_calls * 100, 1) if total_calls else 100.0,
+        "avg_latency_ms": round(float(summary_row.avg_latency or 0), 1),
+    }
+
+    total_label = func.count().label("total_calls")
+    per_server_rows = (
+        await db.execute(
+            select(
+                McpOutboundAuditLog.server_id,
+                total_label,
+                func.sum(case((McpOutboundAuditLog.status != "success", 1), else_=0)).label("failed_calls"),
+                func.max(McpOutboundAuditLog.created_at).label("last_called_at"),
+            )
+            .where(*scope_filters)
+            .group_by(McpOutboundAuditLog.server_id)
+            .order_by(desc(total_label))
+            .limit(5)
+        )
+    ).all()
+    servers = [
+        {
+            "server_id": row.server_id,
+            "server_name": server_names.get(row.server_id) or "",
+            "total_calls": int(row.total_calls or 0),
+            "failed_calls": int(row.failed_calls or 0),
+            "last_called_at": row.last_called_at.isoformat() if row.last_called_at else None,
+        }
+        for row in per_server_rows
+    ]
+
+    tool_label = func.count().label("total_calls")
+    per_tool_rows = (
+        await db.execute(
+            select(McpOutboundAuditLog.tool_name, tool_label)
+            .where(*scope_filters)
+            .group_by(McpOutboundAuditLog.tool_name)
+            .order_by(desc(tool_label))
+            .limit(5)
+        )
+    ).all()
+    tools = [
+        {"tool_name": row.tool_name, "total_calls": int(row.total_calls or 0)}
+        for row in per_tool_rows
+    ]
+
+    day_label = func.date(McpOutboundAuditLog.created_at).label("day")
+    per_day_rows = (
+        await db.execute(
+            select(day_label, total_label)
+            .where(*scope_filters)
+            .group_by(day_label)
+            .order_by(day_label)
+        )
+    ).all()
+    daily = [
+        {
+            "date": str(row.day),
+            "total_calls": int(row.total_calls or 0),
+        }
+        for row in per_day_rows
+    ]
+
+    return {
+        "range": window,
+        "summary": summary,
+        "servers": servers,
+        "tools": tools,
+        "daily": daily,
+    }
+
+
 @router.get("/outbound-logs")
 async def get_all_mcp_outbound_logs(
     server_id: Optional[str] = None,
@@ -1277,3 +1447,166 @@ async def get_all_mcp_outbound_logs(
             "avg_latency_ms": avg_latency,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# 个人 MCP 分享：搜索接收人 / 发送 / 收到的分享 / 我的分享
+# ---------------------------------------------------------------------------
+
+def _share_http_exception(exc: Exception) -> Optional[HTTPException]:
+    """把域异常映射成 HTTP 错误；不是分享域异常时返回 None 交给调用方兜底。"""
+    if isinstance(exc, McpShareNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, McpSharePermissionError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, McpShareConflictError):
+        return HTTPException(status_code=409, detail=str(exc))
+    return None
+
+
+def _raise_if_share_error(exc: Exception) -> None:
+    mapped = _share_http_exception(exc)
+    if mapped is not None:
+        raise mapped
+
+
+class McpServerShareRequest(BaseModel):
+    target_user_ids: List[int] = Field(default_factory=list)
+    message: Optional[str] = None
+    # 默认携带凭证：私有 MCP 没有 Token 就是连不上的空壳
+    include_credentials: bool = True
+
+
+class McpShareAcceptRequest(BaseModel):
+    """安装向导里允许用户改的三项；不传则全部沿用分享快照。"""
+
+    server_name: Optional[str] = None
+    remark: Optional[str] = None
+    sse_url: Optional[str] = None
+
+
+@router.get("/share-targets", summary="搜索可分享的同事")
+async def list_mcp_share_targets(
+    keyword: str = Query(""),
+    limit: int = Query(20),
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    targets = await search_share_targets(
+        db, user=user, keyword=keyword, limit=max(1, min(limit, 50))
+    )
+    return {"status": "success", "data": targets}
+
+
+@router.post("/servers/{server_id}/shares", summary="把个人 MCP 分享给指定同事")
+async def create_mcp_server_share(
+    server_id: str,
+    data: McpServerShareRequest,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    try:
+        result = await share_mcp_server(
+            db,
+            user=user,
+            server_id=server_id,
+            target_user_ids=data.target_user_ids,
+            message=data.message,
+            include_credentials=data.include_credentials,
+        )
+        return {"status": "success", "data": result}
+    except Exception as exc:
+        _raise_if_share_error(exc)
+        logger.error("[MCP] 分享失败 server=%s: %s", server_id, exc)
+        raise HTTPException(status_code=500, detail="分享 MCP 失败")
+
+
+@router.get("/shares/summary", summary="分享角标计数")
+async def get_mcp_share_summary(
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    data = await mcp_share_menu_counts(db, user=user)
+    return {"status": "success", "data": data}
+
+
+@router.get("/shares/sent", summary="我发出的 MCP 分享")
+async def list_mcp_sent_shares(
+    status: Optional[str] = Query(None),
+    limit: int = Query(100),
+    offset: int = Query(0),
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    data = await list_sent_mcp_shares(
+        db, user=user, status=status, limit=limit, offset=offset
+    )
+    return {"status": "success", "data": data}
+
+
+@router.get("/shares/received", summary="我收到的 MCP 分享")
+async def list_mcp_received_shares(
+    status: str = Query("PENDING"),
+    limit: int = Query(100),
+    offset: int = Query(0),
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    data = await list_received_mcp_shares(
+        db, user=user, status=status, limit=limit, offset=offset
+    )
+    return {"status": "success", "data": data}
+
+
+@router.post("/shares/received/{share_id}/accept", summary="接受 MCP 分享并安装到我的 MCP")
+async def accept_mcp_received_share(
+    share_id: str,
+    data: Optional[McpShareAcceptRequest] = None,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    overrides = data or McpShareAcceptRequest()
+    try:
+        result = await accept_mcp_share(
+            db,
+            user=user,
+            share_id=share_id,
+            server_name=overrides.server_name,
+            remark=overrides.remark,
+            sse_url=overrides.sse_url,
+        )
+        return {"status": "success", "data": result}
+    except Exception as exc:
+        _raise_if_share_error(exc)
+        logger.error("[MCP] 接受分享失败 share=%s: %s", share_id, exc)
+        raise HTTPException(status_code=500, detail="接受 MCP 分享失败")
+
+
+@router.post("/shares/received/{share_id}/reject", summary="拒绝 MCP 分享")
+async def reject_mcp_received_share(
+    share_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    try:
+        data = await reject_mcp_share(db, user=user, share_id=share_id)
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_if_share_error(exc)
+        logger.error("[MCP] 拒绝分享失败 share=%s: %s", share_id, exc)
+        raise HTTPException(status_code=500, detail="拒绝 MCP 分享失败")
+
+
+@router.delete("/shares/sent/{share_id}", summary="撤回 MCP 分享")
+async def withdraw_mcp_sent_share(
+    share_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    try:
+        data = await withdraw_mcp_share(db, user=user, share_id=share_id)
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_if_share_error(exc)
+        logger.error("[MCP] 撤回分享失败 share=%s: %s", share_id, exc)
+        raise HTTPException(status_code=500, detail="撤回 MCP 分享失败")

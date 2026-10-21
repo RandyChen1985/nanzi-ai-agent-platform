@@ -138,7 +138,37 @@
               <tr>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">角色</th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">描述</th>
-                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">用户数</th>
+                <th
+                  class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
+                  :aria-sort="userCountAriaSort"
+                >
+                  <!-- 用户数可点排序：首次点击倒序（人多→人少），再点切升序 -->
+                  <button
+                    type="button"
+                    @click="toggleUserCountSort"
+                    class="inline-flex items-center gap-1 uppercase tracking-wider transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 rounded"
+                    :class="sortBy === 'user_count' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-800'"
+                    :title="userCountSortTitle"
+                  >
+                    用户数
+                    <span class="inline-flex flex-col items-center leading-none -space-y-0.5" aria-hidden="true">
+                      <svg
+                        class="w-3 h-3"
+                        :class="sortBy === 'user_count' && sortOrder === 'asc' ? 'text-blue-600' : 'text-gray-300'"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 15l7-7 7 7" />
+                      </svg>
+                      <svg
+                        class="w-3 h-3"
+                        :class="sortBy === 'user_count' && sortOrder === 'desc' ? 'text-blue-600' : 'text-gray-300'"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </span>
+                  </button>
+                </th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">创建时间</th>
                 <th class="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
               </tr>
@@ -172,9 +202,18 @@
                   {{ role.description || '—' }}
                 </td>
                 <td class="px-5 py-4 whitespace-nowrap">
-                  <span class="inline-flex items-center bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full text-xs font-medium">
+                  <!-- 用户数是入口：点开右侧抽屉就地看成员、移出、启停 -->
+                  <button
+                    type="button"
+                    @click="openMembersDrawer(role)"
+                    class="inline-flex items-center gap-1 bg-gray-100 hover:bg-blue-50 hover:text-blue-700 text-gray-700 px-2 py-0.5 rounded-full text-xs font-medium transition-colors"
+                    :title="`查看并管理「${role.name}」的成员`"
+                  >
                     {{ role.user_count }}
-                  </span>
+                    <svg class="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
                 </td>
                 <td class="px-5 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
                   {{ formatDate(role.created_at) }}
@@ -238,6 +277,32 @@
 
       <!-- Mobile Card List -->
       <div v-else class="space-y-3">
+        <!-- 移动端没有表头，用同一份排序状态提供等价入口 -->
+        <div class="flex items-center justify-between gap-3 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+          <span class="text-xs text-gray-500">排序</span>
+          <button
+            type="button"
+            @click="toggleUserCountSort"
+            class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-semibold transition-colors"
+            :class="sortBy === 'user_count' ? 'text-blue-600 bg-blue-50' : 'text-gray-600 hover:bg-gray-50'"
+            :title="userCountSortTitle"
+          >
+            用户数
+            <span v-if="sortBy === 'user_count'" class="font-normal">
+              {{ sortOrder === 'desc' ? '从多到少' : '从少到多' }}
+            </span>
+            <svg
+              v-if="sortBy === 'user_count' && sortOrder === 'asc'"
+              class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 15l7-7 7 7" />
+            </svg>
+            <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
+
         <div
           v-for="role in roles"
           :key="role.id"
@@ -261,9 +326,14 @@
                 <p class="text-xs font-mono text-gray-500 mt-0.5">{{ role.code }}</p>
               </div>
             </div>
-            <span class="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0">
+            <button
+              type="button"
+              @click="openMembersDrawer(role)"
+              class="bg-gray-100 hover:bg-blue-50 hover:text-blue-700 text-gray-700 px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0"
+              :title="`查看并管理「${role.name}」的成员`"
+            >
               {{ role.user_count }} 用户
-            </span>
+            </button>
           </div>
 
           <p class="mt-3 text-xs text-gray-500 line-clamp-2 leading-relaxed">
@@ -1097,6 +1167,14 @@
       </div>
     </Teleport>
 
+    <!-- Role Members Drawer：点「用户数」就地看成员并做单点操作 -->
+    <RoleMembersDrawer
+      v-model="showMembersDrawer"
+      :role="membersRole"
+      @changed="fetchRoles"
+      @add-members="handleAddMembersFromDrawer"
+    />
+
   </div>
 </template>
 
@@ -1115,6 +1193,7 @@ import {
 } from '../utils/permissionLists'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
 import MenuAccessTree from '../components/user/MenuAccessTree.vue'
+import RoleMembersDrawer from '../components/system/RoleMembersDrawer.vue'
 import ForbiddenResourceTabs from '../components/system/ForbiddenResourceTabs.vue'
 import AgentRestrictionDialog from '../components/system/AgentRestrictionDialog.vue'
 import { parseForbiddenCommands } from "../utils/forbiddenCommands"
@@ -1141,6 +1220,26 @@ const { hasPermission } = useUser()
 const canEditRole = computed(() => hasPermission('element:role:edit'))
 const canDeleteRole = computed(() => hasPermission('element:role:delete'))
 
+// 角色成员抽屉：入口是列表里的「用户数」
+const showMembersDrawer = ref(false)
+const membersRole = ref<any>(null)
+
+function openMembersDrawer(role: any) {
+  membersRole.value = role
+  showMembersDrawer.value = true
+}
+
+/**
+ * 抽屉里的「添加成员」交回本页现有的双栏弹窗。
+ *
+ * 添加是"多选后整集提交"，与抽屉里"点一下立即移出"是两种语义；在抽屉里再实现一套
+ * 添加流程会让两处漂移，所以这里只做转交。两个浮层同层（z-9990），因此先关抽屉。
+ */
+const handleAddMembersFromDrawer = (role: any) => {
+  showMembersDrawer.value = false
+  if (role) openUserAssignmentDialog(role)
+}
+
 const windowWidth = ref(window.innerWidth)
 const isMobile = computed(() => windowWidth.value < 768)
 const handleResize = () => { windowWidth.value = window.innerWidth }
@@ -1159,6 +1258,23 @@ const total = ref(0)
 const page = ref(1)
 const size = ref(20)
 const totalPages = ref(0)
+
+// 用户数排序：列表是服务端分页，排序必须交给后端（本地排序只能排当前页）。
+// 默认仍按创建时间倒序展示，首点「用户数」列进入倒序（人多→人少），再点切升序。
+const sortBy = ref<'created_at' | 'user_count'>('created_at')
+const sortOrder = ref<'asc' | 'desc'>('desc')
+
+const userCountAriaSort = computed(() => {
+    if (sortBy.value !== 'user_count') return 'none'
+    return sortOrder.value === 'desc' ? 'descending' : 'ascending'
+})
+
+const userCountSortTitle = computed(() => {
+    if (sortBy.value !== 'user_count') return '点击按用户数倒序排列（人多→人少），系统角色始终置顶'
+    return sortOrder.value === 'desc'
+        ? '当前按用户数倒序（人多→人少），点击切换为升序；系统角色始终置顶'
+        : '当前按用户数升序（人少→人多），点击切换为倒序；系统角色始终置顶'
+})
 
 const searchQuery = ref('')
 const isSearchEmpty = computed(
@@ -2090,7 +2206,12 @@ const isAllSelected = computed(() => {
 const fetchRoles = async () => {
     loading.value = true
     try {
-        const params: any = { page: page.value, size: size.value }
+        const params: any = {
+            page: page.value,
+            size: size.value,
+            sort_by: sortBy.value,
+            sort_order: sortOrder.value,
+        }
         if (searchQuery.value) params.search = searchQuery.value
 
         const response = await axios.get('/api/portal/roles', {
@@ -2105,6 +2226,18 @@ const fetchRoles = async () => {
     } finally {
         loading.value = false
     }
+}
+
+// 用户数列头：未排序时首点进入倒序；已是用户数排序则升降序互切
+const toggleUserCountSort = () => {
+    if (sortBy.value !== 'user_count') {
+        sortBy.value = 'user_count'
+        sortOrder.value = 'desc'
+    } else {
+        sortOrder.value = sortOrder.value === 'desc' ? 'asc' : 'desc'
+    }
+    page.value = 1
+    fetchRoles()
 }
 
 let searchTimeout: any = null

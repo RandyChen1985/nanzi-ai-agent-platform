@@ -818,6 +818,17 @@ async def get_current_user_info(
 
     mail_service_available = (await EmailDeliveryService.load_global_smtp_settings()) is not None
 
+    # 个人中心要能自助看到「我属于哪些部门」：此前只返回 dept_code / org_path
+    # （机器格式），前端一处都没用上，普通用户进不了用户管理就查不到自己的部门。
+    # 部门表未迁移时降级为空，不能因为展示字段把整个 /me 打成 500。
+    dept_names: list[str] = []
+    try:
+        from app.services.department_service import DepartmentService
+
+        dept_names = await DepartmentService.department_names_for_user(db, user_id)
+    except Exception:
+        logger.debug("读取用户部门名称失败，降级为空", exc_info=True)
+
     return {
         "status": "success",
         "email": current_email,
@@ -831,6 +842,9 @@ async def get_current_user_info(
             "role": user.get("role"),
             "dept_code": user.get("dept_code"),
             "org_path": user.get("org_path"),
+            # 展示用：主部门名 + 全部部门名（主部门排第一）；org_path 是机器路径，不展示
+            "dept_name": dept_names[0] if dept_names else "",
+            "dept_names": dept_names,
             "extra_data": user.get("extra_data"),
             "created_at": user.get("created_at"),
             "last_login_at": user_obj.last_login_at.strftime("%Y-%m-%d %H:%M:%S") if (user_obj and user_obj.last_login_at) else None,

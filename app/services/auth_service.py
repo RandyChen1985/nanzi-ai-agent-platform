@@ -183,6 +183,38 @@ class AuthService:
         }
 
     @staticmethod
+    async def _attach_department_label(session, user_data: Optional[Dict]) -> Optional[Dict]:
+        """给身份字典补上**可读**的部门名（``dept_name``）。
+
+        `users.dept_code` / `org_path` 都是机器标识：admin 的主部门在库里是
+        `dept_code='main'`、`org_path='/1/'`。模型拿这两个值回答"我是什么部门的"，
+        只能照搬 `/1/` —— 整个上下文里没有任何中文部门名。
+
+        `AgentServicePrompts.user_context_message` 本来就有 `dept` 参数且优先于
+        `org_path`，但没人给它赋值。这里补上。
+
+        查询失败（部门表未迁移、连接异常等）**不得影响认证**：降级为不注入该字段。
+        """
+        if not user_data:
+            return user_data
+        raw_user_id = user_data.get("user_id")
+        if not raw_user_id:
+            return user_data
+        try:
+            from app.services.department_service import DepartmentService
+
+            label = await DepartmentService.department_label_for_user(
+                session, int(str(raw_user_id))
+            )
+        except Exception:
+            logger.debug("补全用户部门名称失败，降级为不注入", exc_info=True)
+            return user_data
+        # 即使没有部门也落这个键（空串）：缓存命中判断靠"键是否存在"，
+        # 少了它，无部门用户每次请求都会回源查库。
+        user_data["dept_name"] = label or ""
+        return user_data
+
+    @staticmethod
     async def create_portal_session(user_id: int, db: Optional[AsyncSession] = None) -> Optional[str]:
         """按 user_id 签发不透明会话令牌。
 
@@ -200,6 +232,7 @@ class AuthService:
             if not user or user.status != 1:
                 return None
             user_data = AuthService._user_model_to_data(user)
+            await AuthService._attach_department_label(session, user_data)
         finally:
             if is_local:
                 await session.close()
@@ -711,7 +744,8 @@ class AuthService:
             if cached_user:
                  # 增强校验：检查 status 字段
                  # 如果 status 缺失（旧缓存）或者 status不是 "1"，视为无效/需要重新验证
-                 if cached_user.get("status") != "1":
+                 if cached_user.get("status") != "1" or "dept_name" not in cached_user:
+                     # status 缺失（旧缓存）或旧缓存还没有可读部门名 → 回源补齐
                      pass # Fall through to DB
                  else:
                      if cached_user.get("session_type") in ("embed", "portal"):
@@ -770,6 +804,7 @@ class AuthService:
             user_data = None
             if user and user.status == 1:
                 user_data = AuthService._user_model_to_data(user)
+                await AuthService._attach_department_label(session, user_data)
             
             # 3. Cache to Redis
             if user_data and redis:
@@ -803,8 +838,21 @@ class AuthService:
             return cached_user
 
         session, is_local = await AuthService._get_session(db)
+        refreshed_label = ""
         try:
             user = await session.get(User, int(user_id_text))
+            # 部门名趁 session 还开着取（下面 finally 就关连接了）。
+            # 单独包一层 try：部门表查不出来不能等同于"复核失败"，
+            # 否则会 fail-open 跳过状态检查，禁用用户的会话就吊销不掉了。
+            if user is not None and int(getattr(user, "status", 0) or 0) == 1:
+                try:
+                    from app.services.department_service import DepartmentService
+
+                    refreshed_label = await DepartmentService.department_label_for_user(
+                        session, int(user_id_text)
+                    )
+                except Exception:
+                    logger.debug("复核时补全部门名称失败，忽略", exc_info=True)
         except Exception as exc:
             # 复核失败不应把在线用户全踢下线（fail-open），沿用缓存
             logger.warning("会话回源复核失败，本次沿用缓存: %s", exc)
@@ -824,6 +872,10 @@ class AuthService:
 
         # 用库里的最新身份字段覆盖缓存，保留会话自有字段
         refreshed = AuthService._user_model_to_data(user)
+        # 与 `_attach_department_label` 保持一致：没有部门也落键（空串）。
+        # 注：此处写回用的是 HSET，它只覆盖给出的字段、不删未提及的字段，所以即便不落键
+        # 也不会造成缓存穿透；落键是为了让两支产出逻辑写法一致，避免以后改成整键重写时踩坑。
+        refreshed["dept_name"] = refreshed_label or ""
         for key in ("session_type", "agent_id", "created_by_user_id"):
             value = cached_user.get(key)
             if value is not None:

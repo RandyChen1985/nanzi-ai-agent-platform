@@ -85,6 +85,9 @@ class _ExecuteResult:
     def scalar_one(self):
         return self._values[0]
 
+    def all(self):
+        return list(self._values)
+
 
 def test_saved_report_static_sql_stays_compatible():
     report = saved_reports.SavedReportItem.model_validate(
@@ -153,7 +156,14 @@ async def test_get_saved_reports_enriches_owner_share_summary(monkeypatch):
 async def test_get_saved_reports_marks_shared_report_denied_when_table_permission_fails(monkeypatch):
     shared_report = _report_row(owner_user_id=1, owner_name="admin", visibility="shared")
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_ExecuteResult([2]), _ExecuteResult([shared_report]), _ExecuteResult([])])
+    db.execute = AsyncMock(
+        side_effect=[
+            _ExecuteResult([2]),
+            _ExecuteResult([shared_report]),
+            _ExecuteResult([]),
+            _ExecuteResult([]),  # 用户部门查询（该用户无部门）
+        ]
+    )
 
     async def fake_execute_sql_query_core(*args, **kwargs):
         assert kwargs["auth_check_only"] is True

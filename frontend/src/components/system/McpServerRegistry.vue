@@ -51,6 +51,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'server-count-changed', payload: { scope: 'global' | 'personal'; count: number }): void
+  (e: 'share-server', server: any): void
 }>()
 
 const { showToast } = useToast()
@@ -76,10 +77,16 @@ const servers = ref<any[]>([])
 const searchQuery = ref('')
 const showAddDropdown = ref(false)
 
+/** 只看已启用（运行中）的服务——停用的排不进实际调用 */
+const onlyRunning = ref(false)
+
 const filteredServers = computed(() => {
+  const base = onlyRunning.value
+    ? servers.value.filter((s: any) => s.enabled_status === 1)
+    : servers.value
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return servers.value
-  return servers.value.filter((s: any) => {
+  if (!query) return base
+  return base.filter((s: any) => {
     const nameMatch = (s.server_name || '').toLowerCase().includes(query)
     const descMatch = (s.description || '').toLowerCase().includes(query)
     const urlMatch = (s.url || '').toLowerCase().includes(query)
@@ -704,7 +711,13 @@ const fetchServers = async () => {
       scope: props.scope,
       count: Array.isArray(res.data) ? res.data.length : 0,
     })
+    serversLoaded.value = true
+    // 从「收到的分享」点「去我的 MCP 看看」时列表可能刚重建，加载完再落选中
+    if (pendingFocusServerId && !tryResolvePendingFocus()) {
+      settlePendingFocus(false)
+    }
   } catch (e) {
+    settlePendingFocus(false)
     showToast(getApiErrorMessage(e, '获取 MCP 服务列表失败'), 'error')
   } finally {
     loading.value = false
@@ -777,9 +790,48 @@ const openAddModal = (initialTab: 'manual' | 'json' = 'manual') => {
   showAddModal.value = true
 }
 
+/** 列表是否已经加载过一次（用于判断「找不到」是没加载完还是真没有） */
+const serversLoaded = ref(false)
+let pendingFocusServerId = ''
+let pendingFocusResolve: ((found: boolean) => void) | null = null
+
+const settlePendingFocus = (found: boolean) => {
+  const resolve = pendingFocusResolve
+  pendingFocusResolve = null
+  pendingFocusServerId = ''
+  resolve?.(found)
+}
+
+/** 列表可能还没加载完，先记下要选中的服务，等 fetchServers 回来再兑现。 */
+const tryResolvePendingFocus = (): boolean => {
+  if (!pendingFocusServerId) return false
+  const found = servers.value.find((item: any) => item.id === pendingFocusServerId)
+  if (!found) return false
+  selectServer(found)
+  settlePendingFocus(true)
+  return true
+}
+
+/**
+ * 选中指定服务，并告知是否真的选中了。
+ * 返回 false 的场景：列表已加载完但没有这条（例如接受分享后又把它删了）。
+ */
+const focusServer = (serverId: string): Promise<boolean> => {
+  if (!serverId) return Promise.resolve(false)
+  return new Promise<boolean>((resolve) => {
+    pendingFocusResolve?.(false)
+    pendingFocusResolve = resolve
+    pendingFocusServerId = serverId
+    if (serversLoaded.value && !tryResolvePendingFocus()) {
+      settlePendingFocus(false)
+    }
+  })
+}
+
 defineExpose({
   openAddModal,
   resetWizard,
+  focusServer,
 })
 
 const openEditModal = (server: any) => {
@@ -1268,18 +1320,9 @@ onMounted(fetchServers)
         </div>
       </div>
 
-      <div class="flex items-center justify-between gap-2 border-b border-gray-100 bg-gray-50/80 px-3 py-2 sm:px-4 sm:py-2.5">
-        <div class="flex shrink-0 items-center gap-1.5">
-          <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-500 sm:text-xs whitespace-nowrap">
-            已连接服务
-          </h3>
-          <span v-if="props.scope === 'global' && !canSave" class="rounded border border-amber-200/60 bg-amber-50 px-1.5 py-0.5 text-[9px] font-normal text-amber-600 shrink-0">
-            只读
-          </span>
-        </div>
-
-        <!-- 搜索框 -->
-        <div class="flex min-w-[100px] max-w-[180px] flex-1 items-center">
+      <div class="flex flex-wrap items-center gap-2 border-b border-gray-100 bg-gray-50/80 px-3 py-2 sm:px-4 sm:py-2.5">
+        <!-- 搜索框（放在最前，服务多时第一动作就是搜） -->
+        <div class="flex min-w-[120px] max-w-[220px] flex-1 items-center">
           <div class="relative w-full">
             <MagnifyingGlassIcon class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
             <input
@@ -1300,8 +1343,25 @@ onMounted(fetchServers)
           </div>
         </div>
 
+        <!-- 只看运行中：停用的服务排不进调用，混在列表里只会干扰挑选 -->
+        <label
+          class="flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap text-[11px] text-gray-600 dark:text-gray-300"
+          title="只显示已启用的 MCP 服务"
+        >
+          <input
+            v-model="onlyRunning"
+            type="checkbox"
+            class="h-3.5 w-3.5 cursor-pointer rounded border-gray-300 text-primary focus:ring-primary dark:border-gray-600 dark:bg-gray-800"
+          />
+          仅运行中
+        </label>
+
+        <span v-if="props.scope === 'global' && !canSave" class="shrink-0 rounded border border-amber-200/60 bg-amber-50 px-1.5 py-0.5 text-[9px] font-normal text-amber-600">
+          只读
+        </span>
+
         <!-- 右侧操作区 -->
-        <div v-if="canSave" class="relative flex shrink-0 items-center">
+        <div v-if="canSave" class="relative ml-auto flex shrink-0 items-center">
           <!-- 个人 MCP: 仅单一添加按钮 -->
           <button
             v-if="props.scope === 'personal' && canCreateMcp"
@@ -1395,13 +1455,15 @@ onMounted(fetchServers)
           暂无配置 MCP 服务
         </div>
         <div v-else-if="filteredServers.length === 0" class="p-8 text-center">
-          <p class="text-xs text-gray-400">未找到匹配的 MCP 服务</p>
+          <p class="text-xs text-gray-400">
+            {{ searchQuery ? '未找到匹配的 MCP 服务' : '没有运行中的 MCP 服务' }}
+          </p>
           <button
             type="button"
-            @click="searchQuery = ''"
+            @click="searchQuery = ''; onlyRunning = false"
             class="mt-2 text-[11px] font-medium text-primary hover:underline"
           >
-            清空搜索关键词
+            清空搜索与筛选
           </button>
         </div>
         <div v-else class="divide-y divide-gray-50">
@@ -1441,6 +1503,12 @@ onMounted(fetchServers)
                 />
               </div>
             </div>
+            <p
+              v-if="server.shared_from"
+              class="mb-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+            >
+              来自 {{ server.shared_from.source_real_name || server.shared_from.source_user_name }} 的分享
+            </p>
             <div class="mb-2 flex items-center truncate font-mono text-[10px] text-gray-400">
               <LinkIcon class="mr-1 h-3 w-3 shrink-0" />
               <span class="truncate">{{ server.sse_url }}</span>
@@ -1452,9 +1520,26 @@ onMounted(fetchServers)
                 <span v-else class="font-bold text-gray-400">服务已禁用</span>
                 <span v-if="server.stale_tool_count > 0" class="ml-1 text-amber-600">{{ server.stale_tool_count }} 个远端已删除</span>
               </span>
+              <span
+                v-if="server.share_count > 0"
+                class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+              >
+                已分享 {{ server.share_count }} 次
+              </span>
               <div class="flex items-center gap-1">
                 <span class="mr-1 hidden text-[9px] italic text-gray-400 sm:inline" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
                 <div class="flex items-center space-x-0.5" @click.stop>
+                  <button
+                    v-if="props.scope === 'personal'"
+                    type="button"
+                    @click="emit('share-server', server)"
+                    class="rounded p-1.5 text-emerald-500 transition-colors hover:bg-white hover:text-emerald-700"
+                    title="分享给同事（对方接受后会复制一份到他的个人 MCP）"
+                  >
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13" />
+                    </svg>
+                  </button>
                   <button type="button" @click="openLogModal(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-indigo-600" title="出站调用日志">
                     <DocumentTextIcon class="h-4 w-4" />
                   </button>

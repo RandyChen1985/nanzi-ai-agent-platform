@@ -848,7 +848,10 @@ class AgentServicePrompts:
         email_text = str(email if email is not None else "").strip()
         if email_text:
             profile_lines.append(f"- **Email**: {email_text}")
-        department = (dept or org_path or "").strip()
+        # 只用可读部门名。``org_path`` 是 id 物化路径（``/1/``），对模型没有信息价值：
+        # 线上就是因为拿它兜底，模型照着答"部门路径 /1/，没有具体的部门名称"。
+        # 没有中文名时退到业务代码（稳定标识），而不是拿一串编号去让模型猜。
+        department = (dept or "").strip()
         if department:
             profile_lines.append(f"- **Department**: {department}")
         elif (dept_code or "").strip():

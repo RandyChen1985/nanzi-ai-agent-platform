@@ -50,11 +50,23 @@ const isSavedReportNotification = (item: any) => {
 
 const notificationKindLabel = (item: any) => {
   if (isSavedReportNotification(item)) return "固化报表";
+  if (item?.resource_type === "skill_share" || item?.category === "skill_share" || item?.category === "skill_share_result") return "技能分享";
+  if (item?.resource_type === "mcp_share" || item?.category === "mcp_share" || item?.category === "mcp_share_result") return "MCP 分享";
   if (item?.category === "agent") return "智能体";
   if (item?.category === "saved_report") return "报表";
   if (item?.category === "task_center") return "任务中心";
   return "系统";
 };
+
+const isSkillShareNotification = (item: any) =>
+  item?.resource_type === "skill_share" ||
+  item?.category === "skill_share" ||
+  item?.category === "skill_share_result";
+
+const isMcpShareNotification = (item: any) =>
+  item?.resource_type === "mcp_share" ||
+  item?.category === "mcp_share" ||
+  item?.category === "mcp_share_result";
 
 const isTaskCenterNotification = (item: any) =>
   item?.category === "task_center" || item?.resource_type === "scheduled_task";
@@ -204,6 +216,28 @@ const openNotification = async (item: any) => {
     : null;
 
   await markItemRead(item);
+
+  // 技能分享：直接落到「我的技能」的对应二级页，而不是弹一个只能看不能操作的详情
+  if (isSkillShareNotification(item)) {
+    const targetTab = meta.target_tab === "sent" ? "sent" : "received";
+    closeNotifications();
+    closeDetail();
+    await router
+      .push({ path: "/dashboard/personal", query: { tab: "skills", skills_tab: targetTab } })
+      .catch(() => undefined);
+    return;
+  }
+
+  // MCP 分享：同样落到「我的 MCP」的对应二级页
+  if (isMcpShareNotification(item)) {
+    const targetTab = meta.target_tab === "sent" ? "sent" : "received";
+    closeNotifications();
+    closeDetail();
+    await router
+      .push({ path: "/dashboard/personal", query: { tab: "mcp", mcp_tab: targetTab } })
+      .catch(() => undefined);
+    return;
+  }
 
   if (notificationTarget && savedReportOpenRequest) {
     closeNotifications();

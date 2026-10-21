@@ -21,6 +21,7 @@ import {
   FunnelIcon, ArrowsRightLeftIcon, BookOpenIcon, DocumentIcon,
   ClipboardDocumentListIcon, FolderOpenIcon, ArchiveBoxIcon, BookmarkIcon,
   TagIcon, UsersIcon, UserIcon, UserCircleIcon,
+  BuildingOffice2Icon,
   UserGroupIcon, KeyIcon, LockClosedIcon, ShieldCheckIcon,
   ClipboardDocumentCheckIcon, IdentificationIcon, Cog6ToothIcon, WrenchScrewdriverIcon,
   ServerStackIcon, CloudIcon, CodeBracketIcon, CommandLineIcon,
@@ -64,6 +65,7 @@ export const MENU_ICON_COMPONENTS: Record<string, Component> = {
   memory: ArchiveBoxIcon,
   bookmark: BookmarkIcon,
   tag: TagIcon,
+  org: BuildingOffice2Icon,
   users: UsersIcon,
   user: UserIcon,
   user_circle: UserCircleIcon,
@@ -168,6 +170,7 @@ export const MENU_ICON_LABELS: Record<string, string> = {
   token_stats: '用量统计',
   user: '个人',
   user_circle: '用户头像',
+  org: '组织',
   users: '用户',
   widget: '组件',
 }
@@ -195,7 +198,7 @@ export const MENU_ICON_CATEGORIES: { title: string; keys: string[] }[] = [
   },
   {
     title: '用户与权限',
-    keys: ['users', 'user', 'user_circle', 'roles', 'key', 'lock', 'shield', 'audit', 'identification'],
+    keys: ['org', 'users', 'user', 'user_circle', 'roles', 'key', 'lock', 'shield', 'audit', 'identification'],
   },
   {
     title: '系统与运维',

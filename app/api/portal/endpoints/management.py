@@ -2,7 +2,7 @@ from fastapi import APIRouter, Body, Depends, Query, HTTPException, status, Requ
 from pydantic import BaseModel, Field, field_validator
 from typing import Any, Dict, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func, desc, or_
+from sqlalchemy import select, update, delete, func, desc, or_, exists
 from sqlalchemy.orm import selectinload
 from app.core.dependencies import require_admin, require_api_key, require_permission, require_permission
 from app.core.orm import get_db_session
@@ -18,6 +18,8 @@ from app.services.permission_service import PermissionService
 from app.models.agent import AIAgent
 from app.models.permission import ResourcePermission, Role, UserRoleRelation
 from app.models.wechat_binding import WechatBinding
+from app.models.department import Department, UserDepartment
+from app.services.department_service import DepartmentService, subtree_like_prefix
 from app.services.sso_user import LaplacePortalApiClient
 from app.services.db_connection_service import DbConnectionService
 import json
@@ -52,6 +54,8 @@ class CreateUserRequest(BaseModel):
     user_name: str
     real_name: Optional[str] = None
     role: str = "user"  # "admin" or "user"
+    # 已废弃：dept_code / org_path 是主部门派生快照，只能由 DepartmentService 维护。
+    # 字段保留是为了**显式拒绝**（400 + 指路），而不是让调用方以为写成功了。
     dept_code: Optional[str] = None
     org_path: Optional[str] = None
     extra_data: Optional[str] = None
@@ -288,10 +292,15 @@ async def run_third_party_sync(
     try:
         cfg = request.config or await UserSyncService.get_config()
         result = await UserSyncService.run_sync(db, user_names=request.user_names, config=cfg)
+        dept_note = ""
+        if result.get("dept_linked"):
+            dept_note += f"，关联部门 {result['dept_linked']} 人"
+        if result.get("dept_skipped"):
+            dept_note += f"，{result['dept_skipped']} 人部门编码未匹配"
         return {
             "message": (
                 f"同步完成：新增 {result['created']} 人，更新 {result['updated']} 人，"
-                f"失败 {result['failed']} 人"
+                f"失败 {result['failed']} 人{dept_note}"
             ),
             **result,
         }
@@ -299,9 +308,21 @@ async def run_third_party_sync(
         logger.error(f"Third-party sync run failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+class SetUserDepartmentsRequest(BaseModel):
+    """用户部门归属的整集提交：部门是用户属性，弹窗里就是"最终状态"。
+
+    `dept_ids` 与 `dept_codes` 二选一：前端手上有 id，外部系统迁移只有编码。
+    """
+    dept_ids: List[int] = []
+    dept_codes: List[str] = []
+    primary_dept_id: Optional[int] = None
+    primary_dept_code: Optional[str] = None
+
+
 class UpdateUserRequest(BaseModel):
     real_name: Optional[str] = None
     role: Optional[str] = None
+    # 已废弃：见 CreateUserRequest 的说明，收到即 400
     dept_code: Optional[str] = None
     org_path: Optional[str] = None
     extra_data: Optional[str] = None
@@ -408,6 +429,24 @@ async def list_users(
         ge=1,
         description="排除已属于该角色的用户，用于角色「分配用户」弹窗的候选列表",
     ),
+    dept_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description="按部门过滤：只看该部门的成员",
+    ),
+    include_sub: bool = Query(
+        False,
+        description="配合 dept_id 使用：是否包含子部门的成员（按物化路径前缀匹配）",
+    ),
+    exclude_dept_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description="排除已属于该部门的用户，用于部门「添加成员」弹窗的候选列表",
+    ),
+    unassigned_only: bool = Query(
+        False,
+        description="只返回尚未加入任何部门的用户，用于「添加成员」时优先分配新人",
+    ),
     admin: dict = Depends(require_permission("menu", "menu:system:users")),
     db: AsyncSession = Depends(get_db_session)
 ):
@@ -438,6 +477,38 @@ async def list_users(
             UserRoleRelation.role_id == exclude_role_id
         )
         stmt = stmt.where(~User.id.in_(member_ids))
+
+    if exclude_dept_id is not None:
+        dept_member_ids = select(UserDepartment.user_id).where(
+            UserDepartment.dept_id == exclude_dept_id
+        )
+        stmt = stmt.where(~User.id.in_(dept_member_ids))
+
+    if unassigned_only:
+        # 「未分配部门」= 关系表里没有任何行。用 NOT EXISTS 而不是先取回全部 user_id
+        # 再 NOT IN：关系表变大后后者会退化成物化临时表。
+        stmt = stmt.where(
+            ~exists(select(1).where(UserDepartment.user_id == User.id))
+        )
+
+    if dept_id is not None:
+        dept = await db.get(Department, int(dept_id))
+        if not dept:
+            raise HTTPException(status_code=404, detail="部门不存在")
+        # include_sub 用物化路径前缀，不做递归查询：子树在 path 上就是前缀关系
+        if include_sub:
+            dept_scope = select(Department.id).where(
+                Department.path.like(subtree_like_prefix(dept.path))
+            )
+        else:
+            dept_scope = select(Department.id).where(Department.id == int(dept.id))
+        stmt = stmt.where(
+            User.id.in_(
+                select(UserDepartment.user_id).where(
+                    UserDepartment.dept_id.in_(dept_scope)
+                )
+            )
+        )
         
     # Count
     count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -458,6 +529,31 @@ async def list_users(
         )
         bound_user_ids = {r[0] for r in bound_rows.all()}
 
+    # 本页用户的部门归属：一次 IN 查询，禁止逐行查（与 role_names 同处理）
+    dept_map: dict = {}
+    if page_user_ids:
+        dept_rows = await db.execute(
+            select(
+                UserDepartment.user_id,
+                UserDepartment.dept_id,
+                UserDepartment.is_primary,
+                Department.name,
+            )
+            .join(Department, Department.id == UserDepartment.dept_id)
+            .where(UserDepartment.user_id.in_(page_user_ids))
+            .order_by(Department.path.asc())
+        )
+        for uid, dept_pk, is_primary, dept_name in dept_rows.all():
+            entry = dept_map.setdefault(
+                int(uid),
+                {"ids": [], "names": [], "primary_id": None, "primary_name": None},
+            )
+            entry["ids"].append(int(dept_pk))
+            entry["names"].append(dept_name)
+            if int(is_primary or 0) == 1:
+                entry["primary_id"] = int(dept_pk)
+                entry["primary_name"] = dept_name
+
     items = []
     for row in rows:
         role_ids = [r.id for r in row.roles] if row.roles else []
@@ -471,6 +567,10 @@ async def list_users(
             "role": row.role,
             "dept_code": row.dept_code,
             "org_path": row.org_path,
+            "dept_ids": dept_map.get(row.id, {}).get("ids", []),
+            "dept_names": dept_map.get(row.id, {}).get("names", []),
+            "primary_dept_id": dept_map.get(row.id, {}).get("primary_id"),
+            "primary_dept_name": dept_map.get(row.id, {}).get("primary_name"),
             "extra_data": row.extra_data,
             "role_ids": role_ids,
             "role_names": role_names,
@@ -587,6 +687,14 @@ async def create_user(
     Create a new user with API key.
     Admin only.
     """
+    # 快照只能由部门归属派生：直接写会让 users.dept_code 与关系表分叉
+    if request.dept_code is not None or request.org_path is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="dept_code / org_path 已由主部门自动派生，请先创建用户，"
+                   "再用 PUT /management/users/{user_id}/departments 设置部门归属",
+        )
+
     # Validate role
     if request.role not in ["admin", "user"]:
         raise HTTPException(
@@ -674,6 +782,13 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
+    if request.dept_code is not None or request.org_path is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="dept_code / org_path 已由主部门自动派生，"
+                   "请改用 PUT /management/users/{user_id}/departments 设置部门归属",
+        )
+
     if request.role is not None:
         if request.role not in ["admin", "user"]:
              raise HTTPException(status_code=400, detail="Invalid role")
@@ -681,12 +796,6 @@ async def update_user(
     
     if request.real_name is not None:
         user.real_name = request.real_name
-        
-    if request.dept_code is not None:
-        user.dept_code = request.dept_code
-    
-    if request.org_path is not None:
-        user.org_path = request.org_path
         
     if request.extra_data is not None:
         user.extra_data = request.extra_data
@@ -782,6 +891,57 @@ async def _send_review_result_mail(user: User, approved: bool):
     if not ok:
         logger.warning("审核结果邮件发送失败: user=%s reason=%s", user.user_name, message)
     return ok, (None if ok else message)
+
+
+@router.put("/users/{user_id}/departments")
+async def set_user_departments(
+    user_id: int,
+    request: SetUserDepartmentsRequest,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """整集保存用户部门归属。
+
+    users.dept_code / org_path 是主部门快照，只能由 DepartmentService 统一维护；
+    接口层不得直接改这两列，否则快照会与 is_primary 关系脱节，行级过滤随之失效。
+    """
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    if request.dept_ids and request.dept_codes:
+        raise HTTPException(status_code=400, detail="dept_ids 与 dept_codes 只能给一种")
+
+    service = DepartmentService(db)
+    dept_ids = [int(i) for i in request.dept_ids]
+    if request.dept_codes:
+        dept_ids = []
+        for code in request.dept_codes:
+            dept = await service.get_by_code(code)
+            if dept is None:
+                raise HTTPException(status_code=400, detail=f"部门编码 {code} 不存在")
+            dept_ids.append(int(dept.id))
+
+    primary_dept_id = request.primary_dept_id
+    if request.primary_dept_code:
+        primary = await service.get_by_code(request.primary_dept_code)
+        if primary is None:
+            raise HTTPException(
+                status_code=400, detail=f"主部门编码 {request.primary_dept_code} 不存在"
+            )
+        primary_dept_id = int(primary.id)
+
+    try:
+        await service.set_user_departments(user_id, dept_ids, primary_dept_id)
+        await db.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "dept_ids": dept_ids,
+        "primary_dept_id": primary_dept_id,
+    }
 
 
 @router.patch("/users/{user_id}/status")
@@ -1081,7 +1241,148 @@ async def delete_user(
     # This avoids StaleDataError because SQLAlchemy will track the deletion
     user.roles = []
     await db.flush()
-    
+
+    # 部门两张表同样没有外键（用户决策），必须显式清理，否则留下悬挂归属
+    await db.execute(delete(UserDepartment).where(UserDepartment.user_id == user_id))
+
+    # 兜底再按 user_id 显式删一次：上面依赖 roles 集合已被完整加载，而 MySQL 侧这张表
+    # 没有外键约束（见 db-prod/V27），漏删就会留下指向不存在用户的悬挂行——
+    # 线上出现过「角色列表显示 1 人、点开抽屉 0 位成员」正是这类数据。
+    await db.execute(delete(UserRoleRelation).where(UserRoleRelation.user_id == user_id))
+
+    # 技能分享：两个方向都要清（他分享出去的、别人分享给他的）。
+    # skill_shares 与部门两张表同一惯例——数据库层不建物理外键，漏删只会留下悬挂行；
+    # 但 PENDING 分享还占着一份快照目录，必须先把磁盘上的东西回收，再删数据库记录。
+    from app.models.skill_share import SkillShare
+    from app.services.skill_share_service import remove_share_snapshot
+
+    share_scope = or_(
+        SkillShare.source_user_id == user_id,
+        SkillShare.target_user_id == user_id,
+    )
+    share_rows = (await db.execute(select(SkillShare).where(share_scope))).scalars().all()
+    for share_row in share_rows:
+        remove_share_snapshot(share_row.snapshot_path)
+    await db.execute(delete(SkillShare).where(share_scope))
+
+    # 个人 MCP 分享：同样两个方向都清。payload 只是数据库里的 JSON 快照，
+    # 没有磁盘目录要回收，直接删行即可。
+    from app.models.mcp_share import McpServerShare
+
+    mcp_share_scope = or_(
+        McpServerShare.source_user_id == user_id,
+        McpServerShare.target_user_id == user_id,
+    )
+    await db.execute(delete(McpServerShare).where(mcp_share_scope))
+
+    # 个人 MCP：孤儿的服务行没人能再访问（归属校验按 user_id 全挡），
+    # 但 server_name 是全局唯一索引，名字会被永久占用，别人起同名直接 400。
+    # 因此随用户一起清掉；工具缓存表没有级联外键，必须自己先删。
+    from app.models.mcp import McpOutboundAuditLog, McpServer, McpToolCache
+
+    owned_server_ids = list(
+        (
+            await db.execute(
+                select(McpServer.id).where(
+                    McpServer.scope == "personal",
+                    McpServer.user_id == user_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if owned_server_ids:
+        await db.execute(
+            delete(McpToolCache).where(McpToolCache.server_id.in_(owned_server_ids))
+        )
+        await db.execute(
+            delete(McpOutboundAuditLog).where(
+                McpOutboundAuditLog.server_id.in_(owned_server_ids)
+            )
+        )
+        await db.execute(delete(McpServer).where(McpServer.id.in_(owned_server_ids)))
+
+    # 发布谱系：这里沿用「下架」语义而不是物理删记录。
+    # 删记录会毁掉审核轨迹（谁提交、谁审核、审核意见）并把 platform_skill_id（唯一索引）
+    # 永远对不上历史引用；因此 V180/V81 把 source_user_id / submitted_by 改为可空，
+    # 删除用户时：已发布的平台技能真的从公共库消失（删物化目录），记录只解绑作者。
+    from datetime import datetime
+
+    from app.models.skill_publication import SkillPublication, SkillPublicationVersion
+    from app.services.skill_publication_service import (
+        cleanup_publication_snapshot,
+        remove_materialized_skill,
+    )
+
+    now = datetime.now()
+    publication_rows = (
+        await db.execute(
+            select(SkillPublication).where(SkillPublication.source_user_id == user_id)
+        )
+    ).scalars().all()
+    for publication in publication_rows:
+        versions = (
+            await db.execute(
+                select(SkillPublicationVersion).where(
+                    SkillPublicationVersion.publication_id == publication.id
+                )
+            )
+        ).scalars().all()
+        for version in versions:
+            if version.status == "PENDING":
+                # 作者没了，待审版本不会再有人接，直接按「撤销」收尾（快照已无用）
+                version.status = "WITHDRAWN"
+                version.withdrawn_at = now
+                cleanup_publication_snapshot(version.snapshot_path)
+            elif version.status == "APPROVED":
+                # 保留 snapshot_path：与 revoke_published_version 一致，快照是物化来源
+                version.status = "REVOKED"
+                version.reviewed_at = now
+                version.materialized_path = None
+        if publication.status == "PUBLISHED":
+            if publication.platform_skill_id:
+                # 先落库再删目录：flush 失败时目录原样保留，DB 与磁盘不会互相打脸
+                await db.flush()
+                try:
+                    remove_materialized_skill(platform_skill_id=publication.platform_skill_id)
+                except Exception as exc:  # 脏数据不能反过来让删用户失败
+                    logger.warning(
+                        "[Users] 删除用户 %s 时移除平台技能 %s 失败: %s",
+                        user_id,
+                        publication.platform_skill_id,
+                        exc,
+                    )
+            publication.current_version = None
+            publication.revoked_at = now
+        if publication.status in {"PUBLISHED", "PENDING"}:
+            publication.status = "UNPUBLISHED"
+        publication.revoked_by = None
+        publication.source_user_id = None
+        publication.updated_at = now
+
+    # 他给别人留下的审核 / 撤销痕迹：只解绑，不动别人的发布记录
+    await db.execute(
+        update(SkillPublicationVersion)
+        .where(SkillPublicationVersion.submitted_by == user_id)
+        .values(submitted_by=None)
+    )
+    await db.execute(
+        update(SkillPublicationVersion)
+        .where(SkillPublicationVersion.reviewed_by == user_id)
+        .values(reviewed_by=None)
+    )
+    await db.execute(
+        update(SkillPublicationVersion)
+        .where(SkillPublicationVersion.withdrawn_by == user_id)
+        .values(withdrawn_by=None)
+    )
+    await db.execute(
+        update(SkillPublication)
+        .where(SkillPublication.revoked_by == user_id)
+        .values(revoked_by=None)
+    )
+
     # 3. Finally delete the user
     await db.delete(user)
     await db.commit()

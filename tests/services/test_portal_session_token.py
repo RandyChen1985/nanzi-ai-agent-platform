@@ -232,6 +232,8 @@ async def test_real_api_key_path_is_untouched():
         "user_name": "bob",
         "role": "user",
         "status": "1",
+        # 新缓存一定带 dept_name（哪怕是空串）：命中路径靠这个键判断是否需要回源
+        "dept_name": "",
     }
 
     session = AsyncMock()
@@ -541,3 +543,27 @@ async def test_revoke_portal_session_accepts_embed_sessions():
 
     assert _session_key(token) not in redis.hashes
     assert _session_key(token) not in redis.sets.get(_index_key(7), set())
+
+
+@pytest.mark.asyncio
+async def test_stale_cache_without_department_label_backfills_once():
+    """改造前写下的缓存没有 dept_name，必须回源补一次，之后不再查库。
+
+    否则在线用户要等缓存过期（1 小时起）才看得到可读部门名——用户会以为没修好。
+    """
+    redis = _FakeRedis()
+    real_key = "legacy-key-without-dept"
+    redis.hashes[_session_key(real_key)] = {
+        "user_id": "9",
+        "user_name": "bob",
+        "role": "user",
+        "status": "1",
+    }
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        user_info = await AuthService.verify_api_key(real_key)
+
+    assert user_info is not None
+    assert "dept_name" in user_info
+    # 补齐后的缓存已落键，下次命中就不会再回源
+    assert "dept_name" in redis.hashes[_session_key(real_key)]

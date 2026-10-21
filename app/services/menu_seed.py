@@ -31,6 +31,7 @@ NODE_ELEMENT = "element"
 ALLOWED_ICON_KEYS = (
     "dashboard",
     "menu",
+    "org",
     "widget",
     "ellipsis",
     "rectangle_stack",
@@ -128,6 +129,7 @@ ALLOWED_PAGE_PATHS = (
     "/dashboard/roles",
     "/dashboard/system",
     "/dashboard/menus",
+    "/dashboard/departments",
 )
 
 # 外链菜单允许的协议。`javascript:` / `data:` 一律拒绝，避免管理员误填变成脚本执行入口。
@@ -436,6 +438,17 @@ _RAW_SEED: List[BuiltinMenuNode] = [
         icon="roles",
         path="/dashboard/roles",
         active_route_names="Roles",
+    ),
+    BuiltinMenuNode(
+        code="menu:system:departments",
+        node_type=NODE_PAGE,
+        label="部门管理",
+        parent_code="group:system",
+        permission_code="menu:system:departments",
+        icon="org",
+        path="/dashboard/departments",
+        active_route_names="DepartmentManagement",
+        description="组织架构（树形部门）与部门成员维护",
     ),
     BuiltinMenuNode(
         code="menu:system:config",
@@ -784,6 +797,18 @@ _RAW_SEED: List[BuiltinMenuNode] = [
         node_type=NODE_ELEMENT,
         label="删除角色",
         parent_code="menu:system:roles",
+    ),
+    BuiltinMenuNode(
+        code="element:dept:edit",
+        node_type=NODE_ELEMENT,
+        label="维护部门结构与部门成员",
+        parent_code="menu:system:departments",
+    ),
+    BuiltinMenuNode(
+        code="element:dept:delete",
+        node_type=NODE_ELEMENT,
+        label="删除部门",
+        parent_code="menu:system:departments",
     ),
     BuiltinMenuNode(
         code="element:system:config_save",

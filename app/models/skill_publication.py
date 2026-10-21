@@ -11,7 +11,8 @@ class SkillPublication(Base):
 
     id = Column(String(36), primary_key=True)
     platform_skill_id = Column(String(128), nullable=True, unique=True)
-    source_user_id = Column(BigInteger, ForeignKey("ai_agent_users.id"), nullable=False)
+    # 可空：作者被删除时把行保留下来（审核审计与 platform_skill_id 不丢），只解绑作者
+    source_user_id = Column(BigInteger, ForeignKey("ai_agent_users.id"), nullable=True)
     source_personal_skill_id = Column(String(128), nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -50,7 +51,8 @@ class SkillPublicationVersion(Base):
     content_sha256 = Column(String(64), nullable=False)
     file_count = Column(Integer, nullable=False, default=0)
     total_size = Column(BigInteger, nullable=False, default=0)
-    submitted_by = Column(BigInteger, ForeignKey("ai_agent_users.id"), nullable=False)
+    # 可空：同 source_user_id，提交人被删除后保留版本记录
+    submitted_by = Column(BigInteger, ForeignKey("ai_agent_users.id"), nullable=True)
     submitted_at = Column(DateTime, default=datetime.now, nullable=False)
     reviewed_by = Column(BigInteger, ForeignKey("ai_agent_users.id"), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)

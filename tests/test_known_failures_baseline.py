@@ -13,6 +13,7 @@ from known_failures import (
     load_known_failures,
     mark_known_failures,
     missing_from_collection,
+    stale_entries,
 )
 
 pytestmark = pytest.mark.no_infrastructure
@@ -88,6 +89,53 @@ def test_real_baseline_file_is_valid_and_categorized():
     for nodeid, reason in known.items():
         assert "::" in nodeid, f"清单项不像 nodeid：{nodeid}"
         assert any(reason.startswith(c) for c in CATEGORIES), f"缺少合法分类：{reason}"
+
+
+def test_subset_run_does_not_report_out_of_scope_entries(tmp_path):
+    """只跑某个子目录时，别的目录的条目"找不到"是正常的，不该报陈旧。
+
+    以前每次 `pytest tests/frontend` 都会打 63 条警告，噪音大到没人会认真看。
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "alive.py").write_text("", encoding="utf-8")
+    (tmp_path / "tests" / "other_dir").mkdir()
+    (tmp_path / "tests" / "other_dir" / "test_x.py").write_text("", encoding="utf-8")
+    known = {"tests/other_dir/test_x.py::test_x": "A-断言过时: x"}
+
+    # 文件还在，只是这次没被收集（跑了子集）→ 不算陈旧
+    assert stale_entries(known, {"tests/alive.py::test_y"}, root=tmp_path) == []
+
+
+def test_healthy_entry_is_not_stale(tmp_path):
+    """条目对应的用例确实被收集到，就不算陈旧（最重要的正向用例）。"""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "alive.py").write_text("", encoding="utf-8")
+    known = {"tests/alive.py::test_y": "A-断言过时: y"}
+
+    assert stale_entries(known, {"tests/alive.py::test_y"}, root=tmp_path) == []
+
+
+def test_deleted_test_file_is_stale(tmp_path):
+    known = {"tests/gone.py::test_x": "A-断言过时: x"}
+    assert stale_entries(known, set(), root=tmp_path) == ["tests/gone.py::test_x"]
+
+
+def test_renamed_test_inside_collected_file_is_stale(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "alive.py").write_text("", encoding="utf-8")
+    known = {"tests/alive.py::test_old": "A-断言过时: x"}
+
+    assert stale_entries(known, {"tests/alive.py::test_new"}, root=tmp_path) == [
+        "tests/alive.py::test_old"
+    ]
+
+
+def test_real_baseline_entries_point_to_existing_files():
+    """真实清单里的每个 nodeid 都要指向仍然存在的测试文件。"""
+    known = load_known_failures()
+    repo_root = Path(__file__).resolve().parents[1]
+    for nodeid in known:
+        assert (repo_root / nodeid.split("::", 1)[0]).exists(), nodeid
 
 
 class _FakeItem:

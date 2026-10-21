@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import List
 
@@ -26,8 +27,44 @@ from app.services.menu_seed import (  # noqa: E402
     BuiltinMenuNode,
 )
 
-MYSQL_PATH = ROOT / "db-prod" / "V176-create_agent_menus.sql"
-PG_PATH = ROOT / "db-prod-pg" / "V77-create_agent_menus.sql"
+# 基线迁移：建表 + 首批内置节点。**已上线，冻结**——不再重新生成，也不许手工改；
+# 后续新增的节点一律追加一个增量迁移，避免每次加菜单都把几百行旧节点重抄一遍。
+BASELINE_TARGETS = (
+    ("mysql", ROOT / "db-prod" / "V176-create_agent_menus.sql"),
+    ("pg", ROOT / "db-prod-pg" / "V77-create_agent_menus.sql"),
+)
+
+# 增量迁移：每批新增节点登记一项。校验时会检查
+#   1) 登记里的权限码都真实存在（防手滑写错 code）；
+#   2) 每个增量文件的内容 == 用登记的节点重新生成的结果（防 SQL 与 seed 漂移）；
+#   3) 基线文件 == 用「全部节点 - 已登记增量」重新生成的结果 —— 于是**任何未登记的新节点**
+#      都会让基线校验失败并提示「请登记到 INCREMENTAL_MIGRATIONS」，不会悄悄漏进基线。
+INCREMENTAL_MIGRATIONS = (
+    {
+        "key": "department-menu",
+        "title": "部门管理菜单",
+        "reason": "新增「部门管理」页面节点与两个功能点（维护部门结构 / 删除部门）。",
+        "spec": "docs/superpowers/specs/2026-10-20-department-management-design.md",
+        # 一个功能一个迁移：建表与它的菜单种子写在同一个文件里（与 V176/V77 一致）。
+        # 种子部分被 START/END 标记包围，脚本只改标记块，不碰手写的建表 DDL。
+        "targets": {
+            "mysql": ROOT / "db-prod" / "V178-create_departments.sql",
+            "pg": ROOT / "db-prod-pg" / "V79-create_departments.sql",
+        },
+        "codes": (
+            "menu:system:departments",
+            "element:dept:edit",
+            "element:dept:delete",
+        ),
+        # 部门管理插在「角色管理」之后，同级排序按出现顺序自动编号，
+        # 于是「系统配置」「菜单管理」被顺推 10。基线（V176）里它们仍是旧值，
+        # 由本批 UPDATE 改成新值——不这么写，库里的排序就和代码永久分叉。
+        "resort_before": {
+            "menu:system:config": 30,
+            "menu:system:menus": 40,
+        },
+    },
+)
 
 TABLE = "ai_agent_menus"
 
@@ -274,35 +311,163 @@ WHERE src.resource_type = 'menu'
     return "\n\n".join(blocks)
 
 
-def _body(dialect: str) -> str:
+def _split_nodes():
+    """按登记表把种子切成「基线节点」与「各增量节点」。
+
+    登记里出现种子里没有的权限码属于笔误，直接失败：否则那个增量迁移会生成空文件，
+    而真正的新节点会被当成基线节点、在基线校验里报「过期」，排查起来很绕。
+    """
+    all_nodes = list(BUILTIN_MENU_SEED)
+    all_codes = {node.code for node in all_nodes}
+    registered: set = set()
+    for item in INCREMENTAL_MIGRATIONS:
+        registered.update(item["codes"])
+    unknown = registered - all_codes
+    if unknown:
+        raise SystemExit(f"增量迁移登记了种子里不存在的权限码：{sorted(unknown)}")
+
+    # 基线生成时把「后续迁移要改排序」的节点还原成旧值，否则基线永远与 V176 对不上
+    restore = {}
+    for item in INCREMENTAL_MIGRATIONS:
+        for code, old_sort in (item.get("resort_before") or {}).items():
+            restore.setdefault(code, old_sort)
+
+    baseline = [
+        replace(node, sort_order=restore[node.code]) if node.code in restore else node
+        for node in all_nodes
+        if node.code not in registered
+    ]
+    increments = {
+        item["title"]: [node for node in all_nodes if node.code in set(item["codes"])]
+        for item in INCREMENTAL_MIGRATIONS
+    }
+    return baseline, increments
+
+
+def _body(dialect: str, nodes: List[BuiltinMenuNode], *, with_permission_split: bool) -> str:
     parts: List[str] = []
-    parts.append(f"-- ========== 菜单与权限节点 seed（{len(BUILTIN_MENU_SEED)} 条）==========")
+    parts.append(f"-- ========== 菜单与权限节点 seed（{len(nodes)} 条）==========")
     parts.append(
         "-- 顺序即同级排序；分组先于其子项，页面先于其功能点，因此逐条插入不需要额外的拓扑排序。"
     )
     parts.append("")
-    for node in BUILTIN_MENU_SEED:
+    for node in nodes:
         parts.append(_insert_sql(node, dialect))
         parts.append("")
-    parts.append("-- ========== 权限码拆分：复制既有授权 ==========")
-    parts.append("")
-    parts.append(_split_permission_sql(dialect))
-    parts.append("")
-    parts.append("-- `menu:system:menus` / `element:menu:edit` 刻意不自动授予任何非 admin 角色：")
-    parts.append("-- 菜单管理是新增能力，是否需要授予由管理员在角色管理里决定。")
+    if with_permission_split:
+        parts.append("-- ========== 权限码拆分：复制既有授权 ==========")
+        parts.append("")
+        parts.append(_split_permission_sql(dialect))
+        parts.append("")
+        parts.append("-- `menu:system:menus` / `element:menu:edit` 刻意不自动授予任何非 admin 角色：")
+        parts.append("-- 菜单管理是新增能力，是否需要授予由管理员在角色管理里决定。")
     return "\n".join(parts)
 
 
-def build_mysql_sql() -> str:
-    return _ddl_mysql() + "\n" + _body("mysql") + "\n"
+def _increment_header(item: dict, dialect: str) -> str:
+    version = item["pg_version"] if dialect == "pg" else item["version"]
+    label = "PostgreSQL" if dialect == "pg" else "MySQL"
+    return f"""-- {version}: {item["title"]}（{label} 方言）
+-- 变更原因：{item["reason"]}
+-- 需求背景：{item["spec"]}
+-- 注意事项：本脚本由 scripts/gen_menu_seed_sql.py 从 app/services/menu_seed.py 生成，
+--           请勿手工编辑；如需调整菜单请改 menu_seed.py 后重新生成。
+--           **只插入本批新增的节点**，表结构与历史节点已由 V176/V77 建立。
+--           本脚本仅由 Agent 生成，不得自动执行，请由用户手工导入更新到数据库。
+--           apply_sql.py 无 schema_migrations 记录表，幂等必须写在 SQL 自身。
+--           幂等写法：INSERT ... SELECT ... WHERE NOT EXISTS（按 code 判重），
+--           重复执行只会补齐缺失节点，不会改动已存在的行。
+-- =====================================================================
+"""
 
 
-def build_pg_sql() -> str:
-    return _ddl_pg() + "\n" + _body("pg") + "\n"
+def build_baseline_sql(dialect: str) -> str:
+    baseline, _ = _split_nodes()
+    ddl = _ddl_pg() if dialect == "pg" else _ddl_mysql()
+    return ddl + "\n" + _body(dialect, baseline, with_permission_split=True) + "\n"
+
+
+def _resort_sql(item: dict, dialect: str) -> str:
+    """把给新节点腾位置的旧节点排序往后挪。
+
+    `AND sort_order = <旧值>` 是刻意的：管理员如果手工调过这几项的排序，就不该被迁移覆盖。
+    """
+    resort = item.get("resort_before") or {}
+    if not resort:
+        return ""
+    table = _quote(TABLE, dialect) if dialect == "pg" else TABLE
+    by_code = {node.code: node for node in BUILTIN_MENU_SEED}
+    lines = ["-- ========== 给新节点腾位置：顺推同级排序（已被手工调整过则跳过）=========="]
+    for code, old_sort in resort.items():
+        new_sort = by_code[code].sort_order
+        if new_sort == old_sort:
+            continue
+        lines.append(
+            f"UPDATE {table} SET {_quote('sort_order', dialect)} = {new_sort}, "
+            f"{_quote('updated_at', dialect)} = {_now(dialect)} "
+            f"WHERE {_quote('code', dialect)} = {_lit(code)} "
+            f"AND {_quote('sort_order', dialect)} = {old_sort};"
+        )
+    return "\n".join(lines)
+
+
+def marker_start(key: str) -> str:
+    return f"-- >>> gen_menu_seed_sql:{key} START（本段由脚本生成，勿手改）>>>"
+
+
+def marker_end(key: str) -> str:
+    return f"-- <<< gen_menu_seed_sql:{key} END <<<"
+
+
+def build_increment_block(item: dict, dialect: str) -> str:
+    """标记块**内部**内容：本批新增节点 +（可选）顺推排序。
+
+    不含文件头注释与建表 DDL——它们由人在同一个文件里维护，
+    脚本只负责这一段的正确性。
+    """
+    _, increments = _split_nodes()
+    nodes = increments[item["title"]]
+    parts = [_body(dialect, nodes, with_permission_split=False)]
+    resort = _resort_sql(item, dialect)
+    if resort:
+        parts.extend(["", resort])
+    return "\n".join(parts)
+
+
+def extract_block(text: str, key: str):
+    """取出标记块内部内容；标记缺失或不配对返回 None（区别于「块为空」）。"""
+    start, end = marker_start(key), marker_end(key)
+    i, j = text.find(start), text.find(end)
+    if i < 0 or j < 0 or j < i:
+        return None
+    return text[i + len(start) : j]
+
+
+def splice_block(text: str, key: str, body: str) -> str:
+    """只替换标记块内部，标记行与块外内容原样保留。"""
+    start, end = marker_start(key), marker_end(key)
+    i, j = text.find(start), text.find(end)
+    if i < 0 or j < 0 or j < i:
+        raise ValueError(f"缺少标记块 {key}")
+    return text[: i + len(start)] + "\n" + body.rstrip("\n") + "\n" + text[j:]
 
 
 def _is_current(path: Path, content: str) -> bool:
     return path.exists() and path.read_text(encoding="utf-8") == content
+
+
+def _baseline_targets() -> list:
+    """基线是纯生成文件：整份比对、整份重写（实际从不重写，见 main）。"""
+    return [(path, build_baseline_sql(dialect)) for dialect, path in BASELINE_TARGETS]
+
+
+def _incremental_targets() -> list:
+    """增量是标记块：只比对/替换块内部，块外的人工内容不受影响。"""
+    targets = []
+    for item in INCREMENTAL_MIGRATIONS:
+        for dialect in ("mysql", "pg"):
+            targets.append((item["targets"][dialect], item["key"], build_increment_block(item, dialect)))
+    return targets
 
 
 def main(argv=None) -> int:
@@ -310,29 +475,59 @@ def main(argv=None) -> int:
     parser.add_argument("--check", action="store_true", help="只比对，不写文件")
     args = parser.parse_args(argv)
 
-    targets = (
-        (MYSQL_PATH, build_mysql_sql()),
-        (PG_PATH, build_pg_sql()),
-    )
-
     if args.check:
-        stale = [path for path, content in targets if not _is_current(path, content)]
+        stale = []
+        for path, content in _baseline_targets():
+            if not _is_current(path, content):
+                stale.append(
+                    (
+                        path,
+                        "基线迁移已冻结：说明有新节点没登记迁移，"
+                        "请把它的 code 加进 INCREMENTAL_MIGRATIONS 并重新生成",
+                    )
+                )
+        for path, key, body in _incremental_targets():
+            text = path.read_text(encoding="utf-8") if path.exists() else ""
+            block = extract_block(text, key)
+            if block is None:
+                stale.append((path, f"缺少标记块 {key}，请先手工加上 START/END 两行"))
+            elif block.strip() != body.strip():
+                stale.append((path, "标记块内容与 menu_seed.py 不一致，请重新生成"))
         if stale:
-            for path in stale:
-                print(f"过期：{path.relative_to(ROOT)}（请重新运行 scripts/gen_menu_seed_sql.py）")
+            for path, hint in stale:
+                print(f"过期：{path.relative_to(ROOT)}（{hint}）")
             return 1
-        print("两套迁移 SQL 与 menu_seed.py 一致")
+        print(
+            "迁移 SQL 与 menu_seed.py 一致"
+            f"（基线 {len(BASELINE_TARGETS)} 份 + 增量 {len(INCREMENTAL_MIGRATIONS)} 批标记块）"
+        )
         return 0
 
-    changed = [path for path, content in targets if not _is_current(path, content)]
-    for path, content in targets:
-        if _is_current(path, content):
+    for path, content in _baseline_targets():
+        if not _is_current(path, content):
+            print(
+                f"基线迁移与种子不一致，拒绝覆盖：{path.relative_to(ROOT)}\n"
+                "  基线已上线，新增节点请登记到 INCREMENTAL_MIGRATIONS。"
+            )
+            return 1
+
+    changed = []
+    for path, key, body in _incremental_targets():
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+        if extract_block(text, key) is None:
+            print(
+                f"缺少标记块 {key}：{path.relative_to(ROOT)}\n"
+                "  请在该文件里手工加上 START/END 两行标记后重新运行。"
+            )
+            return 1
+        updated = splice_block(text, key, body)
+        if updated == text:
             continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-        print(f"已更新：{path.relative_to(ROOT)}")
+        path.write_text(updated, encoding="utf-8")
+        changed.append(path)
+        print(f"已更新标记块：{path.relative_to(ROOT)}")
     if not changed:
-        print("两套迁移 SQL 已是最新")
+        print("迁移 SQL 已是最新")
     return 0
 
 

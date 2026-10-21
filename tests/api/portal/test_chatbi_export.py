@@ -9,9 +9,9 @@ from app.api.portal.endpoints.chatbi_export import (
     ChatBIExportRequest,
     _extract_rows_columns,
     _md_escape,
-    _user_dimensions,
 )
 from app.services.ai.tools.data_api import MAX_EXPORT_SQL_ROWS, MAX_LOCAL_SQL_ROWS
+from app.services.user_dimension_service import build_base_dimensions
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -67,12 +67,16 @@ def test_extract_rows_columns_empty_returns_empty():
 
 
 def test_user_dimensions_shape():
-    dims = _user_dimensions(
+    """维度形状由公共构造函数保证：三个部门键始终存在（无部门时为空列表）。"""
+    dims = build_base_dimensions(
         {"user_name": "alice", "real_name": "爱丽丝", "role": "user", "dept_code": "D1"}, 7
     )
     assert dims["id"] == 7
     assert dims["user_name"] == "alice"
     assert dims["role"] == "user"
+    assert dims["dept_code"] == "D1"
+    assert dims["dept_codes"] == []
+    assert dims["dept_codes_subtree"] == []
 
 
 def test_export_request_requires_sql_and_data_source():

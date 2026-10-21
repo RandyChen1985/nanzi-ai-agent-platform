@@ -656,6 +656,15 @@ const router = useRouter()
 const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp', 'tasks']
 const activeTab = ref<PersonalTab>(personalTabs.includes(route.query.tab as PersonalTab) ? route.query.tab as PersonalTab : 'info')
 const skillsInitialId = computed(() => String(route.query.skill_id || '').trim())
+/** 通知与深链共用的「我的技能」二级落点：mine / received / sent。 */
+const skillsInitialMenu = computed<'mine' | 'received' | 'sent'>(() => {
+    const value = String(route.query.skills_tab || '').trim()
+    return value === 'received' || value === 'sent' ? value : 'mine'
+})
+const mcpInitialMenu = computed<'mine' | 'received' | 'sent'>(() => {
+    const value = String(route.query.mcp_tab || '').trim()
+    return value === 'received' || value === 'sent' ? value : 'mine'
+})
 const permissionsSubTab = ref<'list' | 'about'>('list')
 const showAboutTab = computed(() => !!branding.value.contact_markdown?.trim())
 const contactHtml = computed(() => renderMarkdown(branding.value.contact_markdown || ''))
@@ -953,6 +962,23 @@ onMounted(() => {
                                     >
                                         {{ userInfo.role === 'admin' ? '管理员' : '普通用户' }}
                                     </span>
+                                    <!-- 部门：显示名字，不显示 dept_code / org_path 这类机器格式。
+                                         主部门用主色区分，兼职部门用中性色——多部门时人最关心"主"是哪个。
+                                         直接列出来而不是折叠成 +N：移动端 hover 不出来，看不到就等于没有。 -->
+                                    <template v-if="userInfo.dept_names && userInfo.dept_names.length">
+                                        <span
+                                            v-for="(name, idx) in userInfo.dept_names"
+                                            :key="name"
+                                            class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium"
+                                            :class="idx === 0
+                                                ? 'bg-primary/10 text-primary border border-primary/20'
+                                                : 'bg-gray-100 text-gray-600'"
+                                        >{{ name }}</span>
+                                    </template>
+                                    <span
+                                        v-else
+                                        class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-gray-100 text-gray-400"
+                                    >未设置部门</span>
                                 </div>
                             </div>
                         </div>
@@ -1570,12 +1596,13 @@ onMounted(() => {
             <SkillsManagement
                 personal-only
                 :initial-skill-id="skillsInitialId"
+                :initial-personal-menu="skillsInitialMenu"
                 @drawer-closed="clearSkillsDeepLink"
             />
         </div>
 
         <div v-else-if="activeTab === 'mcp'" class="px-3 pb-4 sm:px-6 sm:pb-6 min-h-[28rem]">
-            <McpManagement personal-only />
+            <McpManagement personal-only :initial-personal-menu="mcpInitialMenu" />
         </div>
 
         <div v-else-if="activeTab === 'tasks'" class="px-4 pb-4 sm:px-6 sm:pb-6 min-h-[32rem]">
