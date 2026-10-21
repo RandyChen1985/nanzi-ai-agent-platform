@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import SkillFlowGuideBanner from '../components/skill/SkillFlowGuideBanner.vue'
+import SkillPersonalMenu from '../components/skill/SkillPersonalMenu.vue'
+import SkillShareDialog from '../components/skill/SkillShareDialog.vue'
+import ReceivedSharesPanel from '../components/skill/ReceivedSharesPanel.vue'
+import SentSharesPanel from '../components/skill/SentSharesPanel.vue'
 import axios from '../utils/axios'
 import { useToast } from '../composables/useToast'
 import SkillFileTree from '../components/SkillFileTree.vue'
@@ -14,6 +18,9 @@ import { isSkillEnabled } from '@/utils/skillEnabled'
 
 /** 发布状态：与后端 skill_publication_service 的取值一一对应（新增状态必须同步这里）。 */
 type PublicationStatus = 'UNPUBLISHED' | 'PENDING' | 'PUBLISHED' | 'REJECTED' | 'WITHDRAWN' | 'REVOKED'
+
+/** 「我的技能」内的二级菜单：我的技能 / 收到的分享 / 我的分享。 */
+type PersonalMenuKey = 'mine' | 'received' | 'sent'
 
 interface Skill {
   id: string
@@ -29,6 +36,17 @@ interface Skill {
   pending_version?: number | null
   last_review_comment?: string | null
   platform_skill_id?: string | null
+  /** 该技能来自谁的分享（仅在「收到的分享」接受过之后出现） */
+  shared_from?: {
+    share_id: string
+    source_skill_id: string
+    source_user_id: number
+    source_user_name?: string | null
+    source_real_name?: string | null
+    shared_at?: string | null
+  } | null
+  /** 分享给过多少人（待接受 + 已接受） */
+  share_count?: number
 }
 
 interface PublicationReviewItem {
@@ -102,9 +120,12 @@ const props = withDefaults(defineProps<{
   personalOnly?: boolean
   /** 打开时定位到指定个人技能详情 */
   initialSkillId?: string
+  /** 「我的技能」内的落点：mine / received / sent（深链与通知共用） */
+  initialPersonalMenu?: PersonalMenuKey
 }>(), {
   personalOnly: false,
   initialSkillId: '',
+  initialPersonalMenu: 'mine',
 })
 
 const emit = defineEmits<{
@@ -173,6 +194,18 @@ const confirmState = ref({
 
 const skills = ref<Skill[]>([])
 const personalSkills = ref<Skill[]>([])
+
+// 「我的技能」内的二级菜单与分享状态
+const normalizePersonalMenu = (value?: string): PersonalMenuKey =>
+  value === 'received' || value === 'sent' ? value : 'mine'
+const route = useRoute()
+/** 二级菜单落点：query（深链/通知）优先，其次才是宿主传入的 prop。 */
+const resolvePersonalMenu = (): PersonalMenuKey =>
+  normalizePersonalMenu(String(route.query.skills_tab || '') || props.initialPersonalMenu)
+const personalMenu = ref<PersonalMenuKey>(resolvePersonalMenu())
+const shareDialogSkill = ref<Skill | null>(null)
+const shareMenuCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
+
 /** 首屏落点：只有能用平台管理视图的用户才落到「平台技能」，否则一律落到「我的技能」。 */
 const resolveInitialWorkspaceTab = (): 'global' | 'personal' =>
   canAccessPlatformWorkspace.value ? 'global' : 'personal'
@@ -498,6 +531,43 @@ const fetchPersonalSkills = async () => {
     showToast(e.response?.data?.detail || '获取个人技能列表失败', 'error')
   } finally {
     endListLoading()
+  }
+}
+
+// 分享：菜单计数、弹窗与跳转
+const fetchShareMenuCounts = async () => {
+  try {
+    const response = await axios.get('/api/portal/skills/personal/shares/summary')
+    const data = response.data?.data || {}
+    shareMenuCounts.value = {
+      received_pending: Number(data.received_pending || 0),
+      sent_pending: Number(data.sent_pending || 0),
+      sent_total: Number(data.sent_total || 0),
+    }
+  } catch (error) {
+    console.warn('获取技能分享计数失败', error)
+  }
+}
+
+const openShareDialog = (skill: Skill) => {
+  shareDialogSkill.value = skill
+}
+
+const handleShareChanged = async () => {
+  await Promise.all([fetchShareMenuCounts(), fetchPersonalSkills()])
+}
+
+const openSharedSkill = async (skillId: string) => {
+  personalMenu.value = 'mine'
+  if (!personalSkills.value.some((skill) => skill.id === skillId)) {
+    // 刚接受完分享时列表可能还在刷新，这里兜底重拉一次，避免「点了打不开」
+    await fetchPersonalSkills()
+  }
+  await nextTick()
+  if (personalSkills.value.some((skill) => skill.id === skillId)) {
+    openSkillDetail(skillId)
+  } else {
+    showToast('该技能已不存在或已删除', 'error')
   }
 }
 
@@ -1814,9 +1884,11 @@ onMounted(() => {
     if (targetId && personalSkills.value.some((s) => s.id === targetId)) {
       activeWorkspaceTab.value = 'personal'
       activeScope.value = 'personal'
+      personalMenu.value = 'mine'
       openSkillDetail(targetId)
     }
   })
+  fetchShareMenuCounts()
   document.addEventListener('click', closeContextMenu)
   document.addEventListener('keydown', handleDrawerKeydown)
 })
@@ -1832,8 +1904,16 @@ watch(
     if (personalSkills.value.some((s) => s.id === targetId)) {
       activeWorkspaceTab.value = 'personal'
       activeScope.value = 'personal'
+      personalMenu.value = 'mine'
       openSkillDetail(targetId)
     }
+  },
+)
+
+watch(
+  () => [String(route.query.skills_tab || ''), props.initialPersonalMenu],
+  () => {
+    personalMenu.value = resolvePersonalMenu()
   },
 )
 
@@ -1885,143 +1965,6 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <div v-if="showSkillList" class="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div class="relative min-w-0 flex-1">
-          <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </span>
-          <input
-            v-model="searchQuery"
-            type="search"
-            placeholder="搜索技能名称或描述..."
-            class="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-9 pr-4 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-
-        <div class="flex shrink-0 flex-wrap items-center gap-2">
-          <div class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
-            <button
-              type="button"
-              class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
-              :class="skillSortBy === 'name' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
-              title="按名称排序"
-              @click="skillSortBy = 'name'"
-            >
-              名称
-            </button>
-            <button
-              type="button"
-              class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
-              :class="skillSortBy === 'time' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
-              title="按更新时间排序"
-              @click="skillSortBy = 'time'"
-            >
-              时间
-            </button>
-            <button
-              type="button"
-              class="rounded-md p-1.5 text-gray-500 transition-all hover:bg-gray-200 hover:text-gray-800"
-              :title="skillSortOrder === 'asc' ? '当前升序，点击切换降序' : '当前降序，点击切换升序'"
-              @click="toggleSkillSortOrder"
-            >
-              <svg class="h-4 w-4 transition-transform" :class="skillSortOrder === 'desc' ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0v4m0 0l-3-3m3 3l3-3" />
-              </svg>
-            </button>
-          </div>
-
-          <div class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
-            <button
-              type="button"
-              class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-              :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
-              title="卡片视图"
-              @click="viewMode = 'card'"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-              :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
-              title="列表视图"
-              @click="viewMode = 'list'"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-          </div>
-
-          <button
-            v-if="!personalOnly"
-            type="button"
-            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
-            title="统计查看"
-            @click="openStatsModal"
-          >
-            <svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-          </button>
-
-          <div class="relative shrink-0" @click.stop>
-            <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
-              <button
-                type="button"
-                class="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all active:scale-[0.98]"
-                :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
-                @click="openCreateModal"
-              >
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                </svg>
-                新建技能
-              </button>
-              <button
-                type="button"
-                class="border-l px-2 text-white transition-colors"
-                :class="activeScope === 'personal' ? 'border-emerald-500 bg-emerald-600 hover:bg-emerald-700' : 'border-blue-500 bg-blue-600 hover:bg-blue-700'"
-                title="更多创建方式"
-                @click="showCreateMenu = !showCreateMenu"
-              >
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-            </div>
-            <div
-              v-if="showCreateMenu"
-              class="absolute right-0 z-20 mt-1.5 w-48 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
-            >
-              <button
-                type="button"
-                class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                @click="showCreateMenu = false; openCreateModal()"
-              >
-                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                </svg>
-                空白新建
-              </button>
-              <button
-                type="button"
-                class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                @click="showCreateMenu = false; openImportModal()"
-              >
-                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                </svg>
-                导入 Zip/Tar
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- 技能工作台全生命周期指引横幅 -->
@@ -2035,15 +1978,18 @@ onUnmounted(() => {
     </div>
 
     <!-- Scope Tab 切换 -->
-    <div v-if="!personalOnly" class="flex items-center border-b border-gray-200">
+    <div
+      v-if="!personalOnly"
+      class="flex items-center overflow-x-auto border-b border-gray-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
       <button
         v-if="canManagePlatformSkills"
         id="tab-global-skills"
         @click="activeWorkspaceTab = 'global'; activeScope = 'global'"
-        class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
+        class="flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm"
         :class="activeWorkspaceTab === 'global' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
         </svg>
         平台技能
@@ -2052,10 +1998,10 @@ onUnmounted(() => {
       <button
         id="tab-personal-skills"
         @click="activeWorkspaceTab = 'personal'; activeScope = 'personal'"
-        class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
+        class="flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm"
         :class="activeWorkspaceTab === 'personal' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
         </svg>
         我的技能
@@ -2066,10 +2012,10 @@ onUnmounted(() => {
         id="tab-skill-publication-review"
         type="button"
         @click="openPublicationReview"
-        class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
+        class="flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm"
         :class="activeWorkspaceTab === 'review' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.5-2.5A8.5 8.5 0 1112 3.5a8.5 8.5 0 018.5 8.5z" />
         </svg>
         待审核
@@ -2080,10 +2026,10 @@ onUnmounted(() => {
         id="tab-skill-publications"
         type="button"
         @click="openPublications"
-        class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors"
+        class="flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm"
         :class="activeWorkspaceTab === 'publications' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
         </svg>
         已发布
@@ -2246,6 +2192,175 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- 我的技能：左侧二级菜单 + 右侧内容（窄屏折叠为顶部胶囊 Tab） -->
+    <div v-if="activeWorkspaceTab === 'personal'" class="mb-3 md:hidden">
+      <SkillPersonalMenu
+        variant="chips"
+        :active="personalMenu"
+        :received-count="shareMenuCounts.received_pending"
+        :sent-pending-count="shareMenuCounts.sent_pending"
+        @select="personalMenu = $event"
+      />
+    </div>
+
+    <div class="flex flex-col gap-4 md:flex-row md:items-start">
+      <SkillPersonalMenu
+        v-if="activeWorkspaceTab === 'personal'"
+        variant="aside"
+        :active="personalMenu"
+        :received-count="shareMenuCounts.received_pending"
+        :sent-pending-count="shareMenuCounts.sent_pending"
+        @select="personalMenu = $event"
+      />
+      <div class="min-w-0 flex-1 space-y-4">
+        <ReceivedSharesPanel
+          v-if="activeWorkspaceTab === 'personal' && personalMenu === 'received'"
+          @updated="handleShareChanged"
+          @go-mine="openSharedSkill"
+        />
+        <SentSharesPanel
+          v-else-if="activeWorkspaceTab === 'personal' && personalMenu === 'sent'"
+          @updated="handleShareChanged"
+          @open-skill="openSharedSkill"
+        />
+        <template v-else>
+          <div v-if="showSkillList" class="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div class="relative min-w-0 flex-1">
+              <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </span>
+              <input
+                v-model="searchQuery"
+                type="search"
+                placeholder="搜索技能名称或描述..."
+                class="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-9 pr-4 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div class="flex shrink-0 flex-wrap items-center gap-2">
+              <div class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+                <button
+                  type="button"
+                  class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
+                  :class="skillSortBy === 'name' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                  title="按名称排序"
+                  @click="skillSortBy = 'name'"
+                >
+                  名称
+                </button>
+                <button
+                  type="button"
+                  class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
+                  :class="skillSortBy === 'time' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                  title="按更新时间排序"
+                  @click="skillSortBy = 'time'"
+                >
+                  时间
+                </button>
+                <button
+                  type="button"
+                  class="rounded-md p-1.5 text-gray-500 transition-all hover:bg-gray-200 hover:text-gray-800"
+                  :title="skillSortOrder === 'asc' ? '当前升序，点击切换降序' : '当前降序，点击切换升序'"
+                  @click="toggleSkillSortOrder"
+                >
+                  <svg class="h-4 w-4 transition-transform" :class="skillSortOrder === 'desc' ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0v4m0 0l-3-3m3 3l3-3" />
+                  </svg>
+                </button>
+              </div>
+
+              <div class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+                <button
+                  type="button"
+                  class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
+                  :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                  title="卡片视图"
+                  @click="viewMode = 'card'"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
+                  :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
+                  title="列表视图"
+                  @click="viewMode = 'list'"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+              </div>
+
+              <button
+                v-if="!personalOnly"
+                type="button"
+                class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
+                title="统计查看"
+                @click="openStatsModal"
+              >
+                <svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </button>
+
+              <div class="relative shrink-0" @click.stop>
+                <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
+                  <button
+                    type="button"
+                    class="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all active:scale-[0.98]"
+                    :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
+                    @click="openCreateModal"
+                  >
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                    </svg>
+                    新建技能
+                  </button>
+                  <button
+                    type="button"
+                    class="border-l px-2 text-white transition-colors"
+                    :class="activeScope === 'personal' ? 'border-emerald-500 bg-emerald-600 hover:bg-emerald-700' : 'border-blue-500 bg-blue-600 hover:bg-blue-700'"
+                    title="更多创建方式"
+                    @click="showCreateMenu = !showCreateMenu"
+                  >
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                </div>
+                <div
+                  v-if="showCreateMenu"
+                  class="absolute right-0 z-20 mt-1.5 w-48 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
+                >
+                  <button
+                    type="button"
+                    class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                    @click="showCreateMenu = false; openCreateModal()"
+                  >
+                    <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                    </svg>
+                    空白新建
+                  </button>
+                  <button
+                    type="button"
+                    class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                    @click="showCreateMenu = false; openImportModal()"
+                  >
+                    <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                    导入 Zip/Tar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
     <template v-if="showSkillList">
     <!-- 技能列表网格 -->
     <div v-if="loading" class="flex flex-col items-center justify-center py-16">
@@ -2361,6 +2476,16 @@ onUnmounted(() => {
               <p class="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-gray-400">
                 ID: {{ skill.id }}
               </p>
+              <p
+                v-if="skill.shared_from"
+                class="mt-0.5 inline-flex items-center gap-1 text-[10px] text-blue-600"
+                :title="`来源技能：${skill.shared_from.source_skill_id}`"
+              >
+                <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13" />
+                </svg>
+                来自 {{ skill.shared_from.source_real_name || skill.shared_from.source_user_name }} 的分享
+              </p>
             </div>
           </div>
           
@@ -2376,10 +2501,22 @@ onUnmounted(() => {
               <div class="peer h-4 w-7 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none dark:bg-gray-700"></div>
             </label>
 
-            <!-- 导出 / 重命名：与删除同组，hover 显示 -->
+            <!-- 分享：常驻显示（新功能需要被看见，触屏也没有 hover）；导出/重命名/删除仍走 hover -->
+            <button
+              v-if="skill.scope === 'personal'"
+              @click.stop="openShareDialog(skill)"
+              class="rounded-lg p-1.5 text-blue-500 transition-colors hover:bg-blue-50 hover:text-blue-700"
+              title="分享给同事（对方接受后会复制一份到他的个人技能）"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13" />
+              </svg>
+            </button>
+
+            <!-- 导出 / 重命名：窄屏（无 hover）常显，md 以上回到 hover 显示 -->
             <button
               @click.stop="exportSkill(skill.id, skill.scope === 'personal' ? 'personal' : 'global')"
-              class="rounded-lg p-1.5 text-gray-400 opacity-0 transition-all hover:bg-emerald-50 hover:text-emerald-600 group-hover:opacity-100 focus:opacity-100"
+              class="rounded-lg p-1.5 text-gray-400 opacity-100 transition-all hover:bg-emerald-50 hover:text-emerald-600 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
               title="导出为 zip 压缩包（可备份或迁移到其它环境）"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2388,7 +2525,7 @@ onUnmounted(() => {
             </button>
             <button
               @click.stop="renameSkill(skill.id, skill.scope === 'personal' ? 'personal' : 'global')"
-              class="rounded-lg p-1.5 text-gray-400 opacity-0 transition-all hover:bg-indigo-50 hover:text-indigo-600 group-hover:opacity-100 focus:opacity-100"
+              class="rounded-lg p-1.5 text-gray-400 opacity-100 transition-all hover:bg-indigo-50 hover:text-indigo-600 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
               title="重命名技能 ID（会同步智能体白名单、发布记录与会话挂载）"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2396,10 +2533,10 @@ onUnmounted(() => {
               </svg>
             </button>
 
-            <!-- 删除：仅 hover 显示，降低误触 -->
+            <!-- 删除：窄屏常显（否则触屏无法删除），md 以上 hover 显示以降低误触 -->
             <button 
               @click.stop="deleteSkill(skill.id)"
-              class="rounded-lg p-1.5 text-gray-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100"
+              class="rounded-lg p-1.5 text-gray-400 opacity-100 transition-all hover:bg-red-50 hover:text-red-600 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
               title="注销并彻底删除技能目录"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2569,6 +2706,15 @@ onUnmounted(() => {
                   >
                     撤销审核
                   </button>
+                  <button
+                    v-if="skill.scope === 'personal'"
+                    type="button"
+                    @click="openShareDialog(skill)"
+                    class="rounded-lg border border-blue-200 px-2 py-1.5 text-xs font-semibold text-blue-600 transition-colors hover:bg-blue-50 whitespace-nowrap shrink-0"
+                    title="分享给同事（对方接受后会复制一份到他的个人技能）"
+                  >
+                    分享
+                  </button>
                   <button 
                     @click="openSkillDetail(skill.id)"
                     class="px-3 py-1.5 text-xs font-semibold border border-blue-200 text-blue-600 hover:bg-blue-50 hover:border-blue-300 rounded-lg transition-colors whitespace-nowrap shrink-0"
@@ -2593,6 +2739,9 @@ onUnmounted(() => {
     </div>
 
     </template>
+        </template>
+      </div>
+    </div>
 
     <!-- 技能工作台设计规范与全流程指引 Modal -->
     <Teleport to="body">
@@ -3745,6 +3894,14 @@ onUnmounted(() => {
       </template>
     </template>
   </div>
+
+  <SkillShareDialog
+    :visible="!!shareDialogSkill"
+    :skill="shareDialogSkill"
+    @close="shareDialogSkill = null"
+    @sent="handleShareChanged"
+    @view-sent="shareDialogSkill = null; personalMenu = 'sent'"
+  />
 </template>
 
 <style scoped>

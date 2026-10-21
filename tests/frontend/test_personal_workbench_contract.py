@@ -88,7 +88,11 @@ def test_workbench_route_navigation_and_actions_are_closed():
     assert workbench.permission_code is None
     assert "SidebarMenuLink" in dashboard
     assert 'if (route.name === "PersonalWorkbench") return "p-0 sm:px-4 sm:pt-2.5 sm:pb-4 md:px-6 md:pt-3 md:pb-6 lg:px-8 lg:pt-3.5 lg:pb-6"' in dashboard
-    assert "const homeRoute = computed(() => userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench')" in dashboard
+    # 落地页可在「菜单管理」里配置，因此 homeRoute 先取 landingPath，未配置时才退回角色口径
+    assert (
+        "landingPath.value || (userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench')"
+        in dashboard
+    )
     assert ':to="homeRoute"' in dashboard
     assert "router.push('/dashboard/workbench')" in login
     for action in (

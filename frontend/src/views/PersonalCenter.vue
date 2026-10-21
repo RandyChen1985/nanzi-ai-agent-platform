@@ -656,6 +656,11 @@ const router = useRouter()
 const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp', 'tasks']
 const activeTab = ref<PersonalTab>(personalTabs.includes(route.query.tab as PersonalTab) ? route.query.tab as PersonalTab : 'info')
 const skillsInitialId = computed(() => String(route.query.skill_id || '').trim())
+/** 通知与深链共用的「我的技能」二级落点：mine / received / sent。 */
+const skillsInitialMenu = computed<'mine' | 'received' | 'sent'>(() => {
+    const value = String(route.query.skills_tab || '').trim()
+    return value === 'received' || value === 'sent' ? value : 'mine'
+})
 const permissionsSubTab = ref<'list' | 'about'>('list')
 const showAboutTab = computed(() => !!branding.value.contact_markdown?.trim())
 const contactHtml = computed(() => renderMarkdown(branding.value.contact_markdown || ''))
@@ -1587,6 +1592,7 @@ onMounted(() => {
             <SkillsManagement
                 personal-only
                 :initial-skill-id="skillsInitialId"
+                :initial-personal-menu="skillsInitialMenu"
                 @drawer-closed="clearSkillsDeepLink"
             />
         </div>

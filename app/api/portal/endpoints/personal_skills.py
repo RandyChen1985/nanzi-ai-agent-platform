@@ -32,6 +32,20 @@ from app.services.skill_publication_service import (
     submit_personal_skill,
     withdraw_personal_skill_publication,
 )
+from app.services.skill_share_service import (
+    ShareConflictError,
+    ShareNotFoundError,
+    SharePermissionError,
+    accept_share,
+    annotate_personal_skills,
+    list_received_shares,
+    list_sent_shares,
+    reject_share,
+    search_share_targets,
+    share_menu_counts,
+    share_skill,
+    withdraw_share,
+)
 
 # 复用平台技能中的辅助函数
 from app.api.portal.endpoints.skills import (
@@ -105,8 +119,15 @@ def _validate_personal_skill_path(
 # ---------------------------------------------------------------------------
 
 @router.get("", summary="列出当前用户的个人技能")
-async def list_personal_skills(user: dict = Depends(require_api_key)):
-    """扫描用户个人技能目录，解析 SKILL.md 返回列表。"""
+async def list_personal_skills(
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """扫描用户个人技能目录，解析 SKILL.md 返回列表。
+
+    列表同时带上 ``shared_from``（该技能是否由「收到的分享」落地而来）与
+    ``share_count``（该技能当前有效分享人数），前端卡片据此展示来源与分享入口。
+    """
     skills_root = _get_personal_skills_root(user)
     skills_list = []
     try:
@@ -121,7 +142,183 @@ async def list_personal_skills(user: dict = Depends(require_api_key)):
     except Exception as e:
         logger.error("[PersonalSkills] Failed to list skills: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        annotations = await annotate_personal_skills(session, user=user)
+    except Exception as exc:  # 分享标注失败不该让整个「我的技能」列表不可用
+        logger.warning("[PersonalSkills] Failed to annotate shares: %s", exc)
+        annotations = {"shared_from": {}, "share_counts": {}}
+    for meta in skills_list:
+        meta["shared_from"] = annotations["shared_from"].get(meta.get("id"))
+        meta["share_count"] = annotations["share_counts"].get(meta.get("id"), 0)
     return {"status": "success", "data": skills_list}
+
+
+# ---------------------------------------------------------------------------
+# 点对点分享
+#
+# 路由顺序有讲究：``/share-targets`` 只有一段，必须注册在 ``/{skill_id}`` 之前，
+# 否则会被当成「技能 ID 叫 share-targets」。
+# ---------------------------------------------------------------------------
+
+def _share_http_exception(exc: Exception) -> HTTPException:
+    """把分享服务的领域异常翻译成 HTTP 状态码。"""
+    if isinstance(exc, ShareNotFoundError):
+        return HTTPException(status_code=404, detail="分享记录不存在")
+    if isinstance(exc, SharePermissionError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, ShareConflictError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, FileNotFoundError):
+        return HTTPException(status_code=404, detail="个人技能不存在")
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=500, detail="技能分享操作失败")
+
+
+@router.get("/share-targets", summary="搜索可以接收分享的用户")
+async def search_personal_skill_share_targets(
+    keyword: str = "",
+    limit: int = 20,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await search_share_targets(session, user=user, keyword=keyword, limit=limit)
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        if isinstance(exc, ValueError):
+            raise _share_http_exception(exc)
+        logger.error("[PersonalSkills] Failed to search share targets: %s", exc)
+        raise HTTPException(status_code=500, detail="搜索用户失败")
+
+
+@router.get("/shares/summary", summary="技能分享的菜单计数")
+async def get_personal_skill_share_summary(
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await share_menu_counts(session, user=user)
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        if isinstance(exc, ValueError):
+            raise _share_http_exception(exc)
+        logger.error("[PersonalSkills] Failed to load share summary: %s", exc)
+        raise HTTPException(status_code=500, detail="加载分享计数失败")
+
+
+@router.get("/shares/sent", summary="我发出的技能分享")
+async def list_personal_skill_sent_shares(
+    status: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await list_sent_shares(
+            session, user=user, status=status or None, limit=limit, offset=offset
+        )
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_if_domain(exc)
+        logger.error("[PersonalSkills] Failed to list sent shares: %s", exc)
+        raise HTTPException(status_code=500, detail="加载我的分享失败")
+
+
+@router.delete("/shares/sent/{share_id}", summary="撤回尚未被接受的技能分享")
+async def withdraw_personal_skill_share(
+    share_id: str,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await withdraw_share(session, user=user, share_id=share_id)
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_if_domain(exc)
+        logger.error("[PersonalSkills] Failed to withdraw share %s: %s", share_id, exc)
+        raise HTTPException(status_code=500, detail="撤回分享失败")
+
+
+@router.get("/shares/received", summary="我收到的技能分享")
+async def list_personal_skill_received_shares(
+    status: str = "PENDING",
+    limit: int = 100,
+    offset: int = 0,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await list_received_shares(
+            session, user=user, status=status, limit=limit, offset=offset
+        )
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_if_domain(exc)
+        logger.error("[PersonalSkills] Failed to list received shares: %s", exc)
+        raise HTTPException(status_code=500, detail="加载收到的分享失败")
+
+
+@router.post("/shares/received/{share_id}/accept", summary="接受技能分享并安装到我的技能")
+async def accept_personal_skill_share(
+    share_id: str,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await accept_share(session, user=user, share_id=share_id)
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_if_domain(exc)
+        logger.error("[PersonalSkills] Failed to accept share %s: %s", share_id, exc)
+        raise HTTPException(status_code=500, detail="接受分享失败")
+
+
+@router.post("/shares/received/{share_id}/reject", summary="拒绝技能分享")
+async def reject_personal_skill_share(
+    share_id: str,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await reject_share(session, user=user, share_id=share_id)
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_if_domain(exc)
+        logger.error("[PersonalSkills] Failed to reject share %s: %s", share_id, exc)
+        raise HTTPException(status_code=500, detail="拒绝分享失败")
+
+
+def _raise_if_domain(exc: Exception) -> None:
+    if isinstance(
+        exc,
+        (ShareNotFoundError, SharePermissionError, ShareConflictError, FileNotFoundError, ValueError),
+    ):
+        raise _share_http_exception(exc)
+
+
+@router.post("/{skill_id}/shares", summary="把个人技能分享给指定用户")
+async def create_personal_skill_share(
+    skill_id: str,
+    payload: dict,
+    user: dict = Depends(require_api_key),
+    session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        data = await share_skill(
+            session,
+            user=user,
+            skill_id=skill_id,
+            target_user_ids=payload.get("target_user_ids") or [],
+            message=payload.get("message"),
+        )
+        return {"status": "success", "data": data}
+    except Exception as exc:
+        _raise_if_domain(exc)
+        logger.error("[PersonalSkills] Failed to share skill %s: %s", skill_id, exc)
+        raise HTTPException(status_code=500, detail="分享技能失败")
 
 
 # ---------------------------------------------------------------------------

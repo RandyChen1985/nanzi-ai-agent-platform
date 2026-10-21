@@ -149,7 +149,13 @@ def validate_snapshot_tree(root: str) -> SnapshotStats:
     return SnapshotStats(hasher.hexdigest(), file_count, total_size)
 
 
-def _copy_tree_contents(source: Path, target: Path) -> None:
+def copy_tree_contents(source: Path, target: Path) -> None:
+    """把技能目录内容复制到 target（target 需已存在或可创建）。
+
+    发布快照与点对点分享快照共用这一份实现。两处都必须拒绝符号链接：
+    快照会被复制进别人的个人技能目录，跟随链接会把技能目录之外的任意文件
+    （例如密钥、其它用户的技能）一并带过去。
+    """
     target.mkdir(parents=True, exist_ok=True)
     for entry in sorted(source.iterdir(), key=lambda item: item.name):
         destination = target / entry.name
@@ -159,6 +165,10 @@ def _copy_tree_contents(source: Path, target: Path) -> None:
             shutil.copytree(entry, destination, symlinks=False)
         else:
             shutil.copy2(entry, destination)
+
+
+# 兼容旧引用（本模块历史调用与外部可能仍在用私有名）
+_copy_tree_contents = copy_tree_contents
 
 
 def create_personal_skill_snapshot(
