@@ -126,6 +126,11 @@ def is_v1_api_whitelisted(path: str) -> bool:
         return True
     if "/sandbox/k8s/workspace" in path:
         return True
+    # 管理端沙箱动作（镜像预构建 / 状态查询、E2B 与 SSH 测试、K8s RBAC 探测）：
+    # 白名单只负责放行已登录用户，真正的能力边界由端点内的
+    # element:system:config_save 依赖校验（admin 直通），这里不放宽任何权限。
+    if path.startswith(f"{V1_API_PREFIX}/admin/sandbox/"):
+        return True
     return False
 
 

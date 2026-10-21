@@ -51,7 +51,13 @@ def test_is_v1_api_whitelisted():
     assert is_v1_api_whitelisted("/api/v1/sandbox/k8s/workspace/status") is True
     assert is_v1_api_whitelisted("/api/v1/sandbox/k8s/workspace/stop") is True
     assert is_v1_api_whitelisted("/api/v1/sandbox/k8s/workspace/restart") is True
-    assert is_v1_api_whitelisted("/api/v1/admin/sandbox/docker/prebuild") is False
+    # 管理端沙箱动作：白名单只放行到端点，能力边界由端点内 element:system:config_save 校验
+    assert is_v1_api_whitelisted("/api/v1/admin/sandbox/docker/prebuild") is True
+    assert is_v1_api_whitelisted("/api/v1/admin/sandbox/docker/prebuild-status") is True
+    assert is_v1_api_whitelisted("/api/v1/admin/sandbox/docker/prebuild/stream") is True
+    assert is_v1_api_whitelisted("/api/v1/admin/sandbox/e2b/test-connection") is True
+    assert is_v1_api_whitelisted("/api/v1/admin/sandbox/ssh/test-connection") is True
+    assert is_v1_api_whitelisted("/api/v1/admin/sandbox/k8s/check-rbac") is True
     assert is_v1_api_whitelisted("/api/v1/users/profile") is False
 
 

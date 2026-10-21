@@ -96,10 +96,15 @@ async def test_embed_check_reports_embeddable_site(client: AsyncClient, valid_ap
 
 @pytest.mark.asyncio
 async def test_embed_check_returns_null_for_unreachable_target(
-    client: AsyncClient, valid_api_key: str, probe_spy
+    client: AsyncClient, valid_api_key: str, probe_spy, monkeypatch
 ):
     """探测不出结论时必须回 null，让前端降级——绝不能默认成「受限」再次误拦。"""
     probe_spy(_result(None, reason="探测超时"))
+
+    # 地址校验会真的做 DNS 解析，而这里只是想模拟「探测无结论」这一种结果。用编造的
+    # 域名会让测试成败取决于能否解析（CI/无外网环境直接 400 而不是 200），所以打桩掉。
+    # SSRF 本身另有专门用例 test_embed_check_rejects_internal_addresses_before_probing。
+    monkeypatch.setattr(web_preview, "validate_browser_navigation", lambda url: url)
 
     response = await client.post(
         URL,

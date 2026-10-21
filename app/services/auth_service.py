@@ -199,11 +199,11 @@ class AuthService:
         """给身份字典补上**可读**的部门名（``dept_name``）。
 
         `users.dept_code` / `org_path` 都是机器标识：admin 的主部门在库里是
-        `dept_code='main'`、`org_path='/1/'`。模型拿这两个值回答"我是什么部门的"，
-        只能照搬 `/1/` —— 整个上下文里没有任何中文部门名。
+        `dept_code='main'`、`org_path='/main/'`（编码路径，不是 id 路径 `/1/`）。
+        模型拿这两个值回答"我是什么部门的"，只能照搬路径 —— 上下文里没有中文部门名。
 
-        `AgentServicePrompts.user_context_message` 本来就有 `dept` 参数且优先于
-        `org_path`，但没人给它赋值。这里补上。
+        `AgentServicePrompts.user_context_message` 有 `dept` 参数，但没人给它赋值。
+        这里补上。
 
         查询失败（部门表未迁移、连接异常等）**不得影响认证**：降级为不注入该字段。
         """

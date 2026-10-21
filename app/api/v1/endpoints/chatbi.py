@@ -288,8 +288,8 @@ async def chatbi_sql_execute(
         user_id = int(session_user_info["user_id"])
         user_dimensions = await build_sql_user_dimensions(db, session_user_info, user_id)
 
-    is_openclaw_user = bool(_openclaw_openai_username_from_sessionid(body.sessionid))
-    bypass_table_auth = not is_openclaw_user
+    # 表级门禁不能由调用方传入的 sessionid 决定：OpenClaw 会话在上一行已经
+    # 按会话用户做过一次等价校验，非 OpenClaw 调用方也必须走完整的表权限校验。
     dataset_name = await _resolve_direct_sql_dataset_name(
         db,
         sql=body.sql,
@@ -310,9 +310,13 @@ async def chatbi_sql_execute(
         agent_context=None,
         dry_run=False,
         is_admin=user_info.get("role") == "admin",
-        bypass_table_auth=bypass_table_auth,
+        bypass_table_auth=False,
         permission_notice=permission_notice,
     )
+
+    # 行级重写后的 SQL 只用于内部审计/工具日志，不回传给调用方：
+    # permission_notice 的契约是“非敏感提示”，不应暴露过滤条件表达式。
+    permission_notice.pop("executed_sql", None)
 
     # 动态判定当前物理执行分流模式
     env_mode = os.environ.get("SQL_EXECUTION_MODE", "").strip().lower()

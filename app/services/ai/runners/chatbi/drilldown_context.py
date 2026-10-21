@@ -18,7 +18,9 @@ def build_inherited_analysis_context(
     raw_filters = context.get("filters") or []
     filters = dict(raw_filters) if isinstance(raw_filters, Mapping) else list(raw_filters)
     inherited = {
-        "previous_question": str(result.get("question") or "").strip(),
+        "previous_question": str(
+            result.get("question") or result.get("user_question") or ""
+        ).strip(),
         "dataset_name": str(result.get("dataset_name") or "").strip(),
         "metrics": list(context.get("metrics") or []),
         "dimensions": list(context.get("dimensions") or []),

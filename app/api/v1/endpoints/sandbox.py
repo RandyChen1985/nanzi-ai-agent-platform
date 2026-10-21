@@ -14,8 +14,9 @@
   初始化一次真实沙箱，完成连通性/初始化检查后立即释放资源。
 
 这些端点都挂在 ``v1_secured`` 下（继承 ``require_api_key`` +
-``verify_v1_api_access``）。镜像预构建和 E2B/SSH 连通性测试额外校验
-``role == "admin"``；用户工作区 ensure 接口只使用当前登录用户身份。
+``verify_v1_api_access``）。镜像预构建、E2B/SSH 连通性测试与 K8s RBAC 校验属于
+沙箱管理动作，与「保存系统配置」同权：admin 直通，其余账号需要
+``element:system:config_save``；用户工作区 ensure 接口只使用当前登录用户身份。
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.core.dependencies import require_api_key
+from app.core.dependencies import require_api_key, require_permission
 from app.schemas.response import StandardResponse
 from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
 from app.services.ai.runtime.agentscope.docker_prebuild import (
@@ -76,11 +77,10 @@ def _safe_test_detail(text: Any) -> str:
     return masked
 
 
-def _require_admin(user_info: Dict[str, Any]) -> None:
-    """普通 API 用户无权执行沙箱管理操作。"""
-    role = user_info.get("role") or user_info.get("user_role")
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="仅管理员可执行沙箱管理操作")
+#: 沙箱管理动作（镜像预构建 / E2B、SSH 连通性测试 / K8s RBAC 探测）与保存系统配置同权。
+#: 这些动作会改变或探测全局沙箱运行环境，因此与系统配置页其它写入口使用同一个功能点；
+#: admin 由 require_permission 直通，无需单独判角色。
+SANDBOX_MANAGE_PERMISSION = require_permission("element", "element:system:config_save")
 
 
 async def _resolve_sandbox_auto_warm_enabled() -> bool:
@@ -130,10 +130,9 @@ def _sse_event(name: str, data: dict[str, Any]) -> str:
 )
 async def get_docker_prebuild_status(
     base_image: str | None = Query(None, description="临时指定的 Docker 基础镜像，为空则使用系统配置"),
-    user_info: Dict[str, Any] = Depends(require_api_key),
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
 ):
     """查询 Docker 镜像缓存和自动构建能力，离线时返回手动下载信息。"""
-    _require_admin(user_info)
     status = await docker_workspace_prebuild_status(base_image=base_image)
     return StandardResponse(
         data=status,
@@ -148,7 +147,7 @@ async def get_docker_prebuild_status(
 )
 async def trigger_docker_prebuild(
     base_image: str | None = Query(None, description="临时指定的 Docker 基础镜像，为空则使用系统配置"),
-    user_info: Dict[str, Any] = Depends(require_api_key),
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
 ):
     """强制构建（或复用已存在）Docker 沙箱基础镜像。
 
@@ -160,7 +159,6 @@ async def trigger_docker_prebuild(
     如果后端无法访问 Docker daemon，则返回 ``action=manual_download`` 和镜像导入
     信息，不会把环境不支持误报成构建失败。
     """
-    _require_admin(user_info)
     try:
         result = await prebuild_docker_workspace_image(
             base_image=base_image,
@@ -183,11 +181,9 @@ async def trigger_docker_prebuild(
 async def stream_docker_prebuild(
     request: Request,
     base_image: str | None = Query(None, description="临时指定的 Docker 基础镜像，为空则使用系统配置"),
-    user_info: Dict[str, Any] = Depends(require_api_key),
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
 ):
     """以 SSE 转发管理员 Docker 预构建的阶段、原始日志和最终结果。"""
-    _require_admin(user_info)
-
     events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
     async def publish(event: dict[str, Any]) -> None:
@@ -719,10 +715,9 @@ class SandboxConnectionTestRequest(BaseModel):
 async def test_sandbox_connection(
     policy: Literal["e2b", "ssh"],
     body: SandboxConnectionTestRequest,
-    user_info: Dict[str, Any] = Depends(require_api_key),
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
 ):
     """使用当前页面配置做一次真实初始化测试，并在结束后释放沙箱。"""
-    _require_admin(user_info)
     workspace = None
     try:
         workspace = await build_sandbox_workspace_for_test(
@@ -771,10 +766,9 @@ async def test_sandbox_connection(
 )
 async def check_k8s_rbac_endpoint(
     namespace: str | None = Query(None, description="可选指定待探测的沙箱命名空间，留空则读取系统配置"),
-    user_info: Dict[str, Any] = Depends(require_api_key),
+    user_info: Dict[str, Any] = Depends(SANDBOX_MANAGE_PERMISSION),
 ):
     """校验当前平台 Pod 是否具备连接 Kubernetes API Server 并创建/管理沙箱 Pod 的权限。"""
-    _require_admin(user_info)
     from app.services.ai.runtime.agentscope.k8s_workspace import check_k8s_rbac_status
 
     result = await check_k8s_rbac_status(namespace=namespace)

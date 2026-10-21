@@ -25,22 +25,27 @@ logger = logging.getLogger(__name__)
 _DIALECT_BUILTIN_TABLE_EXEMPTIONS: dict[str, frozenset[str]] = {
     "oracle": frozenset({"dual"}),
 }
-_DIALECT_BUILTIN_SCHEMA_EXEMPTIONS: dict[str, frozenset[str]] = {
+# 系统库/系统表不是业务数据：显式拒绝，而不是“跳过校验后放行”。
+# 历史实现把它们从 refs 中剔除，导致 mysql.user / information_schema.* 绕过表权限。
+_SYSTEM_SCHEMA_DENYLIST: dict[str, frozenset[str]] = {
     "clickhouse": frozenset({"system", "information_schema"}),
     "mysql": frozenset({"information_schema", "mysql", "performance_schema", "sys"}),
     "oracle": frozenset({"sys", "system"}),
+    "postgres": frozenset({"pg_catalog", "information_schema", "pg_toast"}),
+    "postgresql": frozenset({"pg_catalog", "information_schema", "pg_toast"}),
 }
 
 
 def _is_exempt_builtin_table(table_lower: str, dialect: str, schema_lower: Optional[str] = None) -> bool:
     dialect_lower = str(dialect or "").lower()
     table_exemptions = _DIALECT_BUILTIN_TABLE_EXEMPTIONS.get(dialect_lower, frozenset())
-    if table_lower in table_exemptions:
-        return True
+    return table_lower in table_exemptions
+
+
+def _is_system_schema(schema_lower: str, dialect: str) -> bool:
     if not schema_lower:
         return False
-    schema_exemptions = _DIALECT_BUILTIN_SCHEMA_EXEMPTIONS.get(dialect_lower, frozenset())
-    return schema_lower in schema_exemptions
+    return schema_lower in _SYSTEM_SCHEMA_DENYLIST.get(str(dialect or "").lower(), frozenset())
 
 
 def _effective_dry_run(dry_run: Optional[bool]) -> bool:
@@ -192,23 +197,19 @@ def _collect_cte_alias_lowers(expression: exp.Expression) -> set[str]:
     return aliases
 
 
-def _collect_subquery_alias_lowers(expression: exp.Expression) -> set[str]:
-    aliases: set[str] = set()
-    for sq in expression.find_all(exp.Subquery):
-        if sq.alias:
-            aliases.add(sq.alias.lower())
-    return aliases
-
-
 def extract_physical_table_refs_from_select_sql(sql: str, dialect: str) -> Tuple[Optional[str], Dict[str, str]]:
     """
     解析单条只读 SQL，提取物理表引用（视图与普通表同等对待）。
-    支持 SELECT、WITH...SELECT；对 EXPLAIN / SHOW / DESCRIBE 等无表引用的只读语句返回空字典。
+    支持 SELECT、WITH...SELECT、UNION/EXCEPT/INTERSECT、EXPLAIN/DESCRIBE 包裹的 SELECT。
+    对 SHOW 等无表引用的只读语句返回空字典；系统库/系统表直接拒绝。
     返回 (错误信息或 None, {physical_lower -> SQL 中的展示名（保留原始大小写）})
     """
     sql_clean = sql.strip()
     if not sql_clean:
         return "Empty SQL query.", {}
+
+    if "/*!" in sql_clean:
+        return "MySQL version comments (/*! ... */) are not allowed.", {}
 
     try:
         parsed = sqlglot.parse(sql_clean, read=to_sqlglot_dialect(dialect))
@@ -233,11 +234,17 @@ def extract_physical_table_refs_from_select_sql(sql: str, dialect: str) -> Tuple
     if isinstance(expression, _WRITE_TYPES):
         return "Write/DDL operations are not allowed.", {}
 
-    # For EXPLAIN / SHOW / DESCRIBE etc., no physical table refs to extract
-    if not isinstance(expression, exp.Select):
+    set_operation = getattr(exp, "SetOperation", None)
+    read_roots: list[type] = [exp.Select, exp.Describe]
+    if isinstance(set_operation, type):
+        read_roots.append(set_operation)
+    # SHOW / 其它只读命令没有可提取的物理表：保持空 refs，由后续逻辑决定是否允许。
+    if not isinstance(expression, tuple(read_roots)):
         return None, {}
 
-    skip_aliases = _collect_cte_alias_lowers(expression) | _collect_subquery_alias_lowers(expression)
+    # CTE 别名不是物理表；子查询别名不能参与剪枝（否则 `(SELECT * FROM t) t`
+    # 会把真实表 t 从 refs 中抹掉）。
+    skip_aliases = _collect_cte_alias_lowers(expression)
 
     refs: Dict[str, str] = {}
     for table in expression.find_all(exp.Table):
@@ -246,6 +253,11 @@ def extract_physical_table_refs_from_select_sql(sql: str, dialect: str) -> Tuple
             continue
         lk = frag.lower()
         schema_lower = _schema_fragment_from_table(table).lower()
+        if _is_system_schema(schema_lower, dialect):
+            return (
+                f"System schema '{schema_lower}' is not allowed for business queries.",
+                {},
+            )
         if lk in skip_aliases:
             continue
         if _is_exempt_builtin_table(lk, dialect, schema_lower=schema_lower):
@@ -454,6 +466,12 @@ async def execute_sql_query_core(
                 data_source,
                 dataset_name or "未指定",
             )
+    # 先做只读/多语句/危险函数校验，再做表引用解析：否则 DROP 之类的语句
+    # 会先被“提取表引用”逻辑拦截，返回与 HTTP 契约不一致的错误文案。
+    error = validate_sql(sql, dialect=dialect)
+    if error:
+        return f"[Validation Failed] {error}"
+
     if binding is not None:
         binding = await prepare_binding_for_execution(
             session,
@@ -594,6 +612,19 @@ async def execute_sql_query_core(
                 return f"[Validation Failed] SQL语法错误: {error_str}"
             return f"[Security Error] Failed to apply data permissions: {error_str}"
 
+    # 只读与静态安全校验必须先于任何外部调用：沙箱会对 SQL 发 EXPLAIN，
+    # 不能让未通过校验的 SQL（含/*!版本注释*/）先到达数据源。
+    error = validate_sql(sql, dialect=dialect)
+    if error:
+        return f"[Validation Failed] {error}"
+
+    if _effective_dry_run(dry_run):
+        return f"[DRY_RUN] Dialect: {dialect} | Source: {data_source} | Scope: {dataset_name}\nSQL: {sql}"
+
+    # auth_check_only 只做权限/语法校验，不应触发 EXPLAIN 等外部 SQL 调用。
+    if auth_check_only:
+        return json.dumps({"allowed": True}, ensure_ascii=False)
+
     # SQL 性能与安全沙箱网关预检
     try:
         from app.services.ai.sql_sandbox_gate import SQLSandboxGate
@@ -608,16 +639,6 @@ async def execute_sql_query_core(
         sql = sandbox_res.optimized_sql
     except Exception as sandbox_err:
         logger.warning(f"[SQL Sandbox] Pre-check failed or skipped: {sandbox_err}")
-
-    error = validate_sql(sql, dialect=dialect)
-    if error:
-        return f"[Validation Failed] {error}"
-
-    if _effective_dry_run(dry_run):
-        return f"[DRY_RUN] Dialect: {dialect} | Source: {data_source} | Scope: {dataset_name}\nSQL: {sql}"
-
-    if auth_check_only:
-        return json.dumps({"allowed": True}, ensure_ascii=False)
 
     return await call_external_sql_api(
         sql,

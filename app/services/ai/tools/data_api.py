@@ -29,6 +29,11 @@ def validate_sql(sql: str, dialect: str = "clickhouse") -> Optional[str]:
     if not sql_clean:
         return "Empty SQL query."
 
+    # MySQL 会执行 /*!50000 ... */ 里的 SQL，而 sqlglot/静态门禁把它当注释。
+    # 在执行前直接拒绝，避免“看起来是 SELECT 1、实际读任意表”的注入。
+    if "/*!" in sql_clean:
+        return "MySQL version comments (/*! ... */) are not allowed."
+
     # Strip leading SQL comments (/* ... */ block and -- line) before keyword check
     sql_for_check = re.sub(
         r'^(\s*/\*.*?\*/|\s*--[^\n]*\n)*\s*', '', sql_clean, flags=re.DOTALL
@@ -54,6 +59,24 @@ def validate_sql(sql: str, dialect: str = "clickhouse") -> Optional[str]:
         if isinstance(expression, _WRITE_TYPES):
             return "Write/DDL operations are not allowed."
 
+        # 只读语义：行锁会持有写锁并可能长期阻塞业务库。
+        lock_type = getattr(exp, "Lock", None)
+        if isinstance(lock_type, type) and expression.find(lock_type):
+            return "Locking clauses (FOR UPDATE / LOCK IN SHARE MODE) are not allowed."
+
+        # 资源型函数：SQL 只读不代表无副作用（SLEEP/BENCHMARK 可拖垮数据源）。
+        _DANGEROUS_FUNCTIONS = {
+            "sleep",
+            "benchmark",
+            "load_file",
+            "get_lock",
+            "release_lock",
+        }
+        for node in expression.find_all(exp.Anonymous):
+            fn_name = str(getattr(node, "name", "") or "").strip().lower()
+            if fn_name in _DANGEROUS_FUNCTIONS:
+                return f"Dangerous function is not allowed: {fn_name}"
+
         # Deep check for dangerous commands in AST
         # Allow safe read-only commands; block system commands like OPTIMIZE, KILL, etc.
         _SAFE_COMMANDS = {"EXPLAIN", "SHOW", "DESCRIBE", "DESC"}
@@ -74,6 +97,32 @@ def validate_sql(sql: str, dialect: str = "clickhouse") -> Optional[str]:
         return f"SQL Validation Failed: {str(e)}"
 
     return None
+
+
+def _clamp_select_row_limit(sql: str, *, dialect: str, max_rows: int) -> str:
+    """在 AST 上给 SELECT 设置/收紧行数上限。
+
+    远程模式此前只在导出时加 LIMIT，AI 分析可拉全表；用 AST 而不是正则，
+    避免注释或子查询里的 LIMIT 顶掉外层上限。
+    """
+    from app.services.sql_query_execution_service import to_sqlglot_dialect
+
+    read_dialect = to_sqlglot_dialect(dialect)
+    expression = sqlglot.parse_one(sql.strip().rstrip(";"), read=read_dialect)
+    set_operation = getattr(exp, "SetOperation", None)
+    limited_types = (exp.Select,) + ((set_operation,) if isinstance(set_operation, type) else ())
+    if not isinstance(expression, limited_types):
+        return sql
+    limit_node = expression.args.get("limit")
+    if limit_node is not None:
+        try:
+            raw_limit = getattr(limit_node, "expression", None)
+            current = int(str(getattr(raw_limit, "name", raw_limit)))
+            if current <= max_rows:
+                return sql
+        except (TypeError, ValueError):
+            pass
+    return expression.limit(max_rows).sql(dialect=read_dialect)
 
 
 def _result_rows(payload: Any) -> list[Any]:
@@ -192,7 +241,10 @@ async def call_external_sql_api(
         data_source = await ConfigService.get("external_sql_data_source", default="default_clickhouse")
 
     # 远程调用和本地适配器都统一接收 PostgreSQL 兼容 SQL，覆盖绕过 execute_sql_query_core 的历史调用方。
-    from app.services.sql_query_execution_service import dialect_from_data_source
+    from app.services.sql_query_execution_service import (
+        dialect_from_data_source,
+        to_sqlglot_dialect,
+    )
 
     if dialect_from_data_source(data_source) == "postgres":
         from app.services.data_adapter.postgresql import normalize_postgresql_sql
@@ -294,18 +346,31 @@ async def call_external_sql_api(
                 max_limit=row_limit,
             )
         else:
-            # MySQL / ClickHouse 使用 LIMIT
+            # MySQL / ClickHouse 使用 LIMIT。
+            # 不能再用正则找第一个 LIMIT：注释/字符串/子查询里的 LIMIT 会顶掉
+            # 外层上限，导致 AI 分析实际拉到全表。这里只认 AST 顶层 LIMIT。
             clean_sql = sql.strip().rstrip(";")
-
-            limit_match = re.search(r"\bLIMIT\s+(\d+)", sql, re.IGNORECASE)
-            if limit_match:
-                limit_val = int(limit_match.group(1))
-                if limit_val > row_limit:
-                    sql_limited = sql[:limit_match.start(1)] + str(row_limit) + sql[limit_match.end(1):]
-                else:
-                    sql_limited = sql
-            else:
+            dialect_name = dialect_from_data_source(data_source)
+            try:
+                parsed_sql = sqlglot.parse_one(
+                    clean_sql,
+                    read=to_sqlglot_dialect(dialect_name),
+                )
+            except Exception:
+                parsed_sql = None
+            if isinstance(parsed_sql, exp.Select) and parsed_sql.args.get("limit") is not None:
+                sql_limited = _clamp_select_row_limit(
+                    clean_sql,
+                    dialect=dialect_name,
+                    max_rows=row_limit,
+                )
+            elif isinstance(parsed_sql, exp.Select) or isinstance(
+                parsed_sql, getattr(exp, "SetOperation", ())
+            ):
                 sql_limited = f"SELECT * FROM ({clean_sql}) AS _sub LIMIT {row_limit}"
+            else:
+                # SHOW / DESCRIBE 等元数据语句没有行集可包，保持原样。
+                sql_limited = clean_sql
 
         count_sql: Optional[str] = None
         count_status = "not_requested"
@@ -419,21 +484,32 @@ async def call_external_sql_api(
                 count_status = "unknown"
                 count_error = _count_error_category(error)
 
-        # 远程模式：完整导出口径下本端同样收紧行数上限（远程服务端也可能不默认限制）。
+        # 远程模式：导出用 10 万行上限；AI 分析也必须收紧到 1000 行，
+        # 否则远程服务端不默认限制时会把全表读进平台内存/模型上下文。
         detail_sql = sql
         if for_export:
             try:
-                from app.services.ai.sql_dialect_limit import apply_dialect_row_limit
-
-                detail_sql = apply_dialect_row_limit(
-                    sql.strip().rstrip(";"),
+                detail_sql = _clamp_select_row_limit(
+                    sql,
                     dialect=dialect_from_data_source(data_source),
-                    limit=MAX_EXPORT_SQL_ROWS,
-                    max_limit=MAX_EXPORT_SQL_ROWS,
+                    max_rows=MAX_EXPORT_SQL_ROWS,
                 )
             except Exception as limit_err:
-                logger.warning(
-                    "[Agent Remote] 导出行数限制应用失败，沿用原 SQL: %s", limit_err
+                return (
+                    "[TOOL_ERROR] 导出行数限制应用失败，已拒绝执行以避免全表导出: "
+                    f"{limit_err}\n\n[Executed SQL]:\n{sql}"
+                )
+        else:
+            try:
+                detail_sql = _clamp_select_row_limit(
+                    sql,
+                    dialect=dialect_from_data_source(data_source),
+                    max_rows=MAX_LOCAL_SQL_ROWS,
+                )
+            except Exception as limit_err:
+                return (
+                    "[TOOL_ERROR] 远程查询行数上限应用失败，已拒绝执行: "
+                    f"{limit_err}\n\n[Executed SQL]:\n{sql}"
                 )
         detail_payload = {**payload, "sql": detail_sql}
         response = await client.post(api_url, headers=headers, json=detail_payload, timeout=timeout)
@@ -460,6 +536,12 @@ async def call_external_sql_api(
                 count_error=count_error,
             )
         result_json = json.dumps(result_data, ensure_ascii=False)
+        if not for_export and len(result_json.encode("utf-8")) > MAX_LOCAL_RESULT_BYTES:
+            return (
+                "[TOOL_ERROR] 远程执行结果超过最大返回体限制 "
+                f"({MAX_LOCAL_RESULT_BYTES} bytes)，请缩小查询字段或过滤条件。"
+                f"\n\n[Executed SQL]:\n{sql}"
+            )
 
         if redis_client:
             await redis_client.set(cache_key, result_json, ex=60)

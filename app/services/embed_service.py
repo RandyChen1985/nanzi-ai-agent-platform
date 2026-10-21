@@ -99,6 +99,17 @@ class EmbedService:
 
         ttl = max(60, min(expires_in, 1800))  # 限制在 1 分钟 ~ 30 分钟之间，默认 300 秒
 
+        # 可读部门名要随票据带到会话里：会话令牌的 hash 在 users 表里查不到（它不是真实
+        # API Key），所以 `verify_api_key` 一旦因为「缓存缺 dept_name」回源查库，就必然
+        # 查不到人而 401。签发时算好，兑换时原样落进会话缓存。
+        try:
+            from app.services.department_service import DepartmentService
+
+            dept_name = await DepartmentService.department_label_for_user(db, int(target_user.id))
+        except Exception as exc:  # 部门表未迁移等情况不得阻断签发
+            logger.warning("签发嵌入票据时获取部门名失败，降级为空: %s", exc)
+            dept_name = ""
+
         ticket_payload = {
             "ticket": ticket_id,
             "user_id": str(target_user.id),
@@ -107,6 +118,7 @@ class EmbedService:
             "role": target_user.role,
             "dept_code": target_user.dept_code or "",
             "org_path": target_user.org_path or "",
+            "dept_name": dept_name or "",
             "extra_data": target_user.extra_data or "",
             "agent_id": agent_id or "",
             "allowed_origins": json.dumps(allowed_origins or []),
@@ -205,6 +217,9 @@ class EmbedService:
             "role": ticket_data.get("role", "user"),
             "dept_code": ticket_data.get("dept_code", ""),
             "org_path": ticket_data.get("org_path", ""),
+            # 必须落键（空串也算）：缓存命中判断靠「键是否存在」，缺了它每次请求都会回源
+            # 按 hash 查用户，而会话令牌在 users 表里根本没有对应行 → 必然 401。
+            "dept_name": ticket_data.get("dept_name") or "",
             "extra_data": ticket_data.get("extra_data", ""),
             "remark": "Embed Session",
             "status": "1",

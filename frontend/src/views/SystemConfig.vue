@@ -607,6 +607,8 @@ const applyDockerPrebuildStatus = (data: any) => {
 }
 
 const refreshDockerPrebuildStatus = async (silent = false, baseImageOverride?: string) => {
+  // 无 element:system:config_save 时后端会 403，这里直接跳过，避免输入框自动触发的静默请求
+  if (!canSave) return
   if (targetSandboxPolicy() !== 'docker') return
   if (!silent) dockerPrebuildChecking.value = true
   try {
@@ -682,6 +684,8 @@ const handleDockerPrebuildStreamEvent = (streamEvent: DockerPrebuildStreamEvent)
 }
 
 const executeDockerPrebuild = async () => {
+  // 入口已按 canSave 隐藏，这里再守一道，避免无权限时白跑构建流程
+  if (!canSave) return
   dockerPrebuilding.value = true
   startDockerPrebuildTimer()
   dockerPrebuildReused.value = false
@@ -2317,6 +2321,8 @@ const normalizeSshPrivateKey = (item: ConfigItem) => {
 }
 
 const testSandboxConnection = async (policy: 'e2b' | 'ssh') => {
+  // 入口已按 canSave 隐藏，这里再守一道，避免无权限时创建真实沙箱
+  if (!canSave) return
   if (sandboxConnectionTesting.value) return
 
   const values = Object.fromEntries(
@@ -2406,6 +2412,8 @@ const copyK8sRbacCommand = async () => {
 }
 
 const checkK8sRbac = async () => {
+  // check-rbac 与保存配置同权（element:system:config_save），入口也按 canSave 隐藏
+  if (!canSave) return
   if (k8sChecking.value) return
   k8sChecking.value = true
   k8sCheckResult.value = null
@@ -4488,8 +4496,8 @@ onUnmounted(() => {
                                    </div>
                                  </div>
 
-                                 <!-- 权限检测操作栏 -->
-                                 <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-sky-100/80">
+                                 <!-- 权限检测操作栏（check-rbac 与保存配置同权：element:system:config_save） -->
+                                 <div v-if="canSave" class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-sky-100/80">
                                    <span class="text-sky-800 text-[11px]">
                                      配置好 RBAC 后，点击右侧按钮实时探测当前平台 Pod 是否具备所需权限：
                                    </span>
@@ -5071,7 +5079,9 @@ onUnmounted(() => {
                                    <span class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 shrink-0 select-none border border-emerald-200">
                                        chatbi-example-meta
                                    </span>
+                                   <!-- 同「测试 Embedding 连接」：后端 test-connection 要求 config_save，无权限时必须隐藏 -->
                                    <button
+                                       v-if="canSave"
                                        @click="testChatBiKb(item)"
                                        :disabled="chatbiKbTesting"
                                        class="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50 shrink-0"
@@ -5137,7 +5147,9 @@ onUnmounted(() => {
                           </div>
                           <div v-else-if="item.key === 'embed_dimensions'">
                               <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
+                              <!-- 无 element:system:config_save 时隐藏：test-connection 端点要求同权限，暴露只会 403 -->
                               <button
+                                  v-if="canSave"
                                   type="button"
                                   @click="testGlobalEmbed"
                                   :disabled="globalEmbedTesting"

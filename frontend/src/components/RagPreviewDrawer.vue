@@ -141,7 +141,7 @@
           >
             <div
               class="flex-1 min-h-0 overflow-y-auto p-3 bg-blue-50/30 dark:bg-blue-900/5 border border-blue-100/50 dark:border-blue-900/10 rounded-xl text-xs text-gray-600 dark:text-gray-300 leading-relaxed custom-table-render scrollbar-thin"
-              v-html="content"
+              v-html="safeContent"
             />
           </div>
         </section>
@@ -154,6 +154,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import DocumentViewer from "@/components/embed/DocumentViewer.vue";
 import { useDarkThemeFlag } from "@/composables/useDarkThemeFlag";
+import { sanitizeRenderedHtml } from "@/utils/sanitizeHtml";
 import {
   canPreviewWithDocumentViewer,
   shouldDownloadInsteadOfPreview,
@@ -168,6 +169,10 @@ const props = defineProps<{
   fileUrl: string;
   content: string;
 }>();
+
+/** RAG 切片来自知识库原文（用户上传的文档），可能夹带 HTML；渲染前统一消毒。
+ *  表格等高亮结构都在 html profile 白名单内，消毒只削事件属性与脚本。 */
+const safeContent = computed(() => sanitizeRenderedHtml(props.content || ""));
 
 /** Office 与文本格式：交给 DocumentViewer 内联预览 */
 const canPreview = computed(() => canPreviewWithDocumentViewer(props.docName));

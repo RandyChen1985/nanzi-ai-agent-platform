@@ -40,7 +40,6 @@ def _build_user_profile_block(runner: Any) -> str | None:
     user_id = str(runner.user_info.get("user_id") or runner.user_info.get("id") or "")
     real_name = runner.user_info.get("real_name") or raw_name
     dept = runner.user_info.get("dept_name") or runner.user_info.get("department")
-    org_path = runner.user_info.get("org_path")
     dept_code = runner.user_info.get("dept_code")
     role = runner.user_info.get("role_name") or runner.user_info.get("role")
     return AgentServicePrompts.user_context_message(
@@ -49,7 +48,6 @@ def _build_user_profile_block(runner: Any) -> str | None:
         real_name=real_name,
         dept=dept,
         dept_code=dept_code,
-        org_path=org_path,
         role=role,
         # 与主链路保持同一组只读字段，避免两条路径画像不一致
         email=runner.user_info.get("email"),

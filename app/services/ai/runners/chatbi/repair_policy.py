@@ -409,7 +409,9 @@ def reset_state_for_repair(state: DataRunState) -> None:
     state.sql_sandbox_blocked_reason = ""
     state.failed_sql_repeat_gate_block = False
     state.preflight_fail_signatures = {}
-    state.platform_auto_sql_attempts = 0
+    # 平台自动 SQL 重试是整轮预算，不能每修复轮清零：否则 34 轮修复 × 5 次
+    # 自动重试会把外部 SQL 调用放大到上百次，并与 600s 看门狗直接冲突。
+    # 保留 state.platform_auto_sql_attempts 的累计值。
     if repair_kind in {"empty_sql_result", "duration_anomaly"}:
         state.expecting_final_sql_after_diagnostic = True
     state.diagnostic_sql_pending_final = False

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Any, AsyncGenerator, Dict, List
 
@@ -12,7 +13,11 @@ from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chu
 from app.services.ai.runtime.agentscope.state_store import agent_state_store
 from app.services.ai.runtime.agentscope.stream_reconcile import finalize_visible_reply
 from app.services.ai.runtime.agentscope.compat import HumanMessage, AIMessage
-from app.services.ai.runners.chatbi.constants import DATA_REPAIR_BUDGETS, MAX_DATA_REPAIR_ROUNDS
+from app.services.ai.runners.chatbi.constants import (
+    DATA_REPAIR_BUDGETS,
+    MAX_DATA_REPAIR_ROUNDS,
+    MAX_REPAIR_WALL_SECONDS,
+)
 from app.services.ai.runners.chatbi.forced_tool_choice import ForcedFirstToolChoiceModel
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.runners.chatbi.repair_controller import ChatBIRepairController
@@ -449,8 +454,15 @@ async def run_native_agent_turn(
             semantic_intent=getattr(runner, "_semantic_intent", None),
         )
     )
+    repair_started_at = time.time()
     for _ in range(max_repair_rounds):
         if state.sql_fatal_error:
+            break
+        if time.time() - repair_started_at > MAX_REPAIR_WALL_SECONDS:
+            logger.warning(
+                "[DataAgentRunner] Repair wall-clock budget exhausted (%.0fs), stop opening new repair rounds.",
+                MAX_REPAIR_WALL_SECONDS,
+            )
             break
         repair_decision = repair_controller.decide()
         if repair_decision is None:

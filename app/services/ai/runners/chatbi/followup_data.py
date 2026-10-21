@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -173,6 +174,18 @@ async def save_last_data_result_for_followups(
         if tool_args.get("dataset_name")
         else None
     )
+    from app.services.ai.chatbi_result_stack import ChatBIAnalysisContext
+    from app.services.ai.data_query_semantic_intent import semantic_intent_to_dict
+
+    semantic = semantic_intent_to_dict(getattr(runner, "_semantic_intent", None))
+    analysis_context = ChatBIAnalysisContext(
+        metrics=list(semantic.get("metrics") or []),
+        dimensions=list(semantic.get("dimensions") or []),
+        filters=list(semantic.get("filters") or []),
+        time_range={"expression": semantic.get("time_range")} if semantic.get("time_range") else {},
+        time_grain=str(semantic.get("grain") or ""),
+    )
+    standalone_query = str(getattr(runner, "_standalone_query", "") or "")
     payload = {
         "sql": tool_args.get("sql") or tool_args.get("query"),
         "data_source": tool_args.get("data_source"),
@@ -185,26 +198,21 @@ async def save_last_data_result_for_followups(
         "data_as_of": data_as_of,
         "result_status": _result_status(normalized),
         "trace_id": runner.trace_id,
+        # 追问继承直接读统一结果栈；analysis_context 必须同时存在于兼容 payload
+        # 与统一栈，否则“换成按月/只看华东”会丢失上一轮的口径。
+        "analysis_context": asdict(analysis_context),
+        "question": standalone_query,
     }
     try:
         from app.services.ai.memory_service import memory_service
-        from app.services.ai.chatbi_result_stack import ChatBIAnalysisContext, ChatBIResultRef
-        from app.services.ai.data_query_semantic_intent import semantic_intent_to_dict
+        from app.services.ai.chatbi_result_stack import ChatBIResultRef
 
         await memory_service.set_last_data_result(user_id, runner.conversation_id, payload)
-        semantic = semantic_intent_to_dict(getattr(runner, "_semantic_intent", None))
         stack = await memory_service.get_data_result_stack(user_id, runner.conversation_id)
         parent_result_id = str(stack[-1].get("result_id") or "") if stack else None
-        analysis_context = ChatBIAnalysisContext(
-            metrics=list(semantic.get("metrics") or []),
-            dimensions=list(semantic.get("dimensions") or []),
-            filters=list(semantic.get("filters") or []),
-            time_range={"expression": semantic.get("time_range")} if semantic.get("time_range") else {},
-            time_grain=str(semantic.get("grain") or ""),
-        )
         result_ref = ChatBIResultRef(
             parent_result_id=parent_result_id or None,
-            question=str(getattr(runner, "_standalone_query", "") or ""),
+            question=standalone_query,
             dataset_name=str(tool_args.get("dataset_name") or ""),
             data_source=str(tool_args.get("data_source") or ""),
             sql=str(tool_args.get("sql") or tool_args.get("query") or ""),
@@ -227,7 +235,7 @@ async def save_last_data_result_for_followups(
             tool_output=normalized,
             source_type="system",
             tool_args=tool_args,
-            user_question=str(getattr(runner, "_standalone_query", "") or ""),
+            user_question=standalone_query,
             trace_id=str(runner.trace_id or ""),
             origin_type="tool",
         )
