@@ -75,6 +75,60 @@ def resolve_mcp_auth_headers(server: Any) -> dict[str, str]:
     return headers
 
 
+# 认证头关键字：命中即视为「凭据」，分享时选择「不携带凭证」必须一并剔除。
+# 只按名字判断是有意为之——值已经加密，按内容猜更不可靠。
+_CREDENTIAL_HEADER_HINTS = (
+    "authorization",
+    "api-key",
+    "api_key",
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "cookie",
+    "signature",
+    "credential",
+    "auth",
+)
+
+
+def looks_like_credential_header(name: Any) -> bool:
+    """判断一个请求头名是否属于凭据（``X-Api-Key``、``X-Auth-Token`` 等）。
+
+    ``Accept`` / ``Content-Type`` / ``X-Tenant-Id`` 这类协议头不会被命中，因此
+    「不携带凭证」的分享仍然能被接收方正常连上，只是需要自己补凭据。
+    """
+    normalized = str(name or "").strip().casefold().replace("_", "-")
+    return any(hint in normalized for hint in _CREDENTIAL_HEADER_HINTS)
+
+
+def without_credential_headers(server: Any) -> str:
+    """返回**剔除全部疑似凭据头后重新加密**的 auth_headers。
+
+    分享 MCP 时若用户选择「不携带凭证」，只剥 ``Authorization`` 是不够的：
+    很多网关用 ``X-Api-Key`` / ``X-Auth-Token`` 认证，这些头会原样泄露给对方，
+    变成「以为没带、其实带了」。固定 Token（``fixed_token_encrypted``）与断言私钥
+    由调用方另行置空，本函数只处理 ``auth_headers``。历史脏值解析失败时返回空配置，
+    宁可让对方重新填，也不把未知内容原样带出去。
+    """
+    try:
+        headers = _parse_auth_headers(_stored_auth_headers(getattr(server, "auth_headers", None)))
+    except (TypeError, ValueError):
+        return encrypt_mcp_auth_headers({})
+    cleaned = {
+        str(key): str(value)
+        for key, value in headers.items()
+        if not looks_like_credential_header(key)
+    }
+    return encrypt_mcp_auth_headers(cleaned)
+
+
+def without_authorization_headers(server: Any) -> str:
+    """兼容旧名；行为已升级为剔除所有疑似凭据头。"""
+    return without_credential_headers(server)
+
+
 def mcp_auth_headers_summary(server: Any) -> tuple[bool, dict[str, str]]:
     """返回 Authorization 状态与脱敏后的其他 Header，不返回任何凭证原文。"""
     try:

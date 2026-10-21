@@ -763,6 +763,7 @@ def test_mcp_server_registry_status_toggle_payload_contract():
     assert "filteredServers" in content
     assert "placeholder=\"搜索服务或工具...\"" in content
 
-    # 3. 验证文案统一为「已连接服务」，无多余后缀
-    assert "已连接服务 (平台)" not in content
-    assert "已连接服务" in content
+    # 3. 列表头部不再有「已连接服务」小标题（2026-10-21 用户要求删除：
+    #    列表就在正下方，标题不携带信息还占宽度），改为搜索前置 + 「仅运行中」筛选
+    assert "已连接服务" not in content
+    assert "仅运行中" in content

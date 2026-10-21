@@ -661,6 +661,10 @@ const skillsInitialMenu = computed<'mine' | 'received' | 'sent'>(() => {
     const value = String(route.query.skills_tab || '').trim()
     return value === 'received' || value === 'sent' ? value : 'mine'
 })
+const mcpInitialMenu = computed<'mine' | 'received' | 'sent'>(() => {
+    const value = String(route.query.mcp_tab || '').trim()
+    return value === 'received' || value === 'sent' ? value : 'mine'
+})
 const permissionsSubTab = ref<'list' | 'about'>('list')
 const showAboutTab = computed(() => !!branding.value.contact_markdown?.trim())
 const contactHtml = computed(() => renderMarkdown(branding.value.contact_markdown || ''))
@@ -1598,7 +1602,7 @@ onMounted(() => {
         </div>
 
         <div v-else-if="activeTab === 'mcp'" class="px-3 pb-4 sm:px-6 sm:pb-6 min-h-[28rem]">
-            <McpManagement personal-only />
+            <McpManagement personal-only :initial-personal-menu="mcpInitialMenu" />
         </div>
 
         <div v-else-if="activeTab === 'tasks'" class="px-4 pb-4 sm:px-6 sm:pb-6 min-h-[32rem]">

@@ -1,21 +1,41 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import axios from '../utils/axios'
 import McpServerRegistry from '../components/system/McpServerRegistry.vue'
 import McpFlowGuideBanner from '../components/mcp/McpFlowGuideBanner.vue'
 import McpAuditLogTab from '../components/mcp/McpAuditLogTab.vue'
+import McpPersonalMenu from '../components/mcp/McpPersonalMenu.vue'
+import McpShareDialog from '../components/mcp/McpShareDialog.vue'
+import ReceivedMcpSharesPanel from '../components/mcp/ReceivedMcpSharesPanel.vue'
+import SentMcpSharesPanel from '../components/mcp/SentMcpSharesPanel.vue'
 import { useUser } from '../composables/useUser'
+import { useToast } from '../composables/useToast'
+import type { McpPersonalMenuKey } from '../utils/mcpShare'
 
 const props = withDefaults(defineProps<{
   /** 仅展示「我的 MCP」，用于个人中心（无需 menu:mcp_management） */
   personalOnly?: boolean
+  /** 深链落点：收到分享的通知会带 mcp_tab=received 直接落到对应二级页 */
+  initialPersonalMenu?: McpPersonalMenuKey
 }>(), {
   personalOnly: false,
+  initialPersonalMenu: 'mine',
 })
 
 const router = useRouter()
+const route = useRoute()
 const { isAdmin } = useUser()
+const { showToast } = useToast()
+
+// 「我的 MCP」里的二级菜单：我的 MCP / 收到的分享 / 我的分享
+const normalizePersonalMenu = (value?: string): McpPersonalMenuKey =>
+  value === 'received' || value === 'sent' ? value : 'mine'
+const resolvePersonalMenu = (): McpPersonalMenuKey =>
+  normalizePersonalMenu(String(route.query.mcp_tab || '') || props.initialPersonalMenu)
+const mcpMenu = ref<McpPersonalMenuKey>(resolvePersonalMenu())
+const shareDialogServer = ref<{ id: string; server_name: string; sse_url: string } | null>(null)
+const mcpShareCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
 const activeScope = ref<'global' | 'personal' | 'audit'>(props.personalOnly ? 'personal' : 'global')
 const registryRef = ref<InstanceType<typeof McpServerRegistry> | null>(null)
 
@@ -51,8 +71,51 @@ const handleServerCountChanged = (payload: { scope: 'global' | 'personal'; count
   }
 }
 
+const fetchMcpShareCounts = async () => {
+  try {
+    const response = await axios.get('/api/portal/mcp/shares/summary')
+    const data = response.data?.data || {}
+    mcpShareCounts.value = {
+      received_pending: Number(data.received_pending || 0),
+      sent_pending: Number(data.sent_pending || 0),
+      sent_total: Number(data.sent_total || 0),
+    }
+  } catch (err) {
+    console.warn('获取 MCP 分享计数失败', err)
+  }
+}
+
+/** 分享 / 接受 / 拒绝后统一刷新：角标 + 顶部「我的 MCP」数量 */
+const handleShareUpdated = async () => {
+  await Promise.all([fetchMcpShareCounts(), fetchServerCounts()])
+}
+
+/** 弹窗刚发完：只刷计数，弹窗留着展示「已分享给 N 人」 */
+const handleShareSent = async () => {
+  await Promise.all([fetchMcpShareCounts(), fetchServerCounts()])
+}
+
+/** 从「收到的分享」跳回「我的 MCP」，并选中刚安装的那条 */
+const openInstalledServer = async (serverId: string) => {
+  mcpMenu.value = 'mine'
+  await nextTick()
+  const focused = await registryRef.value?.focusServer(serverId)
+  if (focused === false) {
+    showToast('这条 MCP 已经不在了，可能你之前把它删掉了', 'warning')
+  }
+  void fetchServerCounts()
+}
+
+watch(
+  () => [String(route.query.mcp_tab || ''), props.initialPersonalMenu],
+  () => {
+    mcpMenu.value = resolvePersonalMenu()
+  },
+)
+
 onMounted(() => {
   void fetchServerCounts()
+  void fetchMcpShareCounts()
 })
 
 // 流程指引横幅状态与持久化
@@ -157,12 +220,15 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
     </div>
 
     <!-- Scope Tab：个人中心模式下隐藏平台/个人切换 -->
-    <div v-if="!personalOnly" class="flex flex-shrink-0 items-center border-b border-gray-200 dark:border-gray-800">
+    <div
+      v-if="!personalOnly"
+      class="flex flex-shrink-0 items-center overflow-x-auto border-b border-gray-200 [scrollbar-width:none] dark:border-gray-800 [&::-webkit-scrollbar]:hidden"
+    >
       <button
         id="tab-global-mcp"
         type="button"
         @click="activeScope = 'global'"
-        class="flex cursor-pointer items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
+        class="flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
         :class="activeScope === 'global' ? 'border-blue-600 font-bold text-blue-600 dark:border-blue-400 dark:text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
       >
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -180,7 +246,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         id="tab-personal-mcp"
         type="button"
         @click="activeScope = 'personal'"
-        class="flex cursor-pointer items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
+        class="flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
         :class="activeScope === 'personal' ? 'border-emerald-600 font-bold text-emerald-600 dark:border-emerald-400 dark:text-emerald-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
       >
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -199,7 +265,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         id="tab-audit-logs"
         type="button"
         @click="activeScope = 'audit'"
-        class="flex cursor-pointer items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
+        class="flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
         :class="activeScope === 'audit' ? 'border-indigo-600 font-bold text-indigo-600 dark:border-indigo-400 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
       >
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -210,16 +276,67 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
     </div>
 
     <!-- 主体区域：个人中心随页面滚动；控制台保留定高裁剪 -->
-    <div :class="personalOnly ? 'min-h-[28rem]' : 'min-h-0 flex-1 overflow-hidden'">
+    <div
+      class="flex flex-col"
+      :class="personalOnly ? 'min-h-[28rem]' : 'min-h-0 flex-1 overflow-hidden'"
+    >
       <McpAuditLogTab v-if="activeScope === 'audit' && isAdmin" />
+
+      <!-- 我的 MCP：与「我的技能」同构，左侧二级菜单 + 三块内容 -->
+      <div v-else-if="activeScope === 'personal'" class="flex min-h-0 flex-1 flex-col gap-2 md:flex-row md:gap-4">
+        <McpPersonalMenu
+          variant="aside"
+          :active="mcpMenu"
+          :counts="mcpShareCounts"
+          @select="mcpMenu = $event"
+        />
+        <div class="flex min-h-0 flex-1 flex-col gap-2">
+          <McpPersonalMenu
+            variant="chips"
+            :active="mcpMenu"
+            :counts="mcpShareCounts"
+            @select="mcpMenu = $event"
+          />
+          <McpCallSummary v-if="mcpMenu === 'mine'" class="shrink-0" />
+          <McpServerRegistry
+            v-if="mcpMenu === 'mine'"
+            ref="registryRef"
+            scope="personal"
+            class="min-h-0 flex-1"
+            @server-count-changed="handleServerCountChanged"
+            @share-server="shareDialogServer = $event"
+          />
+          <ReceivedMcpSharesPanel
+            v-else-if="mcpMenu === 'received'"
+            class="min-h-0 flex-1"
+            @updated="handleShareUpdated"
+            @go-mine="openInstalledServer"
+          />
+          <SentMcpSharesPanel
+            v-else-if="mcpMenu === 'sent'"
+            class="min-h-0 flex-1"
+            @updated="handleShareUpdated"
+            @open-mine="mcpMenu = 'mine'"
+          />
+        </div>
+      </div>
+
       <McpServerRegistry
         v-else
         ref="registryRef"
         :key="activeScope"
-        :scope="activeScope === 'audit' ? 'global' : activeScope"
+        scope="global"
         @server-count-changed="handleServerCountChanged"
       />
     </div>
+
+    <!-- 分享个人 MCP：选接收人 + 是否携带凭证 + 附言 -->
+    <McpShareDialog
+      :visible="!!shareDialogServer"
+      :server="shareDialogServer"
+      @close="shareDialogServer = null"
+      @sent="handleShareSent"
+    />
 
     <!-- MCP 设计规范与全流程指引 Modal -->
     <Teleport to="body">

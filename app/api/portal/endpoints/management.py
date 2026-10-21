@@ -1265,6 +1265,44 @@ async def delete_user(
         remove_share_snapshot(share_row.snapshot_path)
     await db.execute(delete(SkillShare).where(share_scope))
 
+    # 个人 MCP 分享：同样两个方向都清。payload 只是数据库里的 JSON 快照，
+    # 没有磁盘目录要回收，直接删行即可。
+    from app.models.mcp_share import McpServerShare
+
+    mcp_share_scope = or_(
+        McpServerShare.source_user_id == user_id,
+        McpServerShare.target_user_id == user_id,
+    )
+    await db.execute(delete(McpServerShare).where(mcp_share_scope))
+
+    # 个人 MCP：孤儿的服务行没人能再访问（归属校验按 user_id 全挡），
+    # 但 server_name 是全局唯一索引，名字会被永久占用，别人起同名直接 400。
+    # 因此随用户一起清掉；工具缓存表没有级联外键，必须自己先删。
+    from app.models.mcp import McpOutboundAuditLog, McpServer, McpToolCache
+
+    owned_server_ids = list(
+        (
+            await db.execute(
+                select(McpServer.id).where(
+                    McpServer.scope == "personal",
+                    McpServer.user_id == user_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if owned_server_ids:
+        await db.execute(
+            delete(McpToolCache).where(McpToolCache.server_id.in_(owned_server_ids))
+        )
+        await db.execute(
+            delete(McpOutboundAuditLog).where(
+                McpOutboundAuditLog.server_id.in_(owned_server_ids)
+            )
+        )
+        await db.execute(delete(McpServer).where(McpServer.id.in_(owned_server_ids)))
+
     # 发布谱系：这里沿用「下架」语义而不是物理删记录。
     # 删记录会毁掉审核轨迹（谁提交、谁审核、审核意见）并把 platform_skill_id（唯一索引）
     # 永远对不上历史引用；因此 V180/V81 把 source_user_id / submitted_by 改为可空，

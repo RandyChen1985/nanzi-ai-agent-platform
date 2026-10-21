@@ -228,8 +228,11 @@ async function submit() {
                   @click="toggle(user)"
                 >
                   <span class="min-w-0">
-                    <span class="font-medium text-gray-800 dark:text-gray-200">{{ displayName(user) }}</span>
-                    <span class="ml-1 text-xs text-gray-400 dark:text-gray-500">@{{ user.user_name }}</span>
+                    <span class="font-medium text-gray-800 dark:text-gray-200">{{ user.real_name || user.user_name }}</span>
+                    <span
+                      v-if="user.real_name && user.user_name && user.real_name !== user.user_name"
+                      class="ml-1 text-xs text-gray-400 dark:text-gray-500"
+                    >@{{ user.user_name }}</span>
                   </span>
                   <span class="shrink-0 text-[11px] text-gray-400 dark:text-gray-500">{{ user.department || '' }}</span>
                 </button>
