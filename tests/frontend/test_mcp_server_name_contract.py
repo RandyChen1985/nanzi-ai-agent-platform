@@ -24,6 +24,7 @@ def test_mcp_registry_shows_fixed_prefix_and_suffix_input():
     registry_source = REGISTRY.read_text(encoding="utf-8")
     assert "namePrefix" in registry_source
     assert "serverNameSuffix" in registry_source
-    assert "composeMcpServerName" in registry_source
+    # 编辑态走「保留原名」的解析函数，不再无条件重拼前缀（会静默改名平台 Echo）。
+    assert "resolveEditedServerName" in registry_source
     assert "{{ namePrefix }}" in registry_source
     assert "请填写服务名称后缀" in registry_source

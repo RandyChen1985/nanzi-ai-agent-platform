@@ -131,7 +131,6 @@ def test_mcp_write_endpoints_are_gated_per_action():
 
     expected = {
         "create_mcp_server": "create",
-        "verify_mcp_server": "edit",
         "update_mcp_server": "edit",
         "delete_mcp_server": "delete",
         "sync_mcp_tools": "sync",
@@ -140,6 +139,13 @@ def test_mcp_write_endpoints_are_gated_per_action():
     }
     for func, action in expected.items():
         assert _single(f"element:mcp_management:{action}") in routes[func], func
+
+    # 连接测试是新建与编辑共用的第一步（向导第 1 步必须调它），且不落库：
+    # create / edit 任一权限即可，否则只有 create 码的角色永远建不了服务。
+    verify = routes["verify_mcp_server"]
+    assert "require_any_permission" in verify
+    assert '("element", "element:mcp_management:create")' in verify
+    assert '("element", "element:mcp_management:edit")' in verify
 
 
 def test_mcp_echo_creation_checks_scope_specific_permissions_in_function():

@@ -50,4 +50,6 @@ def test_submit_button_is_disabled_without_create_permission():
     index = source.index(marker)
     # 按钮属性写在插值之前，取前面一段窗口看 :disabled
     window = source[max(0, index - 400):index]
-    assert ":disabled=\"!isEditing && !canCreateMcp\"" in window, window
+    # 没有 create 码不能提交；同时保存中必须禁用，避免双击变成两次请求。
+    assert "!isEditing && !canCreateMcp" in window, window
+    assert "savingServer" in window, window

@@ -8,11 +8,11 @@ import ConfirmModal from '../../components/ConfirmModal.vue'
 import Switch from '../Switch.vue'
 import McpToolTester from './McpToolTester.vue'
 import {
-  buildDefaultMcpServerName,
   buildMcpServerNamePrefix,
-  composeMcpServerName,
   normalizeMcpServerNameSuffix,
+  resolveEditedServerName,
   stripMcpServerNamePrefix,
+  suggestUniqueServerNameSuffix,
 } from '@/utils/mcpServerName'
 import {
   parseMcpServersPaste,
@@ -99,13 +99,16 @@ const filteredServers = computed(() => {
 
 /** 用户只填后缀；保存时与固定前缀拼接 */
 const serverNameSuffix = ref('')
+/** 编辑态回填的原始完整名：用户没改后缀时必须原样保留，绝不重新拼前缀 */
+const editingOriginalName = ref('')
 /** 第一步录入方式：手动 / JSON 粘贴 */
 const connectionInputTab = ref<'manual' | 'json'>('manual')
 const mcpJsonPaste = ref('')
 const mcpJsonPasteHint = ref('')
 
 const syncFullServerName = () => {
-  newServer.value.server_name = composeMcpServerName(
+  newServer.value.server_name = resolveEditedServerName(
+    editingOriginalName.value,
     props.scope,
     userInfo.value?.user_name,
     serverNameSuffix.value,
@@ -773,6 +776,7 @@ const createEchoTestMcp = async () => {
 const resetWizard = () => {
   isEditing.value = false
   editingId.value = ''
+  editingOriginalName.value = ''
   editingAuthHeadersConfigured.value = false
   wizardStep.value = 1
   createdServer.value = null
@@ -871,6 +875,8 @@ defineExpose({
 const openEditModal = (server: any) => {
   isEditing.value = true
   editingId.value = server.id
+  // 记住原始完整名：无前缀（平台 Echo）/历史无用户名前缀的名字不会被重新拼前缀改写。
+  editingOriginalName.value = String(server.server_name || '')
   editingAuthHeadersConfigured.value = Boolean(server.auth_headers_configured)
   // 只有库里已经开启（且已有私钥）时才允许直接签发断言做探测。
   savedUserAssertionEnabled.value = Boolean(server.user_assertion_enabled)
@@ -1063,6 +1069,27 @@ const applyMcpJsonPaste = (options?: { connect?: boolean }) => {
   return true
 }
 
+/**
+ * 名字后缀为空时按地址推导一个不冲突的后缀。
+ *
+ * 第一步表单里没有后缀输入框，用户直接点「保存并启用透传」时后缀仍是空的；
+ * 这里在保存前补齐，避免"唯一的主按钮点了没反应"。
+ */
+const ensureServerNameSuffixFromUrl = () => {
+  if (normalizeMcpServerNameSuffix(serverNameSuffix.value)) return false
+  const existingNames = servers.value
+    .filter((server: any) => server.id !== editingId.value)
+    .map((server: any) => server.server_name)
+  serverNameSuffix.value = suggestUniqueServerNameSuffix(
+    newServer.value.sse_url,
+    props.scope,
+    userInfo.value?.user_name,
+    existingNames,
+  )
+  syncFullServerName()
+  return true
+}
+
 const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
   if (!newServer.value.sse_url) {
     showToast(connectionInputTab.value === 'json' ? '请先粘贴并解析有效的 MCP JSON' : '请输入服务地址', 'warning')
@@ -1086,35 +1113,7 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
     const res = await axios.post('/api/portal/mcp/verify', payload)
     discoveredTools.value = res.data.tools
     wizardStep.value = 2
-    if (!normalizeMcpServerNameSuffix(serverNameSuffix.value)) {
-        try {
-            const url = new URL(newServer.value.sse_url)
-            let suffix = normalizeMcpServerNameSuffix(url.hostname) || 'server'
-            let candidate = composeMcpServerName(props.scope, userInfo.value?.user_name, suffix)
-            let counter = 1
-            while (servers.value.some((s: any) => s.server_name === candidate && s.id !== editingId.value)) {
-                counter++
-                candidate = composeMcpServerName(
-                  props.scope,
-                  userInfo.value?.user_name,
-                  `${suffix}-${counter}`,
-                )
-            }
-            serverNameSuffix.value = stripMcpServerNamePrefix(
-              candidate,
-              props.scope,
-              userInfo.value?.user_name,
-            )
-        } catch {
-            serverNameSuffix.value = normalizeMcpServerNameSuffix(
-              buildDefaultMcpServerName(props.scope, userInfo.value?.user_name, 'server').replace(
-                namePrefix.value,
-                '',
-              ),
-            ) || 'server'
-        }
-        syncFullServerName()
-    }
+    ensureServerNameSuffixFromUrl()
     showToast('连接成功，已发现工具', 'success')
   } catch (e: any) {
     showToast(getApiErrorMessage(e, '连接失败，请检查地址或认证信息'), 'error')
@@ -1124,6 +1123,8 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
 }
 
 const addServer = async (options?: { closeAfterSave?: boolean }) => {
+  // 按钮已用 savingServer 禁用，这里再兜一层：双击/回车连发不能变成两次 POST/PUT。
+  if (savingServer.value) return false
   // 新建走 POST /servers（后端要求 create 码）；编辑走 PUT（要求 edit 码）。
   // 按钮隐藏 + openAddModal 守卫已挡一层，这里再兜底，避免任何入口绕到 403。
   if (!isEditing.value && !canCreateMcp.value) {
@@ -1205,6 +1206,8 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
  * 这里先保存并生成密钥，再让用户回到编辑态做一次带断言的完整测试。
  */
 const saveAndEnableUserAssertion = async () => {
+  // 第一步没有后缀输入框：先按地址补齐，否则唯一的主按钮只会提示"请填写后缀"。
+  ensureServerNameSuffixFromUrl()
   await addServer({ closeAfterSave: true })
 }
 
@@ -2330,10 +2333,10 @@ onMounted(fetchServers)
             <button 
               v-else-if="wizardStep === 2"
               @click="addServer()" 
-              :disabled="!isEditing && !canCreateMcp"
+              :disabled="savingServer || (!isEditing && !canCreateMcp)"
               class="rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-green-600 sm:px-6 sm:py-2"
             >
-              {{ isEditing ? '保存修改' : '确认并完成添加' }}
+              {{ savingServer ? '保存中...' : isEditing ? '保存修改' : '确认并完成添加' }}
             </button>
 
             <template v-else-if="wizardStep === 3">

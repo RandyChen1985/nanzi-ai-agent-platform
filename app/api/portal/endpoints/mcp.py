@@ -11,7 +11,12 @@ import secrets
 
 from app.core.config import settings
 from app.core.orm import get_db_session
-from app.core.dependencies import require_admin, require_permission, require_api_key
+from app.core.dependencies import (
+    require_admin,
+    require_any_permission,
+    require_permission,
+    require_api_key,
+)
 from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
@@ -427,7 +432,19 @@ def _build_verify_user_assertion_headers(
         raise HTTPException(status_code=400, detail=f"用户身份传递配置无效: {exc}")
 
 
-@router.post("/verify", dependencies=[Depends(require_permission("element", "element:mcp_management:edit"))])
+# 连接测试是「新建」与「编辑」共用的第一步（向导第 1 步必须调它），所以 create / edit
+# 任一权限即可；它只做探测、不落库，不构成写操作。
+@router.post(
+    "/verify",
+    dependencies=[
+        Depends(
+            require_any_permission(
+                ("element", "element:mcp_management:create"),
+                ("element", "element:mcp_management:edit"),
+            )
+        )
+    ],
+)
 async def verify_mcp_server(
     data: McpVerifyRequest,
     db: AsyncSession = Depends(get_db_session),
@@ -667,6 +684,32 @@ async def create_echo_test_mcp(
                 )
             )
         ).scalar_one_or_none()
+        if tool is None:
+            # 任何一次改名（编辑平台 Echo、迁移历史个人 Echo）都会让工具标识与常量对不上。
+            # tool_id 是这个实例的稳定标识：先按它兜底改名，避免同主键重复插入报 500。
+            stale_tool = (
+                await db.execute(
+                    select(McpToolCache).where(
+                        McpToolCache.server_id == server_id,
+                        McpToolCache.id == tool_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if stale_tool is not None:
+                stale_tool.tool_name = tool_name
+                tool = stale_tool
+                try:
+                    from app.services.conversation_resource_service import (
+                        ConversationResourceService,
+                    )
+
+                    await ConversationResourceService.rewrite_mcp_tool_name(
+                        owner_id=owner_id,
+                        tool_id=stale_tool.id,
+                        new_name=tool_name,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
         if tool is None and is_personal:
             # 兼容旧数据：上一版个人 Echo 复用了平台 Echo 的工具名，这里就地改名，
             # 否则平台/个人两个 Echo 同时存在时按名称查询会命中多行。
@@ -883,7 +926,14 @@ async def update_mcp_server(
         server.remark = _normalized_remark(data.remark)
     await db.commit()
     _clear_runtime_tool_cache()
-    
+
+    # 会话在建立时缓存了 sse_url 与解密后的 Header，唯一兜底是 300s 空闲回收；
+    # 改了地址 / Token / 断言配置后必须先淘汰，否则接下来的同步与调用还在用旧连接。
+    try:
+        await McpClientService.evict_session(server_id)
+    except Exception as e:
+        logger.warning(f"Evicting session failed during update for server {server_id}: {e}")
+
     # Only enabled servers should be synchronized. Syncing a disabled server
     # would mark it enabled again inside McpClientService.sync_tools().
     if server.enabled_status == 1:
@@ -891,11 +941,6 @@ async def update_mcp_server(
             await McpClientService.sync_tools(server_id)
         except Exception as e:
             logger.warning(f"Sync failed during update for server {server_id}: {e}")
-    else:
-        try:
-            await McpClientService.evict_session(server_id)
-        except Exception as e:
-            logger.warning(f"Evicting session failed during disable for server {server_id}: {e}")
     
     # Return with updated counts
     count_stmt = select(func.count(McpToolCache.id)).where(McpToolCache.server_id == server_id)
