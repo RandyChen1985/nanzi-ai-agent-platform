@@ -462,142 +462,6 @@
         ref="messagesContainer"
         @scroll="handleScroll"
       >
-      <!-- Awaiting host INIT_CONFIG (strict/debug mode) -->
-      <div
-        v-if="isAwaitingHostInitConfig"
-        class="absolute inset-0 z-50 flex flex-col overflow-hidden"
-        data-testid="embed-awaiting-init"
-      >
-        <!-- 背景骨架：让用户隐约看出这里将是一个对话界面（纯装饰，不参与交互） -->
-        <div
-          class="flex-1 flex flex-col space-y-6 px-3 sm:px-4 pt-3 sm:pt-4 pb-3"
-          aria-hidden="true"
-          data-testid="embed-awaiting-skeleton"
-        >
-          <div v-for="i in 3" :key="i" class="flex items-start space-x-3">
-            <div class="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
-            <div class="flex-1 space-y-2">
-              <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 animate-pulse"></div>
-              <div class="h-4 bg-gray-100 dark:bg-gray-800 rounded w-1/2 animate-pulse"></div>
-            </div>
-          </div>
-          <!-- 底部输入框轮廓：一眼看出这里将是一个对话界面 -->
-          <div class="mt-auto h-11 rounded-xl bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
-        </div>
-
-        <!-- 半透明遮罩：骨架若隐若现，同时整层吃掉点击，避免凭据落定前误操作 -->
-        <div
-          class="absolute inset-0 flex flex-col items-center justify-center bg-white/70 dark:bg-gray-900/80 backdrop-blur-[2px] p-6 text-center"
-          data-testid="embed-awaiting-mask"
-        >
-          <div class="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-full mb-4">
-            <svg
-              class="w-12 h-12 text-blue-500 animate-spin"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="3"
-              />
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-              />
-            </svg>
-          </div>
-          <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
-            {{ hostInitNotice.title }}
-          </h3>
-          <p
-            class="text-sm text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed"
-          >
-            {{ hostInitNotice.message }}
-          </p>
-          <p
-            v-if="hostInitNoticeExpired"
-            class="mt-3 text-xs text-gray-400 dark:text-gray-500"
-          >
-            若一直停在这里，可先刷新本页重试。
-          </p>
-        </div>
-      </div>
-      <!-- No Permission Overlay -->
-      <div
-        v-else-if="!hasPermission"
-        class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 text-center"
-      >
-        <div class="p-4 bg-red-50 dark:bg-red-900/10 rounded-full mb-4">
-          <svg
-            class="w-12 h-12 text-red-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.5"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-            />
-          </svg>
-        </div>
-        <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
-          {{ authFailureView.title }}
-        </h3>
-        <p
-          class="text-sm text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed"
-        >
-          {{ authFailureView.message }}
-        </p>
-      </div>
-      <!-- URL agent_id deep-link error -->
-      <div
-        v-else-if="urlAgentAccessError"
-        class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 text-center"
-      >
-        <div
-          class="p-4 rounded-full mb-4"
-          :class="urlAgentAccessError.code === 'AGENT_FORBIDDEN' ? 'bg-amber-50 dark:bg-amber-900/10' : 'bg-red-50 dark:bg-red-900/10'"
-        >
-          <svg
-            class="w-12 h-12"
-            :class="urlAgentAccessError.code === 'AGENT_FORBIDDEN' ? 'text-amber-500' : 'text-red-500'"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.5"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-            />
-          </svg>
-        </div>
-        <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
-          {{ urlAgentAccessError.code === 'AGENT_FORBIDDEN' ? '无权使用该智能体' : '智能体不存在' }}
-        </h3>
-        <p class="text-sm text-gray-500 dark:text-gray-400 max-w-sm leading-relaxed mb-2">
-          {{ urlAgentAccessError.message }}
-        </p>
-        <p v-if="urlAgentAccessError.agentKey" class="text-xs text-gray-400 font-mono mb-4 break-all">
-          agent_id={{ urlAgentAccessError.agentKey }}
-          <template v-if="urlAgentAccessError.displayName">
-            （{{ urlAgentAccessError.displayName }}）
-          </template>
-        </p>
-        <p class="text-xs text-gray-400 max-w-sm leading-relaxed">
-          {{ urlAgentAccessError.code === 'AGENT_FORBIDDEN'
-            ? '请更换有权限的账号 / Token，或联系管理员开通该智能体。'
-            : '请检查链接中的 agent_id 是否正确，或联系管理员确认智能体配置。' }}
-        </p>
-      </div>
       <!-- Connection Status Overlay -->
       <div
         v-if="connectionStatus !== 'connected'"
@@ -2487,6 +2351,142 @@
       v-model:panel-width="webPreviewPanelWidthReactive"
       @close="closeWebPreviewPanel"
     />
+    <!-- Awaiting host INIT_CONFIG (strict/debug mode) -->
+    <div
+      v-if="isAwaitingHostInitConfig"
+      class="absolute inset-0 z-[60] flex flex-col overflow-hidden"
+      data-testid="embed-awaiting-init"
+    >
+      <!-- 背景骨架：让用户隐约看出这里将是一个对话界面（纯装饰，不参与交互） -->
+      <div
+        class="flex-1 flex flex-col space-y-6 px-3 sm:px-4 pt-3 sm:pt-4 pb-3"
+        aria-hidden="true"
+        data-testid="embed-awaiting-skeleton"
+      >
+        <div v-for="i in 3" :key="i" class="flex items-start space-x-3">
+          <div class="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
+          <div class="flex-1 space-y-2">
+            <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 animate-pulse"></div>
+            <div class="h-4 bg-gray-100 dark:bg-gray-800 rounded w-1/2 animate-pulse"></div>
+          </div>
+        </div>
+        <!-- 底部输入框轮廓：一眼看出这里将是一个对话界面 -->
+        <div class="mt-auto h-11 rounded-xl bg-gray-200 dark:bg-gray-700 animate-pulse"></div>
+      </div>
+
+      <!-- 半透明遮罩：骨架若隐若现，同时整层吃掉点击，避免凭据落定前误操作 -->
+      <div
+        class="absolute inset-0 flex flex-col items-center justify-center bg-white/70 dark:bg-gray-900/80 backdrop-blur-[2px] p-6 text-center"
+        data-testid="embed-awaiting-mask"
+      >
+        <div class="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-full mb-4">
+          <svg
+            class="w-12 h-12 text-blue-500 animate-spin"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="3"
+            />
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+        </div>
+        <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
+          {{ hostInitNotice.title }}
+        </h3>
+        <p
+          class="text-sm text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed"
+        >
+          {{ hostInitNotice.message }}
+        </p>
+        <p
+          v-if="hostInitNoticeExpired"
+          class="mt-3 text-xs text-gray-400 dark:text-gray-500"
+        >
+          若一直停在这里，可先刷新本页重试。
+        </p>
+      </div>
+    </div>
+    <!-- No Permission Overlay -->
+    <div
+      v-else-if="!hasPermission"
+      class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 text-center"
+    >
+      <div class="p-4 bg-red-50 dark:bg-red-900/10 rounded-full mb-4">
+        <svg
+          class="w-12 h-12 text-red-500"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="1.5"
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+          />
+        </svg>
+      </div>
+      <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
+        {{ authFailureView.title }}
+      </h3>
+      <p
+        class="text-sm text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed"
+      >
+        {{ authFailureView.message }}
+      </p>
+    </div>
+    <!-- URL agent_id deep-link error -->
+    <div
+      v-else-if="urlAgentAccessError"
+      class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 text-center"
+    >
+      <div
+        class="p-4 rounded-full mb-4"
+        :class="urlAgentAccessError.code === 'AGENT_FORBIDDEN' ? 'bg-amber-50 dark:bg-amber-900/10' : 'bg-red-50 dark:bg-red-900/10'"
+      >
+        <svg
+          class="w-12 h-12"
+          :class="urlAgentAccessError.code === 'AGENT_FORBIDDEN' ? 'text-amber-500' : 'text-red-500'"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="1.5"
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+          />
+        </svg>
+      </div>
+      <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
+        {{ urlAgentAccessError.code === 'AGENT_FORBIDDEN' ? '无权使用该智能体' : '智能体不存在' }}
+      </h3>
+      <p class="text-sm text-gray-500 dark:text-gray-400 max-w-sm leading-relaxed mb-2">
+        {{ urlAgentAccessError.message }}
+      </p>
+      <p v-if="urlAgentAccessError.agentKey" class="text-xs text-gray-400 font-mono mb-4 break-all">
+        agent_id={{ urlAgentAccessError.agentKey }}
+        <template v-if="urlAgentAccessError.displayName">
+          （{{ urlAgentAccessError.displayName }}）
+        </template>
+      </p>
+      <p class="text-xs text-gray-400 max-w-sm leading-relaxed">
+        {{ urlAgentAccessError.code === 'AGENT_FORBIDDEN'
+          ? '请更换有权限的账号 / Token，或联系管理员开通该智能体。'
+          : '请检查链接中的 agent_id 是否正确，或联系管理员确认智能体配置。' }}
+      </p>
+    </div>
     </div>
 </template>
 <script setup lang="ts">
@@ -11323,7 +11323,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
                 ltmAlertedInSession.value = true;
               }
             }
-          } else if (data.type === "error") {
+          } else if (data.type === "error" || data.status === "error") {
+            // 错误块可能只带 status:"error" + content；必须先于 content 分支，
+            // 否则错误文案会被当成正常回答增量渲染，且永远不进入错误态。
             flushContentBuffer();
             agentMsg.value.isThinking = false;
             (agentMsg.value as any).status = "error";
@@ -11349,10 +11351,6 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             if (agentMsg.value.content || pendingContentBuffer) {
               agentMsg.value.isThinking = false;
             }
-          } else if (data.type === "error" || data.status === "error") {
-            flushContentBuffer();
-            agentMsg.value.isThinking = false;
-            applyStreamErrorMessage(agentMsg.value, data);
           }
           if (!pendingContentBuffer) {
             scrollToBottom();
