@@ -163,6 +163,9 @@ const wizardStep = ref<1 | 2 | 3>(1) // 1: Input & Verify, 2: Preview & Name, 3:
 const createdServer = ref<any | null>(null)
 const publishAllLoading = ref(false)
 const verifying = ref(false)
+const savingServer = ref(false)
+// 编辑态记录库里已保存的开关值：仅凭表单开关无法判断签名私钥是否已经生成。
+const savedUserAssertionEnabled = ref(false)
 const discoveredTools = ref<any[]>([])
 const syncLoading = ref<Record<string, boolean>>({})
 const statusLoading = ref<Record<string, boolean>>({})
@@ -396,6 +399,15 @@ const newServer = ref({
   user_assertion_audience: '',
   user_assertion_key_id: '',
   user_assertion_issuer: 'nanzi-platform',
+})
+
+/**
+ * 开关已打开但库里还没有这份配置：签名私钥要等保存时才生成，
+ * 此时探测请求无法签发断言，必须提供「先保存」的入口。
+ */
+const userAssertionPendingSave = computed(() => {
+  if (!newServer.value.user_assertion_enabled) return false
+  return !isEditing.value || !savedUserAssertionEnabled.value
 })
 
 const buildServerPayload = (server: any) => {
@@ -746,6 +758,8 @@ const resetWizard = () => {
   createdServer.value = null
   publishAllLoading.value = false
   verifying.value = false
+  savingServer.value = false
+  savedUserAssertionEnabled.value = false
   discoveredTools.value = []
   newServer.value = {
     server_name: '',
@@ -838,6 +852,8 @@ const openEditModal = (server: any) => {
   isEditing.value = true
   editingId.value = server.id
   editingAuthHeadersConfigured.value = Boolean(server.auth_headers_configured)
+  // 只有库里已经开启（且已有私钥）时才允许直接签发断言做探测。
+  savedUserAssertionEnabled.value = Boolean(server.user_assertion_enabled)
   wizardStep.value = 1
   serverNameSuffix.value = stripMcpServerNamePrefix(
     server.server_name,
@@ -1019,14 +1035,15 @@ const applyMcpJsonPaste = (options?: { connect?: boolean }) => {
     || `已解析「${entry.key}」→ ${entry.url}`
 
   if (options?.connect) {
-    void handleVerify()
+    // JSON 粘贴同样是新建流程：开关未保存时先跳过断言探测，保存时再生成密钥。
+    void handleVerify({ skipUserAssertion: userAssertionPendingSave.value })
   } else {
     showToast(`已从 JSON 解析：${entry.key}`, 'success')
   }
   return true
 }
 
-const handleVerify = async () => {
+const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
   if (!newServer.value.sse_url) {
     showToast(connectionInputTab.value === 'json' ? '请先粘贴并解析有效的 MCP JSON' : '请输入服务地址', 'warning')
     return
@@ -1035,6 +1052,10 @@ const handleVerify = async () => {
   verifying.value = true
   try {
     const payload = buildServerPayload(newServer.value)
+    if (options?.skipUserAssertion) {
+      // 未保存的透传配置还没有私钥：本次只验证地址与 Token，断言等保存后再测。
+      payload.user_assertion_enabled = false
+    }
     if (isEditing.value && editingId.value) {
       // 编辑态带上 server_id：地址未变时后端复用已保存的凭据完成探测。
       payload.server_id = editingId.value
@@ -1082,53 +1103,89 @@ const handleVerify = async () => {
   }
 }
 
-const addServer = async () => {
+const addServer = async (options?: { closeAfterSave?: boolean }) => {
   // 新建走 POST /servers（后端要求 create 码）；编辑走 PUT（要求 edit 码）。
   // 按钮隐藏 + openAddModal 守卫已挡一层，这里再兜底，避免任何入口绕到 403。
   if (!isEditing.value && !canCreateMcp.value) {
     showToast('没有创建 MCP 服务的权限', 'error')
-    return
+    return false
+  }
+  if (isEditing.value && !canEditMcp.value) {
+    showToast('没有编辑 MCP 服务的权限', 'error')
+    return false
   }
   syncFullServerName()
   if (!normalizeMcpServerNameSuffix(serverNameSuffix.value)) {
     showToast('请填写服务名称后缀', 'warning')
-    return
+    return false
   }
   if (!newServer.value.server_name || !newServer.value.sse_url) {
     showToast('请填写完整信息', 'warning')
-    return
+    return false
   }
   if (authorizationEnabled.value && authorizationEditing.value && !authorizationToken.value.trim()) {
     showToast('请输入 Authorization Token', 'warning')
-    return
+    return false
   }
   if (headerMode.value === 'advanced') {
     try {
       JSON.parse(newServer.value.auth_headers)
       syncJsonToPairs()
     }
-    catch (e) { showToast('JSON 格式错误', 'error'); return }
+    catch (e) { showToast('JSON 格式错误', 'error'); return false }
   }
 
+  savingServer.value = true
   try {
     const payload = buildServerPayload(newServer.value)
     if (isEditing.value) {
       await axios.put(`/api/portal/mcp/servers/${editingId.value}`, payload)
-      showToast('更新成功', 'success')
+      savedUserAssertionEnabled.value = Boolean(payload.user_assertion_enabled)
+      showToast(
+        options?.closeAfterSave && payload.user_assertion_enabled
+          ? '已保存：用户身份传递已开启，签名密钥已生成；再次进入编辑点「连接并发现工具」可验证验签链路'
+          : '更新成功',
+        'success',
+      )
       closeWizard()
       fetchServers()
-    } else {
-      const res = await axios.post('/api/portal/mcp/servers', payload)
-      showToast('添加成功', 'success')
-      createdServer.value = res.data
-      await fetchServers()
-      const matched = servers.value.find((s: any) => s.id === res.data?.id) || res.data
-      selectServer(matched)
-      wizardStep.value = 3
+      return true
     }
+
+    const res = await axios.post('/api/portal/mcp/servers', payload)
+    savedUserAssertionEnabled.value = Boolean(payload.user_assertion_enabled)
+    if (options?.closeAfterSave) {
+      showToast(
+        payload.user_assertion_enabled
+          ? '已保存：用户身份传递已开启，签名密钥已生成；可在列表中编辑该服务测试连接'
+          : '添加成功',
+        'success',
+      )
+      closeWizard()
+      fetchServers()
+      return true
+    }
+    showToast('添加成功', 'success')
+    createdServer.value = res.data
+    await fetchServers()
+    const matched = servers.value.find((s: any) => s.id === res.data?.id) || res.data
+    selectServer(matched)
+    wizardStep.value = 3
+    return true
   } catch (e: any) {
     showToast(getApiErrorMessage(e, '操作失败'), 'error')
+    return false
+  } finally {
+    savingServer.value = false
   }
+}
+
+/**
+ * 开关在库里尚未开启时，签名私钥还不存在，第一步探测必然失败。
+ * 这里先保存并生成密钥，再让用户回到编辑态做一次带断言的完整测试。
+ */
+const saveAndEnableUserAssertion = async () => {
+  await addServer({ closeAfterSave: true })
 }
 
 const publishAllCreatedTools = async () => {
@@ -1829,6 +1886,9 @@ onMounted(fetchServers)
                   <p class="mt-1 text-[10px] leading-relaxed text-gray-500">
                     关闭时保持原有 MCP 调用方式；开启后仅为当前 MCP 增加签名用户身份。签名私钥由系统自动生成并加密保存，业务方只使用公钥验签。
                   </p>
+                  <p v-if="userAssertionPendingSave" class="mt-1 text-[10px] font-semibold leading-relaxed text-indigo-600">
+                    当前开关尚未保存：签名私钥在保存时才生成，未保存前无法发送带签名的连接测试。
+                  </p>
                 </div>
                 <Switch
                   :model-value="newServer.user_assertion_enabled"
@@ -2170,9 +2230,27 @@ onMounted(fetchServers)
               {{ verifying ? '正在连接并发现工具...' : '解析并连接发现工具' }}
             </button>
 
+            <template v-else-if="wizardStep === 1 && userAssertionPendingSave">
+              <button
+                @click="handleVerify({ skipUserAssertion: true })"
+                :disabled="verifying || savingServer"
+                class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                仅测试连接（不含透传）
+              </button>
+              <button
+                @click="saveAndEnableUserAssertion"
+                :disabled="savingServer || verifying"
+                class="flex items-center justify-center rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50 sm:px-6 sm:py-2"
+              >
+                <ArrowPathIcon v-if="savingServer" class="mr-2 h-4 w-4 animate-spin" />
+                {{ savingServer ? '正在保存...' : '保存并启用透传' }}
+              </button>
+            </template>
+
             <button 
               v-else-if="wizardStep === 1"
-              @click="handleVerify" 
+              @click="handleVerify()" 
               :disabled="verifying"
               class="flex items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary-dark disabled:opacity-50 sm:px-6 sm:py-2"
             >
