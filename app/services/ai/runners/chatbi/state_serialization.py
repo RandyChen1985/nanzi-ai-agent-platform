@@ -39,6 +39,41 @@ def build_stream_state(
     return stream_state
 
 
+def _restore_table_bindings(raw_bindings: Any) -> Any:
+    """``asdict(DataRunState)`` 会把 TableBinding 变成 dict；恢复时必须还原成
+    dataclass，否则 insight_meta 等处的 ``binding.dataset_name`` 会 AttributeError。
+    """
+    if not isinstance(raw_bindings, dict):
+        return raw_bindings
+    from app.services.ai.chatbi_sql_query_binding import TableBinding
+    from app.services.ai.runners.chatbi.sql_gates import SchemaColumnMeta
+
+    restored: dict[str, Any] = {}
+    for key, value in raw_bindings.items():
+        if not isinstance(value, dict):
+            restored[key] = value
+            continue
+        columns: list[Any] = []
+        for column in value.get("columns") or []:
+            if isinstance(column, dict):
+                columns.append(
+                    SchemaColumnMeta(
+                        name=str(column.get("name") or ""),
+                        col_type=str(column.get("col_type") or ""),
+                        examples=list(column.get("examples") or []),
+                    )
+                )
+            else:
+                columns.append(column)
+        restored[key] = TableBinding(
+            physical_name=str(value.get("physical_name") or key),
+            dataset_name=str(value.get("dataset_name") or ""),
+            data_source=str(value.get("data_source") or ""),
+            columns=columns,
+        )
+    return restored
+
+
 def pending_state_to_data_run_state(
     pending_state: dict[str, Any],
 ) -> tuple[DataRunState, dict[str, Any]]:
@@ -54,6 +89,18 @@ def pending_state_to_data_run_state(
             )
         except Exception:
             kwargs["tool_loop_detector"] = ToolLoopDetector()
+    kwargs["table_bindings"] = _restore_table_bindings(kwargs.get("table_bindings"))
+    raw_binding = kwargs.get("sql_query_binding")
+    if isinstance(raw_binding, dict):
+        from app.services.ai.chatbi_sql_query_binding import SqlQueryBinding
+
+        kwargs["sql_query_binding"] = SqlQueryBinding(
+            sql=str(raw_binding.get("sql") or ""),
+            primary_dataset_name=str(raw_binding.get("primary_dataset_name") or ""),
+            schema_output=str(raw_binding.get("schema_output") or ""),
+            tables=_restore_table_bindings(raw_binding.get("tables")) or {},
+            preflight_validated=bool(raw_binding.get("preflight_validated")),
+        )
     data_state = DataRunState(**kwargs)
     stream_meta = {
         key: pending_state[key]

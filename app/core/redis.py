@@ -14,6 +14,10 @@ def _redis_connect_kwargs(*, decode_responses: bool) -> dict:
         "port": settings.REDIS_PORT,
         "db": settings.REDIS_DB,
         "decode_responses": decode_responses,
+        # 防止 Redis 主从切换/网络分区时锁、状态、配置读取无限挂起；
+        # 3s 大于业务里最长的阻塞读（BLPOP 1s / XREAD block 1s）。
+        "socket_timeout": 3.0,
+        "socket_connect_timeout": 1.0,
     }
     if decode_responses:
         kwargs["encoding"] = "utf-8"

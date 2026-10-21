@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from app.services.ai.chatbi_sql_query_binding import TableBinding
+if TYPE_CHECKING:
+    from app.services.ai.chatbi_sql_query_binding import TableBinding
+
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 
 

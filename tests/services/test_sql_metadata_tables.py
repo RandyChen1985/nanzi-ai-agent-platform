@@ -62,19 +62,21 @@ def test_extract_skips_oracle_dual_builtin():
     assert "clue_monthly" in refs2
 
 
-def test_extract_skips_system_schema_tables():
+def test_extract_rejects_system_schema_tables():
+    # 系统库不是业务数据：以前是“跳过校验后放行”，会让 mysql.user /
+    # information_schema.* 绕过物理表权限；现在显式拒绝。
     err, refs = extract_physical_table_refs_from_select_sql(
         "SELECT name FROM system.tables",
         dialect="clickhouse",
     )
-    assert err is None
+    assert "System schema" in str(err)
     assert refs == {}
 
     err2, refs2 = extract_physical_table_refs_from_select_sql(
         "SELECT table_name FROM information_schema.tables",
         dialect="mysql",
     )
-    assert err2 is None
+    assert "System schema" in str(err2)
     assert refs2 == {}
 
 

@@ -9,6 +9,9 @@ TOOL_LOOP_FUSE_THRESHOLD = 3
 FAILED_SQL_REPEAT_THRESHOLD = 2
 DELAY_SECONDS_EXTREME_THRESHOLD = 7 * 24 * 60 * 60
 MAX_DATA_REPAIR_ROUNDS = 2
+# 修复轮墙钟软预算：34 轮 × 每轮多次 LLM 会撞上 600s 看门狗，留下“超时无答复”。
+# 到点后停止开新修复轮，交给现有 final guard / 合成兜底输出。
+MAX_REPAIR_WALL_SECONDS = 240.0
 # 平台在工具回调内自动执行的 SQL 重试上限（empty_filter / WHERE 探查），不计入 LLM repair 轮次。
 MAX_PLATFORM_AUTO_SQL_RETRIES = 5
 DATA_REPAIR_BUDGETS = {

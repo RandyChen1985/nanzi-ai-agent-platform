@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# 持有后台 task 的强引用，防止看门狗等在事件循环中只被弱引用而提前回收。
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
 SSE_RESPONSE_HEADERS = {
     # Prevent browser/proxy transformations from coalescing small narration deltas.
     "Cache-Control": "no-cache, no-transform",
@@ -2223,10 +2226,14 @@ async def create_chat_completion(
         if _producer_hard_timeout_seconds > 0:
             # 看门狗随 producer 结束而结束：`wait_for` 会在 producer 完成后提前返回，
             # 不会为了等满整个 hard_timeout 而残留。
-            asyncio.create_task(
+            # 必须持引用：否则事件循环只保留弱引用，极端情况下看门狗被 GC 后，
+            # 整轮唯一的 600s 兜底消失，只剩会话锁 TTL 自然过期。
+            watchdog_task = asyncio.create_task(
                 _producer_watchdog(_producer_hard_timeout_seconds),
                 name=f"chat-producer-watchdog-{conversation_id or 'unknown'}",
             )
+            _BACKGROUND_TASKS.add(watchdog_task)
+            watchdog_task.add_done_callback(_BACKGROUND_TASKS.discard)
 
         async def sse_generator() -> AsyncGenerator[str, None]:
             client_disconnected = False

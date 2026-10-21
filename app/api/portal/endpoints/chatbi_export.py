@@ -120,6 +120,20 @@ async def export_chatbi_detail(
     is_admin = user_info.get("role") == "admin"
     include_total = False
 
+    # 行级权限只在显式 dataset_name 命中的数据集上施加。导出通道必须自己
+    # 反解数据集（与 /chatbi/sql/execute 同源守卫），否则省略 dataset_name
+    # 就能导出未经过行级过滤的全量明细。
+    dataset_name = str(body.dataset_name or "").strip() or None
+    if dataset_name is None:
+        from app.api.v1.endpoints.chatbi import _resolve_direct_sql_dataset_name
+
+        dataset_name = await _resolve_direct_sql_dataset_name(
+            db,
+            sql=raw_sql,
+            data_source=body.data_source,
+            explicit_dataset_name=None,
+        )
+
     from app.services.sql_query_execution_service import execute_sql_query_core
 
     try:
@@ -128,7 +142,7 @@ async def export_chatbi_detail(
             db,
             sql=raw_sql,
             data_source=body.data_source,
-            dataset_name=body.dataset_name,
+            dataset_name=dataset_name,
             user_id=user_id,
             user_dimensions=export_dimensions,
             trace_logs=None,

@@ -155,7 +155,10 @@ class DataSourcePoolManager:
             password=db_config.password,
             minsize=1,
             maxsize=50,  # 适度控制单进程池大小以防止多 worker 爆表
-            autocommit=False
+            # 数据源适配器只执行只读 SQL，且 execute_sql 不显式 commit/rollback。
+            # autocommit=False 会让 SELECT 留下未结束事务（FOR UPDATE 甚至长期持锁），
+            # 归还连接后污染后续查询与业务库；只读通道使用自动提交。
+            autocommit=True
         )
         return pool
 
