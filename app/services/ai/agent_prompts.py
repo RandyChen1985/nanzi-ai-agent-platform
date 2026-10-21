@@ -823,7 +823,6 @@ class AgentServicePrompts:
         real_name: Optional[str] = None,
         dept: Optional[str] = None,
         dept_code: Optional[str] = None,
-        org_path: Optional[str] = None,
         role: Optional[str] = None,
         email: Optional[str] = None,
         status: Optional[Any] = None,
@@ -848,9 +847,10 @@ class AgentServicePrompts:
         email_text = str(email if email is not None else "").strip()
         if email_text:
             profile_lines.append(f"- **Email**: {email_text}")
-        # 只用可读部门名。``org_path`` 是 id 物化路径（``/1/``），对模型没有信息价值：
-        # 线上就是因为拿它兜底，模型照着答"部门路径 /1/，没有具体的部门名称"。
-        # 没有中文名时退到业务代码（稳定标识），而不是拿一串编号去让模型猜。
+        # 只用可读部门名。``org_path`` 甚至不在本函数入参里——它是给规则占位符和
+        # MCP 断言用的机器标识，渲染进画像只会被模型照搬（线上出现过「部门路径
+        # /1/，没有具体的部门名称」）。没有中文名时退到业务代码（稳定标识），
+        # 而不是拿一串路径去让模型猜。
         department = (dept or "").strip()
         if department:
             profile_lines.append(f"- **Department**: {department}")

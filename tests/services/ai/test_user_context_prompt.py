@@ -31,10 +31,11 @@ async def test_user_context_prompt_uses_verified_identity_fields():
 
 @pytest.mark.asyncio
 async def test_user_context_prompt_does_not_leak_internal_department_path():
-    """`org_path` 是 id 物化路径（`/1/`），对模型没有信息价值，反而会被照搬进回答。
+    """`org_path` 不进画像——它是给规则占位符和 MCP 断言用的机器标识。
 
-    线上就是这样：只给了 `org_path='/1/'`，模型答"部门路径 `/1/`，没有部门名称"。
-    没有可读部门名时宁可空着，也不要给一串编号让模型去猜。
+    早期它还是 id 物化路径（`/1/`），渲染进画像只会被模型照搬（线上答过「部门路径
+    /1/，没有具体的部门名称」）。现在它已改成编码路径（`/main/dev/`），依然不渲染：
+    路径对「我是什么部门的」这个问题没有信息增量，有中文名说名字、没名字给业务代码。
     """
     msg = await AgentService()._build_user_context_msg(
         {
@@ -267,3 +268,30 @@ def test_user_context_prompt_keeps_unparsable_extra_data():
         user_id="42", raw_name="tester", extra_data="非 JSON 的自由文本"
     )
     assert "非 JSON 的自由文本" in content
+
+
+def test_user_context_message_no_longer_accepts_org_path():
+    """守住死参数的删除：它曾被读出来、传进来，然后在模板里被完全忽略。
+
+    留着比删掉更糟——注释写着「org_path 是 id 路径」，有人会以为它能影响画像，
+    于是去调它、去给 auth_service 里那堆 user_info 补字段，白忙一场。
+    """
+    import inspect
+
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    params = inspect.signature(AgentServicePrompts.user_context_message).parameters
+    assert "org_path" not in params
+
+
+def test_prompt_callers_do_not_pass_org_path():
+    """两条画像构建路径（主链路 + ChatBI 澄清）都不得再传这个参数。"""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    for rel in (
+        "app/services/ai/agent_service.py",
+        "app/services/ai/runners/chatbi/clarification.py",
+    ):
+        source = (root / rel).read_text(encoding="utf-8")
+        assert "org_path=" not in source, f"{rel} 仍在给画像传 org_path"

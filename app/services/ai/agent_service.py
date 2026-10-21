@@ -888,7 +888,6 @@ class AgentService:
         user_id = str(user_info.get("user_id") or user_info.get("id") or "")
         real_name = user_info.get("real_name") or raw_name
         dept = user_info.get("dept_name") or user_info.get("department")
-        org_path = user_info.get("org_path")
         dept_code = user_info.get("dept_code")
         role = user_info.get("role_name") or user_info.get("role")
 
@@ -898,7 +897,6 @@ class AgentService:
             real_name=real_name,
             dept=dept,
             dept_code=dept_code,
-            org_path=org_path,
             role=role,
             # 扩展只读字段。来源是 API Key 校验（或会话缓存）返回的已验证身份字典，
             # 与上述身份字段同源；自由文本的单行化与截断在模板层统一处理。
