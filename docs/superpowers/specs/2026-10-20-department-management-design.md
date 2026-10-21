@@ -483,6 +483,8 @@ cd frontend && NODE_OPTIONS=--max-old-space-size=6144 ./node_modules/.bin/vue-ts
 
 **历史数据**：尚未上生产，**不交付回填迁移**——生产库没有 id 形式的旧快照，为新库准备一个只为旧数据服务的脚本反而是负担。本地开发库可能残留旧值，重设一次该用户的主部门即会经 `sync_primary_snapshot` 刷新。已确认库内 431 个文本列**无任何** `{user.org_path}` 引用，现有 SQL 模板与行级规则不受影响。
 
+**唯一写入方**：`users.dept_code` / `org_path` 只能由 `DepartmentService.sync_primary_snapshot()` 写。`AuthService.generate_api_key()` 虽保留这两个参数（仓库外可能仍有脚本按旧签名 import），但传值一律 `ValueError` 拒绝——它是建 User 行的唯一入口，放开就等于给快照开了条绕过关系表的旁路，将来有人塞进外部系统的部门标识，`org_path` 会冒出第三种格式。创建用户端点对这两个字段同样是显式 400，而不是静默忽略（忽略会让调用方以为写成功了）。
+
 **对外影响**：`{user.org_path}` 与 MCP 用户断言里的值从 `/1/2/` 变为 `/main/dev/`。若有平台外系统按 id 路径做前缀匹配，需同步调整。
 
 ### 8.7 部门在界面上显示在哪里

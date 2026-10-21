@@ -725,8 +725,8 @@ async def create_user(
             real_name=request.real_name,
             role=request.role,
             remark=request.remark,
-            dept_code=request.dept_code,
-            org_path=request.org_path,
+            # 部门快照不在这里传：上面已经对 request.dept_code / org_path 显式 400，
+            # 传入恒为 None 的死参数只会让人误以为建号时能设部门。
             extra_data=request.extra_data,
             email=email,
             db=db # Pass session!
