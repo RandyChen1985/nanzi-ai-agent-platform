@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, watch, ref } from "vue";
 import { copyToClipboard } from "../utils/clipboard";
+import { sanitizeRenderedHtml } from "../utils/sanitizeHtml";
 
 export interface CitationItem {
   id?: string | number;
@@ -47,6 +48,10 @@ const toPlainText = (htmlOrText: string): string => {
   div.innerHTML = htmlOrText;
   return div.textContent || htmlOrText;
 };
+
+/** 引用切片是知识库原文（用户上传的文档），可能夹带 HTML；渲染前统一消毒。
+ *  `toPlainText` 走的是 detached div，不会执行脚本，但也别让注入原样进 DOM。 */
+const safeCitationContent = computed(() => sanitizeRenderedHtml(props.citation?.content || ""));
 
 const handleCopy = async () => {
   const text = toPlainText(props.citation?.content || "");
@@ -248,7 +253,7 @@ onUnmounted(() => {
 
       <div
         class="citation-popover-body flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-2.5 text-xs text-gray-600 dark:text-gray-300 leading-relaxed whitespace-pre-wrap custom-scrollbar"
-        v-html="citation.content"
+        v-html="safeCitationContent"
         @wheel.stop
         @touchmove.stop
       />

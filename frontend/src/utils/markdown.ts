@@ -7,6 +7,7 @@ import 'katex/dist/katex.min.css'
 import { normalizeGroundingNoticeMarkdown } from './markdownNormalization'
 import { registerBareFilenameUnlink } from './markdownBareFilename'
 import { registerTypographerWithoutPlusMinus } from './markdownTypographer'
+import { sanitizeRenderedHtml } from './sanitizeHtml'
 
 const mathOptions = {
   engine: katex,
@@ -147,7 +148,9 @@ const normalizePipeTables = (content: string) => {
 };
 
 export const renderMarkdown = (content: string) => {
-  return md.render(normalizePipeTables(normalizeGroundingNoticeMarkdown(content)))
+  return sanitizeRenderedHtml(
+    md.render(normalizePipeTables(normalizeGroundingNoticeMarkdown(content))),
+  )
 }
 
 /** 画布/预览场景：保留单行换行，便于 .md 纯文本阅读 */
@@ -165,5 +168,7 @@ mdPreview.renderer.rules.fence = md.renderer.rules.fence!
 mdPreview.validateLink = md.validateLink
 
 export const renderMarkdownPreview = (content: string) => {
-  return mdPreview.render(normalizePipeTables(normalizeGroundingNoticeMarkdown(content)))
+  return sanitizeRenderedHtml(
+    mdPreview.render(normalizePipeTables(normalizeGroundingNoticeMarkdown(content))),
+  )
 }
