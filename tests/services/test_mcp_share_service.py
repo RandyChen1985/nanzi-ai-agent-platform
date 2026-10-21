@@ -265,7 +265,8 @@ async def test_accept_share_installs_independent_copy():
     assert server.sse_url == "https://example.com/mcp"
     assert len(tools) == 1
     assert tools[0].server_id == server.id
-    assert tools[0].tool_name == "trend_query"
+    # 工具标识必须换成副本自己的服务名前缀，否则同步后旧前缀的行会变孤立记录
+    assert tools[0].tool_name == "mcp-private-bob-trends-hub:trend_query"
 
     assert row.status == "ACCEPTED"
     assert row.accepted_server_id == server.id
@@ -298,6 +299,8 @@ async def test_accept_share_applies_custom_name():
 
     server = next(obj for obj in session.added if isinstance(obj, McpServer))
     assert server.server_name == "my-own-hcp"
+    tools = [obj for obj in session.added if isinstance(obj, McpToolCache)]
+    assert tools[0].tool_name == "my-own-hcp:trend_query"
 
 
 async def test_accept_share_rejects_conflicting_custom_name():
@@ -475,6 +478,18 @@ async def test_share_server_refuses_platform_server():
         await svc.share_server(
             session, user={"user_id": 7}, server_id="srv-1", target_user_ids=[9]
         )
+
+
+async def test_share_server_refuses_echo_test_server():
+    """Echo 的 audience 与 Token 绑定原实例，复制一份给他人必然验签失败。"""
+    echo = _server(sse_url="https://nanzi.example.com/mcp/echo/srv-echo/mcp")
+    session = _FakeSession(_FakeResult([echo]))
+
+    with pytest.raises(svc.McpShareConflictError, match="Echo 测试 MCP 不支持分享"):
+        await svc.share_server(
+            session, user={"user_id": 7}, server_id="srv-1", target_user_ids=[9]
+        )
+    assert session.added == []
 
 
 # ---------------------------------------------------------------------------

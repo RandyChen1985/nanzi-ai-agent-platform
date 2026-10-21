@@ -8,11 +8,11 @@ import ConfirmModal from '../../components/ConfirmModal.vue'
 import Switch from '../Switch.vue'
 import McpToolTester from './McpToolTester.vue'
 import {
-  buildDefaultMcpServerName,
   buildMcpServerNamePrefix,
-  composeMcpServerName,
   normalizeMcpServerNameSuffix,
+  resolveEditedServerName,
   stripMcpServerNamePrefix,
+  suggestUniqueServerNameSuffix,
 } from '@/utils/mcpServerName'
 import {
   parseMcpServersPaste,
@@ -99,13 +99,16 @@ const filteredServers = computed(() => {
 
 /** 用户只填后缀；保存时与固定前缀拼接 */
 const serverNameSuffix = ref('')
+/** 编辑态回填的原始完整名：用户没改后缀时必须原样保留，绝不重新拼前缀 */
+const editingOriginalName = ref('')
 /** 第一步录入方式：手动 / JSON 粘贴 */
 const connectionInputTab = ref<'manual' | 'json'>('manual')
 const mcpJsonPaste = ref('')
 const mcpJsonPasteHint = ref('')
 
 const syncFullServerName = () => {
-  newServer.value.server_name = composeMcpServerName(
+  newServer.value.server_name = resolveEditedServerName(
+    editingOriginalName.value,
     props.scope,
     userInfo.value?.user_name,
     serverNameSuffix.value,
@@ -736,15 +739,35 @@ const fetchServers = async () => {
   }
 }
 
+/** Echo 测试 MCP 的地址带 /mcp/echo/ 前缀；Token 与 audience 绑定实例，不能分享。 */
+const isEchoTestServer = (server: any) =>
+  String(server?.sse_url || '').includes('/mcp/echo/')
+
 const createEchoTestMcp = async () => {
-  if (props.scope !== 'global' || !canSave.value) return
+  if (!canSave.value) return
+  if (props.scope === 'personal') {
+    if (!canCreateMcp.value) {
+      showToast('没有创建个人 MCP 服务的权限', 'error')
+      return
+    }
+  } else if (!canEditMcp.value) {
+    showToast('没有创建 Echo 测试 MCP 的权限', 'error')
+    return
+  }
 
   try {
-    const response = await axios.post('/api/portal/mcp/servers/echo-test')
+    const response = await axios.post('/api/portal/mcp/servers/echo-test', null, {
+      params: { scope: props.scope },
+    })
     await fetchServers()
     const created = servers.value.find((server: any) => server.id === response.data?.id)
     if (created) selectServer(created)
-    showToast('Echo 测试 MCP 已就绪，所有智能体都可以挂载', 'success')
+    showToast(
+      props.scope === 'personal'
+        ? '个人 Echo 测试 MCP 已就绪，可用于验证本人调用链路的用户身份透传'
+        : 'Echo 测试 MCP 已就绪，所有智能体都可以挂载',
+      'success',
+    )
   } catch (error: any) {
     showToast(getApiErrorMessage(error, '创建 Echo 测试 MCP 失败'), 'error')
   }
@@ -753,6 +776,7 @@ const createEchoTestMcp = async () => {
 const resetWizard = () => {
   isEditing.value = false
   editingId.value = ''
+  editingOriginalName.value = ''
   editingAuthHeadersConfigured.value = false
   wizardStep.value = 1
   createdServer.value = null
@@ -851,6 +875,8 @@ defineExpose({
 const openEditModal = (server: any) => {
   isEditing.value = true
   editingId.value = server.id
+  // 记住原始完整名：无前缀（平台 Echo）/历史无用户名前缀的名字不会被重新拼前缀改写。
+  editingOriginalName.value = String(server.server_name || '')
   editingAuthHeadersConfigured.value = Boolean(server.auth_headers_configured)
   // 只有库里已经开启（且已有私钥）时才允许直接签发断言做探测。
   savedUserAssertionEnabled.value = Boolean(server.user_assertion_enabled)
@@ -1043,6 +1069,27 @@ const applyMcpJsonPaste = (options?: { connect?: boolean }) => {
   return true
 }
 
+/**
+ * 名字后缀为空时按地址推导一个不冲突的后缀。
+ *
+ * 第一步表单里没有后缀输入框，用户直接点「保存并启用透传」时后缀仍是空的；
+ * 这里在保存前补齐，避免"唯一的主按钮点了没反应"。
+ */
+const ensureServerNameSuffixFromUrl = () => {
+  if (normalizeMcpServerNameSuffix(serverNameSuffix.value)) return false
+  const existingNames = servers.value
+    .filter((server: any) => server.id !== editingId.value)
+    .map((server: any) => server.server_name)
+  serverNameSuffix.value = suggestUniqueServerNameSuffix(
+    newServer.value.sse_url,
+    props.scope,
+    userInfo.value?.user_name,
+    existingNames,
+  )
+  syncFullServerName()
+  return true
+}
+
 const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
   if (!newServer.value.sse_url) {
     showToast(connectionInputTab.value === 'json' ? '请先粘贴并解析有效的 MCP JSON' : '请输入服务地址', 'warning')
@@ -1066,35 +1113,7 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
     const res = await axios.post('/api/portal/mcp/verify', payload)
     discoveredTools.value = res.data.tools
     wizardStep.value = 2
-    if (!normalizeMcpServerNameSuffix(serverNameSuffix.value)) {
-        try {
-            const url = new URL(newServer.value.sse_url)
-            let suffix = normalizeMcpServerNameSuffix(url.hostname) || 'server'
-            let candidate = composeMcpServerName(props.scope, userInfo.value?.user_name, suffix)
-            let counter = 1
-            while (servers.value.some((s: any) => s.server_name === candidate && s.id !== editingId.value)) {
-                counter++
-                candidate = composeMcpServerName(
-                  props.scope,
-                  userInfo.value?.user_name,
-                  `${suffix}-${counter}`,
-                )
-            }
-            serverNameSuffix.value = stripMcpServerNamePrefix(
-              candidate,
-              props.scope,
-              userInfo.value?.user_name,
-            )
-        } catch {
-            serverNameSuffix.value = normalizeMcpServerNameSuffix(
-              buildDefaultMcpServerName(props.scope, userInfo.value?.user_name, 'server').replace(
-                namePrefix.value,
-                '',
-              ),
-            ) || 'server'
-        }
-        syncFullServerName()
-    }
+    ensureServerNameSuffixFromUrl()
     showToast('连接成功，已发现工具', 'success')
   } catch (e: any) {
     showToast(getApiErrorMessage(e, '连接失败，请检查地址或认证信息'), 'error')
@@ -1104,6 +1123,8 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
 }
 
 const addServer = async (options?: { closeAfterSave?: boolean }) => {
+  // 按钮已用 savingServer 禁用，这里再兜一层：双击/回车连发不能变成两次 POST/PUT。
+  if (savingServer.value) return false
   // 新建走 POST /servers（后端要求 create 码）；编辑走 PUT（要求 edit 码）。
   // 按钮隐藏 + openAddModal 守卫已挡一层，这里再兜底，避免任何入口绕到 403。
   if (!isEditing.value && !canCreateMcp.value) {
@@ -1185,6 +1206,8 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
  * 这里先保存并生成密钥，再让用户回到编辑态做一次带断言的完整测试。
  */
 const saveAndEnableUserAssertion = async () => {
+  // 第一步没有后缀输入框：先按地址补齐，否则唯一的主按钮只会提示"请填写后缀"。
+  ensureServerNameSuffixFromUrl()
   await addServer({ closeAfterSave: true })
 }
 
@@ -1419,16 +1442,65 @@ onMounted(fetchServers)
 
         <!-- 右侧操作区 -->
         <div v-if="canSave" class="relative ml-auto flex shrink-0 items-center">
-          <!-- 个人 MCP: 仅单一添加按钮 -->
-          <button
+          <!-- 个人 MCP: 添加 + 创建 Echo 测试（同一 create 码收敛） -->
+          <div
             v-if="props.scope === 'personal' && canCreateMcp"
-            type="button"
-            @click="resetWizard(); showAddModal = true"
-            class="inline-flex h-7 items-center justify-center rounded-md bg-emerald-600 px-2.5 text-[11px] font-bold leading-none text-white shadow-sm transition-all hover:bg-emerald-700 sm:px-3"
+            class="relative inline-flex h-7 items-stretch rounded-md shadow-sm"
           >
-            <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
-            <span>添加</span>
-          </button>
+            <button
+              type="button"
+              @click="resetWizard(); showAddModal = true"
+              class="inline-flex h-full items-center justify-center rounded-l-md bg-emerald-600 px-2.5 text-[11px] font-bold leading-none text-white transition-all hover:bg-emerald-700 sm:px-3"
+            >
+              <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
+              <span>添加</span>
+            </button>
+            <button
+              type="button"
+              @click.stop="showAddDropdown = !showAddDropdown"
+              class="inline-flex h-full items-center justify-center rounded-r-md border-l border-white/20 bg-emerald-600 px-1.5 text-white transition-all hover:bg-emerald-700"
+              title="更多添加选项"
+            >
+              <ChevronDownIcon class="h-3.5 w-3.5 shrink-0 transition-transform duration-200" :class="{ 'rotate-180': showAddDropdown }" />
+            </button>
+
+            <div
+              v-if="showAddDropdown"
+              class="fixed inset-0 z-20 cursor-default"
+              @click="showAddDropdown = false"
+            ></div>
+
+            <div
+              v-if="showAddDropdown"
+              class="absolute right-0 top-full z-30 mt-1.5 w-52 origin-top-right rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-800"
+              @click.stop
+            >
+              <button
+                type="button"
+                @click="showAddDropdown = false; resetWizard(); showAddModal = true"
+                class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                <PlusIcon class="h-4 w-4 text-primary shrink-0" />
+                <div class="min-w-0 flex-1">
+                  <div>添加 MCP 服务</div>
+                  <div class="text-[10px] font-normal text-gray-400">配置自定义工具服务</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                @click="showAddDropdown = false; createEchoTestMcp()"
+                class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+                title="创建个人 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
+              >
+                <BeakerIcon class="h-4 w-4 text-indigo-600 shrink-0" />
+                <div class="min-w-0 flex-1">
+                  <div>创建 Echo 测试 MCP</div>
+                  <div class="text-[10px] font-normal text-gray-400">个人联调诊断服务</div>
+                </div>
+              </button>
+            </div>
+          </div>
 
           <!-- 平台 MCP: 分裂式添加按钮 + 更多操作下拉
                主按钮只给 canCreateMcp：只有 edit 码的角色（如内置 Echo、改服务配置）
@@ -1587,7 +1659,7 @@ onMounted(fetchServers)
                 <span class="mr-1 hidden text-[9px] italic text-gray-400 sm:inline" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
                 <div class="flex items-center space-x-0.5" @click.stop>
                   <button
-                    v-if="props.scope === 'personal'"
+                    v-if="props.scope === 'personal' && !isEchoTestServer(server)"
                     type="button"
                     @click="emit('share-server', server)"
                     class="rounded p-1.5 text-emerald-500 transition-colors hover:bg-white hover:text-emerald-700"
@@ -2260,11 +2332,11 @@ onMounted(fetchServers)
             
             <button 
               v-else-if="wizardStep === 2"
-              @click="addServer" 
-              :disabled="!isEditing && !canCreateMcp"
+              @click="addServer()" 
+              :disabled="savingServer || (!isEditing && !canCreateMcp)"
               class="rounded-lg bg-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-green-600 sm:px-6 sm:py-2"
             >
-              {{ isEditing ? '保存修改' : '确认并完成添加' }}
+              {{ savingServer ? '保存中...' : isEditing ? '保存修改' : '确认并完成添加' }}
             </button>
 
             <template v-else-if="wizardStep === 3">

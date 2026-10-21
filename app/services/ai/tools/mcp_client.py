@@ -385,10 +385,12 @@ class McpClientService:
                     call_result = text if text else {"success": True, "content": ""}
                     return call_result
                 except Exception as e:
+                    transport_broken = False
                     if not transport_retry and isinstance(
                         e, (ConnectionError, TimeoutError, EOFError, OSError, httpx.HTTPError)
                     ):
                         transport_retry = True
+                        transport_broken = True
                         original_error = e
                         try:
                             await session_mgr.close()
@@ -442,7 +444,10 @@ class McpClientService:
                                 f"{original_error}; reconnect retry failed: {retry_error}"
                             )
 
-                    if not ephemeral_session:
+                    # 远端业务失败（isError / 工具自身抛错）不影响连接；只有 transport
+                    # 异常才淘汰按 server_id 共享的会话，否则一次工具报错会拆掉所有并发
+                    # 用户的连接并触发重连风暴。
+                    if transport_broken and not ephemeral_session:
                         await session_mgr.close()
                     raise RuntimeError(f"MCP tool '{tool_name}' failed: {e}") from e
             else:

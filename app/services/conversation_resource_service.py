@@ -281,6 +281,92 @@ class ConversationResourceService:
         return updated
 
     @classmethod
+    async def rewrite_mcp_tool_name(
+        cls,
+        *,
+        owner_id: Any,
+        tool_id: str,
+        new_name: str,
+        max_sessions: int = MAX_MOUNT_REWRITE,
+    ) -> int:
+        """把某个 MCP 工具缓存 id 在会话资源里的名字改成新名字，返回改动数。
+
+        MCP 工具名是 ``server_name:tool``。服务改名、或历史数据把两个服务写成同名时，
+        已挂载的会话里仍存着旧名，运行时按名字反查工具会落空（模型看得见清单却调不到）。
+        这里按**工具缓存 id** 精确匹配，绝不按名字批量改——同名平台工具有自己的 id。
+
+        Args:
+            owner_id: 个人服务的属主；``None`` 表示平台服务改名，需要扫全库（低频操作）。
+        """
+        target = str(tool_id or "").strip()
+        name = str(new_name or "").strip()
+        if not target or not name:
+            return 0
+
+        try:
+            redis = await get_redis()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[ConversationResource] Redis 不可用，跳过 MCP 工具名同步: %s", exc)
+            return 0
+        if not redis:
+            return 0
+
+        if owner_id is None:
+            # 平台服务属于所有用户，改名前后的引用分散在各会话键里
+            pattern = f"{cls.KEY_PREFIX}:*:*:{cls.SUFFIX}"
+        else:
+            try:
+                owner_segment = require_user_id(owner_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[ConversationResource] 无法确定 MCP 工具名同步的用户边界: %s", exc)
+                return 0
+            pattern = f"{cls.KEY_PREFIX}:{owner_segment}:*:{cls.SUFFIX}"
+        updated = 0
+        cursor = 0
+        try:
+            while True:
+                cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=200)
+                for key in keys:
+                    raw = await redis.get(key)
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8")
+                    try:
+                        value = json.loads(raw or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(value, dict):
+                        continue
+                    items = value.get("mcp_tools")
+                    if not isinstance(items, list):
+                        continue
+                    changed = False
+                    for item in items:
+                        if (
+                            isinstance(item, dict)
+                            and str(item.get("id") or "") == target
+                            and item.get("name") != name
+                        ):
+                            item["name"] = name
+                            changed = True
+                    if not changed:
+                        continue
+                    await redis.set(
+                        key,
+                        json.dumps(value, ensure_ascii=False),
+                        ex=cls.TTL_SECONDS,
+                    )
+                    updated += 1
+                    if updated >= max_sessions:
+                        return updated
+                if cursor == 0:
+                    break
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[ConversationResource] MCP 工具名同步中断（已同步 %s 个）: %s", updated, exc
+            )
+        return updated
+
+    @classmethod
     async def delete(cls, user_id: Any, conversation_id: str) -> None:
         try:
             redis = await get_redis()

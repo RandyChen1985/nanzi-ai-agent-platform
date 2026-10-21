@@ -35,7 +35,11 @@ import os
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.core.orm import get_db_session
-from app.services.mcp.echo_server import echo_mcp, echo_mcp_lifespan
+from app.services.mcp.echo_server import (
+    EchoServerIdMiddleware,
+    echo_mcp,
+    echo_mcp_lifespan,
+)
 from app.services.mcp.platform_mcp import platform_mcp, platform_mcp_lifespan
 from app.api.mcp_platform import router as mcp_platform_router
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -409,8 +413,8 @@ app.add_middleware(
 # 安全响应头放在最外层：保证所有响应（含 CORS 预检、异常响应与静态文件）都带上。
 app.add_middleware(SecurityHeadersMiddleware)
 
-# 内置平台 Echo MCP：创建配置后供所有智能体挂载，用于验证实际出站请求。
-app.mount("/mcp/echo", echo_mcp.streamable_http_app())
+# 内置 Echo MCP：平台实例供所有智能体挂载；个人实例把 server_id 编进路径复用同一端点。
+app.mount("/mcp/echo", EchoServerIdMiddleware(echo_mcp.streamable_http_app()))
 app.mount("/mcp", platform_mcp.streamable_http_app())
 
 # Platform MCP 的 OAuth2/OIDC discovery 与授权端点必须位于 SPA catch-all 之前，

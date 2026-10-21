@@ -4,13 +4,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update, func, case, or_, desc
 import uuid
 import json
+import re
 import time
 import logging
 import secrets
 
 from app.core.config import settings
 from app.core.orm import get_db_session
-from app.core.dependencies import require_admin, require_permission, require_api_key
+from app.core.dependencies import (
+    require_admin,
+    require_any_permission,
+    require_permission,
+    require_api_key,
+)
 from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
@@ -43,7 +49,10 @@ from app.services.mcp.echo_server import (
     ECHO_SERVER_NAME,
     ECHO_TOOL_NAME,
     ECHO_TOOL_DESCRIPTION,
+    build_echo_server_url,
     echo_tool_schema,
+    personal_echo_server_id,
+    personal_echo_tool_name,
     resolve_echo_base_url,
 )
 from app.utils.encryption import get_api_key_manager
@@ -200,10 +209,15 @@ async def _migrate_server_name_references(
     server_id: str,
     old_name: str,
     new_name: str,
-) -> None:
-    """Keep cached tools and all agent-version references valid after rename."""
+) -> list[tuple[str, str]]:
+    """Keep cached tools and all agent-version references valid after rename.
+
+    Returns:
+        ［(tool_cache_id, new_tool_name)］：供调用方同步会话资源里的旧引用。
+    """
     old_prefix = f"{old_name}:"
     new_prefix = f"{new_name}:"
+    renamed_cache: list[tuple[str, str]] = []
     tool_result = await db.execute(
         select(McpToolCache).where(McpToolCache.server_id == server_id)
     )
@@ -228,12 +242,39 @@ async def _migrate_server_name_references(
         cached_by_name.pop(tool.tool_name, None)
         tool.tool_name = renamed_name
         cached_by_name[renamed_name] = tool
+        renamed_cache.append((tool.id, renamed_name))
 
     version_result = await db.execute(select(AIAgentVersion))
     for version in version_result.scalars().all():
-        renamed_tools = _rename_tool_reference(version.tools, old_name, new_name)
-        if renamed_tools != version.tools:
-            version.tools = renamed_tools
+        renamed_version_tools = _rename_tool_reference(version.tools, old_name, new_name)
+        if renamed_version_tools != version.tools:
+            version.tools = renamed_version_tools
+    return renamed_cache
+
+
+async def _sync_renamed_tools_to_conversations(
+    renamed_tools: list[tuple[str, str]],
+    *,
+    owner_id: Optional[int],
+) -> None:
+    """服务改名后，把已挂载会话里的旧工具名按缓存 id 纠成新名。
+
+    智能体版本里的引用由 ``_migrate_server_name_references`` 直接改写；会话资源存在
+    Redis 里、按运行时注入，必须单独同步，否则用户会看到「清单里有、调用时未注册」。
+    """
+    if not renamed_tools:
+        return
+    from app.services.conversation_resource_service import ConversationResourceService
+
+    for tool_id, new_name in renamed_tools:
+        try:
+            await ConversationResourceService.rewrite_mcp_tool_name(
+                owner_id=owner_id,
+                tool_id=tool_id,
+                new_name=new_name,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _ensure_server_control_access(server: McpServer, user: Dict) -> None:
@@ -391,7 +432,19 @@ def _build_verify_user_assertion_headers(
         raise HTTPException(status_code=400, detail=f"用户身份传递配置无效: {exc}")
 
 
-@router.post("/verify", dependencies=[Depends(require_permission("element", "element:mcp_management:edit"))])
+# 连接测试是「新建」与「编辑」共用的第一步（向导第 1 步必须调它），所以 create / edit
+# 任一权限即可；它只做探测、不落库，不构成写操作。
+@router.post(
+    "/verify",
+    dependencies=[
+        Depends(
+            require_any_permission(
+                ("element", "element:mcp_management:create"),
+                ("element", "element:mcp_management:edit"),
+            )
+        )
+    ],
+)
 async def verify_mcp_server(
     data: McpVerifyRequest,
     db: AsyncSession = Depends(get_db_session),
@@ -484,50 +537,115 @@ async def list_mcp_servers(
     return res
 
 
-@router.post("/servers/echo-test", response_model=McpServerResponse, dependencies=[Depends(require_permission("element", "element:mcp_management:edit"))])
+def _echo_owner_name_part(value: Any) -> str:
+    text = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "").strip()).strip("-")
+    return text or "user"
+
+
+async def _require_echo_scope_access(
+    scope: str,
+    user: Dict,
+    db: AsyncSession,
+) -> Optional[int]:
+    """平台 Echo 仍限管理员；个人 Echo 与手动创建同权，统一走 create 码。"""
+    if scope == "global":
+        if user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="只有系统管理员才能创建平台 Echo 测试 MCP")
+        return None
+
+    owner_id = _get_user_id(user)
+    if owner_id is None:
+        raise HTTPException(status_code=403, detail="无法识别当前用户，不能创建个人 Echo 测试 MCP")
+    if user.get("role") == "admin":
+        return owner_id
+
+    from app.services.permission_service import PermissionService
+
+    if not await PermissionService(db).check_permission(
+        owner_id, "element", "element:mcp_management:create"
+    ):
+        raise HTTPException(status_code=403, detail="没有创建个人 MCP 服务的权限")
+    return owner_id
+
+
+async def _unique_personal_echo_name(
+    db: AsyncSession,
+    base_name: str,
+    server_id: str,
+) -> str:
+    """显示名全局唯一：被同名服务占用时追加序号，最多 100 字符。"""
+    candidate = base_name[:100]
+    suffix = 1
+    while await _find_server_with_name(db, candidate, exclude_server_id=server_id) is not None:
+        suffix += 1
+        candidate = f"{base_name[: 96 - len(str(suffix))]}-{suffix}"
+    return candidate
+
+
+@router.post("/servers/echo-test", response_model=McpServerResponse)
 async def create_echo_test_mcp(
     request: Request,
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_api_key),
+    scope: str = Query("global", pattern="^(global|personal)$"),
 ):
-    """幂等创建平台级 Echo MCP，固定 Authorization Bearer Token 只加密保存，不返回给前端。"""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="只有系统管理员才能创建 Echo 测试 MCP")
+    """幂等创建/恢复 Echo 测试 MCP；固定 Token 与签名私钥只加密保存，不返回前端。"""
+    # 直接调用（测试/内部）时默认值还是 Query 对象，这里统一回落平台实例。
+    scope = scope if isinstance(scope, str) and scope in ("global", "personal") else "global"
+    owner_id = await _require_echo_scope_access(scope, user, db)
+    is_personal = scope == "personal"
+    server_id = personal_echo_server_id(owner_id) if is_personal else ECHO_SERVER_ID
 
     base_url = resolve_echo_base_url(str(request.base_url), settings.APP_PUBLIC_URL)
-    echo_url = f"{base_url}/mcp/echo/mcp"
+    echo_url = build_echo_server_url(base_url, server_id)
+    tool_id = (
+        str(uuid.uuid5(uuid.NAMESPACE_URL, f"nanzi:mcp:echo:personal:{owner_id}:tool:echo"))
+        if is_personal
+        else str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo"))
+    )
     manager = get_api_key_manager()
     server = (
-        await db.execute(select(McpServer).where(McpServer.id == ECHO_SERVER_ID))
+        await db.execute(select(McpServer).where(McpServer.id == server_id))
     ).scalar_one_or_none()
 
     if server is None:
+        if is_personal:
+            server_name = await _unique_personal_echo_name(
+                db,
+                f"mcp-private-{_echo_owner_name_part(user.get('user_name'))}-echo",
+                server_id,
+            )
+            remark = "个人 Echo 测试 MCP，用于验证本人调用链路的用户身份透传"
+        else:
+            server_name = ECHO_SERVER_NAME
+            remark = "平台内置 Echo 测试 MCP，用于验证协议和用户身份透传"
         server = McpServer(
-            id=ECHO_SERVER_ID,
-            server_name=ECHO_SERVER_NAME,
-            remark="平台内置 Echo 测试 MCP，用于验证协议和用户身份透传",
+            id=server_id,
+            server_name=server_name,
+            remark=remark,
             sse_url=echo_url,
             auth_headers="{}",
             credential_mode="fixed_token_signed_user",
             fixed_token_encrypted=manager.encrypt_api_key(secrets.token_urlsafe(32)),
             user_assertion_enabled=True,
             user_assertion_header="X-Nanzi-User-Assertion",
-            user_assertion_audience=f"mcp:{ECHO_SERVER_ID}",
+            user_assertion_audience=f"mcp:{server_id}",
             user_assertion_key_id=f"echo-{uuid.uuid4().hex[:16]}",
             user_assertion_issuer="nanzi-platform",
             user_assertion_private_key_encrypted=manager.encrypt_api_key(
                 generate_mcp_private_key_pem()
             ),
             enabled_status=1,
-            scope="global",
-            user_id=None,
+            scope=scope,
+            user_id=owner_id,
         )
         db.add(server)
+        tool_name = personal_echo_tool_name(server_name) if is_personal else ECHO_TOOL_NAME
         db.add(
             McpToolCache(
-                id=str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo")),
-                server_id=ECHO_SERVER_ID,
-                tool_name=ECHO_TOOL_NAME,
+                id=tool_id,
+                server_id=server_id,
+                tool_name=tool_name,
                 tool_description=ECHO_TOOL_DESCRIPTION,
                 parameter_schema=echo_tool_schema(),
                 is_published=True,
@@ -535,20 +653,21 @@ async def create_echo_test_mcp(
             )
         )
     else:
-        # 允许管理员重新点击入口恢复内置服务，但不轮换既有凭证。
-        server.server_name = ECHO_SERVER_NAME
+        # 重新点击入口只恢复可用状态，不轮换既有的 Token / 私钥。
+        if not is_personal:
+            server.server_name = ECHO_SERVER_NAME
+            server.remark = "平台内置 Echo 测试 MCP，用于验证协议和用户身份透传"
         server.sse_url = echo_url
-        server.remark = "平台内置 Echo 测试 MCP，用于验证协议和用户身份透传"
         server.auth_headers = "{}"
         server.credential_mode = "fixed_token_signed_user"
         server.user_assertion_enabled = True
         server.user_assertion_header = "X-Nanzi-User-Assertion"
-        server.user_assertion_audience = server.user_assertion_audience or f"mcp:{ECHO_SERVER_ID}"
+        server.user_assertion_audience = server.user_assertion_audience or f"mcp:{server_id}"
         server.user_assertion_key_id = server.user_assertion_key_id or f"echo-{uuid.uuid4().hex[:16]}"
         server.user_assertion_issuer = "nanzi-platform"
         server.enabled_status = 1
-        server.scope = "global"
-        server.user_id = None
+        server.scope = scope
+        server.user_id = owner_id
         if not server.fixed_token_encrypted:
             server.fixed_token_encrypted = manager.encrypt_api_key(secrets.token_urlsafe(32))
         if not server.user_assertion_private_key_encrypted:
@@ -556,20 +675,74 @@ async def create_echo_test_mcp(
                 generate_mcp_private_key_pem()
             )
 
+        tool_name = personal_echo_tool_name(server.server_name) if is_personal else ECHO_TOOL_NAME
         tool = (
             await db.execute(
                 select(McpToolCache).where(
-                    McpToolCache.server_id == ECHO_SERVER_ID,
-                    McpToolCache.tool_name == ECHO_TOOL_NAME,
+                    McpToolCache.server_id == server_id,
+                    McpToolCache.tool_name == tool_name,
                 )
             )
         ).scalar_one_or_none()
         if tool is None:
+            # 任何一次改名（编辑平台 Echo、迁移历史个人 Echo）都会让工具标识与常量对不上。
+            # tool_id 是这个实例的稳定标识：先按它兜底改名，避免同主键重复插入报 500。
+            stale_tool = (
+                await db.execute(
+                    select(McpToolCache).where(
+                        McpToolCache.server_id == server_id,
+                        McpToolCache.id == tool_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if stale_tool is not None:
+                stale_tool.tool_name = tool_name
+                tool = stale_tool
+                try:
+                    from app.services.conversation_resource_service import (
+                        ConversationResourceService,
+                    )
+
+                    await ConversationResourceService.rewrite_mcp_tool_name(
+                        owner_id=owner_id,
+                        tool_id=stale_tool.id,
+                        new_name=tool_name,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+        if tool is None and is_personal:
+            # 兼容旧数据：上一版个人 Echo 复用了平台 Echo 的工具名，这里就地改名，
+            # 否则平台/个人两个 Echo 同时存在时按名称查询会命中多行。
+            legacy_tool = (
+                await db.execute(
+                    select(McpToolCache).where(
+                        McpToolCache.server_id == server_id,
+                        McpToolCache.tool_name == ECHO_TOOL_NAME,
+                    )
+                )
+            ).scalar_one_or_none()
+            if legacy_tool is not None:
+                legacy_tool.tool_name = tool_name
+                tool = legacy_tool
+                # 已挂载的会话里存的是旧工具名，按工具缓存 id 精确纠名，用户不必重新勾选。
+                try:
+                    from app.services.conversation_resource_service import (
+                        ConversationResourceService,
+                    )
+
+                    await ConversationResourceService.rewrite_mcp_tool_name(
+                        owner_id=owner_id,
+                        tool_id=legacy_tool.id,
+                        new_name=tool_name,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+        if tool is None:
             db.add(
                 McpToolCache(
-                    id=str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo")),
-                    server_id=ECHO_SERVER_ID,
-                    tool_name=ECHO_TOOL_NAME,
+                    id=tool_id,
+                    server_id=server_id,
+                    tool_name=tool_name,
                     tool_description=ECHO_TOOL_DESCRIPTION,
                     parameter_schema=echo_tool_schema(),
                     is_published=True,
@@ -716,7 +889,13 @@ async def update_mcp_server(
         raise HTTPException(status_code=400, detail=f"服务显示名称 '{server_name}' 已存在，请修改名称后保存")
 
     if server.server_name != server_name:
-        await _migrate_server_name_references(db, server_id, server.server_name, server_name)
+        renamed_tools = await _migrate_server_name_references(
+            db, server_id, server.server_name, server_name
+        )
+        await _sync_renamed_tools_to_conversations(
+            renamed_tools,
+            owner_id=server.user_id if server.scope == "personal" else None,
+        )
     server.server_name = server_name
     server.sse_url = data.sse_url
     _apply_mcp_auth_update(server, data)
@@ -747,7 +926,14 @@ async def update_mcp_server(
         server.remark = _normalized_remark(data.remark)
     await db.commit()
     _clear_runtime_tool_cache()
-    
+
+    # 会话在建立时缓存了 sse_url 与解密后的 Header，唯一兜底是 300s 空闲回收；
+    # 改了地址 / Token / 断言配置后必须先淘汰，否则接下来的同步与调用还在用旧连接。
+    try:
+        await McpClientService.evict_session(server_id)
+    except Exception as e:
+        logger.warning(f"Evicting session failed during update for server {server_id}: {e}")
+
     # Only enabled servers should be synchronized. Syncing a disabled server
     # would mark it enabled again inside McpClientService.sync_tools().
     if server.enabled_status == 1:
@@ -755,11 +941,6 @@ async def update_mcp_server(
             await McpClientService.sync_tools(server_id)
         except Exception as e:
             logger.warning(f"Sync failed during update for server {server_id}: {e}")
-    else:
-        try:
-            await McpClientService.evict_session(server_id)
-        except Exception as e:
-            logger.warning(f"Evicting session failed during disable for server {server_id}: {e}")
     
     # Return with updated counts
     count_stmt = select(func.count(McpToolCache.id)).where(McpToolCache.server_id == server_id)
