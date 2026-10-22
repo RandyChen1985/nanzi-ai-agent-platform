@@ -104,7 +104,7 @@ async def test_embed_check_returns_null_for_unreachable_target(
     # 地址校验会真的做 DNS 解析，而这里只是想模拟「探测无结论」这一种结果。用编造的
     # 域名会让测试成败取决于能否解析（CI/无外网环境直接 400 而不是 200），所以打桩掉。
     # SSRF 本身另有专门用例 test_embed_check_rejects_internal_addresses_before_probing。
-    monkeypatch.setattr(web_preview, "validate_browser_navigation", lambda url: url)
+    monkeypatch.setattr(web_preview, "validate_public_navigation", lambda url: url)
 
     response = await client.post(
         URL,

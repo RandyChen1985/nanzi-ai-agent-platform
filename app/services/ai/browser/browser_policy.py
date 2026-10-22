@@ -11,7 +11,7 @@ BrowserActionClass = Literal["read", "interact", "commit"]
 
 
 class BrowserUrlBlocked(ValueError):
-    """浏览器导航目标未通过 SSRF 与地址范围校验。"""
+    """地址未通过服务端出站入口的 SSRF 与地址范围校验。"""
 
 
 class BrowserScriptBlocked(ValueError):
@@ -57,12 +57,15 @@ _INTERACTIVE_ROLES = {
     "tab",
     "textbox",
 }
-_BLOCKED_HOSTNAMES = {
+_PUBLIC_SCHEMES = {"http", "https"}
+
+# 仅服务端出站入口（网页预览实测）使用：该入口由后端进程按用户给的地址主动
+# 发起请求，因此仍然拒绝内网、环回与云元数据地址。
+_PUBLIC_ONLY_BLOCKED_HOSTNAMES = {
     "localhost",
     "metadata.google.internal",
     "metadata.google.com",
 }
-
 
 _FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 _BROWSER_SCRIPT_MAX_LENGTH = 50000
@@ -94,17 +97,40 @@ def _resolved_addresses(hostname: str) -> list[str]:
     return list({str(info[4][0]) for info in infos if info[4]})
 
 
-def _validate_network_url(url: str, allowed_schemes: set[str]) -> str:
+def _check_scheme_and_host(url: str, allowed_schemes: set[str]) -> str:
+    """只校验协议、凭据与主机名存在性，不限制目标地址所在网段。"""
     parsed = urlparse(url)
     if parsed.scheme.lower() not in allowed_schemes:
         raise BrowserUrlBlocked("浏览器只允许访问 http、https、ws 或 wss 地址")
     if parsed.username or parsed.password:
         raise BrowserUrlBlocked("浏览器导航地址不允许携带用户名或密码")
 
-    hostname = (parsed.hostname or "").rstrip(".").lower()
+    hostname = (parsed.hostname or "").strip()
     if not hostname:
         raise BrowserUrlBlocked("浏览器导航地址缺少主机名")
-    if hostname in _BLOCKED_HOSTNAMES or hostname.endswith((".local", ".internal")):
+    return url
+
+
+def validate_browser_navigation(url: str) -> str:
+    """浏览器导航地址不做任何限制：协议、凭据与目标网段全部放行。"""
+    return url
+
+
+def validate_browser_request(url: str) -> str:
+    """页面发出的网络请求不做任何限制：协议与目标网段全部放行。"""
+    return url
+
+
+def validate_public_navigation(url: str) -> str:
+    """服务端出站入口（网页预览实测）专用：在协议校验之上拒绝内网与元数据地址。
+
+    浏览器工具本身已放开内网访问；这里保留原 SSRF 判定，是因为该入口由后端
+    进程按用户提交的地址主动出站，放开等于把内网探测能力暴露给任意登录用户。
+    """
+    _check_scheme_and_host(url, _PUBLIC_SCHEMES)
+
+    hostname = (urlparse(url).hostname or "").rstrip(".").lower()
+    if hostname in _PUBLIC_ONLY_BLOCKED_HOSTNAMES or hostname.endswith((".local", ".internal")):
         raise BrowserUrlBlocked(f"禁止访问平台内部主机：{hostname}")
 
     addresses = [hostname] if _is_blocked_ip(hostname) else _resolved_addresses(hostname)
@@ -114,22 +140,6 @@ def _validate_network_url(url: str, allowed_schemes: set[str]) -> str:
     if blocked:
         raise BrowserUrlBlocked(f"禁止访问内部或元数据地址：{blocked}")
     return url
-
-
-def validate_browser_navigation(url: str) -> str:
-    """校验浏览器导航地址，并拒绝内部网络、元数据和不安全协议。"""
-    return _validate_network_url(url, {"http", "https"})
-
-
-def validate_browser_request(url: str) -> str:
-    """校验页面发出的网络请求，避免通过 WebSocket 或其他协议绕过 SSRF 防护。"""
-    parsed = urlparse(url)
-    scheme = parsed.scheme.lower()
-    if scheme in {"http", "https", "ws", "wss"}:
-        return _validate_network_url(url, {"http", "https", "ws", "wss"})
-    if scheme in {"about", "blob", "data"}:
-        return url
-    raise BrowserUrlBlocked(f"浏览器请求协议不在允许范围内：{scheme or '未知'}")
 
 
 def classify_browser_action(*, role: str | None, name: str | None) -> BrowserActionClass:

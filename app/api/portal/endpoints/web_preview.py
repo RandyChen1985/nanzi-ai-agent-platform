@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from app.services.ai.browser.browser_policy import (
     BrowserUrlBlocked,
-    validate_browser_navigation,
+    validate_public_navigation,
 )
 from app.services.web_preview_embed_service import probe_embed_policy
 
@@ -71,7 +71,7 @@ async def check_embed(payload: EmbedCheckRequest) -> EmbedCheckResponse:
 
     # 先做 SSRF / 协议校验，再考虑出站；内网地址不得触发任何请求。
     try:
-        validate_browser_navigation(target)
+        validate_public_navigation(target)
     except BrowserUrlBlocked as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
