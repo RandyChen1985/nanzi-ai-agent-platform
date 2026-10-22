@@ -5,7 +5,7 @@ import re
 from pydantic import BaseModel, Field
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.services.ai.agent_manager import AgentManagerService
-from app.services.ai.config import AgentConfigProvider
+from app.services.ai.config import AgentConfigProvider, resolve_runtime_model_info
 from app.core.orm import AsyncSessionLocal
 from app.services.metadata_relationship_candidate_service import (
     MetadataRelationshipCandidateService,
@@ -364,6 +364,47 @@ class MetadataGeneratorService:
             logger.error(f"Failed to save trace log: {e}", exc_info=True)
 
     @staticmethod
+    async def describe_ai_analysis_config() -> Dict[str, Any]:
+        """返回元数据智能分析实际生效的智能体/模型配置，供导入向导提示条展示。
+
+        口径必须与 generate_from_ddl() 的配置解析保持一致：
+        - 智能体被禁用（或不存在）时不去调用 get_active_agent_config()，因为该方法
+          会为禁用态打一条 warning 日志，而提示条属于高频只读查询；
+        - prompt_source 的判断条件与 generate_from_ddl() 中
+          ``if not agent_config or not agent_config.system_prompt`` 的分支一致。
+        修改任一处请同步另一处，避免「界面显示」和「实际执行」不一致。
+        """
+        from sqlalchemy import select
+        from app.models.agent import AIAgent
+
+        async with AsyncSessionLocal() as session:
+            agent = (
+                await session.execute(
+                    select(AIAgent).where(AIAgent.name == "metadata-specialist")
+                )
+            ).scalar_one_or_none()
+
+        enabled = bool(agent and agent.is_enabled)
+        agent_config = None
+        if enabled:
+            async with AsyncSessionLocal() as session:
+                agent_config = await AgentManagerService.get_active_agent_config(
+                    session, agent_name="metadata-specialist"
+                )
+
+        model_info = await resolve_runtime_model_info(config=agent_config)
+        return {
+            "agent_name": "metadata-specialist",
+            "display_name": getattr(agent, "display_name", None) or "元数据专家",
+            "enabled": enabled,
+            "model_name": model_info.effective_model_id,
+            "model_source": model_info.source,
+            "prompt_source": (
+                "agent" if agent_config and agent_config.system_prompt else "builtin"
+            ),
+        }
+
+    @staticmethod
     async def generate_from_ddl(
         content: str,
         data_source: Optional[str] = None,
@@ -415,6 +456,8 @@ class MetadataGeneratorService:
             # 4. Resolve System Prompt
             # metadata-specialist 智能体默认处于禁用状态（见 DEFAULT_METADATA_SYSTEM_PROMPT
             # 的说明），因此这里的兜底分支是常态路径而非异常兜底，模板必须保持完整。
+            # 提示条展示用的 describe_ai_analysis_config() 用同一判断条件推导
+            # prompt_source，改动此处请同步该方法。
             if not agent_config or not agent_config.system_prompt:
                 system_prompt_template = DEFAULT_METADATA_SYSTEM_PROMPT
             else:

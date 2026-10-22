@@ -1689,6 +1689,21 @@ async def enhance_dataset_metadata(dataset_id: int, conn: AsyncSession = Depends
 
 from app.services.metadata_generator import MetadataGeneratorService
 
+
+@router.get("/ai-analysis-config", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
+async def get_ai_analysis_config():
+    """智能导入向导提示条：返回智能分析实际生效的智能体与模型配置。
+
+    只读接口，不触发任何模型调用；权限与 /tables/import 一致——能打开导入向导就能读取。
+    """
+    data = await MetadataGeneratorService.describe_ai_analysis_config()
+    return {
+        "code": 200,
+        "message": "success",
+        "data": data,
+    }
+
+
 @router.post("/tables/import", dependencies=[Depends(require_permission("element", "element:metadata:import"))])
 async def import_ddl(ddl: dict): # Expects {"ddl": "..."}
     """

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import axios from '../../utils/axios'
-import { metadataApi } from '../../api/metadata'
+import { metadataApi, type MetadataAiAnalysisConfig } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
+import { useUser } from '../../composables/useUser'
 import TraceLogViewer from '../TraceLogViewer.vue'
 import DatabaseImportModal from './DatabaseImportModal.vue'
 import { normalizeRelationshipJoinType } from '../../utils/relationshipJoinType'
@@ -62,6 +64,50 @@ const isSaveDisabled = computed(() => {
 
 // Toast
 const { showToast } = useToast()
+const router = useRouter()
+const { hasPermission } = useUser()
+
+// 智能分析提示条：显示实际生效的智能体 / 模型，避免用户不知道模型从哪来
+const aiAnalysisConfig = ref<MetadataAiAnalysisConfig | null>(null)
+const canManageAgent = computed(() => hasPermission('menu:agent_management'))
+
+const fetchAiAnalysisConfig = async () => {
+  try {
+    const res = await metadataApi.getAiAnalysisConfig()
+    aiAnalysisConfig.value = res.data?.data || null
+  } catch {
+    // 提示条属于增强信息，读取失败时静默隐藏，不阻塞导入主流程
+    aiAnalysisConfig.value = null
+  }
+}
+
+// 三种真实执行状态必须分别表述，避免「界面说智能体驱动、实际用内置模板」
+const aiAnalysisSummary = computed(() => {
+  const cfg = aiAnalysisConfig.value
+  if (!cfg) return null
+  if (!cfg.enabled) {
+    return {
+      title: `「${cfg.display_name}」当前未启用，本次使用系统默认模型 ${cfg.model_name} 与平台内置解析模板`,
+      hint: '如需指定模型或调整解析口径，请在智能体中心启用并配置该智能体。',
+    }
+  }
+  if (cfg.prompt_source === 'builtin') {
+    return {
+      title: `「${cfg.display_name}」已启用，但未读到该智能体的系统提示词，本次仍使用平台内置解析模板（模型：${cfg.model_name}）`,
+      hint: '请在智能体中心检查该智能体的已发布版本是否配置了系统提示词。',
+    }
+  }
+  return {
+    title: `本次智能分析由「${cfg.display_name}」智能体驱动，模型：${cfg.model_name}`,
+    hint: '模型与解析口径均可在智能体中心调整；停用该智能体会回退到系统默认模型与平台内置解析模板。',
+  }
+})
+
+const openAgentManagement = () => {
+  // 新标签页打开，避免跳转导致向导里已粘贴的 DDL 丢失
+  const target = router.resolve({ name: 'AgentManagement' })
+  window.open(target.href, '_blank', 'noopener')
+}
 
 // File Upload State & Logic
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -210,13 +256,19 @@ const fetchExistingDatasetNames = async () => {
 }
 
 watch(() => props.show, (visible) => {
-  if (visible && !props.datasetId) {
+  if (!visible) return
+  // 提示条与追加模式无关：智能分析始终走同一份智能体 / 模型配置
+  void fetchAiAnalysisConfig()
+  if (!props.datasetId) {
     fetchSystemDefaultDataSource()
     fetchExistingDatasetNames()
   }
 })
 
 onMounted(() => {
+  if (props.show) {
+    void fetchAiAnalysisConfig()
+  }
   if (!props.datasetId) {
     fetchSystemDefaultDataSource()
     fetchExistingDatasetNames()
@@ -612,7 +664,28 @@ const normalizeType = (rawType: string): string => {
 
         <!-- Content Step 1: Input -->
         <div v-if="step === 1" class="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <div class="flex-1 p-5 min-h-0 overflow-hidden">
+          <!-- 智能分析执行方提示：让用户知道模型从哪来、去哪里改 -->
+          <div v-if="aiAnalysisConfig" class="shrink-0 px-5 pt-4">
+            <div class="flex items-start gap-2.5 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2">
+              <svg class="w-4 h-4 shrink-0 text-blue-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 100-16 8 8 0 000 16z"/>
+              </svg>
+              <div class="flex-1 min-w-0 text-xs leading-relaxed">
+                <p class="font-bold text-blue-900">{{ aiAnalysisSummary?.title }}</p>
+                <p class="mt-0.5 text-blue-600/90">{{ aiAnalysisSummary?.hint }}</p>
+              </div>
+              <button
+                v-if="canManageAgent"
+                type="button"
+                @click="openAgentManagement"
+                class="shrink-0 self-center rounded-md border border-blue-200 bg-white px-2.5 py-1 text-[11px] font-bold text-blue-600 transition-colors hover:bg-blue-100 cursor-pointer"
+              >
+                去配置
+              </button>
+            </div>
+          </div>
+
+          <div class="flex-1 min-h-0 overflow-hidden" :class="aiAnalysisConfig ? 'px-5 pb-5 pt-2' : 'p-5'">
           <div class="relative h-full">
              <!-- 隐藏的文件选择 input -->
              <input 

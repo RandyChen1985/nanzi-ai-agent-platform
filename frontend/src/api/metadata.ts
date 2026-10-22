@@ -327,6 +327,17 @@ export async function streamMetadataRecommendation<T>(
   return completedResult;
 }
 
+export interface MetadataAiAnalysisConfig {
+  agent_name: string;
+  display_name: string;
+  enabled: boolean;
+  model_name: string;
+  /** agent_config：来自智能体配置；system_default：系统默认模型 */
+  model_source: string;
+  /** agent：使用智能体提示词；builtin：使用平台内置解析模板 */
+  prompt_source: "agent" | "builtin";
+}
+
 export const metadataApi = {
   // Datasets
   getDatasets: () => axios.get<Dataset[]>(`${API_BASE}/datasets`),
@@ -400,6 +411,10 @@ export const metadataApi = {
     axios.get<AllTablesDataset[]>(`${API_BASE}/all-tables`),
 
   // AI Assistant / Import (Mock for Phase 4)
+  getAiAnalysisConfig: () =>
+    axios.get<{ code: number; message: string; data: MetadataAiAnalysisConfig }>(
+      `${API_BASE}/ai-analysis-config`
+    ),
   analyzeDDL: (ddl: string, dataSource?: string, signal?: AbortSignal) =>
     axios.post(
       `${API_BASE}/tables/import`,
