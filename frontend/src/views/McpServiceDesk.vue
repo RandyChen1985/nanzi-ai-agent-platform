@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import type { Component } from 'vue'
+import { BookOpenIcon, CheckIcon, CircleStackIcon, ClipboardDocumentIcon, CpuChipIcon } from '@heroicons/vue/24/outline'
 import api from '../utils/axios'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
@@ -123,9 +125,9 @@ type Grant = {
 type ClientConfirmAction = 'disable' | 'reset-secret' | 'delete'
 type ResourceType = 'agent' | 'knowledge_base' | 'metadata_dataset'
 type ResourceOption = { id: string; name: string; description?: string }
-type ResourceWhitelistConfig = { field: ResourceWhitelistField; resourceType: ResourceType; title: string; buttonLabel: string }
+type ResourceWhitelistConfig = { field: ResourceWhitelistField; resourceType: ResourceType; title: string; buttonLabel: string; icon: Component }
 
-const { hasPermission, isAdmin, userInfo } = useUser()
+const { hasPermission, userInfo } = useUser()
 const { showToast } = useToast()
 const activeTab = ref<Tab>('overview')
 const loading = ref(false)
@@ -210,9 +212,9 @@ const clientEditForm = reactive({
   is_shared: false,
 })
 const resourceWhitelistConfigs: ResourceWhitelistConfig[] = [
-  { field: 'allowed_agent_ids', resourceType: 'agent', title: '智能体白名单', buttonLabel: '编辑智能体白名单' },
-  { field: 'allowed_knowledge_base_ids', resourceType: 'knowledge_base', title: '知识库白名单', buttonLabel: '编辑知识库白名单' },
-  { field: 'allowed_metadata_dataset_ids', resourceType: 'metadata_dataset', title: '元数据集白名单', buttonLabel: '编辑数据集白名单' },
+  { field: 'allowed_agent_ids', resourceType: 'agent', title: '智能体白名单', buttonLabel: '编辑智能体白名单', icon: CpuChipIcon },
+  { field: 'allowed_knowledge_base_ids', resourceType: 'knowledge_base', title: '知识库白名单', buttonLabel: '编辑知识库白名单', icon: BookOpenIcon },
+  { field: 'allowed_metadata_dataset_ids', resourceType: 'metadata_dataset', title: '元数据集白名单', buttonLabel: '编辑数据集白名单', icon: CircleStackIcon },
 ]
 const showResourceWhitelistModal = ref(false)
 const resourceWhitelistModal = reactive({
@@ -498,14 +500,15 @@ const canReadMethods = computed(() => hasPermission('element:mcp_service:capabil
 const canReadAudit = computed(() => hasPermission('element:mcp_service:audit:read'))
 const canReadGrants = computed(() => hasPermission('element:mcp_service:grant:read'))
 const canRevokeGrants = computed(() => hasPermission('element:mcp_service:grant:revoke'))
+// 与后端同口径：任何角色都只能管理自己创建的 Client（共享 Client 只读）。
 const canManageClientItem = (client: Client) => (
-  canManageClient.value && (isAdmin.value || isClientOwner(client))
+  canManageClient.value && isClientOwner(client)
 )
 const canResetSecretForClient = (client: Client) => (
-  canResetSecret.value && (isAdmin.value || isClientOwner(client))
+  canResetSecret.value && isClientOwner(client)
 )
 const canRevokeAllClientTokens = (client: Client | null) => (
-  !!client && canIssueToken.value && (isAdmin.value || isClientOwner(client))
+  !!client && canIssueToken.value && isClientOwner(client)
 )
 const availableTabs = computed(() => [
   canReadOverview.value ? { id: 'overview' as Tab, label: '服务总览' } : null,
@@ -908,7 +911,7 @@ const filteredClientTokens = computed(() => clientTokens.value.filter(token => {
 const canDeleteClientToken = (token: ClientToken) => (
   canIssueToken.value
   && !!tokenDetailsClient.value
-  && (isAdmin.value || isClientOwner(tokenDetailsClient.value) || token.user_id === currentUserId.value)
+  && (isClientOwner(tokenDetailsClient.value) || token.user_id === currentUserId.value)
 )
 
 const deletableVisibleTokens = computed(() => filteredClientTokens.value.filter(canDeleteClientToken))
@@ -2122,8 +2125,7 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="mb-5 flex items-center justify-between gap-3">
-          <span v-if="isAdmin" class="text-xs font-bold text-indigo-700">管理员视角：查看全部用户的 Client</span>
-          <span v-else class="text-xs text-slate-500">展示当前账号创建及全员共享的 Client</span>
+          <span class="text-xs text-slate-500">展示当前账号创建及全员共享的 Client</span>
           <div class="flex items-center gap-2">
             <button type="button" class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="showClientFilters = !showClientFilters">{{ showClientFilters ? '收起筛选' : '展开筛选' }}</button>
             <div class="flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-100 p-0.5" data-testid="client-view-mode-toggle">
@@ -2353,21 +2355,20 @@ onUnmounted(() => {
                           <svg class="h-2.5 w-2.5 text-indigo-500" viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z"/></svg>
                           全员共享
                         </span>
-                      </div>
-                      <div class="mt-1 flex items-center gap-1.5">
+                        <!-- 列表视图不展示 Client ID 文本（过长挤占列宽），只保留复制入口，完整 ID 见 title -->
                         <button
                           type="button"
-                          class="inline-flex items-center gap-1 rounded border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[11px] text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 cursor-pointer"
-                          :title="copied === 'client-id-' + client.client_id ? '已复制！' : '点击快速复制 Client ID'"
+                          class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-transparent transition hover:bg-indigo-50"
+                          :class="copied === 'client-id-' + client.client_id ? 'text-emerald-600' : 'text-slate-400 hover:text-indigo-600'"
+                          :title="copied === 'client-id-' + client.client_id ? '已复制！' : `复制 Client ID：${client.client_id}`"
+                          :aria-label="copied === 'client-id-' + client.client_id ? 'Client ID 已复制' : '复制 Client ID'"
                           @click="copyValue('client-id-' + client.client_id, client.client_id)"
                         >
-                          <code class="break-all">{{ client.client_id }}</code>
-                          <span class="text-[10px] font-bold" :class="copied === 'client-id-' + client.client_id ? 'text-emerald-600' : 'text-slate-400'">
-                            {{ copied === 'client-id-' + client.client_id ? '✓' : '⧉' }}
-                          </span>
+                          <CheckIcon v-if="copied === 'client-id-' + client.client_id" class="h-4 w-4" />
+                          <ClipboardDocumentIcon v-else class="h-4 w-4" />
                         </button>
                       </div>
-                      <div class="mt-1 text-[11px] text-slate-400">
+                      <div class="mt-1.5 text-[11px] text-slate-400">
                         所属：<span class="text-slate-600 font-medium">{{ client.owner_real_name || client.owner_user_name || '未知用户' }}</span>
                         <span v-if="client.created_by" class="ml-1 text-slate-400">· ID {{ client.created_by }}</span>
                       </div>
@@ -2419,27 +2420,29 @@ onUnmounted(() => {
                       </div>
                     </td>
 
-                    <!-- 资源白名单 -->
+                    <!-- 资源白名单（列表视图用图标按钮，避免中文字段名撑宽列；状态仍由颜色区分） -->
                     <td class="px-4 py-3.5 align-middle">
-                      <div class="flex flex-wrap items-center gap-1 max-w-[200px]">
+                      <div class="flex items-center gap-1" data-testid="client-resource-policy-icons">
                         <template v-for="config in resourceWhitelistConfigs" :key="config.field">
                           <button
                             v-if="canManageClientItem(client)"
                             type="button"
-                            class="rounded-lg border px-2 py-1 text-[10px] font-bold shadow-xs transition"
+                            class="inline-flex h-7 w-7 items-center justify-center rounded-lg border shadow-xs transition"
                             :class="resourcePolicyButtonClass(client, config.field)"
-                            :title="resourcePolicySummary(client, config.field)"
+                            :title="`${config.buttonLabel}：${resourcePolicySummary(client, config.field)}`"
+                            :aria-label="`${config.buttonLabel}，当前${resourcePolicySummary(client, config.field)}`"
                             @click="openResourceWhitelist(client, config)"
                           >
-                            {{ config.buttonLabel }}
+                            <component :is="config.icon" class="h-5 w-5" aria-hidden="true" />
                           </button>
                           <span
                             v-else
-                            class="rounded-lg border px-2 py-1 text-[10px] font-bold"
+                            class="inline-flex h-7 w-7 items-center justify-center rounded-lg border"
                             :class="resourcePolicyButtonClass(client, config.field)"
-                            :title="resourcePolicySummary(client, config.field)"
+                            :title="`${config.title}：${resourcePolicySummary(client, config.field)}`"
+                            :aria-label="`${config.title}，当前${resourcePolicySummary(client, config.field)}`"
                           >
-                            {{ config.buttonLabel }}
+                            <component :is="config.icon" class="h-5 w-5" aria-hidden="true" />
                           </span>
                         </template>
                       </div>
@@ -2555,7 +2558,7 @@ onUnmounted(() => {
           <div>
             <h2 class="text-lg font-black">MCP 入站调用审计</h2>
             <p class="mt-1 text-sm text-slate-500">查看外部系统调用 NanZi Platform MCP 的记录；这里只展示审计字段，不展示 Token、Secret 或原始请求头。</p>
-            <p class="mt-1 text-sm text-slate-500">{{ isAdmin ? '管理员可查看全部 MCP 入站调用记录。' : '其他用户仅能查看自己发起的调用记录。' }}</p>
+            <p class="mt-1 text-sm text-slate-500">仅展示当前账号发起的 MCP 入站调用记录。</p>
           </div>
           <div class="flex items-center gap-2">
             <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">共 {{ auditTotal }} 条</span>
@@ -2711,7 +2714,7 @@ onUnmounted(() => {
                 <div class="min-w-0">
                   <h2 class="text-xl font-black text-slate-800">使用统计</h2>
                   <p class="mt-1 break-all text-sm text-slate-500">{{ clientUsageTarget.client_name }} · {{ clientUsageTarget.client_id }}</p>
-                  <p class="mt-1 text-xs text-slate-400">{{ isAdmin ? '管理员：统计该 Client 的全部用户调用' : '仅统计当前用户发起的调用' }}</p>
+                  <p class="mt-1 text-xs text-slate-400">仅统计当前用户发起的调用</p>
                 </div>
                 <div class="flex shrink-0 items-center gap-3">
                   <select v-model="clientUsageRange" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600" :disabled="clientUsageLoading" aria-label="使用统计周期" @change="loadClientUsage">
@@ -3317,7 +3320,7 @@ onUnmounted(() => {
               <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
                 <div>
                   <h2 class="text-xl font-black text-slate-800">已授权的外部应用 (OAuth Grants)</h2>
-                  <p class="mt-1 text-xs text-slate-500">{{ isAdmin ? '管理员可查看并管理全平台的授权关系' : '展示当前账号已同意授权访问 NanZi 平台的外部系统' }}</p>
+                  <p class="mt-1 text-xs text-slate-500">展示当前账号已同意授权访问 NanZi 平台的外部系统</p>
                 </div>
                 <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭授权管理" @click="showGrants = false">×</button>
               </div>
@@ -3329,7 +3332,6 @@ onUnmounted(() => {
                     <thead class="bg-slate-50 text-slate-500">
                       <tr>
                         <th class="p-3">应用名称 / Client ID</th>
-                        <th v-if="isAdmin" class="p-3">授权用户 ID</th>
                         <th class="p-3">授予 Scope</th>
                         <th class="p-3">授权时间</th>
                         <th class="p-3">最近使用</th>
@@ -3343,7 +3345,6 @@ onUnmounted(() => {
                           <div class="font-bold text-slate-700">{{ grant.client_name }}</div>
                           <div class="font-mono text-[11px] text-slate-400">{{ grant.client_id }}</div>
                         </td>
-                        <td v-if="isAdmin" class="p-3 font-mono text-slate-600">{{ grant.user_id }}</td>
                         <td class="p-3">
                           <div class="flex max-w-[220px] flex-wrap gap-1">
                             <span v-for="sc in grant.scopes" :key="sc" class="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{{ sc }}</span>

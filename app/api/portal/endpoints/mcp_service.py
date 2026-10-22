@@ -124,14 +124,12 @@ async def _get_owned_client(
     user: dict,
     allow_shared: bool = False,
 ) -> McpOAuthClient | None:
-    """普通用户按所有权查询 Client，若 allow_shared=True 则允许查询全员共享 Client；管理员可在服务台管理全局 Client。"""
+    """按当前用户所有权查询 Client，若 allow_shared=True 则允许查询全员共享 Client。
+
+    管理员与普通用户同口径：服务台不再因为 role=admin 放开跨用户访问，
+    别人的 Client 一律按“不存在”处理（404），避免越权读改。
+    """
     current_user_id = _current_user_id(user)
-    if user.get("role") == "admin":
-        return (
-            await db.execute(
-                select(McpOAuthClient).where(McpOAuthClient.client_id == client_id)
-            )
-        ).scalar_one_or_none()
     conditions = [McpOAuthClient.client_id == client_id]
     if allow_shared:
         conditions.append(
@@ -578,7 +576,7 @@ async def get_overview(
                 select(McpOAuthClient)
                 .where(
                     McpOAuthClient.status != "deleted",
-                    *([] if user.get("role") == "admin" else [McpOAuthClient.created_by == current_user_id]),
+                    (McpOAuthClient.created_by == current_user_id) | (McpOAuthClient.is_shared.is_(True)),
                 )
             )
         )
@@ -616,10 +614,7 @@ async def audit_summary(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     """返回当前用户可见范围内的 MCP 审计调用汇总。"""
-    if user.get("role") == "admin":
-        filters = []
-    else:
-        filters = [McpInboundAuditLog.user_id == _current_user_id(user)]
+    filters = [McpInboundAuditLog.user_id == _current_user_id(user)]
 
     period_hours = {"24h": 24, "7d": 7 * 24, "30d": 30 * 24}[range]
     filters.append(McpInboundAuditLog.created_at >= datetime.utcnow() - timedelta(hours=period_hours))
@@ -706,10 +701,8 @@ async def client_usage(
         McpInboundAuditLog.client_id == client_id,
         McpInboundAuditLog.created_at >= start_at,
         McpInboundAuditLog.created_at <= end_at,
+        McpInboundAuditLog.user_id == _current_user_id(user),
     ]
-    if user.get("role") != "admin":
-        current_user_id = _current_user_id(user)
-        filters.append(McpInboundAuditLog.user_id == current_user_id)
 
     daily = {
         day: {"total": 0, "completed": 0, "failed": 0, "denied": 0}
@@ -941,13 +934,10 @@ async def list_audit(
     if start_at and end_at and start_at > end_at:
         raise HTTPException(status_code=400, detail="start_at 不能晚于 end_at")
 
-    if user.get("role") == "admin":
-        # 管理员可以查看所有用户的入站调用审计；具体元素权限仍由统一依赖校验。
-        filters = []
-    else:
-        # 审计归属以实际调用身份为准，而不是以 Client 创建人或请求筛选参数为准。
-        current_user_id = _current_user_id(user)
-        filters = [McpInboundAuditLog.user_id == current_user_id]
+    # 审计归属以实际调用身份为准，任何角色都只看到自己发起的调用，
+    # 而不是以 Client 创建人或请求筛选参数为准。
+    current_user_id = _current_user_id(user)
+    filters = [McpInboundAuditLog.user_id == current_user_id]
     exact_filters = {
         "client_id": client_id,
         "user_id": user_id,
@@ -1012,9 +1002,7 @@ async def export_audit(
     """导出当前可见范围内的脱敏调用审计 CSV。"""
     if start_at and end_at and start_at > end_at:
         raise HTTPException(status_code=400, detail="start_at 不能晚于 end_at")
-    filters = []
-    if user.get("role") != "admin":
-        filters.append(McpInboundAuditLog.user_id == _current_user_id(user))
+    filters = [McpInboundAuditLog.user_id == _current_user_id(user)]
     exact_filters = {
         "client_id": client_id,
         "user_id": user_id,
@@ -1078,9 +1066,7 @@ async def list_security_audit(
 ) -> dict[str, Any]:
     if start_at and end_at and start_at > end_at:
         raise HTTPException(status_code=400, detail="start_at 不能晚于 end_at")
-    filters = []
-    if user.get("role") != "admin":
-        filters.append(McpOAuthSecurityAuditLog.user_id == _current_user_id(user))
+    filters = [McpOAuthSecurityAuditLog.user_id == _current_user_id(user)]
     if event_type:
         filters.append(McpOAuthSecurityAuditLog.event_type == event_type.strip())
     if start_at:
@@ -1114,9 +1100,10 @@ async def audit_trend(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     period_hours = {"24h": 24, "7d": 7 * 24, "30d": 30 * 24}[range]
-    filters = [McpInboundAuditLog.created_at >= datetime.utcnow() - timedelta(hours=period_hours)]
-    if user.get("role") != "admin":
-        filters.append(McpInboundAuditLog.user_id == _current_user_id(user))
+    filters = [
+        McpInboundAuditLog.created_at >= datetime.utcnow() - timedelta(hours=period_hours),
+        McpInboundAuditLog.user_id == _current_user_id(user),
+    ]
     rows = (await db.execute(
         select(McpInboundAuditLog.created_at, McpInboundAuditLog.result_status)
         .where(*filters)
@@ -1150,9 +1137,8 @@ async def security_audit_alerts(
     filters = [
         McpOAuthSecurityAuditLog.created_at >= datetime.utcnow() - timedelta(minutes=15),
         McpOAuthSecurityAuditLog.result_status.in_(["failed", "denied"]),
+        McpOAuthSecurityAuditLog.user_id == _current_user_id(user),
     ]
-    if user.get("role") != "admin":
-        filters.append(McpOAuthSecurityAuditLog.user_id == _current_user_id(user))
     recent_count = int(await db.scalar(select(func.count()).select_from(McpOAuthSecurityAuditLog).where(*filters)) or 0)
     rate_limited_count = int(
         await db.scalar(
@@ -1234,11 +1220,11 @@ async def list_clients(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     current_user_id = _current_user_id(user)
-    filters = [McpOAuthClient.status != "deleted"]
-    if user.get("role") != "admin":
-        filters.append(
-            (McpOAuthClient.created_by == current_user_id) | (McpOAuthClient.is_shared.is_(True))
-        )
+    filters = [
+        McpOAuthClient.status != "deleted",
+        # 任何角色都只看自己创建的 Client，外加被标记为全员共享的 Client。
+        (McpOAuthClient.created_by == current_user_id) | (McpOAuthClient.is_shared.is_(True)),
+    ]
     if search and search.strip():
         keyword = f"%{search.strip()}%"
         filters.append(
@@ -1270,18 +1256,18 @@ async def list_clients(
         owned_client_ids = [
             row.client_id for row in rows if str(row.created_by or "") == current_user_id
         ]
-        visible_token_filters = [McpOAuthAccessToken.client_id.in_(client_ids)]
-        if user.get("role") != "admin":
-            shared_client_ids = [client_id for client_id in client_ids if client_id not in owned_client_ids]
-            visible_token_filters.append(
-                or_(
-                    McpOAuthAccessToken.client_id.in_(owned_client_ids),
-                    and_(
-                        McpOAuthAccessToken.client_id.in_(shared_client_ids),
-                        McpOAuthAccessToken.user_id == current_user_id,
-                    ),
-                )
-            )
+        shared_client_ids = [client_id for client_id in client_ids if client_id not in owned_client_ids]
+        # 共享 Client 只统计当前用户自己签发的 Token；自己的 Client 统计全部。
+        visible_token_filters = [
+            McpOAuthAccessToken.client_id.in_(client_ids),
+            or_(
+                McpOAuthAccessToken.client_id.in_(owned_client_ids),
+                and_(
+                    McpOAuthAccessToken.client_id.in_(shared_client_ids),
+                    McpOAuthAccessToken.user_id == current_user_id,
+                ),
+            ),
+        ]
         all_token_rows = (
             await db.execute(
                 select(McpOAuthAccessToken)
@@ -1314,10 +1300,7 @@ async def list_clients(
     items = [
         _serialize_client(
             row,
-            include_resource_details=(
-                user.get("role") == "admin"
-                or str(row.created_by or "") == current_user_id
-            ),
+            include_resource_details=(str(row.created_by or "") == current_user_id),
             # Scope、Secret、停用/启用等安全变更都会撤销旧 Token。只要该
             # Client 曾经签发过 Token 且当前没有有效 Token，就需要重新生成；
             # 停用期间不提示，重新启用后再提示；新建但尚未签发 Token
@@ -1446,7 +1429,7 @@ async def list_client_tokens(
         raise HTTPException(status_code=404, detail="OAuth Client 不存在")
     filters = [McpOAuthAccessToken.client_id == client_id]
     current_user_id = _current_user_id(user)
-    if user.get("role") != "admin" and client.created_by != current_user_id:
+    if client.created_by != current_user_id:
         filters.append(McpOAuthAccessToken.user_id == current_user_id)
     if not include_revoked:
         filters.extend((McpOAuthAccessToken.revoked_at.is_(None), McpOAuthAccessToken.expires_at > datetime.utcnow()))
@@ -1494,7 +1477,7 @@ async def delete_client_token(
     if token is None:
         raise HTTPException(status_code=404, detail="Access Token 不存在")
     current_user_id = _current_user_id(user)
-    if user.get("role") != "admin" and client.created_by != current_user_id and token.user_id != current_user_id:
+    if client.created_by != current_user_id and token.user_id != current_user_id:
         raise HTTPException(status_code=403, detail="无权删除其他用户的 Access Token")
 
     now = datetime.utcnow()
@@ -1538,7 +1521,7 @@ async def delete_client_tokens(
         McpOAuthAccessToken.id.in_(token_ids),
     ]
     current_user_id = _current_user_id(user)
-    if user.get("role") != "admin" and client.created_by != current_user_id:
+    if client.created_by != current_user_id:
         filters.append(McpOAuthAccessToken.user_id == current_user_id)
     tokens = (await db.execute(select(McpOAuthAccessToken).where(*filters))).scalars().all()
     if not tokens:
@@ -1595,7 +1578,7 @@ async def revoke_client_token(
     if token is None:
         raise HTTPException(status_code=404, detail="Access Token 不存在")
     current_user_id = _current_user_id(user)
-    if user.get("role") != "admin" and client.created_by != current_user_id and token.user_id != current_user_id:
+    if client.created_by != current_user_id and token.user_id != current_user_id:
         raise HTTPException(status_code=403, detail="无权撤销其他用户的 Access Token")
     if token.revoked_at is None:
         token.revoked_at = datetime.utcnow()
@@ -1663,11 +1646,9 @@ async def list_grants(
     user: dict = Depends(require_mcp_service_permission("element:mcp_service:grant:read")),
     db: AsyncSession = Depends(get_db_session),
 ) -> list[dict[str, Any]]:
-    """查询外部应用授权关系列表。管理员可查看全局，普通用户仅查看自身的授权。"""
+    """查询外部应用授权关系列表：任何角色都只能查看自己同意的授权。"""
     current_user_id = _current_user_id(user)
-    filters = []
-    if user.get("role") != "admin":
-        filters.append(McpOAuthGrant.user_id == current_user_id)
+    filters = [McpOAuthGrant.user_id == current_user_id]
     grants = (
         await db.execute(
             select(McpOAuthGrant)
@@ -1701,7 +1682,7 @@ async def revoke_grant(
     ).scalar_one_or_none()
     if grant is None:
         raise HTTPException(status_code=404, detail="OAuth 授权关系不存在")
-    if user.get("role") != "admin" and grant.user_id != current_user_id:
+    if grant.user_id != current_user_id:
         raise HTTPException(status_code=403, detail="无权操作其他用户的授权关系")
     if grant.status == "active":
         now = datetime.utcnow()

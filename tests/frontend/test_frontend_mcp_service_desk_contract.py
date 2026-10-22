@@ -70,11 +70,12 @@ def test_service_desk_exposes_permission_gated_audit_tab_and_filters():
     assert "查看详情" in view
 
 
-def test_audit_tab_explains_role_based_visibility():
+def test_audit_tab_explains_current_user_only_visibility():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
-    assert "管理员可查看全部 MCP 入站调用记录" in view
-    assert "其他用户仅能查看自己发起的调用记录" in view
+    assert "仅展示当前账号发起的 MCP 入站调用记录。" in view
+    assert "管理员可查看全部 MCP 入站调用记录" not in view
+    assert "其他用户仅能查看自己发起的调用记录" not in view
 
 
 def test_audit_filters_are_collapsed_by_default_and_use_one_dynamic_row():
@@ -160,7 +161,8 @@ def test_client_cards_prioritize_primary_action_and_collapse_low_frequency_actio
     assert "更多操作" in view
     assert "有效 Token" in view
     assert "最近过期" in view
-    assert "管理员视角：查看全部用户的 Client" in view
+    assert "展示当前账号创建及全员共享的 Client" in view
+    assert "管理员视角" not in view
     assert "创建第一个 Client" in view
     assert "md:grid-cols-2" in view
     assert "expandedClientIds" in view
@@ -599,7 +601,12 @@ def test_shared_client_mutations_are_owner_scoped_in_ui():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
     clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
 
-    assert "const { hasPermission, isAdmin, userInfo } = useUser()" in view
+    assert "const { hasPermission, userInfo } = useUser()" in view
+    assert "isAdmin" not in view
+    assert "canManageClient.value && isClientOwner(client)" in view
+    assert "canResetSecret.value && isClientOwner(client)" in view
+    assert "canIssueToken.value && isClientOwner(client)" in view
+    assert "isAdmin.value || isClientOwner" not in view
     assert "const isClientOwner = (client: Client) =>" in view
     assert "!!currentUserId.value" in view
     assert "const canManageClientItem = (client: Client) =>" in view
@@ -736,14 +743,49 @@ def test_external_client_card_and_list_view_mode_toggle_contract():
     assert '<!-- 列表视图 (List View) -->' in view
 
     # 验证列表视图表格列与核心交互
-    client_section = view.split('<!-- 列表视图 (List View) -->', 1)[1].split('<!-- 分页器（卡片与列表共用） -->', 1)[0]
-    assert "<table" in client_section
+    client_section = view.split('<!-- 列表视图 (List View) -->', 1)[1].split('</table>', 1)[0]
+    assert "activeTab === 'methods'" not in client_section  # 已切到表格内部，避免匹配到后续 Tab 内容
     for col in ("Client 信息", "状态", "Scope 授权", "Token 概览", "资源白名单", "最近签发", "操作"):
         assert col in client_section
     assert "openTokenIssue(client)" in client_section
     assert "openTokenDetails(client)" in client_section
     assert "openResourceWhitelist(client, config)" in client_section
     assert "openClientDetails(client)" in client_section
+
+
+def test_list_view_hides_client_id_text_and_keeps_copy_icon():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    client_section = view.split('<!-- 列表视图 (List View) -->', 1)[1].split('</table>', 1)[0]
+
+    # 列表视图不再渲染 Client ID 文本，只在名称行保留复制图标
+    assert "{{ client.client_id }}" not in client_section
+    assert "复制 Client ID：${client.client_id}" in client_section
+    assert "<ClipboardDocumentIcon" in client_section
+    assert "<CheckIcon" in client_section
+    assert "copyValue('client-id-' + client.client_id, client.client_id)" in client_section
+    # 卡片视图仍展示完整 Client ID 与说明
+    assert "{{ client.client_id }}" in view
+    assert "Client ID 用于 Token Endpoint" in view
+
+
+def test_list_view_resource_whitelist_uses_icon_buttons():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    client_section = view.split('<!-- 列表视图 (List View) -->', 1)[1].split('</table>', 1)[0]
+
+    # 列表视图资源白名单改为三个图标按钮，不再渲染长中文按钮文字
+    assert "{{ config.buttonLabel }}" not in client_section
+    assert 'data-testid="client-resource-policy-icons"' in client_section
+    assert '<component :is="config.icon"' in client_section
+    assert "resourcePolicyButtonClass(client, config.field)" in client_section
+    assert "openResourceWhitelist(client, config)" in client_section
+    # 图标按钮保留悬停说明（含当前策略）与无障碍标签
+    assert "`${config.buttonLabel}：${resourcePolicySummary(client, config.field)}`" in client_section
+    assert ":aria-label=" in client_section
+    # 三个资源配置仍各自绑定独立图标，卡片视图保留文字按钮
+    assert "icon: CpuChipIcon" in view
+    assert "icon: BookOpenIcon" in view
+    assert "icon: CircleStackIcon" in view
+    assert "{{ config.buttonLabel }}" in view
 
 
 def test_mcp_server_registry_status_toggle_payload_contract():
@@ -767,3 +809,19 @@ def test_mcp_server_registry_status_toggle_payload_contract():
     #    列表就在正下方，标题不携带信息还占宽度），改为搜索前置 + 「仅运行中」筛选
     assert "已连接服务" not in content
     assert "仅运行中" in content
+
+
+def test_admin_has_no_cross_user_client_or_grant_visibility_in_ui():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    # 任何角色都只看自己的 Client（外加全员共享），页面不再保留管理员全局口径
+    assert "管理员视角" not in view
+    assert "管理员可查看并管理全平台的授权关系" not in view
+    assert "管理员：统计该 Client 的全部用户调用" not in view
+    assert "管理员可查看全部 MCP 入站调用记录" not in view
+    assert "仅统计当前用户发起的调用" in view
+    assert "展示当前账号创建及全员共享的 Client" in view
+    assert "展示当前账号已同意授权访问 NanZi 平台的外部系统" in view
+
+    # Grants 弹窗不再有仅管理员可见的「授权用户 ID」列
+    assert "授权用户 ID" not in view
