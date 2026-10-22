@@ -326,7 +326,7 @@
               </p>
               <p class="mt-1 text-xs break-words">
                 <span class="text-gray-400">邮箱：</span>
-                <span v-if="user.email" class="font-mono text-gray-600">{{ user.email }}</span>
+                <span v-if="user.email" class="font-mono text-gray-600">{{ canEditUser ? user.email : maskEmail(user.email) }}</span>
                 <span v-else class="text-gray-300">未设置</span>
               </p>
             </div>
@@ -594,9 +594,9 @@
                     <div
                       v-if="user.email"
                       class="mt-0.5 min-w-0 text-xs text-gray-500"
-                      :title="user.email"
+                      :title="canEditUser ? user.email : maskEmail(user.email)"
                     >
-                      <span class="block max-w-[16rem] truncate font-mono">{{ user.email }}</span>
+                      <span class="block max-w-[16rem] truncate font-mono">{{ canEditUser ? user.email : maskEmail(user.email) }}</span>
                     </div>
                   </div>
                 </td>
@@ -750,7 +750,7 @@
                 </template>
               </p>
               <p class="text-xs mt-0.5 truncate" :class="user.email ? 'text-gray-500' : 'text-gray-300'">
-                {{ user.email || "未设置邮箱" }}
+                {{ user.email ? (canEditUser ? user.email : maskEmail(user.email)) : "未设置邮箱" }}
               </p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -2359,6 +2359,7 @@
 import { ref, onMounted, computed, onUnmounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import axios from "../utils/axios";
+import { maskEmail } from "../utils/maskEmail";
 import { modelApi } from "../api/model";
 import {
   shouldShowModelSearch,
