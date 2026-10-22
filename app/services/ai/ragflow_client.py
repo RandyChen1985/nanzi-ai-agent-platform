@@ -98,6 +98,46 @@ class RagFlowClient:
             )
         return f"RAGFlow {action} 错误: {msg}"
 
+    def _describe_non_json_response(
+        self, response: httpx.Response, action: str, exc: Exception
+    ) -> str:
+        """把「HTTP 200 但响应体不是 JSON」翻译成可排查的中文错误。
+
+        RAGFlow 正常返回时一定是 JSON。拿到 200 + 空响应 / HTML，通常说明请求
+        在链路上被反向代理、API 网关或登录页截走了，此时裸抛
+        ``JSONDecodeError: Expecting value: line 1 column 1 (char 0)`` 会让排查
+        者误以为是 API Key 或代码问题，因此这里把状态码、Content-Type、URL 和
+        响应体片段一并带出来。
+        """
+        content_type = response.headers.get("content-type") or "未提供"
+        raw = response.content or b""
+        snippet = " ".join(raw[:300].decode("utf-8", errors="replace").split())
+
+        # httpx 的 Response.request 在未关联请求时会抛 RuntimeError，
+        # getattr 也挡不住（属性访问本身就会抛），因此用 try/except 兜底。
+        request_url = ""
+        try:
+            request_url = str(response.request.url)
+        except Exception:  # noqa: BLE001 - 仅用于取诊断信息，取不到就留空
+            pass
+
+        parts = [
+            f"RAGFlow {action} 返回的内容不是 JSON（HTTP {response.status_code}，"
+            f"Content-Type: {content_type}"
+            + (f"，URL: {request_url}" if request_url else "")
+            + "）。"
+        ]
+        if raw:
+            parts.append(f"响应体前 {len(raw[:300])} 字节：{snippet}")
+        else:
+            parts.append("响应体为空（0 字节）。")
+        parts.append(
+            "常见原因：请求被反向代理 / API 网关 / 登录页拦截后返回了空响应或 HTML，"
+            "或者服务地址指向了非 RAGFlow OpenAPI 的服务。请检查 RAGFlow 服务地址与网络链路。"
+        )
+        parts.append(f"原始解析错误：{type(exc).__name__}: {exc}")
+        return " ".join(parts)
+
     async def _handle_response(self, response: httpx.Response, action: str) -> Dict[str, Any]:
         """Centralized response handling"""
         if response.status_code != 200:
@@ -105,8 +145,13 @@ class RagFlowClient:
             logger.error(f"[RAGFlow] {action} Failed ({response.status_code}): {detail}")
             friendly_detail = self._translate_error(detail, action)
             raise RagFlowServiceError(friendly_detail)
-        
-        res_json = response.json()
+
+        try:
+            res_json = response.json()
+        except ValueError as e:
+            diagnosable = self._describe_non_json_response(response, action, e)
+            logger.error(f"[RAGFlow] {action} 响应非 JSON: {diagnosable}")
+            raise RagFlowServiceError(diagnosable) from e
         if res_json.get("code") != 0:
             msg = res_json.get('message') or ""
             logger.error(f"[RAGFlow] {action} Service Error: {msg}")

@@ -135,6 +135,41 @@ async def test_handle_response_includes_status_when_error_body_empty(ragflow_cli
 
 
 @pytest.mark.asyncio
+async def test_handle_response_empty_body_raises_diagnosable_error(ragflow_client):
+    """HTTP 200 但响应体为空时，不能把裸 JSONDecodeError 抛给上层。
+
+    ``json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)``
+    既看不出是哪个接口，也看不出响应头，排查时只能靠猜。这里要求带上状态码、
+    Content-Type 与「空响应」这一判定。
+    """
+    response = httpx.Response(200, content=b"", headers={"content-type": "text/html"})
+
+    with pytest.raises(RagFlowServiceError) as excinfo:
+        await ragflow_client._handle_response(response, "List Datasets")
+
+    msg = str(excinfo.value)
+    assert "200" in msg
+    assert "text/html" in msg
+    assert "空响应" in msg
+
+
+@pytest.mark.asyncio
+async def test_handle_response_html_body_raises_diagnosable_error(ragflow_client):
+    """HTTP 200 但返回 HTML（网关页 / 登录页）时，应保留 body 片段供定位。"""
+    html = b"<html><head><title>502 Bad Gateway</title></head><body>upstream error</body></html>"
+    response = httpx.Response(
+        200, content=html, headers={"content-type": "text/html; charset=utf-8"}
+    )
+
+    with pytest.raises(RagFlowServiceError) as excinfo:
+        await ragflow_client._handle_response(response, "List Datasets")
+
+    msg = str(excinfo.value)
+    assert "不是 JSON" in msg
+    assert "Bad Gateway" in msg
+
+
+@pytest.mark.asyncio
 async def test_handle_response_error_translation_permission_denied(ragflow_client):
     """测试 _handle_response 正确翻译 RAGFlow 的缺乏权限错误"""
     response = httpx.Response(200, json={
