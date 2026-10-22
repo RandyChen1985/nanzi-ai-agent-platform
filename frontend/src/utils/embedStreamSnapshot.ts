@@ -119,6 +119,20 @@ const trimInteraction = (value: unknown): EmbedStreamSnapshotInteraction | null 
   return serializedBytes(next) <= MAX_INTERACTION_BYTES ? next : null;
 };
 
+/**
+ * 去掉「本端 SSE 读流失败」时追加的临时错误后缀。
+ *
+ * 这类错误是浏览器的传输层失败（network error / Failed to fetch），不代表服务端那轮真的
+ * 失败：producer 往往还在后台继续跑。它适合留在当前界面提示断线，但**不能写进恢复快照**
+ * ——否则刷新后草稿会先闪出一条早已过时的错误，再被落库终态覆盖。
+ */
+export function stripClientStreamErrorSuffix(content: unknown, suffix?: string | null): string {
+  const text = String(content ?? "");
+  const suffixText = String(suffix || "");
+  if (!suffixText || !text.endsWith(suffixText)) return text;
+  return text.slice(0, text.length - suffixText.length);
+}
+
 const hasInteractionState = (draft: EmbedStreamSnapshotDraft | null | undefined): boolean =>
   Boolean(
     draft?.pendingPermission ||

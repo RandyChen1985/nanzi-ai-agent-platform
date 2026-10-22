@@ -2515,6 +2515,7 @@ import {
 import {
   buildEmbedStreamSnapshot,
   isEmbedStreamSnapshotUsable,
+  stripClientStreamErrorSuffix,
   type EmbedStreamSnapshot,
 } from "@/utils/embedStreamSnapshot";
 import { useToast } from "../composables/useToast";
@@ -2903,6 +2904,13 @@ interface Message {
   citations?: any[];
   /** 历史回放标记：引用详情解析不到时用于区分「已过期」与「加载中」 */
   isHistory?: boolean;
+  /**
+   * 本端 SSE 读流失败时追加到正文的临时错误后缀。
+   *
+   * 仅用于提示当前界面；写入恢复快照时必须剥离——它不是服务端终态，刷新后由恢复器
+   * 取回真正内容即可。
+   */
+  clientTransportErrorSuffix?: string;
   isThinking?: boolean;
   isThoughtExpanded?: boolean;
   processNarration?: string;
@@ -5132,7 +5140,8 @@ const persistStreamSnapshot = (
     lastSeq: cursor?.lastSeq,
     user: userMsg ? { content: userMsg.content, timestamp: userMsg.timestamp } : null,
     draft: {
-      content: draft.content,
+      // 本端读流失败的错误只提示当前界面，不随快照还原（见 helper 注释）。
+      content: stripClientStreamErrorSuffix(draft.content, draft.clientTransportErrorSuffix),
       reasoningContent: draft.reasoningContent,
       processTimeline: draft.processTimeline,
       agentName: draft.agentName,
@@ -11671,7 +11680,11 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     } else if (document.visibilityState === "hidden") {
       console.log("[Stream] Client disconnected in background; awaiting background producer sync on resume.");
     } else if (!embedUnmounted) {
-      agentMsg.value.content += `\n[错误: ${e.message}]`;
+      // 本端传输层错误：不是服务端那轮的终态。记下后缀供快照过滤，避免刷新后先闪出一条
+      // 过时错误、再被落库内容覆盖（用户实测现象）。
+      const transportErrorSuffix = `\n[错误: ${e.message}]`;
+      agentMsg.value.content += transportErrorSuffix;
+      agentMsg.value.clientTransportErrorSuffix = transportErrorSuffix;
     }
   } finally {
     streamInFlight = false;

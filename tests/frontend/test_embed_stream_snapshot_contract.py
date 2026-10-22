@@ -321,3 +321,35 @@ def test_embed_chat_restores_interaction_state_from_snapshot():
     assert "businessConfirmation:" in source
     # 只还原了提问时不能伪造一条空助手气泡：交给恢复器补建草稿。
     assert "只还原了提问：先让用户看见本轮问题，助手草稿由恢复器补建" in source
+
+
+def test_strip_client_stream_error_suffix_only_removes_the_transient_tail():
+    """本端读流失败的错误只提示当前界面，不得写进恢复快照。
+
+    它是浏览器传输层失败（network error / Failed to fetch），不代表服务端那轮失败；
+    快照带上它，刷新后就会先闪出一条过时错误，再被落库终态覆盖（用户实测）。
+    """
+    result = _call(
+        """
+const suffix = '\\n[错误: network error]';
+return {
+  stripped: api.stripClientStreamErrorSuffix('完整回答' + suffix, suffix),
+  noSuffix: api.stripClientStreamErrorSuffix('完整回答', ''),
+  mismatch: api.stripClientStreamErrorSuffix('完整回答\\n[错误: other]', suffix),
+  serverErrorKept: api.stripClientStreamErrorSuffix('完整回答\\n\\n> ❌ **处理未完成**: 服务端错误', suffix),
+};
+"""
+    )
+    assert result == {
+        "stripped": "完整回答",
+        "noSuffix": "完整回答",
+        "mismatch": "完整回答\n[错误: other]",
+        "serverErrorKept": "完整回答\n\n> ❌ **处理未完成**: 服务端错误",
+    }
+
+
+def test_embed_chat_does_not_persist_a_transient_client_transport_error():
+    source = _embed_source()
+    assert "stripClientStreamErrorSuffix(draft.content, draft.clientTransportErrorSuffix)" in source
+    assert "agentMsg.value.clientTransportErrorSuffix = transportErrorSuffix;" in source
+    assert "clientTransportErrorSuffix?: string;" in source
