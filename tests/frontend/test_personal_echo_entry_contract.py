@@ -22,4 +22,5 @@ def test_echo_servers_cannot_be_shared_from_registry():
 
     assert "const isEchoTestServer" in source
     assert "/mcp/echo/" in source
-    assert "props.scope === 'personal' && !isEchoTestServer(server)" in source
+    # 分享入口收在「⋯」菜单里，判断对象是当前菜单绑定的 server
+    assert "props.scope === 'personal' && !isEchoTestServer(actionMenu.server)" in source

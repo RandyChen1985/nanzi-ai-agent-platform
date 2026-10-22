@@ -40,6 +40,7 @@ import {
   CheckCircleIcon,
   InformationCircleIcon,
   DocumentTextIcon,
+  EllipsisHorizontalIcon,
 } from '@heroicons/vue/24/outline'
 import McpServerLogModal from './McpServerLogModal.vue'
 
@@ -80,13 +81,41 @@ const showAddDropdown = ref(false)
 /** 只看已启用（运行中）的服务——停用的排不进实际调用 */
 const onlyRunning = ref(false)
 
+/** 列表排序：默认「运行中优先 → 最近同步」，服务多了再按需切换 */
+type ServerSortKey = 'default' | 'recent' | 'name' | 'tools'
+const sortBy = ref<ServerSortKey>('default')
+
+const syncTimestamp = (server: any): number => {
+  const parsed = server?.last_sync_at ? new Date(server.last_sync_at).getTime() : 0
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+/** 不改原数组：sort 原地排序会打乱后端顺序，切回默认时无法复原 */
+function sortServers(list: any[]): any[] {
+  const next = [...list]
+  switch (sortBy.value) {
+    case 'name':
+      return next.sort((a, b) =>
+        String(a.server_name || '').localeCompare(String(b.server_name || ''), 'zh-Hans-CN'))
+    case 'recent':
+      return next.sort((a, b) => syncTimestamp(b) - syncTimestamp(a))
+    case 'tools':
+      return next.sort((a, b) => (b.tool_count || 0) - (a.tool_count || 0))
+    default:
+      return next.sort((a, b) => {
+        const running = Number(b.enabled_status === 1) - Number(a.enabled_status === 1)
+        return running || syncTimestamp(b) - syncTimestamp(a)
+      })
+  }
+}
+
 const filteredServers = computed(() => {
   const base = onlyRunning.value
     ? servers.value.filter((s: any) => s.enabled_status === 1)
     : servers.value
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return base
-  return base.filter((s: any) => {
+  if (!query) return sortServers(base)
+  return sortServers(base.filter((s: any) => {
     const nameMatch = (s.server_name || '').toLowerCase().includes(query)
     const descMatch = (s.description || '').toLowerCase().includes(query)
     const urlMatch = (s.url || '').toLowerCase().includes(query)
@@ -94,7 +123,7 @@ const filteredServers = computed(() => {
       (t.name || '').toLowerCase().includes(query) || (t.description || '').toLowerCase().includes(query)
     )
     return nameMatch || descMatch || urlMatch || toolMatch
-  })
+  }))
 })
 
 /** 用户只填后缀；保存时与固定前缀拼接 */
@@ -743,6 +772,61 @@ const fetchServers = async () => {
 const isEchoTestServer = (server: any) =>
   String(server?.sse_url || '').includes('/mcp/echo/')
 
+/** 同步时间放完整时间会在窄卡片里挤成一坨：显示相对时间，完整值留给 title */
+function formatRelativeTime(value: string | null | undefined): string {
+  if (!value) return ''
+  const ts = new Date(value).getTime()
+  if (Number.isNaN(ts)) return ''
+  const diff = Date.now() - ts
+  if (diff < 60_000) return '刚刚同步'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前同步`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前同步`
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前同步`
+  return `${new Date(ts).toLocaleDateString('zh-CN')} 同步`
+}
+
+/** 参数名只做展示：坏 schema 不能把整个工具列表的渲染打断 */
+function toolParamNames(tool: any): string[] {
+  try {
+    const schema = typeof tool?.parameter_schema === 'string'
+      ? JSON.parse(tool.parameter_schema)
+      : tool?.parameter_schema
+    const properties = schema?.properties
+    return properties && typeof properties === 'object' ? Object.keys(properties) : []
+  } catch {
+    return []
+  }
+}
+
+/** 卡片「⋯」操作菜单：fixed 定位，避免被列表滚动容器裁掉 */
+const actionMenu = ref<{ server: any; x: number; y: number } | null>(null)
+
+function openActionMenu(event: MouseEvent, server: any) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const width = 192
+  const height = 200
+  const x = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
+  const y = rect.bottom + 6 + height > window.innerHeight
+    ? Math.max(8, rect.top - height - 6)
+    : rect.bottom + 6
+  actionMenu.value = { server, x, y }
+}
+
+function closeActionMenu() {
+  actionMenu.value = null
+}
+
+function runServerAction(action: 'share' | 'logs' | 'edit' | 'sync' | 'delete') {
+  const server = actionMenu.value?.server
+  closeActionMenu()
+  if (!server) return
+  if (action === 'share') emit('share-server', server)
+  else if (action === 'logs') openLogModal(server)
+  else if (action === 'edit') openEditModal(server)
+  else if (action === 'sync') syncTools(server.id)
+  else if (action === 'delete') confirmDeleteServer(server)
+}
+
 const createEchoTestMcp = async () => {
   if (!canSave.value) return
   if (props.scope === 'personal') {
@@ -1365,17 +1449,34 @@ onMounted(fetchServers)
   <div class="flex h-full min-h-[28rem] flex-col gap-3 lg:min-h-0 lg:flex-row lg:gap-6">
     <!-- Left: Server List — 移动端选中服务后隐藏，避免左右挤成一条 -->
     <div
-      class="flex w-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:w-1/3"
+      class="flex w-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:w-[360px] lg:shrink-0 xl:w-[400px]"
       :class="selectedServer ? 'hidden lg:flex' : 'flex'"
     >
-      <!-- Market Guide (High Contrast with Dynamic Scope Theme) -->
-      <div 
+      <!--
+        市场入口：有服务时收成一行链接，低频外链不该占列表首屏；
+        列表为空时才展开成引导卡。
+      -->
+      <a
+        v-if="!loading && servers.length > 0"
+        href="https://modelscope.cn/mcp"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="flex items-center gap-1.5 border-b border-gray-100 bg-gray-50/60 px-3 py-1.5 text-[11px] text-gray-500 transition-colors hover:text-indigo-600 dark:border-gray-800 dark:bg-gray-800/40 dark:text-gray-400 dark:hover:text-indigo-300 sm:px-4"
+      >
+        <ShoppingBagIcon class="h-3.5 w-3.5 shrink-0" />
+        <span class="truncate">去魔搭发现更多 MCP 服务</span>
+        <span class="ml-auto shrink-0" aria-hidden="true">→</span>
+      </a>
+
+      <!-- Market Guide (only when the list is empty) -->
+      <div
+        v-else-if="!loading"
         class="border-b border-white/10 px-3 py-2 text-white transition-colors duration-300 sm:px-4 sm:py-2.5"
         :class="props.scope === 'personal' ? 'bg-slate-950' : 'bg-slate-900'"
       >
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0 flex-1">
-            <h4 
+            <h4
               class="flex items-center text-sm font-black transition-colors duration-300"
               :class="props.scope === 'personal' ? 'text-emerald-400' : 'text-indigo-400'"
             >
@@ -1390,6 +1491,7 @@ onMounted(fetchServers)
             <a
               href="https://modelscope.cn/mcp"
               target="_blank"
+              rel="noopener noreferrer"
               class="inline-flex items-center rounded px-2.5 py-1 text-[10px] font-bold text-white shadow-sm transition-all duration-200 whitespace-nowrap"
               :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-indigo-600 hover:bg-indigo-500'"
             >
@@ -1400,187 +1502,219 @@ onMounted(fetchServers)
         </div>
       </div>
 
-      <div class="flex flex-wrap items-center gap-2 border-b border-gray-100 bg-gray-50/80 px-3 py-2 sm:px-4 sm:py-2.5">
-        <!-- 搜索框（放在最前，服务多时第一动作就是搜） -->
-        <div class="flex min-w-[120px] max-w-[220px] flex-1 items-center">
-          <div class="relative w-full">
-            <MagnifyingGlassIcon class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+      <div class="flex flex-col gap-2 border-b border-gray-100 bg-gray-50/80 px-3 py-2 sm:px-4 sm:py-2.5">
+        <!-- 第一行：搜索 + 新建。搜索是列表页第一动作，吃满剩余宽度 -->
+        <div class="flex items-center gap-2">
+          <div class="relative min-w-0 flex-1">
+            <MagnifyingGlassIcon class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input
               v-model="searchQuery"
               type="search"
               placeholder="搜索服务或工具..."
-              class="h-7 w-full rounded-md border border-gray-200 bg-white pl-7 pr-6 text-[11px] leading-none text-gray-700 shadow-sm transition-all placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+              class="h-8 w-full rounded-md border border-gray-200 bg-white pl-8 pr-7 text-xs leading-none text-gray-700 shadow-sm transition-all placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
             />
             <button
               v-if="searchQuery"
               type="button"
               @click="searchQuery = ''"
-              class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-              title="清空搜索"
+              class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              aria-label="清空搜索"
             >
-              <XMarkIcon class="h-3 w-3" />
+              <XMarkIcon class="h-3.5 w-3.5" />
             </button>
           </div>
-        </div>
 
-        <!-- 只看运行中：停用的服务排不进调用，混在列表里只会干扰挑选 -->
-        <label
-          class="flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap text-[11px] text-gray-600 dark:text-gray-300"
-          title="只显示已启用的 MCP 服务"
-        >
-          <input
-            v-model="onlyRunning"
-            type="checkbox"
-            class="h-3.5 w-3.5 cursor-pointer rounded border-gray-300 text-primary focus:ring-primary dark:border-gray-600 dark:bg-gray-800"
-          />
-          仅运行中
-        </label>
+          <span v-if="props.scope === 'global' && !canSave" class="shrink-0 rounded border border-amber-200/60 bg-amber-50 px-1.5 py-0.5 text-[9px] font-normal text-amber-600">
+            只读
+          </span>
 
-        <span v-if="props.scope === 'global' && !canSave" class="shrink-0 rounded border border-amber-200/60 bg-amber-50 px-1.5 py-0.5 text-[9px] font-normal text-amber-600">
-          只读
-        </span>
-
-        <!-- 右侧操作区 -->
-        <div v-if="canSave" class="relative ml-auto flex shrink-0 items-center">
-          <!-- 个人 MCP: 添加 + 创建 Echo 测试（同一 create 码收敛） -->
-          <div
-            v-if="props.scope === 'personal' && canCreateMcp"
-            class="relative inline-flex h-7 items-stretch rounded-md shadow-sm"
-          >
-            <button
-              type="button"
-              @click="resetWizard(); showAddModal = true"
-              class="inline-flex h-full items-center justify-center rounded-l-md bg-emerald-600 px-2.5 text-[11px] font-bold leading-none text-white transition-all hover:bg-emerald-700 sm:px-3"
-            >
-              <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
-              <span>添加</span>
-            </button>
-            <button
-              type="button"
-              @click.stop="showAddDropdown = !showAddDropdown"
-              class="inline-flex h-full items-center justify-center rounded-r-md border-l border-white/20 bg-emerald-600 px-1.5 text-white transition-all hover:bg-emerald-700"
-              title="更多添加选项"
-            >
-              <ChevronDownIcon class="h-3.5 w-3.5 shrink-0 transition-transform duration-200" :class="{ 'rotate-180': showAddDropdown }" />
-            </button>
-
+          <!-- 新建服务 -->
+          <div v-if="canSave" class="relative ml-auto flex shrink-0 items-center">
+            <!-- 个人 MCP: 添加 + 创建 Echo 测试（同一 create 码收敛） -->
             <div
-              v-if="showAddDropdown"
-              class="fixed inset-0 z-20 cursor-default"
-              @click="showAddDropdown = false"
-            ></div>
-
-            <div
-              v-if="showAddDropdown"
-              class="absolute right-0 top-full z-30 mt-1.5 w-52 origin-top-right rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-800"
-              @click.stop
+              v-if="props.scope === 'personal' && canCreateMcp"
+              class="relative inline-flex h-8 items-stretch rounded-md shadow-sm"
             >
               <button
                 type="button"
-                @click="showAddDropdown = false; resetWizard(); showAddModal = true"
-                class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
+                @click="resetWizard(); showAddModal = true"
+                class="inline-flex h-full items-center justify-center rounded-l-md bg-emerald-600 px-2.5 text-[11px] font-bold leading-none text-white transition-all hover:bg-emerald-700 sm:px-3"
               >
-                <PlusIcon class="h-4 w-4 text-primary shrink-0" />
-                <div class="min-w-0 flex-1">
-                  <div>添加 MCP 服务</div>
-                  <div class="text-[10px] font-normal text-gray-400">配置自定义工具服务</div>
-                </div>
+                <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
+                <span>添加</span>
               </button>
-
               <button
                 type="button"
-                @click="showAddDropdown = false; createEchoTestMcp()"
-                class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
-                title="创建个人 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
+                @click.stop="showAddDropdown = !showAddDropdown"
+                class="inline-flex h-full items-center justify-center rounded-r-md border-l border-white/20 bg-emerald-600 px-1.5 text-white transition-all hover:bg-emerald-700"
+                title="更多添加选项"
               >
-                <BeakerIcon class="h-4 w-4 text-indigo-600 shrink-0" />
-                <div class="min-w-0 flex-1">
-                  <div>创建 Echo 测试 MCP</div>
-                  <div class="text-[10px] font-normal text-gray-400">个人联调诊断服务</div>
-                </div>
+                <ChevronDownIcon class="h-3.5 w-3.5 shrink-0 transition-transform duration-200" :class="{ 'rotate-180': showAddDropdown }" />
               </button>
+
+              <div
+                v-if="showAddDropdown"
+                class="fixed inset-0 z-20 cursor-default"
+                @click="showAddDropdown = false"
+              ></div>
+
+              <div
+                v-if="showAddDropdown"
+                class="absolute right-0 top-full z-30 mt-1.5 w-52 origin-top-right rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-800"
+                @click.stop
+              >
+                <button
+                  type="button"
+                  @click="showAddDropdown = false; resetWizard(); showAddModal = true"
+                  class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  <PlusIcon class="h-4 w-4 text-primary shrink-0" />
+                  <div class="min-w-0 flex-1">
+                    <div>添加 MCP 服务</div>
+                    <div class="text-[10px] font-normal text-gray-400">配置自定义工具服务</div>
+                  </div>
+                </button>
+
+                <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
+                <p class="px-2.5 pb-0.5 pt-1 text-[10px] font-normal text-gray-400">测试工具</p>
+                <button
+                  type="button"
+                  @click="showAddDropdown = false; createEchoTestMcp()"
+                  class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+                  title="创建个人 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
+                >
+                  <BeakerIcon class="h-4 w-4 text-indigo-600 shrink-0" />
+                  <div class="min-w-0 flex-1">
+                    <div>创建 Echo 测试 MCP</div>
+                    <div class="text-[10px] font-normal text-gray-400">个人联调诊断服务</div>
+                  </div>
+                </button>
+              </div>
             </div>
-          </div>
 
-          <!-- 平台 MCP: 分裂式添加按钮 + 更多操作下拉
-               主按钮只给 canCreateMcp：只有 edit 码的角色（如内置 Echo、改服务配置）
-               不该看到「添加」，否则能打开新建向导、填完才在 POST /servers 上撞 403。
-               箭头只给 canEditMcp：「添加 MCP 服务」需 create，Echo 测试需 edit，
-               没有 edit 时下拉里没有可选项，留一个空箭头等于噪音。 -->
-          <div
-            v-else-if="props.scope !== 'personal' && (canCreateMcp || canEditMcp)"
-            class="relative inline-flex h-7 items-stretch rounded-md shadow-sm"
-          >
-            <button
-              v-if="canCreateMcp"
-              type="button"
-              @click="resetWizard(); showAddModal = true"
-              class="inline-flex h-full items-center justify-center bg-primary px-2.5 text-[11px] font-bold leading-none text-white transition-all hover:bg-primary-dark sm:px-3"
-              :class="canEditMcp ? 'rounded-l-md' : 'rounded-md'"
-            >
-              <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
-              <span>添加</span>
-            </button>
-            <button
-              v-if="canEditMcp"
-              type="button"
-              @click.stop="showAddDropdown = !showAddDropdown"
-              class="inline-flex h-full items-center justify-center bg-primary px-1.5 text-white transition-all hover:bg-primary-dark"
-              :class="canCreateMcp ? 'rounded-r-md border-l border-white/20' : 'rounded-md'"
-              title="更多添加选项"
-            >
-              <ChevronDownIcon class="h-3.5 w-3.5 shrink-0 transition-transform duration-200" :class="{ 'rotate-180': showAddDropdown }" />
-            </button>
-
-            <!-- 遮罩关闭 -->
+            <!-- 平台 MCP: 分裂式添加按钮 + 更多操作下拉
+                 主按钮只给 canCreateMcp：只有 edit 码的角色（如内置 Echo、改服务配置）
+                 不该看到「添加」，否则能打开新建向导、填完才在 POST /servers 上撞 403。
+                 箭头只给 canEditMcp：「添加 MCP 服务」需 create，Echo 测试需 edit，
+                 没有 edit 时下拉里没有可选项，留一个空箭头等于噪音。 -->
             <div
-              v-if="showAddDropdown"
-              class="fixed inset-0 z-20 cursor-default"
-              @click="showAddDropdown = false"
-            ></div>
-
-            <!-- 下拉浮层 -->
-            <div
-              v-if="showAddDropdown"
-              class="absolute right-0 top-full z-30 mt-1.5 w-52 origin-top-right rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-800"
-              @click.stop
+              v-else-if="props.scope !== 'personal' && (canCreateMcp || canEditMcp)"
+              class="relative inline-flex h-8 items-stretch rounded-md shadow-sm"
             >
               <button
                 v-if="canCreateMcp"
                 type="button"
-                @click="showAddDropdown = false; resetWizard(); showAddModal = true"
-                class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
+                @click="resetWizard(); showAddModal = true"
+                class="inline-flex h-full items-center justify-center bg-primary px-2.5 text-[11px] font-bold leading-none text-white transition-all hover:bg-primary-dark sm:px-3"
+                :class="canEditMcp ? 'rounded-l-md' : 'rounded-md'"
               >
-                <PlusIcon class="h-4 w-4 text-primary shrink-0" />
-                <div class="min-w-0 flex-1">
-                  <div>添加 MCP 服务</div>
-                  <div class="text-[10px] font-normal text-gray-400">配置自定义工具服务</div>
-                </div>
+                <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
+                <span>添加</span>
               </button>
-
               <button
                 v-if="canEditMcp"
                 type="button"
-                @click="showAddDropdown = false; createEchoTestMcp()"
-                class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
-                title="创建平台内置 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
+                @click.stop="showAddDropdown = !showAddDropdown"
+                class="inline-flex h-full items-center justify-center bg-primary px-1.5 text-white transition-all hover:bg-primary-dark"
+                :class="canCreateMcp ? 'rounded-r-md border-l border-white/20' : 'rounded-md'"
+                title="更多添加选项"
               >
-                <BeakerIcon class="h-4 w-4 text-indigo-600 shrink-0" />
-                <div class="min-w-0 flex-1">
-                  <div>创建 Echo 测试 MCP</div>
-                  <div class="text-[10px] font-normal text-gray-400">平台内置联调诊断服务</div>
-                </div>
+                <ChevronDownIcon class="h-3.5 w-3.5 shrink-0 transition-transform duration-200" :class="{ 'rotate-180': showAddDropdown }" />
               </button>
+
+              <!-- 遮罩关闭 -->
+              <div
+                v-if="showAddDropdown"
+                class="fixed inset-0 z-20 cursor-default"
+                @click="showAddDropdown = false"
+              ></div>
+
+              <!-- 下拉浮层 -->
+              <div
+                v-if="showAddDropdown"
+                class="absolute right-0 top-full z-30 mt-1.5 w-52 origin-top-right rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-800"
+                @click.stop
+              >
+                <button
+                  v-if="canCreateMcp"
+                  type="button"
+                  @click="showAddDropdown = false; resetWizard(); showAddModal = true"
+                  class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  <PlusIcon class="h-4 w-4 text-primary shrink-0" />
+                  <div class="min-w-0 flex-1">
+                    <div>添加 MCP 服务</div>
+                    <div class="text-[10px] font-normal text-gray-400">配置自定义工具服务</div>
+                  </div>
+                </button>
+
+                <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
+                <p class="px-2.5 pb-0.5 pt-1 text-[10px] font-normal text-gray-400">测试工具</p>
+                <button
+                  v-if="canEditMcp"
+                  type="button"
+                  @click="showAddDropdown = false; createEchoTestMcp()"
+                  class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+                  title="创建平台内置 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
+                >
+                  <BeakerIcon class="h-4 w-4 text-indigo-600 shrink-0" />
+                  <div class="min-w-0 flex-1">
+                    <div>创建 Echo 测试 MCP</div>
+                    <div class="text-[10px] font-normal text-gray-400">平台内置联调诊断服务</div>
+                  </div>
+                </button>
+              </div>
             </div>
           </div>
+        </div>
+
+        <!-- 第二行：筛选 + 排序 + 当前条数。固定两行，避免窄左栏把新建挤到下一行 -->
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] transition-colors"
+            :class="onlyRunning
+              ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300'
+              : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'"
+            :aria-pressed="onlyRunning"
+            title="只显示已启用的 MCP 服务"
+            @click="onlyRunning = !onlyRunning"
+          >
+            <span class="h-1.5 w-1.5 rounded-full" :class="onlyRunning ? 'bg-indigo-500' : 'bg-gray-300'"></span>
+            仅运行中
+          </button>
+
+          <select
+            v-model="sortBy"
+            class="h-8 shrink-0 rounded-md border border-gray-200 bg-white px-1.5 text-[11px] text-gray-600 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+            aria-label="服务排序方式"
+          >
+            <option value="default">默认排序</option>
+            <option value="recent">最近同步</option>
+            <option value="name">名称</option>
+            <option value="tools">工具数</option>
+          </select>
+
+          <span class="ml-auto shrink-0 text-[10px] text-gray-400">
+            {{ filteredServers.length }} / {{ servers.length }} 个服务
+          </span>
         </div>
       </div>
 
       <div class="custom-scrollbar max-h-[min(52vh,28rem)] flex-1 overflow-y-auto lg:max-h-none">
-        <div v-if="loading" class="p-8 text-center">
-          <ArrowPathIcon class="mx-auto h-6 w-6 animate-spin text-gray-300" />
+        <!-- 骨架屏：列表高度不跳，比单个 spinner 更少突兀 -->
+        <div v-if="loading" class="space-y-2 p-3">
+          <div
+            v-for="index in 3"
+            :key="index"
+            class="animate-pulse rounded-lg border border-gray-100 p-3 dark:border-gray-800"
+          >
+            <div class="h-3 w-1/2 rounded bg-gray-100 dark:bg-gray-800"></div>
+            <div class="mt-2 h-2.5 w-3/4 rounded bg-gray-100 dark:bg-gray-800"></div>
+            <div class="mt-3 h-2.5 w-2/5 rounded bg-gray-100 dark:bg-gray-800"></div>
+          </div>
         </div>
-        <div v-else-if="servers.length === 0" class="p-8 text-center text-sm italic text-gray-400">
+        <div v-else-if="servers.length === 0" class="p-8 text-center text-sm text-gray-400">
           暂无配置 MCP 服务
         </div>
         <div v-else-if="filteredServers.length === 0" class="p-8 text-center">
@@ -1600,29 +1734,36 @@ onMounted(fetchServers)
             v-for="server in filteredServers"
             :key="server.id"
             @click="selectServer(server)"
-            class="cursor-pointer p-3 transition-all hover:bg-blue-50/30 sm:p-4"
-            :class="selectedServer?.id === server.id ? 'border-l-4 border-primary bg-blue-50' : 'border-l-4 border-transparent'"
+            class="group relative cursor-pointer border-l-4 p-3 transition-all hover:bg-blue-50/30 dark:hover:bg-blue-500/10 sm:p-4"
+            :class="selectedServer?.id === server.id ? 'border-primary bg-blue-50 dark:bg-blue-500/10' : 'border-transparent'"
           >
-            <div class="mb-1.5 flex items-start justify-between gap-2">
+            <div class="flex items-start justify-between gap-2">
               <div class="min-w-0 flex-1">
-                <span class="block truncate text-sm font-bold text-gray-900">{{ server.server_name }}</span>
-                <span
-                  v-if="server.user_assertion_enabled"
-                  class="mt-1 inline-flex rounded border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700"
-                >已启用用户身份签名</span>
-                <span
-                  v-if="server.server_name === 'NanZi Echo 测试 MCP'"
-                  class="mt-1 ml-1 inline-flex rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700"
-                >平台测试 MCP / 所有智能体可挂载</span>
-                <p v-if="server.remark" class="mt-0.5 line-clamp-2 text-[11px] leading-snug text-gray-500">{{ server.remark }}</p>
+                <span class="block truncate text-sm font-bold text-gray-900 dark:text-gray-100">{{ server.server_name }}</span>
+                <div v-if="server.user_assertion_enabled || isEchoTestServer(server)" class="mt-1 flex flex-wrap items-center gap-1">
+                  <span
+                    v-if="server.user_assertion_enabled"
+                    class="inline-flex rounded border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"
+                  >已启用用户身份签名</span>
+                  <span
+                    v-if="isEchoTestServer(server)"
+                    class="inline-flex rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+                  >平台测试 MCP / 所有智能体可挂载</span>
+                </div>
+                <p
+                  v-if="server.remark"
+                  class="mt-1 line-clamp-2 text-[11px] leading-snug text-gray-500"
+                  :title="server.remark"
+                >{{ server.remark }}</p>
               </div>
+
+              <!-- 状态只留圆点 + 开关：「运行中」文字与开关是同一件事，重复说反而占位 -->
               <div class="flex shrink-0 items-center gap-2" @click.stop>
                 <span
-                  class="text-[10px] font-semibold"
-                  :class="server.enabled_status === 1 ? 'text-emerald-600' : 'text-gray-400'"
-                >
-                  {{ server.enabled_status === 1 ? '运行中' : '已禁用' }}
-                </span>
+                  class="h-1.5 w-1.5 rounded-full"
+                  :class="server.enabled_status === 1 ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'"
+                  :title="server.enabled_status === 1 ? '运行中' : '已禁用'"
+                ></span>
                 <Switch
                   :model-value="server.enabled_status === 1"
                   :disabled="!canSave || !canEditMcp || statusLoading[server.id]"
@@ -1630,20 +1771,31 @@ onMounted(fetchServers)
                   :aria-label="`${server.server_name}${server.enabled_status === 1 ? '禁用' : '启用'}`"
                   @update:model-value="handleServerStatusChange(server, $event)"
                 />
+                <button
+                  type="button"
+                  class="rounded p-1 text-gray-400 transition-all hover:bg-white hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                  :class="actionMenu?.server?.id === server.id
+                    ? 'opacity-100'
+                    : 'opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100'"
+                  :aria-label="`${server.server_name} 的更多操作`"
+                  title="更多操作"
+                  @click="openActionMenu($event, server)"
+                >
+                  <EllipsisHorizontalIcon class="h-4 w-4" />
+                </button>
               </div>
             </div>
+
             <p
               v-if="server.shared_from"
-              class="mb-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+              class="mb-1 mt-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
             >
               来自 {{ server.shared_from.source_real_name || server.shared_from.source_user_name }} 的分享
             </p>
-            <div class="mb-2 flex items-center truncate font-mono text-[10px] text-gray-400">
-              <LinkIcon class="mr-1 h-3 w-3 shrink-0" />
-              <span class="truncate">{{ server.sse_url }}</span>
-            </div>
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
+
+            <!-- 底部只留「一眼要判断」的指标：工具数、分享数、最近同步 -->
+            <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]">
+              <span class="rounded bg-gray-100 px-1.5 py-0.5 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                 {{ server.tool_count }} 工具 /
                 <span v-if="server.enabled_status === 1" class="font-bold text-green-600">{{ server.published_tool_count }} 已发布</span>
                 <span v-else class="font-bold text-gray-400">服务已禁用</span>
@@ -1651,40 +1803,15 @@ onMounted(fetchServers)
               </span>
               <span
                 v-if="server.share_count > 0"
-                class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                class="rounded bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
               >
                 已分享 {{ server.share_count }} 次
               </span>
-              <div class="flex items-center gap-1">
-                <span class="mr-1 hidden text-[9px] italic text-gray-400 sm:inline" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
-                <div class="flex items-center space-x-0.5" @click.stop>
-                  <button
-                    v-if="props.scope === 'personal' && !isEchoTestServer(server)"
-                    type="button"
-                    @click="emit('share-server', server)"
-                    class="rounded p-1.5 text-emerald-500 transition-colors hover:bg-white hover:text-emerald-700"
-                    title="分享给同事（对方接受后会复制一份到他的个人 MCP）"
-                  >
-                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13" />
-                    </svg>
-                  </button>
-                  <button type="button" @click="openLogModal(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-indigo-600" title="出站调用日志">
-                    <DocumentTextIcon class="h-4 w-4" />
-                  </button>
-                  <template v-if="canSave">
-                    <button v-if="canEditMcp" type="button" @click="openEditModal(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-blue-500" title="编辑配置">
-                      <PencilSquareIcon class="h-4 w-4" />
-                    </button>
-                    <button v-if="canSyncMcp" type="button" @click="syncTools(server.id)" :disabled="syncLoading[server.id]" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-primary" title="同步工具">
-                      <CloudArrowDownIcon class="h-4 w-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
-                    </button>
-                    <button v-if="canDeleteMcp" type="button" @click="confirmDeleteServer(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-red-500" title="删除服务">
-                      <TrashIcon class="h-4 w-4" />
-                    </button>
-                  </template>
-                </div>
-              </div>
+              <span
+                v-if="server.last_sync_at"
+                class="ml-auto shrink-0 text-gray-400"
+                :title="new Date(server.last_sync_at).toLocaleString()"
+              >{{ formatRelativeTime(server.last_sync_at) }}</span>
             </div>
           </div>
         </div>
@@ -1731,6 +1858,14 @@ onMounted(fetchServers)
                 <span class="text-slate-400">{{ selectedServerUsage.bound_version_count }} 个版本配置</span>
               </div>
               <span v-else-if="usageLoading[selectedServer.id]" class="mt-1 text-[10px] text-slate-400">正在统计使用情况...</span>
+              <p
+                v-if="selectedServer.sse_url"
+                class="mt-1 flex items-center gap-1 font-mono text-[10px] text-gray-400"
+                :title="selectedServer.sse_url"
+              >
+                <LinkIcon class="h-3 w-3 shrink-0" />
+                <span class="truncate">{{ selectedServer.sse_url }}</span>
+              </p>
             </div>
           </div>
           
@@ -1816,11 +1951,15 @@ onMounted(fetchServers)
                     <span v-else-if="tool.is_published" class="rounded border border-green-100 bg-green-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-green-600">已发布</span>
                     <span v-else class="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-gray-400">待发布</span>
                   </div>
-                  <p class="line-clamp-2 text-xs italic leading-relaxed text-gray-500">
+                  <p class="line-clamp-2 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
                     {{ tool.tool_description || '暂无描述' }}
                   </p>
-                  <div class="mt-2 flex flex-wrap gap-1" v-if="tool.parameter_schema">
-                    <code class="rounded border bg-white px-1 text-[9px] text-gray-400" v-for="(_, p) in JSON.parse(tool.parameter_schema).properties" :key="p">{{ p }}</code>
+                  <div class="mt-2 flex flex-wrap gap-1" v-if="toolParamNames(tool).length">
+                    <code
+                      v-for="paramName in toolParamNames(tool)"
+                      :key="paramName"
+                      class="rounded border bg-white px-1 text-[9px] text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
+                    >{{ paramName }}</code>
                   </div>
                 </div>
               </div>
@@ -2212,7 +2351,7 @@ onMounted(fetchServers)
             <div class="bg-gray-50 rounded-lg border border-gray-100 max-h-[250px] overflow-y-auto divide-y divide-gray-200 custom-scrollbar">
               <div v-for="tool in discoveredTools" :key="tool.name" class="p-3">
                 <div class="text-xs font-bold text-gray-800">{{ tool.name }}</div>
-                <div class="text-[10px] text-gray-500 line-clamp-1 italic">{{ tool.description || '无描述' }}</div>
+                <div class="text-[10px] text-gray-500 line-clamp-1">{{ tool.description || '无描述' }}</div>
               </div>
             </div>
           </div>
@@ -2360,6 +2499,68 @@ onMounted(fetchServers)
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 服务卡片「⋯」操作菜单：fixed 定位，避免被列表滚动容器裁剪 -->
+    <div v-if="actionMenu" class="fixed inset-0 z-[60]" @click="closeActionMenu"></div>
+    <div
+      v-if="actionMenu"
+      class="fixed z-[61] w-48 rounded-xl border border-gray-100 bg-white p-1 shadow-xl ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-800"
+      :style="{ left: `${actionMenu.x}px`, top: `${actionMenu.y}px` }"
+      @click.stop
+    >
+      <button
+        v-if="props.scope === 'personal' && !isEchoTestServer(actionMenu.server)"
+        type="button"
+        class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
+        @click="runServerAction('share')"
+      >
+        <svg class="h-4 w-4 shrink-0 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13" />
+        </svg>
+        分享给同事
+      </button>
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
+        @click="runServerAction('logs')"
+      >
+        <DocumentTextIcon class="h-4 w-4 shrink-0 text-indigo-500" />
+        调用日志
+      </button>
+      <template v-if="canSave">
+        <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
+        <button
+          v-if="canEditMcp"
+          type="button"
+          class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
+          @click="runServerAction('edit')"
+        >
+          <PencilSquareIcon class="h-4 w-4 shrink-0 text-gray-400" />
+          编辑配置
+        </button>
+        <button
+          v-if="canSyncMcp"
+          type="button"
+          class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
+          @click="runServerAction('sync')"
+        >
+          <ArrowPathIcon
+            class="h-4 w-4 shrink-0 text-gray-400"
+            :class="actionMenu?.server && syncLoading[actionMenu.server.id] ? 'animate-spin' : ''"
+          />
+          同步工具
+        </button>
+        <button
+          v-if="canDeleteMcp"
+          type="button"
+          class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10"
+          @click="runServerAction('delete')"
+        >
+          <TrashIcon class="h-4 w-4 shrink-0" />
+          删除服务
+        </button>
+      </template>
     </div>
 
     <!-- MCP 接入模拟代码 Modal -->
