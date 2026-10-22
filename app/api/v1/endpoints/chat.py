@@ -1475,31 +1475,72 @@ async def get_conversation_context_usage(
 
 
 class ConversationFinalizeResponse(BaseModel):
-    finalized: bool = Field(..., description="是否已触发摘要写入")
+    finalized: bool = Field(..., description="是否已受理并触发后台摘要写入")
     conversation_id: Optional[str] = None
-    reason: Optional[str] = Field(None, description="未写入时的原因")
+    reason: Optional[str] = Field(None, description="未受理时的原因（后台执行，不回报写入结果）")
+
+
+# 切会话收尾是「通知式」调用：前端一律 fire-and-forget，从不读返回值。
+# 摘要合并要跑 LLM + embedding（线上实测均值 21.8s、最坏 57s）。如果在这里同步 await，
+# 每次点击历史项都会占住浏览器一条同源连接几十秒；用户来回连点几次就把同源 6 条连接
+# 全占满，最后一次切换的 GET /chat/history 只能排队，界面一直停在
+# 「正在加载历史记录...」，直到前面的收尾请求陆续返回。摘要写入不需要调用方等待，
+# 因此改为后台执行、立即答复。
+_finalize_session_tasks: "set[asyncio.Task]" = set()
+
+
+async def _run_finalize_session(user_id: str, conversation_id: str) -> None:
+    """后台执行会话摘要收尾；异常必须自吞，不能污染已返回的响应。"""
+    from app.services.ai.session_summary_service import SessionSummaryService
+
+    try:
+        await SessionSummaryService.finalize_session(user_id, conversation_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 后台任务无处上报，只记录
+        logger.warning(
+            "[Memory] Background finalize failed user=%s conv=%s: %s",
+            user_id,
+            conversation_id,
+            exc,
+        )
 
 
 @router.post(
     "/conversation/{conversation_id}/finalize",
     response_model=StandardResponse[ConversationFinalizeResponse],
     summary="结束会话并刷新记忆摘要",
-    description="切换或新建会话前调用，强制合并当前会话摘要（跳过防抖）。",
+    description=(
+        "切换或新建会话前调用，强制合并当前会话摘要（跳过防抖）。"
+        "摘要合并（含 LLM 与 embedding）在后台执行，接口立即返回，"
+        "避免收尾请求长期占用浏览器同源连接、把随后的历史加载阻塞在队列里。"
+    ),
 )
 async def finalize_conversation(
     conversation_id: str,
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    from app.services.ai.session_summary_service import SessionSummaryService
-
     user_id = _require_chat_user_id(user_info)
+    cid = (conversation_id or "").strip()
+    if not cid:
+        return StandardResponse(
+            data=ConversationFinalizeResponse(
+                finalized=False,
+                conversation_id=conversation_id,
+                reason="missing_conversation_id",
+            )
+        )
 
-    result = await SessionSummaryService.finalize_session(user_id, conversation_id)
+    task = asyncio.create_task(_run_finalize_session(user_id, cid))
+    # 必须持有强引用：asyncio 只持弱引用，任务可能在执行前被 GC 回收。
+    _finalize_session_tasks.add(task)
+    task.add_done_callback(_finalize_session_tasks.discard)
+
     return StandardResponse(
         data=ConversationFinalizeResponse(
-            finalized=bool(result.get("finalized")),
-            conversation_id=result.get("conversation_id") or conversation_id,
-            reason=result.get("reason"),
+            finalized=True,
+            conversation_id=cid,
+            reason=None,
         )
     )
 
