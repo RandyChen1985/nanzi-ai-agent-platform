@@ -65,15 +65,16 @@ def test_call_log_entry_requires_server_control_access():
     assert 'v-if="canSave"' in action_block
 
 
-def test_url_change_requires_reentering_token_before_verify_or_save():
+def test_url_change_keeps_saved_token_without_blocking_verify_or_save():
+    """改地址不应阻断测试/保存，也不应要求重新输入 Token。"""
     assert 'const verifyAddressChanged = computed' in SOURCE
     add_block = SOURCE.split("const addServer = async", 1)[1].split(
         "const saveAndEnableUserAssertion", 1
     )[0]
-    assert "verifyAddressChanged.value" in add_block
-    assert "重新输入 Token 后再保存" in add_block
-    assert "已保存的认证 Header 不会自动沿用" in add_block
+    assert "重新输入 Token 后再保存" not in add_block
+    assert "已保存的认证 Header 不会自动沿用" not in add_block
     verify_block = SOURCE.split("const handleVerify = async", 1)[1].split(
         "const addServer = async", 1
     )[0]
-    assert "重新输入 Token 后再测试" in verify_block
+    assert "重新输入 Token 后再测试" not in verify_block
+    assert "地址已变更，测试与保存会继续沿用已保存的 Token" in SOURCE

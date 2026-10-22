@@ -169,7 +169,6 @@ const loading = ref(false)
 const showAddModal = ref(false)
 const isEditing = ref(false)
 const editingId = ref('')
-const editingAuthHeadersConfigured = ref(false)
 
 // Tool Tester Logic
 const showTester = ref(false)
@@ -902,7 +901,6 @@ const resetWizard = () => {
   isEditing.value = false
   editingId.value = ''
   editingOriginalName.value = ''
-  editingAuthHeadersConfigured.value = false
   wizardStep.value = 1
   createdServer.value = null
   publishAllLoading.value = false
@@ -1002,7 +1000,6 @@ const openEditModal = (server: any) => {
   editingId.value = server.id
   // 记住原始完整名：无前缀（平台 Echo）/历史无用户名前缀的名字不会被重新拼前缀改写。
   editingOriginalName.value = String(server.server_name || '')
-  editingAuthHeadersConfigured.value = Boolean(server.auth_headers_configured)
   // 只有库里已经开启（且已有私钥）时才允许直接签发断言做探测。
   savedUserAssertionEnabled.value = Boolean(server.user_assertion_enabled)
   wizardStep.value = 1
@@ -1229,13 +1226,8 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
       payload.user_assertion_enabled = false
     }
     if (isEditing.value && editingId.value) {
-      // 编辑态带上 server_id：地址未变时后端复用已保存的凭据完成探测。
+      // 编辑态带上 server_id：后端复用已保存的凭据完成探测（地址变更也沿用）。
       payload.server_id = editingId.value
-    }
-    if (verifyAddressChanged.value && authorizationEnabled.value && !authorizationEditing.value) {
-      // 后端不会把旧地址的 Token 复用给新地址；这里直接拦住，避免发出一次注定失败的探测。
-      showToast('服务地址已变更：已保存的 Token 不会用于新地址，请点击“编辑”重新输入 Token 后再测试', 'warning')
-      return
     }
     const res = await axios.post('/api/portal/mcp/verify', payload)
     discoveredTools.value = res.data.tools
@@ -1274,21 +1266,6 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
   if (authorizationEnabled.value && authorizationEditing.value && !authorizationToken.value.trim()) {
     showToast('请输入 Authorization Token', 'warning')
     return false
-  }
-  if (
-    isEditing.value &&
-    verifyAddressChanged.value &&
-    authorizationEnabled.value &&
-    !authorizationEditing.value
-  ) {
-    // 与后端 update 的「地址变更清凭据」保持一致：旧 Token 不会自动跟到新地址。
-    showToast('服务地址已变更：请点击“编辑”重新输入 Token 后再保存', 'warning')
-    return false
-  }
-  if (isEditing.value && verifyAddressChanged.value && editingAuthHeadersConfigured.value) {
-    // 非 Authorization 的凭据头（如 X-Api-Key）后端同样会在改地址时剔除；这里提示
-    // 用户去「高级配置」重新确认，避免保存后以为还带着旧 Header。
-    showToast('服务地址已变更：已保存的认证 Header 不会自动沿用，请在高级配置中确认', 'warning')
   }
   if (headerMode.value === 'advanced') {
     try {
@@ -2513,8 +2490,8 @@ onMounted(fetchServers)
                 >取消</button>
               </div>
               <p v-if="isEditing && authorizationEnabled" class="mt-2 text-[10px] leading-relaxed text-amber-600">已配置 Token 不会回显；点击“编辑”后填写新 Token，保存后才会替换。</p>
-              <p v-if="verifyReusesSavedAuth && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">地址未修改时，“连接并发现工具”会沿用已保存的 Token。</p>
-              <p v-if="verifyAddressChanged && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-amber-600">服务地址已变更，已保存的 Token 不会用于新地址；请点击“编辑”重新输入 Token。</p>
+              <p v-if="verifyReusesSavedAuth && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">“连接并发现工具”与保存都会沿用已保存的 Token。</p>
+              <p v-if="verifyAddressChanged && authorizationEnabled && !authorizationEditing" class="mt-1 text-[10px] leading-relaxed text-gray-500">地址已变更，测试与保存会继续沿用已保存的 Token；如需更换请点击“编辑”。</p>
             </div>
 
             <!-- Dynamic Headers Editor -->

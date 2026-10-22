@@ -388,8 +388,7 @@ def _apply_mcp_auth_update(
 ) -> None:
     """应用认证更新；编辑界面只提交 Header 增量，避免回显或覆盖旧密钥。
 
-    ``reset_credentials`` 用于服务地址变更：旧地址的 Token/凭据不应自动跟随到新地址
-    （既防误发到新主机，也防分享接收方改地址后把原分享人的凭据引到自己的服务器）。
+    ``reset_credentials`` 仅用于显式重置凭据的场景（更新接口已不再因地址变更调用它）。
     非凭据类 Header（如 X-Tenant-Id）保留；凭据类 Header 与固定 Token 清空，除非本次
     请求显式重新提供。
     """
@@ -453,7 +452,7 @@ async def _load_verify_saved_server(
     data: McpVerifyRequest,
     user: Dict,
 ) -> Optional[McpServer]:
-    """编辑态探测的凭据来源；地址变更时不返回，避免旧凭据被发往新地址。"""
+    """编辑态探测的凭据来源；地址变更也沿用已保存凭据，避免用户重复输入 Token。"""
     server_id = str(data.server_id or "").strip()
     if not server_id:
         return None
@@ -464,9 +463,6 @@ async def _load_verify_saved_server(
     if server is None:
         raise HTTPException(status_code=404, detail="Server not found")
     _ensure_server_control_access(server, user)
-    if str(data.sse_url or "").strip() != str(server.sse_url or "").strip():
-        # 地址已改：不复用旧凭据，必须由本次请求显式提供 Token。
-        return None
     return server
 
 
@@ -1031,12 +1027,9 @@ async def update_mcp_server(
             owner_id=server.user_id if server.scope == "personal" else None,
         )
     server.server_name = server_name
-    url_changed = (
-        str(data.sse_url or "").strip() != str(server.sse_url or "").strip()
-    )
     server.sse_url = data.sse_url
-    # 地址变了就不再复用旧地址的凭据；需要时由本次请求显式提供。
-    _apply_mcp_auth_update(server, data, reset_credentials=url_changed)
+    # 地址变更不再清空凭据：沿用已保存的 Token 与 Header；需要更换时在本次请求显式提供。
+    _apply_mcp_auth_update(server, data)
     server.credential_mode = data.credential_mode
     server.user_assertion_enabled = data.user_assertion_enabled
     server.user_assertion_header = data.user_assertion_header

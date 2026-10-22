@@ -77,10 +77,10 @@ def test_mcp_registry_preserves_auth_policy_when_toggling_server_status():
 def test_mcp_registry_does_not_render_server_authentication_values():
     source = COMPONENT.read_text(encoding="utf-8")
 
-    assert "auth_headers_configured" in source
     assert "auth_headers: server.auth_headers" not in source
     assert "已配置 Token 不会回显" in source
     assert "认证信息不会回显；已配置项显示为" not in source
+    assert "{{ server.auth_headers }}" not in source
 
 
 def test_mcp_tool_tester_exposes_sanitized_user_assertion_status():

@@ -1,4 +1,4 @@
-"""编辑态连接测试必须复用已保存凭据，但不允许把旧凭据发往新地址。"""
+"""编辑态连接测试必须复用已保存凭据，地址变更时也沿用，避免用户重复输入 Token。"""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -96,16 +96,16 @@ async def test_edit_verify_reuses_saved_extra_headers_when_url_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_edit_verify_does_not_reuse_saved_token_when_url_changed():
-    """地址被改掉时不能把旧凭据发往新地址。"""
+async def test_edit_verify_reuses_saved_token_when_url_changed():
+    """地址被改掉时仍沿用已保存凭据，避免用户每次改地址都要重填 Token。"""
     headers = await _run_verify(
-        _verify_request(sse_url="http://evil.example.com/mcp"),
+        _verify_request(sse_url="https://new.example.com/mcp"),
         server=_saved_server(),
     )
 
     assert headers is not None
-    assert "Authorization" not in headers
-    assert "X-Tenant" not in headers
+    assert headers["Authorization"] == f"Bearer {SAVED_TOKEN}"
+    assert headers["X-Tenant"] == "tenant-a"
 
 
 @pytest.mark.asyncio
