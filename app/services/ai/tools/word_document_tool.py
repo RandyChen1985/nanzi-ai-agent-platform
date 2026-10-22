@@ -6,7 +6,12 @@ from typing import Any
 from docx import Document
 
 from app.core.context import get_current_agent_context
-from app.services.ai.tools.document_paths import DocumentPathError, resolve_document_input_path, resolve_document_output_path
+from app.services.ai.tools.document_paths import (
+    DocumentPathError,
+    resolve_context_user_name,
+    resolve_document_input_path,
+    resolve_document_output_path,
+)
 from app.services.ai.tools.generated_file_service import register_artifact
 from app.services.ai.tools.tool_compat import tool
 
@@ -20,15 +25,6 @@ def _context():
     return context
 
 
-def _context_user_name(context) -> str | None:
-    dims = context.user_dimensions or {}
-    raw_name = dims.get("user_name") or dims.get("username")
-    if not raw_name:
-        return None
-    name = str(raw_name).strip()
-    return name or None
-
-
 async def _input_path(path: str):
     context = _context()
     return await resolve_document_input_path(
@@ -37,7 +33,7 @@ async def _input_path(path: str):
         user_id=context.user_id,
         conversation_id=context.conversation_id,
         allowed_extensions=_EXTENSIONS,
-        user_name=_context_user_name(context),
+        user_name=resolve_context_user_name(context),
     )
 
 
@@ -48,7 +44,7 @@ async def _output_path(filename: str):
         user_id=context.user_id,
         conversation_id=context.conversation_id,
         allowed_extensions=_EXTENSIONS,
-        user_name=_context_user_name(context),
+        user_name=resolve_context_user_name(context),
     )
 
 
