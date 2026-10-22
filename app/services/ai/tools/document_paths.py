@@ -4,15 +4,46 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from app.utils.fs_paths import get_data_base_dir
 
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 
+# 邮件附件：类型白名单 + 数量/合计上限。
+# 白名单不是「懒得判断」而是刻意收窄：模型可能被诱导把 .env、密钥、脚本当附件外发，
+# 而这类文件恰好也是邮箱网关最爱拦的，放开等于两头挨打。
+EMAIL_ATTACHMENT_EXTENSIONS = frozenset(
+    {
+        ".docx",
+        ".xlsx",
+        ".pptx",
+        ".pdf",
+        ".csv",
+        ".txt",
+        ".md",
+        ".json",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".zip",
+    }
+)
+MAX_EMAIL_ATTACHMENTS = 5
+# 与 MAX_DOCUMENT_BYTES 同口径：单文件与合计都不超过 20MB 原始字节。
+# 注意 base64 编码后报文约膨胀到 26.7MB，超出部分邮箱服务商的 25MB 单封上限时
+# 由 SMTP 服务端返回真实错误——不做静默截断。
+MAX_EMAIL_ATTACHMENT_TOTAL_BYTES = MAX_DOCUMENT_BYTES
+
 
 class DocumentPathError(ValueError):
     """A document path is not safe for the current request."""
+
+
+class EmailAttachmentError(DocumentPathError):
+    """邮件附件不合法：类型、体量或数量不满足约定。"""
 
 
 async def resolve_workspace_root() -> str:
@@ -55,6 +86,20 @@ def resolve_user_docs_dir(
         user_name=user_name,
         user_info=user_info,
     )
+
+
+def resolve_context_user_name(context: Any) -> str | None:
+    """从 AgentContext 的 user_dimensions 取用户名，用于工作区目录解析。
+
+    这段取值规则原先在 word / excel / notification 三个工具里各抄一份。它直接决定
+    代码去哪个用户目录找文件，一旦某处漂移就会「同一个文件在 A 工具能读、在 B 工具
+    读不到」，所以收敛到这里。
+    """
+    dimensions = getattr(context, "user_dimensions", None) or {}
+    raw = dimensions.get("user_name") or dimensions.get("username")
+    if not raw:
+        return None
+    return str(raw).strip() or None
 
 
 def _path_under(path: Path, parent: Path) -> bool:
@@ -159,6 +204,76 @@ async def resolve_document_input_path(
     if legacy_workdir != session_workdir and _path_under(candidate, legacy_workdir):
         return candidate
     raise DocumentPathError("文件不在当前会话允许访问的目录中")
+
+
+async def resolve_email_attachments(
+    paths: Iterable[str],
+    *,
+    allowed_attachment_paths: Iterable[str],
+    user_id: int | str | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+) -> list[Path]:
+    """校验邮件附件，返回可直接读取的绝对路径。
+
+    单个文件的授权范围、扩展名与 20MB 上限全部复用 ``resolve_document_input_path``，
+    这里只叠三条批量规则：去重保序、数量上限、合计大小上限。
+
+    **任一附件不合法就整批抛错**：调用方据此整封不发。若改成「跳过坏附件照发」，
+    用户会收到一封「看起来发了三个附件、实际只发了两个」的邮件，而发信人无从察觉。
+    """
+    requested = [str(item).strip() for item in paths or [] if str(item).strip()]
+    if not requested:
+        return []
+
+    # 先按原始条目粗判数量：模型可能一口气给几十上百个路径，而每条都会触发一次
+    # 「解析工作区根目录（内含读配置）+ stat」，等到全跑完再报数量错纯属浪费。
+    # 用字符串去重而不是解析后去重，是为了这一步不碰磁盘。
+    unique_requested = list(dict.fromkeys(requested))
+    if len(unique_requested) > MAX_EMAIL_ATTACHMENTS:
+        raise EmailAttachmentError(
+            f"附件数量超限：最多 {MAX_EMAIL_ATTACHMENTS} 个，"
+            f"当前 {len(unique_requested)} 个"
+        )
+
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for raw in requested:
+        try:
+            path = await resolve_document_input_path(
+                raw,
+                allowed_attachment_paths=allowed_attachment_paths,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                allowed_extensions=EMAIL_ATTACHMENT_EXTENSIONS,
+                user_name=user_name,
+            )
+        except DocumentPathError as exc:
+            # 必须点名是哪个文件：多附件时只说「不支持的文件类型」，用户得逐个去猜。
+            # raw 可能是目录写法（结尾带 /），此时 basename 为空，退回原串。
+            label = Path(raw).name or raw
+            raise EmailAttachmentError(f"附件 {label} 不可用：{exc}") from None
+        if path in seen:
+            continue
+        seen.add(path)
+        resolved.append(path)
+
+    total_bytes = 0
+    for path in resolved:
+        try:
+            total_bytes += path.stat().st_size
+        except OSError:
+            # 校验与汇总之间文件被删：包成业务错误，别让 OSError 穿透工具边界。
+            raise EmailAttachmentError(
+                f"附件 {path.name} 不可用：文件已不存在或无法读取"
+            ) from None
+        if total_bytes > MAX_EMAIL_ATTACHMENT_TOTAL_BYTES:
+            total_mb = MAX_EMAIL_ATTACHMENT_TOTAL_BYTES // (1024 * 1024)
+            raise EmailAttachmentError(
+                f"附件合计大小超限：最多 {total_mb}MB，"
+                f"当前 {total_bytes / (1024 * 1024):.1f}MB"
+            )
+    return resolved
 
 
 def sanitize_output_filename(filename: str, allowed_extensions: Iterable[str]) -> str:

@@ -21,8 +21,6 @@ import {
 import { 
   PlusIcon,
   BeakerIcon,
-  EyeIcon,
-  EyeSlashIcon,
   CodeBracketIcon,
   ListBulletIcon,
   ArrowPathIcon,
@@ -231,6 +229,31 @@ const selectedToolIds = ref<Set<string>>(new Set())
 const selectedServer = ref<any>(null)
 const tools = ref<any[]>([])
 const toolsLoading = ref(false)
+/** 工具列表请求序号：快速切换服务时，旧响应不得覆盖新选中服务的工具。 */
+let toolsRequestSeq = 0
+
+/**
+ * 列表刷新后用新对象重绑当前选中服务。
+ *
+ * 选中对象是列表项的引用：fetchServers 会整体替换 servers 数组，如果不重绑，
+ * 改名 / 改地址 / 同步后的工具计数会一直停在旧对象上（右侧标题和“清理已失效”
+ * 按钮都读 selectedServer）。服务已不存在时清空选中，避免操作到已删除的服务。
+ */
+const reconcileSelectedServer = () => {
+  const current = selectedServer.value
+  if (!current) return
+  const fresh = servers.value.find((item: any) => item.id === current.id)
+  if (fresh) {
+    selectedServer.value = fresh
+    return
+  }
+  selectedServer.value = null
+  selectedServerUsage.value = null
+  tools.value = []
+  selectedToolIds.value = new Set()
+  toolsRequestSeq += 1
+}
+
 const isSelectedServerEnabled = computed(() => Number(selectedServer.value?.enabled_status) === 1)
 const canManageSelectedTools = computed(() => canSave.value && isSelectedServerEnabled.value)
 const canManageTool = (tool: any) => canManageSelectedTools.value && tool?.is_available !== false
@@ -260,30 +283,40 @@ const toggleSelectTool = (id: string) => {
   }
 }
 
+/** 批量操作条上的「取消选择」：整体替换 Set，确保依赖选中集合的 UI 同步刷新 */
+const clearToolSelection = () => {
+  selectedToolIds.value = new Set()
+}
+
 const batchUpdateStatus = async (published: boolean) => {
+  const targetServerId = selectedServer.value?.id
   const ids = tools.value
     .filter(tool => selectedToolIds.value.has(tool.id) && tool.is_available !== false)
     .map(tool => tool.id)
   if (!canManageSelectedTools.value || ids.length === 0) return
-  
+
   loading.value = true
   try {
-    // Batch update in parallel
-    await Promise.all(ids.map(id => 
-      axios.put(`/api/portal/mcp/tools/${id}/publish?published=${published}`)
-    ))
-    
-    showToast(`成功${published ? '发布' : '下线'} ${ids.length} 个工具`, 'success')
-    if (selectedServer.value) {
-      fetchTools(selectedServer.value.id)
-      fetchServerUsage(selectedServer.value.id).then((usage) => {
-        if (selectedServer.value) selectedServerUsage.value = usage
+    // 并行请求里部分失败是常态（并发上限、单个工具被远端删除），不能因为一个失败
+    // 就丢掉其余成功结果、也不刷新界面。allSettled + 统一刷新。
+    const results = await Promise.allSettled(
+      ids.map(id => axios.put(`/api/portal/mcp/tools/${id}/publish?published=${published}`))
+    )
+    const failed = results.filter(item => item.status === 'rejected').length
+    const succeeded = ids.length - failed
+    if (failed > 0) {
+      showToast(`已${published ? '发布' : '下线'} ${succeeded} 个，${failed} 个失败`, 'warning')
+    } else {
+      showToast(`成功${published ? '发布' : '下线'} ${ids.length} 个工具`, 'success')
+    }
+    if (targetServerId) {
+      fetchTools(targetServerId)
+      fetchServerUsage(targetServerId).then((usage) => {
+        if (selectedServer.value?.id === targetServerId) selectedServerUsage.value = usage
       })
       fetchServers()
     }
     selectedToolIds.value.clear()
-  } catch (e) {
-    showToast(getApiErrorMessage(e, '批量操作失败'), 'error')
   } finally {
     loading.value = false
   }
@@ -297,24 +330,28 @@ const isAllToolsUnpublished = computed(() => {
 const isPublishingAllCurrent = ref(false)
 
 const publishAllCurrentServerTools = async () => {
-  if (!selectedServer.value || !canManageSelectedTools.value) return
+  const targetServerId = selectedServer.value?.id
+  if (!targetServerId || !canManageSelectedTools.value) return
   const unpub = tools.value.filter(tool => !tool.is_published && tool.is_available !== false)
   if (unpub.length === 0) return
 
   isPublishingAllCurrent.value = true
   try {
-    await Promise.all(unpub.map(tool => 
-      axios.put(`/api/portal/mcp/tools/${tool.id}/publish?published=true`)
-    ))
-    showToast(`成功发布全部 ${unpub.length} 个工具`, 'success')
-    fetchTools(selectedServer.value.id)
-    fetchServerUsage(selectedServer.value.id).then((usage) => {
-      if (selectedServer.value) selectedServerUsage.value = usage
+    const results = await Promise.allSettled(
+      unpub.map(tool => axios.put(`/api/portal/mcp/tools/${tool.id}/publish?published=true`))
+    )
+    const failed = results.filter(item => item.status === 'rejected').length
+    if (failed > 0) {
+      showToast(`已发布 ${unpub.length - failed} 个，${failed} 个失败`, 'warning')
+    } else {
+      showToast(`成功发布全部 ${unpub.length} 个工具`, 'success')
+    }
+    fetchTools(targetServerId)
+    fetchServerUsage(targetServerId).then((usage) => {
+      if (selectedServer.value?.id === targetServerId) selectedServerUsage.value = usage
     })
     fetchServers()
     selectedToolIds.value.clear()
-  } catch (e) {
-    showToast(getApiErrorMessage(e, '批量发布失败'), 'error')
   } finally {
     isPublishingAllCurrent.value = false
   }
@@ -750,10 +787,11 @@ const fetchServers = async () => {
     const res = await axios.get('/api/portal/mcp/servers', {
       params: { scope: props.scope }
     })
-    servers.value = res.data
+    servers.value = Array.isArray(res.data) ? res.data : []
+    reconcileSelectedServer()
     emit('server-count-changed', {
       scope: props.scope,
-      count: Array.isArray(res.data) ? res.data.length : 0,
+      count: servers.value.length,
     })
     serversLoaded.value = true
     // 从「收到的分享」点「去我的 MCP 看看」时列表可能刚重建，加载完再落选中
@@ -1195,7 +1233,9 @@ const handleVerify = async (options?: { skipUserAssertion?: boolean }) => {
       payload.server_id = editingId.value
     }
     if (verifyAddressChanged.value && authorizationEnabled.value && !authorizationEditing.value) {
+      // 后端不会把旧地址的 Token 复用给新地址；这里直接拦住，避免发出一次注定失败的探测。
       showToast('服务地址已变更：已保存的 Token 不会用于新地址，请点击“编辑”重新输入 Token 后再测试', 'warning')
+      return
     }
     const res = await axios.post('/api/portal/mcp/verify', payload)
     discoveredTools.value = res.data.tools
@@ -1234,6 +1274,21 @@ const addServer = async (options?: { closeAfterSave?: boolean }) => {
   if (authorizationEnabled.value && authorizationEditing.value && !authorizationToken.value.trim()) {
     showToast('请输入 Authorization Token', 'warning')
     return false
+  }
+  if (
+    isEditing.value &&
+    verifyAddressChanged.value &&
+    authorizationEnabled.value &&
+    !authorizationEditing.value
+  ) {
+    // 与后端 update 的「地址变更清凭据」保持一致：旧 Token 不会自动跟到新地址。
+    showToast('服务地址已变更：请点击“编辑”重新输入 Token 后再保存', 'warning')
+    return false
+  }
+  if (isEditing.value && verifyAddressChanged.value && editingAuthHeadersConfigured.value) {
+    // 非 Authorization 的凭据头（如 X-Api-Key）后端同样会在改地址时剔除；这里提示
+    // 用户去「高级配置」重新确认，避免保存后以为还带着旧 Header。
+    showToast('服务地址已变更：已保存的认证 Header 不会自动沿用，请在高级配置中确认', 'warning')
   }
   if (headerMode.value === 'advanced') {
     try {
@@ -1309,16 +1364,26 @@ const publishAllCreatedTools = async () => {
     let serverTools = tools.value
     if (!serverTools.length || selectedServer.value?.id !== targetServerId) {
       const res = await axios.get(`/api/portal/mcp/servers/${targetServerId}/tools`)
-      serverTools = res.data || []
+      serverTools = Array.isArray(res.data) ? res.data : []
     }
     const unpublishedTools = serverTools.filter((t: any) => !t.is_published && t.is_available !== false)
     if (unpublishedTools.length > 0) {
-      await Promise.all(unpublishedTools.map((t: any) => 
-        axios.put(`/api/portal/mcp/tools/${t.id}/publish?published=true`)
-      ))
+      const results = await Promise.allSettled(
+        unpublishedTools.map((t: any) =>
+          axios.put(`/api/portal/mcp/tools/${t.id}/publish?published=true`)
+        )
+      )
+      const failed = results.filter(item => item.status === 'rejected').length
+      if (failed > 0) {
+        showToast(`已发布 ${unpublishedTools.length - failed} 个，${failed} 个失败`, 'warning')
+      } else {
+        showToast(`成功发布全部 ${unpublishedTools.length} 个工具`, 'success')
+      }
+    } else {
+      showToast('没有需要发布的工具', 'info')
     }
-    showToast(`成功发布全部 ${serverTools.length} 个工具`, 'success')
-    fetchTools(targetServerId)
+    // 部分失败也刷新列表，让用户看到真实状态后手动处理。
+    if (selectedServer.value?.id === targetServerId) fetchTools(targetServerId)
     fetchServers()
     closeWizard()
   } catch (e: any) {
@@ -1371,12 +1436,20 @@ const cancelDeleteServer = () => {
   deleteServerUsage.value = null
 }
 
-const syncTools = async (id: string) => {
+const syncGuardServerId = ref<string | null>(null)
+const syncGuardMessage = ref('')
+const showSyncGuardConfirm = ref(false)
+
+const syncTools = async (id: string, options?: { force?: boolean }) => {
   if (syncLoading.value[id]) return
-  
+
   syncLoading.value[id] = true
   try {
-    const response = await axios.post(`/api/portal/mcp/servers/${id}/sync`)
+    const response = await axios.post(
+      `/api/portal/mcp/servers/${id}/sync`,
+      null,
+      options?.force ? { params: { force: true } } : undefined,
+    )
     const remoteDeletedCount = Number(response.data?.remote_deleted_count || 0)
     showToast(
       remoteDeletedCount > 0
@@ -1392,21 +1465,80 @@ const syncTools = async (id: string) => {
         })
     }
   } catch (e: any) {
+    if (!options?.force && e?.response?.status === 409) {
+      // 远端返回 0 个工具、本地仍有可用工具：后端默认拒绝，避免一次异常把工具全下线。
+      syncGuardServerId.value = id
+      syncGuardMessage.value = String(
+        e?.response?.data?.detail || '远端返回 0 个工具，疑似异常，已拒绝本次同步。',
+      )
+      showSyncGuardConfirm.value = true
+      return
+    }
     showToast(getApiErrorMessage(e, '同步失败'), 'error')
   } finally {
     syncLoading.value[id] = false
   }
 }
 
+const confirmForceSync = async () => {
+  const id = syncGuardServerId.value
+  showSyncGuardConfirm.value = false
+  syncGuardServerId.value = null
+  if (id) await syncTools(id, { force: true })
+}
+
+const cancelForceSync = () => {
+  showSyncGuardConfirm.value = false
+  syncGuardServerId.value = null
+}
+
+/**
+ * 清理「远端已删除」工具：只删失效缓存与智能体版本里的死引用，
+ * 不动服务配置与出站调用审计（删服务才会连带清空审计日志）。
+ */
+const showCleanupConfirm = ref(false)
+const cleanupStaleLoading = ref(false)
+const staleToolNames = computed(() =>
+  tools.value
+    .filter((tool: any) => tool.is_available === false)
+    .map((tool: any) => tool.tool_name),
+)
+const staleToolCount = computed(
+  () => Number(selectedServer.value?.stale_tool_count || staleToolNames.value.length),
+)
+
+const cleanupStaleTools = async () => {
+  const server = selectedServer.value
+  if (!server || cleanupStaleLoading.value) return
+  cleanupStaleLoading.value = true
+  try {
+    const response = await axios.delete(`/api/portal/mcp/servers/${server.id}/stale-tools`)
+    showToast(response.data?.message || '已清理远端已删除的工具', 'success')
+    showCleanupConfirm.value = false
+    // 后端已删干净：先就地把计数清零，避免刷新返回前按钮和提示还挂着
+    if (selectedServer.value?.id === server.id) selectedServer.value.stale_tool_count = 0
+    fetchServers()
+    fetchTools(server.id)
+  } catch (e: any) {
+    showToast(getApiErrorMessage(e, '清理失败'), 'error')
+  } finally {
+    cleanupStaleLoading.value = false
+  }
+}
+
 const fetchTools = async (serverId: string) => {
+  const seq = ++toolsRequestSeq
   toolsLoading.value = true
   try {
     const res = await axios.get(`/api/portal/mcp/servers/${serverId}/tools`)
-    tools.value = res.data
+    if (seq !== toolsRequestSeq || selectedServer.value?.id !== serverId) return
+    tools.value = Array.isArray(res.data) ? res.data : []
   } catch (e) {
-    showToast(getApiErrorMessage(e, '获取工具列表失败'), 'error')
+    if (seq === toolsRequestSeq) {
+      showToast(getApiErrorMessage(e, '获取工具列表失败'), 'error')
+    }
   } finally {
-    toolsLoading.value = false
+    if (seq === toolsRequestSeq) toolsLoading.value = false
   }
 }
 
@@ -1414,6 +1546,9 @@ const selectServer = (server: any) => {
   selectedServer.value = server
   selectedServerUsage.value = null
   selectedToolIds.value = new Set()
+  // 先清空，避免新服务的标题下短暂展示上一个服务的工具；同时让旧请求失效。
+  tools.value = []
+  toolsRequestSeq += 1
   fetchTools(server.id)
   fetchServerUsage(server.id).then((usage) => {
     if (selectedServer.value?.id === server.id) selectedServerUsage.value = usage
@@ -1426,6 +1561,7 @@ const clearSelectedServer = () => {
   selectedServerUsage.value = null
   tools.value = []
   selectedToolIds.value = new Set()
+  toolsRequestSeq += 1
 }
 
 const togglePublish = async (tool: any) => {
@@ -1435,6 +1571,8 @@ const togglePublish = async (tool: any) => {
     await axios.put(`/api/portal/mcp/tools/${tool.id}/publish?published=${newStatus}`)
     tool.is_published = newStatus
     showToast(newStatus ? '工具已发布' : '工具已下线', 'success')
+    // 列表卡片上的“N 已发布”来自 server 记录；只改 tool 会留下旧计数。
+    fetchServers()
     if (selectedServer.value) {
       fetchServerUsage(selectedServer.value.id).then((usage) => {
         if (selectedServer.value) selectedServerUsage.value = usage
@@ -1449,7 +1587,7 @@ onMounted(fetchServers)
 </script>
 
 <template>
-  <div class="flex h-full min-h-[28rem] flex-col gap-3 lg:min-h-0 lg:flex-row lg:gap-6">
+  <div class="flex h-full min-h-[28rem] min-w-0 flex-col gap-3 lg:min-h-0 lg:flex-row lg:gap-6">
     <!-- Left: Server List — 移动端选中服务后隐藏，避免左右挤成一条 -->
     <div
       class="flex w-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:w-[360px] lg:shrink-0 xl:w-[400px]"
@@ -1808,7 +1946,13 @@ onMounted(fetchServers)
                 {{ server.tool_count }} 工具 /
                 <span v-if="server.enabled_status === 1" class="font-bold text-green-600">{{ server.published_tool_count }} 已发布</span>
                 <span v-else class="font-bold text-gray-400">服务已禁用</span>
-                <span v-if="server.stale_tool_count > 0" class="ml-1 text-amber-600">{{ server.stale_tool_count }} 个远端已删除</span>
+                <!-- 「远端已删除」不是错误而是存量提示：上次同步时远端没再返回这些工具。
+                     文案必须解释「为什么出现 + 影响什么 + 怎么恢复」，否则用户只会当成故障。 -->
+                <span
+                  v-if="server.stale_tool_count > 0"
+                  class="ml-1 cursor-help text-amber-600"
+                  v-tooltip="`这 ${server.stale_tool_count} 个工具在上次同步时已从远端消失，常见原因是远端改名、下架，或凭证与权限收窄导致 tools/list 少返回。它们仍保留在列表里供核对，但不可发布、不可执行，也不会被智能体调用；远端恢复同名工具后，下次同步会恢复可用性，但已下线的工具需要重新发布。`"
+                >{{ server.stale_tool_count }} 个远端已删除</span>
               </span>
               <span
                 v-if="server.share_count > 0"
@@ -1829,7 +1973,7 @@ onMounted(fetchServers)
 
     <!-- Right: Tool List — 移动端仅在选中服务后展示 -->
     <div
-      class="flex min-h-[22rem] flex-1 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:min-h-0"
+      class="flex min-h-[22rem] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:min-h-0"
       :class="selectedServer ? 'flex' : 'hidden lg:flex'"
     >
       <div v-if="!selectedServer" class="flex flex-1 flex-col items-center justify-center text-gray-400">
@@ -1839,7 +1983,7 @@ onMounted(fetchServers)
       
       <template v-else>
         <div class="flex flex-col gap-3 border-b border-gray-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
-          <div class="flex min-w-0 items-start gap-2">
+          <div class="flex min-w-0 flex-1 items-start gap-2">
             <button
               type="button"
               class="-ml-1 mt-0.5 rounded-md p-1.5 text-gray-500 hover:bg-white hover:text-gray-800 lg:hidden"
@@ -1869,7 +2013,7 @@ onMounted(fetchServers)
               <span v-else-if="usageLoading[selectedServer.id]" class="mt-1 text-[10px] text-slate-400">正在统计使用情况...</span>
               <p
                 v-if="selectedServer.sse_url"
-                class="mt-1 flex items-center gap-1 font-mono text-[10px] text-gray-400"
+                class="mt-1 flex min-w-0 items-center gap-1 font-mono text-[10px] text-gray-400"
                 :title="selectedServer.sse_url"
               >
                 <LinkIcon class="h-3 w-3 shrink-0" />
@@ -1878,23 +2022,108 @@ onMounted(fetchServers)
             </div>
           </div>
           
-          <div class="flex flex-wrap items-center gap-2 pl-8 sm:pl-0 lg:pl-0">
+          <div class="flex flex-wrap items-center gap-2 pl-8 sm:max-w-[60%] sm:justify-end sm:pl-0">
             <button
+              v-if="canSave"
               type="button"
               @click="openLogModal(selectedServer)"
-              class="flex items-center rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:text-indigo-600 hover:border-indigo-200 shadow-xs transition-colors"
-              title="查看该服务的出站调用日志"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-slate-500 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50/60 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 active:scale-[0.96]"
+              v-tooltip="'查看该服务的出站调用日志'"
+              aria-label="查看该服务的出站调用日志"
             >
-              <DocumentTextIcon class="mr-1 h-3.5 w-3.5 text-indigo-500" />
-              调用日志
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M8 13h8" />
+                <path d="M8 17h5" />
+              </svg>
             </button>
-            <div v-if="canSave && canPublishMcp && selectedToolIds.size > 0" class="flex items-center space-x-2 rounded-lg border border-gray-200 bg-white p-1 shadow-sm animate-fade-in">
-              <button @click="batchUpdateStatus(true)" :disabled="!canManageSelectedTools" class="rounded bg-green-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50">批量发布</button>
-              <button @click="batchUpdateStatus(false)" :disabled="!canManageSelectedTools" class="rounded bg-slate-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">批量下线</button>
-            </div>
-            <button v-if="canSave && canSyncMcp" @click="syncTools(selectedServer.id)" :disabled="syncLoading[selectedServer.id]" class="flex items-center rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-primary hover:underline">
-              <ArrowPathIcon class="mr-1 h-3.5 w-3.5" :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''" />
-              刷新
+            <button
+              v-if="canSave && canSyncMcp"
+              type="button"
+              @click="syncTools(selectedServer.id)"
+              :disabled="syncLoading[selectedServer.id]"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-slate-500 shadow-sm transition-all hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 active:scale-[0.96] disabled:cursor-wait disabled:opacity-60"
+              v-tooltip="syncLoading[selectedServer.id] ? '正在同步远端工具…' : '重新同步远端工具列表'"
+              :aria-label="syncLoading[selectedServer.id] ? '正在同步远端工具' : '重新同步远端工具列表'"
+            >
+              <svg
+                class="h-4 w-4"
+                :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''"
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+              >
+                <path d="M21 12a9 9 0 1 1-2.636-6.364" />
+                <path d="M21 3v6h-6" />
+              </svg>
+            </button>
+            <!-- 「远端已删除」是存量噪音：给一个有权限的人可执行的动作，而不是只有提示 -->
+            <button
+              v-if="canSave && canDeleteMcp && staleToolCount > 0"
+              type="button"
+              class="relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-200 bg-amber-50/60 text-amber-600 shadow-sm transition-all hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 active:scale-[0.96]"
+              :class="cleanupStaleLoading ? 'cursor-wait opacity-60' : ''"
+              :disabled="cleanupStaleLoading"
+              @click="showCleanupConfirm = true"
+              v-tooltip="`清理 ${staleToolCount} 个远端已删除的工具`"
+              :aria-label="`清理 ${staleToolCount} 个远端已删除的工具`"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6M14 11v6" />
+              </svg>
+              <span class="absolute -right-1.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold leading-none text-white shadow-sm">{{ staleToolCount }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 批量操作条：选中工具后独立成层，不与头部图标工具栏混排 -->
+        <div
+          v-if="canSave && canPublishMcp && selectedToolIds.size > 0"
+          class="flex flex-wrap items-center gap-2 border-b border-blue-100 bg-blue-50/70 px-3 py-2 sm:px-4 animate-fade-in"
+        >
+          <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-700">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            批量操作
+            <span class="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">{{ selectedToolIds.size }}</span>
+          </span>
+          <div class="ml-auto flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              @click="clearToolSelection"
+              class="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-white hover:text-slate-700"
+            >
+              取消选择
+            </button>
+            <button
+              type="button"
+              @click="batchUpdateStatus(true)"
+              :disabled="!canManageSelectedTools"
+              class="inline-flex items-center gap-1.5 rounded-md bg-green-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all hover:bg-green-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              批量发布
+            </button>
+            <button
+              type="button"
+              @click="batchUpdateStatus(false)"
+              :disabled="!canManageSelectedTools"
+              class="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all hover:bg-slate-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+                <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+                <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+                <path d="m2 2 20 20" />
+              </svg>
+              批量下线
             </button>
           </div>
         </div>
@@ -1934,7 +2163,7 @@ onMounted(fetchServers)
               v-for="tool in tools" 
               :key="tool.id" 
               @click="canManageTool(tool) && toggleSelectTool(tool.id)"
-              class="group flex flex-col gap-3 rounded-lg border p-3 transition-all sm:flex-row sm:items-start sm:justify-between sm:p-4"
+              class="group flex min-w-0 flex-col gap-3 rounded-lg border p-3 transition-all sm:flex-row sm:items-start sm:justify-between sm:p-4"
               :class="[
                 canManageTool(tool) ? 'cursor-pointer' : 'cursor-default',
                 selectedToolIds.has(tool.id) ? 'border-primary bg-blue-50/50 shadow-sm' : 'border-gray-100 bg-gray-50/30 hover:border-primary/30'
@@ -1956,7 +2185,11 @@ onMounted(fetchServers)
                       <LinkIcon class="mr-0.5 h-3 w-3" />{{ tool.usage_count }}
                     </span>
                     <span v-if="!isSelectedServerEnabled" class="rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-amber-600">服务已禁用</span>
-                    <span v-else-if="tool.is_available === false" class="rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-amber-600">远端已删除</span>
+                    <span
+                      v-else-if="tool.is_available === false"
+                      class="cursor-help rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-amber-600"
+                      v-tooltip="'该工具在最近一次同步时已从远端消失，因此不能勾选给智能体、不能发布，测试台也无法执行。远端重新提供同名工具后，再次同步可恢复可用性；发布状态需重新确认（或重新发布）。若远端已改名，旧记录需删除整个服务重建。'"
+                    >远端已删除</span>
                     <span v-else-if="tool.is_published" class="rounded border border-green-100 bg-green-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-green-600">已发布</span>
                     <span v-else class="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-gray-400">待发布</span>
                   </div>
@@ -1976,20 +2209,36 @@ onMounted(fetchServers)
                 <button 
                   @click.stop="openTester(tool)"
                   :disabled="!canManageTool(tool)"
-                  class="flex items-center rounded-md border border-indigo-100 bg-white px-3 py-1.5 text-[11px] font-bold text-indigo-600 shadow-sm transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
-                  title="在线测试"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-indigo-100 bg-white text-indigo-600 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
+                  v-tooltip="'在线测试'"
+                  aria-label="在线测试"
                 >
-                  <BeakerIcon class="mr-1.5 h-3.5 w-3.5" />
-                  测试
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10 2v7.31" />
+                    <path d="M14 9.3V2" />
+                    <path d="M8.5 2h7" />
+                    <path d="M14 9.3a6.5 6.5 0 1 1-4 0" />
+                    <path d="M5.52 16h12.96" />
+                  </svg>
                 </button>
                 <button 
                   @click.stop="togglePublish(tool)"
                   :disabled="!canManageTool(tool) || !canPublishMcp"
-                  class="flex items-center rounded-md border px-3 py-1.5 text-[11px] font-bold shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
-                  :class="tool.is_published ? 'border-gray-200 bg-white text-gray-600 hover:text-red-600' : 'border-transparent bg-primary text-white hover:bg-primary-dark'"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-lg border shadow-sm transition-all focus:outline-none focus-visible:ring-2 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
+                  :class="tool.is_published ? 'border-gray-200 bg-white text-gray-500 hover:border-red-200 hover:bg-red-50/60 hover:text-red-600 focus-visible:ring-red-200' : 'border-transparent bg-primary text-white hover:bg-primary-dark focus-visible:ring-primary/30'"
+                  v-tooltip="tool.is_published ? '下线该工具，智能体将不再可见' : '发布该工具，智能体配置中即可勾选'"
+                  :aria-label="tool.is_published ? '下线该工具' : '发布该工具'"
                 >
-                  <component :is="tool.is_published ? EyeSlashIcon : EyeIcon" class="mr-1.5 h-3.5 w-3.5" />
-                  {{ tool.is_published ? '下线' : '发布' }}
+                  <svg v-if="tool.is_published" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+                    <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+                    <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+                    <path d="m2 2 20 20" />
+                  </svg>
+                  <svg v-else class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
                 </button>
               </div>
             </div>
@@ -2532,6 +2781,7 @@ onMounted(fetchServers)
         分享给同事
       </button>
       <button
+        v-if="canSave"
         type="button"
         class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
         @click="runServerAction('logs')"
@@ -2712,6 +2962,30 @@ onMounted(fetchServers)
       :loading="statusConfirmLoading"
       @confirm="executeStatusChange"
       @cancel="cancelStatusConfirm"
+    />
+
+    <!-- 清理远端已删除工具：只删失效缓存，不动服务配置与调用日志 -->
+    <ConfirmModal
+      v-if="showCleanupConfirm"
+      title="清理远端已删除的工具"
+      :message="`确定要删除该服务下 ${staleToolCount} 条已失效工具的缓存记录吗？\n这些工具在最近一次同步时已从远端消失，本来就不能发布、不能执行，也不会被智能体调用。清理不会改动服务配置，也不会删除出站调用日志；若远端之后恢复同名工具，需要重新同步并在智能体版本配置里重新勾选。`"
+      type="warning"
+      confirm-text="确认清理"
+      :loading="cleanupStaleLoading"
+      :details="staleToolNames"
+      details-label="将被清理的工具"
+      @confirm="cleanupStaleTools"
+      @cancel="showCleanupConfirm = false"
+    />
+
+    <ConfirmModal
+      v-if="showSyncGuardConfirm"
+      title="远端返回 0 个工具"
+      :message="`${syncGuardMessage}\n\n确认远端确实已清空全部工具吗？继续会把这些工具标记为远端已删除，已发布工具将被下线。`"
+      type="warning"
+      confirm-text="仍要同步"
+      @confirm="confirmForceSync"
+      @cancel="cancelForceSync"
     />
 
     <!-- Outbound Audit Log Modal -->

@@ -77,9 +77,14 @@ def test_both_chat_surfaces_refresh_remote_status_on_visibility_and_bind_busy_st
         assert "visibilitychange" in source
         # 输入区绑定的是「本轮是否还占着输入」的 busy 判定，而不是后端锁真相：
         # 锁真相要在输出完成后继续驱动恢复收敛，不能被输入解锁一并抹掉。
-        assert ':is-processing="isProcessing || remoteRunBusy"' in source
+        if relative_path.endswith("EmbedChat.vue"):
+            # EmbedChat 额外用 recoveryLocking 兜住「运行态未知但仍有未收敛草稿」的窗口。
+            assert ':is-processing="isProcessing || remoteRunBusy || recoveryLocking"' in source
+            assert "if (isProcessing.value || remoteRunBusy.value || recoveryLocking.value) return;" in source
+        else:
+            assert ':is-processing="isProcessing || remoteRunBusy"' in source
+            assert "if (isProcessing.value || remoteRunBusy.value) return;" in source
         assert ':is-submitting="sendLocked"' in source
-        assert "if (isProcessing.value || remoteRunBusy.value) return;" in source
 
 
 def test_mark_output_completed_keeps_lock_truth_alive_for_recovery():
@@ -209,7 +214,7 @@ def test_embed_chat_focuses_desktop_input_only_after_all_busy_states_clear():
     source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
 
     assert "const focusChatInputWhenReady = () =>" in source
-    assert "if (isMobile.value || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;" in source
+    assert "if (isMobile.value || isProcessing.value || remoteRunBusy.value || recoveryLocking.value || sendLocked.value) return;" in source
     assert "watch([isProcessing, remoteRunBusy, sendLocked], focusChatInputWhenReady);" in source
     assert "nextTick(() => chatInputRef.value?.focus());" in source
 
@@ -286,3 +291,86 @@ def test_resume_flow_run_status_triggers_completion_finalization_on_both_surface
         assert 'type === "run_status"' in region, f"{relative_path} 恢复流未处理 run_status"
         assert "markOutputCompleted()" in region, f"{relative_path} 恢复流未做完成收尾"
         assert 'data.status === "success"' in region, f"{relative_path} 恢复流未按 success 状态收尾"
+
+
+def test_failed_status_query_keeps_the_last_lock_state_and_retries():
+    """查询失败 ≠ 运行结束：必须保留上次锁态并继续重试。
+
+    旧实现 catch 后直接把 remoteRunActive/remoteRunBusy 压成 false 并停掉轮询：
+    一次网络抖动就会让恢复器与输入锁一起消失，而服务端 producer 仍在跑。
+    """
+    result = _run_typescript(
+        """
+let calls = 0;
+const controller = api.createConversationRunStatusController(async () => {
+  calls += 1;
+  if (calls === 1) return { active: true, trace_id: 't1', ttl_seconds: 30, available: true };
+  throw new Error('network down');
+}, 100000);
+await controller.refresh('c1');
+const activeAfterOk = controller.remoteRunActive.value;
+const busyAfterOk = controller.remoteRunBusy.value;
+const unknownAfterOk = controller.statusUnknown.value;
+await controller.refresh('c1');
+const activeAfterFail = controller.remoteRunActive.value;
+const busyAfterFail = controller.remoteRunBusy.value;
+const unknownAfterFail = controller.statusUnknown.value;
+const pollingAfterFail = controller.isPolling();
+controller.stopPolling();
+return { activeAfterOk, busyAfterOk, unknownAfterOk, activeAfterFail, busyAfterFail, unknownAfterFail, pollingAfterFail };
+"""
+    )
+    assert result == {
+        "activeAfterOk": True,
+        "busyAfterOk": True,
+        "unknownAfterOk": False,
+        "activeAfterFail": True,
+        "busyAfterFail": True,
+        "unknownAfterFail": True,
+        "pollingAfterFail": True,
+    }
+
+
+def test_unavailable_payload_is_treated_as_unknown_instead_of_finished():
+    """后端 hash 不可用（available=false）时不能当成「已结束」解锁输入。"""
+    result = _run_typescript(
+        """
+const controller = api.createConversationRunStatusController(
+  async () => ({ active: false, trace_id: null, ttl_seconds: null, available: false }),
+  100000,
+);
+await controller.refresh('c1');
+const unknown = controller.statusUnknown.value;
+const active = controller.remoteRunActive.value;
+const polling = controller.isPolling();
+controller.stopPolling();
+return { unknown, active, polling };
+"""
+    )
+    assert result == {"unknown": True, "active": False, "polling": True}
+
+
+def test_a_real_inactive_answer_clears_unknown_and_stops_polling():
+    result = _run_typescript(
+        """
+const controller = api.createConversationRunStatusController(
+  async () => ({ active: false, trace_id: null, ttl_seconds: null, available: true }),
+  100000,
+);
+await controller.refresh('c1');
+const unknown = controller.statusUnknown.value;
+const polling = controller.isPolling();
+controller.stopPolling();
+return { unknown, polling };
+"""
+    )
+    assert result == {"unknown": False, "polling": False}
+
+
+def test_embed_chat_turns_error_envelopes_into_unknown_run_status():
+    """HTTP 200 + 错误包络同样不可信：必须返回 available=false 让控制器重试。"""
+    source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    run_status_start = source.index("} = useConversationRunStatus(async (cid) => {")
+    block = source[run_status_start : run_status_start + 1200]
+    assert "if (!isApiSuccess(response.data))" in block
+    assert "available: false" in block

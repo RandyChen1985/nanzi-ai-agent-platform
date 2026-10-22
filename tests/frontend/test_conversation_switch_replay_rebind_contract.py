@@ -60,8 +60,16 @@ def test_history_sync_gives_up_once_the_conversation_changed():
     assert "const startedForConversation = conversationId.value;" in body
     guard = "if (conversationId.value !== startedForConversation) return;"
     assert body.count(guard) == 2
-    # reload 分支会 clearStreamSnapshot：必须排在它之前，否则删掉目标会话在途快照。
-    assert body.index('if (action.kind === "reload") {') < body.index(guard)
+    reload_at = body.index('if (action.kind === "reload") {')
+    first_guard = body.index(guard)
+    second_guard = body.index(guard, first_guard + 1)
+    # 拉取返回后先确认会话没被切走，再进入 reload；reload 内部重拉前还要再确认一次。
+    assert first_guard < reload_at < second_guard
+    # 顺序必须是「先重拉、后清理」：旧实现先 clearStreamSnapshot 再请求历史，慢网络下
+    # 会在首屏历史尚未还原时就把快照删掉。
+    fetch_at = body.index("await fetchConversationHistory(false);", reload_at)
+    finish_at = body.index("finishRecoveredTurn();", fetch_at)
+    assert fetch_at < finish_at
 
 
 # ---- F3：日志被截断时不再丢弃已放行的增量 ----

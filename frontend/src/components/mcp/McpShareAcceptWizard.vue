@@ -86,7 +86,15 @@ async function submit() {
       },
     )
     const data = response.data?.data || {}
-    showToast(`已安装为 ${data.server?.server_name || fullName.value}`, 'success')
+    if (data.credentials_dropped) {
+      // 改了地址时后端会剥离分享人的 Token / 断言私钥，必须明确告知重新配置。
+      showToast(
+        `已安装为 ${data.server?.server_name || fullName.value}；因修改了服务地址，原认证凭据未复制，请在“我的 MCP”中重新配置`,
+        'warning',
+      )
+    } else {
+      showToast(`已安装为 ${data.server?.server_name || fullName.value}`, 'success')
+    }
     emit('installed', String(data.accepted_server_id || ''))
     emit('close')
   } catch (error: any) {

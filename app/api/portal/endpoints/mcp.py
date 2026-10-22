@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from typing import List, Optional, Dict, Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, update, func, case, or_, desc
+from sqlalchemy import String, cast, select, delete, update, func, case, or_, and_, desc
 import uuid
 import json
 import re
@@ -19,17 +19,20 @@ from app.core.dependencies import (
 )
 from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
 from app.models.agent import AIAgent, AIAgentVersion
-from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
+from app.services.ai.tools.mcp_client import McpClientService, McpSseSession, McpSyncGuardError
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from app.services.mcp.mcp_auth_policy import (
     _parse_auth_headers,
     build_mcp_user_assertion_headers,
     encrypt_mcp_auth_headers,
     generate_mcp_private_key_pem,
+    looks_like_credential_header,
     mcp_auth_headers_configured,
     mcp_auth_headers_summary,
     resolve_mcp_auth_headers,
 )
+from app.services.mcp.stale_tool_cleanup import cleanup_stale_tools
+from app.services.mcp.management_rate_limit import enforce_mcp_management_rate_limit
 from app.services.mcp_share_service import (
     McpShareConflictError,
     McpShareNotFoundError,
@@ -56,10 +59,21 @@ from app.services.mcp.echo_server import (
     resolve_echo_base_url,
 )
 from app.utils.encryption import get_api_key_manager
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _iso_utc(value: Any) -> Optional[str]:
+    """MCP 出站审计时间统一按 UTC 存储；序列化时补时区，避免前端按本地时间解析。"""
+    if value is None:
+        return None
+    from datetime import timezone
+
+    if getattr(value, "tzinfo", None) is None:
+        return value.replace(tzinfo=timezone.utc).isoformat()
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _clear_runtime_tool_cache() -> None:
@@ -69,24 +83,58 @@ def _clear_runtime_tool_cache() -> None:
     ToolRegistry.clear_db_tool_cache()
 
 class McpServerBase(BaseModel):
-    server_name: str
-    sse_url: str
+    server_name: str = Field(..., max_length=100)
+    sse_url: str = Field(..., max_length=2048)
     enabled_status: Optional[int] = 1
     scope: Optional[str] = "global"
     remark: Optional[str] = Field(default=None, max_length=500)
     credential_mode: Literal["static", "fixed_token_signed_user"] = "static"
     user_assertion_enabled: bool = False
-    user_assertion_header: str = "X-Nanzi-User-Assertion"
-    user_assertion_audience: Optional[str] = None
-    user_assertion_key_id: Optional[str] = None
-    user_assertion_issuer: Optional[str] = "nanzi-platform"
+    user_assertion_header: str = Field(default="X-Nanzi-User-Assertion", max_length=100)
+    user_assertion_audience: Optional[str] = Field(default=None, max_length=255)
+    user_assertion_key_id: Optional[str] = Field(default=None, max_length=100)
+    user_assertion_issuer: Optional[str] = Field(default="nanzi-platform", max_length=255)
+
+    @field_validator("server_name")
+    @classmethod
+    def validate_server_name(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("服务显示名称不能为空")
+        # 工具标识是 ``server_name:tool_name``，服务名本身带冒号会让运行时按第一个
+        # 冒号拆分时取错远端工具名。
+        if ":" in text:
+            raise ValueError("服务显示名称不能包含冒号（:）")
+        return text
+
+    @field_validator("sse_url")
+    @classmethod
+    def validate_sse_url(cls, value: str) -> str:
+        from app.services.mcp.url_policy import McpUrlPolicyError, validate_mcp_outbound_url
+
+        try:
+            return validate_mcp_outbound_url(value)
+        except McpUrlPolicyError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("user_assertion_header")
+    @classmethod
+    def validate_user_assertion_header(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("UserContext Header 不能为空")
+        if text.lower() == "authorization":
+            raise ValueError("UserContext Header 不能使用 Authorization")
+        if any(ord(char) < 0x20 or ord(char) == 0x7F for char in text):
+            raise ValueError("UserContext Header 包含非法字符")
+        return text
 
 
 class McpServerWrite(McpServerBase):
     """MCP Server 写入模型；fixed_token 只允许写入，不进入响应模型。"""
 
-    auth_headers: Optional[str] = "{}"
-    fixed_token: Optional[str] = Field(default=None, exclude=True)
+    auth_headers: Optional[str] = Field(default="{}", max_length=20000)
+    fixed_token: Optional[str] = Field(default=None, max_length=4096, exclude=True)
     authorization_enabled: Optional[bool] = None
     auth_headers_patch: Optional[Dict[str, Optional[str]]] = None
 
@@ -182,6 +230,27 @@ def _configured_tool_names(value: Any) -> set[str]:
         elif isinstance(item, dict) and item.get("name"):
             names.add(str(item["name"]))
     return names
+
+
+def _mcp_tool_payload_filter(server_name: str, tool_names: Any):
+    """Agent 版本 tools 的 SQL 粗筛条件。
+
+    正常 MCP 工具名是 ``server_name:tool``，一条前缀 LIKE 足够；但历史/测试数据里
+    也可能存在不按前缀命名的缓存行，额外对这些名字逐个 LIKE，避免把真实引用漏掉。
+    非前缀名字通常为 0，只有脏数据才会多几条条件。
+    """
+    prefix = f"{server_name}:"
+    conditions = [cast(AIAgentVersion.tools, String).contains(prefix, autoescape=True)]
+    extra_names = [
+        str(name)
+        for name in (tool_names or [])
+        if name and not str(name).startswith(prefix)
+    ][:100]
+    for name in extra_names:
+        conditions.append(
+            cast(AIAgentVersion.tools, String).contains(name, autoescape=True)
+        )
+    return or_(*conditions)
 
 
 def _rename_tool_reference(value: Any, old_prefix: str, new_prefix: str) -> Any:
@@ -311,20 +380,43 @@ def _set_header_case_insensitive(headers: Dict[str, str], key: str, value: str) 
     headers[key] = value
 
 
-def _apply_mcp_auth_update(server: McpServer, data: McpServerWrite) -> None:
-    """应用认证更新；编辑界面只提交 Header 增量，避免回显或覆盖旧密钥。"""
+def _apply_mcp_auth_update(
+    server: McpServer,
+    data: McpServerWrite,
+    *,
+    reset_credentials: bool = False,
+) -> None:
+    """应用认证更新；编辑界面只提交 Header 增量，避免回显或覆盖旧密钥。
+
+    ``reset_credentials`` 用于服务地址变更：旧地址的 Token/凭据不应自动跟随到新地址
+    （既防误发到新主机，也防分享接收方改地址后把原分享人的凭据引到自己的服务器）。
+    非凭据类 Header（如 X-Tenant-Id）保留；凭据类 Header 与固定 Token 清空，除非本次
+    请求显式重新提供。
+    """
     has_patch = "auth_headers_patch" in data.model_fields_set
     has_authorization_control = (
         "authorization_enabled" in data.model_fields_set
         or data.fixed_token is not None
     )
+    has_explicit_headers = "auth_headers" in data.model_fields_set
 
-    if not has_patch and not has_authorization_control:
-        if "auth_headers" in data.model_fields_set:
+    if not has_patch and not has_authorization_control and not reset_credentials:
+        if has_explicit_headers:
             server.auth_headers = encrypt_mcp_auth_headers(data.auth_headers)
         return
 
-    headers = resolve_mcp_auth_headers(server)
+    if reset_credentials:
+        headers = {
+            str(key): str(value)
+            for key, value in resolve_mcp_auth_headers(server).items()
+            if not looks_like_credential_header(key)
+        }
+        server.fixed_token_encrypted = None
+        if has_explicit_headers and _parse_auth_headers(data.auth_headers or "{}"):
+            headers = _parse_auth_headers(data.auth_headers)
+    else:
+        headers = resolve_mcp_auth_headers(server)
+
     for key, value in (data.auth_headers_patch or {}).items():
         normalized_key = str(key).strip()
         if not normalized_key:
@@ -424,7 +516,7 @@ def _build_verify_user_assertion_headers(
     try:
         return build_mcp_user_assertion_headers(
             server,
-            user_info=user,
+            user_info=_mcp_user_context(user),
             agent_info={"agent_id": "mcp-connection-test", "agent_name": "MCP 连接测试"},
             assertion_header=data.user_assertion_header,
         )
@@ -451,6 +543,10 @@ async def verify_mcp_server(
     user: Dict = Depends(require_api_key)
 ):
     """Test connection and return discovered tools without saving"""
+    # 管理员本身拥有全部 MCP 权限，限流主要拦普通角色的异常刷接口；同时避免运维脚本
+    # / 批量诊断被误伤。
+    if user.get("role") != "admin":
+        await enforce_mcp_management_rate_limit(_get_user_id(user), "verify")
     saved_server = await _load_verify_saved_server(db, data, user)
     auth_headers = _build_verify_auth_headers(saved_server, data)
     auth_headers.update(_build_verify_user_assertion_headers(saved_server, data, user))
@@ -476,7 +572,12 @@ async def verify_mcp_server(
         if temp_id in McpClientService._sessions:
             await McpClientService._sessions[temp_id].close()
             del McpClientService._sessions[temp_id]
-        raise HTTPException(status_code=400, detail=f"连接失败: {str(e)}")
+        # 原始异常可能带内部地址/HTTP 响应，不能直接回给客户端；详情只落服务端日志。
+        logger.warning("MCP verify failed for %s: %s", data.sse_url, e, exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail="连接失败：请检查服务地址、网络连通性与认证配置",
+        )
 
 def _get_user_id(user: Dict) -> Optional[int]:
     val = user.get("user_id") if user.get("user_id") is not None else user.get("id")
@@ -485,6 +586,12 @@ def _get_user_id(user: Dict) -> Optional[int]:
     except Exception:
         return None
 
+
+def _mcp_user_context(user: Dict) -> Dict[str, Any]:
+    """只把断言需要的用户字段传给同步；绝不把 API Key 等敏感字段带进出站路径。"""
+    fields = ("user_id", "user_name", "real_name", "dept_code", "org_path", "extra_data")
+    return {key: user.get(key) for key in fields if user.get(key) is not None}
+
 @router.get("/servers", response_model=List[McpServerResponse])
 async def list_mcp_servers(
     scope: str = Query("global"),
@@ -492,6 +599,8 @@ async def list_mcp_servers(
     user: Dict = Depends(require_api_key)
 ):
     """List MCP servers filtered by scope (global / personal). Personal servers are strictly isolated by current user."""
+    if scope != "personal" and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="只有系统管理员才能查看平台公共 MCP 服务")
     if scope == "personal":
         user_id = _get_user_id(user)
         stmt = select(McpServer).where(McpServer.scope == "personal", McpServer.user_id == user_id)
@@ -506,33 +615,53 @@ async def list_mcp_servers(
     if scope == "personal":
         annotations = await annotate_personal_servers(session=db, user=user)
 
+    # 三个计数一次聚合，避免每服务 3 条 count 查询（N+1）；服务多时差距是数量级的。
+    counts_by_server: Dict[str, Dict[str, int]] = {}
+    server_ids = [server.id for server in servers]
+    if server_ids:
+        counts_stmt = (
+            select(
+                McpToolCache.server_id,
+                func.sum(
+                    case((McpToolCache.is_available.is_(True), 1), else_=0)
+                ).label("available_count"),
+                func.sum(
+                    case((McpToolCache.is_available.is_(False), 1), else_=0)
+                ).label("stale_count"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                McpToolCache.is_available.is_(True),
+                                McpToolCache.is_published.is_(True),
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("published_count"),
+            )
+            .where(McpToolCache.server_id.in_(server_ids))
+            .group_by(McpToolCache.server_id)
+        )
+        for row in (await db.execute(counts_stmt)).all():
+            counts_by_server[str(row.server_id)] = {
+                "available": int(row.available_count or 0),
+                "stale": int(row.stale_count or 0),
+                "published": int(row.published_count or 0),
+            }
+
     res = []
     for s in servers:
-        # Total count
-        count_stmt = select(func.count(McpToolCache.id)).where(McpToolCache.server_id == s.id)
-        total_count = (await db.execute(count_stmt.where(McpToolCache.is_available == True))).scalar() or 0
-        stale_count_stmt = select(func.count(McpToolCache.id)).where(
-            McpToolCache.server_id == s.id,
-            McpToolCache.is_available == False,
-        )
-        stale_count = (await db.execute(stale_count_stmt)).scalar() or 0
-        
-        # Published count
-        pub_stmt = select(func.count(McpToolCache.id)).where(
-            McpToolCache.server_id == s.id,
-            McpToolCache.is_available == True,
-            McpToolCache.is_published == True
-        )
-        pub_count = (await db.execute(pub_stmt)).scalar() or 0
-        
+        counts = counts_by_server.get(str(s.id), {"available": 0, "stale": 0, "published": 0})
         item = McpServerResponse.model_validate(s)
         item.share_count = int(annotations["share_counts"].get(s.id, 0))
         item.shared_from = annotations["shared_from"].get(s.id)
         item.auth_headers_configured = mcp_auth_headers_configured(s)
         item.authorization_configured, item.masked_auth_headers = mcp_auth_headers_summary(s)
-        item.tool_count = total_count
-        item.published_tool_count = pub_count
-        item.stale_tool_count = stale_count
+        item.tool_count = counts["available"]
+        item.published_tool_count = counts["published"]
+        item.stale_tool_count = counts["stale"]
         res.append(item)
     return res
 
@@ -597,7 +726,12 @@ async def create_echo_test_mcp(
     server_id = personal_echo_server_id(owner_id) if is_personal else ECHO_SERVER_ID
 
     base_url = resolve_echo_base_url(str(request.base_url), settings.APP_PUBLIC_URL)
-    echo_url = build_echo_server_url(base_url, server_id)
+    from app.services.mcp.url_policy import McpUrlPolicyError, validate_mcp_outbound_url
+
+    try:
+        echo_url = validate_mcp_outbound_url(build_echo_server_url(base_url, server_id))
+    except McpUrlPolicyError as exc:
+        raise HTTPException(status_code=400, detail=f"Echo 服务地址不合法: {exc}") from exc
     tool_id = (
         str(uuid.uuid5(uuid.NAMESPACE_URL, f"nanzi:mcp:echo:personal:{owner_id}:tool:echo"))
         if is_personal
@@ -833,7 +967,7 @@ async def create_mcp_server(
     
     # Auto-sync tools immediately after creation
     try:
-        await McpClientService.sync_tools(server_id)
+        await McpClientService.sync_tools(server_id, user_info=_mcp_user_context(user))
     except Exception as e:
         logger.warning(f"Initial sync failed for new server {server_id}: {e}")
 
@@ -897,8 +1031,12 @@ async def update_mcp_server(
             owner_id=server.user_id if server.scope == "personal" else None,
         )
     server.server_name = server_name
+    url_changed = (
+        str(data.sse_url or "").strip() != str(server.sse_url or "").strip()
+    )
     server.sse_url = data.sse_url
-    _apply_mcp_auth_update(server, data)
+    # 地址变了就不再复用旧地址的凭据；需要时由本次请求显式提供。
+    _apply_mcp_auth_update(server, data, reset_credentials=url_changed)
     server.credential_mode = data.credential_mode
     server.user_assertion_enabled = data.user_assertion_enabled
     server.user_assertion_header = data.user_assertion_header
@@ -938,7 +1076,7 @@ async def update_mcp_server(
     # would mark it enabled again inside McpClientService.sync_tools().
     if server.enabled_status == 1:
         try:
-            await McpClientService.sync_tools(server_id)
+            await McpClientService.sync_tools(server_id, user_info=_mcp_user_context(user))
         except Exception as e:
             logger.warning(f"Sync failed during update for server {server_id}: {e}")
     
@@ -1006,9 +1144,46 @@ async def delete_mcp_server(
         logger.warning(f"Evicting session failed during delete for server {server_id}: {e}")
     return {"message": "Server and associated tools deleted"}
 
+@router.delete(
+    "/servers/{server_id}/stale-tools",
+    dependencies=[Depends(require_permission("element", "element:mcp_management:delete"))],
+)
+async def cleanup_mcp_server_stale_tools(
+    server_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    """清理该服务下「远端已删除」的工具缓存，并从智能体版本里剔除死引用。
+
+    与删除服务不同：这里不删服务本身，也不动出站调用审计（审计表对
+    ``sys_mcp_servers`` 是 ``ondelete=CASCADE``，删服务会连带清空历史）。
+    """
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == server_id))
+    ).scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    _ensure_server_control_access(server, user)
+
+    result = await cleanup_stale_tools(db, server_id)
+    if result["removed_count"] == 0:
+        return {
+            "status": "success",
+            "message": "没有需要清理的远端已删除工具",
+            **result,
+        }
+
+    _clear_runtime_tool_cache()
+    message = f"已清理 {result['removed_count']} 个远端已删除的工具"
+    if result["affected_agent_versions"]:
+        message += f"，并从 {result['affected_agent_versions']} 个智能体版本配置中移除了对应引用"
+    return {"status": "success", "message": message, **result}
+
+
 @router.post("/servers/{server_id}/sync", dependencies=[Depends(require_permission("element", "element:mcp_management:sync"))])
 async def sync_mcp_tools(
     server_id: str,
+    force: bool = Query(False, description="远端返回 0 个工具时仍强制应用（需显式确认）"),
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_api_key)
 ):
@@ -1022,8 +1197,12 @@ async def sync_mcp_tools(
     if server.scope == "personal" and server.user_id != _get_user_id(user) and not is_admin:
         raise HTTPException(status_code=403, detail="无法同步其他用户的私有 MCP 服务")
 
+    if user.get("role") != "admin":
+        await enforce_mcp_management_rate_limit(_get_user_id(user), "sync")
     try:
-        sync_result = await McpClientService.sync_tools(server_id) or {}
+        sync_result = await McpClientService.sync_tools(
+            server_id, user_info=_mcp_user_context(user), force=force
+        ) or {}
         _clear_runtime_tool_cache()
         stale_unpublished = int(sync_result.get("stale_unpublished", 0))
         return {
@@ -1036,8 +1215,14 @@ async def sync_mcp_tools(
             "stale_unpublished": stale_unpublished,
             "remote_deleted_count": int(sync_result.get("remote_deleted_count", 0)),
         }
+    except McpSyncGuardError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.warning("MCP sync failed for server %s: %s", server_id, e, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="工具同步失败：请检查远端服务状态与认证配置",
+        )
 
 @router.get("/servers/{server_id}/usage", response_model=McpServerUsageResponse)
 async def get_mcp_server_usage(
@@ -1050,8 +1235,8 @@ async def get_mcp_server_usage(
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    if server.scope == "personal" and server.user_id != _get_user_id(user) and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无法查看其他用户的私有 MCP 使用情况")
+    # 公共服务的绑定智能体清单属于管理信息；与写操作同口径：公共仅 admin、个人仅 owner/admin。
+    _ensure_server_control_access(server, user)
 
     tool_rows = (
         await db.execute(
@@ -1063,10 +1248,16 @@ async def get_mcp_server_usage(
     all_tool_names = {row[0] for row in tool_rows if row[0]}
     published_tool_names = {row[0] for row in tool_rows if row[0] and row[1]}
 
+    # tools 是 JSON；先在 SQL 侧按「服务名前缀」粗筛，避免把全平台所有版本配置
+    # （可能很大）都拉进 Python 再过滤。CAST 成文本在 MySQL/PG 都可用，误匹配只多不少，
+    # 后续 _configured_tool_names 仍会精确判定。
     version_rows = (
         await db.execute(
             select(AIAgentVersion, AIAgent)
             .join(AIAgent, AIAgent.id == AIAgentVersion.agent_id)
+            .where(
+                _mcp_tool_payload_filter(server.server_name, all_tool_names)
+            )
         )
     ).all()
 
@@ -1119,31 +1310,29 @@ async def list_mcp_server_tools(
     server = (await db.execute(server_stmt)).scalar_one_or_none()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
-    if server.scope == "personal" and server.user_id != _get_user_id(user) and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无法查看其他用户的私有 MCP 工具")
+    # 工具清单（含未发布工具与 Schema）只对服务控制者开放，避免任意登录用户枚举。
+    _ensure_server_control_access(server, user)
 
     stmt = select(McpToolCache).where(McpToolCache.server_id == server_id)
     tools = (await db.execute(stmt)).scalars().all()
     
-    v_stmt = select(AIAgentVersion.tools)
-    all_versions_tools = (await db.execute(v_stmt)).scalars().all()
-    
-    usage_map = {}
-    for tool_config in all_versions_tools:
-        if not tool_config: continue
-        actual_list = tool_config
-        if isinstance(tool_config, str):
-            try: actual_list = json.loads(tool_config)
-            except: continue
-        if not isinstance(actual_list, list): continue
-        for t in actual_list:
-            t_name = t if isinstance(t, str) else (t.get("name") if isinstance(t, dict) else None)
-            if t_name: usage_map[t_name] = usage_map.get(t_name, 0) + 1
+    v_stmt = select(AIAgentVersion.agent_id, AIAgentVersion.tools).where(
+        _mcp_tool_payload_filter(
+            server.server_name, [tool.tool_name for tool in tools]
+        )
+    )
+    version_rows = (await db.execute(v_stmt)).all()
+
+    # 徽标写的是“被智能体引用”，按 agent 去重；旧实现按版本计数，同一智能体多版本会虚高。
+    usage_by_tool: Dict[str, set[str]] = {}
+    for agent_id, tool_config in version_rows:
+        for name in _configured_tool_names(tool_config):
+            usage_by_tool.setdefault(name, set()).add(str(agent_id))
 
     res = []
     for t in tools:
         item = McpToolResponseWithUsage.model_validate(t)
-        item.usage_count = usage_map.get(t.tool_name, 0)
+        item.usage_count = len(usage_by_tool.get(t.tool_name, set()))
         res.append(item)
     return res
 
@@ -1166,6 +1355,8 @@ async def execute_mcp_tool(
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
     _ensure_server_control_access(server, user)
+    if user.get("role") != "admin":
+        await enforce_mcp_management_rate_limit(_get_user_id(user), "execute")
     if server.enabled_status != 1:
         raise HTTPException(status_code=409, detail="MCP 服务已禁用，无法执行工具")
     if not tool.is_available:
@@ -1220,7 +1411,19 @@ async def execute_mcp_tool(
             result = await lc_tool.ainvoke(req.arguments)
         return {"status": "success", "result": result, "mcp_auth": mcp_auth}
     except Exception as e:
-        return {"status": "error", "message": str(e), "mcp_auth": mcp_auth}
+        # 远程执行失败必须是错误状态，不能 HTTP 200 返回 status=error：否则监控/调用方
+        # 会把失败当成功。详情限长，避免把内部堆栈/地址整段回给前端。
+        logger.warning(
+            "MCP tool test execution failed for server %s tool %s: %s",
+            tool.server_id,
+            tool.tool_name,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"MCP 工具执行失败: {str(e)[:500]}",
+        ) from e
 
 @router.put("/tools/{tool_id}/publish", dependencies=[Depends(require_permission("element", "element:mcp_management:publish"))])
 async def toggle_tool_publish(
@@ -1256,8 +1459,8 @@ async def get_mcp_server_outbound_logs(
     tool_name: Optional[str] = None,
     status: Optional[str] = None,
     range: str = "7d",
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_api_key),
 ) -> Dict[str, Any]:
@@ -1266,8 +1469,8 @@ async def get_mcp_server_outbound_logs(
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    if server.scope == "personal" and server.user_id != _get_user_id(user) and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无法查看其他用户的私有 MCP 调用日志")
+    # 调用流水含工具入参/出参与调用人；公共服务的审计只给 admin，个人服务只给 owner/admin。
+    _ensure_server_control_access(server, user)
 
     from datetime import datetime, timedelta
     now = datetime.utcnow()
@@ -1331,7 +1534,7 @@ async def get_mcp_server_outbound_logs(
             "error_message": log.error_message,
             "tool_input": log.tool_input,
             "tool_output": log.tool_output,
-            "created_at": log.created_at.isoformat() if log.created_at else None,
+            "created_at": _iso_utc(log.created_at),
         }
         for log in log_rows
     ]
@@ -1451,7 +1654,7 @@ async def get_my_mcp_outbound_summary(
             "server_name": server_names.get(row.server_id) or "",
             "total_calls": int(row.total_calls or 0),
             "failed_calls": int(row.failed_calls or 0),
-            "last_called_at": row.last_called_at.isoformat() if row.last_called_at else None,
+            "last_called_at": _iso_utc(row.last_called_at),
         }
         for row in per_server_rows
     ]
@@ -1503,8 +1706,8 @@ async def get_all_mcp_outbound_logs(
     tool_name: Optional[str] = None,
     status: Optional[str] = None,
     range: str = "7d",
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
     db: AsyncSession = Depends(get_db_session),
     user: Dict = Depends(require_api_key),
 ) -> Dict[str, Any]:
@@ -1609,7 +1812,7 @@ async def get_all_mcp_outbound_logs(
             "error_message": log.error_message,
             "tool_input": log.tool_input,
             "tool_output": log.tool_output,
-            "created_at": log.created_at.isoformat() if log.created_at else None,
+            "created_at": _iso_utc(log.created_at),
         }
         for log in log_rows
     ]

@@ -46,7 +46,7 @@ async def test_update_evicts_cached_session_before_resync():
     async def fake_evict(server_id: str) -> None:
         calls.append(("evict", server_id))
 
-    async def fake_sync(server_id: str) -> dict:
+    async def fake_sync(server_id: str, **_kwargs) -> dict:
         calls.append(("sync", server_id))
         return {}
 

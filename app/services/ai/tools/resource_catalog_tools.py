@@ -8,23 +8,13 @@ from typing import Any, Optional
 
 from app.core.context import get_current_agent_context
 from app.core.orm import AsyncSessionLocal
+from app.services.ai.tools.document_paths import resolve_context_user_name
 from app.services.ai.tools.tool_compat import tool
 from app.services.ai.knowledge_catalog import fetch_authorized_knowledge_catalog
 from app.services.metadata_service import MetadataService
 from app.services.permission_service import PermissionService
 
 logger = logging.getLogger(__name__)
-
-
-def _context_user_name(ctx: Any) -> Optional[str]:
-    dims = getattr(ctx, "user_dimensions", None) or {}
-    if not isinstance(dims, dict):
-        return None
-    raw = dims.get("user_name") or dims.get("username")
-    if raw is None:
-        return None
-    name = str(raw).strip()
-    return name or None
 
 
 def _dataset_item(row: Any) -> dict[str, Any]:
@@ -89,7 +79,7 @@ async def list_accessible_knowledge_bases() -> str:
         return "无法识别当前用户，拒绝列出知识库。"
 
     try:
-        user_name = _context_user_name(ctx)
+        user_name = resolve_context_user_name(ctx)
         async with AsyncSessionLocal() as db:
             catalog = await fetch_authorized_knowledge_catalog(
                 db,
@@ -195,7 +185,7 @@ async def list_accessible_directories() -> str:
             get_public_runtime_help_files,
         )
 
-        user_name = _context_user_name(ctx)
+        user_name = resolve_context_user_name(ctx)
         user_info = {
             "user_id": ctx.user_id,
             "id": ctx.user_id,

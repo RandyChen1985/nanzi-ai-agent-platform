@@ -268,6 +268,9 @@ async def test_accept_share_installs_independent_copy():
     # 工具标识必须换成副本自己的服务名前缀，否则同步后旧前缀的行会变孤立记录
     assert tools[0].tool_name == "mcp-private-bob-trends-hub:trend_query"
 
+    # 地址未改：默认携带快照里的认证配置，接收方才能直接连上
+    assert server.auth_headers == "enc:v1:abc"
+
     assert row.status == "ACCEPTED"
     assert row.accepted_server_id == server.id
     assert row.payload is None
@@ -511,3 +514,51 @@ async def test_list_received_shares_applies_limit():
 
     assert result["pending_count"] == 2
     assert getattr(statements[0], "_limit_clause", None) is not None
+
+
+async def test_accept_share_drops_credentials_when_url_is_overridden():
+    """接收方把地址改到别处时，不能把分享人的 Token / 断言私钥带过去。"""
+    import json
+
+    payload = {
+        "version": 1,
+        "config": {
+            "server_name": "mcp-private-admin-trends-hub",
+            "source_user_name": "admin",
+            "sse_url": "https://example.com/mcp",
+            "auth_headers": mcp_auth_policy.encrypt_mcp_auth_headers(
+                {"Authorization": "Bearer secret-token", "X-Tenant": "tenant-a"}
+            ),
+            "fixed_token_encrypted": "enc-fixed-token",
+            "user_assertion_enabled": True,
+            "user_assertion_private_key_encrypted": "enc-private-key",
+        },
+        "tools": [
+            {
+                "tool_name": "trend_query",
+                "tool_description": "查询趋势",
+                "parameter_schema": "{}",
+                "is_published": True,
+                "is_available": True,
+            }
+        ],
+    }
+    row = _share_row(payload=json.dumps(payload))
+    session = _FakeSession(_FakeResult([row]), _FakeResult([]))
+
+    with _notification_mock():
+        result = await svc.accept_share(
+            session,
+            user={"user_id": 9, "user_name": "bob"},
+            share_id="share-1",
+            sse_url="https://another.example.com/mcp",
+        )
+
+    server = next(obj for obj in session.added if isinstance(obj, McpServer))
+    assert result["credentials_dropped"] is True
+    assert server.sse_url == "https://another.example.com/mcp"
+    assert server.fixed_token_encrypted is None
+    assert server.user_assertion_enabled is False
+    assert server.user_assertion_private_key_encrypted is None
+    # 非凭据 Header 保留；Authorization 不再存在
+    assert mcp_auth_policy.resolve_mcp_auth_headers(server) == {"X-Tenant": "tenant-a"}

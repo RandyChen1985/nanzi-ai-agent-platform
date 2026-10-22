@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="assistant-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1d4ed8" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#assistant-bg)" />
+  <line x1="48" y1="30" x2="48" y2="44" stroke="#ffffff" stroke-width="6" stroke-linecap="round" />
+  <line x1="80" y1="30" x2="80" y2="44" stroke="#ffffff" stroke-width="6" stroke-linecap="round" />
+  <rect x="32" y="38" width="64" height="56" rx="10" fill="#ffffff" />
+  <line x1="32" y1="52" x2="96" y2="52" stroke="#c7d2fe" stroke-width="4" />
+  <rect x="42" y="60" width="10" height="10" rx="3" fill="#c7d2fe" />
+  <rect x="59" y="60" width="10" height="10" rx="3" fill="#c7d2fe" />
+  <rect x="76" y="60" width="10" height="10" rx="3" fill="#c7d2fe" />
+  <rect x="42" y="76" width="10" height="10" rx="3" fill="#c7d2fe" />
+  <path d="M59 81 L65 87 L79 71" fill="none" stroke="#2563eb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

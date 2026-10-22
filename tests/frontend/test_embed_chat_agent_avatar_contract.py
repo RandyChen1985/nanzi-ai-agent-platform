@@ -101,6 +101,16 @@ def test_preset_agent_avatars_use_bundled_assets_instead_of_inline_data_uris():
         "nanzi-agent-avatar-service.svg",
         "nanzi-agent-avatar-analytics.svg",
         "nanzi-agent-avatar-shield.svg",
+        "nanzi-agent-avatar-code.svg",
+        "nanzi-agent-avatar-creative.svg",
+        "nanzi-agent-avatar-writer.svg",
+        "nanzi-agent-avatar-translate.svg",
+        "nanzi-agent-avatar-legal.svg",
+        "nanzi-agent-avatar-finance.svg",
+        "nanzi-agent-avatar-medical.svg",
+        "nanzi-agent-avatar-devops.svg",
+        "nanzi-agent-avatar-marketing.svg",
+        "nanzi-agent-avatar-assistant.svg",
     )
     for asset_name in preset_assets:
         assert f'"/agent-avatars/{asset_name}"' in presets_source, asset_name
@@ -112,7 +122,7 @@ def test_preset_agent_avatars_use_bundled_assets_instead_of_inline_data_uris():
         # public 资源按原样提供：文件体积远小于 Vite 4KB 内联阈值，路径也不会被内联
         assert asset_path.stat().st_size < 4096, asset_name
 
-    # 8 组预设（官方默认 + 7 款风格化）全部走静态资源
+    # 18 组预设（官方默认 + 17 款风格化）全部走静态资源
     assert presets_source.count("\n    url: ") == len(preset_assets) + 1
 
     # 所有内联字面量 URL 都必须在服务端长度上限内
@@ -121,11 +131,60 @@ def test_preset_agent_avatars_use_bundled_assets_instead_of_inline_data_uris():
     for literal in literal_urls:
         assert len(literal) <= 2048, literal
 
-    # 前端长度护栏接入设置面板；8 款预设行需自动折行，避免窄屏横向溢出
+    # 前端长度护栏接入设置面板；18 款预设行需自动折行，避免窄屏横向溢出
     settings_source = (ROOT / "frontend/src/components/embed/ChatSettings.vue").read_text(encoding="utf-8")
     assert "isAgentAvatarUrlTooLong(target)" in settings_source
     assert "MAX_AGENT_AVATAR_URL_LENGTH" in settings_source
     assert 'class="flex flex-wrap items-center gap-2 mb-2.5"' in settings_source
+
+
+def test_preset_agent_avatars_cover_business_scenarios_and_stay_unique():
+    """预设头像要覆盖常见业务场景，且 id / 名称 / 资源路径不得重复。
+
+    回归背景：用户反馈「内置头像太少了」，本轮从 8 款扩到 18 款（官方默认 + 17 款风格化）。
+    预设值会写入 Redis 全局键，前端按 id 与 URL 判定选中态；一旦重复，点击两个不同
+    头像会出现同一个高亮项，用户会以为「换头像没生效」，因此在这里钉死唯一性。
+    """
+    presets_source = (ROOT / "frontend/src/utils/presetAgentAvatars.ts").read_text(encoding="utf-8")
+
+    # ① 新增 10 款各自对应一个垂直场景，名称即用户在选头像时的心理分类
+    for scenario in (
+        "代码开发",
+        "创意设计",
+        "文案写作",
+        "多语翻译",
+        "法务合规",
+        "财务金融",
+        "医疗健康",
+        "运维监控",
+        "营销增长",
+        "日程助理",
+    ):
+        assert f'name: "{scenario}"' in presets_source, scenario
+
+    # ② id / 名称 / 静态资源路径必须唯一（默认项用变量 URL，单独排除）
+    ids = re.findall(r'^    id: "([^"]+)",$', presets_source, flags=re.MULTILINE)
+    names = re.findall(r'^    name: "([^"]+)",$', presets_source, flags=re.MULTILINE)
+    literal_urls = re.findall(r'^    url: "([^"]+)",$', presets_source, flags=re.MULTILINE)
+    assert len(ids) == 18 and len(set(ids)) == 18
+    assert len(names) == 18 and len(set(names)) == 18
+    assert len(literal_urls) == 17 and len(set(literal_urls)) == 17
+
+    # ③ 新增资源全部落在预设目录下，且不误用 src/assets（会被 Vite 内联成 base64）
+    for asset in (
+        "nanzi-agent-avatar-code.svg",
+        "nanzi-agent-avatar-creative.svg",
+        "nanzi-agent-avatar-writer.svg",
+        "nanzi-agent-avatar-translate.svg",
+        "nanzi-agent-avatar-legal.svg",
+        "nanzi-agent-avatar-finance.svg",
+        "nanzi-agent-avatar-medical.svg",
+        "nanzi-agent-avatar-devops.svg",
+        "nanzi-agent-avatar-marketing.svg",
+        "nanzi-agent-avatar-assistant.svg",
+    ):
+        assert f"/agent-avatars/{asset}" in presets_source
+        assert (ROOT / "frontend/public/agent-avatars" / asset).is_file(), asset
 
 
 def test_agent_avatar_resolution_is_agent_then_global_then_bundled():

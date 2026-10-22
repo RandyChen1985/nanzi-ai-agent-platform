@@ -92,6 +92,18 @@ class FakeRedis:
         self.lists[key] = values[start:] if end == -1 else values[start : end + 1]
         return True
 
+    async def llen(self, key: str) -> int:
+        return len(self.lists.get(key, []))
+
+    async def lindex(self, key: str, index: int) -> str | None:
+        values = self.lists.get(key, [])
+        if not values:
+            return None
+        try:
+            return values[index]
+        except IndexError:
+            return None
+
     async def expire(self, key: str, seconds: int) -> bool:
         self.expires[key] = seconds
         return True
@@ -289,3 +301,65 @@ async def test_append_ignores_non_dict_events_without_gaps(fake_redis):
     batch = await journal.read_after("u1", "c1", after_seq=0)
     assert [event["title"] for event in batch["events"]] == ["a", "b"]
     assert [event["_seq"] for event in batch["events"]] == [1, 2]
+
+
+async def test_read_after_uses_tail_window_for_incremental_polls(fake_redis):
+    """增量轮询只读尾部窗口，而不是每次都把整条日志拉回来解析。
+
+    恢复中的客户端每秒拉一次，游标几乎总在尾部附近。旧实现固定 `LRANGE 0 -1`，
+    长任务（8000 条）下每秒都要传输并 JSON 解析整条列表；这里锁定「读窗口」行为。
+    """
+    from app.services.ai.runtime.conversation_stream_journal import READ_TAIL_WINDOW_EVENTS
+
+    journal = ConversationStreamJournal(max_events=2000, ttl_seconds=60)
+    batch_size = READ_TAIL_WINDOW_EVENTS + 50
+    await journal.append(
+        "u1", "c1", [{"type": "log", "title": f"t{index}"} for index in range(batch_size)]
+    )
+
+    calls: list[tuple[int, int]] = []
+    original_lrange = fake_redis.lrange
+
+    async def recording_lrange(key: str, start: int, end: int):
+        calls.append((start, end))
+        return await original_lrange(key, start, end)
+
+    fake_redis.lrange = recording_lrange
+    cursor = batch_size - 10
+    batch = await journal.read_after("u1", "c1", after_seq=cursor)
+
+    assert [event["_seq"] for event in batch["events"]] == list(range(cursor + 1, batch_size + 1))
+    assert batch["next_seq"] == batch_size
+    assert calls, "必须真正读取 Redis"
+    start, _ = calls[0]
+    assert start > 0, "游标在尾部时不应全量读取"
+    assert start <= cursor, "窗口起点必须覆盖到游标之后，否则会漏事件"
+
+
+async def test_read_after_short_circuits_when_cursor_is_current(fake_redis):
+    """游标已经追上最新事件时直接返回空，不再扫描列表。"""
+    journal = _journal()
+    await journal.append("u1", "c1", [{"type": "log", "title": "a"}])
+
+    async def fail_lrange(*args, **kwargs):  # pragma: no cover - 不应被调用
+        raise AssertionError("游标已追平时不应读取整条列表")
+
+    fake_redis.lrange = fail_lrange
+    batch = await journal.read_after("u1", "c1", after_seq=1)
+    assert batch == {"events": [], "next_seq": 1}
+
+
+async def test_read_after_falls_back_to_full_scan_when_cursor_precedes_window(fake_redis):
+    """游标早于尾部窗口（首次恢复 / 日志被截断）时必须退回全量，不能漏读中间事件。"""
+    from app.services.ai.runtime.conversation_stream_journal import READ_TAIL_WINDOW_EVENTS
+
+    journal = ConversationStreamJournal(max_events=2000, ttl_seconds=60)
+    batch_size = READ_TAIL_WINDOW_EVENTS + 50
+    await journal.append(
+        "u1", "c1", [{"type": "log", "title": f"t{index}"} for index in range(batch_size)]
+    )
+
+    batch = await journal.read_after("u1", "c1", after_seq=0)
+    assert len(batch["events"]) == batch_size
+    assert batch["events"][0]["_seq"] == 1
+    assert batch["next_seq"] == batch_size

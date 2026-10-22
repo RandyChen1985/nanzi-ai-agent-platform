@@ -1031,6 +1031,9 @@ class ConversationRunStatusResponse(BaseModel):
     active: bool = False
     trace_id: Optional[str] = None
     ttl_seconds: Optional[int] = None
+    # 后端是否给出了可信结论。Redis 异常 / 运行锁被关闭时为 False，前端应保留
+    # 上次锁态并退避重试，而不是把「查不到」当成「已结束」。
+    available: bool = True
     sandbox_degraded: bool = False
     sandbox_degraded_message: Optional[str] = None
 
@@ -1113,6 +1116,9 @@ class ConversationStreamEventsResponse(BaseModel):
     events: List[Dict[str, Any]] = Field(default_factory=list)
     next_seq: int = 0
     run_active: bool = False
+    # 与 run-status 的 available 同口径：false 表示 Redis/运行锁不可用，
+    # 本轮「看起来结束了」并不可信，前端不得据此永久停掉事件续显。
+    run_available: bool = True
 
 
 @router.get(
@@ -1145,12 +1151,15 @@ async def get_conversation_stream_events(
             conversation_id=conversation_id,
         )
         run_active = bool(run_status.get("active"))
+        run_available = bool(run_status.get("available", True))
     except Exception:
         run_active = False
+        run_available = False
     payload = {
         "events": batch.get("events") or [],
         "next_seq": int(batch.get("next_seq") or 0),
         "run_active": run_active,
+        "run_available": run_available,
     }
     return StandardResponse(data=ConversationStreamEventsResponse(**payload))
 

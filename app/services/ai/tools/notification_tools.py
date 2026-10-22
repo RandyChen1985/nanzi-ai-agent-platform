@@ -1,16 +1,31 @@
 import logging
 import json
+import re
 import time
 import hmac
 import hashlib
 import base64
 import urllib.parse
 import httpx
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, List, Type, Union
 from app.services.ai.tools.tool_compat import BaseTool
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_attachment_input(raw: Union[List[str], str, None]) -> List[str]:
+    """把模型给的附件参数归一成路径列表。
+
+    模型偶尔把数组写成单个字符串（甚至换行/分号分隔的一串），schema 再严格也拦不住
+    它落到 `str` 分支。这里统一归一，而不是直接报参数错误让整封邮件失败。
+    """
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [part.strip() for part in re.split(r"[\n;]", raw) if part.strip()]
+    return [str(item).strip() for item in raw if str(item).strip()]
+
 
 class DingTalkInput(BaseModel):
     title: str = Field(description="The title of the message (visible in notifications)")
@@ -104,22 +119,47 @@ class EmailInput(BaseModel):
             "邮件正文，**支持 Markdown**（标题、列表、表格、粗体、链接、代码块会被渲染成"
             "排版后的 HTML 邮件），直接用 Markdown 写即可；纯文本同样可以。"
             "**不要写 HTML 标签**——正文里的原始 HTML 会被转义成字面文本显示出来。"
+            "**不要用本参数代替附件**：需要发送文件时请用 attachments。"
         )
+    )
+    # schema 用 List[str]（对模型是清晰的数组），但 _arun 的入参仍接受 str：
+    # 工具调用不经过 pydantic 校验，模型偶尔会把数组写成单个字符串，
+    # 在 _arun 里归一比让整封邮件失败更合适。
+    attachments: List[str] = Field(
+        default_factory=list,
+        description=(
+            "附件文件路径列表（服务器绝对路径）。"
+            "**只能用上下文里出现过的路径**：用户本轮上传附件时系统注入的绝对路径，"
+            "或工作区里已生成的文件路径；**不要凭文件名猜路径，也不要编造路径**。"
+            "用户没要求发文件就留空。"
+            "上限 5 个、单个与合计均不超过 20MB；"
+            "仅支持 docx/xlsx/pptx/pdf/csv/txt/md/json/png/jpg/jpeg/gif/webp/zip，"
+            "其他类型会被拒绝。任一附件不合法则整封邮件不会发出。"
+        ),
     )
 
 class send_email(BaseTool):
     name: str = "send_email"
     description: str = (
-        "发送邮件通知。Send an email via SMTP. "
+        "发送邮件通知，可携带附件。Send an email via SMTP with optional attachments. "
         "本工具会自动读取当前用户在个人中心 -> 消息通知里的 SMTP 配置，"
         "无需用户在本轮对话中提供 SMTP 服务器或密码。"
         "收件人：用户明确说了就填 to_email；用户没说就把 to_email 留空，"
         "系统会发给用户配置好的收件人，**不要自己猜一个地址填进去**。"
+        "附件：用户要求发文件时，把上下文里注入的附件绝对路径（或工作区文件路径）"
+        "填进 attachments；路径必须真实存在且在当前会话/用户工作区允许的范围内，"
+        "不要编造路径。"
         "正文支持 Markdown 排版（标题、列表、表格等会渲染成 HTML 邮件），不要写 HTML 标签。"
     )
     args_schema: Type[BaseModel] = EmailInput
 
-    async def _arun(self, to_email: str = "", subject: str = "", content: str = "") -> str:
+    async def _arun(
+        self,
+        to_email: str = "",
+        subject: str = "",
+        content: str = "",
+        attachments: Union[List[str], str] = "",
+    ) -> str:
         """Use the tool asynchronously.
 
         发送统一走 EmailDeliveryService.send_mail：它显式处理 ssl/starttls/none，
@@ -200,6 +240,25 @@ class send_email(BaseTool):
         if settings is None:
             return "Error: SMTP configuration is missing or incomplete. Please configure it in Personal Center -> Message Notifications."
 
+        # 附件：整批校验。任一不合法就整封不发——「看起来发了三个、实际只发了两个」
+        # 的邮件比一句明确的报错更糟，用户根本无从察觉少了什么。
+        from app.services.ai.tools.document_paths import (
+            DocumentPathError,
+            resolve_context_user_name,
+            resolve_email_attachments,
+        )
+
+        try:
+            resolved_attachments = await resolve_email_attachments(
+                _normalize_attachment_input(attachments),
+                allowed_attachment_paths=agent_ctx.authorized_attachment_paths,
+                user_id=agent_ctx.user_id,
+                conversation_id=agent_ctx.conversation_id,
+                user_name=resolve_context_user_name(agent_ctx),
+            )
+        except DocumentPathError as exc:
+            return f"Error: {exc}"
+
         try:
             # send_mail 是同步阻塞的，放进线程池，别卡住事件循环。
             # render_markdown=True：这里的正文由模型生成，天然带 Markdown 排版
@@ -211,16 +270,27 @@ class send_email(BaseTool):
                 subject,
                 content,
                 render_markdown=True,
+                attachments=resolved_attachments,
             )
         except Exception as e:
             logger.error(f"SMTP Error: {e}", exc_info=True)
             return f"Error sending email: {e}"
 
         if ok:
-            return f"Successfully sent email to {', '.join(recipients)}"
+            suffix = ""
+            if resolved_attachments:
+                label = "attachment" if len(resolved_attachments) == 1 else "attachments"
+                suffix = f" ({len(resolved_attachments)} {label})"
+            return f"Successfully sent email to {', '.join(recipients)}{suffix}"
         return f"Error sending email: {message}"
 
-    def _run(self, to_email: str, subject: str, content: str) -> str:
+    def _run(
+        self,
+        to_email: str,
+        subject: str,
+        content: str,
+        attachments: Union[List[str], str] = "",
+    ) -> str:
         raise NotImplementedError("Use _arun instead")
 
 class WeChatWorkInput(BaseModel):

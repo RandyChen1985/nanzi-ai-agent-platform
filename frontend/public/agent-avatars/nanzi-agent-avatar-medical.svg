@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="medical-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#be123c" />
+      <stop offset="100%" stop-color="#f43f5e" />
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#medical-bg)" />
+  <path d="M64 94 C64 94 28 72 28 52 C28 41 37 34 46 34 C54 34 60 40 64 47 C68 40 74 34 82 34 C91 34 100 41 100 52 C100 72 64 94 64 94 Z" fill="#ffffff" />
+  <path d="M36 64 H48 L54 52 L62 74 L70 58 L76 64 H92" fill="none" stroke="#be123c" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

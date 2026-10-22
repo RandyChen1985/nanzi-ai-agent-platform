@@ -373,6 +373,7 @@ async def test_conversation_run_lane_status_exposes_trace_and_ttl(monkeypatch):
         "active": False,
         "trace_id": None,
         "ttl_seconds": None,
+        "available": True,
     }
     key = lane._lock_key("u1", conversation_id)
     trace_id = str(uuid.uuid4())
@@ -382,6 +383,7 @@ async def test_conversation_run_lane_status_exposes_trace_and_ttl(monkeypatch):
         "active": True,
         "trace_id": trace_id,
         "ttl_seconds": 321,
+        "available": True,
     }
     fake.store[key] = "untrusted-arbitrary-value"
     assert (await lane.get_status(user_id="u1", conversation_id=conversation_id))["trace_id"] is None
@@ -398,6 +400,7 @@ async def test_conversation_run_lane_status_is_safe_when_disabled_or_unavailable
         "active": False,
         "trace_id": None,
         "ttl_seconds": None,
+        "available": True,
     }
 
     async def _redis_unavailable():
@@ -412,6 +415,7 @@ async def test_conversation_run_lane_status_is_safe_when_disabled_or_unavailable
         "active": False,
         "trace_id": None,
         "ttl_seconds": None,
+        "available": False,
     }
 
 

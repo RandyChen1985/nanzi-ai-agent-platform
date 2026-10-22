@@ -25,7 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.mcp import McpServer, McpToolCache
 from app.models.mcp_share import McpServerShare
 from app.models.user import User
-from app.services.mcp.mcp_auth_policy import without_credential_headers
+from app.services.mcp.mcp_auth_policy import (
+    strip_credential_headers_from_encrypted,
+    without_credential_headers,
+)
+from app.services.mcp.url_policy import McpUrlPolicyError, validate_mcp_outbound_url
 from app.services.mcp.echo_server import is_echo_server_sse_url
 from app.services.portal_notification_service import PortalNotificationService
 
@@ -590,12 +594,24 @@ async def accept_share(
             ),
         )
 
+    source_url = str(config.get("sse_url") or row.sse_url or "").strip()
     if sse_url is not None:
         requested_url = (sse_url or "").strip()
-        if not requested_url.lower().startswith(("http://", "https://")):
-            raise McpShareConflictError("服务地址需以 http:// 或 https:// 开头")
     else:
-        requested_url = config.get("sse_url") or row.sse_url
+        requested_url = source_url
+    try:
+        requested_url = validate_mcp_outbound_url(requested_url)
+    except McpUrlPolicyError as exc:
+        raise McpShareConflictError(f"服务地址不合法: {exc}") from exc
+    url_overridden = bool(sse_url is not None and requested_url != source_url)
+    if url_overridden:
+        # 接收方把地址改到别处时，绝不能把分享人快照里的 Token / 断言私钥带过去。
+        config["auth_headers"] = strip_credential_headers_from_encrypted(
+            config.get("auth_headers")
+        )
+        config["fixed_token_encrypted"] = None
+        config["user_assertion_enabled"] = False
+        config["user_assertion_private_key_encrypted"] = None
 
     if remark is not None:
         requested_remark = (remark or "").strip()[:500] or None
@@ -668,6 +684,7 @@ async def accept_share(
     return {
         "share_id": row.id,
         "accepted_server_id": new_id,
+        "credentials_dropped": url_overridden,
         "server": {
             "id": new_id,
             "server_name": server.server_name,

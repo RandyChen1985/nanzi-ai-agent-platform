@@ -13,15 +13,19 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import re
 import smtplib
 from dataclasses import dataclass
 from datetime import datetime
+from email import encoders
 from email.header import Header
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formataddr
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from email.utils import formataddr, formatdate, make_msgid
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 from markdown_it import MarkdownIt
 from sqlalchemy import func, select
@@ -35,6 +39,20 @@ SmtpScope = Literal["user", "global"]
 
 DEFAULT_TIMEOUT = 10
 
+# 单文件上限，与 app/services/ai/tools/document_paths.py 的 MAX_DOCUMENT_BYTES 同口径
+# （20MB 原始字节）。两处数值必须一致，否则工具层放过的文件会在这里才失败。
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+# 整封邮件的附件合计上限。工具层也会拦，这里再兜一次：build_message/send_mail 是
+# 公开入口，绕过工具直接调用不该能塞进 5×20MB。
+MAX_ATTACHMENT_TOTAL_BYTES = MAX_ATTACHMENT_BYTES
+# 带附件时的 socket 超时下限。10 秒撑不住 20MB 原文 → 约 26.7MB base64 的 sendall，
+# 慢速上行或拥塞网关下会被判成超时，用户只看到一句 timeout、误以为是配置错。
+ATTACHMENT_TIMEOUT = 60
+
+# 少量 mimetypes 在 slim 镜像里没有 /etc/mime.types 就推不出来（.md 是典型），
+# 退成 octet-stream 会让客户端无法预览。
+_MIMETYPE_OVERRIDES = {".md": "text/markdown"}
+
 
 class SmtpDeliveryError(RuntimeError):
     """传输层发送失败（连接/超时/认证等），意味着「可以重试」。
@@ -42,6 +60,15 @@ class SmtpDeliveryError(RuntimeError):
     单独定义类型是为了让需要退避重试的调用方（notification_service）能靠异常区分
     瞬时故障与业务性失败——业务性失败用返回值表达，不抛异常。
     异常的 message 已做口令清洗，可直接进日志。
+    """
+
+
+class AttachmentPreparationError(RuntimeError):
+    """附件无法装进报文：文件读不到、超出体量上限。
+
+    与 SmtpDeliveryError 刻意分开：这是**业务性失败**，重试没有意义。
+    将来若有调用方按异常类型决定重试，不会把永久失败当成瞬时故障。
+    文案只用文件名、不带服务器绝对路径（不向终端用户暴露容器目录结构）。
     """
 
 
@@ -493,6 +520,7 @@ class EmailDeliveryService:
         subject: str,
         body: str,
         render_markdown: bool = False,
+        attachments: Sequence[Path] = (),
     ) -> Any:
         """构造邮件报文（不含发送），便于单测直接检查 MIME 结构。
 
@@ -503,6 +531,10 @@ class EmailDeliveryService:
 
         渲染异常时降级为纯文本单部分：邮件承载的是通知本身，不能因为排版渲染出问题
         就把这条通知丢掉（发信失败与字体难看之间，后者可以忍）。
+
+        附件只影响**最外层容器**：有附件时根节点是 multipart/mixed，正文部分原样
+        （单部分 plain 或 alternative）挂在第一位。这样已有的「纯文本在前」约束不会
+        因为附件而改变，也不必为附件另写一套正文构造逻辑。
         """
         html: Optional[str] = None
         if render_markdown:
@@ -512,18 +544,87 @@ class EmailDeliveryService:
                 logger.warning("邮件 Markdown 渲染失败，降级为纯文本发送: %s", exc)
 
         if not html:
-            message: Any = MIMEText(body, "plain", "utf-8")
+            body_part: Any = MIMEText(body, "plain", "utf-8")
         else:
-            message = MIMEMultipart("alternative")
-            message.attach(MIMEText(body, "plain", "utf-8"))
-            message.attach(MIMEText(html, "html", "utf-8"))
+            body_part = MIMEMultipart("alternative")
+            body_part.attach(MIMEText(body, "plain", "utf-8"))
+            body_part.attach(MIMEText(html, "html", "utf-8"))
+
+        if attachments:
+            message: Any = MIMEMultipart("mixed")
+            message.attach(body_part)
+            total_bytes = 0
+            for path in attachments:
+                part, size = cls._build_attachment_part(path)
+                total_bytes += size
+                if total_bytes > MAX_ATTACHMENT_TOTAL_BYTES:
+                    raise AttachmentPreparationError(
+                        f"附件合计大小超限：最多 "
+                        f"{MAX_ATTACHMENT_TOTAL_BYTES // (1024 * 1024)}MB，"
+                        f"当前 {total_bytes / (1024 * 1024):.1f}MB"
+                    )
+                message.attach(part)
+        else:
+            message = body_part
 
         message["Subject"] = Header(subject, "utf-8")
         message["From"] = formataddr(
             (str(Header(settings.sender_name, "utf-8")), settings.effective_from())
         )
         message["To"] = ", ".join(to)
+        # 带附件的邮件更容易被判定为垃圾邮件：补 Date / Message-ID 是成本最低的改善。
+        message["Date"] = formatdate(localtime=True)
+        message["Message-ID"] = make_msgid()
         return message
+
+    @classmethod
+    def _build_attachment_part(cls, path: Path) -> Tuple[MIMEBase, int]:
+        """把一个文件变成 base64 附件部分，同时返回原始字节数（供合计复核）。
+
+        先读盘、再按**实际读到的字节**复核大小：工具层的校验与这里之间隔着数据库查询
+        和线程池调度，文件可能已被替换或截断。宁可发信失败，也不要把超出服务商上限的
+        报文推过去（那会得到一句语焉不详的 552，用户根本不知道是哪个附件惹的祸）。
+        """
+        path = Path(path)
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            # 不把绝对路径写进错误文案：它会原样返回给终端用户。
+            raise AttachmentPreparationError(
+                f"附件 {path.name} 不可用：读取失败（{type(exc).__name__}）"
+            ) from None
+
+        size = len(data)
+        if size > MAX_ATTACHMENT_BYTES:
+            raise AttachmentPreparationError(
+                f"附件 {path.name} 大小 {size / (1024 * 1024):.1f}MB，"
+                f"超过 {MAX_ATTACHMENT_BYTES // (1024 * 1024)}MB 上限"
+            )
+
+        # 文件名是用户上传时定的，可能带换行/控制字符。标准库会做编码、不会因此多造
+        # 一个头，但客户端拿到的文件名带 \r\n 会显示错乱；这里先清洗。
+        filename = re.sub(r"[\x00-\x1f\x7f]+", "_", path.name)
+
+        suffix = Path(filename).suffix.lower()
+        content_type = _MIMETYPE_OVERRIDES.get(suffix)
+        if not content_type:
+            guessed, encoding = mimetypes.guess_type(filename)
+            # 未知类型或带内容编码（.gz 等）：按二进制流发，避免声明成可解析类型。
+            content_type = guessed if guessed and not encoding else "application/octet-stream"
+        maintype, _, subtype = content_type.partition("/")
+
+        part = MIMEBase(maintype, subtype or "octet-stream")
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        # ASCII 名用普通参数（老 Outlook/企业网关只认 filename="x.pdf"）；
+        # 非 ASCII 才用 (charset, language, value) 交给标准库做 RFC 2231 编码。
+        if filename.isascii():
+            part.add_header("Content-Disposition", "attachment", filename=filename)
+        else:
+            part.add_header(
+                "Content-Disposition", "attachment", filename=("utf-8", "", filename)
+            )
+        return part, size
 
     @classmethod
     def send_mail(
@@ -535,6 +636,7 @@ class EmailDeliveryService:
         *,
         raise_on_transport_error: bool = False,
         render_markdown: bool = False,
+        attachments: Sequence[Path] = (),
     ) -> Tuple[bool, str]:
         """同步发送。返回 (ok, message)。
 
@@ -552,6 +654,12 @@ class EmailDeliveryService:
         HTML。**默认关闭**，且刻意只给「模型产出正文」的两条路径开——工具 send_email 与
         定时通知邮件。审核、密码重置、测试邮件这些人工编写的文案里成对的标记符号
         （`*重要*`、`__init__`）会被 Markdown 误解析成斜体/粗体，那些路径继续走纯文本。
+
+        attachments 为已通过授权校验的绝对路径列表，默认空（现有调用方行为不变）。
+        附件构造失败（文件被删、超限、读盘失败）属于业务性失败，走返回值；
+        **报文构造阶段的任何异常都不冒泡**（含编程错误）——发信失败只该让调用方拿到
+        一句可展示的原因，而不是把请求变成 500。真正需要重试的传输层异常仍是
+        raise_on_transport_error 控制的抛异常路径。
         """
         if not settings.is_complete():
             return False, "邮件服务配置不完整（至少需要填写 SMTP 服务器地址）"
@@ -572,19 +680,34 @@ class EmailDeliveryService:
                 f"（仅允许 {'/'.join(cls.ALLOWED_SECURITY)}）"
             )
 
-        message = cls.build_message(
-            settings=settings,
-            to=to,
-            subject=subject,
-            body=body,
-            render_markdown=render_markdown,
-        )
+        try:
+            message = cls.build_message(
+                settings=settings,
+                to=to,
+                subject=subject,
+                body=body,
+                render_markdown=render_markdown,
+                attachments=attachments,
+            )
+        except AttachmentPreparationError as exc:
+            # 预期内的业务失败（文件没了 / 太大）：warning，不打全栈污染日志。
+            logger.warning("邮件附件不可用: %s", exc)
+            return False, str(exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("构造邮件报文失败: %s", exc, exc_info=True)
+            return False, cls.sanitize_error_text(
+                f"{type(exc).__name__}: {exc}", settings.password
+            )
+
+        # 有附件时放大 socket 超时：26.7MB 的 base64 在慢上行下 10 秒发不完，
+        # 否则用户看到的是一句 timeout，容易误判成 SMTP 配置错误。
+        timeout = max(settings.timeout, ATTACHMENT_TIMEOUT) if attachments else settings.timeout
 
         try:
             if settings.security == "ssl":
-                server = smtplib.SMTP_SSL(settings.host, settings.port, timeout=settings.timeout)
+                server = smtplib.SMTP_SSL(settings.host, settings.port, timeout=timeout)
             else:
-                server = smtplib.SMTP(settings.host, settings.port, timeout=settings.timeout)
+                server = smtplib.SMTP(settings.host, settings.port, timeout=timeout)
 
             with server:
                 server.ehlo()

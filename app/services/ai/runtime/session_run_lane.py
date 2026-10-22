@@ -251,16 +251,25 @@ class ConversationRunLane:
         user_id: str | int | None,
         conversation_id: str | None,
     ) -> dict[str, object | None]:
-        """读取当前会话运行状态，不改变锁，也不暴露锁的内部实现细节。"""
-        empty = {"active": False, "trace_id": None, "ttl_seconds": None}
+        """读取当前会话运行状态，不改变锁，也不暴露锁的内部实现细节。
+
+        `available` 区分「查过、确实没有锁」与「查不了」：Redis 抖动 / 配置读取失败
+        时若只返回 active=false，前端会把它当成「本轮已结束」，提前停掉恢复器并解锁
+        输入框——而服务端 producer 可能仍在跑。前端据此保留上次锁态并退避重试。
+        """
+        empty = {"active": False, "trace_id": None, "ttl_seconds": None, "available": True}
+        unknown = {"active": False, "trace_id": None, "ttl_seconds": None, "available": False}
         if not conversation_id:
-            return empty
+            return unknown
         try:
             enabled = await self._is_enabled()
         except Exception as exc:
             logger.warning("[ConversationRunLane] get_status config check failed: %s", exc)
-            return empty
+            return unknown
         if not enabled:
+            # 运行锁被显式关闭是部署方的明确选择：此时不存在可观测的运行态，
+            # 按「无锁」返回（available=True）而不是「未知」，否则前端会在
+            # 每个页面永久退避轮询一个永远不会恢复的接口。
             return empty
 
         from app.core.redis import get_redis
@@ -269,9 +278,9 @@ class ConversationRunLane:
             redis = await get_redis()
         except Exception as exc:
             logger.warning("[ConversationRunLane] get_status Redis unavailable: %s", exc)
-            return empty
+            return unknown
         if redis is None:
-            return empty
+            return unknown
 
         key = self._lock_key(user_id, conversation_id)
         try:
@@ -293,10 +302,15 @@ class ConversationRunLane:
                         ttl_seconds = parsed_ttl
                 except (TypeError, ValueError):
                     pass
-            return {"active": True, "trace_id": trace_id, "ttl_seconds": ttl_seconds}
+            return {
+                "active": True,
+                "trace_id": trace_id,
+                "ttl_seconds": ttl_seconds,
+                "available": True,
+            }
         except Exception as exc:
             logger.warning("[ConversationRunLane] get_status failed: %s", exc)
-            return empty
+            return unknown
 
     async def list_active(
         self,
