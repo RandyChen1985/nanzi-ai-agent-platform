@@ -170,6 +170,170 @@ async def test_handle_response_html_body_raises_diagnosable_error(ragflow_client
 
 
 @pytest.mark.asyncio
+async def test_create_dataset_keeps_legacy_contract_when_accepted(ragflow_client, mock_config):
+    """官方 Python 版接受 chunk_method 时，应保持原有请求体不变。"""
+    RagFlowClient._create_contract_cache.clear()
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = httpx.Response(200, json={"code": 0, "data": {"id": "ds-legacy"}})
+
+        data = await ragflow_client.create_dataset("kb", description="desc", chunk_method="one")
+
+    assert data["id"] == "ds-legacy"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["chunk_method"] == "one"
+    assert payload["description"] == "desc"
+    assert "parse_type" not in payload
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_falls_back_to_parse_type_contract(ragflow_client, mock_config):
+    """Go 版 RAGFlow 拒绝 chunk_method 时，应改用 parse_type + parser_id 重试。
+
+    该发行版要求 ``parse_type``（1=BuiltIn）并拒绝 description / chunk_method，
+    报错形如 ``Extra inputs are not permitted: chunk_method``。
+    """
+    RagFlowClient._create_contract_cache.clear()
+    rejected = httpx.Response(
+        200, json={"code": 101, "message": "Extra inputs are not permitted: chunk_method"}
+    )
+    accepted = httpx.Response(200, json={"code": 0, "data": {"id": "ds-go"}})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+            patch("httpx.AsyncClient.put", new_callable=AsyncMock) as mock_put:
+        mock_post.side_effect = [rejected, accepted]
+        mock_put.return_value = httpx.Response(200, json={"code": 0, "data": None})
+
+        data = await ragflow_client.create_dataset("kb", description="desc", chunk_method="one")
+
+    assert data["id"] == "ds-go"
+    assert mock_post.call_count == 2
+
+    first = mock_post.call_args_list[0].kwargs["json"]
+    second = mock_post.call_args_list[1].kwargs["json"]
+    assert first["chunk_method"] == "one"
+    assert second == {"name": "kb", "parse_type": 1, "parser_id": "one"}
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_fills_description_after_parse_type_create(ragflow_client, mock_config):
+    """1.0 建库不收 description，应通过 PUT 部分更新补写。"""
+    RagFlowClient._create_contract_cache.clear()
+    rejected = httpx.Response(
+        200, json={"code": 101, "message": "Extra inputs are not permitted: chunk_method"}
+    )
+    accepted = httpx.Response(200, json={"code": 0, "data": {"id": "ds-go"}})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+            patch("httpx.AsyncClient.put", new_callable=AsyncMock) as mock_put:
+        mock_post.side_effect = [rejected, accepted]
+        mock_put.return_value = httpx.Response(200, json={"code": 0, "data": None})
+
+        await ragflow_client.create_dataset("kb", description="我的描述", chunk_method="one")
+
+    assert mock_put.call_count == 1
+    args, kwargs = mock_put.call_args
+    assert args[0].endswith("/api/v1/datasets/ds-go")
+    assert kwargs["json"] == {"description": "我的描述"}
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_degrades_resume_to_general(ragflow_client, mock_config):
+    """1.0 没有 resume 解析器，应降级为 general 而不是让建库直接失败。"""
+    RagFlowClient._create_contract_cache.clear()
+    rejected = httpx.Response(
+        200, json={"code": 101, "message": "Extra inputs are not permitted: chunk_method"}
+    )
+    accepted = httpx.Response(200, json={"code": 0, "data": {"id": "ds-go"}})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = [rejected, accepted]
+
+        await ragflow_client.create_dataset("kb", chunk_method="resume")
+
+    second = mock_post.call_args_list[1].kwargs["json"]
+    assert second["parser_id"] == "general"
+
+
+@pytest.mark.asyncio
+async def test_list_datasets_exposes_parser_id_as_chunk_method(ragflow_client, mock_config):
+    """1.0 只返回 parser_id，应补 chunk_method 别名供管理端展示。"""
+    response = httpx.Response(
+        200,
+        json={
+            "code": 0,
+            "data": [
+                {"id": "ds1", "name": "kb", "parser_id": "general"},
+                {"id": "ds2", "name": "kb2", "parser_id": "one", "chunk_method": "one"},
+            ],
+        },
+    )
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = response
+        datasets = await ragflow_client.list_datasets(page=1, page_size=10)
+
+    assert datasets[0]["chunk_method"] == "general"
+    assert datasets[1]["chunk_method"] == "one"
+
+
+@pytest.mark.asyncio
+async def test_list_documents_maps_ingestion_status_to_run(ragflow_client, mock_config):
+    """1.0 用 ingestion_status，应映射成前端认识的 run。"""
+    docs = [
+        {"id": "d1", "ingestion_status": "UNSTART"},
+        {"id": "d2", "ingestion_status": "RUNNING"},
+        {"id": "d3", "ingestion_status": "COMPLETED"},
+        {"id": "d4", "ingestion_status": "FAILED"},
+        {"id": "d5", "run": "DONE", "ingestion_status": "COMPLETED"},
+    ]
+    response = httpx.Response(200, json={"code": 0, "data": {"docs": docs}})
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = response
+        result = await ragflow_client.list_documents("ds1", page_size=10)
+
+    assert [d["run"] for d in result] == ["UNSTART", "RUNNING", "DONE", "FAIL", "DONE"]
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_remembers_contract_per_base_url(ragflow_client, mock_config):
+    """契约探测结果按 base_url 缓存，避免每次建库都多打一次失败请求。"""
+    RagFlowClient._create_contract_cache.clear()
+    rejected = httpx.Response(
+        200, json={"code": 101, "message": "Extra inputs are not permitted: chunk_method"}
+    )
+    accepted = httpx.Response(200, json={"code": 0, "data": {"id": "ds-go"}})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = [rejected, accepted, accepted]
+
+        await ragflow_client.create_dataset("kb1", chunk_method="one")
+        await ragflow_client.create_dataset("kb2", chunk_method="one")
+
+    # 第一次：legacy 失败 + parse_type 成功；第二次直接走 parse_type。
+    assert mock_post.call_count == 3
+    assert mock_post.call_args_list[2].kwargs["json"]["parse_type"] == 1
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_does_not_swallow_unrelated_errors(ragflow_client, mock_config):
+    """非契约类错误（如权限拒绝）不应触发 parse_type 重试。"""
+    RagFlowClient._create_contract_cache.clear()
+    denied = httpx.Response(
+        200,
+        json={"code": 109, "message": "User lacks permission for datasets: 'ds-1'"},
+    )
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = denied
+
+        with pytest.raises(RagFlowServiceError, match="RAGFlow 权限拒绝"):
+            await ragflow_client.create_dataset("kb", chunk_method="one")
+
+    assert mock_post.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_handle_response_error_translation_permission_denied(ragflow_client):
     """测试 _handle_response 正确翻译 RAGFlow 的缺乏权限错误"""
     response = httpx.Response(200, json={

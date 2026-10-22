@@ -2156,7 +2156,7 @@ onUnmounted(() => {
       <div v-else-if="publicationQueue.length === 0" class="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">
         当前没有待审核的个人技能发布申请
       </div>
-      <div v-else class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+      <div v-else class="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)]">
         <div class="space-y-2">
           <button
             v-for="item in publicationQueue"

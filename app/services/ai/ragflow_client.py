@@ -138,6 +138,70 @@ class RagFlowClient:
         parts.append(f"原始解析错误：{type(exc).__name__}: {exc}")
         return " ".join(parts)
 
+    # --- RAGFlow 版本字段归一化 ---
+    # RAGFlow 1.0 起改了一批字段名，这里统一归一化，让上层（前端、同步服务）
+    # 不必同时兼容两套字段：
+    #   数据集：chunk_method（0.x）→ parser_id（1.0）
+    #   文档：  run（0.x）        → ingestion_status（1.0）
+    _INGESTION_STATUS_TO_RUN = {
+        "UNSTART": "UNSTART",
+        "PENDING": "RUNNING",
+        "RUNNING": "RUNNING",
+        "COMPLETED": "DONE",
+        "DONE": "DONE",
+        "SUCCESS": "DONE",
+        "FAILED": "FAIL",
+        "FAIL": "FAIL",
+        "ERROR": "FAIL",
+        "CANCELED": "UNSTART",
+        "CANCELLED": "UNSTART",
+    }
+
+    @staticmethod
+    def _extract_datasets(data: Any) -> List[Dict[str, Any]]:
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("datasets") or data.get("items") or data.get("data") or []
+        return []
+
+    @classmethod
+    def _normalize_dataset(cls, dataset: Any) -> Any:
+        """为 1.0 的数据集补上 0.x 的 ``chunk_method`` 别名（值取 ``parser_id``）。
+
+        1.0 的列表接口只返回 ``parser_id``，而管理端仍按 ``chunk_method``
+        展示解析算法，缺字段会一直显示「未设置」。
+        """
+        if isinstance(dataset, dict) and not dataset.get("chunk_method"):
+            parser_id = dataset.get("parser_id")
+            if parser_id:
+                dataset["chunk_method"] = parser_id
+        return dataset
+
+    @staticmethod
+    def _extract_documents(data: Any) -> List[Dict[str, Any]]:
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return data.get("docs") or data.get("documents") or data.get("data") or []
+        return []
+
+    @classmethod
+    def _normalize_document(cls, document: Any) -> Any:
+        """把 1.0 的 ``ingestion_status`` 映射成前端认识的 ``run``。
+
+        1.0 不再返回 ``run``，而前端 ``getDocStatus`` 只认 ``run`` / ``status``，
+        缺字段会把已解析完成的文档显示成「未解析」，因此补一个等价别名。
+        """
+        if not isinstance(document, dict):
+            return document
+        if document.get("run") in (None, ""):
+            status = str(document.get("ingestion_status") or "").upper()
+            mapped = cls._INGESTION_STATUS_TO_RUN.get(status)
+            if mapped:
+                document["run"] = mapped
+        return document
+
     async def _handle_response(self, response: httpx.Response, action: str) -> Dict[str, Any]:
         """Centralized response handling"""
         if response.status_code != 200:
@@ -242,23 +306,71 @@ class RagFlowClient:
             slice_end = slice_start + page_size
             datasets = datasets[slice_start:slice_end]
 
+        datasets = [self._normalize_dataset(d) for d in datasets]
+
         # Client-side filtering
         if name:
             datasets = [d for d in datasets if d.get("name") == name]
             
         return datasets
 
-    async def create_dataset(self, name: str, description: str = "", chunk_method: str = "naive") -> Dict[str, Any]:
-        """Create a new dataset (Knowledge Base)"""
-        await self._ensure_config()
-        url = f"{self.base_url}/api/v1/datasets"
-        payload = {
+    # 不同 RAGFlow 发行版的「建库」字段契约不同：
+    #   chunk_method —— 官方 Python 版：chunk_method + description + permission
+    #   parse_type   —— Go 版内置解析器：parse_type(int, 1=BuiltIn) + parser_id，
+    #                   并明确拒绝 description / chunk_method
+    # 探测结果按 base_url 缓存，避免每次建库都多打一次被拒绝的请求。
+    _create_contract_cache: Dict[str, str] = {}
+
+    # Go 版拒绝旧字段时的文案。只有命中这些提示才切换契约，
+    # 避免把权限不足、模型未配置等真实错误也当成契约不匹配去重试。
+    _PARSE_TYPE_CONTRACT_HINTS = (
+        "parse_type is required",
+        "parser_id is required",
+        "Extra inputs are not permitted",
+    )
+
+    @classmethod
+    def _looks_like_parse_type_contract_error(cls, message: str) -> bool:
+        msg = message or ""
+        return any(hint in msg for hint in cls._PARSE_TYPE_CONTRACT_HINTS)
+
+    # 1.0 的 parser_id 合法值：general / qa / manual / table / paper / book /
+    # laws / presentation / picture / one / audio / email。
+    #   naive 是同一解析器的新名字；
+    #   resume / tag 在 1.0 没有对应解析器，降级为 general（通用分块），
+    #   否则前端选了「简历解析」会直接建库失败。
+    _PARSE_TYPE_ID_ALIASES = {
+        "naive": "general",
+        "resume": "general",
+        "tag": "general",
+    }
+    _PARSE_TYPE_DEGRADED = {"resume", "tag"}
+
+    @classmethod
+    def _resolve_parser_id(cls, chunk_method: Optional[str]) -> str:
+        cm = (chunk_method or "general").strip().lower()
+        mapped = cls._PARSE_TYPE_ID_ALIASES.get(cm, cm)
+        if cm in cls._PARSE_TYPE_DEGRADED:
+            logger.warning(
+                f"[RAGFlow] RAGFlow 1.0 没有 parser_id={cm}，已降级为 {mapped}（通用分块）"
+            )
+        return mapped
+
+    async def _post_create_dataset(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as client:
+            resp = await client.post(url, headers=self._get_headers(), json=payload)
+            return await self._handle_response(resp, "Create Dataset")
+
+    async def _create_dataset_with_chunk_method(
+        self, url: str, name: str, description: str, chunk_method: str
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
             "name": name,
             "description": description,
             "chunk_method": chunk_method,
-            "permission": "me"
+            "permission": "me",
         }
-        
+
         # If chunk_method is 'one', we don't need complex parser_config
         if chunk_method == "naive":
             # RAGFlow API: layout_recognize must be a string (e.g. "DeepDOC"), not bool
@@ -267,9 +379,84 @@ class RagFlowClient:
                 "layout_recognize": "DeepDOC",
             }
 
-        async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as client:
-            resp = await client.post(url, headers=self._get_headers(), json=payload)
-            return await self._handle_response(resp, "Create Dataset")
+        return await self._post_create_dataset(url, payload)
+
+    async def _create_dataset_with_parse_type(
+        self, url: str, name: str, chunk_method: str
+    ) -> Dict[str, Any]:
+        """1.0 契约：parse_type 是 int 枚举（1=BuiltIn，2=Pipeline）。
+
+        该版本不接受 description（由 :meth:`_fill_description` 建库后补写），
+        也不接受 chunk_method，解析方式改由 ``parser_id`` 指定。
+        """
+        payload: Dict[str, Any] = {
+            "name": name,
+            "parse_type": 1,
+            "parser_id": self._resolve_parser_id(chunk_method),
+        }
+        if chunk_method == "naive":
+            payload["parser_config"] = {
+                "chunk_token_num": 2048,
+                "layout_recognize": "DeepDOC",
+            }
+        return await self._post_create_dataset(url, payload)
+
+    async def _update_dataset_description(self, dataset_id: str, description: str) -> None:
+        """1.0 建库不接受 description，但 PUT 支持部分更新，用它补写。"""
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}"
+        try:
+            async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as client:
+                resp = await client.put(
+                    url, headers=self._get_headers(), json={"description": description}
+                )
+                await self._handle_response(resp, "Update Dataset Description")
+        except Exception as e:  # noqa: BLE001 - 描述是附加信息，失败不应中断建库
+            logger.warning(
+                f"[RAGFlow] 补写数据集描述失败（id={dataset_id}）："
+                f"{type(e).__name__}: {e}"
+            )
+
+    async def _fill_description(self, data: Any, description: str) -> None:
+        """建库成功后，在需要时按 1.0 的方式补写描述。"""
+        if not description or not isinstance(data, dict):
+            return
+        dataset_id = data.get("id")
+        if dataset_id:
+            await self._update_dataset_description(dataset_id, description)
+
+    async def create_dataset(self, name: str, description: str = "", chunk_method: str = "naive") -> Dict[str, Any]:
+        """Create a new dataset (Knowledge Base)
+
+        自动适配两种建库契约：官方版用 ``chunk_method``，1.0 版用
+        ``parse_type`` + ``parser_id``。默认仍按官方契约请求，只有对方明确
+        拒绝这些字段时才切换，因此官方版的请求内容与次数完全不变。
+        """
+        await self._ensure_config()
+        url = f"{self.base_url}/api/v1/datasets"
+
+        if self._create_contract_cache.get(self.base_url) == "parse_type":
+            data = await self._create_dataset_with_parse_type(url, name, chunk_method)
+            await self._fill_description(data, description)
+            return data
+
+        try:
+            data = await self._create_dataset_with_chunk_method(
+                url, name, description, chunk_method
+            )
+        except RagFlowServiceError as e:
+            if not self._looks_like_parse_type_contract_error(str(e)):
+                raise
+            logger.info(
+                f"[RAGFlow] Create Dataset 不接受 chunk_method 契约，"
+                f"改用 parse_type+parser_id 重试（base_url={self.base_url}）：{e}"
+            )
+            data = await self._create_dataset_with_parse_type(url, name, chunk_method)
+            self._create_contract_cache[self.base_url] = "parse_type"
+            await self._fill_description(data, description)
+            return data
+
+        self._create_contract_cache[self.base_url] = "chunk_method"
+        return data
 
     async def delete_datasets(self, dataset_ids: List[str]):
         """Delete datasets by IDs"""
@@ -297,11 +484,10 @@ class RagFlowClient:
             async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as client:
                 resp = await client.get(url, headers=self._get_headers(), params=params)
                 data = await self._handle_response(resp, "List Documents")
-                if isinstance(data, list):
-                    return data
-                if isinstance(data, dict):
-                    return data.get("docs") or data.get("documents") or data.get("data") or []
-                return []
+                return [
+                    self._normalize_document(d)
+                    for d in self._extract_documents(data)
+                ]
         else:
             documents = []
             start_offset = (page - 1) * page_size
@@ -318,12 +504,7 @@ class RagFlowClient:
                         params["name"] = name
                     resp = await client.get(url, headers=self._get_headers(), params=params)
                     data = await self._handle_response(resp, f"List Documents Page {p}")
-                    if isinstance(data, list):
-                        page_data = data
-                    elif isinstance(data, dict):
-                        page_data = data.get("docs") or data.get("documents") or data.get("data") or []
-                    else:
-                        page_data = []
+                    page_data = self._extract_documents(data)
                         
                     if not page_data:
                         break
@@ -333,7 +514,10 @@ class RagFlowClient:
             
             slice_start = start_offset - (start_page - 1) * ragflow_page_size
             slice_end = slice_start + page_size
-            return documents[slice_start:slice_end]
+            return [
+                self._normalize_document(d)
+                for d in documents[slice_start:slice_end]
+            ]
 
     async def upload_document(
         self,
@@ -492,9 +676,26 @@ class RagFlowClient:
             try:
                 async with client.stream("POST", url, headers=self._get_headers(), json=payload) as response:
                     if response.status_code != 200:
-                        err_text = await response.read()
+                        err_text = (await response.read()).decode("utf-8", errors="replace")
+                        logger.error(
+                            f"[RAGFlow] Agent chat failed ({response.status_code}) {url}: {err_text[:300]}"
+                        )
+                        # RAGFlow 1.0 起移除了 /api/v1/agents_openai/{app_id}/chat/completions，
+                        # 该路由会直接 404；这里给出可定位的提示，而不是把原始报文抛给用户。
+                        if response.status_code == 404:
+                            yield {
+                                "type": "error",
+                                "content": (
+                                    "⚠️ **RAGFlow 对话接口不可用（404）**："
+                                    f"`{url}` 不存在。RAGFlow 1.0 已移除 "
+                                    "`/api/v1/agents_openai/{app_id}/chat/completions`，"
+                                    "请确认该 Agent 应用是否仍支持此接入方式，"
+                                    "或联系管理员调整 RAGFlow 引擎配置。"
+                                ),
+                            }
+                            return
                         yield {
-                            "content": f"**RAGFlow Error** ({response.status_code}): {err_text.decode()}",
+                            "content": f"**RAGFlow Error** ({response.status_code}): {err_text}",
                             "type": "error"
                         }
                         return
@@ -773,5 +974,13 @@ class RagFlowClient:
                     filename = urllib.parse.unquote(raw_fn)
 
                 return resp.content, filename, content_type
-            raise Exception(f"RAGFlow document download failed ({resp.status_code}): {resp.text}")
+            hint = ""
+            if not dataset_id and resp.status_code == 404:
+                hint = (
+                    "（RAGFlow 1.0 已移除 /api/v1/document/get，"
+                    "请提供 dataset_id 走数据集作用域下载接口）"
+                )
+            raise Exception(
+                f"RAGFlow document download failed ({resp.status_code}): {resp.text}{hint}"
+            )
 

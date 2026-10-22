@@ -38,7 +38,11 @@ import {
   BookOpenIcon,
   ChartBarIcon,
   ChatBubbleLeftRightIcon,
+  ClockIcon,
   CpuChipIcon,
+  DocumentDuplicateIcon,
+  PencilSquareIcon,
+  TrashIcon,
   UserCircleIcon,
 } from "@heroicons/vue/24/outline";
 import { isSkillEnabled } from '@/utils/skillEnabled'
@@ -3447,45 +3451,52 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </button>
               <div
                 v-if="openCardMenuId === agent.id"
-                class="absolute right-0 bottom-full mb-1 w-40 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-30"
+                class="absolute right-0 bottom-full z-30 mb-1 w-44 overflow-hidden rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
               >
                 <button
                   @click="closeCardMenus(); openPreview(agent)"
-                  class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
                 >
+                  <ChatBubbleLeftRightIcon class="h-4 w-4 text-gray-400" />
                   预览对话
                 </button>
                 <button
                   v-if="agent.is_editable !== false"
                   v-has-perm="'element:agent:edit'"
                   @click="closeCardMenus(); openAgentModal(agent)"
-                  class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
                 >
+                  <PencilSquareIcon class="h-4 w-4 text-gray-400" />
                   编辑智能体
                 </button>
                 <!-- 复制不修改源智能体，因此不受 is_editable 限制（系统智能体也可作为模板） -->
                 <button
                   v-has-perm="'element:agent:create'"
                   @click="openDuplicateModal(agent)"
-                  class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
                 >
+                  <DocumentDuplicateIcon class="h-4 w-4 text-gray-400" />
                   复制智能体
                 </button>
                 <button
                   v-if="!isMobile"
                   @click="closeCardMenus(); openHistoryModal(agent)"
-                  class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
                 >
+                  <ClockIcon class="h-4 w-4 text-gray-400" />
                   历史记录
                 </button>
-                <button
-                  v-if="!agent.is_system && !isMainAgent(agent) && agent.is_editable !== false"
-                  v-has-perm="'element:agent:delete'"
-                  @click="closeCardMenus(); handleDeleteAgent(agent)"
-                  class="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer"
-                >
-                  删除
-                </button>
+                <template v-if="!agent.is_system && !isMainAgent(agent) && agent.is_editable !== false">
+                  <div class="my-1 border-t border-gray-100"></div>
+                  <button
+                    v-has-perm="'element:agent:delete'"
+                    @click="closeCardMenus(); handleDeleteAgent(agent)"
+                    class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-red-600 transition-colors hover:bg-red-50 cursor-pointer"
+                  >
+                    <TrashIcon class="h-4 w-4" />
+                    删除
+                  </button>
+                </template>
               </div>
             </div>
 
