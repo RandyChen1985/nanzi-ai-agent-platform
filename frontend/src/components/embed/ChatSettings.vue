@@ -19,6 +19,8 @@ const props = defineProps<{
   allowedAgents: any[];
   routingLocked?: boolean;
   isAdmin?: boolean;
+  /** 引导上次完成时间（ISO），空表示未完成 */
+  tourCompletedAt?: string;
 }>();
 
 const emit = defineEmits<{
@@ -31,7 +33,20 @@ const emit = defineEmits<{
   (e: 'mode-change', mode: string): void;
   (e: 'switch-to-auto'): void;
   (e: 'switch-to-expert', agentId: string): void;
+  (e: 'replay-tour'): void;
 }>();
+
+const formatTourCompletedAt = (value?: string) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
 
 const router = useRouter();
 const { showToast } = useToast();
@@ -968,6 +983,26 @@ const handleLogout = () => {
               />
             </div>
 
+          </div>
+
+          <!-- Group 4: 功能引导 -->
+          <div class="bg-gray-50/50 dark:bg-gray-900/20 border border-gray-100 dark:border-gray-700/40 rounded-xl p-3.5 space-y-3">
+            <div class="flex items-center space-x-1.5 pb-1.5 border-b border-gray-100 dark:border-gray-700/50">
+              <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+              <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest">功能引导 / Feature Tour</h4>
+            </div>
+            <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal">首次使用会自动播放一次；之后可以在这里重看，进度按账号保存。</p>
+            <div class="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-600 shadow-sm transition-colors hover:border-primary/40 hover:text-primary dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                @click="emit('replay-tour')"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                重新播放功能引导
+              </button>
+              <span class="shrink-0 text-[9.5px] text-gray-400">{{ tourCompletedAt ? `上次完成：${formatTourCompletedAt(tourCompletedAt)}` : '尚未完成' }}</span>
+            </div>
           </div>
 
           <!-- Bottom Action Buttons -->

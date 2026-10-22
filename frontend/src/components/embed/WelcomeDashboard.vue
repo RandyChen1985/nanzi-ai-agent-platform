@@ -163,7 +163,7 @@ const recommendedPrompts = computed(() => {
         <div class="mb-3 px-1">
           <p class="text-[10px] font-black text-gray-300 uppercase tracking-widest">快捷入口</p>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div data-tour="welcome-cards" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <template v-if="welcomeCards?.length === 3">
           <button
             v-for="(card, index) in welcomeCards"

@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.avatar_assets import (
     ALLOWED_AVATAR_TYPES,
@@ -77,6 +77,9 @@ class PortalPrefs(BaseModel):
     routing_configured: bool = Field(default=False, description="用户是否明确设置过 Embed 路由模式")
     history_sidebar_open: bool = Field(default=False, description="会话历史侧栏是否展开（账号级，跨设备）")
     left_sidebar_collapsed: bool = Field(default=False, description="左侧主导航是否折叠（账号级，跨设备）")
+    embed_tour_version: int = Field(default=0, description="EmbedChat 功能引导的内容版本；文案改版时 +1，旧版本视为未完成")
+    embed_tour_step: int = Field(default=0, description="引导进行到第几步（0 基，10 表示已完成）")
+    embed_tour_completed_at: str = Field(default="", description="引导完成时间（ISO 8601），空表示未完成")
 
 
 class PortalPrefsUpdate(BaseModel):
@@ -106,6 +109,24 @@ class PinnedConversationsUpdate(BaseModel):
 class RoutingPreferenceUpdate(BaseModel):
     routing_mode: Literal["auto", "expert"] = "auto"
     expert_agent_id: str = ""
+
+
+class EmbedTourUpdate(BaseModel):
+    """功能引导进度（账号级，跨设备）。
+
+    只存「版本 + 步数 + 完成时间」三件事：版本用于文案改版后重播，
+    步数用于断点续播，完成时间用于设置页展示「上次完成」。
+    """
+
+    version: int = Field(default=0, ge=0, le=999, description="引导内容版本，与前端 TOUR_VERSION 对齐")
+    step: int = Field(default=0, ge=0, le=10, description="进行到第几步（0 基，10 = 已完成）")
+    completed_at: str = Field(default="", description="完成时间（ISO 8601），空表示未完成")
+
+    @field_validator("completed_at")
+    @classmethod
+    def _trim_completed_at(cls, value: str) -> str:
+        # 只做长度兜底：正常值是 ISO 字符串，超长输入不应写进 Redis。
+        return (value or "").strip()[:40]
 
 
 class HistorySidebarPreferenceUpdate(BaseModel):
@@ -309,6 +330,11 @@ async def update_portal_prefs(
             if body.left_sidebar_collapsed is None
             else body.left_sidebar_collapsed
         ),
+        # 引导状态只允许通过 /embed-tour 写入；旧页面全量回写必须保留现值，
+        # 否则会把「已看完」冲回未完成，用户下次进来又被播一遍。
+        embed_tour_version=existing.embed_tour_version,
+        embed_tour_step=existing.embed_tour_step,
+        embed_tour_completed_at=existing.embed_tour_completed_at,
     )
 
     try:
@@ -376,6 +402,63 @@ async def update_pinned_conversations(
             ]
         },
         "message": "置顶已保存",
+    }
+
+
+@router.put(
+    "/embed-tour",
+    response_model=Dict[str, Any],
+    summary="更新当前用户的 EmbedChat 功能引导进度",
+)
+async def update_embed_tour(
+    body: EmbedTourUpdate,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """只替换引导三字段。
+
+    引导进度是账号级 UI 状态，存 Redis 才能跨设备；走专用端点避免全量偏好
+    的陈旧副本把「已看完」覆盖回未完成。
+    """
+
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis 服务不可用",
+        )
+
+    user_id = int(user_info["user_id"])
+    key = _redis_key(user_id)
+    prefs = PortalPrefs()
+    try:
+        raw = await redis.get(key)
+        if raw:
+            prefs = _parse_portal_prefs(raw)
+    except Exception as e:
+        logger.warning("Failed to read existing portal prefs before tour update: %s", e)
+
+    prefs.embed_tour_version = int(body.version)
+    prefs.embed_tour_step = int(body.step)
+    prefs.embed_tour_completed_at = body.completed_at
+
+    try:
+        # 与全量偏好一致：不设 TTL，长期保留
+        await redis.set(key, prefs.model_dump_json())
+    except Exception as e:
+        logger.error("Failed to save embed tour state to Redis: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="保存引导进度失败",
+        ) from e
+
+    return {
+        "code": 0,
+        "data": {
+            "embed_tour_version": prefs.embed_tour_version,
+            "embed_tour_step": prefs.embed_tour_step,
+            "embed_tour_completed_at": prefs.embed_tour_completed_at,
+        },
+        "message": "引导进度已保存",
     }
 
 

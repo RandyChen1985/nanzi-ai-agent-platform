@@ -1317,6 +1317,20 @@ const closeContextUsageDetails = () => {
   contextUsageDetailsPlacement.value = 'above';
 };
 
+/** 引导专用：确保上下文用量弹层打开；返回「是否是本次调用打开的」，便于退出时只收自己那份 */
+const openContextUsageForTour = async (): Promise<boolean> => {
+  if (showContextUsageDetails.value) return false;
+  closeContextCompactionDetails();
+  showContextUsageDetails.value = true;
+  await nextTick();
+  updateContextUsageDetailsPlacement();
+  return true;
+};
+
+const closeContextUsageForTour = () => {
+  closeContextUsageDetails();
+};
+
 const closeContextCompactionDetails = () => {
   showContextCompactionDetails.value = false;
   contextCompactionDetailsPlacement.value = 'above';
@@ -1926,6 +1940,8 @@ defineExpose({
   closeCommandDrawer,
   pushLocalFile,
   mountedFilePaths,
+  openContextUsageForTour,
+  closeContextUsageForTour,
 });
 </script>
 
@@ -2083,6 +2099,7 @@ defineExpose({
 
         <!-- Input Box -->
         <div
+          data-tour="composer"
           @dragover.prevent
           @drop="handleDropFile"
           class="relative flex flex-col rounded-2xl border bg-white px-3 py-2.5 transition-all duration-300 dark:bg-gray-800"
@@ -2155,7 +2172,7 @@ defineExpose({
             ]" :placeholder="inputPlaceholder"></textarea>
 
             <!-- 输入框内部右上角状态浮标组 (反幻觉浮标 + 上下文用量胶囊，完全对齐且低饱和淡雅配色) -->
-            <div class="absolute right-2 top-2 z-30 flex items-center gap-1.5 pointer-events-auto">
+            <div data-tour="composer-pills" class="absolute right-2 top-2 z-30 flex items-center gap-1.5 pointer-events-auto">
               <!-- 反幻觉校验浮标 (开启时呈现，极淡灰底+微绿点缀) -->
               <div
                 v-if="enableGrounding"
@@ -2422,6 +2439,7 @@ defineExpose({
                     </div>
                     <div
                       v-if="sandboxPolicyLabel"
+                      data-tour="sandbox-block"
                       class="mt-2 flex flex-col gap-1.5 border-t border-gray-100 pt-2 text-gray-400 dark:border-gray-700 dark:text-gray-500"
                     >
                         <div class="flex items-center justify-between gap-2">
@@ -2603,7 +2621,7 @@ defineExpose({
             >
                 <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
                 <div ref="plusMenuContainerRef" class="relative flex-shrink-0 z-30">
-                    <button @click="togglePlusMenu" :disabled="isInteractionLocked" class="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isInteractionLocked }" title="添加附件或上下文">
+                    <button data-tour="composer-plus" @click="togglePlusMenu" :disabled="isInteractionLocked" class="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isInteractionLocked }" title="添加附件或上下文">
                         <svg class="w-5 h-5 sm:w-4 sm:h-4 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" />
                         </svg>
@@ -2951,7 +2969,7 @@ defineExpose({
                 </div>
 
                 <!-- 智能委派胶囊 (桌面端；移动端走加号「专家中心」；URL 锁定时隐藏) -->
-                <div v-if="!isMobileViewport && !lockExpertAgent" ref="expertSelectorRef" class="relative flex-shrink-0 z-30">
+                <div v-if="!isMobileViewport && !lockExpertAgent" ref="expertSelectorRef" data-tour="composer-routing" class="relative flex-shrink-0 z-30">
                     <button
                       type="button"
                       :disabled="isInteractionLocked"
@@ -3063,7 +3081,7 @@ defineExpose({
                     </Teleport>
                 </div>
 
-                <div ref="approvalTriggerWrapperRef" class="relative flex-shrink-0">
+                <div ref="approvalTriggerWrapperRef" data-tour="composer-approval" class="relative flex-shrink-0">
                     <button
                       ref="approvalTriggerRef"
                       type="button"
