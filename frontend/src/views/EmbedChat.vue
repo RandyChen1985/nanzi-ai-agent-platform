@@ -5712,8 +5712,43 @@ watch(
   { immediate: true },
 );
 
+/**
+ * 离开会话时的记忆收尾（fire-and-forget）。
+ *
+ * 历史侧栏是可以连点的：每点一次都会把「上一个会话」送去收尾，而后端的摘要合并要跑
+ * LLM + embedding（实测均值 20s+）。浏览器对同源只有 6 条连接，连点几次就能把它们
+ * 占满，最后一次切换的 GET /chat/history 只能排在队列里，界面一直停在
+ * 「正在加载历史记录...」。这里做两件事：
+ *
+ * 1. 合并连点：600ms 内的连续切换互相覆盖，只对「真正离开」的那个会话收尾一次；
+ * 2. 又切回来就不收尾：定时触发时目标仍是当前会话就直接丢弃（用户只是扫了一眼）。
+ *
+ * 后端已改为立即返回、后台合并摘要，所以合并后发一次即可，不需要等待结果。
+ */
+let pendingFinalizeConversationId = "";
+let finalizeConversationTimer: ReturnType<typeof setTimeout> | null = null;
+
+const cancelPendingConversationFinalize = () => {
+  if (finalizeConversationTimer) {
+    clearTimeout(finalizeConversationTimer);
+    finalizeConversationTimer = null;
+  }
+  pendingFinalizeConversationId = "";
+};
+
 const finalizeConversationInBackground = (cid: string) => {
-  void finalizeConversation(cid, embedAuthHeaders());
+  const normalized = String(cid || "").trim();
+  if (!normalized) return;
+  pendingFinalizeConversationId = normalized;
+  if (finalizeConversationTimer) clearTimeout(finalizeConversationTimer);
+  finalizeConversationTimer = setTimeout(() => {
+    finalizeConversationTimer = null;
+    const target = pendingFinalizeConversationId;
+    pendingFinalizeConversationId = "";
+    // 又切回该会话（或它就是当前会话）：没有真正离开，不需要收尾。
+    if (!target || target === conversationId.value) return;
+    void finalizeConversation(target, embedAuthHeaders());
+  }, 600);
 };
 
 const updateActiveConversationOnServer = async (cid: string) => {
@@ -5877,6 +5912,9 @@ const resetSessionForIdentityChange = (
   resourceScope.value = emptyResourceScopeState();
   Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '', mcp_tools: '' });
   resourceScopeLoadSequence += 1;
+  // 上一位用户待提交的会话收尾必须撤掉：既不能用新身份去 finalize 别人的会话，
+  // 也不能让换人的动作顺带触发一次后端摘要合并。
+  cancelPendingConversationFinalize();
   historyRequestSequence += 1;
   historyAbortController?.abort();
   historyAbortController = null;
@@ -8212,6 +8250,8 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
     conversationId.value = "";
     messages.value = [];
     resourceScope.value = emptyResourceScopeState();
+    // 实例已换：上一个实例待提交的收尾不能再发，服务端会按新实例的上下文处理它。
+    cancelPendingConversationFinalize();
     historyRequestSequence += 1;
     historyAbortController?.abort();
     historyAbortController = null;
@@ -11923,6 +11963,8 @@ onUnmounted(() => {
   if (abortController) abortController.abort();
   if (abortController) abortController = null;
   cancelPendingUrlTokenInitialization();
+  // 卸载后定时器再触发就只是发一次没人等的收尾请求，直接撤掉。
+  cancelPendingConversationFinalize();
   window.removeEventListener("resize", updateWidth);
   window.removeEventListener("fullscreenchange", updateFullScreenStatus);
   window.removeEventListener("keydown", handleGlobalKeydown);
