@@ -1122,6 +1122,12 @@ async def _system_audit_log_maintenance_job():
                 retention_days = 90
                 
             res = await PartitionService.prune_expired_logs(db_session, retention_days)
+            # MCP 出站审计是普通表（无分区），使用同一保留天数做批量清理；它按 UTC
+            # 记录时间，清理阈值也由该服务内部用 UTC 计算。
+            from app.services.mcp.outbound_audit import prune_mcp_outbound_audit_logs
+
+            mcp_deleted = await prune_mcp_outbound_audit_logs(retention_days)
+            res = {**res, "sys_mcp_outbound_audit_logs": {"deleted_rows": mcp_deleted}}
             logger.info(f"✅ System audit log partition maintenance completed. Result: {res}")
     except Exception as e:
         logger.error(f"❌ Failed to run system audit log partition maintenance: {e}", exc_info=True)

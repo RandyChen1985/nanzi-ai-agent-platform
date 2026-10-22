@@ -197,3 +197,50 @@ def test_mcp_tool_tester_uses_current_user_and_never_returns_assertion_value():
     assert "user_info=test_user_info" in source
     assert 'value_masked": "********"' in source
     assert "X-Nanzi-User-Assertion" in source
+
+
+def test_mcp_auth_update_resets_credentials_when_endpoint_changes():
+    """改地址不继承旧 Token/凭据头；非凭据 Header 保留，显式新 Token 才生效。"""
+    server = type(
+        "McpServerStub",
+        (),
+        {
+            "auth_headers": mcp_auth_policy.encrypt_mcp_auth_headers(
+                {"Authorization": "Bearer old-token", "X-Tenant": "tenant-a"}
+            ),
+            "fixed_token_encrypted": mcp_auth_policy.get_api_key_manager().encrypt_api_key(
+                "old-fixed-token"
+            ),
+        },
+    )()
+    data = McpServerWrite(**_payload(auth_headers="{}"))
+
+    _apply_mcp_auth_update(server, data, reset_credentials=True)
+
+    headers = mcp_auth_policy.resolve_mcp_auth_headers(server)
+    assert headers == {"X-Tenant": "tenant-a"}
+    assert server.fixed_token_encrypted is None
+
+
+def test_mcp_auth_update_accepts_explicit_new_token_after_endpoint_change():
+    server = type(
+        "McpServerStub",
+        (),
+        {
+            "auth_headers": mcp_auth_policy.encrypt_mcp_auth_headers(
+                {"Authorization": "Bearer old-token"}
+            ),
+            "fixed_token_encrypted": mcp_auth_policy.get_api_key_manager().encrypt_api_key(
+                "old-fixed-token"
+            ),
+        },
+    )()
+    data = McpServerWrite(
+        **_payload(auth_headers="{}", fixed_token="new-token", authorization_enabled=True)
+    )
+
+    _apply_mcp_auth_update(server, data, reset_credentials=True)
+
+    assert mcp_auth_policy.resolve_mcp_auth_headers(server) == {
+        "Authorization": "Bearer new-token"
+    }

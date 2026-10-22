@@ -667,7 +667,10 @@ async def test_mcp_server_rename_migrates_cached_tools_and_agent_versions(
                 headers=headers,
             )
         assert rename_resp.status_code == 200
-        sync_tools.assert_awaited_once_with(server_id)
+        assert sync_tools.await_count == 1
+        sync_call = sync_tools.await_args
+        assert sync_call.args == (server_id,)
+        assert "api_key" not in (sync_call.kwargs.get("user_info") or {})
 
         tool = (
             await db_session.execute(

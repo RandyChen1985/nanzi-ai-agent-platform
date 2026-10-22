@@ -129,6 +129,24 @@ def without_authorization_headers(server: Any) -> str:
     return without_credential_headers(server)
 
 
+def strip_credential_headers_from_encrypted(raw: Any) -> str:
+    """对「已加密的 auth_headers 字符串」再剔除凭据头并重新加密。
+
+    分享接受时若接收方改了服务地址，快照里的凭据不能跟过去；这里复用与
+    ``without_credential_headers`` 相同的判定，但入参是 config 里的密文字符串。
+    """
+    try:
+        headers = _parse_auth_headers(_stored_auth_headers(raw))
+    except Exception:  # noqa: BLE001 - 损坏/旧格式凭据按“无凭据”处理，不能阻断接受分享
+        headers = {}
+    cleaned = {
+        str(key): str(value)
+        for key, value in headers.items()
+        if not looks_like_credential_header(key)
+    }
+    return encrypt_mcp_auth_headers(cleaned)
+
+
 def mcp_auth_headers_summary(server: Any) -> tuple[bool, dict[str, str]]:
     """返回 Authorization 状态与脱敏后的其他 Header，不返回任何凭证原文。"""
     try:

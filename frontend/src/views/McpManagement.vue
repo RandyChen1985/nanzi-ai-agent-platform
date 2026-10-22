@@ -36,7 +36,10 @@ const resolvePersonalMenu = (): McpPersonalMenuKey =>
 const mcpMenu = ref<McpPersonalMenuKey>(resolvePersonalMenu())
 const shareDialogServer = ref<{ id: string; server_name: string; sse_url: string } | null>(null)
 const mcpShareCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
-const activeScope = ref<'global' | 'personal' | 'audit'>(props.personalOnly ? 'personal' : 'global')
+// 平台 MCP 列表/工具/日志已收紧为 admin；非管理员直接落到「我的 MCP」，不显示会 403 的平台页签。
+const activeScope = ref<'global' | 'personal' | 'audit'>(
+  props.personalOnly || !isAdmin.value ? 'personal' : 'global',
+)
 const registryRef = ref<InstanceType<typeof McpServerRegistry> | null>(null)
 
 // 平台 MCP 与我的 MCP 数量计数
@@ -50,8 +53,11 @@ const serverCounts = ref<{
 
 const fetchServerCounts = async () => {
   try {
+    const globalRequest = isAdmin.value
+      ? axios.get('/api/portal/mcp/servers', { params: { scope: 'global' } })
+      : Promise.resolve({ data: [] })
     const [globalRes, personalRes] = await Promise.allSettled([
-      axios.get('/api/portal/mcp/servers', { params: { scope: 'global' } }),
+      globalRequest,
       axios.get('/api/portal/mcp/servers', { params: { scope: 'personal' } }),
     ])
     if (globalRes.status === 'fulfilled' && Array.isArray(globalRes.value.data)) {
@@ -225,6 +231,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
       class="flex flex-shrink-0 items-center overflow-x-auto border-b border-gray-200 [scrollbar-width:none] dark:border-gray-800 [&::-webkit-scrollbar]:hidden"
     >
       <button
+        v-if="isAdmin"
         id="tab-global-mcp"
         type="button"
         @click="activeScope = 'global'"
@@ -322,7 +329,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
       </div>
 
       <McpServerRegistry
-        v-else
+        v-else-if="isAdmin"
         ref="registryRef"
         :key="activeScope"
         scope="global"

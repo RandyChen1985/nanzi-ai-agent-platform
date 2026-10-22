@@ -15,6 +15,32 @@ from sqlalchemy import select, update
 
 logger = logging.getLogger(__name__)
 
+# tools/list 是分页接口；只取第一页会把后续工具当成“远端已删除”误下线。
+# 上限用于防御异常远端返回无限 cursor。
+MAX_REMOTE_TOOL_PAGES = 100
+MAX_REMOTE_TOOLS = 5000
+# 同步时若远端返回空列表而本地已有可用工具，默认拒绝应用（见 sync_tools）。
+# 这是防止远端瞬时故障/权限抖动把整批工具误标为删除的最后一道闸门。
+_AUDIT_TASKS: set[asyncio.Task] = set()
+
+
+class McpSyncGuardError(RuntimeError):
+    """同步结果看起来不可信（例如远端突然返回 0 个工具），需要显式强制。"""
+
+
+def _create_no_redirect_mcp_http_client(headers=None, timeout=None, auth=None):
+    """MCP SDK 默认跟随重定向；自定义 Header 可能带凭据，跟随到新 host 等于外泄。
+
+    内网地址已按产品要求放行，但至少要保证重定向不能把请求带到未校验的地址。
+    """
+    return httpx.AsyncClient(
+        headers=headers,
+        timeout=timeout or httpx.Timeout(30.0),
+        auth=auth,
+        follow_redirects=False,
+    )
+
+
 class McpSseSession:
     """Manages an MCP connection, supporting both standard SSE and Direct HTTP Post gateways"""
     def __init__(self, server_id: str, sse_url: str, auth_headers: Optional[Dict] = None):
@@ -28,6 +54,7 @@ class McpSseSession:
         self._exit_stack = None
         self.is_direct_http = False 
         self.mcp_session_id: Optional[str] = None
+        self.mcp_protocol_version: Optional[str] = None
         self._rpc_id_counter = 1
         self._http_client: Optional[httpx.AsyncClient] = None
         self._active_requests: int = 0
@@ -46,7 +73,9 @@ class McpSseSession:
     async def _looks_like_sse_endpoint(self) -> bool:
         """Quick probe: skip SSE when the gateway clearly speaks JSON/HTTP."""
         try:
-            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            # 不跟随重定向：自定义 Header 可能包含凭据，跟随到新 host 等于把凭据发过去。
+            # 需要重定向的服务请直接填写最终地址。
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
                 response = await client.get(self.sse_url, headers=self.auth_headers)
             content_type = (response.headers.get("content-type") or "").lower()
             if "text/event-stream" in content_type:
@@ -88,7 +117,11 @@ class McpSseSession:
                     try:
                         async def _connect_sse():
                             read_stream, write_stream = await self._exit_stack.enter_async_context(
-                                sse_client(url=self.sse_url, headers=self.auth_headers)
+                                sse_client(
+                                    url=self.sse_url,
+                                    headers=self.auth_headers,
+                                    httpx_client_factory=_create_no_redirect_mcp_http_client,
+                                )
                             )
                             sse_session = await self._exit_stack.enter_async_context(
                                 ClientSession(read_stream, write_stream)
@@ -206,8 +239,17 @@ class McpClientService:
                 async with creation_lock:
                     if cache_key not in cls._sessions:
                         server = await cls._load_server(server_id)
+                        from app.services.mcp.url_policy import (
+                            McpUrlPolicyError,
+                            validate_mcp_outbound_url,
+                        )
+
+                        try:
+                            validated_url = validate_mcp_outbound_url(server.sse_url)
+                        except McpUrlPolicyError as exc:
+                            raise ValueError(f"MCP 服务地址不合法: {exc}") from exc
                         headers = auth_headers if auth_headers is not None else resolve_mcp_auth_headers(server)
-                        cls._sessions[cache_key] = McpSseSession(server_id, server.sse_url, headers)
+                        cls._sessions[cache_key] = McpSseSession(server_id, validated_url, headers)
             finally:
                 async with cls._sessions_lock:
                     if (
@@ -230,41 +272,156 @@ class McpClientService:
         session.update_activity()
         return session
 
+    @staticmethod
+    def _remote_tool_name(tool: Any) -> Optional[str]:
+        if isinstance(tool, str):
+            return tool.strip() or None
+        name = tool.name if hasattr(tool, "name") else (tool.get("name") if isinstance(tool, dict) else None)
+        text = str(name or "").strip()
+        return text or None
+
     @classmethod
-    async def list_remote_tools(cls, server_id: str) -> List[Any]:
-        session_mgr = await cls.get_session(server_id)
-        
-        if not session_mgr.is_direct_http:
-            session = session_mgr.session
-            if session is None:
-                raise RuntimeError("MCP SSE session is unavailable")
-            try:
-                response = await session.list_tools()
-            except Exception as exc:
-                logger.warning(
-                    "[MCP] Tool listing failed for %s; reconnecting once: %s",
-                    server_id,
-                    exc,
+    def _dedupe_remote_tools(cls, tools: List[Any]) -> List[Any]:
+        """按远端工具名去重并保持顺序；重复项会让同步触发唯一键冲突。"""
+        result: List[Any] = []
+        seen: set[str] = set()
+        for tool in tools:
+            name = cls._remote_tool_name(tool)
+            if name is None:
+                continue
+            if name in seen:
+                logger.warning("[MCP] Remote tool list contains duplicate name %r; keeping first", name)
+                continue
+            seen.add(name)
+            result.append(tool)
+        return result
+
+    @classmethod
+    async def _list_sse_tools(cls, session: ClientSession) -> List[Any]:
+        tools: List[Any] = []
+        cursor: Optional[str] = None
+        seen_cursors: set[str] = set()
+        for _ in range(MAX_REMOTE_TOOL_PAGES):
+            response = await session.list_tools(cursor=cursor) if cursor else await session.list_tools()
+            tools.extend(list(getattr(response, "tools", None) or []))
+            if len(tools) > MAX_REMOTE_TOOLS:
+                raise RuntimeError(
+                    f"MCP tools/list 返回超过 {MAX_REMOTE_TOOLS} 个工具，已中止同步以避免不完整结果"
                 )
-                await session_mgr.close()
-                await session_mgr.connect()
-                if session_mgr.is_direct_http:
-                    await cls._ensure_direct_http_initialized(session_mgr)
-                    res = await cls._direct_http_rpc(session_mgr, "tools/list", {})
-                    if isinstance(res, dict) and "tools" in res:
-                        return res["tools"]
-                    return res if isinstance(res, list) else []
+            raw_cursor = (
+                getattr(response, "nextCursor", None)
+                or getattr(response, "next_cursor", None)
+            )
+            # 只接受字符串 cursor：部分网关/测试替身可能返回非字符串的占位对象，
+            # 直接当成“还有下一页”会触发重复 cursor 误判。
+            cursor = raw_cursor if isinstance(raw_cursor, str) and raw_cursor else None
+            if not cursor:
+                return tools
+            if cursor in seen_cursors:
+                raise RuntimeError("MCP tools/list 返回了重复的 cursor，已中止同步")
+            seen_cursors.add(cursor)
+        raise RuntimeError(
+            f"MCP tools/list 分页超过 {MAX_REMOTE_TOOL_PAGES} 页，已中止同步以避免不完整结果"
+        )
+
+    @classmethod
+    async def _list_direct_http_tools(cls, session_mgr: McpSseSession) -> List[Any]:
+        await cls._ensure_direct_http_initialized(session_mgr)
+        tools: List[Any] = []
+        cursor: Optional[str] = None
+        seen_cursors: set[str] = set()
+        for _ in range(MAX_REMOTE_TOOL_PAGES):
+            params = {"cursor": cursor} if cursor else {}
+            res = await cls._direct_http_rpc(session_mgr, "tools/list", params)
+            if isinstance(res, dict):
+                tools.extend(list(res.get("tools") or []))
+                raw_cursor = res.get("nextCursor") or res.get("next_cursor")
+                cursor = raw_cursor if isinstance(raw_cursor, str) and raw_cursor else None
+            elif isinstance(res, list):
+                tools.extend(res)
+                cursor = None
+            else:
+                break
+            if len(tools) > MAX_REMOTE_TOOLS:
+                raise RuntimeError(
+                    f"MCP tools/list 返回超过 {MAX_REMOTE_TOOLS} 个工具，已中止同步以避免不完整结果"
+                )
+            if not cursor:
+                return tools
+            if cursor in seen_cursors:
+                raise RuntimeError("MCP tools/list 返回了重复的 cursor，已中止同步")
+            seen_cursors.add(cursor)
+        raise RuntimeError(
+            f"MCP tools/list 分页超过 {MAX_REMOTE_TOOL_PAGES} 页，已中止同步以避免不完整结果"
+        )
+
+    @classmethod
+    async def list_remote_tools(
+        cls,
+        server_id: str,
+        *,
+        user_info: Optional[Dict[str, Any]] = None,
+    ) -> List[Any]:
+        """拉取远端全部工具（跟随 cursor 分页）。
+
+        ``user_info`` 用于 UserContext 服务：这类服务的 tools/list 也可能要求签名，
+        只带静态 Header 会被远端拒绝。签名断言是按用户签发的，必须使用短生命周期
+        的临时会话，避免把某个用户的断言复用给其他请求。
+        """
+        ephemeral_session = False
+        session_key: Optional[str] = None
+        auth_headers: Optional[Dict[str, str]] = None
+        if user_info:
+            server = await cls._load_server(server_id)
+            if bool(getattr(server, "user_assertion_enabled", False)):
+                user_id = str((user_info or {}).get("user_id") or "").strip()
+                if not user_id:
+                    raise ValueError("MCP UserContext requires an authenticated user_id")
+                auth_headers = build_mcp_headers(
+                    server,
+                    user_info=user_info,
+                    agent_info={
+                        "agent_id": "mcp-tool-sync",
+                        "agent_name": "MCP 工具同步",
+                    },
+                )
+                session_key = f"{server_id}:sync:user:{user_id}:{uuid.uuid4().hex}"
+                ephemeral_session = True
+
+        session_mgr = await cls.get_session(
+            server_id,
+            session_key=session_key,
+            auth_headers=auth_headers,
+        )
+        try:
+            if not session_mgr.is_direct_http:
                 session = session_mgr.session
                 if session is None:
-                    raise RuntimeError("MCP SSE session is unavailable after reconnect")
-                response = await session.list_tools()
-            return response.tools
-        else:
-            await cls._ensure_direct_http_initialized(session_mgr)
-            res = await cls._direct_http_rpc(session_mgr, "tools/list", {})
-            if isinstance(res, dict) and "tools" in res: return res["tools"]
-            elif isinstance(res, list): return res
-            return []
+                    raise RuntimeError("MCP SSE session is unavailable")
+                try:
+                    return cls._dedupe_remote_tools(await cls._list_sse_tools(session))
+                except Exception as exc:
+                    logger.warning(
+                        "[MCP] Tool listing failed for %s; reconnecting once: %s",
+                        server_id,
+                        exc,
+                    )
+                    await session_mgr.close()
+                    await session_mgr.connect()
+                    if session_mgr.is_direct_http:
+                        return cls._dedupe_remote_tools(
+                            await cls._list_direct_http_tools(session_mgr)
+                        )
+                    session = session_mgr.session
+                    if session is None:
+                        raise RuntimeError("MCP SSE session is unavailable after reconnect")
+                    return cls._dedupe_remote_tools(await cls._list_sse_tools(session))
+            return cls._dedupe_remote_tools(await cls._list_direct_http_tools(session_mgr))
+        finally:
+            if ephemeral_session:
+                await session_mgr.close()
+                if session_key:
+                    cls._sessions.pop(session_key, None)
 
     @classmethod
     async def _ensure_direct_http_initialized(cls, session_mgr: McpSseSession) -> None:
@@ -361,6 +518,9 @@ class McpClientService:
                 try:
                     session = session_mgr.session
                     if session is None:
+                        # session 已丢失但对象还挂在缓存里：先关闭，下一次调用才会重新
+                        # 建连；否则会一直拿到同一个空会话。
+                        await session_mgr.close()
                         raise RuntimeError("MCP SSE session is unavailable")
                     response = await asyncio.wait_for(
                         session.call_tool(tool_name, arguments),
@@ -411,6 +571,7 @@ class McpClientService:
                                 return call_result
                             session = session_mgr.session
                             if session is None:
+                                await session_mgr.close()
                                 raise RuntimeError("MCP SSE session is unavailable after reconnect")
                             response = await asyncio.wait_for(
                                 session.call_tool(tool_name, arguments),
@@ -464,7 +625,7 @@ class McpClientService:
         finally:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             try:
-                asyncio.create_task(
+                audit_task = asyncio.create_task(
                     record_outbound_audit_log(
                         server_id=server_id,
                         tool_name=tool_name,
@@ -478,6 +639,10 @@ class McpClientService:
                         tool_output=call_result,
                     )
                 )
+                # 事件循环对 Task 只持弱引用；不在集合里留强引用，极端情况下任务可能在
+                # 执行前被 GC，导致这条审计丢失。
+                _AUDIT_TASKS.add(audit_task)
+                audit_task.add_done_callback(_AUDIT_TASKS.discard)
             except Exception as audit_dispatch_err:
                 logger.warning("[MCP] Failed to dispatch outbound audit log: %s", audit_dispatch_err)
 
@@ -713,31 +878,50 @@ class McpClientService:
         return str(res)
 
     @classmethod
-    async def sync_tools(cls, server_id: str):
-        tools = await cls.list_remote_tools(server_id)
+    async def sync_tools(
+        cls,
+        server_id: str,
+        *,
+        user_info: Optional[Dict[str, Any]] = None,
+        force: bool = False,
+    ):
+        """拉取远端工具并同步缓存。
+
+        - `user_info`：UserContext 服务的 tools/list 也需要签名时传入当前操作者；
+        - `force`：远端返回 0 个工具而本地仍有可用工具时，默认拒绝应用（防止远端
+          瞬时故障/权限抖动把整批工具误标为删除）；显式 force 才允许清空。
+        """
+        tools = await cls.list_remote_tools(server_id, user_info=user_info)
         async with AsyncSessionLocal() as db:
-            result = await db.execute(select(McpServer).where(McpServer.id == server_id))
+            # 同一服务的并发同步（创建自动同步 / 管理员手点 / 多 worker）会在插入新
+            # 工具时撞 (server_id, tool_name) 唯一键；用行锁把 DB 应用段串行化。
+            result = await db.execute(
+                select(McpServer).where(McpServer.id == server_id).with_for_update()
+            )
             server = result.scalar_one_or_none()
-            if not server: return
+            if not server:
+                return
             from datetime import datetime
+
             cached_result = await db.execute(
                 select(McpToolCache).where(McpToolCache.server_id == server_id)
             )
             cached_tools = cached_result.scalars().all()
             cached_by_name = {tool.tool_name: tool for tool in cached_tools}
+            cached_available = sum(1 for tool in cached_tools if getattr(tool, "is_available", True))
             remote_tool_names = set()
             stale_unpublished = 0
             remote_deleted_count = 0
-            server.last_sync_at = datetime.now()
+
             for t in tools:
-                t_name = t.name if hasattr(t, 'name') else t.get('name')
+                t_name = t.name if hasattr(t, "name") else t.get("name")
                 if not t_name:
                     continue
-                t_desc = t.description if hasattr(t, 'description') else t.get('description')
-                t_schema = t.inputSchema if hasattr(t, 'inputSchema') else t.get('inputSchema', t.get('parameter_schema'))
+                t_desc = t.description if hasattr(t, "description") else t.get("description")
+                t_schema = t.inputSchema if hasattr(t, "inputSchema") else t.get("inputSchema", t.get("parameter_schema"))
                 if hasattr(t_schema, "model_dump"):
                     t_schema = t_schema.model_dump(mode="json")
-                schema_payload = dict(t_schema or {})
+                schema_payload = dict(t_schema or {}) if isinstance(t_schema, dict) else {}
                 annotations = getattr(t, "annotations", None)
                 if annotations is None and isinstance(t, dict):
                     annotations = t.get("annotations")
@@ -753,7 +937,27 @@ class McpClientService:
                     existing.tool_description = t_desc
                     existing.parameter_schema = json.dumps(schema_payload)
                 else:
-                    db.add(McpToolCache(id=str(uuid.uuid4()), server_id=server_id, tool_name=full_name, tool_description=t_desc, parameter_schema=json.dumps(schema_payload), is_published=False, is_available=True))
+                    created = McpToolCache(
+                        id=str(uuid.uuid4()),
+                        server_id=server_id,
+                        tool_name=full_name,
+                        tool_description=t_desc,
+                        parameter_schema=json.dumps(schema_payload),
+                        is_published=False,
+                        is_available=True,
+                    )
+                    db.add(created)
+                    # 同一批远端结果即使有重复名（normally 已在 list_remote_tools 去重），
+                    # 也不会再插入第二行。
+                    cached_by_name[full_name] = created
+
+            if not remote_tool_names and cached_available and not force:
+                raise McpSyncGuardError(
+                    f"远端返回 0 个工具，但本地仍有 {cached_available} 个可用工具；"
+                    "已拒绝本次同步以避免误下线。若确认远端确实已清空，请使用强制同步。"
+                )
+
+            server.last_sync_at = datetime.now()
             for cached_tool in cached_tools:
                 if cached_tool.tool_name not in remote_tool_names and cached_tool.is_published:
                     cached_tool.is_published = False
