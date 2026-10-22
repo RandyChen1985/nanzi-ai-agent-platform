@@ -131,8 +131,18 @@ class AgentContextManager:
                         break
 
         if not agent_config:
-            from app.services.config_service import ConfigService
-            default_model = await ConfigService.get("llm_model_name") or "DeepSeek-V3.2"
+            from app.services.ai.default_model import get_default_llm_model
+
+            default_model = await get_default_llm_model()
+            if not default_model:
+                # 不能伪造模型名继续执行：那会拿着目标环境并不存在的模型去要
+                # API Key，最终报「LLM API Key is missing」误导排查方向。
+                logger.error(
+                    "No usable agent config and no default LLM model configured "
+                    "(llm_model_name); skip synthetic fallback agent."
+                )
+                return None, None
+
             fallback_slug = RouterService.FALLBACK_AGENT_NAMES[-1]
 
             agent_config = ChatConfig(

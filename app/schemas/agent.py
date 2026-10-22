@@ -86,6 +86,14 @@ class AIAgentReorderItem(BaseModel):
 class AIAgentReorderRequest(BaseModel):
     items: List[AIAgentReorderItem]
 
+class AgentModelIssue(BaseModel):
+    """智能体绑定模型在当前环境不可用的原因（取值见 agent_model_health）。"""
+
+    code: str
+    message: str
+    model_name: str = ""
+
+
 class AIAgentResponse(AIAgentBase):
     id: str
     is_system: bool
@@ -106,6 +114,8 @@ class AIAgentResponse(AIAgentBase):
     knowledge_base_count: Optional[int] = None
     readiness_ready: bool = False
     readiness_missing: List[str] = Field(default_factory=list)
+    # 模型配置异常：null 表示正常；仅在列表接口计算，避免/health 之类的轻量接口多查库
+    model_issue: Optional[AgentModelIssue] = None
     onboarding_step: str = "COMPLETE"
     # 已发布版本的「是否允许手动切换模型」；None 表示无已发布版本，前端按允许处理
     allow_model_switch: Optional[bool] = None

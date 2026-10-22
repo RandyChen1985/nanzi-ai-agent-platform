@@ -121,11 +121,24 @@ class AgentManagerService:
                 "template_fallback": False,
             }
 
-        from app.services.config_service import ConfigService
+        from fastapi import HTTPException
+
+        from app.services.ai.default_model import (
+            DefaultModelNotConfigured,
+            require_default_llm_model,
+        )
 
         fallback = AgentManagerService._ONBOARDING_FALLBACKS[str(type_value)]
+
+        try:
+            model_name = await require_default_llm_model()
+        except DefaultModelNotConfigured as exc:
+            # 不能伪造模型名落库：否则该智能体之后每次调用都会拿一个目标环境
+            # 并不存在的模型去要 API Key，报错会被误诊成「密钥缺失」。
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         return {
-            "model_name": await ConfigService.get("llm_model_name") or "DeepSeek-V3.2",
+            "model_name": model_name,
             "temperature": 0.0,
             "system_prompt": fallback["system_prompt"],
             "tools": list(fallback["tools"]),
@@ -670,7 +683,37 @@ class AgentManagerService:
             )
             agent.readiness_ready = readiness.ready
             agent.readiness_missing = list(readiness.missing)
-            
+
+        # 模型健康：只校验 LOCAL 引擎的已启用智能体。OPENCLAW 的 model 是机器人 ID，
+        # RAGFLOW 不走平台 LLM，拿模型表去比对只会误报。
+        agent.model_issue = None
+        local_enabled = [
+            agent
+            for agent in visible_agents
+            if (agent.engine_type or "LOCAL") == "LOCAL" and agent.is_enabled
+        ]
+        if local_enabled:
+            from app.services.ai.agent_model_health import (
+                evaluate_model_issue,
+                load_global_llm_api_key,
+                load_model_registry,
+            )
+
+            model_registry = await load_model_registry(session)
+            has_global_api_key = await load_global_llm_api_key()
+            for agent in local_enabled:
+                published_version = published_by_agent.get(agent.id)
+                if published_version is None:
+                    # 无已发布版本由 readiness 的 published_version 项覆盖，这里不重复报。
+                    continue
+                issue = evaluate_model_issue(
+                    getattr(published_version, "model_name", None),
+                    registry=model_registry,
+                    has_global_api_key=has_global_api_key,
+                )
+                if issue is not None:
+                    agent.model_issue = issue.to_dict()
+
         return visible_agents
 
     @staticmethod

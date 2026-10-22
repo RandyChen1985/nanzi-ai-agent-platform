@@ -103,6 +103,23 @@ async def get_agent_toolcall_timeout(
     return {"seconds": int(timeout_seconds)}
 
 
+@router.get(
+    "/model-health",
+    dependencies=[Depends(require_permission("menu", "menu:agent_management"))],
+    summary="系统默认 LLM 模型的健康状态（智能体管理页顶部提示用）",
+)
+async def get_agent_model_health(session: AsyncSession = Depends(get_db_session)):
+    """默认模型未配置 / 未注册 / 已禁用 / 缺 API Key 时返回具体原因。
+
+    判定与智能体自身的 ``model_issue`` 同源（同一个模型表快照规则），
+    区别只在于这里校验的是系统配置 ``llm_model_name`` 指向的模型。
+    """
+    from app.services.ai.agent_model_health import load_default_model_issue
+
+    issue = await load_default_model_issue(session)
+    return {"default_model_issue": issue.to_dict() if issue else None}
+
+
 # 与 `ai_agents.name` 的 String(100) 对齐：预检就拦住超长名称，避免落库报错
 AGENT_NAME_MAX_LENGTH = 100
 

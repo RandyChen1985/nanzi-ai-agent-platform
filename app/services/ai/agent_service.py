@@ -1657,8 +1657,9 @@ class AgentService:
 
         if route_details and getattr(route_details, "provenance", None) == "router":
             logger.info(f"[Router] Routing decision found: {route_details}")
-            from app.services.config_service import ConfigService
-            router_model = await ConfigService.get("llm_model_name") or "DeepSeek-V3.2"
+            from app.services.ai.default_model import get_default_llm_model
+
+            router_model = await get_default_llm_model() or "未配置（llm_model_name）"
             r_thought = getattr(route_details, "reasoning", "No reasoning")
             r_conf = getattr(route_details, "confidence", 0.0)
             r_agent = getattr(route_details, "agent_id", "unknown")

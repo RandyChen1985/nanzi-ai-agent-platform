@@ -22,6 +22,13 @@ export interface ChatHistoryQueryParams {
   group_by_conversation?: boolean
 }
 
+/** 模型配置异常原因：missing | unregistered | disabled | missing_api_key */
+export interface AgentModelIssue {
+  code: string
+  message: string
+  model_name?: string
+}
+
 export interface AIAgent {
   id: string
   name: string
@@ -54,6 +61,11 @@ export interface AIAgent {
   knowledge_base_count?: number | null
   readiness_ready?: boolean
   readiness_missing?: string[]
+  /**
+   * 已发布版本绑定的模型在当前环境不可用的原因；null/undefined 表示正常。
+   * code: missing | unregistered | disabled | missing_api_key
+   */
+  model_issue?: AgentModelIssue | null
   onboarding_step?: 'VERSION' | 'RESOURCE' | 'COMPLETE'
   /** 已发布版本是否允许在输入框手动切换模型；null/undefined 表示无发布版或未配置，前端按允许处理 */
   allow_model_switch?: boolean | null
@@ -113,6 +125,10 @@ export const agentApi = {
 
   // Read-only global tool-call timeout shown in the version editor
   getGlobalToolcallTimeout: () => axios.get<{ seconds: number }>('/api/portal/agents/toolcall-timeout'),
+
+  /** 系统默认 LLM 模型的健康状态；default_model_issue 为 null 表示正常 */
+  getModelHealth: () =>
+    axios.get<{ default_model_issue: AgentModelIssue | null }>('/api/portal/agents/model-health'),
   
   // Create agent
   createAgent: (data: Partial<AIAgent>) => axios.post<AIAgent>('/api/portal/agents/', data),

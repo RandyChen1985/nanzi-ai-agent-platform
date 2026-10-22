@@ -6,6 +6,7 @@ import type {
   AIAgent,
   AIAgentBase,
   AIAgentVersion,
+  AgentModelIssue,
   AgentType,
 } from "../api/agent";
 import { modelApi, type AIModel } from "../api/model";
@@ -100,6 +101,18 @@ const fetchGlobalAgentToolcallTimeout = async () => {
   }
 };
 
+// 系统默认模型（llm_model_name）本身的健康状态：未配置 / 未注册 / 已禁用 / 缺 Key。
+// 它影响所有没有显式绑定模型的链路，所以和单个智能体的问题一起在顶部提示。
+const defaultModelIssue = ref<AgentModelIssue | null>(null);
+
+const fetchModelHealth = async () => {
+  try {
+    const res = await agentApi.getModelHealth();
+    defaultModelIssue.value = res.data?.default_model_issue ?? null;
+  } catch (error) {
+    console.warn("Failed to fetch default model health", error);
+  }
+};
 const showAgentModal = ref(false);
 const showVersionModal = ref(false);
 const showHistoryModal = ref(false);
@@ -426,6 +439,64 @@ const segmentCounts = computed(() => {
   const kb = agents.value.filter(a => a.agent_type === 'KNOWLEDGE_BASE').length
   const custom = agents.value.filter(a => !a.is_system).length
   return { all, ready, unready, general, chatbi, kb, custom }
+})
+
+// 模型健康：已发布版本绑定的模型在当前环境未注册 / 已禁用 / 缺 API Key。
+// 判定在后端完成（LOCAL 引擎的已启用智能体才返回 model_issue），这里只做汇总展示。
+const modelIssuePanelOpen = ref(false)
+const modelIssuesDismissed = ref(false)
+const modelIssues = computed(() => agents.value.filter(a => a.model_issue))
+
+type ModelHealthItem = {
+  key: string
+  title: string
+  detail: string
+  hint: string
+  /** 只有「系统默认模型」有可靠的跳转入口；智能体的模型在版本配置里，位置随版本而异 */
+  action?: 'system'
+}
+
+// 智能体的模型在「版本配置」里，而用户可能一个版本都没建过，跳不过去也没意义。
+// 因此这里不复用 openAgentModal（那是基础信息弹窗，改不了模型），直接给操作路径。
+const MODEL_ISSUE_HINT: Record<string, string> = {
+  missing: '请在该智能体的「版本配置 → 模型」中选择模型并发布',
+  unregistered: '请先在「模型管理」新增该模型，或在「版本配置 → 模型」改选已有模型',
+  disabled: '请在「模型管理」中启用该模型',
+  missing_api_key: '请在「模型管理」中为该模型填写 API Key',
+}
+
+const modelIssueHint = (code?: string) =>
+  (code && MODEL_ISSUE_HINT[code]) || '请在「模型管理」与「版本配置 → 模型」中检查'
+
+// 两个来源合并展示：系统默认模型（影响所有未显式绑定模型的链路）+ 单个智能体。
+const modelHealthItems = computed<ModelHealthItem[]>(() => {
+  const items: ModelHealthItem[] = []
+  if (defaultModelIssue.value) {
+    items.push({
+      key: 'system-default',
+      title: '系统默认 LLM 模型',
+      detail: defaultModelIssue.value.message,
+      hint: '',
+      action: 'system',
+    })
+  }
+  for (const agent of modelIssues.value) {
+    items.push({
+      key: agent.id,
+      title: agent.display_name || agent.name,
+      detail: agent.model_issue?.message || '',
+      hint: modelIssueHint(agent.model_issue?.code),
+    })
+  }
+  return items
+})
+
+const visibleModelIssues = computed(() =>
+  modelIssuesDismissed.value ? [] : modelHealthItems.value
+)
+// 问题清空后重置「知道了」，下次真的再出现时仍然提示
+watch(modelHealthItems, (list) => {
+  if (!list.length) modelIssuesDismissed.value = false
 })
 
 const filteredAgents = computed(() => {
@@ -2823,6 +2894,7 @@ onMounted(() => {
   fetchModels();
   fetchGlobalModelTemperature();
   fetchGlobalAgentToolcallTimeout();
+  fetchModelHealth();
   fetchTools();
   const cached = localStorage.getItem("user_info");
   if (cached) userInfo.value = JSON.parse(cached);
@@ -3027,6 +3099,70 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 模型配置异常提示：只在有问题时渲染，正常时完全不占空间 -->
+    <div
+      v-if="visibleModelIssues.length"
+      class="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex min-w-0 items-center gap-2">
+          <svg class="h-4 w-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <span class="text-sm font-medium text-amber-900">
+            {{ visibleModelIssues.length }} 处模型配置异常
+          </span>
+          <span class="hidden truncate text-xs text-amber-700 sm:inline">
+            相关调用会失败，请尽快修复
+          </span>
+        </div>
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            class="cursor-pointer rounded-md px-2 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100"
+            @click="modelIssuePanelOpen = !modelIssuePanelOpen"
+          >
+            {{ modelIssuePanelOpen ? '收起' : '查看' }}
+          </button>
+          <button
+            type="button"
+            class="cursor-pointer rounded-md px-2 py-1 text-xs text-amber-700 transition-colors hover:bg-amber-100"
+            @click="modelIssuesDismissed = true"
+          >
+            知道了
+          </button>
+        </div>
+      </div>
+
+      <ul v-if="modelIssuePanelOpen" class="mt-2.5 space-y-1.5">
+        <li
+          v-for="item in visibleModelIssues"
+          :key="item.key"
+          class="flex items-center justify-between gap-3 rounded-lg bg-white/80 px-3 py-2"
+        >
+          <div class="min-w-0">
+            <div class="truncate text-sm font-medium text-gray-800">
+              {{ item.title }}
+            </div>
+            <div class="truncate text-xs text-gray-500">
+              {{ item.detail }}
+            </div>
+            <div v-if="item.hint" class="mt-0.5 text-xs text-amber-700">
+              {{ item.hint }}
+            </div>
+          </div>
+          <button
+            v-if="item.action === 'system'"
+            type="button"
+            class="shrink-0 cursor-pointer rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-50"
+            @click="router.push('/dashboard/system?tab=models')"
+          >
+            去设置
+          </button>
+        </li>
+      </ul>
     </div>
 
     <!-- 分段快捷筛选 Tab 栏 (Segmented Filter Tabs) -->
@@ -3298,13 +3434,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <div class="py-2.5 space-y-2 text-[11px]">
             <div class="flex items-center justify-between gap-2 text-gray-700">
               <div class="flex items-center gap-1.5">
-                <span :class="agent.readiness_missing?.includes('model_missing') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
-                  {{ agent.readiness_missing?.includes('model_missing') ? '⚠️' : '✓' }}
+                <span :class="agent.model_issue ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
+                  {{ agent.model_issue ? '⚠️' : '✓' }}
                 </span>
                 <span class="font-medium text-gray-900">大模型绑定</span>
               </div>
-              <span :class="agent.readiness_missing?.includes('model_missing') ? 'text-amber-700 font-medium' : 'text-emerald-600'">
-                {{ agent.readiness_missing?.includes('model_missing') ? '缺少模型配置' : '已就绪' }}
+              <span :class="agent.model_issue ? 'text-amber-700 font-medium' : 'text-emerald-600'">
+                {{ agent.model_issue ? agent.model_issue.message : '已就绪' }}
               </span>
             </div>
 

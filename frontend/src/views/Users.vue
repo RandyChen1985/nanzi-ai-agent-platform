@@ -533,7 +533,6 @@
                   />
                 </th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">用户</th>
-                <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">邮箱</th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">身份 / 角色</th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">备注</th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">状态</th>
@@ -592,11 +591,14 @@
                         >{{ user.primary_dept_name }}<template v-if="(user.dept_names || []).length > 1">+{{ user.dept_names.length - 1 }}</template></span>
                       </template>
                     </div>
+                    <div
+                      v-if="user.email"
+                      class="mt-0.5 min-w-0 text-xs text-gray-500"
+                      :title="user.email"
+                    >
+                      <span class="block max-w-[16rem] truncate font-mono">{{ user.email }}</span>
+                    </div>
                   </div>
-                </td>
-                <td class="px-5 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <span v-if="user.email" class="font-mono text-xs text-gray-600" :title="user.email">{{ user.email }}</span>
-                  <span v-else class="text-gray-300">-</span>
                 </td>
                 <td class="px-5 py-4 whitespace-nowrap text-sm">
                   <div class="flex flex-col gap-1.5 items-start">
