@@ -31,6 +31,8 @@ export interface WorkbenchAgent {
   id: string
   name: string
   description?: string
+  /** 智能体自己的头像；空字符串表示未配置，卡片回退到名称首字 */
+  avatar_url?: string
   execution_count?: number
   action: "open_agent"
   target: WorkbenchTarget

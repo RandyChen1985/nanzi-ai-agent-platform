@@ -174,9 +174,15 @@ const recommendedPrompts = computed(() => {
             class="welcome-card-item p-4 rounded-2xl bg-white dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all group text-left cursor-pointer"
             @click="emit('quick-question', card.prompt)"
           >
-            <div class="mb-2 text-primary group-hover:scale-110 transition-transform"><component :is="welcomeCardIcon(card.icon)" class="h-7 w-7" aria-hidden="true" /></div>
-            <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ card.title }}</h3>
-            <p class="text-[10px] text-gray-400 leading-normal">{{ card.subtitle }}</p>
+            <div class="flex items-start gap-3">
+              <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform group-hover:scale-110">
+                <component :is="welcomeCardIcon(card.icon)" class="h-6 w-6" aria-hidden="true" />
+              </span>
+              <div class="min-w-0">
+                <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ card.title }}</h3>
+                <p class="text-[10px] text-gray-400 leading-normal">{{ card.subtitle }}</p>
+              </div>
+            </div>
           </button>
         </template>
         <template v-else>
@@ -189,9 +195,15 @@ const recommendedPrompts = computed(() => {
             :aria-label="cap.title"
             @click="handleCapabilityClick(cap.action)"
           >
-            <div class="mb-2 text-primary group-hover:scale-110 transition-transform"><component :is="welcomeCardIcon(cap.icon)" class="h-7 w-7" aria-hidden="true" /></div>
-            <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ cap.title }}</h3>
-            <p class="text-[10px] text-gray-400 leading-normal">{{ cap.desc }}</p>
+            <div class="flex items-start gap-3">
+              <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform group-hover:scale-110">
+                <component :is="welcomeCardIcon(cap.icon)" class="h-6 w-6" aria-hidden="true" />
+              </span>
+              <div class="min-w-0">
+                <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ cap.title }}</h3>
+                <p class="text-[10px] text-gray-400 leading-normal">{{ cap.desc }}</p>
+              </div>
+            </div>
           </button>
         </template>
         </div>
