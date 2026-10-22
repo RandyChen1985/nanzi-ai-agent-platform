@@ -89,6 +89,7 @@
           <div class="relative group inline-flex items-center flex-shrink-0">
             <button
               type="button"
+              data-tour="history-toggle"
               @click="showHistorySidebar = !showHistorySidebar"
               class="p-1.5 -ml-1 text-gray-500 dark:text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors flex-shrink-0"
               :class="{ 'text-primary bg-primary/10': showHistorySidebar }"
@@ -109,7 +110,7 @@
           <!-- 不能加 overflow-hidden：副标题行里挂着「进行中的会话」浮层（absolute 定位），
                祖先裁剪会让浮层整块不可见（表现为点了没反应）。文字截断由各行 span
                自己的 truncate 负责。 -->
-          <div class="flex flex-col min-w-0">
+          <div data-tour="header-status" class="flex flex-col min-w-0">
                 <div class="flex items-center space-x-1.5 leading-tight">
                     <span class="text-[13px] font-semibold text-gray-800 dark:text-gray-100 truncate">
                         <template v-if="isProcessing">
@@ -212,7 +213,7 @@
             </div>
         </div>
 
-        <div class="flex items-center space-x-2">
+        <div data-tour="header-actions" class="flex items-center space-x-2">
             <!-- Fullscreen Button (desktop only) -->
             <div v-if="!isMobile" class="relative group inline-flex items-center">
               <button
@@ -1874,8 +1875,21 @@
       @cancel="showSandboxStopConfirm = false"
     />
     <!-- Settings Modal -->
+    <ChatTour
+      ref="tourRef"
+      v-model="tourActive"
+      :steps="TOUR_STEPS"
+      :initial-index="tourStepIndex"
+      @change="handleTourChange"
+      @enter="handleTourEnter"
+      @leave="handleTourLeave"
+      @missing-target="handleTourMissing"
+      @finish="tour.finish()"
+      @skip="tour.skip()"
+    />
     <ChatSettings
       v-model:visible="showSettings"
+      :tour-completed-at="tourCompletedAt"
       :config="config"
       :allowed-agents="allowedAgents"
       :routing-locked="isRoutingSettingsLocked"
@@ -1887,6 +1901,7 @@
       @switch-to-expert="switchToExpert"
       @save-settings="saveRoutingSettings"
       @reset-session="resetSession"
+      @replay-tour="handleReplayTour"
     />
     <PersonalResourcesModal
       v-model:visible="showPersonalResources"
@@ -2496,6 +2511,9 @@ import { useRouter } from "vue-router";
 import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
 import ActiveRunsPopover from "@/components/chat/ActiveRunsPopover.vue";
+import ChatTour from "@/components/embed/ChatTour.vue";
+import { useEmbedTour } from "@/composables/embed/useEmbedTour";
+import { TOUR_STEPS, TOUR_VERSION } from "@/components/embed/tourSteps";
 import { createActiveRunsController, type ActiveRunItem } from "@/composables/chat/useActiveRuns";
 import { cancelConversationRun, cancelConversationRunDetailed } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
@@ -3140,6 +3158,103 @@ const effectiveOverrideModel = computed(() =>
 );
 const chatInputRef = ref<any>(null);
 const userInput = ref("");
+// ---- 功能引导（EmbedChat Feature Tour） ----
+const tour = useEmbedTour({ isMobile: () => isMobile.value });
+const tourActive = tour.active;
+const tourStepIndex = tour.stepIndex;
+const tourRef = ref<any>(null);
+/** 只有引导自己打开过上下文弹层，退出时才替用户收起 */
+const tourOwnsContextPanel = ref(false);
+const tourCompletedAt = computed(() => tour.state.value.completed_at);
+
+const handleTourEnter = async (_index: number, step: { opensContextPanel?: boolean }) => {
+  if (!step?.opensContextPanel) return;
+  const opened = await chatInputRef.value?.openContextUsageForTour?.();
+  if (opened) tourOwnsContextPanel.value = true;
+  await nextTick();
+  // 弹层渲染完成后再让引导重新测量锚点
+  window.setTimeout(() => tourRef.value?.refresh?.(), 80);
+};
+
+const handleTourLeave = () => {
+  if (!tourOwnsContextPanel.value) return;
+  chatInputRef.value?.closeContextUsageForTour?.();
+  tourOwnsContextPanel.value = false;
+};
+
+/** ChatTour 内部换步 → 同步状态机，断点与「跳过」记录的才是真实进度 */
+const handleTourChange = (index: number) => {
+  tour.goTo(index);
+};
+
+const handleTourMissing = (index: number) => {
+  window.setTimeout(() => {
+    if (!tour.active.value) return;
+    if (tour.stepIndex.value !== index) return;
+    if (index >= TOUR_STEPS.length - 1) {
+      tour.finish();
+      return;
+    }
+    // 必须由 ChatTour 自己前进：索引在组件内部，父组件直接改状态机不会驱动界面
+    tourRef.value?.goNext?.();
+  }, 80);
+};
+
+/** 等某个引导锚点真正出现（initChat 是异步的，固定延时不够稳） */
+const waitForTourAnchor = async (selector: string, timeout = 1200) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeout) {
+    if (document.querySelector(selector)) return true;
+    await new Promise((resolve) => window.setTimeout(resolve, 60));
+  }
+  return false;
+};
+
+/**
+ * 引导要讲欢迎卡片，而卡片只在空会话渲染。
+ * 当前内容本来就会保存进历史（与「开启新会话」同语义），所以直接开一个空会话，
+ * 不额外弹确认框——页面刚加载时用户基本还没开始输入。
+ */
+const prepareEmptyConversationForTour = async () => {
+  if (messages.value.length === 0) return;
+  startNewConversation();
+  await nextTick();
+  await waitForTourAnchor('[data-tour="welcome-cards"]');
+};
+
+const handleReplayTour = async () => {
+  showSettings.value = false;
+  await nextTick();
+  await prepareEmptyConversationForTour();
+  await nextTick();
+  tour.restart();
+};
+
+// 索引从步骤表派生；万一 id 被改名，兜底到 0（仍然先开空会话）
+const welcomeStepIndex = Math.max(0, TOUR_STEPS.findIndex((step) => step.id === 'welcome-cards'));
+
+// 等权限与首屏渲染稳定后再起播：确实要播、且当前有旧内容时，先开空会话
+let tourBootTimer: number | undefined;
+
+onMounted(() => {
+  tourBootTimer = window.setTimeout(async () => {
+    if (!hasPermission.value) return;
+    // 生成中不打断；下次进入仍是未完成状态，会重新尝试
+    if (isProcessing.value) return;
+    await tour.loadState();
+    if (!tour.shouldAutoPlay()) return;
+    const resumeIndex = tour.state.value.version === TOUR_VERSION ? tour.state.value.step : 0;
+    // 从后面断点继续时不需要欢迎卡片，也就不动当前会话（索引从步骤表派生，加步骤不会漂）
+    if (resumeIndex <= welcomeStepIndex) {
+      await prepareEmptyConversationForTour();
+    }
+    void tour.resumeOrStart(true);
+  }, 900);
+});
+
+onUnmounted(() => {
+  if (tourBootTimer) window.clearTimeout(tourBootTimer);
+});
 const showWorkspaceDrawer = ref(false);
 const showMyArtifactsDrawer = ref(false);
 const myArtifactsInitialTab = ref<"files" | "reusable">("files");
@@ -7639,6 +7754,10 @@ watch(historyKeyword, () => {
 });
 // Settings
 const showSettings = ref(false);
+// 打开设置时刷新一次「上次完成」，避免刚进页面时状态还没加载
+watch(showSettings, (visible) => {
+  if (visible) void tour.loadState();
+});
 const showHelpModal = ref(false);
 
 
