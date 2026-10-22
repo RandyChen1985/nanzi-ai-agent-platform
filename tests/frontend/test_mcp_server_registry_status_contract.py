@@ -37,3 +37,18 @@ def test_remote_deleted_tool_is_visible_but_cannot_be_managed():
     assert "远端已删除" in SOURCE
     assert "tool?.is_available !== false" in SOURCE
     assert ":disabled=\"!canManageTool(tool)\"" in SOURCE
+
+
+def test_remote_deleted_hint_explains_itself_via_platform_tooltip():
+    """「远端已删除」是存量提示不是故障，必须解释原因/影响/恢复路径。
+
+    用全局 v-tooltip 指令（挂 body、可控换行、移动端可点），不能用原生 title：
+    原生 title 约 1 秒才出现、长文案被压成一行，等于没解释。
+    """
+    assert "个远端已删除" in SOURCE
+    assert "v-tooltip=" in SOURCE
+    # 触发区要给出「可悬停」的视觉暗示
+    assert "cursor-help" in SOURCE
+    # 文案必须覆盖「为什么出现」与「怎么恢复」两件事
+    assert "常见原因是远端改名、下架" in SOURCE
+    assert "远端恢复同名工具后" in SOURCE

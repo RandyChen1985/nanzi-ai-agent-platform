@@ -1808,7 +1808,13 @@ onMounted(fetchServers)
                 {{ server.tool_count }} 工具 /
                 <span v-if="server.enabled_status === 1" class="font-bold text-green-600">{{ server.published_tool_count }} 已发布</span>
                 <span v-else class="font-bold text-gray-400">服务已禁用</span>
-                <span v-if="server.stale_tool_count > 0" class="ml-1 text-amber-600">{{ server.stale_tool_count }} 个远端已删除</span>
+                <!-- 「远端已删除」不是错误而是存量提示：上次同步时远端没再返回这些工具。
+                     文案必须解释「为什么出现 + 影响什么 + 怎么恢复」，否则用户只会当成故障。 -->
+                <span
+                  v-if="server.stale_tool_count > 0"
+                  class="ml-1 cursor-help text-amber-600"
+                  v-tooltip="`这 ${server.stale_tool_count} 个工具在上次同步时已从远端消失，常见原因是远端改名、下架，或凭证与权限收窄导致 tools/list 少返回。它们仍保留在列表里供核对，但不可发布、不可执行，也不会被智能体调用；远端恢复同名工具后，下次同步会自动恢复。`"
+                >{{ server.stale_tool_count }} 个远端已删除</span>
               </span>
               <span
                 v-if="server.share_count > 0"
@@ -1956,7 +1962,11 @@ onMounted(fetchServers)
                       <LinkIcon class="mr-0.5 h-3 w-3" />{{ tool.usage_count }}
                     </span>
                     <span v-if="!isSelectedServerEnabled" class="rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-amber-600">服务已禁用</span>
-                    <span v-else-if="tool.is_available === false" class="rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-amber-600">远端已删除</span>
+                    <span
+                      v-else-if="tool.is_available === false"
+                      class="cursor-help rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-amber-600"
+                      v-tooltip="'该工具在最近一次同步时已从远端消失，因此不能勾选给智能体、不能发布，测试台也无法执行。远端重新提供同名工具后，再次同步即自动恢复；若远端已改名，旧记录需删除整个服务重建。'"
+                    >远端已删除</span>
                     <span v-else-if="tool.is_published" class="rounded border border-green-100 bg-green-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-green-600">已发布</span>
                     <span v-else class="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-tighter text-gray-400">待发布</span>
                   </div>
