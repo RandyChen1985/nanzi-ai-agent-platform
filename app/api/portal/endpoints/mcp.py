@@ -30,6 +30,7 @@ from app.services.mcp.mcp_auth_policy import (
     mcp_auth_headers_summary,
     resolve_mcp_auth_headers,
 )
+from app.services.mcp.stale_tool_cleanup import cleanup_stale_tools
 from app.services.mcp_share_service import (
     McpShareConflictError,
     McpShareNotFoundError,
@@ -1005,6 +1006,42 @@ async def delete_mcp_server(
     except Exception as e:
         logger.warning(f"Evicting session failed during delete for server {server_id}: {e}")
     return {"message": "Server and associated tools deleted"}
+
+@router.delete(
+    "/servers/{server_id}/stale-tools",
+    dependencies=[Depends(require_permission("element", "element:mcp_management:delete"))],
+)
+async def cleanup_mcp_server_stale_tools(
+    server_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+):
+    """清理该服务下「远端已删除」的工具缓存，并从智能体版本里剔除死引用。
+
+    与删除服务不同：这里不删服务本身，也不动出站调用审计（审计表对
+    ``sys_mcp_servers`` 是 ``ondelete=CASCADE``，删服务会连带清空历史）。
+    """
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == server_id))
+    ).scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    _ensure_server_control_access(server, user)
+
+    result = await cleanup_stale_tools(db, server_id)
+    if result["removed_count"] == 0:
+        return {
+            "status": "success",
+            "message": "没有需要清理的远端已删除工具",
+            **result,
+        }
+
+    _clear_runtime_tool_cache()
+    message = f"已清理 {result['removed_count']} 个远端已删除的工具"
+    if result["affected_agent_versions"]:
+        message += f"，并从 {result['affected_agent_versions']} 个智能体版本配置中移除了对应引用"
+    return {"status": "success", "message": message, **result}
+
 
 @router.post("/servers/{server_id}/sync", dependencies=[Depends(require_permission("element", "element:mcp_management:sync"))])
 async def sync_mcp_tools(

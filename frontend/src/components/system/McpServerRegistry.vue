@@ -1398,6 +1398,40 @@ const syncTools = async (id: string) => {
   }
 }
 
+/**
+ * 清理「远端已删除」工具：只删失效缓存与智能体版本里的死引用，
+ * 不动服务配置与出站调用审计（删服务才会连带清空审计日志）。
+ */
+const showCleanupConfirm = ref(false)
+const cleanupStaleLoading = ref(false)
+const staleToolNames = computed(() =>
+  tools.value
+    .filter((tool: any) => tool.is_available === false)
+    .map((tool: any) => tool.tool_name),
+)
+const staleToolCount = computed(
+  () => Number(selectedServer.value?.stale_tool_count || staleToolNames.value.length),
+)
+
+const cleanupStaleTools = async () => {
+  const server = selectedServer.value
+  if (!server || cleanupStaleLoading.value) return
+  cleanupStaleLoading.value = true
+  try {
+    const response = await axios.delete(`/api/portal/mcp/servers/${server.id}/stale-tools`)
+    showToast(response.data?.message || '已清理远端已删除的工具', 'success')
+    showCleanupConfirm.value = false
+    // 后端已删干净：先就地把计数清零，避免刷新返回前按钮和提示还挂着
+    if (selectedServer.value?.id === server.id) selectedServer.value.stale_tool_count = 0
+    fetchServers()
+    fetchTools(server.id)
+  } catch (e: any) {
+    showToast(getApiErrorMessage(e, '清理失败'), 'error')
+  } finally {
+    cleanupStaleLoading.value = false
+  }
+}
+
 const fetchTools = async (serverId: string) => {
   toolsLoading.value = true
   try {
@@ -1901,6 +1935,18 @@ onMounted(fetchServers)
             <button v-if="canSave && canSyncMcp" @click="syncTools(selectedServer.id)" :disabled="syncLoading[selectedServer.id]" class="flex items-center rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-primary hover:underline">
               <ArrowPathIcon class="mr-1 h-3.5 w-3.5" :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''" />
               刷新
+            </button>
+            <!-- 「远端已删除」是存量噪音：给一个有权限的人可执行的动作，而不是只有提示 -->
+            <button
+              v-if="canSave && canDeleteMcp && staleToolCount > 0"
+              type="button"
+              class="flex items-center rounded border border-amber-200 bg-white px-2 py-1 text-[11px] font-bold text-amber-700 shadow-xs transition-colors hover:border-amber-300 hover:bg-amber-50"
+              :class="cleanupStaleLoading ? 'cursor-wait opacity-60' : ''"
+              :disabled="cleanupStaleLoading"
+              @click="showCleanupConfirm = true"
+            >
+              <TrashIcon class="mr-1 h-3.5 w-3.5" />
+              清理已失效 {{ staleToolCount }}
             </button>
           </div>
         </div>
@@ -2722,6 +2768,20 @@ onMounted(fetchServers)
       :loading="statusConfirmLoading"
       @confirm="executeStatusChange"
       @cancel="cancelStatusConfirm"
+    />
+
+    <!-- 清理远端已删除工具：只删失效缓存，不动服务配置与调用日志 -->
+    <ConfirmModal
+      v-if="showCleanupConfirm"
+      title="清理远端已删除的工具"
+      :message="`确定要删除该服务下 ${staleToolCount} 条已失效工具的缓存记录吗？\n这些工具在最近一次同步时已从远端消失，本来就不能发布、不能执行，也不会被智能体调用。清理不会改动服务配置，也不会删除出站调用日志；若远端之后恢复同名工具，需要重新同步并在智能体版本配置里重新勾选。`"
+      type="warning"
+      confirm-text="确认清理"
+      :loading="cleanupStaleLoading"
+      :details="staleToolNames"
+      details-label="将被清理的工具"
+      @confirm="cleanupStaleTools"
+      @cancel="showCleanupConfirm = false"
     />
 
     <!-- Outbound Audit Log Modal -->

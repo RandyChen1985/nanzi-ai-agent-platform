@@ -52,3 +52,25 @@ def test_remote_deleted_hint_explains_itself_via_platform_tooltip():
     # 文案必须覆盖「为什么出现」与「怎么恢复」两件事
     assert "常见原因是远端改名、下架" in SOURCE
     assert "远端恢复同名工具后" in SOURCE
+
+
+def test_remote_deleted_tools_have_a_guarded_cleanup_action():
+    """长期无法自愈时必须有出口：清理按钮 + 二次确认 + 只打 stale-tools 接口。
+
+    清理走 DELETE /servers/{id}/stale-tools，而不是删服务——删服务会因
+    sys_mcp_outbound_audit_logs 的 ondelete=CASCADE 连带清空出站审计日志。
+    """
+    assert "stale-tools" in SOURCE
+    assert "清理已失效" in SOURCE
+    assert "const cleanupStaleTools = async" in SOURCE
+    # 删除类动作要 delete 权限，且必须经过确认弹窗
+    assert "canDeleteMcp && staleToolCount > 0" in SOURCE
+    assert "showCleanupConfirm" in SOURCE
+    assert "将被清理的工具" in SOURCE
+
+    # 前端不能退化成「删服务」来清缓存：清理只打 stale-tools 子资源
+    cleanup_block = SOURCE.split("const cleanupStaleTools = async", 1)[1].split(
+        "const fetchTools", 1
+    )[0]
+    assert "/stale-tools`" in cleanup_block
+    assert "executeDeleteServer" not in cleanup_block
