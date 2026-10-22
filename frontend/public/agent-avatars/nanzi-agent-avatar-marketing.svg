@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="marketing-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#dc2626" />
+      <stop offset="100%" stop-color="#f97316" />
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#marketing-bg)" />
+  <path d="M64 24 C76 38 82 54 82 68 L64 84 L46 68 C46 54 52 38 64 24 Z" fill="#ffffff" />
+  <circle cx="64" cy="48" r="7" fill="#dc2626" />
+  <path d="M46 66 L36 80 L52 78 Z" fill="#ffffff" fill-opacity="0.82" />
+  <path d="M82 66 L92 80 L76 78 Z" fill="#ffffff" fill-opacity="0.82" />
+  <path d="M64 84 C58 92 58 98 64 106 C70 98 70 92 64 84 Z" fill="#fde68a" />
+</svg>

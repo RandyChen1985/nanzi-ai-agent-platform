@@ -1,6 +1,7 @@
 /**
  * 预设 AI 智能体头像列表
- * 提供不同设计风格的现代化矢量头像（机器人、智慧光芒、极客科技、睿智学者等）
+ * 提供不同设计风格的现代化矢量头像（机器人、智慧光芒、极客科技、睿智学者等），
+ * 并覆盖常见业务场景（研发 / 设计 / 写作 / 翻译 / 法务 / 财务 / 医疗 / 运维 / 营销 / 行政）。
  *
  * 注意：所有预设必须使用**短的静态资源路径**，禁止使用内联 `data:` URI
  * （把 SVG 源码 URL 编码后塞进链接）那种超长串。预设值会被写入 Redis 全局键并在
@@ -69,6 +70,56 @@ export const PRESET_AGENT_AVATARS: PresetAgentAvatar[] = [
     id: "shield",
     name: "安全守护",
     url: "/agent-avatars/nanzi-agent-avatar-shield.svg",
+  },
+  {
+    id: "code",
+    name: "代码开发",
+    url: "/agent-avatars/nanzi-agent-avatar-code.svg",
+  },
+  {
+    id: "creative",
+    name: "创意设计",
+    url: "/agent-avatars/nanzi-agent-avatar-creative.svg",
+  },
+  {
+    id: "writer",
+    name: "文案写作",
+    url: "/agent-avatars/nanzi-agent-avatar-writer.svg",
+  },
+  {
+    id: "translate",
+    name: "多语翻译",
+    url: "/agent-avatars/nanzi-agent-avatar-translate.svg",
+  },
+  {
+    id: "legal",
+    name: "法务合规",
+    url: "/agent-avatars/nanzi-agent-avatar-legal.svg",
+  },
+  {
+    id: "finance",
+    name: "财务金融",
+    url: "/agent-avatars/nanzi-agent-avatar-finance.svg",
+  },
+  {
+    id: "medical",
+    name: "医疗健康",
+    url: "/agent-avatars/nanzi-agent-avatar-medical.svg",
+  },
+  {
+    id: "devops",
+    name: "运维监控",
+    url: "/agent-avatars/nanzi-agent-avatar-devops.svg",
+  },
+  {
+    id: "marketing",
+    name: "营销增长",
+    url: "/agent-avatars/nanzi-agent-avatar-marketing.svg",
+  },
+  {
+    id: "assistant",
+    name: "日程助理",
+    url: "/agent-avatars/nanzi-agent-avatar-assistant.svg",
   },
 ];
 
