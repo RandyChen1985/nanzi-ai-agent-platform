@@ -85,3 +85,24 @@ def test_toolbar_is_fixed_two_rows():
     assert "{{ filteredServers.length }} / {{ servers.length }} 个服务" in toolbar
     # 搜索属于第一行，筛选与排序属于第二行
     assert toolbar.index('placeholder="搜索服务或工具..."') < toolbar.index("仅运行中")
+
+def test_selected_server_is_visually_unmistakable():
+    """选中态要同时有左条、底色、内描边和主色名称；hover 用中性色避免混淆。"""
+    source = _source()
+    template = source[source.index("<template>"):]
+    assert "border-primary bg-primary/10 ring-1 ring-inset ring-primary/25" in template
+    assert ":aria-current=\"selectedServer?.id === server.id ? 'true' : undefined\"" in template
+    assert "selectedServer?.id === server.id ? 'text-primary'" in template
+    # 选中项 hover 时保持主色底，不能被灰色 hover 盖掉
+    assert "hover:bg-primary/15" in template
+    assert "hover:bg-gray-50 dark:hover:bg-gray-800/50" in template
+
+
+def test_list_divider_does_not_override_selection_border():
+    """divide-* 会设置四边 border-color，特异性高于 .border-primary；
+    第二项起左边条会被染成分隔色，看上去像「只有第一个选中」。
+    分隔线必须只作用于 border-top。"""
+    source = _source()
+    assert "divide-y divide-gray-50" not in source
+    assert "[&>*+*]:border-t" in source
+    assert "[&>*+*]:border-t-gray-50" in source

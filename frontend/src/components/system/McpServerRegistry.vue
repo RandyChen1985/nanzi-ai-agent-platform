@@ -1729,17 +1729,23 @@ onMounted(fetchServers)
             清空搜索与筛选
           </button>
         </div>
-        <div v-else class="divide-y divide-gray-50">
+        <div v-else class="[&>*+*]:border-t [&>*+*]:border-t-gray-50 dark:[&>*+*]:border-t-gray-800">
           <div
             v-for="server in filteredServers"
             :key="server.id"
             @click="selectServer(server)"
-            class="group relative cursor-pointer border-l-4 p-3 transition-all hover:bg-blue-50/30 dark:hover:bg-blue-500/10 sm:p-4"
-            :class="selectedServer?.id === server.id ? 'border-primary bg-blue-50 dark:bg-blue-500/10' : 'border-transparent'"
+            class="group relative cursor-pointer border-l-4 p-3 transition-colors sm:p-4"
+            :class="selectedServer?.id === server.id
+              ? 'border-primary bg-primary/10 ring-1 ring-inset ring-primary/25 hover:bg-primary/15 dark:bg-primary/15 dark:ring-primary/25 dark:hover:bg-primary/20'
+              : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'"
+            :aria-current="selectedServer?.id === server.id ? 'true' : undefined"
           >
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0 flex-1">
-                <span class="block truncate text-sm font-bold text-gray-900 dark:text-gray-100">{{ server.server_name }}</span>
+                <span
+                  class="block truncate text-sm font-bold"
+                  :class="selectedServer?.id === server.id ? 'text-primary' : 'text-gray-900 dark:text-gray-100'"
+                >{{ server.server_name }}</span>
                 <div v-if="server.user_assertion_enabled || isEchoTestServer(server)" class="mt-1 flex flex-wrap items-center gap-1">
                   <span
                     v-if="server.user_assertion_enabled"
