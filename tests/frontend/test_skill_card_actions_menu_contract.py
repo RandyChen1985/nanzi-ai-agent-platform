@@ -29,7 +29,8 @@ def test_more_menu_is_accessible_and_unanchored():
     assert ':aria-expanded="actionMenu?.skill?.id === skill.id"' in template
     assert 'fixed inset-0 z-[60]' in template
     assert 'z-[61]' in template
-    assert ':style="{ left: `${actionMenu.x}px`, top: `${actionMenu.y}px` }"' in template
+    assert ':style="actionMenu.top !== null' in template
+    assert 'bottom: `${actionMenu.bottom}px`' in template
 
 
 def test_share_entry_only_for_personal_skills():

@@ -799,17 +799,20 @@ function toolParamNames(tool: any): string[] {
 }
 
 /** 卡片「⋯」操作菜单：fixed 定位，避免被列表滚动容器裁掉 */
-const actionMenu = ref<{ server: any; x: number; y: number } | null>(null)
+const actionMenu = ref<{ server: any; x: number; top: number | null; bottom: number | null } | null>(null)
 
 function openActionMenu(event: MouseEvent, server: any) {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const width = 192
-  const height = 200
   const x = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
-  const y = rect.bottom + 6 + height > window.innerHeight
-    ? Math.max(8, rect.top - height - 6)
-    : rect.bottom + 6
-  actionMenu.value = { server, x, y }
+  // 下方放不下时向上展开；用 bottom 定位，菜单底部正好贴住按钮顶部，不依赖高度估算
+  const openUp = window.innerHeight - rect.bottom < 240
+  actionMenu.value = {
+    server,
+    x,
+    top: openUp ? null : rect.bottom + 6,
+    bottom: openUp ? window.innerHeight - rect.top + 6 : null,
+  }
 }
 
 function closeActionMenu() {
@@ -1781,7 +1784,7 @@ onMounted(fetchServers)
                   type="button"
                   class="rounded p-1 text-gray-400 transition-all hover:bg-white hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary dark:hover:bg-gray-800 dark:hover:text-gray-200"
                   :class="actionMenu?.server?.id === server.id
-                    ? 'opacity-100'
+                    ? 'bg-gray-100 text-gray-600 opacity-100 dark:bg-gray-800 dark:text-gray-200'
                     : 'opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100'"
                   :aria-label="`${server.server_name} 的更多操作`"
                   title="更多操作"
@@ -2512,7 +2515,9 @@ onMounted(fetchServers)
     <div
       v-if="actionMenu"
       class="fixed z-[61] w-48 rounded-xl border border-gray-100 bg-white p-1 shadow-xl ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-800"
-      :style="{ left: `${actionMenu.x}px`, top: `${actionMenu.y}px` }"
+      :style="actionMenu.top !== null
+        ? { left: `${actionMenu.x}px`, top: `${actionMenu.top}px` }
+        : { left: `${actionMenu.x}px`, bottom: `${actionMenu.bottom}px` }"
       @click.stop
     >
       <button

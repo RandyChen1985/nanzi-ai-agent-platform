@@ -550,15 +550,19 @@ const fetchShareMenuCounts = async () => {
 }
 
 /** 卡片「更多」操作菜单：fixed 定位，避免被卡片/网格裁切 */
-const actionMenu = ref<{ skill: Skill; x: number; y: number } | null>(null)
+const actionMenu = ref<{ skill: Skill; x: number; top: number | null; bottom: number | null } | null>(null)
 
 const openActionMenu = (event: MouseEvent, skill: Skill) => {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const menuWidth = 176
+  const x = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8))
+  // 下方放不下时向上展开；用 bottom 定位，菜单底部正好贴住按钮顶部
+  const openUp = window.innerHeight - rect.bottom < 220
   actionMenu.value = {
     skill,
-    x: Math.min(Math.max(8, rect.right - menuWidth), window.innerWidth - menuWidth - 8),
-    y: rect.bottom + 4,
+    x,
+    top: openUp ? null : rect.bottom + 6,
+    bottom: openUp ? window.innerHeight - rect.top + 6 : null,
   }
 }
 
@@ -2538,6 +2542,7 @@ onUnmounted(() => {
               type="button"
               @click.stop="openActionMenu($event, skill)"
               class="rounded-lg p-1.5 text-gray-400 opacity-100 transition-all hover:bg-gray-100 hover:text-gray-600 md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
+              :class="actionMenu?.skill?.id === skill.id ? 'bg-gray-100 text-gray-600' : ''"
               :aria-label="`${skill.name} 的更多操作`"
               :aria-expanded="actionMenu?.skill?.id === skill.id"
             >
@@ -3905,7 +3910,9 @@ onUnmounted(() => {
     v-if="actionMenu"
     role="menu"
     class="fixed z-[61] w-44 overflow-hidden rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
-    :style="{ left: `${actionMenu.x}px`, top: `${actionMenu.y}px` }"
+    :style="actionMenu.top !== null
+      ? { left: `${actionMenu.x}px`, top: `${actionMenu.top}px` }
+      : { left: `${actionMenu.x}px`, bottom: `${actionMenu.bottom}px` }"
   >
     <button
       v-if="actionMenu.skill.scope === 'personal'"

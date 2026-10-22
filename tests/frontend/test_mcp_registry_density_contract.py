@@ -106,3 +106,9 @@ def test_list_divider_does_not_override_selection_border():
     assert "divide-y divide-gray-50" not in source
     assert "[&>*+*]:border-t" in source
     assert "[&>*+*]:border-t-gray-50" in source
+
+def test_action_menu_flips_without_height_guess():
+    """菜单向上展开时必须用 bottom 贴住按钮顶部，不能靠估算高度反推 top。"""
+    source = _source()
+    assert "bottom: openUp ? window.innerHeight - rect.top + 6 : null" in source
+    assert "top: openUp ? null : rect.bottom + 6" in source
