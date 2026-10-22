@@ -135,6 +135,17 @@ const engineStatusText = computed(() => {
   return '未连接'
 })
 
+/**
+ * 窄屏状态条只放圆点 + 两三个字，完整文案（「知识库引擎连接中 ...」）留给桌面。
+ * 直接复用 engineStatusText 会把标题区撑宽，图标按钮那一行又回到换行老问题。
+ */
+const engineStatusShort = computed(() => {
+  if (!isKnowledgeEnabled.value) return '未开启'
+  if (engineStatus.value === 'checking') return '连接中'
+  if (engineStatus.value === 'connected') return '已连接'
+  return '未连接'
+})
+
 const selectedDatasetId = computed(() => selectedDataset.value?.ragflow_dataset_id || selectedDataset.value?.id || '')
 
 const chunkMethodDescription = computed(() => {
@@ -1534,8 +1545,8 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
     </div>
 
     <!-- Header Section -->
-    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm">
-      <div class="flex flex-col gap-1">
+    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm">
+      <div class="flex min-w-0 flex-col gap-1">
         <div class="flex items-center gap-3">
           <h1 class="text-2xl font-bold text-gray-900 tracking-tight">知识库管理</h1>
           <button
@@ -1561,10 +1572,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         </div>
         <p class="text-sm text-gray-500 mt-0.5">管理 RAGFlow 知识库、平台扩展元数据及一体化文档解析。</p>
       </div>
-      <div class="flex items-center gap-3">
+      <!--
+        操作区：窄屏一行图标，lg 起恢复文字按钮。
+        四个文字按钮并排会把中文挤成两三行，两行又占竖向空间，所以窄屏只留图标；
+        顺序仍是 引擎状态 → 同步 → 刷新 → 新建，图标按钮用 aria-label 保留语义。
+      -->
+      <div class="flex shrink-0 items-center gap-2 lg:gap-3">
         <!-- 引擎连接指示器 -->
         <div
-          class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs border transition-colors group relative cursor-pointer"
+          class="flex h-10 min-w-0 items-center gap-2 rounded-xl border px-2.5 text-xs transition-colors group relative cursor-pointer lg:h-auto lg:px-3 lg:py-1.5"
           :class="{
             'border-blue-200 bg-blue-50/50 text-blue-700': isKnowledgeEnabled && engineStatus === 'checking',
             'border-emerald-200 bg-emerald-50/50 text-emerald-700': isKnowledgeEnabled && engineStatus === 'connected',
@@ -1572,14 +1588,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           }"
         >
           <span
-            class="inline-block w-2 h-2 rounded-full"
+            class="inline-block h-2 w-2 shrink-0 rounded-full"
             :class="{
               'bg-blue-500 animate-pulse': engineStatus === 'checking',
               'bg-emerald-500': engineStatus === 'connected',
               'bg-amber-500': engineStatus === 'disconnected'
             }"
           ></span>
-          <span class="font-medium">引擎 {{ engineStatusText }}</span>
+          <span class="whitespace-nowrap font-medium lg:hidden">{{ engineStatusShort }}</span>
+          <span class="hidden whitespace-nowrap font-medium lg:inline">引擎 {{ engineStatusText }}</span>
 
           <!-- 悬浮 Tooltip 提示引擎详细配置 -->
           <span class="absolute top-full right-0 mt-2 hidden group-hover:block bg-slate-900 text-white text-xs p-2.5 rounded-lg shadow-xl z-50 text-left font-sans font-normal pointer-events-none">
@@ -1594,20 +1611,40 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         </div>
         <button
           v-if="canSync"
-          class="px-4 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-sm font-medium transition-all disabled:opacity-50"
+          type="button"
+          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 transition-all hover:bg-emerald-100 disabled:opacity-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"
+          :aria-label="syncing ? '正在从 RAGFlow 同步' : '从 RAGFlow 同步'"
           :disabled="syncing || !isEngineReady"
           @click="syncFromRagFlow"
         >
-          {{ syncing ? '同步中...' : '从 RAGFlow 同步' }}
+          <svg class="h-5 w-5 lg:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 9.75v6.75m0 0l-3-3m3 3l3-3m-8.25 6a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
+          </svg>
+          <span class="hidden whitespace-nowrap text-sm font-medium lg:inline">{{ syncing ? '同步中...' : '从 RAGFlow 同步' }}</span>
         </button>
-        <button class="px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-sm font-medium transition-all" @click="fetchDatasets">刷新</button>
+        <button
+          type="button"
+          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"
+          aria-label="刷新知识库列表"
+          @click="fetchDatasets"
+        >
+          <svg class="h-5 w-5 lg:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+          </svg>
+          <span class="hidden whitespace-nowrap text-sm font-medium lg:inline">刷新</span>
+        </button>
         <button
           v-if="canCreate"
-          class="px-4 py-2 rounded-xl bg-primary text-white hover:bg-primary/90 text-sm font-medium shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          type="button"
+          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-sm transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"
+          aria-label="新建知识库"
           :disabled="!isEngineReady"
           @click="openCreate"
         >
-          新建知识库
+          <svg class="h-5 w-5 lg:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+          <span class="hidden whitespace-nowrap text-sm font-medium lg:inline">新建知识库</span>
         </button>
       </div>
     </div>
