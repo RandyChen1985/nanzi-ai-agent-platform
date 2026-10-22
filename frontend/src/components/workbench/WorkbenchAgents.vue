@@ -34,9 +34,17 @@
         >
           <div class="flex items-start gap-3">
             <span
-              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-sm font-bold text-emerald-700 ring-1 ring-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-800/40"
+              class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-emerald-50 text-sm font-bold text-emerald-700 ring-1 ring-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-400 dark:ring-emerald-800/40"
               aria-hidden="true"
-            >{{ initial(agent.name) }}</span>
+            >
+              <img
+                v-if="agentOwnAvatarUrl(agent)"
+                :src="agentOwnAvatarUrl(agent)"
+                alt=""
+                class="h-full w-full object-cover"
+              />
+              <template v-else>{{ initial(agent.name) }}</template>
+            </span>
             <span class="min-w-0 flex-1 pr-4">
               <span class="flex items-center gap-1.5">
                 <span class="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{{ agent.name }}</span>
@@ -89,6 +97,7 @@
 <script setup lang="ts">
 import { ref, computed } from "vue"
 import type { WorkbenchAgent } from "@/types/workbench"
+import { agentOwnAvatarUrl } from "@/utils/agentAvatar"
 import WorkbenchMobileViewAll from "./WorkbenchMobileViewAll.vue"
 import WorkbenchSectionHeader from "./WorkbenchSectionHeader.vue"
 

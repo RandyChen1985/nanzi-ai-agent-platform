@@ -512,6 +512,8 @@ async def _load_agents(db: AsyncSession, user: Mapping[str, Any]) -> List[Dict[s
             "id": str(agent.id),
             "name": str(agent.display_name or agent.name),
             "description": str(agent.description or ""),
+            # 卡片头像优先用智能体自己的形象，前端未配置时回退首字
+            "avatar_url": str(getattr(agent, "avatar_url", "") or ""),
             "execution_count": int(getattr(agent, "execution_count", 0) or 0),
             "action": "open_agent",
             "target": {"agent_id": str(agent.id)},

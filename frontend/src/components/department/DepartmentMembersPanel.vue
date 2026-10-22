@@ -111,7 +111,7 @@
                   class="rounded bg-purple-50 px-1.5 py-0.5 text-[11px] font-bold text-purple-600 dark:bg-purple-500/10 dark:text-purple-300"
                 >管理员</span>
               </div>
-              <div v-if="member.email" class="mt-0.5 text-[11px] text-gray-400">{{ member.email }}</div>
+              <div v-if="member.email" class="mt-0.5 text-[11px] text-gray-400">{{ canEditUser ? member.email : maskEmail(member.email) }}</div>
             </td>
             <td class="px-4 py-3 text-sm">
               <span
@@ -331,7 +331,7 @@
                     >禁用</span>
                   </span>
                   <span class="mt-0.5 flex items-center gap-2 text-[11px] text-gray-400">
-                    <span v-if="user.email" class="truncate">{{ user.email }}</span>
+                    <span v-if="user.email" class="truncate">{{ canEditUser ? user.email : maskEmail(user.email) }}</span>
                     <span v-if="deptSummary(user)" class="shrink-0 rounded bg-gray-100 px-1 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                       已在 {{ deptSummary(user) }}
                     </span>
@@ -401,6 +401,7 @@ import { useRouter } from 'vue-router'
 import axios from '../../utils/axios'
 import { useToast } from '../../composables/useToast'
 import { extractApiErrorDetail } from '../../utils/apiErrorDetail'
+import { maskEmail } from '../../utils/maskEmail'
 import ConfirmModal from '../ConfirmModal.vue'
 import PasswordResetDialog from '../PasswordResetDialog.vue'
 

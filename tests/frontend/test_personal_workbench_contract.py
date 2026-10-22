@@ -240,3 +240,14 @@ def test_scenario_browse_routes_allow_chat_users():
     assert "meta: { perm: 'menu:ai_chat', title: '场景模板' }" in router
     assert "meta: { perm: 'menu:ai_chat', title: '模板详情' }" in router
     assert "meta: { perm: 'menu:agent_management', title: '交付向导' }" in router
+
+
+def test_workbench_agent_cards_prefer_agent_avatar():
+    """助手卡片必须优先展示智能体自己的头像，没配置时才回退名称首字。"""
+    agents = _read("frontend/src/components/workbench/WorkbenchAgents.vue")
+    workbench_type = _read("frontend/src/types/workbench.ts")
+
+    assert "agentOwnAvatarUrl" in agents
+    assert 'class="h-full w-full object-cover"' in agents
+    assert "{{ initial(agent.name) }}" in agents
+    assert "avatar_url?: string" in workbench_type

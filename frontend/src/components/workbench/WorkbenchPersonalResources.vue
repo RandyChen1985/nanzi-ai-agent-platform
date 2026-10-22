@@ -53,6 +53,11 @@ const getResourceStyle = (key: string) => {
         iconBg: "bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400",
         hoverBorder: "hover:border-rose-300 dark:hover:border-rose-600/50",
       }
+    case "inbox":
+      return {
+        iconBg: "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400",
+        hoverBorder: "hover:border-sky-300 dark:hover:border-sky-600/50",
+      }
     default:
       return {
         iconBg: "bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
@@ -85,67 +90,79 @@ const getResourceStyle = (key: string) => {
       ]"
       @click="emit('select', item)"
     >
-      <div class="flex items-center justify-between gap-1.5">
-        <p
-          class="truncate font-medium text-gray-500 dark:text-gray-400"
-          :class="compact ? 'text-[11px] sm:text-[9px] sm:leading-tight' : 'text-[11px]'"
-        >
-          {{ item.label }}
-        </p>
+      <div class="flex items-center gap-2.5">
         <span
-          class="flex shrink-0 items-center justify-center rounded-lg p-1 transition-transform group-hover:scale-110"
-          :class="compact ? 'h-5 w-5' : 'h-6 w-6', getResourceStyle(item.key).iconBg"
+          class="flex shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-110"
+          :class="compact ? 'h-9 w-9 rounded-[10px]' : 'h-10 w-10 rounded-xl', getResourceStyle(item.key).iconBg"
         >
           <!-- memory -->
-          <svg v-if="item.key === 'memory'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-4 4 4 4 0 0 1-4-4V6a4 4 0 0 1 4-4Z" />
-            <path d="M6 10v1a6 6 0 0 0 12 0v-1" />
-            <path d="M12 17v5" />
+          <svg v-if="item.key === 'memory'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+            <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+            <path d="M12 5v13" />
           </svg>
           <!-- tokens -->
-          <svg v-else-if="item.key === 'tokens'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'tokens'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
           </svg>
           <!-- data -->
-          <svg v-else-if="item.key === 'data'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'data'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <ellipse cx="12" cy="5" rx="9" ry="3" />
             <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
             <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
           </svg>
           <!-- skills -->
-          <svg v-else-if="item.key === 'skills'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z" />
-            <path d="m8.5 8.5 7 7" />
+          <svg v-else-if="item.key === 'skills'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m12 3 1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z" />
+            <path d="M18 15.5 18.9 18l2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9.9-2.5Z" />
           </svg>
           <!-- mcp -->
-          <svg v-else-if="item.key === 'mcp'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect width="16" height="12" x="4" y="8" rx="2" />
-            <path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 2v2" /><path d="M9 2v2" />
+          <svg v-else-if="item.key === 'mcp'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22v-5" />
+            <path d="M9 8V2" /><path d="M15 8V2" />
+            <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
           </svg>
-          <!-- tasks / default -->
-          <svg v-else class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 6v6l4 2" />
+          <!-- tasks -->
+          <svg v-else-if="item.key === 'tasks'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="8" y="2" width="8" height="4" rx="1" />
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+            <path d="m9 14 2 2 4-4" />
+          </svg>
+          <!-- inbox -->
+          <svg v-else-if="item.key === 'inbox'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+            <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+          </svg>
+          <!-- default -->
+          <svg v-else :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4" /><path d="M12 16h.01" />
           </svg>
         </span>
-      </div>
-
-      <p
-        class="truncate font-bold tracking-tight text-gray-900 tabular-nums dark:text-gray-100"
-        :class="compact ? 'mt-1 text-lg sm:mt-0.5 sm:text-sm' : 'mt-1 text-xl'"
-      >
-        {{ displayValue(item) }}
-      </p>
-
-      <div
-        class="flex items-center justify-between text-gray-400 dark:text-gray-500"
-        :class="compact ? 'mt-0.5 text-[10px] sm:text-[9px] sm:leading-tight' : 'mt-0.5 text-[11px]'"
-      >
+        <div class="min-w-0 flex-1">
+          <p
+            class="truncate font-medium text-gray-500 dark:text-gray-400"
+            :class="compact ? 'text-[11px] leading-tight' : 'text-[11px]'"
+          >
+            {{ item.label }}
+          </p>
+          <p
+            class="truncate font-bold tracking-tight text-gray-900 tabular-nums dark:text-gray-100"
+            :class="compact ? 'mt-0.5 text-lg sm:text-base' : 'mt-0.5 text-xl'"
+          >
+            {{ displayValue(item) }}
+          </p>
+          <div
+            class="flex items-center justify-between text-gray-400 dark:text-gray-500"
+            :class="compact ? 'mt-0.5 text-[10px] sm:text-[9px] sm:leading-tight' : 'mt-0.5 text-[11px]'"
+          >
         <span v-if="item.status === 'error'" class="text-amber-500 dark:text-amber-400 font-medium">暂时无法获取</span>
         <span v-else class="truncate">{{ item.unit }}</span>
         <svg class="h-3 w-3 opacity-0 -translate-x-1 transition-all group-hover:opacity-100 group-hover:translate-x-0 text-gray-400 dark:text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="9 18 15 12 9 6" />
-        </svg>
+          </svg>
+          </div>
+        </div>
       </div>
     </button>
   </section>
