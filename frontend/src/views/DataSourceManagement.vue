@@ -4,6 +4,7 @@ import { metadataApi, type DbConnectionConfig } from '../api/metadata'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import DbTypeIcon from '../components/common/DbTypeIcon.vue'
 import DbTableProfileExplorerModal from '../components/metadata/DbTableProfileExplorerModal.vue'
 
 const { showToast } = useToast()
@@ -14,13 +15,14 @@ const { hasPermission } = useUser()
 const canEditDataSource = computed(() => hasPermission('element:data_sources:edit'))
 const canDeleteDataSource = computed(() => hasPermission('element:data_sources:delete'))
 
+// 图标不在数据里，统一交给 DbTypeIcon（官方单色 SVG，避免 emoji 跨平台造型不一致）
 const dbTypes = [
-  { id: 'mysql', name: 'MySQL', icon: '🐬', defaultPort: 3306 },
-  { id: 'doris', name: 'Doris', icon: '🦆', defaultPort: 9030 },
-  { id: 'clickhouse', name: 'ClickHouse', icon: '🧊', defaultPort: 9000 },
-  { id: 'oracle', name: 'Oracle', icon: '🔴', defaultPort: 1521 },
-  { id: 'sqlserver', name: 'SQL Server', icon: '🟦', defaultPort: 1433 },
-  { id: 'postgresql', name: 'PostgreSQL', icon: '🐘', defaultPort: 5432 },
+  { id: 'mysql', name: 'MySQL', defaultPort: 3306 },
+  { id: 'doris', name: 'Doris', defaultPort: 9030 },
+  { id: 'clickhouse', name: 'ClickHouse', defaultPort: 9000 },
+  { id: 'oracle', name: 'Oracle', defaultPort: 1521 },
+  { id: 'sqlserver', name: 'SQL Server', defaultPort: 1433 },
+  { id: 'postgresql', name: 'PostgreSQL', defaultPort: 5432 },
 ]
 
 const configs = ref<DbConnectionConfig[]>([])
@@ -34,6 +36,17 @@ const deleteTarget = ref<DbConnectionConfig | null>(null)
 const testPassed = ref(false)
 const connError = ref('')
 const keyword = ref('')
+// 视图模式：卡片 / 列表。默认卡片视图，选择记到 localStorage，和元数据中心、任务中心等页面保持一致。
+const viewMode = ref<'card' | 'list'>(
+  (localStorage.getItem('data_sources_view_mode') as 'card' | 'list') || 'card'
+)
+watch(viewMode, (newMode) => {
+  localStorage.setItem('data_sources_view_mode', newMode)
+  closeActionMenus()
+})
+// 类型筛选与排序：数据源一多，光靠关键词搜不到「谁还没摸排」，需要能按类型收窄、按画像数排序。
+const typeFilter = ref('all')
+const sortBy = ref<'default' | 'name' | 'updated' | 'profiles'>('default')
 const showSpecsModal = ref(false)
 const activeSpecsTab = ref<'concept' | 'security' | 'practice'>('concept')
 
@@ -101,6 +114,24 @@ const dbTypeColor = (type: string) => {
   if (type === 'postgresql' || type === 'postgres' || type === 'pg') return 'bg-purple-100 text-purple-700 border-purple-200'
   return 'bg-gray-100 text-gray-600 border-gray-200'
 }
+
+// db_type 历史值存在 mssql / postgres / pg 等别名，统一归一化后再取图标、底色与展示名。
+const normalizeDbType = (type: string) => {
+  const raw = String(type || '').toLowerCase()
+  return raw === 'mssql' ? 'sqlserver' : raw === 'postgres' || raw === 'pg' ? 'postgresql' : raw
+}
+const dbTypeMeta = (type: string) => dbTypes.find((db) => db.id === normalizeDbType(type)) || null
+const dbTypeLabel = (type: string) => dbTypeMeta(type)?.name || String(type || '').toUpperCase()
+// 图标底色只取浅色底，避免和徽章的边框/文字色混在一起。
+const DB_TYPE_TINTS: Record<string, string> = {
+  mysql: 'bg-blue-50',
+  doris: 'bg-amber-50',
+  clickhouse: 'bg-cyan-50',
+  oracle: 'bg-red-50',
+  sqlserver: 'bg-indigo-50',
+  postgresql: 'bg-purple-50',
+}
+const dbTypeTint = (type: string) => DB_TYPE_TINTS[normalizeDbType(type)] || 'bg-gray-50'
 
 const toConnectionPayload = () => ({
   type: form.type,
@@ -363,6 +394,94 @@ const runSqlDebug = async () => {
 const profilingTasks = ref<Record<number, { status: number; total_tables: number; processed_tables: number; current_table?: string; error_message?: string }>>({})
 const pollingIntervals = reactive<Record<number, any>>({})
 
+// ---------- 卡片 / 列表共用的派生数据 ----------
+const availableDbTypes = computed(() => {
+  const used = new Set(configs.value.map((item) => normalizeDbType(item.db_type)))
+  return dbTypes.filter((db) => used.has(db.id))
+})
+const hasActiveFilter = computed(() => keyword.value.trim() !== '' || typeFilter.value !== 'all')
+const displayConfigs = computed(() => {
+  const list = typeFilter.value === 'all'
+    ? filteredConfigs.value
+    : filteredConfigs.value.filter((item) => normalizeDbType(item.db_type) === typeFilter.value)
+  if (sortBy.value === 'default') return list
+  const sorted = [...list]
+  if (sortBy.value === 'name') {
+    sorted.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
+  } else if (sortBy.value === 'updated') {
+    sorted.sort((a, b) =>
+      String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || ''))
+    )
+  } else {
+    sorted.sort((a, b) =>
+      (profilingTasks.value[b.id]?.total_tables || 0) - (profilingTasks.value[a.id]?.total_tables || 0)
+      || a.name.localeCompare(b.name, 'zh-Hans-CN')
+    )
+  }
+  return sorted
+})
+
+// 画像状态徽章：0 张不能再显示成「成功绿」，否则看不出「还没摸排」和「摸排完成但库里没表」。
+type ProfileTone = 'empty' | 'running' | 'done' | 'failed' | 'paused'
+const PROFILE_TONE_CLASS: Record<ProfileTone, string> = {
+  empty: 'bg-gray-50 text-gray-500 border-gray-200',
+  running: 'bg-blue-50 text-blue-700 border-blue-100',
+  done: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+  failed: 'bg-red-50 text-red-600 border-red-100',
+  paused: 'bg-amber-50 text-amber-700 border-amber-100',
+}
+const PROFILE_DOT_CLASS: Record<ProfileTone, string> = {
+  empty: 'bg-gray-300',
+  running: 'bg-blue-500 animate-pulse',
+  done: 'bg-emerald-500',
+  failed: 'bg-red-500',
+  paused: 'bg-amber-500',
+}
+const profileStates = computed<Record<number, { tone: ProfileTone; text: string; title: string }>>(() => {
+  const map: Record<number, { tone: ProfileTone; text: string; title: string }> = {}
+  for (const item of configs.value) {
+    const task = profilingTasks.value[item.id]
+    const total = task?.total_tables || 0
+    const processed = task?.processed_tables || 0
+    if (!task) {
+      map[item.id] = { tone: 'empty', text: '待摸排', title: '尚未执行表画像摸排' }
+    } else if (task.status === 1) {
+      map[item.id] = {
+        tone: 'running',
+        text: `摸排中 ${processed}/${total}`,
+        title: task.current_table ? `正在分析：${task.current_table}` : '摸排进行中',
+      }
+    } else if (task.status === 2) {
+      map[item.id] = total > 0
+        ? { tone: 'done', text: `${total} 张画像`, title: `已完成 ${total} 张表/视图的画像` }
+        : { tone: 'empty', text: '未发现表', title: '摸排完成，但库内未发现表或视图' }
+    } else if (task.status === 3) {
+      map[item.id] = { tone: 'failed', text: '分析中断', title: task.error_message || '摸排异常中断' }
+    } else if (task.status === 4) {
+      map[item.id] = { tone: 'paused', text: `已中断 ${processed}/${total}`, title: '摸排被中断，可继续摸排' }
+    } else {
+      map[item.id] = { tone: 'empty', text: '待摸排', title: '' }
+    }
+  }
+  return map
+})
+
+const progressPercent = (item: DbConnectionConfig) => {
+  const task = profilingTasks.value[item.id]
+  if (!task || !task.total_tables) return 0
+  return Math.min(100, Math.round(((task.processed_tables || 0) / task.total_tables) * 100))
+}
+
+const connectionText = (item: DbConnectionConfig) => `${item.host}:${item.port}/${item.database_name}`
+const copyConnection = async (item: DbConnectionConfig) => {
+  try {
+    await navigator.clipboard.writeText(connectionText(item))
+    showToast('已复制连接地址', 'success')
+  } catch {
+    showToast('复制失败，请手动选择文本复制', 'error')
+  }
+}
+
 const loadTaskStatuses = async () => {
   for (const item of configs.value) {
     try {
@@ -571,7 +690,8 @@ onUnmounted(() => {
           <button
             type="button"
             class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 cursor-pointer"
-            title="数据源连接与表画像摸排规范"
+            v-tooltip="'数据源连接与表画像摸排规范'"
+            aria-label="数据源连接与表画像摸排规范"
             @click="showSpecsModal = true"
           >
             <span class="text-sm font-bold">?</span>
@@ -626,7 +746,7 @@ onUnmounted(() => {
                   class="w-28 min-w-28 p-2 rounded-xl border-2 transition-all flex flex-col items-center gap-1.5"
                   :class="form.type === db.id ? 'border-primary bg-primary/5 text-primary' : 'border-gray-100 hover:border-gray-200 text-gray-700'"
                 >
-                  <span class="text-lg leading-6">{{ db.icon }}</span>
+                  <DbTypeIcon :type="db.id" :size="24" />
                   <span class="text-[11px] font-black whitespace-nowrap">{{ db.name }}</span>
                 </button>
                 </div>
@@ -720,217 +840,342 @@ onUnmounted(() => {
 
     <div class="w-full">
       <section class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-visible">
-        <div class="px-5 py-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div class="px-5 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div>
             <h2 class="text-base font-black text-gray-900">已保存数据源</h2>
-            <p class="text-xs text-gray-500 mt-1">共 {{ configs.length }} 个数据源，元数据导入会读取这份列表。</p>
+            <p class="text-xs text-gray-500 mt-1">
+              共 {{ configs.length }} 个数据源，元数据导入会读取这份列表。
+              <span v-if="hasActiveFilter" class="text-gray-400">当前筛选出 {{ displayConfigs.length }} 个</span>
+            </p>
           </div>
-          <div class="relative sm:w-72">
-            <input type="search"
-              v-model="keyword"
-              class="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:bg-white"
-              placeholder="搜索名称、主机、库名..."
+          <div class="flex w-full flex-wrap items-center gap-2 lg:w-auto">
+            <div class="relative order-first w-full sm:order-none sm:w-56">
+              <input type="search"
+                v-model="keyword"
+                class="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:bg-white"
+                placeholder="搜索名称、主机、库名..."
+              >
+              <svg class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+            </div>
+            <select
+              v-if="availableDbTypes.length > 1"
+              v-model="typeFilter"
+              class="rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs font-bold text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              v-tooltip="'按数据库类型筛选'"
+              aria-label="按数据库类型筛选"
             >
-            <svg class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-            </svg>
+              <option value="all">全部类型</option>
+              <option v-for="db in availableDbTypes" :key="db.id" :value="db.id">{{ db.name }}</option>
+            </select>
+            <select
+              v-model="sortBy"
+              class="rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs font-bold text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              v-tooltip="'排序方式'"
+              aria-label="排序方式"
+            >
+              <option value="default">默认排序</option>
+              <option value="name">名称 A→Z</option>
+              <option value="updated">最近更新</option>
+              <option value="profiles">画像数量</option>
+            </select>
+            <!-- 卡片 / 列表视图切换：与元数据中心、任务中心等页面保持同一套交互 -->
+            <div
+              class="ml-auto flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-200 bg-gray-200/60 p-0.5 sm:ml-0"
+              data-testid="data-source-view-mode-toggle"
+            >
+              <button
+                type="button"
+                class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
+                :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+                v-tooltip="'卡片视图'"
+                aria-label="卡片视图"
+                :aria-pressed="viewMode === 'card'"
+                @click="viewMode = 'card'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
+                :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+                v-tooltip="'列表视图'"
+                aria-label="列表视图"
+                :aria-pressed="viewMode === 'list'"
+                @click="viewMode = 'list'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
-        <div v-if="loading" class="p-12 text-center text-sm text-gray-400">加载数据源中...</div>
-        <div v-else-if="filteredConfigs.length === 0" class="p-12 text-center">
+        <!-- 加载骨架：卡片/列表各自形态，避免用一行灰字撑满整屏 -->
+        <div
+          v-if="loading"
+          :class="viewMode === 'card' ? 'grid grid-cols-1 gap-4 rounded-b-xl bg-gray-50/40 p-4 md:grid-cols-2 xl:grid-cols-3' : 'divide-y divide-gray-100'"
+        >
+          <div
+            v-for="i in 3"
+            :key="i"
+            class="animate-pulse"
+            :class="viewMode === 'card' ? 'rounded-xl border border-gray-100 bg-white p-4' : 'px-4 py-4'"
+          >
+            <div class="h-4 w-32 rounded bg-gray-100"></div>
+            <div class="mt-3 h-3 w-full rounded bg-gray-100"></div>
+            <div class="mt-2 h-3 w-2/3 rounded bg-gray-100"></div>
+          </div>
+        </div>
+
+        <div v-else-if="displayConfigs.length === 0" class="p-12 text-center">
           <div class="mx-auto w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 mb-3">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4"/>
             </svg>
           </div>
-          <p class="text-sm font-bold text-gray-600">暂无数据源</p>
-          <p class="text-xs text-gray-400 mt-1">先在左侧添加并测试连接。</p>
+          <p class="text-sm font-bold text-gray-600">{{ configs.length === 0 ? '暂无数据源' : '没有匹配的数据源' }}</p>
+          <p class="text-xs text-gray-400 mt-1">{{ configs.length === 0 ? '先在上方添加并测试连接。' : '换个关键词，或清除类型筛选后再看。' }}</p>
+          <button
+            v-if="configs.length > 0"
+            type="button"
+            class="mt-4 rounded-lg border border-blue-200 px-4 py-2 text-xs font-bold text-blue-600 transition-colors hover:bg-blue-50"
+            @click="keyword = ''; typeFilter = 'all'"
+          >
+            清除筛选
+          </button>
         </div>
-        <div v-else class="divide-y divide-gray-100 overflow-visible">
+
+        <div
+          v-else
+          :class="viewMode === 'card'
+            ? 'grid grid-cols-1 gap-4 rounded-b-xl bg-gray-50/40 p-4 md:grid-cols-2 xl:grid-cols-3'
+            : 'divide-y divide-gray-100 overflow-visible'"
+        >
           <div
-            v-for="item in filteredConfigs"
+            v-for="item in displayConfigs"
             :key="item.id"
-            class="p-4 hover:bg-gray-50 transition-colors relative"
+            class="relative"
             :class="[
-              editingId === item.id ? 'bg-primary/5' : '',
+              viewMode === 'card'
+                ? 'flex flex-col rounded-xl border border-gray-200 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md'
+                : 'flex flex-col gap-2 px-4 py-2.5 transition-colors hover:bg-gray-50 sm:flex-row sm:items-center sm:gap-4',
+              editingId === item.id
+                ? (viewMode === 'card' ? 'border-primary/40 bg-primary/5' : 'bg-primary/5')
+                : (viewMode === 'card' ? 'bg-white' : ''),
               openActionMenuId === item.id ? 'z-40' : 'z-0',
             ]"
           >
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <!-- 左侧基本信息与状态说明 -->
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2 mb-1 flex-wrap">
-                  <h3 class="font-black text-gray-900 truncate">{{ item.name }}</h3>
-                  <span class="px-2 py-0.5 rounded border text-[10px] font-black uppercase shrink-0" :class="dbTypeColor(item.db_type)">{{ item.db_type }}</span>
-                  <!-- 摸排完成的精致徽章 -->
-                  <span 
-                    v-if="profilingTasks[item.id]?.status === 2"
-                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-black shrink-0 shadow-sm shadow-emerald-50"
-                  >
-                    <span>🤖</span>
-                    <span>已生成 {{ profilingTasks[item.id]?.total_tables }} 张表画像</span>
-                  </span>
-                  <!-- 摸排失败提示 -->
-                  <span 
-                    v-if="profilingTasks[item.id]?.status === 3"
-                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100 text-[10px] font-bold shrink-0"
-                    :title="profilingTasks[item.id]?.error_message"
-                  >
-                    <span>⚠️</span>
-                    <span>分析中断</span>
-                  </span>
-                  <!-- 用户主动中断 -->
+            <!-- 信息区：卡片内为纵向堆叠；列表内与操作区同行、两行信息 -->
+            <div class="min-w-0 flex-1" :class="viewMode === 'card' ? 'p-4' : ''">
+              <div class="flex items-center gap-2.5">
+                <span
+                  class="flex shrink-0 items-center justify-center rounded-lg border border-gray-100"
+                  :class="[viewMode === 'card' ? 'h-9 w-9 text-base' : 'h-8 w-8 text-sm', dbTypeTint(item.db_type)]"
+                  v-tooltip="dbTypeLabel(item.db_type)"
+                >
+                  <DbTypeIcon :type="item.db_type" :size="viewMode === 'card' ? 22 : 18" />
+                </span>
+                <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                  <h3 class="truncate text-sm font-black text-gray-900">{{ item.name }}</h3>
+                  <span class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-black uppercase" :class="dbTypeColor(item.db_type)">{{ dbTypeLabel(item.db_type) }}</span>
                   <span
-                    v-if="profilingTasks[item.id]?.status === 4"
-                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100 text-[10px] font-bold shrink-0"
-                    :title="profilingTasks[item.id]?.error_message"
+                    class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold"
+                    :class="PROFILE_TONE_CLASS[profileStates[item.id]?.tone || 'empty']"
+                    v-tooltip="profileStates[item.id]?.title"
                   >
-                    <span>⏸</span>
-                    <span>已中断 {{ profilingTasks[item.id]?.processed_tables }}/{{ profilingTasks[item.id]?.total_tables }}</span>
+                    <span class="h-1.5 w-1.5 rounded-full" :class="PROFILE_DOT_CLASS[profileStates[item.id]?.tone || 'empty']"></span>
+                    <span>{{ profileStates[item.id]?.text }}</span>
                   </span>
-                </div>
-                <p class="text-xs font-mono text-gray-500 truncate">{{ item.host }}:{{ item.port }} / {{ item.database_name }}</p>
-                <p class="text-xs text-gray-400 mt-1">用户：{{ item.db_user }}</p>
-                
-                <div class="flex items-center gap-2 flex-wrap mt-2">
-                  <!-- 用途备注 -->
-                  <div v-if="item.description" class="inline-flex max-w-full items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 border border-amber-100">
-                    <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h6m-6 4h4M5 4h14a1 1 0 011 1v14l-4-3H5a1 1 0 01-1-1V5a1 1 0 011-1z"/>
-                    </svg>
-                    <span class="font-bold shrink-0">用途</span>
-                    <span class="line-clamp-1">{{ item.description }}</span>
-                  </div>
-
-                  <!-- 正在摸排任务进度提示 (轻量化展示在用途旁) -->
-                  <div v-if="profilingTasks[item.id]?.status === 1" class="inline-flex items-center gap-2 bg-blue-50/50 border border-blue-100 rounded-lg px-2.5 py-1.5 text-xs">
-                    <span class="font-bold text-primary animate-pulse shrink-0 flex items-center gap-1">
-                      <span>🤖 摸排中</span>
-                      <span class="font-mono text-gray-500">({{ profilingTasks[item.id]?.processed_tables }}/{{ profilingTasks[item.id]?.total_tables }})</span>
-                    </span>
-                    <!-- 进度条 -->
-                    <div class="w-20 bg-gray-200 rounded-full h-1 overflow-hidden shrink-0">
-                      <div 
-                        class="bg-primary h-full transition-all duration-300"
-                        :style="{ width: `${((profilingTasks[item.id]?.processed_tables || 0) / (profilingTasks[item.id]?.total_tables || 1)) * 100}%` }"
-                      ></div>
-                    </div>
-                    <span v-if="profilingTasks[item.id]?.current_table" class="text-[10px] text-gray-400 truncate max-w-[200px]">
-                      分析中: {{ profilingTasks[item.id]?.current_table }}
-                    </span>
-                  </div>
                 </div>
               </div>
 
-              <!-- 右侧操作：画像 + 摸排 + 测试/编辑 + 更多 -->
-              <div class="flex items-center gap-1.5 flex-shrink-0">
+              <!-- 连接信息：主机端口可一键复制，库名独立成 chip，用户弱化成灰色小字 -->
+              <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                 <button
-                  v-if="canViewTableProfiles(item)"
-                  @click="openTableProfiles(item)"
-                  class="px-3 py-1.5 rounded-lg border border-primary/30 bg-primary/5 text-primary hover:bg-primary/10 text-xs font-bold transition-all flex items-center gap-1"
-                  :title="profilingTasks[item.id]?.status === 1 ? '摸排进行中，可查看已完成的画像' : undefined"
+                  type="button"
+                  class="group/copy inline-flex min-w-0 items-center gap-1 rounded font-mono text-gray-600 transition-colors hover:text-blue-600"
+                  v-tooltip="`点击复制 ${connectionText(item)}`"
+                  @click="copyConnection(item)"
                 >
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                  <span class="truncate">{{ item.host }}:{{ item.port }}</span>
+                  <svg class="h-3 w-3 shrink-0 text-gray-300 transition-colors group-hover/copy:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
                   </svg>
-                  <span>{{ viewProfilesButtonLabel(item) }}</span>
                 </button>
+                <span class="inline-flex min-w-0 items-center gap-1">
+                  <span class="text-gray-400">库</span>
+                  <code class="truncate rounded border border-gray-100 bg-gray-50 px-1.5 py-0.5 font-mono text-[11px] text-gray-600">{{ item.database_name }}</code>
+                </span>
+                <span class="inline-flex items-center gap-1 text-gray-400">
+                  <span>用户</span>
+                  <span class="font-mono text-gray-500">{{ item.db_user }}</span>
+                </span>
+                <!-- 用途：从琥珀色块降级为一行说明；列表里与连接信息同行，卡片里换行占满。
+                     纯展示文本不挂 tooltip：备注本身可读，且列表里它撑满剩余宽度，悬停整行右侧都会误弹提示。 -->
+                <span
+                  v-if="item.description"
+                  class="flex min-w-0 items-start gap-1.5"
+                  :class="viewMode === 'card' ? 'w-full' : 'flex-1'"
+                >
+                  <span class="mt-px shrink-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">用途</span>
+                  <span class="min-w-0 text-gray-600" :class="viewMode === 'card' ? 'line-clamp-2' : 'line-clamp-1'">{{ item.description }}</span>
+                </span>
+              </div>
 
-                <div v-if="canEditDataSource" class="relative">
-                  <button
-                    @click.stop="toggleActionMenu(item.id, 'profile')"
-                    class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-50"
-                    :disabled="profilingTasks[item.id]?.status === 1 && cancellingProfilingId === item.id"
-                  >
-                    <span>{{ profilingTasks[item.id]?.status === 1 ? '摸排中' : '摸排' }}</span>
-                    <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
-                    </svg>
-                  </button>
-                  <div
-                    v-if="isActionMenuOpen(item.id, 'profile')"
-                    class="absolute right-0 top-full mt-1 w-48 rounded-xl border border-gray-200 bg-white shadow-lg z-50 py-1 text-xs"
-                    @click.stop
-                  >
-                    <template v-if="profilingTasks[item.id]?.status === 1">
-                      <button
-                        v-if="canEditDataSource"
-                        @click="handleProfileMenuAction(item, 'cancel')"
-                        :disabled="cancellingProfilingId === item.id"
-                        class="w-full text-left px-3 py-2 text-red-600 hover:bg-red-50 font-bold disabled:opacity-50"
-                      >
-                        {{ cancellingProfilingId === item.id ? '中断中...' : '中断摸排' }}
-                      </button>
-                    </template>
-                    <template v-else>
-                      <button
-                        v-if="canEditDataSource"
-                        @click="handleProfileMenuAction(item, 'incremental')"
-                        class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50"
-                      >
-                        <div class="font-bold">{{ profilingActionLabel(item) }}</div>
-                        <div class="text-[10px] text-gray-400 mt-0.5">仅处理未完成及新增表</div>
-                      </button>
-                      <button
-                        v-if="canEditDataSource && [2, 3, 4].includes(profilingTasks[item.id]?.status || 0)"
-                        @click="handleProfileMenuAction(item, 'full')"
-                        class="w-full text-left px-3 py-2 text-orange-600 hover:bg-orange-50 font-bold border-t border-gray-100"
-                      >
-                        强制全量
-                        <div class="text-[10px] text-orange-400 font-normal mt-0.5">覆盖已有画像，重新分析</div>
-                      </button>
-                    </template>
-                  </div>
+              <!-- 摸排进度：整行进度条，比原来 80px 的小条看得清 -->
+              <div v-if="profilingTasks[item.id]?.status === 1" class="mt-2 flex items-center gap-2">
+                <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
+                  <div class="h-full rounded-full bg-primary transition-all duration-300" :style="{ width: progressPercent(item) + '%' }"></div>
                 </div>
+                <span class="shrink-0 font-mono text-[10px] text-gray-400">
+                  {{ profilingTasks[item.id]?.processed_tables }}/{{ profilingTasks[item.id]?.total_tables }}
+                </span>
+              </div>
+            </div>
 
+            <!-- 操作区：低频动作图标化 + tooltip，卡片内收纳为底部工具条 -->
+            <div
+              :class="viewMode === 'card'
+                ? 'mt-auto flex items-center gap-1 rounded-b-xl border-t border-gray-100 bg-gray-50/60 px-3 py-2'
+                : 'flex shrink-0 items-center justify-end gap-1 border-t border-gray-100 pt-2 sm:border-0 sm:pt-0'"
+            >
+              <button
+                v-if="canViewTableProfiles(item)"
+                type="button"
+                class="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-primary/30 bg-primary/5 px-2.5 text-xs font-bold text-primary transition-colors hover:bg-primary/10"
+                v-tooltip="viewProfilesButtonLabel(item)"
+                @click="openTableProfiles(item)"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                </svg>
+                <span>查看画像</span>
+              </button>
+
+              <div class="ml-auto flex items-center gap-1">
+              <div v-if="canEditDataSource" class="relative">
                 <button
-                  v-if="canEditDataSource"
-                  @click="testSavedConnection(item)"
-                  :disabled="testingConnectionId === item.id"
-                  class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-xs font-bold transition-all disabled:opacity-50"
+                  type="button"
+                  class="inline-flex h-8 items-center justify-center gap-0.5 rounded-lg border border-transparent px-1.5 text-gray-500 transition-colors hover:border-gray-200 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+                  :disabled="profilingTasks[item.id]?.status === 1 && cancellingProfilingId === item.id"
+                  v-tooltip="'智能摸排（增量 / 全量 / 中断）'"
+                  aria-label="智能摸排"
+                  @click.stop="toggleActionMenu(item.id, 'profile')"
                 >
-                  {{ testingConnectionId === item.id ? '测试中...' : '测试' }}
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z"/>
+                  </svg>
+                  <svg class="h-3 w-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+                  </svg>
                 </button>
-
-                <button
-                  v-if="canEditDataSource"
-                  @click="editConfig(item)"
-                  class="px-3 py-1.5 rounded-lg border text-xs font-bold transition-all"
-                  :class="editingId === item.id
-                    ? 'border-primary/30 bg-primary/5 text-primary'
-                    : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'"
+                <div
+                  v-if="isActionMenuOpen(item.id, 'profile')"
+                  class="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl border border-gray-200 bg-white shadow-lg py-1 text-xs"
+                  @click.stop
                 >
-                  编辑
-                </button>
-
-                <div class="relative">
-                  <button
-                    v-if="canEditDataSource || canDeleteDataSource"
-                    @click.stop="toggleActionMenu(item.id, 'more')"
-                    class="w-8 h-8 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 text-base font-bold transition-all flex items-center justify-center"
-                    title="更多操作"
-                  >
-                    ⋯
-                  </button>
-                  <div
-                    v-if="isActionMenuOpen(item.id, 'more')"
-                    class="absolute right-0 top-full mt-1 w-36 rounded-xl border border-gray-200 bg-white shadow-lg z-50 py-1 text-xs"
-                    @click.stop
-                  >
-                    <button v-if="canEditDataSource" @click="handleMoreMenuAction(item, 'debug')" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50">SQL 调试</button>
-                    <button v-if="canEditDataSource" @click="handleMoreMenuAction(item, 'copy')" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50">复制</button>
-                    <div class="border-t border-gray-100 my-1"></div>
+                  <template v-if="profilingTasks[item.id]?.status === 1">
                     <button
-                      v-if="canDeleteDataSource"
-                      @click="handleMoreMenuAction(item, 'delete')"
-                      :disabled="deletingId === item.id"
-                      class="w-full text-left px-3 py-2 text-red-600 hover:bg-red-50 font-bold disabled:opacity-50"
+                      v-if="canEditDataSource"
+                      type="button"
+                      class="w-full text-left px-3 py-2 font-bold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                      :disabled="cancellingProfilingId === item.id"
+                      @click="handleProfileMenuAction(item, 'cancel')"
                     >
-                      {{ deletingId === item.id ? '删除中' : '删除' }}
+                      {{ cancellingProfilingId === item.id ? '中断中...' : '中断摸排' }}
                     </button>
-                  </div>
+                  </template>
+                  <template v-else>
+                    <button
+                      v-if="canEditDataSource"
+                      type="button"
+                      class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50"
+                      @click="handleProfileMenuAction(item, 'incremental')"
+                    >
+                      <div class="font-bold">{{ profilingActionLabel(item) }}</div>
+                      <div class="mt-0.5 text-[10px] text-gray-400">仅处理未完成及新增表</div>
+                    </button>
+                    <button
+                      v-if="canEditDataSource && [2, 3, 4].includes(profilingTasks[item.id]?.status || 0)"
+                      type="button"
+                      class="w-full border-t border-gray-100 px-3 py-2 font-bold text-orange-600 hover:bg-orange-50"
+                      @click="handleProfileMenuAction(item, 'full')"
+                    >
+                      强制全量
+                      <div class="mt-0.5 text-[10px] font-normal text-orange-400">覆盖已有画像，重新分析</div>
+                    </button>
+                  </template>
                 </div>
+              </div>
+
+              <button
+                v-if="canEditDataSource"
+                type="button"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-gray-500 transition-colors hover:border-gray-200 hover:bg-gray-100 hover:text-emerald-600 disabled:opacity-50"
+                :disabled="testingConnectionId === item.id"
+                v-tooltip="'测试连接'"
+                aria-label="测试连接"
+                @click="testSavedConnection(item)"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+              </button>
+
+              <button
+                v-if="canEditDataSource"
+                type="button"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent transition-colors hover:border-gray-200 hover:bg-gray-100"
+                :class="editingId === item.id ? 'border-primary/30 bg-primary/5 text-primary' : 'text-gray-500 hover:text-blue-600'"
+                v-tooltip="'编辑数据源'"
+                aria-label="编辑数据源"
+                @click="editConfig(item)"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+              </button>
+
+              <div class="relative">
+                <button
+                  v-if="canEditDataSource || canDeleteDataSource"
+                  type="button"
+                  class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-gray-500 transition-colors hover:border-gray-200 hover:bg-gray-100 hover:text-gray-700"
+                  v-tooltip="'更多操作（SQL 调试 / 复制 / 删除）'"
+                  aria-label="更多操作"
+                  @click.stop="toggleActionMenu(item.id, 'more')"
+                >
+                  <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                    <circle cx="5" cy="12" r="1.6"/>
+                    <circle cx="12" cy="12" r="1.6"/>
+                    <circle cx="19" cy="12" r="1.6"/>
+                  </svg>
+                </button>
+                <div
+                  v-if="isActionMenuOpen(item.id, 'more')"
+                  class="absolute right-0 top-full z-50 mt-1 w-36 rounded-xl border border-gray-200 bg-white shadow-lg py-1 text-xs"
+                  @click.stop
+                >
+                  <button v-if="canEditDataSource" type="button" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50" @click="handleMoreMenuAction(item, 'debug')">SQL 调试</button>
+                  <button v-if="canEditDataSource" type="button" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50" @click="handleMoreMenuAction(item, 'copy')">复制</button>
+                  <div class="my-1 border-t border-gray-100"></div>
+                  <button
+                    v-if="canDeleteDataSource"
+                    type="button"
+                    class="w-full text-left px-3 py-2 font-bold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    :disabled="deletingId === item.id"
+                    @click="handleMoreMenuAction(item, 'delete')"
+                  >
+                    {{ deletingId === item.id ? '删除中' : '删除' }}
+                  </button>
+                </div>
+              </div>
               </div>
             </div>
           </div>
@@ -1033,7 +1278,7 @@ onUnmounted(() => {
                         </td>
                       </tr>
                       <tr v-else v-for="(row, rIdx) in debugResult.rows" :key="rIdx" class="hover:bg-gray-50 bg-white">
-                        <td v-for="(cell, cIdx) in row" :key="cIdx" class="px-4 py-2 border-r border-gray-100 whitespace-nowrap max-w-[200px] truncate" :title="String(cell)">
+                        <td v-for="(cell, cIdx) in row" :key="cIdx" class="px-4 py-2 border-r border-gray-100 whitespace-nowrap max-w-[200px] truncate" v-tooltip="String(cell)">
                           {{ cell === null ? 'NULL' : cell }}
                         </td>
                       </tr>

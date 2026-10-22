@@ -19,6 +19,9 @@ const GAP = 8
 const EDGE = 8
 const MAX_WIDTH = 288
 const BUBBLE_BG = 'rgba(17, 24, 39, 0.95)'
+// 必须高于业务弹层（Modal 60 / 抽屉 9990 / ConfirmModal 13000），否则弹窗里的提示会被遮住；
+// 又要低于全局 Toast（100000），避免盖住操作反馈。
+const BUBBLE_Z_INDEX = '50000'
 
 type Handlers = {
   enter: () => void
@@ -28,7 +31,6 @@ type Handlers = {
 }
 
 let activeBubble: HTMLDivElement | null = null
-let activeArrow: HTMLSpanElement | null = null
 let listening = false
 const handlers = new WeakMap<HTMLElement, Handlers>()
 
@@ -37,7 +39,6 @@ const readText = (el: HTMLElement) => (el.dataset.tooltipText || '').trim()
 const removeBubble = () => {
   activeBubble?.remove()
   activeBubble = null
-  activeArrow = null
 }
 
 const hideTooltip = () => removeBubble()
@@ -72,7 +73,7 @@ const createBubble = (text: string) => {
   bubble.setAttribute('role', 'tooltip')
   Object.assign(bubble.style, {
     position: 'fixed',
-    zIndex: '90',
+    zIndex: BUBBLE_Z_INDEX,
     maxWidth: `${MAX_WIDTH}px`,
     padding: '6px 10px',
     borderRadius: '8px',
@@ -116,7 +117,6 @@ const showTooltip = (el: HTMLElement) => {
   const { bubble, arrow } = createBubble(text)
   positionBubble(el, bubble, arrow)
   activeBubble = bubble
-  activeArrow = arrow
 }
 
 const writeText = (el: HTMLElement, value: TooltipValue) => {
