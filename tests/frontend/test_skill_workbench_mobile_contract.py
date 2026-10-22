@@ -24,9 +24,12 @@ def test_workspace_tabs_scroll_horizontally_on_mobile():
 
 def test_card_actions_are_visible_without_hover_on_touch():
     source = _read(SKILLS_VIEW)
-    for color in ("emerald", "indigo", "red"):
-        needle = (
-            f"hover:bg-{color}-50 hover:text-{color}-600 "
-            "md:opacity-0 md:group-hover:opacity-100"
-        )
-        assert needle in source, f"{color} 按钮在触屏上不可见"
+    # 四个动作已收进「⋯」：⋯ 必须在触屏常显，桌面才靠 hover 显现
+    assert (
+        "opacity-100 transition-all hover:bg-gray-100 hover:text-gray-600 "
+        "md:opacity-0 md:group-hover:opacity-100"
+    ) in source
+    # 菜单项本身不能接 opacity-0 / group-hover，否则触屏点了也看不见
+    menu_block = source.split('<!-- 卡片「⋯」操作菜单 -->', 1)[1].split('<SkillShareDialog', 1)[0]
+    assert "opacity-0" not in menu_block
+    assert "group-hover" not in menu_block
