@@ -8,6 +8,8 @@ import {
 } from '@/utils/fileTypeVisual'
 import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash } from '@/utils/workspaceFilePreview'
 import WorkspaceActionMenu from '@/components/embed/WorkspaceActionMenu.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
+import { planBatchDelete, selectAllState, toggleSelectAllPaths } from '@/utils/workspaceBatchSelection'
 import { buildWorkspaceActionEntries } from '@/utils/workspaceActionEntries'
 import type { WorkspaceActionKey, WorkspaceActionTarget, WorkspaceMenuContext } from '@/utils/workspaceActionEntries'
 import { useWorkspaceUploadQueue } from '@/composables/useWorkspaceUploadQueue'
@@ -85,6 +87,19 @@ const uploadTargetPath = ref('')
 const highlightedPath = ref('')
 const selectedPaths = ref<Set<string>>(new Set())
 const multiSelectMode = ref(false)
+const batchDeleteConfirm = ref(false)
+const batchDeleteSubmitting = ref(false)
+const batchDeleteProgress = ref({ done: 0, total: 0 })
+
+/**
+ * 清空当前勾选。
+ *
+ * 勾选按 path 记录，切换目录/搜索条件后旧路径已不在列表内；若不清空，
+ * 计数与批量动作就会出现「看不见却被操作」的条目。
+ */
+const resetBatchSelection = () => {
+  if (selectedPaths.value.size > 0) selectedPaths.value = new Set()
+}
 type ViewMode = 'list' | 'grid'
 const viewMode = ref<ViewMode>('list')
 const listPage = ref(1)
@@ -546,6 +561,7 @@ const scheduleRecursiveSearch = (delay = 200) => {
 
 watch(searchQuery, () => {
   selectedItem.value = null
+  resetBatchSelection()
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
 
   if (!searchQuery.value.trim() && !isTypeScanActive.value) {
@@ -576,6 +592,7 @@ watch(includeSubdirs, () => {
 
 watch(typeFilter, () => {
   selectedItem.value = null
+  resetBatchSelection()
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
   if (isTypeScanActive.value || (searchQuery.value.trim() && includeSubdirs.value)) {
     scheduleRecursiveSearch(150)
@@ -659,6 +676,23 @@ const sortedDisplayItems = computed(() => {
   })
   return list
 })
+
+/**
+ * 全选的作用范围＝当前列表（搜索/类型筛选 + 排序后）的全部条目。
+ *
+ * 与「批量挂载」的取数保持一致：两个批量动作看到的集合必须是同一个，
+ * 否则用户会以为「全选后挂载」和「全选后删除」操作的是同一批文件。
+ */
+const batchSelectablePaths = computed(() => sortedDisplayItems.value.map((item) => item.path))
+const batchSelectAllState = computed(() => selectAllState(batchSelectablePaths.value, selectedPaths.value))
+/** 只统计仍在当前列表内的勾选，避免跨目录残留路径虚增计数 */
+const batchSelectedItems = computed(() =>
+  sortedDisplayItems.value.filter((item) => selectedPaths.value.has(item.path)),
+)
+
+const toggleSelectAllItems = () => {
+  selectedPaths.value = toggleSelectAllPaths(batchSelectablePaths.value, selectedPaths.value)
+}
 
 const displayEmptyHint = computed(() => {
   if (isRecursiveListingActive.value && searchLoading.value) return ''
@@ -1027,6 +1061,10 @@ const submitCreateEntry = async () => {
 }
 
 const fetchDirectory = async (pathUrl: string = '', options?: { preserveSearch?: boolean }) => {
+  // 目标目录变了：旧的勾选已不在列表内，留着会让批量删除误伤其它目录的条目
+  if (normalizeFsPathForCompare(pathUrl || '') !== normalizeFsPathForCompare(currentPath.value)) {
+    resetBatchSelection()
+  }
   loading.value = true
   selectedItem.value = null
   closeActionMenu()
@@ -1068,9 +1106,12 @@ watch(
     setMobileBodyScrollLock(!!open)
     if (open) {
       baseDir.value = ''
+      // 抽屉关闭期间列表可能已被外部改动，重开时旧勾选没有意义
+      resetBatchSelection()
       loadRecentFiles()
       fetchDirectory()
     } else {
+      resetBatchSelection()
       closeQuickNavMenu()
       closeRecentFilesMenu()
     }
@@ -1303,15 +1344,14 @@ const toggleMultiSelect = (item: { path: string }) => {
 }
 
 const clearMultiSelect = () => {
-  selectedPaths.value = new Set()
+  resetBatchSelection()
+  batchDeleteConfirm.value = false
   multiSelectMode.value = false
 }
 
 const toggleMultiSelectMode = () => {
   multiSelectMode.value = !multiSelectMode.value
-  if (!multiSelectMode.value) {
-    selectedPaths.value = new Set()
-  }
+  if (!multiSelectMode.value) clearMultiSelect()
 }
 
 const handleRowClick = (item: any) => {
@@ -1360,7 +1400,7 @@ const mountItemToSession = (item: { path: string; name: string; is_dir: boolean;
 }
 
 const mountSelectedBatch = () => {
-  const selected = sortedDisplayItems.value.filter((item) => selectedPaths.value.has(item.path))
+  const selected = batchSelectedItems.value
   if (!selected.length) return
   for (const item of selected) {
     mountItemToSession(item)
@@ -1603,6 +1643,101 @@ const canManageItem = (item: { path: string; is_dir?: boolean }) => {
   ) return false
   if (isAdminScope.value && !isTrashPath(item.path)) return true
   return isPathInUserWorkspace(item.path) && !isTrashPath(item.path)
+}
+
+// --------------------------------------------------------------------------
+// 批量删除：先按「可管理」拆分选中项，再用通用 ConfirmModal 二次确认。
+// 不许绕过确认直接删：一次误操作会同时移走多个文件，回收站虽然可恢复，
+// 但用户很难回忆起自己刚才勾了哪些。
+// --------------------------------------------------------------------------
+const batchDeletePlan = computed(() =>
+  planBatchDelete(batchSelectedItems.value, (item) => canManageItem(item) && !isTrashPath(item.path)),
+)
+
+/** 管理员删公共目录内容是永久删除（后端直接 rmtree/remove），确认框必须说清楚 */
+const batchDeletePermanentCount = computed(
+  () => batchDeletePlan.value.deletable.filter((item) => isAdminScope.value && isPublicItem(item)).length,
+)
+
+const batchDeleteDetails = computed(() =>
+  batchDeletePlan.value.deletable.map((item) => resolveItemDisplayName(item)),
+)
+
+const batchDeleteMessage = computed(() => {
+  if (batchDeleteSubmitting.value) {
+    return `正在删除 ${batchDeleteProgress.value.done}/${batchDeleteProgress.value.total} 项…`
+  }
+  const plan = batchDeletePlan.value
+  const permanentCount = batchDeletePermanentCount.value
+  const trashedCount = plan.deletable.length - permanentCount
+  const lines: string[] = []
+  if (trashedCount > 0) lines.push(`${trashedCount} 项将移入回收站，可随时恢复。`)
+  if (permanentCount > 0) lines.push(`${permanentCount} 项属于公共目录，将被永久删除且不可恢复。`)
+  if (plan.skipped.length > 0) lines.push(`另有 ${plan.skipped.length} 项只读或受保护，将自动跳过。`)
+  return lines.join('\n')
+})
+
+const requestBatchDelete = () => {
+  if (isTrashView.value || batchDeleteSubmitting.value) return
+  const plan = batchDeletePlan.value
+  if (plan.deletable.length === 0) {
+    showToast(plan.skipped.length > 0 ? '所选项目为只读或受保护，无法删除' : '请先选择要删除的项目', 'info')
+    return
+  }
+  batchDeleteConfirm.value = true
+  closeActionMenu()
+}
+
+const submitBatchDelete = async () => {
+  if (batchDeleteSubmitting.value) return
+  const plan = batchDeletePlan.value
+  if (plan.deletable.length === 0) {
+    batchDeleteConfirm.value = false
+    return
+  }
+  const permanentPaths = new Set(
+    plan.deletable.filter((item) => isAdminScope.value && isPublicItem(item)).map((item) => item.path),
+  )
+  batchDeleteSubmitting.value = true
+  batchDeleteProgress.value = { done: 0, total: plan.deletable.length }
+  const succeededPaths: string[] = []
+  const failed: Array<{ name: string; error: string }> = []
+  // 逐项调用既有单条删除接口：不新增后端，单项失败也不影响其余条目
+  for (const item of plan.deletable) {
+    try {
+      await deleteWorkspaceEntry(item.path)
+      succeededPaths.push(item.path)
+    } catch (error: any) {
+      failed.push({
+        name: resolveItemDisplayName(item),
+        error: error?.response?.data?.detail || '删除失败',
+      })
+    }
+    batchDeleteProgress.value = {
+      done: batchDeleteProgress.value.done + 1,
+      total: plan.deletable.length,
+    }
+  }
+  batchDeleteSubmitting.value = false
+  batchDeleteConfirm.value = false
+
+  // 成功项移出勾选；失败项保留，用户可以直接重试
+  const next = new Set(selectedPaths.value)
+  for (const path of succeededPaths) next.delete(path)
+  selectedPaths.value = next
+
+  const permanentDeleted = succeededPaths.filter((path) => permanentPaths.has(path)).length
+  const trashed = succeededPaths.length - permanentDeleted
+  const summary: string[] = []
+  if (trashed > 0) summary.push(`${trashed} 项已移入回收站`)
+  if (permanentDeleted > 0) summary.push(`${permanentDeleted} 项已永久删除`)
+  if (plan.skipped.length > 0) summary.push(`${plan.skipped.length} 项只读已跳过`)
+  if (summary.length > 0) showToast(summary.join('，'), 'success')
+  if (failed.length > 0) {
+    showToast(`${failed.length} 项删除失败：${failed[0].name} — ${failed[0].error}`, 'error')
+  }
+
+  await fetchDirectory(currentPath.value, { preserveSearch: true })
 }
 
 const handleTouchStart = (event: TouchEvent, item: { path: string; name: string; is_dir: boolean }) => {
@@ -2111,7 +2246,18 @@ onUnmounted(() => {
                     </div>
                   </div>
                   <div v-if="viewMode === 'list'" class="grid grid-cols-12 gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/20 text-[10px] font-black text-gray-400 tracking-wider shrink-0">
-                    <div v-if="multiSelectMode" class="col-span-1" aria-hidden="true" />
+                    <div v-if="multiSelectMode" class="col-span-1 flex items-center">
+                      <input
+                        type="checkbox"
+                        class="rounded border-gray-300 text-primary"
+                        :checked="batchSelectAllState === 'all'"
+                        :indeterminate="batchSelectAllState === 'partial'"
+                        :disabled="batchSelectablePaths.length === 0"
+                        :title="batchSelectAllState === 'all' ? '取消全选' : '全选当前列表'"
+                        :aria-label="batchSelectAllState === 'all' ? '取消全选' : '全选当前列表'"
+                        @click.stop="toggleSelectAllItems"
+                      >
+                    </div>
                     <button
                       type="button"
                       class="inline-flex items-center gap-1 text-left hover:text-primary transition-colors focus:outline-none"
@@ -2340,14 +2486,41 @@ onUnmounted(() => {
                   </div>
 
                   <div class="absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2 pointer-events-none">
-                    <button
-                      v-if="multiSelectMode && selectedPaths.size > 0"
-                      type="button"
-                      class="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary px-3.5 py-2 text-[11px] font-bold text-white shadow-lg shadow-primary/20 transition-all hover:brightness-105 active:scale-[0.98]"
-                      @click="mountSelectedBatch"
+                    <!-- 多选操作条：「全选」常驻（没选任何项时也要能全选），删除/挂载按可用性出现 -->
+                    <div
+                      v-if="multiSelectMode"
+                      class="pointer-events-auto flex items-center gap-1 rounded-full border border-gray-200 bg-white/95 px-1.5 py-1 shadow-lg ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-900/95"
                     >
-                      批量挂载 ({{ selectedPaths.size }})
-                    </button>
+                      <button
+                        type="button"
+                        class="rounded-full px-2.5 py-1.5 text-[11px] font-bold text-gray-600 transition-colors hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-40 dark:text-gray-300 dark:hover:bg-gray-800"
+                        :disabled="batchSelectablePaths.length === 0"
+                        :title="batchSelectAllState === 'all' ? '取消全选当前列表' : '全选当前列表'"
+                        @click="toggleSelectAllItems"
+                      >
+                        {{ batchSelectAllState === 'all' ? '取消全选' : '全选' }}
+                      </button>
+                      <span class="h-4 w-px bg-gray-200 dark:bg-gray-700" aria-hidden="true" />
+                      <button
+                        v-if="!isTrashView"
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-bold text-red-600 transition-colors hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/40 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
+                        :disabled="batchDeletePlan.deletable.length === 0 || batchDeleteSubmitting"
+                        :title="batchDeletePlan.deletable.length === 0 ? '请选择可删除的项目' : '批量删除所选项目'"
+                        @click="requestBatchDelete"
+                      >
+                        <TrashIcon class="h-3.5 w-3.5" aria-hidden="true" />
+                        批量删除 ({{ batchDeletePlan.deletable.length }})
+                      </button>
+                      <button
+                        v-if="batchSelectedItems.length > 0"
+                        type="button"
+                        class="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary px-3 py-1.5 text-[11px] font-bold text-white shadow-primary/20 transition-all hover:brightness-105 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        @click="mountSelectedBatch"
+                      >
+                        批量挂载 ({{ batchSelectedItems.length }})
+                      </button>
+                    </div>
                     <button
                       type="button"
                       class="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border shadow-lg transition-all active:scale-95"
@@ -2708,6 +2881,20 @@ onUnmounted(() => {
       </div>
     </div>
   </Teleport>
+
+  <!-- 批量删除二次确认：复用仓库通用 ConfirmModal，列出待删项与跳过项，
+       避免「一次点击删掉一批」且用户记不清自己勾了什么 -->
+  <ConfirmModal
+    v-if="batchDeleteConfirm"
+    :title="batchDeletePermanentCount > 0 ? '确认删除选中项？' : '移入回收站？'"
+    :message="batchDeleteMessage"
+    :details="batchDeleteDetails"
+    details-label="将删除以下项目"
+    confirm-text="确认删除"
+    :loading="batchDeleteSubmitting"
+    @confirm="submitBatchDelete"
+    @cancel="batchDeleteConfirm = false"
+  />
 </template>
 
 <style scoped>
