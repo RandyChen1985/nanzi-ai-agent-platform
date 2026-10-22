@@ -17,6 +17,10 @@ const MAX_TIMELINE_ITEMS = 120;
 const MAX_TIMELINE_DEPTH = 2;
 const MAX_TEXT_ITEM_CHARS = 8_000;
 const MAX_LOG_DETAILS_CHARS = 2_000;
+const MAX_INTERACTION_BYTES = 24_000;
+
+/** 待确认交互态：这些是「upsert 终态」，重放不会回退，适合随快照一起还原。 */
+export type EmbedStreamSnapshotInteraction = Record<string, unknown>;
 
 export interface EmbedStreamSnapshotDraft {
   content?: string;
@@ -26,6 +30,14 @@ export interface EmbedStreamSnapshotDraft {
   agentDisplayName?: string;
   agentType?: string;
   agentAvatarUrl?: string;
+  /**
+   * 待确认卡片。事件日志被 LTRIM/TTL 截断时，客户端唯一的恢复来源就是这里；
+   * 缺了它，刷新后权限卡片会永久消失、后台任务一直挂到确认超时。
+   */
+  pendingPermission?: EmbedStreamSnapshotInteraction | null;
+  pendingExternalExecution?: EmbedStreamSnapshotInteraction | null;
+  userQuestion?: EmbedStreamSnapshotInteraction | null;
+  businessConfirmation?: EmbedStreamSnapshotInteraction | null;
 }
 
 export interface EmbedStreamSnapshotInput {
@@ -89,12 +101,43 @@ const trimTimelineItems = (items: unknown[], depth = 0): unknown[] => {
   return result;
 };
 
+/**
+ * 交互态裁剪：保留恢复卡片所需的全部终态字段；体积超限时只丢工具参数
+ * （权限确认只需 request_id + confirmed，外部执行恢复可退化为默认工具名），
+ * 仍超限则放弃这一项——绝不把一个撑爆存储的快照写进去。
+ */
+const trimInteraction = (value: unknown): EmbedStreamSnapshotInteraction | null => {
+  if (!value || typeof value !== "object") return null;
+  const next: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  if (serializedBytes(next) > MAX_INTERACTION_BYTES) {
+    // 外部执行草稿可能很长：先截断它、再丢工具参数（卡片本身要保住）。
+    if (typeof next.outputDraft === "string") {
+      next.outputDraft = clip(next.outputDraft, 4_000);
+    }
+    if ("tool_call" in next) delete next.tool_call;
+  }
+  return serializedBytes(next) <= MAX_INTERACTION_BYTES ? next : null;
+};
+
+const hasInteractionState = (draft: EmbedStreamSnapshotDraft | null | undefined): boolean =>
+  Boolean(
+    draft?.pendingPermission ||
+      draft?.pendingExternalExecution ||
+      draft?.userQuestion ||
+      draft?.businessConfirmation,
+  );
+
 const hasVisibleContent = (snapshot: EmbedStreamSnapshot | null | undefined): boolean => {
   const draft = snapshot?.draft;
-  if (!draft) return false;
-  if (String(draft.content || "").trim()) return true;
-  if (String(draft.reasoningContent || "").trim()) return true;
-  return Array.isArray(draft.processTimeline) && draft.processTimeline.length > 0;
+  if (draft) {
+    if (String(draft.content || "").trim()) return true;
+    if (String(draft.reasoningContent || "").trim()) return true;
+    if (Array.isArray(draft.processTimeline) && draft.processTimeline.length > 0) return true;
+    if (hasInteractionState(draft)) return true;
+  }
+  // 用户提问也算可见内容：首片正文还没到就刷新时，至少要让提问留在界面上；
+  // 后续过程由恢复器从事件日志重建。
+  return Boolean(String(snapshot?.user?.content || "").trim());
 };
 
 export function buildEmbedStreamSnapshot(
@@ -108,10 +151,20 @@ export function buildEmbedStreamSnapshot(
   const processTimeline = trimTimelineItems(
     Array.isArray(input?.draft?.processTimeline) ? (input!.draft!.processTimeline as unknown[]) : [],
   );
-  if (!content && !reasoningContent && processTimeline.length === 0) return null;
+  const pendingPermission = trimInteraction(input?.draft?.pendingPermission);
+  const pendingExternalExecution = trimInteraction(input?.draft?.pendingExternalExecution);
+  const userQuestion = trimInteraction(input?.draft?.userQuestion);
+  const businessConfirmation = trimInteraction(input?.draft?.businessConfirmation);
+  const userContent = clip(input?.user?.content, MAX_CONTENT_CHARS);
+
+  const hasDraftState =
+    Boolean(content || reasoningContent) ||
+    processTimeline.length > 0 ||
+    Boolean(pendingPermission || pendingExternalExecution || userQuestion || businessConfirmation);
+  // 只有提问也算有效快照：刷新后先把提问还原出来，过程交给恢复器重建。
+  if (!hasDraftState && !userContent) return null;
 
   const traceId = String(input?.traceId || "").trim();
-  const userContent = clip(input?.user?.content, MAX_CONTENT_CHARS);
   const userTimestamp = String(input?.user?.timestamp || "").trim();
 
   const base: EmbedStreamSnapshot = {
@@ -128,6 +181,10 @@ export function buildEmbedStreamSnapshot(
       content,
       ...(reasoningContent ? { reasoningContent } : {}),
       ...(processTimeline.length > 0 ? { processTimeline } : {}),
+      ...(pendingPermission ? { pendingPermission } : {}),
+      ...(pendingExternalExecution ? { pendingExternalExecution } : {}),
+      ...(userQuestion ? { userQuestion } : {}),
+      ...(businessConfirmation ? { businessConfirmation } : {}),
       ...(input?.draft?.agentName ? { agentName: String(input.draft.agentName) } : {}),
       ...(input?.draft?.agentDisplayName
         ? { agentDisplayName: String(input.draft.agentDisplayName) }
@@ -143,6 +200,7 @@ export function buildEmbedStreamSnapshot(
   if (serializedBytes(base) <= SNAPSHOT_MAX_BYTES) return base;
 
   // 体积降级：先丢时间线（最大的那块），再丢思考正文，保证绝不撑爆 sessionStorage。
+  // 交互态是「刷新后唯一可点的东西」，降级顺序里必须最后才考虑它。
   const withoutTimeline: EmbedStreamSnapshot = {
     ...base,
     draft: { ...base.draft, processTimeline: [] },

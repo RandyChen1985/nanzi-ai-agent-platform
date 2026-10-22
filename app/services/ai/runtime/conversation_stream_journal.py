@@ -31,6 +31,24 @@ DEFAULT_MAX_EVENTS = 8000
 DEFAULT_TTL_SECONDS = 1800
 CONFIG_KEY_MAX_EVENTS = "chat_stream_journal_max_events"
 CONFIG_KEY_TTL_SECONDS = "chat_stream_journal_ttl_seconds"
+# 增量轮询只读尾部窗口：前端每秒拉一次，游标几乎总在尾部附近。旧实现每次都
+# `LRANGE 0 -1` 再逐条 JSON 解析——长任务下是固定 O(窗口全部事件) 的成本，
+# 每秒一次、每个恢复中的客户端都要付一遍。窗口大小覆盖两次轮询之间的事件量绰绰有余。
+READ_TAIL_WINDOW_EVENTS = 512
+
+
+def _parse_event_seq(raw: Any) -> int | None:
+    try:
+        event = json.loads(raw) if isinstance(raw, (str, bytes, bytearray)) else None
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(event, dict):
+        return None
+    try:
+        seq = int(event.get("_seq") or 0)
+    except (TypeError, ValueError):
+        return None
+    return seq if seq > 0 else None
 
 
 class ConversationStreamJournal:
@@ -125,6 +143,36 @@ class ConversationStreamJournal:
                 exc,
             )
 
+    async def _read_window_items(self, redis: Any, list_key: str, cursor: int) -> list[Any]:
+        """只读取「可能包含 seq > cursor」的最小窗口；无法判断时退回全量。
+
+        - 最新一条的 seq 都没超过游标：直接返回空列表（稳态轮询的常见情况，零 LRANGE）；
+        - 游标落在尾部窗口内：只读尾部窗口，避免每次都拉全量；
+        - 游标早于窗口起点（首次恢复 / 日志被 LTRIM）：退回全量，保证不丢未读事件。
+        """
+        llen = getattr(redis, "llen", None)
+        lindex = getattr(redis, "lindex", None)
+        if llen is None or lindex is None:
+            return list(await redis.lrange(list_key, 0, -1))
+
+        total = int(await llen(list_key) or 0)
+        if total <= 0:
+            return []
+        latest_seq = _parse_event_seq(await lindex(list_key, -1))
+        if latest_seq is not None and latest_seq <= cursor:
+            return []
+
+        start = total - READ_TAIL_WINDOW_EVENTS
+        if start <= 0:
+            return list(await redis.lrange(list_key, 0, -1))
+        tail = list(await redis.lrange(list_key, start, -1))
+        first_seq = _parse_event_seq(tail[0]) if tail else None
+        # 窗口起点都已经是 cursor 之后很远的位置，说明中间可能还有未读事件（或日志
+        # 被 LTRIM 过）；无法仅凭 seq 区分，只能全量读，保证不漏。
+        if first_seq is None or first_seq > cursor + 1:
+            return list(await redis.lrange(list_key, 0, -1))
+        return tail
+
     async def read_after(
         self,
         user_id: str | int | None,
@@ -138,7 +186,9 @@ class ConversationStreamJournal:
             redis = await self._redis()
             if redis is None:
                 return {"events": [], "next_seq": cursor}
-            raw_items = await redis.lrange(self._list_key(user_id, conversation_id), 0, -1)
+            raw_items = await self._read_window_items(
+                redis, self._list_key(user_id, conversation_id), cursor
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "[StreamJournal] read failed for conversation=%s: %s",

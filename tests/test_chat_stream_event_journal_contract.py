@@ -57,3 +57,10 @@ def test_producer_clears_previous_turn_journal_before_streaming():
     """
     source = _source()
     assert "await conversation_stream_journal.clear(lane_user_id, conversation_id)" in source
+
+
+def test_stream_events_exposes_run_availability():
+    """事件续显的「本轮是否结束」同样不可在查询失败时被当成已结束。"""
+    source = _source()
+    assert "run_available" in source
+    assert "ConversationStreamEventsResponse(**payload)" in source

@@ -20,7 +20,7 @@ EMBED_CHAT = ROOT / "frontend/src/views/EmbedChat.vue"
 pytestmark = pytest.mark.no_infrastructure
 
 
-def _plan(messages, latest):
+def _plan(messages, latest, options=None):
     module_path = "frontend/src/utils/runRecoverySync.ts"
     script = f"""
 (async () => {{
@@ -35,6 +35,7 @@ new Function('module', 'exports', 'require', code)(moduleRef, moduleRef.exports,
 const result = moduleRef.exports.planHistorySync(
   {json.dumps(messages, ensure_ascii=False)},
   {json.dumps(latest, ensure_ascii=False)},
+  {json.dumps(options or {}, ensure_ascii=False)},
 );
 process.stdout.write(JSON.stringify(result));
 }})().catch(error => {{ console.error(error); process.exit(1); }});
@@ -319,8 +320,295 @@ def test_embed_chat_stream_replay_does_not_finish_the_turn():
 def test_embed_chat_keeps_lock_truth_driving_recovery_while_composer_uses_busy():
     """恢复器必须以锁真相为驱动，输入解锁只认 busy：两者不得再耦合成同一个标志。"""
     source = _embed_source()
-    assert ':is-processing="isProcessing || remoteRunBusy"' in source
-    assert "const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || sendLocked.value;" in source
+    assert ':is-processing="isProcessing || remoteRunBusy || recoveryLocking"' in source
+    assert (
+        "const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || recoveryLocking.value || sendLocked.value;"
+        in source
+    )
     assert "watch(remoteRunActive, (active) =>" in source
-    assert "if (!remoteRunActive.value || document.visibilityState" in source
+    # 恢复器有两个驱动力：锁真相与「仍有一份未收敛草稿」。后者让 run-status 查询失败 /
+    # 任务恰好在挂载窗口内结束时仍有人收敛。
+    assert "if (!remoteRunActive.value && !recoveryPending.value) return;" in source
+    assert 'if (document.visibilityState !== "visible") return;' in source
+    assert "watch(recoveryPending, (pending) =>" in source
 
+
+
+# ---- 无草稿 / 分隔符 / 水位线：刷新后仍能收敛到新答案 ----
+
+
+SYSTEM_SEPARATOR = {
+    "role": "system",
+    "content": "以上是历史会话，可以重置会话清除",
+    "timestamp": "2026-10-22T10:00:05",
+}
+HISTORY_TAIL = [
+    {"role": "user", "trace_id": "t0", "content": "旧提问", "timestamp": "2026-10-22T10:00:00"},
+    {
+        "role": "agent",
+        "trace_id": "t0",
+        "content": "旧回答",
+        "isHistory": True,
+        "timestamp": "2026-10-22T10:00:05",
+    },
+    SYSTEM_SEPARATOR,
+]
+
+
+def test_reloads_when_history_is_loaded_and_a_newer_turn_exists_on_server():
+    """刷新后快照缺失时，末条历史 + 分隔符不能挡掉新终态。
+
+    旧实现取 `messages[last]`（分隔符）判角色，fill/append 都失效后落到 ignore，
+    新回答永远不会出现；这里必须整段重拉。
+    """
+    assert _plan(
+        HISTORY_TAIL,
+        {
+            "trace_id": "t1",
+            "summary": "新回答",
+            "query": "新提问",
+            "created_at": "2026-10-22T10:05:00",
+        },
+    ) == {"kind": "reload"}
+
+
+def test_ignores_an_older_record_that_is_not_on_the_loaded_history_page():
+    """更早轮次的陈留记录不得触发整段重拉（否则会重复加载/冲掉本地现场）。"""
+    assert _plan(
+        HISTORY_TAIL,
+        {
+            "trace_id": "t-old",
+            "summary": "更早回答",
+            "query": "更早提问",
+            "created_at": "2026-10-22T09:00:00",
+        },
+    ) == {"kind": "ignore"}
+
+
+def test_ignores_when_latest_record_is_already_the_loaded_tail():
+    assert _plan(
+        HISTORY_TAIL,
+        {
+            "trace_id": "t0",
+            "summary": "旧回答",
+            "query": "旧提问",
+            "created_at": "2026-10-22T10:00:05",
+        },
+    ) == {"kind": "ignore"}
+
+
+def test_updates_trace_less_draft_by_query_match():
+    """快照里的 trace 丢失/被嵌套 trace 覆盖时，用本轮 query 对上是同一轮即可覆盖。"""
+    assert _plan(
+        [
+            *HISTORY_TAIL,
+            {"role": "user", "content": "新提问"},
+            {"role": "agent", "content": "半截回答", "isThinking": False},
+        ],
+        {
+            "trace_id": "t1",
+            "summary": "完整回答",
+            "query": "新提问",
+            "created_at": "2026-10-22T10:05:00",
+        },
+    ) == {"kind": "update", "index": 4}
+
+
+def test_updates_timeline_only_record_for_an_unsettled_draft():
+    """summary 为空但有 timeline 的合法轮次也要收敛（旧判据把它当未落库永远忽略）。
+
+    更新时调用方必须保留草稿正文，不能拿空 summary 覆盖。
+    """
+    assert _plan(
+        [
+            *HISTORY_TAIL,
+            {"role": "user", "content": "新提问"},
+            {"role": "agent", "trace_id": "t1", "content": "半截回答", "isThinking": False},
+        ],
+        {
+            "trace_id": "t1",
+            "summary": "",
+            "query": "新提问",
+            "process_timeline": [{"kind": "log", "title": "工具"}],
+            "created_at": "2026-10-22T10:05:00",
+        },
+        {"hasUnsettledDraft": True},
+    ) == {"kind": "update", "index": 4}
+
+
+def test_appends_when_local_tail_is_the_matching_user_turn():
+    """本地只剩本轮提问（快照只有 user）时按 query 追加，不重拉、不丢提问。"""
+    assert _plan(
+        [*HISTORY_TAIL, {"role": "user", "content": "新提问"}],
+        {
+            "trace_id": "t1",
+            "summary": "答复",
+            "query": "新提问",
+            "created_at": "2026-10-22T10:05:01",
+        },
+    ) == {"kind": "append"}
+
+
+# ---- 接线契约：无草稿补建 / 双驱动力 / 硬刷新落盘 / 轻量轮询 ----
+
+
+def test_embed_chat_can_rebuild_a_draft_from_redis_history_without_a_snapshot():
+    source = _embed_source()
+    assert "const ensureRecoveryDraft = async () =>" in source
+    assert "/api/v1/chat/conversation/${encodeURIComponent(cid)}" in source
+    assert 'if (!last || last.role !== "user"' in source
+    assert "const placeholder = ref<Message>({" in source
+    assert "scheduleStreamReplay();" in source
+
+
+def test_embed_chat_recovery_has_a_second_driver_for_unsettled_drafts():
+    source = _embed_source()
+    assert "const recoveryPending = ref(false);" in source
+    assert "const recoveryLocking = computed(" in source
+    assert "recoveryPending.value =" in source
+    assert "watch(recoveryPending, (pending) =>" in source
+    assert "if (!remoteRunActive.value && !recoveryPending.value) return;" in source
+    assert "void ensureRecoveryDraft();" in source
+
+
+def test_embed_chat_flushes_the_draft_on_pagehide_and_resumes_on_pageshow():
+    """浏览器硬刷新/关闭标签不会走 onUnmounted，visibilitychange 也不保证派发。"""
+    source = _embed_source()
+    assert 'window.addEventListener("pagehide", onPageHide);' in source
+    assert 'window.addEventListener("pageshow", onPageShow);' in source
+    assert "if (!event?.persisted) return;" in source
+    assert "onPageHide," in source
+    assert 'window.removeEventListener("pagehide", handlers.onPageHide);' in source
+
+
+def test_embed_chat_history_polling_is_lightweight_and_waits_for_first_page():
+    source = _embed_source()
+    sync_start = source.index("const syncLatestSessionHistory = async")
+    sync_body = source[sync_start : source.index("\n  };", sync_start)]
+    assert "page_size: 1" in sync_body
+    assert "if (isLoadingHistory.value) {" in sync_body
+    # reload 之前不得清快照：慢网络下首屏历史可能还没还原快照。
+    reload_at = sync_body.index('if (action.kind === "reload") {')
+    fetch_at = sync_body.index("await fetchConversationHistory(false);", reload_at)
+    assert reload_at < fetch_at
+    assert "clearStreamSnapshot(" not in sync_body[reload_at:fetch_at]
+
+
+def test_embed_chat_replay_stops_only_on_a_confirmed_terminal():
+    source = _embed_source()
+    assert "data.run_active === false && data.run_available !== false && !activeStreamDraft" in source
+
+
+def test_embed_chat_unifies_terminal_sync_cleanup():
+    source = _embed_source()
+    assert "const finishRecoveredTurn = () =>" in source
+    start = source.index("const finishRecoveredTurn = () =>")
+    body = source[start : source.index("\n};", start)]
+    assert "settleRecoveredTimeline();" in body
+    assert "activeStreamDraft = null;" in body
+    assert "clearStreamReplayTimer();" in body
+    assert "clearStreamSnapshot(conversationId.value);" in body
+    assert "refreshRecoveryCard();" in body
+
+
+def test_unsettled_draft_does_not_turn_a_previous_turn_record_into_an_update():
+    """在途草稿不能把「上一轮已落库记录」误判成本轮需要收敛。
+
+    旧判据只要 unsettled 就 update 命中的 trace；而命中的往往是上一轮终态。调用方
+    随即会清掉本轮草稿、停续显，恢复器再补建草稿，形成每 3s 一次的抖动。
+    """
+    assert _plan(
+        [
+            *HISTORY_TAIL,
+            {"role": "user", "content": "新提问"},
+            {"role": "agent", "trace_id": "t1", "content": "半截回答", "isThinking": False},
+        ],
+        {
+            "trace_id": "t0",
+            "summary": "旧回答",
+            "query": "旧提问",
+            "created_at": "2026-10-22T10:00:05",
+        },
+        {"hasUnsettledDraft": True},
+    ) == {"kind": "ignore"}
+
+
+def test_embed_chat_only_finishes_recovery_for_the_current_turn():
+    """历史收敛命中上一轮时只补内容，不得清掉本轮在途草稿。"""
+    source = _embed_source()
+    assert "const actionIsForCurrentTurn =" in source
+    assert "action.index > lastLocalUserIndex" in source
+    assert "if (actionIsForCurrentTurn) {" in source
+
+
+def test_trace_less_placeholder_is_not_filled_with_an_older_turn_record():
+    """占位没有 trace 时，fill 只能用于「记录的 query 与本轮提问一致」的情况。
+
+    否则恢复器会把上一轮回答填进本轮刚创建的占位气泡，随后又被终态覆盖。
+    """
+    assert _plan(
+        [
+            *HISTORY_TAIL,
+            {"role": "user", "content": "新提问"},
+            {"role": "agent", "content": "", "isThinking": True},
+        ],
+        {
+            "trace_id": "t0",
+            "summary": "旧回答",
+            "query": "旧提问",
+            "created_at": "2026-10-22T10:00:05",
+        },
+        {"hasUnsettledDraft": True},
+    ) == {"kind": "ignore"}
+
+
+def test_repeated_identical_question_is_not_filled_with_the_previous_turn_answer():
+    """同一会话重复提问时，上一轮的记录不能按 query 文本被误判成本轮。
+
+    这里刻意让上一轮的助手消息不在本地（只保留提问 + 分隔符），此时 trace 匹配不到，
+    只能靠「记录 trace 属于最后一条用户消息之前的某一轮」排除。
+    """
+    messages = [
+        {"role": "user", "trace_id": "t0", "content": "查一下", "timestamp": "2026-10-22T10:00:00"},
+        SYSTEM_SEPARATOR,
+        {"role": "user", "content": "查一下"},
+        {"role": "agent", "content": "", "isThinking": True},
+    ]
+    assert _plan(
+        messages,
+        {
+            "trace_id": "t0",
+            "summary": "上一轮的回答",
+            "query": "查一下",
+            "created_at": "2026-10-22T10:00:05",
+        },
+        {"hasUnsettledDraft": True},
+    ) == {"kind": "ignore"}
+
+
+def test_repeated_identical_question_still_converges_its_own_new_record():
+    """同文本提问的**本轮**记录（trace 不属于更早的提问）仍要正常补进占位。"""
+    messages = [
+        {"role": "user", "trace_id": "t0", "content": "查一下", "timestamp": "2026-10-22T10:00:00"},
+        SYSTEM_SEPARATOR,
+        {"role": "user", "content": "查一下"},
+        {"role": "agent", "content": "", "isThinking": True},
+    ]
+    assert _plan(
+        messages,
+        {
+            "trace_id": "t1",
+            "summary": "本轮回答",
+            "query": "查一下",
+            "created_at": "2026-10-22T10:05:00",
+        },
+        {"hasUnsettledDraft": True},
+    ) == {"kind": "fill", "index": 3}
+
+
+def test_embed_chat_synced_cleanup_requires_the_answer_after_the_last_user():
+    """已同步收尾也必须校验位置：重复提问时上一轮的答案不能触发本轮收尾。"""
+    source = _embed_source()
+    assert "const latestSyncedIndex =" in source
+    assert "latestSyncedIndex > lastLocalUserIndex" in source
+    assert "if (latestSyncedIndex !== -1 && isLatestTurn)" in source

@@ -126,12 +126,26 @@ def test_empty_or_missing_timeline_is_safe():
 
 
 def test_every_terminal_convergence_settles_the_timeline():
-    """接线契约：每条终态收敛路径都要收尾，漏一条秒表就会一直跑。"""
+    """接线契约：每条终态收敛路径都要收尾，漏一条秒表就会一直跑。
+
+    历史收敛的多个分支（reload / update|fill|append / 已同步）现在统一走
+    `finishRecoveredTurn()`：它同时落定时间线、置完成态并清草稿/快照。这样新增
+    收敛分支时不会再出现「只置了完成态、忘了 settle」的漏收尾。
+    """
     source = EMBED_CHAT.read_text(encoding="utf-8")
-    convergences = source.count("recoveryCardTerminalApplied.value = true;")
-    settles = source.count("settleRecoveredTimeline();")
-    assert convergences >= 3
-    assert settles == convergences
+    start = source.index("const finishRecoveredTurn = () => {")
+    body = source[start:source.index("\n};", start)]
+    assert "settleRecoveredTimeline();" in body
+    assert "recoveryCardTerminalApplied.value = true;" in body
+
+    sync_start = source.index("const syncLatestSessionHistory = async")
+    sync_body = source[sync_start:source.index("\n  };", sync_start)]
+    assert sync_body.count("finishRecoveredTurn();") >= 3, "所有历史收敛分支都必须走统一收尾"
+    assert "recoveryCardTerminalApplied.value = true;" not in sync_body
+
+    # SSE 自然结束路径仍要自行收尾（此时没有历史收敛分支可走）。
+    assert "settleRecoveredTimeline();" in source
+    assert "recoveryCardTerminalApplied.value = true;" in source
 
 
 def _settle_helper_body() -> str:
