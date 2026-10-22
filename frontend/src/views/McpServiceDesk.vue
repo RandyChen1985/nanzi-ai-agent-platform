@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component } from 'vue'
-import { BookOpenIcon, CheckIcon, CircleStackIcon, ClipboardDocumentIcon, CpuChipIcon } from '@heroicons/vue/24/outline'
+import { BookOpenIcon, CheckIcon, CircleStackIcon, ClipboardDocumentIcon, CpuChipIcon, EllipsisHorizontalIcon, KeyIcon, QueueListIcon } from '@heroicons/vue/24/outline'
 import api from '../utils/axios'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
@@ -146,6 +146,55 @@ watch(clientViewMode, (newMode) => {
   localStorage.setItem('mcp_client_view_mode', newMode)
 })
 const clientActionMenuId = ref<string | null>(null)
+// 「更多」菜单通过 Teleport 渲染到 body 并改用 fixed 定位：列表视图的表格容器是
+// overflow-x-auto，绝对定位的菜单会被容器裁掉（只在表格内露出一角）。
+const clientActionMenuAnchor = ref<{ top: number | null; bottom: number | null; left: number } | null>(null)
+const ACTION_MENU_WIDTH = 176 // w-44
+const ACTION_MENU_MAX_HEIGHT = 320 // 菜单最多 7 项时的近似高度，用于判断向上还是向下展开
+
+const closeClientActionMenu = () => {
+  clientActionMenuId.value = null
+  clientActionMenuAnchor.value = null
+}
+
+const toggleClientActionMenu = (client: Client, event: MouseEvent) => {
+  if (clientActionMenuId.value === client.client_id) {
+    closeClientActionMenu()
+    return
+  }
+  const trigger = event.currentTarget as HTMLElement | null
+  if (!trigger) return
+  const rect = trigger.getBoundingClientRect()
+  const openUpwards = window.innerHeight - rect.bottom < ACTION_MENU_MAX_HEIGHT && rect.top > ACTION_MENU_MAX_HEIGHT
+  clientActionMenuId.value = client.client_id
+  clientActionMenuAnchor.value = {
+    left: Math.max(8, Math.min(rect.right - ACTION_MENU_WIDTH, window.innerWidth - ACTION_MENU_WIDTH - 8)),
+    top: openUpwards ? null : rect.bottom + 6,
+    bottom: openUpwards ? window.innerHeight - rect.top + 6 : null,
+  }
+}
+
+const clientActionMenuStyle = computed(() => {
+  const anchor = clientActionMenuAnchor.value
+  if (!anchor) return {}
+  return {
+    left: `${anchor.left}px`,
+    ...(anchor.top === null ? {} : { top: `${anchor.top}px` }),
+    ...(anchor.bottom === null ? {} : { bottom: `${anchor.bottom}px` }),
+  }
+})
+
+const handleClientActionMenuDismiss = (event: Event) => {
+  if (!clientActionMenuId.value) return
+  const target = event.target
+  // 点击菜单自身或触发按钮不关闭：触发按钮还要负责切换，交给 toggle 逻辑。
+  if (target instanceof Element && (target.closest('[data-client-action-menu]') || target.closest('[data-client-action-trigger]'))) return
+  closeClientActionMenu()
+}
+
+const handleClientActionMenuReposition = () => {
+  if (clientActionMenuId.value) closeClientActionMenu()
+}
 const expandedClientIds = ref<Set<string>>(new Set())
 const methods = ref<any[]>([])
 const auditLogs = ref<AuditLog[]>([])
@@ -1525,12 +1574,18 @@ onMounted(() => {
     tokenClock.value = Date.now()
     purgeExpiredSessionTokens()
   }, 1_000)
+  document.addEventListener('click', handleClientActionMenuDismiss)
+  window.addEventListener('scroll', handleClientActionMenuReposition, true)
+  window.addEventListener('resize', handleClientActionMenuReposition)
   load()
 })
 onUnmounted(() => {
   if (sessionTokenCleanupTimer !== undefined) {
     window.clearInterval(sessionTokenCleanupTimer)
   }
+  document.removeEventListener('click', handleClientActionMenuDismiss)
+  window.removeEventListener('scroll', handleClientActionMenuReposition, true)
+  window.removeEventListener('resize', handleClientActionMenuReposition)
 })
 </script>
 
@@ -1552,24 +1607,24 @@ onUnmounted(() => {
           :aria-label="loading ? '刷新中' : '刷新 MCP 服务台'"
           @click="load"
         >
-          <svg
-            class="h-3.5 w-3.5"
-            :class="{ 'animate-spin': loading }"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"
-            />
-          </svg>
-          <span>{{ loading ? '刷新中' : '刷新' }}</span>
-        </button>
-      </div>
+                            <svg
+                            class="h-3.5 w-3.5"
+                            :class="{ 'animate-spin': loading }"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                            >
+                            <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"
+                            />
+                            </svg>
+                            <span>{{ loading ? '刷新中' : '刷新' }}</span>
+                            </button>
+                        </div>
 
       <div v-if="error" class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{{ error }}</div>
       <div v-if="oneTimeSecret && !secretRevealClientId" class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -1602,7 +1657,7 @@ onUnmounted(() => {
           <span
             v-if="tab.hasAlert"
             class="relative flex h-2 w-2"
-            title="检测到近期安全或限流事件"
+            v-tooltip="'检测到近期安全或限流事件'"
           >
             <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75"></span>
             <span class="relative inline-flex h-2 w-2 rounded-full bg-rose-500"></span>
@@ -1833,7 +1888,7 @@ onUnmounted(() => {
             <div v-for="item in endpointHelpItems" :key="item.key" class="group relative flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3">
               <div class="w-full sm:w-56"><div class="flex items-center gap-1.5 text-sm font-bold text-slate-700"><span>{{ item.label }}</span><button type="button" class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-indigo-300 text-xs font-black text-indigo-600 hover:bg-indigo-50" :aria-label="`查看${item.label}说明`" @click="openEndpointHelp(item.key)">?</button></div><div class="mt-1 text-xs text-slate-500">{{ item.description }}</div></div>
               <code class="min-w-0 flex-1 break-all pr-10 text-xs text-slate-600">{{ item.value || '启动并完成配置后显示' }}</code>
-              <button v-if="item.value" type="button" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-sm font-bold text-indigo-600 opacity-0 shadow-sm transition-opacity hover:border-indigo-200 hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100" :aria-label="`复制${item.label}地址`" :title="copied === item.key ? '已复制' : `复制${item.label}地址`" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '✓' : '⧉' }}</button>
+              <button v-if="item.value" type="button" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-sm font-bold text-indigo-600 opacity-0 shadow-sm transition-opacity hover:border-indigo-200 hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100" :aria-label="`复制${item.label}地址`" v-tooltip="copied === item.key ? '已复制' : `复制${item.label}地址`" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '✓' : '⧉' }}</button>
             </div>
           </div>
         </div>
@@ -1975,7 +2030,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="rounded-2xl bg-white p-6 shadow-sm"><h2 class="text-lg font-black">外部系统接入信息</h2><div class="mt-4 grid gap-3"><div v-for="item in endpointHelpItems" :key="item.key" class="group relative flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3"><span class="flex w-full items-center gap-1.5 text-sm font-bold text-slate-600 sm:w-48"><span>{{ item.label }}</span><button type="button" class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-indigo-300 text-xs font-black text-indigo-600 hover:bg-indigo-50" :aria-label="`查看${item.label}说明`" @click="openEndpointHelp(item.key)">?</button></span><code class="min-w-0 flex-1 break-all pr-10 text-xs">{{ item.value || '—' }}</code><button v-if="item.value" type="button" class="absolute right-3 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-sm font-bold text-indigo-600 opacity-0 shadow-sm transition-opacity hover:border-indigo-200 hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100" :aria-label="`复制${item.label}地址`" :title="copied === item.key ? '已复制' : `复制${item.label}地址`" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '✓' : '⧉' }}</button></div></div></div>
+        <div class="rounded-2xl bg-white p-6 shadow-sm"><h2 class="text-lg font-black">外部系统接入信息</h2><div class="mt-4 grid gap-3"><div v-for="item in endpointHelpItems" :key="item.key" class="group relative flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3"><span class="flex w-full items-center gap-1.5 text-sm font-bold text-slate-600 sm:w-48"><span>{{ item.label }}</span><button type="button" class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-indigo-300 text-xs font-black text-indigo-600 hover:bg-indigo-50" :aria-label="`查看${item.label}说明`" @click="openEndpointHelp(item.key)">?</button></span><code class="min-w-0 flex-1 break-all pr-10 text-xs">{{ item.value || '—' }}</code><button v-if="item.value" type="button" class="absolute right-3 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-sm font-bold text-indigo-600 opacity-0 shadow-sm transition-opacity hover:border-indigo-200 hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100" :aria-label="`复制${item.label}地址`" v-tooltip="copied === item.key ? '已复制' : `复制${item.label}地址`" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '✓' : '⧉' }}</button></div></div></div>
       </section>
 
       <section v-else-if="activeTab === 'config' && canReadConfig" class="space-y-5">
@@ -2133,7 +2188,7 @@ onUnmounted(() => {
                 type="button"
                 class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
                 :class="clientViewMode === 'card' ? 'border border-slate-200 bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'"
-                title="卡片视图"
+                v-tooltip="'卡片视图'"
                 aria-label="卡片视图"
                 @click="clientViewMode = 'card'"
               >
@@ -2145,7 +2200,7 @@ onUnmounted(() => {
                 type="button"
                 class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
                 :class="clientViewMode === 'list' ? 'border border-slate-200 bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'"
-                title="列表视图"
+                v-tooltip="'列表视图'"
                 aria-label="列表视图"
                 @click="clientViewMode = 'list'"
               >
@@ -2203,7 +2258,7 @@ onUnmounted(() => {
                   <button
                     type="button"
                     class="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-0.5 font-mono text-xs text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 cursor-pointer"
-                    :title="copied === 'client-id-' + client.client_id ? '已复制！' : '点击快速复制 Client ID'"
+                    v-tooltip="copied === 'client-id-' + client.client_id ? '已复制！' : '点击快速复制 Client ID'"
                     @click="copyValue('client-id-' + client.client_id, client.client_id)"
                   >
                     <code class="break-all">{{ client.client_id }}</code>
@@ -2217,12 +2272,12 @@ onUnmounted(() => {
               <div data-testid="client-actions" class="relative flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 xl:justify-end">
                 <button v-if="canIssueToken" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">生成 MCP Access Token</button>
                 <button v-if="canReadClients" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100" @click="openTokenDetails(client)">Token 管理 <span class="ml-1 rounded-full bg-white px-1.5 py-0.5 text-[10px]">{{ client.token_total_count || 0 }}</span></button>
-                <button type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="clientActionMenuId = clientActionMenuId === client.client_id ? null : client.client_id">更多操作 <span class="ml-1">⌄</span></button>
+                <button type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" data-client-action-trigger @click="toggleClientActionMenu(client, $event)">更多操作 <span class="ml-1">⌄</span></button>
                 <button
                   type="button"
                   class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-indigo-700 transition hover:bg-indigo-50 hover:text-indigo-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2"
                   :aria-label="expandedClientIds.has(client.client_id) ? '收起 Client 详情' : '展开 Client 详情'"
-                  :title="expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情'"
+                  v-tooltip="expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情'"
                   :aria-expanded="expandedClientIds.has(client.client_id)"
                   :aria-controls="'client-details-' + client.client_id"
                   @click="toggleClientExpanded(client.client_id)"
@@ -2232,14 +2287,16 @@ onUnmounted(() => {
                     <path v-else d="m9 6 6 6-6 6" />
                   </svg>
                 </button>
-                <div v-if="clientActionMenuId === client.client_id" class="absolute right-0 top-11 z-20 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                  <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientEdit(client)">编辑基本信息</button>
-                  <button v-if="canReadAudit" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="openClientUsage(client)">使用统计</button>
-                  <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientScopeEdit(client)">编辑 Scope</button>
-                  <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
-                  <button v-if="canResetSecretForClient(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" @click="clientActionMenuId = null; resetSecret(client)">重置 Secret</button>
-                  <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50" @click="clientActionMenuId = null; removeClient(client)">删除 Client</button>
+                <Teleport to="body">
+                  <div v-if="clientActionMenuId === client.client_id && clientActionMenuAnchor" data-client-action-menu class="fixed z-[80] w-44 rounded-xl border border-slate-200 bg-white p-1.5 text-left shadow-xl" :style="clientActionMenuStyle">
+                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientEdit(client)">编辑基本信息</button>
+                    <button v-if="canReadAudit" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientUsage(client)">使用统计</button>
+                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientScopeEdit(client)">编辑 Scope</button>
+                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
+                    <button v-if="canResetSecretForClient(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" @click="closeClientActionMenu(); resetSecret(client)">重置 Secret</button>
+                    <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50" @click="closeClientActionMenu(); removeClient(client)">删除 Client</button>
                 </div>
+                </Teleport>
               </div>
             </div>
             <div v-if="oneTimeSecret && secretRevealClientId === client.client_id" class="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/80 p-4">
@@ -2263,7 +2320,7 @@ onUnmounted(() => {
             <div class="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2">
               <span class="mr-1 text-xs font-black text-slate-700">资源访问</span>
               <template v-for="config in resourceWhitelistConfigs" :key="config.field">
-                <button v-if="canManageClientItem(client)" type="button" class="rounded-lg border px-2.5 py-1.5 text-[11px] font-bold shadow-sm transition" :class="resourcePolicyButtonClass(client, config.field)" :title="resourcePolicySummary(client, config.field)" @click="openResourceWhitelist(client, config)">{{ config.buttonLabel }}</button>
+                <button v-if="canManageClientItem(client)" type="button" class="rounded-lg border px-2.5 py-1.5 text-[11px] font-bold shadow-sm transition" :class="resourcePolicyButtonClass(client, config.field)" v-tooltip="resourcePolicySummary(client, config.field)" @click="openResourceWhitelist(client, config)">{{ config.buttonLabel }}</button>
               </template>
             </div>
             <div v-if="expandedClientIds.has(client.client_id)" :id="'client-details-' + client.client_id">
@@ -2286,12 +2343,12 @@ onUnmounted(() => {
                 <div class="rounded-xl bg-slate-50 px-3 py-3">
                   <div class="text-[11px] font-bold text-slate-400">Scope</div>
                   <div class="mt-1 text-sm font-bold text-slate-700">{{ client.allowed_scopes.length }} 项已授权</div>
-                  <div class="mt-1 truncate text-xs text-slate-500" :title="client.allowed_scopes.join('、')">{{ scopeSummary(client) }}</div>
+                  <div class="mt-1 truncate text-xs text-slate-500" v-tooltip="client.allowed_scopes.join('、')">{{ scopeSummary(client) }}</div>
                 </div>
                 <div class="rounded-xl bg-slate-50 px-3 py-3">
                   <div class="text-[11px] font-bold text-slate-400">回调地址 (Redirect URIs)</div>
                   <div class="mt-1 max-h-12 overflow-y-auto space-y-0.5">
-                    <div v-for="uri in (client.redirect_uris || [])" :key="uri" class="truncate font-mono text-xs text-slate-600" :title="uri">{{ uri }}</div>
+                    <div v-for="uri in (client.redirect_uris || [])" :key="uri" class="truncate font-mono text-xs text-slate-600" v-tooltip="uri">{{ uri }}</div>
                     <div v-if="!(client.redirect_uris || []).length" class="text-xs text-slate-400">未配置</div>
                   </div>
                 </div>
@@ -2360,7 +2417,7 @@ onUnmounted(() => {
                           type="button"
                           class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-transparent transition hover:bg-indigo-50"
                           :class="copied === 'client-id-' + client.client_id ? 'text-emerald-600' : 'text-slate-400 hover:text-indigo-600'"
-                          :title="copied === 'client-id-' + client.client_id ? '已复制！' : `复制 Client ID：${client.client_id}`"
+                          v-tooltip="copied === 'client-id-' + client.client_id ? '已复制！' : `复制 Client ID：${client.client_id}`"
                           :aria-label="copied === 'client-id-' + client.client_id ? 'Client ID 已复制' : '复制 Client ID'"
                           @click="copyValue('client-id-' + client.client_id, client.client_id)"
                         >
@@ -2383,7 +2440,7 @@ onUnmounted(() => {
                             {{ client.status === 'active' ? '启用' : '停用' }}
                           </span>
                         </div>
-                        <div v-if="client.needs_token_regeneration" class="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800" title="原有 Access Token 已失效，需重新生成">
+                        <div v-if="client.needs_token_regeneration" class="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800" v-tooltip="'原有 Access Token 已失效，需重新生成'">
                           <span>⚠️ 需重签 Token</span>
                         </div>
                       </div>
@@ -2395,7 +2452,7 @@ onUnmounted(() => {
                         <span class="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
                           {{ client.allowed_scopes.length }} 项已授权
                         </span>
-                        <div class="mt-1 truncate text-[11px] text-slate-500" :title="client.allowed_scopes.join('、')">
+                        <div class="mt-1 truncate text-[11px] text-slate-500" v-tooltip="client.allowed_scopes.join('、')">
                           {{ scopeSummary(client) }}
                         </div>
                       </div>
@@ -2429,7 +2486,7 @@ onUnmounted(() => {
                             type="button"
                             class="inline-flex h-7 w-7 items-center justify-center rounded-lg border shadow-xs transition"
                             :class="resourcePolicyButtonClass(client, config.field)"
-                            :title="`${config.buttonLabel}：${resourcePolicySummary(client, config.field)}`"
+                            v-tooltip="`${config.buttonLabel}：${resourcePolicySummary(client, config.field)}`"
                             :aria-label="`${config.buttonLabel}，当前${resourcePolicySummary(client, config.field)}`"
                             @click="openResourceWhitelist(client, config)"
                           >
@@ -2439,7 +2496,7 @@ onUnmounted(() => {
                             v-else
                             class="inline-flex h-7 w-7 items-center justify-center rounded-lg border"
                             :class="resourcePolicyButtonClass(client, config.field)"
-                            :title="`${config.title}：${resourcePolicySummary(client, config.field)}`"
+                            v-tooltip="`${config.title}：${resourcePolicySummary(client, config.field)}`"
                             :aria-label="`${config.title}，当前${resourcePolicySummary(client, config.field)}`"
                           >
                             <component :is="config.icon" class="h-5 w-5" aria-hidden="true" />
@@ -2467,40 +2524,51 @@ onUnmounted(() => {
                         <button
                           v-if="canIssueToken"
                           type="button"
-                          class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
                           :disabled="client.status !== 'active' || !client.allowed_scopes.length"
-                          title="生成 MCP Access Token"
+                          :aria-label="`生成 MCP Access Token`"
+                          v-tooltip="'生成 MCP Access Token'"
                           @click="openTokenIssue(client)"
                         >
-                          生成 Token
+                          <KeyIcon class="h-4 w-4" aria-hidden="true" />
                         </button>
                         <button
                           v-if="canReadClients"
                           type="button"
-                          class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"
+                          class="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                          :aria-label="`Token 管理，共 ${client.token_total_count || 0} 个`"
+                          v-tooltip="`Token 管理 · 共 ${client.token_total_count || 0} 个`"
                           @click="openTokenDetails(client)"
                         >
-                          Token 管理 <span class="ml-1 rounded-full bg-white px-1.5 py-0.2 text-[10px]">{{ client.token_total_count || 0 }}</span>
+                          <QueueListIcon class="h-4 w-4" aria-hidden="true" />
+                          <span class="absolute -right-1 -top-1 inline-flex min-w-4 items-center justify-center rounded-full border border-white bg-indigo-600 px-1 text-[9px] font-bold leading-4 text-white">{{ client.token_total_count || 0 }}</span>
                         </button>
                         <button
                           type="button"
-                          class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
-                          @click="clientActionMenuId = clientActionMenuId === client.client_id ? null : client.client_id"
+                          class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                          aria-label="更多操作"
+                          v-tooltip="'更多操作'"
+                          data-client-action-trigger
+                          @click="toggleClientActionMenu(client, $event)"
                         >
-                          更多 <span class="ml-0.5">⌄</span>
+                          <EllipsisHorizontalIcon class="h-5 w-5" aria-hidden="true" />
                         </button>
-                        <div
-                          v-if="clientActionMenuId === client.client_id"
-                          class="absolute right-0 top-10 z-30 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl text-left"
-                        >
-                          <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientEdit(client)">编辑基本信息</button>
-                          <button v-if="canReadAudit" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientUsage(client)">使用统计</button>
-                          <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientScopeEdit(client)">编辑 Scope</button>
-                          <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
-                          <button v-if="canResetSecretForClient(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" @click="clientActionMenuId = null; resetSecret(client)">重置 Secret</button>
-                          <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50" @click="clientActionMenuId = null; removeClient(client)">删除 Client</button>
-                          <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-slate-700 hover:bg-slate-50 border-t border-slate-100 mt-1" @click="clientActionMenuId = null; openClientDetails(client)">查看权限详情</button>
+                        <Teleport to="body">
+                          <div
+                            v-if="clientActionMenuId === client.client_id && clientActionMenuAnchor"
+                            data-client-action-menu
+                            class="fixed z-[80] w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl text-left"
+                            :style="clientActionMenuStyle"
+                          >
+                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientEdit(client)">编辑基本信息</button>
+                            <button v-if="canReadAudit" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientUsage(client)">使用统计</button>
+                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); openClientScopeEdit(client)">编辑 Scope</button>
+                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="closeClientActionMenu(); toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
+                            <button v-if="canResetSecretForClient(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" @click="closeClientActionMenu(); resetSecret(client)">重置 Secret</button>
+                            <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50" @click="closeClientActionMenu(); removeClient(client)">删除 Client</button>
+                            <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-slate-700 hover:bg-slate-50 border-t border-slate-100 mt-1" @click="closeClientActionMenu(); openClientDetails(client)">查看权限详情</button>
                         </div>
+                        </Teleport>
                       </div>
                     </td>
                   </tr>
@@ -2639,7 +2707,7 @@ onUnmounted(() => {
           </div>
           <div id="audit-trend-content" v-if="showAuditTrend">
             <div v-if="auditTrend.length" class="mt-4 flex h-28 items-end gap-1 overflow-x-auto">
-              <div v-for="item in auditTrend" :key="item.at" class="flex min-w-8 flex-1 flex-col items-center justify-end gap-1" :title="formatAuditTime(item.at) + '：' + item.total + ' 次'">
+              <div v-for="item in auditTrend" :key="item.at" class="flex min-w-8 flex-1 flex-col items-center justify-end gap-1" v-tooltip="formatAuditTime(item.at) + '：' + item.total + ' 次'">
                 <div class="flex h-20 w-full items-end"><div class="w-full rounded-t bg-indigo-400 transition-[height]" :style="{ height: trendBarHeight(item.total) }" /></div>
                 <span class="text-[9px] text-slate-400">{{ item.total }}</span>
               </div>
@@ -2746,7 +2814,7 @@ onUnmounted(() => {
                     <div class="flex items-center justify-between gap-3"><h3 class="text-sm font-black text-slate-800">每日调用趋势</h3><div class="flex gap-2 text-[10px] text-slate-500"><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-indigo-400" />成功</span><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-rose-400" />失败</span><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-amber-400" />拒绝</span></div></div>
                     <div v-if="!clientUsage.daily_trend.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
                     <div v-else ref="clientUsageTrendRef" class="mt-4 flex h-44 items-end gap-1 overflow-x-auto">
-                      <div v-for="item in clientUsage.daily_trend" :key="item.date" class="flex min-w-8 flex-none flex-col items-center justify-end gap-1" :title="`${item.date}：${item.total} 次`">
+                      <div v-for="item in clientUsage.daily_trend" :key="item.date" class="flex min-w-8 flex-none flex-col items-center justify-end gap-1" v-tooltip="`${item.date}：${item.total} 次`">
                         <div class="flex h-32 w-full items-end"><div class="flex w-full flex-col justify-end overflow-hidden rounded-t transition-[height]" :style="{ height: `${Math.max(item.total ? 8 : 0, Math.round(item.total / clientUsageMax * 120))}px` }"><div class="w-full bg-indigo-400" :style="{ height: `${item.total ? item.completed / item.total * 100 : 0}%` }" /><div class="w-full bg-rose-400" :style="{ height: `${item.total ? item.failed / item.total * 100 : 0}%` }" /><div class="w-full bg-amber-400" :style="{ height: `${item.total ? item.denied / item.total * 100 : 0}%` }" /></div></div>
                         <span class="text-[10px] text-slate-500">{{ item.total }}</span><span class="text-[9px] text-slate-400">{{ item.date.slice(5) }}</span>
                       </div>
@@ -2777,7 +2845,7 @@ onUnmounted(() => {
                   <section class="rounded-xl border border-slate-200 p-4">
                     <h3 class="text-sm font-black text-slate-800">用户调用排行</h3>
                     <div v-if="!clientUsage.user_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
-                    <div v-else class="mt-4 space-y-2"><div v-for="item in clientUsage.user_distribution.slice(0, 10)" :key="item.user_id" class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span class="min-w-0 truncate text-slate-700" :title="`${item.display_name} · user_id=${item.user_id}`"><span class="font-bold">{{ item.display_name }}</span><span v-if="item.real_name && item.user_name" class="ml-1 text-slate-400">@{{ item.user_name }}</span></span><span class="shrink-0 font-bold text-indigo-700">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div></div>
+                    <div v-else class="mt-4 space-y-2"><div v-for="item in clientUsage.user_distribution.slice(0, 10)" :key="item.user_id" class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span class="min-w-0 truncate text-slate-700" v-tooltip="`${item.display_name} · user_id=${item.user_id}`"><span class="font-bold">{{ item.display_name }}</span><span v-if="item.real_name && item.user_name" class="ml-1 text-slate-400">@{{ item.user_name }}</span></span><span class="shrink-0 font-bold text-indigo-700">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div></div>
                   </section>
 
                   <section class="rounded-xl border border-slate-200 p-4">
@@ -3469,7 +3537,7 @@ onUnmounted(() => {
                       type="button"
                       class="inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-mono text-[11px] transition"
                       :class="playgroundToken === tok.token ? 'border-indigo-500 bg-indigo-50 text-indigo-700 font-bold' : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-indigo-300 hover:bg-indigo-50'"
-                      :title="tok.token"
+                      v-tooltip="tok.token"
                       @click="playgroundToken = tok.token"
                     >
                       <span>{{ tok.label }}</span>

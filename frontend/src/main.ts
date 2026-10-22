@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import './style.css'
 import App from '@/App.vue'
 import router from '@/router'
+import { tooltip } from '@/directives/tooltip'
 
 import axios from 'axios'
 
@@ -53,6 +54,9 @@ axios.interceptors.response.use(
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
+
+// 注册全局提示指令 v-tooltip：统一替代浏览器原生 title
+app.directive('tooltip', tooltip)
 
 // 注册全局权限指令 v-has-perm
 app.directive('has-perm', {
