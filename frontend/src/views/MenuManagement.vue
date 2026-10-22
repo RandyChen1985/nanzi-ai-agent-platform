@@ -59,9 +59,28 @@
     <div class="grid gap-4 lg:grid-cols-[minmax(260px,340px)_1fr]">
       <!-- 左：菜单树 -->
       <section class="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
-        <div class="flex items-center justify-between border-b border-gray-100 px-3 py-2 dark:border-gray-800">
+        <div class="flex items-center justify-between gap-2 border-b border-gray-100 px-3 py-2 dark:border-gray-800">
           <span class="text-xs font-bold text-gray-500 dark:text-gray-400">菜单结构</span>
-          <span class="text-[10px] text-gray-400">{{ flatNodes.length }} 个节点</span>
+          <div class="flex items-center gap-1.5">
+            <!-- 一眼核对「哪些菜单在移动端不出现」：点开只看 desktop_only 节点 -->
+            <button
+              v-if="desktopOnlyCount"
+              type="button"
+              class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold transition-colors"
+              :class="desktopOnlyFilter
+                ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300'
+                : 'border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800'"
+              :aria-pressed="desktopOnlyFilter"
+              title="只显示移动端侧栏里隐藏的菜单"
+              @click="desktopOnlyFilter = !desktopOnlyFilter"
+            >
+              <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
+              </svg>
+              仅桌面 {{ desktopOnlyCount }}
+            </button>
+            <span class="text-[10px] text-gray-400">{{ flatNodes.length }} 个节点</span>
+          </div>
         </div>
 
         <div v-if="loading" class="space-y-2 p-3">
@@ -79,7 +98,7 @@
           class="max-h-[calc(100vh-260px)] overflow-y-auto p-2"
           @contextmenu="onNodeContextMenu($event, null)"
         >
-          <div v-for="group in tree" :key="group.code" class="mb-1">
+          <div v-for="group in visibleTree" :key="group.code" class="mb-1">
             <!-- 分组行 -->
             <div class="flex items-center gap-1">
               <button
@@ -93,9 +112,15 @@
               >
                 <MenuIcon :name="group.icon || 'menu'" class="h-4 w-4 opacity-70" />
                 <span class="truncate">{{ group.label }}</span>
+                <span v-if="group.desktop_only" class="inline-flex shrink-0 items-center gap-0.5 rounded bg-slate-100 px-1 text-[10px] font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                  <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
+                  </svg>
+                  仅桌面
+                </span>
                 <span v-if="!group.enabled" class="rounded bg-gray-100 px-1 text-[10px] text-gray-500 dark:bg-gray-800">已停用</span>
               </button>
-              <template v-if="canEdit">
+              <template v-if="canEdit && !onlyDesktopFilter">
                 <button
                   type="button"
                   class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
@@ -126,13 +151,19 @@
                   >
                     <MenuIcon :name="item.icon || 'menu'" class="h-3.5 w-3.5 opacity-60" />
                     <span class="truncate">{{ item.label }}</span>
+                    <span v-if="item.desktop_only" class="inline-flex shrink-0 items-center gap-0.5 rounded bg-slate-100 px-1 text-[10px] font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                      <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
+                      </svg>
+                      仅桌面
+                    </span>
                     <span
                       v-if="item.node_type === 'external'"
                       class="rounded bg-violet-50 px-1 text-[10px] font-bold text-violet-600 dark:bg-violet-500/15 dark:text-violet-300"
                     >{{ item.open_mode === 'embed' ? '内嵌' : '外链' }}</span>
                     <span v-if="!item.enabled" class="rounded bg-gray-100 px-1 text-[10px] text-gray-500 dark:bg-gray-800">已停用</span>
                   </button>
-                  <template v-if="canEdit">
+                  <template v-if="canEdit && !onlyDesktopFilter">
                     <button
                       type="button"
                       class="rounded px-1 text-[10px] text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
@@ -314,10 +345,13 @@
               <input v-model="draft.enabled" type="checkbox" :disabled="readonlyFields.enabled" />
               启用
             </label>
-            <label class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-              <input v-model="draft.desktop_only" type="checkbox" :disabled="readonlyFields.desktop_only" />
-              仅桌面端显示
-            </label>
+            <span class="inline-flex items-center gap-1">
+              <label class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                <input v-model="draft.desktop_only" type="checkbox" :disabled="readonlyFields.desktop_only" />
+                仅桌面端显示
+              </label>
+              <InfoTooltip text="勾选后，该菜单在手机 / 窄屏（宽度 < 1024px）的侧栏中隐藏；只隐藏入口，不限制直接访问页面。" />
+            </span>
             <label
               v-if="draft.node_type === 'page'"
               class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"
@@ -405,6 +439,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import axios from '../utils/axios'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import InfoTooltip from '../components/InfoTooltip.vue'
 import MenuIcon from '../components/menu/MenuIcon.vue'
 import { useUser } from '../composables/useUser'
 import MenuIconPicker from '../components/menu/MenuIconPicker.vue'
@@ -574,6 +609,35 @@ const tree = computed<AdminMenuNode[]>(() => {
   }
   sortRec(roots)
   return roots
+})
+
+/**
+ * 「仅桌面端」核对视图。
+ *
+ * 光有一个勾选框，管理员得逐个点开属性面板才知道哪些菜单在手机上不出现；
+ * 这里把 desktop_only 直接标在树上，并提供只看这些节点的开关（数量就是角标）。
+ */
+const desktopOnlyFilter = ref(false)
+
+const desktopOnlyCount = computed(
+  () => flatNodes.value.filter((node) => node.desktop_only && node.node_type !== 'element').length
+)
+
+const visibleTree = computed<AdminMenuNode[]>(() => {
+  if (!desktopOnlyFilter.value) return tree.value
+  return tree.value
+    .map((group) => {
+      // 分组本身仅桌面端：整组在移动端都不出现，子项保持完整便于核对
+      if (group.desktop_only) return group
+      return {
+        ...group,
+        // 功能点不属于导航，过滤视图里清掉，避免被误读成「这些功能点也仅桌面」
+        children: (group.children || [])
+          .filter((child) => child.desktop_only)
+          .map((child) => ({ ...child, children: [] })),
+      }
+    })
+    .filter((group) => group.desktop_only || (group.children || []).length > 0)
 })
 
 const groupOptions = computed(() => flatNodes.value.filter((node) => node.node_type === 'group'))

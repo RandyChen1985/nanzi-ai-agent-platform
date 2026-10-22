@@ -612,25 +612,30 @@ onMounted(async () => {
         <p class="text-sm text-gray-500 mt-1">管理问答经验样本及 RAG 语义对齐案例</p>
       </div>
 
-      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:items-center sm:gap-2.5">
-        <div class="flex w-full items-center gap-2 sm:w-auto">
-          <!-- 统一搜索框（支持提问内容、ID、Agent、数据集、Trace） -->
-          <div class="relative min-w-0 flex-1 sm:w-64 sm:flex-none lg:w-80">
-            <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-              <MagnifyingGlassIcon class="h-4 w-4 text-gray-400" />
-            </span>
-            <input
-              v-model="searchQuery"
-              type="search"
-              placeholder="搜索提问、ID、Agent、数据集..."
-              class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
-            />
-          </div>
+      <!--
+        工具栏：窄屏「搜索框独占一行 + 筛选/操作一行」，lg 起恢复单行。
+        之前的 flex-col 让导出、检索测试各占一行，同步按钮的 w-full 又被拉成
+        一条只有图标的空条；这里把四个操作收成 36px 方形图标，横向排在同一条线上。
+      -->
+      <div class="flex w-full flex-col gap-2.5 lg:w-auto lg:flex-row lg:items-center lg:gap-2.5">
+        <!-- 统一搜索框（支持提问内容、ID、Agent、数据集、Trace） -->
+        <div class="relative w-full lg:w-80">
+          <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+            <MagnifyingGlassIcon class="h-4 w-4 text-gray-400" />
+          </span>
+          <input
+            v-model="searchQuery"
+            type="search"
+            placeholder="搜索提问、ID、Agent、数据集..."
+            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          />
+        </div>
 
+        <div class="flex items-center gap-2">
           <!-- 分类下拉过滤器 -->
           <select
             v-model="filterCategory"
-            class="h-9 px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white shadow-sm hover:bg-gray-50 text-gray-700 font-medium outline-none cursor-pointer transition-colors shrink-0"
+            class="h-9 min-w-0 max-w-[200px] flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm font-medium text-gray-700 shadow-sm outline-none transition-colors hover:bg-gray-50 lg:max-w-none lg:flex-none lg:px-3"
           >
             <option value="">分类：全部</option>
             <option value="data_query">分类：数据查询</option>
@@ -642,45 +647,49 @@ onMounted(async () => {
           <button
             type="button"
             class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-blue-600"
+            aria-label="刷新列表"
             title="刷新列表"
             @click="fetchExamples"
           >
             <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': loading }" />
           </button>
+
+          <!-- 导出 Markdown 按钮（纯图标） -->
+          <button
+            type="button"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-blue-600"
+            aria-label="导出为 Markdown 文档"
+            title="将当前案例列表格式化导出为 Markdown 文档"
+            @click="exportToMarkdown"
+          >
+            <DocumentArrowDownIcon class="h-4 w-4" />
+          </button>
+
+          <!-- 案例集检索测试按钮（纯图标） -->
+          <button
+            type="button"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-600 shadow-sm transition-colors hover:bg-amber-100"
+            aria-label="案例集检索测试"
+            title="案例集检索测试：输入问题验证样例集命中情况，可临时调节 Top K / 阈值等参数"
+            @click="searchTestModalRef?.open()"
+          >
+            <MagnifyingGlassIcon class="h-4 w-4" />
+          </button>
+
+          <!-- 一键同步按钮：窄屏收成图标，避免 w-full 拉出一条空条 -->
+          <button
+            v-if="canSyncExample"
+            type="button"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-sm font-medium text-indigo-700 shadow-sm transition-all hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto lg:px-3.5 lg:py-2"
+            :disabled="loading || (!isLocalMode && !isEngineReady)"
+            :title="isLocalMode ? '一键同步至本地向量索引' : (!isEngineReady ? 'RAGFlow 服务未就绪' : '一键同步至 RAGFlow')"
+            :aria-label="isLocalMode ? '一键同步至本地向量索引' : '一键同步至 RAGFlow'"
+            @click="(isLocalMode || isEngineReady) && (showSyncAllConfirm = true)"
+          >
+            <CloudArrowUpIcon class="h-4 w-4 text-indigo-600" />
+            <span class="hidden lg:inline">同步</span>
+          </button>
         </div>
-
-        <!-- 导出 Markdown 按钮（纯图标） -->
-        <button
-          type="button"
-          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-blue-600"
-          title="将当前案例列表格式化导出为 Markdown 文档"
-          @click="exportToMarkdown"
-        >
-          <DocumentArrowDownIcon class="h-4 w-4" />
-        </button>
-
-        <!-- 案例集检索测试按钮（纯图标） -->
-        <button
-          type="button"
-          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-600 shadow-sm transition-colors hover:bg-amber-100"
-          title="案例集检索测试：输入问题验证样例集命中情况，可临时调节 Top K / 阈值等参数"
-          @click="searchTestModalRef?.open()"
-        >
-          <MagnifyingGlassIcon class="h-4 w-4" />
-        </button>
-
-        <!-- 一键同步按钮 -->
-        <button
-          v-if="canSyncExample"
-          type="button"
-          class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-sm font-medium text-indigo-700 shadow-sm transition-all hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-          :disabled="loading || (!isLocalMode && !isEngineReady)"
-          :title="isLocalMode ? '一键同步至本地向量索引' : (!isEngineReady ? 'RAGFlow 服务未就绪' : '一键同步至 RAGFlow')"
-          @click="(isLocalMode || isEngineReady) && (showSyncAllConfirm = true)"
-        >
-          <CloudArrowUpIcon class="h-4 w-4 text-indigo-600" />
-          <span class="hidden sm:inline">同步</span>
-        </button>
       </div>
     </div>
 

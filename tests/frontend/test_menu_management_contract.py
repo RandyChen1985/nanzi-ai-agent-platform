@@ -254,8 +254,10 @@ def test_write_entry_points_are_hidden_when_the_user_cannot_edit():
     # 本地权限快照可能过期，后端 403 时也要降级为只读
     assert "if (error?.response?.status === 403) editDenied.value = true" in source
 
-    # 三组入口（工具栏 / 排序 / 保存删除）都在 canEdit 之下
-    assert source.count('v-if="canEdit"') >= 4
+    # 三组入口（工具栏 / 排序 / 保存删除）都在 canEdit 之下；
+    # 树里的排序还多一个「过滤视图下隐藏」的条件，一并计入
+    edit_guards = source.count('v-if="canEdit"') + source.count('v-if="canEdit && !onlyDesktopFilter"')
+    assert edit_guards >= 4
     # 不再用置灰代替隐藏
     assert ':disabled="!canEdit' not in source
     # 只读时字段全部锁死：否则能改、却存不下去
@@ -268,3 +270,51 @@ def test_write_entry_points_are_hidden_when_the_user_cannot_edit():
     # 只读态要有明确说明，别让人以为页面坏了
     assert "只读模式 · 无菜单编辑权限" in source
     assert "只读模式：可查看但不能修改" in source
+
+
+def test_desktop_only_hint_is_custom_and_explains_mobile_hiding():
+    """「仅桌面端显示」需要解释，但必须用 InfoTooltip（原生 title 在触摸端不显示）。
+
+    文案只提"桌面端"容易理解成"手机上不能访问"，实际是侧栏隐藏入口，
+    所以提示里要把这两件事分开说清楚。
+    """
+    source = _read(MANAGEMENT)
+
+    assert "import InfoTooltip from '../components/InfoTooltip.vue'" in source
+    assert (
+        '<InfoTooltip text="勾选后，该菜单在手机 / 窄屏（宽度 < 1024px）的侧栏中隐藏；'
+        '只隐藏入口，不限制直接访问页面。" />' in source
+    )
+
+    # 勾选框附近不得回退成原生 title
+    anchor = source.index("仅桌面端显示")
+    block = source[max(0, anchor - 400) : anchor + 400]
+    assert ":title=" not in block
+    assert "title=" not in block
+
+
+def test_desktop_only_nodes_are_marked_in_the_tree_and_filterable():
+    """移动端隐藏项要能在树上直接看见，而不是逐个点开属性面板才发现。
+
+    树里给 desktop_only 节点打「仅桌面」徽标，并在面板头部提供「仅桌面 N」开关；
+    打开后只保留这些节点及其分组，同时隐藏排序箭头（排序基于完整列表，过滤后
+    上下移动会看起来在跳）。
+    """
+    source = _read(MANAGEMENT)
+
+    assert "const desktopOnlyFilter = ref(false)" in source
+    assert "const desktopOnlyCount = computed(" in source
+    assert "const visibleTree = computed<AdminMenuNode[]>(" in source
+
+    # 树渲染过滤后的视图，徽标由数据字段驱动（不是写死某几个菜单）
+    assert 'v-for="group in visibleTree"' in source
+    assert 'v-if="group.desktop_only"' in source
+    assert 'v-if="item.desktop_only"' in source
+    assert "仅桌面 {{ desktopOnlyCount }}" in source
+
+    # 过滤视图：保留分组自身语义，功能点层清空，避免被误读
+    assert "if (group.desktop_only) return group" in source
+    assert ".map((child) => ({ ...child, children: [] }))" in source
+
+    # 过滤时排序箭头必须收起来
+    assert source.count('v-if="canEdit && !onlyDesktopFilter"') == 2

@@ -70,11 +70,12 @@ def test_service_desk_exposes_permission_gated_audit_tab_and_filters():
     assert "查看详情" in view
 
 
-def test_audit_tab_explains_role_based_visibility():
+def test_audit_tab_explains_current_user_only_visibility():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
-    assert "管理员可查看全部 MCP 入站调用记录" in view
-    assert "其他用户仅能查看自己发起的调用记录" in view
+    assert "仅展示当前账号发起的 MCP 入站调用记录。" in view
+    assert "管理员可查看全部 MCP 入站调用记录" not in view
+    assert "其他用户仅能查看自己发起的调用记录" not in view
 
 
 def test_audit_filters_are_collapsed_by_default_and_use_one_dynamic_row():
@@ -160,7 +161,8 @@ def test_client_cards_prioritize_primary_action_and_collapse_low_frequency_actio
     assert "更多操作" in view
     assert "有效 Token" in view
     assert "最近过期" in view
-    assert "管理员视角：查看全部用户的 Client" in view
+    assert "展示当前账号创建及全员共享的 Client" in view
+    assert "管理员视角" not in view
     assert "创建第一个 Client" in view
     assert "md:grid-cols-2" in view
     assert "expandedClientIds" in view
@@ -510,7 +512,7 @@ def test_resource_whitelist_save_shows_success_feedback_and_supports_hidden_summ
     assert "showToast('资源白名单已更新', 'success')" in view
     assert "resource_policy_summary" in view
     assert "资源策略详情不可见" in view
-    assert ':title="resourcePolicySummary(client, config.field)"' in clients_section
+    assert 'v-tooltip="resourcePolicySummary(client, config.field)"' in clients_section
     assert "创建 Client 后，可在 Client 卡片的资源访问区域配置白名单" in view
 
 
@@ -588,7 +590,7 @@ def test_client_detail_toggle_uses_icon_button_with_accessibility_label():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
     assert ":aria-label=\"expandedClientIds.has(client.client_id) ? '收起 Client 详情' : '展开 Client 详情'\"" in view
-    assert ":title=\"expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情'\"" in view
+    assert "v-tooltip=\"expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情'\"" in view
     assert ":aria-controls=\"'client-details-' + client.client_id\"" in view
     assert "@click=\"toggleClientExpanded(client.client_id)\"" in view
     assert "<svg" in view
@@ -599,7 +601,12 @@ def test_shared_client_mutations_are_owner_scoped_in_ui():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
     clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
 
-    assert "const { hasPermission, isAdmin, userInfo } = useUser()" in view
+    assert "const { hasPermission, userInfo } = useUser()" in view
+    assert "isAdmin" not in view
+    assert "canManageClient.value && isClientOwner(client)" in view
+    assert "canResetSecret.value && isClientOwner(client)" in view
+    assert "canIssueToken.value && isClientOwner(client)" in view
+    assert "isAdmin.value || isClientOwner" not in view
     assert "const isClientOwner = (client: Client) =>" in view
     assert "!!currentUserId.value" in view
     assert "const canManageClientItem = (client: Client) =>" in view
@@ -726,8 +733,8 @@ def test_external_client_card_and_list_view_mode_toggle_contract():
 
     # 验证视图切换按钮组与位置（在筛选按钮旁）
     assert 'data-testid="client-view-mode-toggle"' in view
-    assert "title=\"卡片视图\"" in view
-    assert "title=\"列表视图\"" in view
+    assert "v-tooltip=\"'卡片视图'\"" in view
+    assert "v-tooltip=\"'列表视图'\"" in view
     assert "@click=\"clientViewMode = 'card'\"" in view
     assert "@click=\"clientViewMode = 'list'\"" in view
 
@@ -736,14 +743,49 @@ def test_external_client_card_and_list_view_mode_toggle_contract():
     assert '<!-- 列表视图 (List View) -->' in view
 
     # 验证列表视图表格列与核心交互
-    client_section = view.split('<!-- 列表视图 (List View) -->', 1)[1].split('<!-- 分页器（卡片与列表共用） -->', 1)[0]
-    assert "<table" in client_section
+    client_section = view.split('<!-- 列表视图 (List View) -->', 1)[1].split('</table>', 1)[0]
+    assert "activeTab === 'methods'" not in client_section  # 已切到表格内部，避免匹配到后续 Tab 内容
     for col in ("Client 信息", "状态", "Scope 授权", "Token 概览", "资源白名单", "最近签发", "操作"):
         assert col in client_section
     assert "openTokenIssue(client)" in client_section
     assert "openTokenDetails(client)" in client_section
     assert "openResourceWhitelist(client, config)" in client_section
     assert "openClientDetails(client)" in client_section
+
+
+def test_list_view_hides_client_id_text_and_keeps_copy_icon():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    client_section = view.split('<!-- 列表视图 (List View) -->', 1)[1].split('</table>', 1)[0]
+
+    # 列表视图不再渲染 Client ID 文本，只在名称行保留复制图标
+    assert "{{ client.client_id }}" not in client_section
+    assert "复制 Client ID：${client.client_id}" in client_section
+    assert "<ClipboardDocumentIcon" in client_section
+    assert "<CheckIcon" in client_section
+    assert "copyValue('client-id-' + client.client_id, client.client_id)" in client_section
+    # 卡片视图仍展示完整 Client ID 与说明
+    assert "{{ client.client_id }}" in view
+    assert "Client ID 用于 Token Endpoint" in view
+
+
+def test_list_view_resource_whitelist_uses_icon_buttons():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    client_section = view.split('<!-- 列表视图 (List View) -->', 1)[1].split('</table>', 1)[0]
+
+    # 列表视图资源白名单改为三个图标按钮，不再渲染长中文按钮文字
+    assert "{{ config.buttonLabel }}" not in client_section
+    assert 'data-testid="client-resource-policy-icons"' in client_section
+    assert '<component :is="config.icon"' in client_section
+    assert "resourcePolicyButtonClass(client, config.field)" in client_section
+    assert "openResourceWhitelist(client, config)" in client_section
+    # 图标按钮保留悬停说明（含当前策略）与无障碍标签
+    assert "`${config.buttonLabel}：${resourcePolicySummary(client, config.field)}`" in client_section
+    assert ":aria-label=" in client_section
+    # 三个资源配置仍各自绑定独立图标，卡片视图保留文字按钮
+    assert "icon: CpuChipIcon" in view
+    assert "icon: BookOpenIcon" in view
+    assert "icon: CircleStackIcon" in view
+    assert "{{ config.buttonLabel }}" in view
 
 
 def test_mcp_server_registry_status_toggle_payload_contract():
@@ -767,3 +809,98 @@ def test_mcp_server_registry_status_toggle_payload_contract():
     #    列表就在正下方，标题不携带信息还占宽度），改为搜索前置 + 「仅运行中」筛选
     assert "已连接服务" not in content
     assert "仅运行中" in content
+
+
+def test_admin_has_no_cross_user_client_or_grant_visibility_in_ui():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    # 任何角色都只看自己的 Client（外加全员共享），页面不再保留管理员全局口径
+    assert "管理员视角" not in view
+    assert "管理员可查看并管理全平台的授权关系" not in view
+    assert "管理员：统计该 Client 的全部用户调用" not in view
+    assert "管理员可查看全部 MCP 入站调用记录" not in view
+    assert "仅统计当前用户发起的调用" in view
+    assert "展示当前账号创建及全员共享的 Client" in view
+    assert "展示当前账号已同意授权访问 NanZi 平台的外部系统" in view
+
+    # Grants 弹窗不再有仅管理员可见的「授权用户 ID」列
+    assert "授权用户 ID" not in view
+
+
+def test_client_action_menu_escapes_table_overflow_container():
+    """列表视图的表格容器是 overflow-x-auto，下拉菜单必须 Teleport 到 body 才不会被裁切。"""
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    list_section = view.split("<!-- 操作列 -->", 1)[1].split("</table>", 1)[0]
+
+    # 触发按钮仍在单元格内，菜单节点通过 Teleport 渲染到 body
+    assert list_section.count("data-client-action-trigger") == 1
+    assert list_section.count("data-client-action-menu") == 1
+    assert '<Teleport to="body">' in list_section
+    assert 'class="fixed z-[80] w-44' in list_section
+    assert "toggleClientActionMenu(client, $event)" in list_section
+
+    # 卡片视图同样走同一套定位逻辑，避免两份实现分叉
+    # （data-client-action-menu 在脚本里还有一处 closest() 选择器，故按模板样式计数）
+    assert view.count(':style="clientActionMenuStyle"') == 2
+    assert view.count('class="fixed z-[80] w-44') == 2
+    assert view.count("toggleClientActionMenu(client, $event)") == 2
+
+    # 旧的 absolute 定位（被表格 overflow 裁掉）不得回退
+    assert "absolute right-0 top-10" not in view
+    assert "absolute right-0 top-11" not in view
+
+    # fixed 菜单需要跟随触发器位置，并在滚动 / 缩放 / 点击外部时关闭
+    assert "clientActionMenuAnchor" in view
+    assert "getBoundingClientRect()" in view
+    assert "clientActionMenuStyle" in view
+    assert "document.addEventListener('click', handleClientActionMenuDismiss)" in view
+    assert "document.removeEventListener('click', handleClientActionMenuDismiss)" in view
+    assert "window.addEventListener('scroll', handleClientActionMenuReposition, true)" in view
+    assert "window.removeEventListener('scroll', handleClientActionMenuReposition, true)" in view
+    assert "window.addEventListener('resize', handleClientActionMenuReposition)" in view
+
+
+def test_mcp_service_desk_uses_custom_tooltip_instead_of_native_title():
+    """原生 title 在移动端不显示、样式不可控；本页统一改用全局 v-tooltip 指令。"""
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert view.count("v-tooltip=") >= 20
+    # 唯一保留的 :title 是 ConfirmModal 的弹窗标题，不属于 tooltip
+    native_titles = [
+        line.strip()
+        for line in view.splitlines()
+        if 'title="' in line and ':title="confirmModalTitle"' not in line
+    ]
+    assert native_titles == []
+    assert ':title="confirmModalTitle"' in view
+
+    directive = (ROOT / "frontend/src/directives/tooltip.ts").read_text(encoding="utf-8")
+    assert "position: 'fixed'" in directive
+    assert "el.removeAttribute('title')" in directive
+    assert "role', 'tooltip'" in directive
+    assert "window.addEventListener('scroll', onViewportChange, true)" in directive
+
+    main = (ROOT / "frontend/src/main.ts").read_text(encoding="utf-8")
+    assert "app.directive('tooltip', tooltip)" in main
+
+
+def test_list_view_actions_use_icon_buttons():
+    """列表视图操作列三连图标化：主操作、Token 管理与更多，数量改用角标。"""
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    list_actions = view.split("<!-- 操作列 -->", 1)[1].split("</td>", 1)[0]
+
+    assert "KeyIcon" in list_actions
+    assert "QueueListIcon" in list_actions
+    assert "EllipsisHorizontalIcon" in list_actions
+
+    # 不再保留文字按钮，数量降级为角标
+    assert "生成 Token\n" not in list_actions
+    assert "Token 管理 <span" not in list_actions
+    assert "client.token_total_count || 0" in list_actions
+
+    # 主操作仍受 Client 状态与 Scope 约束
+    assert ":disabled=\"client.status !== 'active' || !client.allowed_scopes.length\"" in list_actions
+
+    # 图标按钮必须保留无障碍名与悬停说明
+    assert list_actions.count("aria-label") >= 3
+    assert list_actions.count("v-tooltip") >= 3

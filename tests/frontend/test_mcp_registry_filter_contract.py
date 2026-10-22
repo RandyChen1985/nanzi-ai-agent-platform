@@ -24,13 +24,16 @@ def test_search_box_comes_before_other_controls():
     search_index = source.index('placeholder="搜索服务或工具..."')
     toggle_index = source.index("仅运行中")
     assert search_index < toggle_index, "搜索框应排在「仅运行中」左边"
-    assert "flex flex-wrap items-center gap-2 border-b" in source[:search_index]
+    # 工具栏固定两行：第一行搜索 + 新建，第二行筛选 + 排序 + 计数
+    assert "flex flex-col gap-2 border-b" in source[:search_index]
 
 
 def test_only_running_toggle_filters_disabled_servers():
     source = _source()
     assert "const onlyRunning = ref(false)" in source
-    assert 'v-model="onlyRunning"' in source
+    # 复选框改成了 chip 按钮：语义仍是「切换只看运行中」，用 aria-pressed 表达状态
+    assert '@click="onlyRunning = !onlyRunning"' in source
+    assert ':aria-pressed="onlyRunning"' in source
     filter_body = source.split("const filteredServers = computed(", 1)[1].split("})", 1)[0]
     assert "enabled_status === 1" in filter_body
     # 关键词过滤要建立在启用过滤之后，否则勾选会被关键词分支绕过

@@ -156,7 +156,7 @@ def test_mcp_service_exposes_inbound_audit_query_with_read_permission_and_user_s
     assert "result_status" in source
     audit_segment = source.split('@router.get("/audit")', 1)[1].split('@router.get("/clients")', 1)[0]
     assert "client_secret" not in audit_segment
-    assert 'if user.get("role") == "admin":' in audit_segment
+    assert 'if user.get("role") == "admin":' not in audit_segment
     assert "McpInboundAuditLog.user_id == current_user_id" in audit_segment
     assert "owner_client_ids = select(McpOAuthClient.client_id)" not in audit_segment
 
@@ -203,7 +203,7 @@ def test_mcp_service_exposes_client_usage_analytics_with_audit_scope():
     assert "element:mcp_service:audit:read" in source
     usage_segment = source.split('@router.get("/clients/{client_id}/usage")', 1)[1].split("@router.get", 1)[0]
     assert "McpInboundAuditLog.client_id == client_id" in usage_segment
-    assert "McpInboundAuditLog.user_id == current_user_id" in usage_segment
+    assert "McpInboundAuditLog.user_id == _current_user_id(user)" in usage_segment
     for field in (
         '"summary"', '"daily_trend"', '"method_distribution"',
         '"status_distribution"', '"auth_distribution"',
@@ -264,13 +264,17 @@ def test_usage_resource_counts_keeps_multiple_resource_dimensions_and_other():
     }
 
 
-def test_admin_can_manage_global_clients_and_client_owner_is_serialized():
+def test_client_owner_is_serialized_without_cross_user_client_access():
     source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
 
+    # 归属信息仅用于展示是谁的 Client，不再作为管理员跨用户可见的开关。
     assert "owner_user_name" in source
     assert "owner_real_name" in source
-    assert 'user.get("role") == "admin"' in source
     assert "select(User)" in source
+    owned = _function_body(source, "_get_owned_client")
+    assert 'user.get("role")' not in owned
+    assert "McpOAuthClient.created_by == current_user_id" in owned
+    assert "McpOAuthClient.is_shared.is_(True)" in owned
 
 
 def test_audit_scope_is_independent_from_client_ownership():
@@ -585,3 +589,84 @@ def test_resource_whitelist_changes_revoke_tokens_and_grants():
     assert "McpOAuthAccessToken.revoked_at" in source
     assert "McpOAuthRefreshToken.revoked_at" in source
     assert "McpOAuthGrant.status" in source
+
+
+def _function_body(source: str, name: str) -> str:
+    """截取单个函数的源码片段，避免用大段区间把相邻端点的判断混进来。"""
+    start = source.index(f"async def {name}(")
+    rest = source[start:]
+    end = len(rest)
+    for marker in ("\n@router.", "\nasync def ", "\ndef "):
+        index = rest.find(marker, 1)
+        if index != -1:
+            end = min(end, index)
+    return rest[:end]
+
+
+def test_client_list_and_overview_are_owner_or_shared_for_every_role():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    for name in ("list_clients", "get_overview"):
+        body = _function_body(source, name)
+        assert 'user.get("role")' not in body, name
+        assert "McpOAuthClient.is_shared.is_(True)" in body, name
+
+    clients = _function_body(source, "list_clients")
+    # 共享 Client 只统计当前用户自己签发的 Token，自己的 Client 统计全部。
+    assert "McpOAuthAccessToken.user_id == current_user_id" in clients
+    assert "include_resource_details=(str(row.created_by or \"\") == current_user_id)" in clients
+
+
+def test_client_management_and_tokens_are_owner_scoped_for_admin_too():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    for name in (
+        "list_client_tokens",
+        "delete_client_token",
+        "delete_client_tokens",
+        "revoke_client_token",
+        "revoke_all_client_tokens",
+    ):
+        body = _function_body(source, name)
+        assert 'user.get("role")' not in body, name
+
+    assert "if client.created_by != current_user_id and token.user_id != current_user_id:" in source
+    assert "if client.created_by != current_user_id:" in source
+
+
+def test_audit_usage_and_grants_are_current_user_scoped():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    for name in (
+        "audit_summary",
+        "client_usage",
+        "list_audit",
+        "export_audit",
+        "list_security_audit",
+        "audit_trend",
+        "security_audit_alerts",
+    ):
+        body = _function_body(source, name)
+        assert 'user.get("role")' not in body, name
+
+    for name, scope_condition in (
+        ("audit_summary", "McpInboundAuditLog.user_id == _current_user_id(user)"),
+        ("client_usage", "McpInboundAuditLog.user_id == _current_user_id(user)"),
+        ("export_audit", "McpInboundAuditLog.user_id == _current_user_id(user)"),
+        ("list_security_audit", "McpOAuthSecurityAuditLog.user_id == _current_user_id(user)"),
+        ("audit_trend", "McpInboundAuditLog.user_id == _current_user_id(user)"),
+        ("security_audit_alerts", "McpOAuthSecurityAuditLog.user_id == _current_user_id(user)"),
+    ):
+        assert scope_condition in _function_body(source, name), name
+
+    grants = _function_body(source, "list_grants")
+    assert 'user.get("role")' not in grants
+    assert "filters = [McpOAuthGrant.user_id == current_user_id]" in grants
+
+    revoke = _function_body(source, "revoke_grant")
+    assert 'user.get("role")' not in revoke
+    assert "if grant.user_id != current_user_id:" in revoke
+
+    # 元素权限直通保留：admin 仍能进服务台，只是数据范围不再跨用户。
+    permission_dependency = source.split("def require_mcp_service_permission(", 1)[1].split("def _current_user_id(", 1)[0]
+    assert 'if user.get("role") == "admin":' in permission_dependency

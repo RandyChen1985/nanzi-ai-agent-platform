@@ -93,9 +93,8 @@ def test_registry_only_shares_personal_servers():
     source = _read(REGISTRY)
     assert "(e: 'share-server', server: any): void" in source
     assert "emit('share-server', server)" in source
-    index = source.index("emit('share-server', server)")
-    window = source[max(0, index - 900): index]
-    assert "props.scope === 'personal'" in window
+    # 分享按钮已收进卡片「⋯」菜单，可见条件仍在模板里限死个人 scope
+    assert "props.scope === 'personal' && !isEchoTestServer(actionMenu.server)" in source
 
 
 def test_registry_shows_share_lineage():

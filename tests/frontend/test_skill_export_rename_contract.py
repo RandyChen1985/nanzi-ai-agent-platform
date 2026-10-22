@@ -57,8 +57,9 @@ def test_frontend_wires_export_and_rename_with_refresh():
     assert "const renameSkill" in text
     # 导出走 axios（保留鉴权头），不能用 window.open 丢凭据
     assert "responseType: 'blob'" in text
-    assert "@click.stop=\"exportSkill(" in text
-    assert "@click.stop=\"renameSkill(" in text
+    # 导出 / 重命名已收进「⋯」菜单，由 runSkillAction 分发
+    assert "runSkillAction('export')" in text
+    assert "runSkillAction('rename')" in text
     # 重命名后必须刷新列表，否则界面还显示旧 ID
     assert "await Promise.all([fetchSkills(), fetchPersonalSkills()])" in text
     # 未同步的引用必须展示给用户，不能静默

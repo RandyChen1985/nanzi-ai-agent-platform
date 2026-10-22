@@ -8,7 +8,7 @@
 
 **安全边界**（复用浏览器自动化同一套 SSRF 口径）：
 
-1. 复用 :func:`validate_browser_navigation`：只允许 http/https，拒绝环回、私网、
+1. 复用 :func:`validate_public_navigation`：只允许 http/https，拒绝环回、私网、
    链路本地、保留网段与云元数据地址，且先做 DNS 解析再判断（防域名指向内网）。
 2. 手动逐跳处理重定向并**每跳重新校验**——若交给 httpx 自动跟随，
    ``https://evil.example`` 可以 302 到 ``http://169.254.169.254/`` 绕过校验。
@@ -29,7 +29,7 @@ import httpx
 from app.core.config import settings
 from app.services.ai.browser.browser_policy import (
     BrowserUrlBlocked,
-    validate_browser_navigation,
+    validate_public_navigation,
 )
 
 logger = logging.getLogger(__name__)
@@ -236,7 +236,7 @@ async def probe_embed_policy(
     其它一切失败都收敛成 ``embeddable=None`` 的「未知」结论。
     """
     # 首跳校验失败要让调用方明确拒绝（400），而不是伪装成「未知」。
-    target = validate_browser_navigation(url)
+    target = validate_public_navigation(url)
 
     origins = tuple(platform_origins) if platform_origins is not None else _platform_origins()
     current = target
@@ -262,7 +262,7 @@ async def probe_embed_policy(
                         if location:
                             next_url = urljoin(str(response.url), location)
                             try:
-                                validate_browser_navigation(next_url)
+                                validate_public_navigation(next_url)
                             except BrowserUrlBlocked as exc:
                                 logger.warning(
                                     "网页预览探测重定向被 SSRF 防线拦截：%s", exc

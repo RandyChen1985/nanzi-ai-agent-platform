@@ -7,6 +7,7 @@ from app.services.ai.browser.browser_policy import (
     decide_browser_action,
     redact_browser_arguments,
     validate_browser_navigation,
+    validate_public_navigation,
 )
 from app.services.ai.browser.browser_worker import BrowserEnvironmentError
 
@@ -18,4 +19,5 @@ __all__ = [
     "decide_browser_action",
     "redact_browser_arguments",
     "validate_browser_navigation",
+    "validate_public_navigation",
 ]

@@ -549,6 +549,38 @@ const fetchShareMenuCounts = async () => {
   }
 }
 
+/** 卡片「更多」操作菜单：fixed 定位，避免被卡片/网格裁切 */
+const actionMenu = ref<{ skill: Skill; x: number; top: number | null; bottom: number | null } | null>(null)
+
+const openActionMenu = (event: MouseEvent, skill: Skill) => {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const menuWidth = 176
+  const x = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8))
+  // 下方放不下时向上展开；用 bottom 定位，菜单底部正好贴住按钮顶部
+  const openUp = window.innerHeight - rect.bottom < 220
+  actionMenu.value = {
+    skill,
+    x,
+    top: openUp ? null : rect.bottom + 6,
+    bottom: openUp ? window.innerHeight - rect.top + 6 : null,
+  }
+}
+
+const closeActionMenu = () => {
+  actionMenu.value = null
+}
+
+const runSkillAction = (action: 'share' | 'export' | 'rename' | 'delete') => {
+  const skill = actionMenu.value?.skill
+  closeActionMenu()
+  if (!skill) return
+  const scope = skill.scope === 'personal' ? 'personal' : 'global'
+  if (action === 'share') openShareDialog(skill)
+  else if (action === 'export') exportSkill(skill.id, scope)
+  else if (action === 'rename') renameSkill(skill.id, scope)
+  else deleteSkill(skill.id)
+}
+
 const openShareDialog = (skill: Skill) => {
   shareDialogSkill.value = skill
 }
@@ -2505,46 +2537,19 @@ onUnmounted(() => {
               <div class="peer h-4 w-7 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none dark:bg-gray-700"></div>
             </label>
 
-            <!-- 分享：常驻显示（新功能需要被看见，触屏也没有 hover）；导出/重命名/删除仍走 hover -->
+            <!-- 操作收进「⋯」：桌面 hover 显示，移动端常驻；菜单 fixed 定位避免被卡片裁切 -->
             <button
-              v-if="skill.scope === 'personal'"
-              @click.stop="openShareDialog(skill)"
-              class="rounded-lg p-1.5 text-blue-500 transition-colors hover:bg-blue-50 hover:text-blue-700"
-              title="分享给同事（对方接受后会复制一份到他的个人技能）"
+              type="button"
+              @click.stop="openActionMenu($event, skill)"
+              class="rounded-lg p-1.5 text-gray-400 opacity-100 transition-all hover:bg-gray-100 hover:text-gray-600 md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
+              :class="actionMenu?.skill?.id === skill.id ? 'bg-gray-100 text-gray-600' : ''"
+              :aria-label="`${skill.name} 的更多操作`"
+              :aria-expanded="actionMenu?.skill?.id === skill.id"
             >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13" />
-              </svg>
-            </button>
-
-            <!-- 导出 / 重命名：窄屏（无 hover）常显，md 以上回到 hover 显示 -->
-            <button
-              @click.stop="exportSkill(skill.id, skill.scope === 'personal' ? 'personal' : 'global')"
-              class="rounded-lg p-1.5 text-gray-400 opacity-100 transition-all hover:bg-emerald-50 hover:text-emerald-600 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
-              title="导出为 zip 压缩包（可备份或迁移到其它环境）"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
-              </svg>
-            </button>
-            <button
-              @click.stop="renameSkill(skill.id, skill.scope === 'personal' ? 'personal' : 'global')"
-              class="rounded-lg p-1.5 text-gray-400 opacity-100 transition-all hover:bg-indigo-50 hover:text-indigo-600 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
-              title="重命名技能 ID（会同步智能体白名单、发布记录与会话挂载）"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
-            </button>
-
-            <!-- 删除：窄屏常显（否则触屏无法删除），md 以上 hover 显示以降低误触 -->
-            <button 
-              @click.stop="deleteSkill(skill.id)"
-              class="rounded-lg p-1.5 text-gray-400 opacity-100 transition-all hover:bg-red-50 hover:text-red-600 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
-              title="注销并彻底删除技能目录"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                <circle cx="5" cy="12" r="1.6" />
+                <circle cx="12" cy="12" r="1.6" />
+                <circle cx="19" cy="12" r="1.6" />
               </svg>
             </button>
           </div>
@@ -3897,6 +3902,64 @@ onUnmounted(() => {
         </button>
       </template>
     </template>
+  </div>
+
+  <!-- 卡片「⋯」操作菜单 -->
+  <div v-if="actionMenu" class="fixed inset-0 z-[60]" @click="closeActionMenu"></div>
+  <div
+    v-if="actionMenu"
+    role="menu"
+    class="fixed z-[61] w-44 overflow-hidden rounded-xl border border-gray-100 bg-white py-1 shadow-xl"
+    :style="actionMenu.top !== null
+      ? { left: `${actionMenu.x}px`, top: `${actionMenu.top}px` }
+      : { left: `${actionMenu.x}px`, bottom: `${actionMenu.bottom}px` }"
+  >
+    <button
+      v-if="actionMenu.skill.scope === 'personal'"
+      type="button"
+      role="menuitem"
+      class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+      @click="runSkillAction('share')"
+    >
+      <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13" />
+      </svg>
+      分享给同事
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+      @click="runSkillAction('export')"
+    >
+      <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" />
+      </svg>
+      导出 zip
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+      @click="runSkillAction('rename')"
+    >
+      <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+      </svg>
+      重命名
+    </button>
+    <div class="my-1 border-t border-gray-100"></div>
+    <button
+      type="button"
+      role="menuitem"
+      class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-red-600 transition-colors hover:bg-red-50"
+      @click="runSkillAction('delete')"
+    >
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+      </svg>
+      删除技能
+    </button>
   </div>
 
   <SkillShareDialog
