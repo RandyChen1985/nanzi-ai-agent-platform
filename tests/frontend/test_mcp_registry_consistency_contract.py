@@ -57,7 +57,7 @@ def test_empty_remote_tool_list_requires_explicit_force_confirmation():
 
 def test_call_log_entry_requires_server_control_access():
     """公共服务调用日志只给管理员；非管理员不应看到入口（后端也已 403）。"""
-    marker = 'title="查看该服务的出站调用日志"'
+    marker = """v-tooltip="'查看该服务的出站调用日志'"""
     index = SOURCE.index(marker)
     header_block = SOURCE[max(0, index - 600) : index]
     assert 'v-if="canSave"' in header_block

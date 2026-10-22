@@ -21,8 +21,6 @@ import {
 import { 
   PlusIcon,
   BeakerIcon,
-  EyeIcon,
-  EyeSlashIcon,
   CodeBracketIcon,
   ListBulletIcon,
   ArrowPathIcon,
@@ -283,6 +281,11 @@ const toggleSelectTool = (id: string) => {
   } else {
     selectedToolIds.value.add(id)
   }
+}
+
+/** 批量操作条上的「取消选择」：整体替换 Set，确保依赖选中集合的 UI 同步刷新 */
+const clearToolSelection = () => {
+  selectedToolIds.value = new Set()
 }
 
 const batchUpdateStatus = async (published: boolean) => {
@@ -1584,7 +1587,7 @@ onMounted(fetchServers)
 </script>
 
 <template>
-  <div class="flex h-full min-h-[28rem] flex-col gap-3 lg:min-h-0 lg:flex-row lg:gap-6">
+  <div class="flex h-full min-h-[28rem] min-w-0 flex-col gap-3 lg:min-h-0 lg:flex-row lg:gap-6">
     <!-- Left: Server List — 移动端选中服务后隐藏，避免左右挤成一条 -->
     <div
       class="flex w-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:w-[360px] lg:shrink-0 xl:w-[400px]"
@@ -1970,7 +1973,7 @@ onMounted(fetchServers)
 
     <!-- Right: Tool List — 移动端仅在选中服务后展示 -->
     <div
-      class="flex min-h-[22rem] flex-1 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:min-h-0"
+      class="flex min-h-[22rem] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:min-h-0"
       :class="selectedServer ? 'flex' : 'hidden lg:flex'"
     >
       <div v-if="!selectedServer" class="flex flex-1 flex-col items-center justify-center text-gray-400">
@@ -1980,7 +1983,7 @@ onMounted(fetchServers)
       
       <template v-else>
         <div class="flex flex-col gap-3 border-b border-gray-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
-          <div class="flex min-w-0 items-start gap-2">
+          <div class="flex min-w-0 flex-1 items-start gap-2">
             <button
               type="button"
               class="-ml-1 mt-0.5 rounded-md p-1.5 text-gray-500 hover:bg-white hover:text-gray-800 lg:hidden"
@@ -2010,7 +2013,7 @@ onMounted(fetchServers)
               <span v-else-if="usageLoading[selectedServer.id]" class="mt-1 text-[10px] text-slate-400">正在统计使用情况...</span>
               <p
                 v-if="selectedServer.sse_url"
-                class="mt-1 flex items-center gap-1 font-mono text-[10px] text-gray-400"
+                class="mt-1 flex min-w-0 items-center gap-1 font-mono text-[10px] text-gray-400"
                 :title="selectedServer.sse_url"
               >
                 <LinkIcon class="h-3 w-3 shrink-0" />
@@ -2019,36 +2022,108 @@ onMounted(fetchServers)
             </div>
           </div>
           
-          <div class="flex flex-wrap items-center gap-2 pl-8 sm:pl-0 lg:pl-0">
+          <div class="flex flex-wrap items-center gap-2 pl-8 sm:max-w-[60%] sm:justify-end sm:pl-0">
             <button
               v-if="canSave"
               type="button"
               @click="openLogModal(selectedServer)"
-              class="flex items-center rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:text-indigo-600 hover:border-indigo-200 shadow-xs transition-colors"
-              title="查看该服务的出站调用日志"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-slate-500 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50/60 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 active:scale-[0.96]"
+              v-tooltip="'查看该服务的出站调用日志'"
+              aria-label="查看该服务的出站调用日志"
             >
-              <DocumentTextIcon class="mr-1 h-3.5 w-3.5 text-indigo-500" />
-              调用日志
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M8 13h8" />
+                <path d="M8 17h5" />
+              </svg>
             </button>
-            <div v-if="canSave && canPublishMcp && selectedToolIds.size > 0" class="flex items-center space-x-2 rounded-lg border border-gray-200 bg-white p-1 shadow-sm animate-fade-in">
-              <button @click="batchUpdateStatus(true)" :disabled="!canManageSelectedTools" class="rounded bg-green-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50">批量发布</button>
-              <button @click="batchUpdateStatus(false)" :disabled="!canManageSelectedTools" class="rounded bg-slate-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">批量下线</button>
-            </div>
-            <button v-if="canSave && canSyncMcp" @click="syncTools(selectedServer.id)" :disabled="syncLoading[selectedServer.id]" class="flex items-center rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-primary hover:underline">
-              <ArrowPathIcon class="mr-1 h-3.5 w-3.5" :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''" />
-              刷新
+            <button
+              v-if="canSave && canSyncMcp"
+              type="button"
+              @click="syncTools(selectedServer.id)"
+              :disabled="syncLoading[selectedServer.id]"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-slate-500 shadow-sm transition-all hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 active:scale-[0.96] disabled:cursor-wait disabled:opacity-60"
+              v-tooltip="syncLoading[selectedServer.id] ? '正在同步远端工具…' : '重新同步远端工具列表'"
+              :aria-label="syncLoading[selectedServer.id] ? '正在同步远端工具' : '重新同步远端工具列表'"
+            >
+              <svg
+                class="h-4 w-4"
+                :class="syncLoading[selectedServer.id] ? 'animate-spin' : ''"
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+              >
+                <path d="M21 12a9 9 0 1 1-2.636-6.364" />
+                <path d="M21 3v6h-6" />
+              </svg>
             </button>
             <!-- 「远端已删除」是存量噪音：给一个有权限的人可执行的动作，而不是只有提示 -->
             <button
               v-if="canSave && canDeleteMcp && staleToolCount > 0"
               type="button"
-              class="flex items-center rounded border border-amber-200 bg-white px-2 py-1 text-[11px] font-bold text-amber-700 shadow-xs transition-colors hover:border-amber-300 hover:bg-amber-50"
+              class="relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-amber-200 bg-amber-50/60 text-amber-600 shadow-sm transition-all hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 active:scale-[0.96]"
               :class="cleanupStaleLoading ? 'cursor-wait opacity-60' : ''"
               :disabled="cleanupStaleLoading"
               @click="showCleanupConfirm = true"
+              v-tooltip="`清理 ${staleToolCount} 个远端已删除的工具`"
+              :aria-label="`清理 ${staleToolCount} 个远端已删除的工具`"
             >
-              <TrashIcon class="mr-1 h-3.5 w-3.5" />
-              清理已失效 {{ staleToolCount }}
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6M14 11v6" />
+              </svg>
+              <span class="absolute -right-1.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold leading-none text-white shadow-sm">{{ staleToolCount }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 批量操作条：选中工具后独立成层，不与头部图标工具栏混排 -->
+        <div
+          v-if="canSave && canPublishMcp && selectedToolIds.size > 0"
+          class="flex flex-wrap items-center gap-2 border-b border-blue-100 bg-blue-50/70 px-3 py-2 sm:px-4 animate-fade-in"
+        >
+          <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-700">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            批量操作
+            <span class="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">{{ selectedToolIds.size }}</span>
+          </span>
+          <div class="ml-auto flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              @click="clearToolSelection"
+              class="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-white hover:text-slate-700"
+            >
+              取消选择
+            </button>
+            <button
+              type="button"
+              @click="batchUpdateStatus(true)"
+              :disabled="!canManageSelectedTools"
+              class="inline-flex items-center gap-1.5 rounded-md bg-green-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all hover:bg-green-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              批量发布
+            </button>
+            <button
+              type="button"
+              @click="batchUpdateStatus(false)"
+              :disabled="!canManageSelectedTools"
+              class="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all hover:bg-slate-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+                <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+                <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+                <path d="m2 2 20 20" />
+              </svg>
+              批量下线
             </button>
           </div>
         </div>
@@ -2088,7 +2163,7 @@ onMounted(fetchServers)
               v-for="tool in tools" 
               :key="tool.id" 
               @click="canManageTool(tool) && toggleSelectTool(tool.id)"
-              class="group flex flex-col gap-3 rounded-lg border p-3 transition-all sm:flex-row sm:items-start sm:justify-between sm:p-4"
+              class="group flex min-w-0 flex-col gap-3 rounded-lg border p-3 transition-all sm:flex-row sm:items-start sm:justify-between sm:p-4"
               :class="[
                 canManageTool(tool) ? 'cursor-pointer' : 'cursor-default',
                 selectedToolIds.has(tool.id) ? 'border-primary bg-blue-50/50 shadow-sm' : 'border-gray-100 bg-gray-50/30 hover:border-primary/30'
@@ -2134,20 +2209,36 @@ onMounted(fetchServers)
                 <button 
                   @click.stop="openTester(tool)"
                   :disabled="!canManageTool(tool)"
-                  class="flex items-center rounded-md border border-indigo-100 bg-white px-3 py-1.5 text-[11px] font-bold text-indigo-600 shadow-sm transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
-                  title="在线测试"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-indigo-100 bg-white text-indigo-600 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
+                  v-tooltip="'在线测试'"
+                  aria-label="在线测试"
                 >
-                  <BeakerIcon class="mr-1.5 h-3.5 w-3.5" />
-                  测试
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10 2v7.31" />
+                    <path d="M14 9.3V2" />
+                    <path d="M8.5 2h7" />
+                    <path d="M14 9.3a6.5 6.5 0 1 1-4 0" />
+                    <path d="M5.52 16h12.96" />
+                  </svg>
                 </button>
                 <button 
                   @click.stop="togglePublish(tool)"
                   :disabled="!canManageTool(tool) || !canPublishMcp"
-                  class="flex items-center rounded-md border px-3 py-1.5 text-[11px] font-bold shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
-                  :class="tool.is_published ? 'border-gray-200 bg-white text-gray-600 hover:text-red-600' : 'border-transparent bg-primary text-white hover:bg-primary-dark'"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-lg border shadow-sm transition-all focus:outline-none focus-visible:ring-2 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
+                  :class="tool.is_published ? 'border-gray-200 bg-white text-gray-500 hover:border-red-200 hover:bg-red-50/60 hover:text-red-600 focus-visible:ring-red-200' : 'border-transparent bg-primary text-white hover:bg-primary-dark focus-visible:ring-primary/30'"
+                  v-tooltip="tool.is_published ? '下线该工具，智能体将不再可见' : '发布该工具，智能体配置中即可勾选'"
+                  :aria-label="tool.is_published ? '下线该工具' : '发布该工具'"
                 >
-                  <component :is="tool.is_published ? EyeSlashIcon : EyeIcon" class="mr-1.5 h-3.5 w-3.5" />
-                  {{ tool.is_published ? '下线' : '发布' }}
+                  <svg v-if="tool.is_published" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+                    <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+                    <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+                    <path d="m2 2 20 20" />
+                  </svg>
+                  <svg v-else class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
                 </button>
               </div>
             </div>

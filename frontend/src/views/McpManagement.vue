@@ -297,7 +297,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
           :counts="mcpShareCounts"
           @select="mcpMenu = $event"
         />
-        <div class="flex min-h-0 flex-1 flex-col gap-2">
+        <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
           <McpPersonalMenu
             variant="chips"
             :active="mcpMenu"
