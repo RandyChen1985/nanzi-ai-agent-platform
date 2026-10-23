@@ -89,11 +89,10 @@ def test_change_password_logs_out_current_device():
 
 
 def test_app_public_url_copy_mentions_reset_link():
-    """该前缀同时服务重置链接，说明必须写清楚，否则管理员不会把两者联系起来。"""
-    assert "重置链接" in SYSCONFIG
+    """该地址同时服务重置链接，说明必须写清楚，否则管理员不会把两者联系起来。"""
     idx = SYSCONFIG.index("app_public_url: '")
     short_desc = SYSCONFIG[idx : idx + 400]
-    assert "重置链接" in short_desc or "重置" in short_desc
+    assert "重置" in short_desc
     assert "重置" in CHECKLIST
 
 

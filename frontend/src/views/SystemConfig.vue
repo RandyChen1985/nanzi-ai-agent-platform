@@ -60,6 +60,8 @@ const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 
 const diagSubTab = ref<'console' | 'redis'>('console')
 // 「Redis 向量搜索」的检测详情默认收起，避免顶部操作区占用过多高度
 const vectorHealthExpanded = ref(false)
+// 对外访问地址的使用场景说明较长，默认折叠成一行摘要，点「查看说明」再展开
+const appPublicUrlHelpOpen = ref(false)
 // 顶部诊断概览整体折叠状态（默认折叠，并记忆用户偏好）
 const storedDiagCollapsed = localStorage.getItem('system_diag_overview_collapsed')
 const diagnosticsOverviewCollapsed = ref(storedDiagCollapsed === null ? true : storedDiagCollapsed === 'true')
@@ -2542,9 +2544,9 @@ const configShortDescriptions: Record<string, string> = {
   user_registration_enabled: '账号自主注册申请开关。开启后登录页显示「申请账号」入口，注册申请须管理员审核通过后才能登录。',
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
-  app_public_url: '平台对外访问地址。生成文件下载链接、忘记密码重置链接、MCP 公网地址与 OAuth 元数据、'
-    + '报表通知深链、网页预览判定都用它。只填协议 + 域名（如 https://your-domain.example.com），'
-    + '不要填写任何路径、文件名或 token。留空时回退环境变量 APP_PUBLIC_URL。',
+  app_public_url: '平台对外的访问地址，下载链接、重置邮件、MCP 与通知深链都由它拼出。'
+    + '只填协议 + 域名（如 https://your-domain.example.com），不要填写任何路径、文件名或 token。'
+    + '留空时回退环境变量 APP_PUBLIC_URL。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
   llm_request_read_timeout: '大模型请求的读取超时（秒），指相邻两次数据到达的最大间隔，默认 180，范围 30-300。',
   agent_max_toolcall_timeout: '单次 Agent 工具调用的全局超时时间（秒），默认 180 秒，范围 1-3600；版本级配置优先于全局配置。',
@@ -4625,10 +4627,29 @@ onUnmounted(() => {
                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
                              />
                              <div class="mt-2 text-xs text-blue-700 bg-blue-50/60 p-3 rounded-xl border border-blue-100/70 leading-relaxed">
-                               <div>💡 <strong>设置示例：</strong>填写 <code class="font-mono text-blue-800">https://your-domain.example.com</code>，生成的下载地址会是 <code class="font-mono text-blue-800">https://your-domain.example.com/api/v1/chat/generated-files/...</code>。</div>
-                               <div class="mt-1">只填写协议、域名和必要的反向代理前缀，<strong>不要填写</strong> API 路径、文件名或 token。留空时回退到环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code>，两者都没有则使用相对地址。</div>
-                               <div class="mt-1">用户「忘记密码」时收到的重置邮件也用这个地址，链接形如 <code class="font-mono text-blue-800">https://your-domain.example.com/reset-password?token=...</code>；同样<strong>不要</strong>填写 <code class="font-mono text-blue-800">/reset-password</code>。因此本项留空时，登录页的「忘记密码」入口会整块隐藏（邮件里的相对地址点不开，发出去等于废邮件）。</div>
-                               <div class="mt-1">MCP（Echo 测试服务与平台级 MCP）的公网地址、OAuth 元数据、报表订阅通知里的深链也取自这里。保存后立即生效；已创建的 Echo 需回【MCP 管理】重新点一次「创建 Echo 测试 MCP」刷新库里保存的 <code class="font-mono text-blue-800">sse_url</code>。</div>
+                               <div class="flex items-start justify-between gap-3">
+                                 <div class="min-w-0">
+                                   <span>💡 只填协议 + 域名（如 <code class="font-mono text-blue-800">https://your-domain.example.com</code>），不要填路径、文件名或 token。留空时回退环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code>。</span>
+                                 </div>
+                                 <button
+                                   type="button"
+                                   class="inline-flex items-center flex-shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900 py-0.5 px-1.5 -my-0.5 rounded-lg hover:bg-blue-100/70 transition-colors cursor-pointer"
+                                   @click="appPublicUrlHelpOpen = !appPublicUrlHelpOpen"
+                                 >
+                                   {{ appPublicUrlHelpOpen ? '收起说明' : '查看说明' }}
+                                   <ChevronDownIcon class="h-3.5 w-3.5 ml-0.5 transition-transform duration-200" :class="appPublicUrlHelpOpen ? 'rotate-180' : ''" />
+                                 </button>
+                               </div>
+
+                               <div v-if="appPublicUrlHelpOpen" class="mt-2.5 pt-2.5 border-t border-blue-100/80 space-y-1.5 text-blue-800">
+                                 <div class="font-semibold text-blue-900">这个地址会被下面这些地方用到：</div>
+                                 <div><strong>1）生成文件下载链接</strong>：<code class="font-mono text-blue-800">https://your-domain.example.com/api/v1/chat/generated-files/...</code></div>
+                                 <div><strong>2）忘记密码的重置邮件</strong>：<code class="font-mono text-blue-800">https://your-domain.example.com/reset-password?token=...</code>。本项留空时登录页的「忘记密码」入口会整块隐藏，否则邮件里的相对地址点不开。</div>
+                                 <div><strong>3）MCP</strong>：Echo 测试服务与平台级 MCP 的公网地址、OAuth 元数据（<code class="font-mono text-blue-800">/.well-known/oauth-*</code>）以及 Host/Origin 白名单。保存后立即生效；已创建的 Echo 需回【MCP 管理】重新点一次「创建 Echo 测试 MCP」，刷新库里保存的 <code class="font-mono text-blue-800">sse_url</code>。</div>
+                                 <div><strong>4）报表订阅通知</strong>：定时任务推送到邮件 / 企微等渠道时附带的深链。</div>
+                                 <div><strong>5）网页预览</strong>：判定第三方页面能否在平台内嵌打开时，用于识别「本平台自己的页面」。</div>
+                                 <div class="pt-1 text-[11px] text-blue-700/80">只写协议、域名和必要的反向代理前缀；<strong>不要</strong>写 API 路径、文件名、token，也不要写 <code class="font-mono text-blue-800">/reset-password</code> 这类页面路径。</div>
+                               </div>
                              </div>
                           </div>
                           <div v-else-if="item.key === 'sandbox_ssh_auth_type'" class="space-y-2">

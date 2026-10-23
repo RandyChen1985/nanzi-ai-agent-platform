@@ -57,3 +57,18 @@ def test_deployment_checklist_points_at_the_renamed_key():
     assert "key: 'app_public_url'" in source
     assert "download_url_prefix" not in source
     assert "MCP" in source
+
+
+def test_help_block_is_collapsible_and_lists_consumers():
+    """说明文字曾是 4 段大长句，占掉半屏。改为默认折叠 + 分点罗列使用场景。"""
+
+    source = SYSTEM_CONFIG_VUE.read_text(encoding="utf-8")
+    idx = source.index("item.key === 'app_public_url'")
+    window = source[idx : idx + 5000]
+
+    assert "appPublicUrlHelpOpen" in window, "需要折叠状态"
+    assert "查看说明" in window and "收起说明" in window, "需要展开/收起按钮"
+    assert "ChevronDownIcon" in window, "展开态需要箭头指示"
+
+    for marker in ("1）", "2）", "3）", "4）", "5）"):
+        assert marker in window, f"用途需要按 {marker} 分点罗列"
