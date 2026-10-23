@@ -924,6 +924,19 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
     case "context_update":
       handleContextUpdate(msg, data, addLog);
       return true;
+    case "history_persist_failed":
+      // 后端重试后仍未写入 ai_agent_execution_history：run_status 早已按
+      // persisting=true 发出，这里补一条可见告警，避免用户刷新后才发现本轮消失。
+      addLog(msg, {
+        id: `history_persist_failed_${data.trace_id || Date.now()}`,
+        title: "本轮记录未保存",
+        details: String(
+          data.message || "服务端历史写入失败，刷新后可能看不到这条记录。",
+        ),
+        status: "warning",
+        category: "system",
+      });
+      return true;
     case "grounding_blocked":
       msg.groundingBlocked = {
         title: String(data.title || "暂时无法验证事实"),
