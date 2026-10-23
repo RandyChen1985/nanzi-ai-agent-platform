@@ -189,7 +189,9 @@ const hasActiveFilters = computed(() =>
 
 const fetchAgents = async () => {
   try {
-    const res = await agentApi.listAgents()
+    // 审计页要能筛选历史日志，因此连同已停用智能体一起取；
+    // /agents/ 需要「智能体管理」菜单权限，仅有 menu:chat_logs 时会 403 导致筛选为空。
+    const res = await agentApi.listAllowedAgents({ includeDisabled: true })
     agents.value = res.data
   } catch (e) {
     console.error('Failed to fetch agents', e)

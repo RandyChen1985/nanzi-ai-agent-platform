@@ -773,9 +773,14 @@ async def get_current_user_info(
     perms_response = await perm_service.get_user_permissions(user_id)
     
     from app.services.config_service import ConfigService
+    from app.services.branding_settings_service import BrandingSettingsService
+
     watermark_enabled = await ConfigService.get("embedchat_watermark_enabled") == "true"
     watermark_style = await ConfigService.get("embedchat_watermark_style") or "user_time"
-    watermark_text = await ConfigService.get("embedchat_watermark_text") or "南孜系统"
+    watermark_text = (
+        await ConfigService.get("embedchat_watermark_text")
+        or BrandingSettingsService.get_prompt_brand_name()
+    )
 
     two_factor_enabled = await AuthService.get_user_2fa_status(user_id, db=db)
 
@@ -1232,10 +1237,14 @@ async def validate_user_apikey(
     """
     from app.services.config_service import ConfigService
     from app.services.embed_service import EmbedService
+    from app.services.branding_settings_service import BrandingSettingsService
 
     watermark_enabled = await ConfigService.get("embedchat_watermark_enabled") == "true"
     watermark_style = await ConfigService.get("embedchat_watermark_style") or "user_time"
-    watermark_text = await ConfigService.get("embedchat_watermark_text") or "南孜系统"
+    watermark_text = (
+        await ConfigService.get("embedchat_watermark_text")
+        or BrandingSettingsService.get_prompt_brand_name()
+    )
 
     data = {
         "valid": True,

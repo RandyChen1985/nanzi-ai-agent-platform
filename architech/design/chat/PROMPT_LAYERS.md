@@ -43,7 +43,7 @@
 | 5 | `[跨会话记忆检索]` | `should_inject_memory_recall_hint` + 记忆服务开启 |
 | 6 | `[System Preloaded Memories]` | 回忆意图 / 日期命中 |
 | 7 | **`[南孜智能体平台 · 全局守则]`** | `engine_type == LOCAL` |
-| 8 | **整段替换** | `debug_options.system_prompt_override` |
+| 8 | **整段替换** | `execution_options.system_prompt_override` |
 
 **发给模型时，从上到下：**
 
@@ -78,7 +78,7 @@ full_text = stable_prefix + CACHE_BOUNDARY + dynamic_suffix   （有动态块时
 
 | 内容 | 条件 |
 |------|------|
-| `# Session Runtime Context` + 移动/桌面 UI | `debug_options.injected_context` |
+| `# Session Runtime Context` + 移动/桌面 UI | `execution_options.injected_context` |
 
 用户画像默认在 **PromptAssembler.stable_prefix**（§2.2.1），不再单独占 `SystemMessage #2`；未走 assembler 的旧路径仍可能注入独立 system 行。
 

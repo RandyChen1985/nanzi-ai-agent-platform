@@ -28,7 +28,7 @@
 - `app/services/ai/runtime/agentscope/tools.py`
 - `app/services/ai/runtime/agentscope/event_stream.py`
 
-Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`；KnowledgeAgent 保留独立 NLI 反思，但通过同一服务生成最终消息内提示。原始 API 会话只有显式传入布尔值 `debug_options.grounding_enabled=true` 才启用这些审核；EmbedChat 新会话默认发送 `true`，AgentDebug 默认发送 `false`，显式 `false` 始终关闭。关闭不影响 Runner 流式输出、常规工具调用、KnowledgeAgent 检索或 ChatBI SQL/Schema 安全门禁。
+Main 与 ChatBI 的最终事实判断统一委托给 `GroundingService.audit()`；KnowledgeAgent 保留独立 NLI 反思，但通过同一服务生成最终消息内提示。原始 API 会话只有显式传入布尔值 `execution_options.grounding_enabled=true` 才启用这些审核；EmbedChat 新会话默认发送 `true`，AgentDebug 默认发送 `false`，显式 `false` 始终关闭。关闭不影响 Runner 流式输出、常规工具调用、KnowledgeAgent 检索或 ChatBI SQL/Schema 安全门禁。
 
 ## 外层路由执行流程
 

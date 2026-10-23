@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.context import set_debug_context
+from app.core.context import set_execution_options_context
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -21,10 +21,10 @@ def _read(relative_path: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _clean_debug_context():
-    set_debug_context({})
+def _clean_execution_options_context():
+    set_execution_options_context({})
     yield
-    set_debug_context({})
+    set_execution_options_context({})
 
 
 def test_resolve_config_temperature_follows_session_override():
@@ -34,7 +34,7 @@ def test_resolve_config_temperature_follows_session_override():
 
     assert resolve_config_temperature(config) == 0.0
 
-    set_debug_context({"temperature": 0.3})
+    set_execution_options_context({"temperature": 0.3})
 
     assert resolve_config_temperature(config) == 0.3
 
@@ -43,7 +43,7 @@ def test_resolve_config_temperature_treats_zero_as_a_real_value():
     from app.services.ai.temperature import resolve_config_temperature
 
     config = type("Config", (), {"temperature": 0.7})()
-    set_debug_context({"temperature": 0.0})
+    set_execution_options_context({"temperature": 0.0})
 
     assert resolve_config_temperature(config) == 0.0
 

@@ -773,11 +773,19 @@ class AgentManagerService:
         return agent
 
     @staticmethod
-    async def list_allowed_agents(session: AsyncSession, user: Any = None, keyword: Optional[str] = None) -> List[Any]:
+    async def list_allowed_agents(
+        session: AsyncSession,
+        user: Any = None,
+        keyword: Optional[str] = None,
+        include_disabled: bool = False,
+    ) -> List[Any]:
         """
         List ONLY agents that the user has permission to EXECUTE/CHAT with.
         - Admin: All
         - User: System Agents + Owned Agents + Permitted Agents
+
+        ``include_disabled=True`` 会一并返回已停用的智能体，仅用于历史数据筛选
+        （例如聊天日志按智能体过滤），不应作为「可选用智能体」来源。
         """
         if not user:
             return []
@@ -785,7 +793,9 @@ class AgentManagerService:
         # User Info extraction
         is_admin, username, user_id = AgentManagerService._extract_user_identity(user)
 
-        stmt = select(AIAgent).where(AIAgent.is_enabled == True)
+        stmt = select(AIAgent)
+        if not include_disabled:
+            stmt = stmt.where(AIAgent.is_enabled == True)
 
         if not is_admin:
             # Normal User Logic

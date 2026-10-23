@@ -24,7 +24,7 @@ async def _unlocked_session(**_kwargs):
     yield
 
 
-def _runner(*, request_source="unknown", debug_options=None) -> AssistantAgentRunner:
+def _runner(*, request_source="unknown", execution_options=None) -> AssistantAgentRunner:
     return AssistantAgentRunner(
         config=ChatConfig(
             agent_id="sys-agent-chat",
@@ -43,7 +43,7 @@ def _runner(*, request_source="unknown", debug_options=None) -> AssistantAgentRu
             source=request_source,
             capability="answer",
         ),
-        debug_options=debug_options,
+        execution_options=execution_options,
     )
 
 
@@ -120,10 +120,10 @@ def _fabricated_ranking() -> str:
 
 
 def test_grounding_requires_explicit_boolean_true():
-    assert _runner(debug_options=None)._grounding_enabled() is False
-    assert _runner(debug_options={"grounding_enabled": False})._grounding_enabled() is False
-    assert _runner(debug_options={"grounding_enabled": "true"})._grounding_enabled() is False
-    assert _runner(debug_options={"grounding_enabled": True})._grounding_enabled() is True
+    assert _runner(execution_options=None)._grounding_enabled() is False
+    assert _runner(execution_options={"grounding_enabled": False})._grounding_enabled() is False
+    assert _runner(execution_options={"grounding_enabled": "true"})._grounding_enabled() is False
+    assert _runner(execution_options={"grounding_enabled": True})._grounding_enabled() is True
 
 
 def test_candidate_answer_streaming_is_limited_to_general_without_evidence_duty():
@@ -221,7 +221,7 @@ def test_tool_preflight_marks_evidence_capable_nudge_as_current_turn_required():
 def test_disabled_grounding_does_not_mark_preflight_as_strict_evidence():
     from app.services.ai.tool_nudge_policy import ToolNudge
 
-    runner = _runner(debug_options={"grounding_enabled": False})
+    runner = _runner(execution_options={"grounding_enabled": False})
     tool = RuntimeToolSpec(
         name="mcp_get_tickets",
         description="查询票务结果",
@@ -252,7 +252,7 @@ def test_disabled_grounding_does_not_mark_preflight_as_strict_evidence():
 
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_blocks_unverified_specific_answer():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         yield {
@@ -289,7 +289,7 @@ async def test_current_turn_evidence_gate_blocks_unverified_specific_answer():
 
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_keeps_uncertainty_reply_and_guides_user():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         yield {
@@ -338,7 +338,7 @@ async def test_current_turn_evidence_gate_keeps_uncertainty_reply_and_guides_use
 
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_replaces_unverified_facts_with_guidance():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         yield {
@@ -374,7 +374,7 @@ async def test_current_turn_evidence_gate_replaces_unverified_facts_with_guidanc
 
 @pytest.mark.asyncio
 async def test_disabled_grounding_does_not_reenable_strict_preflight_gate():
-    runner = _runner(debug_options={"grounding_enabled": False})
+    runner = _runner(execution_options={"grounding_enabled": False})
 
     async def fake_core(_history):
         yield {
@@ -408,7 +408,7 @@ async def test_disabled_grounding_does_not_reenable_strict_preflight_gate():
 @pytest.mark.asyncio
 async def test_stream_with_retraction_emits_speculative_answer_then_retraction():
     runner = _runner(
-        debug_options={
+        execution_options={
             "grounding_enabled": True,
             "grounding_block_mode": "stream_with_retraction",
         }
@@ -452,7 +452,7 @@ async def test_stream_with_retraction_emits_speculative_answer_then_retraction()
 
 @pytest.mark.asyncio
 async def test_multi_tool_evidence_contracts_are_checked_independently():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         runner._evidence_ledger.record_success(
@@ -649,7 +649,7 @@ async def test_current_turn_evidence_gate_releases_answer_with_matching_receipt(
 
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_warns_when_successful_external_receipt_has_weak_overlap():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         runner._evidence_ledger.record_success(
@@ -698,7 +698,7 @@ async def test_current_turn_evidence_gate_warns_when_successful_external_receipt
 
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_blocks_weak_overlap_for_internal_data():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         runner._evidence_ledger.record_success(
@@ -746,7 +746,7 @@ async def test_current_turn_evidence_gate_blocks_weak_overlap_for_internal_data(
 
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_does_not_reuse_historical_receipt():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         runner._evidence_ledger.record_success(
@@ -787,7 +787,7 @@ async def test_current_turn_evidence_gate_does_not_reuse_historical_receipt():
 
 @pytest.mark.asyncio
 async def test_preflight_failure_keeps_current_turn_evidence_gate_fail_closed():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
     tool = RuntimeToolSpec(
         name="mcp_get_tickets",
         description="查询高铁票车次和票价",
@@ -867,7 +867,7 @@ async def test_current_turn_evidence_gate_releases_explicit_no_result_answer():
 
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_waits_for_interrupted_tool_resume():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         yield {
@@ -905,7 +905,7 @@ async def test_current_turn_evidence_gate_waits_for_interrupted_tool_resume():
 
 @pytest.mark.asyncio
 async def test_resumed_evidence_tool_answer_is_blocked_without_successful_receipt():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
     agent = SimpleNamespace(reply_stream=lambda _event: object(), state={})
     native_model = SimpleNamespace(model="test")
     state = {"user_query": "查询明天高铁票"}
@@ -985,7 +985,7 @@ async def test_unknown_request_directly_passes_structured_output_without_tool_ev
 
 @pytest.mark.asyncio
 async def test_unknown_date_answer_does_not_append_grounding_warning():
-    runner = _runner(debug_options={"grounding_enabled": True})
+    runner = _runner(execution_options={"grounding_enabled": True})
     answer = "今天是 2026年7月30日，星期四。"
 
     async def fake_core(_history):
@@ -1010,9 +1010,9 @@ async def test_unknown_date_answer_does_not_append_grounding_warning():
 def test_structured_grounding_retry_overrides_unknown_route_with_typed_requirement():
     runner = _runner(
         request_source="unknown",
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
-    runner.debug_options["grounding_action"] = {
+    runner.execution_options["grounding_action"] = {
         "type": "retry",
         "required_evidence_types": ["public_web", "unsupported"],
     }
@@ -1046,9 +1046,9 @@ def test_grounding_retry_selects_only_tool_with_matching_evidence_type():
 def test_structured_method_action_keeps_unknown_output_scrutiny_without_requiring_tool():
     runner = _runner(
         request_source="internal_structured_data",
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
-    runner.debug_options["grounding_action"] = {"type": "method"}
+    runner.execution_options["grounding_action"] = {"type": "method"}
     ctx = runner._ensure_agent_context()
 
     requirement = runner._resolve_turn_grounding_requirement("只看分析方法", ctx)
@@ -1142,7 +1142,7 @@ async def test_successful_read_only_mcp_receipt_does_not_append_risk_warning():
 async def test_missing_evidence_preserves_answer_and_appends_risk_warning():
     runner = _runner(
         request_source="internal_structured_data",
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
     answer = "当前销售额排名第一的是王强，金额为 663.98 万元。"
 
@@ -1193,7 +1193,7 @@ async def test_grounding_is_disabled_by_default_and_streams_without_warning():
 async def test_internal_knowledge_compatibility_preserves_answer_with_source_notice():
     runner = _runner(
         request_source="internal_structured_data",
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
     answer = "询价审批需要采购和主管共同确认。"
 
@@ -1394,7 +1394,7 @@ async def test_clearly_non_factual_turn_emits_content_before_generation_complete
 async def test_general_route_dynamic_fact_streams_then_appends_warning():
     runner = _runner(
         request_source="general",
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
 
     async def fake_core(_history):
@@ -1422,7 +1422,7 @@ async def test_general_route_dynamic_fact_streams_then_appends_warning():
 async def test_resumed_stream_preserves_answer_and_appends_risk_warning():
     runner = _runner(
         request_source="internal_structured_data",
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
     answer = "当前销售额为 663.98 万元。"
     agent = SimpleNamespace(reply_stream=lambda _event: object(), state={})

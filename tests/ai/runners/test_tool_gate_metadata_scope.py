@@ -2,7 +2,7 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.core.context import AgentContext, get_current_agent_context, set_agent_context, set_debug_context
+from app.core.context import AgentContext, get_current_agent_context, set_agent_context, set_execution_options_context
 from app.services.chatbi_dataset_schema_service import fetch_dataset_schema_core
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.runners.chatbi.schema_prefetch import auto_invoke_get_dataset_schema
@@ -29,7 +29,7 @@ async def test_schema_gate_injects_context_metadata_dataset_ids_over_session_sco
         )
     )
     runner = SimpleNamespace(
-        debug_options={
+        execution_options={
             "resource_scope": {
                 "datasets": [{"id": "9", "name": "session_only", "dataset_name": "session_only"}],
             }
@@ -71,7 +71,7 @@ async def test_schema_gate_falls_back_to_session_scope_when_context_empty():
         )
     )
     runner = SimpleNamespace(
-        debug_options={
+        execution_options={
             "resource_scope": {
                 "datasets": [{"id": "9", "name": "session_ds", "dataset_name": "session_ds"}],
             }
@@ -135,7 +135,7 @@ async def test_sql_gate_uses_prefetched_dataset_name_for_turn_only_scope():
         return None
 
     set_agent_context(AgentContext(agent_id="a1", agent_name="data", metadata_dataset_ids=["1"]))
-    runner = SimpleNamespace(debug_options={}, _resolve_sql_schema_preflight_error=resolve_preflight)
+    runner = SimpleNamespace(execution_options={}, _resolve_sql_schema_preflight_error=resolve_preflight)
     state = DataRunState(requires_fresh_data=False)
     state.schema_output = "dataset: orders\ntable_name: order_items"
     tool = RuntimeToolSpec(
@@ -197,7 +197,7 @@ def test_schema_tool_log_shows_effective_scope_and_actual_dataset():
 @pytest.mark.asyncio
 async def test_schema_scope_debug_is_available_when_selected_dataset_is_not_authorized():
     set_agent_context(AgentContext(agent_id="a1", agent_name="data"))
-    set_debug_context({
+    set_execution_options_context({
         "metadata_dataset_scope": {
             "source": "turn",
             "request_ids": ["53"],

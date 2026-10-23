@@ -30,7 +30,7 @@ async def test_data_executor_delegates_to_data_agent_runner(data_config):
         config=data_config,
         trace_id="trace-data-native",
         trace_buffer=trace_buffer,
-        debug_options={"dry_run": True},
+        execution_options={"dry_run": True},
         user_info={"id": "u1"},
         conversation_id="c1",
         turn_decision=TurnDecision(
@@ -63,7 +63,7 @@ async def test_data_executor_delegates_to_data_agent_runner(data_config):
     assert kwargs["config"] is data_config
     assert kwargs["trace_id"] == "trace-data-native"
     assert kwargs["trace_buffer"] is trace_buffer
-    assert kwargs["debug_options"] == {"dry_run": True}
+    assert kwargs["execution_options"] == {"dry_run": True}
     assert kwargs["user_info"] == {"id": "u1"}
     assert kwargs["conversation_id"] == "c1"
     assert kwargs["turn_decision"].semantic_domain == "chatbi_business_data"

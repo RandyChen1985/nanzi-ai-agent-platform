@@ -1047,7 +1047,7 @@ class AgentService:
         user_info: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
         enable_multi_agent: bool = True,
-        debug_options: Optional[Dict[str, Any]] = None,
+        execution_options: Optional[Dict[str, Any]] = None,
         permission_options: Optional[Dict[str, Any]] = None,
         knowledge_dataset_ids: Optional[List[str]] = None,
         metadata_dataset_ids: Optional[List[str]] = None,
@@ -1059,10 +1059,10 @@ class AgentService:
         """
         Main entry point for streaming chat.
         """
-        debug_options = dict(debug_options or {})
-        if "injected_context" in debug_options:
-            debug_options["injected_context"] = sanitize_injected_context(
-                debug_options["injected_context"]
+        execution_options = dict(execution_options or {})
+        if "injected_context" in execution_options:
+            execution_options["injected_context"] = sanitize_injected_context(
+                execution_options["injected_context"]
             )
         from app.services.ai.runtime.agentscope.tool_timeout import (
             load_agent_max_toolcall_timeout,
@@ -1078,7 +1078,7 @@ class AgentService:
             agent_max_toolcall_timeout_seconds = parse_agent_max_toolcall_timeout(
                 configured_timeout
             )
-        debug_options["_agent_max_toolcall_timeout_seconds"] = (
+        execution_options["_agent_max_toolcall_timeout_seconds"] = (
             agent_max_toolcall_timeout_seconds
         )
         from app.utils.context import current_user_info
@@ -1130,7 +1130,7 @@ class AgentService:
             conversation_id=conversation_id,
             api_key=api_key,
             enable_multi_agent=enable_multi_agent,
-            debug_options=debug_options,
+            execution_options=execution_options,
             permission_options=permission_options,
             knowledge_dataset_ids=knowledge_dataset_ids,
             metadata_dataset_ids=metadata_dataset_ids,
@@ -1236,7 +1236,7 @@ class AgentService:
         self,
         *,
         config: Optional[Any],
-        debug_options: Optional[Dict[str, Any]],
+        execution_options: Optional[Dict[str, Any]],
         model_override: Optional[str] = None,
         phase: str = "primary_agent",
     ) -> RuntimeModelInfo:
@@ -1244,7 +1244,7 @@ class AgentService:
         try:
             return await resolve_runtime_model_info(
                 config=config,
-                debug_options=debug_options,
+                execution_options=execution_options,
                 model_override=model_override,
                 phase=phase,
             )
@@ -1330,7 +1330,7 @@ class AgentService:
 
         与阶段①（:meth:`_resolve_pre_route_context_budget`）的区别，也是本方法的重点：
 
-        - 只有模型来源是**显式指定**（``runtime_override`` / ``debug_override`` /
+        - 只有模型来源是**显式指定**（``runtime_override`` / ``request_override`` /
           ``agent_config``）时，才采纳它的 ``context_size`` 作为水位线；
         - 若只是 ``system_default``（回落到系统默认模型），**即使注册表里有
           ``context_size`` 也不采纳**，仍用 ``agent_context_max_tokens``。
@@ -1342,7 +1342,7 @@ class AgentService:
         runtime_max_tokens = await self._resolve_pre_route_context_budget()
         if runtime_model_info.source in {
             "runtime_override",
-            "debug_override",
+            "request_override",
             "agent_config",
         }:
             try:
@@ -1360,7 +1360,7 @@ class AgentService:
     def _configured_model_window(runtime_model_info: RuntimeModelInfo) -> int:
         if runtime_model_info.source not in {
             "runtime_override",
-            "debug_override",
+            "request_override",
             "agent_config",
         }:
             return 0
@@ -1816,7 +1816,7 @@ class AgentService:
         *,
         user_info: Optional[dict[str, Any]],
         early_turn_kind: str,
-        debug_options: Optional[dict[str, Any]],
+        execution_options: Optional[dict[str, Any]],
         user_query: str,
     ) -> tuple[Optional[str], Optional[dict], Optional[str], Optional[str]]:
         """加载记忆与 LTM 预加载。
@@ -1825,7 +1825,7 @@ class AgentService:
         ltm_profile: Optional[str] = None
         ltm_loaded_data: Optional[dict] = None
         ignore_ltm = False
-        if debug_options and debug_options.get("ignore_ltm"):
+        if execution_options and execution_options.get("ignore_ltm"):
             ignore_ltm = True
 
         if not ignore_ltm and should_inject_ltm(early_turn_kind) and user_info:
@@ -1917,7 +1917,7 @@ class AgentService:
         messages: list[dict[str, str]],
         trace_id: str,
         trace_buffer: list[AgentExecutionStep],
-        debug_options: Optional[dict[str, Any]],
+        execution_options: Optional[dict[str, Any]],
         permission_options: Optional[dict[str, Any]],
         user_info: Optional[dict[str, Any]],
         conversation_id: Optional[str],
@@ -1930,7 +1930,7 @@ class AgentService:
             messages,
             trace_id,
             trace_buffer,
-            debug_options,
+            execution_options,
             permission_options,
             user_info,
             conversation_id,
@@ -1985,7 +1985,7 @@ class AgentService:
         user_query: str,
         turn_decision: Any,
         messages: List[Dict[str, str]],
-        debug_options: Optional[Dict[str, Any]],
+        execution_options: Optional[Dict[str, Any]],
         conversation_id: Optional[str] = None,
         request_observability: Optional[Dict[str, Any]] = None,
         performance_tracker: Optional[Any] = None,
@@ -2150,7 +2150,7 @@ class AgentService:
                         agent_config=agent_config,
                         user_info=user_info,
                         skills_log_callback=skills_log_callback,
-                        resource_scope=(debug_options or {}).get("resource_scope"),
+                        resource_scope=(execution_options or {}).get("resource_scope"),
                     )
             except Exception as err:
                 logger.warning(f"Error in concurrent _inject_skills: {err}")
@@ -2162,7 +2162,7 @@ class AgentService:
                     return await self._load_memory_context(
                         user_info=user_info,
                         early_turn_kind=early_turn_kind,
-                        debug_options=debug_options,
+                        execution_options=execution_options,
                         user_query=user_query,
                     )
             except Exception as err:
@@ -2327,7 +2327,7 @@ class AgentService:
         user_info: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
         enable_multi_agent: bool = True,
-        debug_options: Optional[Dict[str, Any]] = None,
+        execution_options: Optional[Dict[str, Any]] = None,
         permission_options: Optional[Dict[str, Any]] = None,
         knowledge_dataset_ids: Optional[List[str]] = None,
         metadata_dataset_ids: Optional[List[str]] = None,
@@ -2354,7 +2354,7 @@ class AgentService:
             user_info=user_info,
             api_key=api_key,
             enable_multi_agent=enable_multi_agent,
-            debug_options=debug_options,
+            execution_options=execution_options,
             permission_options=permission_options,
             knowledge_dataset_ids=knowledge_dataset_ids,
             metadata_dataset_ids=metadata_dataset_ids,
@@ -2469,7 +2469,7 @@ class AgentService:
         messages: List[Dict[str, str]],
         trace_id: str,
         trace_buffer: List[AgentExecutionStep],
-        debug_options: Dict[str, Any],
+        execution_options: Dict[str, Any],
         permission_options: Optional[Dict[str, Any]],
         user_info: Optional[Dict[str, Any]],
         api_key: Optional[str],
@@ -2487,7 +2487,7 @@ class AgentService:
             messages,
             trace_id,
             trace_buffer,
-            debug_options,
+            execution_options,
             permission_options,
             user_info,
             api_key,

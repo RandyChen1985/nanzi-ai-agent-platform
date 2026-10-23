@@ -364,7 +364,7 @@ workspace = LocalWorkspace(
 
 **平台专属逻辑（ChatBI 特有，实现于 `app/services/ai/runners/chatbi/`）**：
 - Schema 检索前置（`schema_prefetch`，预取表结构）
-- SQL 计划推演（`sql_gates.should_require_sql_plan`，须 `debug_options.enable_sql_plan=true` 才启用 G6/G11）
+- SQL 计划推演（`sql_gates.should_require_sql_plan`，须 `execution_options.enable_sql_plan=true` 才启用 G6/G11）
 - 意图改写触发的历史截断（`native_turn`，当 `standalone_query ≠ user_question` 时只保留最近 3 轮 Human/AI）
 - DataBlock 图表块提取（`data_tools.py`）
 - 流式 `<sql_plan>` 块由前端 `SqlPlanCard` 结构化展示

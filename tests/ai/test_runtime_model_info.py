@@ -59,7 +59,7 @@ def test_runtime_model_info_public_payload_includes_safe_capacity_metadata():
 
 
 @pytest.mark.asyncio
-async def test_resolve_runtime_model_info_prefers_debug_override():
+async def test_resolve_runtime_model_info_prefers_request_override():
     config = SimpleNamespace(model_name="agent-model")
 
     with patch(
@@ -71,12 +71,12 @@ async def test_resolve_runtime_model_info_prefers_debug_override():
     ):
         info = await resolve_runtime_model_info(
             config=config,
-            debug_options={"model": "debug-model"},
+            execution_options={"model": "override-model"},
         )
 
-    assert info.configured_model == "debug-model"
-    assert info.effective_model_id == "debug-model"
-    assert info.source == "debug_override"
+    assert info.configured_model == "override-model"
+    assert info.effective_model_id == "override-model"
+    assert info.source == "request_override"
     assert info.resolution_status == "direct"
 
 

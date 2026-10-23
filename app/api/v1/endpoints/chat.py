@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, AsyncGenerator, Dict, Any, Union, Literal
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import get_db_session
 from app.services.ai.agent_service import agent_service
@@ -15,7 +15,7 @@ from app.services.ai.context_compaction_log_service import context_compaction_lo
 from app.services.ai.context_usage import estimate_context_usage
 from app.services.ai.export_service import ExportService
 from app.services.config_service import ConfigService
-from app.core.context import set_debug_context
+from app.core.context import set_execution_options_context
 from app.core.dependencies import require_admin, require_api_key
 from app.schemas.response import StandardResponse, ListResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
@@ -579,7 +579,12 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         description="本轮结构化指定的 MetaDataset ID 列表（优先于会话挂载；仍需通过权限校验）",
     )
-    debug_options: Optional[Dict[str, Any]] = None
+    # 兼容旧字段名：历史客户端/集成仍可继续传 debug_options。
+    execution_options: Optional[Dict[str, Any]] = Field(
+        default=None,
+        validation_alias=AliasChoices("execution_options", "debug_options"),
+        description="本轮执行覆盖项（模型/思考/温度等）；旧字段名 debug_options 仍兼容",
+    )
     permission_options: Optional[Dict[str, Any]] = None
     grounding_action: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -1814,16 +1819,16 @@ async def _enforce_chat_model_whitelist(
     db: AsyncSession,
     user_info: Dict[str, Any],
     chat_user_id: Any,
-    effective_debug_options: Dict[str, Any],
+    effective_execution_options: Dict[str, Any],
     agent_id: Optional[str],
     version_id: Optional[str],
 ) -> None:
     """聊天模型白名单：只拦客户端显式注入的模型覆盖，未配置（None）= 不限制。
 
     智能体版本指定的模型天然豁免——用户「选回默认模型」必须始终合法；
-    全局 debug 配置与系统默认模型不经过这里，白名单不影响它们。
+    全局执行选项配置与系统默认模型不经过这里，白名单不影响它们。
     """
-    override_model = str(effective_debug_options.get("model") or "").strip()
+    override_model = str(effective_execution_options.get("model") or "").strip()
     if not override_model or str(user_info.get("role") or "") == "admin":
         return
 
@@ -1877,31 +1882,31 @@ async def create_chat_completion(
     ):
         raise HTTPException(status_code=403, detail="该会话不属于当前用户")
 
-    # Initialize Request Context for Debugging
-    effective_debug_options = dict(completion_request.debug_options or {})
-    # 资源范围只能由服务端会话快照决定，禁止客户端通过 debug_options 注入范围。
-    effective_debug_options.pop("resource_scope", None)
+    # Initialize Request Execution Options
+    effective_execution_options = dict(completion_request.execution_options or {})
+    # 资源范围只能由服务端会话快照决定，禁止客户端通过 execution_options 注入范围。
+    effective_execution_options.pop("resource_scope", None)
     # 模型白名单：只约束客户端显式注入的模型覆盖（智能体默认模型豁免）。
     await _enforce_chat_model_whitelist(
         db=db,
         user_info=user_info,
         chat_user_id=chat_user_id,
-        effective_debug_options=effective_debug_options,
+        effective_execution_options=effective_execution_options,
         agent_id=completion_request.agent_id,
         version_id=completion_request.version_id,
     )
-    if "injected_context" in effective_debug_options:
-        effective_debug_options["injected_context"] = sanitize_injected_context(
-            effective_debug_options["injected_context"]
+    if "injected_context" in effective_execution_options:
+        effective_execution_options["injected_context"] = sanitize_injected_context(
+            effective_execution_options["injected_context"]
         )
     if completion_request.grounding_action:
-        effective_debug_options["grounding_action"] = dict(
+        effective_execution_options["grounding_action"] = dict(
             completion_request.grounding_action
         )
-    if effective_debug_options:
-        set_debug_context(effective_debug_options)
+    if effective_execution_options:
+        set_execution_options_context(effective_execution_options)
     else:
-        set_debug_context({}) # Clear/Default
+        set_execution_options_context({}) # Clear/Default
 
     validate_chat_completion_messages(
         completion_request.messages,
@@ -1925,7 +1930,7 @@ async def create_chat_completion(
         conversation_scope.get(key)
         for key in ("datasets", "knowledge_bases", "skills", "mcp_tools")
     ):
-        effective_debug_options["resource_scope"] = conversation_scope
+        effective_execution_options["resource_scope"] = conversation_scope
     scoped_kb_ids = [str(item.get("id")) for item in conversation_scope.get("knowledge_bases", []) if item.get("id")]
     effective_knowledge_dataset_ids = scoped_kb_ids or completion_request.knowledge_dataset_ids
     from app.services.ai.metadata_dataset_scope import (
@@ -1948,7 +1953,7 @@ async def create_chat_completion(
         request_ids=request_metadata_dataset_ids,
         session_ids=session_dataset_ids,
     )
-    effective_debug_options["metadata_dataset_scope"] = {
+    effective_execution_options["metadata_dataset_scope"] = {
         "source": "turn" if request_metadata_dataset_ids else ("session" if session_dataset_ids else "user"),
         "request_ids": list(request_metadata_dataset_ids or []),
         "session": list(conversation_scope.get("datasets", []) or []),
@@ -2144,7 +2149,7 @@ async def create_chat_completion(
                     user_info=user_info,
                     api_key=api_key_str,
                     enable_multi_agent=completion_request.enable_multi_agent,
-                    debug_options=effective_debug_options,
+                    execution_options=effective_execution_options,
                     permission_options=completion_request.permission_options,
                     knowledge_dataset_ids=effective_knowledge_dataset_ids,
                     metadata_dataset_ids=effective_metadata_dataset_ids,
@@ -2383,7 +2388,7 @@ async def create_chat_completion(
                 user_info=user_info,
                 api_key=api_key_str,
                 enable_multi_agent=completion_request.enable_multi_agent,
-                debug_options=effective_debug_options,
+                execution_options=effective_execution_options,
                 permission_options=completion_request.permission_options,
                 knowledge_dataset_ids=effective_knowledge_dataset_ids,
                 metadata_dataset_ids=effective_metadata_dataset_ids,

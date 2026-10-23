@@ -89,7 +89,9 @@
 | `model` | string | 否 | 指定模型名称 | `gpt-4` |
 | `agent_id` | string | 否 | 指定智能体 ID | `agent_sales` |
 | `conversation_id` | string | 否 | 服务端会话 ID | `uuid...` |
-| `debug_options` | object | 否 | 调试选项 | `{"trace": true}` |
+| `execution_options` | object | 否 | 本轮执行覆盖项（模型 / 思考 / 温度 / 资源范围等） | `{"model": "gpt-4o"}` |
+
+> 兼容说明：该字段原名为 `debug_options`，旧请求仍可继续使用；两者同时出现时以 `execution_options` 为准。
 
 #### 响应 (非流式 Non-Stream)
 

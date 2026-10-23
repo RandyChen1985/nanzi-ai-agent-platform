@@ -66,7 +66,7 @@ async def stream_to_routed_assistant(
         messages,
         runner.trace_id,
         runner.trace_buffer,
-        runner.debug_options,
+        runner.execution_options,
         runner.permission_options,
         runner.user_info,
         runner.conversation_id,

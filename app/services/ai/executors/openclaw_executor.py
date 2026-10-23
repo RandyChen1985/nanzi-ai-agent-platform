@@ -29,13 +29,13 @@ class OpenClawExecutor(BaseExecutor):
         agent_config: ChatConfig,
         trace_id: str,
         trace_buffer: List[AgentExecutionStep],
-        debug_options: Optional[Dict[str, Any]] = None,
+        execution_options: Optional[Dict[str, Any]] = None,
         user_info: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[str] = None,
         permission_options: Optional[Dict[str, Any]] = None,
         current_user_query: Optional[str] = None,
     ):
-        super().__init__(agent_config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
+        super().__init__(agent_config, trace_id, trace_buffer, execution_options, user_info, conversation_id, permission_options)
         self.current_user_query = current_user_query
         self.client = OpenClawClient()
 

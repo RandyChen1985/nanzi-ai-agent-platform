@@ -97,7 +97,7 @@ async def test_expert_mode_still_uses_platform_grounding_gate(chat_config):
             capability="answer",
             provenance="direct_agent_selection",
         ),
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
 
     async def fake_core(_history):
@@ -126,7 +126,7 @@ async def test_web_search_table_without_internal_signals_not_intercepted(chat_co
     )
     runner = _main_runner(
         chat_config,
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
 
     async def fake_core(_history):
@@ -151,7 +151,7 @@ async def test_auto_main_preserves_internal_asset_table_with_risk_warning(chat_c
     )
     runner = _main_runner(
         chat_config,
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
     data_agent = SimpleNamespace(
         id="agent-data-custom",

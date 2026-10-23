@@ -517,7 +517,7 @@ class AgentScopeResumeHandler:
 
             runtime_model_info = await agent_service._resolve_runtime_model_info_safe(
                 config=runner.config,
-                debug_options=dict(getattr(runner, "debug_options", {}) or {}),
+                execution_options=dict(getattr(runner, "execution_options", {}) or {}),
             )
             runtime_context_metadata = await agent_service._runtime_context_metadata(
                 runtime_model_info
@@ -525,7 +525,7 @@ class AgentScopeResumeHandler:
 
             await AgentContextManager.setup_context(
                 config=runner.config,
-                debug_options=dict(getattr(runner, "debug_options", {}) or {}),
+                execution_options=dict(getattr(runner, "execution_options", {}) or {}),
                 user_info=effective_user_info,
                 api_key=effective_user_info.get("api_key"),
                 conversation_id=(
@@ -536,7 +536,7 @@ class AgentScopeResumeHandler:
                 runtime_model_info=runtime_context_metadata,
                 published_download_urls=_restore_published_download_urls_from_pending(pending),
                 agent_max_toolcall_timeout_seconds=(
-                    dict(getattr(runner, "debug_options", {}) or {}).get(
+                    dict(getattr(runner, "execution_options", {}) or {}).get(
                         "_agent_max_toolcall_timeout_seconds"
                     )
                 ),

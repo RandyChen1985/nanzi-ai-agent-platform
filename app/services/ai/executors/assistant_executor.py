@@ -12,14 +12,14 @@ class AssistantExecutor(BaseExecutor):
         config: ChatConfig,
         trace_id: str,
         trace_buffer: List[AgentExecutionStep],
-        debug_options: Dict[str, Any] = None,
+        execution_options: Dict[str, Any] = None,
         user_info: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[str] = None,
         permission_options: Dict[str, Any] = None,
         turn_decision: Optional[TurnDecision] = None,
         current_user_query: Optional[str] = None,
     ):
-        super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
+        super().__init__(config, trace_id, trace_buffer, execution_options, user_info, conversation_id, permission_options)
         self.turn_decision = turn_decision
         self.current_user_query = current_user_query
         self._runner: Optional[AssistantAgentRunner] = None
@@ -32,7 +32,7 @@ class AssistantExecutor(BaseExecutor):
             config=self.config,
             trace_id=self.trace_id,
             trace_buffer=self.trace_buffer,
-            debug_options=self.debug_options,
+            execution_options=self.execution_options,
             permission_options=self.permission_options,
             user_info=self.user_info,
             conversation_id=self.conversation_id,

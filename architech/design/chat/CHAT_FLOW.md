@@ -1,6 +1,6 @@
 # 聊天流程说明（Chat Flow）
 
-本文描述南孜智能体平台从用户发消息到看到回复的端到端流程。以 **Embed 对话页**（`EmbedChat.vue`）为主；**Agent 调试页**（`AgentDebug.vue`）逻辑类似，额外支持 `debug_options` 覆盖模型等调试项。
+本文描述南孜智能体平台从用户发消息到看到回复的端到端流程。以 **Embed 对话页**（`EmbedChat.vue`）为主；**Agent 调试页**（`AgentDebug.vue`）逻辑类似，额外支持 `execution_options` 覆盖模型等调试项。
 
 **提示词分层**（`system_prompt` 栈、全局守则、轮次裁剪）见同目录 [PROMPT_LAYERS.md](./PROMPT_LAYERS.md)。目录索引：[README.md](./README.md)。
 
@@ -99,7 +99,7 @@ sequenceDiagram
 | `agent_id` | 指定智能体；为空时由后端直接加载默认 Main |
 | `conversation_id` | 服务端 Redis 会话记忆 |
 | `enable_multi_agent` | 是否启用多智能体协同 |
-| `debug_options.injected_context` | 页面信息、用户身份等注入上下文 |
+| `execution_options.injected_context` | 页面信息、用户身份等注入上下文 |
 
 ### 2.2 流式响应解析
 
@@ -127,7 +127,7 @@ sequenceDiagram
 **文件**：`app/api/v1/endpoints/chat.py`
 
 1. `require_api_key` 校验登录 / API Key，得到 `user_info`
-2. `set_debug_context(debug_options)`（调试页可覆盖模型等）
+2. `set_execution_options_context(execution_options)`（调试页可覆盖模型等）
 3. **流式**：调用 `agent_service.chat_completion_stream(...)`，每块格式化为 SSE
 4. **非流式**：调用 `agent_service.chat_completion(...)`，返回标准 JSON 包装
 

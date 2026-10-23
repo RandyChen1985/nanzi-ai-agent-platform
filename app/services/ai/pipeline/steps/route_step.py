@@ -43,7 +43,7 @@ class RouteStep(BasePipelineStep):
         version_id = context.version_id or shared_state.get("version_id")
         conversation_id = context.conversation_id
         user_info = context.user_info
-        debug_options = context.debug_options or {}
+        execution_options = context.execution_options or {}
         trace_id = context.trace_id
         trace_buffer = context.trace_buffer
         enable_multi_agent = context.enable_multi_agent
@@ -295,7 +295,7 @@ class RouteStep(BasePipelineStep):
         # 3. 挂载 Session MCP 工具
         apply_session_mcp_tools_to_agent_config(
             agent_config,
-            (debug_options or {}).get("resource_scope"),
+            (execution_options or {}).get("resource_scope"),
         )
 
         # 4. 解析运行时模型信息
@@ -304,13 +304,13 @@ class RouteStep(BasePipelineStep):
         if self.agent_service and hasattr(self.agent_service, "_resolve_runtime_model_info_safe"):
             runtime_model_info = await self.agent_service._resolve_runtime_model_info_safe(
                 config=agent_config,
-                debug_options=debug_options,
+                execution_options=execution_options,
             )
             synthesis_model_name = str(getattr(agent_config, "synthesis_model_name", "") or "").strip()
             if synthesis_model_name:
                 synthesis_runtime_model_info = await self.agent_service._resolve_runtime_model_info_safe(
                     config=agent_config,
-                    debug_options=debug_options,
+                    execution_options=execution_options,
                     model_override=synthesis_model_name,
                     phase="synthesis",
                 )

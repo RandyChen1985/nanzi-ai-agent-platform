@@ -572,7 +572,7 @@ async def web_search_baidu_http(
     需要阅读某个结果正文时，可对真实 URL 调用 fetch_static_web_url。
 
     Args:
-        query: 检索关键词（例如 '南孜智能体 智能运营'）。
+        query: 检索关键词（例如 '智能体 智能运营'）。
         max_results: 返回的最多结果条数，默认 6 条。
         deep_fetch: 是否并发抓取 Top-2 结果页正文（默认 False，更快）。
     """
@@ -608,7 +608,7 @@ async def web_search_baidu(query: str, max_results: int = 6) -> str:
     不需要商业 API Key。
 
     Args:
-        query: 检索关键词（例如 '南孜智能体 智能运营'）。
+        query: 检索关键词（例如 '智能体 智能运营'）。
         max_results: 返回的最多结果条数，默认 6 条。
     """
     try:

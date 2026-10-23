@@ -288,7 +288,7 @@ async def test_get_llm_async_applies_request_reasoning_override_to_auxiliary_cal
 
     monkeypatch.setattr(client.ConfigServiceProxy, "get", staticmethod(fake_config_get))
     monkeypatch.setattr(client, "_lookup_ai_model_record", fake_lookup)
-    monkeypatch.setattr(client, "get_debug_option", lambda key, default=None: {
+    monkeypatch.setattr(client, "get_execution_option", lambda key, default=None: {
         "thinking_enable": False,
         "reasoning_effort": "high",
     }.get(key, default))
@@ -332,7 +332,7 @@ async def test_get_llm_async_ignores_session_reasoning_override_when_requested(m
 
     monkeypatch.setattr(client.ConfigServiceProxy, "get", staticmethod(fake_config_get))
     monkeypatch.setattr(client, "_lookup_ai_model_record", fake_lookup)
-    monkeypatch.setattr(client, "get_debug_option", lambda key, default=None: {
+    monkeypatch.setattr(client, "get_execution_option", lambda key, default=None: {
         "thinking_enable": False,
         "reasoning_effort": "high",
     }.get(key, default))
@@ -424,7 +424,7 @@ async def test_request_reasoning_override_applies_only_when_registered_model_all
     monkeypatch.setattr(config_module, "get_llm", fake_get_llm)
     monkeypatch.setattr(
         config_module,
-        "get_debug_option",
+        "get_execution_option",
         lambda key, default=None: {
             "thinking_enable": False,
             "reasoning_effort": "high",
@@ -476,7 +476,7 @@ async def test_request_reasoning_override_ignores_unsupported_effort(monkeypatch
     monkeypatch.setattr(config_module, "get_llm", fake_get_llm)
     monkeypatch.setattr(
         config_module,
-        "get_debug_option",
+        "get_execution_option",
         lambda key, default=None: "xhigh" if key == "reasoning_effort" else default,
     )
 

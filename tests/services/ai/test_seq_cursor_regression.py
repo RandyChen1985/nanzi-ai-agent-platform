@@ -353,12 +353,12 @@ class TestPostRouteModelWindowAdoption:
 
         assert result == 43210
 
-    def test_debug_override_model_window_is_adopted(self):
-        """用户在输入框手动切换的模型（debug_override）同样应采纳其窗口。"""
+    def test_request_override_model_window_is_adopted(self):
+        """用户在输入框手动切换的模型（request_override）同样应采纳其窗口。"""
         import asyncio
 
         result = asyncio.run(
-            self._history_budget("debug_override", 128000, cfg="65536")
+            self._history_budget("request_override", 128000, cfg="65536")
         )
 
         assert result == 128000
@@ -380,7 +380,7 @@ class TestFinalRuntimeModelFallback:
         ):
             result = await service._resolve_runtime_model_info_safe(
                 config=config,
-                debug_options=None,
+                execution_options=None,
             )
 
         assert isinstance(result, RuntimeModelInfo)

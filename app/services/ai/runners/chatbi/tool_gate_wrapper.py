@@ -20,7 +20,7 @@ from app.services.ai.time_anchor import build_time_range_gate_message, detect_ti
 def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state: DataRunState) -> list[RuntimeToolSpec]:
     from app.core.context import get_current_agent_context
 
-    resource_scope = (getattr(runner, "debug_options", {}) or {}).get("resource_scope", {}) or {}
+    resource_scope = (getattr(runner, "execution_options", {}) or {}).get("resource_scope", {}) or {}
 
     def _effective_metadata_dataset_ids() -> list[str] | None:
         ctx = get_current_agent_context()
@@ -42,7 +42,7 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
 
     def mounted_dataset_names() -> set[str] | None:
         scope_datasets = (
-            ((getattr(runner, "debug_options", {}) or {}).get("resource_scope", {}) or {}).get("datasets", [])
+            ((getattr(runner, "execution_options", {}) or {}).get("resource_scope", {}) or {}).get("datasets", [])
             or []
         )
         if effective_dataset_ids:

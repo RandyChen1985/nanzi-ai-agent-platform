@@ -128,6 +128,9 @@ async def test_create_task_persists_sanitized_config():
         "_sanitize_task_config",
         AsyncMock(return_value={"resource_scope": _authorized_scope()}),
     ), patch.object(
+        # 智能体绑定校验由 test_task_agent_validation.py 覆盖，这里聚焦范围收敛。
+        tasks_endpoint, "_ensure_agent_selectable", AsyncMock()
+    ), patch.object(
         tasks_endpoint.TaskCenterService, "create_task", AsyncMock(return_value=created)
     ) as create, patch.object(
         tasks_endpoint.TaskResponse, "from_orm", MagicMock(return_value=None)

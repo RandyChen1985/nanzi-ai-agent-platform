@@ -48,6 +48,37 @@ async def _task_owner_info(db: AsyncSession, owner_user_id: Any) -> Dict[str, An
     }
 
 
+async def _ensure_agent_selectable(
+    db: AsyncSession,
+    user_info: Dict[str, Any],
+    agent_id: Any,
+) -> None:
+    """定时任务只能绑定「存在 + 已启用 + 当前用户有权使用」的智能体。
+
+    任务按所有者身份执行，入口不校验时，普通用户可直接调 API 绑定别人的私有
+    智能体或已停用智能体，把任务变成越权执行入口（前端下拉只是第一道防线）。
+    """
+    from app.models.agent import AIAgent
+    from app.services.ai.agent_manager import AgentManagerService
+
+    key = str(agent_id or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="agent_id 不能为空")
+
+    agent = await db.get(AIAgent, key)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    if not agent.is_enabled:
+        raise HTTPException(status_code=400, detail="智能体已停用，无法绑定定时任务")
+
+    if user_info.get("role") == "admin":
+        return
+
+    allowed = await AgentManagerService.list_allowed_agents(db, user=user_info)
+    if key not in {item.id for item in allowed}:
+        raise HTTPException(status_code=403, detail="无权使用该智能体")
+
+
 # 任务约束指令会进入 system prompt，必须限制体量：超限直接拒绝保存，
 # 不做静默截断——否则用户会误以为约束已完整生效。
 TASK_CONSTRAINTS_MAX_CHARS = 2000
@@ -120,6 +151,7 @@ async def create_task(
     """
     raw_user_id = user_info.get("user_id") or user_info.get("id")
     user_id = int(raw_user_id) if raw_user_id is not None else None
+    await _ensure_agent_selectable(db, user_info, task_in.agent_id)
     owner_info = await _task_owner_info(db, user_id)
     config = await _sanitize_task_config(db, owner_info, task_in.config)
     task = await TaskCenterService.create_task(
@@ -327,8 +359,14 @@ async def update_task(
     _check_task_ownership(task, user_info)
 
     payload = task_in.model_dump(exclude_unset=True)
-    if "config" in payload:
+    agent_changed = bool(payload.get("agent_id")) and payload["agent_id"] != task.agent_id
+    owner_info: Dict[str, Any] = {}
+    if agent_changed or "config" in payload:
         owner_info = await _task_owner_info(db, task.user_id)
+    if agent_changed:
+        # 任务按所有者身份执行：改绑校验必须看 owner 的权限，而不是当前操作人
+        await _ensure_agent_selectable(db, owner_info, payload["agent_id"])
+    if "config" in payload:
         payload["config"] = await _sanitize_task_config(db, owner_info, payload["config"])
 
     updated = await TaskCenterService.update_task(db, task_id, payload)

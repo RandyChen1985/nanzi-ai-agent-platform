@@ -187,7 +187,7 @@ async def test_hallucination_reflection_loop_corrects(kb_config):
     """验证当检测到幻觉时触发自反思重写循环，若第二次通过则输出正确答案。"""
     runner = _kb_runner(
         kb_config,
-        debug_options={"grounding_enabled": True, "hallucination_check": True},
+        execution_options={"grounding_enabled": True, "hallucination_check": True},
     )
     runner._rag_empty = False
     runner._valid_citation_ids = ["chunk_1"]
@@ -255,7 +255,7 @@ async def test_hallucination_max_retries_retains_answer_with_soft_warning(kb_con
     """反思次数耗尽后保留最后回答，并追加一次消息内风险提示。"""
     runner = _kb_runner(
         kb_config,
-        debug_options={"grounding_enabled": True, "hallucination_check": True},
+        execution_options={"grounding_enabled": True, "hallucination_check": True},
     )
     runner._rag_empty = False
 
@@ -348,7 +348,7 @@ async def test_hallucination_guard_is_disabled_by_default(kb_config):
 async def test_stream_error_bypasses_knowledge_grounding_reflection(kb_config):
     runner = _kb_runner(
         kb_config,
-        debug_options={"grounding_enabled": True, "hallucination_check": True},
+        execution_options={"grounding_enabled": True, "hallucination_check": True},
     )
     runner._rag_empty = False
 

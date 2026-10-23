@@ -44,7 +44,7 @@ def test_federated_failed_sql_repeat_message_has_prefix():
 @pytest.mark.no_infrastructure
 async def test_federated_preflight_receives_project_dataset_scope():
     runner = MagicMock()
-    runner.debug_options = {
+    runner.execution_options = {
         "resource_scope": {
             "datasets": [{"id": "7", "dataset_name": "mounted_ds"}],
         }

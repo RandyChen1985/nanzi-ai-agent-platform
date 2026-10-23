@@ -404,7 +404,7 @@ async def test_assistant_agent_runner_prompt_layout_stable_before_dynamic_and_no
         trace_id="trace-layout",
         trace_buffer=[],
         turn_decision=turn_decision,
-        debug_options={
+        execution_options={
             "grounding_enabled": True,
             "grounding_action": {"type": "method"},
         },

@@ -9,7 +9,7 @@ import platform
 import sys
 from typing import Any
 
-from app.core.context import get_current_agent_context, get_debug_option
+from app.core.context import get_current_agent_context, get_execution_option
 from app.core.redis import get_redis
 from app.services.ai.context_usage import estimate_context_usage, estimate_text_tokens
 from app.services.ai.memory_service import memory_service
@@ -113,7 +113,7 @@ def _user_summary(context: Any) -> dict[str, Any] | None:
 
 
 def _client_summary() -> dict[str, Any]:
-    injected = get_debug_option("injected_context", {}) or {}
+    injected = get_execution_option("injected_context", {}) or {}
     if not isinstance(injected, dict):
         injected = {}
     device_type = injected.get("device_type")

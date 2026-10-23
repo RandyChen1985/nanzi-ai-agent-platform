@@ -1,4 +1,7 @@
 import json
+import logging
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict
 from urllib.parse import urlparse, urlsplit, urlunsplit
@@ -14,10 +17,12 @@ from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.ai_model import (
     AIModelCreate,
     AIModelDiscoverRequest,
+    AIModelDiscoverResponse,
     AIModelOption,
     AIModelTestRequest,
     AIModelUpdate,
     AIModelResponse,
+    ModelDiagnosticStep,
     normalize_supported_reasoning_efforts,
     normalize_legacy_reasoning_effort,
     normalize_legacy_supported_reasoning_efforts,
@@ -29,9 +34,57 @@ from app.utils.model_providers import (
     default_model_api_base_url,
     resolve_model_api_base_url,
 )
+from app.utils.provider_diagnostics import (
+    describe_http_failure,
+    describe_invalid_response,
+    describe_sdk_failure,
+    describe_transport_failure,
+    redact_secrets,
+)
 import uuid
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.perf_counter() - started_at) * 1000)
+
+
+def _log_reason(text: str, limit: int = 160) -> str:
+    """Collapse a multi-line diagnostic into one log line without leaking secrets."""
+
+    stripped = (text or "").strip()
+    if not stripped:
+        return ""
+    return redact_secrets(stripped.splitlines()[0])[:limit]
+
+
+class _StepRecorder:
+    """采集一次供应商调用的分步耗时，供前端渲染「测试过程」时间线。
+
+    每个步骤的 ``elapsed_ms`` 是「从上一步到这里」的耗时，因此「请求供应商」
+    那条就是真实网络耗时——安装方据此能判断慢在连接、鉴权还是解析。
+    """
+
+    def __init__(self) -> None:
+        self._steps: list[dict] = []
+        self._mark = time.perf_counter()
+
+    def add(self, name: str, *, status: str = "ok", detail: str | None = None) -> None:
+        now = time.perf_counter()
+        self._steps.append(
+            {
+                "name": name,
+                "status": status,
+                "detail": _log_reason(detail) if detail else None,
+                "elapsed_ms": int((now - self._mark) * 1000),
+            }
+        )
+        self._mark = now
+
+    def snapshot(self) -> list[dict]:
+        return list(self._steps)
 
 
 def _serialize_reasoning_efforts(value: list[str]) -> str:
@@ -93,7 +146,7 @@ async def list_models(
     return [AIModelResponse.from_orm_custom(m) for m in result.scalars().all()]
 
 
-@router.post("/discover", response_model=List[AIModelOption])
+@router.post("/discover", response_model=AIModelDiscoverResponse)
 async def discover_models(
     request: AIModelDiscoverRequest,
     db: AsyncSession = Depends(get_db_session),
@@ -112,6 +165,12 @@ async def discover_models(
         if existing:
             api_key = decrypt_model_api_key(existing.api_key) or ""
 
+    recorder = _StepRecorder()
+    recorder.add(
+        "读取配置",
+        detail=f"provider={request.provider}，API Key {'已配置' if api_key else '未配置'}",
+    )
+
     base_url = resolve_model_api_base_url(request.provider, request.api_base_url)
     if not base_url:
         raise HTTPException(status_code=400, detail="请填写 API Base URL")
@@ -129,6 +188,16 @@ async def discover_models(
         # the deployments API on the same regional host.
         request_url = f"{parsed.scheme}://{parsed.netloc}/api/v1/deployments/models"
         request_params = {"page_no": 1, "page_size": 100, "version": "v1.0", "model_source": "base"}
+
+    recorder.add("解析请求地址", detail=request_url)
+    logger.info(
+        "[model.discover] start provider=%s url=%s key=%s",
+        request.provider,
+        redact_secrets(request_url),
+        "已配置" if api_key else "未配置",
+    )
+    started_at = time.perf_counter()
+
     try:
         async with httpx.AsyncClient(
             timeout=10.0,
@@ -139,24 +208,102 @@ async def discover_models(
                 response = await client.get(request_url, headers=headers, params=request_params)
             else:
                 response = await client.get(request_url, headers=headers)
-            response.raise_for_status()
-            payload = response.json()
-    except httpx.HTTPStatusError as exc:
-        status_code = exc.response.status_code
-        if status_code in {401, 403}:
-            detail = "供应商鉴权失败，请检查 API Key。"
-        else:
-            detail = f"供应商模型列表请求失败（HTTP {status_code}）。"
-        raise HTTPException(status_code=502, detail=detail) from exc
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail=f"无法获取供应商模型列表：{exc}") from exc
+            recorder.add("请求供应商", detail=f"HTTP {response.status_code}")
+
+            if response.status_code >= 400:
+                detail_text = describe_http_failure(
+                    method="GET",
+                    request_url=request_url,
+                    status_code=response.status_code,
+                    body=response.text,
+                )
+                if not api_key and response.status_code in {401, 403}:
+                    detail_text = (
+                        f"{detail_text}\n注意：本次请求没有携带 API Key——表单留空，"
+                        "且未能从已保存的配置中解出密钥（更换过 SECRET_KEY 或迁移环境后旧密钥会失效，需要重新填写）。"
+                    )
+                recorder.add(
+                    "供应商响应",
+                    status="failed",
+                    detail=_log_reason(detail_text),
+                )
+                logger.warning(
+                    "[model.discover] failed provider=%s url=%s status=%s elapsed_ms=%s reason=%s",
+                    request.provider,
+                    redact_secrets(request_url),
+                    response.status_code,
+                    _elapsed_ms(started_at),
+                    _log_reason(detail_text),
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail={"message": detail_text, "steps": recorder.snapshot()},
+                )
+
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                invalid_detail = describe_invalid_response(
+                    method="GET",
+                    request_url=request_url,
+                    body=response.text,
+                    content_type=response.headers.get("content-type"),
+                )
+                recorder.add(
+                    "解析返回内容",
+                    status="failed",
+                    detail="返回内容不是合法 JSON",
+                )
+                logger.error(
+                    "[model.discover] failed provider=%s url=%s status=%s elapsed_ms=%s reason=%s",
+                    request.provider,
+                    redact_secrets(request_url),
+                    response.status_code,
+                    _elapsed_ms(started_at),
+                    _log_reason(invalid_detail),
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail={"message": invalid_detail, "steps": recorder.snapshot()},
+                ) from exc
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        transport_detail = describe_transport_failure(
+            method="GET",
+            request_url=request_url,
+            exc=exc,
+        )
+        recorder.add(
+            "请求供应商",
+            status="failed",
+            detail=f"{type(exc).__name__}: {exc}".rstrip(": "),
+        )
+        logger.error(
+            "[model.discover] failed provider=%s url=%s elapsed_ms=%s reason=%s",
+            request.provider,
+            redact_secrets(request_url),
+            _elapsed_ms(started_at),
+            _log_reason(f"{type(exc).__name__}: {exc}"),
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={"message": transport_detail, "steps": recorder.snapshot()},
+        ) from exc
 
     if request.provider == "dashscope" and isinstance(payload, dict):
         raw_models = payload.get("output", {}).get("models", [])
     else:
         raw_models = payload.get("data", []) if isinstance(payload, dict) else payload
     if not isinstance(raw_models, list):
-        raise HTTPException(status_code=502, detail="供应商返回的模型列表格式无法识别")
+        recorder.add("解析返回内容", status="failed", detail="模型列表格式无法识别")
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "供应商返回的模型列表格式无法识别",
+                "steps": recorder.snapshot(),
+            },
+        )
 
     options: list[AIModelOption] = []
     for item in raw_models:
@@ -171,7 +318,15 @@ async def discover_models(
         if model_id:
             options.append(AIModelOption(model_id=model_id, name=model_name or model_id))
 
-    return options
+    recorder.add("解析返回内容", detail=f"{len(options)} 个模型")
+    logger.info(
+        "[model.discover] ok provider=%s url=%s models=%s elapsed_ms=%s",
+        request.provider,
+        redact_secrets(request_url),
+        len(options),
+        _elapsed_ms(started_at),
+    )
+    return {"models": options, "steps": recorder.snapshot()}
 
 @router.post("", response_model=AIModelResponse)
 async def create_model(
@@ -423,14 +578,42 @@ async def _test_model_connection(
     max_output_tokens: int | None = None,
     temperature: float | None = None,
 ):
+    recorder = _StepRecorder()
+    recorder.add(
+        "读取配置",
+        detail=(
+            f"provider={provider or '默认'}，model={model_id}，"
+            f"API Key {'已配置' if api_key else '未配置'}"
+        ),
+    )
+    logger.info(
+        "[model.test] start model=%s type=%s provider=%s base_url=%s key=%s",
+        model_id,
+        model_type,
+        provider,
+        redact_secrets((api_base_url or "").strip()) or "（默认）",
+        "已配置" if api_key else "未配置",
+    )
+    started_at = time.perf_counter()
     try:
         if model_type == "embedding":
-            return await _test_embedding_connection(
+            recorder.add(
+                "准备 Embedding 请求",
+                detail=redact_secrets((api_base_url or "").strip()) or "使用供应商默认地址",
+            )
+            result = await _test_embedding_connection(
                 provider=provider,
                 model_id=model_id,
                 api_key=api_key,
                 api_base_url=api_base_url,
             )
+            recorder.add("收到响应", detail=str(result.get("response") or ""))
+            logger.info(
+                "[model.test] ok model=%s type=embedding elapsed_ms=%s",
+                model_id,
+                _elapsed_ms(started_at),
+            )
+            return {**result, "steps": recorder.snapshot()}
 
         from app.core.llm.client import get_llm_async
         from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
@@ -446,9 +629,19 @@ async def _test_model_connection(
             temperature=temperature,
             source="model.test",
         )
-        
+        recorder.add(
+            "创建 LLM 客户端",
+            detail=redact_secrets((api_base_url or "").strip()) or "使用供应商默认地址",
+        )
+
         if not llm:
-            return {"status": "error", "message": "无法创建 LLM 实例，请检查配置。"}
+            recorder.add("创建 LLM 客户端", status="failed", detail="无法创建 LLM 实例")
+            logger.error("[model.test] failed model=%s reason=无法创建 LLM 实例", model_id)
+            return {
+                "status": "error",
+                "message": "无法创建 LLM 实例，请检查配置。",
+                "steps": recorder.snapshot(),
+            }
 
         # Simple ping-style check
         import asyncio
@@ -464,16 +657,45 @@ async def _test_model_connection(
             ),
             timeout=15.0,
         )
-        
+        recorder.add("收到响应", detail=_log_reason(response, 60))
+
+        logger.info(
+            "[model.test] ok model=%s type=%s elapsed_ms=%s",
+            model_id,
+            model_type,
+            _elapsed_ms(started_at),
+        )
         return {
             "status": "success", 
             "message": "连接成功", 
-            "response": response[:100]
+            "response": response[:100],
+            "steps": recorder.snapshot(),
         }
+    except ValueError as e:
+        # 配置类错误（Base URL 缺失、供应商返回格式不符）本身已是可读中文，
+        # 直接透出比套一层「调用失败」更有用。
+        recorder.add("执行请求", status="failed", detail=str(e))
+        logger.warning(
+            "[model.test] failed model=%s elapsed_ms=%s reason=%s",
+            model_id,
+            _elapsed_ms(started_at),
+            _log_reason(str(e)),
+        )
+        return {"status": "error", "message": str(e), "steps": recorder.snapshot()}
     except Exception as e:
-        import logging
-        logging.error(f"Model test failed: {str(e)}")
-        return {"status": "error", "message": f"连接失败: {str(e)}"}
+        recorder.add(f"{type(e).__name__}", status="failed", detail=str(e) or "异常消息为空")
+        logger.error(
+            "[model.test] failed model=%s type=%s elapsed_ms=%s reason=%s",
+            model_id,
+            type(e).__name__,
+            _elapsed_ms(started_at),
+            _log_reason(str(e)) or "（异常消息为空）",
+        )
+        return {
+            "status": "error",
+            "message": describe_sdk_failure(e),
+            "steps": recorder.snapshot(),
+        }
 
 
 def _embedding_request_url(

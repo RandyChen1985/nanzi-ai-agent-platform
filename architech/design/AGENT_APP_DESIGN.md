@@ -65,7 +65,7 @@
     "messages": [{"role": "user", "content": "..."}],
     "stream": true,
     "agent_id": "可选，指定agent_id",
-    "debug_options": {
+    "execution_options": {
         "return_raw_prompt": true // 是否返回原始Prompt用于调试
     }
   }
@@ -155,7 +155,7 @@
 *客户端动作*: 实时更新侧边栏或浮动窗口中的变量视图。
 
 #### 5. 调试信息 (Debug Info)
-仅在请求体中 `debug_options.return_raw_prompt = true` 时返回。
+仅在请求体中 `execution_options.return_raw_prompt = true` 时返回。
 ```json
 // data:
 {

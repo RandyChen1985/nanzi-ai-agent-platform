@@ -43,7 +43,7 @@ async def test_schema_miss_handoff_replaces_fatal_response(monkeypatch):
         _active_history=[{"role": "user", "content": "联网查一下今天行业新闻"}],
         trace_id="trace-source",
         trace_buffer=[],
-        debug_options={},
+        execution_options={},
         permission_options={},
         user_info={"user_id": 7},
         conversation_id="conv-1",

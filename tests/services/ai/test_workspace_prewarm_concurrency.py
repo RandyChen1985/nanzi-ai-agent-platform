@@ -43,7 +43,7 @@ async def _call_preflight(service: AgentService, **kwargs) -> object:
         "user_query": "测试查询",
         "turn_decision": _fake_turn_decision(),
         "messages": [{"role": "user", "content": "测试查询"}],
-        "debug_options": None,
+        "execution_options": None,
     }
     base_kwargs.update(kwargs)
     return await service._gather_turn_preflight_context(**base_kwargs)

@@ -1,4 +1,5 @@
 import pytest
+import httpx
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.main import app
@@ -544,6 +545,8 @@ async def test_model_discovery_uses_provider_default_and_returns_model_options(
     monkeypatch,
 ):
     class FakeResponse:
+        status_code = 200
+
         def raise_for_status(self):
             return None
 
@@ -586,10 +589,19 @@ async def test_model_discovery_uses_provider_default_and_returns_model_options(
     )
 
     assert response.status_code == 200
-    assert response.json() == [
+    payload = response.json()
+    assert payload["models"] == [
         {"model_id": "deepseek-v4-pro", "name": "deepseek-v4-pro"},
         {"model_id": "deepseek-v4-flash", "name": "deepseek-v4-flash"},
     ]
+    assert [step["name"] for step in payload["steps"]] == [
+        "读取配置",
+        "解析请求地址",
+        "请求供应商",
+        "解析返回内容",
+    ]
+    assert all(step["status"] == "ok" for step in payload["steps"])
+    assert all("elapsed_ms" in step for step in payload["steps"])
     assert FakeClient.last_url == "https://api.deepseek.com/models"
     assert FakeClient.last_headers == {"Authorization": "Bearer sk-discover-test"}
 
@@ -601,6 +613,8 @@ async def test_dashscope_discovery_uses_official_catalog_endpoint(
     monkeypatch,
 ):
     class FakeResponse:
+        status_code = 200
+
         def raise_for_status(self):
             return None
 
@@ -637,7 +651,7 @@ async def test_dashscope_discovery_uses_official_catalog_endpoint(
     )
 
     assert response.status_code == 200
-    assert response.json() == [{"model_id": "qwen-plus", "name": "qwen-plus"}]
+    assert response.json()["models"] == [{"model_id": "qwen-plus", "name": "qwen-plus"}]
     assert FakeClient.last_url == "https://dashscope.aliyuncs.com/api/v1/deployments/models"
     assert FakeClient.last_params == {
         "page_no": 1,
@@ -645,3 +659,210 @@ async def test_dashscope_discovery_uses_official_catalog_endpoint(
         "version": "v1.0",
         "model_source": "base",
     }
+
+
+def _discover_fake_client(monkeypatch, *, response=None, exc=None):
+    class FakeClient:
+        last_url = None
+
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, headers=None, params=None):
+            FakeClient.last_url = url
+            if exc is not None:
+                raise exc
+            return response
+
+    monkeypatch.setattr("app.api.portal.endpoints.models.httpx.AsyncClient", FakeClient)
+    return FakeClient
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_reports_auth_failure_with_provider_detail(
+    client: AsyncClient,
+    admin_headers,
+    monkeypatch,
+):
+    class FakeResponse:
+        status_code = 401
+        text = '{"code": "InvalidApiKey", "message": "Invalid API-key provided."}'
+        headers = {"content-type": "application/json"}
+
+        def json(self):
+            raise AssertionError("401 responses must not be parsed as a model list")
+
+    _discover_fake_client(monkeypatch, response=FakeResponse())
+
+    response = await client.post(
+        "/api/portal/models/discover",
+        json={"provider": "openai", "api_base_url": "https://api.example.com/v1"},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "供应商鉴权失败（HTTP 401）" in detail
+    assert "InvalidApiKey" in detail
+    assert "请求：GET https://api.example.com/v1/models" in detail
+    assert "没有携带 API Key" in detail
+    # 失败时也要把过程步骤带回来，前端才能画出「卡在哪一步」
+    steps = response.json()["data"]["steps"]
+    failed_steps = [step for step in steps if step["status"] == "failed"]
+    assert [step["name"] for step in failed_steps] == ["供应商响应"]
+    assert [step["name"] for step in steps][:3] == [
+        "读取配置",
+        "解析请求地址",
+        "请求供应商",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_reports_transport_failure_with_request_url(
+    client: AsyncClient,
+    admin_headers,
+    monkeypatch,
+):
+    _discover_fake_client(monkeypatch, exc=httpx.ConnectTimeout("timed out"))
+
+    response = await client.post(
+        "/api/portal/models/discover",
+        json={
+            "provider": "openai",
+            "api_base_url": "https://api.example.com/v1",
+            "api_key": "sk-discover-transport-test",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "超时" in detail
+    assert "请求：GET https://api.example.com/v1/models" in detail
+    assert "ConnectTimeout: timed out" in detail
+    assert "HTTP_PROXY" in detail
+    steps = response.json()["data"]["steps"]
+    assert steps[-1]["status"] == "failed"
+    assert steps[-1]["name"] == "请求供应商"
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_reports_non_json_response_body(
+    client: AsyncClient,
+    admin_headers,
+    monkeypatch,
+):
+    class FakeResponse:
+        status_code = 200
+        text = "<html><body>please login</body></html>"
+        headers = {"content-type": "text/html; charset=utf-8"}
+
+        def json(self):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    _discover_fake_client(monkeypatch, response=FakeResponse())
+
+    response = await client.post(
+        "/api/portal/models/discover",
+        json={
+            "provider": "openai",
+            "api_base_url": "https://api.example.com/v1",
+            "api_key": "sk-discover-nonjson-test",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "不是合法 JSON" in detail
+    assert "text/html" in detail
+    assert "please login" in detail
+    steps = response.json()["data"]["steps"]
+    last_step = steps[-1]
+    assert last_step["name"] == "解析返回内容"
+    assert last_step["status"] == "failed"
+    assert last_step["detail"] == "返回内容不是合法 JSON"
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_logs_progress_with_elapsed_time(
+    client: AsyncClient,
+    admin_headers,
+    monkeypatch,
+    caplog,
+):
+    class FakeResponse:
+        status_code = 200
+        text = ""
+        headers: dict = {}
+
+        def json(self):
+            return {"data": [{"id": "deepseek-v4-pro"}]}
+
+    _discover_fake_client(monkeypatch, response=FakeResponse())
+
+    with caplog.at_level("INFO", logger="app.api.portal.endpoints.models"):
+        response = await client.post(
+            "/api/portal/models/discover",
+            json={"provider": "deepseek", "api_key": "sk-log-test"},
+            headers=admin_headers,
+        )
+
+    assert response.status_code == 200
+    messages = [record.getMessage() for record in caplog.records]
+    started = next(m for m in messages if m.startswith("[model.discover] start"))
+    finished = next(m for m in messages if m.startswith("[model.discover] ok"))
+
+    assert "provider=deepseek" in started
+    assert "url=https://api.deepseek.com/models" in started
+    assert "key=已配置" in started
+    assert "models=1" in finished
+    assert "elapsed_ms=" in finished
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_logs_failure_reason_and_status(
+    client: AsyncClient,
+    admin_headers,
+    monkeypatch,
+    caplog,
+):
+    class FakeResponse:
+        status_code = 401
+        text = '{"code": "InvalidApiKey", "message": "Invalid API-key provided."}'
+        headers = {"content-type": "application/json"}
+
+        def json(self):
+            raise AssertionError("401 responses must not be parsed as a model list")
+
+    _discover_fake_client(monkeypatch, response=FakeResponse())
+
+    with caplog.at_level("INFO", logger="app.api.portal.endpoints.models"):
+        response = await client.post(
+            "/api/portal/models/discover",
+            json={
+                "provider": "openai",
+                "api_base_url": "https://api.example.com/v1",
+                "api_key": "sk-log-failure-test",
+            },
+            headers=admin_headers,
+        )
+
+    assert response.status_code == 502
+    failed = [
+        record.getMessage()
+        for record in caplog.records
+        if "[model.discover] failed" in record.getMessage()
+    ]
+    assert len(failed) == 1
+    assert "status=401" in failed[0]
+    assert "InvalidApiKey" in failed[0]
+    assert "elapsed_ms=" in failed[0]
+    # 日志里不能出现密钥原文
+    assert "sk-log-failure-test" not in failed[0]

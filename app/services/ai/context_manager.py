@@ -5,7 +5,7 @@ from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.router_service import RouterService
 from app.core.context import (
     get_current_agent_context,
-    set_debug_context,
+    set_execution_options_context,
     set_agent_context,
     AgentContext,
 )
@@ -198,7 +198,7 @@ class AgentContextManager:
     @staticmethod
     async def setup_context(
         config: ChatConfig,
-        debug_options: Dict[str, Any] = {},
+        execution_options: Dict[str, Any] = {},
         user_info: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
         conversation_id: Optional[str] = None,
@@ -214,10 +214,10 @@ class AgentContextManager:
         agent_max_toolcall_timeout_seconds: Optional[float] = None,
     ):
         """
-        Setup the execution context (debug options + agent config).
+        Setup the execution context (execution options + agent config).
         """
-        # 1. Set Debug Context
-        set_debug_context(debug_options)
+        # 1. Set Execution Options Context
+        set_execution_options_context(execution_options)
 
         # 2. Set Agent Context
         u_id_val = None
@@ -336,7 +336,7 @@ class AgentContextManager:
             rag_params=_normalize_rag_params(engine_config),
             user_id=u_id_val,
             conversation_id=conversation_id,
-            browser_session_id=(debug_options or {}).get("browser_session_id")
+            browser_session_id=(execution_options or {}).get("browser_session_id")
             or (previous_context.browser_session_id if previous_context else None),
             is_admin=is_admin_val,
             api_key=api_key_val,

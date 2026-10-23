@@ -14,7 +14,7 @@ from app.services.ai.runtime.agentscope.request_timeout import (
 )
 from app.services.ai.runtime.agentscope.stream_idle_guard import guard_model_stream_idle
 from app.utils.model_credentials import decrypt_model_api_key
-from app.core.context import get_debug_option
+from app.core.context import get_execution_option
 from app.services.ai.reasoning import UNSET, resolve_reasoning_settings
 from app.services.ai.temperature import session_temperature_override
 
@@ -244,7 +244,7 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
                     else (
                         UNSET
                         if ignore_session_reasoning_overrides
-                        else get_debug_option("thinking_enable", UNSET)
+                        else get_execution_option("thinking_enable", UNSET)
                     )
                 ),
                 "reasoning_effort": (
@@ -253,7 +253,7 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
                     else (
                         UNSET
                         if ignore_session_reasoning_overrides
-                        else get_debug_option("reasoning_effort", UNSET)
+                        else get_execution_option("reasoning_effort", UNSET)
                     )
                 ),
             },

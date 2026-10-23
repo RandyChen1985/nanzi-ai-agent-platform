@@ -190,6 +190,15 @@
                 同步第三方用户
               </button>
               <button
+                v-if="canEditUser"
+                type="button"
+                class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                @click="showMoreMenu = false; showImportDialog = true"
+              >
+                <ArrowUpTrayIcon class="h-4 w-4 text-emerald-500" />
+                批量导入用户
+              </button>
+              <button
                 v-if="canOpenSystemQuota"
                 type="button"
                 class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
@@ -2353,6 +2362,12 @@
     @close="showThirdPartyDrawer = false"
     @synced="onThirdPartySynced"
   />
+
+  <UserImportDialog
+    :visible="showImportDialog"
+    @close="showImportDialog = false"
+    @imported="fetchUsers"
+  />
 </template>
 
 <script setup lang="ts">
@@ -2408,6 +2423,7 @@ import { extractApiErrorDetail } from "../utils/apiErrorDetail";
 import MenuAccessTree from "../components/user/MenuAccessTree.vue";
 import RoleList from "../components/RoleList.vue";
 import ThirdPartyUserSyncDrawer from "../components/ThirdPartyUserSyncDrawer.vue";
+import UserImportDialog from "../components/user/UserImportDialog.vue";
 import DepartmentPicker from "../components/department/DepartmentPicker.vue";
 // 与部门成员页共用同一个密码弹窗：等保规则说明与实时合规指标只有一份实现
 import PasswordResetDialog from "../components/PasswordResetDialog.vue";
@@ -2415,6 +2431,7 @@ import QuotaPolicyPanel from "../components/admin/QuotaPolicyPanel.vue";
 import {
   KeyIcon,
   ArrowPathIcon,
+  ArrowUpTrayIcon,
   PencilSquareIcon,
   TrashIcon,
   PlusIcon,
@@ -2811,6 +2828,7 @@ const showDisable2FADialog = ref(false);
 const showViewKeyDialog = ref(false);
 const showSsoModal = ref(false);
 const showThirdPartyDrawer = ref(false);
+const showImportDialog = ref(false);
 const showSystemQuotaModal = ref(false);
 const userToDelete = ref<any>(null);
 const userToRegenerate = ref<any>(null);

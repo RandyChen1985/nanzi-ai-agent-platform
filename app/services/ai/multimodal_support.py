@@ -189,11 +189,11 @@ def resolve_runtime_model_name(
     prefer_synthesis: bool = True,
 ) -> Optional[str]:
     """与 AgentConfigProvider 优先级大致对齐，用于发送前校验。"""
-    from app.core.context import get_debug_option
+    from app.core.context import get_execution_option
 
-    debug_model = get_debug_option("model")
-    if debug_model:
-        return str(debug_model)
+    request_model = get_execution_option("model")
+    if request_model:
+        return str(request_model)
     if prefer_synthesis and getattr(config, "synthesis_model_name", None):
         return config.synthesis_model_name
     return getattr(config, "model_name", None)

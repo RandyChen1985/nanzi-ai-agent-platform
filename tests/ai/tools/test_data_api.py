@@ -271,7 +271,7 @@ async def test_execute_sql_query_tool_dry_run():
     with patch("app.core.orm.AsyncSessionLocal", new_callable=MagicMock), \
          patch("app.services.metadata_service.MetadataService.get_dataset_by_name", new_callable=AsyncMock) as mock_get_name, \
          patch("app.core.context.get_current_agent_context", return_value=mock_ctx), \
-         patch("app.core.context.get_debug_option", return_value=True):
+         patch("app.core.context.get_execution_option", return_value=True):
         
         mock_get_name.return_value = mock_ds
         

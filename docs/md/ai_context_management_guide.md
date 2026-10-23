@@ -28,10 +28,10 @@
 
 1. **默认 Main 入口预算**：未指定专家时直接读取默认 Main 的模型与上下文配置，不增加一轮外层路由模型调用。
 2. **最终模型窗口优先**：确定 Main 或指定专家后，优先采纳最终模型所注册的 `context_size`（即 `current_model.context_size`，共用源），解析顺序：
-   - `debug_options.model`（输入框切换所选模型）→ 经 debug 通道解析；
+   - `execution_options.model`（输入框切换所选模型）→ 经请求执行选项通道解析；
    - 否则最终发布 agent 的 `model_name` → 经注册表解析。
 3. **配置兜底**：最终模型不可解析、或模型是 `system_default`（系统默认回落，无显式指定）时，回落 `agent_context_max_tokens`（默认 **65536**）。
-4. **采纳条件**：仅当模型来源为显式指定（`runtime_override` / `debug_override` / `agent_config`，**排除 `system_default`**）且注册表解析出有效 `context_size > 0` 时才采纳模型窗口，否则一律回落配置兜底值。历史消息预算还会预留 `agent_context_overhead_headroom_tokens`（默认 8192）给系统提示、工具 schema 和本轮用户消息；若配置的主模型与合成模型窗口不同，取两者历史预算的较小值。
+4. **采纳条件**：仅当模型来源为显式指定（`runtime_override` / `request_override` / `agent_config`，**排除 `system_default`**）且注册表解析出有效 `context_size > 0` 时才采纳模型窗口，否则一律回落配置兜底值。历史消息预算还会预留 `agent_context_overhead_headroom_tokens`（默认 8192）给系统提示、工具 schema 和本轮用户消息；若配置的主模型与合成模型窗口不同，取两者历史预算的较小值。
 
 > 设计目的：避免模型实际窗口较大（如 1M）而兜底配置仅 64k 时，出现**提前截断（过早 compat）**，也避免用错 agent 的模型窗口。任何 DB / 注册表异常均静默回落兜底，不影响主流程。最终模型确定后，实际发送上下文会按该模型重新构建；runner、模型调用统计、压缩卡片与 `session_status` 共享 `physical_window` / `history_budget` 这组最终运行时口径。
 

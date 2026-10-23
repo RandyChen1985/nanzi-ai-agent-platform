@@ -113,7 +113,7 @@ flowchart TD
 
 Main 和 ChatBI 统一通过 `GroundingService.audit()` 将候选回答、事实要求和当前轮证据账本转换为审核结论及可选风险提示。KnowledgeAgent 的独立 NLI 反思结论继续由知识库流程产生，但最终提示也通过 `GroundingService.warning_chunk()` 统一生成。`policy.py` 只维护纯判断规则，Runner 继续拥有流式、反思重试以及 SQL/Schema 门禁等业务编排。
 
-聊天“界面设置”和 AgentDebug 右侧“调试配置”均提供会话级“反幻觉校验”总开关，通过 `debug_options.grounding_enabled` 显式传递。该开关默认关闭；字段缺失、`false` 或字符串真值都按关闭处理。关闭时 Main 不缓存正文或强制 Grounding 取证，ChatBI 不追加 Grounding 风险提示，KnowledgeAgent 不执行幻觉评估和反思重试。模型生成、常规工具预检、工具权限、知识库检索、ChatBI SQL/Schema 安全门禁均不受影响。两个页面输入框中的模型选择保留，设置面板内不再重复提供模型覆盖。开启后才执行下述审核策略。
+聊天“界面设置”和 AgentDebug 右侧“调试配置”均提供会话级“反幻觉校验”总开关，通过 `execution_options.grounding_enabled` 显式传递。该开关默认关闭；字段缺失、`false` 或字符串真值都按关闭处理。关闭时 Main 不缓存正文或强制 Grounding 取证，ChatBI 不追加 Grounding 风险提示，KnowledgeAgent 不执行幻觉评估和反思重试。模型生成、常规工具预检、工具权限、知识库检索、ChatBI SQL/Schema 安全门禁均不受影响。两个页面输入框中的模型选择保留，设置面板内不再重复提供模型覆盖。开启后才执行下述审核策略。
 
 两个开关标题旁统一提供 `?` 帮助弹层，以“查询当前销售额”为例说明关闭、开启且证据匹配、开启但证据不足三种结果。证据不足时仍保留回答，只在消息末尾追加风险提示。弹层支持桌面端悬停/点击、触屏点击、点击外部和 `Esc` 关闭；帮助按钮与开关控件相互独立，不会误切换配置，也不会发起后端请求。
 

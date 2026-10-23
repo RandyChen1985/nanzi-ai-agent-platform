@@ -1330,7 +1330,7 @@ async def _dispatch_sub_agent_executor(
         sub_history,
         trace_id=trace_id,
         trace_buffer=trace_buffer,
-        debug_options=None,
+        execution_options=None,
         permission_options=permission_options,
         user_info=user_info,
         conversation_id=conversation_id,

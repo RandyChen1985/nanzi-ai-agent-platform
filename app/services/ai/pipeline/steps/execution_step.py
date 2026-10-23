@@ -45,7 +45,7 @@ class ExecutionStep(BasePipelineStep):
         trace_buffer = context.trace_buffer
         user_query = str(context.user_query or shared_state.get("user_query") or "")
         messages = context.messages
-        debug_options = context.debug_options
+        execution_options = context.execution_options
         permission_options = context.permission_options
         user_info = context.user_info
         api_key = context.api_key
@@ -143,7 +143,7 @@ class ExecutionStep(BasePipelineStep):
                 messages,
                 trace_id,
                 trace_buffer,
-                debug_options,
+                execution_options,
                 permission_options,
                 user_info,
                 api_key,
@@ -157,7 +157,7 @@ class ExecutionStep(BasePipelineStep):
                 messages=messages,
                 trace_id=trace_id,
                 trace_buffer=trace_buffer,
-                debug_options=debug_options,
+                execution_options=execution_options,
                 permission_options=permission_options,
                 user_info=user_info,
                 conversation_id=conversation_id,

@@ -171,7 +171,7 @@ async def test_chat_completion_stream_sse_snapshot(monkeypatch):
                 "stream": True,
                 "conversation_id": "conv-sse",
                 "enable_multi_agent": False,
-                "debug_options": {"return_raw_prompt": True},
+                "execution_options": {"return_raw_prompt": True},
             }
             async with client.stream(
                 "POST",

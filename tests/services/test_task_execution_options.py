@@ -1,5 +1,5 @@
 from app.services.task_execution_options import (
-    debug_options_from_task_config,
+    execution_options_from_task_config,
     knowledge_dataset_ids_from_scope,
     merge_execution_options_into_config,
     metadata_dataset_ids_from_scope,
@@ -36,42 +36,42 @@ def test_resource_scope_and_dataset_ids_from_task_config():
     assert scope["skills"][0]["scope"] == "personal"
     assert knowledge_dataset_ids_from_scope(scope) == ["kb1"]
     assert metadata_dataset_ids_from_scope(scope) == ["ds1"]
-    debug = debug_options_from_task_config(config)
-    assert debug["model"] == "deepseek-v3"
-    assert debug["resource_scope"]["mcp_tools"][0]["name"] == "search_x"
+    options = execution_options_from_task_config(config)
+    assert options["model"] == "deepseek-v3"
+    assert options["resource_scope"]["mcp_tools"][0]["name"] == "search_x"
 
 
-def test_debug_options_from_task_config_includes_explicit_reasoning_overrides():
-    debug = debug_options_from_task_config(
+def test_execution_options_from_task_config_includes_explicit_reasoning_overrides():
+    options = execution_options_from_task_config(
         {
             "thinking_enable": False,
             "reasoning_effort": "high",
         }
     )
 
-    assert debug["thinking_enable"] is False
-    assert "reasoning_effort" not in debug
+    assert options["thinking_enable"] is False
+    assert "reasoning_effort" not in options
 
-    enabled_debug = debug_options_from_task_config(
+    enabled_options = execution_options_from_task_config(
         {
             "thinking_enable": True,
             "reasoning_effort": "high",
         }
     )
-    assert enabled_debug["thinking_enable"] is True
-    assert enabled_debug["reasoning_effort"] == "high"
+    assert enabled_options["thinking_enable"] is True
+    assert enabled_options["reasoning_effort"] == "high"
 
 
-def test_debug_options_from_task_config_ignores_invalid_reasoning_overrides():
-    debug = debug_options_from_task_config(
+def test_execution_options_from_task_config_ignores_invalid_reasoning_overrides():
+    options = execution_options_from_task_config(
         {
             "thinking_enable": "false",
             "reasoning_effort": "turbo",
         }
     )
 
-    assert "thinking_enable" not in debug
-    assert "reasoning_effort" not in debug
+    assert "thinking_enable" not in options
+    assert "reasoning_effort" not in options
 
 
 def test_merge_execution_options_into_config_clears_empty_scope():
@@ -98,14 +98,14 @@ def test_normalize_temperature_bounds_and_rounding():
     assert normalize_temperature(1.054) == 1.05
 
 
-def test_debug_options_from_task_config_includes_temperature():
-    debug = debug_options_from_task_config({"model": "qwen3.6", "temperature": 0.2})
-    assert debug["model"] == "qwen3.6"
-    assert debug["temperature"] == 0.2
+def test_execution_options_from_task_config_includes_temperature():
+    options = execution_options_from_task_config({"model": "qwen3.6", "temperature": 0.2})
+    assert options["model"] == "qwen3.6"
+    assert options["temperature"] == 0.2
 
     # 非法温度不注入
-    debug_invalid = debug_options_from_task_config({"model": "qwen3.6", "temperature": "not_a_number"})
-    assert "temperature" not in debug_invalid
+    invalid_options = execution_options_from_task_config({"model": "qwen3.6", "temperature": "not_a_number"})
+    assert "temperature" not in invalid_options
 
 
 def test_merge_execution_options_into_config_supports_temperature():
