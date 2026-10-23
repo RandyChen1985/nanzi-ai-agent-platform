@@ -40,7 +40,7 @@
         │     │     Schema/SQL 条件未满足时，把模型输出缓冲，不下发给用户
         │     │
         │     └─ [G6] SQL Plan 门禁（高风险查询，可选）
-        │           须 debug_options.enable_sql_plan=true 且问题命中高风险关键词
+        │           须 execution_options.enable_sql_plan=true 且问题命中高风险关键词
         │           → 要求先输出 <sql_plan>{...}</sql_plan>
         │
         └─ 修复轮（MAX_DATA_REPAIR_ROUNDS=2）
@@ -149,7 +149,7 @@
 | 属性 | 内容 |
 |------|------|
 | 实现位置 | `sql_gates.should_require_sql_plan`；`repair_policy`；`react_stream` |
-| 开关 | `debug_options.enable_sql_plan`（Embed / 调试页 `enableSqlPlan`；默认关闭时 G6/G11 不生效） |
+| 开关 | `execution_options.enable_sql_plan`（Embed / 调试页 `enableSqlPlan`；默认关闭时 G6/G11 不生效） |
 | 触发条件 | 开关开启 **且** 新查数路径 **且** 问题含高风险关键词（率/占比/同比/趋势/Top/JOIN/分组等，见 `_should_require_sql_plan`） |
 | 要求 | 执行 SQL 前须在模型输出中给出 `<sql_plan>{...JSON...}</sql_plan>`（前端 `MessageRenderer` + `SqlPlanCard` 可结构化展示） |
 | 若缺失 | `sql_plan_missing=True` → 进入修复轮 G11 |

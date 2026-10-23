@@ -22,7 +22,7 @@ async def test_ltm_applied_in_stream_meta():
             early_turn_kind="chat",
             user_info={"user_id": "test_user_99"},
             user_query="你好",
-            debug_options=None,
+            execution_options=None,
         )
         assert ltm_loaded_data == mock_ltm_data
         assert ltm_profile is not None
@@ -66,7 +66,7 @@ async def test_ltm_applied_in_stream_meta():
 @pytest.mark.asyncio
 async def test_ignore_ltm_in_stream_meta():
     """
-    测试当在 debug_options 中传入 ignore_ltm=True 时，跳过加载和注入 LTM。
+    测试当在 execution_options 中传入 ignore_ltm=True 时，跳过加载和注入 LTM。
     """
     service = AgentService()
     with patch("app.services.ai.memory_service.ltm_service.fetch_memory", new_callable=AsyncMock) as mock_fetch:
@@ -74,7 +74,7 @@ async def test_ignore_ltm_in_stream_meta():
             early_turn_kind="chat",
             user_info={"user_id": "test_user_99"},
             user_query="你好",
-            debug_options={"ignore_ltm": True},
+            execution_options={"ignore_ltm": True},
         )
         assert ltm_loaded_data is None
         assert ltm_profile is None

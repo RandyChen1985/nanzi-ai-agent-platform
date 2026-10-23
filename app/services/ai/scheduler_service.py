@@ -909,7 +909,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
         # ── 阶段 2：长 LLM 调用。此时不持有任何数据库连接 ──
         from app.services.task_notification_channels import channels_from_task_config
         from app.services.task_execution_options import (
-            debug_options_from_task_config,
+            execution_options_from_task_config,
             knowledge_dataset_ids_from_scope,
             metadata_dataset_ids_from_scope,
             permission_options_from_task_config,
@@ -917,7 +917,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
         )
 
         resource_scope = resource_scope_from_task_config(task_config)
-        debug_options = debug_options_from_task_config(task_config)
+        execution_options = execution_options_from_task_config(task_config)
         knowledge_ids = knowledge_dataset_ids_from_scope(resource_scope)
         metadata_ids = metadata_dataset_ids_from_scope(resource_scope)
         # 提前统一计算通知渠道，阶段2构建 prompt 与阶段3通知投递共用，避免重复调用。
@@ -953,7 +953,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                     conversation_id=run_conversation_id,
                     user_info=user_info,
                     enable_multi_agent=True,
-                    debug_options=debug_options,
+                    execution_options=execution_options,
                     permission_options=permission_options_from_task_config(task_config),
                     knowledge_dataset_ids=knowledge_ids or None,
                     metadata_dataset_ids=metadata_ids or None,

@@ -127,7 +127,7 @@ def metadata_dataset_ids_from_scope(scope: Mapping[str, Any]) -> List[str]:
     return ids
 
 
-def debug_options_from_task_config(config: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+def execution_options_from_task_config(config: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     cfg = config if isinstance(config, Mapping) else {}
     scope = resource_scope_from_task_config(cfg)
     options: Dict[str, Any] = {"resource_scope": scope}

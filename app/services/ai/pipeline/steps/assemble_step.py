@@ -102,7 +102,7 @@ class AssembleStep(BasePipelineStep):
 
     async def run(self, context: PipelineContext) -> AsyncGenerator[Dict[str, Any], None]:
         shared_state = context.shared_state
-        debug_options = context.debug_options or {}
+        execution_options = context.execution_options or {}
         user_info = context.user_info
         trace_id = context.trace_id
 
@@ -144,7 +144,7 @@ class AssembleStep(BasePipelineStep):
 
             context_setup_kwargs = dict(
                 config=agent_config,
-                debug_options=debug_options,
+                execution_options=execution_options,
                 user_info=user_info,
                 api_key=context.api_key,
                 conversation_id=context.conversation_id,
@@ -191,7 +191,7 @@ class AssembleStep(BasePipelineStep):
                     user_query=str(context.user_query or shared_state.get("user_query") or ""),
                     turn_decision=turn_decision,
                     messages=context.messages,
-                    debug_options=debug_options,
+                    execution_options=execution_options,
                     conversation_id=context.conversation_id,
                     request_observability=context.request_observability,
                     performance_tracker=context.performance_tracker,
@@ -252,7 +252,7 @@ class AssembleStep(BasePipelineStep):
         ltm_profile = context.ltm_profile
         turn_decision = context.turn_decision or shared_state.get("turn_decision")
 
-        session_scope = (debug_options or {}).get("resource_scope") or {}
+        session_scope = (execution_options or {}).get("resource_scope") or {}
         authorized_scope = (request_observability or {}).get("authorized_resource_scope") or {}
 
         # 1. 产出能力目录日志
@@ -355,9 +355,9 @@ class AssembleStep(BasePipelineStep):
         if performance_tracker and hasattr(performance_tracker, "mark"):
             performance_tracker.mark("prompt_assembly")
 
-        if debug_options and debug_options.get("return_raw_prompt"):
-            debug_options.setdefault("prompt_assembler_meta", {})
-            debug_options["prompt_assembler_meta"] = {
+        if execution_options and execution_options.get("return_raw_prompt"):
+            execution_options.setdefault("prompt_assembler_meta", {})
+            execution_options["prompt_assembler_meta"] = {
                 "stable_chars": len(assembled_prompt.stable_prefix),
                 "dynamic_chars": len(assembled_prompt.dynamic_suffix),
                 "cache_boundary_enabled": assembled_prompt.cache_boundary_enabled,
@@ -370,11 +370,11 @@ class AssembleStep(BasePipelineStep):
             }
 
         # 3. 调试覆盖 Debug Overrides
-        if debug_options:
-            if debug_options.get("system_prompt_override"):
+        if execution_options:
+            if execution_options.get("system_prompt_override"):
                 logger.info(f"[Debug] Overriding System Prompt for Trace {trace_id}")
                 if agent_config:
-                    agent_config.system_prompt = debug_options["system_prompt_override"]
+                    agent_config.system_prompt = execution_options["system_prompt_override"]
                 yield {
                     "type": "log",
                     "title": "Debug: Prompt Override",
@@ -383,8 +383,8 @@ class AssembleStep(BasePipelineStep):
                     "isDebug": True,
                 }
 
-            if debug_options.get("injected_context"):
-                context_data = sanitize_injected_context(debug_options["injected_context"])
+            if execution_options.get("injected_context"):
+                context_data = sanitize_injected_context(execution_options["injected_context"])
                 logger.info(f"[Debug] Injecting Context: {context_data}")
                 ctx_lines = []
                 for k, v in context_data.items():
@@ -444,7 +444,7 @@ class AssembleStep(BasePipelineStep):
             execution_time_ms=max(1.0, (now - preparation_started_at) * 1000),
         )
 
-        if debug_options.get("return_raw_prompt"):
+        if execution_options.get("return_raw_prompt"):
             yield {
                 "type": "debug",
                 "subtype": "raw_prompt",

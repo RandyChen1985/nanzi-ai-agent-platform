@@ -404,7 +404,7 @@ def _resolve_decision_request_nudge(
 
 def is_automatic_delivery_context(
     user_info: Optional[Mapping[str, Any]] = None,
-    debug_options: Optional[Mapping[str, Any]] = None,
+    execution_options: Optional[Mapping[str, Any]] = None,
 ) -> bool:
     """识别无人值守交付上下文，避免主动提问卡等待不存在的用户。"""
     def enabled(value: Any) -> bool:
@@ -412,7 +412,7 @@ def is_automatic_delivery_context(
             return value
         return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
-    for context in (user_info, debug_options):
+    for context in (user_info, execution_options):
         if not isinstance(context, Mapping):
             continue
         if any(

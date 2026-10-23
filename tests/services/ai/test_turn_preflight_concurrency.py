@@ -67,7 +67,7 @@ async def test_gather_turn_preflight_context_runs_concurrently(monkeypatch):
         user_query="测试查询",
         turn_decision=fake_turn_decision,
         messages=[{"role": "user", "content": "测试查询"}],
-        debug_options=None,
+        execution_options=None,
     )
 
     # 验证并发度
@@ -124,7 +124,7 @@ async def test_gather_turn_preflight_context_fault_tolerance(monkeypatch):
         user_query="容错测试",
         turn_decision=fake_turn_decision,
         messages=[{"role": "user", "content": "容错测试"}],
-        debug_options=None,
+        execution_options=None,
     )
 
     # 正常协程的结果依然能够正确拿到

@@ -23,7 +23,7 @@ class PipelineContext:
     conversation_id: Optional[str] = None
     api_key: Optional[str] = None
     enable_multi_agent: bool = True
-    debug_options: Dict[str, Any] = field(default_factory=dict)
+    execution_options: Dict[str, Any] = field(default_factory=dict)
     permission_options: Optional[Dict[str, Any]] = None
     knowledge_dataset_ids: Optional[List[str]] = None
     metadata_dataset_ids: Optional[List[str]] = None

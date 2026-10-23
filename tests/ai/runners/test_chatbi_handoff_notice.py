@@ -19,7 +19,7 @@ async def init_infrastructure():
 async def test_handoff_emits_notice_before_delegated_content_without_relabeling_message():
     config = SimpleNamespace(agent_name="general-assistant", agent_display_name="通用智能助手", capabilities=[])
     runner = SimpleNamespace(
-        user_info={"user_id": "1"}, trace_id="trace-12345678", trace_buffer=[], debug_options={},
+        user_info={"user_id": "1"}, trace_id="trace-12345678", trace_buffer=[], execution_options={},
         permission_options={}, conversation_id="conv-1", step_counter=0,
         config=SimpleNamespace(agent_display_name="数据智能助手", agent_name="chat-bi"),
         _runtime_agent_name=lambda: "chat-bi",

@@ -130,7 +130,7 @@ def test_scheduler_reads_task_execution_options_from_config():
     scheduler = SCHEDULER.read_text(encoding="utf-8")
     options = OPTIONS.read_text(encoding="utf-8")
     assert "permission_options_from_task_config" in scheduler
-    assert "debug_options_from_task_config" in scheduler
+    assert "execution_options_from_task_config" in scheduler
     assert "knowledge_dataset_ids" in scheduler
     assert "metadata_dataset_ids" in scheduler
     assert "DEFAULT_APPROVAL_MODE = \"allow\"" in options

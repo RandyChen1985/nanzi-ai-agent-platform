@@ -136,7 +136,7 @@ async def test_general_chat_executor_delegates_to_general_agent_runner(chat_conf
         config=chat_config,
         trace_id="trace-runner",
         trace_buffer=trace_buffer,
-        debug_options={"return_raw_prompt": True},
+        execution_options={"return_raw_prompt": True},
         user_info={"id": "u1"},
         conversation_id="c1",
         turn_decision=TurnDecision(
@@ -165,7 +165,7 @@ async def test_general_chat_executor_delegates_to_general_agent_runner(chat_conf
     assert kwargs["config"] is chat_config
     assert kwargs["trace_id"] == "trace-runner"
     assert kwargs["trace_buffer"] is trace_buffer
-    assert kwargs["debug_options"] == {"return_raw_prompt": True}
+    assert kwargs["execution_options"] == {"return_raw_prompt": True}
     assert kwargs["user_info"] == {"id": "u1"}
     assert kwargs["conversation_id"] == "c1"
     assert kwargs["turn_decision"].turn_labels == ["same_topic"]
@@ -1699,7 +1699,7 @@ async def test_knowledge_runner_reuses_cached_result_without_search_tool(chat_co
         config=chat_config,
         trace_id="trace-cached-kb",
         trace_buffer=[],
-        debug_options={"grounding_enabled": False},
+        execution_options={"grounding_enabled": False},
         user_info={"user_id": "42"},
         conversation_id="conv-cached-kb",
         turn_decision=TurnDecision(
@@ -1970,7 +1970,7 @@ async def test_general_runner_without_tools_preserves_hallucination_with_risk_wa
         trace_id="test-hallucination-intercept",
         trace_buffer=[],
         user_info={"role": "admin", "user_id": "1"},
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
     runner.config.agent_id = "sys-agent-chat"
     runner.config.agent_name = "main"
@@ -2023,7 +2023,7 @@ async def test_general_runner_without_data_tool_flags_fake_chatbi_handoff(chat_c
         trace_id="test-fake-chatbi-handoff",
         trace_buffer=[],
         user_info={"role": "admin", "user_id": "1"},
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
         turn_decision=TurnDecision(
             route_status="resolved",
             turn_kind="general",

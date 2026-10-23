@@ -197,7 +197,7 @@ async def test_resolved_model_compaction_persistence_uses_request_user_id():
                 user_info={"user_id": "user-1"},
                 api_key=None,
                 enable_multi_agent=True,
-                debug_options=None,
+                execution_options=None,
                 permission_options=None,
                 knowledge_dataset_ids=None,
                 metadata_dataset_ids=None,

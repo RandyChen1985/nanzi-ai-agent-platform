@@ -17,7 +17,7 @@ class BaseExecutor(ABC):
         config: ChatConfig,
         trace_id: str,
         trace_buffer: List[AgentExecutionStep],
-        debug_options: Dict[str, Any] = None,
+        execution_options: Dict[str, Any] = None,
         user_info: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[str] = None,
         permission_options: Dict[str, Any] = None,
@@ -25,7 +25,7 @@ class BaseExecutor(ABC):
         self.config = config
         self.trace_id = trace_id
         self.trace_buffer = trace_buffer
-        self.debug_options = debug_options or {}
+        self.execution_options = execution_options or {}
         self.permission_options = permission_options or {}
         self.user_info = user_info
         self.conversation_id = conversation_id
@@ -42,7 +42,7 @@ class BaseExecutor(ABC):
 
     def _grounding_enabled(self) -> bool:
         """Return whether this request explicitly enabled grounding audits."""
-        return self.debug_options.get("grounding_enabled") is True
+        return self.execution_options.get("grounding_enabled") is True
 
     async def _using_cache_layout(self) -> bool:
         """是否启用 prompt-cache 稳定前缀布局（enabled 灰度桶）。
@@ -132,7 +132,7 @@ class BaseExecutor(ABC):
             ctx.api_key = self.user_info.get("api_key")
         if self.conversation_id:
             ctx.conversation_id = self.conversation_id
-        browser_session_id = self.debug_options.get("browser_session_id")
+        browser_session_id = self.execution_options.get("browser_session_id")
         if browser_session_id:
             ctx.browser_session_id = str(browser_session_id)
         ctx.permission_options = dict(self.permission_options or {})
@@ -167,7 +167,7 @@ class BaseExecutor(ABC):
             engine_config=engine_config,
             user_id=u_id_val,
             conversation_id=self.conversation_id,
-            browser_session_id=self.debug_options.get("browser_session_id"),
+            browser_session_id=self.execution_options.get("browser_session_id"),
             is_admin=is_admin_val,
             api_key=self.user_info.get("api_key") if self.user_info else None,
             user_dimensions=user_dims,

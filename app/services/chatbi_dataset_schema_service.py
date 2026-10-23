@@ -89,12 +89,12 @@ def _set_metadata_scope_debug(
     provider: str,
 ) -> None:
     from app.core.context import get_current_agent_context
-    from app.core.context import get_debug_option
+    from app.core.context import get_execution_option
 
     ctx = get_current_agent_context()
     if ctx is None:
         return
-    request_scope = get_debug_option("metadata_dataset_scope", {}) or {}
+    request_scope = get_execution_option("metadata_dataset_scope", {}) or {}
 
     def serialize(items: list[Any]) -> list[dict[str, str]]:
         return [

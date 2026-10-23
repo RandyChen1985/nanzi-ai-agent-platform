@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.context import AgentContext, get_current_agent_context, set_agent_context, set_debug_context
+from app.core.context import AgentContext, get_current_agent_context, set_agent_context, set_execution_options_context
 from app.services.ai.tools.registry import ToolRegistry
 
 
@@ -77,7 +77,7 @@ def _install_context(
             permission_options={"mode": "allow"},
         )
     )
-    set_debug_context(
+    set_execution_options_context(
         {
             "injected_context": {
                 "device_type": "移动端(小屏幕)",
@@ -359,7 +359,7 @@ def test_session_status_excludes_secrets_and_internal_objects(tmp_path: Path, mo
 
 def test_session_status_is_parameterless_and_handles_missing_context(monkeypatch):
     set_agent_context(None)
-    set_debug_context({})
+    set_execution_options_context({})
 
     tool = _session_status_tool()
     assert tool.args_schema.model_fields == {}

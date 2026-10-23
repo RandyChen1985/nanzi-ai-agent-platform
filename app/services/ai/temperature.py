@@ -13,9 +13,9 @@
 
 from typing import Any, Optional
 
-from app.core.context import get_debug_option
+from app.core.context import get_execution_option
 
-SESSION_TEMPERATURE_DEBUG_KEY = "temperature"
+SESSION_TEMPERATURE_OVERRIDE_KEY = "temperature"
 
 
 def coerce_temperature(value: Any) -> Optional[float]:
@@ -31,9 +31,9 @@ def coerce_temperature(value: Any) -> Optional[float]:
 
 
 def session_temperature_override() -> Optional[float]:
-    """读取本次请求（`debug_options`）里的会话级温度覆盖，0.0 也算有效覆盖。"""
+    """读取本次请求（`execution_options`）里的会话级温度覆盖，0.0 也算有效覆盖。"""
     return coerce_temperature(
-        get_debug_option(SESSION_TEMPERATURE_DEBUG_KEY)
+        get_execution_option(SESSION_TEMPERATURE_OVERRIDE_KEY)
     )
 
 

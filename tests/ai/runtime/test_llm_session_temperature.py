@@ -9,16 +9,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.context import set_debug_context
+from app.core.context import set_execution_options_context
 
 pytestmark = pytest.mark.no_infrastructure
 
 
 @pytest.fixture(autouse=True)
-def _clean_debug_context():
-    set_debug_context({})
+def _clean_execution_options_context():
+    set_execution_options_context({})
     yield
-    set_debug_context({})
+    set_execution_options_context({})
 
 
 def _patch_config(monkeypatch, values: dict) -> None:
@@ -48,7 +48,7 @@ async def test_get_llm_async_uses_session_temperature_override(monkeypatch):
             "llm_temperature": "0.0",
         },
     )
-    set_debug_context({"temperature": 0.3})
+    set_execution_options_context({"temperature": 0.3})
 
     handle = await client_module.get_llm_async(streaming=False)
 
@@ -68,7 +68,7 @@ async def test_get_llm_async_keeps_explicit_temperature_over_session_override(mo
             "llm_temperature": "0.0",
         },
     )
-    set_debug_context({"temperature": 0.3})
+    set_execution_options_context({"temperature": 0.3})
 
     handle = await client_module.get_llm_async(streaming=False, temperature=0.9)
 
@@ -108,7 +108,7 @@ async def test_get_llm_async_can_opt_out_of_session_temperature(monkeypatch):
             "llm_temperature": "0.4",
         },
     )
-    set_debug_context({"temperature": 0.3})
+    set_execution_options_context({"temperature": 0.3})
 
     handle = await client_module.get_llm_async(
         streaming=False, ignore_session_temperature=True

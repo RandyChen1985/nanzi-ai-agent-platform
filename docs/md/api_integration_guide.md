@@ -209,16 +209,18 @@ Main 不会因为专家数量变化而机械地逐个调用专家。运行时会
 - **Endpoint**: `GET /api/v1/chat/logs/{trace_id}`
 - **功能**: 回溯某次对话的完整“思考过程”，包含所有工具调用的输入输出和耗时。
 
-### 7.2 调试选项
-在 `POST /api/v1/chat/completions` 时，可以传递 `debug_options`：
+### 7.2 执行选项
+在 `POST /api/v1/chat/completions` 时，可以传递 `execution_options`：
 ```json
 {
   "messages": [...],
-  "debug_options": {
+  "execution_options": {
     "force_intent": "DATA_QUERY"
   }
 }
 ```
+
+> 兼容说明：该字段原名为 `debug_options`。旧客户端继续传 `debug_options` 仍然生效（两者同时出现时以 `execution_options` 为准），建议新集成统一使用 `execution_options`。
 
 ---
 

@@ -85,8 +85,8 @@ class UpgradeToFederatedQuery(Exception):
 class DataAgentRunner(BaseExecutor):
     """AgentScope-native runner foundation for ChatBI/DataExecutor migration."""
 
-    def __init__(self, config: ChatConfig, trace_id: str, trace_buffer: List[AgentExecutionStep], debug_options: Dict[str, Any]=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None, permission_options: Dict[str, Any]=None, turn_decision: Optional[TurnDecision]=None, current_user_query: Optional[str]=None):
-        super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
+    def __init__(self, config: ChatConfig, trace_id: str, trace_buffer: List[AgentExecutionStep], execution_options: Dict[str, Any]=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None, permission_options: Dict[str, Any]=None, turn_decision: Optional[TurnDecision]=None, current_user_query: Optional[str]=None):
+        super().__init__(config, trace_id, trace_buffer, execution_options, user_info, conversation_id, permission_options)
         self.turn_decision = turn_decision or TurnDecision(
             route_status="failed",
             provenance="missing_turn_decision",
@@ -317,7 +317,7 @@ class DataAgentRunner(BaseExecutor):
         return float(similarity_threshold)
 
     def _is_sql_plan_enabled(self) -> bool:
-        raw = self.debug_options.get('enable_sql_plan')
+        raw = self.execution_options.get('enable_sql_plan')
         if isinstance(raw, bool):
             return raw
         return str(raw or '').strip().lower() in {'1', 'true', 'yes', 'on'}
@@ -344,12 +344,14 @@ class DataAgentRunner(BaseExecutor):
         return name or None
 
     def _runner_context(self, *, system_content: str, max_steps: int) -> Dict[str, Any]:
-        return {'runner_type': 'data', 'config': self.config.model_dump(), 'debug_options': self.debug_options, 'permission_options': self.permission_options, 'turn_decision': self.turn_decision.model_dump(mode='json') if self.turn_decision is not None else None, 'evidence_metadata': self._evidence_metadata, 'system_content': system_content, 'max_steps': max_steps, 'standalone_query': self._standalone_query, 'schema_search_keywords': self._schema_search_keywords, 'semantic_intent': semantic_intent_to_dict(self._semantic_intent), 'requires_fresh_data': self._requires_fresh_data, 'requires_sql_query': bool(getattr(self, '_requires_sql_query', True))}
+        return {'runner_type': 'data', 'config': self.config.model_dump(), 'execution_options': self.execution_options, 'permission_options': self.permission_options, 'turn_decision': self.turn_decision.model_dump(mode='json') if self.turn_decision is not None else None, 'evidence_metadata': self._evidence_metadata, 'system_content': system_content, 'max_steps': max_steps, 'standalone_query': self._standalone_query, 'schema_search_keywords': self._schema_search_keywords, 'semantic_intent': semantic_intent_to_dict(self._semantic_intent), 'requires_fresh_data': self._requires_fresh_data, 'requires_sql_query': bool(getattr(self, '_requires_sql_query', True))}
 
     @classmethod
     def from_runner_context(cls, *, runner_context: Dict[str, Any], trace_id: str, trace_buffer: List[AgentExecutionStep] | None=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None) -> 'DataAgentRunner':
         config = ChatConfig(**runner_context['config'])
-        runner = cls(config=config, trace_id=trace_id, trace_buffer=trace_buffer or [], debug_options=runner_context.get('debug_options'), permission_options=runner_context.get('permission_options'), user_info=user_info, conversation_id=conversation_id, turn_decision=TurnDecision.model_validate(runner_context['turn_decision']))
+        # 兼容升级前写入的挂起快照（旧 key 为 debug_options）。
+        _execution_options = runner_context.get('execution_options') or runner_context.get('debug_options')
+        runner = cls(config=config, trace_id=trace_id, trace_buffer=trace_buffer or [], execution_options=_execution_options, permission_options=runner_context.get('permission_options'), user_info=user_info, conversation_id=conversation_id, turn_decision=TurnDecision.model_validate(runner_context['turn_decision']))
         runner._standalone_query = str(runner_context.get('standalone_query') or '')
         runner._schema_search_keywords = str(runner_context.get('schema_search_keywords') or '')
         runner._semantic_intent = semantic_intent_from_dict(runner_context.get('semantic_intent'))

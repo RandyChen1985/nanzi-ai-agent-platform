@@ -398,11 +398,11 @@ def test_chat_input_and_embedchat_temperature_override_contract():
     assert "PRESET_TEMPERATURES" in chat_input_source
     assert "getTemperatureGuidance" in chat_input_source
 
-    # EmbedChat 声明了 temperatureOverride 并绑定至 ChatInput 和 debug_options
+    # EmbedChat 声明了 temperatureOverride 并绑定至 ChatInput 和 execution_options
     assert "const temperatureOverride = ref<number | null>(null);" in embed_chat_source
     assert ':temperature-override="temperatureOverride"' in embed_chat_source
     assert '@update:temperature-override="temperatureOverride = $event"' in embed_chat_source
-    assert "(body.debug_options as Record<string, unknown>).temperature = temperatureOverride.value;" in embed_chat_source
+    assert "(body.execution_options as Record<string, unknown>).temperature = temperatureOverride.value;" in embed_chat_source
     assert "temperatureOverride.value = null;" in embed_chat_source
 
     # 温度大于 1 时的警示提示与高亮样式

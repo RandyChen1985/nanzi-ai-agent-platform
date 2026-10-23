@@ -418,14 +418,14 @@ class AssistantAgentRunner(BaseExecutor):
         config: ChatConfig,
         trace_id: str,
         trace_buffer: List[AgentExecutionStep],
-        debug_options: Dict[str, Any] = None,
+        execution_options: Dict[str, Any] = None,
         user_info: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[str] = None,
         permission_options: Dict[str, Any] = None,
         turn_decision: Optional[TurnDecision] = None,
         current_user_query: Optional[str] = None,
     ):
-        super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
+        super().__init__(config, trace_id, trace_buffer, execution_options, user_info, conversation_id, permission_options)
         self.turn_decision = turn_decision or TurnDecision(
             route_status="failed",
             provenance="missing_turn_decision",
@@ -457,7 +457,7 @@ class AssistantAgentRunner(BaseExecutor):
         return {
             "runner_type": "assistant",
             "config": self.config.model_dump(),
-            "debug_options": self.debug_options,
+            "execution_options": self.execution_options,
             "permission_options": self.permission_options,
             "system_content": system_content,
             "max_steps": max_steps,
@@ -484,7 +484,11 @@ class AssistantAgentRunner(BaseExecutor):
             config=config,
             trace_id=trace_id,
             trace_buffer=trace_buffer or [],
-            debug_options=runner_context.get("debug_options"),
+            # 兼容升级前写入的挂起快照（旧 key 为 debug_options）。
+            execution_options=(
+                runner_context.get("execution_options")
+                or runner_context.get("debug_options")
+            ),
             permission_options=runner_context.get("permission_options"),
             user_info=user_info,
             conversation_id=conversation_id,
@@ -1050,7 +1054,7 @@ class AssistantAgentRunner(BaseExecutor):
             self._resolve_grounding_request_decision(user_query)
         )
         grounding_action = (
-            self.debug_options.get("grounding_action")
+            self.execution_options.get("grounding_action")
             if self._grounding_enabled()
             else None
         )
@@ -1201,7 +1205,7 @@ class AssistantAgentRunner(BaseExecutor):
         strict_tool_evidence_types = frozenset()
         strict_evidence_contracts: tuple[dict[str, Any], ...] = ()
         grounding_block_mode = self._normalize_grounding_block_mode(
-            self.debug_options.get("grounding_block_mode")
+            self.execution_options.get("grounding_block_mode")
         )
 
         from app.core.context import set_agent_context
@@ -1563,7 +1567,7 @@ class AssistantAgentRunner(BaseExecutor):
         # 2. Build Messages
         system_content = self.config.system_prompt or ""
         grounding_action = (
-            self.debug_options.get("grounding_action")
+            self.execution_options.get("grounding_action")
             if self._grounding_enabled()
             else None
         )
@@ -1807,14 +1811,14 @@ class AssistantAgentRunner(BaseExecutor):
         )
         retry_evidence_types = (
             self._parse_grounding_retry_evidence_types(
-                self.debug_options.get("grounding_action")
+                self.execution_options.get("grounding_action")
             )
             if grounding_enabled
             else frozenset()
         )
         interactive_question_allowed = not is_automatic_delivery_context(
             self.user_info,
-            self.debug_options,
+            self.execution_options,
         )
         explicit_user_question_requested = (
             interactive_question_allowed
@@ -1823,7 +1827,7 @@ class AssistantAgentRunner(BaseExecutor):
         )
         preflight_mode = "soft"
         grounding_block_mode = self._normalize_grounding_block_mode(
-            self.debug_options.get("grounding_block_mode")
+            self.execution_options.get("grounding_block_mode")
         )
         evidence_contracts: tuple[dict[str, Any], ...] = ()
         try:
@@ -1833,7 +1837,7 @@ class AssistantAgentRunner(BaseExecutor):
                 ).strip().lower()
                 if (
                     grounding_enabled
-                    and "grounding_block_mode" not in self.debug_options
+                    and "grounding_block_mode" not in self.execution_options
                 ):
                     try:
                         grounding_block_mode = self._normalize_grounding_block_mode(
@@ -3215,7 +3219,7 @@ class AssistantAgentRunner(BaseExecutor):
                 grounding_block_mode = self._normalize_grounding_block_mode(
                     state.get(
                         "grounding_block_mode",
-                        self.debug_options.get("grounding_block_mode"),
+                        self.execution_options.get("grounding_block_mode"),
                     )
                 )
                 strict_tool_evidence_types = self._resolve_current_turn_evidence_types(

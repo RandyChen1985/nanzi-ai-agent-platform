@@ -184,7 +184,7 @@ knowledge_base_metadata (平台扩展)
 - **钉住 / 提问后不关闭**：偏好持久化到 `portal-prefs`（`pinned_kb_dataset_ids` 等）。
 - **推荐提问**：`GET /datasets/{id}/portal`，支持换一批（`exclude` 参数 + 随机抽样文档名）。
 - **文档级提问**：展开文档后 `GET .../documents/{doc_id}/portal`。
-- **高级参数**（存 localStorage，经 `debug_options` 传入后端）：
+- **高级参数**（存 localStorage，经 `execution_options` 传入后端）：
   - `knowledge_ragflow_similarity_threshold`
   - `knowledge_ragflow_vector_weight`
   - `knowledge_ragflow_metadata_top_k`
@@ -205,7 +205,7 @@ sequenceDiagram
     U->>FE: 输入问题 + 可选知识库附件
     FE->>FE: collectKnowledgeDatasetIds()
     FE->>FE: appendAttachmentContext() 注入 dataset_id 文本提示
-    FE->>API: messages + knowledge_dataset_ids + debug_options
+    FE->>API: messages + knowledge_dataset_ids + execution_options
 ```
 
 **双通道传递 dataset ID：**
@@ -343,7 +343,7 @@ flowchart TD
 **`search_knowledge_base` 工具**（`app/services/ai/tools/knowledge_tool.py`）：
 
 1. `resolve_knowledge_dataset_ids` + 权限过滤
-2. `resolve_rag_retrieval_params`（系统配置 ← 智能体配置 ← `debug_options`）
+2. `resolve_rag_retrieval_params`（系统配置 ← 智能体配置 ← `execution_options`）
 3. `RagFlowClient.retrieve()` → `POST /api/v1/retrieval`
 
 返回 JSON：

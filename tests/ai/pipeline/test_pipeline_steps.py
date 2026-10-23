@@ -297,8 +297,8 @@ async def test_assemble_step_omits_task_constraints_when_absent_or_blank():
 
 
 @pytest.mark.asyncio
-async def test_assemble_step_debug_override():
-    """Verify that AssembleStep handles debug system_prompt_override correctly."""
+async def test_assemble_step_system_prompt_override():
+    """Verify that AssembleStep handles execution-option system_prompt_override correctly."""
     from app.services.ai.pipeline.steps.assemble_step import AssembleStep
 
     class DummyAgentConfig:
@@ -310,7 +310,7 @@ async def test_assemble_step_debug_override():
     context = PipelineContext(
         messages=[{"role": "user", "content": "debug test"}],
         user_info={"user_id": 123},
-        debug_options={"system_prompt_override": "DEBUG_OVERRIDE_PROMPT"},
+        execution_options={"system_prompt_override": "DEBUG_OVERRIDE_PROMPT"},
     )
     context.shared_state["agent_config"] = dummy_config
 
@@ -628,7 +628,7 @@ async def test_assemble_step_emits_skill_log_and_raw_prompt_debug_event():
     context = PipelineContext(
         messages=[{"role": "user", "content": "使用测试技能"}],
         user_info={"user_id": 123},
-        debug_options={"return_raw_prompt": True},
+        execution_options={"return_raw_prompt": True},
     )
     context.user_query = "使用测试技能"
     context.shared_state.update(
@@ -1066,7 +1066,7 @@ async def test_assemble_step_records_layout_mode_and_prompt_plan_in_debug_meta()
         messages=[{"role": "user", "content": "hi"}],
         user_info={"user_id": 123},
         conversation_id="conv_observe",
-        debug_options=debug_opts,
+        execution_options=debug_opts,
     )
     context.shared_state["agent_config"] = DummyAgentConfig()
 

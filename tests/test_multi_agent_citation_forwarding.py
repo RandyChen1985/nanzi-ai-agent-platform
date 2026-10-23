@@ -69,7 +69,7 @@ async def _collect(monkeypatch, chunks):
         messages=[],
         trace_id="trace-1",
         trace_buffer=[],
-        debug_options={},
+        execution_options={},
         permission_options=None,
         user_info=None,
         api_key=None,

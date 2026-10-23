@@ -276,7 +276,7 @@ async def estimate_context_usage(
             physical_window = 0
         if physical_window <= 0:
             source = info.get("source")
-            if source in {"runtime_override", "debug_override", "agent_config"}:
+            if source in {"runtime_override", "request_override", "agent_config"}:
                 try:
                     physical_window = int(info.get("context_size") or 0)
                 except (TypeError, ValueError):

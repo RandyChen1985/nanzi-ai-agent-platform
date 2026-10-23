@@ -9,17 +9,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.context import set_debug_context
+from app.core.context import set_execution_options_context
 from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
 
 pytestmark = pytest.mark.no_infrastructure
 
 
 @pytest.fixture(autouse=True)
-def _clean_debug_context():
-    set_debug_context({})
+def _clean_execution_options_context():
+    set_execution_options_context({})
     yield
-    set_debug_context({})
+    set_execution_options_context({})
 
 
 def _runner(temperature: float = 0.0) -> AssistantAgentRunner:
@@ -82,7 +82,7 @@ def test_zero_temperature_is_a_real_value_not_an_absent_one():
 
 
 def test_tool_observation_reports_session_override_as_effective_temperature():
-    set_debug_context({"temperature": 0.3})
+    set_execution_options_context({"temperature": 0.3})
 
     result = _observe(_runner(temperature=0.0))
 
@@ -91,7 +91,7 @@ def test_tool_observation_reports_session_override_as_effective_temperature():
 
 
 def test_tool_observation_keeps_tool_runtime_temperature_over_session_override():
-    set_debug_context({"temperature": 0.3})
+    set_execution_options_context({"temperature": 0.3})
     tool = SimpleNamespace(
         _runtime_config=SimpleNamespace(temperature=0.9, model_name="tool-model")
     )

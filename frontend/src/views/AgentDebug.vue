@@ -3593,7 +3593,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
         messages: buildOutboundMessages(),
         stream: true,
         enable_multi_agent: debugConfig.enableMultiAgent,
-        debug_options: debugOptions,
+        execution_options: debugOptions,
         permission_options: {
           approval_mode: debugConfig.approvalMode || "ask",
         },

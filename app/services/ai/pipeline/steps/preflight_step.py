@@ -141,7 +141,7 @@ class PreflightStep(BasePipelineStep):
                 )
                 if restored_dataset_ids:
                     context.metadata_dataset_ids = restored_dataset_ids
-                    context.debug_options["metadata_dataset_scope"] = {
+                    context.execution_options["metadata_dataset_scope"] = {
                         "source": "user_question",
                         "request_ids": restored_dataset_ids,
                     }

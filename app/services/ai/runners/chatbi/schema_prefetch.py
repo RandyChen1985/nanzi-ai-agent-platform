@@ -38,9 +38,9 @@ from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 logger = logging.getLogger(__name__)
 
 
-def _apply_session_resource_scope(dataset_menu: str, debug_options: dict[str, Any] | None) -> str:
+def _apply_session_resource_scope(dataset_menu: str, execution_options: dict[str, Any] | None) -> str:
     """项目会话有手动挂载数据集时，只把挂载的数据集注入本轮 Schema 上下文。"""
-    scope = (debug_options or {}).get("resource_scope") or {}
+    scope = (execution_options or {}).get("resource_scope") or {}
     mounted = {
         str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip().casefold()
         for item in scope.get("datasets", [])
@@ -164,7 +164,7 @@ async def plan_schema_search_keywords(
         user_id = getattr(runner.config, "user_id", None)
         is_admin = getattr(runner.config, "is_admin", False)
         dataset_menu = await AgentConfigProvider.get_dataset_menu(user_id=user_id, is_admin=is_admin)
-        dataset_menu = _apply_session_resource_scope(dataset_menu, getattr(runner, "debug_options", None))
+        dataset_menu = _apply_session_resource_scope(dataset_menu, getattr(runner, "execution_options", None))
     except Exception as e:
         logger.warning("[DataAgentRunner] Failed to fetch dataset menu for schema prefetch: %s", e)
         dataset_menu = ""

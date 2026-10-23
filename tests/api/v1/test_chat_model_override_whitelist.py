@@ -41,7 +41,7 @@ async def _call(
         db=_Session(),
         user_info={"id": 7, "role": role},
         chat_user_id=7,
-        effective_debug_options={"model": model},
+        effective_execution_options={"model": model},
         agent_id=agent_id,
         version_id=None,
     )
@@ -77,11 +77,11 @@ async def test_admin_bypasses_whitelist(monkeypatch):
     await _call(monkeypatch, role="admin", allowed={"gpt-4o"}, model="gpt-4-turbo")
 
 
-def test_chat_endpoint_calls_the_guard_in_debug_options_cleanup():
+def test_chat_endpoint_calls_the_guard_in_execution_options_cleanup():
     source = open("app/api/v1/endpoints/chat.py", encoding="utf-8").read()
 
     assert "_enforce_chat_model_whitelist(" in source
-    # 必须紧邻既有的 debug_options 清洗，避免被绕过
-    assert source.index("effective_debug_options.pop(\"resource_scope\", None)") < source.index(
+    # 必须紧邻既有的 execution_options 清洗，避免被绕过
+    assert source.index("effective_execution_options.pop(\"resource_scope\", None)") < source.index(
         "await _enforce_chat_model_whitelist("
     )

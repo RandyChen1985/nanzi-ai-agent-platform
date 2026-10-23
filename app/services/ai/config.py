@@ -14,7 +14,7 @@ from app.services.ai.runtime.agentscope.request_timeout import (
     LLM_REQUEST_READ_TIMEOUT_KEY,
     parse_llm_request_read_timeout,
 )
-from app.core.context import get_debug_option
+from app.core.context import get_execution_option
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ async def resolve_runtime_model_info(
     *,
     config: Optional[ChatConfig] = None,
     model_override: Optional[str] = None,
-    debug_options: Optional[Dict[str, object]] = None,
+    execution_options: Optional[Dict[str, object]] = None,
     phase: str = "primary_agent",
     is_fallback: bool = False,
 ) -> RuntimeModelInfo:
@@ -105,14 +105,14 @@ async def resolve_runtime_model_info(
     def get_val(key: str, default: str) -> str:
         return llm_config.get(key, {}).get("value") or default
 
-    explicit_debug_model = (debug_options or {}).get("model")
-    debug_model = explicit_debug_model or get_debug_option("model")
+    explicit_request_model = (execution_options or {}).get("model")
+    request_model = explicit_request_model or get_execution_option("model")
     if model_override:
         configured_model = str(model_override)
         source = "runtime_override"
-    elif debug_model:
-        configured_model = str(debug_model)
-        source = "debug_override"
+    elif request_model:
+        configured_model = str(request_model)
+        source = "request_override"
     elif config and config.model_name:
         configured_model = str(config.model_name)
         source = "agent_config"
@@ -137,9 +137,9 @@ async def resolve_runtime_model_info(
     if registered is not None:
         reasoning_overrides = {
             key: (
-                (debug_options or {}).get(key)
-                if key in (debug_options or {})
-                else get_debug_option(key, UNSET)
+                (execution_options or {}).get(key)
+                if key in (execution_options or {})
+                else get_execution_option(key, UNSET)
             )
             for key in ("thinking_enable", "reasoning_effort")
         }
@@ -203,7 +203,7 @@ class AgentConfigProvider:
         
         Priority:
         1. Runtime Override (model_override/temp_override from Tool Runtime Config)
-        2. Debug Options (User session debug)
+        2. Execution Options (per-request overrides: chat turn or scheduled task)
         3. Agent Config (ChatConfig)
         4. System Defaults
         """
@@ -218,8 +218,8 @@ class AgentConfigProvider:
             model_override=model_override,
         )
 
-        # Check Debug Context Overrides
-        from app.core.context import get_debug_option
+        # Check Execution Options Context Overrides
+        from app.core.context import get_execution_option
 
         # 1. Model Name Priority (centralized in resolve_runtime_model_info)
         model = runtime_model_info.effective_model_id
@@ -227,7 +227,7 @@ class AgentConfigProvider:
         # 2. Temperature Priority：与工具卡片/审计轨迹共用同一套解析口径。
         temperature = resolve_effective_temperature(
             tool_temperature=temp_override,
-            session_temperature=get_debug_option("temperature"),
+            session_temperature=get_execution_option("temperature"),
             config_temperature=getattr(config, "temperature", None) if config else None,
             global_temperature=get_val("llm_temperature", None),
         )

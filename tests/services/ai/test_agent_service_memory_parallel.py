@@ -50,7 +50,7 @@ async def test_date_memory_preload_reads_daily_sources_concurrently(monkeypatch)
     result = await AgentService()._load_memory_context(
         user_info={"user_id": 1},
         early_turn_kind="general",
-        debug_options=None,
+        execution_options=None,
         user_query="昨天发生了什么",
     )
 

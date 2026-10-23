@@ -11512,7 +11512,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       agent_id: forcedDataAgentIdForTurn || ((config.routingMode === "expert" && config.expertAgentId) ? config.expertAgentId : (config.overrideAgentId || config.agentId)),
       enable_multi_agent: config.enableMultiAgent,
       conversation_id: conversationId.value,
-      debug_options: {
+      execution_options: {
         injected_context: injectedContext.value,
         // 智能体版本禁止手动切换模型时不接受模型覆盖，避免绕过版本配置
         model: effectiveOverrideModel.value || undefined,
@@ -11534,13 +11534,13 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     // 模型切换入口被版本配置禁用时，思考 / 推理强度 / 温度覆盖同样不下发：
     // 它们都来自模型切换面板，禁用后残留的覆盖值会与版本配置的模型不匹配。
     if (manualModelSwitchAllowed.value && thinkingEnableOverride.value !== null) {
-      (body.debug_options as Record<string, unknown>).thinking_enable = thinkingEnableOverride.value;
+      (body.execution_options as Record<string, unknown>).thinking_enable = thinkingEnableOverride.value;
     }
     if (manualModelSwitchAllowed.value && reasoningEffortOverride.value !== null) {
-      (body.debug_options as Record<string, unknown>).reasoning_effort = reasoningEffortOverride.value;
+      (body.execution_options as Record<string, unknown>).reasoning_effort = reasoningEffortOverride.value;
     }
     if (manualModelSwitchAllowed.value && temperatureOverride.value !== null && temperatureOverride.value !== undefined) {
-      (body.debug_options as Record<string, unknown>).temperature = temperatureOverride.value;
+      (body.execution_options as Record<string, unknown>).temperature = temperatureOverride.value;
     }
     if (knowledgeDatasetIds.length > 0) {
       body.knowledge_dataset_ids = knowledgeDatasetIds;

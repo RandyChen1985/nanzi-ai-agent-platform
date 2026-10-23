@@ -639,8 +639,8 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 "content": "知识库工具 search_knowledge_base 不可用，无法执行知识库问答。",
             }
             return
-        # 从 debug_options 读取会话级反幻觉开关（与模型覆盖等参数同通道）
-        hallucination_check_enabled = bool(self.debug_options.get("hallucination_check", False))
+        # 从 execution_options 读取会话级反幻觉开关（与模型覆盖等参数同通道）
+        hallucination_check_enabled = bool(self.execution_options.get("hallucination_check", False))
         grounding_enabled = self._grounding_enabled()
 
         system_content = self.config.system_prompt or ""
@@ -885,7 +885,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             react_tools,
             allow_interactive_question=not is_automatic_delivery_context(
                 self.user_info,
-                self.debug_options,
+                self.execution_options,
             ),
         )
         if question_nudge is not None:

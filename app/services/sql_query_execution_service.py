@@ -51,10 +51,10 @@ def _is_system_schema(schema_lower: str, dialect: str) -> bool:
 def _effective_dry_run(dry_run: Optional[bool]) -> bool:
     if dry_run is not None:
         return bool(dry_run)
-    # 在函数内导入，便于测试 patch `app.core.context.get_debug_option` 与工具内联 import 行为一致
-    from app.core.context import get_debug_option as _get_debug_option
+    # 在函数内导入，便于测试 patch `app.core.context.get_execution_option` 与工具内联 import 行为一致
+    from app.core.context import get_execution_option as _get_execution_option
 
-    return bool(_get_debug_option("dry_run"))
+    return bool(_get_execution_option("dry_run"))
 
 
 def _append_trace(agent_context: Optional[AgentContext], trace_logs: Optional[List[str]], message: str) -> None:
@@ -391,8 +391,8 @@ async def execute_sql_query_core(
     在给定 DB 会话下完成权限重写与执行；调用方负责会话生命周期。
 
     Args:
-        dry_run: 若为 None，则与工具一致，回退到请求级 `get_debug_option("dry_run")`；
-                 HTTP 接口应显式传入 False，避免受调试上下文影响。
+        dry_run: 若为 None，则与工具一致，回退到请求级 `get_execution_option("dry_run")`；
+                 HTTP 接口应显式传入 False，避免受请求级执行选项影响。
         is_admin: 平台管理员；为 True 时跳过物理表权限校验（仍会做语法与安全校验）。
         auth_check_only: 为 True 时走与执行相同的权限与语法校验（含行级重写），**不调用**外部 SQL API；
                  成功时返回 JSON 字符串 `{"allowed": true}`。与 `dry_run` 互斥使用（HTTP 校验接口传

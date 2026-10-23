@@ -2,18 +2,18 @@ from contextvars import ContextVar
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 
-# Define a ContextVar to hold request-scoped debug options
-# Structure: { "dry_run": bool, "return_raw_prompt": bool, "model_override": str, ... }
-debug_context: ContextVar[Dict[str, Any]] = ContextVar("debug_context", default={})
+# 请求级执行选项（模型/思考/温度等覆盖值），随本轮请求或定时任务下发。
+# Structure: { "dry_run": bool, "return_raw_prompt": bool, "model": str, ... }
+execution_options_context: ContextVar[Dict[str, Any]] = ContextVar("execution_options_context", default={})
 
-def get_debug_option(key: str, default: Any = None) -> Any:
-    """Helper to get a value from the current debug context."""
-    ctx = debug_context.get()
+def get_execution_option(key: str, default: Any = None) -> Any:
+    """Helper to get a value from the current execution options context."""
+    ctx = execution_options_context.get()
     return ctx.get(key, default)
 
-def set_debug_context(options: Dict[str, Any]):
-    """Set the debug context for the current request."""
-    debug_context.set(options or {})
+def set_execution_options_context(options: Dict[str, Any]):
+    """Set the execution options context for the current request."""
+    execution_options_context.set(options or {})
 
 # Define a ContextVar to hold the current executing agent's context
 class AgentContext(BaseModel):

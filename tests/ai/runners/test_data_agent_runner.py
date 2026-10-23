@@ -517,7 +517,7 @@ async def test_data_agent_runner_system_content_includes_sql_plan_when_enabled(d
         config=data_config,
         trace_id="trace-data-plan",
         trace_buffer=[],
-        debug_options={"enable_sql_plan": True},
+        execution_options={"enable_sql_plan": True},
     )
 
     system_content = await runner._build_system_content()
@@ -966,7 +966,7 @@ async def test_data_agent_runner_does_not_issue_derived_evidence_for_history_onl
         trace_buffer=[],
         user_info={"user_id": 42},
         conversation_id="conv-1",
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
 
     events = []
@@ -1127,7 +1127,7 @@ async def test_data_agent_runner_reuse_synthesis_collapses_duplicated_output(
         trace_buffer=[],
         user_info={"user_id": 42},
         conversation_id="conv-1",
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
 
     events = []
@@ -3442,7 +3442,7 @@ async def test_project_dataset_scope_gates_sql_without_fresh_data(data_config):
         config=data_config,
         trace_id="trace-scope-nofresh",
         trace_buffer=[],
-        debug_options={
+        execution_options={
             "resource_scope": {
                 "datasets": [{"id": "1", "dataset_name": "mounted_ds", "name": "Mounted"}],
             }
@@ -6171,7 +6171,7 @@ async def test_data_agent_runner_auto_generates_plan_and_executes_high_risk_sql(
         config=data_config,
         trace_id="trace-plan-gate",
         trace_buffer=[],
-        debug_options={"enable_sql_plan": True},
+        execution_options={"enable_sql_plan": True},
     )
     runner._standalone_query = "按机房统计利用率"
     wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
@@ -6228,7 +6228,7 @@ async def test_data_agent_runner_refreshes_auto_plan_when_repair_changes_sql(dat
         config=data_config,
         trace_id="trace-plan-refresh",
         trace_buffer=[],
-        debug_options={"enable_sql_plan": True},
+        execution_options={"enable_sql_plan": True},
     )
     wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
 
@@ -6465,7 +6465,7 @@ def test_chatbi_grounding_audit_returns_warning_for_unrelated_business_fact(data
         trace_buffer=[],
         user_info={"user_id": "1"},
         conversation_id="conv-1",
-        debug_options={"grounding_enabled": True},
+        execution_options={"grounding_enabled": True},
     )
 
     audit = runner._chatbi_grounding_audit(
