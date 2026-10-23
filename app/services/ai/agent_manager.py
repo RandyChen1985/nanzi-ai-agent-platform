@@ -714,6 +714,44 @@ class AgentManagerService:
                 if issue is not None:
                     agent.model_issue = issue.to_dict()
 
+        # 工具失效：运行时用已发布版本，所以只校验它；没有已发布版本的由 readiness 覆盖。
+        # 判定口径与版本编辑器的 tool-health 完全一致，避免列表说没问题、点进去一堆红。
+        for agent in visible_agents:
+            agent.tool_issue = None
+        tool_targets = [
+            (agent, published_by_agent.get(agent.id))
+            for agent in visible_agents
+            if (agent.engine_type or "LOCAL") == "LOCAL"
+            and agent.is_enabled
+            and published_by_agent.get(agent.id) is not None
+        ]
+        if tool_targets:
+            from app.services.mcp.tool_ref_health import find_stale_tool_refs_bulk
+
+            stale_lists = await find_stale_tool_refs_bulk(
+                session,
+                [version.tools for _agent, version in tool_targets],
+                user=user if isinstance(user, dict) else {
+                    "user_id": getattr(user, "user_id", None),
+                    "user_name": getattr(user, "user_name", None),
+                },
+            )
+            for (agent, version), stale in zip(tool_targets, stale_lists):
+                if not stale:
+                    continue
+                # 只列前 3 个名字：横幅是给人扫的，全量明细在版本编辑器里
+                labels = [
+                    f"{item['name']}（{item['reason_label']}）" for item in stale[:3]
+                ]
+                suffix = "" if len(stale) <= 3 else f" 等 {len(stale)} 个"
+                agent.tool_issue = {
+                    "code": "stale_tools",
+                    "message": "、".join(labels) + suffix,
+                    "count": len(stale),
+                    "names": [item["name"] for item in stale],
+                    "version_id": version.id,
+                }
+
         return visible_agents
 
     @staticmethod

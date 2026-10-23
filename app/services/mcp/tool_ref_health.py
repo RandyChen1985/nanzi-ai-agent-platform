@@ -15,7 +15,7 @@
 运行时不区分管理员：管理员也只能用公共 MCP 与自己的个人 MCP，这里保持一致。
 """
 import json
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -191,31 +191,94 @@ async def resolve_unresolved_tool_names(
     return unresolved
 
 
-async def find_stale_tool_refs(
-    db: AsyncSession,
-    tools_config: Any,
-    *,
-    user: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    """列出 ``tools_config`` 里运行时已失效的引用，附带原因文案。
-
-    只对 MCP 形态（``server:tool``）做服务级原因判定；其它无法解析的名字（例如被删除的
-    业务 API 工具）归为 ``unknown``，同样允许移除——否则用户依然没有解绑入口。
-    """
-    names = configured_tool_names(tools_config)
-    if not names:
-        return []
-
-    user_id = None
+def _resolve_user_id(user: Dict[str, Any]) -> Optional[int]:
     raw_user_id = user.get("user_id") if user.get("user_id") is not None else user.get("id")
     try:
-        user_id = int(raw_user_id) if raw_user_id is not None else None
+        return int(raw_user_id) if raw_user_id is not None else None
     except (TypeError, ValueError):
-        user_id = None
+        return None
 
-    unresolved = await resolve_unresolved_tool_names(db, names, user_id=user_id)
+
+def _classify_stale_items(
+    names: Set[str],
+    *,
+    mcp_pairs: Dict[str, Tuple[str, str]],
+    servers_by_name: Dict[str, List[McpServer]],
+    caches_by_tool: Dict[str, List[McpToolCache]],
+    user_id: Optional[int],
+) -> List[Dict[str, Any]]:
+    """把一批「解析不到实现」的名字归类成可展示的失效项。"""
+    items: List[Dict[str, Any]] = []
+    for name in sorted(names):
+        pair = mcp_pairs.get(name)
+        if not pair:
+            items.append(
+                {
+                    "name": name,
+                    "display_name": name,
+                    "server_name": "",
+                    "reason": "unknown",
+                    "reason_label": REASON_LABELS["unknown"],
+                }
+            )
+            continue
+
+        server_name, tool_name = pair
+        servers = servers_by_name.get(server_name, [])
+        visible_servers = [server for server in servers if _server_visible_to(server, user_id)]
+        # 同名服务可能因历史数据重复：只要有一个可见就按它解释原因。
+        active_server = visible_servers[0] if visible_servers else None
+        cache = None
+        if active_server is not None:
+            cache = next(
+                (
+                    item
+                    for item in caches_by_tool.get(name, [])
+                    if item.server_id == active_server.id
+                ),
+                None,
+            )
+        reason = classify_stale_mcp_ref(
+            server_exists=bool(servers),
+            server_visible=active_server is not None,
+            server_enabled=bool(active_server and int(active_server.enabled_status or 0) == 1),
+            cache_exists=cache is not None,
+            cache_published=bool(cache and cache.is_published),
+            cache_available=bool(cache and cache.is_available),
+        )
+        items.append(
+            {
+                "name": name,
+                "display_name": tool_name,
+                "server_name": server_name,
+                "reason": reason,
+                "reason_label": REASON_LABELS[reason],
+            }
+        )
+    return items
+
+
+async def find_stale_tool_refs_bulk(
+    db: AsyncSession,
+    tools_configs: Iterable[Any],
+    *,
+    user: Dict[str, Any],
+) -> List[List[Dict[str, Any]]]:
+    """批量判定多个版本的 ``tools`` 配置，返回与输入等长的明细列表。
+
+    智能体列表页要逐个智能体判定；若每个都重新查 MCP 服务与工具缓存，
+    智能体一多就是 2N 次往返。这里把所有名字取并集后查一遍，再按各自配置求交集。
+    """
+    configs = list(tools_configs)
+    per_config_names = [configured_tool_names(config) for config in configs]
+    all_names: Set[str] = set().union(*per_config_names) if per_config_names else set()
+    if not all_names:
+        return [[] for _ in configs]
+
+    user_id = _resolve_user_id(user)
+    unresolved = await resolve_unresolved_tool_names(db, all_names, user_id=user_id)
     if not unresolved:
-        return []
+        return [[] for _ in configs]
 
     mcp_pairs: Dict[str, Tuple[str, str]] = {}
     for name in sorted(unresolved):
@@ -247,51 +310,28 @@ async def find_stale_tool_refs(
         for cache in cache_rows:
             caches_by_tool.setdefault(cache.tool_name, []).append(cache)
 
-    items: List[Dict[str, Any]] = []
-    for name in sorted(unresolved):
-        pair = mcp_pairs.get(name)
-        if not pair:
-            items.append(
-                {
-                    "name": name,
-                    "display_name": name,
-                    "server_name": "",
-                    "reason": "unknown",
-                    "reason_label": REASON_LABELS["unknown"],
-                }
-            )
-            continue
+    return [
+        _classify_stale_items(
+            names & unresolved,
+            mcp_pairs=mcp_pairs,
+            servers_by_name=servers_by_name,
+            caches_by_tool=caches_by_tool,
+            user_id=user_id,
+        )
+        for names in per_config_names
+    ]
 
-        server_name, tool_name = pair
-        servers = servers_by_name.get(server_name, [])
-        visible_servers = [s for s in servers if _server_visible_to(s, user_id)]
-        # 同名服务可能因历史数据重复：只要有一个可见就按它解释原因。
-        active_server = visible_servers[0] if visible_servers else None
-        cache = None
-        if active_server is not None:
-            cache = next(
-                (
-                    item
-                    for item in caches_by_tool.get(name, [])
-                    if item.server_id == active_server.id
-                ),
-                None,
-            )
-        reason = classify_stale_mcp_ref(
-            server_exists=bool(servers),
-            server_visible=active_server is not None,
-            server_enabled=bool(active_server and int(active_server.enabled_status or 0) == 1),
-            cache_exists=cache is not None,
-            cache_published=bool(cache and cache.is_published),
-            cache_available=bool(cache and cache.is_available),
-        )
-        items.append(
-            {
-                "name": name,
-                "display_name": tool_name,
-                "server_name": server_name,
-                "reason": reason,
-                "reason_label": REASON_LABELS[reason],
-            }
-        )
-    return items
+
+async def find_stale_tool_refs(
+    db: AsyncSession,
+    tools_config: Any,
+    *,
+    user: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """列出 ``tools_config`` 里运行时已失效的引用，附带原因文案。
+
+    只对 MCP 形态（``server:tool``）做服务级原因判定；其它无法解析的名字（例如被删除的
+    业务 API 工具）归为 ``unknown``，同样允许移除——否则用户依然没有解绑入口。
+    """
+    results = await find_stale_tool_refs_bulk(db, [tools_config], user=user)
+    return results[0] if results else []

@@ -26,9 +26,10 @@ def test_banner_only_renders_when_issues_exist():
     source = _management_source()
 
     assert "const modelIssues = computed(() => agents.value.filter(a => a.model_issue))" in source
+    assert "const toolIssues = computed(() => agents.value.filter(a => a.tool_issue))" in source
     # 横幅必须由长度守卫，没问题时不占空间
-    assert 'v-if="visibleModelIssues.length"' in source
-    assert "处模型配置异常" in source
+    assert 'v-if="visibleConfigIssues.length"' in source
+    assert "处配置异常" in source
 
 
 def test_banner_covers_system_default_model():
@@ -57,10 +58,10 @@ def test_banner_tells_users_where_to_fix_instead_of_jumping():
 def test_banner_can_be_dismissed_for_the_session():
     source = _management_source()
 
-    assert "const modelIssuesDismissed = ref(false)" in source
-    assert "modelIssuesDismissed = true" in source
+    assert "const configIssuesDismissed = ref(false)" in source
+    assert "configIssuesDismissed = true" in source
     # 问题清空后必须重置，否则修好一个再出现新问题就永远不提示了
-    assert "if (!list.length) modelIssuesDismissed.value = false" in source
+    assert "if (!list.length) configIssuesDismissed.value = false" in source
 
 
 def test_readiness_popover_uses_real_model_issue_instead_of_phantom_flag():
@@ -77,3 +78,27 @@ def test_agent_api_type_exposes_model_issue_and_health_endpoint():
     assert "model_issue?: AgentModelIssue | null" in source
     assert "export interface AgentModelIssue" in source
     assert "/api/portal/agents/model-health" in source
+
+
+def test_banner_also_surfaces_stale_tool_refs_from_published_version():
+    """工具/MCP 失效与模型问题共用一条横幅，避免用户点进版本配置才发现。"""
+    source = _management_source()
+
+    # 后端在列表接口算好摘要（tool_issue），前端只合并展示
+    assert "const toolIssues = computed(() => agents.value.filter(a => a.tool_issue))" in source
+    assert "for (const agent of toolIssues.value)" in source
+    assert "agent.tool_issue?.message" in source
+    assert "「版本配置 → 工具能力」移除失效引用后重新发布" in source
+    # 两类条目用前缀区分 key：同一智能体可能同时有模型问题和工具问题
+    assert "key: `model:${agent.id}`" in source
+    assert "key: `tool:${agent.id}`" in source
+    # 类型徽章让用户一眼分清是模型还是工具
+    assert "item.kind === 'tool' ? 'bg-amber-100 text-amber-700'" in source
+    assert "{{ item.kind === 'tool' ? '工具' : '模型' }}" in source
+
+
+def test_agent_api_type_exposes_tool_issue():
+    source = AGENT_API.read_text(encoding="utf-8")
+
+    assert "export interface AgentToolIssue" in source
+    assert "tool_issue?: AgentToolIssue | null" in source

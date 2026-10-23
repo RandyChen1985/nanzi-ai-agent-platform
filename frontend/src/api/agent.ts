@@ -29,6 +29,15 @@ export interface AgentModelIssue {
   model_name?: string
 }
 
+/** 已发布版本里运行时已失效的工具引用摘要（列表页配置异常横幅用） */
+export interface AgentToolIssue {
+  code: string
+  message: string
+  count: number
+  names: string[]
+  version_id: string
+}
+
 export interface AIAgent {
   id: string
   name: string
@@ -66,6 +75,11 @@ export interface AIAgent {
    * code: missing | unregistered | disabled | missing_api_key
    */
   model_issue?: AgentModelIssue | null
+  /**
+   * 已发布版本里运行时已失效的工具/MCP 引用摘要；null/undefined 表示正常，
+   * 或该智能体还没有已发布版本（由 readiness 覆盖）。
+   */
+  tool_issue?: AgentToolIssue | null
   onboarding_step?: 'VERSION' | 'RESOURCE' | 'COMPLETE'
   /** 已发布版本是否允许在输入框手动切换模型；null/undefined 表示无发布版或未配置，前端按允许处理 */
   allow_model_switch?: boolean | null

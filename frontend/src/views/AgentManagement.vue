@@ -442,18 +442,21 @@ const segmentCounts = computed(() => {
   return { all, ready, unready, general, chatbi, kb, custom }
 })
 
-// 模型健康：已发布版本绑定的模型在当前环境未注册 / 已禁用 / 缺 API Key。
-// 判定在后端完成（LOCAL 引擎的已启用智能体才返回 model_issue），这里只做汇总展示。
+// 配置异常：已发布版本绑定的模型不可用（model_issue），或引用了已失效的工具/MCP（tool_issue）。
+// 两类判定都在后端完成（LOCAL 引擎的已启用智能体才返回），这里只做汇总展示。
 const modelIssuePanelOpen = ref(false)
-const modelIssuesDismissed = ref(false)
+const configIssuesDismissed = ref(false)
 const modelIssues = computed(() => agents.value.filter(a => a.model_issue))
+const toolIssues = computed(() => agents.value.filter(a => a.tool_issue))
 
-type ModelHealthItem = {
+type ConfigIssueItem = {
   key: string
+  /** 模型问题指向「模型管理 / 版本配置 → 模型」，工具问题指向「版本配置 → 工具能力」 */
+  kind: 'model' | 'tool'
   title: string
   detail: string
   hint: string
-  /** 只有「系统默认模型」有可靠的跳转入口；智能体的模型在版本配置里，位置随版本而异 */
+  /** 只有「系统默认模型」有可靠的跳转入口；智能体的配置在版本配置里，位置随版本而异 */
   action?: 'system'
 }
 
@@ -469,12 +472,16 @@ const MODEL_ISSUE_HINT: Record<string, string> = {
 const modelIssueHint = (code?: string) =>
   (code && MODEL_ISSUE_HINT[code]) || '请在「模型管理」与「版本配置 → 模型」中检查'
 
-// 两个来源合并展示：系统默认模型（影响所有未显式绑定模型的链路）+ 单个智能体。
-const modelHealthItems = computed<ModelHealthItem[]>(() => {
-  const items: ModelHealthItem[] = []
+const TOOL_ISSUE_HINT = '请在「版本配置 → 工具能力」移除失效引用后重新发布'
+
+// 三个来源合并展示：系统默认模型（影响所有未显式绑定模型的链路）、单个智能体的模型、
+// 单个智能体已发布版本里失效的工具引用。
+const configIssueItems = computed<ConfigIssueItem[]>(() => {
+  const items: ConfigIssueItem[] = []
   if (defaultModelIssue.value) {
     items.push({
       key: 'system-default',
+      kind: 'model',
       title: '系统默认 LLM 模型',
       detail: defaultModelIssue.value.message,
       hint: '',
@@ -483,21 +490,31 @@ const modelHealthItems = computed<ModelHealthItem[]>(() => {
   }
   for (const agent of modelIssues.value) {
     items.push({
-      key: agent.id,
+      key: `model:${agent.id}`,
+      kind: 'model',
       title: agent.display_name || agent.name,
       detail: agent.model_issue?.message || '',
       hint: modelIssueHint(agent.model_issue?.code),
     })
   }
+  for (const agent of toolIssues.value) {
+    items.push({
+      key: `tool:${agent.id}`,
+      kind: 'tool',
+      title: agent.display_name || agent.name,
+      detail: agent.tool_issue?.message || '',
+      hint: TOOL_ISSUE_HINT,
+    })
+  }
   return items
 })
 
-const visibleModelIssues = computed(() =>
-  modelIssuesDismissed.value ? [] : modelHealthItems.value
+const visibleConfigIssues = computed(() =>
+  configIssuesDismissed.value ? [] : configIssueItems.value
 )
 // 问题清空后重置「知道了」，下次真的再出现时仍然提示
-watch(modelHealthItems, (list) => {
-  if (!list.length) modelIssuesDismissed.value = false
+watch(configIssueItems, (list) => {
+  if (!list.length) configIssuesDismissed.value = false
 })
 
 const filteredAgents = computed(() => {
@@ -3177,7 +3194,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
     <!-- 模型配置异常提示：只在有问题时渲染，正常时完全不占空间 -->
     <div
-      v-if="visibleModelIssues.length"
+      v-if="visibleConfigIssues.length"
       class="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3"
     >
       <div class="flex flex-wrap items-center justify-between gap-2">
@@ -3186,7 +3203,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
           <span class="text-sm font-medium text-amber-900">
-            {{ visibleModelIssues.length }} 处模型配置异常
+            {{ visibleConfigIssues.length }} 处配置异常
           </span>
           <span class="hidden truncate text-xs text-amber-700 sm:inline">
             相关调用会失败，请尽快修复
@@ -3203,7 +3220,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <button
             type="button"
             class="cursor-pointer rounded-md px-2 py-1 text-xs text-amber-700 transition-colors hover:bg-amber-100"
-            @click="modelIssuesDismissed = true"
+            @click="configIssuesDismissed = true"
           >
             知道了
           </button>
@@ -3212,13 +3229,21 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
       <ul v-if="modelIssuePanelOpen" class="mt-2.5 space-y-1.5">
         <li
-          v-for="item in visibleModelIssues"
+          v-for="item in visibleConfigIssues"
           :key="item.key"
           class="flex items-center justify-between gap-3 rounded-lg bg-white/80 px-3 py-2"
         >
           <div class="min-w-0">
-            <div class="truncate text-sm font-medium text-gray-800">
-              {{ item.title }}
+            <div class="flex min-w-0 items-center gap-1.5">
+              <span
+                class="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
+                :class="item.kind === 'tool' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'"
+              >
+                {{ item.kind === 'tool' ? '工具' : '模型' }}
+              </span>
+              <div class="truncate text-sm font-medium text-gray-800">
+                {{ item.title }}
+              </div>
             </div>
             <div class="truncate text-xs text-gray-500">
               {{ item.detail }}

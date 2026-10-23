@@ -373,3 +373,56 @@ async def test_tool_health_post_checks_unsaved_tools(client, admin_api_key, vali
         async with AsyncSessionLocal() as session:
             await session.execute(delete(AIAgent).where(AIAgent.id == agent_id))
             await session.commit()
+
+
+async def test_agent_list_reports_stale_tools_of_published_version(client, admin_api_key):
+    """智能体中心的配置异常横幅：列表接口直接给出已发布版本的失效引用摘要。"""
+    suffix = uuid.uuid4().hex[:10]
+    agent_id = str(uuid.uuid4())
+    version_id = str(uuid.uuid4())
+    ghost_tool = f"mcp-public-gone-{suffix}:query"
+
+    async with AsyncSessionLocal() as session:
+        session.add(
+            AIAgent(
+                id=agent_id,
+                name=f"list-ghost-{suffix}",
+                display_name="列表失效工具",
+                created_by="someone-else",
+                is_system=False,
+                is_enabled=True,
+                engine_type="LOCAL",
+            )
+        )
+        session.add(
+            AIAgentVersion(
+                id=version_id,
+                agent_id=agent_id,
+                version_number=1,
+                status="PUBLISHED",
+                system_prompt="you are a test agent",
+                tools=["get_dataset_schema", ghost_tool],
+            )
+        )
+        await session.commit()
+
+    try:
+        resp = await client.get(
+            "/api/portal/agents/",
+            headers={"Authorization": f"Bearer {admin_api_key}"},
+        )
+        assert resp.status_code == 200
+        target = next(item for item in resp.json() if item["id"] == agent_id)
+        issue = target["tool_issue"]
+        assert issue is not None
+        assert issue["count"] == 1
+        assert issue["names"] == [ghost_tool]
+        assert "MCP 服务已删除" in issue["message"]
+        assert issue["version_id"] == version_id
+    finally:
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(AIAgentVersion).where(AIAgentVersion.agent_id == agent_id)
+            )
+            await session.execute(delete(AIAgent).where(AIAgent.id == agent_id))
+            await session.commit()
