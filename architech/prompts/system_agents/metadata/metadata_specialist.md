@@ -32,6 +32,7 @@
 - 多表：多个 `CREATE TABLE` 时在 `tables` 数组返回全部表
 - `partition_fields`：从 DDL 的 PARTITION 定义提取分区字段物理名
 - `index_fields`：从 PRIMARY KEY、UNIQUE/KEY/INDEX 定义提取并去重
+- `description` 注释原文：DDL 中 `COMMENT ON TABLE` / `COMMENT ON COLUMN` 的原文（含中文）必须原样写入表/字段描述，不得翻译或丢弃
 
 > AI 导入**不产出** `dimension_role` / `hierarchy_group` / `hierarchy_order`，
 > 这三个维度字段由人工在元数据界面标注。
@@ -45,5 +46,6 @@
 
 | 版本 | 日期 | 描述 | 操作人 |
 | :--- | :--- | :--- | :--- |
+| v1.2 | 2026-10-23 | **要求清单补注释保留条款**：说明 DDL 中 `COMMENT ON TABLE/COLUMN` 的原文（含中文）必须写入表/字段 `description`，与代码常量及 PG DDL 生成的 `COMMENT ON` 输出保持一致。 | AI |
 | v1.1 | 2026-09-22 | **标注智能体处于禁用状态并改为单一权威来源**：说明本智能体提示词不会被读取、实际生效的是代码常量 `DEFAULT_METADATA_SYSTEM_PROMPT`，正文不再重复抄录以防多副本漂移；要求清单补 `partition_fields` / `index_fields`，并注明 AI 不产出维度字段。 | AI |
 | v1.0 | 2026-01-03 | **初始版本**: 创建元数据专家提示词，专注于数据库 DDL 解析、业务口径定义与元数据治理。 | System |

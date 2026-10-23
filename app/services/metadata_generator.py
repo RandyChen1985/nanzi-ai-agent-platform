@@ -22,14 +22,14 @@ class ColumnMetadata(BaseModel):
     physical_name: str = Field(description="数据库物理列名")
     term: str = Field(description="业务术语，如 '机房名称' 而非 'room_name'")
     type: str = Field(description="字段数据类型")
-    description: str = Field(description="详细的业务含义描述")
+    description: str = Field(description="详细的业务含义描述；DDL 含 COMMENT ON COLUMN 时必须使用其原文")
     enums: List[Dict[str, Any]] = Field(default=[], description="枚举值列表，如 [{'value': 0, 'label': '正常'}]")
     synonyms: List[str] = Field(default=[], description="该字段的同义词，用于增强检索")
 
 class TableMetadata(BaseModel):
     physical_name: str = Field(description="数据库物理表名")
     term: str = Field(description="业务术语，如 '资产配置表'")
-    description: str = Field(description="该表存储的数据内容概要")
+    description: str = Field(description="该表存储的数据内容概要；DDL 含 COMMENT ON TABLE 时必须使用其原文")
     synonyms: List[str] = Field(default=[], description="表的同义词")
     partition_fields: List[str] = Field(default=[], description="数据库分区字段物理名列表；必须从 DDL 的 PARTITION 定义提取")
     index_fields: List[str] = Field(default=[], description="数据库索引字段物理名列表；从 PRIMARY KEY、UNIQUE/KEY/INDEX 定义提取并去重")
@@ -122,6 +122,9 @@ DEFAULT_METADATA_SYSTEM_PROMPT = (
     "特别要求：\n"
     "- 提取业务术语（term）：提供最准确的中文业务名称。如果输入缺失备注/注释，请根据物理名（Physical Name）进行智能推断。\n"
     "- 识别描述（description）：提供详细的业务含义描述。如果原始信息缺失且字段名具有代表性，请结合行业知识生成建议的业务解释。\n"
+    "- 保留数据库注释原文：DDL 中的 COMMENT ON TABLE / COMMENT ON COLUMN 是库表作者写下的备注，"
+    "必须原样（包括中文、标点和换行）写入对应表与字段的 description；term 可据此提炼，"
+    "但不得翻译、摘要或丢弃注释原文。\n"
     "- 识别物理名（physical_name）：如果是 DDL 请严格保留；如果是自然语言请按下划线命名法推断（如 '机房ID' -> 'room_id'）。\n"
     "- 识别枚举值（enums）：从描述文本中提取可能的取值范围。\n"
     "- 生成同义词（synonyms）：为表和核心字段提供 2-3 个业务同义词，帮助 AI 检索。\n"
