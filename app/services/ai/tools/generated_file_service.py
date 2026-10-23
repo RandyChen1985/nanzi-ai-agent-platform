@@ -18,7 +18,7 @@ from typing import Any
 from app.core.config import settings
 from app.models.artifact import AiArtifact
 from app.core.orm import AsyncSessionLocal
-from app.services.config_service import ConfigService
+from app.services.app_public_url_service import get_app_public_url, normalize_public_url
 from app.utils.fs_paths import get_data_base_dir
 
 logger = logging.getLogger(__name__)
@@ -40,18 +40,8 @@ _OFFICE_MIME_TYPES = {
 
 
 def _normalize_public_base_url(value: str | None) -> str:
-    return str(value or "").strip().rstrip("/")
-
-
-async def get_download_url_prefix() -> str:
-    """Read the system-configured download prefix with environment fallback."""
-    try:
-        configured = await ConfigService.get("download_url_prefix")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to read download_url_prefix from system config: %s", exc)
-        configured = None
-    configured_base = _normalize_public_base_url(configured)
-    return configured_base or _normalize_public_base_url(settings.APP_PUBLIC_URL)
+    """对外地址归一：去空白、去结尾斜杠（统一实现在 app_public_url_service）。"""
+    return normalize_public_url(value)
 
 
 def build_download_url(
@@ -312,7 +302,7 @@ async def register_artifact(
         session.add(artifact)
         await session.commit()
 
-    public_base_url = await get_download_url_prefix()
+    public_base_url = await get_app_public_url()
     published = PublishedArtifact(
         artifact_id=artifact.id,
         token=token,

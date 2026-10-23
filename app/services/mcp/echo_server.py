@@ -20,6 +20,7 @@ from app.services.mcp.mcp_auth_policy import (
     load_mcp_private_key,
     resolve_mcp_auth_headers,
 )
+from app.services.mcp.public_url import mutable_transport_security
 from app.services.mcp.transport_security import (
     _parse_public_url,
     build_mcp_transport_security,
@@ -263,7 +264,9 @@ echo_mcp = FastMCP(
     streamable_http_path="/mcp",
     json_response=True,
     stateless_http=True,
-    transport_security=build_echo_transport_security(settings.APP_PUBLIC_URL),
+    # 占位对象：启动后由 refresh_mcp_public_url() 按「系统配置 → 环境变量」
+    # 原地刷新白名单（FastMCP 中间件按对象引用读取，不能替换实例）。
+    transport_security=mutable_transport_security(settings.APP_PUBLIC_URL),
 )
 
 

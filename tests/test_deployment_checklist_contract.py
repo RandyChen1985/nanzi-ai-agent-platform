@@ -56,7 +56,7 @@ def test_deployment_checklist_is_admin_only_and_reachable_from_overview():
     assert "knowledge_environment" in checklist
     assert "RAGFlow" in checklist
     for item in (
-        "download_url_prefix", "llm_model_name", "multimodal_model_name",
+        "app_public_url", "llm_model_name", "multimodal_model_name",
         "embed_api_url", "metadata_provider", "knowledge_ragflow_api_url",
         "sandbox_policy", "TASK_SCHEDULER_ENABLED",
     ):

@@ -222,6 +222,15 @@ def test_confirm_supports_fixed_password_and_optional_password_email():
     assert "平台邮件服务未启用或配置不完整" in source
 
 
+def test_password_mail_carries_platform_url_from_the_shared_resolver():
+    """邮件里要有平台地址，且必须取统一口径（系统配置 app_public_url → env）。"""
+
+    source = _source()
+
+    assert "get_app_public_url" in source
+    assert "platform_url=platform_url" in source
+
+
 def test_fixed_password_is_validated_before_creating_any_account():
     """固定密码不适用时必须整体 400，不能建到一半才失败。"""
 

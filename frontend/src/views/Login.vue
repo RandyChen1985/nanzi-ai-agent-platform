@@ -247,7 +247,7 @@ const hideLoginApiKey = ref(false)
 const registrationEnabled = ref(false)
 
 // 忘记密码入口。与注册入口同口径：由后端公开配置下发的 password_reset_available 控制，
-// 后端只有在「全局邮件服务可用」且「download_url_prefix 已配置」时才置为 true ——
+// 后端只有在「全局邮件服务可用」且「app_public_url 已配置」时才置为 true ——
 // 两者缺一都会让重置邮件里的链接变成点不开的地址，因此宁可整块入口不显示。
 const passwordResetAvailable = ref(false)
 const isRegisterStep = ref(false)

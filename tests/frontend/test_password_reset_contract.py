@@ -88,10 +88,10 @@ def test_change_password_logs_out_current_device():
     assert "/login" in window, "改密成功后必须回登录页重新认证"
 
 
-def test_download_url_prefix_copy_mentions_reset_link():
+def test_app_public_url_copy_mentions_reset_link():
     """该前缀同时服务重置链接，说明必须写清楚，否则管理员不会把两者联系起来。"""
     assert "重置链接" in SYSCONFIG
-    idx = SYSCONFIG.index("download_url_prefix: '")
+    idx = SYSCONFIG.index("app_public_url: '")
     short_desc = SYSCONFIG[idx : idx + 400]
     assert "重置链接" in short_desc or "重置" in short_desc
     assert "重置" in CHECKLIST
@@ -106,7 +106,7 @@ def test_config_search_covers_code_side_descriptions():
 
 
 def test_existing_download_prefix_migration_contract_untouched():
-    """V129 / V29 里的历史文案保持不变：本特性零迁移，不去改已发布的迁移。"""
+    """V129 / V29 里的历史文案保持不变：改名由 V183 / V84 承担，不回改已发布的迁移。"""
     mysql = (ROOT / "db-prod/V129-add_download_url_prefix_config.sql").read_text(
         encoding="utf-8"
     )

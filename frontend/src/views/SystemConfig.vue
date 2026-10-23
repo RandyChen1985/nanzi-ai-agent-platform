@@ -2542,9 +2542,9 @@ const configShortDescriptions: Record<string, string> = {
   user_registration_enabled: '账号自主注册申请开关。开启后登录页显示「申请账号」入口，注册申请须管理员审核通过后才能登录。',
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
-  download_url_prefix: '生成文件下载链接、以及忘记密码「重置链接」使用的公网地址前缀。'
-    + '只填协议 + 域名（如 https://your-domain.example.com），不要填写任何路径、文件名或 token。'
-    + '留空时回退 APP_PUBLIC_URL。',
+  app_public_url: '平台对外访问地址。生成文件下载链接、忘记密码重置链接、MCP 公网地址与 OAuth 元数据、'
+    + '报表通知深链、网页预览判定都用它。只填协议 + 域名（如 https://your-domain.example.com），'
+    + '不要填写任何路径、文件名或 token。留空时回退环境变量 APP_PUBLIC_URL。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
   llm_request_read_timeout: '大模型请求的读取超时（秒），指相邻两次数据到达的最大间隔，默认 180，范围 30-300。',
   agent_max_toolcall_timeout: '单次 Agent 工具调用的全局超时时间（秒），默认 180 秒，范围 1-3600；版本级配置优先于全局配置。',
@@ -2640,7 +2640,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'platform_timezone',
       'agentscope_inject_runtime_state',
       'agentscope_inject_time_interval_hours',
-      'download_url_prefix',
+      'app_public_url',
     ]
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
@@ -4616,7 +4616,7 @@ onUnmounted(() => {
                                影响定时任务 Cron「每天 08:00」的解释与下次运行时间，以及平台时间展示。无法修改外部 MySQL 服务器时区时，仍以本项 + 应用容器 TZ 为准。
                              </p>
                           </div>
-                          <div v-else-if="item.key === 'download_url_prefix'">
+                          <div v-else-if="item.key === 'app_public_url'">
                              <input
                                type="url"
                                v-model="item.value"
@@ -4626,8 +4626,9 @@ onUnmounted(() => {
                              />
                              <div class="mt-2 text-xs text-blue-700 bg-blue-50/60 p-3 rounded-xl border border-blue-100/70 leading-relaxed">
                                <div>💡 <strong>设置示例：</strong>填写 <code class="font-mono text-blue-800">https://your-domain.example.com</code>，生成的下载地址会是 <code class="font-mono text-blue-800">https://your-domain.example.com/api/v1/chat/generated-files/...</code>。</div>
-                               <div class="mt-1">只填写协议、域名和必要的反向代理前缀，<strong>不要填写</strong> API 路径、文件名或 token。留空时回退到环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code> 或相对地址。</div>
-                               <div class="mt-1">用户「忘记密码」时收到的重置邮件也用此前缀，链接形如 <code class="font-mono text-blue-800">https://your-domain.example.com/reset-password?token=...</code>；同样<strong>不要</strong>在前缀里填写 <code class="font-mono text-blue-800">/reset-password</code>。因此本项留空时，登录页的「忘记密码」入口会整块隐藏（邮件里的相对地址点不开，发出去等于废邮件）。</div>
+                               <div class="mt-1">只填写协议、域名和必要的反向代理前缀，<strong>不要填写</strong> API 路径、文件名或 token。留空时回退到环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code>，两者都没有则使用相对地址。</div>
+                               <div class="mt-1">用户「忘记密码」时收到的重置邮件也用这个地址，链接形如 <code class="font-mono text-blue-800">https://your-domain.example.com/reset-password?token=...</code>；同样<strong>不要</strong>填写 <code class="font-mono text-blue-800">/reset-password</code>。因此本项留空时，登录页的「忘记密码」入口会整块隐藏（邮件里的相对地址点不开，发出去等于废邮件）。</div>
+                               <div class="mt-1">MCP（Echo 测试服务与平台级 MCP）的公网地址、OAuth 元数据、报表订阅通知里的深链也取自这里。保存后立即生效；已创建的 Echo 需回【MCP 管理】重新点一次「创建 Echo 测试 MCP」刷新库里保存的 <code class="font-mono text-blue-800">sse_url</code>。</div>
                              </div>
                           </div>
                           <div v-else-if="item.key === 'sandbox_ssh_auth_type'" class="space-y-2">

@@ -47,6 +47,7 @@ from app.services.mcp_share_service import (
     share_server as share_mcp_server,
     withdraw_share as withdraw_mcp_share,
 )
+from app.services.app_public_url_service import get_app_public_url
 from app.services.mcp.echo_server import (
     ECHO_SERVER_ID,
     ECHO_SERVER_NAME,
@@ -721,7 +722,7 @@ async def create_echo_test_mcp(
     is_personal = scope == "personal"
     server_id = personal_echo_server_id(owner_id) if is_personal else ECHO_SERVER_ID
 
-    base_url = resolve_echo_base_url(str(request.base_url), settings.APP_PUBLIC_URL)
+    base_url = resolve_echo_base_url(str(request.base_url), await get_app_public_url())
     from app.services.mcp.url_policy import McpUrlPolicyError, validate_mcp_outbound_url
 
     try:

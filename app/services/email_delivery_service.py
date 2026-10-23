@@ -31,6 +31,7 @@ from markdown_it import MarkdownIt
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.app_public_url_service import normalize_public_url
 from app.services.platform_timezone import format_platform_datetime
 
 logger = logging.getLogger(__name__)
@@ -764,26 +765,44 @@ def build_review_mail(user_name: str, approved: bool, sender_name: str) -> Tuple
 
 
 def build_account_created_mail(
-    user_name: str, password: str, sender_name: str
+    user_name: str,
+    password: str,
+    sender_name: str,
+    platform_url: str = "",
 ) -> Tuple[str, str]:
-    """批量导入开户的「账号 + 初始密码」通知。返回 (主题, 正文)。
+    """批量导入开户的「平台地址 + 账号 + 初始密码」通知。返回 (主题, 正文)。
 
     与 `build_review_mail` 刻意相反：这封邮件的**目的**就是把管理员指定或系统
     生成的初始密码送达用户邮箱，所以函数入参必须包含密码。约束放在调用侧：
     只有管理员在导入确认页显式打开「发送密码到用户邮箱」时才会调用；明文密码
     只出现在邮件正文与一次性响应里，不写日志、不落库。
+
+    ``platform_url`` 由调用方传入统一解析出来的对外地址（系统配置 app_public_url
+    → 环境变量 APP_PUBLIC_URL）。这里刻意不自己读配置：纯函数更好测，也避免一封
+    邮件一个来源。未配置时不渲染「平台地址」行 —— 相对地址在邮件里点不开，写出来
+    只会让收件人以为链接坏了。
     """
     subject = f"【{sender_name}】您的平台账号已创建"
-    body = (
-        f"您好，{user_name}：\n\n"
-        "平台已为您创建账号，登录信息如下：\n\n"
-        f"账号：{user_name}\n"
-        f"初始密码：{password}\n\n"
-        "为了账号安全，请在首次登录后立即修改密码。\n"
-        "如果这不是您预期的操作，请联系平台管理员核实。\n\n"
-        "（本邮件包含初始密码，请勿转发；本邮件由系统自动发送，请勿直接回复）\n"
-    )
-    return subject, body
+
+    cleaned_url = normalize_public_url(platform_url)
+    lines = [
+        f"您好，{user_name}：",
+        "",
+        "平台已为您创建账号，登录信息如下：",
+        "",
+    ]
+    if cleaned_url:
+        lines.append(f"平台地址：{cleaned_url}")
+    lines += [
+        f"账号：{user_name}",
+        f"初始密码：{password}",
+        "",
+        "为了账号安全，请在首次登录后立即修改密码。",
+        "如果这不是您预期的操作，请联系平台管理员核实。",
+        "",
+        "（本邮件包含初始密码，请勿转发；本邮件由系统自动发送，请勿直接回复）",
+    ]
+    return subject, "\n".join(lines) + "\n"
 
 
 def build_admin_review_notice(
@@ -803,7 +822,7 @@ def build_admin_review_notice(
     - **不放链接**：待审核页无法用 URL 直达 —— 前端 Users.vue 的 activeView 是纯本地
       ref、不接受 URL 参数，/users?view=review 会落在默认列表页；放个落到列表页的
       链接反而误导。用户已明确否决「改前端加 query 支持」，故只给文字指引。
-      附带好处：本函数不依赖 download_url_prefix，也就不存在「前缀没配就发不出去」。
+      附带好处：本函数不依赖 app_public_url，也就不存在「前缀没配就发不出去」。
     - **入参不含任何凭据**：签名只接受展示用字段，从来源上保证这封邮件不可能泄露
       口令或 API Key —— 比在正文里逐个回避敏感词可靠（后者会连正当提示一起禁掉）。
     """

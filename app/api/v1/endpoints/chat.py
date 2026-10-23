@@ -298,8 +298,8 @@ async def list_artifacts(
         DEFAULT_TTL,
         build_artifact_token,
         build_download_url,
-        get_download_url_prefix,
     )
+    from app.services.app_public_url_service import get_app_public_url
     from sqlalchemy import func, select
 
     user_id = _require_numeric_chat_user_id(user_info)
@@ -327,7 +327,7 @@ async def list_artifacts(
     )
     rows = (await db.scalars(stmt)).all()
 
-    public_base_url = await get_download_url_prefix()
+    public_base_url = await get_app_public_url()
     items: List[ArtifactListItem] = []
     # 确定性签名：同一产物重算出的 token 与登记时一致，因此这里**不再改写 token_hash**。
     # 旧实现「每列出一次就新签发并覆盖哈希」会把已经发到消息正文里的链接全部吊销

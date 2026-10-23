@@ -338,20 +338,20 @@ async def test_availability_reports_missing_prefix(monkeypatch):
         return ""
 
     monkeypatch.setattr(edmod.EmailDeliveryService, "load_global_smtp_settings", _settings)
-    monkeypatch.setattr(prmod, "get_download_url_prefix", _empty)
+    monkeypatch.setattr(prmod, "get_app_public_url", _empty)
 
     reason = await PasswordResetService.availability()
-    assert reason is not None and "download_url_prefix" in reason
+    assert reason is not None and "app_public_url" in reason
 
 
 @pytest.mark.no_infrastructure
-async def test_build_link_uses_download_url_prefix(monkeypatch):
+async def test_build_link_uses_app_public_url(monkeypatch):
     from app.services import password_reset_service as prmod
 
     async def _prefix():
         return "https://portal.example.com"
 
-    monkeypatch.setattr(prmod, "get_download_url_prefix", _prefix)
+    monkeypatch.setattr(prmod, "get_app_public_url", _prefix)
 
     link = await PasswordResetService.build_link(7, FakeRedis())
     assert link.startswith("https://portal.example.com/reset-password?token=7.")
@@ -365,7 +365,7 @@ async def test_build_link_returns_none_when_prefix_empty(monkeypatch):
     async def _empty():
         return ""
 
-    monkeypatch.setattr(prmod, "get_download_url_prefix", _empty)
+    monkeypatch.setattr(prmod, "get_app_public_url", _empty)
     assert await PasswordResetService.build_link(7, FakeRedis()) is None
 
 
@@ -576,7 +576,7 @@ PORTAL_PREFIX = "https://portal.example.com"
 def _stub_mail(monkeypatch, *, available=True, prefix=PORTAL_PREFIX):
     """把「邮件服务可用性 + 对外地址 + 实际发信」变成显式可控，返回发信捕获列表。
 
-    patch 目标只有一处：`password_reset_service` 模块名下的 `get_download_url_prefix`
+    patch 目标只有一处：`password_reset_service` 模块名下的 `get_app_public_url`
     （availability 与 build_link 都经它导入）。**不要**分别去 patch 端点里的局部导入，
     否则会出现「patch 了不生效、用例永远通过」的假绿。
     """
@@ -602,7 +602,7 @@ def _stub_mail(monkeypatch, *, available=True, prefix=PORTAL_PREFIX):
 
     monkeypatch.setattr(edmod.EmailDeliveryService, "load_global_smtp_settings", _settings)
     monkeypatch.setattr(edmod.EmailDeliveryService, "send_mail", staticmethod(_send))
-    monkeypatch.setattr(prmod, "get_download_url_prefix", _prefix)
+    monkeypatch.setattr(prmod, "get_app_public_url", _prefix)
     return captured
 
 
@@ -692,7 +692,7 @@ async def test_request_endpoint_503_when_prefix_empty(client, monkeypatch):
 
     resp = await client.post(RESET_REQUEST_URL, json={"email": "a@b.com"})
     assert resp.status_code == 503
-    assert "download_url_prefix" in resp.json()["detail"]
+    assert "app_public_url" in resp.json()["detail"]
 
 
 async def test_request_endpoint_503_when_redis_down(client, monkeypatch):
@@ -717,7 +717,7 @@ async def test_request_endpoint_rejects_malformed_email(client, monkeypatch):
 async def test_request_endpoint_sends_mail_with_prefix_link(
     client, enabled_account, monkeypatch
 ):
-    """发信发生在响应之后，且链接由 download_url_prefix 拼出。"""
+    """发信发生在响应之后，且链接由 app_public_url 拼出。"""
     sent = _stub_mail(monkeypatch)
     _stub_redis(monkeypatch, FakeRedis())
     _, email = enabled_account

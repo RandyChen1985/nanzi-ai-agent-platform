@@ -336,6 +336,16 @@ class ConfigService:
         return values
 
     @staticmethod
+    async def _notify_app_public_url_changed() -> None:
+        """对外地址变更后刷新 MCP 白名单（惰性导入避免与 MCP 模块循环依赖）。"""
+        try:
+            from app.services.mcp.public_url import refresh_mcp_public_url
+
+            await refresh_mcp_public_url()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to refresh MCP public url after config change: %s", exc)
+
+    @staticmethod
     async def set_config(
         key: str, 
         value: str, 
@@ -412,6 +422,9 @@ class ConfigService:
         
         # Invalidate Memory Cache
         ConfigService._all_configs_cache = None
+        # 对外访问地址变更后立刻刷新 MCP 白名单，否则要重启后端才生效
+        if key == "app_public_url":
+            await ConfigService._notify_app_public_url_changed()
             
         return old_value != value
 
@@ -577,6 +590,9 @@ class ConfigService:
         
         # Invalidate Memory Cache
         ConfigService._all_configs_cache = None
+        # 对外访问地址变更后立刻刷新 MCP 白名单，否则要重启后端才生效
+        if key == "app_public_url":
+            await ConfigService._notify_app_public_url_changed()
             
         return old_value != value
 

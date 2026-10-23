@@ -27,6 +27,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from app.core.config import settings
+from app.services.app_public_url_service import get_app_public_url
 from app.services.ai.browser.browser_policy import (
     BrowserUrlBlocked,
     validate_public_navigation,
@@ -206,11 +207,12 @@ def evaluate_embed_policy(
 # --------------------------------------------------------------------------
 
 
-def _platform_origins() -> Tuple[str, ...]:
+async def _platform_origins() -> Tuple[str, ...]:
     """平台自身的源，用于匹配 CSP ``frame-ancestors`` 白名单。"""
     origins: List[str] = []
 
-    public_url = str(getattr(settings, "APP_PUBLIC_URL", "") or "").strip()
+    # 与下载/重置链接同源：系统配置 app_public_url 优先，其次 APP_PUBLIC_URL
+    public_url = await get_app_public_url()
     if public_url:
         origins.append(public_url)
 
@@ -238,7 +240,7 @@ async def probe_embed_policy(
     # 首跳校验失败要让调用方明确拒绝（400），而不是伪装成「未知」。
     target = validate_public_navigation(url)
 
-    origins = tuple(platform_origins) if platform_origins is not None else _platform_origins()
+    origins = tuple(platform_origins) if platform_origins is not None else await _platform_origins()
     current = target
 
     client_kwargs = {
