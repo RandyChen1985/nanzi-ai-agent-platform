@@ -123,6 +123,16 @@ export const agentApi = {
   // List all agents
   listAgents: () => axios.get<AIAgent[]>('/api/portal/agents/'),
 
+  /**
+   * 当前用户有权执行/对话的智能体（只要求登录态，不要求「智能体管理」菜单权限）。
+   * 任务调度台等非管理页面必须用这个：普通用户若只有 menu:task_center，
+   * /agents/ 会返回 403，导致智能体下拉永远为空。
+   */
+  listAllowedAgents: (params?: { includeDisabled?: boolean }) =>
+    axios.get<AIAgent[]>('/api/portal/agents/allowed', {
+      params: params?.includeDisabled ? { include_disabled: true } : undefined,
+    }),
+
   // Read-only global tool-call timeout shown in the version editor
   getGlobalToolcallTimeout: () => axios.get<{ seconds: number }>('/api/portal/agents/toolcall-timeout'),
 

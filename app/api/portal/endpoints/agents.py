@@ -30,11 +30,20 @@ router = APIRouter()
 @router.get("/allowed", response_model=List[AIAgentResponse])
 async def list_allowed_agents(
     keyword: str = None,
+    include_disabled: bool = False,
     session: AsyncSession = Depends(get_db_session), 
     user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """获取当前用户有权限使用的智能体列表 (用于 @提及)"""
-    agents = list(await AgentManagerService.list_allowed_agents(session, user=user, keyword=keyword))
+    """获取当前用户有权限使用的智能体列表。
+
+    默认只返回已启用智能体（@提及、任务绑定等可选用场景）；
+    ``include_disabled=true`` 额外返回已停用智能体，供聊天日志等历史数据筛选使用。
+    """
+    agents = list(
+        await AgentManagerService.list_allowed_agents(
+            session, user=user, keyword=keyword, include_disabled=include_disabled
+        )
+    )
     # 输入框据此决定是否展示模型切换入口：该字段属于 ai_agent_versions，这里一次性补齐，避免前端逐条回查
     return await AgentManagerService.attach_published_model_switch_flags(session, agents)
 

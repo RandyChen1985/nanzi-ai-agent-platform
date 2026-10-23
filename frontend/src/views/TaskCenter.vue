@@ -843,7 +843,7 @@ const fetchTasks = async (isSilent = false) => {
 
 const fetchAgents = async () => {
   try {
-    const res = await agentApi.listAgents()
+    const res = await agentApi.listAllowedAgents()
     agents.value = res.data
   } catch (e) { 
     console.error('Failed to fetch agents', e) 
