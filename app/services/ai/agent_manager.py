@@ -618,8 +618,11 @@ class AgentManagerService:
         visible_agents = []
 
         for agent in agents:
-            # Visibility Check (currently all are visible, but editability differs)
-            
+            # 可见性：非管理员只看系统智能体和自己创建的。别人的非系统智能体既不能编辑，
+            # 也不在 /agents/allowed 的可对话列表里，列出来只会让人误以为能管、能用。
+            if not is_admin and not agent.is_system and agent.created_by != username:
+                continue
+
             # Editability Check
             is_owner = agent.created_by == username
             agent.is_editable = True if is_admin or is_owner or (not agent.created_by and is_admin) else False
