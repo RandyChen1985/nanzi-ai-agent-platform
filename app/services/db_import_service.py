@@ -94,6 +94,11 @@ class DBImportService:
         return data_type or udt_name or "text"
 
     @staticmethod
+    def _format_postgresql_comment_literal(comment: Optional[str]) -> str:
+        """把注释渲染成 SQL 字符串字面量；注释内的单引号按 SQL 规则翻倍。"""
+        return "'" + str(comment).replace("'", "''") + "'"
+
+    @staticmethod
     async def _get_postgresql_ddl_from_connection(conn, table_names: List[str]) -> str:
         ddls = []
         async with conn.cursor() as cur:
@@ -102,7 +107,11 @@ class DBImportService:
                 schema_name = schema_name or "public"
                 await cur.execute(
                     """
-                    SELECT table_type
+                    SELECT table_type,
+                           COALESCE(obj_description(
+                               (quote_ident(table_schema) || '.' || quote_ident(table_name))::regclass,
+                               'pg_class'
+                           ), '')
                     FROM information_schema.tables
                     WHERE table_schema = %s AND table_name = %s
                     """,
@@ -114,6 +123,7 @@ class DBImportService:
                 qualified = ".".join(
                     [quote_postgresql_identifier(schema_name), quote_postgresql_identifier(physical_name)]
                 )
+                table_comment = (type_row[1] or "").strip() if len(type_row) > 1 else ""
                 if type_row[0] == "VIEW":
                     await cur.execute(
                         """
@@ -125,14 +135,24 @@ class DBImportService:
                     )
                     view_row = await cur.fetchone()
                     if view_row and view_row[0]:
-                        ddls.append(f"CREATE VIEW {qualified} AS\n{view_row[0].strip()};")
+                        view_ddl = f"CREATE VIEW {qualified} AS\n{view_row[0].strip()};"
+                        if table_comment:
+                            view_ddl += (
+                                f"\n\nCOMMENT ON VIEW {qualified} IS "
+                                f"{DBImportService._format_postgresql_comment_literal(table_comment)};"
+                            )
+                        ddls.append(view_ddl)
                     continue
 
                 await cur.execute(
                     """
                     SELECT column_name, data_type, udt_name,
                            character_maximum_length, numeric_precision,
-                           numeric_scale, is_nullable, column_default
+                           numeric_scale, is_nullable, column_default,
+                           COALESCE(col_description(
+                               (quote_ident(table_schema) || '.' || quote_ident(table_name))::regclass,
+                               ordinal_position
+                           ), '')
                     FROM information_schema.columns
                     WHERE table_schema = %s AND table_name = %s
                     ORDER BY ordinal_position
@@ -143,6 +163,7 @@ class DBImportService:
                 if not columns:
                     continue
                 column_defs = []
+                column_comments = []
                 for column in columns:
                     column_type = DBImportService._format_postgresql_type(column[1:6])
                     nullable = " NOT NULL" if column[6] == "NO" else ""
@@ -150,7 +171,20 @@ class DBImportService:
                     column_defs.append(
                         f"    {quote_postgresql_identifier(column[0])} {column_type}{nullable}{default}"
                     )
-                ddls.append(f"CREATE TABLE {qualified} (\n" + ",\n".join(column_defs) + "\n);")
+                    column_comment = (column[8] or "").strip() if len(column) > 8 else ""
+                    if column_comment:
+                        column_comments.append(
+                            f"COMMENT ON COLUMN {qualified}.{quote_postgresql_identifier(column[0])} IS "
+                            f"{DBImportService._format_postgresql_comment_literal(column_comment)};"
+                        )
+                ddl_parts = [f"CREATE TABLE {qualified} (\n" + ",\n".join(column_defs) + "\n);"]
+                if table_comment:
+                    ddl_parts.append(
+                        f"COMMENT ON TABLE {qualified} IS "
+                        f"{DBImportService._format_postgresql_comment_literal(table_comment)};"
+                    )
+                ddl_parts.extend(column_comments)
+                ddls.append("\n\n".join(ddl_parts))
         return "\n\n".join(ddls)
 
     @staticmethod

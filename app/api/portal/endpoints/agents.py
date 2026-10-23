@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from app.core.avatar_assets import (
@@ -15,6 +17,8 @@ from app.core.orm import get_db_session
 from app.core.dependencies import require_admin, get_current_user, require_permission
 from typing import Dict, Any
 from app.services.ai.agent_manager import AgentManagerService
+from app.models.agent import AIAgent, AIAgentVersion
+from app.services.mcp.tool_ref_health import find_stale_tool_refs
 from app.schemas.agent import (
     AIAgentResponse, AIAgentBase,
     AIAgentReorderRequest,
@@ -380,6 +384,83 @@ async def delete_agent(
 async def list_agent_versions(agent_id: str, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """获取智能体的所有版本记录"""
     return await AgentManagerService.get_agent_versions(session, agent_id, user=user)
+
+@router.get("/{agent_id}/versions/{version_id}/tool-health")
+async def get_agent_version_tool_health(
+    agent_id: str,
+    version_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """列出该版本配置里运行时已失效的工具引用（MCP 服务被删/禁用、工具下线等）。
+
+    只读诊断，用于给编辑器一个「解绑」入口：版本配置的 tools 是整体加载、整体保存的，
+    失效引用既不会自己消失，也不会出现在工具选择器里，没有这个接口用户无从取消。
+    判定口径与运行时一致；权限与版本编辑一致（owner 或管理员），不向他人暴露工具配置。
+    """
+    agent = await session.get(AIAgent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    is_admin, username = AgentManagerService._resolve_actor(user)
+    if not is_admin and str(agent.created_by or "") != username:
+        raise HTTPException(status_code=403, detail="Forbidden: 只能查看自己智能体的版本配置")
+
+    version = (
+        await session.execute(
+            select(AIAgentVersion).where(
+                AIAgentVersion.id == version_id,
+                AIAgentVersion.agent_id == agent_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    stale_tools = await find_stale_tool_refs(session, version.tools, user=user)
+    return {
+        "agent_id": agent_id,
+        "version_id": version_id,
+        "stale_count": len(stale_tools),
+        "stale_tools": stale_tools,
+    }
+
+
+class AgentToolsHealthRequest(BaseModel):
+    """待保存的工具配置。项可能是名称，也可能是带运行配置的对象。"""
+
+    tools: List[Any] = []
+
+
+@router.post("/{agent_id}/tool-health")
+async def check_agent_tools_health(
+    agent_id: str,
+    payload: AgentToolsHealthRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """诊断「还没有版本 id」的工具配置（新建、克隆）。
+
+    克隆会把旧版本的失效引用整份复制过来，而这一刻恰恰最需要提示：工具选择器
+    只渲染可用工具，克隆进来的幽灵引用既看不见也取消不了。判定逻辑与按版本查询
+    完全一致，只是把 tools 从请求体里拿而不是从库里读。
+    """
+    agent = await session.get(AIAgent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    is_admin, username = AgentManagerService._resolve_actor(user)
+    if not is_admin and str(agent.created_by or "") != username:
+        raise HTTPException(status_code=403, detail="Forbidden: 只能校验自己智能体的工具配置")
+
+    stale_tools = await find_stale_tool_refs(session, payload.tools, user=user)
+    return {
+        "agent_id": agent_id,
+        "version_id": None,
+        "stale_count": len(stale_tools),
+        "stale_tools": stale_tools,
+    }
+
 
 @router.post("/{agent_id}/versions", response_model=AIAgentVersionResponse)
 async def create_agent_version(agent_id: str, data: AIAgentVersionBase, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):

@@ -94,6 +94,16 @@ class AgentModelIssue(BaseModel):
     model_name: str = ""
 
 
+class AgentToolIssue(BaseModel):
+    """已发布版本里运行时已失效的工具引用摘要（列表页横幅展示用）。"""
+
+    code: str = "stale_tools"
+    message: str
+    count: int
+    names: List[str] = Field(default_factory=list)
+    version_id: str = ""
+
+
 class AIAgentResponse(AIAgentBase):
     id: str
     is_system: bool
@@ -116,6 +126,8 @@ class AIAgentResponse(AIAgentBase):
     readiness_missing: List[str] = Field(default_factory=list)
     # 模型配置异常：null 表示正常；仅在列表接口计算，避免/health 之类的轻量接口多查库
     model_issue: Optional[AgentModelIssue] = None
+    # 已发布版本的工具失效摘要：null 表示正常或没有已发布版本
+    tool_issue: Optional[AgentToolIssue] = None
     onboarding_step: str = "COMPLETE"
     # 已发布版本的「是否允许手动切换模型」；None 表示无已发布版本，前端按允许处理
     allow_model_switch: Optional[bool] = None

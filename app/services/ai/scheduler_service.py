@@ -732,7 +732,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                 ]
                 await AuditManager.save_trace_logs(trace_id, trace_steps)
 
-                await AuditManager.save_history(
+                history_saved = await AuditManager.save_history(
                     trace_id=trace_id,
                     agent_id=task_agent_id or "system_metadata_inspection",
                     user_info=user_info,
@@ -755,7 +755,10 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                         }
                     ],
                 )
-                logger.info(f"💾 [元数据定时巡检] 审计历史与链路已保存 | TraceID: {trace_id} | 会话ID: {run_conversation_id}")
+                if history_saved:
+                    logger.info(f"💾 [元数据定时巡检] 审计历史与链路已保存 | TraceID: {trace_id} | 会话ID: {run_conversation_id}")
+                else:
+                    logger.error(f"🚫 [元数据定时巡检] 审计历史未落库 | TraceID: {trace_id} | 会话ID: {run_conversation_id}")
             except Exception as audit_err:
                 logger.warning(f"⚠️ [元数据定时巡检] 记录审计历史失败: {audit_err}", exc_info=True)
 

@@ -43,6 +43,7 @@
 特别要求：
 - 提取业务术语（term）：提供最准确的中文业务名称。如果输入缺失备注/注释，请根据物理名（Physical Name）进行智能推断。
 - 识别描述（description）：提供详细的业务含义描述。如果原始信息缺失且字段名具有代表性，请结合行业知识生成建议的业务解释。
+- 保留数据库注释原文：DDL 中的 COMMENT ON TABLE / COMMENT ON COLUMN 是库表作者写下的备注，必须原样（包括中文、标点和换行）写入对应表与字段的 description；term 可据此提炼，但不得翻译、摘要或丢弃注释原文。
 - 识别物理名（physical_name）：如果是 DDL 请严格保留；如果是自然语言请按下划线命名法推断（如 '机房ID' -> 'room_id'）。
 - 识别枚举值（enums）：从描述文本中提取可能的取值范围。
 - 生成同义词（synonyms）：为表和核心字段提供 2-3 个业务同义词，帮助 AI 检索。
@@ -100,9 +101,25 @@
 > 由人工在元数据界面标注，`ColumnMetadata` 里没有这三个字段。因此重新执行智能导入时
 > 必须保留人工标注（见 `POST /datasets/{id}/tables` 的 `model_dump(exclude_unset=True)`）。
 
+## 数据库注释的传递链路
+
+注释在 PG / MySQL 两条链路上的承载方式不同，改动任一端都会让中文备注丢失：
+
+1. **MySQL / Doris / ClickHouse**：`SHOW CREATE TABLE` 的原样输出里自带列注释（`COMMENT '...'`），
+   `DBImportService.get_mysql_ddl()` / `get_clickhouse_ddl()` 无需额外拼装。
+2. **PostgreSQL**：`information_schema` 不暴露注释，必须显式查 `obj_description()` /
+   `col_description()`。`DBImportService._get_postgresql_ddl_from_connection()` 会在
+   `CREATE TABLE` 之后追加 `COMMENT ON TABLE` 与 `COMMENT ON COLUMN`（空注释跳过，单引号翻倍转义），
+   视图则追加 `COMMENT ON VIEW`。
+3. **解析端**：DDL 交给 LLM 后，注释原文由上面的"保留数据库注释原文"条款要求写入
+   `description`，`term` 只做中文业务名提炼。`ImportResult` 的 Schema 描述里也写明了这一要求。
+4. **未覆盖场景**：自定义 SQL 作为表结构来源时（`get_columns(custom_sql=...)`），
+   驱动游标 `description` 不带注释，此时 `comment` 恒为空，属于协议限制。
+
 ## 变更日志 (Change Log)
 
 | 版本 | 日期 | 描述 | 操作人 |
 | :--- | :--- | :--- | :--- |
+| v1.2 | 2026-10-23 | **补齐 PG 注释链路**：PG DDL 生成追加 `COMMENT ON TABLE/COLUMN/VIEW`（原实现只输出 `CREATE TABLE`，导致中文备注在选表导入时丢失）；提示词新增"保留数据库注释原文"条款并要求写入 `description`；新增"数据库注释的传递链路"一节说明各库差异与自定义 SQL 的限制。 | AI |
 | v1.1 | 2026-09-22 | **同步 PR #197 新字段 + 修正"文档描述的提示词并未生效"**：查实 `metadata-specialist` 在两库种子中均被禁用、且无迁移重新启用，实际生效的是代码常量 `DEFAULT_METADATA_SYSTEM_PROMPT`；遂把该常量确立为正式提示词并全文补齐（原本只在存档版里的 enums / synonyms / metrics / relationships / 多表 等要求，以及新增的 `partition_fields` / `index_fields` 提取要求）；Output Schema 补两个新字段并注明 AI 不产出维度字段。 | AI |
 | v1.0 | 2026-01-03 | **初始版本**: 创建元数据解析生成提示词，支持从DDL、Markdown表格或自然语言定义生成标准化元数据。 | System |

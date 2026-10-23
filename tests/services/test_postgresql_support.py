@@ -163,9 +163,10 @@ async def test_db_import_service_supports_postgresql_tables_and_ddl():
     ) as connect:
         connection = MagicMock()
         cursor = AsyncMock()
+        cursor.fetchone.return_value = ("BASE TABLE", "客户主数据")
         cursor.fetchall.side_effect = [
             [("demo", "customers", "Customer", "BASE TABLE")],
-            [("customer_id", "integer", "int4", None, None, None, "NO", None)],
+            [("customer_id", "integer", "int4", None, None, None, "NO", None, "客户编号")],
         ]
         cursor_cm = MagicMock()
         cursor_cm.__aenter__ = AsyncMock(return_value=cursor)
@@ -178,6 +179,9 @@ async def test_db_import_service_supports_postgresql_tables_and_ddl():
 
     assert tables == [{"name": "demo.customers", "comment": "Customer", "type": "table"}]
     assert 'CREATE TABLE "demo"."customers"' in ddl
+    # PG 的 COMMENT ON 必须在 DDL 里带出来，否则中文备注在选表导入时全部丢失
+    assert 'COMMENT ON TABLE "demo"."customers" IS \'客户主数据\';' in ddl
+    assert 'COMMENT ON COLUMN "demo"."customers"."customer_id" IS \'客户编号\';' in ddl
 
 
 @pytest.mark.asyncio

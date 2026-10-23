@@ -433,6 +433,15 @@ class ToolRegistry:
         return or_(global_condition, personal_condition)
 
     @classmethod
+    def known_static_tool_names(cls) -> set[str]:
+        """运行时必定能解析的静态工具名（内置实现 + AgentScope 内置别名）。
+
+        供「配置里哪些工具已经失效」的诊断使用：这些名字不依赖数据库配置，
+        因此永远不该被判定成失效引用。
+        """
+        return set(cls._registry) | set(AGENTSCOPE_BUILTIN_TOOL_ALIASES)
+
+    @classmethod
     async def get_tool(cls, name: str) -> Optional[Any]:
         """Retrieve a tool by its name (Async)."""
         # 1. Check static registry

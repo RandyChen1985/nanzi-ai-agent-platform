@@ -70,6 +70,9 @@ class FinalizeStep(BasePipelineStep):
         trace_id = context.trace_id
         conversation_id = context.conversation_id
         audit_completed = False
+        # None：未执行审计（暂停态延后 / 短路态）或审计被取消分离；
+        # True/False：审计已执行且历史是否真的落库。
+        audit_persisted: Optional[bool] = None
         start_time = context.start_time
 
         try:
@@ -215,7 +218,7 @@ class FinalizeStep(BasePipelineStep):
                 import app.services.ai.agent_service as agent_service_module
                 AuditManagerClass = getattr(agent_service_module, "AuditManager", AgentServiceAuditManager)
                 audit_detached = current_task_cancelling()
-                await await_unless_cancelling(
+                audit_persisted = await await_unless_cancelling(
                     lambda: AuditManagerClass.log_transaction(
                         trace_id,
                         agent_config,
@@ -237,6 +240,20 @@ class FinalizeStep(BasePipelineStep):
                     name=f"audit-cancelled-turn-{trace_id}",
                 )
                 audit_completed = not audit_detached
+                # 历史落库失败不能让本轮安静收尾：run_status 已经带着 persisting=True
+                # 发出去了，这里必须用独立事件把「其实没写进去」补出来。
+                if audit_completed and audit_persisted is False:
+                    logger.error(
+                        "[Audit] 本轮历史未落库，刷新后将查不到该轮 trace_id=%s status=%s",
+                        trace_id,
+                        context.execution_status,
+                    )
+                    yield {
+                        "type": "history_persist_failed",
+                        "trace_id": trace_id,
+                        "conversation_id": conversation_id,
+                        "message": "本轮对话历史保存失败，刷新后可能看不到这条记录",
+                    }
         finally:
             performance_tracker = context.performance_tracker or shared_state.get("performance_tracker")
             if audit_completed and performance_tracker is not None:
@@ -247,6 +264,9 @@ class FinalizeStep(BasePipelineStep):
                     status=context.execution_status,
                 )
                 performance_snapshot["audit_completed"] = audit_completed
+                # 保留三态：None 表示没跑审计或结果未知（如审计被取消分离），
+                # 不能把「未知」压成 False 误报历史丢失。
+                performance_snapshot["audit_persisted"] = audit_persisted
                 if context.shared_state is not None:
                     context.shared_state["execution_performance"] = performance_snapshot
                 logger.info(

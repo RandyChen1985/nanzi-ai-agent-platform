@@ -8,6 +8,7 @@ import type {
   AIAgentVersion,
   AgentModelIssue,
   AgentType,
+  StaleToolRef,
 } from "../api/agent";
 import { modelApi, type AIModel } from "../api/model";
 import { toolApi, type SysApiTool } from "../api/tool";
@@ -441,18 +442,21 @@ const segmentCounts = computed(() => {
   return { all, ready, unready, general, chatbi, kb, custom }
 })
 
-// 模型健康：已发布版本绑定的模型在当前环境未注册 / 已禁用 / 缺 API Key。
-// 判定在后端完成（LOCAL 引擎的已启用智能体才返回 model_issue），这里只做汇总展示。
+// 配置异常：已发布版本绑定的模型不可用（model_issue），或引用了已失效的工具/MCP（tool_issue）。
+// 两类判定都在后端完成（LOCAL 引擎的已启用智能体才返回），这里只做汇总展示。
 const modelIssuePanelOpen = ref(false)
-const modelIssuesDismissed = ref(false)
+const configIssuesDismissed = ref(false)
 const modelIssues = computed(() => agents.value.filter(a => a.model_issue))
+const toolIssues = computed(() => agents.value.filter(a => a.tool_issue))
 
-type ModelHealthItem = {
+type ConfigIssueItem = {
   key: string
+  /** 模型问题指向「模型管理 / 版本配置 → 模型」，工具问题指向「版本配置 → 工具能力」 */
+  kind: 'model' | 'tool'
   title: string
   detail: string
   hint: string
-  /** 只有「系统默认模型」有可靠的跳转入口；智能体的模型在版本配置里，位置随版本而异 */
+  /** 只有「系统默认模型」有可靠的跳转入口；智能体的配置在版本配置里，位置随版本而异 */
   action?: 'system'
 }
 
@@ -468,12 +472,16 @@ const MODEL_ISSUE_HINT: Record<string, string> = {
 const modelIssueHint = (code?: string) =>
   (code && MODEL_ISSUE_HINT[code]) || '请在「模型管理」与「版本配置 → 模型」中检查'
 
-// 两个来源合并展示：系统默认模型（影响所有未显式绑定模型的链路）+ 单个智能体。
-const modelHealthItems = computed<ModelHealthItem[]>(() => {
-  const items: ModelHealthItem[] = []
+const TOOL_ISSUE_HINT = '请在「版本配置 → 工具能力」移除失效引用后重新发布'
+
+// 三个来源合并展示：系统默认模型（影响所有未显式绑定模型的链路）、单个智能体的模型、
+// 单个智能体已发布版本里失效的工具引用。
+const configIssueItems = computed<ConfigIssueItem[]>(() => {
+  const items: ConfigIssueItem[] = []
   if (defaultModelIssue.value) {
     items.push({
       key: 'system-default',
+      kind: 'model',
       title: '系统默认 LLM 模型',
       detail: defaultModelIssue.value.message,
       hint: '',
@@ -482,21 +490,31 @@ const modelHealthItems = computed<ModelHealthItem[]>(() => {
   }
   for (const agent of modelIssues.value) {
     items.push({
-      key: agent.id,
+      key: `model:${agent.id}`,
+      kind: 'model',
       title: agent.display_name || agent.name,
       detail: agent.model_issue?.message || '',
       hint: modelIssueHint(agent.model_issue?.code),
     })
   }
+  for (const agent of toolIssues.value) {
+    items.push({
+      key: `tool:${agent.id}`,
+      kind: 'tool',
+      title: agent.display_name || agent.name,
+      detail: agent.tool_issue?.message || '',
+      hint: TOOL_ISSUE_HINT,
+    })
+  }
   return items
 })
 
-const visibleModelIssues = computed(() =>
-  modelIssuesDismissed.value ? [] : modelHealthItems.value
+const visibleConfigIssues = computed(() =>
+  configIssuesDismissed.value ? [] : configIssueItems.value
 )
 // 问题清空后重置「知道了」，下次真的再出现时仍然提示
-watch(modelHealthItems, (list) => {
-  if (!list.length) modelIssuesDismissed.value = false
+watch(configIssueItems, (list) => {
+  if (!list.length) configIssuesDismissed.value = false
 })
 
 const filteredAgents = computed(() => {
@@ -1373,12 +1391,83 @@ const versionStatusClass = computed(() => {
   return 'bg-gray-50 text-gray-600 border-gray-200';
 });
 
+/**
+ * 版本配置里「运行时已失效」的工具引用：MCP 服务被删/禁用、工具下线后，勾选列表里
+ * 已经没有这一项，用户因此连取消勾选的入口都没有。这里按版本拉一次只读诊断，
+ * 由编辑器展示并提供移除；移除只改本地 versionForm，保存版本后才真正落库。
+ */
+const versionToolHealth = ref<StaleToolRef[]>([]);
+const versionToolHealthLoading = ref(false);
+const versionToolHealthError = ref('');
+// 快速切换版本（或连续点「重新检测」）时丢弃过期响应：只认最后一次请求。
+let versionToolHealthRequestSeq = 0;
+
 const resetVersionEditorUi = () => {
   versionConfigStep.value = 'model';
   toolSearchQuery.value = '';
   collapsedMcpGroups.value = new Set();
   collapsedStaticGroups.value = getDefaultCollapsedStaticGroups();
   expandedBusinessGroups.value = new Set();
+  versionToolHealth.value = [];
+  versionToolHealthLoading.value = false;
+  versionToolHealthError.value = '';
+  // 作废进行中的诊断请求，避免旧版本的结果落到新打开的编辑器上
+  versionToolHealthRequestSeq += 1;
+};
+
+const fetchVersionToolHealth = async () => {
+  const agentId = selectedAgent.value?.id;
+  const versionId = versionForm.value?.id;
+  const tools = Array.isArray(versionForm.value?.tools) ? versionForm.value.tools : [];
+  const seq = ++versionToolHealthRequestSeq;
+
+  // 已有版本按版本 id 查；新建/克隆版本还没有 id，但克隆会把旧版本的工具整份带来，
+  // 这时候只能把当前 tools 传给无状态接口，否则用户看到的是一份「干净」的配置。
+  if (!agentId || (!versionId && tools.length === 0)) {
+    versionToolHealth.value = [];
+    versionToolHealthLoading.value = false;
+    versionToolHealthError.value = '';
+    return;
+  }
+
+  versionToolHealthLoading.value = true;
+  versionToolHealthError.value = '';
+  try {
+    const response = versionId
+      ? await agentApi.getVersionToolHealth(agentId, versionId)
+      : await agentApi.checkToolsHealth(agentId, tools);
+    if (seq !== versionToolHealthRequestSeq) return;
+    versionToolHealth.value = Array.isArray(response.data?.stale_tools)
+      ? response.data.stale_tools
+      : [];
+  } catch (error: any) {
+    if (seq !== versionToolHealthRequestSeq) return;
+    versionToolHealth.value = [];
+    // 只是诊断：失败不打断编辑，把原因留在卡片里让用户自己决定是否重试。
+    versionToolHealthError.value =
+      error.response?.data?.detail || '失效引用检测失败，可稍后重试';
+  } finally {
+    if (seq === versionToolHealthRequestSeq) versionToolHealthLoading.value = false;
+  }
+};
+
+const removeStaleToolRefs = (names: string[]) => {
+  if (!canEditVersion.value) return;
+  const targets = new Set(
+    (names || []).map((name) => String(name || '').trim()).filter(Boolean),
+  );
+  if (!targets.size) return;
+
+  const before = (versionForm.value.tools || []).length;
+  versionForm.value.tools = (versionForm.value.tools || []).filter((item) => {
+    const name = typeof item === 'string' ? item : (item as any)?.name;
+    return !targets.has(String(name || '').trim());
+  });
+  const removed = before - (versionForm.value.tools || []).length;
+  if (removed > 0) {
+    versionToolHealth.value = versionToolHealth.value.filter((item) => !targets.has(item.name));
+    showToast(`已移除 ${removed} 项失效引用，保存版本后生效`, 'success');
+  }
 };
 
 watch(versionConfigStep, (step, previousStep) => {
@@ -2050,6 +2139,8 @@ const openVersionModal = (
   }
   resetVersionEditorUi();
   showVersionModal.value = true;
+  // 失效引用诊断只对已有版本有意义；新建/克隆版本没有 id，fetch 内部会直接清空。
+  void fetchVersionToolHealth();
 };
 
 const handleDrawerEditVersion = (v: AIAgentVersion) => {
@@ -3103,7 +3194,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
     <!-- 模型配置异常提示：只在有问题时渲染，正常时完全不占空间 -->
     <div
-      v-if="visibleModelIssues.length"
+      v-if="visibleConfigIssues.length"
       class="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3"
     >
       <div class="flex flex-wrap items-center justify-between gap-2">
@@ -3112,7 +3203,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
           <span class="text-sm font-medium text-amber-900">
-            {{ visibleModelIssues.length }} 处模型配置异常
+            {{ visibleConfigIssues.length }} 处配置异常
           </span>
           <span class="hidden truncate text-xs text-amber-700 sm:inline">
             相关调用会失败，请尽快修复
@@ -3129,7 +3220,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <button
             type="button"
             class="cursor-pointer rounded-md px-2 py-1 text-xs text-amber-700 transition-colors hover:bg-amber-100"
-            @click="modelIssuesDismissed = true"
+            @click="configIssuesDismissed = true"
           >
             知道了
           </button>
@@ -3138,13 +3229,21 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
       <ul v-if="modelIssuePanelOpen" class="mt-2.5 space-y-1.5">
         <li
-          v-for="item in visibleModelIssues"
+          v-for="item in visibleConfigIssues"
           :key="item.key"
           class="flex items-center justify-between gap-3 rounded-lg bg-white/80 px-3 py-2"
         >
           <div class="min-w-0">
-            <div class="truncate text-sm font-medium text-gray-800">
-              {{ item.title }}
+            <div class="flex min-w-0 items-center gap-1.5">
+              <span
+                class="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
+                :class="item.kind === 'tool' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'"
+              >
+                {{ item.kind === 'tool' ? '工具' : '模型' }}
+              </span>
+              <div class="truncate text-sm font-medium text-gray-800">
+                {{ item.title }}
+              </div>
             </div>
             <div class="truncate text-xs text-gray-500">
               {{ item.detail }}
@@ -4687,6 +4786,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :enabled-global-skills-count="enabledGlobalSkills.length"
       :all-available-tools-count="allAvailableTools.length"
       :mcp-tools-count="mcpTools.length"
+      :stale-tool-refs="versionToolHealth"
+      :stale-tool-refs-loading="versionToolHealthLoading"
+      :stale-tool-refs-error="versionToolHealthError"
       :is-tool-selected="isToolSelected"
       :is-skill-selected="isSkillSelected"
       :get-tool-custom-config="getToolCustomConfig"
@@ -4714,6 +4816,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @toggle-skill="toggleSkill"
       @set-skills-custom="setSkillsCustom"
       @toggle-select-all-mcp="toggleSelectAllMcp"
+      @remove-stale-tool-refs="removeStaleToolRefs"
+      @refresh-stale-tool-refs="fetchVersionToolHealth"
       @toggle-select-all-static="toggleSelectAllStatic"
       @toggle-mcp-group-collapse="toggleMcpGroupCollapse"
       @toggle-static-group-collapse="toggleStaticGroupCollapse"

@@ -1,6 +1,16 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, Float, BigInteger
+from sqlalchemy.dialects import mysql
 from datetime import datetime
 from app.core.orm import Base
+
+# MySQL 的 TEXT 只有 65,535 字节（utf8mb4 下约 2.1 万汉字），长思考或长回答会被
+# 严格模式整行拒绝。对话历史的三处长文本统一升到 MEDIUMTEXT（16MB）；PG 的 TEXT
+# 本身无长度上限，保持原样。每列单独构造，避免多列共享同一个类型实例。
+
+
+def _history_long_text() -> Text:
+    return Text().with_variant(mysql.MEDIUMTEXT(), "mysql")
+
 
 class AgentExecutionTrace(Base):
     __tablename__ = "ai_agent_execution_traces"
@@ -41,9 +51,9 @@ class AgentExecutionHistory(Base):
     conversation_id = Column(String(50), nullable=True, index=True, comment='关联会话 ID')
     user_id = Column(String(64), nullable=True, comment='用户 ID')
     username = Column(String(64), nullable=True, comment='用户名')
-    query = Column(Text, nullable=True, comment='用户提问')
-    summary = Column(Text, nullable=True, comment='AI 响应/总结')
-    reasoning_content = Column(Text, nullable=True, comment='模型推理过程')
+    query = Column(_history_long_text(), nullable=True, comment='用户提问')
+    summary = Column(_history_long_text(), nullable=True, comment='AI 响应/总结')
+    reasoning_content = Column(_history_long_text(), nullable=True, comment='模型推理过程')
     process_timeline = Column(JSON, nullable=True, comment='思考卡定稿快照')
     prompt_tokens = Column(Integer, default=0, comment='输入 Token 消耗数')
     completion_tokens = Column(Integer, default=0, comment='输出 Token 消耗数')

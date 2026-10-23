@@ -88,6 +88,22 @@ def test_schema_carries_the_query_optimization_fields_with_guidance() -> None:
     assert "UNIQUE/KEY/INDEX" in schema
 
 
+def test_prompt_preserves_database_comment_text() -> None:
+    """数据库里的中文备注必须原样落到 description，而不是被模型翻译或丢弃。
+
+    PG 的 DDL 生成端会追加 `COMMENT ON TABLE/COLUMN`（见 db_import_service），
+    这里锁定解析端的对应条款，两端缺一端中文备注就在导入链路上丢失。
+    """
+    assert "COMMENT ON TABLE" in DEFAULT_METADATA_SYSTEM_PROMPT
+    assert "COMMENT ON COLUMN" in DEFAULT_METADATA_SYSTEM_PROMPT
+    assert "不得翻译" in DEFAULT_METADATA_SYSTEM_PROMPT
+    assert "description" in DEFAULT_METADATA_SYSTEM_PROMPT
+
+    schema = _schema_text()
+    assert "COMMENT ON TABLE" in schema
+    assert "COMMENT ON COLUMN" in schema
+
+
 # --- 占位符契约 ---
 
 

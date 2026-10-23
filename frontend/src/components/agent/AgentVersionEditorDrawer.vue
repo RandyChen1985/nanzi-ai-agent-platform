@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { AIAgent, AIAgentBase, AIAgentVersion, AgentType } from '../../api/agent';
+import type { AIAgent, AIAgentBase, AIAgentVersion, AgentType, StaleToolRef } from '../../api/agent';
 import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
 import Modal from '../Modal.vue';
@@ -17,7 +17,7 @@ type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'r
 type ToolGroup = { label: string; icon: string; tools: any[] };
 type SkillItem = { id: string; name?: string; description?: string; enabled?: string | boolean; path?: string };
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   show: boolean;
   isCreatingAgent: boolean;
   isOnboardingFlow: boolean;
@@ -72,7 +72,15 @@ const props = defineProps<{
     missingBinding: boolean;
     datasetCount: number;
   } | null;
-}>();
+  /** 运行时已失效的工具引用（服务删除/禁用、工具下线），由父级按版本诊断后传入 */
+  staleToolRefs?: StaleToolRef[];
+  staleToolRefsLoading?: boolean;
+  staleToolRefsError?: string;
+}>(), {
+  staleToolRefs: () => [],
+  staleToolRefsLoading: false,
+  staleToolRefsError: '',
+});
 
 const emit = defineEmits<{
   close: [];
@@ -107,6 +115,8 @@ const emit = defineEmits<{
   toast: [message: string, type?: 'success' | 'error' | 'info' | 'warning'];
   checkAgentName: [name: string];
   resetAgentNameCheck: [];
+  removeStaleToolRefs: [names: string[]];
+  refreshStaleToolRefs: [];
 }>();
 
 // 搜索期间一律展开分组（只读覆盖，不写回折叠集合）：否则搜索命中的工具躲在折叠的
@@ -285,6 +295,28 @@ const currentScopeGroupedMcpTools = computed(() => {
 const currentScopeGroupedMcpToolsCount = computed(() => {
   return Object.keys(currentScopeGroupedMcpTools.value).length;
 });
+
+/**
+ * 分组选中态：全选的分组必须在头部就能和「一个都没选」区分开。
+ * 只靠右侧那行 (8/8) 小字，46 个工具分四组时根本扫不出来，
+ * 折叠状态下更是完全看不见——这决定分组头用什么底色、色条和计数样式。
+ */
+const groupSelectionState = (
+  tools: any[] | undefined,
+  selectedCount: (list: any[]) => number,
+): 'all' | 'some' | 'none' => {
+  const total = tools?.length || 0;
+  if (total <= 0) return 'none';
+  const selected = selectedCount(tools as any[]);
+  if (selected >= total) return 'all';
+  return selected > 0 ? 'some' : 'none';
+};
+
+const mcpGroupState = (tools: any[]) =>
+  groupSelectionState(tools, (list) => props.getMcpGroupSelectedCount(list));
+
+const staticGroupState = (tools: any[]) =>
+  groupSelectionState(tools, (list) => props.getStaticGroupSelectedCount(list));
 
 const globalMcpToolsCount = computed(() => {
   let count = 0;
@@ -1103,7 +1135,11 @@ const externalCreationMissingFields = computed(() => {
                   @click="emit('update:toolTab', 'mcp')"
                   class="px-3 py-1.5 rounded-md transition-all font-medium"
                   :class="toolTab === 'mcp' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
-                >MCP 工具 ({{ selectedMcpToolsCount }}/{{ mcpToolsCount }})</button>
+                >MCP 工具 ({{ selectedMcpToolsCount }}/{{ mcpToolsCount }})<span
+                  v-if="staleToolRefs.length"
+                  class="ml-1.5 inline-flex items-center rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-600 dark:bg-red-900/40 dark:text-red-300"
+                  :title="`${staleToolRefs.length} 项失效引用待移除`"
+                >{{ staleToolRefs.length }} 项失效</span></button>
                 <button
                   type="button"
                   @click="emit('update:toolTab', 'skills')"
@@ -1115,8 +1151,20 @@ const externalCreationMissingFields = computed(() => {
 
             <!-- Static Tools -->
             <div v-if="toolTab === 'static'" class="flex-1 overflow-y-auto space-y-3 pr-1 version-editor-scroll">
-              <div v-for="group in filteredGroupedTools" :key="group.label" class="rounded-lg border border-gray-200 overflow-hidden">
-                <div class="flex items-center justify-between py-2 px-3 bg-gray-50 border-b border-gray-100">
+              <div
+                v-for="group in filteredGroupedTools"
+                :key="group.label"
+                class="rounded-lg border overflow-hidden transition-colors"
+                :class="staticGroupState(group.tools) === 'all' ? 'border-primary/40' : 'border-gray-200'"
+              >
+                <div
+                  class="flex items-center justify-between border-b py-2 px-3 border-l-4 transition-colors"
+                  :class="staticGroupState(group.tools) === 'all'
+                    ? 'border-b-primary/20 border-l-primary bg-primary/5'
+                    : staticGroupState(group.tools) === 'some'
+                      ? 'border-b-gray-100 border-l-primary/40 bg-gray-50'
+                      : 'border-b-gray-100 border-l-transparent bg-gray-50'"
+                >
                   <button
                     type="button"
                     @click="emit('toggleStaticGroupCollapse', group.label)"
@@ -1130,7 +1178,14 @@ const externalCreationMissingFields = computed(() => {
                     </svg>
                     <span class="text-xs">{{ group.icon }}</span>
                     <span class="text-xs font-bold text-gray-700">{{ group.label }}</span>
-                    <span class="text-[10px] text-gray-400">({{ getStaticGroupSelectedCount(group.tools) }}/{{ group.tools.length }})</span>
+                    <span
+                      class="shrink-0 rounded px-1.5 py-0.5 text-[10px] transition-colors"
+                      :class="staticGroupState(group.tools) === 'all'
+                        ? 'bg-primary font-bold text-white'
+                        : staticGroupState(group.tools) === 'some'
+                          ? 'bg-primary/10 font-semibold text-primary'
+                          : 'text-gray-400'"
+                    >({{ getStaticGroupSelectedCount(group.tools) }}/{{ group.tools.length }})</span>
                   </button>
                   <button
                     v-if="canEditVersion"
@@ -1210,6 +1265,72 @@ const externalCreationMissingFields = computed(() => {
 
             <!-- MCP Tools -->
             <div v-else-if="toolTab === 'mcp'" class="flex-1 overflow-y-auto space-y-3 pr-1 version-editor-scroll">
+              <!--
+                失效引用：工具选择器只渲染「当前可见且已发布」的工具，服务删除/禁用后
+                旧引用既不会显示也不会自动消失，这里是用户唯一的解绑入口。
+              -->
+              <div
+                v-if="staleToolRefs.length"
+                class="rounded-lg border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900/50 dark:bg-amber-950/30"
+              >
+                <div class="flex items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <p class="flex items-center gap-1.5 text-xs font-bold text-amber-800 dark:text-amber-300">
+                      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M10.29 3.86a2 2 0 0 1 3.42 0l8.6 14.86A2 2 0 0 1 20.6 21H3.4a2 2 0 0 1-1.71-2.28z" />
+                        <path d="M12 9v4" />
+                        <path d="M12 17h.01" />
+                      </svg>
+                      {{ staleToolRefs.length }} 项已失效的工具引用
+                    </p>
+                    <p class="mt-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300/80">
+                      这些工具已不可用（MCP 服务被删除、禁用，或工具已下线），运行时拿不到，勾选列表里也不会再显示。移除后请保存版本。
+                    </p>
+                    <p v-if="!canEditVersion" class="mt-1 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                      当前版本不可编辑（已发布或只读）。请编辑草稿版本、移除后重新发布，改动才会生效。
+                    </p>
+                  </div>
+                  <div class="flex shrink-0 items-center gap-1">
+                    <button
+                      v-if="canEditVersion"
+                      type="button"
+                      class="rounded-md bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-amber-700"
+                      @click="emit('removeStaleToolRefs', staleToolRefs.map((item) => item.name))"
+                    >全部移除</button>
+                    <button
+                      type="button"
+                      class="rounded-md border border-amber-300 px-2 py-1 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                      @click="emit('refreshStaleToolRefs')"
+                    >重新检测</button>
+                  </div>
+                </div>
+                <ul class="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                  <li
+                    v-for="item in staleToolRefs"
+                    :key="item.name"
+                    class="flex items-center gap-2 rounded-md bg-white/80 px-2 py-1.5 dark:bg-gray-800/80"
+                  >
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate font-mono text-[11px] text-gray-700 dark:text-gray-200" :title="item.name">{{ item.name }}</span>
+                      <span class="block text-[10px] text-amber-700 dark:text-amber-300/80">{{ item.reason_label }}<template v-if="item.server_name"> · {{ item.server_name }}</template></span>
+                    </span>
+                    <button
+                      v-if="canEditVersion"
+                      type="button"
+                      class="shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold text-amber-700 transition-colors hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                      @click="emit('removeStaleToolRefs', [item.name])"
+                    >移除</button>
+                  </li>
+                </ul>
+              </div>
+              <p
+                v-else-if="staleToolRefsError"
+                class="flex items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400"
+              >
+                <span class="min-w-0 truncate">{{ staleToolRefsError }}</span>
+                <button type="button" class="shrink-0 font-semibold text-primary hover:underline" @click="emit('refreshStaleToolRefs')">重试</button>
+              </p>
+
               <!-- MCP Scope Tab 选项卡：平台 MCP / 我的 MCP -->
               <div class="flex items-center justify-between border-b border-indigo-100 dark:border-gray-800 pb-2 mb-1 sticky top-0 bg-white dark:bg-gray-900 z-10">
                 <div class="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-800 p-0.5 rounded-lg text-xs">
@@ -1241,15 +1362,33 @@ const externalCreationMissingFields = computed(() => {
               <div v-if="currentScopeGroupedMcpToolsCount === 0" class="p-12 text-center text-gray-400 text-sm">
                 {{ mcpSubTab === 'personal' ? '暂无个人的 MCP 工具，请前往 MCP 工具集 配置。' : '暂无已发布的平台 MCP 工具，请前往 MCP 工具集 配置。' }}
               </div>
-              <div v-else v-for="(tools, serverName) in currentScopeGroupedMcpTools" :key="serverName" class="rounded-lg border border-indigo-100 overflow-hidden">
-                <div class="flex items-center justify-between py-2 px-3 bg-indigo-50/60 border-b border-indigo-100/50">
+              <div
+                v-else
+                v-for="(tools, serverName) in currentScopeGroupedMcpTools"
+                :key="serverName"
+                class="rounded-lg border overflow-hidden transition-colors"
+                :class="mcpGroupState(tools) === 'all'
+                  ? 'border-indigo-300'
+                  : mcpGroupState(tools) === 'some'
+                    ? 'border-indigo-200'
+                    : 'border-indigo-100'"
+              >
+                <div
+                  class="flex items-center justify-between border-b py-2 px-3 border-l-4 transition-colors"
+                  :class="mcpGroupState(tools) === 'all'
+                    ? 'border-b-indigo-200 border-l-indigo-500 bg-indigo-100'
+                    : mcpGroupState(tools) === 'some'
+                      ? 'border-b-indigo-100 border-l-indigo-300 bg-indigo-50/80'
+                      : 'border-b-indigo-100/50 border-l-transparent bg-indigo-50/60'"
+                >
                   <button type="button" @click="emit('toggleMcpGroupCollapse', serverName)" :disabled="isSearching" :title="isSearching ? '搜索状态下分组自动展开，清空搜索后可折叠' : ''" :class="isSearching ? 'cursor-default' : ''" class="flex items-center gap-1.5 min-w-0 flex-1 text-left">
                     <svg class="w-3.5 h-3.5 text-indigo-400 transition-transform shrink-0" :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) || isSearching }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>
                     <span class="min-w-0 flex-1">
                       <span
-                        class="text-[10px] font-bold text-indigo-700 uppercase truncate block"
+                        class="text-[10px] font-bold uppercase truncate block"
+                        :class="mcpGroupState(tools) === 'all' ? 'text-indigo-900' : 'text-indigo-700'"
                         :title="tools[0]?.server_remark ? `${serverName} · ${tools[0].server_remark}` : String(serverName)"
                       >{{ serverName }}</span>
                       <span
@@ -1263,7 +1402,14 @@ const externalCreationMissingFields = computed(() => {
                     <span v-else class="ml-1.5 px-1.5 py-0.2 text-[9px] rounded font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 flex-shrink-0">
                       平台
                     </span>
-                    <span class="text-[10px] text-indigo-400 shrink-0">({{ getMcpGroupSelectedCount(tools) }}/{{ tools.length }})</span>
+                    <span
+                      class="shrink-0 rounded px-1.5 py-0.5 text-[10px] transition-colors"
+                      :class="mcpGroupState(tools) === 'all'
+                        ? 'bg-indigo-600 font-bold text-white'
+                        : mcpGroupState(tools) === 'some'
+                          ? 'bg-indigo-100 font-semibold text-indigo-700'
+                          : 'text-indigo-400'"
+                    >({{ getMcpGroupSelectedCount(tools) }}/{{ tools.length }})</span>
                   </button>
                   <button v-if="canEditVersion" type="button" @click.stop="emit('toggleSelectAllMcp', serverName, tools)" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 ml-2 flex-shrink-0">
                     {{ isAllMcpSelected(serverName, tools) ? '取消全选' : '一键全选' }}
