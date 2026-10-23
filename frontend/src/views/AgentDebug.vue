@@ -1726,6 +1726,10 @@ const {
   sandboxWorkspaceStartedAt,
   sandboxWorkspaceUptimeSeconds,
   sandboxWorkspaceError,
+  sandboxWarmHintVisible,
+  sandboxWarmHintTitle,
+  sandboxWarmHintSubtitle,
+  dismissSandboxWarmHint,
   sandboxBackend,
   showSandboxStopConfirm,
   showDockerTerminal,
@@ -1743,6 +1747,7 @@ const {
   // 认证依赖同源 HttpOnly Cookie，无需再提供 authHeaders
   isProcessing,
   remoteRunActive,
+  preferToast: computed(() => windowWidth.value < 640),
   showToast,
 });
 
@@ -5236,6 +5241,10 @@ onUnmounted(() => {
           :routing-mode="debugMode === 'specific' ? 'expert' : 'auto'"
           :expert-agent-id="agentParams.agent_id || ''"
           :sandbox-workspace-status="sandboxWorkspaceStatus"
+          :sandbox-warm-hint-visible="sandboxWarmHintVisible"
+          :sandbox-warm-hint-title="sandboxWarmHintTitle"
+          :sandbox-warm-hint-subtitle="sandboxWarmHintSubtitle"
+          @dismiss-sandbox-warm-hint="dismissSandboxWarmHint"
           :sandbox-workspace-instance-id="sandboxWorkspaceInstanceId"
           :sandbox-workspace-started-at="sandboxWorkspaceStartedAt"
           :sandbox-workspace-uptime-seconds="sandboxWorkspaceUptimeSeconds"

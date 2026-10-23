@@ -1386,6 +1386,10 @@
         :is-loading-agents="isLoadingAgents"
         :lock-expert-agent="isRoutingSettingsLocked"
         :sandbox-workspace-status="sandboxWorkspaceStatus"
+        :sandbox-warm-hint-visible="sandboxWarmHintVisible"
+        :sandbox-warm-hint-title="sandboxWarmHintTitle"
+        :sandbox-warm-hint-subtitle="sandboxWarmHintSubtitle"
+        @dismiss-sandbox-warm-hint="dismissSandboxWarmHint"
         :sandbox-workspace-instance-id="sandboxWorkspaceInstanceId"
         :sandbox-workspace-started-at="sandboxWorkspaceStartedAt"
         :sandbox-workspace-uptime-seconds="sandboxWorkspaceUptimeSeconds"
@@ -5995,6 +5999,11 @@ const {
   sandboxWorkspaceInstanceId,
   sandboxWorkspaceStartedAt,
   sandboxWorkspaceUptimeSeconds,
+  sandboxWarmHintVisible,
+  sandboxWarmHintTitle,
+  sandboxWarmHintSubtitle,
+  dismissSandboxWarmHint,
+  showSandboxWarmHint,
   effectiveSandboxPolicy,
   sandboxBackend,
   isSandboxWorkspacePolicy,
@@ -6018,6 +6027,7 @@ const {
   authHeaders: embedAuthHeaders,
   isProcessing,
   remoteRunActive,
+  preferToast: computed(() => windowWidth.value < 640),
   showToast,
 });
 const {
@@ -10853,7 +10863,12 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       showToast("正在拉起沙箱运行环境…", "info");
       void refreshSandboxWorkspaceStatus();
     } else if (isSandboxPrewarmLogId(logId) && currentLog.status === "pending" && nextStatus === "success") {
-      showToast("沙箱环境已就绪，正在执行命令…", "success");
+      // 桌面端改成指向输入框浮标的气泡；移动端由 showSandboxWarmHint 内部回退 toast
+      showSandboxWarmHint({
+        title: "沙箱已就绪",
+        subtitle: "正在执行命令，点这里查看运行状态",
+        toastMessage: "沙箱环境已就绪，正在执行命令…",
+      });
       void refreshSandboxWorkspaceStatus();
     } else if (isSandboxPrewarmLogId(logId) && currentLog.status === "pending" && nextStatus === "error") {
       showToast(data.error_reason || "沙箱环境启动失败", "error");

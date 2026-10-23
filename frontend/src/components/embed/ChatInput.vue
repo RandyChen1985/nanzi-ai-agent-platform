@@ -153,9 +153,17 @@ const props = withDefaults(defineProps<{
   allowModelSwitch?: boolean;
   /** 候选为空时占用切换器位置的只读提示（例如「你的可用模型已全部停用，请联系管理员」） */
   modelSwitchHint?: string;
+  /** 自动预热完成：在上下文用量浮标上挂气泡，引导用户去那里看沙箱状态 */
+  sandboxWarmHintVisible?: boolean;
+  /** 气泡标题：自动预热与 Bash 按需拉起用不同文案 */
+  sandboxWarmHintTitle?: string;
+  /** 气泡副标题 */
+  sandboxWarmHintSubtitle?: string;
 }>(), {
   showGeneratingAnimation: true,
   allowModelSwitch: true,
+  sandboxWarmHintTitle: "沙箱已预热就绪",
+  sandboxWarmHintSubtitle: "点这里查看运行状态",
 });
 
 const textareaPaddingRightClass = computed(() => {
@@ -373,6 +381,7 @@ const emit = defineEmits<{
   (e: 'ignore-ltm'): void;
   (e: 'dismiss-ltm'): void;
   (e: 'refresh-context-compactions'): void;
+  (e: 'dismiss-sandbox-warm-hint'): void;
   (e: 'manual-context-compaction', retainRatio: 0.25 | 0.5 | 0.75, mode: "fast" | "smart"): void;
   (e: 'start-sandbox-workspace'): void;
   (e: 'refresh-sandbox-workspace', manualFeedback?: boolean): void;
@@ -2214,6 +2223,50 @@ defineExpose({
                 ref="contextUsageContainerRef"
                 class="relative flex items-center"
               >
+                <!-- 自动预热完成：气泡指向用量浮标，点开即可看到沙箱状态（不再用 toast 打断） -->
+                <transition
+                  enter-active-class="transition-all duration-300 ease-out"
+                  enter-from-class="opacity-0 translate-y-1 scale-95"
+                  enter-to-class="opacity-100 translate-y-0 scale-100"
+                  leave-active-class="transition-all duration-200 ease-in"
+                  leave-from-class="opacity-100 translate-y-0 scale-100"
+                  leave-to-class="opacity-0 translate-y-1 scale-95"
+                >
+                  <div
+                    v-if="sandboxWarmHintVisible"
+                    data-testid="sandbox-warm-hint"
+                    class="absolute bottom-full right-0 z-50 mb-2.5 flex items-center gap-2.5 whitespace-nowrap rounded-xl border border-primary/20 bg-primary/95 px-3 py-2 text-[12px] text-white shadow-2xl backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95"
+                  >
+                    <!-- 底部小尖角：指向下方的用量浮标 -->
+                    <div class="absolute -bottom-1.5 right-4 h-3 w-3 rotate-45 border-b border-r border-primary/20 bg-primary/95 dark:border-slate-700/60 dark:bg-slate-900/95" />
+
+                    <button
+                      type="button"
+                      class="flex items-center gap-2.5 text-left"
+                      title="打开上下文用量面板查看沙箱状态"
+                      @click.stop="toggleContextUsageDetails()"
+                    >
+                      <svg class="h-4 w-4 shrink-0 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                      </svg>
+                      <span class="flex flex-col">
+                        <span class="font-bold leading-tight">{{ sandboxWarmHintTitle }}</span>
+                        <span class="mt-0.5 text-[11px] leading-tight text-white/85 dark:text-slate-300">{{ sandboxWarmHintSubtitle }}</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      class="ml-1 rounded-md p-1 text-white/70 transition-colors hover:bg-white/20 hover:text-white dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+                      title="关闭提示"
+                      @click.stop="emit('dismiss-sandbox-warm-hint')"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </transition>
+
                 <button
                   type="button"
                   data-testid="context-usage-indicator"

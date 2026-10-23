@@ -138,6 +138,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { resolveAutoDuration } from '@/composables/useToast'
 
 interface Props {
   message?: string
@@ -163,10 +164,13 @@ const emit = defineEmits<{
   close: []
 }>()
 
-// 成功与普通提示 2000ms（2秒），警告与报错 3500ms（3.5秒）
+// 显式 duration 优先；缺省时与 useToast 用同一套「按文案长度」规则，避免两处默认值漂移
 const resolveDuration = () => {
   if (props.duration !== undefined) return props.duration
-  return props.type === 'error' || props.type === 'warning' ? 3500 : 2000
+  return resolveAutoDuration(
+    props.message || props.title || props.description || '',
+    props.type,
+  )
 }
 
 const activeDuration = resolveDuration()
