@@ -295,6 +295,8 @@ class EmailDeliveryService:
 
     @staticmethod
     def _from_global_row(row: Dict[str, Any]) -> SmtpSettings:
+        from app.services.branding_settings_service import BrandingSettingsService
+
         def _int(v, default):
             try:
                 return int(str(v).strip())
@@ -313,7 +315,8 @@ class EmailDeliveryService:
                 {"security": row.get("email_smtp_security")}, port
             ),
             from_address=str(row.get("email_from_address") or "").strip(),
-            sender_name=str(row.get("email_sender_name") or "NanZi AI Agent").strip(),
+            sender_name=str(row.get("email_sender_name") or "").strip()
+            or BrandingSettingsService.get_prompt_brand_name(),
         )
 
     @classmethod

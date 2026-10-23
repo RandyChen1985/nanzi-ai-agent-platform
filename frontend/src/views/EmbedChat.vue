@@ -35,7 +35,7 @@
     <div v-if="currentUser?.watermark ? currentUser.watermark.enabled : true" class="fixed inset-0 pointer-events-none overflow-hidden z-0 opacity-[0.04] select-none grid grid-cols-2 sm:grid-cols-3 gap-x-10 gap-y-24 p-10 justify-items-center items-center h-full w-full" aria-hidden="true">
         <div v-for="n in 60" :key="n" class="text-[10px] sm:text-xs font-black -rotate-[30deg] whitespace-nowrap uppercase tracking-tighter">
             <template v-if="currentUser?.watermark?.style === 'custom'">
-                {{ currentUser?.watermark?.text || '南孜系统' }}
+                {{ currentUser?.watermark?.text || branding.product_name }}
             </template>
             <template v-else>
                 {{ currentUser?.real_name || currentUser?.user_name || 'Unauthorized' }}
@@ -10449,7 +10449,7 @@ const portalLoadingTips = [
   "AI 正在深度解析物理表的业务语义与指标口径... 📊",
   "首次加载需探索物理库表，耗时稍长（约15-30秒），请耐心稍候喔 ✨",
   "正在基于大模型智构最适合该数据集的场景分析提问... 🚀",
-  "南孜大模型正在努力推理计算中，马上就好... 🔄",
+  "系统大模型正在努力推理计算中，马上就好... 🔄",
 ];
 const currentPortalLoadingTip = ref(portalLoadingTips[0]);
 let portalLoadingTipTimer: ReturnType<typeof setInterval> | null = null;

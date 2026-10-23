@@ -1,6 +1,15 @@
+import time
 from typing import Any, Dict, Optional
 
 from app.services.config_service import ConfigService
+
+# 提示词中使用的平台品牌名：未启用品牌个性化时的兜底文案。
+# 注意与前端展示用的 DEFAULT_PRODUCT_NAME 区分——后者用于侧栏/登录页 logo 文案。
+DEFAULT_PLATFORM_BRAND_NAME = "NanZi智能体平台"
+
+# 提示词品牌名缓存：提示词拼装链路是同步的，无法 await 配置读取，
+# 因此这里维护进程内缓存，由异步侧刷新（启动预热 / 配置更新 / 前端拉取品牌时顺带刷新）。
+_PROMPT_BRAND_NAME_TTL_SECONDS = 60.0
 
 DEFAULT_PRODUCT_NAME = "NanZi AI Agent"
 DEFAULT_LOGIN_SUBTITLE = "Your Intelligent Agent Platform"
@@ -27,6 +36,64 @@ class BrandingSettingsService:
     CONFIG_CONTACT_MARKDOWN = "branding.contact_markdown"
     CONFIG_COPYRIGHT_TEXT = "branding.copyright_text"
     CONFIG_DEFAULT_AGENT_NAME = "branding.default_agent_name"
+
+    # 进程内提示词品牌名缓存（同步读取路径用）
+    _prompt_brand_name: Optional[str] = None
+    _prompt_brand_name_cached_at: float = 0.0
+    # 单协程内正在刷新标志，避免缓存过期的瞬间被并发请求重复打穿配置读取
+    _prompt_brand_name_refreshing: bool = False
+
+    @classmethod
+    def _store_prompt_brand_name(cls, raw: Dict[str, Any]) -> str:
+        """把原始品牌设置折算成提示词品牌名并写入缓存。"""
+        if raw.get("enabled"):
+            name = (raw.get("product_name") or "").strip() or DEFAULT_PLATFORM_BRAND_NAME
+        else:
+            name = DEFAULT_PLATFORM_BRAND_NAME
+        cls._prompt_brand_name = name
+        cls._prompt_brand_name_cached_at = time.monotonic()
+        return name
+
+    @classmethod
+    async def refresh_prompt_brand_name(cls) -> str:
+        """异步刷新提示词品牌名缓存，返回最新品牌名。"""
+        try:
+            raw = await cls.get_raw_settings()
+        except Exception:
+            # 配置读取失败时保留旧值，仅重置时间戳避免高频重试
+            cls._prompt_brand_name_cached_at = time.monotonic()
+            return cls._prompt_brand_name or DEFAULT_PLATFORM_BRAND_NAME
+        return cls._store_prompt_brand_name(raw)
+
+    @classmethod
+    async def refresh_prompt_brand_name_if_stale(cls) -> str:
+        """缓存过期时刷新提示词品牌名，未过期直接返回缓存值。
+
+        供异步请求入口调用（路由分诊），避免在同步提示词拼装路径里创建后台任务。
+        """
+        if (
+            cls._prompt_brand_name is not None
+            and (time.monotonic() - cls._prompt_brand_name_cached_at) < _PROMPT_BRAND_NAME_TTL_SECONDS
+        ):
+            return cls._prompt_brand_name
+        if cls._prompt_brand_name_refreshing:
+            # 已有协程在刷新：本次直接返回旧值，避免并发重复读取配置
+            return cls._prompt_brand_name or DEFAULT_PLATFORM_BRAND_NAME
+        cls._prompt_brand_name_refreshing = True
+        try:
+            return await cls.refresh_prompt_brand_name()
+        finally:
+            cls._prompt_brand_name_refreshing = False
+
+    @classmethod
+    def get_prompt_brand_name(cls) -> str:
+        """同步读取提示词品牌名缓存（纯读、无副作用）。
+
+        启用品牌个性化时返回 ``branding.product_name``，否则返回
+        :data:`DEFAULT_PLATFORM_BRAND_NAME`。缓存由启动预热、保存品牌配置、
+        前端拉取品牌信息以及 :meth:`refresh_prompt_brand_name_if_stale` 刷新。
+        """
+        return cls._prompt_brand_name or DEFAULT_PLATFORM_BRAND_NAME
 
     @staticmethod
     async def _get_bool(key: str, default: bool = False) -> bool:
@@ -58,6 +125,8 @@ class BrandingSettingsService:
     async def get_public_branding(cls) -> Dict[str, Any]:
         """前端展示用：未启用个性化时返回默认品牌，开关项均为默认展示行为。"""
         raw = await cls.get_raw_settings()
+        # 前端加载品牌信息时顺带刷新提示词品牌名缓存，减少一次配置读取。
+        cls._store_prompt_brand_name(raw)
         if not raw["enabled"]:
             return {
                 "enabled": False,
@@ -160,3 +229,5 @@ class BrandingSettingsService:
             category="branding",
             changed_by=changed_by,
         )
+        # 配置保存后立即刷新提示词品牌名，避免本进程内继续使用旧品牌名。
+        await cls.refresh_prompt_brand_name()

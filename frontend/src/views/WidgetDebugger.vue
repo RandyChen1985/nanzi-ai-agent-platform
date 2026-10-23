@@ -645,7 +645,7 @@ async def get_ai_embed_ticket(username: str = "zhangsan"):
             caption: '企业级生产推荐：长期 API Key 留在宿主后端，前端仅使用一次性短时 Ticket，自动滑动续期。',
             summary: '宿主后端代表用户调用 /api/v1/embed/tickets 获得 ticket，前端仅传 ticket 即可完成安全鉴权。',
             points: ['长期 API Key 永不暴露给浏览器', 'Ticket 5分钟有效且一次性核销（阅后即焚）', '会话活跃自动滑动延长 24 小时 TTL', '支持超时自动静默重连'],
-            code: `<!-- 1. 宿主后端 (Node.js/Java/Python/Go)：代表登录员工向南孜申请一次性 Ticket -->
+            code: `<!-- 1. 宿主后端 (Node.js/Java/Python/Go)：代表登录员工向平台申请一次性 Ticket -->
 // POST ${host}/api/v1/embed/tickets
 // Headers: { "X-API-Key": "YOUR_SERVER_SYSTEM_KEY" }
 // Body: { "username": "zhangsan"${agentInitLine ? ',' + agentInitLine.trim() : ''} }

@@ -2458,7 +2458,7 @@ onMounted(async () => {
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
-              <input v-model="newDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 南孜资源数据集">
+              <input v-model="newDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 资源数据集">
             </div>
             <div>
               <label class="flex items-center text-sm font-medium text-gray-700 mb-1">
@@ -2545,7 +2545,7 @@ onMounted(async () => {
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 (Display Name)</label>
-              <input v-model="editingDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 南孜资源数据集">
+              <input v-model="editingDataset.display_name" type="text" class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 资源数据集">
             </div>
             <div>
               <label class="flex items-center text-sm font-medium text-gray-700 mb-1">

@@ -3510,7 +3510,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     isThoughtExpanded: true, // Default expanded to show progress
     thoughtStartTime: Date.now(),
     thoughtDuration: "0.0",
-    thinkingText: "南孜正在处理您的请求...",
+    thinkingText: "系统正在处理您的请求...",
   });
   messages.value.push(agentMsg.value);
 

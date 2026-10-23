@@ -25,6 +25,7 @@ from app.core.middleware import AccessLogMiddleware, SecurityHeadersMiddleware
 from app.core.logging_filters import install_cancellation_log_filters
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
+from app.services.branding_settings_service import DEFAULT_PLATFORM_BRAND_NAME, BrandingSettingsService
 from app.core.errors import ErrorCode, RagFlowError
 from app.core.openapi import custom_openapi, tags_metadata # Import OpenAPI Logic
 from asynch.errors import InterfaceError
@@ -81,6 +82,15 @@ async def lifespan(app: FastAPI):
         get_default_timezone.cache_clear()
     except Exception as exc:
         logging.warning("Failed to refresh platform timezone on startup: %s", exc)
+
+    # 预热提示词品牌名缓存，并同步 API 文档品牌（未启用品牌个性化时回落到默认品牌）
+    try:
+        brand_name = await BrandingSettingsService.refresh_prompt_brand_name()
+        app.title = brand_name
+        app.description = _API_DESCRIPTION_TEMPLATE.replace("{platform_brand_name}", brand_name)
+        app.openapi_schema = None
+    except Exception as exc:
+        logging.warning("Failed to refresh prompt branding on startup: %s", exc)
 
     # Start Task Scheduler
     from app.services.ai.scheduler_service import scheduler_service
@@ -151,13 +161,11 @@ async def lifespan(app: FastAPI):
     await database.close_db()
     await redis.close_redis()
 
-app = FastAPI(
-    title="南孜·智能体平台",
-    description="""
+_API_DESCRIPTION_TEMPLATE = """
 ## 概述
 
-南孜智能体平台提供统一的 AI 智能体服务，支持 ChatBI、知识库问答、自动化工作流等能力。
-通过对接南孜数据服务平台，为业务人员提供自然语言交互的取数与分析体验。
+{platform_brand_name}提供统一的 AI 智能体服务，支持 ChatBI、知识库问答、自动化工作流等能力。
+通过对接数据服务平台，为业务人员提供自然语言交互的取数与分析体验。
 
 ## 核心特性
 
@@ -197,10 +205,16 @@ X-API-Key: your_api_key_here
 
 - **技术支持**：support@yovole.com
 - **官网**：https://www.yovole.com
-    """,
+"""
+
+app = FastAPI(
+    title=DEFAULT_PLATFORM_BRAND_NAME,
+    description=_API_DESCRIPTION_TEMPLATE.replace(
+        "{platform_brand_name}", DEFAULT_PLATFORM_BRAND_NAME
+    ),
     version="1.0.0",
     contact={
-        "name": "南孜智能体团队",
+        "name": "智能体平台团队",
         "email": "support@yovole.com",
         "url": "https://www.yovole.com"
     },

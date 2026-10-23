@@ -2,10 +2,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.branding_settings_service import (
     BrandingSettingsService,
     DEFAULT_ICON_URL,
     DEFAULT_LOGIN_SUBTITLE,
+    DEFAULT_PLATFORM_BRAND_NAME,
     DEFAULT_PRODUCT_NAME,
 )
 
@@ -91,3 +93,88 @@ async def test_update_settings_persists_all_keys():
     assert BrandingSettingsService.CONFIG_CONTACT_MARKDOWN in keys
     assert BrandingSettingsService.CONFIG_COPYRIGHT_TEXT in keys
     assert BrandingSettingsService.CONFIG_DEFAULT_AGENT_NAME in keys
+
+
+@pytest.fixture(autouse=True)
+def _isolate_prompt_brand_name_cache(monkeypatch):
+    """隔离提示词品牌名进程内缓存，避免测试之间相互污染。"""
+    monkeypatch.setattr(BrandingSettingsService, "_prompt_brand_name", None)
+    monkeypatch.setattr(BrandingSettingsService, "_prompt_brand_name_cached_at", 0.0)
+    monkeypatch.setattr(BrandingSettingsService, "_prompt_brand_name_refreshing", False)
+
+
+def test_prompt_brand_name_falls_back_when_branding_disabled():
+    BrandingSettingsService._store_prompt_brand_name(
+        {"enabled": False, "product_name": "景普·智能体中心"}
+    )
+
+    assert BrandingSettingsService.get_prompt_brand_name() == DEFAULT_PLATFORM_BRAND_NAME
+
+
+def test_prompt_brand_name_uses_product_name_when_enabled():
+    BrandingSettingsService._store_prompt_brand_name(
+        {"enabled": True, "product_name": "景普·智能体中心"}
+    )
+
+    assert BrandingSettingsService.get_prompt_brand_name() == "景普·智能体中心"
+
+
+def test_prompt_brand_name_falls_back_when_enabled_but_blank():
+    BrandingSettingsService._store_prompt_brand_name(
+        {"enabled": True, "product_name": "   "}
+    )
+
+    assert BrandingSettingsService.get_prompt_brand_name() == DEFAULT_PLATFORM_BRAND_NAME
+
+
+def test_platform_global_prompt_renders_default_brand():
+    prompt = AgentServicePrompts.platform_global_system_prompt()
+
+    assert prompt.startswith(f"[{DEFAULT_PLATFORM_BRAND_NAME} · 全局守则]")
+    assert f"你是{DEFAULT_PLATFORM_BRAND_NAME}的对话助手" in prompt
+    assert "{platform_brand_name}" not in prompt
+
+
+def test_platform_global_prompt_renders_custom_brand():
+    BrandingSettingsService._store_prompt_brand_name(
+        {"enabled": True, "product_name": "景普·智能体中心"}
+    )
+
+    prompt = AgentServicePrompts.platform_global_system_prompt()
+
+    assert prompt.startswith("[景普·智能体中心 · 全局守则]")
+    assert "你是景普·智能体中心的对话助手" in prompt
+    assert "{platform_brand_name}" not in prompt
+
+
+def test_is_platform_global_prompt_ignores_brand_name():
+    BrandingSettingsService._store_prompt_brand_name(
+        {"enabled": True, "product_name": "景普·智能体中心"}
+    )
+
+    assert AgentServicePrompts.is_platform_global_prompt(
+        AgentServicePrompts.platform_global_system_prompt()
+    )
+    assert not AgentServicePrompts.is_platform_global_prompt("# Active User Profile\n- name: x")
+    assert not AgentServicePrompts.is_platform_global_prompt("")
+
+
+def test_is_platform_global_prompt_handles_long_brand_and_mid_text():
+    long_brand = "超长品牌" * 20  # 80 字
+    long_prompt = AgentServicePrompts.platform_global_system_prompt(long_brand)
+    assert AgentServicePrompts.is_platform_global_prompt(long_prompt)
+
+    # 守则不在首行（多段落合并）时仍需识别
+    merged = "# 其他段落\n\n" + AgentServicePrompts.platform_global_system_prompt()
+    assert AgentServicePrompts.is_platform_global_prompt(merged)
+
+
+def test_user_context_message_carries_brand_name():
+    """回归：USER_PROFILE 前缀曾因批量改名出现 {platform_brand_name} 未定义变量（NameError）。"""
+    BrandingSettingsService._store_prompt_brand_name(
+        {"enabled": True, "product_name": "景普·智能体中心"}
+    )
+
+    message = AgentServicePrompts.user_context_message(user_id="u1", raw_name="tester")
+
+    assert "由 景普·智能体中心 根据当前 API Key 会话身份注入" in message

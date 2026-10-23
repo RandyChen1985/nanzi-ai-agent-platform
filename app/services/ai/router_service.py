@@ -67,7 +67,7 @@ class RouterService:
     # 兜底通用助手 slug，按优先级匹配 DB 中 ai_agents.name（首个命中即用）
     FALLBACK_AGENT_NAMES = ("assistant", "main", "general-chat")
 
-    DEFAULT_SYSTEM_PROMPT = """# Role: 南孜智能体平台 · 智能路由助手 (Smart Router V8 · 清单驱动 · 意图合并)
+    DEFAULT_SYSTEM_PROMPT = """# Role: {platform_brand_name} · 智能路由助手 (Smart Router V8 · 清单驱动 · 意图合并)
 
 你是智能体平台的"分诊台"。任务：依据【可用智能体清单】+【对话历史与上一轮路由】+【用户最新输入】，选出最合适的智能体，并同时给出来源意图。
 你只输出路由决策 JSON，绝不回答业务问题本身。
@@ -175,7 +175,7 @@ class RouterService:
 - 用户："我有哪些数据集/知识库" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.93, "secondary_agents": [], "turn_labels": ["meta_action", "general_chat"], "relation_to_previous": "standalone", "user_action_type": "manage_agent_or_skill", "intent": "GENERAL", "domain": "general", "operation": "explain", "thought": "权限内资源目录，走通用助手工具"}
 - 用户："统计一下我机器的文件数" -> {"agent_name": "{fallback_agent_name}", "confidence": 0.94, "secondary_agents": [], "turn_labels": ["general_chat"], "relation_to_previous": "standalone", "user_action_type": "chat", "intent": "GENERAL", "domain": "local_file", "operation": "aggregate", "fact_kind": "file_count", "thought": "本机文件统计，不是业务查数"}"""
 
-    COMPACT_SYSTEM_PROMPT = """# Role: 南孜智能体平台 · 智能路由助手
+    COMPACT_SYSTEM_PROMPT = """# Role: {platform_brand_name} · 智能路由助手
 
 你只负责选择目标智能体和判断来源意图，绝不回答业务问题本身。
 只能从【可用智能体清单】中选择，必须返回纯 JSON。
@@ -704,8 +704,13 @@ thought 不超过 40 个汉字。只返回下列 JSON，不要 Markdown 或额�
         )
         
         fallback_agent_name = self._resolve_fallback_agent_name(routing_agents)
+        from app.services.branding_settings_service import BrandingSettingsService
+
+        # 路由分诊是每次对话的必经入口，借此兜住多副本下的品牌名收敛
+        await BrandingSettingsService.refresh_prompt_brand_name_if_stale()
         formatted_prompt = (
             system_prompt
+            .replace("{platform_brand_name}", BrandingSettingsService.get_prompt_brand_name())
             .replace("{agents_context}", agents_str)
             .replace(
                 "{accessible_resources_context}",
