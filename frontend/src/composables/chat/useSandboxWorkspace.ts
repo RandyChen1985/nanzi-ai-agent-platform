@@ -10,6 +10,8 @@ export interface UseSandboxWorkspaceOptions {
   authHeaders?: () => Record<string, string> | undefined;
   isProcessing?: Ref<boolean>;
   remoteRunActive?: Ref<boolean>;
+  /** 移动端空间有限：自动预热完成仍用 toast，不挂气泡（气泡会压住输入区） */
+  preferToast?: Ref<boolean>;
   showToast: (msg: string, type?: "success" | "error" | "info" | "warning") => void;
 }
 
@@ -20,6 +22,7 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
     authHeaders,
     isProcessing = ref(false),
     remoteRunActive = ref(false),
+    preferToast,
     showToast,
   } = options;
 
@@ -152,11 +155,17 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
 
   const pollSandboxWorkspaceUntilRunning = async (
     cid: string,
-    opts: { readyToast?: boolean; readyMessage?: string } = {},
+    opts: {
+      readyToast?: boolean;
+      readyMessage?: string;
+      onReady?: () => void;
+      /** 单独控制超时提示：自动预热成功时不打扰，但卡住 60 秒仍然要让人知道 */
+      timeoutToast?: boolean;
+    } = {},
   ) => {
     if (isPollingRunning) return;
     isPollingRunning = true;
-    const { readyToast = true, readyMessage = "沙箱已就绪" } = opts;
+    const { readyToast = true, readyMessage = "沙箱已就绪", onReady, timeoutToast = readyToast } = opts;
     const MAX_ATTEMPTS = 30; // 60s
     try {
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
@@ -179,6 +188,7 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
             if (readyToast) {
               showToast(readyMessage, "success");
             }
+            onReady?.();
             return;
           }
           if (mapped === "error") {
@@ -189,8 +199,14 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
         }
       }
       if (conversationId.value === cid && sandboxWorkspaceStatus.value !== "running") {
-        if (readyToast) {
-          showToast("Pod 仍在创建中（可能镜像拉取较慢），可稍后点「刷新」查看", "info");
+        if (timeoutToast) {
+          // 文案按后端区分：docker 场景说「Pod」会让用户以为去查错了对象
+          showToast(
+            sandboxBackend.value === "k8s"
+              ? "Pod 仍在创建中（可能镜像拉取较慢），可稍后点「刷新」查看"
+              : "容器仍在启动中（可能镜像拉取较慢），可稍后点「刷新」查看",
+            "info",
+          );
         }
       }
     } finally {
@@ -199,6 +215,38 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
   };
 
   let autoWarmedConversationKey = "";
+
+  // 沙箱就绪的提示不用 toast（移动端除外），改为挂在输入框上下文用量浮标上的气泡：
+  // 用户顺着尖角就知道去那里看沙箱状态。3 秒后自动收起，也能手动关。
+  const sandboxWarmHintVisible = ref(false);
+  const sandboxWarmHintTitle = ref("沙箱已预热就绪");
+  const sandboxWarmHintSubtitle = ref("点这里查看运行状态");
+  let sandboxWarmHintTimer: ReturnType<typeof setTimeout> | null = null;
+  const dismissSandboxWarmHint = () => {
+    if (sandboxWarmHintTimer) {
+      clearTimeout(sandboxWarmHintTimer);
+      sandboxWarmHintTimer = null;
+    }
+    sandboxWarmHintVisible.value = false;
+  };
+  const showSandboxWarmHint = (options?: {
+    title?: string;
+    subtitle?: string;
+    /** 移动端 toast 文案；缺省用 title */
+    toastMessage?: string;
+  }) => {
+    const title = options?.title || "沙箱已预热就绪";
+    // 移动端空间有限：气泡会盖住输入区，退回顶部 toast
+    if (preferToast?.value) {
+      showToast(options?.toastMessage || title, "success");
+      return;
+    }
+    dismissSandboxWarmHint();
+    sandboxWarmHintTitle.value = title;
+    sandboxWarmHintSubtitle.value = options?.subtitle || "点这里查看运行状态";
+    sandboxWarmHintVisible.value = true;
+    sandboxWarmHintTimer = setTimeout(dismissSandboxWarmHint, 3000);
+  };
 
   const maybeAutoWarmSandbox = async () => {
     if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
@@ -229,12 +277,14 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
         ? data.uptime_seconds
         : null;
       if (mapped === "running") {
-        showToast("沙箱环境已预热就绪", "success");
+        showSandboxWarmHint();
       } else {
-        showToast("正在预热沙箱运行环境…", "info");
+        // 预热中不打扰：输入框里的沙箱状态本身就在显示「创建中」，再弹 toast 只是噪音
         void pollSandboxWorkspaceUntilRunning(String(conversationId.value), {
-          readyToast: true,
+          readyToast: false,
           readyMessage: "沙箱环境已预热就绪",
+          onReady: showSandboxWarmHint,
+          timeoutToast: true,
         });
       }
     } catch {
@@ -396,6 +446,10 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
 
   onUnmounted(() => {
     isPollingRunning = false;
+    if (sandboxWarmHintTimer) {
+      clearTimeout(sandboxWarmHintTimer);
+      sandboxWarmHintTimer = null;
+    }
   });
 
   return {
@@ -417,6 +471,11 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
     sandboxWorkspaceRefreshing,
     pollSandboxWorkspaceUntilRunning,
     maybeAutoWarmSandbox,
+    sandboxWarmHintVisible,
+    sandboxWarmHintTitle,
+    sandboxWarmHintSubtitle,
+    showSandboxWarmHint,
+    dismissSandboxWarmHint,
     ensureSandboxWorkspace,
     openDockerTerminal,
     handleStopSandboxWorkspaceRequest,
