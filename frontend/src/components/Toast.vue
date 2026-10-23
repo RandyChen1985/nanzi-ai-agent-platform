@@ -51,13 +51,13 @@
         <div class="font-semibold text-xs sm:text-sm tracking-tight text-zinc-900 dark:text-zinc-100 truncate">
           {{ title }}
         </div>
-        <div v-if="description" class="text-[11px] sm:text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 leading-relaxed break-words">
+        <div v-if="description" class="text-[11px] sm:text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 leading-relaxed break-words whitespace-pre-wrap">
           {{ description }}
         </div>
       </template>
       <div
         v-else
-        class="font-medium text-xs sm:text-sm tracking-tight leading-snug break-words"
+        class="font-medium text-xs sm:text-sm tracking-tight leading-snug break-words whitespace-pre-wrap"
         :class="[
           type === 'success'
             ? 'text-emerald-950 dark:text-emerald-100'
@@ -80,6 +80,23 @@
       class="shrink-0 px-2.5 py-1 text-xs font-medium rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 transition-colors focus:outline-none"
     >
       {{ action.label }}
+    </button>
+
+    <!-- Right: Copy Error Detail (hover affordance for error toasts) -->
+    <button
+      v-if="type === 'error' && copyPayload"
+      type="button"
+      @click.stop="copyToastText"
+      class="shrink-0 p-1 -mr-0.5 rounded-full text-rose-400 opacity-40 transition-all duration-150 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-rose-100 hover:text-rose-600 dark:text-rose-300 dark:hover:bg-rose-500/15 dark:hover:text-rose-200 focus:outline-none"
+      :title="copied ? '已复制' : '复制错误详情'"
+      :aria-label="copied ? '已复制错误详情' : '复制错误详情'"
+    >
+      <svg v-if="copied" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+      </svg>
+      <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 9V5a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2h-4M5 9h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2v-8a2 2 0 012-2z" />
+      </svg>
     </button>
 
     <!-- Right: Close Button -->
@@ -120,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 
 interface Props {
   message?: string
@@ -198,6 +215,35 @@ const handleAction = () => {
   close()
 }
 
+/**
+ * 复制浮标的载荷：错误提示常常是一整段后端诊断（标题 + 多行原因），
+ * 安装方要能一键带走，所以把标题和正文按行拼起来，而不是只复制正文。
+ */
+const copyPayload = computed(() => {
+  const parts = [props.title, props.description || props.message]
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+  return parts.join('\n')
+})
+
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+
+const copyToastText = async () => {
+  if (!copyPayload.value) return
+  try {
+    await navigator.clipboard.writeText(copyPayload.value)
+    copied.value = true
+    if (copiedTimer) clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => {
+      copied.value = false
+    }, 2000)
+  } catch {
+    // 剪贴板不可用（非 HTTPS / 权限被拒）时保持静默，避免再弹一个 toast
+    copied.value = false
+  }
+}
+
 const close = () => {
   if (timer) {
     clearTimeout(timer)
@@ -219,5 +265,6 @@ onMounted(() => {
 onUnmounted(() => {
   if (timer) clearTimeout(timer)
   if (progressInterval) clearInterval(progressInterval)
+  if (copiedTimer) clearTimeout(copiedTimer)
 })
 </script>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
-import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AIModelReference, type AIModelUpdate, type ReasoningEffort } from '../../api/model'
+import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AIModelReference, type AIModelUpdate, type ModelDiagnosticStep, type ReasoningEffort } from '../../api/model'
 import axios from '@/utils/axios'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
@@ -47,6 +47,60 @@ const showAdvancedModelOptions = ref(false)
 const showTemperatureGuide = ref(false)
 const loadingDiscoveredModels = ref(false)
 const discoveredModels = ref<AIModelOption[]>([])
+// 模型配置排障：后端回传的分步耗时 + 诊断原文都留在弹窗里，方便安装方复制给运维。
+const modalError = ref('')
+const diagnosticSteps = ref<ModelDiagnosticStep[]>([])
+
+const providerErrorMessage = (e: any): string => {
+    const detail = e?.response?.data?.detail || e?.response?.data?.message || e?.message
+    return String(detail || '未知错误')
+}
+
+/** 失败的响应把步骤放在 data.steps，成功时步骤直接跟着业务数据回来。 */
+const providerErrorSteps = (e: any): ModelDiagnosticStep[] => {
+    const steps = e?.response?.data?.data?.steps
+    return Array.isArray(steps) ? steps as ModelDiagnosticStep[] : []
+}
+
+const showModalError = (title: string, detail: string, steps: ModelDiagnosticStep[] = []) => {
+    modalError.value = detail
+    diagnosticSteps.value = steps
+    showToast({ type: 'error', title, description: detail, duration: 8000 })
+}
+
+const showDiagnosticSteps = (steps?: ModelDiagnosticStep[] | null) => {
+    diagnosticSteps.value = Array.isArray(steps) ? steps : []
+}
+
+const diagnosticsText = (): string => {
+    const lines = diagnosticSteps.value.map((step) => {
+        const mark = step.status === 'ok' ? '✓' : '✗'
+        const elapsed = step.elapsed_ms ?? 0
+        const detail = step.detail ? ` — ${step.detail}` : ''
+        return `${mark} ${step.name} [${elapsed}ms]${detail}`
+    })
+    if (modalError.value) {
+        if (lines.length) lines.push('')
+        lines.push('错误详情：', modalError.value)
+    }
+    return lines.join('\n')
+}
+
+const clearDiagnostics = () => {
+    modalError.value = ''
+    diagnosticSteps.value = []
+}
+
+const copyModalError = async () => {
+    const text = diagnosticsText()
+    if (!text) return
+    try {
+        await navigator.clipboard.writeText(text)
+        showToast('已复制过程与错误详情', 'success')
+    } catch {
+        showToast('复制失败，请手动选中文本复制', 'warning')
+    }
+}
 const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string; description: string }> = [
   { value: 'none', label: '无（none）', description: '普通问答、摘要、改写' },
   { value: 'minimal', label: '极简（minimal）', description: '简单判断、轻量分析' },
@@ -363,6 +417,7 @@ const discoverProviderModels = async () => {
     }
     loadingDiscoveredModels.value = true
     showModelPicker.value = false
+    clearDiagnostics()
     try {
         const response = await modelApi.discover({
             provider,
@@ -370,13 +425,14 @@ const discoverProviderModels = async () => {
             api_key: modelForm.value.api_key,
             model_config_id: modelForm.value.id,
         })
-        discoveredModels.value = response.data
+        discoveredModels.value = response.data.models || []
+        showDiagnosticSteps(response.data.steps)
         showModelPicker.value = true
-        if (!response.data.length) {
+        if (!discoveredModels.value.length) {
             showToast('供应商没有返回可用模型', 'warning')
         }
     } catch (e: any) {
-        showToast(`加载模型列表失败: ${e.response?.data?.message || e.response?.data?.detail || e.message}`, 'error')
+        showModalError('加载模型列表失败', providerErrorMessage(e), providerErrorSteps(e))
     } finally {
         loadingDiscoveredModels.value = false
     }
@@ -397,10 +453,20 @@ const testModel = async (model: AIModel) => {
         if (res.data.status === 'success') {
             showToast(`${model.name}: ${res.data.message}`, 'success')
         } else {
-            showToast(`${model.name}: ${res.data.message}`, 'error')
+            showToast({
+                type: 'error',
+                title: `${model.name}：连接失败`,
+                description: String(res.data.message || '未知原因'),
+                duration: 8000,
+            })
         }
     } catch (e: any) {
-        showToast(`请求失败: ${e.response?.data?.detail || e.message}`, 'error')
+        showToast({
+            type: 'error',
+            title: `${model.name}：测试请求失败`,
+            description: providerErrorMessage(e),
+            duration: 8000,
+        })
     } finally {
         testingModelId.value = null
     }
@@ -422,6 +488,7 @@ const testCurrentModel = async () => {
         return
     }
     testingFormModel.value = true
+    clearDiagnostics()
     try {
         const response = await modelApi.testConfig({
             provider: String(modelForm.value.provider || 'openai'),
@@ -434,13 +501,14 @@ const testCurrentModel = async () => {
             temperature: normalizeTemperature(modelForm.value.temperature),
             model_config_id: modelForm.value.id,
         })
+        showDiagnosticSteps(response.data.steps)
         if (response.data.status === 'success') {
             showToast(`连接成功${response.data.response ? `：${response.data.response}` : ''}`, 'success')
         } else {
-            showToast(response.data.message || '连接失败', 'error')
+            showModalError('测试连接失败', String(response.data.message || '未知原因'), response.data.steps)
         }
     } catch (e: any) {
-        showToast(`测试连接失败: ${e.response?.data?.detail || e.message}`, 'error')
+        showModalError('测试连接失败', providerErrorMessage(e), providerErrorSteps(e))
     } finally {
         testingFormModel.value = false
     }
@@ -451,6 +519,7 @@ const openModelModal = (model?: AIModel, isClone = false) => {
     showModelPicker.value = false
     showAdvancedModelOptions.value = false
     discoveredModels.value = []
+    clearDiagnostics()
     if (model) {
         if (isClone) {
             isEditingModel.value = false
@@ -535,7 +604,7 @@ const saveModel = async () => {
         showModelModal.value = false
         fetchModels()
     } catch (e: any) {
-        showToast('保存失败: ' + (e.response?.data?.message || e.response?.data?.detail || e.message), 'error')
+        showModalError('保存失败', providerErrorMessage(e))
     }
 }
 
@@ -764,7 +833,28 @@ onBeforeUnmount(() => {
         <div v-if="showModelModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm" @click="showProviderMenu = false; showModelPicker = false">
             <div class="bg-white rounded-xl shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 text-left" @click.stop>
                 <h3 class="text-lg font-bold text-gray-900">{{ isEditingModel ? '编辑模型' : '添加新模型' }}</h3>
-              
+
+                <div v-if="diagnosticSteps.length || modalError" class="rounded-lg border p-3" :class="modalError ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50'">
+                    <div class="flex items-start justify-between gap-3">
+                        <p class="text-xs font-semibold" :class="modalError ? 'text-red-700' : 'text-gray-600'">
+                            {{ modalError ? '操作失败，过程如下（可复制给运维排查）' : '测试过程（可复制）' }}
+                        </p>
+                        <div class="flex shrink-0 items-center gap-2">
+                            <button type="button" class="text-xs font-medium hover:underline" :class="modalError ? 'text-red-700' : 'text-gray-600'" @click="copyModalError">复制</button>
+                            <button type="button" class="text-base leading-none hover:text-red-600" :class="modalError ? 'text-red-400' : 'text-gray-400'" aria-label="关闭过程详情" @click="clearDiagnostics">×</button>
+                        </div>
+                    </div>
+                    <ol v-if="diagnosticSteps.length" class="mt-2 space-y-1">
+                        <li v-for="(step, index) in diagnosticSteps" :key="`${index}-${step.name}`" class="flex items-start gap-2 text-[11px] leading-relaxed">
+                            <span class="w-3 shrink-0 font-mono" :class="step.status === 'ok' ? 'text-emerald-600' : 'text-red-600'">{{ step.status === 'ok' ? '✓' : '✗' }}</span>
+                            <span class="shrink-0 font-medium text-gray-700">{{ step.name }}</span>
+                            <span class="min-w-0 flex-1 break-all text-gray-500">{{ step.detail }}</span>
+                            <span class="shrink-0 font-mono text-gray-400">{{ step.elapsed_ms ?? 0 }}ms</span>
+                        </li>
+                    </ol>
+                    <pre v-if="modalError" class="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-red-800">{{ modalError }}</pre>
+                </div>
+
                 <div class="space-y-3">
                     <div>
                        <label class="block text-sm font-medium text-gray-700">提供商</label>

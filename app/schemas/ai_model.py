@@ -225,6 +225,19 @@ class AIModelDiscoverRequest(BaseModel):
     model_config_id: Optional[str] = None
 
 
+class ModelDiagnosticStep(BaseModel):
+    """一次供应商调用中的单个步骤，供前端渲染成过程时间线。
+
+    ``elapsed_ms`` 是「从上一步到此步」的耗时，因此请求步骤的值就是
+    真实网络耗时，安装方可据此判断慢在连接、鉴权还是解析。
+    """
+
+    name: str
+    status: str = "ok"
+    detail: Optional[str] = None
+    elapsed_ms: Optional[int] = None
+
+
 class AIModelTestRequest(BaseModel):
     provider: ModelProvider
     type: ModelType
@@ -261,6 +274,11 @@ class AIModelTestRequest(BaseModel):
 class AIModelOption(BaseModel):
     model_id: str
     name: str
+
+
+class AIModelDiscoverResponse(BaseModel):
+    models: list[AIModelOption]
+    steps: list[ModelDiagnosticStep] = Field(default_factory=list)
 
 class AIModelResponse(AIModelBase):
     id: str

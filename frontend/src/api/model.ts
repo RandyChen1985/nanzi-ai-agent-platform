@@ -71,6 +71,26 @@ export interface AIModelOption {
   name: string
 }
 
+/** 一次供应商调用的单步耗时，用于在配置弹窗里渲染「测试过程」。 */
+export interface ModelDiagnosticStep {
+  name: string
+  status: string
+  detail?: string | null
+  elapsed_ms?: number | null
+}
+
+export interface AIModelDiscoverResponse {
+  models: AIModelOption[]
+  steps: ModelDiagnosticStep[]
+}
+
+export interface AIModelTestResponse {
+  status: string
+  message: string
+  response?: string
+  steps?: ModelDiagnosticStep[]
+}
+
 export interface AIModelReference {
   kind: string
   key: string
@@ -124,14 +144,14 @@ export const modelApi = {
   },
 
   testConnection: (id: string) => {
-    return axios.post<{ status: string; message: string; response?: string }>(`/api/portal/models/${id}/test`)
+    return axios.post<AIModelTestResponse>(`/api/portal/models/${id}/test`)
   },
 
   testConfig: (data: AIModelTestRequest) => {
-    return axios.post<{ status: string; message: string; response?: string }>('/api/portal/models/test-config', data)
+    return axios.post<AIModelTestResponse>('/api/portal/models/test-config', data)
   },
 
   discover: (data: AIModelDiscoverRequest) => {
-    return axios.post<AIModelOption[]>('/api/portal/models/discover', data)
+    return axios.post<AIModelDiscoverResponse>('/api/portal/models/discover', data)
   }
 }
