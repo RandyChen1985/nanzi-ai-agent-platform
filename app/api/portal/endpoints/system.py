@@ -917,6 +917,28 @@ async def upload_branding_icon(
     return {"icon_url": icon_url}
 
 
+@router.post("/branding/icon/reset")
+async def reset_branding_icon(
+    user: Dict = Depends(require_permission("element", "element:system:config_save")),
+):
+    """还原品牌 Logo / Favicon 为平台默认图标，并清理已上传的自定义图标文件。"""
+    removed: List[str] = []
+    for ext in sorted(set(ALLOWED_ICON_TYPES.values())):
+        filename = f"icon{ext}"
+        path = os.path.join(BRANDING_UPLOAD_DIR, filename)
+        if not os.path.isfile(path):
+            continue
+        try:
+            os.remove(path)
+            removed.append(filename)
+        except OSError as exc:
+            # 文件删除失败不影响配置还原，仅记录日志
+            logging.warning("Failed to remove branding icon %s: %s", path, exc)
+
+    raw = await BrandingSettingsService.reset_icon(changed_by=user.get("user_name", "admin"))
+    return {"icon_url": raw["icon_url"], "removed": removed}
+
+
 # --- Log & Partition Management Endpoints (Admin Only) ---
 
 from app.core.orm import get_db_session

@@ -178,3 +178,25 @@ def test_user_context_message_carries_brand_name():
     message = AgentServicePrompts.user_context_message(user_id="u1", raw_name="tester")
 
     assert "由 景普·智能体中心 根据当前 API Key 会话身份注入" in message
+
+
+@pytest.mark.asyncio
+async def test_reset_icon_rewrites_icon_url_to_default():
+    """还原图标只重写 branding.icon_url，返回最新原始配置。"""
+    with patch.object(
+        BrandingSettingsService,
+        "get_raw_settings",
+        new=AsyncMock(return_value={"icon_url": DEFAULT_ICON_URL}),
+    ), patch(
+        "app.services.branding_settings_service.ConfigService.set_config",
+        new=AsyncMock(return_value=True),
+    ) as set_config:
+        raw = await BrandingSettingsService.reset_icon(changed_by="tester")
+
+    set_config.assert_awaited_once()
+    args = set_config.await_args.args
+    kwargs = set_config.await_args.kwargs
+    assert args[0] == BrandingSettingsService.CONFIG_ICON_URL
+    assert args[1] == DEFAULT_ICON_URL
+    assert kwargs["changed_by"] == "tester"
+    assert raw["icon_url"] == DEFAULT_ICON_URL

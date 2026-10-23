@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import axios from '@/utils/axios'
 import { getTemperatureGuidance, temperatureScaleGuidance } from '../utils/temperatureGuidance'
 import { isMultimodalModelType } from '../utils/modelSelect'
+import { DEFAULT_ICON_URL as DEFAULT_BRANDING_ICON } from '@/constants/branding'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { modelApi, type AIModel } from '../api/model'
@@ -1125,6 +1126,7 @@ const brandingConfig = ref({
   default_agent_name: 'NanZi · AI',
 })
 const brandingIconInput = ref<HTMLInputElement | null>(null)
+const brandingIconResetting = ref(false)
 
 const fetchBrandingConfig = async () => {
   try {
@@ -1236,6 +1238,33 @@ const uploadBrandingIconDirectly = async (fileOrBlob: File | Blob, filename = 'i
     showToast(err.response?.data?.detail || '上传失败', 'error')
   } finally {
     brandingIconUploading.value = false
+  }
+}
+
+const isCustomBrandingIcon = computed(() => {
+  const url = (brandingConfig.value.icon_url || '').trim()
+  return !!url && !url.startsWith(DEFAULT_BRANDING_ICON)
+})
+
+const showResetIconConfirm = ref(false)
+
+const resetBrandingIcon = () => {
+  showResetIconConfirm.value = true
+}
+
+const executeResetBrandingIcon = async () => {
+  showResetIconConfirm.value = false
+  brandingIconResetting.value = true
+  try {
+    const res = await axios.post('/api/portal/system/branding/icon/reset')
+    brandingConfig.value.icon_url = res.data?.icon_url || DEFAULT_BRANDING_ICON
+    const { loadBranding } = await import('@/composables/useBranding')
+    await loadBranding(true)
+    showToast('已还原为默认图标', 'success')
+  } catch (err: any) {
+    showToast(err.response?.data?.detail || '还原失败', 'error')
+  } finally {
+    brandingIconResetting.value = false
   }
 }
 
@@ -3935,14 +3964,25 @@ onUnmounted(() => {
                     placeholder="/favicon.svg 或 /branding/icon.png"
                   />
 
-                  <button
-                    type="button"
-                    class="text-sm text-primary hover:text-primary/80 disabled:opacity-50"
-                    :disabled="brandingIconUploading || !brandingConfig.enabled"
-                    @click="triggerBrandingIconUpload"
-                  >
-                    {{ brandingIconUploading ? '上传中...' : '上传图片' }}
-                  </button>
+                  <div class="flex items-center gap-4">
+                    <button
+                      type="button"
+                      class="text-sm text-primary hover:text-primary/80 disabled:opacity-50"
+                      :disabled="brandingIconUploading || !brandingConfig.enabled"
+                      @click="triggerBrandingIconUpload"
+                    >
+                      {{ brandingIconUploading ? '上传中...' : '上传图片' }}
+                    </button>
+                    <button
+                      v-if="isCustomBrandingIcon"
+                      type="button"
+                      class="text-sm text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                      :disabled="brandingIconResetting"
+                      @click="resetBrandingIcon"
+                    >
+                      {{ brandingIconResetting ? '还原中...' : '还原默认' }}
+                    </button>
+                  </div>
                   <input
                     ref="brandingIconInput"
                     type="file"
@@ -6438,6 +6478,16 @@ onUnmounted(() => {
       type="danger"
       @confirm="executeDeleteKey"
       @cancel="showDeleteKeyConfirm = false"
+    />
+    <ConfirmModal
+      v-if="showResetIconConfirm"
+      title="还原为默认图标？"
+      message="将把 Logo / Favicon 还原为平台默认图标（/favicon.svg），并删除已上传的自定义图标文件。此操作不可撤销，是否继续？"
+      confirm-text="确认还原"
+      cancel-text="取消"
+      type="danger"
+      @confirm="executeResetBrandingIcon"
+      @cancel="showResetIconConfirm = false"
     />
     <ConfirmModal
       v-if="showDeleteGroupConfirm"

@@ -152,6 +152,21 @@ class BrandingSettingsService:
         }
 
     @classmethod
+    async def reset_icon(cls, changed_by: str = "system") -> Dict[str, Any]:
+        """把品牌图标还原为平台默认图标（``DEFAULT_ICON_URL``），返回最新原始配置。
+
+        只重置 ``branding.icon_url`` 一个键，不影响其他品牌字段的编辑状态。
+        """
+        await ConfigService.set_config(
+            cls.CONFIG_ICON_URL,
+            DEFAULT_ICON_URL,
+            description="Logo / Favicon 地址",
+            category="branding",
+            changed_by=changed_by,
+        )
+        return await cls.get_raw_settings()
+
+    @classmethod
     async def update_settings(
         cls,
         *,
