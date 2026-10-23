@@ -347,8 +347,10 @@ docker exec nanzi-ai-agent python -c "from app.core.database import engine; prin
 `APP_PUBLIC_URL`，因此公网请求的 Host 不在允许列表中。常见表现是本地
 `localhost` 测试成功，生产公网 IP 或域名测试失败。
 
-**解决方法**:
-1. 在 Docker 目录的 `.env` 中填写平台对外 Origin，不要填写 API 路径：
+**解决方法**（按优先级二选一，推荐第一种）:
+1. 登录平台【系统配置】填写「对外访问地址」（配置键 `app_public_url`），保存后立即生效，无需重启容器；
+   也可在 Docker 目录的 `.env` 中填写同名环境变量 `APP_PUBLIC_URL` 作为回退值，
+   不要填写 API 路径：
    `APP_PUBLIC_URL=http://103.79.25.80:8001` 或 `APP_PUBLIC_URL=https://your-domain.example.com`
 2. 确认使用的 Compose 文件包含 `APP_PUBLIC_URL=${APP_PUBLIC_URL:-}`，并重新创建 API 容器：
    `docker-compose -f docker-compose.ai-agent.yml up -d --force-recreate`
@@ -356,7 +358,7 @@ docker exec nanzi-ai-agent python -c "from app.core.database import engine; prin
 4. 回到【MCP 管理】点击一次【创建 Echo 测试 MCP】，让数据库中的 Echo 地址同步为公网地址。
 
 不要在测试页面填写 `request.base_url` 或 `allowed_hosts`；前者由后端自动回退生成，后者由
-服务端根据 `APP_PUBLIC_URL` 自动配置。
+服务端根据「系统配置 `app_public_url` → 环境变量 `APP_PUBLIC_URL`」自动配置。
 
 ## 生产环境部署建议
 

@@ -30,6 +30,7 @@ from app.core.orm import get_db_session
 from app.models.permission import Role
 from app.models.user import User
 from app.services.auth_service import AuthService
+from app.services.app_public_url_service import get_app_public_url
 from app.services.email_delivery_service import (
     EmailDeliveryService,
     build_account_created_mail,
@@ -145,12 +146,18 @@ async def _deliver_credential_mails(
         return
 
     semaphore = asyncio.Semaphore(concurrency)
+    # 一次性取对外地址：与下载链接、重置链接同源（系统配置 app_public_url → env），
+    # 不按收件人重复查配置；未配置时邮件里不渲染该行。
+    platform_url = await get_app_public_url()
 
     async def deliver(job: Dict[str, Any]) -> None:
         item = job["item"]
         async with semaphore:
             subject, body = build_account_created_mail(
-                item["user_name"], job["password"], settings.sender_name
+                item["user_name"],
+                job["password"],
+                settings.sender_name,
+                platform_url=platform_url,
             )
             try:
                 ok, message = await asyncio.to_thread(

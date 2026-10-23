@@ -52,7 +52,11 @@ def test_main_mounts_echo_streamable_http_mcp():
 def test_echo_transport_security_reads_app_public_url():
     source = Path("app/services/mcp/echo_server.py").read_text(encoding="utf-8")
 
-    assert "transport_security=build_echo_transport_security(settings.APP_PUBLIC_URL)" in source
+    # 构造期给可变占位对象，启动/保存配置后由 refresh_mcp_public_url() 原地刷新
+    assert "transport_security=mutable_transport_security(settings.APP_PUBLIC_URL)" in source
+
+    main_source = Path("app/main.py").read_text(encoding="utf-8")
+    assert "refresh_mcp_public_url()" in main_source
 
 
 @pytest.mark.asyncio
@@ -64,7 +68,10 @@ async def test_echo_creation_is_admin_only_and_returns_no_credentials():
     manager = MagicMock()
     manager.encrypt_api_key.return_value = "encrypted-value"
 
-    with patch.object(mcp, "get_api_key_manager", return_value=manager), patch.object(
+    # 未配置对外地址时才回退到当前请求地址（系统配置 app_public_url 优先）
+    with patch.object(
+        mcp, "get_app_public_url", AsyncMock(return_value="")
+    ), patch.object(mcp, "get_api_key_manager", return_value=manager), patch.object(
         mcp, "_clear_runtime_tool_cache"
     ):
         response = await mcp.create_echo_test_mcp(
@@ -97,9 +104,11 @@ async def test_echo_creation_prefers_configured_app_public_url():
     manager = MagicMock()
     manager.encrypt_api_key.return_value = "encrypted-value"
 
-    with patch.object(mcp.settings, "APP_PUBLIC_URL", "https://mcp.example.com/"), patch.object(
-        mcp, "get_api_key_manager", return_value=manager
-    ), patch.object(mcp, "_clear_runtime_tool_cache"):
+    with patch.object(
+        mcp, "get_app_public_url", AsyncMock(return_value="https://mcp.example.com")
+    ), patch.object(mcp, "get_api_key_manager", return_value=manager), patch.object(
+        mcp, "_clear_runtime_tool_cache"
+    ):
         response = await mcp.create_echo_test_mcp(
             SimpleNamespace(base_url="http://proxy.internal:8001/"),
             db,
@@ -210,7 +219,9 @@ async def test_personal_echo_creation_uses_owner_scoped_id_and_name():
     manager = MagicMock()
     manager.encrypt_api_key.return_value = "encrypted-value"
 
-    with patch.object(mcp, "get_api_key_manager", return_value=manager), patch.object(
+    with patch.object(
+        mcp, "get_app_public_url", AsyncMock(return_value="")
+    ), patch.object(mcp, "get_api_key_manager", return_value=manager), patch.object(
         mcp, "_clear_runtime_tool_cache"
     ), patch(
         "app.services.permission_service.PermissionService"

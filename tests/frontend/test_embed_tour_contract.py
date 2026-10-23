@@ -116,7 +116,9 @@ def test_tour_waits_for_async_targets_before_skipping():
     """沙箱步骤要先展开弹层；缺失判定必须留出宽限，不能被首测误跳过。"""
     tour = _read("frontend/src/components/embed/ChatTour.vue")
 
-    assert "const MISSING_GRACE_MS = 450" in tour
+    # 宽限默认 450ms（系统配置页会传更大的值，所以做成了可调 prop）
+    assert "missingGraceMs: 450" in tour
+    assert "}, props.missingGraceMs)" in tour in tour
     assert "if (resolveTarget()) return" in tour
     assert "window.clearTimeout(missingTimer)" in tour
 

@@ -48,8 +48,9 @@ def test_main_mounts_platform_mcp_before_spa_catch_all_and_hosts_oauth_routes():
 def test_platform_mcp_uses_public_url_for_transport_security():
     source = Path("app/services/mcp/platform_mcp.py").read_text(encoding="utf-8")
 
-    assert "build_mcp_transport_security" in source
-    assert "transport_security=build_mcp_transport_security(settings.APP_PUBLIC_URL)" in source
+    assert "transport_security=mutable_transport_security(settings.APP_PUBLIC_URL)" in source
+    # 运行期以「系统配置 app_public_url」为准，缓存未初始化时回退环境变量
+    assert "get_cached_public_url" in source
 
 
 def test_platform_mcp_uses_the_canonical_resource_uri_at_oauth_boundaries():

@@ -690,6 +690,7 @@ onBeforeUnmount(() => {
                 <button
                     v-if="canSave"
                     @click="openModelModal()"
+                    data-tour="model-add"
                     class="px-3 py-2 bg-primary text-white text-sm rounded-md hover:bg-primary-dark transition-colors"
                 >
                     + 添加模型
@@ -717,7 +718,7 @@ onBeforeUnmount(() => {
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
-                <tr v-for="m in filteredModels" :key="m.id" class="group hover:bg-gray-50">
+                <tr v-for="(m, modelIndex) in filteredModels" :key="m.id" class="group hover:bg-gray-50">
                     <td class="px-6 py-4 min-w-[360px]">
                         <div class="model-cell">
                         <div class="text-sm font-semibold text-gray-900">{{ m.name }}</div>
@@ -779,7 +780,7 @@ onBeforeUnmount(() => {
                         <span v-else class="text-xs text-gray-400">—</span>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium sticky right-0 bg-white group-hover:bg-gray-50 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.4)]">
-                        <div v-if="canSave" class="flex items-center justify-end space-x-2">
+                        <div v-if="canSave" class="flex items-center justify-end space-x-2" :data-tour="modelIndex === 0 ? 'model-row-actions' : undefined">
                             <button 
                                 @click="testModel(m)" 
                                 :disabled="testingModelId === m.id"

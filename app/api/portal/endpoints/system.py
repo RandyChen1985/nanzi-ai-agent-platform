@@ -1014,3 +1014,79 @@ async def manual_cleanup_logs(
     except Exception as e:
         logging.error(f"Failed to cleanup logs: {e}")
         raise HTTPException(status_code=500, detail=f"清理历史日志失败: {str(e)}")
+
+# ---------------------------------------------------------------------------
+# 系统配置功能引导（全局一份，存 Redis 单键）
+# ---------------------------------------------------------------------------
+
+SYSTEM_CONFIG_TOUR_KEY = "agent:tour:system_config"
+
+
+class SystemConfigTourState(BaseModel):
+    """引导完成态。
+
+    引导是系统级、全局共用：谁看完（或谁关掉）都写同一份，
+    所以没有 step —— 进度只存前端 sessionStorage，全局存步数会让下一个人从半路开始。
+    """
+
+    version: int = 0
+    completed_at: str = ""
+    completed_by: int = 0
+    completed_by_name: str = ""
+    skipped: bool = False
+
+
+class SystemConfigTourUpdate(BaseModel):
+    version: int = 0
+    completed_at: str = ""
+    skipped: bool = False
+
+
+def _tour_user_name(user: Dict[str, Any]) -> str:
+    return str(user.get("real_name") or user.get("user_name") or "")
+
+
+async def _read_tour_state() -> SystemConfigTourState:
+    redis_client = await redis.get_redis()
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis 服务不可用")
+    raw = await redis_client.get(SYSTEM_CONFIG_TOUR_KEY)
+    if not raw:
+        return SystemConfigTourState()
+    text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+    try:
+        return SystemConfigTourState(**json.loads(text))
+    except Exception as exc:
+        # 值被写坏时按未完成处理：宁可多播一次，也不让新部署的人漏掉引导
+        logging.warning("系统配置引导状态解析失败，按未完成处理: %s", exc)
+        return SystemConfigTourState()
+
+
+@router.get("/tour", summary="读取系统配置引导的全局完成状态")
+async def get_system_config_tour(
+    user: Dict = Depends(require_permission("menu", "menu:system:config"))
+):
+    """任何能进系统配置页的人都可以读，用来决定要不要自动播。"""
+    state = await _read_tour_state()
+    return {"code": 0, "data": state.model_dump()}
+
+
+@router.put("/tour", summary="写入系统配置引导的全局完成状态")
+async def update_system_config_tour(
+    body: SystemConfigTourUpdate,
+    user: Dict = Depends(require_permission("menu", "menu:system:config"))
+):
+    """看完或跳过都写完成态；只要求菜单权限，不要求 config_save。"""
+    redis_client = await redis.get_redis()
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis 服务不可用")
+
+    state = SystemConfigTourState(
+        version=int(body.version),
+        completed_at=body.completed_at.strip(),
+        completed_by=int(user.get("user_id") or 0),
+        completed_by_name=_tour_user_name(user),
+        skipped=bool(body.skipped),
+    )
+    await redis_client.set(SYSTEM_CONFIG_TOUR_KEY, state.model_dump_json())
+    return {"code": 0, "data": state.model_dump()}

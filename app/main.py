@@ -128,6 +128,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logging.warning("Failed to initialize Langfuse observability: %s", exc)
 
+    # 对外访问地址（系统配置 app_public_url → 环境变量 APP_PUBLIC_URL）在启动时
+    # 落到 MCP 的 Host/Origin 白名单：FastMCP 在导入期已构造并挂载，只能原地刷新。
+    try:
+        from app.services.mcp.public_url import refresh_mcp_public_url
+
+        await refresh_mcp_public_url()
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("Failed to apply app_public_url to MCP: %s", exc)
+
     # Mounted Starlette 子应用不会自动执行自己的 lifespan；显式托管
     # FastMCP 的 session manager，否则首次请求会报 Task group 未初始化。
     async with echo_mcp_lifespan(), platform_mcp_lifespan():

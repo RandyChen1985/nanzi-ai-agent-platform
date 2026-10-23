@@ -57,6 +57,7 @@ from app.services.mcp.platform_mcp_support import (
 from app.services.mcp.security_audit import write_security_audit
 from app.services.permission_service import PermissionService
 from app.services.metadata_service import MetadataService
+from app.services.mcp.public_url import mutable_transport_security
 from app.services.mcp.transport_security import build_mcp_transport_security
 
 
@@ -190,8 +191,14 @@ def get_method_definition(name: str) -> PlatformMcpMethodDefinition | None:
 
 
 def _platform_base_url() -> str:
-    value = str(settings.APP_PUBLIC_URL or "http://localhost:8001").rstrip("/")
-    return value
+    """平台公网地址：优先取运行期缓存（系统配置 app_public_url），回退环境变量。"""
+    from app.services.mcp.public_url import get_cached_public_url
+
+    value = (
+        get_cached_public_url()
+        or str(settings.APP_PUBLIC_URL or "")
+    ).rstrip("/")
+    return value or "http://localhost:8001"
 
 
 def platform_mcp_resource_url() -> str:
@@ -227,7 +234,8 @@ platform_mcp = PlatformFastMCP(
     streamable_http_path="/platform",
     json_response=True,
     stateless_http=True,
-    transport_security=build_mcp_transport_security(settings.APP_PUBLIC_URL),
+    # 占位对象：启动后由 refresh_mcp_public_url() 原地刷新白名单
+    transport_security=mutable_transport_security(settings.APP_PUBLIC_URL),
     token_verifier=PlatformMcpTokenVerifier(),
     auth=AuthSettings(
         issuer_url=_platform_base_url(),

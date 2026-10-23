@@ -10,6 +10,7 @@ pytestmark = pytest.mark.no_infrastructure
 @pytest.mark.asyncio
 async def test_generated_file_download_uses_capability_token(tmp_path, monkeypatch):
     from app.main import app
+    from app.services import app_public_url_service
     from app.services.ai.tools import generated_file_service
 
     class FakeSession:
@@ -40,7 +41,7 @@ async def test_generated_file_download_uses_capability_token(tmp_path, monkeypat
         return None
     monkeypatch.setattr(generated_file_service, "_workspace_root", fake_workspace_root)
     monkeypatch.setattr(generated_file_service, "AsyncSessionLocal", lambda: session)
-    monkeypatch.setattr(generated_file_service.ConfigService, "get", fake_config_get)
+    monkeypatch.setattr(app_public_url_service.ConfigService, "get", fake_config_get)
     source = tmp_path / "source.xlsx"
     source.write_bytes(b"workbook")
     set_agent_context(
@@ -87,6 +88,7 @@ async def test_generated_file_download_rejects_fake_artifact_url(tmp_path, monke
 @pytest.mark.asyncio
 async def test_generated_html_file_defaults_to_inline_disposition(tmp_path, monkeypatch):
     from app.main import app
+    from app.services import app_public_url_service
     from app.services.ai.tools import generated_file_service
 
     class FakeSession:
@@ -120,7 +122,7 @@ async def test_generated_html_file_defaults_to_inline_disposition(tmp_path, monk
 
     monkeypatch.setattr(generated_file_service, "_workspace_root", fake_workspace_root)
     monkeypatch.setattr(generated_file_service, "AsyncSessionLocal", lambda: session)
-    monkeypatch.setattr(generated_file_service.ConfigService, "get", fake_config_get)
+    monkeypatch.setattr(app_public_url_service.ConfigService, "get", fake_config_get)
 
     source = tmp_path / "index.html"
     source.write_text("<!DOCTYPE html><html><body><h1>Hello World</h1></body></html>", encoding="utf-8")

@@ -28,7 +28,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import USER_STATUS_ENABLED, User
-from app.services.ai.tools.generated_file_service import get_download_url_prefix
+from app.services.app_public_url_service import get_app_public_url
 from app.services.auth_service import AuthService
 
 logger = logging.getLogger(__name__)
@@ -243,14 +243,14 @@ class PasswordResetService:
 
         if await EmailDeliveryService.load_global_smtp_settings() is None:
             return "邮件找回功能未开启，请联系管理员"
-        if not (await get_download_url_prefix()).strip():
-            return "平台未配置对外访问地址，请先在系统配置中填写 download_url_prefix"
+        if not (await get_app_public_url()).strip():
+            return "平台未配置对外访问地址，请先在系统配置中填写 app_public_url"
         return None
 
     @staticmethod
     async def build_link(user_id: int, redis) -> Optional[str]:
         """签发 token 并拼出完整重置链接；前缀为空时返回 None。"""
-        prefix = (await get_download_url_prefix()).strip()
+        prefix = (await get_app_public_url()).strip()
         if not prefix:
             return None
         token = await PasswordResetService.issue_token(user_id, redis)

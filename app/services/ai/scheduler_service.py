@@ -13,6 +13,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.services.app_public_url_service import get_app_public_url
 from app.core.orm import AsyncSessionLocal, engine
 from app.core import redis
 from app.models.task import AgentScheduledTask
@@ -1309,7 +1310,7 @@ async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bo
                             enabled=bool(getattr(subscription, "ai_analysis_enabled", True)),
                             analysis_instruction=getattr(subscription, "analysis_instruction", None),
                         )
-                        public_base = str(settings.APP_PUBLIC_URL or "").rstrip("/")
+                        public_base = await get_app_public_url()
                         report_url = (
                             f"{public_base}/dashboard/chat?dataset_portal=1&report_id={report.id}&run_id={run.id}"
                             if public_base and run else ""

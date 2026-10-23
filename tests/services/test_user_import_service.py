@@ -320,3 +320,32 @@ def test_account_created_mail_intentionally_carries_initial_password():
     assert "Abc!12345678" in body
     assert "修改密码" in body
     assert "请勿转发" in body
+
+
+def test_account_created_mail_includes_platform_url_before_credentials():
+    """用户拿到邮件后要能直接知道去哪登录，地址必须在账号密码之前。"""
+
+    from app.services.email_delivery_service import build_account_created_mail
+
+    subject, body = build_account_created_mail(
+        "alice", "Abc!12345678", "NanZi", platform_url="https://nanzi.example.com/"
+    )
+
+    assert "https://nanzi.example.com" in body
+    # 尾斜杠被规整，避免出现 https://host//login
+    assert "https://nanzi.example.com/" not in body
+    assert body.index("平台地址") < body.index("初始密码")
+    assert "修改密码" in body
+
+
+def test_account_created_mail_omits_platform_line_when_url_is_blank():
+    """未配置对外地址时不要渲染一行空的「平台地址：」，那比没有更让人困惑。"""
+
+    from app.services.email_delivery_service import build_account_created_mail
+
+    for blank in ("", "   ", None):
+        subject, body = build_account_created_mail(
+            "alice", "Abc!12345678", "NanZi", platform_url=blank
+        )
+        assert "平台地址" not in body
+        assert "Abc!12345678" in body

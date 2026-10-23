@@ -8,11 +8,12 @@
 -- 密钥明文。signing_key_id 全局唯一，业务方据此选择对应密钥。
 --
 -- 默认关闭，已有工具行为不变；关闭时保留密文，便于后续重新开启/轮换。
+-- IF NOT EXISTS：与 db-prod-pg 的幂等约定一致，重跑迁移不会因「列已存在」中断
 ALTER TABLE sys_api_tools
-  ADD COLUMN signing_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN signing_key_id VARCHAR(64) NULL,
-  ADD COLUMN signing_secret_encrypted TEXT NULL,
-  ADD COLUMN signing_algorithm VARCHAR(32) NOT NULL DEFAULT 'hmac-sha256';
+  ADD COLUMN IF NOT EXISTS signing_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS signing_key_id VARCHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS signing_secret_encrypted TEXT NULL,
+  ADD COLUMN IF NOT EXISTS signing_algorithm VARCHAR(32) NOT NULL DEFAULT 'hmac-sha256';
 
 COMMENT ON COLUMN sys_api_tools.signing_enabled IS '是否开启请求签名';
 COMMENT ON COLUMN sys_api_tools.signing_key_id IS '签名 Key-Id，16 位小写十六进制，全局唯一';

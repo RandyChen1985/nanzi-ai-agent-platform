@@ -9,6 +9,9 @@ import { useUser } from '../composables/useUser'
 import { modelApi, type AIModel } from '../api/model'
 import ModelRegistry from '../components/system/ModelRegistry.vue'
 import ToolRegistry from '../components/system/ToolRegistry.vue'
+import ChatTour from '../components/embed/ChatTour.vue'
+import { SYSTEM_CONFIG_TOUR_STEPS } from '../components/system/systemConfigTourSteps'
+import { useSystemConfigTour } from '../composables/system/useSystemConfigTour'
 import LangfuseConfig from '../components/system/LangfuseConfig.vue'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -60,6 +63,8 @@ const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 
 const diagSubTab = ref<'console' | 'redis'>('console')
 // 「Redis 向量搜索」的检测详情默认收起，避免顶部操作区占用过多高度
 const vectorHealthExpanded = ref(false)
+// 对外访问地址的使用场景说明较长，默认折叠成一行摘要，点「查看说明」再展开
+const appPublicUrlHelpOpen = ref(false)
 // 顶部诊断概览整体折叠状态（默认折叠，并记忆用户偏好）
 const storedDiagCollapsed = localStorage.getItem('system_diag_overview_collapsed')
 const diagnosticsOverviewCollapsed = ref(storedDiagCollapsed === null ? true : storedDiagCollapsed === 'true')
@@ -2542,9 +2547,9 @@ const configShortDescriptions: Record<string, string> = {
   user_registration_enabled: '账号自主注册申请开关。开启后登录页显示「申请账号」入口，注册申请须管理员审核通过后才能登录。',
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
-  download_url_prefix: '生成文件下载链接、以及忘记密码「重置链接」使用的公网地址前缀。'
+  app_public_url: '平台对外的访问地址，下载链接、重置邮件、MCP 与通知深链都由它拼出。'
     + '只填协议 + 域名（如 https://your-domain.example.com），不要填写任何路径、文件名或 token。'
-    + '留空时回退 APP_PUBLIC_URL。',
+    + '留空时回退环境变量 APP_PUBLIC_URL。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
   llm_request_read_timeout: '大模型请求的读取超时（秒），指相邻两次数据到达的最大间隔，默认 180，范围 30-300。',
   agent_max_toolcall_timeout: '单次 Agent 工具调用的全局超时时间（秒），默认 180 秒，范围 1-3600；版本级配置优先于全局配置。',
@@ -2640,7 +2645,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'platform_timezone',
       'agentscope_inject_runtime_state',
       'agentscope_inject_time_interval_hours',
-      'download_url_prefix',
+      'app_public_url',
     ]
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
@@ -3149,6 +3154,88 @@ const executeDeleteGroup = async () => {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 系统配置功能引导（全局一份，播完在 tab 栏右侧留一个只给自己的重播）
+// ---------------------------------------------------------------------------
+const sysTour = useSystemConfigTour()
+const sysTourActive = ref(false)
+const sysTourStepIndex = ref(0)
+const sysTourRef = ref<InstanceType<typeof ChatTour> | null>(null)
+const sysTourSkippedCount = ref(0)
+let sysTourSkipGuard = -1
+let sysTourBootTimer: number | undefined
+
+/** 等某个引导锚点真正出现：切 tab / 切分组后是整块重渲染，固定延时不够稳 */
+const waitForSysTourAnchor = async (selector: string, timeout = 2000) => {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeout) {
+    if (document.querySelector(selector)) return true
+    await new Promise((resolve) => window.setTimeout(resolve, 60))
+  }
+  return false
+}
+
+const finishSystemTour = async (skipped: boolean) => {
+  sysTourActive.value = false
+  await sysTour.markCompleted(skipped)
+}
+
+/**
+ * 跳过当前步。
+ *
+ * 两个入口会同时想跳（页面等锚点超时、ChatTour 的 missing-target），
+ * 不做去重会一次跳两步；同一 index 只允许跳一次，连续 3 步找不到锚点就直接结束。
+ */
+const skipSysTourStep = (index: number) => {
+  // 期间用户已经自己翻页或退出：旧一步的等待结果不能把当前步再推一格
+  if (!sysTourActive.value || sysTourStepIndex.value !== index) return
+  if (sysTourSkipGuard === index) return
+  sysTourSkipGuard = index
+  sysTourSkippedCount.value += 1
+  if (sysTourSkippedCount.value >= 3) {
+    void finishSystemTour(true)
+    return
+  }
+  window.setTimeout(() => sysTourRef.value?.goNext?.(), 0)
+}
+
+const handleSysTourEnter = async (
+  index: number,
+  step: (typeof SYSTEM_CONFIG_TOUR_STEPS)[number],
+) => {
+  if (step.tab && activeTab.value !== step.tab) activeTab.value = step.tab
+  if (step.group && realizedActiveCategory.value !== step.group) {
+    // false = 不做「滚到分组顶部」，精确定位交给 ChatTour 的 scrollIntoView
+    selectConfigCategory(step.group, false)
+  }
+  const found = await waitForSysTourAnchor(step.selector)
+  // 等锚点期间用户可能连点「下一步」或直接退出，回来时这一步已经不该再处理
+  if (!sysTourActive.value || sysTourStepIndex.value !== index) return
+  if (!found) {
+    skipSysTourStep(index)
+    return
+  }
+  sysTourSkippedCount.value = 0
+  sysTourRef.value?.refresh?.()
+}
+
+const handleSysTourMissing = (index: number) => skipSysTourStep(index)
+
+const handleSysTourChange = (index: number) => {
+  sysTourStepIndex.value = index
+  sysTour.persistStep(index)
+}
+
+/** 重播：只给自己播，不写全局完成态 */
+const replaySystemTour = async () => {
+  activeTab.value = 'models'
+  sysTourStepIndex.value = 0
+  sysTourSkipGuard = -1
+  sysTourSkippedCount.value = 0
+  await nextTick()
+  sysTourActive.value = true
+}
+
 onMounted(async () => {
   window.addEventListener('keydown', handleGlobalKeydown)
   if (route.query.tab === 'mcp') {
@@ -3167,11 +3254,29 @@ onMounted(async () => {
     fetchPartitions()
     refreshDockerPrebuildStatus(true)
   }
+
+  // 引导起播：只有要动手配置的人（config_save）才播，桌面端限定，?tour=0 可关
+  sysTourBootTimer = window.setTimeout(async () => {
+    if (!canSave) return
+    if (window.innerWidth < 768) return
+    const tourQuery = new URLSearchParams(window.location.search).get('tour')
+    if (tourQuery === '0' || tourQuery === 'off') return
+    // 配置没拉到时锚点必然缺失，不播残缺引导
+    if (!configGroups.value || Object.keys(configGroups.value).length === 0) return
+    await sysTour.loadState()
+    if (!sysTour.shouldAutoPlay()) return
+    // 第 0 步讲 tab 栏，先把高亮落到「模型管理」
+    activeTab.value = 'models'
+    sysTourStepIndex.value = sysTour.initialStep()
+    await nextTick()
+    sysTourActive.value = true
+  }, 700)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
   stopDockerPrebuildTimer()
+  if (sysTourBootTimer) window.clearTimeout(sysTourBootTimer)
 })
 </script>
 
@@ -3179,12 +3284,10 @@ onUnmounted(() => {
   <div class="flex h-full min-h-0 flex-col gap-4 sm:gap-6">
     <div class="flex flex-shrink-0 flex-col gap-3">
       <h1 class="text-xl font-semibold text-gray-900 sm:text-2xl">系统配置与诊断</h1>
-      <!-- Tabs：窄屏横向滚动，避免文字被挤成竖排 -->
-      <div
-        class="-mx-1 overflow-x-auto px-1"
-        style="-webkit-overflow-scrolling: touch;"
-      >
-        <div class="inline-flex min-w-full gap-1 rounded-lg bg-gray-100 p-1 sm:min-w-0">
+      <!-- Tabs：窄屏横向滚动，避免文字被挤成竖排；重播引导在滚动区之外，滚动时不会跟着滚走 -->
+      <div class="-mx-1 flex items-center gap-2 px-1">
+        <div class="min-w-0 flex-1 overflow-x-auto" style="-webkit-overflow-scrolling: touch;">
+          <div data-tour="sys-tabs" class="inline-flex min-w-full gap-1 rounded-lg bg-gray-100 p-1 sm:min-w-0">
           <button
             type="button"
             @click="activeTab = 'models'"
@@ -3249,7 +3352,19 @@ onUnmounted(() => {
             <ChartBarSquareIcon class="mr-1.5 h-4 w-4 shrink-0" />
             链路追踪
           </button>
+          </div>
         </div>
+        <!-- 系统配置引导播完后才出现；只重播给自己看，不动全局完成态 -->
+        <button
+          v-if="sysTour.isCompletedForCurrentVersion.value"
+          type="button"
+          class="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-transparent px-2 text-[11px] font-bold text-gray-400 transition-colors hover:border-primary/20 hover:bg-primary/5 hover:text-primary dark:text-gray-500"
+          title="重看系统配置引导（只影响自己，不改动其他管理员的状态）"
+          @click="replaySystemTour"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+          引导
+        </button>
       </div>
     </div>
 
@@ -4177,7 +4292,7 @@ onUnmounted(() => {
              </aside>
              <!-- 右侧：当前组内容（独立滚动容器 + 自己的 sticky 工具条） -->
              <div class="min-w-0 pb-28 md:h-full md:min-h-0 md:overflow-y-auto custom-scrollbar">
-             <div data-config-toolbar class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white/95 px-1 py-2 backdrop-blur-sm">
+             <div data-config-toolbar data-tour="config-toolbar" class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white/95 px-1 py-2 backdrop-blur-sm">
                <!-- 左侧：未保存状态指示 -->
                <div class="flex items-center gap-2">
                  <div
@@ -4268,7 +4383,9 @@ onUnmounted(() => {
                           「发送测试邮件」<strong>使用已保存的配置</strong>，请先保存再测试。前端只持有脱敏后的密码，尚未保存的改动无法用于发信。
                        </div>
                     </div>
-                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-6 py-5 first:pt-0 last:pb-2 transition-all duration-150" :class="[
+                    <!-- data-tour 给引导用；id 与参数搜索的 getElementById('config-item-*') 对齐，
+                         并落在整行上，让「高亮、搜索滚动、引导锚点」指向同一个盒子 -->
+                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" :data-tour="`config-${item.key}`" :id="`config-item-${item.key}`" class="grid grid-cols-1 md:grid-cols-3 gap-6 py-5 first:pt-0 last:pb-2 transition-all duration-150" :class="[
                       isConfigItemModified(item.key) ? 'bg-amber-50/40 rounded-xl px-4 -mx-4 border-l-4 border-amber-400 shadow-2xs' : '',
                       item.key === 'embed_api_url' ? 'embed-config-group rounded-t-xl border-x border-t border-indigo-100/70 bg-indigo-50/30 px-4 pt-4 pb-3 -mx-4' : '',
                       ['embed_api_key', 'embed_model_name'].includes(item.key) ? 'embed-config-group border-x border-indigo-100/70 bg-indigo-50/30 px-4 py-3 -mx-4 !mt-0' : '',
@@ -4309,7 +4426,6 @@ onUnmounted(() => {
                         </div>
                       </div>
                        <div class="md:col-span-1 pt-1"
-                          :id="`config-key-${item.key}`"
                        >
                           <label class="block text-sm font-medium text-gray-700 flex flex-wrap items-center gap-1.5">
                              <span :class="isConfigItemModified(item.key) ? 'text-amber-800 font-semibold' : ''">{{ item.key }}</span>
@@ -4616,7 +4732,7 @@ onUnmounted(() => {
                                影响定时任务 Cron「每天 08:00」的解释与下次运行时间，以及平台时间展示。无法修改外部 MySQL 服务器时区时，仍以本项 + 应用容器 TZ 为准。
                              </p>
                           </div>
-                          <div v-else-if="item.key === 'download_url_prefix'">
+                          <div v-else-if="item.key === 'app_public_url'">
                              <input
                                type="url"
                                v-model="item.value"
@@ -4625,9 +4741,29 @@ onUnmounted(() => {
                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
                              />
                              <div class="mt-2 text-xs text-blue-700 bg-blue-50/60 p-3 rounded-xl border border-blue-100/70 leading-relaxed">
-                               <div>💡 <strong>设置示例：</strong>填写 <code class="font-mono text-blue-800">https://your-domain.example.com</code>，生成的下载地址会是 <code class="font-mono text-blue-800">https://your-domain.example.com/api/v1/chat/generated-files/...</code>。</div>
-                               <div class="mt-1">只填写协议、域名和必要的反向代理前缀，<strong>不要填写</strong> API 路径、文件名或 token。留空时回退到环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code> 或相对地址。</div>
-                               <div class="mt-1">用户「忘记密码」时收到的重置邮件也用此前缀，链接形如 <code class="font-mono text-blue-800">https://your-domain.example.com/reset-password?token=...</code>；同样<strong>不要</strong>在前缀里填写 <code class="font-mono text-blue-800">/reset-password</code>。因此本项留空时，登录页的「忘记密码」入口会整块隐藏（邮件里的相对地址点不开，发出去等于废邮件）。</div>
+                               <div class="flex items-start justify-between gap-3">
+                                 <div class="min-w-0">
+                                   <span>💡 只填协议 + 域名（如 <code class="font-mono text-blue-800">https://your-domain.example.com</code>），不要填路径、文件名或 token。留空时回退环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code>。</span>
+                                 </div>
+                                 <button
+                                   type="button"
+                                   class="inline-flex items-center flex-shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900 py-0.5 px-1.5 -my-0.5 rounded-lg hover:bg-blue-100/70 transition-colors cursor-pointer"
+                                   @click="appPublicUrlHelpOpen = !appPublicUrlHelpOpen"
+                                 >
+                                   {{ appPublicUrlHelpOpen ? '收起说明' : '查看说明' }}
+                                   <ChevronDownIcon class="h-3.5 w-3.5 ml-0.5 transition-transform duration-200" :class="appPublicUrlHelpOpen ? 'rotate-180' : ''" />
+                                 </button>
+                               </div>
+
+                               <div v-if="appPublicUrlHelpOpen" class="mt-2.5 pt-2.5 border-t border-blue-100/80 space-y-1.5 text-blue-800">
+                                 <div class="font-semibold text-blue-900">这个地址会被下面这些地方用到：</div>
+                                 <div><strong>1）生成文件下载链接</strong>：<code class="font-mono text-blue-800">https://your-domain.example.com/api/v1/chat/generated-files/...</code></div>
+                                 <div><strong>2）忘记密码的重置邮件</strong>：<code class="font-mono text-blue-800">https://your-domain.example.com/reset-password?token=...</code>。本项留空时登录页的「忘记密码」入口会整块隐藏，否则邮件里的相对地址点不开。</div>
+                                 <div><strong>3）MCP</strong>：Echo 测试服务与平台级 MCP 的公网地址、OAuth 元数据（<code class="font-mono text-blue-800">/.well-known/oauth-*</code>）以及 Host/Origin 白名单。保存后立即生效；已创建的 Echo 需回【MCP 管理】重新点一次「创建 Echo 测试 MCP」，刷新库里保存的 <code class="font-mono text-blue-800">sse_url</code>。</div>
+                                 <div><strong>4）报表订阅通知</strong>：定时任务推送到邮件 / 企微等渠道时附带的深链。</div>
+                                 <div><strong>5）网页预览</strong>：判定第三方页面能否在平台内嵌打开时，用于识别「本平台自己的页面」。</div>
+                                 <div class="pt-1 text-[11px] text-blue-700/80">只写协议、域名和必要的反向代理前缀；<strong>不要</strong>写 API 路径、文件名、token，也不要写 <code class="font-mono text-blue-800">/reset-password</code> 这类页面路径。</div>
+                               </div>
                              </div>
                           </div>
                           <div v-else-if="item.key === 'sandbox_ssh_auth_type'" class="space-y-2">
@@ -6641,6 +6777,19 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <ChatTour
+      ref="sysTourRef"
+      v-model="sysTourActive"
+      :steps="SYSTEM_CONFIG_TOUR_STEPS"
+      :initial-index="sysTourStepIndex"
+      :missing-grace-ms="2500"
+      @change="handleSysTourChange"
+      @enter="handleSysTourEnter"
+      @missing-target="handleSysTourMissing"
+      @finish="finishSystemTour(false)"
+      @skip="finishSystemTour(true)"
+    />
   </div>
 </template>
 

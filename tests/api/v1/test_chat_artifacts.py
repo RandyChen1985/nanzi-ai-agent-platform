@@ -11,6 +11,7 @@ from app.main import app
 from app.api.v1.endpoints import chat as chat_endpoint
 from app.core.orm import get_db_session
 from app.models.artifact import AiArtifact
+from app.services import app_public_url_service
 from app.services.ai.tools import generated_file_service
 
 pytestmark = pytest.mark.no_infrastructure
@@ -96,11 +97,11 @@ async def test_list_artifacts_returns_stable_signed_token_without_rotating(monke
     """
     # 显式钉住公开前缀：否则 download_url 会带上环境/系统配置里的前缀，断言随环境漂移
     # （旧用例正是因此被记进 known_failures）。chat.py 在函数内 import 该函数，
-    # 调用时从模块取属性，所以 patch 模块属性即可生效。
+    # 调用时从 app_public_url_service 模块取属性，所以 patch 模块属性即可生效。
     async def _no_prefix():
         return ""
 
-    monkeypatch.setattr(generated_file_service, "get_download_url_prefix", _no_prefix)
+    monkeypatch.setattr(app_public_url_service, "get_app_public_url", _no_prefix)
     a1 = _make_artifact(artifact_id="aa" * 16, filename="方案.docx")
     a2 = _make_artifact(artifact_id="bb" * 16, artifact_type="excel", filename="报表.xlsx")
     session = _FakeSession(rows=[a2, a1], count=2)
@@ -136,12 +137,12 @@ async def test_list_artifacts_returns_stable_signed_token_without_rotating(monke
 async def test_list_artifacts_uses_configured_public_url(monkeypatch):
     a1 = _make_artifact(artifact_id="cc" * 16, filename="方案.docx")
     session = _FakeSession(rows=[a1], count=1)
-    # 直接钉住配置读取：真实环境里系统配置项 download_url_prefix 优先于 APP_PUBLIC_URL，
+    # 直接钉住配置读取：真实环境里系统配置项 app_public_url 优先于 APP_PUBLIC_URL，
     # 只 patch APP_PUBLIC_URL 会让断言随环境漂移（该用例在配置了前缀的环境下一直是红的）。
     async def _configured_prefix(key, default=None):
-        return "https://files.example.com/" if key == "download_url_prefix" else None
+        return "https://files.example.com/" if key == "app_public_url" else None
 
-    monkeypatch.setattr(generated_file_service.ConfigService, "get", _configured_prefix)
+    monkeypatch.setattr(app_public_url_service.ConfigService, "get", _configured_prefix)
 
     app.dependency_overrides[chat_endpoint.require_api_key] = _fake_require_api_key({"user_id": "7", "role": "user"})
     app.dependency_overrides[get_db_session] = _db_override(session)
@@ -324,7 +325,7 @@ async def test_list_artifacts_backfills_missing_expiry_with_utc(monkeypatch):
     async def _no_prefix():
         return ""
 
-    monkeypatch.setattr(generated_file_service, "get_download_url_prefix", _no_prefix)
+    monkeypatch.setattr(app_public_url_service, "get_app_public_url", _no_prefix)
     row = _make_artifact(artifact_id="dd" * 16, expires_at=None, created_at=None)
     session = _FakeSession(rows=[row], count=1)
 

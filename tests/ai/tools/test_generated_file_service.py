@@ -34,6 +34,7 @@ class _FakeArtifactSession:
 
 @pytest.fixture
 def unified_publish_env(tmp_path, monkeypatch):
+    from app.services import app_public_url_service
     from app.services.ai.tools import generated_file_service
 
     workspace_root = tmp_path / "agent_workspaces"
@@ -48,7 +49,9 @@ def unified_publish_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(generated_file_service, "_workspace_root", fake_workspace_root)
     monkeypatch.setattr(generated_file_service, "AsyncSessionLocal", lambda: session)
-    monkeypatch.setattr(generated_file_service.ConfigService, "get", fake_config_get)
+    monkeypatch.setattr(
+        app_public_url_service.ConfigService, "get", fake_config_get
+    )
     set_agent_context(AgentContext(agent_id="agent", agent_name="Agent", user_id=7))
     try:
         yield workspace_root, session
@@ -97,10 +100,11 @@ async def test_publish_uses_configured_public_url_for_download_link(
     monkeypatch,
     unified_publish_env,
 ):
+    from app.services import app_public_url_service
     from app.services.ai.tools import generated_file_service
 
     monkeypatch.setattr(
-        generated_file_service.settings,
+        app_public_url_service.settings,
         "APP_PUBLIC_URL",
         "https://files.example.com/",
     )
@@ -121,21 +125,21 @@ async def test_publish_uses_configured_public_url_for_download_link(
 
 
 @pytest.mark.asyncio
-async def test_system_download_url_prefix_takes_precedence_over_env(monkeypatch):
-    from app.services.ai.tools import generated_file_service
+async def test_system_app_public_url_takes_precedence_over_env(monkeypatch):
+    from app.services import app_public_url_service
 
     async def fake_get(key, default=None):
-        assert key == "download_url_prefix"
+        assert key == "app_public_url"
         return "https://configured.example.com/"
 
-    monkeypatch.setattr(generated_file_service.ConfigService, "get", fake_get)
+    monkeypatch.setattr(app_public_url_service.ConfigService, "get", fake_get)
     monkeypatch.setattr(
-        generated_file_service.settings,
+        app_public_url_service.settings,
         "APP_PUBLIC_URL",
         "https://environment.example.com",
     )
 
-    assert await generated_file_service.get_download_url_prefix() == "https://configured.example.com"
+    assert await app_public_url_service.get_app_public_url() == "https://configured.example.com"
 
 
 @pytest.mark.asyncio
@@ -210,6 +214,7 @@ async def test_resolve_workspace_artifact_rejects_deleted_source_file(
 @pytest.mark.asyncio
 async def test_publish_unifies_external_file_into_workspace_artifact(tmp_path, monkeypatch):
     from app.core.context import AgentContext, set_agent_context
+    from app.services import app_public_url_service
     from app.services.ai.tools import generated_file_service
 
     class FakeSession:
@@ -243,7 +248,9 @@ async def test_publish_unifies_external_file_into_workspace_artifact(tmp_path, m
 
     monkeypatch.setattr(generated_file_service, "_workspace_root", fake_workspace_root)
     monkeypatch.setattr(generated_file_service, "AsyncSessionLocal", lambda: session)
-    monkeypatch.setattr(generated_file_service.ConfigService, "get", fake_config_get)
+    monkeypatch.setattr(
+        app_public_url_service.ConfigService, "get", fake_config_get
+    )
     set_agent_context(
         AgentContext(
             agent_id="agent",

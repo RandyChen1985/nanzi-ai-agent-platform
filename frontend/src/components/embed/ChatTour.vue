@@ -15,8 +15,15 @@ const props = withDefaults(
     modelValue: boolean
     steps: TourStep[]
     initialIndex?: number
+    /**
+     * 目标缺失多久才判定该步不可用。
+     *
+     * EmbedChat 里 450ms 够「点开弹层等渲染」；系统配置页切 tab、切配置分组
+     * 都是整块重渲染，需要更宽的窗口，所以做成可调。
+     */
+    missingGraceMs?: number
   }>(),
-  { initialIndex: 0 },
+  { initialIndex: 0, missingGraceMs: 450 },
 )
 
 const emit = defineEmits<{
@@ -58,8 +65,6 @@ let missingEmittedFor = -1
  * 目标缺失要延迟判定：沙箱步骤需要父组件先点开上下文弹层，
  * 首次测量必然落空；450ms 内目标出现（refresh）就取消，避免误跳过该步。
  */
-const MISSING_GRACE_MS = 450
-
 const resolveTarget = (): HTMLElement | null => {
   if (!step.value) return null
   try {
@@ -148,7 +153,7 @@ const measure = () => {
       if (resolveTarget()) return
       missingEmittedFor = index.value
       emit('missing-target', index.value)
-    }, MISSING_GRACE_MS)
+    }, props.missingGraceMs)
     return
   }
   window.clearTimeout(missingTimer)

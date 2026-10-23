@@ -75,7 +75,11 @@ async def _record_oauth_failure(
 
 
 def _base_url() -> str:
-    return str(settings.APP_PUBLIC_URL or "http://localhost:8001").rstrip("/")
+    """OAuth issuer 基址：运行期缓存（系统配置 app_public_url）优先，回退环境变量。"""
+    from app.services.mcp.public_url import get_cached_public_url
+
+    value = (get_cached_public_url() or str(settings.APP_PUBLIC_URL or "")).rstrip("/")
+    return value or "http://localhost:8001"
 
 
 def _form_from_body(body: bytes) -> dict[str, str]:

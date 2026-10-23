@@ -31,6 +31,7 @@ from app.models.platform_mcp import (
     McpPlatformConfig,
 )
 from app.models.user import User
+from app.services.app_public_url_service import get_app_public_url
 from app.services.mcp.platform_mcp import (
     PLATFORM_MCP_METHODS,
     PLATFORM_MCP_NAME,
@@ -584,13 +585,14 @@ async def get_overview(
         .all()
     )
     config = await PlatformMcpConfigService.get(db)
+    public_base = (await get_app_public_url()) or "http://localhost:8001"
     return {
         "service_name": PLATFORM_MCP_NAME,
         "mcp_endpoint": platform_mcp_resource_url(),
         "resource": platform_mcp_resource_url(),
-        "authorization_server": str(settings.APP_PUBLIC_URL or "http://localhost:8001").rstrip("/"),
-        "protected_resource_metadata": f"{str(settings.APP_PUBLIC_URL or 'http://localhost:8001').rstrip('/')}/.well-known/oauth-protected-resource/mcp/platform",
-        "authorization_server_metadata": f"{str(settings.APP_PUBLIC_URL or 'http://localhost:8001').rstrip('/')}/.well-known/oauth-authorization-server",
+        "authorization_server": public_base,
+        "protected_resource_metadata": f"{public_base}/.well-known/oauth-protected-resource/mcp/platform",
+        "authorization_server_metadata": f"{public_base}/.well-known/oauth-authorization-server",
         "jwks_url": None,
         "platform_enabled": bool(config.platform_enabled) if config else False,
         "client_count": len(clients),

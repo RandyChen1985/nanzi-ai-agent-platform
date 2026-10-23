@@ -579,7 +579,7 @@ docker push registry.example.com/nanzi-ai-agent:1.2.0
 
 | 配置项 | 示例值 | 是否必改 | 是干什么的 |
 | --- | --- | --- | --- |
-| `APP_PUBLIC_URL` | `https://nanzi.example.com` | 是 | 用户访问平台的公开地址，生成链接和部分通知会使用 |
+| `APP_PUBLIC_URL` | `https://nanzi.example.com` | 是 | 用户访问平台的公开地址。**回退值**：平台【系统配置】里的「对外访问地址」(`app_public_url`) 优先，此处仅在系统配置留空时生效 |
 | `ALLOWED_ORIGINS` | `["https://nanzi.example.com"]` | 是 | 浏览器 CORS 白名单，必须是 JSON 数组字符串 |
 | `BROWSER_VIEWER_ALLOWED_ORIGINS` | `https://nanzi.example.com` | 是 | 浏览器人工接管/查看功能允许的来源 |
 | `DATABASE_TYPE` | `mysql` | 是 | 主库类型，只能按实际使用 `mysql` 或 `postgresql` |
