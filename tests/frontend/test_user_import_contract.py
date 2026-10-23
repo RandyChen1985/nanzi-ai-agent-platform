@@ -208,3 +208,16 @@ def test_confirm_page_rechecks_edited_account_and_email():
     assert "await recheckSelectedNow()" in source
     assert "账号或邮箱已被占用，请修改标红的行后再导入" in source
     assert "正在检查账号/邮箱占用" in source
+
+
+def test_result_page_makes_mail_delivery_and_failures_visible():
+    """不能只把失败原因放在 title 里：成功/失败/未开启都要有显式文案。"""
+
+    source = _dialog_source()
+
+    assert "本次未开启密码邮件" in source
+    assert "密码邮件已提交给邮件服务器" in source
+    assert "emailFailureGroups" in source
+    assert "emailToastNote" in source
+    assert "row.email_error" in source
+    assert "测试发送" in source

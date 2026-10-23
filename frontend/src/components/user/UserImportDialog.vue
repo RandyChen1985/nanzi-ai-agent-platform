@@ -242,7 +242,7 @@
                     !emailServiceAvailable
                       ? "平台未开启全局邮件服务，请先在「系统配置 → 邮件服务」中启用并保存。"
                       : sendPasswordEmail
-                        ? "使用平台全局邮件服务发送；发送失败会在结果页标注，账号仍会创建。"
+                        ? "使用平台全局邮件服务发送；结果页会显示每封成功/失败及原因，账号仍会创建。"
                         : "关闭时请在结果页复制或下载密码，再通过安全渠道分发。"
                   }}
                 </p>
@@ -416,7 +416,7 @@
 
           <!-- Step 3: result -->
           <section v-else class="space-y-5">
-            <div class="grid gap-3" :class="sendEmailRequested ? 'sm:grid-cols-4' : 'sm:grid-cols-3'">
+            <div class="grid gap-3 sm:grid-cols-4">
               <div class="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
                 <p class="text-xs font-medium text-emerald-700">成功创建</p>
                 <p class="mt-1 text-2xl font-bold text-emerald-700">{{ created.length }}</p>
@@ -437,17 +437,33 @@
                 </p>
               </div>
               <div
-                v-if="sendEmailRequested"
                 class="rounded-xl border p-4"
-                :class="emailFailedCount ? 'border-red-100 bg-red-50/70' : 'border-sky-100 bg-sky-50/70'"
+                :class="!sendEmailRequested
+                  ? 'border-gray-100 bg-gray-50'
+                  : emailFailedCount
+                    ? 'border-red-100 bg-red-50/70'
+                    : 'border-sky-100 bg-sky-50/70'"
               >
-                <p class="text-xs font-medium" :class="emailFailedCount ? 'text-red-700' : 'text-sky-700'">
+                <p
+                  class="text-xs font-medium"
+                  :class="!sendEmailRequested
+                    ? 'text-gray-500'
+                    : emailFailedCount ? 'text-red-700' : 'text-sky-700'"
+                >
                   密码邮件
                 </p>
-                <p class="mt-1 text-2xl font-bold" :class="emailFailedCount ? 'text-red-700' : 'text-sky-700'">
-                  {{ emailSentCount }}<span class="ml-1 text-sm font-normal">成功</span>
-                </p>
-                <p v-if="emailFailedCount" class="text-xs text-red-600">失败 {{ emailFailedCount }}</p>
+                <template v-if="sendEmailRequested">
+                  <p
+                    class="mt-1 text-2xl font-bold"
+                    :class="emailFailedCount ? 'text-red-700' : 'text-sky-700'"
+                  >
+                    {{ emailSentCount }}<span class="ml-1 text-sm font-normal">成功</span>
+                  </p>
+                  <p v-if="emailFailedCount" class="text-xs text-red-600">失败 {{ emailFailedCount }}</p>
+                  <p v-else-if="created.length" class="text-xs text-sky-600">已全部提交</p>
+                  <p v-else class="text-xs text-gray-500">无账号可发送</p>
+                </template>
+                <p v-else class="mt-1 text-sm font-semibold text-gray-500">未开启</p>
               </div>
             </div>
 
@@ -456,7 +472,40 @@
               class="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs leading-relaxed text-amber-800"
             >
               <p class="font-semibold">有 {{ emailFailedCount }} 个账号的密码邮件未发出</p>
-              <p>账号已创建成功。请复制或下载密码后通过其他安全渠道发送，失败原因见下方「密码邮件」列。</p>
+              <p>账号已创建成功。请复制或下载密码后通过其他安全渠道发送；失败原因如下：</p>
+              <ul class="mt-2 space-y-1">
+                <li
+                  v-for="group in emailFailureGroups"
+                  :key="group.reason"
+                  class="break-words rounded-lg bg-amber-100/70 px-2.5 py-1.5"
+                >
+                  <span class="font-medium">{{ group.reason }}</span>
+                  <span class="ml-1 text-amber-700/80">（{{ group.count }} 个）</span>
+                </li>
+              </ul>
+            </div>
+            <div
+              v-else-if="sendEmailRequested"
+              class="rounded-xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-xs leading-relaxed text-sky-800"
+            >
+              <template v-if="created.length">
+                <p class="font-semibold">密码邮件已提交给邮件服务器（{{ emailSentCount }} 封）</p>
+                <p>
+                  提交成功不等于一定进入收件箱；如果用户没收到，请先检查垃圾邮件/收件规则，
+                  也可到「系统配置 → 邮件服务」用「测试发送」确认投递链路。
+                </p>
+              </template>
+              <template v-else>
+                <p class="font-semibold">没有创建成功的账号，未发送密码邮件</p>
+                <p>请查看下方失败明细，修正后重新导入。</p>
+              </template>
+            </div>
+            <div
+              v-else
+              class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs leading-relaxed text-gray-600"
+            >
+              <p class="font-semibold">本次未开启密码邮件</p>
+              <p>账号密码只在本页显示，请复制或下载后通过安全渠道分发。</p>
             </div>
 
             <div v-if="created.length" class="space-y-2">
@@ -504,14 +553,15 @@
                         <td class="px-3 py-2.5">
                           <code class="rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-900">{{ row.password }}</code>
                         </td>
-                        <td v-if="sendEmailRequested" class="px-3 py-2.5 text-xs">
+                        <td v-if="sendEmailRequested" class="px-3 py-2.5 align-top text-xs">
                           <span v-if="row.email_sent" class="font-medium text-emerald-600">已发送</span>
-                          <span
-                            v-else-if="row.email_error"
-                            class="cursor-help font-medium text-red-600"
-                            :title="row.email_error"
-                          >发送失败</span>
-                          <span v-else class="text-gray-400">未发送</span>
+                          <div v-else-if="row.email_error" class="max-w-[220px]">
+                            <span class="font-medium text-red-600">发送失败</span>
+                            <span class="mt-0.5 block break-words text-[11px] leading-snug text-red-500">
+                              {{ row.email_error }}
+                            </span>
+                          </div>
+                          <span v-else class="text-amber-600">状态未知</span>
                         </td>
                         <td class="px-3 py-2.5 text-right">
                           <button
@@ -838,6 +888,21 @@ const emailSentCount = computed(
 const emailFailedCount = computed(
   () => created.value.filter((row) => sendEmailRequested.value && !row.email_sent).length,
 );
+const emailToastNote = computed(() => {
+  if (!sendEmailRequested.value || created.value.length === 0) return "";
+  return emailFailedCount.value
+    ? `；密码邮件失败 ${emailFailedCount.value} 封`
+    : `；密码邮件已提交 ${emailSentCount.value} 封`;
+});
+const emailFailureGroups = computed(() => {
+  const counts = new Map<string, number>();
+  for (const row of created.value) {
+    if (!sendEmailRequested.value || row.email_sent) continue;
+    const reason = (row.email_error || "邮件发送失败").trim();
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([reason, count]) => ({ reason, count }));
+});
 
 function isHardBlocking(row: ConfirmRow): boolean {
   return row.existed || row.email_taken || missingName(row) || !emailLooksValid(row.email);
@@ -1193,10 +1258,10 @@ async function submitImport(): Promise<void> {
     emit("imported");
 
     if (created.value.length > 0 && failed.value.length === 0) {
-      showToast(`成功创建 ${created.value.length} 个账号`, "success");
+      showToast(`成功创建 ${created.value.length} 个账号${emailToastNote.value}`, "success");
     } else if (created.value.length > 0) {
       showToast(
-        `成功 ${created.value.length} 个，失败 ${failed.value.length} 个，请查看失败明细`,
+        `成功 ${created.value.length} 个，失败 ${failed.value.length} 个${emailToastNote.value}，请查看失败明细`,
         "warning",
       );
     } else {

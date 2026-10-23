@@ -322,3 +322,30 @@ def test_confirm_page_recheck_endpoint_checks_edited_names_and_emails():
     assert "normalized_email = AuthService.normalize_email" in source
     assert '"existed": bool(name) and name.lower() in existing_names' in source
     assert '"email_taken": bool(normalized_email)' in source
+
+
+def test_mail_service_requires_a_sender_and_known_security(monkeypatch):
+    """只有 host 不够：没有发件人时开关不能显示可用，否则每封都必然失败。"""
+
+    from app.api.portal.endpoints.user_import import _load_ready_mail_settings
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    async def fake_load():
+        return SimpleNamespace(effective_from=lambda: "", security="ssl")
+
+    monkeypatch.setattr(EmailDeliveryService, "load_global_smtp_settings", staticmethod(fake_load))
+    assert asyncio.run(_load_ready_mail_settings()) is None
+
+    async def fake_load_ready():
+        return SimpleNamespace(effective_from=lambda: "sender@example.com", security="ssl")
+
+    monkeypatch.setattr(EmailDeliveryService, "load_global_smtp_settings", staticmethod(fake_load_ready))
+    assert asyncio.run(_load_ready_mail_settings()) is not None
+
+    async def fake_load_bad_security():
+        return SimpleNamespace(effective_from=lambda: "sender@example.com", security="tls")
+
+    monkeypatch.setattr(
+        EmailDeliveryService, "load_global_smtp_settings", staticmethod(fake_load_bad_security)
+    )
+    assert asyncio.run(_load_ready_mail_settings()) is None

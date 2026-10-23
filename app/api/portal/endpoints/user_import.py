@@ -113,6 +113,23 @@ async def _existing_emails(db: AsyncSession, emails: List[str]) -> set[str]:
     return {row[0] for row in result.all() if row[0]}
 
 
+async def _load_ready_mail_settings() -> Optional[Any]:
+    """返回真正可用的全局 SMTP 配置；不能只看 host 是否填写。
+
+    host-only 的内部中继是合法配置，但没有 SMTP 登录账号、也没有单独的发件人
+    地址时，``send_mail`` 必然返回「未配置发件人地址」。如果这里仍把邮件开关
+    显示为可用，管理员会以为已经发送，实际每一封都失败；因此把「能确定发件人」
+    也作为可用性的必要条件。
+    """
+
+    settings = await EmailDeliveryService.load_global_smtp_settings()
+    if settings is None or not settings.effective_from():
+        return None
+    if settings.security not in EmailDeliveryService.ALLOWED_SECURITY:
+        return None
+    return settings
+
+
 async def _deliver_credential_mails(
     settings: Any,
     jobs: List[Dict[str, Any]],
@@ -238,9 +255,7 @@ async def preview_import(
         "total": len(items),
         "roles": role_payloads,
         "default_role_id": default_role.id if default_role is not None else None,
-        "email_service_available": (
-            await EmailDeliveryService.load_global_smtp_settings()
-        ) is not None,
+        "email_service_available": (await _load_ready_mail_settings()) is not None,
         "items": items,
     }
 
@@ -403,7 +418,7 @@ async def confirm_import(
 
     mail_settings = None
     if request.send_password_email:
-        mail_settings = await EmailDeliveryService.load_global_smtp_settings()
+        mail_settings = await _load_ready_mail_settings()
 
     roles = await _load_roles(db)
     role_map = {role.id: role for role in roles}
@@ -524,6 +539,18 @@ async def confirm_import(
         sum(1 for job in email_jobs if job["item"]["email_sent"])
         if request.send_password_email
         else 0
+    )
+
+    logger.log(
+        logging.INFO,
+        "Excel 导入完成: created=%s failed=%s password_mode=%s "
+        "send_password_email=%s email_sent=%s email_failed=%s",
+        len(created),
+        len(failed),
+        password_mode,
+        request.send_password_email,
+        email_sent_count,
+        email_failed_count,
     )
 
     return {
