@@ -102,3 +102,16 @@ def test_agent_api_type_exposes_tool_issue():
 
     assert "export interface AgentToolIssue" in source
     assert "tool_issue?: AgentToolIssue | null" in source
+
+
+def test_readonly_agents_point_to_admin_instead_of_a_version_page():
+    """系统智能体/别人的智能体，普通用户点进版本配置也改不了。"""
+    source = _management_source()
+
+    assert "const MANAGED_AGENT_HINT = '该智能体由管理员维护，请联系管理员处理'" in source
+    # 模型条目与工具条目都要按 is_editable 分流
+    assert source.count("agent.is_editable === false") >= 2
+    assert source.count("MANAGED_AGENT_HINT") >= 3
+    # 可编辑时仍保留原来的操作路径
+    assert "modelIssueHint(agent.model_issue?.code)" in source
+    assert "? MANAGED_AGENT_HINT : TOOL_ISSUE_HINT" in source

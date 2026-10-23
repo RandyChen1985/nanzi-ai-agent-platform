@@ -473,6 +473,8 @@ const modelIssueHint = (code?: string) =>
   (code && MODEL_ISSUE_HINT[code]) || '请在「模型管理」与「版本配置 → 模型」中检查'
 
 const TOOL_ISSUE_HINT = '请在「版本配置 → 工具能力」移除失效引用后重新发布'
+// 系统智能体与别人创建的智能体对当前用户只读：引导他去版本配置只会点进一个改不了的页面
+const MANAGED_AGENT_HINT = '该智能体由管理员维护，请联系管理员处理'
 
 // 三个来源合并展示：系统默认模型（影响所有未显式绑定模型的链路）、单个智能体的模型、
 // 单个智能体已发布版本里失效的工具引用。
@@ -494,7 +496,10 @@ const configIssueItems = computed<ConfigIssueItem[]>(() => {
       kind: 'model',
       title: agent.display_name || agent.name,
       detail: agent.model_issue?.message || '',
-      hint: modelIssueHint(agent.model_issue?.code),
+      hint:
+        agent.is_editable === false
+          ? MANAGED_AGENT_HINT
+          : modelIssueHint(agent.model_issue?.code),
     })
   }
   for (const agent of toolIssues.value) {
@@ -503,7 +508,7 @@ const configIssueItems = computed<ConfigIssueItem[]>(() => {
       kind: 'tool',
       title: agent.display_name || agent.name,
       detail: agent.tool_issue?.message || '',
-      hint: TOOL_ISSUE_HINT,
+      hint: agent.is_editable === false ? MANAGED_AGENT_HINT : TOOL_ISSUE_HINT,
     })
   }
   return items
