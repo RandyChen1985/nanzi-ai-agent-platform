@@ -473,7 +473,7 @@ const modelIssueHint = (code?: string) =>
   (code && MODEL_ISSUE_HINT[code]) || '请在「模型管理」与「版本配置 → 模型」中检查'
 
 const TOOL_ISSUE_HINT = '请在「版本配置 → 工具能力」移除失效引用后重新发布'
-// 系统智能体与别人创建的智能体对当前用户只读：引导他去版本配置只会点进一个改不了的页面
+// 系统智能体对当前用户只读（自己创建后被动提升为系统级的也一样）：引导他去版本配置只会点进一个改不了的页面
 const MANAGED_AGENT_HINT = '该智能体由管理员维护，请联系管理员处理'
 
 // 三个来源合并展示：系统默认模型（影响所有未显式绑定模型的链路）、单个智能体的模型、
@@ -597,6 +597,15 @@ const hasActiveAgentFilters = computed(
 const canDragAgents = computed(
   () => !hasActiveAgentFilters.value && userInfo.value?.role === "admin" && !loading.value,
 );
+
+// 普通用户只看到自己创建的智能体（系统内置的不再出现），空列表要说明原因，
+// 否则会以为系统坏了或权限丢了。
+const emptyStateMessage = computed(() => {
+  if (!hasActiveAgentFilters.value && userInfo.value?.role !== "admin") {
+    return "你还没有创建智能体。系统内置智能体由管理员维护，已授权的可以直接在对话里使用。";
+  }
+  return "没有找到匹配的智能体";
+});
 
 const dragSourceId = ref<string | null>(null);
 const dragOverId = ref<string | null>(null);
@@ -3358,7 +3367,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       v-else-if="filteredAgents.length === 0"
       class="py-16 text-center bg-white rounded-xl border border-dashed border-gray-200"
     >
-      <p class="text-gray-500">没有找到匹配的智能体</p>
+      <p class="max-w-xl mx-auto text-gray-500">{{ emptyStateMessage }}</p>
       <button
         @click="startAgentCreation()"
         class="mt-4 text-primary hover:underline"
@@ -3709,7 +3718,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   <PencilSquareIcon class="h-4 w-4 text-gray-400" />
                   编辑智能体
                 </button>
-                <!-- 复制不修改源智能体，因此不受 is_editable 限制（系统智能体也可作为模板） -->
+                <!-- 复制不修改源智能体，因此在可编辑性之外单独判定：列表对普通用户只含自建智能体，
+                     后端对「别人创建的系统智能体」另有 403 兜底 -->
                 <button
                   v-has-perm="'element:agent:create'"
                   @click="openDuplicateModal(agent)"

@@ -618,9 +618,12 @@ class AgentManagerService:
         visible_agents = []
 
         for agent in agents:
-            # 可见性：非管理员只看系统智能体和自己创建的。别人的非系统智能体既不能编辑，
-            # 也不在 /agents/allowed 的可对话列表里，列出来只会让人误以为能管、能用。
-            if not is_admin and not agent.is_system and agent.created_by != username:
+            # 可见性：非管理员只看自己创建的。别人创建的智能体（无论是否系统级）都不出现：
+            # 系统智能体由管理员维护，普通用户既管不了，也不该看到它的提示词与工具配置——
+            # 复制接口会把整份配置带出来，看到即等于可复刻。
+            # 按 created_by 而不是 is_system 判定：自己创建的智能体被管理员提升为系统级后
+            # created_by 不变，本人仍应看得到。
+            if not is_admin and agent.created_by != username:
                 continue
 
             # Editability Check
@@ -1030,7 +1033,13 @@ class AgentManagerService:
         if not source:
             return None
 
-        _, username = AgentManagerService._resolve_actor(user)
+        is_admin, username = AgentManagerService._resolve_actor(user)
+
+        # 系统智能体是管理员的资产：复制会把提示词、工具/MCP 绑定、模型参数整份带走。
+        # 自己创建后被提升为系统级的仍允许复制（是他的东西），拦的是「别人的系统智能体」。
+        # 界面已看不到这些智能体，但 id 会在对话/Embed 链接里出现，所以接口必须自己挡。
+        if source.is_system and not is_admin and source.created_by != username:
+            raise HTTPException(status_code=403, detail="系统智能体由管理员维护，不能复制")
 
         new_name = AgentManagerService.normalize_agent_name(getattr(data, "name", None))
         if not new_name:
