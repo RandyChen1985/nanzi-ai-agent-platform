@@ -59,6 +59,30 @@ def prune_dead_tool_refs(tools_config: Any, dead_names: Set[str]) -> Optional[Li
     return remaining if changed else None
 
 
+async def prune_agent_versions_by_names(db: AsyncSession, dead_names: Set[str]) -> int:
+    """从所有智能体版本配置里剔除指向 ``dead_names`` 的引用，返回受影响的版本数。
+
+    刻意不 commit：删除 MCP 服务需要与「删缓存 + 删服务」在同一个事务里落库，
+    否则中途失败会留下「服务没了、引用还在」的半成品状态。
+    """
+    if not dead_names:
+        return 0
+
+    affected_versions = 0
+    # tools 的 JSON 包含查询在 MySQL / PostgreSQL 语法不同，而清理是低频管理操作，
+    # 全表取 (id, tools) 在 Python 侧过滤最省心，也避免方言分支。
+    versions_result = await db.execute(select(AIAgentVersion.id, AIAgentVersion.tools))
+    for version_id, tools_config in versions_result.all():
+        remaining = prune_dead_tool_refs(tools_config, dead_names)
+        if remaining is None:
+            continue
+        await db.execute(
+            update(AIAgentVersion).where(AIAgentVersion.id == version_id).values(tools=remaining)
+        )
+        affected_versions += 1
+    return affected_versions
+
+
 async def cleanup_stale_tools(db: AsyncSession, server_id: str) -> Dict[str, Any]:
     """删除 ``server_id`` 下所有远端已不存在的工具缓存，并清理版本死引用。"""
     stale_result = await db.execute(
@@ -75,19 +99,7 @@ async def cleanup_stale_tools(db: AsyncSession, server_id: str) -> Dict[str, Any
     stale_ids = [tool.id for tool in stale_tools]
     await db.execute(delete(McpToolCache).where(McpToolCache.id.in_(stale_ids)))
 
-    affected_versions = 0
-    # tools 的 JSON 包含查询在 MySQL / PostgreSQL 语法不同，而清理是低频管理操作，
-    # 全表取 (id, tools) 在 Python 侧过滤最省心，也避免方言分支。
-    versions_result = await db.execute(select(AIAgentVersion.id, AIAgentVersion.tools))
-    for version_id, tools_config in versions_result.all():
-        remaining = prune_dead_tool_refs(tools_config, dead_names)
-        if remaining is None:
-            continue
-        await db.execute(
-            update(AIAgentVersion).where(AIAgentVersion.id == version_id).values(tools=remaining)
-        )
-        affected_versions += 1
-
+    affected_versions = await prune_agent_versions_by_names(db, dead_names)
     await db.commit()
     return {
         "removed_count": len(stale_ids),

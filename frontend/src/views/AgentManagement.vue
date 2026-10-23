@@ -8,6 +8,7 @@ import type {
   AIAgentVersion,
   AgentModelIssue,
   AgentType,
+  StaleToolRef,
 } from "../api/agent";
 import { modelApi, type AIModel } from "../api/model";
 import { toolApi, type SysApiTool } from "../api/tool";
@@ -1373,12 +1374,83 @@ const versionStatusClass = computed(() => {
   return 'bg-gray-50 text-gray-600 border-gray-200';
 });
 
+/**
+ * 版本配置里「运行时已失效」的工具引用：MCP 服务被删/禁用、工具下线后，勾选列表里
+ * 已经没有这一项，用户因此连取消勾选的入口都没有。这里按版本拉一次只读诊断，
+ * 由编辑器展示并提供移除；移除只改本地 versionForm，保存版本后才真正落库。
+ */
+const versionToolHealth = ref<StaleToolRef[]>([]);
+const versionToolHealthLoading = ref(false);
+const versionToolHealthError = ref('');
+// 快速切换版本（或连续点「重新检测」）时丢弃过期响应：只认最后一次请求。
+let versionToolHealthRequestSeq = 0;
+
 const resetVersionEditorUi = () => {
   versionConfigStep.value = 'model';
   toolSearchQuery.value = '';
   collapsedMcpGroups.value = new Set();
   collapsedStaticGroups.value = getDefaultCollapsedStaticGroups();
   expandedBusinessGroups.value = new Set();
+  versionToolHealth.value = [];
+  versionToolHealthLoading.value = false;
+  versionToolHealthError.value = '';
+  // 作废进行中的诊断请求，避免旧版本的结果落到新打开的编辑器上
+  versionToolHealthRequestSeq += 1;
+};
+
+const fetchVersionToolHealth = async () => {
+  const agentId = selectedAgent.value?.id;
+  const versionId = versionForm.value?.id;
+  const tools = Array.isArray(versionForm.value?.tools) ? versionForm.value.tools : [];
+  const seq = ++versionToolHealthRequestSeq;
+
+  // 已有版本按版本 id 查；新建/克隆版本还没有 id，但克隆会把旧版本的工具整份带来，
+  // 这时候只能把当前 tools 传给无状态接口，否则用户看到的是一份「干净」的配置。
+  if (!agentId || (!versionId && tools.length === 0)) {
+    versionToolHealth.value = [];
+    versionToolHealthLoading.value = false;
+    versionToolHealthError.value = '';
+    return;
+  }
+
+  versionToolHealthLoading.value = true;
+  versionToolHealthError.value = '';
+  try {
+    const response = versionId
+      ? await agentApi.getVersionToolHealth(agentId, versionId)
+      : await agentApi.checkToolsHealth(agentId, tools);
+    if (seq !== versionToolHealthRequestSeq) return;
+    versionToolHealth.value = Array.isArray(response.data?.stale_tools)
+      ? response.data.stale_tools
+      : [];
+  } catch (error: any) {
+    if (seq !== versionToolHealthRequestSeq) return;
+    versionToolHealth.value = [];
+    // 只是诊断：失败不打断编辑，把原因留在卡片里让用户自己决定是否重试。
+    versionToolHealthError.value =
+      error.response?.data?.detail || '失效引用检测失败，可稍后重试';
+  } finally {
+    if (seq === versionToolHealthRequestSeq) versionToolHealthLoading.value = false;
+  }
+};
+
+const removeStaleToolRefs = (names: string[]) => {
+  if (!canEditVersion.value) return;
+  const targets = new Set(
+    (names || []).map((name) => String(name || '').trim()).filter(Boolean),
+  );
+  if (!targets.size) return;
+
+  const before = (versionForm.value.tools || []).length;
+  versionForm.value.tools = (versionForm.value.tools || []).filter((item) => {
+    const name = typeof item === 'string' ? item : (item as any)?.name;
+    return !targets.has(String(name || '').trim());
+  });
+  const removed = before - (versionForm.value.tools || []).length;
+  if (removed > 0) {
+    versionToolHealth.value = versionToolHealth.value.filter((item) => !targets.has(item.name));
+    showToast(`已移除 ${removed} 项失效引用，保存版本后生效`, 'success');
+  }
 };
 
 watch(versionConfigStep, (step, previousStep) => {
@@ -2050,6 +2122,8 @@ const openVersionModal = (
   }
   resetVersionEditorUi();
   showVersionModal.value = true;
+  // 失效引用诊断只对已有版本有意义；新建/克隆版本没有 id，fetch 内部会直接清空。
+  void fetchVersionToolHealth();
 };
 
 const handleDrawerEditVersion = (v: AIAgentVersion) => {
@@ -4687,6 +4761,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :enabled-global-skills-count="enabledGlobalSkills.length"
       :all-available-tools-count="allAvailableTools.length"
       :mcp-tools-count="mcpTools.length"
+      :stale-tool-refs="versionToolHealth"
+      :stale-tool-refs-loading="versionToolHealthLoading"
+      :stale-tool-refs-error="versionToolHealthError"
       :is-tool-selected="isToolSelected"
       :is-skill-selected="isSkillSelected"
       :get-tool-custom-config="getToolCustomConfig"
@@ -4714,6 +4791,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @toggle-skill="toggleSkill"
       @set-skills-custom="setSkillsCustom"
       @toggle-select-all-mcp="toggleSelectAllMcp"
+      @remove-stale-tool-refs="removeStaleToolRefs"
+      @refresh-stale-tool-refs="fetchVersionToolHealth"
       @toggle-select-all-static="toggleSelectAllStatic"
       @toggle-mcp-group-collapse="toggleMcpGroupCollapse"
       @toggle-static-group-collapse="toggleStaticGroupCollapse"

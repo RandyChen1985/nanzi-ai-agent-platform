@@ -1,9 +1,11 @@
 /**
- * 编译所有 Vue 单文件组件的模板，找出语法级错误。
+ * 编译所有 Vue 单文件组件的模板与 <script setup>，找出语法级错误。
  *
  * 为什么需要它：`vue-tsc --noEmit` 只做类型检查，不校验模板属性重复这类语法问题；
  * 这类错误要等 `vite build` 才会暴露（例如同一个标签上写了两个 `v-if`）。
- * 在 pytest 里提前跑一遍，构建前就能拦住。
+ * 脚本侧同理：`defineProps` 外面漏写 `withDefaults(` 时 vue-tsc 不报错，
+ * 但 babel 解析 SFC 会失败，直接把构建打挂。这里两种都用与构建相同的
+ * `@vue/compiler-sfc` 预编译一遍。
  *
  * 已知可忽略项：AgentDebug.vue 模板里内联的 <script> 会被 compiler 提示
  * "Tags with side effect ... are ignored"，这是提示而非语法错误。
@@ -16,7 +18,7 @@ const { createRequire } = require('module')
 const ROOT = path.join(__dirname, '../..')
 // 脚本在 tests/ 下，依赖装在 frontend/node_modules，必须显式按 frontend 解析
 const frontendRequire = createRequire(path.join(ROOT, 'frontend/package.json'))
-const { parse, compileTemplate } = frontendRequire('vue/compiler-sfc')
+const { parse, compileTemplate, compileScript } = frontendRequire('vue/compiler-sfc')
 
 const IGNORED = [/Tags with side effect/]
 
@@ -44,6 +46,16 @@ for (const file of files) {
     problems.push(`${relative}: ${errors[0].message}`)
     continue
   }
+
+  // 脚本语法：与 vite build 同一编译器，能抓到 vue-tsc 漏掉的 SFC 解析错误
+  if (descriptor.script || descriptor.scriptSetup) {
+    try {
+      compileScript(descriptor, { id: relative })
+    } catch (error) {
+      problems.push(`${relative}: [script] ${String(error.message || error).split('\n')[0]}`)
+    }
+  }
+
   if (!descriptor.template) continue
 
   const result = compileTemplate({

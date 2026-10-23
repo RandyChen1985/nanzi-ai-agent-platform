@@ -119,6 +119,26 @@ export interface AIAgentVersion {
 export interface WelcomeCard { icon: 'chart' | 'knowledge' | 'workspace' | 'report' | 'alert' | 'chat'; title: string; subtitle: string; prompt: string }
 export interface WelcomeConfig { enabled: boolean; mode: 'manual' | 'ai'; generation_requirement: string; cards: WelcomeCard[] }
 
+/**
+ * 版本配置里「运行时已失效」的工具引用。
+ * 服务被删/禁用、工具下线后，引用仍在 tools 数组里，但选择器不再渲染它，
+ * 用户因此没有取消勾选的入口——需要这份诊断数据来提供解绑按钮。
+ */
+export interface StaleToolRef {
+  name: string
+  display_name: string
+  server_name: string
+  reason: 'server_deleted' | 'server_forbidden' | 'server_disabled' | 'tool_missing' | 'tool_removed_remote' | 'tool_unpublished' | 'unknown'
+  reason_label: string
+}
+
+export interface VersionToolHealth {
+  agent_id: string
+  version_id: string
+  stale_count: number
+  stale_tools: StaleToolRef[]
+}
+
 export const agentApi = {
   // List all agents
   listAgents: () => axios.get<AIAgent[]>('/api/portal/agents/'),
@@ -179,6 +199,17 @@ export const agentApi = {
   
   // Delete version (DRAFT/ARCHIVED only)
   deleteVersion: (agentId: string, versionId: string) => axios.delete(`/api/portal/agents/${agentId}/versions/${versionId}`),
+
+  /** 版本配置里已失效的工具引用（只读诊断，用于编辑器内解绑） */
+  getVersionToolHealth: (agentId: string, versionId: string) =>
+    axios.get<VersionToolHealth>(`/api/portal/agents/${agentId}/versions/${versionId}/tool-health`),
+
+  /**
+   * 诊断「还没有版本 id」的工具配置（新建、克隆）。
+   * 克隆会把旧版本的失效引用整份复制过来，这时按版本查不了，只能把 tools 传上去。
+   */
+  checkToolsHealth: (agentId: string, tools: Array<string | ToolConfigItem>) =>
+    axios.post<VersionToolHealth>(`/api/portal/agents/${agentId}/tool-health`, { tools }),
 
   // Get agent execution history (Old portal API)
   getAgentExecutions: (agentId: string, limit: number = 50) => axios.get<AgentExecutionHistory[]>(`/api/portal/agents/${agentId}/executions`, { params: { limit } }),

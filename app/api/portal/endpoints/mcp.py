@@ -31,7 +31,11 @@ from app.services.mcp.mcp_auth_policy import (
     mcp_auth_headers_summary,
     resolve_mcp_auth_headers,
 )
-from app.services.mcp.stale_tool_cleanup import cleanup_stale_tools
+from app.services.mcp.stale_tool_cleanup import (
+    cleanup_stale_tools,
+    prune_agent_versions_by_names,
+)
+from app.services.mcp.tool_ref_health import configured_tool_names as _configured_tool_names
 from app.services.mcp.management_rate_limit import enforce_mcp_management_rate_limit
 from app.services.mcp_share_service import (
     McpShareConflictError,
@@ -213,24 +217,6 @@ def _normalized_server_name(value: str) -> str:
 
 def _default_user_assertion_audience(server_id: str) -> str:
     return f"mcp:{server_id}"
-
-
-def _configured_tool_names(value: Any) -> set[str]:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return {value}
-    if not isinstance(value, list):
-        return set()
-
-    names = set()
-    for item in value:
-        if isinstance(item, str):
-            names.add(item)
-        elif isinstance(item, dict) and item.get("name"):
-            names.add(str(item["name"]))
-    return names
 
 
 def _mcp_tool_payload_filter(server_name: str, tool_names: Any):
@@ -1124,19 +1110,39 @@ async def delete_mcp_server(
     if server.scope == "personal" and server.user_id != _get_user_id(user):
         raise HTTPException(status_code=403, detail="无法删除其他用户的私有 MCP 服务")
 
+    # 先把该服务的工具名留下来：缓存行删除后，智能体版本里的旧引用就成了
+    # 「运行时解析不到、UI 里也看不到」的幽灵配置，用户连取消勾选的入口都没有。
+    tool_names = {
+        row[0]
+        for row in (
+            await db.execute(
+                select(McpToolCache.tool_name).where(McpToolCache.server_id == server_id)
+            )
+        ).all()
+        if row[0]
+    }
+
     # 1. Cascade delete associated tools first
     await db.execute(delete(McpToolCache).where(McpToolCache.server_id == server_id))
     
     # 2. Delete the server itself
     await db.execute(delete(McpServer).where(McpServer.id == server_id))
-    
+
+    # 3. 同步剔除智能体版本里的死引用：与「清理远端已删除工具」同一口径，
+    #    放在同一事务里，避免出现「服务没了、引用还在」的半成品状态。
+    affected_agent_versions = await prune_agent_versions_by_names(db, tool_names)
+
     await db.commit()
     _clear_runtime_tool_cache()
     try:
         await McpClientService.evict_session(server_id)
     except Exception as e:
         logger.warning(f"Evicting session failed during delete for server {server_id}: {e}")
-    return {"message": "Server and associated tools deleted"}
+    return {
+        "message": "Server and associated tools deleted",
+        "removed_tool_names": sorted(tool_names),
+        "affected_agent_versions": affected_agent_versions,
+    }
 
 @router.delete(
     "/servers/{server_id}/stale-tools",

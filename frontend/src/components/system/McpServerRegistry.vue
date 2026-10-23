@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, watch, computed, nextTick } from 'vue'
 import axios from '@/utils/axios'
 import { copyToClipboard } from '@/utils/clipboard'
 import { useToast } from '@/composables/useToast'
@@ -34,6 +34,7 @@ import {
   DocumentDuplicateIcon,
   ChevronLeftIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   XMarkIcon,
   CheckCircleIcon,
   InformationCircleIcon,
@@ -41,6 +42,7 @@ import {
   EllipsisHorizontalIcon,
 } from '@heroicons/vue/24/outline'
 import McpServerLogModal from './McpServerLogModal.vue'
+import McpServerAgentsDrawer from './McpServerAgentsDrawer.vue'
 
 const props = withDefaults(defineProps<{
   scope?: 'global' | 'personal'
@@ -217,6 +219,7 @@ type McpServerUsage = {
 }
 
 const selectedServerUsage = ref<McpServerUsage | null>(null)
+const showAgentUsageDrawer = ref(false)
 const usageLoading = ref<Record<string, boolean>>({})
 const showStatusConfirm = ref(false)
 const statusConfirmServer = ref<any | null>(null)
@@ -248,6 +251,7 @@ const reconcileSelectedServer = () => {
   }
   selectedServer.value = null
   selectedServerUsage.value = null
+  showAgentUsageDrawer.value = false
   tools.value = []
   selectedToolIds.value = new Set()
   toolsRequestSeq += 1
@@ -1086,6 +1090,27 @@ const fetchServerUsage = async (serverId: string): Promise<McpServerUsage | null
   }
 }
 
+const refreshSelectedServerUsage = async () => {
+  const serverId = selectedServer.value?.id
+  if (!serverId) return
+  const usage = await fetchServerUsage(serverId)
+  // 刷新期间用户可能已切到别的服务；只在还是同一个服务时写回，避免串数据。
+  if (usage && selectedServer.value?.id === serverId) selectedServerUsage.value = usage
+}
+
+const openAgentUsageDrawer = async () => {
+  if (!selectedServer.value) return
+  showAgentUsageDrawer.value = true
+  // 正在刷新（连点或切服务后的自动拉取）时不重复发起：抽屉先展示已有数据。
+  if (usageLoading.value[selectedServer.value.id]) return
+  // 统计行里的数据可能是几分钟前拉的；打开时静默刷新，失败则保留旧值（fetchServerUsage 已提示）。
+  await refreshSelectedServerUsage()
+}
+
+const closeAgentUsageDrawer = () => {
+  showAgentUsageDrawer.value = false
+}
+
 const formatUsageImpact = (usage: McpServerUsage | null, action: '禁用' | '删除') => {
   if (!usage || usage.bound_agent_count === 0) {
     return `${action}后，关联的 MCP 工具将立即不可用。`
@@ -1389,8 +1414,15 @@ const executeDeleteServer = async () => {
   const deletingId = serverToDelete.value
   deleteLoading.value = true
   try {
-    await axios.delete(`/api/portal/mcp/servers/${deletingId}`)
-    showToast('删除成功', 'success')
+    const response = await axios.delete(`/api/portal/mcp/servers/${deletingId}`)
+    // 后端会顺手清理版本里的死引用；告诉用户不用再手动去智能体里解绑。
+    const affectedVersions = Number(response.data?.affected_agent_versions || 0)
+    showToast(
+      affectedVersions > 0
+        ? `删除成功，已从 ${affectedVersions} 个智能体版本中移除失效引用`
+        : '删除成功',
+      'success',
+    )
     showDeleteConfirm.value = false
     serverToDelete.value = null
     deleteServerUsage.value = null
@@ -1532,10 +1564,38 @@ const selectServer = (server: any) => {
   })
 }
 
+const serverToolsPanelRef = ref<HTMLElement | null>(null)
+
+/** 发布状态：0 已发布和全部已发布绝不能同一种绿色，否则列表在替异常背书。 */
+const serverPublishState = (server: any): 'disabled' | 'empty' | 'none' | 'partial' | 'full' => {
+  if (server.enabled_status !== 1) return 'disabled'
+  const total = Number(server.tool_count || 0)
+  const published = Number(server.published_tool_count || 0)
+  if (total <= 0) return 'empty'
+  if (published <= 0) return 'none'
+  if (published < total) return 'partial'
+  return 'full'
+}
+
+const unpublishedToolCount = (server: any) =>
+  Math.max(0, Number(server.tool_count || 0) - Number(server.published_tool_count || 0))
+
+/**
+ * 卡片上的「去发布」：选中服务并把视线带到右侧的一键发布条。
+ * 不直接执行批量发布——一次改变多个工具的可见性该由用户在面板里确认。
+ */
+const goPublishServerTools = (server: any) => {
+  selectServer(server)
+  nextTick(() => {
+    serverToolsPanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+
 /** 移动端从工具详情返回服务列表 */
 const clearSelectedServer = () => {
   selectedServer.value = null
   selectedServerUsage.value = null
+  showAgentUsageDrawer.value = false
   tools.value = []
   selectedToolIds.value = new Set()
   toolsRequestSeq += 1
@@ -1917,20 +1977,41 @@ onMounted(fetchServers)
               来自 {{ server.shared_from.source_real_name || server.shared_from.source_user_name }} 的分享
             </p>
 
-            <!-- 底部只留「一眼要判断」的指标：工具数、分享数、最近同步 -->
+            <!-- 底部只留「一眼要判断」的指标：工具数、发布情况、远端失效、分享数、最近同步 -->
             <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]">
               <span class="rounded bg-gray-100 px-1.5 py-0.5 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
-                {{ server.tool_count }} 工具 /
-                <span v-if="server.enabled_status === 1" class="font-bold text-green-600">{{ server.published_tool_count }} 已发布</span>
-                <span v-else class="font-bold text-gray-400">服务已禁用</span>
-                <!-- 「远端已删除」不是错误而是存量提示：上次同步时远端没再返回这些工具。
-                     文案必须解释「为什么出现 + 影响什么 + 怎么恢复」，否则用户只会当成故障。 -->
-                <span
-                  v-if="server.stale_tool_count > 0"
-                  class="ml-1 cursor-help text-amber-600"
-                  v-tooltip="`这 ${server.stale_tool_count} 个工具在上次同步时已从远端消失，常见原因是远端改名、下架，或凭证与权限收窄导致 tools/list 少返回。它们仍保留在列表里供核对，但不可发布、不可执行，也不会被智能体调用；远端恢复同名工具后，下次同步会恢复可用性，但已下线的工具需要重新发布。`"
-                >{{ server.stale_tool_count }} 个远端已删除</span>
+                {{ server.tool_count }} 工具
               </span>
+              <!-- 发布状态按比例着色：0 已发布若沿用绿色，等于替「智能体完全看不到」背书 -->
+              <span
+                v-if="serverPublishState(server) === 'disabled'"
+                class="rounded bg-gray-100 px-1.5 py-0.5 font-bold text-gray-400 dark:bg-gray-800 dark:text-gray-500"
+              >服务已禁用</span>
+              <span
+                v-else-if="serverPublishState(server) === 'empty'"
+                class="rounded bg-gray-100 px-1.5 py-0.5 text-gray-400 dark:bg-gray-800 dark:text-gray-500"
+              >暂无工具</span>
+              <span
+                v-else-if="serverPublishState(server) === 'none'"
+                class="cursor-help rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 font-bold text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                v-tooltip="'MCP 工具发布后，智能体才能在版本配置里勾选、问答时调用。当前 0 个已发布，这个服务对智能体完全不可见。'"
+              >未发布 · 智能体不可见</span>
+              <span
+                v-else-if="serverPublishState(server) === 'partial'"
+                class="cursor-help rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 font-bold text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                v-tooltip="`还有 ${unpublishedToolCount(server)} 个工具未发布，智能体只能看到已发布的 ${server.published_tool_count} 个。`"
+              >{{ server.published_tool_count }} / {{ server.tool_count }} 已发布</span>
+              <span
+                v-else
+                class="rounded bg-green-50 px-1.5 py-0.5 font-bold text-green-600 dark:bg-green-900/30 dark:text-green-400"
+              >{{ server.published_tool_count }} 已发布</span>
+              <!-- 「远端已删除」不是错误而是存量提示：上次同步时远端没再返回这些工具。
+                   文案必须解释「为什么出现 + 影响什么 + 怎么恢复」，否则用户只会当成故障。 -->
+              <span
+                v-if="server.stale_tool_count > 0"
+                class="cursor-help text-amber-600"
+                v-tooltip="`这 ${server.stale_tool_count} 个工具在上次同步时已从远端消失，常见原因是远端改名、下架，或凭证与权限收窄导致 tools/list 少返回。它们仍保留在列表里供核对，但不可发布、不可执行，也不会被智能体调用；远端恢复同名工具后，下次同步会恢复可用性，但已下线的工具需要重新发布。`"
+              >{{ server.stale_tool_count }} 个远端已删除</span>
               <span
                 v-if="server.share_count > 0"
                 class="rounded bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
@@ -1943,6 +2024,23 @@ onMounted(fetchServers)
                 :title="new Date(server.last_sync_at).toLocaleString()"
               >{{ formatRelativeTime(server.last_sync_at) }}</span>
             </div>
+
+            <!-- 「0 发布」只报数字，用户会当成配置已完成；这里点破后果并给一个直达动作 -->
+            <div
+              v-if="serverPublishState(server) === 'none' || serverPublishState(server) === 'partial'"
+              class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5"
+            >
+              <span class="text-[10px] leading-snug text-amber-700/90 dark:text-amber-300/80">
+                <template v-if="serverPublishState(server) === 'none'">工具已同步，但一个都没发布，智能体看不到</template>
+                <template v-else>还有 {{ unpublishedToolCount(server) }} 个工具未发布</template>
+              </span>
+              <button
+                v-if="canPublishMcp"
+                type="button"
+                class="text-[10px] font-bold text-amber-700 underline decoration-amber-300 underline-offset-2 transition-colors hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
+                @click.stop="goPublishServerTools(server)"
+              >去发布 →</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1950,6 +2048,7 @@ onMounted(fetchServers)
 
     <!-- Right: Tool List — 移动端仅在选中服务后展示 -->
     <div
+      ref="serverToolsPanelRef"
       class="flex min-h-[22rem] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:min-h-0"
       :class="selectedServer ? 'flex' : 'hidden lg:flex'"
     >
@@ -1982,10 +2081,23 @@ onMounted(fetchServers)
               <p class="mt-0.5 text-[10px] text-amber-600" v-if="!isSelectedServerEnabled">服务已禁用，工具暂不可测试、发布或下线</p>
               <p class="mt-0.5 text-[10px] text-slate-500" v-else-if="selectedToolIds.size === 0">发布后的工具智能体才可见</p>
               <p class="mt-0.5 text-[10px] font-black text-primary" v-else>已选中 {{ selectedToolIds.size }} 个项</p>
-              <div v-if="selectedServerUsage" class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
-                <span class="text-slate-500">绑定 {{ selectedServerUsage.bound_agent_count }} 个智能体</span>
-                <span class="text-emerald-600">生效 {{ selectedServerUsage.active_agent_count }} 个</span>
-                <span class="text-slate-400">{{ selectedServerUsage.bound_version_count }} 个版本配置</span>
+              <div v-if="selectedServerUsage" class="mt-1">
+                <button
+                  type="button"
+                  class="group -mx-1 inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-1 py-0.5 text-left text-[10px] transition-colors hover:bg-white hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  :title="selectedServerUsage.bound_agent_count > 0
+                    ? `查看绑定该服务的 ${selectedServerUsage.bound_agent_count} 个智能体`
+                    : '查看绑定智能体（当前没有智能体绑定）'"
+                  aria-label="查看绑定该 MCP 服务的智能体清单"
+                  @click="openAgentUsageDrawer"
+                >
+                  <span class="text-slate-500">绑定 {{ selectedServerUsage.bound_agent_count }} 个智能体</span>
+                  <span class="text-emerald-600">生效 {{ selectedServerUsage.active_agent_count }} 个</span>
+                  <span class="text-slate-400">{{ selectedServerUsage.bound_version_count }} 个版本配置</span>
+                  <span class="inline-flex items-center gap-0.5 font-medium text-slate-400 transition-colors group-hover:text-primary">
+                    查看<ChevronRightIcon class="h-3 w-3" />
+                  </span>
+                </button>
               </div>
               <span v-else-if="usageLoading[selectedServer.id]" class="mt-1 text-[10px] text-slate-400">正在统计使用情况...</span>
               <p
@@ -2923,7 +3035,7 @@ onMounted(fetchServers)
     <ConfirmModal 
       v-if="showDeleteConfirm"
       title="删除 MCP 服务"
-      :message="`确定要删除该服务及其缓存的所有工具吗？此操作不可恢复。\n${formatUsageImpact(deleteServerUsage, '删除')}`"
+      :message="`确定要删除该服务及其缓存的所有工具吗？此操作不可恢复。\n${formatUsageImpact(deleteServerUsage, '删除')}\n删除时会自动从智能体版本配置中移除这些引用，无需再去智能体里手动解绑。`"
       type="danger"
       :loading="deleteLoading"
       @confirm="executeDeleteServer"
@@ -2970,6 +3082,16 @@ onMounted(fetchServers)
       :visible="showLogModal"
       :server="selectedLogServer"
       @close="showLogModal = false"
+    />
+
+    <!-- 绑定智能体清单：只读抽屉，数据复用 selectedServerUsage，不额外请求 -->
+    <McpServerAgentsDrawer
+      :visible="showAgentUsageDrawer"
+      :server="selectedServer"
+      :usage="selectedServerUsage"
+      :loading="!!(selectedServer && usageLoading[selectedServer.id])"
+      @close="closeAgentUsageDrawer"
+      @refresh="refreshSelectedServerUsage"
     />
   </div>
 </template>
