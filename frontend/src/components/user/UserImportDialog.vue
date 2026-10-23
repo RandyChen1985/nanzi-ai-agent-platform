@@ -409,6 +409,7 @@
                 其中 {{ blockingSelected }} 行需处理后才能导入
               </span>
               <span v-else-if="selectedCount > 0" class="text-emerald-600">所选行校验通过</span>
+              <span v-if="rechecking" class="text-xs text-gray-400">正在检查账号/邮箱占用…</span>
               <span class="text-gray-400">账号已存在 / 邮箱被占用的行不会导入，提交时后端还会再校验一次</span>
             </div>
           </section>
@@ -680,6 +681,12 @@ interface ConfirmRow {
   originalEmail: string;
 }
 
+interface CheckItem {
+  user_name: string;
+  existed: boolean;
+  email_taken: boolean;
+}
+
 interface CreatedRow {
   user_id: number;
   user_name: string;
@@ -739,6 +746,11 @@ const nextUid = () => {
 // 上传请求可能比用户点「关闭」更晚返回：用序号丢弃过期响应，避免关闭后又被旧文件
 // 顶到确认页（重新打开时看到上一次的文件）。
 let uploadSeq = 0;
+
+// 确认页改账号/邮箱后的实时查重：防抖 450ms，序号丢弃过期响应
+let recheckTimer: ReturnType<typeof setTimeout> | null = null;
+let recheckSeq = 0;
+const rechecking = ref(false);
 
 const uploadTips = [
   {
@@ -880,16 +892,106 @@ function onNameEdited(row: ConfirmRow): void {
   if (row.user_name.trim().toLowerCase() !== row.originalName.trim().toLowerCase()) {
     row.existed = false;
   }
+  scheduleRecheck();
 }
 
 function onEmailEdited(row: ConfirmRow): void {
   if (row.email.trim().toLowerCase() !== row.originalEmail.trim().toLowerCase()) {
     row.email_taken = false;
   }
+  scheduleRecheck();
+}
+
+function cancelRecheck(): void {
+  recheckSeq += 1;
+  rechecking.value = false;
+  if (recheckTimer) {
+    clearTimeout(recheckTimer);
+    recheckTimer = null;
+  }
+}
+
+function scheduleRecheck(): void {
+  const seq = ++recheckSeq;
+  if (recheckTimer) clearTimeout(recheckTimer);
+  recheckTimer = setTimeout(() => {
+    recheckTimer = null;
+    void recheckRows(seq);
+  }, 450);
+}
+
+function applyRecheck(
+  snapshot: { user_name: string; email: string }[],
+  items: CheckItem[],
+): void {
+  rows.value.forEach((row, index) => {
+    const expected = snapshot[index];
+    const item = items[index];
+    if (!expected || !item) return;
+    // 请求期间用户可能又改了值：只把结果应用到仍然匹配快照的行
+    if (
+      row.user_name.trim() !== expected.user_name ||
+      row.email.trim() !== expected.email
+    ) {
+      return;
+    }
+    row.existed = Boolean(item.existed);
+    row.email_taken = Boolean(item.email_taken);
+  });
+}
+
+async function recheckRows(seq: number): Promise<void> {
+  if (seq !== recheckSeq || !props.visible || step.value !== "confirm") return;
+  const snapshot = rows.value.map((row) => ({
+    user_name: row.user_name.trim(),
+    email: row.email.trim(),
+  }));
+  if (snapshot.length === 0) return;
+
+  rechecking.value = true;
+  try {
+    const response = await axios.post("/api/portal/management/users/import/check", {
+      rows: snapshot,
+    });
+    if (seq !== recheckSeq || !props.visible) return;
+    applyRecheck(
+      snapshot,
+      Array.isArray(response.data?.items) ? response.data.items : [],
+    );
+  } catch {
+    // 实时查重失败不打断输入；提交前还会再查一次，最终以 confirm 为准
+  } finally {
+    if (seq === recheckSeq) rechecking.value = false;
+  }
+}
+
+async function recheckSelectedNow(): Promise<number> {
+  const snapshot = rows.value.map((row) => ({
+    user_name: row.user_name.trim(),
+    email: row.email.trim(),
+  }));
+  if (snapshot.length === 0) return 0;
+
+  rechecking.value = true;
+  try {
+    const response = await axios.post("/api/portal/management/users/import/check", {
+      rows: snapshot,
+    });
+    applyRecheck(
+      snapshot,
+      Array.isArray(response.data?.items) ? response.data.items : [],
+    );
+    return rows.value.filter(
+      (row) => row.selected && (row.existed || row.email_taken),
+    ).length;
+  } finally {
+    rechecking.value = false;
+  }
 }
 
 function resetAll(): void {
   uploadSeq += 1;
+  cancelRecheck();
   step.value = "upload";
   uploading.value = false;
   submitting.value = false;
@@ -1058,8 +1160,19 @@ async function submitImport(): Promise<void> {
     return;
   }
 
+  cancelRecheck();
   submitting.value = true;
   try {
+    try {
+      const blocked = await recheckSelectedNow();
+      if (blocked > 0) {
+        showToast("账号或邮箱已被占用，请修改标红的行后再导入", "warning");
+        return;
+      }
+    } catch {
+      showToast("实时查重失败，提交时后端会再次校验", "warning");
+    }
+
     sendEmailRequested.value = sendPasswordEmail.value;
     const payload = {
       rows: selectedRows.value.map((row) => ({

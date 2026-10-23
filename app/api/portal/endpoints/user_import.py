@@ -1,6 +1,6 @@
-"""用户管理：Excel 批量导入用户（模板下载 / 预览 / 批量建号）。
+"""用户管理：Excel 批量导入用户（模板下载 / 预览 / 实时查重 / 批量建号）。
 
-三个端点都要求 ``element:user:edit``，与「创建用户」同一权限码——导入只是把
+四个端点都要求 ``element:user:edit``，与「创建用户」同一权限码——导入只是把
 逐条建号换成批量，不应该因为入口多了一个就放宽权限。
 
 安全与可恢复设计：
@@ -59,6 +59,15 @@ class ImportConfirmRow(BaseModel):
     real_name: Optional[str] = None
     email: Optional[str] = None
     role_id: Optional[int] = None
+
+
+class ImportCheckRow(BaseModel):
+    user_name: Optional[str] = None
+    email: Optional[str] = None
+
+
+class ImportCheckRequest(BaseModel):
+    rows: List[ImportCheckRow] = Field(default_factory=list)
 
 
 class ImportConfirmRequest(BaseModel):
@@ -309,6 +318,55 @@ def _preview_item(
         "importable": not issues,
         "issues": issues,
     }
+
+
+@router.post("/users/import/check", summary="确认页实时检查账号/邮箱占用")
+async def check_import_rows(
+    request: ImportCheckRequest,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """只做查重，不写库；供确认页在管理员改账号/邮箱后实时刷新标红状态。
+
+    编辑后的值可能已经与上传时完全不同，前端本地无法知道是否撞库；这里一次查
+    全部行，避免每敲一个字打一次接口。格式问题仍交给前端/确认接口，当前接口
+    只回答「账号是否已存在」「邮箱是否已被占用」。
+    """
+
+    if len(request.rows) > MAX_IMPORT_ROWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"单次最多检查 {MAX_IMPORT_ROWS} 行，请拆分后分批导入",
+        )
+    if not request.rows:
+        return {"items": []}
+
+    names = [row.user_name or "" for row in request.rows]
+    emails = [row.email or "" for row in request.rows]
+    existing_names = await _existing_names(db, names)
+    existing_emails = await _existing_emails(db, emails)
+
+    items: List[Dict[str, Any]] = []
+    for row in request.rows:
+        name = (row.user_name or "").strip()
+        email_raw = (row.email or "").strip()
+        normalized_email: Optional[str] = None
+        if email_raw:
+            try:
+                normalized_email = AuthService.normalize_email(email_raw, strict=True)
+            except ValueError:
+                normalized_email = None
+
+        items.append(
+            {
+                "user_name": name,
+                "existed": bool(name) and name.lower() in existing_names,
+                "email_taken": bool(normalized_email)
+                and normalized_email in existing_emails,
+            }
+        )
+
+    return {"items": items}
 
 
 @router.post("/users/import/confirm", summary="确认并批量创建导入账号")

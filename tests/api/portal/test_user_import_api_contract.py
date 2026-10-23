@@ -57,17 +57,18 @@ def _preview(
 # --- 路由与权限 ---
 
 
-def test_three_import_endpoints_are_registered_with_the_same_permission():
+def test_import_endpoints_are_registered_with_the_same_permission():
     source = _source()
 
     for path in (
         '@router.get("/users/import/template"',
         '@router.post("/users/import/preview"',
+        '@router.post("/users/import/check"',
         '@router.post("/users/import/confirm"',
     ):
         assert path in source, f"缺少导入端点 {path}"
 
-    assert source.count('require_permission("element", "element:user:edit")') == 3
+    assert source.count('require_permission("element", "element:user:edit")') == 4
 
 
 def test_router_is_registered_before_management_dynamic_routes():
@@ -309,3 +310,15 @@ def test_confirm_passes_real_name_to_the_single_creation_entry():
     assert "real_name: Optional[str] = None" in source
     assert "real_name=real_name or None" in source
     assert '"real_name": user.real_name' in source
+
+
+def test_confirm_page_recheck_endpoint_checks_edited_names_and_emails():
+    """编辑账号/邮箱后必须能实时查库，不能等 confirm 才报占用。"""
+
+    source = _source()
+
+    assert '@router.post("/users/import/check"' in source
+    assert "existing_names = await _existing_names" in source
+    assert "normalized_email = AuthService.normalize_email" in source
+    assert '"existed": bool(name) and name.lower() in existing_names' in source
+    assert '"email_taken": bool(normalized_email)' in source

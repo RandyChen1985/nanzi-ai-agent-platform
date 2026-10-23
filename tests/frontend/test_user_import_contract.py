@@ -194,3 +194,17 @@ def test_delete_column_is_sticky_and_table_fits_desktop_width():
     assert 'sticky right-0 z-10 w-11' in source
     assert ":class=\"rowClass(row) || 'bg-white'\"" in source
     assert 'min-w-[920px]' in source
+
+
+def test_confirm_page_rechecks_edited_account_and_email():
+    """改完账号/邮箱要防抖查重，并在提交前再强制查一次。"""
+
+    source = _dialog_source()
+
+    assert "/api/portal/management/users/import/check" in source
+    assert "scheduleRecheck()" in source
+    assert "450" in source
+    assert "async function recheckSelectedNow" in source
+    assert "await recheckSelectedNow()" in source
+    assert "账号或邮箱已被占用，请修改标红的行后再导入" in source
+    assert "正在检查账号/邮箱占用" in source
