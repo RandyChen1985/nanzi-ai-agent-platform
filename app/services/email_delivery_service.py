@@ -763,6 +763,29 @@ def build_review_mail(user_name: str, approved: bool, sender_name: str) -> Tuple
     return subject, body
 
 
+def build_account_created_mail(
+    user_name: str, password: str, sender_name: str
+) -> Tuple[str, str]:
+    """批量导入开户的「账号 + 初始密码」通知。返回 (主题, 正文)。
+
+    与 `build_review_mail` 刻意相反：这封邮件的**目的**就是把管理员指定或系统
+    生成的初始密码送达用户邮箱，所以函数入参必须包含密码。约束放在调用侧：
+    只有管理员在导入确认页显式打开「发送密码到用户邮箱」时才会调用；明文密码
+    只出现在邮件正文与一次性响应里，不写日志、不落库。
+    """
+    subject = f"【{sender_name}】您的平台账号已创建"
+    body = (
+        f"您好，{user_name}：\n\n"
+        "平台已为您创建账号，登录信息如下：\n\n"
+        f"账号：{user_name}\n"
+        f"初始密码：{password}\n\n"
+        "为了账号安全，请在首次登录后立即修改密码。\n"
+        "如果这不是您预期的操作，请联系平台管理员核实。\n\n"
+        "（本邮件包含初始密码，请勿转发；本邮件由系统自动发送，请勿直接回复）\n"
+    )
+    return subject, body
+
+
 def build_admin_review_notice(
     *,
     user_name: str,

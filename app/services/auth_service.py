@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import ipaddress
 import logging
@@ -6,7 +7,7 @@ import secrets
 import time
 import httpx
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func
 from app.core.redis import get_redis
@@ -51,7 +52,9 @@ class AuthService:
         user_id: Optional[int] = None,
         status: int = USER_STATUS_ENABLED,
         email: Optional[str] = None,
-        db: Optional[AsyncSession] = None
+        db: Optional[AsyncSession] = None,
+        password: Optional[str] = None,
+        business_role_ids: Optional[List[int]] = None,
     ) -> str:
         """
         生成 API 密钥 (ORM Version)
@@ -64,6 +67,10 @@ class AuthService:
         `DepartmentService.sync_primary_snapshot()` 维护。这两个参数保留只为兼容既有
         签名（仓库外可能还有脚本 import），实际传值一律拒绝：否则有人塞进外部系统的
         部门标识，`users.org_path` 就会冒出第三种格式并与关系表分叉。
+
+        `password` / `business_role_ids` 是给批量导入用的可选初始化项：密码哈希与
+        角色关系必须和建号在同一次提交里，否则会出现「账号建了但没密码」或「建了号
+        却没角色」的半成品。默认 None 时行为与既有调用完全一致。
         """
         if dept_code is not None or org_path is not None:
             raise ValueError(
@@ -93,6 +100,23 @@ class AuthService:
             if user_id is not None:
                 new_user.id = user_id
             session.add(new_user)
+            if password:
+                # bcrypt 是 CPU 密集的同步调用：放进线程池，避免批量导入时堵住事件循环
+                new_user.password_hash = await asyncio.to_thread(
+                    AuthService.get_password_hash, password
+                )
+                new_user.password_updated_at = datetime.now()
+            if business_role_ids:
+                # 先 flush 拿到自增主键，角色关系才能一次插入并随建号一起提交
+                await session.flush()
+                from app.models.permission import UserRoleRelation
+
+                session.add_all(
+                    [
+                        UserRoleRelation(user_id=new_user.id, role_id=role_id)
+                        for role_id in business_role_ids
+                    ]
+                )
             await session.commit()
             return api_key
         except Exception:

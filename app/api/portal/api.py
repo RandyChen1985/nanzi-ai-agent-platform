@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview
+from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview
 
 portal_router = APIRouter()
 
@@ -40,6 +40,9 @@ portal_router.include_router(langfuse.router, prefix="/system/langfuse", tags=["
 portal_router.include_router(keys.router, prefix="/keys", tags=["API密钥"], dependencies=[Depends(require_api_key)])
 
 # 8.1 用户管理 (Management)
+# 导入路由先注册：静态路径 /users/import/* 必须排在 /users/{user_id} 类路由之前，
+# 否则一条宽松的动态路由会把 template / preview 当成 user_id。
+portal_router.include_router(user_import.router, prefix="/management", tags=["用户导入"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(management.router, prefix="/management", tags=["用户管理"], dependencies=[Depends(require_api_key)])
 
 # 8.2 角色管理 (Roles)
