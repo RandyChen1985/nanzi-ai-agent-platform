@@ -4,7 +4,7 @@ import logging
 import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from sqlalchemy import text
+from sqlalchemy import select, text
 from app.core.orm import AsyncSessionLocal
 from app.services.config_service import ConfigService
 from app.services.ai.agent_manager import AgentManagerService
@@ -179,11 +179,52 @@ class PromptService:
         return list(set(re.findall(r'\{([^{}]+)\}', text)))
 
     @staticmethod
-    async def get_all_prompts() -> List[PromptMetadata]:
+    def _is_admin(user: Any) -> bool:
+        if not user:
+            return False
+        if isinstance(user, dict):
+            return user.get("role") == "admin"
+        return getattr(user, "role", None) == "admin"
+
+    @staticmethod
+    async def _visible_agent_ids(session, user: Any) -> Optional[set[str]]:
+        """当前用户在提示词工坊里能看到哪些智能体。
+
+        ``None`` 表示不限制（管理员）。普通用户只能看到**自己创建的普通智能体**：
+        别人的、以及系统级的都不露出。系统级是平台生产基线，迭代走智能体中心
+        （改草稿 → 申请上线）；在工坊里既能改又能一键发布，等于给审核流程开后门。
+        """
+        if PromptService._is_admin(user):
+            return None
+
+        username = user.get("user_name") if isinstance(user, dict) else getattr(user, "user_name", None)
+
+        from app.models.agent import AIAgent
+
+        rows = await session.execute(
+            select(AIAgent.id, AIAgent.created_by, AIAgent.is_system)
+        )
+        visible: set[str] = set()
+        for agent_id, created_by, is_system in rows.all():
+            # 系统级智能体不在工坊露出：那是平台生产基线，由管理员维护，
+            # 迭代走智能体中心（改草稿 → 申请上线）。在工坊里既能改又能发，
+            # 等于给审核流程开了个后门。所以这里连「自己被授权使用」也不算可见。
+            if is_system:
+                continue
+            if username and created_by == username:
+                visible.add(str(agent_id))
+        return visible
+
+    @staticmethod
+    async def get_all_prompts(user: Any = None) -> List[PromptMetadata]:
         prompts = []
-        
+
+        # 平台级提示词（路由规则、主助手人设等）只对管理员开放：
+        # 改动会同时影响所有智能体的行为，不该是「有 prompts:edit 就能碰」的东西。
+        include_system_config = PromptService._is_admin(user)
+
         # 1. 获取系统级 Prompts
-        for key, info in SYSTEM_PROMPT_REGISTRY.items():
+        for key, info in [] if not include_system_config else SYSTEM_PROMPT_REGISTRY.items():
             val = await ConfigService.get(key)
             if val is not None:
                 # 获取历史记录以计算版本
@@ -228,7 +269,11 @@ class PromptService:
             # 获取所有活跃智能体
             result = await session.execute(text("SELECT id, name, display_name, description, created_by, is_system FROM ai_agents"))
             agents = result.fetchall()
-            
+
+            visible_ids = await PromptService._visible_agent_ids(session, user)
+            if visible_ids is not None:
+                agents = [row for row in agents if str(row[0]) in visible_ids]
+
             for agent in agents:
                 agent_id, name, display_name, desc, created_by, is_system = agent
                 
@@ -263,12 +308,19 @@ class PromptService:
         return prompts
 
     @staticmethod
-    async def get_prompt_detail(source: PromptSource, target_id: str, version: Optional[int] = None) -> PromptDetail:
+    async def get_prompt_detail(
+        source: PromptSource,
+        target_id: str,
+        version: Optional[int] = None,
+        user: Any = None,
+    ) -> PromptDetail:
         content = ""
         v_num = version
         note = ""
 
         if source == PromptSource.SYSTEM_CONFIG:
+            if not PromptService._is_admin(user):
+                raise PermissionError("平台提示词仅管理员可查看")
             history = await ConfigService.get_config_history(target_id)
             total_versions = len(history) + 1
             
@@ -295,6 +347,11 @@ class PromptService:
         elif source == PromptSource.AGENT:
             agent_id = target_id.replace("agent_", "")
             async with AsyncSessionLocal() as session:
+                # 看得到才给看：否则任何人拿到 agent_id 就能读别人的提示词全文
+                visible_ids = await PromptService._visible_agent_ids(session, user)
+                if visible_ids is not None and agent_id not in visible_ids:
+                    raise PermissionError("无权查看该智能体的提示词")
+
                 if version:
                     result = await session.execute(
                         text("SELECT system_prompt, comment FROM ai_agent_versions WHERE agent_id = :agent_id AND version_number = :version"),
@@ -386,78 +443,56 @@ class PromptService:
             )
 
     @staticmethod
-    async def save_prompt(source: PromptSource, target_id: str, content: str, version_note: str = "", user_name: str = "system") -> bool:
+    async def save_prompt(
+        source: PromptSource,
+        target_id: str,
+        content: str,
+        version_note: str = "",
+        user_name: str = "system",
+        user: Any = None,
+    ) -> Dict[str, Any]:
+        """保存提示词，返回 ``{"changed": bool, "version_id": Optional[str]}``。
+
+        带上 version_id 是为了让前端能发布**刚保存的那一版**：原先前端靠
+        ``find(v => v.status === 'DRAFT')`` 取列表里第一个草稿，多草稿时会发错版本。
+        """
         if source == PromptSource.SYSTEM_CONFIG:
-            return await ConfigService.set_config(
+            if not PromptService._is_admin(user):
+                # 平台提示词影响所有智能体，不走「有提示词编辑权限就能改」这一套
+                raise PermissionError("平台提示词仅管理员可修改")
+            changed = await ConfigService.set_config(
                 target_id, 
                 content, 
                 description=None, 
                 changed_by=user_name,
                 change_reason=version_note
             )
+            return {"changed": bool(changed), "version_id": None}
         elif source == PromptSource.AGENT:
             agent_id = target_id.replace("agent_", "")
-            # 创建新版本或更新草稿？
-            # 策略：如果当前有 DRAFT，更新它；否则创建一个新的版本号
-            async with AsyncSessionLocal() as session:
-                try:
-                    # 检查是否有 DRAFT
-                    result = await session.execute(
-                        text("SELECT id, version_number, system_prompt, comment FROM ai_agent_versions WHERE agent_id = :agent_id AND status = 'DRAFT' LIMIT 1"),
-                        {"agent_id": agent_id}
-                    )
-                    draft = result.fetchone()
-                    
-                    if draft:
-                        # Check if content actually changed
-                        if draft[2] == content and draft[3] == version_note:
-                            return False # No change
+            # 必须走 AgentManagerService：它带所有权校验、DRAFT 校验，
+            # 并且新建版本时会复制现有字段（temperature / 工具 / 技能……），
+            # 而不是让它们落回数据库默认值。
+            from app.core.orm import AsyncSessionLocal as _Session
+            from app.services.ai.agent_manager import AgentManagerService
 
-                        # Update existing DRAFT
-                        await session.execute(
-                            text("UPDATE ai_agent_versions SET system_prompt = :content, comment = :note WHERE id = :id"),
-                            {"content": content, "note": version_note, "id": draft[0]}
-                        )
-                        await session.commit()
-                        return True
-                    else:
-                        # 获取最大版本号
-                        res_max = await session.execute(
-                            text("SELECT MAX(version_number) FROM ai_agent_versions WHERE agent_id = :agent_id"),
-                            {"agent_id": agent_id}
-                        )
-                        max_v = res_max.fetchone()
-                        next_v = (max_v[0] or 0) + 1
-                        
-                        # 获取已发布版本的模型配置作为模板
-                        res_tmpl = await session.execute(
-                            text("SELECT model_name, tools, synthesis_model_name, synthesis_temperature FROM ai_agent_versions WHERE agent_id = :agent_id AND status = 'PUBLISHED' LIMIT 1"),
-                            {"agent_id": agent_id}
-                        )
-                        template = res_tmpl.fetchone()
-                        model_name = template[0] if template else "gpt-3.5-turbo"
-                        tools = template[1] if template else "[]"
-                        s_model = template[2] if template else None
-                        s_temp = template[3] if template else None
-                        
-                        # 插入新 DRAFT
-                        import uuid
-                        await session.execute(
-                            text("INSERT INTO ai_agent_versions (id, agent_id, version_number, model_name, synthesis_model_name, synthesis_temperature, system_prompt, tools, status, comment) VALUES (:uuid, :agent_id, :next_v, :model_name, :s_model, :s_temp, :content, :tools, 'DRAFT', :note)"),
-                            {
-                                "uuid": str(uuid.uuid4()), 
-                                "agent_id": agent_id, 
-                                "next_v": next_v, 
-                                "model_name": model_name, 
-                                "s_model": s_model,
-                                "s_temp": s_temp,
-                                "content": content, 
-                                "tools": tools, 
-                                "note": version_note
-                            }
-                        )
+            async with _Session() as session:
+                # 写路径要和读路径用同一套可见性：/prompts/detail 会按 _visible_agent_ids
+                # 拒绝系统级与别人的智能体，而保存只走 save_agent_prompt 的归属校验，
+                # 结果系统级所有者能在工坊里改「详情页看都看不到」的智能体（读写不对称）。
+                visible_ids = await PromptService._visible_agent_ids(session, user)
+                if visible_ids is not None and agent_id not in visible_ids:
+                    raise PermissionError("无权修改该智能体的提示词")
+                try:
+                    version_id = await AgentManagerService.save_agent_prompt(
+                        session,
+                        agent_id,
+                        content,
+                        user=user,
+                        note=version_note or None,
+                    )
                     await session.commit()
-                    return True
+                    return {"changed": version_id is not None, "version_id": version_id}
                 except Exception:
                     await session.rollback()
                     raise

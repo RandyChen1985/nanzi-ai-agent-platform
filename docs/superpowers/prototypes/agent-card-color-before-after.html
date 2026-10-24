@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>卡片配色 before / after</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f5f7fa; color: #111827; padding: 30px 26px 40px;
+  }
+  .title { font-size: 15px; font-weight: 700; color: #334155; margin-bottom: 20px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; max-width: 1280px; }
+  .col-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .tag { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 6px; }
+  .tag.before { background: #fee2e2; color: #b91c1c; }
+  .tag.after { background: #dcfce7; color: #15803d; }
+  .col-sub { font-size: 11.5px; color: #64748b; }
+
+  .card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+    overflow: hidden; box-shadow: 0 1px 2px rgba(15,23,42,.04); margin-bottom: 14px;
+  }
+  .accent { height: 5px; }
+  .body { padding: 16px 18px 14px; }
+  .top { display: flex; align-items: flex-start; gap: 11px; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 17px;
+  }
+  h3 { font-size: 14.5px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .shield { color: #a5b4fc; font-size: 12px; }
+  .switch { margin-left: auto; width: 34px; height: 19px; border-radius: 999px; background: #22c55e; position: relative; }
+  .switch::after { content: ''; position: absolute; top: 2px; right: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; }
+
+  .metalist { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+  .type { font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 4px; }
+  .pill { font-size: 11px; font-weight: 500; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  /* before 配色：按类型/维度各上一套色 + 边框 */
+  .type.gen { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
+  .type.chatbi { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
+  .type.kb { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+  .pill.ready-old { background: #ecfdf5; color: #047857; border: 1px solid #d1fae5; }
+  .pill.unready-old { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+  .cap-old { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 5px; display: inline-flex; gap: 4px; align-items: center; }
+  .c-tool { background: #f8fafc; color: #475569; border: 1px solid #f1f5f9; }
+  .c-mcp { background: #f5f3ff; color: #6d28d9; border: 1px solid #ede9fe; }
+  .c-skill { background: #fffbeb; color: #b45309; border: 1px solid #fef3c7; }
+  .c-kb { background: #ecfdf5; color: #047857; border: 1px solid #d1fae5; }
+  .c-call { background: #f9fafb; color: #6b7280; border: 1px solid #f3f4f6; }
+
+  /* after 配色：全部中性灰、无边框，只留就绪圆点 */
+  .type.new { background: #f3f4f6; color: #4b5563; }
+  .pill.ready-new { background: #f3f4f6; color: #4b5563; }
+  .pill.unready-new { background: #f3f4f6; color: #4b5563; }
+  .cap-new { font-size: 11px; padding: 2px 7px; border-radius: 5px; background: #f3f4f6; color: #4b5563; display: inline-flex; gap: 4px; align-items: center; }
+  .cap-new .k { color: #9ca3af; font-weight: 400; }
+  .cap-new .v { font-variant-numeric: tabular-nums; font-weight: 500; }
+
+  .desc { font-size: 12.5px; color: #64748b; line-height: 1.65; margin-top: 11px; }
+  .caps { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 11px; }
+  .foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid #f1f5f9; background: #fafafa; }
+  .btn-ghost { height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid #e5e7eb; background: #fff; font-size: 11.5px; color: #374151; display: inline-flex; align-items: center; gap: 5px; }
+  .btn-primary { margin-left: auto; height: 28px; padding: 0 12px; border-radius: 8px; background: #1677ff; color: #fff; font-size: 11.5px; font-weight: 500; display: inline-flex; align-items: center; }
+  .kebab { color: #9ca3af; font-size: 14px; letter-spacing: 1px; }
+
+  .note { max-width: 1280px; margin-top: 22px; font-size: 12px; color: #475569; line-height: 1.9; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; }
+  .note b { color: #0f172a; }
+</style>
+</head>
+<body>
+<div class="title">智能体卡片 · 配色调整对比</div>
+
+<div class="cols">
+  <!-- BEFORE -->
+  <div>
+    <div class="col-head">
+      <span class="tag before">改 前</span>
+      <span class="col-sub">类型 3 套色 + 能力 chips 5 套色 + 就绪度带彩框</span>
+    </div>
+
+    <div class="card">
+      <div class="accent" style="background:#4f46e5"></div>
+      <div class="body">
+        <div class="top">
+          <div class="avatar" style="background:#eef2ff">📊</div>
+          <div style="min-width:0;flex:1">
+            <h3>数据智能助手 <span class="shield">🛡</span><span class="switch"></span></h3>
+            <div class="metalist">
+              <span class="type chatbi">ChatBI · NanZi</span>
+              <span class="pill ready-old"><span class="dot" style="background:#10b981"></span>已就绪</span>
+            </div>
+          </div>
+        </div>
+        <div class="desc">专注于数据查询、SQL 生成与报表分析的智能助手。当用户询问具体指标、数据统计、或数据库 schema…</div>
+        <div class="caps">
+          <span class="cap-old c-tool">工具 <b>3</b></span>
+          <span class="cap-old c-mcp">MCP <b>0</b></span>
+          <span class="cap-old c-skill">技能 <b>11</b></span>
+          <span class="cap-old c-call"><b>966</b> 次调用</span>
+        </div>
+      </div>
+      <div class="foot"><span class="btn-ghost">💬 预览对话</span><span class="kebab">⋯</span><span class="btn-primary">配置与发布</span></div>
+    </div>
+
+    <div class="card">
+      <div class="accent" style="background:#f59e0b"></div>
+      <div class="body">
+        <div class="top">
+          <div class="avatar" style="background:#fffbeb">📚</div>
+          <div style="min-width:0;flex:1">
+            <h3>知识库专家 <span class="shield">🛡</span><span class="switch"></span></h3>
+            <div class="metalist">
+              <span class="type gen">通用助手 · NanZi</span>
+              <span class="pill unready-old"><span class="dot" style="background:#f59e0b"></span>尚未就绪</span>
+            </div>
+          </div>
+        </div>
+        <div class="desc">test</div>
+        <div class="caps">
+          <span class="cap-old c-tool">工具 <b>1</b></span>
+          <span class="cap-old c-mcp">MCP <b>0</b></span>
+          <span class="cap-old c-skill">技能 <b>11</b></span>
+          <span class="cap-old c-kb">知识库 <b>1</b></span>
+          <span class="cap-old c-call"><b>258</b> 次调用</span>
+        </div>
+      </div>
+      <div class="foot"><span class="btn-ghost">💬 预览对话</span><span class="kebab">⋯</span><span class="btn-primary">配置与发布</span></div>
+    </div>
+  </div>
+
+  <!-- AFTER -->
+  <div>
+    <div class="col-head">
+      <span class="tag after">改 后</span>
+      <span class="col-sub">统一浅灰、去边框，只保留就绪圆点这一个颜色信号</span>
+    </div>
+
+    <div class="card">
+      <div class="accent" style="background:#4f46e5"></div>
+      <div class="body">
+        <div class="top">
+          <div class="avatar" style="background:#eef2ff">📊</div>
+          <div style="min-width:0;flex:1">
+            <h3>数据智能助手 <span class="shield">🛡</span><span class="switch"></span></h3>
+            <div class="metalist">
+              <span class="type new">ChatBI · NanZi</span>
+              <span class="pill ready-new"><span class="dot" style="background:#10b981"></span>已就绪</span>
+            </div>
+          </div>
+        </div>
+        <div class="desc">专注于数据查询、SQL 生成与报表分析的智能助手。当用户询问具体指标、数据统计、或数据库 schema…</div>
+        <div class="caps">
+          <span class="cap-new"><span class="k">工具</span><span class="v">3</span></span>
+          <span class="cap-new"><span class="k">MCP</span><span class="v">0</span></span>
+          <span class="cap-new"><span class="k">技能</span><span class="v">11</span></span>
+          <span class="cap-new"><span class="v">966</span><span class="k">次调用</span></span>
+        </div>
+      </div>
+      <div class="foot"><span class="btn-ghost">💬 预览对话</span><span class="kebab">⋯</span><span class="btn-primary">配置与发布</span></div>
+    </div>
+
+    <div class="card">
+      <div class="accent" style="background:#f59e0b"></div>
+      <div class="body">
+        <div class="top">
+          <div class="avatar" style="background:#fffbeb">📚</div>
+          <div style="min-width:0;flex:1">
+            <h3>知识库专家 <span class="shield">🛡</span><span class="switch"></span></h3>
+            <div class="metalist">
+              <span class="type new">通用助手 · NanZi</span>
+              <span class="pill unready-new"><span class="dot" style="background:#f59e0b"></span>尚未就绪</span>
+            </div>
+          </div>
+        </div>
+        <div class="desc">test</div>
+        <div class="caps">
+          <span class="cap-new"><span class="k">工具</span><span class="v">1</span></span>
+          <span class="cap-new"><span class="k">MCP</span><span class="v">0</span></span>
+          <span class="cap-new"><span class="k">技能</span><span class="v">11</span></span>
+          <span class="cap-new"><span class="k">知识库</span><span class="v">1</span></span>
+          <span class="cap-new"><span class="v">258</span><span class="k">次调用</span></span>
+        </div>
+      </div>
+      <div class="foot"><span class="btn-ghost">💬 预览对话</span><span class="kebab">⋯</span><span class="btn-primary">配置与发布</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>思路：一张卡只留一个颜色信号。</b><br/>
+  原来类型徽标按「通用/ChatBI/知识库」上三套色、能力 chips 又分五套色、就绪度还带彩框——四组颜色互相打架，眼睛找不到重点。<br/>
+  改后：类型、引擎、能力 chips、就绪度底色全部收敛成同一档浅灰（<code>#f3f4f6 / #4b5563</code>），去掉所有边框；<br/>
+  唯一保留颜色的是就绪状态前的<b>小圆点</b>——绿点=已就绪、琥珀点=待完善，需要扫一眼就知道「能不能用」时它最直接。<br/>
+  <b>没动的：</b>头像底色与卡片顶部色带（用于快速识别不同智能体）、底部主按钮、审核中的琥珀冻结条。
+</div>
+
+</body>
+</html>

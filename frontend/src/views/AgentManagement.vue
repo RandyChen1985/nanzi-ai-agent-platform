@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { agentApi } from "../api/agent";
 import type {
   AIAgent,
@@ -48,6 +48,15 @@ import {
   UserCircleIcon,
 } from "@heroicons/vue/24/outline";
 import { isSkillEnabled } from '@/utils/skillEnabled'
+import { agentSystemApi } from '../api/agent'
+import AgentSystemPublishModal from '../components/agent/AgentSystemPublishModal.vue'
+import AgentSystemUnpublishModal from '../components/agent/AgentSystemUnpublishModal.vue'
+import AgentSystemReviewDrawer from '../components/agent/AgentSystemReviewDrawer.vue'
+import AgentSystemHistoryDrawer from '../components/agent/AgentSystemHistoryDrawer.vue'
+import AgentTransferOwnerModal from '../components/agent/AgentTransferOwnerModal.vue'
+import AgentShareModal from '../components/agent/AgentShareModal.vue'
+import AgentShareReceivedPanel from '../components/agent/AgentShareReceivedPanel.vue'
+import AgentShareSentPanel from '../components/agent/AgentShareSentPanel.vue'
 
 const router = useRouter();
 const agents = ref<AIAgent[]>([]);
@@ -414,33 +423,336 @@ const openSafetyModal = (type: 'input' | 'output') => {
 
 // Search & Filter
 const searchKeyword = ref("");
-const statusFilter = ref<"all" | "enabled" | "disabled">("all"); // New
-const typeFilter = ref<"all" | "system" | "custom" | AgentType>("all"); // New
+// 顶部筛选统一走「筛选」面板：原来 7 个分段 tab 承载的维度全拆到这里，
+// 每个维度只有一处入口，不会再出现「tab 选知识库、下拉又选 ChatBI」的空结果。
+const statusFilter = ref<"all" | "enabled" | "disabled">("all");
+const typeFilter = ref<"all" | AgentType>("all");
+const sourceFilter = ref<"all" | "system" | "custom">("all");
+const engineFilter = ref<"all" | "LOCAL" | "RAGFLOW" | "OPENCLAW">("all");
+const readinessFilter = ref<"all" | "ready" | "unready">("all");
+/** 权属人筛选：orphan = 权属人已停用，智能体已经没人能编辑 */
+const ownerFilter = ref<"all" | "orphan">("all");
+const filterPanelOpen = ref(false);
 const userInfo = ref<any>({});
 
-type SegmentTabKey = 'all' | 'ready' | 'unready' | 'GENERAL' | 'CHATBI' | 'KNOWLEDGE_BASE' | 'custom'
-const segmentedFilter = ref<SegmentTabKey>('all')
+// ---------------------------------------------------------------------------
+// 系统级发布：申请 → 审核 → 上架 → 下架
+//
+// 表单里不再有「设为系统级」开关，所有状态变化都从卡片菜单发起，走同一套
+// 接口（有事件、有通知），这样「谁在什么时候把它变成系统级」永远查得到。
+// ---------------------------------------------------------------------------
 
-const segmentTabs = [
-  { key: 'all', label: '全部', countKey: 'all' },
-  { key: 'ready', label: '🚀 已就绪', countKey: 'ready' },
-  { key: 'unready', label: '🛠️ 待完善', countKey: 'unready' },
-  { key: 'GENERAL', label: '🤖 通用助手', countKey: 'general' },
-  { key: 'CHATBI', label: '📊 ChatBI', countKey: 'chatbi' },
-  { key: 'KNOWLEDGE_BASE', label: '📚 知识库', countKey: 'kb' },
-  { key: 'custom', label: '🧩 自定义', countKey: 'custom' },
-] as const
+/** 管理员视角：能看全部智能体，因此需要在卡片上直接辨认归属。 */
+const isAdminViewer = computed(() => userInfo.value?.role === 'admin')
 
-const segmentCounts = computed(() => {
-  const all = agents.value.length
-  const ready = agents.value.filter(a => a.readiness_ready).length
-  const unready = agents.value.filter(a => !a.readiness_ready).length
-  const general = agents.value.filter(a => (a.agent_type || 'GENERAL') === 'GENERAL').length
-  const chatbi = agents.value.filter(a => a.agent_type === 'CHATBI').length
-  const kb = agents.value.filter(a => a.agent_type === 'KNOWLEDGE_BASE').length
-  const custom = agents.value.filter(a => !a.is_system).length
-  return { all, ready, unready, general, chatbi, kb, custom }
-})
+/** 与 v-has-perm 指令同一套判定：admin 直通，其余看 permissions 列表。 */
+const hasElementPerm = (code: string): boolean => {
+  try {
+    const raw = localStorage.getItem('user_info')
+    if (!raw) return false
+    const info = JSON.parse(raw)
+    if (info.role === 'admin') return true
+    const perms = info.permissions
+    const list: string[] = Array.isArray(perms) ? perms : perms?.elements || []
+    return list.includes(code)
+  } catch {
+    return false
+  }
+}
+
+const canReviewSystem = computed(() => hasElementPerm('element:agent:system_publish'))
+
+const showSystemPublishModal = ref(false)
+const systemPublishMode = ref<'publish' | 'apply'>('publish')
+const systemPublishTarget = ref<AIAgent | null>(null)
+const showSystemUnpublishModal = ref(false)
+const systemUnpublishTarget = ref<AIAgent | null>(null)
+const showSystemReviewDrawer = ref(false)
+const showSystemHistoryDrawer = ref(false)
+const systemHistoryTarget = ref<AIAgent | null>(null)
+const pendingSystemCount = ref(0)
+
+const fetchPendingSystemCount = async () => {
+  if (!canReviewSystem.value) return
+  try {
+    const res = await agentSystemApi.countRequests()
+    pendingSystemCount.value = res.data?.count || 0
+  } catch {
+    pendingSystemCount.value = 0
+  }
+}
+
+/**
+ * 审核中：冻的是**发布**与元数据，不是开发。
+ * 草稿照改、版本照建、调试照用；开关/删除/改名仍然锁死（提交时那份配置才是审核对象）。
+ */
+const isPendingReview = (agent: AIAgent): boolean => agent.system_status === 'PENDING_REVIEW'
+
+/** 卡片冻结条文案：带上提交时间，让人知道等了多久。 */
+const pendingReviewHint = (agent: AIAgent): string => {
+  const at = agent.system_requested_at ? formatDate(agent.system_requested_at) : ''
+  return at
+    ? `审核中 · ${at} 提交，期间不能发布新配置`
+    : '审核中 · 期间不能发布新配置'
+}
+
+/** 卡片菜单里该显示哪个系统级动作；空串表示不显示。 */
+const systemCardAction = (agent: AIAgent): 'publish' | 'apply' | 'cancel' | 'unpublish' | '' => {
+  const pending = agent.system_status === 'PENDING_REVIEW'
+  const isOwner = !!userInfo.value?.user_name && agent.created_by === userInfo.value?.user_name
+
+  if (pending) {
+    // 管理员是审核方，撤回由申请人在审核队列里处理更自然
+    return isOwner && !canReviewSystem.value ? 'cancel' : ''
+  }
+  if (agent.is_system) {
+    return canReviewSystem.value && !isMainAgent(agent) ? 'unpublish' : ''
+  }
+  // 只有本地引擎能成为系统级基线：外部引擎的配置在远端，发布流程管不到它
+  const isLocalEngine = (agent.engine_type || 'LOCAL') === 'LOCAL'
+  if (canReviewSystem.value) return isLocalEngine ? 'publish' : ''
+  if (isOwner && isLocalEngine) return 'apply'
+  return ''
+}
+
+/** 发布历史只对管理员与创建者开放，和后端判定保持一致。 */
+/** 系统级基线说明：**只给普通用户看**。
+ *
+ *  管理员不受这些限制，线上是第几版他打开「配置与发布」就能看到，
+ *  卡片上再挂一条只是噪音。
+ *  普通用户真正会误会的是两件事：以为系统级等于整份都不能碰（其实草稿能改），
+ *  或者以为还能像以前那样点一下就上线（其实必须走审核）。
+ */
+const systemBaselineHint = (agent: AIAgent): string => {
+  const version = agent.published_version_number
+  const live = version ? `线上 V${version}` : '尚无线上版本'
+  return `系统级 · 可改草稿，上线需审核 · ${live}`
+}
+
+const canViewSystemHistory = (agent: AIAgent): boolean =>
+  canReviewSystem.value ||
+  (!!userInfo.value?.user_name && agent.created_by === userInfo.value?.user_name)
+
+const openSystemPublish = (agent: AIAgent, mode: 'publish' | 'apply') => {
+  closeCardMenus()
+  systemPublishTarget.value = agent
+  systemPublishMode.value = mode
+  showSystemPublishModal.value = true
+}
+
+const openSystemUnpublish = (agent: AIAgent) => {
+  closeCardMenus()
+  systemUnpublishTarget.value = agent
+  showSystemUnpublishModal.value = true
+}
+
+const openSystemHistory = (agent: AIAgent) => {
+  closeCardMenus()
+  systemHistoryTarget.value = agent
+  showSystemHistoryDrawer.value = true
+}
+
+/** 权属人变更只给管理员；主助手是系统固定入口，没有「归谁」的概念。 */
+const canTransferOwner = (agent: AIAgent): boolean =>
+  // 审核中不能转交（后端 transfer_owner 会 409）：状态流转和权属变更叠在一起
+  // 会出现「换人后由新所有者撤回申请」这种谁也理不清的账
+  isAdminViewer.value && !isMainAgent(agent) && !isPendingReview(agent)
+
+const transferOwnerTarget = ref<AIAgent | null>(null)
+const showTransferOwnerModal = ref(false)
+
+const openTransferOwner = (agent: AIAgent) => {
+  closeCardMenus()
+  transferOwnerTarget.value = agent
+  showTransferOwnerModal.value = true
+}
+
+const handleTransferOwnerDone = (
+  dropped: Array<{ name: string; reason_label?: string }> = []
+) => {
+  showTransferOwnerModal.value = false
+  if (dropped.length) {
+    showToast(
+      `权属人已变更，但新权属人有 ${dropped.length} 个工具无权使用，请在版本配置中移除后重新发布`,
+      'warning'
+    )
+  } else {
+    showToast('权属人已变更，已记入发布历史', 'success')
+  }
+  fetchAgents()
+}
+
+// ---------------------------------------------------------------------------
+// 分享：自己的智能体**发一份副本**给同事。系统级不提供入口。
+// ---------------------------------------------------------------------------
+
+/** 能被分享的智能体：自己的、非系统级、非主助手。管理员可代为分享。 */
+const canShareAgent = (agent: AIAgent): boolean => {
+  if (isMainAgent(agent)) return false
+  // 系统级是平台生产基线，可用范围只能由管理员授权治理
+  if (agent.is_system) return false
+  // RAGFlow / OpenClaw 的 engine_config 指向同一个远端实例，复制出去等于共享数据面，
+  // 「副本互不影响」不成立，因此只允许本地引擎分享（后端同样拦）
+  if (String(agent.engine_type || "LOCAL").toUpperCase() !== "LOCAL") return false
+  if (isAdminViewer.value) return true
+  return !!userInfo.value?.user_name && agent.created_by === userInfo.value?.user_name
+}
+
+const shareTarget = ref<AIAgent | null>(null)
+const showShareModal = ref(false)
+const shareCandidates = ref<Array<{ user_name: string; real_name?: string | null; id?: number | null }>>([])
+const shareCandidatesLoading = ref(false)
+
+// 输入快时旧结果可能覆盖新结果；且不能把接口故障显示成「查无此人」
+let shareCandidatesSeq = 0
+const loadShareCandidates = async (keyword = '') => {
+  const seq = ++shareCandidatesSeq
+  shareCandidatesLoading.value = true
+  try {
+    const res = await agentSystemApi.shareCandidates({ search: keyword, limit: 30 })
+    if (seq !== shareCandidatesSeq) return
+    shareCandidates.value = res.data.map((item) => ({
+      user_name: item.user_name,
+      real_name: item.real_name,
+    }))
+  } catch (error: any) {
+    if (seq !== shareCandidatesSeq) return
+    shareCandidates.value = []
+    showToast(error?.response?.data?.detail || '候选人加载失败，请稍后重试', 'error')
+  } finally {
+    if (seq === shareCandidatesSeq) shareCandidatesLoading.value = false
+  }
+}
+
+// 列表视图的「更多」菜单；与卡片菜单互斥，避免两个菜单同时开着
+const openRowMenuId = ref<string | null>(null)
+const toggleRowMenu = (agentId: string, e?: Event) => {
+  e?.stopPropagation()
+  closeCardMenus()
+  openRowMenuId.value = openRowMenuId.value === agentId ? null : agentId
+}
+
+const openShare = (agent: AIAgent) => {
+  closeCardMenus()
+  shareTarget.value = agent
+  showShareModal.value = true
+  void loadShareCandidates('')
+}
+
+const handleShareDone = (count: number) => {
+  showShareModal.value = false
+  showToast(`已分享给 ${count} 人，对方接受后会生成自己的副本`, 'success')
+}
+
+// 分享：与技能 / MCP 分享同一套交互——平级视图 + 侧边菜单角标。
+// 不再做成「有待处理才出现的弹窗」：那样对方根本不知道去哪儿找。
+type AgentWorkspaceTab = 'all' | 'mine' | 'received' | 'sent'
+
+const workspaceTab = ref<AgentWorkspaceTab>('mine')
+const shareCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
+
+const refreshShareCounts = async () => {
+  try {
+    const res = await agentSystemApi.shareCounts()
+    shareCounts.value = res.data
+  } catch {
+    shareCounts.value = { received_pending: 0, sent_pending: 0, sent_total: 0 }
+  }
+}
+
+const route = useRoute()
+
+/** 站内信/外链可以直接带 ?agents_tab=received 落位 */
+const resolveInitialTab = (): AgentWorkspaceTab => {
+  const raw = String(route.query.agents_tab || '')
+  if (raw === 'received' || raw === 'sent' || raw === 'mine' || raw === 'all') {
+    return raw as AgentWorkspaceTab
+  }
+  // 管理员默认看「全部」：他原本看到的就是平台全量，别因为加了视图就缩小范围
+  return isAdminViewer.value ? 'all' : 'mine'
+}
+
+/** 管理员多一个「全部」：他要能看别人名下的智能体；普通用户只有自己的 */
+const workspaceTabs = computed<Array<{ key: AgentWorkspaceTab; label: string; badge: number }>>(
+  () => [
+    ...(isAdminViewer.value
+      ? [{ key: 'all' as AgentWorkspaceTab, label: '全部智能体', badge: 0 }]
+      : []),
+    { key: 'mine', label: '我的智能体', badge: 0 },
+    { key: 'received', label: '分享给我', badge: shareCounts.value.received_pending },
+    { key: 'sent', label: '我分享的', badge: shareCounts.value.sent_pending },
+  ],
+)
+
+const switchWorkspaceTab = (tab: AgentWorkspaceTab) => {
+  workspaceTab.value = tab
+  // 写回 URL：否则刷新会跳回默认视图，站内信在同路由内 push 时也读不到新 query
+  const query = { ...route.query }
+  if (tab === 'mine') delete query.agents_tab
+  else query.agents_tab = tab
+  void router.replace({ query })
+  if (tab !== 'mine') void refreshShareCounts()
+}
+
+// 已经在本页时点站内信只改 query，组件复用不会重新挂载，必须监听
+watch(
+  () => route.query.agents_tab,
+  (raw) => {
+    const next = String(raw || '')
+    const allowed: AgentWorkspaceTab[] = ['received', 'sent', 'mine', 'all']
+    if (next && allowed.includes(next as AgentWorkspaceTab)) {
+      workspaceTab.value = next as AgentWorkspaceTab
+      if (next !== 'mine') void refreshShareCounts()
+    }
+  },
+)
+
+/** 接受分享后：副本停在向导第一步，直接带用户继续配置 */
+const handleShareAccepted = async (agentId: string) => {
+  await refreshShareCounts()
+  await fetchAgents()
+  workspaceTab.value = 'mine'
+  const created = agents.value.find((item) => item.id === agentId)
+  if (!created) {
+    // 列表没刷到时不能什么都不做：用户会以为接受没成功
+    showToast('副本已创建，请在「我的智能体」里继续配置', 'warning')
+    return
+  }
+  await continueAgentOnboarding(created)
+}
+
+const openSystemReview = () => {
+  showSystemReviewDrawer.value = true
+}
+
+const cancelSystemRequest = (agent: AIAgent) => {
+  closeCardMenus()
+  confirmState.value = {
+    show: true,
+    title: '撤回发布申请',
+    message: `撤回后「${agent.display_name}」立即解冻，可以继续编辑、建版本与发布。`,
+    type: 'warning',
+    onConfirm: async () => {
+      try {
+        await agentSystemApi.cancelRequest(agent.id)
+        showToast('已撤回申请', 'success')
+        confirmState.value.show = false
+        fetchAgents()
+      } catch (error: any) {
+        showToast(error.response?.data?.detail || '撤回失败', 'error')
+      }
+    },
+  }
+}
+
+const onSystemChanged = () => {
+  fetchAgents()
+  void fetchPendingSystemCount()
+}
+
+
+/** 标题旁的总数：原来由「全部 N」那个 tab 承担，tab 取消后放这里 */
+const totalAgentCount = computed(() => agents.value.length)
 
 // 配置异常：已发布版本绑定的模型不可用（model_issue），或引用了已失效的工具/MCP（tool_issue）。
 // 两类判定都在后端完成（LOCAL 引擎的已启用智能体才返回），这里只做汇总展示。
@@ -473,7 +785,7 @@ const modelIssueHint = (code?: string) =>
   (code && MODEL_ISSUE_HINT[code]) || '请在「模型管理」与「版本配置 → 模型」中检查'
 
 const TOOL_ISSUE_HINT = '请在「版本配置 → 工具能力」移除失效引用后重新发布'
-// 系统智能体与别人创建的智能体对当前用户只读：引导他去版本配置只会点进一个改不了的页面
+// 系统智能体对当前用户只读（自己创建后被动提升为系统级的也一样）：引导他去版本配置只会点进一个改不了的页面
 const MANAGED_AGENT_HINT = '该智能体由管理员维护，请联系管理员处理'
 
 // 三个来源合并展示：系统默认模型（影响所有未显式绑定模型的链路）、单个智能体的模型、
@@ -522,20 +834,17 @@ watch(configIssueItems, (list) => {
   if (!list.length) configIssuesDismissed.value = false
 })
 
+/** 权属人已停用的智能体：管理员需要主动转交，否则会变成没人能动的孤儿。 */
+const orphanAgents = computed(() => agents.value.filter((a) => a.owner_active === false));
+
 const filteredAgents = computed(() => {
   let result = [...agents.value];
 
-  // 0. Filter by Segmented Tab
-  if (segmentedFilter.value !== 'all') {
-    if (segmentedFilter.value === 'ready') {
-      result = result.filter(a => a.readiness_ready);
-    } else if (segmentedFilter.value === 'unready') {
-      result = result.filter(a => !a.readiness_ready);
-    } else if (segmentedFilter.value === 'custom') {
-      result = result.filter(a => !a.is_system);
-    } else {
-      result = result.filter(a => (a.agent_type || 'GENERAL') === segmentedFilter.value);
-    }
+  // 0. 工作区视图：「全部」看平台所有智能体（管理员），「我的智能体」只看自己名下。
+  //    非管理员本来就只有自己的，两者等价。
+  if (workspaceTab.value === 'mine') {
+    const me = userInfo.value?.user_name
+    result = me ? result.filter((a) => a.created_by === me) : result
   }
 
   // 1. Filter by keyword
@@ -557,14 +866,31 @@ const filteredAgents = computed(() => {
     result = result.filter((a) => (a.is_enabled ?? true) === isEnabled);
   }
 
-  // 3. Filter by Type
+  // 3. Filter by Type（智能体类型）
   if (typeFilter.value !== "all") {
-    if (typeFilter.value === "system" || typeFilter.value === "custom") {
-      const isSystem = typeFilter.value === "system";
-      result = result.filter((a) => a.is_system === isSystem);
-    } else {
-      result = result.filter((a) => (a.agent_type || 'GENERAL') === typeFilter.value);
-    }
+    result = result.filter((a) => (a.agent_type || 'GENERAL') === typeFilter.value);
+  }
+
+  // 3.1 来源：系统级 / 自定义
+  if (sourceFilter.value !== "all") {
+    const wantSystem = sourceFilter.value === "system";
+    result = result.filter((a) => Boolean(a.is_system) === wantSystem);
+  }
+
+  // 3.2 引擎
+  if (engineFilter.value !== "all") {
+    result = result.filter((a) => (a.engine_type || "LOCAL") === engineFilter.value);
+  }
+
+  // 3.3 就绪度
+  if (readinessFilter.value !== "all") {
+    const wantReady = readinessFilter.value === "ready";
+    result = result.filter((a) => Boolean(a.readiness_ready) === wantReady);
+  }
+
+  // 3.4 权属人状态：离职/停用后智能体已经没人能编辑，管理员要能一次筛出来
+  if (ownerFilter.value === "orphan") {
+    result = result.filter((a) => a.owner_active === false);
   }
 
   // 4. Sort: sort_order (descending), then is_system (descending), then Alphabetical
@@ -591,12 +917,113 @@ const hasActiveAgentFilters = computed(
     !!searchKeyword.value ||
     statusFilter.value !== "all" ||
     typeFilter.value !== "all" ||
-    segmentedFilter.value !== "all",
+    sourceFilter.value !== "all" ||
+    engineFilter.value !== "all" ||
+    readinessFilter.value !== "all" ||
+    ownerFilter.value !== "all",
 );
+
+/** 「筛选」按钮上的角标：有几个条件在生效 */
+const activeFilterCount = computed(
+  () =>
+    [
+      statusFilter.value,
+      typeFilter.value,
+      sourceFilter.value,
+      engineFilter.value,
+      readinessFilter.value,
+      ownerFilter.value,
+    ].filter((value) => value !== "all").length,
+);
+
+const AGENT_TYPE_LABELS: Record<string, string> = {
+  GENERAL: "通用助手",
+  CHATBI: "ChatBI",
+  KNOWLEDGE_BASE: "知识库助手",
+};
+
+const ENGINE_LABELS: Record<string, string> = {
+  LOCAL: "LOCAL",
+  RAGFLOW: "RAGFlow",
+  OPENCLAW: "OpenClaw",
+};
+
+/**
+ * 条件藏在面板里，收起后必须能看见「现在筛了什么」，否则用户会以为智能体丢了。
+ * 返回 [{key, label, clear}]，模板直接渲染成可点掉的 chip。
+ */
+const activeFilterChips = computed(() => {
+  const chips: { key: string; label: string; clear: () => void }[] = [];
+  if (statusFilter.value !== "all") {
+    chips.push({
+      key: "status",
+      label: `状态：${statusFilter.value === "enabled" ? "已启用" : "已禁用"}`,
+      clear: () => (statusFilter.value = "all"),
+    });
+  }
+  if (typeFilter.value !== "all") {
+    chips.push({
+      key: "type",
+      label: `类型：${AGENT_TYPE_LABELS[typeFilter.value] || typeFilter.value}`,
+      clear: () => (typeFilter.value = "all"),
+    });
+  }
+  if (sourceFilter.value !== "all") {
+    chips.push({
+      key: "source",
+      label: `来源：${sourceFilter.value === "system" ? "系统级" : "自定义"}`,
+      clear: () => (sourceFilter.value = "all"),
+    });
+  }
+  if (engineFilter.value !== "all") {
+    chips.push({
+      key: "engine",
+      label: `引擎：${ENGINE_LABELS[engineFilter.value] || engineFilter.value}`,
+      clear: () => (engineFilter.value = "all"),
+    });
+  }
+  if (readinessFilter.value !== "all") {
+    chips.push({
+      key: "readiness",
+      label: `就绪度：${readinessFilter.value === "ready" ? "已就绪" : "待完善"}`,
+      clear: () => (readinessFilter.value = "all"),
+    });
+  }
+  if (ownerFilter.value !== "all") {
+    chips.push({
+      key: "owner",
+      label: "权属人已停用",
+      clear: () => (ownerFilter.value = "all"),
+    });
+  }
+  return chips;
+});
+
+const clearAllAgentFilters = () => {
+  statusFilter.value = "all";
+  typeFilter.value = "all";
+  sourceFilter.value = "all";
+  engineFilter.value = "all";
+  readinessFilter.value = "all";
+  ownerFilter.value = "all";
+};
 
 const canDragAgents = computed(
   () => !hasActiveAgentFilters.value && userInfo.value?.role === "admin" && !loading.value,
 );
+
+// 普通用户只看到自己创建的智能体（系统内置的不再出现），空列表要说明原因，
+// 否则会以为系统坏了或权限丢了。
+const emptyStateMessage = computed(() => {
+  if (!hasActiveAgentFilters.value && userInfo.value?.role !== "admin") {
+    return "你还没有创建智能体。系统内置智能体由管理员维护，已授权的可以直接在对话里使用。";
+  }
+  // 管理员切到「我的智能体」时列表可能是空的，要说清「是因为只看自己」
+  if (!hasActiveAgentFilters.value && workspaceTab.value === "mine") {
+    return "你名下还没有智能体。切到「全部智能体」可以看到平台上其他人的。";
+  }
+  return "没有找到匹配的智能体";
+});
 
 const dragSourceId = ref<string | null>(null);
 const dragOverId = ref<string | null>(null);
@@ -1689,10 +2116,33 @@ const submitDuplicate = async () => {
       name,
       display_name: displayName,
     });
-    showToast(`已复制为「${res.data.display_name}」`, "success");
+    const created = res.data;
+    const dropped = created.dropped_tool_refs || [];
+
+    // 复制会把源版本的工具引用整份带走，其中「源的所有者能用、复制人无权用」的那些
+    // 后端已经剔除；必须告诉用户剔了什么，否则他会以为副本和源完全一样。
+    showToast(
+      dropped.length
+        ? `已复制为「${created.display_name}」，跳过 ${dropped.length} 个你无权使用的工具`
+        : `已复制为「${created.display_name}」`,
+      "success",
+    );
     clearDuplicateNameTimer();
     showDuplicateModal.value = false;
-    fetchAgents();
+    await fetchAgents();
+
+    // 直接把副本的 V1 打开：失效引用卡片就摆在眼前，不用用户自己去找。
+    // 打不开也不影响复制结果，所以整段兜底。
+    try {
+      const versionsRes = await agentApi.listVersions(created.id);
+      const versions = Array.isArray(versionsRes.data) ? versionsRes.data : [];
+      const first = versions.find((v: any) => v.version_number === 1) || versions[0];
+      const opened = (agents.value || []).find((a: any) => a.id === created.id) || created;
+      selectedAgent.value = opened as AIAgent;
+      if (first) openVersionModal(first as AIAgentVersion);
+    } catch (openError) {
+      console.warn("副本创建成功，但自动打开配置失败", openError);
+    }
   } catch (error: any) {
     duplicateError.value =
       error.response?.data?.message ||
@@ -1865,11 +2315,6 @@ const saveAgent = async (exitAfterSave = false) => {
     return;
   }
 
-  // 主助手强制保持系统智能体状态
-  if (selectedAgent.value && isMainAgent(selectedAgent.value)) {
-    agentForm.value.is_system = true;
-  }
-
   if (!agentForm.value.name || !agentForm.value.display_name) {
     showToast("请完善智能体标识和名称", "warning");
     return;
@@ -1880,6 +2325,7 @@ const saveAgent = async (exitAfterSave = false) => {
     showToast(nameConflict, "warning");
     return;
   }
+
   if (agentForm.value.engine_type === 'RAGFLOW' || agentForm.value.engine_type === 'OPENCLAW') {
     agentForm.value.agent_type = 'GENERAL';
     agentForm.value.capabilities = normalizeAgentCapabilities(
@@ -1942,13 +2388,24 @@ const saveAgent = async (exitAfterSave = false) => {
   agentForm.value.engine_config.default_markdown_theme = selectedMarkdownTheme.value;
   agentForm.value.engine_config.hide_message_border = hideMessageBorder.value;
 
+  // 「是否系统级」不能由表单改动：新建/复制路径必须剔除它（后端会 400）。
+  // 必须放在上面所有 agentForm 同步**之后**：这是浅拷贝，早一步取值会把
+  // engine_config / agent_type / capabilities 的改动全部丢掉。
+  const { is_system: _ignoredSystemFlag, ...agentPayload } = agentForm.value as Record<string, any>;
+
   try {
     if (isEditingAgent.value && selectedAgent.value) {
-      await agentApi.updateAgent(selectedAgent.value.id, agentForm.value);
+      await agentApi.updateAgent(selectedAgent.value.id, {
+        ...agentPayload,
+        // 更新时必须回传「当前值」而不是省略：后端字段缺省会取 False，
+        // 与系统级(True) 不等就判定成「想改 is_system」而 400——
+        // 结果管理员改任何一个非主助手的系统级智能体都保存失败。
+        is_system: selectedAgent.value.is_system,
+      } as any);
       showToast("更新成功", "success");
     } else if (isOnboardingFlow.value) {
       const response = await agentApi.createAgentOnboarding({
-        ...agentForm.value,
+        ...agentPayload,
         onboarding_key: onboardingKey.value,
       });
       onboardingAgent.value = response.data.agent;
@@ -1956,15 +2413,20 @@ const saveAgent = async (exitAfterSave = false) => {
       selectedAgent.value = response.data.agent;
       versionForm.value = { ...response.data.version };
       onboardingStep.value = "VERSION";
+      // 模板里可能有「模板作者能用、你无权用」的 MCP 工具，后端已剔除；要说清楚
+      const droppedFromTemplate = response.data.dropped_tool_refs || [];
+      const baseMessage = response.data.template_fallback
+        ? "智能体和 V1 草稿已创建，当前使用安全基础模板"
+        : "智能体和 V1 草稿已创建";
       showToast(
-        response.data.template_fallback
-          ? "智能体和 V1 草稿已创建，当前使用安全基础模板"
-          : "智能体和 V1 草稿已创建",
+        droppedFromTemplate.length
+          ? `${baseMessage}，已跳过 ${droppedFromTemplate.length} 个你无权使用的工具`
+          : baseMessage,
         response.data.template_fallback ? "info" : "success",
       );
       if (!exitAfterSave) return;
     } else {
-      await agentApi.createAgent(agentForm.value);
+      await agentApi.createAgent(agentPayload as any);
       showToast("创建成功", "success");
     }
     showAgentModal.value = false;
@@ -2074,7 +2536,14 @@ const continueAgentOnboarding = async (agent: AIAgent) => {
     engineConfigUI.value.dataset_ids = Array.isArray(agent.engine_config?.dataset_ids)
       ? agent.engine_config.dataset_ids.join(",")
       : "";
-    onboardingStep.value = agent.onboarding_step === "VERSION" ? "VERSION" : "RESOURCE";
+    // 三步向导都要能落位：副本从 BASIC 开始（要重新命名），
+    // 老数据可能停在 VERSION / RESOURCE
+    onboardingStep.value =
+      agent.onboarding_step === "BASIC"
+        ? "BASIC"
+        : agent.onboarding_step === "VERSION"
+          ? "VERSION"
+          : "RESOURCE";
     resetAgentNameCheckState();
     fetchTools();
     toolSearchQuery.value = "";
@@ -2717,7 +3186,7 @@ const hasToolMetadataDatasetBinding = (toolName: string) => {
 };
 
 const canEditVersion = computed(() => {
-  return selectedAgent.value?.is_editable !== false &&
+  return selectedAgent.value?.can_edit_versions !== false &&
          (!versionForm.value.id || versionForm.value.status === 'DRAFT');
 });
 
@@ -2820,11 +3289,16 @@ const getAgentTypeLabel = (agent: AIAgent) => {
   return '通用助手'
 }
 
-const getAgentTypeBadgeClass = (agent: AIAgent) => {
-  if (agent.agent_type === 'CHATBI') return 'border-violet-200 bg-violet-50 text-violet-700'
-  if (agent.agent_type === 'KNOWLEDGE_BASE') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  return 'border-slate-200 bg-slate-100 text-slate-700'
-}
+/**
+ * 类型徽标统一中性灰。
+ *
+ * 原先按类型上了蓝/紫/绿三套色，结果一张卡上「类型」「就绪度」「能力 chips」
+ * 各自带色，谁也不突出。卡片只需要一个颜色信号——就绪状态的圆点，
+ * 其余一律靠灰阶区分层次。
+ */
+const getAgentTypeBadgeClass = (_agent: AIAgent) =>
+  'bg-gray-100 text-gray-600'
+
 
 const isMainAgent = (agent: AIAgent | string) => {
   if (typeof agent === 'string') return agent === 'sys-agent-chat' || agent === 'main'
@@ -2846,7 +3320,15 @@ const formatReadinessMissing = (agent: AIAgent) =>
     .map((item) => READINESS_MISSING_LABELS[item] || item)
     .filter(Boolean)
 
-const getPrimaryCardAction = (agent: AIAgent): 'continue' | 'enable' | 'configure' | 'edit' => {
+const getPrimaryCardAction = (
+  agent: AIAgent,
+): 'continue' | 'enable' | 'configure' | 'edit' | 'frozen' | 'readonly' => {
+  // 审核中不冻开发：草稿照改、版本照建，只是**不能发布新配置**。
+  // 所以主按钮仍然是「配置与发布」，进去后发布按钮会是灰的。
+  // （早期这里直接返回 'frozen' 把入口锁死，等于要求用户提交申请后彻底停工。）
+  // 系统级且非所有者：内容连草稿都改不了，主按钮直接指向「复制一份」这条唯一出路。
+  // 所有者改为可进「配置与发布」改草稿，只是发布按钮会被屏蔽。
+  if (agent.is_system && agent.can_edit_versions === false) return 'readonly'
   if (agent.onboarding_step && agent.onboarding_step !== 'COMPLETE') return 'continue'
   if (!agent.is_enabled) return 'enable'
   if (agent.engine_type === 'RAGFLOW' || agent.engine_type === 'OPENCLAW') return 'edit'
@@ -2855,6 +3337,8 @@ const getPrimaryCardAction = (agent: AIAgent): 'continue' | 'enable' | 'configur
 
 const getPrimaryCardActionLabel = (agent: AIAgent) => {
   const action = getPrimaryCardAction(agent)
+  if (action === 'frozen') return '审核中'
+  if (action === 'readonly') return '复制一份'
   if (action === 'continue') return '继续配置'
   if (action === 'enable') return '启用'
   if (action === 'edit') return '编辑智能体'
@@ -2864,6 +3348,11 @@ const getPrimaryCardActionLabel = (agent: AIAgent) => {
 
 const runPrimaryCardAction = (agent: AIAgent) => {
   const action = getPrimaryCardAction(agent)
+  if (action === 'frozen') return
+  if (action === 'readonly') {
+    openDuplicateModal(agent)
+    return
+  }
   if (action === 'continue') {
     continueAgentOnboarding(agent)
     return
@@ -2937,29 +3426,56 @@ const clearAgentSelection = () => {
   selectedAgentIds.value = new Set()
 }
 const batchSetEnabled = async (enabled: boolean) => {
-  const targets = selectedAgents.value.filter(
-    (agent) => !isMainAgent(agent) && agent.is_editable !== false && Boolean(agent.is_enabled) !== enabled
-  )
-  if (!targets.length) {
-    showToast(enabled ? '所选智能体均已启用' : '所选智能体均已禁用', 'info')
+  if (!selectedAgents.value.length) {
+    // 「没选中」和「都已处于目标状态」是两件事，提示不能共用一句话
+    showToast('请先选择要操作的智能体', 'info')
     return
   }
-  try {
-    await Promise.all(
-      targets.map((agent) =>
-        agentApi.updateAgent(agent.id, {
-          ...agent,
-          is_enabled: enabled,
-        })
-      )
+  const pendingSkipped: AIAgent[] = []
+  const targets = selectedAgents.value.filter((agent) => {
+    if (isMainAgent(agent) || agent.is_editable === false) return false
+    if (Boolean(agent.is_enabled) === enabled) return false
+    // 审核中的智能体不能改元数据（后端 assert_not_frozen 会 409），
+    // 混在批量里会让整批失败，还连带已成功的那些不回滚
+    if (isPendingReview(agent)) {
+      pendingSkipped.push(agent)
+      return false
+    }
+    return true
+  })
+  if (!targets.length) {
+    showToast(
+      pendingSkipped.length
+        ? '所选智能体正在审核中，不能启用或禁用'
+        : enabled
+          ? '所选智能体均已启用'
+          : '所选智能体均已禁用',
+      'info'
     )
-    showToast(enabled ? `已启用 ${targets.length} 个智能体` : `已禁用 ${targets.length} 个智能体`, 'success')
-    clearAgentSelection()
-    await fetchAgents()
-  } catch (e) {
-    console.error(e)
-    showToast('批量更新失败', 'error')
+    return
   }
+  // 用 allSettled：部分成功时不能让界面停在旧状态，也不能把失败说成全部失败
+  const results = await Promise.allSettled(
+    targets.map((agent) =>
+      agentApi.updateAgent(agent.id, {
+        ...agent,
+        is_enabled: enabled,
+      })
+    )
+  )
+  const okCount = results.filter((r) => r.status === 'fulfilled').length
+  const failed = results.length - okCount
+  if (failed === 0) {
+    showToast(enabled ? `已启用 ${okCount} 个智能体` : `已禁用 ${okCount} 个智能体`, 'success')
+  } else {
+    showToast(`${okCount} 个更新成功，${failed} 个失败，请刷新后重试`, 'error')
+  }
+  if (pendingSkipped.length) {
+    showToast(`另有 ${pendingSkipped.length} 个审核中的智能体已跳过`, 'warning')
+  }
+  clearAgentSelection()
+  // 无论成败都刷新：否则部分成功的改动在界面上看不到
+  await fetchAgents()
 }
 
 const openCardMenuId = ref<string | null>(null)
@@ -2983,6 +3499,8 @@ const closeCardMenus = () => {
   openCardMenuId.value = null
   activeReadinessPopoverAgentId.value = null
   showCreateAgentMenu.value = false
+  // 列表视图的「更多」菜单也归这里统一关，避免滚动/点别处后残留
+  openRowMenuId.value = null
 }
 
 onMounted(() => {
@@ -2994,6 +3512,9 @@ onMounted(() => {
   fetchTools();
   const cached = localStorage.getItem("user_info");
   if (cached) userInfo.value = JSON.parse(cached);
+  void fetchPendingSystemCount();
+  void refreshShareCounts();
+  workspaceTab.value = resolveInitialTab();
   document.addEventListener('click', closeCardMenus);
 });
 
@@ -3044,74 +3565,133 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
 <template>
   <div class="space-y-4 sm:space-y-5">
-    <!-- Header：标题一行；筛选/操作在窄屏压缩为搜索 + 双列筛选 + 新建 -->
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-      <div class="flex items-center space-x-3">
+    <!-- 第 1 行：标题 + 主操作固定右上。主操作不再和筛选共用一行，
+         所以宽度再窄「新建智能体」也不会被单独挤到第二行。 -->
+    <div class="flex items-start justify-between gap-4">
+      <div class="flex min-w-0 flex-wrap items-center gap-2.5">
         <h1 class="shrink-0 whitespace-nowrap text-xl font-bold text-gray-900 sm:text-2xl">智能体中心</h1>
+        <span class="shrink-0 text-xs font-medium text-gray-500">共 {{ totalAgentCount }} 个</span>
+        <!-- 说明入口降到「附注」级别：无边框、灰色小图标，不再和主操作抢注意力 -->
         <button
           type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
+          class="hidden sm:flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 cursor-pointer"
           title="智能体调度与托管说明"
           @click="showHelp = true"
         >
-          <span class="text-sm font-bold">?</span>
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
         </button>
+        <!-- 不再带图标：它和「?」都是圆圈符号，并排会显得重复 -->
         <button
           v-if="!showAgentFlowGuide"
           type="button"
-          class="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50/80 px-2.5 py-1 text-xs font-medium text-blue-700 shadow-2xs transition-colors hover:bg-blue-100 cursor-pointer"
+          class="hidden sm:inline shrink-0 whitespace-nowrap text-xs font-medium text-gray-500 underline-offset-2 transition-colors hover:text-primary hover:underline cursor-pointer"
           title="重新展开智能体全流程指引"
           @click="restoreAgentFlowGuide"
         >
-          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <span class="whitespace-nowrap">显示指引</span>
+          显示指引
         </button>
       </div>
 
-      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
-        <div class="relative w-full sm:w-52 lg:w-56">
-          <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+      <div class="flex shrink-0 items-center gap-2">
+        <button
+          v-if="canReviewSystem"
+          type="button"
+          class="relative flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm transition-colors hover:border-primary/40 hover:text-primary"
+          title="查看待审核的「发布为系统级」申请"
+          @click="openSystemReview"
+        >
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+            />
+          </svg>
+          发布审核
+          <span
+            v-if="pendingSystemCount > 0"
+            class="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white"
+          >
+            {{ pendingSystemCount > 99 ? '99+' : pendingSystemCount }}
           </span>
-          <input
-            v-model="searchKeyword"
-            type="search"
-            placeholder="搜索智能体名称..."
-            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
-          />
-        </div>
+        </button>
 
-        <div class="grid grid-cols-2 gap-2 sm:contents">
-          <select
-            v-model="statusFilter"
-            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
-            title="按状态筛选"
+        <div v-has-perm="'element:agent:create'" class="relative" @click.stop>
+          <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
+            <button
+              type="button"
+              class="flex items-center gap-1.5 bg-primary px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark cursor-pointer"
+              @click="startAgentCreation"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              新建智能体
+            </button>
+            <button
+              type="button"
+              class="border-l border-white/25 bg-primary px-2 text-white transition-colors hover:bg-primary-dark cursor-pointer"
+              title="更多创建方式"
+              @click="showCreateAgentMenu = !showCreateAgentMenu"
+            >
+              <svg class="h-4 w-4 transition-transform" :class="{ 'rotate-180': showCreateAgentMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
+          <div
+            v-if="showCreateAgentMenu"
+            class="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-xl"
           >
-            <option value="all">状态：全部</option>
-            <option value="enabled">状态：已启用</option>
-            <option value="disabled">状态：已禁用</option>
-          </select>
-
-          <select
-            v-model="typeFilter"
-            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
-            title="按类型筛选"
-          >
-            <option value="all">类型：全部</option>
-            <option value="system">类型：系统内置</option>
-            <option value="custom">类型：自定义</option>
-            <option disabled>──────────</option>
-            <option value="GENERAL">智能体类型：通用助手</option>
-            <option value="CHATBI">智能体类型：ChatBI</option>
-            <option value="KNOWLEDGE_BASE">智能体类型：知识库助手</option>
-          </select>
+            <button
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              @click="showCreateAgentMenu = false; startAgentCreation()"
+            >
+              <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              空白新建
+            </button>
+            <button
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              @click="showCreateAgentMenu = false; router.push('/dashboard/scenario-templates')"
+            >
+              <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h10M4 17h7" />
+              </svg>
+              从场景模板交付
+            </button>
+          </div>
         </div>
+      </div>
+    </div>
 
-        <div v-if="!isMobile" class="flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+    <!-- 搜索、筛选与两个横幅只服务于「智能体列表」；分享视图有自己的列表，
+         留着它们会让「找到 N 个智能体」这种文案指向一个完全不相关的清单 -->
+    <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
+    <!-- 第 2 行：搜索独占一栏，视图切换与「筛选」跟在后面 -->
+    <div class="flex flex-wrap items-center gap-2.5">
+      <div class="relative min-w-[220px] flex-1">
+        <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+          <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </span>
+        <input
+          v-model="searchKeyword"
+          type="search"
+          placeholder="搜索名称或标识符…"
+          class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
+        />
+      </div>
+
+      <div class="flex shrink-0 items-center gap-2">
+        <div v-if="!isMobile" class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
           <button
             type="button"
             class="rounded-md px-2 py-1.5 text-xs font-medium transition-all"
@@ -3145,55 +3725,155 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </button>
         </div>
 
-        <div v-has-perm="'element:agent:create'" class="relative w-full shrink-0 sm:w-auto" @click.stop>
-          <div class="flex w-full items-stretch overflow-hidden rounded-lg shadow-sm sm:w-auto">
-            <button
-              type="button"
-              class="flex flex-1 items-center justify-center gap-2 bg-primary px-4 py-2 text-sm font-medium text-white transition-all hover:bg-primary-dark active:scale-[0.98] sm:flex-none"
-              @click="startAgentCreation()"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              新建智能体
-            </button>
-            <button
-              type="button"
-              class="border-l border-primary-dark/30 bg-primary px-2 text-white transition-colors hover:bg-primary-dark"
-              title="更多创建方式"
-              @click="showCreateAgentMenu = !showCreateAgentMenu"
-            >
-              <svg class="h-4 w-4 transition-transform" :class="{ 'rotate-180': showCreateAgentMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-          </div>
-          <div
-            v-if="showCreateAgentMenu"
-            class="absolute right-0 z-20 mt-1.5 w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
+        <!-- 高级筛选：状态/类型/引擎/就绪度/来源原先散在工具栏与 7 个 tab 里，
+             现在收进一个面板，避免同一维度两处入口 -->
+        <div class="relative" @click.stop>
+          <button
+            type="button"
+            class="flex items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-sm shadow-sm transition-colors cursor-pointer"
+            :class="activeFilterCount > 0 ? 'border-primary text-primary' : 'border-gray-300 text-gray-700 hover:border-primary/40 hover:text-primary'"
+            title="按状态、类型、引擎、就绪度、来源筛选"
+            @click="filterPanelOpen = !filterPanelOpen"
           >
-            <button
-              type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-              @click="showCreateAgentMenu = false; startAgentCreation()"
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+            筛选
+            <span
+              v-if="activeFilterCount > 0"
+              class="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white"
             >
-              <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              空白新建
-            </button>
-            <button
-              type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-              @click="showCreateAgentMenu = false; router.push('/dashboard/scenario-templates')"
-            >
-              <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h10M4 17h7" />
-              </svg>
-              从场景模板交付
-            </button>
+              {{ activeFilterCount }}
+            </span>
+          </button>
+
+          <div v-if="filterPanelOpen" class="fixed inset-0 z-30" @click="filterPanelOpen = false"></div>
+          <div
+            v-if="filterPanelOpen"
+            class="absolute right-0 top-full z-40 mt-1.5 w-[560px] max-w-[calc(100vw-2rem)] rounded-xl border border-gray-100 bg-white p-4 shadow-2xl"
+          >
+            <div class="mb-3 flex items-center justify-between">
+              <span class="text-sm font-bold text-gray-800">高级筛选</span>
+              <button type="button" class="cursor-pointer rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" @click="filterPanelOpen = false">
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">状态</span>
+                <select v-model="statusFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option value="enabled">已启用</option>
+                  <option value="disabled">已禁用</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">类型</span>
+                <select v-model="typeFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option value="GENERAL">通用助手</option>
+                  <option value="CHATBI">ChatBI</option>
+                  <option value="KNOWLEDGE_BASE">知识库助手</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">引擎</span>
+                <select v-model="engineFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option value="LOCAL">LOCAL</option>
+                  <option value="RAGFLOW">RAGFlow</option>
+                  <option value="OPENCLAW">OpenClaw</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">就绪度</span>
+                <select v-model="readinessFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option value="ready">已就绪</option>
+                  <option value="unready">待完善</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">来源</span>
+                <select v-model="sourceFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option value="system">系统级</option>
+                  <option value="custom">自定义</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">权属人</span>
+                <select v-model="ownerFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option value="orphan">权属人已停用</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
+              <button type="button" class="cursor-pointer text-xs text-gray-500 hover:text-gray-700" @click="clearAllAgentFilters">
+                重置
+              </button>
+              <button
+                type="button"
+                class="cursor-pointer rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-dark"
+                @click="filterPanelOpen = false"
+              >
+                应用
+              </button>
+            </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 第 3 行：条件藏在面板里，收起后必须能看见筛了什么，也避免「筛选了但忘了」 -->
+    <div v-if="activeFilterChips.length" class="flex flex-wrap items-center gap-2 text-xs">
+      <span class="text-gray-500">已筛选：</span>
+      <button
+        v-for="chip in activeFilterChips"
+        :key="chip.key"
+        type="button"
+        class="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 font-medium text-blue-700 transition-colors hover:bg-blue-100 cursor-pointer"
+        :title="`移除「${chip.label}」`"
+        @click="chip.clear()"
+      >
+        {{ chip.label }}
+        <span class="text-blue-400">✕</span>
+      </button>
+      <button type="button" class="cursor-pointer text-gray-500 underline hover:text-gray-700" @click="clearAllAgentFilters">
+        清除全部
+      </button>
+      <span class="ml-auto text-gray-500">找到 {{ filteredAgents.length }} 个智能体</span>
+    </div>
+
+    <!-- 孤儿智能体提示：权属人已停用，没人能编辑。只在管理员视图且确实存在时渲染。 -->
+    <div
+      v-if="isAdminViewer && orphanAgents.length"
+      class="rounded-xl border border-violet-200 bg-violet-50/80 px-4 py-3"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex min-w-0 items-center gap-2">
+          <svg class="h-4 w-4 shrink-0 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-2.99l-6.93-12a2 2 0 00-3.48 0l-6.93 12A2 2 0 005.07 19z" />
+          </svg>
+          <span class="text-sm font-medium text-violet-900">
+            {{ orphanAgents.length }} 个智能体的权属人已停用
+          </span>
+          <span class="hidden truncate text-xs text-violet-700 sm:inline">
+            已无人能编辑，建议转交给仍在岗的同事
+          </span>
+        </div>
+        <button
+          type="button"
+          class="shrink-0 cursor-pointer rounded-md px-2 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
+          @click="ownerFilter = 'orphan'"
+        >
+          只看这些
+        </button>
       </div>
     </div>
 
@@ -3269,30 +3949,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </ul>
     </div>
 
-    <!-- 分段快捷筛选 Tab 栏 (Segmented Filter Tabs) -->
-    <div class="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none" role="tablist" aria-label="智能体分类筛选">
-      <button
-        v-for="tab in segmentTabs"
-        :key="tab.key"
-        type="button"
-        role="tab"
-        :aria-selected="segmentedFilter === tab.key"
-        @click="segmentedFilter = tab.key"
-        class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer border"
-        :class="segmentedFilter === tab.key
-          ? 'bg-primary text-white border-primary shadow-xs'
-          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:text-gray-900'"
-      >
-        <span>{{ tab.label }}</span>
-        <span
-          class="px-1.5 py-0.5 rounded-full text-[10px] tabular-nums font-mono font-normal"
-          :class="segmentedFilter === tab.key ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'"
-        >
-          {{ segmentCounts[tab.countKey] ?? 0 }}
-        </span>
-      </button>
-    </div>
-
     <!-- 智能体 5 步全流程指引横幅 -->
     <AgentFlowGuideBanner
       v-if="showAgentFlowGuide"
@@ -3301,6 +3957,48 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @dismiss="dismissAgentFlowGuide"
     />
 
+    <!-- 三个平级视图：我的智能体 / 分享给我 / 我分享的。
+         分享做成页面级视图而不是弹窗，否则「对方在哪看到」只能靠站内信猜。 -->
+    <div
+      class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2"
+      role="tablist"
+      aria-label="智能体视图"
+    >
+      <button
+        v-for="tab in workspaceTabs"
+        :key="tab.key"
+        type="button"
+        role="tab"
+        :aria-selected="workspaceTab === tab.key"
+        class="relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+        :class="workspaceTab === tab.key ? 'bg-primary/10 text-primary' : 'text-gray-600 hover:bg-gray-50'"
+        @click="switchWorkspaceTab(tab.key)"
+      >
+        {{ tab.label }}
+        <span
+          v-if="tab.badge > 0"
+          class="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white"
+        >
+          {{ tab.badge > 99 ? '99+' : tab.badge }}
+        </span>
+      </button>
+    </div>
+
+    <AgentShareReceivedPanel
+      v-if="workspaceTab === 'received'"
+      @updated="refreshShareCounts"
+      @accepted="handleShareAccepted"
+    />
+    <AgentShareSentPanel
+      v-else-if="workspaceTab === 'sent'"
+      @updated="refreshShareCounts"
+    />
+
+    </template>
+
+    <!-- 列表区：管理员在「全部 / 我的智能体」两个视图共用，
+         差异只体现在 filteredAgents 的归属过滤上 -->
+    <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
     <div
       v-if="batchMode && selectedAgentIds.size > 0"
       class="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white/95 px-4 py-2.5 shadow-md backdrop-blur"
@@ -3358,7 +4056,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       v-else-if="filteredAgents.length === 0"
       class="py-16 text-center bg-white rounded-xl border border-dashed border-gray-200"
     >
-      <p class="text-gray-500">没有找到匹配的智能体</p>
+      <p class="max-w-xl mx-auto text-gray-500">{{ emptyStateMessage }}</p>
       <button
         @click="startAgentCreation()"
         class="mt-4 text-primary hover:underline"
@@ -3373,9 +4071,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <div
           v-for="agent in filteredAgents"
           :key="agent.id"
-          class="bg-white rounded-xl shadow-sm border hover:shadow-md transition-all duration-200 flex flex-col overflow-hidden group relative"
+          class="bg-white rounded-xl shadow-sm border hover:shadow-md transition-all duration-200 flex flex-col group relative"
           :class="[
             !agent.is_enabled ? 'bg-gray-100/80 grayscale opacity-60' : '',
+            isPendingReview(agent) ? 'ring-1 ring-amber-200 bg-amber-50/20' : '',
             batchMode && selectedAgentIds.has(agent.id) ? 'ring-2 ring-blue-400 border-blue-300' : '',
             getAgentColorTheme(agent).border,
             canDragAgents && !batchMode ? 'cursor-grab active:cursor-grabbing' : '',
@@ -3416,7 +4115,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </svg>
         </div>
         <!-- Card Header Accent -->
-        <div class="h-1.5 w-full" :class="getAgentColorTheme(agent).accent"></div>
+        <div class="h-1.5 w-full rounded-t-xl" :class="getAgentColorTheme(agent).accent"></div>
         <!-- Card Header: title left, enable switch right -->
         <div class="p-5 flex items-start justify-between gap-3" :class="batchMode ? 'pl-10' : ''">
           <div class="flex items-center space-x-3 min-w-0 flex-1">
@@ -3435,7 +4134,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <div class="flex items-center gap-1.5 min-w-0">
                 <h3
                   class="font-bold text-gray-900 line-clamp-1"
-                  :title="agent.display_name"
+                  :title="`${agent.display_name}（${agent.name}）`"
                 >
                   {{ agent.display_name }}
                 </h3>
@@ -3451,21 +4150,16 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </div>
               <div class="mt-1.5 flex items-center flex-wrap gap-1 text-[11px] text-gray-500">
                 <span
-                  class="shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] font-semibold tracking-wide"
+                  class="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium tracking-wide"
                   :class="getAgentTypeBadgeClass(agent)"
-                >{{ getAgentTypeLabel(agent) }}</span>
-                <span
-                  class="shrink-0 px-1 py-0.5 rounded text-[10px] font-medium border border-transparent bg-gray-50 text-gray-500"
-                  :title="`执行引擎：${getEngineShortLabel(agent)}`"
-                >{{ getEngineShortLabel(agent) }}</span>
+                  :title="`智能体类型：${getAgentTypeLabel(agent)}；执行引擎：${getEngineShortLabel(agent)}`"
+                >{{ getAgentTypeLabel(agent) }} · {{ getEngineShortLabel(agent) }}</span>
                 
-                <!-- 就绪度徽章 -->
+                <!-- 就绪度：整张卡唯一的颜色信号就是这个小圆点 -->
                 <button
                   type="button"
-                  class="shrink-0 px-1.5 py-0.5 rounded font-medium border text-left flex items-center gap-1 transition-colors"
-                  :class="agent.readiness_ready
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-100 cursor-default'
-                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs'"
+                  class="shrink-0 rounded px-1.5 py-0.5 text-left flex items-center gap-1 bg-gray-100 text-gray-600 font-medium transition-colors"
+                  :class="agent.readiness_ready ? 'cursor-default' : 'hover:bg-gray-200 cursor-pointer'"
                   :title="agent.readiness_ready
                     ? '已满足运行和委派条件'
                     : '点击查看就绪度诊断与检查项'"
@@ -3476,20 +4170,20 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 </button>
                 <span
                   v-if="!agent.is_enabled"
-                  class="shrink-0 px-1.5 py-0.5 rounded font-medium bg-gray-200/80 text-gray-500 border border-gray-300"
+                  class="shrink-0 px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-500"
                 >已禁用</span>
               </div>
-              <p class="mt-1 font-mono text-[10px] text-gray-400 truncate" :title="agent.name">{{ agent.name }}</p>
             </div>
           </div>
 
           <div class="shrink-0 pt-0.5" @click.stop>
             <button
               v-if="agent.is_editable !== false && !isMainAgent(agent)"
-              class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+              class="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               :class="agent.is_enabled ? 'bg-green-500' : 'bg-gray-200'"
+              :disabled="isPendingReview(agent)"
               @click.stop="toggleAgentStatus(agent)"
-              :title="agent.is_enabled ? '已启用，点击禁用' : '已禁用，点击启用'"
+              :title="isPendingReview(agent) ? '审核中不能改动启用状态（属于元数据）；撤回申请后可改' : agent.is_enabled ? '已启用，点击禁用' : '已禁用，点击启用'"
             >
               <span class="sr-only">Toggle Status</span>
               <span
@@ -3586,10 +4280,11 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <!-- Description -->
         <div class="px-5 pb-3 flex-1 flex flex-col">
           <p
-            class="text-sm text-gray-600 leading-relaxed line-clamp-2 min-h-[2.5rem]"
-            :title="agent.description || undefined"
+            v-if="agent.description"
+            class="text-sm text-gray-600 leading-relaxed line-clamp-2"
+            :title="agent.description"
           >
-            {{ agent.description || '暂无描述' }}
+            {{ agent.description }}
           </p>
 
           <div
@@ -3606,42 +4301,49 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           >
             <template v-if="hasCapabilitySummary(agent)">
               <span
-                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-slate-50 text-slate-600 border border-slate-100"
+                class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600"
                 :title="`已配置 ${agent.tool_count ?? 0} 个内置/API 工具`"
               >
-                <span class="text-slate-400 font-normal">工具</span>
-                <span class="tabular-nums text-slate-800">{{ agent.tool_count ?? 0 }}</span>
+                <span class="font-normal text-gray-400">工具</span>
+                <span class="tabular-nums font-medium">{{ agent.tool_count ?? 0 }}</span>
               </span>
               <span
-                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-violet-50 text-violet-700 border border-violet-100"
+                class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600"
                 :title="`已配置 ${agent.mcp_count ?? 0} 个 MCP 服务`"
               >
-                <span class="text-violet-400 font-normal">MCP</span>
-                <span class="tabular-nums">{{ agent.mcp_count ?? 0 }}</span>
+                <span class="font-normal text-gray-400">MCP</span>
+                <span class="tabular-nums font-medium">{{ agent.mcp_count ?? 0 }}</span>
               </span>
               <span
-                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-100"
+                class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600"
                 :title="agent.skills_custom ? `已自定义 ${agent.skill_count ?? 0} 个技能` : `使用全部公共技能（${agent.skill_count ?? 0} 个，另含个人技能）`"
               >
-                <span class="text-amber-400 font-normal">技能</span>
-                <span class="tabular-nums">{{ formatSkillCountLabel(agent) }}</span>
+                <span class="font-normal text-gray-400">技能</span>
+                <span class="tabular-nums font-medium">{{ formatSkillCountLabel(agent) }}</span>
               </span>
             </template>
             <span
               v-if="agent.metadata_dataset_count != null && agent.metadata_dataset_count > 0"
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-cyan-50 text-cyan-700 border border-cyan-100"
+              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600"
               :title="`已绑定 ${agent.metadata_dataset_count} 个元数据集`"
             >
-              <span class="text-cyan-400 font-normal">数据集</span>
-              <span class="tabular-nums">{{ agent.metadata_dataset_count }}</span>
+              <span class="font-normal text-gray-400">数据集</span>
+              <span class="tabular-nums font-medium">{{ agent.metadata_dataset_count }}</span>
             </span>
             <span
               v-if="agent.knowledge_base_count != null && agent.knowledge_base_count > 0"
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100"
+              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600"
               :title="`已绑定 ${agent.knowledge_base_count} 个知识库`"
             >
-              <span class="text-emerald-400 font-normal">知识库</span>
-              <span class="tabular-nums">{{ agent.knowledge_base_count }}</span>
+              <span class="font-normal text-gray-400">知识库</span>
+              <span class="tabular-nums font-medium">{{ agent.knowledge_base_count }}</span>
+            </span>
+            <span
+              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600"
+              :title="`累计调用 ${agent.execution_count ?? 0} 次`"
+            >
+              <span class="tabular-nums font-medium">{{ agent.execution_count ?? 0 }}</span>
+              <span class="font-normal text-gray-400">次调用</span>
             </span>
           </div>
           <div
@@ -3651,14 +4353,27 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             尚未发布版本
           </div>
 
-          <div
-            class="mt-3 flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400 opacity-70 group-hover:opacity-100 transition-opacity"
+          <!-- 审核中：显式冻结条（对齐原型），点它直接看申请进度 -->
+          <button
+            v-if="isPendingReview(agent)"
+            type="button"
+            class="mt-3 flex w-full items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-left text-[11px] font-medium text-amber-800 transition-colors hover:bg-amber-100"
+            :title="`${pendingReviewHint(agent)}；点这里查看申请进度`"
+            @click.stop="openSystemHistory(agent)"
           >
-            <span title="创建者">{{ agent.created_by || '未知' }}</span>
-            <span class="text-gray-300">·</span>
-            <span title="最后更新">更新于 {{ formatDate(agent.updated_at) }}</span>
-            <span class="text-gray-300">·</span>
-            <span title="调用次数">调用 {{ agent.execution_count ?? 0 }} 次</span>
+            <span class="shrink-0 text-amber-500">❄</span>
+            <span class="truncate">{{ pendingReviewHint(agent) }}</span>
+          </button>
+
+          <!-- 系统级基线说明：普通用户最容易误会「系统级 = 我什么都动不了」，
+               或者反过来「我能像以前一样直接发布」。一行字把边界说清楚。 -->
+          <div
+            v-if="agent.is_system && !isPendingReview(agent) && !isAdminViewer"
+            class="mt-3 flex w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-600"
+            :title="systemBaselineHint(agent)"
+          >
+            <span class="shrink-0 text-slate-400">🛡</span>
+            <span class="truncate">{{ systemBaselineHint(agent) }}</span>
           </div>
         </div>
 
@@ -3667,18 +4382,28 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           class="bg-gray-50 px-4 py-3 border-t border-gray-100 flex items-center justify-between gap-2 group-hover:bg-blue-50/30 transition-colors"
           @click.stop
         >
-          <!-- 外置快捷预览对话按钮 -->
-          <button
-            type="button"
-            @click.stop="openPreview(agent)"
-            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-700 shadow-2xs hover:bg-blue-50 hover:text-primary hover:border-blue-200 transition-all cursor-pointer active:scale-95"
-            title="快速预览对话"
-          >
-            <ChatBubbleLeftRightIcon class="w-3.5 h-3.5 text-primary" />
-            <span>预览对话</span>
-          </button>
+          <!-- 归属信息：管理员需要一眼看出是谁建的、多久没动过 -->
+          <div class="flex min-w-0 flex-col gap-0.5 leading-tight">
+            <span
+              v-if="isAdminViewer && agent.created_by_name"
+              class="truncate text-[11px] text-gray-500"
+              :title="`创建者：${agent.created_by_name}`"
+            >创建者：{{ agent.created_by_name }}</span>
+            <span class="truncate text-[11px] text-gray-400" :title="`最后更新：${formatDate(agent.updated_at)}`">
+              更新于 {{ formatDate(agent.updated_at) }}
+            </span>
+          </div>
 
           <div class="flex items-center gap-2">
+            <!-- 外置快捷预览对话：保留在动作区，收成图标避免和归属信息抢空间 -->
+            <button
+              type="button"
+              @click.stop="openPreview(agent)"
+              class="rounded-lg border border-transparent p-1.5 text-gray-400 transition-colors hover:border-gray-200 hover:bg-white hover:text-primary cursor-pointer"
+              title="预览对话"
+            >
+              <ChatBubbleLeftRightIcon class="w-4 h-4" />
+            </button>
             <div class="relative">
               <button
                 @click="toggleCardMenu(agent.id, $event)"
@@ -3701,7 +4426,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   预览对话
                 </button>
                 <button
-                  v-if="agent.is_editable !== false"
+                  v-if="agent.is_editable !== false && !isPendingReview(agent)"
                   v-has-perm="'element:agent:edit'"
                   @click="closeCardMenus(); openAgentModal(agent)"
                   class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
@@ -3709,7 +4434,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   <PencilSquareIcon class="h-4 w-4 text-gray-400" />
                   编辑智能体
                 </button>
-                <!-- 复制不修改源智能体，因此不受 is_editable 限制（系统智能体也可作为模板） -->
+                <!-- 复制不修改源智能体，因此在可编辑性之外单独判定：列表对普通用户只含自建智能体，
+                     后端对「别人创建的系统智能体」另有 403 兜底 -->
                 <button
                   v-has-perm="'element:agent:create'"
                   @click="openDuplicateModal(agent)"
@@ -3726,7 +4452,97 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   <ClockIcon class="h-4 w-4 text-gray-400" />
                   历史记录
                 </button>
-                <template v-if="!agent.is_system && !isMainAgent(agent) && agent.is_editable !== false">
+
+                <!-- 分享：把自己的智能体**发一份副本**给同事（不是授权共用）。
+                     系统级智能体不提供分享——它的可用范围由管理员统一授权治理，
+                     所有者若能自己往外发副本，等于绕开这套治理。 -->
+                <button
+                  v-if="canShareAgent(agent)"
+                  @click="closeCardMenus(); openShare(agent)"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+                >
+                  <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342A6.002 6.002 0 0014 18a6 6 0 100-12 6.002 6.002 0 00-5.316 4.658L4 13l4.684.342z" />
+                  </svg>
+                  分享给同事
+                </button>
+
+                <!-- 权属人变更：所有者离职/转岗后智能体不该变成没人能编辑的孤儿。
+                     主助手是系统固定入口，没有「归谁」的概念，不提供该入口。 -->
+                <button
+                  v-if="canTransferOwner(agent)"
+                  @click="openTransferOwner(agent)"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+                >
+                  <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                  变更权属人
+                </button>
+
+                <!-- 系统级生命周期：发布 / 申请 / 撤回 / 下架 / 发布历史。
+                     状态变化不走编辑表单，保证每次上架下架都有事件可查。 -->
+                <template v-if="systemCardAction(agent) || canViewSystemHistory(agent)">
+                  <div class="my-1 border-t border-gray-100"></div>
+                  <button
+                    v-if="systemCardAction(agent) === 'publish'"
+                    @click="openSystemPublish(agent, 'publish')"
+                    class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+                  >
+                    <svg class="h-4 w-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    发布为系统级
+                  </button>
+                  <button
+                    v-if="systemCardAction(agent) === 'apply'"
+                    @click="openSystemPublish(agent, 'apply')"
+                    class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+                  >
+                    <svg class="h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    </svg>
+                    申请发布为系统级
+                  </button>
+                  <button
+                    v-if="systemCardAction(agent) === 'cancel'"
+                    @click="cancelSystemRequest(agent)"
+                    class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-amber-700 transition-colors hover:bg-amber-50 cursor-pointer"
+                  >
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                    </svg>
+                    撤回发布申请
+                  </button>
+                  <button
+                    v-if="systemCardAction(agent) === 'unpublish'"
+                    @click="openSystemUnpublish(agent)"
+                    class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-red-600 transition-colors hover:bg-red-50 cursor-pointer"
+                  >
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    下架（取消系统级）
+                  </button>
+                  <button
+                    v-if="canViewSystemHistory(agent)"
+                    @click="openSystemHistory(agent)"
+                    class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+                  >
+                    <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    </svg>
+                    发布历史
+                  </button>
+                </template>
+                <template
+                  v-if="
+                    !agent.is_system &&
+                    !isMainAgent(agent) &&
+                    agent.is_editable !== false &&
+                    !isPendingReview(agent)
+                  "
+                >
                   <div class="my-1 border-t border-gray-100"></div>
                   <button
                     v-has-perm="'element:agent:delete'"
@@ -3742,13 +4558,23 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
             <button
               type="button"
+              :disabled="getPrimaryCardAction(agent) === 'frozen'"
               @click.stop="runPrimaryCardAction(agent)"
-              class="px-3 py-1.5 text-white text-xs font-medium rounded-lg shadow-sm transition-colors flex items-center cursor-pointer"
+              class="px-3 py-1.5 text-xs font-medium rounded-lg shadow-sm transition-colors flex items-center"
               :class="{
-                'bg-amber-500 hover:bg-amber-600': getPrimaryCardAction(agent) === 'continue' || (getPrimaryCardAction(agent) === 'configure' && !agent.readiness_ready),
-                'bg-emerald-500 hover:bg-emerald-600': getPrimaryCardAction(agent) === 'enable',
-                'bg-primary hover:bg-primary-dark': getPrimaryCardAction(agent) === 'edit' || (getPrimaryCardAction(agent) === 'configure' && agent.readiness_ready),
+                'bg-amber-500 hover:bg-amber-600 text-white cursor-pointer': getPrimaryCardAction(agent) === 'continue' || (getPrimaryCardAction(agent) === 'configure' && !agent.readiness_ready),
+                'bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer': getPrimaryCardAction(agent) === 'enable',
+                'bg-primary hover:bg-primary-dark text-white cursor-pointer': getPrimaryCardAction(agent) === 'edit' || (getPrimaryCardAction(agent) === 'configure' && agent.readiness_ready),
+                'bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed': getPrimaryCardAction(agent) === 'frozen',
+                'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 cursor-pointer': getPrimaryCardAction(agent) === 'readonly',
               }"
+              :title="
+                getPrimaryCardAction(agent) === 'frozen'
+                  ? '审核中不能发布新配置；可继续改草稿并调试'
+                  : getPrimaryCardAction(agent) === 'readonly'
+                    ? '系统级智能体由管理员维护，内容只读；改动请复制一份继续开发'
+                    : undefined
+              "
             >
               {{ getPrimaryCardActionLabel(agent) }}
             </button>
@@ -3827,6 +4653,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                       <span v-if="!agent.is_enabled" class="ml-1.5 text-[10px] text-gray-400 font-normal underline decoration-gray-200">已禁用</span>
                     </span>
                     <span class="text-[10px] text-gray-400 font-mono line-clamp-1">{{ agent.description || agent.name }}</span>
+                    <span v-if="isAdminViewer && agent.created_by_name" class="text-[10px] text-gray-400">
+                      创建者：{{ agent.created_by_name }}
+                    </span>
                   </div>
                 </td>
                 <td class="w-36 min-w-[9rem] px-6 py-4 hidden md:table-cell">
@@ -3845,26 +4674,26 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <td class="px-6 py-4 hidden lg:table-cell">
                   <div v-if="showCapabilityChips(agent)" class="flex items-center flex-wrap gap-1">
                     <template v-if="hasCapabilitySummary(agent)">
-                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-50 text-slate-600 border border-slate-100 tabular-nums" title="工具">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600 tabular-nums" title="工具">
                         工具 {{ agent.tool_count ?? 0 }}
                       </span>
-                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-700 border border-violet-100 tabular-nums" title="MCP">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600 tabular-nums" title="MCP">
                         MCP {{ agent.mcp_count ?? 0 }}
                       </span>
-                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-100 tabular-nums" title="技能">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600 tabular-nums" title="技能">
                         技能 {{ formatSkillCountLabel(agent) }}
                       </span>
                     </template>
                     <span
                       v-if="agent.metadata_dataset_count != null && agent.metadata_dataset_count > 0"
-                      class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-50 text-cyan-700 border border-cyan-100 tabular-nums"
+                      class="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600 tabular-nums"
                       title="元数据集"
                     >
                       数据集 {{ agent.metadata_dataset_count }}
                     </span>
                     <span
                       v-if="agent.knowledge_base_count != null && agent.knowledge_base_count > 0"
-                      class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100 tabular-nums"
+                      class="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600 tabular-nums"
                       title="知识库"
                     >
                       知识库 {{ agent.knowledge_base_count }}
@@ -3892,14 +4721,23 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   <div class="flex items-center justify-end gap-0.5">
                     <button
                       type="button"
+                      :disabled="getPrimaryCardAction(agent) === 'frozen'"
                       @click.stop="runPrimaryCardAction(agent)"
-                      class="inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1.5 text-xs font-medium text-white shadow-sm"
+                      class="inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1.5 text-xs font-medium shadow-sm"
                       :class="{
-                        'bg-amber-500 hover:bg-amber-600': getPrimaryCardAction(agent) === 'continue' || (getPrimaryCardAction(agent) === 'configure' && !agent.readiness_ready),
-                        'bg-emerald-500 hover:bg-emerald-600': getPrimaryCardAction(agent) === 'enable',
-                        'bg-primary hover:bg-primary-dark': getPrimaryCardAction(agent) === 'edit' || (getPrimaryCardAction(agent) === 'configure' && agent.readiness_ready),
+                        'bg-amber-500 hover:bg-amber-600 text-white': getPrimaryCardAction(agent) === 'continue' || (getPrimaryCardAction(agent) === 'configure' && !agent.readiness_ready),
+                        'bg-emerald-500 hover:bg-emerald-600 text-white': getPrimaryCardAction(agent) === 'enable',
+                        'bg-primary hover:bg-primary-dark text-white': getPrimaryCardAction(agent) === 'edit' || (getPrimaryCardAction(agent) === 'configure' && agent.readiness_ready),
+                        'bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed': getPrimaryCardAction(agent) === 'frozen',
+                        'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50': getPrimaryCardAction(agent) === 'readonly',
                       }"
-                      :title="getPrimaryCardActionLabel(agent)"
+                      :title="
+                        getPrimaryCardAction(agent) === 'frozen'
+                          ? '审核中不能发布新配置；可继续改草稿并调试'
+                          : getPrimaryCardAction(agent) === 'readonly'
+                            ? '系统级智能体由管理员维护，内容只读；改动请复制一份继续开发'
+                            : getPrimaryCardActionLabel(agent)
+                      "
                     >
                       {{ getPrimaryCardActionLabel(agent) }}
                     </button>
@@ -3912,7 +4750,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                       <ChatBubbleLeftRightIcon class="w-3.5 h-3.5 text-primary" />
                       <span>预览</span>
                     </button>
-                    <button v-has-perm="'element:agent:edit'" v-if="agent.is_editable !== false" @click.stop="openAgentModal(agent)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="编辑智能体">
+                    <button v-has-perm="'element:agent:edit'" v-if="agent.is_editable !== false" :disabled="isPendingReview(agent)" @click.stop="openAgentModal(agent)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-gray-400" :title="isPendingReview(agent) ? '审核中不能改元数据；能力配置可在「配置与发布」里继续改草稿' : '编辑智能体'">
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
@@ -3929,7 +4767,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     </button>
                     <button
                       v-has-perm="'element:agent:delete'"
-                      v-if="!agent.is_system && !isMainAgent(agent) && agent.is_editable !== false"
+                      v-if="
+                        !agent.is_system &&
+                        !isMainAgent(agent) &&
+                        agent.is_editable !== false &&
+                        !isPendingReview(agent)
+                      "
                       @click.stop="handleDeleteAgent(agent)"
                       class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100"
                       title="删除"
@@ -3938,6 +4781,82 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
                     </button>
+                    <!-- 列表视图同样要能分享 / 走系统级流程：这些入口原先只在网格卡片菜单里，
+                         而 viewMode 会存 localStorage，用过列表的用户再也找不到它们 -->
+                    <div class="relative">
+                      <button
+                        type="button"
+                        class="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100"
+                        title="更多操作"
+                        @click.stop="toggleRowMenu(agent.id, $event)"
+                      >
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01" />
+                        </svg>
+                      </button>
+                      <div
+                        v-if="openRowMenuId === agent.id"
+                        class="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-xl"
+                        @click.stop
+                      >
+                        <button
+                          v-if="canShareAgent(agent)"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openShare(agent)"
+                        >
+                          分享给同事
+                        </button>
+                        <button
+                          v-if="canTransferOwner(agent)"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openTransferOwner(agent)"
+                        >
+                          变更权属人
+                        </button>
+                        <button
+                          v-if="systemCardAction(agent) === 'publish'"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openSystemPublish(agent, 'publish')"
+                        >
+                          发布为系统级
+                        </button>
+                        <button
+                          v-if="systemCardAction(agent) === 'apply'"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openSystemPublish(agent, 'apply')"
+                        >
+                          申请发布为系统级
+                        </button>
+                        <button
+                          v-if="systemCardAction(agent) === 'cancel'"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; cancelSystemRequest(agent)"
+                        >
+                          撤回上线申请
+                        </button>
+                        <button
+                          v-if="systemCardAction(agent) === 'unpublish'"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openSystemUnpublish(agent)"
+                        >
+                          下架（取消系统级）
+                        </button>
+                        <button
+                          v-if="canViewSystemHistory(agent)"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openSystemHistory(agent)"
+                        >
+                          发布历史
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </td>
               </tr>
@@ -3952,6 +4871,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :is-open="showVersionsDrawer"
       :agent="selectedAgent"
       @close="showVersionsDrawer = false"
+      @update="onSystemChanged"
       @edit-version="handleDrawerEditVersion"
       @create-version="handleDrawerCreateVersion"
       @publish-version="handleDrawerPublishVersion"
@@ -4059,86 +4979,41 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
 
         <div v-if="!isOnboardingFlow || onboardingStep === 'BASIC'" class="space-y-4">
-          <!-- 系统智能体独立设置行 (仅管理员可见) -->
+          <!-- 系统级不在这里切换：只能走「发布为系统级」或提交申请审核，
+               每次上架/下架/配置变更都会留事件（见 AgentSystemPublishModal / 发布历史） -->
           <div
-            v-if="userInfo?.role === 'admin'"
-            class="flex items-start justify-between gap-4 rounded-xl border p-4 transition-all"
-            :class="agentForm.is_system
-              ? 'border-blue-200 bg-blue-50/50 shadow-sm ring-1 ring-blue-500/10'
-              : 'border-gray-200 bg-gray-50/70'"
+            v-if="selectedAgent && selectedAgent.is_system"
+            class="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3"
           >
-            <div class="flex items-start gap-3">
-              <div
-                class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors"
-                :class="agentForm.is_system
-                  ? 'border-blue-200 bg-white text-blue-600 shadow-sm'
-                  : 'border-gray-200 bg-white text-gray-400'"
-              >
-                <svg class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              </div>
-              <div class="space-y-1.5">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span class="text-sm font-bold text-gray-800">设为系统智能体</span>
-                  <span class="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Admin Only</span>
-                  <span
-                    v-if="selectedAgent && isMainAgent(selectedAgent)"
-                    class="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800"
-                  >
-                    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
-                    主专家固定锁定
-                  </span>
-                  <span
-                    v-else
-                    class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold transition-colors"
-                    :class="agentForm.is_system ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'"
-                  >
-                    {{ agentForm.is_system ? '已加入智能委派候选列表' : '普通自定义智能体（不参与委派）' }}
-                  </span>
-                </div>
-                <p class="text-xs leading-relaxed text-gray-500">
-                  <template v-if="selectedAgent && isMainAgent(selectedAgent)">
-                    <span class="font-bold text-amber-800">系统核心约束：</span>
-                    <strong class="text-blue-600">主助手 (Main) 是平台默认兜底主专家</strong>，<strong class="text-amber-700">强制锁定为系统智能体，不可修改或取消</strong>。
-                  </template>
-                  <template v-else>
-                    <span class="font-semibold text-gray-700">用途说明：</span>
-                    开启后作为平台官方内置智能体，<strong class="text-blue-600">只有系统智能体才能被自动委派</strong>，作为主助手智能委派的候选专家列表；普通智能体仅供用户手动选择对话，<span class="text-gray-600 font-medium">不会被系统自动委派</span>。如果只是自己用，也不必设置为系统智能体。
-                  </template>
-                </p>
-              </div>
-            </div>
-
-            <!-- Switch 开关 -->
-            <label
-              class="relative inline-flex items-center shrink-0 mt-0.5"
-              :class="selectedAgent && isMainAgent(selectedAgent) ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'"
-              :title="selectedAgent && isMainAgent(selectedAgent) ? '主助手(Main)为系统默认兜底专家，必须保持系统智能体状态，不可修改或取消' : '点击切换系统智能体状态'"
+            <div
+              class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-white text-blue-600"
             >
-              <input
-                v-model="agentForm.is_system"
-                type="checkbox"
-                class="sr-only"
-                :disabled="Boolean(selectedAgent && isMainAgent(selectedAgent))"
-              />
-              <span
-                class="h-6 w-11 rounded-full transition-colors flex items-center p-0.5"
-                :class="agentForm.is_system ? (selectedAgent && isMainAgent(selectedAgent) ? 'bg-blue-400' : 'bg-primary') : 'bg-gray-300'"
-              >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                />
+              </svg>
+            </div>
+            <div class="space-y-0.5">
+              <p class="flex flex-wrap items-center gap-2 text-sm font-semibold text-blue-900">
+                系统级智能体
                 <span
-                  class="h-5 w-5 rounded-full bg-white shadow-sm transition-transform flex items-center justify-center text-[9px] text-gray-400"
-                  :class="agentForm.is_system ? 'translate-x-5' : 'translate-x-0'"
+                  v-if="isMainAgent(selectedAgent)"
+                  class="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
                 >
-                  <svg v-if="selectedAgent && isMainAgent(selectedAgent)" class="h-2.5 w-2.5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
+                  主助手固定锁定
                 </span>
-              </span>
-            </label>
+              </p>
+              <p class="text-xs leading-relaxed text-blue-800/80">
+                「是否系统级」不在此处切换：由管理员「发布为系统级」，或所有者提交申请后审核通过。
+                下架前所有者对内容只读（只能复制一份继续开发），每次上架、下架与配置变更都会记入发布历史。
+              </p>
+            </div>
           </div>
+
         <div class="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_8rem]">
         <AgentNameField
           v-model="agentForm.name"
@@ -4982,6 +5857,48 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </div>
     </Teleport>
 
+    </template>
+
+    <!-- 系统级发布：发布/申请、下架、审核队列、发布历史 -->
+    <AgentSystemPublishModal
+      :is-open="showSystemPublishModal"
+      :agent="systemPublishTarget"
+      :mode="systemPublishMode"
+      @close="showSystemPublishModal = false"
+      @done="onSystemChanged"
+    />
+    <AgentSystemUnpublishModal
+      :is-open="showSystemUnpublishModal"
+      :agent="systemUnpublishTarget"
+      @close="showSystemUnpublishModal = false"
+      @done="onSystemChanged"
+    />
+    <AgentSystemReviewDrawer
+      :is-open="showSystemReviewDrawer"
+      @close="showSystemReviewDrawer = false"
+      @changed="onSystemChanged"
+    />
+    <AgentSystemHistoryDrawer
+      :is-open="showSystemHistoryDrawer"
+      :agent="systemHistoryTarget"
+      @close="showSystemHistoryDrawer = false"
+    />
+    <AgentTransferOwnerModal
+      :show="showTransferOwnerModal"
+      :agent="transferOwnerTarget"
+      @close="showTransferOwnerModal = false"
+      @done="handleTransferOwnerDone"
+    />
+    <AgentShareModal
+      :show="showShareModal"
+      :agent="shareTarget"
+      :candidates="shareCandidates"
+      :loading-candidates="shareCandidatesLoading"
+      @close="showShareModal = false"
+      @done="handleShareDone"
+      @search="loadShareCandidates"
+    />
+
     <!-- Global Components -->
     <ConfirmModal
       v-if="confirmState.show"
@@ -5176,7 +6093,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                             <h4 class="font-bold text-gray-900 text-sm">定义与系统标识</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
-                            填写名称与业务描述（描述帮助主专家判断委派方向）。勾选为「系统智能体」以加入主专家的自动委派目录，或从场景模板一键交付。
+                            填写名称与业务描述（描述帮助主专家判断委派方向）。创建后如需加入主专家的自动委派目录，由管理员「发布为系统级」（你也可以先提交发布申请），或从场景模板一键交付。
                          </p>
                       </div>
                       <div class="mt-4 pt-3 border-t border-gray-100 flex items-center justify-end gap-2">

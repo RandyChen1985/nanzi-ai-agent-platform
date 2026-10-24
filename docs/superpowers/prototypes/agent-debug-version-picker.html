@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>调试版本选择</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #eef1f6; padding: 26px; color: #111827;
+  }
+  .title { font-size: 15px; font-weight: 700; color: #334155; margin-bottom: 18px; }
+  .panel {
+    width: 430px; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(15,23,42,.06); overflow: visible;
+  }
+  .head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #f1f5f9; }
+  .head h3 { font-size: 14px; font-weight: 600; }
+  .head .x { color: #9ca3af; font-size: 15px; }
+  .body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #374151; }
+  .box { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid #d1d5db; flex-shrink: 0; }
+  .box.on { background: #1677ff; border-color: #1677ff; position: relative; }
+  .box.on::after { content: '✓'; color: #fff; font-size: 10px; position: absolute; left: 2px; top: -2px; }
+  .hint { font-size: 12px; color: #9ca3af; margin-left: 22px; }
+  hr { border: none; border-top: 1px solid #f1f5f9; margin: 2px 0; }
+
+  .vfield { display: flex; flex-direction: column; gap: 6px; }
+  .vfield label { font-size: 13px; font-weight: 600; color: #374151; }
+  .select {
+    display: flex; align-items: center; justify-content: space-between;
+    border: 1px solid #d1d5db; border-radius: 8px; padding: 7px 11px;
+    font-size: 13px; color: #374151; background: #fff;
+  }
+  .select .caret { color: #9ca3af; font-size: 10px; }
+  .select.active { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,.12); }
+  .vnote { font-size: 12px; color: #d97706; }
+  .vnote.calm { color: #9ca3af; }
+
+  .menu {
+    margin-top: 4px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff;
+    box-shadow: 0 10px 28px rgba(15,23,42,.12); padding: 4px; width: 100%;
+  }
+  .opt { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px; font-size: 12.5px; color: #374151; }
+  .opt .tag { font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+  .tag.live { background: #dcfce7; color: #15803d; }
+  .tag.draft { background: #fef3c7; color: #b45309; }
+  .opt .time { margin-left: auto; font-size: 11px; color: #9ca3af; font-variant-numeric: tabular-nums; }
+  .opt.cur { background: #f3f8ff; }
+
+  .note { max-width: 900px; margin-top: 20px; font-size: 12px; color: #475569; line-height: 1.9; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; }
+  .note b { color: #0f172a; }
+  .note code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<div class="title">调试配置 · 新增「调试版本」</div>
+
+<div class="panel">
+  <div class="head"><h3>调试配置</h3><span class="x">⤢ ✕</span></div>
+  <div class="body">
+    <div class="row"><span class="box"></span>空跑模式 (Review SQL)</div>
+    <div class="hint">仅生成 SQL 但不执行。用于安全检查。</div>
+
+    <div class="row"><span class="box on"></span>返回原始 Prompt</div>
+    <div class="row"><span class="box on"></span>启用多智能体协同</div>
+    <div class="row"><span class="box on"></span>显示快捷指令栏</div>
+
+    <!-- 新增 -->
+    <div class="vfield">
+      <label>调试版本</label>
+      <div class="select active">
+        <span>V3 · 草稿 · 10/24 11:27</span>
+        <span class="caret">▲</span>
+      </div>
+      <div class="menu">
+        <div class="opt"><span>跟随线上版本</span><span class="tag live">V2</span></div>
+        <div class="opt cur">
+          <span>V3</span><span class="tag draft">草稿</span>
+          <span class="time">10/24 11:27</span>
+        </div>
+        <div class="opt">
+          <span>V2</span><span class="tag live">线上</span>
+          <span class="time">10/24 08:23</span>
+        </div>
+        <div class="opt">
+          <span>V1</span><span class="tag live">线上</span>
+          <span class="time">09/21 13:41</span>
+        </div>
+      </div>
+      <div class="vnote">正在调试非线上版本，改动实时生效，不影响线上。</div>
+    </div>
+
+    <hr />
+
+    <div class="row"><span class="box"></span>反幻觉校验 <span style="color:#cbd5e1">ⓘ</span></div>
+    <div class="hint">开启后校验回答的事实来源并提示风险。</div>
+  </div>
+</div>
+
+<div class="note">
+  <b>为什么放这里：</b>你圈的那段空白，正好在「显示快捷指令栏」和「反幻觉校验」之间，是配置面板里唯一不被已有语义占用的位置。<br/><br/>
+  <b>默认「跟随线上版本」</b>，不改变现有调试行为；只有主动选了草稿才会绑到具体版本。<br/><br/>
+  <b>选草稿后的提示</b>是橙色的，因为它意味着「你现在跑的不是用户会看到的东西」。<br/><br/>
+  <b>闭环</b>：改成草稿 → 在调试里选这个草稿验证 → 满意后由管理员发布上线。归档版本不列（不会再上线，调它没意义）。
+</div>
+
+</body>
+</html>

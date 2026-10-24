@@ -15,7 +15,8 @@ def test_archived_versions_offer_clone_without_making_archive_editable():
     assert '@click="emit(\'create-version\', v)"' in archived
 
     clone_action = archived[archived.index('@click="emit(\'create-version\', v)"') - 300:]
-    assert 'v-if="agent?.is_editable !== false"' in clone_action
+    # 归档版本只提供「克隆」，不提供直接编辑；克隆属于版本内容编辑权
+    assert 'v-if="agent?.can_edit_versions !== false"' in clone_action
     assert 'title="基于此版本新建"' in clone_action
 
 

@@ -223,6 +223,10 @@ const canPublishLocalVersion = computed(() =>
   props.agentForm.engine_type === 'LOCAL'
   && props.canEditVersion
   && (!props.versionForm.id || props.versionForm.status === 'DRAFT')
+  // 系统级智能体对非管理员不提供发布入口：能改、能存草稿，线上基线只能由管理员变更
+  && props.selectedAgent?.can_publish_version !== false
+  // 待审期间不给发布入口：草稿随便改，但线上配置在审核结束前不能变
+  && props.selectedAgent?.system_status !== 'PENDING_REVIEW'
 );
 
 const AGENT_VERSION_TOOLCALL_TIMEOUT_DEFAULT = 120;
@@ -1634,7 +1638,7 @@ const externalCreationMissingFields = computed(() => {
         <!-- Footer -->
         <div class="px-6 py-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between gap-3 flex-shrink-0">
           <div v-if="!canEditVersion" class="text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">
-            <template v-if="selectedAgent?.is_editable === false">只读模式：当前账号无编辑权限</template>
+            <template v-if="selectedAgent?.can_edit_versions === false">只读模式：当前账号无编辑权限</template>
             <template v-else-if="versionForm.status === 'PUBLISHED'">当前为已发布版本，如需修改请克隆新版本</template>
             <template v-else>当前版本不可编辑</template>
           </div>
@@ -1664,6 +1668,14 @@ const externalCreationMissingFields = computed(() => {
               @click="emit('save')"
               class="px-6 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-dark font-medium shadow-sm disabled:cursor-not-allowed disabled:bg-gray-300 disabled:shadow-none"
             >{{ isCreatingAgent && agentForm.engine_type !== 'LOCAL' ? `创建 ${agentForm.engine_type === 'RAGFLOW' ? 'RAGFlow' : 'OpenClaw'} 智能体` : isCreatingAgent ? '创建智能体与 V1 草稿' : versionForm.id ? '更新草稿' : '保存为草稿' }}</button>
+            <!-- 系统级所有者在这里只能存草稿，不给一句引导会在页脚卡住：
+                 卡片上有说明，但用户进到编辑器里就看不到了 -->
+            <span
+              v-if="isLastStep() && canEditVersion && !canPublishLocalVersion && agentForm.engine_type === 'LOCAL'"
+              class="max-w-[18rem] text-[11px] leading-snug text-gray-500"
+            >
+              系统级智能体的线上基线由管理员变更：保存草稿后到「配置与发布」里提交上线申请。
+            </span>
             <template v-if="isLastStep() && canPublishLocalVersion">
               <button
                 type="button"

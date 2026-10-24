@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import type { AIAgent, AIAgentVersion } from '../../api/agent';
-import { agentApi } from '../../api/agent';
+import { agentApi, agentSystemApi } from '../../api/agent';
+import { useToast } from '../../composables/useToast';
 import ConfirmModal from '../ConfirmModal.vue';
 import AgentVersionDiffModal from './AgentVersionDiffModal.vue';
 import { TrashIcon } from '@heroicons/vue/24/outline';
+import { useRouter } from 'vue-router';
 import {
   findPublishedAgentVersion,
   getAgentVersionDiffPair,
@@ -17,6 +19,44 @@ const props = defineProps<{
   agent: AIAgent | null;
   isOpen: boolean;
 }>();
+
+const router = useRouter();
+const { showToast } = useToast();
+
+const submittingRelease = ref<string | null>(null);
+
+/** 系统级智能体：所有者能改草稿但不能发布，通过申请让管理员把这一版放上线。 */
+const canRequestRelease = (version: AIAgentVersion) =>
+  version.status === 'DRAFT'
+  && props.agent?.is_system === true
+  && props.agent?.can_publish_version === false
+  && props.agent?.can_edit_versions !== false
+  && props.agent?.system_status !== 'PENDING_REVIEW';
+
+const requestRelease = async (version: AIAgentVersion) => {
+  if (!props.agent?.id || submittingRelease.value) return;
+  submittingRelease.value = version.id;
+  try {
+    await agentSystemApi.submitReleaseRequest(props.agent.id, version.id);
+    showToast(`已提交 V${version.version_number} 的上线申请，等待管理员审核`, 'success');
+    emit('update');
+    await loadVersions();
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || '提交上线申请失败', 'error');
+  } finally {
+    submittingRelease.value = null;
+  }
+};
+
+/** 带着版本跳到调试模块：AgentDebug 从 query 读 agent_id/version_id，
+ *  进去就是「调试预览模式」，改完草稿能立刻验证，不用回列表再找一次。 */
+const goDebug = (version: AIAgentVersion) => {
+  if (!props.agent?.id) return;
+  router.push({
+    path: '/dashboard/agent-debug',
+    query: { agent_id: props.agent.id, version_id: version.id },
+  });
+};
 
 const emit = defineEmits<{
   (e: 'close'): void;
@@ -177,7 +217,7 @@ watch(() => props.isOpen, (newVal) => {
                           </label>
                       </div>
                       <button 
-                          v-if="agent?.is_editable !== false"
+                          v-if="agent?.can_edit_versions !== false"
                           @click="emit('create-version')"
                           class="px-3 py-1.5 bg-primary text-white text-sm rounded-md shadow-sm hover:bg-primary-dark transition-colors"
                       >
@@ -233,8 +273,15 @@ watch(() => props.isOpen, (newVal) => {
                                    >
                                        Diff
                                    </button>
+                                   <button
+                                       @click="goDebug(v)"
+                                       class="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                       title="在调试模块中加载此版本"
+                                   >
+                                       去调试
+                                   </button>
                                    <button 
-                                       v-if="agent?.is_editable !== false"
+                                       v-if="agent?.can_edit_versions !== false"
                                        @click="emit('create-version', v)"
                                        class="text-xs text-blue-600 hover:text-blue-700 font-medium"
                                        title="基于此版本新建"
@@ -242,14 +289,23 @@ watch(() => props.isOpen, (newVal) => {
                                        克隆
                                    </button>
                                    <button 
-                                      v-if="v.status === 'DRAFT' && agent?.is_editable !== false"
+                                      v-if="v.status === 'DRAFT' && agent?.can_publish_version !== false"
                                       @click="publishVersion(v)"
                                       class="text-xs text-green-600 hover:text-green-700 font-medium"
                                    >
                                        发布上线
                                    </button>
+                                   <button
+                                       v-else-if="canRequestRelease(v)"
+                                       @click="requestRelease(v)"
+                                       :disabled="submittingRelease === v.id"
+                                       class="text-xs text-green-600 hover:text-green-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                       title="系统级智能体的线上版本由管理员发布：提交申请后等待审核"
+                                   >
+                                       {{ submittingRelease === v.id ? '提交中…' : '申请上线' }}
+                                   </button>
                                    <button 
-                                       v-if="v.status === 'DRAFT' && agent?.is_editable !== false"
+                                       v-if="v.status === 'DRAFT' && agent?.can_edit_versions !== false"
                                        @click="requestDeleteVersion(v)"
                                        class="text-xs text-red-500 hover:text-red-700 font-medium flex items-center"
                                    >
@@ -292,7 +348,7 @@ watch(() => props.isOpen, (newVal) => {
                                           Diff
                                       </button>
                                       <button
-                                          v-if="agent?.is_editable !== false"
+                                          v-if="agent?.can_edit_versions !== false"
                                           @click="emit('create-version', v)"
                                           class="text-xs text-blue-600 hover:text-blue-700 font-medium"
                                           title="基于此版本新建"
@@ -300,7 +356,7 @@ watch(() => props.isOpen, (newVal) => {
                                           克隆
                                       </button>
                                       <button 
-                                          v-if="agent?.is_editable !== false"
+                                          v-if="agent?.can_edit_versions !== false"
                                           @click="requestDeleteVersion(v)"
                                           class="text-xs text-red-400 hover:text-red-600 p-1"
                                           title="删除此版本"

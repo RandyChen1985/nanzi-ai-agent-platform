@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update, or_, case
 from sqlalchemy.orm import selectinload
@@ -8,6 +8,8 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.core.avatar_assets import adopt_pending_avatar
 from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.agent import ChatConfig, AIAgentBase, AIAgentVersionBase
+from app.services.ai.agent_system_columns import attach_system_status
+from app.services.ai.agent_system_publication_service import AgentSystemPublicationService
 from app.services.ai.agent_types import resolve_agent_type
 from app.services.ai.welcome_card_service import normalize_welcome_config, safe_welcome_config
 import json
@@ -40,6 +42,8 @@ class AgentOnboardingResult:
     agent: AIAgent
     version: AIAgentVersion
     template_fallback: bool
+    # 模板里因当前用户无权使用而被跳过的 MCP 工具引用（供前端提示）
+    dropped_tool_refs: tuple = ()
 
 def build_agent_identity_map(agents: Any) -> Dict[str, tuple]:
     """构建「智能体 ID → (slug 标识名, 显示名, 头像)」映射。
@@ -100,9 +104,55 @@ class AgentManagerService:
             raise ValueError("OpenClaw 模式必须填写地址和机器人 ID")
 
     @staticmethod
+    async def drop_inaccessible_mcp_tools(
+        session: AsyncSession,
+        tools: Any,
+        user: Any,
+    ) -> Tuple[Any, List[Dict[str, str]]]:
+        """剔除「源配置里有、但当前用户无权使用」的 MCP 工具引用。
+
+        新建（套模板）和复制都会把别人的工具配置整份搬过来，而「源的所有者能用」
+        不等于「搬过来的人能用」：管理员用自己私有 MCP 服务配好的智能体被普通用户
+        套用后，那些引用对用户永久不可见——工具选择器不渲染它们，用户既看不见也
+        取消不了，只能在列表页看到一堆「无权访问」告警。
+
+        只剔 ``server_forbidden``：服务被临时禁用、工具下线属于源侧状态问题，
+        照旧保留，否则搬一次就悄悄丢配置，比告警更难发现。
+
+        返回 (过滤后的工具列表, 被剔除的明细)，明细供接口层回带给前端。
+        """
+        if not tools:
+            return tools, []
+
+        from app.services.mcp.tool_ref_health import find_stale_tool_refs
+
+        stale_refs = await find_stale_tool_refs(session, tools, user=user)
+        forbidden_items = [
+            item for item in stale_refs if item.get("reason") == "server_forbidden"
+        ]
+        if not forbidden_items:
+            return tools, []
+
+        forbidden = {str(item.get("name")) for item in forbidden_items}
+        filtered = [
+            item
+            for item in tools
+            if (item if isinstance(item, str) else (item or {}).get("name")) not in forbidden
+        ]
+        dropped = [
+            {"name": str(item.get("name")), "reason_label": item.get("reason_label")}
+            for item in forbidden_items
+        ]
+        logger.info(
+            "[agent] 剔除 %d 个当前用户无权使用的 MCP 工具引用", len(dropped)
+        )
+        return filtered, dropped
+
+    @staticmethod
     async def _resolve_onboarding_template(
         session: AsyncSession,
         agent_type: Any,
+        user: Any = None,
     ) -> Dict[str, Any]:
         type_value = getattr(agent_type, "value", agent_type)
         template_name = AgentManagerService._ONBOARDING_TEMPLATE_AGENT_NAMES[str(type_value)]
@@ -111,14 +161,23 @@ class AgentManagerService:
             agent_name=template_name,
         )
         if config:
+            # 模板是拿某个真实智能体配的，里面的 MCP 引用可能只对模板作者可用
+            # （典型是管理员的私有服务）。套模板的人看不到那些服务，必须在这里剔掉，
+            # 否则新建出来的智能体一保存就挂着「无权访问该 MCP 服务」的告警。
+            template_tools, dropped_tools = await AgentManagerService.drop_inaccessible_mcp_tools(
+                session,
+                AgentManagerService._normalize_tools_for_db(config.tools),
+                user,
+            )
             return {
                 "model_name": config.model_name,
                 "temperature": config.temperature or 0.0,
                 "system_prompt": config.system_prompt,
-                "tools": AgentManagerService._normalize_tools_for_db(config.tools),
+                "tools": template_tools,
                 "skills_custom": bool(config.skills_custom),
                 "skills": list(config.skills or []),
                 "template_fallback": False,
+                "dropped_tool_refs": dropped_tools,
             }
 
         from fastapi import HTTPException
@@ -145,9 +204,28 @@ class AgentManagerService:
             "skills_custom": False,
             "skills": [],
             "template_fallback": True,
+            "dropped_tool_refs": [],
         }
 
     @staticmethod
+    @staticmethod
+    def _reject_manual_system_flag(data: Any) -> None:
+        """「是否系统级」不接受新建/编辑表单设置。
+
+        系统级是「生产发布的基线」：只能通过「发布为系统级」动作或管理员审核通过获得，
+        每一次都要落事件、发通知。允许表单直接勾选就等于绕开整条流程与全部留痕。
+        """
+        from fastapi import HTTPException
+
+        if data is not None and getattr(data, "is_system", None):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "「是否系统级」不能通过新建或编辑设置：请保存后用卡片菜单的「发布为系统级」，"
+                    "或提交发布申请由管理员审核"
+                ),
+            )
+
     async def create_agent_onboarding(
         session: AsyncSession,
         data: AIAgentBase,
@@ -155,6 +233,8 @@ class AgentManagerService:
         onboarding_key: str,
         user: Any = None,
     ) -> AgentOnboardingResult:
+        AgentManagerService._reject_manual_system_flag(data)
+
         if isinstance(user, dict):
             created_by = user.get("user_name")
             is_admin = user.get("role", "") == "admin"
@@ -182,6 +262,7 @@ class AgentManagerService:
                     agent=existing_agent,
                     version=existing_version,
                     template_fallback=False,
+                    dropped_tool_refs=(),
                 )
 
         conflict = await AgentManagerService.find_agent_name_conflict(session, data.name)
@@ -190,7 +271,9 @@ class AgentManagerService:
 
             raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
 
-        template = await AgentManagerService._resolve_onboarding_template(session, data.agent_type)
+        template = await AgentManagerService._resolve_onboarding_template(
+            session, data.agent_type, user
+        )
         from app.services.ai.agent_types import (
             normalize_agent_capabilities_for_agent,
             resolve_agent_type_for_engine,
@@ -213,7 +296,8 @@ class AgentManagerService:
             agent_type=resolved_agent_type.value,
             onboarding_key=onboarding_key,
             onboarding_step="VERSION",
-            is_system=data.is_system if is_admin and data.is_system is not None else False,
+            # 系统级只能通过「发布为系统级」获得（有事件、有流程），新建表单不再接受该字段
+            is_system=False,
             sort_order=data.sort_order or 0,
             is_enabled=data.is_enabled if data.is_enabled is not None else True,
             created_by=created_by,
@@ -277,6 +361,7 @@ class AgentManagerService:
             agent=agent,
             version=version,
             template_fallback=bool(template["template_fallback"]),
+            dropped_tool_refs=tuple(template.get("dropped_tool_refs") or ()),
         )
     @staticmethod
     def _tool_entry_name(tool: Any) -> str:
@@ -513,13 +598,36 @@ class AgentManagerService:
             return None
 
     @staticmethod
-    async def get_version_config(
-        session: AsyncSession, 
-        version_id: str
-    ) -> Optional[ChatConfig]:
+    def can_use_agent_version(version: Any, agent: Any, user: Any) -> bool:
+        """该版本能否被当前用户加载执行。
+
+        - 未传 user（定时任务 / 内部调用）：跳过校验，保持原有行为
+        - 管理员：全部可用
+        - 作者本人：草稿和已发布版本都能调试
+        - 其他人：只能跑已发布版本，草稿一律拒绝
         """
-        Fetches the configuration for a SPECIFIC version ID.
-        If version_id matches an AIAgent ID and it's RAGFLOW, return managed config.
+        if user is None:
+            return True
+        is_admin, username = AgentManagerService._resolve_actor(user)
+        if is_admin:
+            return True
+        status = str(getattr(version, "status", "") or "")
+        owner = getattr(agent, "created_by", None) if agent is not None else None
+        if owner and username and owner == username:
+            return True
+        return status == "PUBLISHED"
+
+    @staticmethod
+    async def get_version_config(
+        session: AsyncSession,
+        version_id: str,
+        user: Any = None,
+    ) -> Optional[ChatConfig]:
+        """Fetches the configuration for a SPECIFIC version ID.
+
+        `user` 不为空时会校验该版本是否对调用者可用：草稿只有作者本人和管理员能跑，
+        别人只能跑已发布版本。缺了这层校验，任何人拿到 version_id 就能把别人的草稿
+        当线上配置跑起来，提示词和工具配置等于直接暴露。
         """
         try:
             # 1. Try to find the version record
@@ -528,6 +636,14 @@ class AgentManagerService:
             version = result.scalar_one_or_none()
             
             if version:
+                if not AgentManagerService.can_use_agent_version(version, version.agent, user):
+                    logger.warning(
+                        "version config denied: version=%s agent=%s user=%s",
+                        version.id,
+                        version.agent_id,
+                        (user or {}).get("user_name") if isinstance(user, dict) else getattr(user, "user_name", None),
+                    )
+                    return None
                 tools_list = version.tools
                 if isinstance(tools_list, str):
                     try:
@@ -618,23 +734,60 @@ class AgentManagerService:
         visible_agents = []
 
         for agent in agents:
-            # 可见性：非管理员只看系统智能体和自己创建的。别人的非系统智能体既不能编辑，
-            # 也不在 /agents/allowed 的可对话列表里，列出来只会让人误以为能管、能用。
-            if not is_admin and not agent.is_system and agent.created_by != username:
+            # 可见性：非管理员只看自己创建的。别人创建的智能体（无论是否系统级）都不出现：
+            # 系统智能体由管理员维护，普通用户既管不了，也不该看到它的提示词与工具配置——
+            # 复制接口会把整份配置带出来，看到即等于可复刻。
+            # 按 created_by 而不是 is_system 判定：自己创建的智能体被管理员提升为系统级后
+            # created_by 不变，本人仍应看得到。
+            if not is_admin and agent.created_by != username:
                 continue
 
             # Editability Check
             is_owner = agent.created_by == username
             agent.is_editable = True if is_admin or is_owner or (not agent.created_by and is_admin) else False
             
-            # Special case: System agents are read-only for non-admins
+            # Special case: System agents are read-only for non-admins (metadata only)
             if agent.is_system and not is_admin:
                  agent.is_editable = False
+
+            # 版本内容与元数据分开授权：系统级智能体的所有者仍可建版本、改草稿、存草稿，
+            # 只是「发布上线」这条路必须由管理员走。只读会把所有者逼去「复制一份」，
+            # 代价是版本历史断裂；真正要守的是「线上基线只能管理员变更」。
+            agent.can_edit_versions = bool(is_admin or is_owner)
+            agent.can_publish_version = not (agent.is_system and not is_admin)
             
             # Set execution count (dynamically attached to object, Pydantic will pick it up)
             agent.execution_count = counts.get(agent.id, 0)
                  
             visible_agents.append(agent)
+
+        # 创建者显示名：卡片上只显示 user_name 对管理员不直观（chenxiaolong vs 陈小龙），
+        # 批量反查一次用户表补上 real_name，没有则回落到 user_name。
+        creator_keys = {a.created_by for a in visible_agents if getattr(a, "created_by", None)}
+        creator_names: dict[str, str] = {}
+        if creator_keys:
+            from app.models.user import User
+
+            # 顺带取 status：权属人离职/停用后，这个智能体就没人能编辑了。
+            # 管理员得能一眼筛出来，否则只能靠人想起来去转交。
+            name_rows = await session.execute(
+                select(User.user_name, User.real_name, User.status).where(
+                    User.user_name.in_(creator_keys)
+                )
+            )
+            rows = name_rows.all()
+            creator_names = {row[0]: (row[1] or row[0]) for row in rows if row and row[0]}
+            creator_active = {
+                row[0]: (row[2] == 1) for row in rows if row and row[0]
+            }
+        else:
+            creator_active = {}
+        for agent in visible_agents:
+            key = getattr(agent, "created_by", None)
+            agent.created_by_name = creator_names.get(key, key) if key else None
+            # 查不到对应用户时按「正常」处理：历史数据里 created_by 可能是脚本写入的
+            # 用户名，不该因此把智能体标成孤儿。
+            agent.owner_active = creator_active.get(key, True) if key else True
 
         # 批量附带已发布版本的 tool / mcp / skills 摘要（仅 LOCAL 引擎有版本工具配置）
         local_ids = [a.id for a in visible_agents if (a.engine_type or "LOCAL") == "LOCAL"]
@@ -664,6 +817,9 @@ class AgentManagerService:
                     engine_config=engine_config,
                     enabled_global_skill_count=enabled_global_skill_count,
                 )
+            agent.published_version_number = (
+                getattr(published_version, "version_number", None) if published_version else None
+            )
             agent.tool_count = caps["tool_count"]
             agent.mcp_count = caps["mcp_count"]
             agent.skill_count = caps["skill_count"]
@@ -754,6 +910,10 @@ class AgentManagerService:
                     "names": [item["name"] for item in stale],
                     "version_id": version.id,
                 }
+
+        # 系统级流程状态（审核中徽标 / 编辑冻结提示）。ORM 未映射这两列，
+        # 这里一条 SQL 批量挂到对象上供响应序列化，未迁移时静默跳过。
+        await attach_system_status(session, visible_agents)
 
         return visible_agents
 
@@ -955,6 +1115,8 @@ class AgentManagerService:
     @staticmethod
     async def create_agent(session: AsyncSession, data: AIAgentBase, user: Any = None) -> AIAgent:
         """Create a new agent metadata entry"""
+        AgentManagerService._reject_manual_system_flag(data)
+
         if isinstance(user, dict):
             created_by = user.get('user_name')
             is_admin = user.get('role', '') == 'admin'
@@ -991,7 +1153,8 @@ class AgentManagerService:
                 values=data.capabilities,
             ),
             agent_type=resolved_agent_type.value,
-            is_system=data.is_system if is_admin and data.is_system is not None else False,
+            # 系统级只能通过「发布为系统级」获得（有事件、有流程），新建表单不再接受该字段
+            is_system=False,
             sort_order=data.sort_order if data.sort_order is not None else 0,
             is_enabled=data.is_enabled if data.is_enabled is not None else True,
             created_by=created_by,
@@ -1030,7 +1193,16 @@ class AgentManagerService:
         if not source:
             return None
 
-        _, username = AgentManagerService._resolve_actor(user)
+        is_admin, username = AgentManagerService._resolve_actor(user)
+
+        # 复制会把提示词、工具/MCP 绑定、模型参数整份带走，所以只要不是自己的就必须拦。
+        # 原先只拦「别人的系统级」，别人的普通智能体可以整份复制走——而列表口径早已
+        # 把「别人的智能体」定义为不可见，这两处自相矛盾。id 可能出现在对话 / Embed /
+        # 分享链接里，接口必须自己挡，不能指望界面上看不到。
+        if not is_admin and source.created_by != username:
+            if source.is_system:
+                raise HTTPException(status_code=403, detail="系统智能体由管理员维护，不能复制")
+            raise HTTPException(status_code=403, detail="只能复制自己创建的智能体")
 
         new_name = AgentManagerService.normalize_agent_name(getattr(data, "name", None))
         if not new_name:
@@ -1076,6 +1248,17 @@ class AgentManagerService:
         source_version = await AgentManagerService._pick_duplicate_source_version(
             session, source.id
         )
+        # 复制会把源版本的工具引用整份带走，但「源的所有者能用」不等于「复制人能用」：
+        # 管理员用自己私有 MCP 服务的智能体被别人复制后，那些引用对复制人永久不可见，
+        # 工具选择器里既看不到也取消不了，只能在列表页看到一堆「无权访问」告警。
+        # 这里提前剔掉，副本从创建那一刻就是干净可用的配置。
+        # 只剔 server_forbidden：服务被临时禁用/工具下线是源侧的状态问题，副本照旧保留，
+        # 否则复制一次就悄悄丢配置，用户更难察觉。
+        copied_tools = copy.deepcopy(source_version.tools) if source_version else None
+        copied_tools, dropped_tools = await AgentManagerService.drop_inaccessible_mcp_tools(
+            session, copied_tools, user
+        )
+
         if source_version:
             session.add(
                 AIAgentVersion(
@@ -1089,7 +1272,7 @@ class AgentManagerService:
                     allow_model_switch=bool(getattr(source_version, "allow_model_switch", True)),
                     system_prompt=source_version.system_prompt,
                     # JSON 字段必须深拷贝，避免两个 ORM 实例共享同一可变对象
-                    tools=copy.deepcopy(source_version.tools),
+                    tools=copied_tools,
                     toolcall_timeout_seconds=source_version.toolcall_timeout_seconds,
                     skills_custom=source_version.skills_custom,
                     skills=copy.deepcopy(source_version.skills),
@@ -1109,6 +1292,8 @@ class AgentManagerService:
 
         router_service.invalidate_cache()
 
+        # 供接口层回带给前端：「有 N 个工具因为你无权使用而没有复制过来」
+        agent.dropped_tool_refs = dropped_tools
         return agent
 
     @staticmethod
@@ -1214,7 +1399,9 @@ class AgentManagerService:
         is_admin, username = AgentManagerService._resolve_actor(user)
         if is_admin:
             return True
-        if agent.created_by and agent.created_by != username:
+        # created_by 为空（历史/导入数据）时不能「人人可改」：这类智能体在列表里
+        # 对所有人都不可见，写权限跟着 fail-open 就成了「看不见但随便改」。
+        if agent.created_by != username:
             return False
         if agent.is_system:
             return False
@@ -1241,6 +1428,26 @@ class AgentManagerService:
 
         is_admin, _actor_username = AgentManagerService._resolve_actor(user)
 
+        # 待审中的所有者不能改（管理员是审核方，豁免），否则审核看到的内容和上架内容不一致
+        await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
+
+        # 表单回传当前值（编辑系统级时必然是 true）不算「修改」；只有真想改变它才拦。
+        # 主助手固定是系统级，豁免——它没有「取消」这条路径。
+        if (
+            data.is_system is not None
+            and bool(data.is_system) != bool(agent.is_system)
+            and not _is_main_general_agent_record(agent)
+        ):
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "「是否系统级」不能通过编辑修改：请用卡片菜单的「发布为系统级」、「下架（取消系统级）」，"
+                    "或提交发布申请由管理员审核"
+                ),
+            )
+
         if _is_main_general_agent_record(agent) and data.is_enabled is False:
             raise ValueError("主助手不可禁用")
 
@@ -1259,6 +1466,15 @@ class AgentManagerService:
                 from fastapi import HTTPException
 
                 raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
+
+        _before_meta = {
+            "name": agent.name,
+            "display_name": agent.display_name,
+            "description": agent.description,
+            "avatar_url": agent.avatar_url,
+            "capabilities": agent.capabilities,
+            "sort_order": agent.sort_order,
+        }
 
         agent.name = data.name
         agent.display_name = data.display_name
@@ -1281,12 +1497,12 @@ class AgentManagerService:
         )
         agent.sort_order = data.sort_order if data.sort_order is not None else agent.sort_order
         
-        if is_admin and data.is_system is not None:
-            if _is_main_general_agent_record(agent):
-                agent.is_system = True
-            else:
-                agent.is_system = data.is_system
-            
+        # 「是否系统级」不再接受表单设置：只能走「发布为系统级」或审核通过，
+        # 这样每次上架都有事件、有流程可查。主助手固定是系统级，保持原样。
+        if _is_main_general_agent_record(agent):
+            agent.is_system = True
+
+        _enabled_changed = data.is_enabled is not None and bool(data.is_enabled) != bool(agent.is_enabled)
         if data.is_enabled is not None:
             agent.is_enabled = data.is_enabled
         
@@ -1294,7 +1510,20 @@ class AgentManagerService:
         # runtime parameters remain editable through engine_config.
         if data.engine_config is not None:
             agent.engine_config = data.engine_config
-        
+
+        # 系统级智能体的元数据变更与启用/禁用都要留痕（普通智能体不记，避免噪音）
+        _changed_meta = [
+            field for field, previous in _before_meta.items() if getattr(agent, field) != previous
+        ]
+        if _enabled_changed:
+            await AgentSystemPublicationService.record_enabled_change(
+                session, agent, bool(agent.is_enabled), user
+            )
+        if _changed_meta:
+            await AgentSystemPublicationService.record_meta_update(
+                session, agent, user, _changed_meta
+            )
+
         await session.commit()
         await session.refresh(agent)
         
@@ -1314,8 +1543,11 @@ class AgentManagerService:
         # Permission Check
         is_admin, username = AgentManagerService._resolve_actor(user)
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return False
+
+        # 待审期间不能删：申请单还指着一个不存在的智能体，审核页会打不开
+        await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
 
         await session.delete(agent)
         await session.commit()
@@ -1333,13 +1565,45 @@ class AgentManagerService:
         if not agent:
             return []
 
-        # Permission Check (Visibility)
-        # All users can see versions of all agents (read-only), but we could restrict if needed.
-        # Currently, consistent with metadata, we allow viewing.
-        
+        # 版本正文里有完整的 system_prompt / tools / skills，草稿更是没上线的半成品。
+        # 原先这里没有任何校验（注释还写着 All users can see），任意登录用户凭
+        # agent_id 就能把别人的每一版提示词读走。按「能不能用这个智能体」判定：
+        # 管理员、所有者、以及被授权的系统级使用者可见。
+        if not await AgentManagerService._can_view_agent_versions(session, agent, user):
+            return []
+
         query = select(AIAgentVersion).where(AIAgentVersion.agent_id == agent_id).order_by(AIAgentVersion.version_number.desc())
         result = await session.execute(query)
         return result.scalars().all()
+
+    @staticmethod
+    async def _can_view_agent_versions(
+        session: AsyncSession, agent: AIAgent, user: Any
+    ) -> bool:
+        """谁可以读这个智能体的版本配置。
+
+        不能直接复用 ``_user_can_execute_agent``：它要求系统级智能体「已被授权
+        且启用」，那样所有者反而看不到自己刚建的版本。
+        """
+        if not user or not agent:
+            return False
+        is_admin, username, user_id = AgentManagerService._extract_user_identity(user)
+        if is_admin:
+            return True
+        # 所有者：自己的智能体（含系统级时自己改草稿）
+        if username and agent.created_by == username:
+            return True
+        if not agent.is_system:
+            return False
+        # 系统级：被授权使用的普通用户也可以看（调试需要看当前版本配置）
+        from app.services.permission_service import PermissionService
+
+        try:
+            perms = await PermissionService(session).get_user_permissions(int(user_id))
+            allowed_ids = perms.permissions.agents or []
+        except (ValueError, TypeError):
+            allowed_ids = []
+        return agent.id in allowed_ids
 
     @staticmethod
     def _normalize_tools_for_db(tools: List[Any]) -> List[Any]:
@@ -1398,8 +1662,12 @@ class AgentManagerService:
             is_admin = user and getattr(user, 'role', '') == 'admin'
             username = user and getattr(user, 'user_name', '')
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return None # Forbidden
+
+        # 系统级允许所有者建草稿版本，但发布仍被 publish_version 拦死。
+        # 待审期间同样**允许**建版本：建草稿不碰线上，把它一起冻住等于要求用户
+        # 提交申请后彻底停工，而他往往正是想在这期间继续调。真正要拦的是发布。
 
         skills_custom = bool(getattr(data, "skills_custom", False))
         skills_list = AgentManagerService._normalize_skills_list(getattr(data, "skills", None)) if skills_custom else []
@@ -1439,6 +1707,42 @@ class AgentManagerService:
         
         return version
 
+
+    @staticmethod
+    async def _assert_version_not_pending_release(
+        session: AsyncSession, version_id: str
+    ) -> None:
+        """正在申请上线的版本不能被改写或删除。
+
+        审批通过时是按 ``snapshot_version_id`` 现读内容发布的：
+        - 改写 → 管理员审的是快照，上线的是改后内容；
+        - 删除 → 审批时报 409，而申请单仍停在 PENDING，智能体被
+          ``PENDING_REVIEW`` 永久锁住发布，只能人工驳回或撤回才能解开。
+
+        未迁移环境没有这张表，此时应当放行普通草稿操作。
+        """
+        from fastapi import HTTPException
+
+        from app.models.agent_system import AgentSystemRequest
+
+        try:
+            pending = await session.execute(
+                select(AgentSystemRequest.id)
+                .where(
+                    AgentSystemRequest.snapshot_version_id == str(version_id),
+                    AgentSystemRequest.status == "PENDING",
+                )
+                .limit(1)
+            )
+            has_pending = pending.scalars().first() is not None
+        except OperationalError:
+            return
+        if has_pending:
+            raise HTTPException(
+                status_code=409,
+                detail="该版本正在审核中，暂不能修改或删除；如需调整请新建一个版本再提交申请",
+            )
+
     @staticmethod
     async def update_agent_version(session: AsyncSession, agent_id: str, version_id: str, data: AIAgentVersionBase, user: Any = None) -> Optional[AIAgentVersion]:
         """Update an existing DRAFT version (checks ownership)"""
@@ -1446,7 +1750,13 @@ class AgentManagerService:
         version = await session.get(AIAgentVersion, version_id)
         if not agent or not version:
             return None
-            
+
+        # 版本必须属于路径里的这个智能体。少了这一句，攻击者拿自己任何一个智能体的
+        # id 就能改别人的草稿版本（归属校验只看了 agent，没看 version）。
+        # publish_version 一直有这个判断，改/删两处是漏的。
+        if str(version.agent_id) != str(agent_id):
+            return None
+
         # Only DRAFT versions can be modified
         if version.status != "DRAFT":
             return None
@@ -1459,8 +1769,15 @@ class AgentManagerService:
             is_admin = user and getattr(user, 'role', '') == 'admin'
             username = user and getattr(user, 'user_name', '')
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return None # Forbidden
+
+        # 系统级允许改草稿（不发布就不影响线上基线），发布在 publish_version 单独拦。
+        #
+        # 但「正在申请上线的那个版本」不能改：审批通过时是按 version_id 现读内容发布的，
+        # 待审期间整份改写等于让管理员审的是 A、上线的是 B，审核就白做了。
+        # 只冻这一版，建新版本、改别的草稿都不受影响。
+        await AgentManagerService._assert_version_not_pending_release(session, version_id)
 
         skills_custom = bool(getattr(data, "skills_custom", False))
         skills_list = (
@@ -1516,8 +1833,15 @@ class AgentManagerService:
             is_admin = user and getattr(user, 'role', '') == 'admin'
             username = user and getattr(user, 'user_name', '')
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return False # Forbidden
+
+        # 系统级内容只读：所有者不能发布新版本，否则等于绕过审核改线上基线
+        if agent.is_system and not is_admin:
+            return False
+
+        # 待审期间所有者不能发布新版本（管理员豁免）
+        await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
 
         version = await session.get(AIAgentVersion, version_id)
         if not version or str(version.agent_id) != str(agent_id):
@@ -1554,7 +1878,24 @@ class AgentManagerService:
             .values(status='PUBLISHED')
         )
         agent.onboarding_step = "COMPLETE"
-        
+
+        # 「发布新版本」换掉的是线上基线，不管是不是系统级都必须留痕：
+        # 否则发布历史里版本号变了，却查不到是谁在什么时候换的。
+        # 普通智能体尤其需要——它没有审核环节，发布完全由所有者自行决定。
+        from app.services.ai.agent_system_publication_service import (
+            ACTION_BASELINE_PUBLISH,
+        )
+
+        _, actor_name, actor_id = AgentSystemPublicationService.resolve_actor(user)
+        await AgentSystemPublicationService.record_event(
+            session,
+            agent=agent,
+            action=ACTION_BASELINE_PUBLISH,
+            actor_name=actor_name,
+            actor_id=actor_id,
+            version=version,
+        )
+
         await session.commit()
 
         # Published versions are the source of truth for the next turn. Clear
@@ -1570,17 +1911,110 @@ class AgentManagerService:
         return True
 
     @staticmethod
+    async def save_agent_prompt(
+        session: AsyncSession,
+        agent_id: str,
+        content: str,
+        *,
+        user: Any = None,
+        note: Optional[str] = None,
+    ) -> Optional[str]:
+        """把「系统提示词」存进智能体版本，返回被写入的 version_id。
+
+        提示词工坊原先绕过这里，用裸 SQL 直接 UPDATE/INSERT ``ai_agent_versions``，
+        于是所有权、冻结、字段完整性、缓存失效全部失效——任何有提示词编辑权限的人
+        都能改别人的（包括系统级的）草稿，而且不留痕。
+
+        统一收到这个方法里：
+        * 有草稿就改草稿（``update_agent_version`` 自带归属与 DRAFT 校验）；
+        * 没有草稿就从最新版本复制一份再改——**不能只写 system_prompt 就 INSERT**，
+          否则 temperature / 工具 / 技能 / 欢迎语全落回数据库默认值，
+          用户会得到「提示词一样、效果却变了」的版本，还查不出原因。
+        """
+        from app.schemas.agent import AIAgentVersionBase
+
+        agent = await session.get(AIAgent, agent_id)
+        if not agent:
+            return None
+
+        if isinstance(user, dict):
+            is_admin = user.get("role", "") == "admin"
+            username = user.get("user_name", "")
+        else:
+            is_admin = bool(user and getattr(user, "role", "") == "admin")
+            username = getattr(user, "user_name", "") if user else ""
+
+        if not is_admin and agent.created_by != username:
+            # 明确区分「没权限」和「没变化」：都返回 None 的话，越权会被
+            # 伪装成「未检测到内容变更」，用户和日志都看不出被拒了。
+            raise PermissionError("无权修改该智能体的提示词")
+
+        draft_row = await session.execute(
+            select(AIAgentVersion)
+            .where(
+                AIAgentVersion.agent_id == agent_id,
+                AIAgentVersion.status == "DRAFT",
+            )
+            .order_by(AIAgentVersion.version_number.desc())
+            .limit(1)
+        )
+        draft = draft_row.scalars().first()
+
+        if draft is not None:
+            if (draft.system_prompt or "") == content and (
+                note is None or (draft.comment or "") == note
+            ):
+                return None  # 内容没变，不必制造一个「保存成功」
+
+            payload = AIAgentVersionBase.model_validate(draft, from_attributes=True)
+            payload.system_prompt = content
+            if note is not None:
+                payload.comment = note
+            updated = await AgentManagerService.update_agent_version(
+                session, agent_id, draft.id, payload, user=user
+            )
+            return updated.id if updated else None
+
+        # 没有草稿：复制最新版本再改，保证除提示词外的一切都跟当前版本一致
+        latest_row = await session.execute(
+            select(AIAgentVersion)
+            .where(AIAgentVersion.agent_id == agent_id)
+            .order_by(AIAgentVersion.version_number.desc())
+            .limit(1)
+        )
+        latest = latest_row.scalars().first()
+        if latest is None:
+            return None
+
+        payload = AIAgentVersionBase.model_validate(latest, from_attributes=True)
+        payload.version_number = None
+        payload.status = "DRAFT"
+        payload.system_prompt = content
+        payload.comment = note if note is not None else "提示词工坊修改"
+        created = await AgentManagerService.create_agent_version(
+            session, agent_id, payload, user=user
+        )
+        return created.id if created else None
+
+    @staticmethod
     async def delete_version(session: AsyncSession, agent_id: str, version_id: str, user: Any = None) -> bool:
         """Delete an agent version (only DRAFT or ARCHIVED)"""
         agent = await session.get(AIAgent, agent_id)
         version = await session.get(AIAgentVersion, version_id)
-        
+
         if not agent or not version:
             return False
-            
+
+        # 同 update_agent_version：版本必须属于这个智能体，否则等于允许跨智能体删除
+        if str(version.agent_id) != str(agent_id):
+            return False
+
         # Cannot delete PUBLISHED version
         if version.status == "PUBLISHED":
             return False
+
+        # 正在申请上线的版本同样不能删（否则申请单变孤儿、智能体被审核状态锁死）
+        await AgentManagerService._assert_version_not_pending_release(session, version_id)
 
         # Permission Check
         if isinstance(user, dict):
@@ -1590,8 +2024,10 @@ class AgentManagerService:
             is_admin = user and getattr(user, 'role', '') == 'admin'
             username = user and getattr(user, 'user_name', '')
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return False # Forbidden
+
+        # 系统级允许删草稿；已发布版本由下面的状态校验挡住。
 
         await session.delete(version)
         await session.commit()

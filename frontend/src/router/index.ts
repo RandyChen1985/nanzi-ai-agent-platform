@@ -2,18 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/Login.vue'
 import Dashboard from '../views/Dashboard.vue'
 import Overview from '../views/Overview.vue'
-import AuditLogs from '../views/AuditLogs.vue'
-import Playground from '../views/Playground.vue'
-import AgentDebug from '../views/AgentDebug.vue'
 
-import Users from '../views/Users.vue'
-import SystemConfig from '../views/SystemConfig.vue'
-import PersonalCenter from '../views/PersonalCenter.vue'
-import MetadataDatasets from '../views/MetadataDatasets.vue'
-import MetadataTables from '../views/MetadataTables.vue'
-import AgentManagement from '../views/AgentManagement.vue'
-import PromptStudio from '../views/PromptStudio.vue'
-import ChatLogs from '../views/ChatLogs.vue'
 
 import NoPermission from '../views/NoPermission.vue'
 import { getSnapshotLandingPath } from '../composables/useNavigation'
@@ -77,7 +66,7 @@ const router = createRouter({
         {
           path: 'users',
           name: 'Users',
-          component: Users,
+          component: () => import('../views/Users.vue'),
           meta: { perm: 'menu:system:users', title: '用户管理' }
         },
         {
@@ -95,7 +84,7 @@ const router = createRouter({
         {
           path: 'system',
           name: 'System',
-          component: SystemConfig,
+          component: () => import('../views/SystemConfig.vue'),
           meta: { perm: 'menu:system:config', title: '系统配置' }
         },
         {
@@ -115,7 +104,7 @@ const router = createRouter({
         {
           path: 'audit',
           name: 'Audit',
-          component: AuditLogs,
+          component: () => import('../views/AuditLogs.vue'),
           meta: { perm: 'menu:system:audit', title: '审计日志' }
         },
         {
@@ -127,19 +116,19 @@ const router = createRouter({
         {
           path: 'chat-logs',
           name: 'ChatLogs',
-          component: ChatLogs,
+          component: () => import('../views/ChatLogs.vue'),
           meta: { perm: 'menu:chat_logs', title: '聊天日志' }
         },
         {
           path: 'playground',
           name: 'Playground',
-          component: Playground,
+          component: () => import('../views/Playground.vue'),
           meta: { perm: 'menu:playground', title: '接口调试台' }
         },
         {
           path: 'agent-debug',
           name: 'AgentDebug',
-          component: AgentDebug,
+          component: () => import('../views/AgentDebug.vue'),
           meta: { perm: 'menu:agent_debug', title: '智能体调试' }
         },
         {
@@ -157,19 +146,19 @@ const router = createRouter({
         {
           path: 'personal',
           name: 'PersonalCenter',
-          component: PersonalCenter,
+          component: () => import('../views/PersonalCenter.vue'),
           meta: { title: '个人中心' }
         },
         {
           path: 'metadata',
           name: 'Metadata',
-          component: MetadataDatasets,
+          component: () => import('../views/MetadataDatasets.vue'),
           meta: { perm: 'menu:metadata', title: '元数据管理' }
         },
         {
           path: 'metadata/:id',
           name: 'MetadataTables',
-          component: MetadataTables,
+          component: () => import('../views/MetadataTables.vue'),
           meta: { perm: 'menu:metadata', title: '表详情' }
         },
         {
@@ -181,7 +170,7 @@ const router = createRouter({
         {
           path: 'agent-management',
           name: 'AgentManagement',
-          component: AgentManagement,
+          component: () => import('../views/AgentManagement.vue'),
           meta: { perm: 'menu:agent_management', title: '智能体中心' }
         },
         {
@@ -229,7 +218,7 @@ const router = createRouter({
         {
           path: 'prompts',
           name: 'PromptStudio',
-          component: PromptStudio,
+          component: () => import('../views/PromptStudio.vue'),
           meta: { perm: 'menu:prompts', title: '提示词工坊' }
         },
         {

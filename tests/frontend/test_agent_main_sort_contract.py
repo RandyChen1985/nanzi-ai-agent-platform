@@ -23,11 +23,17 @@ def test_main_agent_is_fixed_first_and_not_draggable():
     assert "_is_main_general_agent_record(agent)" in service
 
 
-def test_agent_management_header_keeps_title_single_line_and_limits_search_width():
+def test_agent_management_header_keeps_title_single_line_and_search_takes_full_row():
+    """搜索框从「固定 208px」改成「独占一栏」。
+
+    原先和状态/类型筛选挤在一行，长名称搜到一半就看不见了；现在搜索吃掉整行剩余宽度，
+    筛选条件挪进「筛选」面板。
+    """
     view = VIEW.read_text(encoding="utf-8")
 
     assert 'class="shrink-0 whitespace-nowrap text-xl font-bold text-gray-900 sm:text-2xl"' in view
-    assert "sm:w-52 lg:w-56" in view
+    assert 'class="relative min-w-[220px] flex-1"' in view
+    assert "sm:w-52 lg:w-56" not in view
 
 
 def test_agent_management_hides_dragging_hint_when_main_is_fixed():

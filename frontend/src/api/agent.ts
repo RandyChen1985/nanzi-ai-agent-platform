@@ -47,8 +47,19 @@ export interface AIAgent {
   capabilities?: string[]
   agent_type: AgentType
   is_system: boolean
+  /** 系统级流程状态：PENDING_REVIEW 表示正在申请审核中，内容对所有者为只读 */
+  system_status?: 'NONE' | 'PENDING_REVIEW'
+  system_pending_request_id?: string | null
+  /** 待审申请单的提交时间，卡片冻结条显示「等了多久」 */
+  system_requested_at?: string | null
   is_enabled: boolean
   created_by?: string
+  /** 版本内容可编辑（系统级所有者为 true，能建版本、改草稿、存草稿） */
+  can_edit_versions?: boolean
+  /** 能否发布草稿上线（系统级对非管理员恒为 false） */
+  can_publish_version?: boolean
+  /** 创建者显示名（real_name 优先），管理员辨认归属用 */
+  created_by_name?: string
   owner_group?: string
   is_editable?: boolean
   engine_type?: 'LOCAL' | 'RAGFLOW' | 'OPENCLAW'
@@ -68,6 +79,12 @@ export interface AIAgent {
   metadata_dataset_count?: number | null
   /** 显式绑定的知识库数；未绑定（走全局）为 null */
   knowledge_base_count?: number | null
+  /** 线上版本号：卡片上要显示「现在生效的是哪一版」 */
+  published_version_number?: number | null
+  /** 复制时因无权使用被跳过的工具引用（仅复制接口返回） */
+  dropped_tool_refs?: Array<{ name: string; reason_label?: string }> | null
+  /** 权属人账号是否仍启用；false = 已无人能编辑，需要转交 */
+  owner_active?: boolean | null
   readiness_ready?: boolean
   readiness_missing?: string[]
   /**
@@ -328,4 +345,234 @@ export interface ContextCompactionsResponse {
   records: ContextCompactionRecord[]
   count: number
   retention_seconds: number
+}
+
+// ---------------------------------------------------------------------------
+// 系统级发布（A 期）：申请 → 审核 → 上架 → 下架，以及发布历史
+//
+// 「发布为系统级」只改 is_system 状态，不选版本、不改任何版本状态——
+// 运行时用哪个版本完全由既有的「发布版本」流程决定。
+// ---------------------------------------------------------------------------
+
+export interface AgentSystemRequestItem {
+  id: string
+  agent_id: string
+  agent_name: string
+  /** 智能体被删除后为 null（孤儿申请单，只能直接驳回关闭） */
+  agent_identifier?: string | null
+  engine_type?: string | null
+  /** 申请单对应的智能体是否已被删除 */
+  agent_missing?: boolean
+  status: string
+  /** SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线 */
+  request_type?: 'SYSTEM_PUBLISH' | 'VERSION_RELEASE'
+  /** VERSION_RELEASE 时指出要上线的是哪一版 */
+  version_number?: number | null
+  request_comment?: string | null
+  requested_by?: number | null
+  /** 审核队列要显示「谁提交的」 */
+  requested_by_name?: string | null
+  requested_at: string
+  waiting_hours: number
+}
+
+export interface AgentSystemRequestDetail extends AgentSystemRequestItem {
+  snapshot?: Record<string, any> | null
+  requested_by_name?: string | null
+  reviewed_by?: number | null
+  reviewed_by_name?: string | null
+  reviewed_at?: string | null
+  review_comment?: string | null
+}
+
+export interface AgentSystemHistoryEntry {
+  kind: 'request' | 'event'
+  id: string
+  at?: string | null
+  /** at 对已审完的申请取审核时间，提交时间另存以便同时展示 */
+  requested_at?: string | null
+  reviewed_at?: string | null
+  status?: string | null
+  /** 申请单类型：SYSTEM_PUBLISH=转系统级；VERSION_RELEASE=版本上线 */
+  request_type?: 'SYSTEM_PUBLISH' | 'VERSION_RELEASE' | null
+  action?: string | null
+  actor_name?: string | null
+  comment?: string | null
+  review_comment?: string | null
+  reason?: string | null
+  version_number?: number | null
+  affected_user_count?: number | null
+  notified?: boolean | null
+  snapshot?: Record<string, any> | null
+}
+
+export interface AgentSystemHistoryResponse {
+  total: number
+  items: AgentSystemHistoryEntry[]
+}
+
+export interface AgentSystemUnpublishPreview {
+  agent_id: string
+  affected_user_count: number
+  sample_user_names: string[]
+}
+
+/** 一条智能体分享记录。 */
+export interface AgentShareRecord {
+  id: string;
+  agent_id: string;
+  agent_name?: string | null;
+  agent_display_name?: string | null;
+  owner_user_name?: string | null;
+  recipient_user_name?: string | null;
+  /** PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED */
+  status: string;
+  share_message?: string | null;
+  share_reason?: string | null;
+  new_agent_id?: string | null;
+  created_at?: string | null;
+  expires_at?: string | null;
+  responded_at?: string | null;
+  /** 从分享快照里抽的摘要，用于在列表里说明「这个智能体是干嘛的」 */
+  summary?: AgentShareSummary | null;
+}
+
+export interface AgentShareSummary {
+  description?: string | null;
+  model_name?: string | null;
+  source_version_number?: number | null;
+  tool_count?: number;
+  skill_count?: number;
+  prompt_excerpt?: string | null;
+  prompt_length?: number;
+  system_prompt?: string | null;
+  tool_names?: string[];
+  welcome_message?: string | null;
+}
+
+export const agentSystemApi = {
+  submitRequest: (agentId: string, data: { comment?: string } = {}) =>
+    axios.post<{ request_id: string; status: string }>(
+      `/api/portal/agents/${agentId}/system/requests`,
+      data,
+    ),
+
+  cancelRequest: (agentId: string) =>
+    axios.delete<{ request_id: string; status: string }>(
+      `/api/portal/agents/${agentId}/system/requests`,
+    ),
+
+  /** 变更权属人（管理员处理离职交接），会记入发布历史并通知新权属人。 */
+  transferOwner: (agentId: string, data: { new_owner: string; reason?: string }) =>
+    axios.post<AIAgent>(`/api/portal/agents/${agentId}/transfer-owner`, data),
+
+  /** 变更权属人时的候选用户（不依赖「用户管理」菜单权限）。 */
+  transferOwnerCandidates: (params?: { search?: string; limit?: number }) =>
+    axios.get<Array<{ user_name: string; real_name?: string | null }>>(
+      '/api/portal/agents/transfer-owner/candidates',
+      { params },
+    ),
+
+  // ---------------------------------------------------------------------
+  // 分享：把配置**副本**发给某个同事，对方接受后得到一份属于自己的新智能体。
+  // 不是授权共用——源与副本从此互不影响。系统级智能体不支持分享。
+  // ---------------------------------------------------------------------
+
+  /** 把智能体分享给一个或多个人（每人一条独立记录）。 */
+  shareAgent: (
+    agentId: string,
+    data: { recipient_user_names: string[]; message?: string },
+  ) => axios.post<{ created: number; ids: string[] }>(
+    `/api/portal/agents/${agentId}/share`,
+    data,
+  ),
+
+  /** 分享时的候选用户（普通用户也能调；转交候选要求管理员权限）。 */
+  shareCandidates: (params?: { search?: string; limit?: number }) =>
+    axios.get<Array<{ user_name: string; real_name?: string | null }>>(
+      '/api/portal/agents/shares/candidates',
+      { params },
+    ),
+
+  /** 我发出的分享。 */
+  listSentShares: () =>
+    axios.get<AgentShareRecord[]>('/api/portal/agents/shares/sent'),
+
+  /** 撤回一条还没被接受的分享。 */
+  withdrawShare: (shareId: string) =>
+    axios.post<{ id: string; status: string }>(
+      `/api/portal/agents/shares/${shareId}/withdraw`,
+    ),
+
+  /** 侧边菜单角标：待接受 / 待对方处理 / 我发出的总数。 */
+  shareCounts: () =>
+    axios.get<{ received_pending: number; sent_pending: number; sent_total: number }>(
+      '/api/portal/agents/shares/counts',
+    ),
+
+  /** 我收到的分享（收件箱）。 */
+  listReceivedShares: (params?: { only_pending?: boolean }) =>
+    axios.get<AgentShareRecord[]>('/api/portal/agents/shares/received', { params }),
+
+  /** 接受分享：按快照生成一份属于我的副本，停在向导第一步。 */
+  acceptShare: (shareId: string, data: { name: string; display_name?: string }) =>
+    axios.post<AIAgent>(`/api/portal/agents/shares/${shareId}/accept`, data),
+
+  rejectShare: (shareId: string) =>
+    axios.post<{ status: string }>(`/api/portal/agents/shares/${shareId}/reject`),
+
+  /** 某个智能体的分享记录（所有者与管理员可见）。 */
+  listAgentShares: (agentId: string) =>
+    axios.get<AgentShareRecord[]>(`/api/portal/agents/${agentId}/shares`),
+
+  /** 申请把某个草稿版本发布上线（系统级智能体的线上基线只能由管理员变更）。 */
+  submitReleaseRequest: (agentId: string, versionId: string, data: { comment?: string } = {}) =>
+    axios.post<{ request_id: string; status: string }>(
+      `/api/portal/agents/${agentId}/system/release-requests`,
+      { version_id: versionId, ...data },
+    ),
+
+  listRequests: (params: { status?: string; page?: number; page_size?: number } = {}) =>
+    axios.get<AgentSystemRequestItem[]>('/api/portal/agents/system/requests', { params }),
+
+  countRequests: () =>
+    axios.get<{ count: number }>('/api/portal/agents/system/requests/count'),
+
+  getRequest: (requestId: string) =>
+    axios.get<AgentSystemRequestDetail>(
+      `/api/portal/agents/system/requests/${requestId}`,
+    ),
+
+  approveRequest: (requestId: string, data: { comment?: string } = {}) =>
+    axios.post<{ agent_id: string; is_system: boolean; message: string }>(
+      `/api/portal/agents/system/requests/${requestId}/approve`,
+      data,
+    ),
+
+  rejectRequest: (requestId: string, data: { comment: string }) =>
+    axios.post<{ request_id: string; status: string }>(
+      `/api/portal/agents/system/requests/${requestId}/reject`,
+      data,
+    ),
+
+  publish: (agentId: string, data: { reason?: string; notify_restore?: boolean } = {}) =>
+    axios.post<AIAgent>(`/api/portal/agents/${agentId}/system/publish`, data),
+
+  previewUnpublish: (agentId: string) =>
+    axios.get<AgentSystemUnpublishPreview>(
+      `/api/portal/agents/${agentId}/system/unpublish-preview`,
+    ),
+
+  unpublish: (agentId: string, data: { reason: string; notify: boolean }) =>
+    axios.post<{
+      agent_id: string
+      affected_user_count: number
+      notified_user_count: number
+    }>(`/api/portal/agents/${agentId}/system/unpublish`, data),
+
+  history: (agentId: string, params: { page?: number; page_size?: number } = {}) =>
+    axios.get<AgentSystemHistoryResponse>(
+      `/api/portal/agents/${agentId}/system/history`,
+      { params },
+    ),
 }

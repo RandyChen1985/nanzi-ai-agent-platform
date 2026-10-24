@@ -52,6 +52,7 @@ const notificationKindLabel = (item: any) => {
   if (isSavedReportNotification(item)) return "固化报表";
   if (item?.resource_type === "skill_share" || item?.category === "skill_share" || item?.category === "skill_share_result") return "技能分享";
   if (item?.resource_type === "mcp_share" || item?.category === "mcp_share" || item?.category === "mcp_share_result") return "MCP 分享";
+  if (item?.resource_type === "agent_share") return "智能体分享";
   if (item?.category === "agent") return "智能体";
   if (item?.category === "saved_report") return "报表";
   if (item?.category === "task_center") return "任务中心";
@@ -67,6 +68,9 @@ const isMcpShareNotification = (item: any) =>
   item?.resource_type === "mcp_share" ||
   item?.category === "mcp_share" ||
   item?.category === "mcp_share_result";
+
+const isAgentShareNotification = (item: any) =>
+  item?.resource_type === "agent_share";
 
 const isTaskCenterNotification = (item: any) =>
   item?.category === "task_center" || item?.resource_type === "scheduled_task";
@@ -224,6 +228,18 @@ const openNotification = async (item: any) => {
     closeDetail();
     await router
       .push({ path: "/dashboard/personal", query: { tab: "skills", skills_tab: targetTab } })
+      .catch(() => undefined);
+    return;
+  }
+
+  // 智能体分享：落到智能体中心的「分享给我 / 我分享的」视图。
+  // 之前只发标题正文，接收方点了不知道去哪儿，等于没通知。
+  if (isAgentShareNotification(item)) {
+    const targetTab = meta.open_tab === "sent" ? "sent" : "received";
+    closeNotifications();
+    closeDetail();
+    await router
+      .push({ path: "/dashboard/agent-management", query: { agents_tab: targetTab } })
       .catch(() => undefined);
     return;
   }

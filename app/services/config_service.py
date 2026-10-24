@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-from typing import Optional, Dict, List
+from typing import Any, Optional, Dict, List
 from sqlalchemy import Boolean, Column, MetaData, String, Table, Text, func, select, text, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -614,10 +614,29 @@ class ConfigService:
             if key is not None and val is not None:
                 await ConfigService.update_config_value(key, val, changed_by=changed_by, change_reason="Bulk update")
 
+    # 名字里带这些词的一律当作密钥处理：历史表存的是明文，界面上不该原样回显
+    _SECRET_KEY_MARKERS = ("key", "secret", "token", "password", "passwd", "credential")
+
     @staticmethod
-    async def get_config_history(key: str, limit: int = 50) -> List[dict]:
+    def _mask_history_value(key: str, value: Any) -> Any:
+        """对密钥类配置的历史值做掩码。"""
+        if value is None:
+            return value
+        text_value = str(value)
+        lowered = str(key or "").lower()
+        if not any(marker in lowered for marker in ConfigService._SECRET_KEY_MARKERS):
+            return value
+        if len(text_value) <= 8:
+            return "***"
+        return f"{text_value[:4]}***{text_value[-4:]}"
+
+    @staticmethod
+    async def get_config_history(key: str, limit: int = 50, mask_secret: bool = False) -> List[dict]:
         """
         Get history of a specific configuration key.
+
+        ``mask_secret=True`` 时对密钥类键的历史值做掩码。历史表里 old/new 是明文，
+        通过提示词历史这类「旁路」接口回显等于把密钥历史直接交出去。
         """
         async with AsyncSessionLocal() as session:
             sql = """
@@ -635,8 +654,12 @@ class ConfigService:
                 history.append({
                     "id": r[0],
                     "config_key": r[1],
-                    "old_value": r[2],
-                    "new_value": r[3],
+                    "old_value": ConfigService._mask_history_value(r[1], r[2])
+                    if mask_secret
+                    else r[2],
+                    "new_value": ConfigService._mask_history_value(r[1], r[3])
+                    if mask_secret
+                    else r[3],
                     "description": r[4],
                     "changed_by": r[5],
                     "change_type": r[6],
