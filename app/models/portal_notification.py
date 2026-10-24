@@ -23,4 +23,7 @@ class PortalNotification(Base):
     __table_args__ = (
         Index("idx_portal_notifications_user_created", "user_id", "created_at"),
         Index("idx_portal_notifications_user_read", "user_id", "read_at"),
+        # 保留期清理按 created_at 范围删除，两条 user_id 前导的索引都用不上
+        # （MySQL V187 / PostgreSQL V87 同步补齐）
+        Index("idx_portal_notifications_created_at", "created_at"),
     )

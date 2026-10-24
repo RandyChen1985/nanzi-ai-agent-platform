@@ -71,6 +71,9 @@ MIN_TASK_RETRY_DELAY_SEC = 60
 MAX_TASK_RETRY_DELAY_SEC = 3600
 SCHEDULER_RECONCILE_INTERVAL_SEC = 30
 
+# 站内信保留天数：随每日 system_audit_log_maintenance 任务一并清理，写死为 30 天
+PORTAL_NOTIFICATION_RETENTION_DAYS = 30
+
 # 执行期互斥锁：执行期间持有、结束释放（不再是「同一分钟去重」），手动触发同样受锁保护
 _TASK_EXEC_LOCK_PREFIX = "lock:task_exec:"
 _TASK_EXEC_LOCK_TTL_BUFFER_SEC = 300
@@ -1113,6 +1116,7 @@ async def _system_audit_log_maintenance_job():
     try:
         from app.services.partition_service import PartitionService
         from app.services.config_service import ConfigService
+        from app.services.portal_notification_service import PortalNotificationService
         
         async with AsyncSessionLocal() as db_session:
             # 1. 自动扩容未来分区
@@ -1132,6 +1136,17 @@ async def _system_audit_log_maintenance_job():
 
             mcp_deleted = await prune_mcp_outbound_audit_logs(retention_days)
             res = {**res, "sys_mcp_outbound_audit_logs": {"deleted_rows": mcp_deleted}}
+            # 站内信同样按保留期清理（保留天数写死，不随审计日志配置变化）。
+            # 复用同一任务与同一分布式锁：站内信清理失败不应中断分区与审计清理。
+            try:
+                inbox_deleted = await PortalNotificationService.purge_older_than(
+                    db_session, PORTAL_NOTIFICATION_RETENTION_DAYS
+                )
+                res = {**res, "portal_notifications": {"deleted_rows": inbox_deleted}}
+            except Exception as inbox_err:
+                await db_session.rollback()
+                logger.warning(f"⚠️ Failed to purge expired portal notifications: {inbox_err}")
+                res = {**res, "portal_notifications": {"error": str(inbox_err)}}
             logger.info(f"✅ System audit log partition maintenance completed. Result: {res}")
     except Exception as e:
         logger.error(f"❌ Failed to run system audit log partition maintenance: {e}", exc_info=True)

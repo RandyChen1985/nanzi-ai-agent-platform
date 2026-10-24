@@ -10,6 +10,7 @@ import tarfile
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -816,11 +817,17 @@ async def delete_entire_skill(
 #: 可以把它膨胀成数 GB——个人技能上传是普通用户可用的入口，因此必须卡住解压侧。
 #: 按上传上限的 5 倍留余量：正常技能包里压缩率本来就高，卡太紧会误伤。
 MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
-MAX_EXTRACTED_FILES = 2000
+
+#: 文件数上限是**独立维度**，不是体积上限的补充：0 字节文件的 ``file_size`` 为 0，
+#: 实测 45KB 的 zip 就能解出 500 个空文件（每条约 90 字节归档开销）——按体积上限
+#: 100MB 放行时，条目数可以到百万级。失控的文件数会耗尽 inode（ENOSPC 会连累所有
+#: 上传/DB/日志写入），并让解压耗时按条目数线性增长。
+#: 20000 对正常技能包（几十到几百个文件）有约两个数量级余量，同时仍能拦住几十万级的洪水。
+MAX_EXTRACTED_FILES = 20000
 
 
 def _guard_extract_budget(written_bytes: int, written_files: int) -> None:
-    """解压预算校验：超限即中止（避免高压缩比归档撑爆磁盘）。"""
+    """解压预算校验：超限即中止（避免高压缩比归档撑爆磁盘、或小文件洪水耗尽 inode）。"""
     if written_files > MAX_EXTRACTED_FILES:
         raise HTTPException(
             status_code=400,
@@ -1056,7 +1063,9 @@ async def upload_skill_archive(
             )
             
         file_name = file.filename if file.filename else "archive.zip"
-        safe_extract_archive(content, file_name, target_dir)
+        # 解压是纯同步 IO（逐个成员写盘 + 预算校验），必须让出事件循环：
+        # 一个体积不大但文件数多的包能跑上几秒到几十秒，直接同步调用会卡死整个 worker。
+        await run_in_threadpool(safe_extract_archive, content, file_name, target_dir)
         
         return {"status": "success", "message": f"技能压缩包 {file_name} 上传解压成功"}
     except HTTPException:
@@ -1097,7 +1106,8 @@ async def import_skill_package(
                 detail=f"导入文件大小超出 {SKILL_PACKAGE_MAX_MB}MB 限制",
             )
             
-        atomic_import_skill_package(content, filename, skill_dir)
+        # 解压 + 校验 + 目录替换整段都是同步文件操作，同样交给线程池执行。
+        await run_in_threadpool(atomic_import_skill_package, content, filename, skill_dir)
             
         return {"status": "success", "message": f"技能 {skill_id} 导入成功"}
     except HTTPException:
