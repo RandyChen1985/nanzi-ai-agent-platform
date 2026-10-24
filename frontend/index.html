@@ -21,8 +21,8 @@
     />
     <title>NanZi AI Agent</title>
     <style>
-      /* 首屏骨架：主包下载解析期间替代白屏。
-         Vue 挂载到 #app 时会清空容器，骨架自动消失，不需要额外的移除逻辑。 */
+      /* 首屏骨架：主包下载解析期间替代白屏。Vue 挂载到 #app 时会清空容器，骨架自动消失，
+         不需要额外的移除逻辑。 */
       html,
       body {
         margin: 0;
@@ -33,68 +33,57 @@
         position: fixed;
         inset: 0;
         display: flex;
+        align-items: center;
+        justify-content: center;
         background: #f5f7fa;
         font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
         z-index: 1;
       }
-      .boot-skeleton .sk-side {
-        width: 240px;
-        flex-shrink: 0;
-        background: #fff;
-        border-right: 1px solid #e8edf4;
-        padding: 18px 16px;
+      .boot-skeleton .sk-card {
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        align-items: center;
+        gap: 14px;
+        box-sizing: border-box;
+        width: min(380px, calc(100vw - 40px));
+        padding: 30px 30px 26px;
+        background: #fff;
+        border: 1px solid #edf1f7;
+        border-radius: 16px;
+        box-shadow: 0 12px 34px rgba(15, 23, 42, 0.06);
       }
       .boot-skeleton .sk-logo {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        margin-bottom: 10px;
-      }
-      .boot-skeleton .sk-logo-mark {
-        width: 26px;
-        height: 26px;
-        border-radius: 8px;
-        background: #1677ff;
-        opacity: 0.85;
-      }
-      .boot-skeleton .sk-main {
-        flex: 1;
-        min-width: 0;
-        padding: 22px 26px;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
-      .boot-skeleton .sk-topbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 4px;
-      }
-      .boot-skeleton .sk-row {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 16px;
-        margin-top: 6px;
-      }
-      .boot-skeleton .sk-card {
-        background: #fff;
-        border: 1px solid #e8edf4;
+        width: 44px;
+        height: 44px;
+        margin-bottom: 6px;
         border-radius: 12px;
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-      .boot-skeleton .sk-bar {
-        border-radius: 5px;
-        background: linear-gradient(90deg, #eef2f7 25%, #e3e9f2 37%, #eef2f7 63%);
+        background: #eef2f7;
+        background-image: linear-gradient(90deg, #eef2f7 25%, #e3e9f2 37%, #eef2f7 63%);
         background-size: 400% 100%;
-        animation: sk-shimmer 1.4s ease infinite;
+        animation: sk-shimmer 1.6s ease infinite;
+      }
+      .boot-skeleton .sk-name {
+        font-size: 15px;
+        font-weight: 500;
+        letter-spacing: 0.2px;
+        color: #334155;
+      }
+      .boot-skeleton .sk-line {
+        height: 10px;
+        border-radius: 6px;
+        background: #eef2f7;
+        background-image: linear-gradient(90deg, #eef2f7 25%, #e3e9f2 37%, #eef2f7 63%);
+        background-size: 400% 100%;
+        animation: sk-shimmer 1.6s ease infinite;
+      }
+      .boot-skeleton .sk-line-1 {
+        width: 100%;
+      }
+      .boot-skeleton .sk-line-2 {
+        width: 82%;
+      }
+      .boot-skeleton .sk-line-3 {
+        width: 58%;
       }
       @keyframes sk-shimmer {
         0% {
@@ -104,26 +93,48 @@
           background-position: 0 50%;
         }
       }
+      .boot-skeleton .sk-progress {
+        position: relative;
+        width: 180px;
+        max-width: 60vw;
+        height: 3px;
+        margin-top: 8px;
+        border-radius: 99px;
+        background: #eef2f7;
+        overflow: hidden;
+      }
+      .boot-skeleton .sk-progress i {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 36%;
+        border-radius: 99px;
+        background: #c7d4e6;
+        animation: sk-run 1.5s ease-in-out infinite;
+      }
+      @keyframes sk-run {
+        0% {
+          transform: translateX(-100%);
+        }
+        100% {
+          transform: translateX(320%);
+        }
+      }
       .boot-skeleton .sk-hint {
         position: absolute;
         left: 50%;
-        bottom: 28px;
+        bottom: 32px;
         transform: translateX(-50%);
         font-size: 12px;
-        color: #94a3b8;
+        color: #a8b3c4;
         letter-spacing: 0.3px;
         white-space: nowrap;
       }
-      @media (max-width: 1023px) {
-        .boot-skeleton .sk-side {
-          display: none;
-        }
-        .boot-skeleton .sk-row {
-          grid-template-columns: minmax(0, 1fr);
-        }
-      }
       @media (prefers-reduced-motion: reduce) {
-        .boot-skeleton .sk-bar {
+        .boot-skeleton .sk-logo,
+        .boot-skeleton .sk-line,
+        .boot-skeleton .sk-progress i {
           animation: none;
         }
       }
@@ -133,75 +144,13 @@
     <div id="app">
       <!-- 骨架屏：主包加载完成后由 Vue 挂载自动清除 -->
       <div class="boot-skeleton" aria-hidden="true">
-        <div class="sk-side">
-          <div class="sk-logo">
-            <div class="sk-logo-mark"></div>
-            <div class="sk-bar" style="width: 92px; height: 13px"></div>
-          </div>
-          <div class="sk-bar" style="width: 100%; height: 30px"></div>
-          <div class="sk-bar" style="width: 88%; height: 30px"></div>
-          <div class="sk-bar" style="width: 94%; height: 30px"></div>
-          <div class="sk-bar" style="width: 78%; height: 30px"></div>
-          <div class="sk-bar" style="width: 90%; height: 30px"></div>
-          <div class="sk-bar" style="width: 70%; height: 30px"></div>
-        </div>
-        <div class="sk-main">
-          <div class="sk-topbar">
-            <div class="sk-bar" style="width: 190px; height: 26px"></div>
-            <div style="display: flex; gap: 10px">
-              <div class="sk-bar" style="width: 96px; height: 34px"></div>
-              <div class="sk-bar" style="width: 124px; height: 34px"></div>
-            </div>
-          </div>
-          <div class="sk-bar" style="width: 100%; height: 38px"></div>
-          <div class="sk-row">
-            <div class="sk-card">
-              <div style="display: flex; gap: 10px; align-items: center">
-                <div class="sk-bar" style="width: 38px; height: 38px; border-radius: 10px"></div>
-                <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
-                  <div class="sk-bar" style="width: 62%; height: 13px"></div>
-                  <div class="sk-bar" style="width: 42%; height: 10px"></div>
-                </div>
-              </div>
-              <div class="sk-bar" style="width: 100%; height: 10px; margin-top: 4px"></div>
-              <div class="sk-bar" style="width: 82%; height: 10px"></div>
-              <div style="display: flex; gap: 6px; margin-top: 4px">
-                <div class="sk-bar" style="width: 54px; height: 20px"></div>
-                <div class="sk-bar" style="width: 44px; height: 20px"></div>
-                <div class="sk-bar" style="width: 62px; height: 20px"></div>
-              </div>
-            </div>
-            <div class="sk-card">
-              <div style="display: flex; gap: 10px; align-items: center">
-                <div class="sk-bar" style="width: 38px; height: 38px; border-radius: 10px"></div>
-                <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
-                  <div class="sk-bar" style="width: 55%; height: 13px"></div>
-                  <div class="sk-bar" style="width: 48%; height: 10px"></div>
-                </div>
-              </div>
-              <div class="sk-bar" style="width: 100%; height: 10px; margin-top: 4px"></div>
-              <div class="sk-bar" style="width: 68%; height: 10px"></div>
-              <div style="display: flex; gap: 6px; margin-top: 4px">
-                <div class="sk-bar" style="width: 48px; height: 20px"></div>
-                <div class="sk-bar" style="width: 58px; height: 20px"></div>
-              </div>
-            </div>
-            <div class="sk-card">
-              <div style="display: flex; gap: 10px; align-items: center">
-                <div class="sk-bar" style="width: 38px; height: 38px; border-radius: 10px"></div>
-                <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
-                  <div class="sk-bar" style="width: 58%; height: 13px"></div>
-                  <div class="sk-bar" style="width: 36%; height: 10px"></div>
-                </div>
-              </div>
-              <div class="sk-bar" style="width: 100%; height: 10px; margin-top: 4px"></div>
-              <div class="sk-bar" style="width: 76%; height: 10px"></div>
-              <div style="display: flex; gap: 6px; margin-top: 4px">
-                <div class="sk-bar" style="width: 52px; height: 20px"></div>
-                <div class="sk-bar" style="width: 40px; height: 20px"></div>
-              </div>
-            </div>
-          </div>
+        <div class="sk-card">
+          <div class="sk-logo"></div>
+          <div class="sk-name">Intelligent Agent Platform</div>
+          <div class="sk-line sk-line-1"></div>
+          <div class="sk-line sk-line-2"></div>
+          <div class="sk-line sk-line-3"></div>
+          <div class="sk-progress"><i></i></div>
         </div>
         <div class="sk-hint">正在加载…</div>
       </div>
