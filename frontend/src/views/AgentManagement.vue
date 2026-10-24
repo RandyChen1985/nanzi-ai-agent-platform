@@ -3673,7 +3673,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
     <!-- 搜索、筛选与两个横幅只服务于「智能体列表」；分享视图有自己的列表，
          留着它们会让「找到 N 个智能体」这种文案指向一个完全不相关的清单 -->
-    <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
+    <!-- 搜索框对所有视图都保留：两个分享面板自己没有搜索，藏掉就等于没法搜。
+         批量 / 网格列表切换 / 筛选 只服务于智能体列表，仍只在一屏内显示。 -->
     <!-- 第 2 行：搜索独占一栏，视图切换与「筛选」跟在后面 -->
     <div class="flex flex-wrap items-center gap-2.5">
       <div class="relative min-w-[220px] flex-1">
@@ -3685,11 +3686,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <input
           v-model="searchKeyword"
           type="search"
-          placeholder="搜索名称或标识符…"
+          :placeholder="workspaceTab === 'mine' || workspaceTab === 'all' ? '搜索名称或标识符…' : '搜索智能体或分享人…'"
           class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
       </div>
 
+      <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
       <div class="flex shrink-0 items-center gap-2">
         <div v-if="!isMobile" class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
           <button
@@ -3828,7 +3830,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </div>
         </div>
       </div>
+      </template>
     </div>
+      <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
 
     <!-- 第 3 行：条件藏在面板里，收起后必须能看见筛了什么，也避免「筛选了但忘了」 -->
     <div v-if="activeFilterChips.length" class="flex flex-wrap items-center gap-2 text-xs">
@@ -3992,10 +3996,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       v-if="workspaceTab === 'received'"
       @updated="refreshShareCounts"
       @accepted="handleShareAccepted"
+      :keyword="searchKeyword"
     />
     <AgentShareSentPanel
       v-else-if="workspaceTab === 'sent'"
       @updated="refreshShareCounts"
+      :keyword="searchKeyword"
     />
 
     <!-- 列表区：管理员在「全部 / 我的智能体」两个视图共用，

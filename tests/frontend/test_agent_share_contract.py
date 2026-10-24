@@ -253,6 +253,28 @@ def test_view_switch_tabs_are_outside_list_only_block():
     ):
         assert needle not in inside, f"{label} 不能被包进列表专属的 v-if"
 
-    # 反过来：搜索与筛选确实应该只在列表视图出现
-    assert "搜索名称或标识符" in inside
+    # 搜索框必须对所有视图可见：两个分享面板自己没有搜索，藏掉就等于没法搜
+    assert "搜索名称或标识符" not in inside
+    assert "搜索智能体或分享人" not in inside
+
+    # 反过来：批量 / 网格列表切换 / 筛选 只服务于智能体列表
     assert "filterPanelOpen" in inside
+    assert "toggleBatchMode" in inside
+
+
+def test_share_panels_receive_search_keyword():
+    """分享视图的搜索框要真的过滤面板内容。
+
+    只把搜索框留在界面上、不把关键词传进面板，等于给了个不生效的输入框——
+    比藏起来更糟。
+    """
+    src = _read(AGENT_MGMT)
+    for comp in ("AgentShareReceivedPanel", "AgentShareSentPanel"):
+        idx = src.index(f"<{comp}")
+        block = src[idx : idx + 300]
+        assert ':keyword="searchKeyword"' in block, f"{comp} 没接搜索词"
+
+    for panel_path in (RECEIVED_PANEL, SENT_PANEL):
+        panel = _read(panel_path)
+        assert "keyword" in panel, f"{panel_path.name} 未声明 keyword 属性"
+        assert "visible" in panel, f"{panel_path.name} 未按关键词过滤"

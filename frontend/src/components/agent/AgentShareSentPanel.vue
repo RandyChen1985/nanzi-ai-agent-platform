@@ -39,6 +39,19 @@ const load = async () => {
 
 onMounted(load)
 
+/** 搜索词来自父级搜索框 */
+const props = withDefaults(defineProps<{ keyword?: string }>(), { keyword: '' })
+
+const visible = computed(() => {
+  const kw = (props.keyword || '').trim().toLowerCase()
+  if (!kw) return items.value
+  return items.value.filter((item) =>
+    [item.agent_name, item.agent_display_name, item.recipient_user_name]
+      .filter(Boolean)
+      .some((field) => String(field).toLowerCase().includes(kw)),
+  )
+})
+
 const statusMeta = (status: string): { label: string; className: string } => {
   switch (status) {
     case 'PENDING':
@@ -108,7 +121,7 @@ const withdraw = async (record: AgentShareRecord) => {
 
     <div v-else class="space-y-2.5">
       <div
-        v-for="record in items"
+        v-for="record in visible"
         :key="record.id"
         class="rounded-xl border border-gray-200 bg-white p-4 transition-colors hover:border-gray-300"
       >

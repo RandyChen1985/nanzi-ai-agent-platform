@@ -38,11 +38,24 @@ const acceptError = ref('')
 
 const pendingCount = computed(() => items.value.filter((item) => item.status === 'PENDING').length)
 
-const visible = computed(() =>
+/** 搜索词来自父级搜索框：面板自己没有输入框，靠外部关键词过滤 */
+const props = withDefaults(defineProps<{ keyword?: string }>(), { keyword: '' })
+
+const byStatus = computed(() =>
   filter.value === 'PENDING'
     ? items.value.filter((item) => item.status === 'PENDING')
     : items.value,
 )
+
+const visible = computed(() => {
+  const kw = (props.keyword || '').trim().toLowerCase()
+  if (!kw) return byStatus.value
+  return byStatus.value.filter((item) =>
+    [item.agent_name, item.agent_display_name, item.owner_user_name, item.message]
+      .filter(Boolean)
+      .some((field) => String(field).toLowerCase().includes(kw)),
+  )
+})
 
 // 快速切「待处理 / 全部」时，先发的请求可能后返回，把列表串成另一个筛选条件的结果
 let loadSeq = 0
