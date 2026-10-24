@@ -40,6 +40,200 @@ from app.schemas.agent import (
 
 router = APIRouter()
 
+
+# ---------------------------------------------------------------------------
+# 智能体分享
+#
+# 语义：把配置**副本**发给某个同事，对方接受后得到一份属于自己的新智能体。
+# 不是授权共用——源与副本从此互不影响。
+#
+# 路由必须注册在 ``/{agent_id}`` 系列之前：``/shares/received`` 里的 "shares"
+# 会被路径参数当作 agent_id 吃掉，之前 ``transfer-owner/candidates`` 已经踩过一次。
+# ---------------------------------------------------------------------------
+
+
+class AgentShareTargets(BaseModel):
+    # 前端只掌握用户名（候选接口不暴露内部 ID），转换放在服务层
+    recipient_user_names: List[str]
+    message: Optional[str] = None
+
+
+class AgentShareAcceptPayload(BaseModel):
+    # 不传就由服务端按源标识符生成不冲突的名字（xxx-copy / xxx-copy-2）
+    name: Optional[str] = None
+    display_name: Optional[str] = None
+
+
+def _serialize_share(record: Any) -> Dict[str, Any]:
+    from app.services.ai.agent_share_service import AgentShareService
+
+    return {
+        "id": record.id,
+        "agent_id": record.agent_id,
+        "agent_name": record.agent_name,
+        "agent_display_name": record.agent_display_name,
+        "owner_user_name": record.owner_user_name,
+        "owner_user_id": record.owner_user_id,
+        "recipient_user_name": record.recipient_user_name,
+        "status": record.status,
+        "share_message": record.share_message,
+        "share_reason": record.share_reason,
+        "new_agent_id": record.new_agent_id,
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+        "expires_at": record.expires_at.isoformat() if record.expires_at else None,
+        "responded_at": record.responded_at.isoformat() if record.responded_at else None,
+        # 列表里只显示名字和时间的说服力太低，接收方判断不了要不要接受
+        "summary": AgentShareService.summarize(record.snapshot),
+    }
+
+
+@router.get("/shares/received")
+async def list_received_shares(
+    only_pending: bool = False,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """我收到的分享（收件箱）。"""
+    from app.services.ai.agent_share_service import AgentShareService
+
+    if not await AgentShareService.supports_share(session):
+        return []
+    records = await AgentShareService.list_received(session, user, only_pending=only_pending)
+    return [_serialize_share(item) for item in records]
+
+
+@router.post("/shares/{share_id}/accept", response_model=AIAgentResponse)
+async def accept_share(
+    share_id: str,
+    payload: AgentShareAcceptPayload,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """接受分享：按快照生成一份属于我的副本，并停在向导第一步。"""
+    from app.services.ai.agent_share_service import AgentShareService
+
+    try:
+        agent = await AgentShareService.accept(
+            session, share_id, user, name=payload.name, display_name=payload.display_name
+        )
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"接受分享失败：{exc}") from exc
+
+    from app.services.ai.router_service import router_service
+
+    router_service.invalidate_cache()
+    return agent
+
+
+@router.post("/shares/{share_id}/reject")
+async def reject_share(
+    share_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """拒绝分享。刻意不通知分享者——拒绝本身可能就不想解释。"""
+    from app.services.ai.agent_share_service import AgentShareService
+
+    record = await AgentShareService.reject(session, share_id, user)
+    await session.commit()
+    return {"status": record.status}
+
+
+@router.get("/shares/sent")
+async def list_sent_shares(
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """我发出的分享。
+
+    与技能/MCP 分享保持一致：分享人也要能查到「我发出去的东西现在什么状态」。
+    """
+    from app.services.ai.agent_share_service import AgentShareService
+
+    if not await AgentShareService.supports_share(session):
+        return []
+    records = await AgentShareService.list_sent_shares(session, user)
+    return [_serialize_share(item) for item in records]
+
+
+@router.get("/shares/counts")
+async def share_menu_counts(
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """侧边菜单角标：待接受 / 待对方处理 / 我发出的总数。"""
+    from app.services.ai.agent_share_service import AgentShareService
+
+    if not await AgentShareService.supports_share(session):
+        return {"received_pending": 0, "sent_pending": 0, "sent_total": 0}
+    return await AgentShareService.menu_counts(session, user)
+
+
+@router.post("/shares/{share_id}/withdraw")
+async def withdraw_share(
+    share_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """撤回一条还没被接受的分享。过期是自动的，但「发错了想收回」得给个主动入口。"""
+    from app.services.ai.agent_share_service import AgentShareService
+
+    try:
+        record = await AgentShareService.withdraw(session, share_id, user)
+        await session.commit()
+    except HTTPException:
+        await session.rollback()
+        raise
+    return {"id": record.id, "status": record.status}
+
+
+@router.post("/{agent_id}/share")
+async def share_agent(
+    agent_id: str,
+    payload: AgentShareTargets,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """把智能体分享给一个或多个人（每人一条独立记录）。"""
+    from app.services.ai.agent_share_service import AgentShareService
+
+    try:
+        records = await AgentShareService.create_shares(
+            session, agent_id, payload.recipient_user_names, user, message=payload.message
+        )
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        await session.rollback()
+        raise
+    return {"created": len(records), "ids": [item.id for item in records]}
+
+
+@router.get("/{agent_id}/shares")
+async def list_agent_shares(
+    agent_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """某个智能体的分享记录（所有者与管理员可见）。"""
+    from app.services.ai.agent_share_service import AgentShareService
+
+    if not await AgentShareService.supports_share(session):
+        return []
+    records = await AgentShareService.list_for_agent(session, agent_id, user)
+    return [_serialize_share(item) for item in records]
+
+
 @router.get("/allowed", response_model=List[AIAgentResponse])
 async def list_allowed_agents(
     keyword: str = None,
@@ -395,20 +589,9 @@ class AgentOwnerCandidate(BaseModel):
     real_name: Optional[str] = None
 
 
-@router.get("/transfer-owner/candidates", response_model=List[AgentOwnerCandidate])
-async def list_transfer_owner_candidates(
-    search: Optional[str] = None,
-    limit: int = 50,
-    session: AsyncSession = Depends(get_db_session),
-    user: Dict[str, Any] = Depends(get_current_user),
-    admin: dict = Depends(require_permission("element", "element:agent:system_publish")),
-):
-    """变更权属人时的候选用户。
-
-    刻意不复用 `menu:system:users` 那套用户管理接口：转交智能体需要「能选一个人」，
-    不需要「能管所有用户」，让这个功能依赖用户管理菜单权限，等于把一件小事卡在
-    一个不相干的权限点上（普通管理员点了会看到空列表，还以为是查不到人）。
-    """
+async def _query_owner_candidates(
+    session: AsyncSession, search: Optional[str], limit: int
+) -> List[AgentOwnerCandidate]:
     from app.models.user import User
 
     stmt = select(User).where(User.status == 1)
@@ -428,6 +611,39 @@ async def list_transfer_owner_candidates(
         )
         for item in rows.scalars().all()
     ]
+
+
+@router.get("/shares/candidates", response_model=List[AgentOwnerCandidate])
+async def list_share_candidates(
+    search: Optional[str] = None,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """分享时的候选用户。
+
+    只要求登录：分享是**普通用户**的核心能力，不能卡在 `element:agent:system_publish`
+    这种管理员权限上——否则普通用户点「分享给同事」会看到空列表，还以为系统里没人。
+    只暴露 user_name 与 real_name，本来就是同事之间可见的信息。
+    """
+    return await _query_owner_candidates(session, search, limit)
+
+
+@router.get("/transfer-owner/candidates", response_model=List[AgentOwnerCandidate])
+async def list_transfer_owner_candidates(
+    search: Optional[str] = None,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+    admin: dict = Depends(require_permission("element", "element:agent:system_publish")),
+):
+    """变更权属人时的候选用户。
+
+    刻意不复用 `menu:system:users` 那套用户管理接口：转交智能体需要「能选一个人」，
+    不需要「能管所有用户」，让这个功能依赖用户管理菜单权限，等于把一件小事卡在
+    一个不相干的权限点上（普通管理员点了会看到空列表，还以为是查不到人）。
+    """
+    return await _query_owner_candidates(session, search, limit)
 
 
 @router.get("/{agent_id}/versions", response_model=List[AIAgentVersionResponse])

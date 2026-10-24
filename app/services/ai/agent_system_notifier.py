@@ -11,7 +11,7 @@
 下架时管理员可以选「不通知」，此时一条站内信都不落，只在事件表里记受影响人数——
 「当时影响了 12 人，只是没告知」这件事本身也要能被追溯。
 """
-from typing import Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -113,10 +113,15 @@ class AgentSystemNotifier:
         title: str,
         content: str,
         level: str = "info",
+        resource_type: str = "agent",
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> int:
         """给一批用户发同一条站内信，返回落库条数。
 
         同一 user_id 只发一次（并集里可能既有直配又有角色命中）。
+
+        ``resource_type`` / ``metadata`` 让通知能点进去：分享类通知要把人带到
+        「分享给我」视图，只给标题正文的话对方还是得自己找入口。
         """
         targets = sorted({int(uid) for uid in user_ids if uid is not None})
         for index, user_id in enumerate(targets):
@@ -127,8 +132,9 @@ class AgentSystemNotifier:
                 content=content,
                 level=level,
                 category=NOTIFICATION_CATEGORY,
-                resource_type="agent",
+                resource_type=resource_type,
                 resource_id=str(agent_id),
+                metadata=metadata,
             )
             if (index + 1) % _BATCH_SIZE == 0:
                 await session.flush()
@@ -302,6 +308,89 @@ class AgentSystemNotifier:
                 f" {previous_owner_user_name or '原所有者'} 变更为你。"
                 "\n\n现在你可以编辑它的配置、创建新版本；系统级智能体的发布仍需管理员审核。"
                 "\n\n如果你并不负责这个智能体，请联系管理员调整。"
+            ),
+            level="info",
+        )
+
+    @staticmethod
+    async def notify_agent_shared(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        display_name: str,
+        owner_name: str,
+        recipient_user_id: int,
+        message: Optional[str] = None,
+    ) -> int:
+        """收到一个智能体分享：告诉对方去「分享给我」里接受。
+
+        关键是要说清「接受后得到的是你自己的副本」——否则用户会以为接受之后就
+        和别人共用同一份，改配置会互相影响。
+        """
+        extra = f"\n\n分享留言：{message}" if message else ""
+        return await AgentSystemNotifier.send(
+            session,
+            [recipient_user_id],
+            agent_id=agent_id,
+            title=f"{owner_name or '同事'} 分享了一个智能体：{display_name}",
+            content=(
+                f"「{owner_name or '同事'}」把他创建的智能体「{display_name}」分享给你。"
+                f"{extra}"
+                "\n\n接受后你会得到**属于自己的一份副本**，需要重新命名并逐项确认配置，"
+                "源智能体不受影响、也不会因此变成共用。"
+                "\n\n你无权使用的工具与技能会在复制时自动剔除。"
+                f"\n\n请在 7 天内到「智能体中心 → 分享给我」处理。"
+            ),
+            level="info",
+            resource_type="agent_share",
+            metadata={"open_tab": "received"},
+        )
+
+    @staticmethod
+    async def notify_share_withdrawn(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        display_name: str,
+        owner_name: str,
+        recipient_user_id: int,
+    ) -> int:
+        """分享被撤回：告诉对方不用再处理了，免得他在收件箱里反复看到。"""
+        return await AgentSystemNotifier.send(
+            session,
+            [recipient_user_id],
+            agent_id=agent_id,
+            title=f"{owner_name or '同事'} 撤回了对「{display_name}」的分享",
+            content=(
+                f"「{display_name}」的分享已被 {owner_name or '分享人'} 撤回，无需再处理。"
+                "\n\n如果你仍然需要这份配置，可以直接联系他对接。"
+            ),
+            level="info",
+            resource_type="agent_share",
+            metadata={"open_tab": "received"},
+        )
+
+    @staticmethod
+    async def notify_share_accepted(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        display_name: str,
+        owner_user_id: Optional[int],
+        recipient_name: str,
+    ) -> int:
+        """分享被接受了：分享者要知道「对方已经拿到了」。"""
+        if owner_user_id is None:
+            return 0
+        return await AgentSystemNotifier.send(
+            session,
+            [owner_user_id],
+            agent_id=agent_id,
+            title=f"{recipient_name or '对方'} 已接受你分享的智能体",
+            content=(
+                f"你分享的智能体「{display_name}」已被 {recipient_name or '对方'} 接受，"
+                "对方得到了一份独立副本。"
+                "\n\n后续对方的修改不会影响你这一份。"
             ),
             level="info",
         )

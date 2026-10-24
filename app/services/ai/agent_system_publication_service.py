@@ -57,6 +57,12 @@ ACTION_TOGGLE_ENABLED = "TOGGLE_ENABLED"
 ACTION_BASELINE_PUBLISH = "BASELINE_PUBLISH"
 # 权属人变更：原所有者离职/转岗后智能体不能变成没人能编辑的孤儿
 ACTION_TRANSFER_OWNER = "TRANSFER_OWNER"
+# 分享：把配置副本发给某个同事。发出去、被接受、被拒绝、被作废都要留痕，
+# 否则「谁在什么时候把这个智能体给了谁」事后查不到。
+ACTION_SHARE_SEND = "SHARE_SEND"
+ACTION_SHARE_ACCEPT = "SHARE_ACCEPT"
+ACTION_SHARE_REJECT = "SHARE_REJECT"
+ACTION_SHARE_REVOKE = "SHARE_REVOKE"
 
 # 只有本地引擎有版本概念；另外两种引擎的配置在远端，拿不到也不该参与委派
 PUBLISHABLE_ENGINE_TYPES = frozenset({"LOCAL"})
@@ -286,6 +292,24 @@ class AgentSystemPublicationService:
                 detail=f"申请单当前状态为 {request.status}，不能执行该操作",
             )
         return request
+
+    @staticmethod
+    async def _revoke_pending_shares(session: AsyncSession, agent_id: str) -> None:
+        """系统级升级时作废待接受的分享。
+
+        分享表与系统级事件表来自不同迁移，缺表时直接跳过——
+        升级为系统级这件事不能被「分享表还没建」挡住。
+        """
+        from app.services.ai.agent_share_service import AgentShareService
+
+        try:
+            if not await AgentShareService.supports_share(session):
+                return
+            await AgentShareService.revoke_pending_for_agent(
+                session, str(agent_id), "该智能体已发布为系统级，请向管理员申请使用权限"
+            )
+        except Exception:
+            pass
 
     @staticmethod
     async def _owner_user_id(
@@ -600,6 +624,9 @@ class AgentSystemPublicationService:
         await write_system_status(
             session, agent.id, status=SYSTEM_STATUS_NONE, pending_request_id=None
         )
+        # 升级为系统级后，之前发出去还没被接受的分享一律作废：
+        # 否则接收方仍能凭快照造出副本，等于绕开系统级的授权治理。
+        await AgentSystemPublicationService._revoke_pending_shares(session, agent.id)
 
         await AgentSystemPublicationService.record_event(
             session,
@@ -827,6 +854,9 @@ class AgentSystemPublicationService:
         await write_system_status(
             session, agent.id, status=SYSTEM_STATUS_NONE, pending_request_id=None
         )
+        # 升级为系统级后，之前发出去还没被接受的分享一律作废：
+        # 否则接收方仍能凭快照造出副本，等于绕开系统级的授权治理。
+        await AgentSystemPublicationService._revoke_pending_shares(session, agent.id)
 
         # 直接发布时顺手关掉待审申请，避免留下一条永远审不掉的单子
         pending = await AgentSystemPublicationService._pending_request(session, agent.id)

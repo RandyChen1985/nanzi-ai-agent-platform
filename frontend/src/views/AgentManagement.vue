@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { agentApi } from "../api/agent";
 import type {
   AIAgent,
@@ -54,6 +54,9 @@ import AgentSystemUnpublishModal from '../components/agent/AgentSystemUnpublishM
 import AgentSystemReviewDrawer from '../components/agent/AgentSystemReviewDrawer.vue'
 import AgentSystemHistoryDrawer from '../components/agent/AgentSystemHistoryDrawer.vue'
 import AgentTransferOwnerModal from '../components/agent/AgentTransferOwnerModal.vue'
+import AgentShareModal from '../components/agent/AgentShareModal.vue'
+import AgentShareReceivedPanel from '../components/agent/AgentShareReceivedPanel.vue'
+import AgentShareSentPanel from '../components/agent/AgentShareSentPanel.vue'
 
 const router = useRouter();
 const agents = ref<AIAgent[]>([]);
@@ -574,6 +577,93 @@ const handleTransferOwnerDone = (
     showToast('权属人已变更，已记入发布历史', 'success')
   }
   fetchAgents()
+}
+
+// ---------------------------------------------------------------------------
+// 分享：自己的智能体**发一份副本**给同事。系统级不提供入口。
+// ---------------------------------------------------------------------------
+
+/** 能被分享的智能体：自己的、非系统级、非主助手。管理员可代为分享。 */
+const canShareAgent = (agent: AIAgent): boolean => {
+  if (isMainAgent(agent)) return false
+  // 系统级是平台生产基线，可用范围只能由管理员授权治理
+  if (agent.is_system) return false
+  if (isAdminViewer.value) return true
+  return !!userInfo.value?.user_name && agent.created_by === userInfo.value?.user_name
+}
+
+const shareTarget = ref<AIAgent | null>(null)
+const showShareModal = ref(false)
+const shareCandidates = ref<Array<{ user_name: string; real_name?: string | null; id?: number | null }>>([])
+const shareCandidatesLoading = ref(false)
+
+const loadShareCandidates = async (keyword = '') => {
+  shareCandidatesLoading.value = true
+  try {
+    const res = await agentSystemApi.shareCandidates({ search: keyword, limit: 30 })
+    shareCandidates.value = res.data.map((item) => ({
+      user_name: item.user_name,
+      real_name: item.real_name,
+    }))
+  } catch {
+    shareCandidates.value = []
+  } finally {
+    shareCandidatesLoading.value = false
+  }
+}
+
+const openShare = (agent: AIAgent) => {
+  closeCardMenus()
+  shareTarget.value = agent
+  showShareModal.value = true
+  void loadShareCandidates('')
+}
+
+const handleShareDone = (count: number) => {
+  showShareModal.value = false
+  showToast(`已分享给 ${count} 人，对方接受后会生成自己的副本`, 'success')
+}
+
+// 分享：与技能 / MCP 分享同一套交互——平级视图 + 侧边菜单角标。
+// 不再做成「有待处理才出现的弹窗」：那样对方根本不知道去哪儿找。
+type AgentWorkspaceTab = 'mine' | 'received' | 'sent'
+
+const workspaceTab = ref<AgentWorkspaceTab>('mine')
+const shareCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
+
+const refreshShareCounts = async () => {
+  try {
+    const res = await agentSystemApi.shareCounts()
+    shareCounts.value = res.data
+  } catch {
+    shareCounts.value = { received_pending: 0, sent_pending: 0, sent_total: 0 }
+  }
+}
+
+const route = useRoute()
+
+/** 站内信/外链可以直接带 ?agents_tab=received 落位 */
+const resolveInitialTab = (): AgentWorkspaceTab => {
+  const raw = String(route.query.agents_tab || '')
+  return raw === 'received' || raw === 'sent' ? (raw as AgentWorkspaceTab) : 'mine'
+}
+
+const switchWorkspaceTab = (tab: AgentWorkspaceTab) => {
+  workspaceTab.value = tab
+  if (tab !== 'mine') void refreshShareCounts()
+}
+
+/** 接受分享后：副本停在向导第一步，直接带用户继续配置 */
+const handleShareAccepted = async (agentId: string) => {
+  await refreshShareCounts()
+  await fetchAgents()
+  const created = agents.value.find((item) => item.id === agentId)
+  if (created) {
+    workspaceTab.value = 'mine'
+    await continueAgentOnboarding(created)
+  } else {
+    workspaceTab.value = 'mine'
+  }
 }
 
 const openSystemReview = () => {
@@ -2374,7 +2464,14 @@ const continueAgentOnboarding = async (agent: AIAgent) => {
     engineConfigUI.value.dataset_ids = Array.isArray(agent.engine_config?.dataset_ids)
       ? agent.engine_config.dataset_ids.join(",")
       : "";
-    onboardingStep.value = agent.onboarding_step === "VERSION" ? "VERSION" : "RESOURCE";
+    // 三步向导都要能落位：副本从 BASIC 开始（要重新命名），
+    // 老数据可能停在 VERSION / RESOURCE
+    onboardingStep.value =
+      agent.onboarding_step === "BASIC"
+        ? "BASIC"
+        : agent.onboarding_step === "VERSION"
+          ? "VERSION"
+          : "RESOURCE";
     resetAgentNameCheckState();
     fetchTools();
     toolSearchQuery.value = "";
@@ -3315,6 +3412,8 @@ onMounted(() => {
   const cached = localStorage.getItem("user_info");
   if (cached) userInfo.value = JSON.parse(cached);
   void fetchPendingSystemCount();
+  void refreshShareCounts();
+  workspaceTab.value = resolveInitialTab();
   document.addEventListener('click', closeCardMenus);
 });
 
@@ -3754,6 +3853,43 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @dismiss="dismissAgentFlowGuide"
     />
 
+    <!-- 三个平级视图：我的智能体 / 分享给我 / 我分享的。
+         分享做成页面级视图而不是弹窗，否则「对方在哪看到」只能靠站内信猜。 -->
+    <div class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2">
+      <button
+        v-for="tab in ([
+          { key: 'mine', label: '我的智能体', badge: 0 },
+          { key: 'received', label: '分享给我', badge: shareCounts.received_pending },
+          { key: 'sent', label: '我分享的', badge: shareCounts.sent_pending },
+        ] as Array<{ key: AgentWorkspaceTab; label: string; badge: number }>)"
+        :key="tab.key"
+        type="button"
+        class="relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+        :class="workspaceTab === tab.key ? 'bg-primary/10 text-primary' : 'text-gray-600 hover:bg-gray-50'"
+        @click="switchWorkspaceTab(tab.key)"
+      >
+        {{ tab.label }}
+        <span
+          v-if="tab.badge > 0"
+          class="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white"
+        >
+          {{ tab.badge > 99 ? '99+' : tab.badge }}
+        </span>
+      </button>
+    </div>
+
+    <AgentShareReceivedPanel
+      v-if="workspaceTab === 'received'"
+      @updated="refreshShareCounts"
+      @accepted="handleShareAccepted"
+    />
+    <AgentShareSentPanel
+      v-else-if="workspaceTab === 'sent'"
+      @updated="refreshShareCounts"
+    />
+
+    <!-- 我的智能体：原有的列表区整体包进 mine 视图 -->
+    <template v-if="workspaceTab === 'mine'">
     <div
       v-if="batchMode && selectedAgentIds.size > 0"
       class="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white/95 px-4 py-2.5 shadow-md backdrop-blur"
@@ -4206,6 +4342,20 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 >
                   <ClockIcon class="h-4 w-4 text-gray-400" />
                   历史记录
+                </button>
+
+                <!-- 分享：把自己的智能体**发一份副本**给同事（不是授权共用）。
+                     系统级智能体不提供分享——它的可用范围由管理员统一授权治理，
+                     所有者若能自己往外发副本，等于绕开这套治理。 -->
+                <button
+                  v-if="canShareAgent(agent)"
+                  @click="closeCardMenus(); openShare(agent)"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+                >
+                  <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342A6.002 6.002 0 0014 18a6 6 0 100-12 6.002 6.002 0 00-5.316 4.658L4 13l4.684.342z" />
+                  </svg>
+                  分享给同事
                 </button>
 
                 <!-- 权属人变更：所有者离职/转岗后智能体不该变成没人能编辑的孤儿。
@@ -5521,6 +5671,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </div>
     </Teleport>
 
+    </template>
+
     <!-- 系统级发布：发布/申请、下架、审核队列、发布历史 -->
     <AgentSystemPublishModal
       :is-open="showSystemPublishModal"
@@ -5550,6 +5702,15 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :agent="transferOwnerTarget"
       @close="showTransferOwnerModal = false"
       @done="handleTransferOwnerDone"
+    />
+    <AgentShareModal
+      :show="showShareModal"
+      :agent="shareTarget"
+      :candidates="shareCandidates"
+      :loading-candidates="shareCandidatesLoading"
+      @close="showShareModal = false"
+      @done="handleShareDone"
+      @search="loadShareCandidates"
     />
 
     <!-- Global Components -->

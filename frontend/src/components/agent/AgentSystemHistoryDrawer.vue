@@ -42,6 +42,10 @@ const eventTone = (entry: AgentSystemHistoryEntry) => {
     TOGGLE_ENABLED: { dot: 'bg-slate-500', label: '启用状态变更' },
     BASELINE_PUBLISH: { dot: 'bg-indigo-500', label: '发布新基线版本' },
     TRANSFER_OWNER: { dot: 'bg-violet-500', label: '变更权属人' },
+  SHARE_SEND: { dot: 'bg-sky-500', label: '分享给同事' },
+  SHARE_ACCEPT: { dot: 'bg-sky-500', label: '分享被接受' },
+  SHARE_REJECT: { dot: 'bg-gray-400', label: '分享被拒绝' },
+  SHARE_REVOKE: { dot: 'bg-amber-500', label: '分享已作废' },
   }
   return map[entry.action || ''] || { dot: 'bg-slate-400', label: entry.action || '操作' }
 }

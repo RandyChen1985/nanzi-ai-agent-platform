@@ -412,6 +412,39 @@ export interface AgentSystemUnpublishPreview {
   sample_user_names: string[]
 }
 
+/** 一条智能体分享记录。 */
+export interface AgentShareRecord {
+  id: string;
+  agent_id: string;
+  agent_name?: string | null;
+  agent_display_name?: string | null;
+  owner_user_name?: string | null;
+  recipient_user_name?: string | null;
+  /** PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED */
+  status: string;
+  share_message?: string | null;
+  share_reason?: string | null;
+  new_agent_id?: string | null;
+  created_at?: string | null;
+  expires_at?: string | null;
+  responded_at?: string | null;
+  /** 从分享快照里抽的摘要，用于在列表里说明「这个智能体是干嘛的」 */
+  summary?: AgentShareSummary | null;
+}
+
+export interface AgentShareSummary {
+  description?: string | null;
+  model_name?: string | null;
+  source_version_number?: number | null;
+  tool_count?: number;
+  skill_count?: number;
+  prompt_excerpt?: string | null;
+  prompt_length?: number;
+  system_prompt?: string | null;
+  tool_names?: string[];
+  welcome_message?: string | null;
+}
+
 export const agentSystemApi = {
   submitRequest: (agentId: string, data: { comment?: string } = {}) =>
     axios.post<{ request_id: string; status: string }>(
@@ -434,6 +467,58 @@ export const agentSystemApi = {
       '/api/portal/agents/transfer-owner/candidates',
       { params },
     ),
+
+  // ---------------------------------------------------------------------
+  // 分享：把配置**副本**发给某个同事，对方接受后得到一份属于自己的新智能体。
+  // 不是授权共用——源与副本从此互不影响。系统级智能体不支持分享。
+  // ---------------------------------------------------------------------
+
+  /** 把智能体分享给一个或多个人（每人一条独立记录）。 */
+  shareAgent: (
+    agentId: string,
+    data: { recipient_user_names: string[]; message?: string },
+  ) => axios.post<{ created: number; ids: string[] }>(
+    `/api/portal/agents/${agentId}/share`,
+    data,
+  ),
+
+  /** 分享时的候选用户（普通用户也能调；转交候选要求管理员权限）。 */
+  shareCandidates: (params?: { search?: string; limit?: number }) =>
+    axios.get<Array<{ user_name: string; real_name?: string | null }>>(
+      '/api/portal/agents/shares/candidates',
+      { params },
+    ),
+
+  /** 我发出的分享。 */
+  listSentShares: () =>
+    axios.get<AgentShareRecord[]>('/api/portal/agents/shares/sent'),
+
+  /** 撤回一条还没被接受的分享。 */
+  withdrawShare: (shareId: string) =>
+    axios.post<{ id: string; status: string }>(
+      `/api/portal/agents/shares/${shareId}/withdraw`,
+    ),
+
+  /** 侧边菜单角标：待接受 / 待对方处理 / 我发出的总数。 */
+  shareCounts: () =>
+    axios.get<{ received_pending: number; sent_pending: number; sent_total: number }>(
+      '/api/portal/agents/shares/counts',
+    ),
+
+  /** 我收到的分享（收件箱）。 */
+  listReceivedShares: (params?: { only_pending?: boolean }) =>
+    axios.get<AgentShareRecord[]>('/api/portal/agents/shares/received', { params }),
+
+  /** 接受分享：按快照生成一份属于我的副本，停在向导第一步。 */
+  acceptShare: (shareId: string, data: { name: string; display_name?: string }) =>
+    axios.post<AIAgent>(`/api/portal/agents/shares/${shareId}/accept`, data),
+
+  rejectShare: (shareId: string) =>
+    axios.post<{ status: string }>(`/api/portal/agents/shares/${shareId}/reject`),
+
+  /** 某个智能体的分享记录（所有者与管理员可见）。 */
+  listAgentShares: (agentId: string) =>
+    axios.get<AgentShareRecord[]>(`/api/portal/agents/${agentId}/shares`),
 
   /** 申请把某个草稿版本发布上线（系统级智能体的线上基线只能由管理员变更）。 */
   submitReleaseRequest: (agentId: string, versionId: string, data: { comment?: string } = {}) =>
