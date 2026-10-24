@@ -2,12 +2,11 @@
 
 这里锁的是**用户能感知到的后果**，不是实现细节：
 
-- 审核中的卡片必须有明确的冻结条（原型里的 freeze-bar），否则用户只看到
-  「审核中」却不知道自己为什么点不动；
-- 编辑 / 配置与发布 / 启用开关 / 删除都要真的不可用，而不是让用户点进去
-  再吃一个 409（那是把错误提示当交互设计）；
-- **复制智能体必须保留**——所有者此时唯一的出路就是复制一份继续开发，
-  把它一起锁掉等于把人堵死。
+- 审核中的卡片必须有明确的提示条，说清**冻的是发布**、不是开发；
+- 待审期间草稿照改、版本照建、调试照用——只有发布被拦住。
+  卡片的「配置与发布」必须仍然可点，锁掉它等于要求用户提交申请后彻底停工；
+- 元数据（改名 / 启停 / 删除）仍然锁死：提交时那份配置才是审核对象；
+- **复制智能体必须保留**——想独立发布时的出口。
 """
 
 from pathlib import Path
@@ -27,7 +26,7 @@ def test_pending_review_has_explicit_freeze_bar():
     assert "const isPendingReview = (agent: AIAgent): boolean" in src
     assert "agent.system_status === 'PENDING_REVIEW'" in src
     assert "const pendingReviewHint = (agent: AIAgent): string" in src
-    assert "已冻结 · " in src
+    assert "审核中 · " in src
     # 冻结条要带上提交时间，用户才知道自己等了多久
     assert "system_requested_at" in src
     # 冻结条可点，直接看申请进度（而不是让人去猜在哪儿看）
@@ -38,15 +37,14 @@ def test_pending_review_has_explicit_freeze_bar():
 def test_pending_review_locks_primary_action_and_switch():
     src = _source()
 
-    # 主按钮变成不可点的「审核中」，并解释原因与出路
-    assert "if (isPendingReview(agent)) return 'frozen'" in src
-    assert "if (action === 'frozen') return '审核中'" in src
-    assert ":disabled=\"getPrimaryCardAction(agent) === 'frozen'\"" in src
-    assert "审核中不能修改配置；可先撤回申请，或复制一份继续开发" in src
+    # 主按钮**不锁**：待审期间仍要能进「配置与发布」改草稿
+    assert "if (isPendingReview(agent)) return 'frozen'" not in src, \
+        "主按钮不能在待审时被锁死——草稿开发不该停"
+    assert "审核中不能发布新配置" in src
 
-    # 启用/禁用开关：待审期间后端会 409，前端不该让人点
+    # 启用/禁用开关仍然锁死（属于元数据）
     assert ':disabled="isPendingReview(agent)"' in src
-    assert "审核中不能改动启用状态；先撤回申请" in src
+    assert "审核中不能改动启用状态" in src
 
 
 def test_pending_review_hides_edit_and_delete_but_keeps_duplicate():
@@ -58,7 +56,7 @@ def test_pending_review_hides_edit_and_delete_but_keeps_duplicate():
     assert "!isPendingReview(agent)" in src
     # 列表行内的编辑按钮保留位置但禁用（避免图标跳动）
     assert "disabled:opacity-40 disabled:cursor-not-allowed" in src
-    assert "审核中不能编辑，先撤回申请" in src
+    assert "审核中不能改元数据" in src
 
     # 复制入口不能被审核中条件排除：它是所有者唯一的自救路径
     duplicate_blocks = [

@@ -768,15 +768,26 @@ class AgentManagerService:
         if creator_keys:
             from app.models.user import User
 
+            # 顺带取 status：权属人离职/停用后，这个智能体就没人能编辑了。
+            # 管理员得能一眼筛出来，否则只能靠人想起来去转交。
             name_rows = await session.execute(
-                select(User.user_name, User.real_name).where(User.user_name.in_(creator_keys))
+                select(User.user_name, User.real_name, User.status).where(
+                    User.user_name.in_(creator_keys)
+                )
             )
-            creator_names = {
-                row[0]: (row[1] or row[0]) for row in name_rows.all() if row and row[0]
+            rows = name_rows.all()
+            creator_names = {row[0]: (row[1] or row[0]) for row in rows if row and row[0]}
+            creator_active = {
+                row[0]: (row[2] == 1) for row in rows if row and row[0]
             }
+        else:
+            creator_active = {}
         for agent in visible_agents:
             key = getattr(agent, "created_by", None)
             agent.created_by_name = creator_names.get(key, key) if key else None
+            # 查不到对应用户时按「正常」处理：历史数据里 created_by 可能是脚本写入的
+            # 用户名，不该因此把智能体标成孤儿。
+            agent.owner_active = creator_active.get(key, True) if key else True
 
         # 批量附带已发布版本的 tool / mcp / skills 摘要（仅 LOCAL 引擎有版本工具配置）
         local_ids = [a.id for a in visible_agents if (a.engine_type or "LOCAL") == "LOCAL"]
@@ -1618,8 +1629,8 @@ class AgentManagerService:
             return None # Forbidden
 
         # 系统级允许所有者建草稿版本，但发布仍被 publish_version 拦死。
-        # 待审期间所有者不能建新版本（管理员豁免）
-        await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
+        # 待审期间同样**允许**建版本：建草稿不碰线上，把它一起冻住等于要求用户
+        # 提交申请后彻底停工，而他往往正是想在这期间继续调。真正要拦的是发布。
 
         skills_custom = bool(getattr(data, "skills_custom", False))
         skills_list = AgentManagerService._normalize_skills_list(getattr(data, "skills", None)) if skills_custom else []
@@ -1784,22 +1795,22 @@ class AgentManagerService:
         )
         agent.onboarding_step = "COMPLETE"
 
-        # 系统级智能体上「发布新版本」就是换掉线上基线，必须留痕：
-        # 否则发布历史里版本号变了却查不到是谁在什么时候换的。
-        if bool(agent.is_system):
-            from app.services.ai.agent_system_publication_service import (
-                ACTION_BASELINE_PUBLISH,
-            )
+        # 「发布新版本」换掉的是线上基线，不管是不是系统级都必须留痕：
+        # 否则发布历史里版本号变了，却查不到是谁在什么时候换的。
+        # 普通智能体尤其需要——它没有审核环节，发布完全由所有者自行决定。
+        from app.services.ai.agent_system_publication_service import (
+            ACTION_BASELINE_PUBLISH,
+        )
 
-            _, actor_name, actor_id = AgentSystemPublicationService.resolve_actor(user)
-            await AgentSystemPublicationService.record_event(
-                session,
-                agent=agent,
-                action=ACTION_BASELINE_PUBLISH,
-                actor_name=actor_name,
-                actor_id=actor_id,
-                version=version,
-            )
+        _, actor_name, actor_id = AgentSystemPublicationService.resolve_actor(user)
+        await AgentSystemPublicationService.record_event(
+            session,
+            agent=agent,
+            action=ACTION_BASELINE_PUBLISH,
+            actor_name=actor_name,
+            actor_id=actor_id,
+            version=version,
+        )
 
         await session.commit()
 
@@ -1814,6 +1825,92 @@ class AgentManagerService:
         router_service.invalidate_cache()
         
         return True
+
+    @staticmethod
+    async def save_agent_prompt(
+        session: AsyncSession,
+        agent_id: str,
+        content: str,
+        *,
+        user: Any = None,
+        note: Optional[str] = None,
+    ) -> Optional[str]:
+        """把「系统提示词」存进智能体版本，返回被写入的 version_id。
+
+        提示词工坊原先绕过这里，用裸 SQL 直接 UPDATE/INSERT ``ai_agent_versions``，
+        于是所有权、冻结、字段完整性、缓存失效全部失效——任何有提示词编辑权限的人
+        都能改别人的（包括系统级的）草稿，而且不留痕。
+
+        统一收到这个方法里：
+        * 有草稿就改草稿（``update_agent_version`` 自带归属与 DRAFT 校验）；
+        * 没有草稿就从最新版本复制一份再改——**不能只写 system_prompt 就 INSERT**，
+          否则 temperature / 工具 / 技能 / 欢迎语全落回数据库默认值，
+          用户会得到「提示词一样、效果却变了」的版本，还查不出原因。
+        """
+        from app.schemas.agent import AIAgentVersionBase
+
+        agent = await session.get(AIAgent, agent_id)
+        if not agent:
+            return None
+
+        if isinstance(user, dict):
+            is_admin = user.get("role", "") == "admin"
+            username = user.get("user_name", "")
+        else:
+            is_admin = bool(user and getattr(user, "role", "") == "admin")
+            username = getattr(user, "user_name", "") if user else ""
+
+        if not is_admin and agent.created_by and agent.created_by != username:
+            # 明确区分「没权限」和「没变化」：都返回 None 的话，越权会被
+            # 伪装成「未检测到内容变更」，用户和日志都看不出被拒了。
+            raise PermissionError("无权修改该智能体的提示词")
+
+        draft_row = await session.execute(
+            select(AIAgentVersion)
+            .where(
+                AIAgentVersion.agent_id == agent_id,
+                AIAgentVersion.status == "DRAFT",
+            )
+            .order_by(AIAgentVersion.version_number.desc())
+            .limit(1)
+        )
+        draft = draft_row.scalars().first()
+
+        if draft is not None:
+            if (draft.system_prompt or "") == content and (
+                note is None or (draft.comment or "") == note
+            ):
+                return None  # 内容没变，不必制造一个「保存成功」
+
+            payload = AIAgentVersionBase.model_validate(draft, from_attributes=True)
+            payload.system_prompt = content
+            if note is not None:
+                payload.comment = note
+            updated = await AgentManagerService.update_agent_version(
+                session, agent_id, draft.id, payload, user=user
+            )
+            return updated.id if updated else None
+
+        # 没有草稿：复制最新版本再改，保证除提示词外的一切都跟当前版本一致
+        latest_row = await session.execute(
+            select(AIAgentVersion)
+            .where(AIAgentVersion.agent_id == agent_id)
+            .order_by(AIAgentVersion.version_number.desc())
+            .limit(1)
+        )
+        latest = latest_row.scalars().first()
+        if latest is None:
+            return None
+
+        payload = AIAgentVersionBase.model_validate(latest, from_attributes=True)
+        payload.version_number = None
+        payload.status = "DRAFT"
+        payload.system_prompt = content
+        payload.comment = note if note is not None else "提示词工坊修改"
+        created = await AgentManagerService.create_agent_version(
+            session, agent_id, payload, user=user
+        )
+        return created.id if created else None
 
     @staticmethod
     async def delete_version(session: AsyncSession, agent_id: str, version_id: str, user: Any = None) -> bool:

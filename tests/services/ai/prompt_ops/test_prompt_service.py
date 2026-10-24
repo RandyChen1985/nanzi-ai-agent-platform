@@ -180,7 +180,9 @@ async def test_save_prompt_config():
             "admin"
         )
         
-        assert success is True
+        # 返回值带上 version_id，前端才能发布「刚保存的这一版」；
+        # 系统级提示词没有智能体版本，这里应为 None
+        assert success == {"changed": True, "version_id": None}
         mock_set.assert_called_once_with(
             "test_key", 
             "New Content", 

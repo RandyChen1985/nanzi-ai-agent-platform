@@ -390,6 +390,46 @@ async def delete_agent(
         raise HTTPException(status_code=403, detail="Forbidden: Cannot delete system agents or agents you do not own")
     return {"status": "success"}
 
+class AgentOwnerCandidate(BaseModel):
+    user_name: str
+    real_name: Optional[str] = None
+
+
+@router.get("/transfer-owner/candidates", response_model=List[AgentOwnerCandidate])
+async def list_transfer_owner_candidates(
+    search: Optional[str] = None,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+    admin: dict = Depends(require_permission("element", "element:agent:system_publish")),
+):
+    """变更权属人时的候选用户。
+
+    刻意不复用 `menu:system:users` 那套用户管理接口：转交智能体需要「能选一个人」，
+    不需要「能管所有用户」，让这个功能依赖用户管理菜单权限，等于把一件小事卡在
+    一个不相干的权限点上（普通管理员点了会看到空列表，还以为是查不到人）。
+    """
+    from app.models.user import User
+
+    stmt = select(User).where(User.status == 1)
+    keyword = (search or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        stmt = stmt.where(
+            (User.user_name.like(like)) | (User.real_name.like(like))
+        )
+    stmt = stmt.order_by(User.user_name.asc()).limit(max(1, min(limit, 200)))
+
+    rows = await session.execute(stmt)
+    return [
+        AgentOwnerCandidate(
+            user_name=item.user_name,
+            real_name=(getattr(item, "real_name", None) or None),
+        )
+        for item in rows.scalars().all()
+    ]
+
+
 @router.get("/{agent_id}/versions", response_model=List[AIAgentVersionResponse])
 async def list_agent_versions(agent_id: str, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """获取智能体的所有版本记录"""
@@ -617,6 +657,30 @@ async def submit_system_request(
         session, agent_id, user, comment=data.comment
     )
     return {"request_id": request.id, "status": request.status}
+
+
+class AgentTransferOwnerRequest(BaseModel):
+    """变更智能体权属人（管理员处理离职交接用）。"""
+
+    new_owner: str
+    reason: Optional[str] = None
+
+
+@router.post(
+    "/{agent_id}/transfer-owner",
+    response_model=AIAgentResponse,
+    dependencies=[Depends(require_permission("element", "element:agent:system_publish"))],
+)
+async def transfer_agent_owner(
+    agent_id: str,
+    data: AgentTransferOwnerRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """把智能体转交给另一个人，并记入发布历史。"""
+    return await AgentSystemPublicationService.transfer_owner(
+        session, agent_id, data.new_owner, user, reason=data.reason
+    )
 
 
 class AgentVersionReleaseRequest(BaseModel):

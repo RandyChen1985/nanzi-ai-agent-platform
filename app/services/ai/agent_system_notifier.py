@@ -280,6 +280,33 @@ class AgentSystemNotifier:
         )
 
     @staticmethod
+    async def notify_owner_transferred(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        display_name: str,
+        previous_owner_user_name: str,
+        new_owner_user_id: Optional[int],
+        actor_name: str,
+    ) -> int:
+        """权属人变更：新所有者要知道「这个智能体现在归你了」。"""
+        if new_owner_user_id is None:
+            return 0
+        return await AgentSystemNotifier.send(
+            session,
+            [new_owner_user_id],
+            agent_id=agent_id,
+            title=f"智能体已转交给你：{display_name}",
+            content=(
+                f"{actor_name} 把智能体「{display_name}」的权属人从"
+                f" {previous_owner_user_name or '原所有者'} 变更为你。"
+                "\n\n现在你可以编辑它的配置、创建新版本；系统级智能体的发布仍需管理员审核。"
+                "\n\n如果你并不负责这个智能体，请联系管理员调整。"
+            ),
+            level="info",
+        )
+
+    @staticmethod
     async def notify_approved(
         session: AsyncSession,
         *,

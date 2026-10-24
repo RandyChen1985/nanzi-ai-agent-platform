@@ -53,6 +53,7 @@ import AgentSystemPublishModal from '../components/agent/AgentSystemPublishModal
 import AgentSystemUnpublishModal from '../components/agent/AgentSystemUnpublishModal.vue'
 import AgentSystemReviewDrawer from '../components/agent/AgentSystemReviewDrawer.vue'
 import AgentSystemHistoryDrawer from '../components/agent/AgentSystemHistoryDrawer.vue'
+import AgentTransferOwnerModal from '../components/agent/AgentTransferOwnerModal.vue'
 
 const router = useRouter();
 const agents = ref<AIAgent[]>([]);
@@ -426,6 +427,8 @@ const typeFilter = ref<"all" | AgentType>("all");
 const sourceFilter = ref<"all" | "system" | "custom">("all");
 const engineFilter = ref<"all" | "LOCAL" | "RAGFLOW" | "OPENCLAW">("all");
 const readinessFilter = ref<"all" | "ready" | "unready">("all");
+/** 权属人筛选：orphan = 权属人已停用，智能体已经没人能编辑 */
+const ownerFilter = ref<"all" | "orphan">("all");
 const filterPanelOpen = ref(false);
 const userInfo = ref<any>({});
 
@@ -476,13 +479,18 @@ const fetchPendingSystemCount = async () => {
   }
 }
 
-/** 审核中：内容冻结。编辑、配置、开关、删除一律不可用，但「复制」必须留着——那是唯一出路。 */
+/**
+ * 审核中：冻的是**发布**与元数据，不是开发。
+ * 草稿照改、版本照建、调试照用；开关/删除/改名仍然锁死（提交时那份配置才是审核对象）。
+ */
 const isPendingReview = (agent: AIAgent): boolean => agent.system_status === 'PENDING_REVIEW'
 
 /** 卡片冻结条文案：带上提交时间，让人知道等了多久。 */
 const pendingReviewHint = (agent: AIAgent): string => {
   const at = agent.system_requested_at ? formatDate(agent.system_requested_at) : ''
-  return at ? `已冻结 · ${at} 提交审核，期间不能编辑` : '已冻结 · 审核中，期间不能编辑'
+  return at
+    ? `审核中 · ${at} 提交，期间不能发布新配置`
+    : '审核中 · 期间不能发布新配置'
 }
 
 /** 卡片菜单里该显示哪个系统级动作；空串表示不显示。 */
@@ -538,6 +546,34 @@ const openSystemHistory = (agent: AIAgent) => {
   closeCardMenus()
   systemHistoryTarget.value = agent
   showSystemHistoryDrawer.value = true
+}
+
+/** 权属人变更只给管理员；主助手是系统固定入口，没有「归谁」的概念。 */
+const canTransferOwner = (agent: AIAgent): boolean =>
+  isAdminViewer.value && !isMainAgent(agent)
+
+const transferOwnerTarget = ref<AIAgent | null>(null)
+const showTransferOwnerModal = ref(false)
+
+const openTransferOwner = (agent: AIAgent) => {
+  closeCardMenus()
+  transferOwnerTarget.value = agent
+  showTransferOwnerModal.value = true
+}
+
+const handleTransferOwnerDone = (
+  dropped: Array<{ name: string; reason_label?: string }> = []
+) => {
+  showTransferOwnerModal.value = false
+  if (dropped.length) {
+    showToast(
+      `权属人已变更，但新权属人有 ${dropped.length} 个工具无权使用，请在版本配置中移除后重新发布`,
+      'warning'
+    )
+  } else {
+    showToast('权属人已变更，已记入发布历史', 'success')
+  }
+  fetchAgents()
 }
 
 const openSystemReview = () => {
@@ -653,6 +689,9 @@ watch(configIssueItems, (list) => {
   if (!list.length) configIssuesDismissed.value = false
 })
 
+/** 权属人已停用的智能体：管理员需要主动转交，否则会变成没人能动的孤儿。 */
+const orphanAgents = computed(() => agents.value.filter((a) => a.owner_active === false));
+
 const filteredAgents = computed(() => {
   let result = [...agents.value];
 
@@ -697,6 +736,11 @@ const filteredAgents = computed(() => {
     result = result.filter((a) => Boolean(a.readiness_ready) === wantReady);
   }
 
+  // 3.4 权属人状态：离职/停用后智能体已经没人能编辑，管理员要能一次筛出来
+  if (ownerFilter.value === "orphan") {
+    result = result.filter((a) => a.owner_active === false);
+  }
+
   // 4. Sort: sort_order (descending), then is_system (descending), then Alphabetical
   return result.sort((a, b) => {
     if (isMainAgent(a) !== isMainAgent(b)) return isMainAgent(a) ? -1 : 1;
@@ -723,7 +767,8 @@ const hasActiveAgentFilters = computed(
     typeFilter.value !== "all" ||
     sourceFilter.value !== "all" ||
     engineFilter.value !== "all" ||
-    readinessFilter.value !== "all",
+    readinessFilter.value !== "all" ||
+    ownerFilter.value !== "all",
 );
 
 /** 「筛选」按钮上的角标：有几个条件在生效 */
@@ -735,6 +780,7 @@ const activeFilterCount = computed(
       sourceFilter.value,
       engineFilter.value,
       readinessFilter.value,
+      ownerFilter.value,
     ].filter((value) => value !== "all").length,
 );
 
@@ -791,6 +837,13 @@ const activeFilterChips = computed(() => {
       clear: () => (readinessFilter.value = "all"),
     });
   }
+  if (ownerFilter.value !== "all") {
+    chips.push({
+      key: "owner",
+      label: "权属人已停用",
+      clear: () => (ownerFilter.value = "all"),
+    });
+  }
   return chips;
 });
 
@@ -800,6 +853,7 @@ const clearAllAgentFilters = () => {
   sourceFilter.value = "all";
   engineFilter.value = "all";
   readinessFilter.value = "all";
+  ownerFilter.value = "all";
 };
 
 const canDragAgents = computed(
@@ -3100,8 +3154,9 @@ const formatReadinessMissing = (agent: AIAgent) =>
 const getPrimaryCardAction = (
   agent: AIAgent,
 ): 'continue' | 'enable' | 'configure' | 'edit' | 'frozen' | 'readonly' => {
-  // 审核中最高优先：主按钮变成不可点的「审核中」，而不是让你点进去再吃一个 409
-  if (isPendingReview(agent)) return 'frozen'
+  // 审核中不冻开发：草稿照改、版本照建，只是**不能发布新配置**。
+  // 所以主按钮仍然是「配置与发布」，进去后发布按钮会是灰的。
+  // （早期这里直接返回 'frozen' 把入口锁死，等于要求用户提交申请后彻底停工。）
   // 系统级且非所有者：内容连草稿都改不了，主按钮直接指向「复制一份」这条唯一出路。
   // 所有者改为可进「配置与发布」改草稿，只是发布按钮会被屏蔽。
   if (agent.is_system && agent.can_edit_versions === false) return 'readonly'
@@ -3546,6 +3601,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   <option value="custom">自定义</option>
                 </select>
               </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-semibold text-gray-500">权属人</span>
+                <select v-model="ownerFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value="all">全部</option>
+                  <option value="orphan">权属人已停用</option>
+                </select>
+              </label>
             </div>
 
             <div class="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
@@ -3583,6 +3645,33 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         清除全部
       </button>
       <span class="ml-auto text-gray-500">找到 {{ filteredAgents.length }} 个智能体</span>
+    </div>
+
+    <!-- 孤儿智能体提示：权属人已停用，没人能编辑。只在管理员视图且确实存在时渲染。 -->
+    <div
+      v-if="isAdminViewer && orphanAgents.length"
+      class="rounded-xl border border-violet-200 bg-violet-50/80 px-4 py-3"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex min-w-0 items-center gap-2">
+          <svg class="h-4 w-4 shrink-0 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-2.99l-6.93-12a2 2 0 00-3.48 0l-6.93 12A2 2 0 005.07 19z" />
+          </svg>
+          <span class="text-sm font-medium text-violet-900">
+            {{ orphanAgents.length }} 个智能体的权属人已停用
+          </span>
+          <span class="hidden truncate text-xs text-violet-700 sm:inline">
+            已无人能编辑，建议转交给仍在岗的同事
+          </span>
+        </div>
+        <button
+          type="button"
+          class="shrink-0 cursor-pointer rounded-md px-2 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
+          @click="ownerFilter = 'orphan'"
+        >
+          只看这些
+        </button>
+      </div>
     </div>
 
     <!-- 模型配置异常提示：只在有问题时渲染，正常时完全不占空间 -->
@@ -3849,7 +3938,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               :class="agent.is_enabled ? 'bg-green-500' : 'bg-gray-200'"
               :disabled="isPendingReview(agent)"
               @click.stop="toggleAgentStatus(agent)"
-              :title="isPendingReview(agent) ? '审核中不能改动启用状态；先撤回申请' : agent.is_enabled ? '已启用，点击禁用' : '已禁用，点击启用'"
+              :title="isPendingReview(agent) ? '审核中不能改动启用状态（属于元数据）；撤回申请后可改' : agent.is_enabled ? '已启用，点击禁用' : '已禁用，点击启用'"
             >
               <span class="sr-only">Toggle Status</span>
               <span
@@ -4119,6 +4208,19 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   历史记录
                 </button>
 
+                <!-- 权属人变更：所有者离职/转岗后智能体不该变成没人能编辑的孤儿。
+                     主助手是系统固定入口，没有「归谁」的概念，不提供该入口。 -->
+                <button
+                  v-if="canTransferOwner(agent)"
+                  @click="openTransferOwner(agent)"
+                  class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50 cursor-pointer"
+                >
+                  <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                  变更权属人
+                </button>
+
                 <!-- 系统级生命周期：发布 / 申请 / 撤回 / 下架 / 发布历史。
                      状态变化不走编辑表单，保证每次上架下架都有事件可查。 -->
                 <template v-if="systemCardAction(agent) || canViewSystemHistory(agent)">
@@ -4209,7 +4311,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               }"
               :title="
                 getPrimaryCardAction(agent) === 'frozen'
-                  ? '审核中不能修改配置；可先撤回申请，或复制一份继续开发'
+                  ? '审核中不能发布新配置；可继续改草稿并调试'
                   : getPrimaryCardAction(agent) === 'readonly'
                     ? '系统级智能体由管理员维护，内容只读；改动请复制一份继续开发'
                     : undefined
@@ -4372,7 +4474,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                       }"
                       :title="
                         getPrimaryCardAction(agent) === 'frozen'
-                          ? '审核中不能修改配置；可先撤回申请，或复制一份继续开发'
+                          ? '审核中不能发布新配置；可继续改草稿并调试'
                           : getPrimaryCardAction(agent) === 'readonly'
                             ? '系统级智能体由管理员维护，内容只读；改动请复制一份继续开发'
                             : getPrimaryCardActionLabel(agent)
@@ -4389,7 +4491,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                       <ChatBubbleLeftRightIcon class="w-3.5 h-3.5 text-primary" />
                       <span>预览</span>
                     </button>
-                    <button v-has-perm="'element:agent:edit'" v-if="agent.is_editable !== false" :disabled="isPendingReview(agent)" @click.stop="openAgentModal(agent)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-gray-400" :title="isPendingReview(agent) ? '审核中不能编辑，先撤回申请' : '编辑智能体'">
+                    <button v-has-perm="'element:agent:edit'" v-if="agent.is_editable !== false" :disabled="isPendingReview(agent)" @click.stop="openAgentModal(agent)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-gray-400" :title="isPendingReview(agent) ? '审核中不能改元数据；能力配置可在「配置与发布」里继续改草稿' : '编辑智能体'">
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
@@ -5442,6 +5544,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :is-open="showSystemHistoryDrawer"
       :agent="systemHistoryTarget"
       @close="showSystemHistoryDrawer = false"
+    />
+    <AgentTransferOwnerModal
+      :show="showTransferOwnerModal"
+      :agent="transferOwnerTarget"
+      @close="showTransferOwnerModal = false"
+      @done="handleTransferOwnerDone"
     />
 
     <!-- Global Components -->

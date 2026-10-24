@@ -32,6 +32,15 @@ class AIAgentVersionBase(BaseModel):
     status: str = "DRAFT"
     comment: Optional[str] = None
 
+    @field_validator("tools", mode="before")
+    @classmethod
+    def coerce_tools_list(cls, value):
+        # DB 历史行 tools 可能是 NULL（早期插入路径没写这一列）；
+        # from_attributes 构造 payload 时若不归一，会直接校验失败
+        if value is None:
+            return []
+        return value
+
     @field_validator("skills", mode="before")
     @classmethod
     def coerce_skills_list(cls, value):
@@ -133,6 +142,8 @@ class AIAgentResponse(AIAgentBase):
     published_version_number: Optional[int] = None
     # 复制智能体时因无权使用而被跳过的工具引用（仅复制接口返回，其它接口为 null）
     dropped_tool_refs: Optional[List[Dict[str, Any]]] = None
+    # 权属人账号是否仍然启用：false 表示这个智能体已经没人能编辑了
+    owner_active: Optional[bool] = None
     readiness_ready: bool = False
     readiness_missing: List[str] = Field(default_factory=list)
     # 模型配置异常：null 表示正常；仅在列表接口计算，避免/health 之类的轻量接口多查库

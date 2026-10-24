@@ -83,6 +83,8 @@ export interface AIAgent {
   published_version_number?: number | null
   /** 复制时因无权使用被跳过的工具引用（仅复制接口返回） */
   dropped_tool_refs?: Array<{ name: string; reason_label?: string }> | null
+  /** 权属人账号是否仍启用；false = 已无人能编辑，需要转交 */
+  owner_active?: boolean | null
   readiness_ready?: boolean
   readiness_missing?: string[]
   /**
@@ -420,6 +422,17 @@ export const agentSystemApi = {
   cancelRequest: (agentId: string) =>
     axios.delete<{ request_id: string; status: string }>(
       `/api/portal/agents/${agentId}/system/requests`,
+    ),
+
+  /** 变更权属人（管理员处理离职交接），会记入发布历史并通知新权属人。 */
+  transferOwner: (agentId: string, data: { new_owner: string; reason?: string }) =>
+    axios.post<AIAgent>(`/api/portal/agents/${agentId}/transfer-owner`, data),
+
+  /** 变更权属人时的候选用户（不依赖「用户管理」菜单权限）。 */
+  transferOwnerCandidates: (params?: { search?: string; limit?: number }) =>
+    axios.get<Array<{ user_name: string; real_name?: string | null }>>(
+      '/api/portal/agents/transfer-owner/candidates',
+      { params },
     ),
 
   /** 申请把某个草稿版本发布上线（系统级智能体的线上基线只能由管理员变更）。 */

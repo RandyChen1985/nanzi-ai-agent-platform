@@ -309,3 +309,43 @@ async def test_update_system_agent_allows_echoing_is_system_true(db_session):
             assert resp.json()["is_system"] is True
     finally:
         await _cleanup(agent.id)
+
+
+@pytest.mark.asyncio
+async def test_transfer_owner_candidates_route_is_not_shadowed(db_session):
+    """候选用户接口不能被 ``/{agent_id}`` 吃成路径参数。
+
+    同一类坑之前踩过一次（``/system/requests/count`` 被当成申请单 ID）。这里是
+    ``/transfer-owner/candidates`` 与 ``/{agent_id}`` 的优先级问题，一旦被吃掉，
+    前端会拿到 404 并显示「没有匹配的启用用户」——把路由错误伪装成「查无此人」，
+    比直接报错难查得多。
+    """
+    admin_key = await AuthService.generate_api_key(
+        f"sys_admin_{_uid()}", role="admin", db=db_session
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/api/portal/agents/transfer-owner/candidates",
+            headers={"X-API-Key": admin_key},
+        )
+    assert resp.status_code == 200, "候选接口被路径参数遮蔽了"
+    payload = resp.json()
+    assert isinstance(payload, list)
+    # 库里必然有启用用户；候选列表只含启用账号
+    assert all(item.get("user_name") for item in payload)
+
+
+@pytest.mark.asyncio
+async def test_transfer_owner_candidates_requires_management_permission(db_session):
+    """普通用户不能拿候选列表（这是管理动作的配套接口）。"""
+    user_key = await AuthService.generate_api_key(
+        f"sys_plain_{_uid()}", role="user", db=db_session
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/api/portal/agents/transfer-owner/candidates",
+            headers={"X-API-Key": user_key},
+        )
+    assert resp.status_code == 403

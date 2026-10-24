@@ -140,11 +140,10 @@ def test_agent_center_card_ux_hierarchy_and_primary_cta():
     assert "isAdminViewer && agent.created_by_name" in management
     # meta 行不重复展示创建者，避免同一信息在一张卡上出现两次
     assert "· {{ agent.created_by_name }}" not in management
-    # 审核中：原型里的冻结条 + 主按钮锁定（点进去再吃 409 的体验太差）
+    # 审核中：提示条说清冻的是发布而非开发；草稿与调试不受影响
     assert "pendingReviewHint(agent)" in management
-    assert "已冻结 · " in management
-    assert "=== 'frozen'" in management
-    assert "审核中不能修改配置" in management
+    assert "审核中 · " in management
+    assert "不能发布新配置" in management
     assert ">工具</span>" in management or "font-normal\">工具</span>" in management
     assert ">技能</span>" in management or "font-normal\">技能</span>" in management
     assert "formatSkillCountLabel" in management

@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import desc, select
+from sqlalchemy import case, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import AIAgent, AIAgentVersion
@@ -33,6 +33,7 @@ from app.services.ai.agent_system_columns import (
     SYSTEM_STATUS_PENDING,
     assert_migrated,
     read_system_status,
+    supports_system_status,
     write_system_status,
 )
 from app.services.ai.agent_system_notifier import AgentSystemNotifier
@@ -54,6 +55,8 @@ ACTION_META_UPDATE = "META_UPDATE"
 ACTION_TOGGLE_ENABLED = "TOGGLE_ENABLED"
 # 管理员给系统级智能体发布新版本 = 换掉线上基线，属于「发布记录」的一部分
 ACTION_BASELINE_PUBLISH = "BASELINE_PUBLISH"
+# 权属人变更：原所有者离职/转岗后智能体不能变成没人能编辑的孤儿
+ACTION_TRANSFER_OWNER = "TRANSFER_OWNER"
 
 # 只有本地引擎有版本概念；另外两种引擎的配置在远端，拿不到也不该参与委派
 PUBLISHABLE_ENGINE_TYPES = frozenset({"LOCAL"})
@@ -196,7 +199,13 @@ class AgentSystemPublicationService:
         snapshot: Optional[Dict[str, Any]] = None,
         affected_user_count: Optional[int] = None,
         notified: Optional[bool] = None,
-    ) -> AgentSystemEvent:
+    ) -> Optional[AgentSystemEvent]:
+        # 事件表与 system_status 列来自同一个迁移。未迁移的环境里表根本不存在，
+        # 直接写会抛错——而发布、改权属人这些动作不该因为「审计表没建」就整条失败。
+        # 探测有缓存，热路径上不额外查库。
+        if not await supports_system_status(session):
+            return None
+
         event = AgentSystemEvent(
             id=str(uuid.uuid4()),
             agent_id=agent.id,
@@ -616,6 +625,151 @@ class AgentSystemPublicationService:
         )
         await session.commit()
         return agent
+
+    # ------------------------------------------------------------------
+    # 权属人变更
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def transfer_owner(
+        session: AsyncSession,
+        agent_id: str,
+        new_owner: str,
+        user: Any,
+        reason: Optional[str] = None,
+    ) -> AIAgent:
+        """把智能体转交给另一个人。
+
+        存在的理由很具体：所有者离职或转岗后，这个智能体既没人能编辑、也没人能
+        发布，只有管理员能碰——必须先有「换个人」这个动作，才谈得上交接。
+
+        约束：
+        * 只有管理员能做（高风险动作，不是普通编辑权限）；
+        * 主助手禁止转交（它是系统固定入口，没有「归谁」的概念）；
+        * 待审申请期间禁止转交（申请单记的是当时的申请人，换了人对不上）；
+        * 目标用户必须存在且启用，转给一个停用账号等于换个方式变孤儿。
+        """
+        await assert_migrated(session)
+        is_admin, actor_name, actor_id = AgentSystemPublicationService.resolve_actor(user)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="只有管理员可以变更智能体权属人")
+
+        agent = await AgentSystemPublicationService._get_agent(session, agent_id)
+
+        from app.services.ai.agent_manager import _is_main_general_agent_record
+
+        if _is_main_general_agent_record(agent):
+            raise HTTPException(
+                status_code=409, detail="主助手是系统固定入口，不允许变更权属人"
+            )
+
+        previous_owner = (agent.created_by or "").strip()
+        target = (new_owner or "").strip()
+        if not target:
+            raise HTTPException(status_code=400, detail="请选择新的权属人")
+        if target == previous_owner:
+            raise HTTPException(status_code=400, detail="该用户已经是这个智能体的权属人")
+
+        current_status, pending_request_id = await read_system_status(session, agent.id)
+        if current_status == SYSTEM_STATUS_PENDING or pending_request_id:
+            raise HTTPException(
+                status_code=409, detail="该智能体有待审的申请，请先处理完申请再变更权属人"
+            )
+
+        target_user = await session.execute(
+            select(User).where(User.user_name == target).limit(1)
+        )
+        new_owner_row = target_user.scalars().first()
+        if new_owner_row is None:
+            raise HTTPException(status_code=404, detail="目标用户不存在")
+        if int(getattr(new_owner_row, "status", 1) or 0) != 1:
+            raise HTTPException(status_code=409, detail="目标用户已停用，不能作为权属人")
+
+        agent.created_by = target
+        await session.flush()
+
+        text = (reason or "").strip()[:REQUEST_COMMENT_MAX] or None
+        suffix = f"（{text}）" if text else ""
+        await AgentSystemPublicationService.record_event(
+            session,
+            agent=agent,
+            action=ACTION_TRANSFER_OWNER,
+            actor_name=actor_name,
+            actor_id=actor_id,
+            reason=f"权属人从 {previous_owner or '未指定'} 变更为 {target}{suffix}",
+        )
+
+        # 系统级智能体还要补授权：列表按 created_by 判定可见性，但对话走 allowed_agents，
+        # 靠的是 ResourcePermission。不补的话新所有者「看得到、用不了」。
+        if bool(agent.is_system):
+            await AgentSystemPublicationService.grant_agent_to_user(
+                session, agent.id, getattr(new_owner_row, "id", None)
+            )
+
+        await AgentSystemNotifier.notify_owner_transferred(
+            session,
+            agent_id=agent.id,
+            display_name=agent.display_name,
+            previous_owner_user_name=previous_owner,
+            new_owner_user_id=getattr(new_owner_row, "id", None),
+            actor_name=actor_name,
+        )
+        await session.commit()
+
+        # 换人之后，配置里可能留着只有原所有者能用的私有 MCP 引用：新所有者
+        # 工具选择器里看不到它们，也就取消不掉。这里按新权属人的视角体检一遍。
+        #
+        # 刻意只体检、不改配置——转交是身份变更，顺手改版本内容等于悄悄动了别人的
+        # 配置，而且必须重新发布才生效，容易变成「看起来修好了、线上还是旧的」。
+        # 让管理员带着这份清单去编辑器里一键移除，动静分明。
+        from app.services.ai.agent_manager import AgentManagerService
+
+        current_version = await AgentSystemPublicationService._pick_relevant_version(
+            session, agent.id
+        )
+        if current_version is not None:
+            new_owner_ctx = {
+                "role": getattr(new_owner_row, "role", "user") or "user",
+                "user_name": target,
+                "user_id": getattr(new_owner_row, "id", None),
+                "id": getattr(new_owner_row, "id", None),
+            }
+            _, dropped = await AgentManagerService.drop_inaccessible_mcp_tools(
+                session, current_version.tools, new_owner_ctx
+            )
+            if dropped:
+                setattr(agent, "dropped_tool_refs", dropped)
+                await AgentSystemPublicationService.record_event(
+                    session,
+                    agent=agent,
+                    action=ACTION_TRANSFER_OWNER,
+                    actor_name=actor_name,
+                    actor_id=actor_id,
+                    reason=(
+                        f"转交后新权属人有 {len(dropped)} 个工具无权使用，"
+                        "需在版本配置中移除失效引用后重新发布"
+                    ),
+                )
+                await session.commit()
+
+        return agent
+
+    @staticmethod
+    async def _pick_relevant_version(
+        session: AsyncSession, agent_id: str
+    ) -> Optional[AIAgentVersion]:
+        """体检用哪个版本：优先线上版本，没有就取最新一版。"""
+        latest = await session.execute(
+            select(AIAgentVersion)
+            .where(AIAgentVersion.agent_id == agent_id)
+            .order_by(
+                # PUBLISHED 优先，其余按版本号倒序
+                case((AIAgentVersion.status == "PUBLISHED", 0), else_=1),
+                AIAgentVersion.version_number.desc(),
+            )
+            .limit(1)
+        )
+        return latest.scalars().first()
 
     # ------------------------------------------------------------------
     # 发布 / 下架

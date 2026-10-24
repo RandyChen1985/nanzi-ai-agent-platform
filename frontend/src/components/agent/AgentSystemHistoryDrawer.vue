@@ -41,6 +41,7 @@ const eventTone = (entry: AgentSystemHistoryEntry) => {
     META_UPDATE: { dot: 'bg-blue-500', label: '修改元数据' },
     TOGGLE_ENABLED: { dot: 'bg-slate-500', label: '启用状态变更' },
     BASELINE_PUBLISH: { dot: 'bg-indigo-500', label: '发布新基线版本' },
+    TRANSFER_OWNER: { dot: 'bg-violet-500', label: '变更权属人' },
   }
   return map[entry.action || ''] || { dot: 'bg-slate-400', label: entry.action || '操作' }
 }

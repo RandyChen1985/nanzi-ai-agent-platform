@@ -93,8 +93,9 @@ const submit = async () => {
               它会进入主助手的自动委派候选与路由，被授权的用户可直接使用。
             </template>
             <template v-else>
-              <strong>提交后内容将被冻结</strong><br />
-              审核期间不能编辑、建版本或发布。如需继续开发，请先「复制智能体」另开一条。
+              <strong>提交后进入审核，审核期间不能发布新配置</strong><br />
+              线上配置保持不变。你可以继续修改草稿、新建版本，并用草稿调试。<br />
+              如需立即把改动发布上线，请先撤回申请，或「复制智能体」另开一条独立维护。
             </template>
           </div>
 
@@ -102,8 +103,9 @@ const submit = async () => {
             v-if="isPublish"
             class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900"
           >
-            ⚠ 发布后该智能体对所有者变为<strong>只读</strong>（只能复制另开一条继续开发），
-            直到下架为止。系统会自动把所有者加入可用名单。
+            ⚠ 发布后<strong>不能直接发布新配置</strong>：能力配置可以改草稿并调试，
+            但上线要走「申请上线」由管理员审批；名称、描述、头像等元数据变为只读。
+            系统会自动把所有者加入可用名单。
           </div>
 
           <div class="space-y-1.5">

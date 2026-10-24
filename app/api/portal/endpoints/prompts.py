@@ -13,8 +13,8 @@ router = APIRouter()
 
 @router.get("/", response_model=List[PromptMetadata])
 async def list_prompts(user: Dict[str, Any] = Depends(get_current_user)):
-    """获取所有提示词元数据列表 (系统级 +智能体级)"""
-    return await PromptService.get_all_prompts()
+    """获取提示词元数据列表 (系统级 + 当前用户可见的智能体级)"""
+    return await PromptService.get_all_prompts(user)
 
 @router.get("/detail", response_model=PromptDetail)
 async def get_prompt_detail(
@@ -23,8 +23,11 @@ async def get_prompt_detail(
     version: Optional[int] = None,
     user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """获取特定提示词的内容详情"""
-    return await PromptService.get_prompt_detail(source, target_id, version)
+    """获取特定提示词的内容详情（智能体提示词按可见性校验）"""
+    try:
+        return await PromptService.get_prompt_detail(source, target_id, version, user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 @router.post("/test", response_model=PromptTestResponse)
 async def test_prompt(
@@ -45,18 +48,24 @@ async def save_prompt(
     user: Dict[str, Any] = Depends(get_current_user)
 ):
     """保存提示词变更 (具有编辑权限)"""
-    changed = await PromptService.save_prompt(
-        data.source, 
-        data.target_id, 
-        data.content, 
-        data.version_note, 
-        user_name=user.get("user_name", "unknown")
-    )
-    
-    if not changed:
-        return {"status": "unchanged", "message": "No changes detected"}
-        
-    return {"status": "success"}
+    try:
+        changed = await PromptService.save_prompt(
+            data.source,
+            data.target_id,
+            data.content,
+            data.version_note,
+            user_name=user.get("user_name", "unknown"),
+            # 归属校验靠它：不是自己的智能体（且非管理员）在这里被拒
+            user=user,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    if not changed["changed"]:
+        return {"status": "unchanged", "message": "No changes detected", "version_id": None}
+
+    # version_id 让前端发布刚保存的这一版，而不是"列表里第一个草稿"
+    return {"status": "success", "version_id": changed["version_id"]}
 
 @router.post("/optimize", response_model=PromptOptimizeResponse, dependencies=[Depends(require_permission("element", "element:prompts:optimize"))])
 async def optimize_prompt(

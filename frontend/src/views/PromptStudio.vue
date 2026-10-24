@@ -291,18 +291,16 @@ const performPublish = async () => {
   )
     return;
 
-  // Save first
-  await performSave();
+  // 先存，再发布「刚存下的这一版」：
+  // 旧实现去版本列表里找第一个 DRAFT，智能体有多个草稿时会发错版本。
+  const savedVersionId = await performSave();
 
   try {
     const agentId = selectedPrompt.value.id.replace("agent_", "");
     await loadPromptDetail(selectedPrompt.value);
 
-    const vRes = await agentApi.listVersions(agentId);
-    const draft = vRes.data.find((v: any) => v.status === "DRAFT");
-
-    if (draft) {
-      await agentApi.publishVersion(agentId, draft.id);
+    if (savedVersionId) {
+      await agentApi.publishVersion(agentId, savedVersionId);
       showToast("已发布并上线！", "success");
       
       // Refresh prompts list to get updated versions
@@ -321,7 +319,7 @@ const performPublish = async () => {
         await loadPromptDetail(updatedPrompt, latestVersion);
       }
     } else {
-      showToast("未找到草稿版本，无法发布", "warning");
+      showToast("提示词没有变更，未生成可发布的草稿版本", "warning");
     }
   } catch (e: any) {
     showToast("发布失败: " + (e.response?.data?.detail || e.message), "error");
@@ -555,9 +553,10 @@ const requestSave = () => {
   showConfirm.value = true;
 };
 
-const performSave = async () => {
+/** 保存提示词，返回刚写入的 version_id（系统级提示词没有版本，返回 null） */
+const performSave = async (): Promise<string | null> => {
   showConfirm.value = false;
-  if (!currentDetail.value || !selectedPrompt.value) return;
+  if (!currentDetail.value || !selectedPrompt.value) return null;
   saving.value = true;
   try {
     const res = await axios.post("/api/portal/prompts/save", {
@@ -577,10 +576,12 @@ const performSave = async () => {
     }
 
     fetchPrompts(); // Refresh version list
+    return res.data.version_id ?? null;
   } catch (e: any) {
     console.error("Failed to save:", e);
     const errorMessage = e.response?.data?.detail || "保存失败";
     showToast(errorMessage, "error");
+    return null;
   } finally {
     saving.value = false;
   }

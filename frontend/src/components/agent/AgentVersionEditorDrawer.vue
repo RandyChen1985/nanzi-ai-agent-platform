@@ -225,6 +225,8 @@ const canPublishLocalVersion = computed(() =>
   && (!props.versionForm.id || props.versionForm.status === 'DRAFT')
   // 系统级智能体对非管理员不提供发布入口：能改、能存草稿，线上基线只能由管理员变更
   && props.selectedAgent?.can_publish_version !== false
+  // 待审期间不给发布入口：草稿随便改，但线上配置在审核结束前不能变
+  && props.selectedAgent?.system_status !== 'PENDING_REVIEW'
 );
 
 const AGENT_VERSION_TOOLCALL_TIMEOUT_DEFAULT = 120;

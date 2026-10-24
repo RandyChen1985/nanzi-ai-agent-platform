@@ -23,10 +23,13 @@ from app.models.user import User
 from app.schemas.agent import AIAgentVersionBase
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.agent_system_columns import (
+    SYSTEM_STATUS_PENDING,
     read_system_status,
     reset_probe_state_for_tests,
     supports_system_status,
+    write_system_status,
 )
+from app.services.ai.skill_resolver import MAIN_GENERAL_AGENT_ID
 from app.services.ai.agent_system_publication_service import (
     ACTION_PUBLISH,
     ACTION_UNPUBLISH,
@@ -788,3 +791,257 @@ async def test_baseline_publish_and_review_timeline_are_recorded(db_session):
         assert "可以继续编辑" in (owner_notifications[0].content or "")
     finally:
         await _cleanup(agent.id, user_ids=(owner.id, admin.id))
+
+
+# ----------------------------------------------------------------------
+# 权属人变更：原所有者离职后，智能体不能变成没人能编辑的孤儿
+# ----------------------------------------------------------------------
+
+
+async def test_admin_can_transfer_owner_and_it_lands_in_history():
+    """管理员把智能体转给别人：created_by 变更、事件落库、新所有者收到站内信。"""
+    async with AsyncSessionLocal() as session:
+        old_owner = await _make_user(session)
+        new_owner = await _make_user(session)
+        admin = await _make_user(session, role="admin")
+        agent = await _make_agent(session, owner=old_owner.user_name)
+        agent_id = agent.id
+        user_ids = (old_owner.id, new_owner.id, admin.id)
+        admin_ctx = {"role": "admin", "user_name": admin.user_name, "user_id": admin.id, "id": admin.id}
+
+        try:
+            await session.commit()
+            moved = await Svc.transfer_owner(
+                session, agent_id, new_owner.user_name, admin_ctx, reason="原负责人离职"
+            )
+            assert moved.created_by == new_owner.user_name
+
+            fresh = await session.execute(select(AIAgent).where(AIAgent.id == agent_id))
+            assert fresh.scalars().first().created_by == new_owner.user_name
+
+            events = await session.execute(
+                select(AgentSystemEvent).where(
+                    AgentSystemEvent.agent_id == agent_id,
+                    AgentSystemEvent.action == "TRANSFER_OWNER",
+                )
+            )
+            event = events.scalars().first()
+            assert event is not None, "权属人变更必须留下事件"
+            assert old_owner.user_name in (event.reason or "")
+            assert new_owner.user_name in (event.reason or "")
+            assert "原负责人离职" in (event.reason or "")
+
+            notes = await session.execute(
+                select(PortalNotification).where(
+                    PortalNotification.resource_type == "agent",
+                    PortalNotification.resource_id == agent_id,
+                )
+            )
+            assert any(n.user_id == new_owner.id for n in notes.scalars().all()), \
+                "新所有者必须收到站内信"
+        finally:
+            await _cleanup(agent_id, user_ids=user_ids)
+
+
+async def test_transfer_owner_rejects_wrong_cases():
+    """非管理员 / 主助手 / 停用账号 / 同名 / 待审中都必须被挡住。"""
+    async with AsyncSessionLocal() as session:
+        old_owner = await _make_user(session)
+        new_owner = await _make_user(session)
+        disabled = await _make_user(session)
+        disabled.status = 0
+        admin = await _make_user(session, role="admin")
+        agent = await _make_agent(session, owner=old_owner.user_name)
+        pending_agent = await _make_agent(session, owner=old_owner.user_name)
+        agent_ids = (agent.id, pending_agent.id)
+        user_ids = (old_owner.id, new_owner.id, disabled.id, admin.id)
+
+        user_ctx = {"role": "user", "user_name": old_owner.user_name, "user_id": old_owner.id, "id": old_owner.id}
+        admin_ctx = {"role": "admin", "user_name": admin.user_name, "user_id": admin.id, "id": admin.id}
+
+        try:
+            await session.commit()
+
+            with pytest.raises(HTTPException) as denied:
+                await Svc.transfer_owner(session, agent.id, new_owner.user_name, user_ctx)
+            assert denied.value.status_code == 403
+
+            # 主助手在库里真实存在（固定 ID），直接拿它试；不能新建，主键会撞
+            main_row = await session.execute(
+                select(AIAgent).where(AIAgent.id == MAIN_GENERAL_AGENT_ID)
+            )
+            main_agent = main_row.scalars().first()
+            assert main_agent is not None, "库里应存在主助手"
+            with pytest.raises(HTTPException) as main_denied:
+                await Svc.transfer_owner(session, main_agent.id, new_owner.user_name, admin_ctx)
+            assert main_denied.value.status_code == 409
+            assert "主助手" in main_denied.value.detail
+
+            with pytest.raises(HTTPException) as same_owner:
+                await Svc.transfer_owner(session, agent.id, old_owner.user_name, admin_ctx)
+            assert same_owner.value.status_code == 400
+
+            with pytest.raises(HTTPException) as missing:
+                await Svc.transfer_owner(session, agent.id, "no-such-user", admin_ctx)
+            assert missing.value.status_code == 404
+
+            with pytest.raises(HTTPException) as inactive:
+                await Svc.transfer_owner(session, agent.id, disabled.user_name, admin_ctx)
+            assert inactive.value.status_code == 409
+
+            # 待审期间不允许换人：申请单记的是当时的申请人，换了人对不上
+            await write_system_status(
+                session, pending_agent.id, status=SYSTEM_STATUS_PENDING, pending_request_id=None
+            )
+            await session.commit()
+            with pytest.raises(HTTPException) as pending:
+                await Svc.transfer_owner(
+                    session, pending_agent.id, new_owner.user_name, admin_ctx
+                )
+            assert pending.value.status_code == 409
+        finally:
+            await _cleanup(*agent_ids, user_ids=user_ids)
+
+
+async def test_transfer_owner_reports_tools_the_new_owner_cannot_use():
+    """转交后要告诉管理员：新权属人有几个工具用不了。
+
+    这不是假设——智能体的工具里可能引用原所有者私有的 MCP 服务，换人之后那些
+    引用对新所有者永久不可见（工具选择器不渲染，也就取消不掉）。转交本身不改
+    配置（身份变更不该顺手动内容），但必须把这份清单交出来，否则新权属人接手后
+    只会看到「配置都在、就是跑不起来」。
+    """
+    import uuid as _uuid
+
+    from app.models.mcp import McpServer, McpToolCache
+
+    async with AsyncSessionLocal() as session:
+        old_owner = await _make_user(session)
+        new_owner = await _make_user(session)
+        admin = await _make_user(session, role="admin")
+        agent = await _make_agent(session, owner=old_owner.user_name)
+        agent_id = agent.id
+        user_ids = (old_owner.id, new_owner.id, admin.id)
+        admin_ctx = {"role": "admin", "user_name": admin.user_name, "user_id": admin.id, "id": admin.id}
+
+        private_server = McpServer(
+            id=str(_uuid.uuid4()),
+            server_name=f"xfer-{_uuid.uuid4().hex[:8]}",
+            sse_url="http://localhost:1/sse",
+            enabled_status=1,
+            scope="personal",
+            user_id=old_owner.id,
+        )
+        session.add(private_server)
+        await session.flush()
+        session.add(
+            McpToolCache(
+                id=str(_uuid.uuid4()),
+                server_id=private_server.id,
+                tool_name="secret-tool",
+                is_published=True,
+                is_available=True,
+            )
+        )
+        await session.flush()
+
+        version_row = await session.execute(
+            select(AIAgentVersion).where(AIAgentVersion.agent_id == agent_id)
+        )
+        version = version_row.scalars().first()
+        version.tools = [f"{private_server.server_name}:secret-tool"]
+        await session.commit()
+
+        try:
+            moved = await Svc.transfer_owner(
+                session, agent_id, new_owner.user_name, admin_ctx
+            )
+            dropped = getattr(moved, "dropped_tool_refs", [])
+            assert [d["name"] for d in dropped] == [
+                f"{private_server.server_name}:secret-tool"
+            ], "转交时应报出新权属人用不了的工具"
+
+            # 清单要落到历史里，事后能查到「转交时就有这个问题」
+            events = await session.execute(
+                select(AgentSystemEvent).where(
+                    AgentSystemEvent.agent_id == agent_id,
+                    AgentSystemEvent.action == "TRANSFER_OWNER",
+                )
+            )
+            reasons = [e.reason or "" for e in events.scalars().all()]
+            assert any("无权使用" in r for r in reasons), "工具不可用的情况应记入历史"
+        finally:
+            await session.execute(
+                delete(McpToolCache).where(McpToolCache.server_id == private_server.id)
+            )
+            await session.delete(private_server)
+            await session.commit()
+            await _cleanup(agent_id, user_ids=user_ids)
+
+
+async def test_publish_version_records_event_for_non_system_agent():
+    """普通智能体发布新版本也要留痕，不只是系统级。
+
+    普通智能体没有审核环节，发布完全由所有者自行决定；如果这里不记事件，
+    「线上什么时候变成了 V3、是谁发的」在发布历史里查不到。
+    """
+    async with AsyncSessionLocal() as session:
+        owner = await _make_user(session)
+        agent = await _make_agent(session, owner=owner.user_name, published=False, versions=1)
+        agent_id = agent.id
+        owner_ctx = {"role": "user", "user_name": owner.user_name, "user_id": owner.id, "id": owner.id}
+
+        version_row = await session.execute(
+            select(AIAgentVersion).where(AIAgentVersion.agent_id == agent_id)
+        )
+        version = version_row.scalars().first()
+        version_id = version.id
+        await session.commit()
+
+        try:
+            assert agent.is_system is False
+            await AgentManagerService.publish_version(session, agent_id, version_id, user=owner_ctx)
+
+            events = await session.execute(
+                select(AgentSystemEvent).where(
+                    AgentSystemEvent.agent_id == agent_id,
+                    AgentSystemEvent.action == "BASELINE_PUBLISH",
+                )
+            )
+            event = events.scalars().first()
+            assert event is not None, "普通智能体的版本发布也必须进发布历史"
+            assert event.version_number == 1
+            assert event.actor_name == owner.user_name
+        finally:
+            await _cleanup(agent_id, user_ids=(owner.id,))
+
+
+async def test_list_agents_marks_orphaned_owner(db_session):
+    """权属人停用后，列表要标出 ``owner_active=False``，管理员才能一次筛出来。"""
+    from app.models.user import User as _User
+
+    owner = await _make_user(db_session)
+    other = await _make_user(db_session)
+    agent = await _make_agent(db_session, owner=owner.user_name)
+    agent_id = agent.id
+    alive_agent = await _make_agent(db_session, owner=other.user_name)
+    alive_id = alive_agent.id
+
+    owner.status = 0
+    await db_session.commit()
+
+    admin = await _make_user(db_session, role="admin")
+    admin_ctx = {"role": "admin", "user_name": admin.user_name, "user_id": admin.id, "id": admin.id}
+    # rollback 会让 ORM 实例过期，之后读属性会触发隐含 IO；先把要用的标量取出来
+    user_ids = (owner.id, other.id, admin.id)
+
+    try:
+        rows = await AgentManagerService.list_agents(db_session, user=admin_ctx)
+        by_id = {item.id: item for item in rows}
+        assert by_id[agent_id].owner_active is False, "权属人停用的智能体必须被标出来"
+        assert by_id[alive_id].owner_active is True
+    finally:
+        # 先结束本 session 的事务：select 之后仍持有共享锁，
+        # 另开 session 删除会撞上 Lock wait timeout
+        await db_session.rollback()
+        await _cleanup(agent_id, alive_id, user_ids=user_ids)
