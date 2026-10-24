@@ -358,8 +358,11 @@ export interface AgentSystemRequestItem {
   id: string
   agent_id: string
   agent_name: string
-  agent_identifier: string
+  /** 智能体被删除后为 null（孤儿申请单，只能直接驳回关闭） */
+  agent_identifier?: string | null
   engine_type?: string | null
+  /** 申请单对应的智能体是否已被删除 */
+  agent_missing?: boolean
   status: string
   /** SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线 */
   request_type?: 'SYSTEM_PUBLISH' | 'VERSION_RELEASE'

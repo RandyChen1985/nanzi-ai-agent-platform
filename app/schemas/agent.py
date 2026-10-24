@@ -308,8 +308,10 @@ class AgentSystemRequestItem(BaseModel):
     id: str
     agent_id: str
     agent_name: str
-    agent_identifier: str
+    # 智能体被删除后为 None：孤儿申请单仍要出现在待审列表里，否则角标清不掉
+    agent_identifier: Optional[str] = None
     engine_type: Optional[str] = None
+    agent_missing: bool = False
     status: str
     # SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线
     request_type: Optional[str] = "SYSTEM_PUBLISH"

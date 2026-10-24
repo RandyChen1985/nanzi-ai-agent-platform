@@ -9,6 +9,7 @@
 * 下架保留授权（重新上架自动恢复），通知可以关掉，但关掉了也要留下「影响了几个人」。
 """
 import uuid
+from datetime import datetime
 
 import pytest
 from fastapi import HTTPException
@@ -1045,3 +1046,71 @@ async def test_list_agents_marks_orphaned_owner(db_session):
         # 另开 session 删除会撞上 Lock wait timeout
         await db_session.rollback()
         await _cleanup(agent_id, alive_id, user_ids=user_ids)
+
+
+@pytest.mark.asyncio
+async def test_pending_count_matches_list_when_agent_deleted(db_session):
+    """角标数量必须和列表条数一致，即使申请单对应的智能体已被删除。
+
+    线上出现过「角标显示 1 条待审，点进去空空如也」：``pending_count`` 只数
+    申请单，``list_requests`` 却用 INNER JOIN 关联智能体——智能体被删后，
+    申请单从列表消失但仍在计数里，而且永远清不掉。
+    """
+    from app.services.ai.agent_system_publication_service import (
+        AgentSystemPublicationService,
+    )
+
+    owner = f"orphan-{uuid.uuid4().hex[:6]}"
+    agent = AIAgent(
+        id=str(uuid.uuid4()),
+        name=f"orphan-agent-{uuid.uuid4().hex[:6]}",
+        display_name="孤儿申请测试",
+        created_by=owner,
+        is_system=False,
+        is_enabled=True,
+        engine_type="LOCAL",
+    )
+    db_session.add(agent)
+    await db_session.flush()
+    request = AgentSystemRequest(
+        id=str(uuid.uuid4()),
+        agent_id=agent.id,
+        request_type="SYSTEM_PUBLISH",
+        status="PENDING",
+        requested_by=None,
+        requested_at=datetime.now(),
+    )
+    db_session.add(request)
+    await db_session.flush()
+
+    try:
+        # 模拟智能体被删掉，申请单留在原地
+        await db_session.execute(delete(AIAgentVersion).where(AIAgentVersion.agent_id == agent.id))
+        await db_session.execute(delete(AIAgent).where(AIAgent.id == agent.id))
+        await db_session.commit()
+
+        count = await AgentSystemPublicationService.pending_count(db_session)
+        items = await AgentSystemPublicationService.list_requests(db_session, status="PENDING")
+        orphan = [item for item in items if item["id"] == request.id]
+
+        assert orphan, "孤儿申请单必须仍然出现在待审列表里，否则角标永远清不掉"
+        assert orphan[0]["agent_missing"] is True
+
+        # 详情也必须能打开：否则列表里看得见、点进去 404，驳回按钮都出不来
+        detail = await AgentSystemPublicationService.request_detail(db_session, request.id)
+        assert detail["agent_missing"] is True
+        assert "已删除" in detail["agent_name"]
+        assert count >= len(orphan), "角标不应少于列表里能看到的条数"
+
+        # 孤儿单要能被直接驳回关闭
+        closed = await AgentSystemPublicationService.reject_request(
+            db_session, request.id, {"role": "admin", "user_name": "admin", "user_id": 1},
+            "智能体已删除，关闭该申请",
+        )
+        assert closed.status == "REJECTED"
+    finally:
+        await db_session.execute(
+            delete(AgentSystemRequest).where(AgentSystemRequest.id == request.id)
+        )
+        await db_session.execute(delete(AIAgent).where(AIAgent.id == agent.id))
+        await db_session.commit()

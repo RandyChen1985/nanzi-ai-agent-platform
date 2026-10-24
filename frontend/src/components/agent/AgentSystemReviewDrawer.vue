@@ -38,8 +38,8 @@ const visibleItems = computed(() => {
   if (text) {
     list = list.filter(
       (item) =>
-        item.agent_name.toLowerCase().includes(text) ||
-        item.agent_identifier.toLowerCase().includes(text),
+        (item.agent_name || '').toLowerCase().includes(text) ||
+        (item.agent_identifier || '').toLowerCase().includes(text),
     )
   }
   if (sortMode.value === 'newest') {
@@ -241,7 +241,12 @@ const reject = async () => {
                   </span>
                 </p>
                 <p class="mt-0.5 text-[11px] text-slate-400">
-                  {{ item.engine_type || 'LOCAL' }} · {{ item.agent_identifier }}
+                  <template v-if="item.agent_missing">
+                    <span class="text-rose-600">智能体已删除，请直接驳回关闭</span>
+                  </template>
+                  <template v-else>
+                    {{ item.engine_type || 'LOCAL' }} · {{ item.agent_identifier }}
+                  </template>
                 </p>
               </button>
             </div>
@@ -365,16 +370,22 @@ const reject = async () => {
               class="flex items-center gap-2 border-t border-slate-200 bg-white px-5 py-3"
             >
               <span class="mr-auto text-[11px] text-slate-400">
-                通过后会记一条发布事件，申请人会收到通知
+                <template v-if="detail.agent_missing">
+                  对应智能体已删除，这条申请只能驳回关闭
+                </template>
+                <template v-else>
+                  通过后会记一条发布事件，申请人会收到通知
+                </template>
               </span>
               <button
                 class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 :disabled="submitting"
                 @click="reject"
               >
-                驳回
+                {{ detail.agent_missing ? '驳回并关闭' : '驳回' }}
               </button>
               <button
+                v-if="!detail.agent_missing"
                 class="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
                 :disabled="submitting"
                 @click="approve"

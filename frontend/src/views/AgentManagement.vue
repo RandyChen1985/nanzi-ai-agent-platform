@@ -626,7 +626,7 @@ const handleShareDone = (count: number) => {
 
 // 分享：与技能 / MCP 分享同一套交互——平级视图 + 侧边菜单角标。
 // 不再做成「有待处理才出现的弹窗」：那样对方根本不知道去哪儿找。
-type AgentWorkspaceTab = 'mine' | 'received' | 'sent'
+type AgentWorkspaceTab = 'all' | 'mine' | 'received' | 'sent'
 
 const workspaceTab = ref<AgentWorkspaceTab>('mine')
 const shareCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
@@ -645,8 +645,24 @@ const route = useRoute()
 /** 站内信/外链可以直接带 ?agents_tab=received 落位 */
 const resolveInitialTab = (): AgentWorkspaceTab => {
   const raw = String(route.query.agents_tab || '')
-  return raw === 'received' || raw === 'sent' ? (raw as AgentWorkspaceTab) : 'mine'
+  if (raw === 'received' || raw === 'sent' || raw === 'mine' || raw === 'all') {
+    return raw as AgentWorkspaceTab
+  }
+  // 管理员默认看「全部」：他原本看到的就是平台全量，别因为加了视图就缩小范围
+  return isAdminViewer.value ? 'all' : 'mine'
 }
+
+/** 管理员多一个「全部」：他要能看别人名下的智能体；普通用户只有自己的 */
+const workspaceTabs = computed<Array<{ key: AgentWorkspaceTab; label: string; badge: number }>>(
+  () => [
+    ...(isAdminViewer.value
+      ? [{ key: 'all' as AgentWorkspaceTab, label: '全部智能体', badge: 0 }]
+      : []),
+    { key: 'mine', label: '我的智能体', badge: 0 },
+    { key: 'received', label: '分享给我', badge: shareCounts.value.received_pending },
+    { key: 'sent', label: '我分享的', badge: shareCounts.value.sent_pending },
+  ],
+)
 
 const switchWorkspaceTab = (tab: AgentWorkspaceTab) => {
   workspaceTab.value = tab
@@ -784,6 +800,13 @@ const orphanAgents = computed(() => agents.value.filter((a) => a.owner_active ==
 
 const filteredAgents = computed(() => {
   let result = [...agents.value];
+
+  // 0. 工作区视图：「全部」看平台所有智能体（管理员），「我的智能体」只看自己名下。
+  //    非管理员本来就只有自己的，两者等价。
+  if (workspaceTab.value === 'mine') {
+    const me = userInfo.value?.user_name
+    result = me ? result.filter((a) => a.created_by === me) : result
+  }
 
   // 1. Filter by keyword
   if (searchKeyword.value) {
@@ -955,6 +978,10 @@ const canDragAgents = computed(
 const emptyStateMessage = computed(() => {
   if (!hasActiveAgentFilters.value && userInfo.value?.role !== "admin") {
     return "你还没有创建智能体。系统内置智能体由管理员维护，已授权的可以直接在对话里使用。";
+  }
+  // 管理员切到「我的智能体」时列表可能是空的，要说清「是因为只看自己」
+  if (!hasActiveAgentFilters.value && workspaceTab.value === "mine") {
+    return "你名下还没有智能体。切到「全部智能体」可以看到平台上其他人的。";
   }
   return "没有找到匹配的智能体";
 });
@@ -3857,11 +3884,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
          分享做成页面级视图而不是弹窗，否则「对方在哪看到」只能靠站内信猜。 -->
     <div class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2">
       <button
-        v-for="tab in ([
-          { key: 'mine', label: '我的智能体', badge: 0 },
-          { key: 'received', label: '分享给我', badge: shareCounts.received_pending },
-          { key: 'sent', label: '我分享的', badge: shareCounts.sent_pending },
-        ] as Array<{ key: AgentWorkspaceTab; label: string; badge: number }>)"
+        v-for="tab in workspaceTabs"
         :key="tab.key"
         type="button"
         class="relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
@@ -3888,8 +3911,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @updated="refreshShareCounts"
     />
 
-    <!-- 我的智能体：原有的列表区整体包进 mine 视图 -->
-    <template v-if="workspaceTab === 'mine'">
+    <!-- 列表区：管理员在「全部 / 我的智能体」两个视图共用，
+         差异只体现在 filteredAgents 的归属过滤上 -->
+    <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
     <div
       v-if="batchMode && selectedAgentIds.size > 0"
       class="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white/95 px-4 py-2.5 shadow-md backdrop-blur"

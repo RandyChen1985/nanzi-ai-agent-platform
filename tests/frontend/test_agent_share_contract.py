@@ -158,3 +158,50 @@ def test_accept_goes_through_onboarding_wizard():
     block = mgmt[mgmt.index("const continueAgentOnboarding") : mgmt.index("const continueAgentOnboarding") + 1600]
     assert 'agent.onboarding_step === "BASIC"' in block
     assert "onboardingStep.value" in block
+
+
+def test_admin_has_all_agents_tab():
+    """管理员要有「全部智能体」，「我的智能体」只看自己名下。"""
+    src = _read(AGENT_MGMT)
+    assert "workspaceTabs" in src
+    assert "全部智能体" in src
+    # tab 只在管理员时出现
+    tabs_block = src[src.index("const workspaceTabs") : src.index("const workspaceTabs") + 700]
+    assert "isAdminViewer.value" in tabs_block
+
+    # 归属过滤必须真的按 created_by 收窄
+    filter_block = src[src.index("const filteredAgents"): src.index("const filteredAgents") + 700]
+    assert "workspaceTab.value === 'mine'" in filter_block
+    assert "a.created_by === me" in filter_block
+
+
+def test_admin_default_tab_does_not_shrink_scope():
+    """管理员默认落在「全部」，加视图不能让他看到的范围突然变小。"""
+    src = _read(AGENT_MGMT)
+    block = src[src.index("const resolveInitialTab") : src.index("const resolveInitialTab") + 500]
+    assert "isAdminViewer.value ? 'all' : 'mine'" in block
+
+
+def test_review_drawer_tolerates_deleted_agent():
+    """孤儿申请单（智能体已删）不能让审核抽屉崩掉，要能直接驳回关闭。
+
+    线上出现过「角标 1 条、点进去空」，根因是 INNER JOIN 把孤儿单从列表里滤掉了。
+    """
+    src = _read(REPO_ROOT / "frontend/src/components/agent/AgentSystemReviewDrawer.vue")
+    assert "agent_missing" in src
+    assert "智能体已删除" in src
+    # 搜索不能对 null 调 toLowerCase
+    assert "(item.agent_identifier || '')" in src
+
+
+def test_review_drawer_supports_closing_orphan_request():
+    """孤儿申请单点进去要能关掉：驳回按钮必须出现，通过按钮要隐藏。
+
+    只修列表不修详情是不够的——按钮区挂 ``v-if="detail"``，详情 404 就整块不渲染，
+    用户会看到一张有标题但没有操作按钮的卡片。
+    """
+    src = _read(REPO_ROOT / "frontend/src/components/agent/AgentSystemReviewDrawer.vue")
+    assert "detail.agent_missing" in src
+    assert "驳回并关闭" in src
+    # 孤儿单不该给出「通过并发布」
+    assert 'v-if="!detail.agent_missing"' in src

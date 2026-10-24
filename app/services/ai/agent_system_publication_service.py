@@ -570,23 +570,27 @@ class AgentSystemPublicationService:
         request = await AgentSystemPublicationService._get_request(
             session, request_id, expect_status=STATUS_PENDING
         )
-        agent = await AgentSystemPublicationService._get_agent(session, request.agent_id)
+        # 智能体可能已经被删：这类孤儿申请单必须能直接关掉，
+        # 否则它永远挂在待审里，角标一直亮、列表里又找不到人处理。
+        agent = await session.get(AIAgent, request.agent_id)
 
         request.status = STATUS_REJECTED
         request.reviewed_by = user_id
         request.reviewed_at = datetime.now()
         request.review_comment = reason
-        await write_system_status(
-            session, agent.id, status=SYSTEM_STATUS_NONE, pending_request_id=None
-        )
 
-        await AgentSystemNotifier.notify_rejected(
-            session,
-            agent_id=agent.id,
-            display_name=agent.display_name,
-            applicant_user_id=request.requested_by,
-            comment=reason,
-        )
+        if agent is not None:
+            await write_system_status(
+                session, agent.id, status=SYSTEM_STATUS_NONE, pending_request_id=None
+            )
+            await AgentSystemNotifier.notify_rejected(
+                session,
+                agent_id=agent.id,
+                display_name=agent.display_name,
+                applicant_user_id=request.requested_by,
+                comment=reason,
+            )
+
         await session.commit()
         return request
 
@@ -1020,9 +1024,12 @@ class AgentSystemPublicationService:
     ) -> List[Dict[str, Any]]:
         """待审列表（按提交时间升序：等得最久的排最前）。"""
         await assert_migrated(session)
+        # LEFT JOIN：申请单对应的智能体可能已经被删掉（历史遗留或绕过拦截的删除）。
+        # 用 INNER JOIN 时这类孤儿单会从列表消失，但 pending_count 仍把它算进去，
+        # 结果是「角标显示 1 条，点进去空空如也」——而且永远清不掉。
         rows = await session.execute(
             select(AgentSystemRequest, AIAgent)
-            .join(AIAgent, AIAgent.id == AgentSystemRequest.agent_id)
+            .outerjoin(AIAgent, AIAgent.id == AgentSystemRequest.agent_id)
             .where(AgentSystemRequest.status == status)
             .order_by(AgentSystemRequest.requested_at.asc())
             .offset(max(0, offset))
@@ -1057,9 +1064,14 @@ class AgentSystemPublicationService:
                 {
                     "id": request.id,
                     "agent_id": request.agent_id,
-                    "agent_name": agent.display_name,
-                    "agent_identifier": agent.name,
-                    "engine_type": agent.engine_type,
+                    # 申请单没冗余存名字，智能体没了就退化到 ID 前 8 位
+                    "agent_name": (
+                        agent.display_name if agent else f"（智能体已删除）{str(request.agent_id)[:8]}"
+                    ),
+                    "agent_identifier": agent.name if agent else None,
+                    "engine_type": agent.engine_type if agent else None,
+                    # 前端据此提示「智能体已删除，这条申请需要直接关闭」
+                    "agent_missing": agent is None,
                     "status": request.status,
                     "request_type": getattr(request, "request_type", None) or REQUEST_TYPE_SYSTEM,
                     "version_number": version_numbers.get(request.snapshot_version_id)
@@ -1096,7 +1108,9 @@ class AgentSystemPublicationService:
     ) -> Dict[str, Any]:
         await assert_migrated(session)
         request = await AgentSystemPublicationService._get_request(session, request_id)
-        agent = await AgentSystemPublicationService._get_agent(session, request.agent_id)
+        # 智能体可能已被删除：详情仍要能打开，否则孤儿申请单在列表里看得见、
+        # 点进去却是 404，连带「驳回」按钮都出不来，这条就永远关不掉。
+        agent = await session.get(AIAgent, request.agent_id)
         snapshot: Optional[Dict[str, Any]] = None
         if request.snapshot:
             try:
@@ -1115,9 +1129,12 @@ class AgentSystemPublicationService:
         return {
             "id": request.id,
             "agent_id": request.agent_id,
-            "agent_name": agent.display_name,
-            "agent_identifier": agent.name,
-            "engine_type": agent.engine_type,
+            "agent_name": (
+                agent.display_name if agent else f"（智能体已删除）{str(request.agent_id)[:8]}"
+            ),
+            "agent_identifier": agent.name if agent else None,
+            "engine_type": agent.engine_type if agent else None,
+            "agent_missing": agent is None,
             "status": request.status,
             "snapshot": snapshot,
             "request_comment": request.request_comment,
