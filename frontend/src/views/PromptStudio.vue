@@ -310,7 +310,11 @@ const performPublish = async () => {
 
   // 先存，再发布「刚存下的这一版」：
   // 旧实现去版本列表里找第一个 DRAFT，智能体有多个草稿时会发错版本。
-  const savedVersionId = await performSave();
+  const saveResult = await performSave();
+  // 保存失败与「没有变更」都返回 null，但处理方式完全不同：
+  // 失败时已经弹过错误，不能再往下走发布、更不能补一句「没有变更」把真错误盖掉
+  if (!saveResult.ok) return;
+  const savedVersionId = saveResult.versionId;
 
   try {
     const agentId = selectedPrompt.value.id.replace("agent_", "");
@@ -571,9 +575,9 @@ const requestSave = () => {
 };
 
 /** 保存提示词，返回刚写入的 version_id（系统级提示词没有版本，返回 null） */
-const performSave = async (): Promise<string | null> => {
+const performSave = async (): Promise<{ ok: boolean; versionId: string | null }> => {
   showConfirm.value = false;
-  if (!currentDetail.value || !selectedPrompt.value) return null;
+  if (!currentDetail.value || !selectedPrompt.value) return { ok: false, versionId: null };
   saving.value = true;
   try {
     const res = await axios.post("/api/portal/prompts/save", {
@@ -593,12 +597,12 @@ const performSave = async (): Promise<string | null> => {
     }
 
     fetchPrompts(); // Refresh version list
-    return res.data.version_id ?? null;
+    return { ok: true, versionId: res.data.version_id ?? null };
   } catch (e: any) {
     console.error("Failed to save:", e);
     const errorMessage = e.response?.data?.detail || "保存失败";
     showToast(errorMessage, "error");
-    return null;
+    return { ok: false, versionId: null };
   } finally {
     saving.value = false;
   }

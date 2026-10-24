@@ -393,6 +393,8 @@ export interface AgentSystemHistoryEntry {
   requested_at?: string | null
   reviewed_at?: string | null
   status?: string | null
+  /** 申请单类型：SYSTEM_PUBLISH=转系统级；VERSION_RELEASE=版本上线 */
+  request_type?: 'SYSTEM_PUBLISH' | 'VERSION_RELEASE' | null
   action?: string | null
   actor_name?: string | null
   comment?: string | null

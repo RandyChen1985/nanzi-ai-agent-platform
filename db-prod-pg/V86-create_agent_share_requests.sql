@@ -17,7 +17,7 @@
 --   新增表 ai_agent_share_requests：
 --     snapshot   分享那一刻的完整配置快照（JSON）。用快照而不是接受时现读源，
 --                是为了让「源后来被改 / 被删 / 被提升为系统级」都不影响已经发出的分享。
---     status     PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED
+--     status     PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED / WITHDRAWN
 --                REVOKED 用于「源在对方接受前变成了系统级」——此时该分享作废，
 --                并提示对方改为向管理员申请使用权限。
 --     expires_at 默认 7 天，过期由读取时惰性判定，不依赖定时任务。
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS public.ai_agent_share_requests (
 
 COMMENT ON TABLE public.ai_agent_share_requests IS '智能体分享记录（副本邀请）';
 COMMENT ON COLUMN public.ai_agent_share_requests.snapshot IS '分享时的完整配置快照（JSON：元数据 + 版本配置）';
-COMMENT ON COLUMN public.ai_agent_share_requests.status IS 'PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED';
+COMMENT ON COLUMN public.ai_agent_share_requests.status IS 'PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED / WITHDRAWN';
 COMMENT ON COLUMN public.ai_agent_share_requests.share_message IS '分享留言（可选）';
 COMMENT ON COLUMN public.ai_agent_share_requests.share_reason IS '状态变更原因（如作废原因）';
 

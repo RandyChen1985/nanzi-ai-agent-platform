@@ -16,7 +16,18 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
+// 版本里的 tools 可能是纯字符串，也可能是 { name, ... } 配置对象；
+// 直接 join 会把对象渲染成 [object Object]
+const formatToolNames = (tools: unknown): string => {
+  if (!Array.isArray(tools)) return ""
+  return tools
+    .map((item: any) => (typeof item === "string" ? item : item?.name || ""))
+    .filter((name: string) => !!name)
+    .join("、")
+}
+
 const entries = ref<AgentSystemHistoryEntry[]>([])
+const totalCount = ref(0)
 const loading = ref(false)
 const errorMessage = ref('')
 const expanded = ref<string>('')
@@ -33,7 +44,11 @@ const eventTone = (entry: AgentSystemHistoryEntry) => {
     if (entry.status === 'APPROVED') return { dot: 'bg-emerald-500', label: '申请已通过' }
     if (entry.status === 'REJECTED') return { dot: 'bg-red-500', label: '申请被驳回' }
     if (entry.status === 'CANCELLED') return { dot: 'bg-slate-400', label: '申请人撤回' }
-    return { dot: 'bg-amber-500', label: '提交发布申请' }
+    // 版本上线申请与转系统级申请是两件事，标签不能一句话糊过去
+    return {
+      dot: 'bg-amber-500',
+      label: entry.request_type === 'VERSION_RELEASE' ? '提交版本上线申请' : '提交发布申请',
+    }
   }
   const map: Record<string, { dot: string; label: string }> = {
     PUBLISH: { dot: 'bg-emerald-500', label: '发布为系统级' },
@@ -61,6 +76,8 @@ const load = async () => {
   try {
     const res = await agentSystemApi.history(props.agent.id, { page_size: 100 })
     entries.value = res.data.items || []
+    // 超过 100 条会被静默截断：用户以为「最早就到这儿」，其实是没翻页入口
+    totalCount.value = res.data.total ?? entries.value.length
   } catch (error: any) {
     entries.value = []
     errorMessage.value = error?.response?.data?.detail || '加载发布历史失败'
@@ -106,6 +123,9 @@ watch(
             还没有发布记录。该智能体被设为系统级后，这里会记录每次申请、审核、上架、下架与配置变更。
           </p>
 
+          <p v-if="totalCount > entries.length" class="mb-2 text-[11px] text-slate-400">
+            仅显示最近 {{ entries.length }} 条（共 {{ totalCount }} 条）
+          </p>
           <ol v-else class="relative space-y-4 border-l border-slate-200 pl-5">
             <li v-for="entry in entries" :key="`${entry.kind}-${entry.id}`" class="relative">
               <span
@@ -177,7 +197,7 @@ watch(
                   v-if="entry.snapshot.version"
                   class="text-[11px] leading-relaxed text-slate-500"
                 >
-                  工具：{{ (entry.snapshot.version.tools || []).join('、') || '未绑定工具' }}
+                  工具：{{ formatToolNames(entry.snapshot.version.tools) || '未绑定工具' }}
                 </p>
                 <pre
                   v-if="entry.snapshot.version?.system_prompt"

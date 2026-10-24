@@ -73,7 +73,7 @@ ALTER TABLE `ai_agent_system_requests`
 CREATE TABLE IF NOT EXISTS `ai_agent_system_events` (
     `id` VARCHAR(36) NOT NULL COMMENT '事件 ID（uuid4）',
     `agent_id` VARCHAR(36) NOT NULL COMMENT '智能体 ID',
-    `action` VARCHAR(20) NOT NULL COMMENT 'PUBLISH / UNPUBLISH / META_UPDATE / TOGGLE_ENABLED',
+    `action` VARCHAR(32) NOT NULL COMMENT 'PUBLISH / UNPUBLISH / META_UPDATE / TOGGLE_ENABLED / BASELINE_PUBLISH / TRANSFER_OWNER / SHARE_SEND / SHARE_ACCEPT / SHARE_REJECT / SHARE_REVOKE',
     `version_id` VARCHAR(36) NULL COMMENT '关联版本 ID',
     `version_number` INT NULL COMMENT '关联版本号（便于展示，避免回查）',
     `snapshot` LONGTEXT NULL COMMENT '发布时的内容快照（JSON）；下架与元数据事件为空',

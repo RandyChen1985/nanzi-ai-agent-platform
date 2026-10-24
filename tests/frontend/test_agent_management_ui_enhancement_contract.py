@@ -25,10 +25,14 @@ def test_agent_management_uses_filter_panel_instead_of_tab_row():
     # 五个维度都在面板里
     for ref_name in ("statusFilter", "typeFilter", "engineFilter", "readinessFilter", "sourceFilter"):
         assert ref_name in source, f"缺少筛选维度 {ref_name}"
-    # tab 行彻底移除
+    # 旧的「按状态/类型分段筛选」tab 行彻底移除
     assert "segmentedFilter" not in source
     assert "segmentTabs" not in source
-    assert 'role="tablist"' not in source
+    # 但视图切换条（我的 / 分享给我 / 我分享的）本身是 tablist 语义，必须保留
+    # 无障碍属性；它切的是数据源，不是筛选维度，与上面禁掉的分段筛选不是一回事
+    assert 'role="tablist"' in source
+    assert 'role="tab"' in source
+    assert ':aria-selected="workspaceTab === tab.key"' in source
     # 条件收起后要能回显，否则用户会以为智能体丢了
     assert "activeFilterChips" in source
     assert "清除全部" in source

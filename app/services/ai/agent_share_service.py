@@ -301,6 +301,16 @@ class AgentShareService:
                 detail="系统级智能体不支持分享，如需他人使用请由管理员授权",
             )
 
+        # RAGFLOW / OPENCLAW 的 engine_config 存的是远端 app / dataset 标识，
+        # 副本与被分享者指向同一个远程实例，「副本互不影响」并不成立——
+        # 接收方改副本的知识库配置会动到分享者的数据面。所以只允许本地引擎分享。
+        engine_type = str(getattr(agent, "engine_type", None) or "LOCAL").upper()
+        if engine_type != "LOCAL":
+            raise HTTPException(
+                status_code=409,
+                detail="该智能体使用外部引擎（RAGFlow / OpenClaw），不支持分享",
+            )
+
         if not agent.is_enabled:
             raise HTTPException(status_code=409, detail="已停用的智能体不能分享")
 
@@ -336,6 +346,26 @@ class AgentShareService:
 
         note = (message or "").strip()[:SHARE_MESSAGE_MAX] or None
         expires_at = datetime.now() + timedelta(days=DEFAULT_EXPIRE_DAYS)
+
+        # 同一个人对同一个智能体已经有一条待接受的分享时，不再重复发：
+        # 否则列表里堆出多条一模一样的卡片，接收方还要一条条拒绝，
+        # 每次重复分享又会再发一封站内信。跳过而不是覆盖，避免把对方
+        # 已经看过的消息内容悄悄改掉。
+        existing_rows = await session.execute(
+            select(AgentShareRequest.recipient_user_name).where(
+                AgentShareRequest.agent_id == agent_id,
+                AgentShareRequest.status == STATUS_PENDING,
+                AgentShareRequest.recipient_user_name.in_(wanted),
+            )
+        )
+        already_pending = {str(row[0]) for row in existing_rows.all()}
+        if already_pending:
+            wanted = [name for name in wanted if name not in already_pending]
+            if not wanted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="这些同事已经有一条待接受的分享，等他们处理后再发",
+                )
 
         created: List[AgentShareRequest] = []
         for name in wanted:

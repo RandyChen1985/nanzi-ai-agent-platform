@@ -25,7 +25,7 @@ def test_share_entry_hidden_for_system_agents():
     """系统级智能体不显示分享入口——可用范围只能由管理员授权治理。"""
     src = _read(AGENT_MGMT)
     assert "const canShareAgent" in src
-    block = src[src.index("const canShareAgent") : src.index("const canShareAgent") + 400]
+    block = src[src.index("const canShareAgent") : src.index("const canShareAgent") + 800]
     assert "agent.is_system" in block
     assert "if (agent.is_system) return false" in block
 
@@ -33,7 +33,7 @@ def test_share_entry_hidden_for_system_agents():
 def test_share_entry_limited_to_owner():
     """普通用户只能分享自己创建的智能体；管理员可代为分享。"""
     src = _read(AGENT_MGMT)
-    block = src[src.index("const canShareAgent") : src.index("const canShareAgent") + 400]
+    block = src[src.index("const canShareAgent") : src.index("const canShareAgent") + 800]
     assert "created_by === userInfo.value?.user_name" in block
     assert "isMainAgent(agent)" in block
 
@@ -218,3 +218,16 @@ def test_editing_returns_current_is_system():
     block = src[src.index("if (isEditingAgent.value && selectedAgent.value)"):]
     block = block[: block.index("} else if")]
     assert "is_system: selectedAgent.value.is_system" in block
+
+
+def test_external_engine_agents_cannot_be_shared():
+    """RAGFlow / OpenClaw 不支持分享。
+
+    这两类引擎的 engine_config 指向同一个远端 app/dataset，复制出去的副本与源
+    共用一个远程实例，「副本互不影响」不成立——接收方改知识库配置会动到分享者的
+    数据面。所以界面要隐藏入口，后端也要拦。
+    """
+    src = _read(AGENT_MGMT)
+    block = src[src.index("const canShareAgent") : src.index("const canShareAgent") + 800]
+    assert 'agent.engine_type || "LOCAL"' in block
+    assert "!== \"LOCAL\"" in block

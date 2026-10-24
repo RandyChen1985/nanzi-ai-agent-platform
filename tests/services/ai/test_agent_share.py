@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import delete, select
 
 from app.core.orm import Base
@@ -498,12 +499,15 @@ async def test_accept_generates_unique_name_without_user_input(db_session, share
     created_ids = []
 
     try:
-        # 同一个人接受两次（两条独立分享），第二次必须自动换个名字
+        # 同一个人先后接受两次，第二次必须自动换个名字。
+        # 中间必须先接受第一条：未处理时重复分享会被幂等挡掉（见下一条用例）。
         r1 = (await AgentShareService.create_shares(db_session, agent.id, [peer_name], owner_ctx))[0]
-        r2 = (await AgentShareService.create_shares(db_session, agent.id, [peer_name], owner_ctx))[0]
+        await db_session.commit()
+        first = await AgentShareService.accept(db_session, r1.id, peer_ctx)
         await db_session.commit()
 
-        first = await AgentShareService.accept(db_session, r1.id, peer_ctx)
+        r2 = (await AgentShareService.create_shares(db_session, agent.id, [peer_name], owner_ctx))[0]
+        await db_session.commit()
         second = await AgentShareService.accept(db_session, r2.id, peer_ctx)
         await db_session.commit()
         created_ids = [first.id, second.id]
@@ -600,5 +604,30 @@ async def test_revoke_notifies_recipients(db_session, share_table):
         ).scalars().all()
         assert rows, "作废分享必须给接收人发站内信"
         assert any("作废" in (item.title or "") for item in rows)
+    finally:
+        await _cleanup(db_session, [agent.id], [owner.id, peer.id])
+
+
+@pytest.mark.asyncio
+async def test_duplicate_share_to_same_person_is_idempotent(db_session, share_table):
+    """同一个人还有待接受的分享时，不再重复发。
+
+    否则列表里堆出多条一模一样的卡片，接收方要一条条拒绝，
+    每次重复分享还会多发一封站内信。
+    """
+    owner_name = f"owner-{uuid.uuid4().hex[:6]}"
+    peer_name = f"peer-{uuid.uuid4().hex[:6]}"
+    owner = await _make_user(db_session, name=owner_name)
+    peer = await _make_user(db_session, name=peer_name)
+    agent = await _make_agent(db_session, owner=owner_name)
+    await db_session.commit()
+    ctx = {"role": "user", "user_name": owner_name, "user_id": owner.id}
+
+    try:
+        await AgentShareService.create_shares(db_session, agent.id, [peer_name], ctx)
+        await db_session.commit()
+        with pytest.raises(HTTPException) as exc:
+            await AgentShareService.create_shares(db_session, agent.id, [peer_name], ctx)
+        assert exc.value.status_code == 409
     finally:
         await _cleanup(db_session, [agent.id], [owner.id, peer.id])

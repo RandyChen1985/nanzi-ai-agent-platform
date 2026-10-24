@@ -9,7 +9,7 @@
  *
  * 系统级智能体不提供分享入口（父组件不渲染本弹窗），后端也会拒绝。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import type { AIAgent } from '../../api/agent'
 import { agentSystemApi } from '../../api/agent'
 
@@ -27,19 +27,40 @@ const emit = defineEmits<{
   (e: 'search', keyword: string): void
 }>()
 
+/** 当前登录人：和智能体中心一样读 localStorage 缓存，避免引入额外的 store 依赖 */
+const currentUserName = (): string => {
+  try {
+    const cached = localStorage.getItem('user_info')
+    if (!cached) return ''
+    return String(JSON.parse(cached)?.user_name || '').trim()
+  } catch {
+    return ''
+  }
+}
+
 const search = ref('')
 const picked = ref<Array<{ user_name: string; real_name?: string | null }>>([])
 const message = ref('')
 const submitting = ref(false)
 const errorMessage = ref('')
+/** 候选人搜索/加载的失败，与提交失败分开显示，避免底部和空态重复同一句话 */
+const searchError = computed(() =>
+  props.loadingCandidates ? '' : errorMessage.value.includes('分享失败') ? '' : errorMessage.value,
+)
 
 const MAX_RECIPIENTS = 20
 
 const available = computed(() => {
   const currentOwner = (props.agent?.created_by || '').trim()
+  // 也要排除当前登录人：管理员代分享别人的智能体时，能把自己选进去，
+  // 提交后后端才报「不能分享给自己」
+  const currentUser = currentUserName()
   const pickedNames = new Set(picked.value.map((item) => item.user_name))
   return (props.candidates || []).filter(
-    (item) => item.user_name !== currentOwner && !pickedNames.has(item.user_name),
+    (item) =>
+      item.user_name !== currentOwner &&
+      item.user_name !== currentUser &&
+      !pickedNames.has(item.user_name),
   )
 })
 
@@ -58,9 +79,17 @@ const reset = () => {
 watch(
   () => props.show,
   (visible) => {
+    if (!visible && searchTimer) {
+      clearTimeout(searchTimer)
+      searchTimer = null
+    }
     if (visible) reset()
   },
 )
+
+onUnmounted(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 const onSearchInput = () => {
@@ -166,7 +195,7 @@ const submit = async () => {
                 v-else-if="!available.length"
                 class="px-3 py-4 text-center text-xs text-gray-400"
               >
-                {{ errorMessage || '没有匹配的启用用户' }}
+                {{ searchError || '没有匹配的启用用户' }}
               </div>
               <button
                 v-for="user in available"

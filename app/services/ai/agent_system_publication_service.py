@@ -195,6 +195,36 @@ class AgentSystemPublicationService:
             }
         return snapshot
 
+
+    @staticmethod
+    async def _close_pending_requests(
+        session: AsyncSession,
+        agent_id: str,
+        reason: str,
+        actor_name: str = "system",
+        actor_id: Optional[int] = None,
+    ) -> List[str]:
+        """把某个智能体名下所有待审申请单关掉，返回被关掉的申请单 ID。"""
+        rows = await session.execute(
+            select(AgentSystemRequest).where(
+                AgentSystemRequest.agent_id == str(agent_id),
+                AgentSystemRequest.status == STATUS_PENDING,
+            )
+        )
+        pending = list(rows.scalars().all())
+        closed: List[str] = []
+        for request in pending:
+            request.status = STATUS_REJECTED
+            request.reviewed_at = datetime.now()
+            request.review_comment = reason
+            # reviewed_by 是用户数字 ID（Integer），系统动作留空
+            if actor_id is not None:
+                request.reviewed_by = actor_id
+            closed.append(str(request.id))
+        if closed:
+            await session.flush()
+        return closed
+
     @staticmethod
     async def record_event(
         session: AsyncSession,
@@ -512,6 +542,10 @@ class AgentSystemPublicationService:
         await session.flush()
 
         try:
+            # 这里刻意合成 admin：publish_version 内部要求角色是 admin 才能落基线，
+            # 而调用本方法的 approve_request 已经在路由层校验过
+            # element:agent:system_publish。合成是为了复用发布逻辑，不是提权。
+            # 注意：任何新增调用方都必须自己先做权限判定——服务层不做鉴权。
             published = await AgentManagerService.publish_version(
                 session,
                 agent.id,
@@ -961,6 +995,16 @@ class AgentSystemPublicationService:
         agent.is_system = False
         await write_system_status(
             session, agent.id, status=SYSTEM_STATUS_NONE, pending_request_id=None
+        )
+
+        # 下架要连同待审申请单一起关掉。否则那张单子会变成孤儿：智能体已经不是
+        # 系统级了，审核抽屉里却还挂着一条 PENDING，管理员点通过还会在普通智能体
+        # 上发布版本，而这条路径本来只该服务于系统级基线。
+        await AgentSystemPublicationService._close_pending_requests(
+            session,
+            agent_id=agent.id,
+            reason="智能体已下架，申请单自动关闭",
+            actor_id=user_id,
         )
 
         # 所有者的账号可能已经不存在，这时把归属转给本次操作的管理员，

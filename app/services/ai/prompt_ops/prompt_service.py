@@ -477,6 +477,12 @@ class PromptService:
             from app.services.ai.agent_manager import AgentManagerService
 
             async with _Session() as session:
+                # 写路径要和读路径用同一套可见性：/prompts/detail 会按 _visible_agent_ids
+                # 拒绝系统级与别人的智能体，而保存只走 save_agent_prompt 的归属校验，
+                # 结果系统级所有者能在工坊里改「详情页看都看不到」的智能体（读写不对称）。
+                visible_ids = await PromptService._visible_agent_ids(session, user)
+                if visible_ids is not None and agent_id not in visible_ids:
+                    raise PermissionError("无权修改该智能体的提示词")
                 try:
                     version_id = await AgentManagerService.save_agent_prompt(
                         session,

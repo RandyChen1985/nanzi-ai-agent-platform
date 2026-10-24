@@ -89,6 +89,10 @@ async def optimize_prompt(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# 这两条刻意不加 element:prompts:optimize：它们是智能体版本编辑器与任务中心里的
+# 「AI 润色」，调用方已经用 canEditVersion / 任务编辑权限把关，前端传的是
+# :require-permission="false"。再加一层会让「能编辑对象但没进过提示词工坊」的人用不了。
+# 成本风险（任意登录用户反复调用烧 LLM）应该靠限流解决，而不是权限点。
 @router.post("/optimize/agent-editor", response_model=PromptOptimizeResponse)
 async def optimize_agent_editor_prompt(
     data: Dict[str, str],

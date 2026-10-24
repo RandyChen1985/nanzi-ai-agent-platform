@@ -44,19 +44,24 @@ const visible = computed(() =>
     : items.value,
 )
 
+// 快速切「待处理 / 全部」时，先发的请求可能后返回，把列表串成另一个筛选条件的结果
+let loadSeq = 0
 const load = async () => {
+  const seq = ++loadSeq
   loading.value = true
   errorMessage.value = ''
   try {
     const res = await agentSystemApi.listReceivedShares(
       filter.value === 'PENDING' ? { only_pending: true } : undefined,
     )
+    if (seq !== loadSeq) return
     items.value = res.data || []
   } catch (e: any) {
+    if (seq !== loadSeq) return
     errorMessage.value = e?.response?.data?.detail || '加载失败，请稍后重试'
     items.value = []
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 

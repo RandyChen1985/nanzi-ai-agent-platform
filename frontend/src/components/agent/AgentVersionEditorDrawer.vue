@@ -1668,6 +1668,14 @@ const externalCreationMissingFields = computed(() => {
               @click="emit('save')"
               class="px-6 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-dark font-medium shadow-sm disabled:cursor-not-allowed disabled:bg-gray-300 disabled:shadow-none"
             >{{ isCreatingAgent && agentForm.engine_type !== 'LOCAL' ? `创建 ${agentForm.engine_type === 'RAGFLOW' ? 'RAGFlow' : 'OpenClaw'} 智能体` : isCreatingAgent ? '创建智能体与 V1 草稿' : versionForm.id ? '更新草稿' : '保存为草稿' }}</button>
+            <!-- 系统级所有者在这里只能存草稿，不给一句引导会在页脚卡住：
+                 卡片上有说明，但用户进到编辑器里就看不到了 -->
+            <span
+              v-if="isLastStep() && canEditVersion && !canPublishLocalVersion && agentForm.engine_type === 'LOCAL'"
+              class="max-w-[18rem] text-[11px] leading-snug text-gray-500"
+            >
+              系统级智能体的线上基线由管理员变更：保存草稿后到「配置与发布」里提交上线申请。
+            </span>
             <template v-if="isLastStep() && canPublishLocalVersion">
               <button
                 type="button"

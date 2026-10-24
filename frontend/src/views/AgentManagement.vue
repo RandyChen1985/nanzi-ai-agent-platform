@@ -508,9 +508,10 @@ const systemCardAction = (agent: AIAgent): 'publish' | 'apply' | 'cancel' | 'unp
   if (agent.is_system) {
     return canReviewSystem.value && !isMainAgent(agent) ? 'unpublish' : ''
   }
-  if (canReviewSystem.value) return 'publish'
-  // 只有本地引擎有版本可发布，外部引擎（RAGFlow/OpenClaw）走不通这条路
-  if (isOwner && (agent.engine_type || 'LOCAL') === 'LOCAL') return 'apply'
+  // 只有本地引擎能成为系统级基线：外部引擎的配置在远端，发布流程管不到它
+  const isLocalEngine = (agent.engine_type || 'LOCAL') === 'LOCAL'
+  if (canReviewSystem.value) return isLocalEngine ? 'publish' : ''
+  if (isOwner && isLocalEngine) return 'apply'
   return ''
 }
 
@@ -553,7 +554,9 @@ const openSystemHistory = (agent: AIAgent) => {
 
 /** 权属人变更只给管理员；主助手是系统固定入口，没有「归谁」的概念。 */
 const canTransferOwner = (agent: AIAgent): boolean =>
-  isAdminViewer.value && !isMainAgent(agent)
+  // 审核中不能转交（后端 transfer_owner 会 409）：状态流转和权属变更叠在一起
+  // 会出现「换人后由新所有者撤回申请」这种谁也理不清的账
+  isAdminViewer.value && !isMainAgent(agent) && !isPendingReview(agent)
 
 const transferOwnerTarget = ref<AIAgent | null>(null)
 const showTransferOwnerModal = ref(false)
@@ -588,6 +591,9 @@ const canShareAgent = (agent: AIAgent): boolean => {
   if (isMainAgent(agent)) return false
   // 系统级是平台生产基线，可用范围只能由管理员授权治理
   if (agent.is_system) return false
+  // RAGFlow / OpenClaw 的 engine_config 指向同一个远端实例，复制出去等于共享数据面，
+  // 「副本互不影响」不成立，因此只允许本地引擎分享（后端同样拦）
+  if (String(agent.engine_type || "LOCAL").toUpperCase() !== "LOCAL") return false
   if (isAdminViewer.value) return true
   return !!userInfo.value?.user_name && agent.created_by === userInfo.value?.user_name
 }
@@ -597,19 +603,33 @@ const showShareModal = ref(false)
 const shareCandidates = ref<Array<{ user_name: string; real_name?: string | null; id?: number | null }>>([])
 const shareCandidatesLoading = ref(false)
 
+// 输入快时旧结果可能覆盖新结果；且不能把接口故障显示成「查无此人」
+let shareCandidatesSeq = 0
 const loadShareCandidates = async (keyword = '') => {
+  const seq = ++shareCandidatesSeq
   shareCandidatesLoading.value = true
   try {
     const res = await agentSystemApi.shareCandidates({ search: keyword, limit: 30 })
+    if (seq !== shareCandidatesSeq) return
     shareCandidates.value = res.data.map((item) => ({
       user_name: item.user_name,
       real_name: item.real_name,
     }))
-  } catch {
+  } catch (error: any) {
+    if (seq !== shareCandidatesSeq) return
     shareCandidates.value = []
+    showToast(error?.response?.data?.detail || '候选人加载失败，请稍后重试', 'error')
   } finally {
-    shareCandidatesLoading.value = false
+    if (seq === shareCandidatesSeq) shareCandidatesLoading.value = false
   }
+}
+
+// 列表视图的「更多」菜单；与卡片菜单互斥，避免两个菜单同时开着
+const openRowMenuId = ref<string | null>(null)
+const toggleRowMenu = (agentId: string, e?: Event) => {
+  e?.stopPropagation()
+  closeCardMenus()
+  openRowMenuId.value = openRowMenuId.value === agentId ? null : agentId
 }
 
 const openShare = (agent: AIAgent) => {
@@ -666,8 +686,26 @@ const workspaceTabs = computed<Array<{ key: AgentWorkspaceTab; label: string; ba
 
 const switchWorkspaceTab = (tab: AgentWorkspaceTab) => {
   workspaceTab.value = tab
+  // 写回 URL：否则刷新会跳回默认视图，站内信在同路由内 push 时也读不到新 query
+  const query = { ...route.query }
+  if (tab === 'mine') delete query.agents_tab
+  else query.agents_tab = tab
+  void router.replace({ query })
   if (tab !== 'mine') void refreshShareCounts()
 }
+
+// 已经在本页时点站内信只改 query，组件复用不会重新挂载，必须监听
+watch(
+  () => route.query.agents_tab,
+  (raw) => {
+    const next = String(raw || '')
+    const allowed: AgentWorkspaceTab[] = ['received', 'sent', 'mine', 'all']
+    if (next && allowed.includes(next as AgentWorkspaceTab)) {
+      workspaceTab.value = next as AgentWorkspaceTab
+      if (next !== 'mine') void refreshShareCounts()
+    }
+  },
+)
 
 /** 接受分享后：副本停在向导第一步，直接带用户继续配置 */
 const handleShareAccepted = async (agentId: string) => {
@@ -3388,29 +3426,56 @@ const clearAgentSelection = () => {
   selectedAgentIds.value = new Set()
 }
 const batchSetEnabled = async (enabled: boolean) => {
-  const targets = selectedAgents.value.filter(
-    (agent) => !isMainAgent(agent) && agent.is_editable !== false && Boolean(agent.is_enabled) !== enabled
-  )
-  if (!targets.length) {
-    showToast(enabled ? '所选智能体均已启用' : '所选智能体均已禁用', 'info')
+  if (!selectedAgents.value.length) {
+    // 「没选中」和「都已处于目标状态」是两件事，提示不能共用一句话
+    showToast('请先选择要操作的智能体', 'info')
     return
   }
-  try {
-    await Promise.all(
-      targets.map((agent) =>
-        agentApi.updateAgent(agent.id, {
-          ...agent,
-          is_enabled: enabled,
-        })
-      )
+  const pendingSkipped: AIAgent[] = []
+  const targets = selectedAgents.value.filter((agent) => {
+    if (isMainAgent(agent) || agent.is_editable === false) return false
+    if (Boolean(agent.is_enabled) === enabled) return false
+    // 审核中的智能体不能改元数据（后端 assert_not_frozen 会 409），
+    // 混在批量里会让整批失败，还连带已成功的那些不回滚
+    if (isPendingReview(agent)) {
+      pendingSkipped.push(agent)
+      return false
+    }
+    return true
+  })
+  if (!targets.length) {
+    showToast(
+      pendingSkipped.length
+        ? '所选智能体正在审核中，不能启用或禁用'
+        : enabled
+          ? '所选智能体均已启用'
+          : '所选智能体均已禁用',
+      'info'
     )
-    showToast(enabled ? `已启用 ${targets.length} 个智能体` : `已禁用 ${targets.length} 个智能体`, 'success')
-    clearAgentSelection()
-    await fetchAgents()
-  } catch (e) {
-    console.error(e)
-    showToast('批量更新失败', 'error')
+    return
   }
+  // 用 allSettled：部分成功时不能让界面停在旧状态，也不能把失败说成全部失败
+  const results = await Promise.allSettled(
+    targets.map((agent) =>
+      agentApi.updateAgent(agent.id, {
+        ...agent,
+        is_enabled: enabled,
+      })
+    )
+  )
+  const okCount = results.filter((r) => r.status === 'fulfilled').length
+  const failed = results.length - okCount
+  if (failed === 0) {
+    showToast(enabled ? `已启用 ${okCount} 个智能体` : `已禁用 ${okCount} 个智能体`, 'success')
+  } else {
+    showToast(`${okCount} 个更新成功，${failed} 个失败，请刷新后重试`, 'error')
+  }
+  if (pendingSkipped.length) {
+    showToast(`另有 ${pendingSkipped.length} 个审核中的智能体已跳过`, 'warning')
+  }
+  clearAgentSelection()
+  // 无论成败都刷新：否则部分成功的改动在界面上看不到
+  await fetchAgents()
 }
 
 const openCardMenuId = ref<string | null>(null)
@@ -3434,6 +3499,8 @@ const closeCardMenus = () => {
   openCardMenuId.value = null
   activeReadinessPopoverAgentId.value = null
   showCreateAgentMenu.value = false
+  // 列表视图的「更多」菜单也归这里统一关，避免滚动/点别处后残留
+  openRowMenuId.value = null
 }
 
 onMounted(() => {
@@ -3604,6 +3671,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </div>
     </div>
 
+    <!-- 搜索、筛选与两个横幅只服务于「智能体列表」；分享视图有自己的列表，
+         留着它们会让「找到 N 个智能体」这种文案指向一个完全不相关的清单 -->
+    <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
     <!-- 第 2 行：搜索独占一栏，视图切换与「筛选」跟在后面 -->
     <div class="flex flex-wrap items-center gap-2.5">
       <div class="relative min-w-[220px] flex-1">
@@ -3889,11 +3959,17 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
     <!-- 三个平级视图：我的智能体 / 分享给我 / 我分享的。
          分享做成页面级视图而不是弹窗，否则「对方在哪看到」只能靠站内信猜。 -->
-    <div class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2">
+    <div
+      class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2"
+      role="tablist"
+      aria-label="智能体视图"
+    >
       <button
         v-for="tab in workspaceTabs"
         :key="tab.key"
         type="button"
+        role="tab"
+        :aria-selected="workspaceTab === tab.key"
         class="relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
         :class="workspaceTab === tab.key ? 'bg-primary/10 text-primary' : 'text-gray-600 hover:bg-gray-50'"
         @click="switchWorkspaceTab(tab.key)"
@@ -3917,6 +3993,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       v-else-if="workspaceTab === 'sent'"
       @updated="refreshShareCounts"
     />
+
+    </template>
 
     <!-- 列表区：管理员在「全部 / 我的智能体」两个视图共用，
          差异只体现在 filteredAgents 的归属过滤上 -->
@@ -4703,6 +4781,82 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
                     </button>
+                    <!-- 列表视图同样要能分享 / 走系统级流程：这些入口原先只在网格卡片菜单里，
+                         而 viewMode 会存 localStorage，用过列表的用户再也找不到它们 -->
+                    <div class="relative">
+                      <button
+                        type="button"
+                        class="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100"
+                        title="更多操作"
+                        @click.stop="toggleRowMenu(agent.id, $event)"
+                      >
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01" />
+                        </svg>
+                      </button>
+                      <div
+                        v-if="openRowMenuId === agent.id"
+                        class="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-xl"
+                        @click.stop
+                      >
+                        <button
+                          v-if="canShareAgent(agent)"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openShare(agent)"
+                        >
+                          分享给同事
+                        </button>
+                        <button
+                          v-if="canTransferOwner(agent)"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openTransferOwner(agent)"
+                        >
+                          变更权属人
+                        </button>
+                        <button
+                          v-if="systemCardAction(agent) === 'publish'"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openSystemPublish(agent, 'publish')"
+                        >
+                          发布为系统级
+                        </button>
+                        <button
+                          v-if="systemCardAction(agent) === 'apply'"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openSystemPublish(agent, 'apply')"
+                        >
+                          申请发布为系统级
+                        </button>
+                        <button
+                          v-if="systemCardAction(agent) === 'cancel'"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; cancelSystemRequest(agent)"
+                        >
+                          撤回上线申请
+                        </button>
+                        <button
+                          v-if="systemCardAction(agent) === 'unpublish'"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openSystemUnpublish(agent)"
+                        >
+                          下架（取消系统级）
+                        </button>
+                        <button
+                          v-if="canViewSystemHistory(agent)"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openSystemHistory(agent)"
+                        >
+                          发布历史
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </td>
               </tr>
@@ -4717,6 +4871,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :is-open="showVersionsDrawer"
       :agent="selectedAgent"
       @close="showVersionsDrawer = false"
+      @update="onSystemChanged"
       @edit-version="handleDrawerEditVersion"
       @create-version="handleDrawerCreateVersion"
       @publish-version="handleDrawerPublishVersion"

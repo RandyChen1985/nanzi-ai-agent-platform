@@ -91,7 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_system_events_agent_time
 COMMENT ON TABLE "ai_agent_system_events" IS '智能体系统级操作事件';
 COMMENT ON COLUMN "ai_agent_system_events"."id" IS '事件 ID（uuid4）';
 COMMENT ON COLUMN "ai_agent_system_events"."agent_id" IS '智能体 ID';
-COMMENT ON COLUMN "ai_agent_system_events"."action" IS 'PUBLISH / UNPUBLISH / META_UPDATE / TOGGLE_ENABLED';
+COMMENT ON COLUMN "ai_agent_system_events"."action" IS 'PUBLISH / UNPUBLISH / META_UPDATE / TOGGLE_ENABLED / BASELINE_PUBLISH / TRANSFER_OWNER / SHARE_SEND / SHARE_ACCEPT / SHARE_REJECT / SHARE_REVOKE';
 COMMENT ON COLUMN "ai_agent_system_events"."version_id" IS '关联版本 ID';
 COMMENT ON COLUMN "ai_agent_system_events"."version_number" IS '关联版本号（便于展示，避免回查）';
 COMMENT ON COLUMN "ai_agent_system_events"."snapshot" IS '发布时的内容快照（JSON）；下架与元数据事件为空';

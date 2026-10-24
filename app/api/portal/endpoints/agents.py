@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
@@ -60,8 +60,9 @@ class AgentShareTargets(BaseModel):
 
 class AgentShareAcceptPayload(BaseModel):
     # 不传就由服务端按源标识符生成不冲突的名字（xxx-copy / xxx-copy-2）
-    name: Optional[str] = None
-    display_name: Optional[str] = None
+    # 长度上限与 create_agent 对齐：超长会撞列的 1406/22001，被当成 500
+    name: Optional[str] = Field(default=None, max_length=100)
+    display_name: Optional[str] = Field(default=None, max_length=100)
 
 
 def _serialize_share(record: Any) -> Dict[str, Any]:
@@ -73,7 +74,6 @@ def _serialize_share(record: Any) -> Dict[str, Any]:
         "agent_name": record.agent_name,
         "agent_display_name": record.agent_display_name,
         "owner_user_name": record.owner_user_name,
-        "owner_user_id": record.owner_user_id,
         "recipient_user_name": record.recipient_user_name,
         "status": record.status,
         "share_message": record.share_message,
@@ -82,8 +82,15 @@ def _serialize_share(record: Any) -> Dict[str, Any]:
         "created_at": record.created_at.isoformat() if record.created_at else None,
         "expires_at": record.expires_at.isoformat() if record.expires_at else None,
         "responded_at": record.responded_at.isoformat() if record.responded_at else None,
-        # 列表里只显示名字和时间的说服力太低，接收方判断不了要不要接受
-        "summary": AgentShareService.summarize(record.snapshot),
+        # 列表里只显示名字和时间的说服力太低，接收方判断不了要不要接受。
+        # 但只有「还有机会接受」的记录才给摘要：一旦作废/拒绝/撤回/过期，
+        # 快照里的完整 system_prompt 与工具清单就没有再展示的理由，
+        # 留着等于给一条已经失效的记录长期开放配置读取。
+        "summary": (
+            AgentShareService.summarize(record.snapshot)
+            if record.status in ("PENDING", "ACCEPTED")
+            else None
+        ),
     }
 
 
@@ -102,7 +109,12 @@ async def list_received_shares(
     return [_serialize_share(item) for item in records]
 
 
-@router.post("/shares/{share_id}/accept", response_model=AIAgentResponse)
+@router.post(
+    "/shares/{share_id}/accept",
+    response_model=AIAgentResponse,
+    # 接受分享会创建一个新智能体，与 create_agent / duplicate_agent 的 gating 保持一致
+    dependencies=[Depends(require_permission("element", "element:agent:create"))],
+)
 async def accept_share(
     share_id: str,
     payload: AgentShareAcceptPayload,

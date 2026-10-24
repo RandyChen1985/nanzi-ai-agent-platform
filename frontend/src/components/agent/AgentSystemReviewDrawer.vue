@@ -68,6 +68,8 @@ const formatTime = (value?: string | null) => {
 
 const loadList = async () => {
   loadingList.value = true
+  // 刷新成功时不清旧错误，会让「加载待审列表失败」一直挂在详情下方
+  errorMessage.value = ''
   try {
     const res = await agentSystemApi.listRequests({ status: 'PENDING', page_size: 100 })
     items.value = res.data || []
@@ -85,19 +87,25 @@ const loadList = async () => {
   }
 }
 
+// 点 A 再点 B 时，若 A 的响应后到就会把右侧覆盖成 A，而左侧高亮仍是 B。
+// 审核人于是可能对着「以为在看的 B」点了通过/驳回，实际处理的是 A。
+let selectSeq = 0
 const select = async (requestId: string) => {
+  const seq = ++selectSeq
   selectedId.value = requestId
   loadingDetail.value = true
   reviewComment.value = ''
   errorMessage.value = ''
   try {
     const res = await agentSystemApi.getRequest(requestId)
+    if (seq !== selectSeq) return
     detail.value = res.data
   } catch (error: any) {
+    if (seq !== selectSeq) return
     detail.value = null
     errorMessage.value = error?.response?.data?.detail || '加载申请详情失败'
   } finally {
-    loadingDetail.value = false
+    if (seq === selectSeq) loadingDetail.value = false
   }
 }
 
@@ -115,6 +123,21 @@ watch(
   },
 )
 
+const isVersionRelease = computed(() => detail.value?.request_type === 'VERSION_RELEASE')
+
+// 两种申请单的通过后果完全不同：转系统级是「进入委派池」，版本上线是「换个基线」
+const approveToast = computed(() =>
+  isVersionRelease.value
+    ? `已通过，V${detail.value?.snapshot?.version?.version_number ?? ''} 已上线`
+    : '已通过并发布为系统级'
+)
+const approveHint = computed(() =>
+  isVersionRelease.value
+    ? '通过后该版本立即成为线上基线，被授权用户与主助手都会用到新配置；旧版本归档。'
+    : '该智能体马上进入主助手的自动委派候选与路由，被授权用户可用。请确认配置与工具已就绪。'
+)
+const approveButtonLabel = computed(() => (isVersionRelease.value ? '通过并上线' : '通过并发布'))
+
 const approve = async () => {
   if (!detail.value || submitting.value) return
   submitting.value = true
@@ -123,7 +146,7 @@ const approve = async () => {
     await agentSystemApi.approveRequest(detail.value.id, {
       comment: reviewComment.value.trim() || undefined,
     })
-    showToast('已通过并发布为系统级', 'success')
+    showToast(approveToast.value, 'success')
     emit('done')
     emit('changed')
     await loadList()
@@ -271,8 +294,7 @@ const reject = async () => {
                 </div>
 
                 <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-                  ⚠ <strong>通过后将立即生效</strong>：该智能体马上进入主助手的自动委派候选与路由，
-                  被授权用户可用。请确认配置与工具已就绪。
+                  ⚠ <strong>通过后将立即生效</strong>：{{ approveHint }}
                 </div>
 
                 <div v-if="detail.request_comment">
@@ -315,10 +337,10 @@ const reject = async () => {
                       <dd class="flex flex-wrap gap-1">
                         <span
                           v-for="tool in detail.snapshot.version.tools || []"
-                          :key="tool"
+                          :key="typeof tool === 'string' ? tool : tool?.name"
                           class="rounded border border-blue-100 bg-blue-50 px-1.5 py-0.5 text-[11px] text-blue-700"
                         >
-                          {{ tool }}
+                          {{ typeof tool === "string" ? tool : tool?.name || "未命名工具" }}
                         </span>
                         <span
                           v-if="!(detail.snapshot.version.tools || []).length"
@@ -390,7 +412,7 @@ const reject = async () => {
                 :disabled="submitting"
                 @click="approve"
               >
-                通过并发布
+                {{ approveButtonLabel }}
               </button>
             </div>
           </div>

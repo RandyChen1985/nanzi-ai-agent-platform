@@ -30,16 +30,25 @@ const errorMessage = ref('')
 const preview = ref<AgentSystemUnpublishPreview | null>(null)
 const loadingPreview = ref(false)
 
+// 关掉 A 再打开 B 时，A 的预览可能后到，把 B 的影响人数顶掉
+let previewSeq = 0
 const loadPreview = async () => {
   if (!props.agent) return
+  const seq = ++previewSeq
   loadingPreview.value = true
   try {
     const res = await agentSystemApi.previewUnpublish(props.agent.id)
+    if (seq !== previewSeq) return
     preview.value = res.data
     // 没有任何使用者时通知开关没有意义，直接关掉
     if (!res.data.affected_user_count) notify.value = false
   } catch (error: any) {
+    if (seq !== previewSeq) return
+    preview.value = null
     errorMessage.value = error?.response?.data?.detail || '加载受影响用户失败'
+    // 影响范围未知时不能默认还发通知：操作者看不到人数、也关不掉开关，
+    // 点确认就会给所有已分配用户群发一封站内信
+    notify.value = false
   } finally {
     loadingPreview.value = false
   }
@@ -72,9 +81,12 @@ const submit = async () => {
       notify: notify.value,
     })
     const notified = res.data.notified_user_count
+    const affected = preview.value?.affected_user_count
+    // notified_user_count 含所有者本人，说成「N 位用户」会让人以为 N 个使用方
+    // 都被覆盖了。这里用预览里的使用方人数，两个数字对不上时也不误导。
     showToast(
       notify.value && notified
-        ? `已下架，并通知了 ${notified} 位用户`
+        ? `已下架，已通知 ${affected ?? notified} 位使用方${affected == null ? '' : '及所有者'}`
         : '已下架',
       'success',
     )
@@ -193,10 +205,10 @@ const submit = async () => {
           </button>
           <button
             class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-            :disabled="submitting || loadingPreview"
+            :disabled="submitting || loadingPreview || !preview"
             @click="submit"
           >
-            {{ submitting ? '下架中…' : '确认下架' }}
+            {{ submitting ? '下架中…' : preview ? '确认下架' : '请先加载影响范围' }}
           </button>
         </div>
       </div>

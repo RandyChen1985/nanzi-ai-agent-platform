@@ -16,7 +16,7 @@
 -- 新增表 ai_agent_share_requests：
 --   snapshot       分享那一刻的完整配置快照（JSON）。用快照而不是接受时现读源，
 --                  是为了让「源后来被改 / 被删 / 被提升为系统级」都不影响已经发出的分享。
---   status         PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED
+--   status         PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED / WITHDRAWN
 --                  REVOKED 用于「源在对方接受前变成了系统级」——此时该分享作废，
 --                  并提示对方改为向管理员申请使用权限。
 --   expires_at     默认 7 天，过期由读取时惰性判定，不依赖定时任务。
@@ -31,13 +31,13 @@ CREATE TABLE IF NOT EXISTS `ai_agent_share_requests` (
     `agent_id` VARCHAR(36) NOT NULL COMMENT '源智能体 ID',
     `agent_name` VARCHAR(255) NULL COMMENT '源智能体物理标识（冗余，源被删后仍可展示）',
     `agent_display_name` VARCHAR(255) NULL COMMENT '源智能体显示名称（冗余）',
-    `owner_user_id` INT NULL COMMENT '分享人用户 ID',
+    `owner_user_id` BIGINT NULL COMMENT '分享人用户 ID',
     `owner_user_name` VARCHAR(255) NULL COMMENT '分享人用户名',
-    `recipient_user_id` INT NOT NULL COMMENT '接收人用户 ID',
+    `recipient_user_id` BIGINT NOT NULL COMMENT '接收人用户 ID',
     `recipient_user_name` VARCHAR(255) NULL COMMENT '接收人用户名',
     `snapshot` LONGTEXT NULL COMMENT '分享时的完整配置快照（JSON：元数据 + 版本配置）',
     `snapshot_version` INT NOT NULL DEFAULT 1 COMMENT '快照结构版本，便于后续演进',
-    `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED',
+    `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / ACCEPTED / REJECTED / EXPIRED / REVOKED / WITHDRAWN',
     `share_message` VARCHAR(500) NULL COMMENT '分享留言（可选）',
     `share_reason` VARCHAR(500) NULL COMMENT '状态变更原因（如作废原因）',
     `new_agent_id` VARCHAR(36) NULL COMMENT '接受后生成的副本智能体 ID',

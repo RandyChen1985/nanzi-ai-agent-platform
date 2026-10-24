@@ -63,7 +63,10 @@ watch(
   },
 )
 
+// 输入快时旧请求可能后到，把候选人列表覆盖成上一次搜索的结果
+let loadUsersSeq = 0
 const loadUsers = async () => {
+  const seq = ++loadUsersSeq
   loadingUsers.value = true
   errorMessage.value = ''
   try {
@@ -71,6 +74,7 @@ const loadUsers = async () => {
       search: search.value.trim() || undefined,
       limit: 50,
     })
+    if (seq !== loadUsersSeq) return
     // 后端只返回启用账号，前端不再二次过滤（过去在界面上过滤，反而把
     // 「接口失败」和「确实没人」显示成同一句「没有匹配的启用用户」）
     candidates.value = (res.data || []).map((item) => ({
@@ -78,6 +82,7 @@ const loadUsers = async () => {
       real_name: item.real_name ?? null,
     }))
   } catch (error: any) {
+    if (seq !== loadUsersSeq) return
     candidates.value = []
     errorMessage.value =
       error.response?.data?.detail || '候选人加载失败，请稍后重试'
