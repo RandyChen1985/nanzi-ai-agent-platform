@@ -165,6 +165,12 @@ async def test_updating_initial_draft_advances_onboarding_to_resource():
     )
     session.get.side_effect = [agent, version]
 
+    # update_agent_version 现在会查「这一版是否正被上线申请引用」；
+    # 测试用 AsyncMock，需要显式给出 execute 的返回值，否则 scalars() 拿到 coroutine
+    pending_result = MagicMock()
+    pending_result.scalars.return_value.first.return_value = None
+    session.execute.return_value = pending_result
+
     updated = await AgentManagerService.update_agent_version(
         session,
         "agent-1",

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timedelta
@@ -22,7 +23,10 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.agent_system_publication_service import (
@@ -197,9 +201,10 @@ class AgentShareService:
             "skill_count": _count(skills),
             "prompt_excerpt": (prompt[:160] + "…") if len(prompt) > 160 else (prompt or None),
             "prompt_length": len(prompt),
-            # 完整提示词：接受前要看清楚「这东西到底怎么说话」，折叠展示即可。
-            # 正常情况下也就几 KB，一次列表几十条不会造成负担。
-            "system_prompt": prompt or None,
+            # 提示词：接受前要看清楚「这东西到底怎么说话」，前端默认折叠。
+            # 但列表接口不能无上限：有人写几万字提示词时，一页 50 条能把响应体
+            # 撑到几 MB，首屏直接卡住。截断到 4000 字，够看清风格了。
+            "system_prompt": (prompt[:4000] + "…") if len(prompt) > 4000 else (prompt or None),
             "tool_names": [
                 (item.get("name") if isinstance(item, dict) else str(item))
                 for item in (tools if isinstance(tools, (list, tuple)) else [])
@@ -370,15 +375,30 @@ class AgentShareService:
     # ------------------------------------------------------------------ 收件箱
 
     @staticmethod
-    async def _expire_if_needed(session: AsyncSession, record: AgentShareRequest) -> None:
-        """惰性过期：不依赖定时任务，读到时顺手判定。"""
+    async def _expire_if_needed(session: AsyncSession, record: AgentShareRequest) -> bool:
+        """惰性过期：不依赖定时任务，读到时顺手判定。
+
+        返回是否真的改了状态——调用方据此决定要不要 commit。只 flush 不提交的话，
+        请求一结束改动就被丢弃，数据库里过期记录永远停在 PENDING，审计数据是脏的。
+        """
         if record.status != STATUS_PENDING or not record.expires_at:
-            return
+            return False
         if record.expires_at > datetime.now():
-            return
+            return False
         record.status = STATUS_EXPIRED
         record.responded_at = datetime.now()
         await session.flush()
+        return True
+
+    @staticmethod
+    async def _expire_many(
+        session: AsyncSession, records: List[AgentShareRequest]
+    ) -> bool:
+        changed = False
+        for record in records:
+            if await AgentShareService._expire_if_needed(session, record):
+                changed = True
+        return changed
 
     @staticmethod
     async def list_received(
@@ -395,11 +415,13 @@ class AgentShareService:
         if only_pending:
             stmt = stmt.where(AgentShareRequest.status == STATUS_PENDING)
         records = list((await session.execute(stmt)).scalars().all())
-        for record in records:
-            await AgentShareService._expire_if_needed(session, record)
+        expired = await AgentShareService._expire_many(session, records)
         # 过期判定改过状态，重新筛一遍，避免把刚过期的仍当作待处理返回
         if only_pending:
             records = [r for r in records if r.status == STATUS_PENDING]
+        # GET 接口里唯一会写数据的场景：把过期状态落库，否则永远是 PENDING
+        if expired:
+            await session.commit()
         return records
 
     @staticmethod
@@ -418,8 +440,8 @@ class AgentShareService:
             .order_by(AgentShareRequest.created_at.desc())
         )
         records = list(rows.scalars().all())
-        for record in records:
-            await AgentShareService._expire_if_needed(session, record)
+        if await AgentShareService._expire_many(session, records):
+            await session.commit()
         return records
 
     # ------------------------------------------------------------------ 接受 / 拒绝
@@ -429,7 +451,9 @@ class AgentShareService:
         session: AsyncSession, share_id: str, user: Any
     ) -> AgentShareRequest:
         _, _, user_id = AgentShareService.resolve_actor(user)
-        record = await session.get(AgentShareRequest, share_id)
+        # 行锁：两个人同时点「接受」时，没有它会双双通过 PENDING 校验、各生成一份副本。
+        # SQLite 会忽略 FOR UPDATE，测试环境行为不变。
+        record = await session.get(AgentShareRequest, share_id, with_for_update=True)
         if not record or record.recipient_user_id != user_id:
             raise HTTPException(status_code=404, detail="分享记录不存在")
         await AgentShareService._expire_if_needed(session, record)
@@ -549,7 +573,20 @@ class AgentShareService:
         record.status = STATUS_ACCEPTED
         record.responded_at = datetime.now()
         record.new_agent_id = new_agent_id
-        await session.flush()
+
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            # ai_agents.name 是全局唯一。两个人同时接受、或刚好有人抢先注册了
+            # 同一个标识符时，_unique_agent_name 查到的「可用名」插入时仍可能撞车。
+            # 回滚整条接受动作（分享记录回到 PENDING），让用户换个名字重试，
+            # 而不是抛一个 500 让他以为系统坏了。
+            await session.rollback()
+            if "name" in str(getattr(exc, "orig", exc)).lower():
+                raise HTTPException(
+                    status_code=409, detail="该名称已被占用，请换一个名字重试"
+                ) from exc
+            raise
 
         from app.services.ai.agent_system_notifier import AgentSystemNotifier
 
@@ -679,8 +716,8 @@ class AgentShareService:
             .order_by(AgentShareRequest.created_at.desc())
         )
         records = list(rows.scalars().all())
-        for record in records:
-            await AgentShareService._expire_if_needed(session, record)
+        if await AgentShareService._expire_many(session, records):
+            await session.commit()
         return records
 
     @staticmethod
@@ -737,11 +774,10 @@ class AgentShareService:
         if user_id is None:
             return {"received_pending": 0, "sent_pending": 0, "sent_total": 0}
 
-        # 过期的要先落状态，否则角标会把已经失效的记录也算进去
-        for record in await AgentShareService.list_received(session, user, only_pending=True):
-            await AgentShareService._expire_if_needed(session, record)
-        for record in await AgentShareService.list_sent_shares(session, user):
-            await AgentShareService._expire_if_needed(session, record)
+        # 过期的要先落状态，否则角标会把已经失效的记录也算进去。
+        # 上面两个方法已经各自 commit 过，这里不用再处理。
+        await AgentShareService.list_received(session, user, only_pending=True)
+        await AgentShareService.list_sent_shares(session, user)
 
         async def _count(*conditions) -> int:
             result = await session.execute(
@@ -785,6 +821,25 @@ class AgentShareService:
             record.share_reason = reason[:500]
         if records:
             await session.flush()
+
+            # 逐个告诉接收方「这条作废了、该去哪儿申请」。设计里这是唯一的补偿，
+            # 不发的话对方只会看到记录凭空消失。通知失败不能反过来挡住作废，
+            # 用 SAVEPOINT 隔离：作废是安全约束，通知是尽力而为。
+            from app.services.ai.agent_system_notifier import AgentSystemNotifier
+
+            for record in records:
+                try:
+                    async with session.begin_nested():
+                        await AgentSystemNotifier.notify_share_revoked(
+                            session,
+                            agent_id=agent_id,
+                            display_name=record.agent_display_name or record.agent_name or "智能体",
+                            recipient_user_id=int(record.recipient_user_id),
+                            reason=reason,
+                        )
+                except Exception as exc:  # pragma: no cover - 通知失败不影响作废
+                    logger.warning(f"通知分享作废失败（share={record.id}）：{exc}")
+
             await AgentShareService._record_event(
                 session,
                 agent_id=agent_id,

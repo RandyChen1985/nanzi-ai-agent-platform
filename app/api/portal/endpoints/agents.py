@@ -775,6 +775,29 @@ async def delete_agent_version(agent_id: str, version_id: str, session: AsyncSes
         raise HTTPException(status_code=403, detail="Forbidden: Version not found, currently active, or missing permissions")
     return {"status": "success"}
 
+async def _assert_can_read_agent_config(
+    session: AsyncSession, agent_id: str, user: Dict[str, Any]
+) -> None:
+    """校验当前用户能否读取该智能体的运行配置。
+
+    ``get_active_agent_config`` 是内部方法（id 或 name 都能解析），聊天链路调用它
+    之前会先做 check_permission。但这两个 HTTP 接口把它直接暴露出来时忘了鉴权，
+    于是 ``GET /agents/chat-bi/active-config`` 就能拿到平台基线的 system_prompt 与
+    工具/MCP 绑定。无权与不存在统一返回 404，避免变成存在性探测。
+    """
+    from app.models.agent import AIAgent
+
+    target = str(agent_id)
+    row = await session.execute(
+        select(AIAgent).where((AIAgent.id == target) | (AIAgent.name == target)).limit(1)
+    )
+    agent = row.scalars().first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Active configuration not found for this agent")
+    if not await AgentManagerService._user_can_execute_agent(session, agent, user):
+        raise HTTPException(status_code=404, detail="Active configuration not found for this agent")
+
+
 @router.get("/{agent_id}/active-config")
 async def get_active_config(
     agent_id: str, 
@@ -782,6 +805,7 @@ async def get_active_config(
     user: Dict[str, Any] = Depends(get_current_user)
 ):
     """获取智能体当前的活跃版本配置 (用于调试预览)"""
+    await _assert_can_read_agent_config(session, agent_id, user)
     config = await AgentManagerService.get_active_agent_config(session, agent_id=agent_id)
     if not config:
         raise HTTPException(status_code=404, detail="Active configuration not found for this agent")
@@ -795,6 +819,7 @@ async def get_runtime_welcome_cards(
     user: Dict[str, Any] = Depends(get_current_user),
 ):
     """获取欢迎页卡片：人工模式读固定配置，自动模式读 5 分钟推荐缓存。"""
+    await _assert_can_read_agent_config(session, agent_id, user)
     config = await AgentManagerService.get_active_agent_config(session, agent_id=agent_id)
     if not config:
         raise HTTPException(status_code=404, detail="Active configuration not found for this agent")

@@ -126,7 +126,10 @@ const submitAccept = async () => {
     emit('updated')
     emit('accepted', res.data.id)
   } catch (e: any) {
-    acceptError.value = e?.response?.data?.detail || '接受失败，请稍后重试'
+    // detail 可能是字符串，也可能是 422 的校验错误数组，直接塞进字符串会显示 [object Object]
+    const detail = e?.response?.data?.detail
+    acceptError.value =
+      typeof detail === 'string' ? detail : Array.isArray(detail) ? (detail[0]?.msg ?? '参数不合法') : '接受失败，请稍后重试'
   } finally {
     actingId.value = null
   }

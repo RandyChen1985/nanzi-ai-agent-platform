@@ -205,3 +205,16 @@ def test_review_drawer_supports_closing_orphan_request():
     assert "驳回并关闭" in src
     # 孤儿单不该给出「通过并发布」
     assert 'v-if="!detail.agent_missing"' in src
+
+
+def test_editing_returns_current_is_system():
+    """更新智能体时必须回传当前 is_system，否则管理员改系统级必然 400。
+
+    后端 AIAgentBase.is_system 缺省是 False；省略该字段就等于「想把它改成非系统级」，
+    与系统级(True) 不等直接 400。表现是管理员对除主助手外的任何系统级智能体
+    改个描述都保存失败。
+    """
+    src = _read(AGENT_MGMT)
+    block = src[src.index("if (isEditingAgent.value && selectedAgent.value)"):]
+    block = block[: block.index("} else if")]
+    assert "is_system: selectedAgent.value.is_system" in block

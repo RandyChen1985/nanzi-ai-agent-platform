@@ -673,13 +673,14 @@ const switchWorkspaceTab = (tab: AgentWorkspaceTab) => {
 const handleShareAccepted = async (agentId: string) => {
   await refreshShareCounts()
   await fetchAgents()
+  workspaceTab.value = 'mine'
   const created = agents.value.find((item) => item.id === agentId)
-  if (created) {
-    workspaceTab.value = 'mine'
-    await continueAgentOnboarding(created)
-  } else {
-    workspaceTab.value = 'mine'
+  if (!created) {
+    // 列表没刷到时不能什么都不做：用户会以为接受没成功
+    showToast('副本已创建，请在「我的智能体」里继续配置', 'warning')
+    return
   }
+  await continueAgentOnboarding(created)
 }
 
 const openSystemReview = () => {
@@ -2349,14 +2350,20 @@ const saveAgent = async (exitAfterSave = false) => {
   agentForm.value.engine_config.default_markdown_theme = selectedMarkdownTheme.value;
   agentForm.value.engine_config.hide_message_border = hideMessageBorder.value;
 
-  // 「是否系统级」只能来自发布 / 审核流程，表单不提交它（后端对 true 直接 400）。
+  // 「是否系统级」不能由表单改动：新建/复制路径必须剔除它（后端会 400）。
   // 必须放在上面所有 agentForm 同步**之后**：这是浅拷贝，早一步取值会把
   // engine_config / agent_type / capabilities 的改动全部丢掉。
   const { is_system: _ignoredSystemFlag, ...agentPayload } = agentForm.value as Record<string, any>;
 
   try {
     if (isEditingAgent.value && selectedAgent.value) {
-      await agentApi.updateAgent(selectedAgent.value.id, agentPayload as any);
+      await agentApi.updateAgent(selectedAgent.value.id, {
+        ...agentPayload,
+        // 更新时必须回传「当前值」而不是省略：后端字段缺省会取 False，
+        // 与系统级(True) 不等就判定成「想改 is_system」而 400——
+        // 结果管理员改任何一个非主助手的系统级智能体都保存失败。
+        is_system: selectedAgent.value.is_system,
+      } as any);
       showToast("更新成功", "success");
     } else if (isOnboardingFlow.value) {
       const response = await agentApi.createAgentOnboarding({

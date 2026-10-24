@@ -371,6 +371,36 @@ class AgentSystemNotifier:
         )
 
     @staticmethod
+    async def notify_share_revoked(
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        display_name: str,
+        recipient_user_id: int,
+        reason: str = "",
+    ) -> int:
+        """分享被系统作废（源智能体变成了系统级）。
+
+        这条通知是设计里唯一的补偿：接收方本来等着接受，突然发现记录没了，
+        不告诉他原因是新增一次困惑。同时要给出下一步——去申请使用授权。
+        """
+        return await AgentSystemNotifier.send(
+            session,
+            [recipient_user_id],
+            agent_id=agent_id,
+            title=f"对「{display_name}」的分享已作废",
+            content=(
+                f"「{display_name}」已被发布为系统级智能体，之前发给你的分享自动作废。"
+                "\n\n系统级智能体的使用权限统一由管理员授予，"
+                "如需使用请在智能体中心申请，或联系管理员开通。"
+                + (f"\n\n原因：{reason}" if reason else "")
+            ),
+            level="warning",
+            resource_type="agent_share",
+            metadata={"open_tab": "received"},
+        )
+
+    @staticmethod
     async def notify_share_accepted(
         session: AsyncSession,
         *,

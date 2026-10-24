@@ -1677,7 +1677,13 @@ class AgentManagerService:
         version = await session.get(AIAgentVersion, version_id)
         if not agent or not version:
             return None
-            
+
+        # 版本必须属于路径里的这个智能体。少了这一句，攻击者拿自己任何一个智能体的
+        # id 就能改别人的草稿版本（归属校验只看了 agent，没看 version）。
+        # publish_version 一直有这个判断，改/删两处是漏的。
+        if str(version.agent_id) != str(agent_id):
+            return None
+
         # Only DRAFT versions can be modified
         if version.status != "DRAFT":
             return None
@@ -1694,6 +1700,31 @@ class AgentManagerService:
             return None # Forbidden
 
         # 系统级允许改草稿（不发布就不影响线上基线），发布在 publish_version 单独拦。
+        #
+        # 但「正在申请上线的那个版本」不能改：审批通过时是按 version_id 现读内容发布的，
+        # 待审期间整份改写等于让管理员审的是 A、上线的是 B，审核就白做了。
+        # 只冻这一版，建新版本、改别的草稿都不受影响。
+        try:
+            from fastapi import HTTPException
+
+            from app.models.agent_system import AgentSystemRequest
+
+            pending_release = await session.execute(
+                select(AgentSystemRequest.id)
+                .where(
+                    AgentSystemRequest.snapshot_version_id == str(version_id),
+                    AgentSystemRequest.status == "PENDING",
+                )
+                .limit(1)
+            )
+            if pending_release.scalars().first():
+                raise HTTPException(
+                    status_code=409,
+                    detail="该版本正在审核中，暂不能修改；如需调整请新建一个版本再提交申请",
+                )
+        except OperationalError:
+            # 未迁移环境没有这张表：不能因此挡住普通改草稿
+            pass
 
         skills_custom = bool(getattr(data, "skills_custom", False))
         skills_list = (
@@ -1917,10 +1948,14 @@ class AgentManagerService:
         """Delete an agent version (only DRAFT or ARCHIVED)"""
         agent = await session.get(AIAgent, agent_id)
         version = await session.get(AIAgentVersion, version_id)
-        
+
         if not agent or not version:
             return False
-            
+
+        # 同 update_agent_version：版本必须属于这个智能体，否则等于允许跨智能体删除
+        if str(version.agent_id) != str(agent_id):
+            return False
+
         # Cannot delete PUBLISHED version
         if version.status == "PUBLISHED":
             return False

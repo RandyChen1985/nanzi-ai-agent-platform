@@ -1114,3 +1114,67 @@ async def test_pending_count_matches_list_when_agent_deleted(db_session):
         )
         await db_session.execute(delete(AIAgent).where(AIAgent.id == agent.id))
         await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_pending_release_version_cannot_be_edited(db_session):
+    """正在申请上线的那个草稿版本不能被改写。
+
+    审批通过时是按 version_id 现读内容发布的。待审期间允许整份改写，管理员审的是
+    提交时的快照、上线的是改后的内容，审核形同虚设，事后也无法证明审的是什么。
+    """
+    from fastapi import HTTPException
+
+    from app.schemas.agent import AIAgentVersionBase
+    from app.services.ai.agent_manager import AgentManagerService
+
+    owner = f"rel-{uuid.uuid4().hex[:6]}"
+    agent = AIAgent(
+        id=str(uuid.uuid4()),
+        name=f"rel-agent-{uuid.uuid4().hex[:6]}",
+        display_name="待审版本冻结测试",
+        created_by=owner,
+        is_system=True,
+        is_enabled=True,
+        engine_type="LOCAL",
+    )
+    db_session.add(agent)
+    await db_session.flush()
+    version = AIAgentVersion(
+        id=str(uuid.uuid4()),
+        agent_id=agent.id,
+        version_number=1,
+        status="DRAFT",
+        system_prompt="原始内容",
+    )
+    db_session.add(version)
+    await db_session.flush()
+    request = AgentSystemRequest(
+        id=str(uuid.uuid4()),
+        agent_id=agent.id,
+        request_type="VERSION_RELEASE",
+        snapshot_version_id=version.id,
+        status="PENDING",
+        requested_at=datetime.now(),
+    )
+    db_session.add(request)
+    await db_session.commit()
+
+    try:
+        payload = AIAgentVersionBase(
+            version_number=1, system_prompt="被偷偷换掉的内容", status="DRAFT"
+        )
+        with pytest.raises(HTTPException) as exc:
+            await AgentManagerService.update_agent_version(
+                db_session, agent.id, version.id, payload,
+                {"role": "user", "user_name": owner, "user_id": 1},
+            )
+        assert exc.value.status_code == 409
+        assert "审核中" in str(exc.value.detail)
+    finally:
+        await db_session.execute(
+            delete(AgentSystemRequest).where(AgentSystemRequest.id == request.id)
+        )
+        await db_session.execute(delete(AIAgentVersion).where(AIAgentVersion.agent_id == agent.id))
+        await db_session.execute(delete(AIAgent).where(AIAgent.id == agent.id))
+        await db_session.commit()

@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from sqlalchemy import delete, select
@@ -516,3 +518,57 @@ async def test_publish_version_rejects_chatbi_without_query_tool_before_archivin
     assert exc_info.value.missing == ("data_query_tool",)
     mock_session.execute.assert_not_called()
     mock_session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_version_cannot_be_edited_across_agents(db_session):
+    """用自己的智能体 ID 去改别人的草稿版本，必须被拒。
+
+    update_agent_version / delete_version 原先只校验了路径里的 agent 归属，
+    没有校验 version.agent_id 是否等于它。攻击者拿自己任何一个智能体的 id
+    就能改/删他人的草稿——受害者的下一版上线内容因此可被第三方写入。
+    publish_version 一直有这个判断，这两处是漏的。
+    """
+    from app.schemas.agent import AIAgentVersionBase
+    from app.services.ai.agent_manager import AgentManagerService
+
+    mark = uuid.uuid4().hex[:6]
+    mine = AIAgent(
+        id=str(uuid.uuid4()), name=f"mine-{mark}", display_name="我的",
+        created_by=f"me-{mark}", is_system=False, is_enabled=True, engine_type="LOCAL",
+    )
+    victim = AIAgent(
+        id=str(uuid.uuid4()), name=f"victim-{mark}", display_name="受害者的",
+        created_by=f"victim-{mark}", is_system=False, is_enabled=True, engine_type="LOCAL",
+    )
+    db_session.add_all([mine, victim])
+    await db_session.flush()
+    victim_version = AIAgentVersion(
+        id=str(uuid.uuid4()), agent_id=victim.id, version_number=1,
+        status="DRAFT", system_prompt="受害者的原始内容",
+    )
+    db_session.add(victim_version)
+    await db_session.commit()
+
+    try:
+        payload = AIAgentVersionBase(
+            version_number=1, system_prompt="被第三方写入的内容", status="DRAFT"
+        )
+        updated = await AgentManagerService.update_agent_version(
+            db_session, mine.id, victim_version.id, payload,
+            {"role": "user", "user_name": f"me-{mark}", "user_id": 1},
+        )
+        assert updated is None, "不能用自己的智能体 ID 改别人的版本"
+
+        deleted = await AgentManagerService.delete_version(
+            db_session, mine.id, victim_version.id,
+            {"role": "user", "user_name": f"me-{mark}", "user_id": 1},
+        )
+        assert deleted is False, "不能用自己的智能体 ID 删别人的版本"
+
+        await db_session.refresh(victim_version)
+        assert victim_version.system_prompt == "受害者的原始内容"
+    finally:
+        await db_session.execute(delete(AIAgentVersion).where(AIAgentVersion.agent_id.in_([mine.id, victim.id])))
+        await db_session.execute(delete(AIAgent).where(AIAgent.id.in_([mine.id, victim.id])))
+        await db_session.commit()

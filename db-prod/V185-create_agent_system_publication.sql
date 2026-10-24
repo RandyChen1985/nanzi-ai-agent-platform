@@ -11,6 +11,16 @@
 --                             注意 is_system 仍是运行时的唯一事实源，本列只表达「有没有在审核中」。
 --   system_pending_request_id 待审申请单 ID（system_status=PENDING_REVIEW 时有值，其余为 NULL）。
 --
+ALTER TABLE `ai_agents`
+    ADD COLUMN `system_status` VARCHAR(20) NOT NULL DEFAULT 'NONE'
+        COMMENT '系统级流程状态：NONE / PENDING_REVIEW（is_system 仍是运行时事实源）'
+        AFTER `is_system`;
+
+ALTER TABLE `ai_agents`
+    ADD COLUMN `system_pending_request_id` VARCHAR(36) NULL
+        COMMENT '待审申请单 ID（system_status=PENDING_REVIEW 时有值）'
+        AFTER `system_status`;
+
 -- 新增表：
 --   ai_agent_system_requests 申请单：提交时打快照，状态 PENDING/APPROVED/REJECTED/CANCELLED。
 --   ai_agent_system_events   操作事件：PUBLISH / UNPUBLISH / META_UPDATE / TOGGLE_ENABLED，
@@ -19,57 +29,14 @@
 -- 刻意不建物理外键：与 skill_publications / mcp_server_shares 同一惯例，
 --   避免删除用户或智能体时撞 RESTRICT，清理统一由应用层负责。
 --
--- 幂等：加列先查 information_schema；建表 IF NOT EXISTS；存量事件按 agent + actor 去重。
+-- 幂等：直接写原生 DDL，靠 apply_sql.py 的错误码跳过实现可重复执行
+--   （1060 Duplicate column / 1050 Table exists / 1062 Duplicate entry 都在跳过名单里）。
+--   MySQL 没有 ADD COLUMN IF NOT EXISTS（那是 MariaDB 扩展），此前用
+--   information_schema + PREPARE/EXECUTE 动态拼 SQL 绕开，结果把「补列」写到了
+--   CREATE TABLE 前面——全新库表不存在时 ALTER 直接 1146，脚本中断且无法自愈。
+--   原生语句没有这个顺序陷阱，也能一眼看出执行顺序。
 
-SET @column_exists := (
-    SELECT COUNT(*)
-    FROM information_schema.columns
-    WHERE table_schema = DATABASE()
-      AND table_name = 'ai_agents'
-      AND column_name = 'system_status'
-);
-SET @sql := IF(
-    @column_exists = 0,
-    'ALTER TABLE `ai_agents` ADD COLUMN `system_status` VARCHAR(20) NOT NULL DEFAULT ''NONE'' COMMENT ''系统级流程状态：NONE / PENDING_REVIEW（is_system 仍是运行时事实源）'' AFTER `is_system`',
-    'SELECT 1'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
 
-SET @column_exists := (
-    SELECT COUNT(*)
-    FROM information_schema.columns
-    WHERE table_schema = DATABASE()
-      AND table_name = 'ai_agents'
-      AND column_name = 'system_pending_request_id'
-);
-SET @sql := IF(
-    @column_exists = 0,
-    'ALTER TABLE `ai_agents` ADD COLUMN `system_pending_request_id` VARCHAR(36) NULL COMMENT ''待审申请单 ID（system_status=PENDING_REVIEW 时有值）'' AFTER `system_status`',
-    'SELECT 1'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
--- 已建过该表的环境（本脚本早版本执行过）补 request_type：
--- CREATE TABLE IF NOT EXISTS 不会给已存在的表加列。
-SET @column_exists := (
-    SELECT COUNT(*)
-    FROM information_schema.columns
-    WHERE table_schema = DATABASE()
-      AND table_name = 'ai_agent_system_requests'
-      AND column_name = 'request_type'
-);
-SET @sql := IF(
-    @column_exists = 0,
-    'ALTER TABLE `ai_agent_system_requests` ADD COLUMN `request_type` VARCHAR(24) NOT NULL DEFAULT ''SYSTEM_PUBLISH'' COMMENT ''SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线'' AFTER `agent_id`',
-    'SELECT 1'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
 
 CREATE TABLE IF NOT EXISTS `ai_agent_system_requests` (
     `id` VARCHAR(36) NOT NULL COMMENT '申请单 ID（uuid4）',
@@ -90,6 +57,18 @@ CREATE TABLE IF NOT EXISTS `ai_agent_system_requests` (
 -- 必须显式指定 collation：ai_agents 是老表（utf8mb4_unicode_ci），库默认是
 -- utf8mb4_0900_ai_ci，两张表混用会在 agent_id 关联时抛 1267 Illegal mix of collations。
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体系统级发布申请单';
+
+-- 本脚本早版本建过该表（没有 request_type），这里补列。
+-- 放在 CREATE TABLE 之后：全新库先建表（已含该列），这条会以 1060 幂等跳过。
+ALTER TABLE `ai_agent_system_requests`
+    ADD COLUMN `request_type` VARCHAR(24) NOT NULL DEFAULT 'SYSTEM_PUBLISH'
+        COMMENT 'SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线'
+        AFTER `agent_id`;
+
+-- 已建过该表的环境（本脚本早版本执行过）补 request_type：
+-- CREATE TABLE IF NOT EXISTS 不会给已存在的表加列，所以要在建表**之后**判断。
+-- 顺序不能反：表还不存在时 information_schema 查不到该列，会走 ALTER 分支，
+-- 直接报 1146 表不存在，全新环境的迁移当场失败。
 
 CREATE TABLE IF NOT EXISTS `ai_agent_system_events` (
     `id` VARCHAR(36) NOT NULL COMMENT '事件 ID（uuid4）',

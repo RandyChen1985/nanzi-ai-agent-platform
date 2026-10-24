@@ -104,5 +104,7 @@ def test_agent_payload_snapshot_taken_after_form_sync():
             f"{later_write} 在 payload 快照之后才写入，会被丢掉"
         )
     # 三个提交口都用同一个 payload
-    assert "agentApi.updateAgent(selectedAgent.value.id, agentPayload as any)" in src
+    # 更新时要在 agentPayload 基础上回传当前 is_system（省略会被后端判定成「想改成非系统级」）
+    assert "agentApi.updateAgent(selectedAgent.value.id, {" in src
+    assert "is_system: selectedAgent.value.is_system" in src
     assert "await agentApi.createAgent(agentPayload as any)" in src

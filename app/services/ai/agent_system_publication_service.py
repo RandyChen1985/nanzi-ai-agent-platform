@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import case, desc, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import AIAgent, AIAgentVersion
@@ -302,14 +302,16 @@ class AgentSystemPublicationService:
         """
         from app.services.ai.agent_share_service import AgentShareService
 
-        try:
-            if not await AgentShareService.supports_share(session):
-                return
-            await AgentShareService.revoke_pending_for_agent(
-                session, str(agent_id), "该智能体已发布为系统级，请向管理员申请使用权限"
-            )
-        except Exception:
-            pass
+        # 分享表还没建（未执行 V186/V86）时跳过：升级为系统级不能被它挡住。
+        if not await AgentShareService.supports_share(session):
+            return
+
+        # 表在就必须作废成功。这里刻意不吞异常：作废失败若被静默忽略，
+        # 智能体已经是系统级、待接受的分享却还能生成副本，等于绕开授权治理。
+        # 失败就让整个发布事务回滚，宁可让管理员重试一次。
+        await AgentShareService.revoke_pending_for_agent(
+            session, str(agent_id), "该智能体已发布为系统级，请向管理员申请使用权限"
+        )
 
     @staticmethod
     async def _owner_user_id(
@@ -1095,12 +1097,14 @@ class AgentSystemPublicationService:
     @staticmethod
     async def pending_count(session: AsyncSession) -> int:
         await assert_migrated(session)
+        # 用 COUNT：这里只需要一个数字，没必要把 PENDING 的主键全拉回内存再数长度。
+        # 口径与 list_requests 完全一致（都按申请单状态，不看智能体是否还在）。
         rows = await session.execute(
-            select(AgentSystemRequest.id).where(
-                AgentSystemRequest.status == STATUS_PENDING
-            )
+            select(func.count())
+            .select_from(AgentSystemRequest)
+            .where(AgentSystemRequest.status == STATUS_PENDING)
         )
-        return len(rows.scalars().all())
+        return int(rows.scalar() or 0)
 
     @staticmethod
     async def request_detail(

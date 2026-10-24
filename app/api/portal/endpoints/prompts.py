@@ -1,4 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.orm import get_db_session
 from typing import List, Optional, Dict, Any
 
 from app.core.dependencies import require_api_key, get_current_user, require_permission
@@ -120,17 +124,28 @@ async def optimize_task_instruction(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/history")
+@router.get("/history", dependencies=[Depends(require_permission("menu", "menu:prompts"))])
 async def get_prompt_history(
     source: PromptSource,
     target_id: str,
-    user: Dict[str, Any] = Depends(get_current_user)
+    user: Dict[str, Any] = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
 ):
-    """获取提示词的变更历史 (System 查 Audit Log, Agent 查 Versions)"""
+    """获取提示词的变更历史 (System 查 Audit Log, Agent 查 Versions)
+
+    历史是同一份数据的第二条通道：列表/详情/保存都已收紧，历史漏了等于全部白做。
+    ``source=system_config`` 的历史里 ``old_value``/``new_value`` 是明文，
+    包含 llm_api_key 这类密钥键，必须限定管理员。
+    """
     if source == PromptSource.SYSTEM_CONFIG:
-        # 复用系统配置审计逻辑
+        if not PromptService._is_admin(user):
+            raise HTTPException(status_code=403, detail="平台提示词历史仅管理员可见")
         from app.services.config_service import ConfigService
-        return await ConfigService.get_config_history(target_id)
-    else:
-        # Agent 级 Prompts: 将版本记录转换为审计日志格式返回
-        return await PromptService.get_agent_prompt_history(target_id)
+
+        return await ConfigService.get_config_history(target_id, mask_secret=True)
+
+    # Agent 分支要按工坊可见性过滤，否则任意用户能读别人（含系统级）的全部版本提示词
+    visible_ids = await PromptService._visible_agent_ids(session, user)
+    if visible_ids is not None and target_id.replace("agent_", "") not in visible_ids:
+        raise HTTPException(status_code=403, detail="无权查看该智能体的提示词历史")
+    return await PromptService.get_agent_prompt_history(target_id)

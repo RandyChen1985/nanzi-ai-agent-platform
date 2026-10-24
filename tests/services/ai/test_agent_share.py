@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.core.orm import Base
 from app.models.agent import AIAgent, AIAgentVersion
@@ -559,5 +559,46 @@ async def test_accept_rejects_missing_snapshot(db_session, share_table):
             await AgentShareService.accept(db_session, records[0].id, ctx, name="x")
         assert exc.value.status_code == 409
         assert "重新分享" in str(exc.value.detail)
+    finally:
+        await _cleanup(db_session, [agent.id], [owner.id, peer.id])
+
+
+@pytest.mark.asyncio
+async def test_revoke_notifies_recipients(db_session, share_table):
+    """源变成系统级时，待接受的分享要作废，并且通知到接收人。
+
+    commit 正文与文档都承诺了这条通知。只改状态不发信的话，接收方只会看到
+    记录凭空消失，既不知道原因也不知道该去哪儿申请授权。
+    """
+    from app.models.portal_notification import PortalNotification
+
+    owner_name = f"owner-{uuid.uuid4().hex[:6]}"
+    peer_name = f"peer-{uuid.uuid4().hex[:6]}"
+    owner = await _make_user(db_session, name=owner_name)
+    peer = await _make_user(db_session, name=peer_name)
+    agent = await _make_agent(db_session, owner=owner_name)
+    await db_session.commit()
+    ctx = {"role": "user", "user_name": owner_name, "user_id": owner.id}
+
+    try:
+        records = await AgentShareService.create_shares(db_session, agent.id, [peer_name], ctx)
+        await db_session.commit()
+
+        revoked = await AgentShareService.revoke_pending_for_agent(
+            db_session, agent.id, "该智能体已发布为系统级，请向管理员申请使用权限"
+        )
+        await db_session.commit()
+        assert revoked == 1
+
+        rows = (
+            await db_session.execute(
+                select(PortalNotification).where(
+                    PortalNotification.user_id == peer.id,
+                    PortalNotification.resource_type == "agent_share",
+                )
+            )
+        ).scalars().all()
+        assert rows, "作废分享必须给接收人发站内信"
+        assert any("作废" in (item.title or "") for item in rows)
     finally:
         await _cleanup(db_session, [agent.id], [owner.id, peer.id])
