@@ -111,6 +111,11 @@ async def accept_share(
 ):
     """接受分享：按快照生成一份属于我的副本，并停在向导第一步。"""
     from app.services.ai.agent_share_service import AgentShareService
+    if not await AgentShareService.supports_share(session):
+        raise HTTPException(
+            status_code=400,
+            detail="分享功能尚未就绪，请先执行迁移 db-prod/V186 或 db-prod-pg/V86",
+        )
 
     try:
         agent = await AgentShareService.accept(
@@ -141,6 +146,11 @@ async def reject_share(
 ):
     """拒绝分享。刻意不通知分享者——拒绝本身可能就不想解释。"""
     from app.services.ai.agent_share_service import AgentShareService
+    if not await AgentShareService.supports_share(session):
+        raise HTTPException(
+            status_code=400,
+            detail="分享功能尚未就绪，请先执行迁移 db-prod/V186 或 db-prod-pg/V86",
+        )
 
     record = await AgentShareService.reject(session, share_id, user)
     await session.commit()
@@ -185,6 +195,11 @@ async def withdraw_share(
 ):
     """撤回一条还没被接受的分享。过期是自动的，但「发错了想收回」得给个主动入口。"""
     from app.services.ai.agent_share_service import AgentShareService
+    if not await AgentShareService.supports_share(session):
+        raise HTTPException(
+            status_code=400,
+            detail="分享功能尚未就绪，请先执行迁移 db-prod/V186 或 db-prod-pg/V86",
+        )
 
     try:
         record = await AgentShareService.withdraw(session, share_id, user)
@@ -204,6 +219,11 @@ async def share_agent(
 ):
     """把智能体分享给一个或多个人（每人一条独立记录）。"""
     from app.services.ai.agent_share_service import AgentShareService
+    if not await AgentShareService.supports_share(session):
+        raise HTTPException(
+            status_code=400,
+            detail="分享功能尚未就绪，请先执行迁移 db-prod/V186 或 db-prod-pg/V86",
+        )
 
     try:
         records = await AgentShareService.create_shares(
@@ -288,13 +308,12 @@ async def get_embed_agent_access(
     if not can_use:
         raise HTTPException(
             status_code=403,
+            # 只回代码与固定文案，不回显内部字段：带上 id/name 等于把
+            # 「名字 → UUID + 是否存在 + 是否启用」做成公开查询，正好给
+            # 版本列表、复制这些按 id 操作的接口供弹药。
             detail={
                 "code": "AGENT_FORBIDDEN",
                 "message": "无权使用该智能体",
-                "agent_key": agent_id,
-                "agent_id": agent.id,
-                "agent_name": agent.name,
-                "display_name": agent.display_name,
             },
         )
     # 深链锁定的智能体同样需要已发布版本的「是否允许手动切换模型」，用于决定输入框是否展示模型切换入口
@@ -728,7 +747,7 @@ async def check_agent_tools_health(
     }
 
 
-@router.post("/{agent_id}/versions", response_model=AIAgentVersionResponse)
+@router.post("/{agent_id}/versions", response_model=AIAgentVersionResponse, dependencies=[Depends(require_permission("element", "element:agent:edit"))])
 async def create_agent_version(agent_id: str, data: AIAgentVersionBase, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """为智能体创建新版本 (默认 DRAFT)"""
     try:
@@ -739,7 +758,7 @@ async def create_agent_version(agent_id: str, data: AIAgentVersionBase, session:
         raise HTTPException(status_code=403, detail="Forbidden: You can only add versions to your own agents")
     return version
 
-@router.put("/{agent_id}/versions/{version_id}", response_model=AIAgentVersionResponse)
+@router.put("/{agent_id}/versions/{version_id}", response_model=AIAgentVersionResponse, dependencies=[Depends(require_permission("element", "element:agent:edit"))])
 async def update_agent_version(agent_id: str, version_id: str, data: AIAgentVersionBase, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """更新现有的草稿版本 (仅限 DRAFT 状态)"""
     try:
@@ -750,7 +769,7 @@ async def update_agent_version(agent_id: str, version_id: str, data: AIAgentVers
         raise HTTPException(status_code=403, detail="Forbidden: Version not found, not a DRAFT, or missing permissions")
     return version
 
-@router.post("/{agent_id}/versions/{version_id}/publish")
+@router.post("/{agent_id}/versions/{version_id}/publish", dependencies=[Depends(require_permission("element", "element:agent:edit"))])
 async def publish_agent_version(agent_id: str, version_id: str, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """发布特定版本（将该版本设为 PUBLISHED，原发布版本设为 ARCHIVED）"""
     from app.services.ai.agent_manager import AgentNotReadyError
@@ -767,7 +786,7 @@ async def publish_agent_version(agent_id: str, version_id: str, session: AsyncSe
     return {"status": "success"}
     return {"status": "success"}
 
-@router.delete("/{agent_id}/versions/{version_id}")
+@router.delete("/{agent_id}/versions/{version_id}", dependencies=[Depends(require_permission("element", "element:agent:edit"))])
 async def delete_agent_version(agent_id: str, version_id: str, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """删除指定版本 (仅限 DRAFT 或 ARCHIVED)"""
     success = await AgentManagerService.delete_version(session, agent_id, version_id, user=user)

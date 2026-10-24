@@ -76,6 +76,11 @@ class AgentShareService:
 
     # None=未探测；True=已建表；False=缺表
     _TABLE_STATE: Optional[bool] = None
+    # 判定「缺表」的时刻。与 agent_system_columns 一致留 60s 重试窗口：
+    # 代码往往先于迁移上线，若把 False 永久缓存，迁移跑完还得重启每个 worker
+    # 才能用分享功能，而且读接口返回空列表、前端完全看不出原因。
+    _TABLE_MISSING_AT: Optional[float] = None
+    _TABLE_RETRY_SECONDS = 60.0
 
     @staticmethod
     async def supports_share(session: AsyncSession) -> bool:
@@ -89,26 +94,38 @@ class AgentShareService:
         突然抛 MissingGreenlet（实例被 expire 后再访问属性就触发 IO）。
         结论会缓存，热路径不重复探测。
         """
+        import time
+
         from sqlalchemy import text
 
-        if AgentShareService._TABLE_STATE is not None:
-            return AgentShareService._TABLE_STATE
+        state = AgentShareService._TABLE_STATE
+        if state is True:
+            return True
+        if state is False:
+            missing_at = AgentShareService._TABLE_MISSING_AT or 0.0
+            if time.monotonic() - missing_at < AgentShareService._TABLE_RETRY_SECONDS:
+                return False
+            # 过了重试窗口，重新探测一次：迁移可能刚刚执行
 
         try:
             async with session.begin_nested():
                 await session.execute(
                     text("SELECT 1 FROM ai_agent_share_requests LIMIT 1")
                 )
-        except Exception:
+        except Exception as exc:
             AgentShareService._TABLE_STATE = False
+            AgentShareService._TABLE_MISSING_AT = time.monotonic()
+            logger.info(f"分享表尚不可用（未迁移？）：{exc}")
             return False
 
         AgentShareService._TABLE_STATE = True
+        AgentShareService._TABLE_MISSING_AT = None
         return True
 
     @staticmethod
     def reset_probe_state_for_tests(state: Optional[bool] = None) -> None:
         AgentShareService._TABLE_STATE = state
+        AgentShareService._TABLE_MISSING_AT = None
 
     # ------------------------------------------------------------------ 快照
 

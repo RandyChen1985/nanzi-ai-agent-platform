@@ -102,8 +102,11 @@ async def test_embed_access_forbidden_for_normal_user(db_session):
     assert denied.status_code == 403
     body = denied.json()
     assert body["data"]["code"] == "AGENT_FORBIDDEN"
-    assert body["data"]["display_name"] == "受限系统专家"
     assert "无权" in body["message"]
+    # 403 不回显内部字段：回显 id/name/display_name 会把「名字 → UUID + 是否存在」
+    # 做成公开查询，正好给按 id 操作的读接口供弹药
+    for leaked in ("agent_id", "agent_name", "display_name"):
+        assert leaked not in body["data"], f"403 不应回显 {leaked}"
 
     # Ensure agent still exists
     found = (

@@ -30,7 +30,8 @@ def test_duplicate_rejects_foreign_system_agent():
     source = MANAGER.read_text(encoding="utf-8")
     dup_block = source.split("async def duplicate_agent", 1)[1].split("async def ", 1)[0]
 
-    assert "if source.is_system and not is_admin and source.created_by != username:" in dup_block
+    # 口径已收紧到「非自己的都拦」：原先只拦别人的系统级，别人的普通智能体可整份复制走
+    assert "if not is_admin and source.created_by != username:" in dup_block
     assert "status_code=403" in dup_block
 
 

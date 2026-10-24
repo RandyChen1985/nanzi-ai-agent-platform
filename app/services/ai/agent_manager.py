@@ -1195,11 +1195,14 @@ class AgentManagerService:
 
         is_admin, username = AgentManagerService._resolve_actor(user)
 
-        # 系统智能体是管理员的资产：复制会把提示词、工具/MCP 绑定、模型参数整份带走。
-        # 自己创建后被提升为系统级的仍允许复制（是他的东西），拦的是「别人的系统智能体」。
-        # 界面已看不到这些智能体，但 id 会在对话/Embed 链接里出现，所以接口必须自己挡。
-        if source.is_system and not is_admin and source.created_by != username:
-            raise HTTPException(status_code=403, detail="系统智能体由管理员维护，不能复制")
+        # 复制会把提示词、工具/MCP 绑定、模型参数整份带走，所以只要不是自己的就必须拦。
+        # 原先只拦「别人的系统级」，别人的普通智能体可以整份复制走——而列表口径早已
+        # 把「别人的智能体」定义为不可见，这两处自相矛盾。id 可能出现在对话 / Embed /
+        # 分享链接里，接口必须自己挡，不能指望界面上看不到。
+        if not is_admin and source.created_by != username:
+            if source.is_system:
+                raise HTTPException(status_code=403, detail="系统智能体由管理员维护，不能复制")
+            raise HTTPException(status_code=403, detail="只能复制自己创建的智能体")
 
         new_name = AgentManagerService.normalize_agent_name(getattr(data, "name", None))
         if not new_name:
@@ -1396,7 +1399,9 @@ class AgentManagerService:
         is_admin, username = AgentManagerService._resolve_actor(user)
         if is_admin:
             return True
-        if agent.created_by and agent.created_by != username:
+        # created_by 为空（历史/导入数据）时不能「人人可改」：这类智能体在列表里
+        # 对所有人都不可见，写权限跟着 fail-open 就成了「看不见但随便改」。
+        if agent.created_by != username:
             return False
         if agent.is_system:
             return False
@@ -1538,7 +1543,7 @@ class AgentManagerService:
         # Permission Check
         is_admin, username = AgentManagerService._resolve_actor(user)
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return False
 
         # 待审期间不能删：申请单还指着一个不存在的智能体，审核页会打不开
@@ -1560,13 +1565,45 @@ class AgentManagerService:
         if not agent:
             return []
 
-        # Permission Check (Visibility)
-        # All users can see versions of all agents (read-only), but we could restrict if needed.
-        # Currently, consistent with metadata, we allow viewing.
-        
+        # 版本正文里有完整的 system_prompt / tools / skills，草稿更是没上线的半成品。
+        # 原先这里没有任何校验（注释还写着 All users can see），任意登录用户凭
+        # agent_id 就能把别人的每一版提示词读走。按「能不能用这个智能体」判定：
+        # 管理员、所有者、以及被授权的系统级使用者可见。
+        if not await AgentManagerService._can_view_agent_versions(session, agent, user):
+            return []
+
         query = select(AIAgentVersion).where(AIAgentVersion.agent_id == agent_id).order_by(AIAgentVersion.version_number.desc())
         result = await session.execute(query)
         return result.scalars().all()
+
+    @staticmethod
+    async def _can_view_agent_versions(
+        session: AsyncSession, agent: AIAgent, user: Any
+    ) -> bool:
+        """谁可以读这个智能体的版本配置。
+
+        不能直接复用 ``_user_can_execute_agent``：它要求系统级智能体「已被授权
+        且启用」，那样所有者反而看不到自己刚建的版本。
+        """
+        if not user or not agent:
+            return False
+        is_admin, username, user_id = AgentManagerService._extract_user_identity(user)
+        if is_admin:
+            return True
+        # 所有者：自己的智能体（含系统级时自己改草稿）
+        if username and agent.created_by == username:
+            return True
+        if not agent.is_system:
+            return False
+        # 系统级：被授权使用的普通用户也可以看（调试需要看当前版本配置）
+        from app.services.permission_service import PermissionService
+
+        try:
+            perms = await PermissionService(session).get_user_permissions(int(user_id))
+            allowed_ids = perms.permissions.agents or []
+        except (ValueError, TypeError):
+            allowed_ids = []
+        return agent.id in allowed_ids
 
     @staticmethod
     def _normalize_tools_for_db(tools: List[Any]) -> List[Any]:
@@ -1625,7 +1662,7 @@ class AgentManagerService:
             is_admin = user and getattr(user, 'role', '') == 'admin'
             username = user and getattr(user, 'user_name', '')
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return None # Forbidden
 
         # 系统级允许所有者建草稿版本，但发布仍被 publish_version 拦死。
@@ -1696,7 +1733,7 @@ class AgentManagerService:
             is_admin = user and getattr(user, 'role', '') == 'admin'
             username = user and getattr(user, 'user_name', '')
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return None # Forbidden
 
         # 系统级允许改草稿（不发布就不影响线上基线），发布在 publish_version 单独拦。
@@ -1780,7 +1817,7 @@ class AgentManagerService:
             is_admin = user and getattr(user, 'role', '') == 'admin'
             username = user and getattr(user, 'user_name', '')
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return False # Forbidden
 
         # 系统级内容只读：所有者不能发布新版本，否则等于绕过审核改线上基线
@@ -1891,7 +1928,7 @@ class AgentManagerService:
             is_admin = bool(user and getattr(user, "role", "") == "admin")
             username = getattr(user, "user_name", "") if user else ""
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             # 明确区分「没权限」和「没变化」：都返回 None 的话，越权会被
             # 伪装成「未检测到内容变更」，用户和日志都看不出被拒了。
             raise PermissionError("无权修改该智能体的提示词")
@@ -1968,7 +2005,7 @@ class AgentManagerService:
             is_admin = user and getattr(user, 'role', '') == 'admin'
             username = user and getattr(user, 'user_name', '')
 
-        if not is_admin and agent.created_by and agent.created_by != username:
+        if not is_admin and agent.created_by != username:
             return False # Forbidden
 
         # 系统级允许删草稿；已发布版本由下面的状态校验挡住。

@@ -74,7 +74,9 @@ async def test_duplicate_agent_drops_tools_the_copier_cannot_access(db_session):
         id=str(uuid.uuid4()),
         name=f"dup-src-{uuid.uuid4().hex[:8]}",
         display_name="源智能体",
-        created_by=f"owner-{uuid.uuid4().hex[:6]}",
+        # 复制人就是所有者：本用例验证的是「工具引用剔除」，复制权限由
+        # test_agent_duplicate_permission 覆盖（别人创建的智能体一律不能复制）
+        created_by="copier",
         is_enabled=True,
         engine_type="LOCAL",
     )

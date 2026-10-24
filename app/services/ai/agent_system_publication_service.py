@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -37,6 +38,8 @@ from app.services.ai.agent_system_columns import (
     write_system_status,
 )
 from app.services.ai.agent_system_notifier import AgentSystemNotifier
+
+logger = logging.getLogger(__name__)
 
 # ---- 申请单状态 ----
 STATUS_PENDING = "PENDING"
@@ -226,8 +229,17 @@ class AgentSystemPublicationService:
             actor_name=actor_name or "system",
             created_at=datetime.now(),
         )
-        session.add(event)
-        await session.flush()
+        # 放进 SAVEPOINT：审计写失败时只回滚这一条，调用方的业务事务保持可用。
+        # 裸写 + 外层 try/except 是行不通的——flush 抛错后 session 已被标记需 rollback，
+        # 异常即便被吞掉，后面的 commit() 也会抛 PendingRollbackError，
+        # 结果整个发布/分享请求 500，业务数据一起丢。
+        try:
+            async with session.begin_nested():
+                session.add(event)
+                await session.flush()
+        except Exception as exc:  # pragma: no cover - 审计失败不阻断主流程
+            logger.warning(f"写入发布事件失败（{action}）：{exc}")
+            return None
         return event
 
     @staticmethod
@@ -256,7 +268,7 @@ class AgentSystemPublicationService:
         status, _ = await read_system_status(session, agent.id)
         if not AgentSystemPublicationService.is_frozen_status(status):
             return
-        if agent.created_by and agent.created_by != username:
+        if agent.created_by != username:
             # 本来就无权编辑，交给各自的权限判定去回 403，这里不抢答
             return
         raise HTTPException(
