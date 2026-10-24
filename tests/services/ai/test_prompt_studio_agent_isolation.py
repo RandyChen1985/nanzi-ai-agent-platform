@@ -163,6 +163,35 @@ async def test_prompt_list_hides_agents_the_user_cannot_see(db_session):
 
 
 @pytest.mark.asyncio
+async def test_system_agents_never_show_up_in_prompt_studio(db_session):
+    """系统级智能体不进提示词工坊——哪怕当前用户被授权使用它。
+
+    工坊能改草稿又能一键发布，等于给「申请-审核-上线」流程开了后门；
+    系统级的迭代统一走智能体中心。
+    """
+    owner = f"pssys-{uuid.uuid4().hex[:6]}"
+    agent = await _make_agent(db_session, owner=owner)
+    agent.is_system = True
+    agent_id = agent.id
+    await db_session.commit()
+
+    try:
+        # 连所有者本人都看不到
+        prompts = await PromptService.get_all_prompts(
+            {"role": "user", "user_name": owner, "user_id": 999006, "id": 999006}
+        )
+        assert all(p.id != f"agent_{agent_id}" for p in prompts)
+
+        # 管理员仍然可以看到并维护
+        admin_prompts = await PromptService.get_all_prompts(
+            {"role": "admin", "user_name": "admin", "user_id": 1, "id": 1}
+        )
+        assert any(p.id == f"agent_{agent_id}" for p in admin_prompts)
+    finally:
+        await _cleanup(db_session, agent_id)
+
+
+@pytest.mark.asyncio
 async def test_prompt_detail_is_guarded_by_visibility(db_session):
     """拿到别人的 agent_id 也不能读提示词全文。"""
     other_owner = f"psother-{uuid.uuid4().hex[:6]}"

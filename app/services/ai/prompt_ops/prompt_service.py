@@ -179,50 +179,52 @@ class PromptService:
         return list(set(re.findall(r'\{([^{}]+)\}', text)))
 
     @staticmethod
+    def _is_admin(user: Any) -> bool:
+        if not user:
+            return False
+        if isinstance(user, dict):
+            return user.get("role") == "admin"
+        return getattr(user, "role", None) == "admin"
+
+    @staticmethod
     async def _visible_agent_ids(session, user: Any) -> Optional[set[str]]:
         """当前用户在提示词工坊里能看到哪些智能体。
 
-        ``None`` 表示不限制（管理员）。口径与智能体中心一致：
-        自己创建的 + 系统级且被授权的。没这条限制时，任何登录账号都能读到
-        全公司所有智能体的系统提示词，包括生产基线。
+        ``None`` 表示不限制（管理员）。普通用户只能看到**自己创建的普通智能体**：
+        别人的、以及系统级的都不露出。系统级是平台生产基线，迭代走智能体中心
+        （改草稿 → 申请上线）；在工坊里既能改又能一键发布，等于给审核流程开后门。
         """
-        is_admin = bool(user and (
-            (user.get("role") == "admin") if isinstance(user, dict)
-            else getattr(user, "role", None) == "admin"
-        ))
-        if is_admin:
+        if PromptService._is_admin(user):
             return None
 
         username = user.get("user_name") if isinstance(user, dict) else getattr(user, "user_name", None)
-        user_id = user.get("user_id") or user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
 
         from app.models.agent import AIAgent
-        from app.services.permission_service import PermissionService
-
-        allowed_ids: set[str] = set()
-        try:
-            perms = await PermissionService(session).get_user_permissions(int(user_id))
-            allowed_ids = set(perms.permissions.agents or [])
-        except (TypeError, ValueError):
-            allowed_ids = set()
 
         rows = await session.execute(
             select(AIAgent.id, AIAgent.created_by, AIAgent.is_system)
         )
         visible: set[str] = set()
         for agent_id, created_by, is_system in rows.all():
+            # 系统级智能体不在工坊露出：那是平台生产基线，由管理员维护，
+            # 迭代走智能体中心（改草稿 → 申请上线）。在工坊里既能改又能发，
+            # 等于给审核流程开了个后门。所以这里连「自己被授权使用」也不算可见。
+            if is_system:
+                continue
             if username and created_by == username:
-                visible.add(str(agent_id))
-            elif is_system and str(agent_id) in allowed_ids:
                 visible.add(str(agent_id))
         return visible
 
     @staticmethod
     async def get_all_prompts(user: Any = None) -> List[PromptMetadata]:
         prompts = []
-        
+
+        # 平台级提示词（路由规则、主助手人设等）只对管理员开放：
+        # 改动会同时影响所有智能体的行为，不该是「有 prompts:edit 就能碰」的东西。
+        include_system_config = PromptService._is_admin(user)
+
         # 1. 获取系统级 Prompts
-        for key, info in SYSTEM_PROMPT_REGISTRY.items():
+        for key, info in [] if not include_system_config else SYSTEM_PROMPT_REGISTRY.items():
             val = await ConfigService.get(key)
             if val is not None:
                 # 获取历史记录以计算版本
@@ -317,6 +319,8 @@ class PromptService:
         note = ""
 
         if source == PromptSource.SYSTEM_CONFIG:
+            if not PromptService._is_admin(user):
+                raise PermissionError("平台提示词仅管理员可查看")
             history = await ConfigService.get_config_history(target_id)
             total_versions = len(history) + 1
             
@@ -453,6 +457,9 @@ class PromptService:
         ``find(v => v.status === 'DRAFT')`` 取列表里第一个草稿，多草稿时会发错版本。
         """
         if source == PromptSource.SYSTEM_CONFIG:
+            if not PromptService._is_admin(user):
+                # 平台提示词影响所有智能体，不走「有提示词编辑权限就能改」这一套
+                raise PermissionError("平台提示词仅管理员可修改")
             changed = await ConfigService.set_config(
                 target_id, 
                 content, 

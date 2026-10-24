@@ -139,9 +139,26 @@ const snippets = [
 const searchQuery = ref("");
 const collapsedGroups = ref<Record<string, boolean>>({});
 
+const isAdmin = computed(() => userInfo.value?.role === "admin");
+
+/**
+ * 能否编辑，必须和后端的 `element:prompts:edit` 对齐。
+ *
+ * 这里原先只认 `role === 'admin'`，于是被授予该权限的非管理员看不到保存/发布按钮——
+ * 而后端是会放行他们的。更糟的是所有者（通常不是管理员）永远看不到按钮，
+ * 「改自己的提示词」在界面上根本不可达。
+ */
 const canEdit = computed(() => {
-  return userInfo.value?.role === "admin";
+  const u = userInfo.value;
+  if (!u) return false;
+  if (u.role === "admin") return true;
+  const perms = u.permissions ?? [];
+  // 兼容扁平数组与旧版 elements 对象两种结构（与 v-has-perm 指令一致）
+  return Array.isArray(perms)
+    ? perms.includes("element:prompts:edit")
+    : (perms.elements ?? []).includes("element:prompts:edit");
 });
+
 
 const toast = ref({ show: false, message: "", type: "success" });
 const showPlayground = ref(false);
@@ -587,15 +604,34 @@ const performSave = async (): Promise<string | null> => {
   }
 };
 
+/**
+ * 历史抽屉里显示一条记录的差异。
+ *
+ * 两个坑：
+ * 1. 原先用 `diffChars`（字符级），时间复杂度接近 O(n²)。系统提示词动辄几千字，
+ *    历史列表一展开就是多条，而且这个函数在 template 里直接调用、每次 re-render 都重算，
+ *    主线程会明显卡住——而显示区域只有 160px 高（max-h-40），根本不值得做字符级比对。
+ * 2. 超长文本没有任何上限，几万字的提示词会把页面拖死。
+ *
+ * 改成行级 diff + 截断：行级对这类"改了几段话"的场景足够，速度差着一个量级。
+ */
+const DIFF_TEXT_LIMIT = 6000;
+
 const computeDiffHtml = (
   oldText: string,
   newText: string,
   type: "old" | "new"
 ) => {
-  if (!oldText) oldText = "";
-  if (!newText) newText = "";
+  const clip = (text: string) => {
+    const value = text || "";
+    if (value.length <= DIFF_TEXT_LIMIT) return value;
+    return `${value.slice(0, DIFF_TEXT_LIMIT)}\n…（内容过长，仅比较前 ${DIFF_TEXT_LIMIT} 字符）`;
+  };
 
-  const diff = Diff.diffChars(oldText, newText);
+  oldText = clip(oldText);
+  newText = clip(newText);
+
+  const diff = Diff.diffLines(oldText, newText);
   let html = "";
 
   diff.forEach((part) => {
@@ -639,9 +675,11 @@ const groupedPrompts = computed(() => {
     }
 
     // Filter by Category Tab
+    // 「系统」只放平台级提示词；系统级**智能体**属于 Agent 分类，
+    // 混进来会让人以为点「系统」能看到谁在维护那些智能体。
     if (tab !== 'ALL') {
-      if (tab === 'System' && p.category !== 'System' && !p.is_system) return;
-      if (tab === 'Agent' && p.category !== 'Agent') return;
+      if (tab === 'System' && p.source !== 'system_config') return;
+      if (tab === 'Agent' && p.source !== 'agent') return;
     }
 
     // Use p.category or fallback
@@ -650,6 +688,22 @@ const groupedPrompts = computed(() => {
     groups[cat]!.push(p);
   });
   return groups;
+});
+
+/**
+ * 列表为空时的提示。
+ *
+ * 原先三种情况共用一句「没有匹配的提示词」：搜索无结果、确实没有数据、
+ * 以及智能体提示词按可见性过滤后一条都不剩（后者最容易让人以为功能坏了）。
+ */
+const emptyListHint = computed(() => {
+  if (searchQuery.value.trim()) return "没有匹配的提示词，换个关键词试试";
+  if (!prompts.value.length) return "还没有任何提示词";
+  const hasAgentPrompts = prompts.value.some((item) => item.source === "agent");
+  if (!hasAgentPrompts) {
+    return "只能看到系统提示词：智能体提示词仅对创建者和被授权者可见";
+  }
+  return "当前分类下没有提示词，切到「全部」看看";
 });
 
 const isDirty = computed(() => {
@@ -679,7 +733,37 @@ const formatRelativeDate = (dateStr: string) => {
   return "刚刚";
 };
 
+/**
+ * 有未保存改动时拦住刷新/关标签。
+ *
+ * 页面内切换提示词已经有确认弹窗（showUnsavedConfirm），但那只覆盖站内操作——
+ * 改了一大段提示词再手滑 Cmd+R，就什么都没了。
+ */
+const onBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (!isDirty.value) return;
+  event.preventDefault();
+  // 部分浏览器仍要求写 returnValue 才会拦截
+  event.returnValue = "";
+};
+
+/** Cmd/Ctrl+S：编辑器肌肉记忆，否则会触发浏览器「保存网页」 */
+const onKeydown = (event: KeyboardEvent) => {
+  if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") return;
+  event.preventDefault();
+  if (!canEdit.value || saving.value) return;
+  if (!isDirty.value) return;
+  // 智能体提示词的「保存」就是发布（一次性写版本并上线），先弹确认
+  if (selectedPrompt.value?.source === "agent") {
+    requestPublish();
+    return;
+  }
+  requestSave();
+};
+
 onMounted(async () => {
+  window.addEventListener("beforeunload", onBeforeUnload);
+  window.addEventListener("keydown", onKeydown);
+
   try {
     fetchUserInfo();
     fetchModels();
@@ -693,6 +777,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener("beforeunload", onBeforeUnload);
+  window.removeEventListener("keydown", onKeydown);
   optimizeAbort?.abort();
   optimizeAbort = null;
 });
@@ -771,7 +857,7 @@ watch(
         :class="showSidebar ? 'w-72' : 'w-0 border-0 opacity-0'"
       >
         <div class="px-3 py-3 border-b border-gray-100 bg-gray-50 space-y-2.5 shrink-0">
-          <div class="flex p-0.5 bg-gray-200/60 rounded-lg">
+          <div v-if="isAdmin" class="flex p-0.5 bg-gray-200/60 rounded-lg">
             <button
               v-for="tab in [
                 { id: 'ALL', label: '全部' },
@@ -892,8 +978,11 @@ watch(
               </button>
             </div>
           </div>
-          <div v-if="Object.keys(groupedPrompts).length === 0" class="py-10 text-center text-xs text-gray-400">
-            没有匹配的提示词
+          <div
+            v-if="Object.keys(groupedPrompts).length === 0"
+            class="px-4 py-10 text-center text-xs leading-relaxed text-gray-400"
+          >
+            {{ emptyListHint }}
           </div>
         </div>
       </div>
@@ -991,11 +1080,17 @@ watch(
                 <ArrowPathIcon v-else class="w-3.5 h-3.5 mr-1 animate-spin" />
                 保存
               </button>
+              <!--
+                系统级智能体不在工坊露出（由后端过滤），所以这里只有「发布」。
+                系统级的迭代走智能体中心：改草稿 → 申请上线。
+              -->
               <button
                 v-if="canEdit && selectedPrompt?.source === 'agent'"
                 type="button"
+                :disabled="saving"
+                title="保存并发布为线上版本，立即覆盖当前线上提示词"
                 @click="requestPublish"
-                class="flex items-center px-3.5 py-1.5 bg-primary text-white text-xs font-bold rounded-lg hover:bg-primary-dark shadow-sm"
+                class="flex items-center px-3.5 py-1.5 bg-primary text-white text-xs font-bold rounded-lg hover:bg-primary-dark shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RocketLaunchIcon class="w-3.5 h-3.5 mr-1" />
                 发布版本

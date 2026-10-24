@@ -36,13 +36,17 @@ async def test_get_prompt_detail_config():
         mock_hist.return_value = mock_history
         
         # 获取最新版
-        detail = await PromptService.get_prompt_detail(PromptSource.SYSTEM_CONFIG, "test_key")
+        detail = await PromptService.get_prompt_detail(
+            PromptSource.SYSTEM_CONFIG, "test_key", None, {"role": "admin", "user_name": "admin"}
+        )
         assert detail.content == mock_val
         assert detail.variables == ["var"]
         assert detail.version_number == 2 # 1 history + 1 current
         
         # 获取历史版
-        detail_old = await PromptService.get_prompt_detail(PromptSource.SYSTEM_CONFIG, "test_key", version=1)
+        detail_old = await PromptService.get_prompt_detail(
+            PromptSource.SYSTEM_CONFIG, "test_key", 1, {"role": "admin", "user_name": "admin"}
+        )
         assert detail_old.content == "Old Prompt"
 
 @pytest.mark.asyncio
@@ -177,7 +181,8 @@ async def test_save_prompt_config():
             "test_key", 
             "New Content", 
             "note", 
-            "admin"
+            "admin",
+            user={"role": "admin", "user_name": "admin"},
         )
         
         # 返回值带上 version_id，前端才能发布「刚保存的这一版」；
