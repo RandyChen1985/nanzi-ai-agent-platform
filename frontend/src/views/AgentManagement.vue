@@ -3957,8 +3957,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @dismiss="dismissAgentFlowGuide"
     />
 
+    </template>
+
     <!-- 三个平级视图：我的智能体 / 分享给我 / 我分享的。
-         分享做成页面级视图而不是弹窗，否则「对方在哪看到」只能靠站内信猜。 -->
+         分享做成页面级视图而不是弹窗，否则「对方在哪看到」只能靠站内信猜。
+         注意：这一段必须在上面那个 v-if 之外，否则切到分享视图时切换条自己
+         也被隐藏，用户就再也点不回「我的智能体」了。 -->
     <div
       class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2"
       role="tablist"
@@ -3993,8 +3997,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       v-else-if="workspaceTab === 'sent'"
       @updated="refreshShareCounts"
     />
-
-    </template>
 
     <!-- 列表区：管理员在「全部 / 我的智能体」两个视图共用，
          差异只体现在 filteredAgents 的归属过滤上 -->

@@ -231,3 +231,28 @@ def test_external_engine_agents_cannot_be_shared():
     block = src[src.index("const canShareAgent") : src.index("const canShareAgent") + 800]
     assert 'agent.engine_type || "LOCAL"' in block
     assert "!== \"LOCAL\"" in block
+
+
+def test_view_switch_tabs_are_outside_list_only_block():
+    """视图切换条与分享面板不能被包进「只显示列表」的 v-if。
+
+    曾经踩过一次：搜索框/筛选横幅的 <template v-if> 结束标签插晚了几行，
+    把切换条和两个分享面板一起圈了进去。表现是切到「分享给我 / 我分享的」
+    后整片空白——连切回去的按钮都没了。
+    """
+    src = _read(AGENT_MGMT)
+    marker = '<template v-if="workspaceTab === \'mine\' || workspaceTab === \'all\'">'
+    start = src.index(marker)
+    end = src.index('</template>', start)
+    inside = src[start:end]
+
+    for label, needle in (
+        ("视图切换条", 'v-for="tab in workspaceTabs"'),
+        ("收到的分享面板", "<AgentShareReceivedPanel"),
+        ("我分享的面板", "<AgentShareSentPanel"),
+    ):
+        assert needle not in inside, f"{label} 不能被包进列表专属的 v-if"
+
+    # 反过来：搜索与筛选确实应该只在列表视图出现
+    assert "搜索名称或标识符" in inside
+    assert "filterPanelOpen" in inside
