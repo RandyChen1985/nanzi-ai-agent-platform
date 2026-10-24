@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-from sqlalchemy import delete, desc, func, select, update
+from sqlalchemy import delete, desc, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.portal_notification import PortalNotification
 
 
@@ -87,3 +88,47 @@ class PortalNotificationService:
         ))
         await db.flush()
         return int(result.rowcount or 0)
+
+    @staticmethod
+    async def purge_older_than(
+        db: AsyncSession,
+        retention_days: int,
+        *,
+        batch_size: int = 5000,
+    ) -> int:
+        """删除早于保留期的站内信，返回删除行数。
+
+        由每日 ``system_audit_log_maintenance`` 任务调用（保留天数在调度层写死）。
+        未读消息同样按时间清理：超过保留期的通知已失去时效价值，长期堆积会让
+        用户一登录就面对大量陈旧未读，反而掩盖真正需要处理的消息。
+
+        采用「按批 DELETE + 逐批提交」，避免大表一次性删除造成长事务、锁表与
+        undo 膨胀；MySQL 与 PostgreSQL 分方言处理（PG 不支持 DELETE ... LIMIT）。
+        """
+        if retention_days <= 0:
+            return 0
+
+        threshold = datetime.now() - timedelta(days=retention_days)
+        table = PortalNotification.__tablename__
+        if settings.normalized_database_type == "postgresql":
+            sql = text(
+                f'DELETE FROM "{table}" WHERE ctid IN ('
+                f'SELECT ctid FROM "{table}" WHERE created_at < :threshold '
+                f"LIMIT :batch_size)"
+            )
+        else:
+            sql = text(
+                f"DELETE FROM `{table}` WHERE created_at < :threshold LIMIT :batch_size"
+            )
+
+        deleted_total = 0
+        while True:
+            result = await db.execute(
+                sql, {"threshold": threshold, "batch_size": batch_size}
+            )
+            await db.commit()
+            deleted = int(result.rowcount or 0)
+            deleted_total += deleted
+            if deleted < batch_size:
+                break
+        return deleted_total
