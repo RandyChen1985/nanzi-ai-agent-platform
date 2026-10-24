@@ -452,17 +452,18 @@ async def test_history_only_visible_to_admin_and_owner():
 
 
 @pytest.mark.asyncio
-async def test_system_agent_content_versions_are_read_only_for_owner(db_session):
-    """上架为系统级后，所有者连**版本**都不能动。
+async def test_system_agent_owner_can_edit_drafts_but_not_publish(db_session):
+    """上架为系统级后，所有者可以改草稿，但**不能发布上线**。
 
-    版本才是内容的主要载体（提示词、工具、模型）。只拦元数据等于没拦——
-    所有者改个草稿再等管理员发布，线上基线就被换掉了。
+    边界划在「线上基线只能由管理员变更」，而不是「一个字都不能改」：
+    完全只读会把所有者逼去「复制一份」另起一条，代价是版本历史断裂，
+    而且他已经无法在原有配置上继续迭代了。所以放开建/改/删草稿，只拦发布。
     """
     owner = await _make_user(db_session, role="user")
     admin = await _make_user(db_session, role="admin")
+    stranger = await _make_user(db_session, role="user")
     agent = await _make_agent(db_session, owner=owner.user_name, published=True)
 
-    # 额外造一个草稿版本，用来验证「改 / 发布 / 删」三条路径
     draft = AIAgentVersion(
         id=str(uuid.uuid4()),
         agent_id=agent.id,
@@ -482,39 +483,229 @@ async def test_system_agent_content_versions_are_read_only_for_owner(db_session)
             reason="作为基线",
         )
 
-        payload = AIAgentVersionBase(system_prompt="偷偷改内容", model_name="deepseek-chat")
+        payload = AIAgentVersionBase(system_prompt="继续迭代", model_name="deepseek-chat")
         actor = {"role": "user", "user_name": owner.user_name}
 
-        assert (
-            await AgentManagerService.create_agent_version(
-                db_session, agent.id, payload, user=actor
-            )
-            is None
-        ), "系统级之后所有者不能新建版本"
-        assert (
-            await AgentManagerService.update_agent_version(
-                db_session, agent.id, draft.id, payload, user=actor
-            )
-            is None
-        ), "系统级之后所有者不能改草稿"
+        created = await AgentManagerService.create_agent_version(
+            db_session, agent.id, payload, user=actor
+        )
+        assert created is not None, "系统级之后所有者仍可以新建草稿版本"
+
+        updated = await AgentManagerService.update_agent_version(
+            db_session, agent.id, draft.id, payload, user=actor
+        )
+        assert updated is not None, "系统级之后所有者仍可以改草稿"
+
         assert (
             await AgentManagerService.publish_version(
                 db_session, agent.id, draft.id, user=actor
             )
             is False
-        ), "系统级之后所有者不能发布版本"
+        ), "系统级之后所有者不能把草稿发布上线"
+
         assert (
             await AgentManagerService.delete_version(
                 db_session, agent.id, draft.id, user=actor
             )
-            is False
-        ), "系统级之后所有者不能删版本"
+            is True
+        ), "系统级之后所有者仍可以删自己的草稿"
 
-        # 管理员不受影响：这条线对他来说本来就只是「改个状态」
-        created = await AgentManagerService.create_agent_version(
+        # 非所有者：连草稿都不能碰（系统级内容对他人始终只读）
+        stranger_payload = AIAgentVersionBase(system_prompt="路人改", model_name="deepseek-chat")
+        stranger_actor = {"role": "user", "user_name": stranger.user_name}
+        assert (
+            await AgentManagerService.create_agent_version(
+                db_session, agent.id, stranger_payload, user=stranger_actor
+            )
+            is None
+        ), "非所有者不能给系统级智能体建版本"
+
+        # 管理员不受影响
+        admin_created = await AgentManagerService.create_agent_version(
             db_session, agent.id, payload, user={"role": "admin", "user_name": admin.user_name}
         )
-        assert created is not None, "管理员仍然可以给系统级智能体建版本"
+        assert admin_created is not None, "管理员仍然可以给系统级智能体建版本"
+    finally:
+        await _cleanup(agent.id, user_ids=(owner.id, admin.id, stranger.id))
+
+
+@pytest.mark.asyncio
+async def test_owner_can_request_release_of_draft_version(db_session):
+    """系统级所有者改完草稿后，必须有通道把它推上线。
+
+    不能发布是设计约束（线上基线要管理员点头），但「改完就卡住」不是——
+    这条通道就是补这一公里：提交申请 → 冻结 → 管理员审。
+    """
+    owner = await _make_user(db_session, role="user")
+    admin = await _make_user(db_session, role="admin")
+    agent = await _make_agent(db_session, owner=owner.user_name, published=True)
+
+    draft = AIAgentVersion(
+        id=str(uuid.uuid4()),
+        agent_id=agent.id,
+        version_number=7,
+        system_prompt="改好的新版本",
+        model_name="deepseek-chat",
+        status="DRAFT",
+    )
+    db_session.add(draft)
+    await db_session.flush()
+
+    try:
+        await Svc.publish_system(
+            db_session, agent.id, {"role": "admin", "user_name": admin.user_name}, reason="基线"
+        )
+
+        request = await Svc.submit_release_request(
+            db_session,
+            agent.id,
+            draft.id,
+            {"role": "user", "user_name": owner.user_name},
+            comment="修了工具描述",
+        )
+        assert request.request_type == "VERSION_RELEASE"
+        assert request.snapshot_version_id == draft.id
+
+        # 待审期间冻结所有者，避免「申请的是这版，审核时被改成别的」
+        status, pending_id = await read_system_status(db_session, agent.id)
+        assert status == "PENDING_REVIEW"
+        assert pending_id == request.id
+    finally:
+        await _cleanup(agent.id, user_ids=(owner.id, admin.id))
+
+
+@pytest.mark.asyncio
+async def test_release_request_rejects_wrong_cases(db_session):
+    """上线申请的四条边界：非系统级、管理员、非草稿、已有待审。"""
+    owner = await _make_user(db_session, role="user")
+    admin = await _make_user(db_session, role="admin")
+    agent = await _make_agent(db_session, owner=owner.user_name, published=True)
+    actor = {"role": "user", "user_name": owner.user_name}
+
+    try:
+        # 非系统级：直接发布即可，不需要申请
+        with pytest.raises(HTTPException) as not_system:
+            await Svc.submit_release_request(db_session, agent.id, "any", actor)
+        assert not_system.value.status_code == 409
+
+        await Svc.publish_system(
+            db_session, agent.id, {"role": "admin", "user_name": admin.user_name}, reason="基线"
+        )
+
+        # 管理员：可以直接发，不该走申请
+        with pytest.raises(HTTPException) as admin_case:
+            await Svc.submit_release_request(
+                db_session, agent.id, "any", {"role": "admin", "user_name": admin.user_name}
+            )
+        assert admin_case.value.status_code == 400
+
+        # 非草稿：已发布版本没有「上线」可言
+        published = await Svc.assert_publishable(db_session, agent)
+        with pytest.raises(HTTPException) as not_draft:
+            await Svc.submit_release_request(db_session, agent.id, published.id, actor)
+        assert not_draft.value.status_code == 409
+
+        # 已有待审：不能叠第二张单子
+        draft = AIAgentVersion(
+            id=str(uuid.uuid4()),
+            agent_id=agent.id,
+            version_number=8,
+            system_prompt="草稿",
+            model_name="deepseek-chat",
+            status="DRAFT",
+        )
+        db_session.add(draft)
+        await db_session.flush()
+        await Svc.submit_release_request(db_session, agent.id, draft.id, actor)
+        with pytest.raises(HTTPException) as duplicated:
+            await Svc.submit_release_request(db_session, agent.id, draft.id, actor)
+        assert duplicated.value.status_code == 409
+    finally:
+        await _cleanup(agent.id, user_ids=(owner.id, admin.id))
+
+
+@pytest.mark.asyncio
+async def test_approving_release_request_publishes_that_version(db_session):
+    """审核通过：申请的那一版变成线上版本，旧线上版本归档，并解冻。"""
+    owner = await _make_user(db_session, role="user")
+    admin = await _make_user(db_session, role="admin")
+    agent = await _make_agent(db_session, owner=owner.user_name, published=True)
+
+    draft = AIAgentVersion(
+        id=str(uuid.uuid4()),
+        agent_id=agent.id,
+        version_number=9,
+        system_prompt="要上线的草稿",
+        model_name="deepseek-chat",
+        status="DRAFT",
+    )
+    db_session.add(draft)
+    await db_session.flush()
+
+    try:
+        await Svc.publish_system(
+            db_session, agent.id, {"role": "admin", "user_name": admin.user_name}, reason="基线"
+        )
+        old_published = await Svc.assert_publishable(db_session, agent)
+
+        request = await Svc.submit_release_request(
+            db_session, agent.id, draft.id, {"role": "user", "user_name": owner.user_name}
+        )
+
+        await Svc.approve_request(
+            db_session, request.id, {"role": "admin", "user_name": admin.user_name}, comment="可以"
+        )
+
+        await db_session.refresh(draft)
+        await db_session.refresh(old_published)
+        assert draft.status == "PUBLISHED", "申请的草稿应被发布上线"
+        assert old_published.status == "ARCHIVED", "旧线上版本应归档"
+
+        status, pending_id = await read_system_status(db_session, agent.id)
+        assert status == "NONE" and pending_id is None, "审核完必须解冻"
+
+        # 系统级状态没有被误改（这条通道只发版本，不碰 is_system）
+        await db_session.refresh(agent)
+        assert bool(agent.is_system) is True
+    finally:
+        await _cleanup(agent.id, user_ids=(owner.id, admin.id))
+
+
+@pytest.mark.asyncio
+async def test_rejecting_release_request_keeps_version_as_draft(db_session):
+    """驳回：版本仍是草稿，智能体解冻，可以继续改完再申请。"""
+    owner = await _make_user(db_session, role="user")
+    admin = await _make_user(db_session, role="admin")
+    agent = await _make_agent(db_session, owner=owner.user_name, published=True)
+
+    draft = AIAgentVersion(
+        id=str(uuid.uuid4()),
+        agent_id=agent.id,
+        version_number=10,
+        system_prompt="草稿",
+        model_name="deepseek-chat",
+        status="DRAFT",
+    )
+    db_session.add(draft)
+    await db_session.flush()
+
+    try:
+        await Svc.publish_system(
+            db_session, agent.id, {"role": "admin", "user_name": admin.user_name}, reason="基线"
+        )
+        request = await Svc.submit_release_request(
+            db_session, agent.id, draft.id, {"role": "user", "user_name": owner.user_name}
+        )
+
+        await Svc.reject_request(
+            db_session, request.id, {"role": "admin", "user_name": admin.user_name}, comment="描述不清楚"
+        )
+
+        await db_session.refresh(draft)
+        assert draft.status == "DRAFT", "驳回后版本必须还是草稿"
+
+        status, pending_id = await read_system_status(db_session, agent.id)
+        assert status == "NONE" and pending_id is None
     finally:
         await _cleanup(agent.id, user_ids=(owner.id, admin.id))
 

@@ -536,13 +536,36 @@ class AgentManagerService:
             return None
 
     @staticmethod
-    async def get_version_config(
-        session: AsyncSession, 
-        version_id: str
-    ) -> Optional[ChatConfig]:
+    def can_use_agent_version(version: Any, agent: Any, user: Any) -> bool:
+        """该版本能否被当前用户加载执行。
+
+        - 未传 user（定时任务 / 内部调用）：跳过校验，保持原有行为
+        - 管理员：全部可用
+        - 作者本人：草稿和已发布版本都能调试
+        - 其他人：只能跑已发布版本，草稿一律拒绝
         """
-        Fetches the configuration for a SPECIFIC version ID.
-        If version_id matches an AIAgent ID and it's RAGFLOW, return managed config.
+        if user is None:
+            return True
+        is_admin, username = AgentManagerService._resolve_actor(user)
+        if is_admin:
+            return True
+        status = str(getattr(version, "status", "") or "")
+        owner = getattr(agent, "created_by", None) if agent is not None else None
+        if owner and username and owner == username:
+            return True
+        return status == "PUBLISHED"
+
+    @staticmethod
+    async def get_version_config(
+        session: AsyncSession,
+        version_id: str,
+        user: Any = None,
+    ) -> Optional[ChatConfig]:
+        """Fetches the configuration for a SPECIFIC version ID.
+
+        `user` 不为空时会校验该版本是否对调用者可用：草稿只有作者本人和管理员能跑，
+        别人只能跑已发布版本。缺了这层校验，任何人拿到 version_id 就能把别人的草稿
+        当线上配置跑起来，提示词和工具配置等于直接暴露。
         """
         try:
             # 1. Try to find the version record
@@ -551,6 +574,14 @@ class AgentManagerService:
             version = result.scalar_one_or_none()
             
             if version:
+                if not AgentManagerService.can_use_agent_version(version, version.agent, user):
+                    logger.warning(
+                        "version config denied: version=%s agent=%s user=%s",
+                        version.id,
+                        version.agent_id,
+                        (user or {}).get("user_name") if isinstance(user, dict) else getattr(user, "user_name", None),
+                    )
+                    return None
                 tools_list = version.tools
                 if isinstance(tools_list, str):
                     try:
@@ -653,9 +684,15 @@ class AgentManagerService:
             is_owner = agent.created_by == username
             agent.is_editable = True if is_admin or is_owner or (not agent.created_by and is_admin) else False
             
-            # Special case: System agents are read-only for non-admins
+            # Special case: System agents are read-only for non-admins (metadata only)
             if agent.is_system and not is_admin:
                  agent.is_editable = False
+
+            # 版本内容与元数据分开授权：系统级智能体的所有者仍可建版本、改草稿、存草稿，
+            # 只是「发布上线」这条路必须由管理员走。只读会把所有者逼去「复制一份」，
+            # 代价是版本历史断裂；真正要守的是「线上基线只能管理员变更」。
+            agent.can_edit_versions = bool(is_admin or is_owner)
+            agent.can_publish_version = not (agent.is_system and not is_admin)
             
             # Set execution count (dynamically attached to object, Pydantic will pick it up)
             agent.execution_count = counts.get(agent.id, 0)
@@ -707,6 +744,9 @@ class AgentManagerService:
                     engine_config=engine_config,
                     enabled_global_skill_count=enabled_global_skill_count,
                 )
+            agent.published_version_number = (
+                getattr(published_version, "version_number", None) if published_version else None
+            )
             agent.tool_count = caps["tool_count"]
             agent.mcp_count = caps["mcp_count"]
             agent.skill_count = caps["skill_count"]
@@ -1502,11 +1542,7 @@ class AgentManagerService:
         if not is_admin and agent.created_by and agent.created_by != username:
             return None # Forbidden
 
-        # 系统级：所有者只能复制另开一条，不能改内容。版本才是内容的主要载体
-        #（提示词/工具/模型），只拦元数据等于没拦。
-        if agent.is_system and not is_admin:
-            return None
-
+        # 系统级允许所有者建草稿版本，但发布仍被 publish_version 拦死。
         # 待审期间所有者不能建新版本（管理员豁免）
         await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
 
@@ -1571,9 +1607,7 @@ class AgentManagerService:
         if not is_admin and agent.created_by and agent.created_by != username:
             return None # Forbidden
 
-        # 系统级内容只读：草稿也不行，否则改完草稿再等管理员发布就等于改线上
-        if agent.is_system and not is_admin:
-            return None
+        # 系统级允许改草稿（不发布就不影响线上基线），发布在 publish_version 单独拦。
 
         skills_custom = bool(getattr(data, "skills_custom", False))
         skills_list = (
@@ -1730,9 +1764,7 @@ class AgentManagerService:
         if not is_admin and agent.created_by and agent.created_by != username:
             return False # Forbidden
 
-        # 系统级内容只读：删草稿/归档版本同样会改变它的内容构成
-        if agent.is_system and not is_admin:
-            return False
+        # 系统级允许删草稿；已发布版本由下面的状态校验挡住。
 
         await session.delete(version)
         await session.commit()

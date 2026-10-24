@@ -220,18 +220,20 @@ class AgentSystemNotifier:
         display_name: str,
         applicant_name: str,
         comment: Optional[str],
+        version_number: Optional[int] = None,
     ) -> int:
         reviewers = await AgentSystemNotifier.reviewer_user_ids(session)
         reason_line = f"\n\n申请理由：{comment}" if comment else ""
+        if version_number:
+            summary = f"{applicant_name} 申请把智能体「{display_name}」的 V{version_number} 草稿发布上线。"
+        else:
+            summary = f"{applicant_name} 申请把智能体「{display_name}」发布为系统级。"
         return await AgentSystemNotifier.send(
             session,
             reviewers,
             agent_id=agent_id,
             title=f"新的发布申请：{display_name}",
-            content=(
-                f"{applicant_name} 申请把智能体「{display_name}」发布为系统级。"
-                f"{reason_line}\n\n请前往「智能体中心 → 发布审核」处理。"
-            ),
+            content=f"{summary}{reason_line}\n\n请前往「智能体中心 → 发布审核」处理。",
             level="info",
         )
 
@@ -285,18 +287,30 @@ class AgentSystemNotifier:
         display_name: str,
         applicant_user_id: Optional[int],
         review_comment: Optional[str],
+        version_number: Optional[int] = None,
     ) -> int:
         if applicant_user_id is None:
             return 0
         extra = f"\n\n审核意见：{review_comment}" if review_comment else ""
+        if version_number:
+            # 版本上线申请的通过通知：说清楚上线的是哪一版，以及他现在仍不能自己发布
+            title = f"版本已上线：{display_name} V{version_number}"
+            body = (
+                f"智能体「{display_name}」的 V{version_number} 已通过审核并发布上线，"
+                f"被授权的同事即刻使用新版本。{extra}"
+                "\n\n线上版本仍由管理员维护：你可以在同一智能体下继续新建草稿，发布时再提交上线申请。"
+            )
+        else:
+            title = f"发布申请已通过：{display_name}"
+            body = (
+                f"智能体「{display_name}」已通过审核并发布为系统级，被授权的同事可以使用。"
+                f"{extra}\n\n内容现在对你只读，如需继续迭代请复制一份另开新智能体。"
+            )
         return await AgentSystemNotifier.send(
             session,
             [applicant_user_id],
             agent_id=agent_id,
-            title=f"发布申请已通过：{display_name}",
-            content=(
-                f"智能体「{display_name}」已通过审核并发布为系统级，被授权的同事可以使用。"
-                f"{extra}\n\n内容现在对你只读，如需继续迭代请复制一份另开新智能体。"
-            ),
+            title=title,
+            content=body,
             level="success",
         )

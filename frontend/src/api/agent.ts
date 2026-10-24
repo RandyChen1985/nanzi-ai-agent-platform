@@ -54,6 +54,10 @@ export interface AIAgent {
   system_requested_at?: string | null
   is_enabled: boolean
   created_by?: string
+  /** 版本内容可编辑（系统级所有者为 true，能建版本、改草稿、存草稿） */
+  can_edit_versions?: boolean
+  /** 能否发布草稿上线（系统级对非管理员恒为 false） */
+  can_publish_version?: boolean
   /** 创建者显示名（real_name 优先），管理员辨认归属用 */
   created_by_name?: string
   owner_group?: string
@@ -75,6 +79,8 @@ export interface AIAgent {
   metadata_dataset_count?: number | null
   /** 显式绑定的知识库数；未绑定（走全局）为 null */
   knowledge_base_count?: number | null
+  /** 线上版本号：卡片上要显示「现在生效的是哪一版」 */
+  published_version_number?: number | null
   readiness_ready?: boolean
   readiness_missing?: string[]
   /**
@@ -351,6 +357,10 @@ export interface AgentSystemRequestItem {
   agent_identifier: string
   engine_type?: string | null
   status: string
+  /** SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线 */
+  request_type?: 'SYSTEM_PUBLISH' | 'VERSION_RELEASE'
+  /** VERSION_RELEASE 时指出要上线的是哪一版 */
+  version_number?: number | null
   request_comment?: string | null
   requested_by?: number | null
   /** 审核队列要显示「谁提交的」 */
@@ -408,6 +418,13 @@ export const agentSystemApi = {
   cancelRequest: (agentId: string) =>
     axios.delete<{ request_id: string; status: string }>(
       `/api/portal/agents/${agentId}/system/requests`,
+    ),
+
+  /** 申请把某个草稿版本发布上线（系统级智能体的线上基线只能由管理员变更）。 */
+  submitReleaseRequest: (agentId: string, versionId: string, data: { comment?: string } = {}) =>
+    axios.post<{ request_id: string; status: string }>(
+      `/api/portal/agents/${agentId}/system/release-requests`,
+      { version_id: versionId, ...data },
     ),
 
   listRequests: (params: { status?: string; page?: number; page_size?: number } = {}) =>

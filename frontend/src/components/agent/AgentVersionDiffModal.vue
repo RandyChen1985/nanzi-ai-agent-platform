@@ -67,12 +67,13 @@ const formatCreatedAt = (value: string) => {
 </script>
 
 <template>
+  <!-- 「配置与发布」抽屉本身是 z-[100]，Diff 是它内部弹出的，层级必须更高否则被盖住 -->
   <Modal
     v-if="show && sourceVersion && publishedVersion && diff"
     title="版本 Diff"
     size="max-w-5xl"
     :show="show"
-    :z-index="70"
+    :z-index="120"
     @close="emit('close')"
   >
     <div class="space-y-5">

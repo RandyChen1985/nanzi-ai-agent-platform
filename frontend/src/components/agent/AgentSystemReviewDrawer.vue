@@ -221,7 +221,19 @@ const reject = async () => {
                 :class="selectedId === item.id ? 'bg-white shadow-[inset_3px_0_0_#1677ff]' : ''"
                 @click="select(item.id)"
               >
-                <p class="text-[13px] font-semibold text-slate-800">{{ item.agent_name }}</p>
+                <p class="flex items-center gap-1.5 text-[13px] font-semibold text-slate-800">
+                  <span class="truncate">{{ item.agent_name }}</span>
+                  <span
+                    class="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
+                    :class="item.request_type === 'VERSION_RELEASE'
+                      ? 'bg-sky-50 text-sky-700'
+                      : 'bg-indigo-50 text-indigo-600'"
+                  >
+                    {{ item.request_type === 'VERSION_RELEASE'
+                      ? (item.version_number ? `V${item.version_number} 上线` : '版本上线')
+                      : '转系统级' }}
+                  </span>
+                </p>
                 <p class="mt-0.5 flex flex-wrap gap-2 text-[11px] text-slate-500">
                   <span>{{ item.requested_by_name || '申请人' }} 提交</span>
                   <span :class="isLate(item.waiting_hours) ? 'font-semibold text-amber-600' : ''">

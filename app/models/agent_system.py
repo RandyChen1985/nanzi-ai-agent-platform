@@ -36,6 +36,9 @@ class AgentSystemRequest(Base):
 
     id = Column(String(36), primary_key=True)
     agent_id = Column(String(36), nullable=False, index=True)
+    # SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线。
+    # 老环境若尚未补列，读出来会是 None，按 SYSTEM_PUBLISH 处理。
+    request_type = Column(String(24), nullable=False, default="SYSTEM_PUBLISH", server_default="SYSTEM_PUBLISH")
     snapshot_version_id = Column(String(36), nullable=True)
     snapshot = Column(_snapshot_text(), nullable=True)
     status = Column(String(20), nullable=False, default="PENDING", index=True)

@@ -44,6 +44,10 @@ STATUS_REJECTED = "REJECTED"
 STATUS_CANCELLED = "CANCELLED"
 
 # ---- 事件动作 ----
+# 申请类型：系统级化 vs 把某个草稿版本发布上线（系统级内容只能管理员发布）
+REQUEST_TYPE_SYSTEM = "SYSTEM_PUBLISH"
+REQUEST_TYPE_RELEASE = "VERSION_RELEASE"
+
 ACTION_PUBLISH = "PUBLISH"
 ACTION_UNPUBLISH = "UNPUBLISH"
 ACTION_META_UPDATE = "META_UPDATE"
@@ -350,6 +354,145 @@ class AgentSystemPublicationService:
         return request
 
     @staticmethod
+    async def submit_release_request(
+        session: AsyncSession,
+        agent_id: str,
+        version_id: str,
+        user: Any,
+        comment: Optional[str] = None,
+    ) -> AgentSystemRequest:
+        """所有者申请把某个草稿版本发布上线。
+
+        系统级智能体的线上基线只能由管理员变更，所有者改完草稿后需要这条通道
+        把版本推上去；否则他能改、能调试，却永远没法让它生效。
+        待审期间同样冻结所有者，避免「申请的是 A 版本，审核时变成了 B」。
+        """
+        await assert_migrated(session)
+        is_admin, username, user_id = AgentSystemPublicationService.resolve_actor(user)
+        agent = await AgentSystemPublicationService._get_agent(session, agent_id)
+
+        if not bool(agent.is_system):
+            raise HTTPException(
+                status_code=409,
+                detail="只有系统级智能体需要提交上线申请；普通智能体可以直接发布版本",
+            )
+        if is_admin:
+            raise HTTPException(
+                status_code=400, detail="管理员可以直接发布版本，无需提交上线申请"
+            )
+        if agent.created_by != username:
+            raise HTTPException(status_code=403, detail="只有创建者可以申请发布版本")
+
+        current_status, pending_request_id = await read_system_status(session, agent.id)
+        if current_status == SYSTEM_STATUS_PENDING or pending_request_id:
+            raise HTTPException(status_code=409, detail="该智能体已有待审的申请")
+
+        from app.models.agent import AIAgentVersion
+
+        version = await session.get(AIAgentVersion, version_id)
+        if not version or str(version.agent_id) != str(agent.id):
+            raise HTTPException(status_code=404, detail="版本不存在")
+        if str(version.status) != "DRAFT":
+            raise HTTPException(status_code=409, detail="只有草稿版本可以申请上线")
+
+        snapshot = AgentSystemPublicationService.build_snapshot(agent, version)
+        text = (comment or "").strip()[:REQUEST_COMMENT_MAX] or None
+        request = AgentSystemRequest(
+            id=str(uuid.uuid4()),
+            agent_id=agent.id,
+            request_type=REQUEST_TYPE_RELEASE,
+            snapshot_version_id=version.id,
+            snapshot=json.dumps(snapshot, ensure_ascii=False),
+            status=STATUS_PENDING,
+            request_comment=text,
+            requested_by=user_id,
+            requested_at=datetime.now(),
+        )
+        session.add(request)
+        await write_system_status(
+            session,
+            agent.id,
+            status=SYSTEM_STATUS_PENDING,
+            pending_request_id=request.id,
+        )
+        await session.flush()
+
+        await AgentSystemNotifier.notify_submitted(
+            session,
+            agent_id=agent.id,
+            display_name=agent.display_name,
+            applicant_name=username or "某位同事",
+            comment=text,
+            version_number=version.version_number,
+        )
+        await session.commit()
+        return request
+
+    @staticmethod
+    async def _approve_release_request(
+        session: AsyncSession,
+        request: AgentSystemRequest,
+        agent: AIAgent,
+        actor_name: str,
+        actor_id: Optional[int],
+        comment: Optional[str],
+    ) -> AIAgent:
+        """通过「发布版本上线」申请：把申请里那个草稿版本真正发布出去。
+
+        发布复用 ``AgentManagerService.publish_version``，它自己会 commit 并清运行时缓存，
+        所以必须先把冻结状态清掉——否则会被 ``assert_not_frozen`` 拦住。
+        """
+        from app.models.agent import AIAgentVersion
+        from app.services.ai.agent_manager import AgentManagerService, AgentNotReadyError
+
+        version = await session.get(AIAgentVersion, request.snapshot_version_id)
+        if not version or str(version.agent_id) != str(agent.id):
+            raise HTTPException(status_code=409, detail="申请的版本已不存在，请让申请人重新提交")
+        if str(version.status) != "DRAFT":
+            raise HTTPException(
+                status_code=409, detail="申请的版本已不是草稿（可能已被发布或删除），请让申请人重新提交"
+            )
+
+        request.status = STATUS_APPROVED
+        request.reviewed_by = actor_id
+        request.reviewed_at = datetime.now()
+        request.review_comment = (comment or "").strip() or None
+
+        # 先解冻，publish_version 内部会校验冻结状态
+        await write_system_status(
+            session, agent.id, status=SYSTEM_STATUS_NONE, pending_request_id=None
+        )
+        await session.flush()
+
+        try:
+            published = await AgentManagerService.publish_version(
+                session,
+                agent.id,
+                version.id,
+                user={"role": "admin", "user_name": actor_name},
+            )
+        except AgentNotReadyError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"该版本还不满足上线条件：{'、'.join(exc.missing or [])}",
+            ) from exc
+
+        if not published:
+            raise HTTPException(status_code=409, detail="发布失败，请检查该版本状态后重试")
+
+        # publish_version 已 commit（含上面的申请单状态），这里只补通知
+        await AgentSystemNotifier.notify_approved(
+            session,
+            agent_id=agent.id,
+            display_name=agent.display_name,
+            applicant_user_id=request.requested_by,
+            review_comment=request.review_comment,
+            version_number=version.version_number,
+        )
+        await session.commit()
+        return agent
+
+    @staticmethod
     async def cancel_request(
         session: AsyncSession, agent_id: str, user: Any
     ) -> AgentSystemRequest:
@@ -418,13 +561,22 @@ class AgentSystemPublicationService:
     async def approve_request(
         session: AsyncSession, request_id: str, user: Any, comment: Optional[str] = None
     ) -> AIAgent:
-        """管理员通过申请：只把智能体置为系统级并记事件，不改任何版本状态。"""
+        """管理员通过申请。
+
+        * SYSTEM_PUBLISH：只把智能体置为系统级，不改任何版本状态；
+        * VERSION_RELEASE：把申请里指定的草稿版本发布上线（系统级内容只能管理员发布）。
+        """
         await assert_migrated(session)
         _, username, user_id = AgentSystemPublicationService.resolve_actor(user)
         request = await AgentSystemPublicationService._get_request(
             session, request_id, expect_status=STATUS_PENDING
         )
         agent = await AgentSystemPublicationService._get_agent(session, request.agent_id)
+
+        if (getattr(request, "request_type", None) or REQUEST_TYPE_SYSTEM) == REQUEST_TYPE_RELEASE:
+            return await AgentSystemPublicationService._approve_release_request(
+                session, request, agent, username, user_id, comment
+            )
 
         # 兜底：申请到审核之间版本可能被删/被归档，不能放出去一个取不到配置的系统智能体
         version = await AgentSystemPublicationService.assert_publishable(session, agent)
@@ -704,6 +856,17 @@ class AgentSystemPublicationService:
             )
             applicant_names = {int(uid): str(name) for uid, name in name_rows if uid is not None}
 
+        # 版本上线申请要显示「哪一版要上线」，一次批量取版本号
+        version_ids = {r.snapshot_version_id for r, _ in pairs if r.snapshot_version_id}
+        version_numbers: Dict[str, int] = {}
+        if version_ids:
+            version_rows = await session.execute(
+                select(AIAgentVersion.id, AIAgentVersion.version_number).where(
+                    AIAgentVersion.id.in_(list(version_ids))
+                )
+            )
+            version_numbers = {vid: num for vid, num in version_rows if vid is not None}
+
         items: List[Dict[str, Any]] = []
         for request, agent in pairs:
             items.append(
@@ -714,6 +877,10 @@ class AgentSystemPublicationService:
                     "agent_identifier": agent.name,
                     "engine_type": agent.engine_type,
                     "status": request.status,
+                    "request_type": getattr(request, "request_type", None) or REQUEST_TYPE_SYSTEM,
+                    "version_number": version_numbers.get(request.snapshot_version_id)
+                    if request.snapshot_version_id
+                    else None,
                     "request_comment": request.request_comment,
                     "requested_by": request.requested_by,
                     "requested_by_name": applicant_names.get(int(request.requested_by))

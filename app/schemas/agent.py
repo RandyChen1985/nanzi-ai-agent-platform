@@ -116,6 +116,10 @@ class AIAgentResponse(AIAgentBase):
     created_by_name: Optional[str] = None
     owner_group: Optional[str] = None
     is_editable: bool = True # Computed field: true if user is owner or admin
+    # 版本内容可编辑：系统级智能体的所有者仍可建版本/改草稿/存草稿
+    can_edit_versions: bool = True
+    # 能否把草稿发布上线：系统级对非管理员恒为 False，只能存草稿
+    can_publish_version: bool = True
     execution_count: int = 0
     # 已发布版本能力摘要（列表卡片展示用；无发布版时为 null）
     tool_count: Optional[int] = None
@@ -125,6 +129,8 @@ class AIAgentResponse(AIAgentBase):
     # 仅在智能体显式绑定（非全局策略）时返回计数，否则为 null
     metadata_dataset_count: Optional[int] = None
     knowledge_base_count: Optional[int] = None
+    # 线上版本号：卡片上要告诉所有者「现在生效的是哪一版」，改草稿时好心里有数
+    published_version_number: Optional[int] = None
     readiness_ready: bool = False
     readiness_missing: List[str] = Field(default_factory=list)
     # 模型配置异常：null 表示正常；仅在列表接口计算，避免/health 之类的轻量接口多查库
@@ -290,6 +296,10 @@ class AgentSystemRequestItem(BaseModel):
     agent_identifier: str
     engine_type: Optional[str] = None
     status: str
+    # SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线
+    request_type: Optional[str] = "SYSTEM_PUBLISH"
+    # VERSION_RELEASE 时告诉审核人「要上线的是哪一版」
+    version_number: Optional[int] = None
     request_comment: Optional[str] = None
     requested_by: Optional[int] = None
     # 审核人要看「谁提交的」，只有 user_id 等于没法判断

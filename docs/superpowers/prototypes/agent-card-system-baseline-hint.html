@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>卡片系统级提示</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #eef1f6; padding: 24px; color: #111827;
+  }
+  h4 { font-size: 12px; font-weight: 700; color: #64748b; letter-spacing: .04em; margin-bottom: 8px; }
+  .row { display: flex; gap: 18px; align-items: flex-start; }
+  .wrap { display: flex; flex-direction: column; }
+
+  .card {
+    width: 330px; background: #fff; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(15,23,42,.07); border: 1px solid #f1f5f9;
+    display: flex; flex-direction: column;
+  }
+  .stripe { height: 4px; background: linear-gradient(90deg,#6366f1,#818cf8); }
+  .inner { padding: 14px 15px 12px; }
+  .top { display: flex; gap: 11px; align-items: flex-start; }
+  .ico {
+    width: 42px; height: 42px; border-radius: 11px; background: #eef2ff; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; color: #6366f1; font-size: 19px;
+  }
+  .name { display: flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 700; }
+  .shield { color: #a5b4fc; font-size: 12px; }
+  .tags { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
+  .t { font-size: 10.5px; padding: 1.5px 7px; border-radius: 4px; background: #f1f5f9; color: #64748b; }
+  .t.ok { background: #f0fdf4; color: #15803d; }
+  .enable { margin-left: auto; font-size: 10.5px; padding: 2px 9px; border-radius: 999px; background: #f0fdf4; color: #16a34a; font-weight: 600; white-space: nowrap; }
+  .chips { display: flex; gap: 5px; margin-top: 12px; flex-wrap: wrap; }
+  .chip { display: inline-flex; gap: 4px; align-items: center; font-size: 10.5px; background: #f3f4f6; color: #4b5563; padding: 2px 7px; border-radius: 4px; }
+  .chip span:first-child { color: #9ca3af; }
+
+  .banner {
+    margin-top: 12px; display: flex; align-items: center; gap: 5px;
+    border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 500;
+    border: 1px solid #e2e8f0; background: #f8fafc; color: #475569;
+  }
+  .banner.amber { border-color: #fde68a; background: #fffbeb; color: #92400e; }
+  .banner .em { flex-shrink: 0; }
+
+  .foot { border-top: 1px solid #f1f5f9; padding: 10px 15px; display: flex; align-items: center; gap: 9px; }
+  .foot .time { font-size: 10.5px; color: #9ca3af; }
+  .foot .icons { margin-left: auto; display: flex; gap: 11px; color: #cbd5e1; font-size: 13px; align-items: center; }
+  .cta { background: #1677ff; color: #fff; font-size: 11.5px; font-weight: 600; padding: 5px 13px; border-radius: 7px; }
+
+  .note { max-width: 1080px; margin-top: 22px; font-size: 12px; color: #475569; line-height: 1.95; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; }
+  .note b { color: #0f172a; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="row">
+
+    <div class="wrap">
+      <h4>普通用户 · 系统级（无待审）</h4>
+      <div class="card">
+        <div class="stripe"></div>
+        <div class="inner">
+          <div class="top">
+            <div class="ico">◫</div>
+            <div style="min-width:0;flex:1">
+              <div class="name">test <span class="shield">🛡</span></div>
+              <div class="tags"><span class="t">通用助手 · NanZi</span><span class="t ok">● 已就绪</span></div>
+            </div>
+            <span class="enable">● 已启用</span>
+          </div>
+          <div class="chips">
+            <span class="chip"><span>工具</span>29</span>
+            <span class="chip"><span>MCP</span>0</span>
+            <span class="chip"><span>技能</span>11</span>
+            <span class="chip">0<span>次调用</span></span>
+          </div>
+          <div class="banner">
+            <span class="em">🛡</span>
+            <span>系统级 · 可改草稿，上线需审核 · 线上 V2</span>
+          </div>
+        </div>
+        <div class="foot">
+          <span class="time">更新于 10/24 11:05</span>
+          <span class="icons">💬 ⋯ <span class="cta">配置与发布</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <h4>普通用户 · 待审中</h4>
+      <div class="card">
+        <div class="stripe"></div>
+        <div class="inner">
+          <div class="top">
+            <div class="ico">◫</div>
+            <div style="min-width:0;flex:1">
+              <div class="name">test <span class="shield">🛡</span></div>
+              <div class="tags"><span class="t">通用助手 · NanZi</span><span class="t ok">● 已就绪</span></div>
+            </div>
+            <span class="enable">● 已启用</span>
+          </div>
+          <div class="chips">
+            <span class="chip"><span>工具</span>29</span>
+            <span class="chip"><span>MCP</span>0</span>
+            <span class="chip"><span>技能</span>11</span>
+            <span class="chip">0<span>次调用</span></span>
+          </div>
+          <div class="banner amber">
+            <span class="em">❄</span>
+            <span>V3 上线申请审核中 · 已等 2.5 小时</span>
+          </div>
+        </div>
+        <div class="foot">
+          <span class="time">更新于 10/24 11:27</span>
+          <span class="icons">💬 ⋯ <span class="cta">配置与发布</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <h4>管理员视角</h4>
+      <div class="card">
+        <div class="stripe"></div>
+        <div class="inner">
+          <div class="top">
+            <div class="ico">◫</div>
+            <div style="min-width:0;flex:1">
+              <div class="name">test <span class="shield">🛡</span></div>
+              <div class="tags"><span class="t">通用助手 · NanZi</span><span class="t ok">● 已就绪</span></div>
+            </div>
+            <span class="enable">● 已启用</span>
+          </div>
+          <div class="chips">
+            <span class="chip"><span>工具</span>29</span>
+            <span class="chip"><span>MCP</span>0</span>
+            <span class="chip"><span>技能</span>11</span>
+            <span class="chip">0<span>次调用</span></span>
+          </div>
+          <div class="banner">
+            <span class="em">🛡</span>
+            <span>系统级基线 · 线上 V2</span>
+          </div>
+        </div>
+        <div class="foot">
+          <span class="time">创建者 陈小龙 · 更新于 10/24 11:05</span>
+          <span class="icons">💬 ⋯ <span class="cta">配置与发布</span></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <b>为什么普通用户那句更长：</b>他真正会误会的是这两件事 —— 以为「系统级」等于整份都不能碰（其实草稿照样能改），或者以为还能像以前一样点一下就上线（其实必须走审核）。一句话把能做的和不能做的都说清楚，比一个纯图标有用。<br/><br/>
+    <b>管理员那句就短：</b>他不受这些限制，只需要知道「线上现在跑的是第几版」。<br/><br/>
+    <b>待审状态复用已有的冻结条</b>（<span class="swatch" style="background:#fde68a"></span> 琥珀色），不叠加两条 —— 同一块地方只讲一件事：现在卡在审核。<br/><br/>
+    <b>版本号来自新字段</b> <code>published_version_number</code>，列表接口一次批量取，不额外查库。没有线上版本时显示「尚无线上版本」。
+  </div>
+</div>
+</body>
+</html>

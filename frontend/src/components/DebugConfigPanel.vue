@@ -32,6 +32,8 @@ const props = defineProps<{
   loadingConfig: boolean;
   agentContext: Record<string, any>;
   ragRetrievalMeta?: Record<string, any> | null;
+  /** 当前智能体的版本列表（已排除归档），用于手动指定调试版本 */
+  versions?: any[];
 }>();
 
 const formatDatasetIds = (ids: unknown) => {
@@ -44,7 +46,29 @@ const emit = defineEmits<{
   (e: "update:isFloating", value: boolean): void;
   (e: "load-config"): void;
   (e: "clear-context", key?: string): void;
+  (e: "update-version", versionId: string | null): void;
 }>();
+
+const versionStatusLabel = (status: string) => {
+  if (status === 'PUBLISHED') return '线上';
+  if (status === 'DRAFT') return '草稿';
+  return status || '未知';
+};
+
+const formatVersionTime = (value?: string | null) => {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const publishedVersionLabel = computed(() => {
+  const current = (props.versions || []).find((v) => v?.status === 'PUBLISHED');
+  return current ? `（V${current.version_number}）` : '';
+});
+
+const isDebuggingUnpublished = computed(() => Boolean(props.agentParams?.version_id));
 
 /** 滑块显示的是「本次真正会下发的温度」：显式覆盖优先，否则回退版本温度。 */
 const temperatureValue = computed({
@@ -191,6 +215,29 @@ const handleGroundingChange = () => {
               >显示快捷指令栏</span
             >
           </label>
+        </div>
+
+        <!-- 调试版本：绑到某个草稿就能在上线前先验证改动 -->
+        <div v-if="(versions || []).length" class="space-y-2">
+          <div class="flex items-center gap-1.5">
+            <span class="text-sm font-medium text-gray-700">调试版本</span>
+          </div>
+          <select
+            :value="agentParams?.version_id || ''"
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-primary focus:ring-primary cursor-pointer"
+            @change="emit('update-version', ($event.target as HTMLSelectElement).value || null)"
+          >
+            <option value="">跟随线上版本{{ publishedVersionLabel }}</option>
+            <option v-for="v in versions || []" :key="v.id" :value="v.id">
+              V{{ v.version_number }} · {{ versionStatusLabel(v.status) }} · {{ formatVersionTime(v.created_at) }}
+            </option>
+          </select>
+          <p v-if="isDebuggingUnpublished" class="text-xs text-amber-600">
+            正在调试非线上版本，改动实时生效，不影响线上。
+          </p>
+          <p v-else class="text-xs text-gray-400">
+            选中草稿版本可以先验证改动，再决定是否提交上线。
+          </p>
         </div>
 
         <hr class="border-gray-100" />

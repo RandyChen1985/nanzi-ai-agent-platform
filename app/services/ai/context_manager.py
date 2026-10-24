@@ -74,7 +74,7 @@ class AgentContextManager:
 
         async with AsyncSessionLocal() as session:
             if version_id:
-                agent_config = await AgentManagerService.get_version_config(session, version_id)
+                agent_config = await AgentManagerService.get_version_config(session, version_id, user=user_info)
             elif agent_id:
                 agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=agent_id)
             elif agent_name:

@@ -109,14 +109,42 @@ async def supports_system_status(session: AsyncSession) -> bool:
     return _COLUMN_STATE is True
 
 
+async def supports_request_type(session: AsyncSession) -> bool:
+    """``ai_agent_system_requests.request_type`` 是否存在。
+
+    该列与申请表同属 V185，但**脚本早期版本**已经建过表、没有这一列；
+    这类环境必须重跑一次幂等脚本补列，否则 ORM 查申请表会 1054。
+    """
+    try:
+        async with session.begin_nested():
+            await session.execute(
+                text("SELECT request_type FROM ai_agent_system_requests LIMIT 1")
+            )
+        return True
+    except Exception as exc:  # noqa: BLE001 - 任何失败都当作「不可用」，不影响主流程
+        message = str(exc)
+        if any(marker in message for marker in _UNKNOWN_COLUMN_MARKERS):
+            logger.warning("[agent-system] request_type 列缺失，需重跑迁移脚本补列")
+            return False
+        # 表不存在等其它情况同样视为未就绪
+        return False
+
+
 async def assert_migrated(session: AsyncSession) -> None:
     """需要写流程状态前调用：未迁移时给出可执行的提示而不是 500。"""
-    if await supports_system_status(session):
-        return
-    raise HTTPException(
-        status_code=400,
-        detail=f"系统级发布功能尚未就绪：{MIGRATION_HINT}",
-    )
+    if not await supports_system_status(session):
+        raise HTTPException(
+            status_code=400,
+            detail=f"系统级发布功能尚未就绪：{MIGRATION_HINT}",
+        )
+    if not await supports_request_type(session):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "系统级发布申请单缺少 request_type 列："
+                "请重跑一次迁移脚本 V185（MySQL）/ V85（PostgreSQL）补列"
+            ),
+        )
 
 
 async def read_system_status(

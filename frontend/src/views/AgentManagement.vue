@@ -504,6 +504,19 @@ const systemCardAction = (agent: AIAgent): 'publish' | 'apply' | 'cancel' | 'unp
 }
 
 /** 发布历史只对管理员与创建者开放，和后端判定保持一致。 */
+/** 系统级基线说明：**只给普通用户看**。
+ *
+ *  管理员不受这些限制，线上是第几版他打开「配置与发布」就能看到，
+ *  卡片上再挂一条只是噪音。
+ *  普通用户真正会误会的是两件事：以为系统级等于整份都不能碰（其实草稿能改），
+ *  或者以为还能像以前那样点一下就上线（其实必须走审核）。
+ */
+const systemBaselineHint = (agent: AIAgent): string => {
+  const version = agent.published_version_number
+  const live = version ? `线上 V${version}` : '尚无线上版本'
+  return `系统级 · 可改草稿，上线需审核 · ${live}`
+}
+
 const canViewSystemHistory = (agent: AIAgent): boolean =>
   canReviewSystem.value ||
   (!!userInfo.value?.user_name && agent.created_by === userInfo.value?.user_name)
@@ -2922,7 +2935,7 @@ const hasToolMetadataDatasetBinding = (toolName: string) => {
 };
 
 const canEditVersion = computed(() => {
-  return selectedAgent.value?.is_editable !== false &&
+  return selectedAgent.value?.can_edit_versions !== false &&
          (!versionForm.value.id || versionForm.value.status === 'DRAFT');
 });
 
@@ -3061,9 +3074,9 @@ const getPrimaryCardAction = (
 ): 'continue' | 'enable' | 'configure' | 'edit' | 'frozen' | 'readonly' => {
   // 审核中最高优先：主按钮变成不可点的「审核中」，而不是让你点进去再吃一个 409
   if (isPendingReview(agent)) return 'frozen'
-  // 系统级且无编辑权（所有者）：内容只读，主按钮直接指向「复制一份」这条唯一出路，
-  // 而不是一个点了会打开只读抽屉的假入口
-  if (agent.is_system && agent.is_editable === false) return 'readonly'
+  // 系统级且非所有者：内容连草稿都改不了，主按钮直接指向「复制一份」这条唯一出路。
+  // 所有者改为可进「配置与发布」改草稿，只是发布按钮会被屏蔽。
+  if (agent.is_system && agent.can_edit_versions === false) return 'readonly'
   if (agent.onboarding_step && agent.onboarding_step !== 'COMPLETE') return 'continue'
   if (!agent.is_enabled) return 'enable'
   if (agent.engine_type === 'RAGFLOW' || agent.engine_type === 'OPENCLAW') return 'edit'
@@ -3989,6 +4002,17 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <span class="shrink-0 text-amber-500">❄</span>
             <span class="truncate">{{ pendingReviewHint(agent) }}</span>
           </button>
+
+          <!-- 系统级基线说明：普通用户最容易误会「系统级 = 我什么都动不了」，
+               或者反过来「我能像以前一样直接发布」。一行字把边界说清楚。 -->
+          <div
+            v-if="agent.is_system && !isPendingReview(agent) && !isAdminViewer"
+            class="mt-3 flex w-full items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-600"
+            :title="systemBaselineHint(agent)"
+          >
+            <span class="shrink-0 text-slate-400">🛡</span>
+            <span class="truncate">{{ systemBaselineHint(agent) }}</span>
+          </div>
         </div>
 
         <!-- Actions Footer -->

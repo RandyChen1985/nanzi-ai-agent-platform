@@ -67,7 +67,8 @@ def test_published_version_view_explains_why_it_is_read_only():
     drawer = _source("frontend/src/components/agent/AgentVersionEditorDrawer.vue")
 
     assert "当前为已发布版本，如需修改请克隆新版本" in drawer
-    assert "selectedAgent?.is_editable === false" in drawer
+    # 只读判定走版本编辑权：系统级所有者仍可编辑草稿，只是不能发布
+    assert "selectedAgent?.can_edit_versions === false" in drawer
 
 
 def test_welcome_switch_thumb_stays_within_its_track():

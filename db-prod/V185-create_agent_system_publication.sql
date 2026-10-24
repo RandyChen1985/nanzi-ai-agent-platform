@@ -53,11 +53,30 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- 已建过该表的环境（本脚本早版本执行过）补 request_type：
+-- CREATE TABLE IF NOT EXISTS 不会给已存在的表加列。
+SET @column_exists := (
+    SELECT COUNT(*)
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'ai_agent_system_requests'
+      AND column_name = 'request_type'
+);
+SET @sql := IF(
+    @column_exists = 0,
+    'ALTER TABLE `ai_agent_system_requests` ADD COLUMN `request_type` VARCHAR(24) NOT NULL DEFAULT ''SYSTEM_PUBLISH'' COMMENT ''SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线'' AFTER `agent_id`',
+    'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 CREATE TABLE IF NOT EXISTS `ai_agent_system_requests` (
     `id` VARCHAR(36) NOT NULL COMMENT '申请单 ID（uuid4）',
     `agent_id` VARCHAR(36) NOT NULL COMMENT '智能体 ID',
     `snapshot_version_id` VARCHAR(36) NULL COMMENT '提交时使用的版本 ID（取最新 PUBLISHED 版本）',
     `snapshot` LONGTEXT NULL COMMENT '提交时的完整内容快照（JSON：元数据 + 版本配置）',
+    `request_type` VARCHAR(24) NOT NULL DEFAULT 'SYSTEM_PUBLISH' COMMENT 'SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线',
     `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / APPROVED / REJECTED / CANCELLED',
     `request_comment` TEXT NULL COMMENT '申请人填写的申请理由（可选，最多 500 字）',
     `requested_by` INT NULL COMMENT '申请人用户 ID',

@@ -468,6 +468,21 @@ const SYSTEM_SLASH_COMMANDS = [
 const isKnowledgeEnabled = ref(true);
 const slashCommands = ref<any[]>([...SYSTEM_SLASH_COMMANDS]);
 
+/** 当前智能体可选调试的版本（排除归档，归档不会再上线，调它没有意义） */
+const debugVersions = ref<any[]>([]);
+
+const fetchDebugVersions = async () => {
+  const agentId = agentParams.agent_id;
+  debugVersions.value = [];
+  if (!agentId) return;
+  try {
+    const res = await axios.get(`/api/portal/agents/${agentId}/versions`);
+    debugVersions.value = (res.data || []).filter((v: any) => v?.status !== 'ARCHIVED');
+  } catch (e) {
+    console.error('Failed to fetch agent versions', e);
+  }
+};
+
 const fetchAgents = async () => {
   try {
     const res = await axios.get("/api/portal/agents/");
@@ -478,6 +493,23 @@ const fetchAgents = async () => {
     console.error("Failed to fetch agents", e);
   }
 };
+
+/** 换智能体时重载版本列表，并校正已绑定的版本。
+ *
+ *  不能一发现 agent_id 变化就清空 version_id —— 从版本抽屉「去调试」跳过来时，
+ *  agent_id 和 version_id 是同时通过 URL 进来的，先设 agent_id 再设 version_id，
+ *  无脑清空会把刚带进来的版本冲掉。等版本列表回来再看归属：绑定的版本不在
+ *  当前智能体的列表里，才说明是上一个智能体残留的。 */
+watch(
+  () => agentParams.agent_id,
+  async (newId, oldId) => {
+    await fetchDebugVersions();
+    if (!agentParams.version_id) return;
+    if (oldId !== undefined && newId === oldId) return;
+    const stillValid = debugVersions.value.some((v: any) => v?.id === agentParams.version_id);
+    if (!stillValid) agentParams.version_id = null;
+  },
+);
 
 const hideDebugLikeDislikeForHostedAgent = computed(() => {
   if (!agentParams.agent_id) return false;
@@ -4447,13 +4479,15 @@ onUnmounted(() => {
         <div class="flex items-center">
           <button
             @click="showHistorySidebar = !showHistorySidebar"
-            class="mr-3 p-1.5 rounded-md transition-all flex items-center space-x-1.5"
+            v-tooltip="showHistorySidebar ? '收起历史记录' : '历史记录'"
+            :aria-label="showHistorySidebar ? '收起历史记录' : '历史记录'"
+            :aria-expanded="showHistorySidebar"
+            class="mr-3 flex h-8 w-8 items-center justify-center rounded-md transition-all"
             :class="
-              !showHistorySidebar
-                ? 'bg-primary/10 text-primary px-3 border border-primary/20 hover:bg-primary/20'
+              showHistorySidebar
+                ? 'bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20'
                 : 'text-gray-500 hover:bg-gray-100'
             "
-            :title="showHistorySidebar ? '收起历史' : '展开历史'"
           >
             <svg
               class="w-5 h-5"
@@ -4462,23 +4496,24 @@ onUnmounted(() => {
               viewBox="0 0 24 24"
             >
               <path
-                v-if="showHistorySidebar"
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 stroke-width="2"
-                d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
+                d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"
               />
               <path
-                v-else
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 stroke-width="2"
-                d="M13 5l7 7-7 7M5 5l7 7-7 7"
+                d="M3 3v5h5"
+              />
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 7v5l4 2"
               />
             </svg>
-            <span v-if="!showHistorySidebar" class="text-xs font-bold"
-              >历史记录</span
-            >
           </button>
           <svg
             class="w-5 h-5 text-primary mr-2"
@@ -4507,7 +4542,7 @@ onUnmounted(() => {
               : showFullscreenTip
                 ? 'bg-sky-50 text-sky-700 border border-sky-200 px-2.5 py-1.5 rounded-lg hover:bg-sky-100 ring-2 ring-sky-200/60 animate-pulse'
                 : 'text-gray-500 hover:text-blue-600 px-2 py-1.5 rounded-lg hover:bg-gray-50'"
-            :title="isFullScreen ? '退出全屏（Esc）' : '全屏调试，获得更大视野'"
+            v-tooltip="isFullScreen ? '退出全屏（Esc）' : '全屏调试，获得更大视野'"
           >
             <svg
               class="w-5 h-5"
@@ -4539,7 +4574,7 @@ onUnmounted(() => {
           <button
             @click="exportChat"
             class="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 transition-colors flex items-center space-x-1"
-            title="导出对话 (Markdown)"
+            v-tooltip="'导出对话 (Markdown)'"
           >
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -4557,7 +4592,7 @@ onUnmounted(() => {
                 ? 'bg-primary/10 text-primary'
                 : 'text-gray-500 hover:bg-gray-100'
             "
-            :title="showConfigPanel ? '收起配置' : '展开配置'"
+            v-tooltip="showConfigPanel ? '收起配置' : '展开配置'"
           >
             <svg
               class="w-6 h-6"
@@ -4808,7 +4843,7 @@ onUnmounted(() => {
                   v-if="msg.trace_id && !msg.isThinking"
                   @click="openExecutionDetail(msg)"
                   class="flex items-center space-x-1 px-2 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors"
-                  title="查看执行步骤 / 组装 Prompt / 运行时上下文"
+                  v-tooltip="'查看执行步骤 / 组装 Prompt / 运行时上下文'"
                 >
                   <svg
                     class="w-3 h-3"
@@ -4830,10 +4865,11 @@ onUnmounted(() => {
                 <!-- Regenerate Button -->
                 <div
                   v-if="messages.indexOf(msg) === messages.length - 1 && !isProcessing && !msg.isThinking"
-                  class="group relative inline-flex items-center justify-center"
+                  class="inline-flex items-center justify-center"
                 >
                   <button
                     @click="regenerate(msg)"
+                    v-tooltip="'重新生成'"
                     class="flex min-h-8 shrink-0 items-center justify-center rounded-md p-1.5 text-gray-400 hover:text-primary transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400 dark:hover:text-primary-active border border-gray-200/60 dark:border-gray-700/60"
                     aria-label="重新生成"
                   >
@@ -4841,12 +4877,6 @@ onUnmounted(() => {
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                   </button>
-                  <div class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform translate-y-0.5 group-hover:translate-y-0">
-                    <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
-                      重新生成
-                    </div>
-                    <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mt-0.5"></div>
-                  </div>
                 </div>
 
                 <!-- Token Usage -->
@@ -4854,7 +4884,7 @@ onUnmounted(() => {
                   v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined || msg.total_tokens !== undefined"
                   @click="openModelCallStats(msg)"
                   class="flex items-center space-x-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-primary dark:hover:text-primary-active hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors rounded px-1.5 py-1 select-none cursor-pointer"
-                  :title="getMessageTokenTooltip(msg)"
+                  v-tooltip="getMessageTokenTooltip(msg)"
                 >
                   <svg class="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                     <ellipse cx="12" cy="5" rx="9" ry="3" />
@@ -4910,7 +4940,7 @@ onUnmounted(() => {
                     <!-- Card Header with Toggle -->
                     <div
                       class="flex items-center justify-between gap-2 cursor-pointer select-none group"
-                      :title="(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) ? '点击收起' : '点击展开'"
+                      v-tooltip="(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending')) ? '点击收起' : '点击展开'"
                       @click="msg.pendingExternalExecution.expanded = !(msg.pendingExternalExecution.expanded ?? (msg.pendingExternalExecution.status === 'pending'))"
                     >
                       <div class="flex min-w-0 flex-1 items-center gap-2">
@@ -5000,7 +5030,7 @@ onUnmounted(() => {
                   type="button"
                   @click.stop="copyContent(visibleStreamBody(msg), $event)"
                   class="absolute -top-1 -right-1 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md transition-all opacity-0 group-hover/content:opacity-100 focus:opacity-100 z-10 shadow-sm border border-gray-100 dark:border-gray-600"
-                  title="复制内容"
+                  v-tooltip="'复制内容'"
                 >
                   <svg
                     class="w-3.5 h-3.5"
@@ -5092,11 +5122,12 @@ onUnmounted(() => {
                   :class="{'!opacity-100': msg.feedback && !hideDebugLikeDislikeForHostedAgent}"
                 >
                   <!-- Copy Content -->
-                  <div class="group relative inline-flex items-center justify-center">
+                  <div class="inline-flex items-center justify-center">
                     <button
                       v-if="msg.content"
                       type="button"
                       @click.stop="copyContent(visibleStreamBody(msg), $event)"
+                      v-tooltip="'复制'"
                       class="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-blue-50 text-gray-400 hover:text-primary transition-colors"
                       aria-label="复制"
                     >
@@ -5104,12 +5135,6 @@ onUnmounted(() => {
                         <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                       </svg>
                     </button>
-                    <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
-                      <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
-                      <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
-                        复制
-                      </div>
-                    </div>
                   </div>
                   <div v-if="msg.content && (canSaveGoldenReportFromMessage(msg) || msg.trace_id || !hideDebugLikeDislikeForHostedAgent)" class="w-px h-3 bg-gray-200 mx-1"></div>
                   <!-- Save Golden Report -->
@@ -5118,7 +5143,7 @@ onUnmounted(() => {
                     type="button"
                     @click="handleSaveReportFromMessage(msg)"
                     class="flex items-center space-x-1 p-1 rounded hover:bg-amber-50 text-amber-700 hover:text-amber-800 transition-colors"
-                    title="将本轮成功查数的 SQL 沉淀为固化报表"
+                    v-tooltip="'将本轮成功查数的 SQL 沉淀为固化报表'"
                   >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
@@ -5131,7 +5156,7 @@ onUnmounted(() => {
                     v-if="msg.trace_id"
                     @click="exportData(msg.trace_id, 'xlsx')"
                     class="flex items-center space-x-1 p-1 rounded hover:bg-blue-50 text-gray-400 hover:text-primary transition-colors"
-                    title="导出数据 (Excel)"
+                    v-tooltip="'导出数据 (Excel)'"
                   >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -5139,10 +5164,11 @@ onUnmounted(() => {
                     <span class="text-[10px] font-bold">导出</span>
                   </button>
                   <div v-if="msg.trace_id && !hideDebugLikeDislikeForHostedAgent" class="w-px h-3 bg-gray-200 mx-1"></div>
-                  <!-- 点赞 (纯图标 + 自定义 Tooltip) -->
-                  <div v-if="!hideDebugLikeDislikeForHostedAgent" class="group relative inline-flex items-center justify-center">
+                  <!-- 点赞 (纯图标 + 平台 tooltip) -->
+                  <div v-if="!hideDebugLikeDislikeForHostedAgent" class="inline-flex items-center justify-center">
                     <button
                       @click="handleFeedback(msg, 'up')"
+                      v-tooltip="'很有帮助'"
                       class="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-green-50 text-gray-400 hover:text-green-500 transition-colors"
                       :class="{ 'text-green-500 bg-green-50': msg.feedback === 'up' }"
                       aria-label="很有帮助"
@@ -5151,17 +5177,12 @@ onUnmounted(() => {
                         <path stroke-linecap="round" stroke-linejoin="round" d="M14 10h4.708C19.712 10 20.5 10.743 20.5 11.658c0 .354-.05.7-.145 1.03l-1.921 6.641C18.232 20.141 17.514 21 16.5 21H8.5c-1.105 0-2-.895-2-2v-8c0-.55.224-1.05.586-1.414l5-5c.381-.381 1-.381 1.381 0L14 5v5z" />
                       </svg>
                     </button>
-                    <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
-                      <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
-                      <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
-                        很有帮助
-                      </div>
-                    </div>
                   </div>
-                  <!-- 点踩 (纯图标 + 自定义 Tooltip) -->
-                  <div v-if="!hideDebugLikeDislikeForHostedAgent" class="group relative inline-flex items-center justify-center">
+                  <!-- 点踩 (纯图标 + 平台 tooltip) -->
+                  <div v-if="!hideDebugLikeDislikeForHostedAgent" class="inline-flex items-center justify-center">
                     <button
                       @click="handleFeedback(msg, 'down')"
+                      v-tooltip="'回答不准确'"
                       class="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
                       :class="{ 'text-red-500 bg-red-50': msg.feedback === 'down' }"
                       aria-label="回答不准确"
@@ -5170,12 +5191,6 @@ onUnmounted(() => {
                         <path stroke-linecap="round" stroke-linejoin="round" d="M10 14H5.292C4.288 14 3.5 13.257 3.5 12.342c0-.354.05-.7.145-1.03l1.921-6.641C6.768 3.859 7.486 3 8.5 3H16.5c1.105 0 2 .895 2 2v8c0 .55-.224 1.05-.586 1.414l-5 5c-.381.381-1 .381-1.381 0L10 19v-5z" />
                       </svg>
                     </button>
-                    <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
-                      <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
-                      <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
-                        回答不准确
-                      </div>
-                    </div>
                   </div>
                 </div>
                 <!-- Typewriter Cursor -->
@@ -5309,7 +5324,9 @@ onUnmounted(() => {
       :loading-config="loadingConfig"
       :agent-context="agentContext"
       :rag-retrieval-meta="ragRetrievalMeta"
+      :versions="debugVersions"
       @update:visible="(val) => { showConfigPanel = val; }"
+      @update-version="(versionId) => { agentParams.version_id = versionId; }"
       @load-config="loadCurrentPrompt"
       @clear-context="clearContext"
     />

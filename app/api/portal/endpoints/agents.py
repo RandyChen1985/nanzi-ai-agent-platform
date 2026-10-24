@@ -618,6 +618,34 @@ async def submit_system_request(
     return {"request_id": request.id, "status": request.status}
 
 
+class AgentVersionReleaseRequest(BaseModel):
+    """申请把某个草稿版本发布上线。"""
+
+    version_id: str
+    comment: Optional[str] = None
+
+
+@router.post(
+    "/{agent_id}/system/release-requests",
+    dependencies=[Depends(require_permission("element", "element:agent:edit"))],
+)
+async def submit_version_release_request(
+    agent_id: str,
+    data: AgentVersionReleaseRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """提交「发布版本上线」申请：系统级智能体的线上基线只能由管理员变更。
+
+    所有者改完草稿后走这条通道，管理员审核通过即发布该版本，
+    不必线下沟通「你去点一下 V3」。
+    """
+    request = await AgentSystemPublicationService.submit_release_request(
+        session, agent_id, data.version_id, user, comment=data.comment
+    )
+    return {"request_id": request.id, "status": request.status}
+
+
 @router.delete(
     "/{agent_id}/system/requests",
     dependencies=[Depends(require_permission("element", "element:agent:edit"))],

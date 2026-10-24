@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS ai_agent_system_requests (
     agent_id VARCHAR(36) NOT NULL,
     snapshot_version_id VARCHAR(36),
     snapshot TEXT,
+    request_type VARCHAR(24) NOT NULL DEFAULT 'SYSTEM_PUBLISH',
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
     request_comment TEXT,
     requested_by INTEGER,
@@ -58,6 +59,10 @@ COMMENT ON COLUMN "ai_agent_system_requests"."agent_id" IS '智能体 ID';
 COMMENT ON COLUMN "ai_agent_system_requests"."snapshot_version_id" IS '提交时使用的版本 ID（取最新 PUBLISHED 版本）';
 COMMENT ON COLUMN "ai_agent_system_requests"."snapshot" IS '提交时的完整内容快照（JSON：元数据 + 版本配置）';
 COMMENT ON COLUMN "ai_agent_system_requests"."status" IS 'PENDING / APPROVED / REJECTED / CANCELLED';
+ALTER TABLE ai_agent_system_requests
+    ADD COLUMN IF NOT EXISTS request_type VARCHAR(24) NOT NULL DEFAULT 'SYSTEM_PUBLISH';
+
+COMMENT ON COLUMN "ai_agent_system_requests"."request_type" IS 'SYSTEM_PUBLISH=申请发布为系统级；VERSION_RELEASE=申请把某版本发布上线';
 COMMENT ON COLUMN "ai_agent_system_requests"."request_comment" IS '申请人填写的申请理由（可选，最多 500 字）';
 COMMENT ON COLUMN "ai_agent_system_requests"."requested_by" IS '申请人用户 ID';
 COMMENT ON COLUMN "ai_agent_system_requests"."requested_at" IS '提交时间';
