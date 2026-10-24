@@ -8,6 +8,8 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.core.avatar_assets import adopt_pending_avatar
 from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.agent import ChatConfig, AIAgentBase, AIAgentVersionBase
+from app.services.ai.agent_system_columns import attach_system_status
+from app.services.ai.agent_system_publication_service import AgentSystemPublicationService
 from app.services.ai.agent_types import resolve_agent_type
 from app.services.ai.welcome_card_service import normalize_welcome_config, safe_welcome_config
 import json
@@ -148,6 +150,24 @@ class AgentManagerService:
         }
 
     @staticmethod
+    @staticmethod
+    def _reject_manual_system_flag(data: Any) -> None:
+        """「是否系统级」不接受新建/编辑表单设置。
+
+        系统级是「生产发布的基线」：只能通过「发布为系统级」动作或管理员审核通过获得，
+        每一次都要落事件、发通知。允许表单直接勾选就等于绕开整条流程与全部留痕。
+        """
+        from fastapi import HTTPException
+
+        if data is not None and getattr(data, "is_system", None):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "「是否系统级」不能通过新建或编辑设置：请保存后用卡片菜单的「发布为系统级」，"
+                    "或提交发布申请由管理员审核"
+                ),
+            )
+
     async def create_agent_onboarding(
         session: AsyncSession,
         data: AIAgentBase,
@@ -155,6 +175,8 @@ class AgentManagerService:
         onboarding_key: str,
         user: Any = None,
     ) -> AgentOnboardingResult:
+        AgentManagerService._reject_manual_system_flag(data)
+
         if isinstance(user, dict):
             created_by = user.get("user_name")
             is_admin = user.get("role", "") == "admin"
@@ -213,7 +235,8 @@ class AgentManagerService:
             agent_type=resolved_agent_type.value,
             onboarding_key=onboarding_key,
             onboarding_step="VERSION",
-            is_system=data.is_system if is_admin and data.is_system is not None else False,
+            # 系统级只能通过「发布为系统级」获得（有事件、有流程），新建表单不再接受该字段
+            is_system=False,
             sort_order=data.sort_order or 0,
             is_enabled=data.is_enabled if data.is_enabled is not None else True,
             created_by=created_by,
@@ -639,6 +662,23 @@ class AgentManagerService:
                  
             visible_agents.append(agent)
 
+        # 创建者显示名：卡片上只显示 user_name 对管理员不直观（chenxiaolong vs 陈小龙），
+        # 批量反查一次用户表补上 real_name，没有则回落到 user_name。
+        creator_keys = {a.created_by for a in visible_agents if getattr(a, "created_by", None)}
+        creator_names: dict[str, str] = {}
+        if creator_keys:
+            from app.models.user import User
+
+            name_rows = await session.execute(
+                select(User.user_name, User.real_name).where(User.user_name.in_(creator_keys))
+            )
+            creator_names = {
+                row[0]: (row[1] or row[0]) for row in name_rows.all() if row and row[0]
+            }
+        for agent in visible_agents:
+            key = getattr(agent, "created_by", None)
+            agent.created_by_name = creator_names.get(key, key) if key else None
+
         # 批量附带已发布版本的 tool / mcp / skills 摘要（仅 LOCAL 引擎有版本工具配置）
         local_ids = [a.id for a in visible_agents if (a.engine_type or "LOCAL") == "LOCAL"]
         published_by_agent = await AgentManagerService._latest_published_versions_by_agent(
@@ -757,6 +797,10 @@ class AgentManagerService:
                     "names": [item["name"] for item in stale],
                     "version_id": version.id,
                 }
+
+        # 系统级流程状态（审核中徽标 / 编辑冻结提示）。ORM 未映射这两列，
+        # 这里一条 SQL 批量挂到对象上供响应序列化，未迁移时静默跳过。
+        await attach_system_status(session, visible_agents)
 
         return visible_agents
 
@@ -958,6 +1002,8 @@ class AgentManagerService:
     @staticmethod
     async def create_agent(session: AsyncSession, data: AIAgentBase, user: Any = None) -> AIAgent:
         """Create a new agent metadata entry"""
+        AgentManagerService._reject_manual_system_flag(data)
+
         if isinstance(user, dict):
             created_by = user.get('user_name')
             is_admin = user.get('role', '') == 'admin'
@@ -994,7 +1040,8 @@ class AgentManagerService:
                 values=data.capabilities,
             ),
             agent_type=resolved_agent_type.value,
-            is_system=data.is_system if is_admin and data.is_system is not None else False,
+            # 系统级只能通过「发布为系统级」获得（有事件、有流程），新建表单不再接受该字段
+            is_system=False,
             sort_order=data.sort_order if data.sort_order is not None else 0,
             is_enabled=data.is_enabled if data.is_enabled is not None else True,
             created_by=created_by,
@@ -1250,6 +1297,26 @@ class AgentManagerService:
 
         is_admin, _actor_username = AgentManagerService._resolve_actor(user)
 
+        # 待审中的所有者不能改（管理员是审核方，豁免），否则审核看到的内容和上架内容不一致
+        await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
+
+        # 表单回传当前值（编辑系统级时必然是 true）不算「修改」；只有真想改变它才拦。
+        # 主助手固定是系统级，豁免——它没有「取消」这条路径。
+        if (
+            data.is_system is not None
+            and bool(data.is_system) != bool(agent.is_system)
+            and not _is_main_general_agent_record(agent)
+        ):
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "「是否系统级」不能通过编辑修改：请用卡片菜单的「发布为系统级」、「下架（取消系统级）」，"
+                    "或提交发布申请由管理员审核"
+                ),
+            )
+
         if _is_main_general_agent_record(agent) and data.is_enabled is False:
             raise ValueError("主助手不可禁用")
 
@@ -1268,6 +1335,15 @@ class AgentManagerService:
                 from fastapi import HTTPException
 
                 raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
+
+        _before_meta = {
+            "name": agent.name,
+            "display_name": agent.display_name,
+            "description": agent.description,
+            "avatar_url": agent.avatar_url,
+            "capabilities": agent.capabilities,
+            "sort_order": agent.sort_order,
+        }
 
         agent.name = data.name
         agent.display_name = data.display_name
@@ -1290,12 +1366,12 @@ class AgentManagerService:
         )
         agent.sort_order = data.sort_order if data.sort_order is not None else agent.sort_order
         
-        if is_admin and data.is_system is not None:
-            if _is_main_general_agent_record(agent):
-                agent.is_system = True
-            else:
-                agent.is_system = data.is_system
-            
+        # 「是否系统级」不再接受表单设置：只能走「发布为系统级」或审核通过，
+        # 这样每次上架都有事件、有流程可查。主助手固定是系统级，保持原样。
+        if _is_main_general_agent_record(agent):
+            agent.is_system = True
+
+        _enabled_changed = data.is_enabled is not None and bool(data.is_enabled) != bool(agent.is_enabled)
         if data.is_enabled is not None:
             agent.is_enabled = data.is_enabled
         
@@ -1303,7 +1379,20 @@ class AgentManagerService:
         # runtime parameters remain editable through engine_config.
         if data.engine_config is not None:
             agent.engine_config = data.engine_config
-        
+
+        # 系统级智能体的元数据变更与启用/禁用都要留痕（普通智能体不记，避免噪音）
+        _changed_meta = [
+            field for field, previous in _before_meta.items() if getattr(agent, field) != previous
+        ]
+        if _enabled_changed:
+            await AgentSystemPublicationService.record_enabled_change(
+                session, agent, bool(agent.is_enabled), user
+            )
+        if _changed_meta:
+            await AgentSystemPublicationService.record_meta_update(
+                session, agent, user, _changed_meta
+            )
+
         await session.commit()
         await session.refresh(agent)
         
@@ -1325,6 +1414,9 @@ class AgentManagerService:
 
         if not is_admin and agent.created_by and agent.created_by != username:
             return False
+
+        # 待审期间不能删：申请单还指着一个不存在的智能体，审核页会打不开
+        await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
 
         await session.delete(agent)
         await session.commit()
@@ -1410,6 +1502,14 @@ class AgentManagerService:
         if not is_admin and agent.created_by and agent.created_by != username:
             return None # Forbidden
 
+        # 系统级：所有者只能复制另开一条，不能改内容。版本才是内容的主要载体
+        #（提示词/工具/模型），只拦元数据等于没拦。
+        if agent.is_system and not is_admin:
+            return None
+
+        # 待审期间所有者不能建新版本（管理员豁免）
+        await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
+
         skills_custom = bool(getattr(data, "skills_custom", False))
         skills_list = AgentManagerService._normalize_skills_list(getattr(data, "skills", None)) if skills_custom else []
         AgentManagerService._validate_skills_config(skills_custom, skills_list)
@@ -1471,6 +1571,10 @@ class AgentManagerService:
         if not is_admin and agent.created_by and agent.created_by != username:
             return None # Forbidden
 
+        # 系统级内容只读：草稿也不行，否则改完草稿再等管理员发布就等于改线上
+        if agent.is_system and not is_admin:
+            return None
+
         skills_custom = bool(getattr(data, "skills_custom", False))
         skills_list = (
             AgentManagerService._normalize_skills_list(getattr(data, "skills", None))
@@ -1528,6 +1632,13 @@ class AgentManagerService:
         if not is_admin and agent.created_by and agent.created_by != username:
             return False # Forbidden
 
+        # 系统级内容只读：所有者不能发布新版本，否则等于绕过审核改线上基线
+        if agent.is_system and not is_admin:
+            return False
+
+        # 待审期间所有者不能发布新版本（管理员豁免）
+        await AgentSystemPublicationService.assert_not_frozen(session, agent, user)
+
         version = await session.get(AIAgentVersion, version_id)
         if not version or str(version.agent_id) != str(agent_id):
             return False
@@ -1563,7 +1674,24 @@ class AgentManagerService:
             .values(status='PUBLISHED')
         )
         agent.onboarding_step = "COMPLETE"
-        
+
+        # 系统级智能体上「发布新版本」就是换掉线上基线，必须留痕：
+        # 否则发布历史里版本号变了却查不到是谁在什么时候换的。
+        if bool(agent.is_system):
+            from app.services.ai.agent_system_publication_service import (
+                ACTION_BASELINE_PUBLISH,
+            )
+
+            _, actor_name, actor_id = AgentSystemPublicationService.resolve_actor(user)
+            await AgentSystemPublicationService.record_event(
+                session,
+                agent=agent,
+                action=ACTION_BASELINE_PUBLISH,
+                actor_name=actor_name,
+                actor_id=actor_id,
+                version=version,
+            )
+
         await session.commit()
 
         # Published versions are the source of truth for the next turn. Clear
@@ -1601,6 +1729,10 @@ class AgentManagerService:
 
         if not is_admin and agent.created_by and agent.created_by != username:
             return False # Forbidden
+
+        # 系统级内容只读：删草稿/归档版本同样会改变它的内容构成
+        if agent.is_system and not is_admin:
+            return False
 
         await session.delete(version)
         await session.commit()

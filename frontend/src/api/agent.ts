@@ -47,8 +47,15 @@ export interface AIAgent {
   capabilities?: string[]
   agent_type: AgentType
   is_system: boolean
+  /** 系统级流程状态：PENDING_REVIEW 表示正在申请审核中，内容对所有者为只读 */
+  system_status?: 'NONE' | 'PENDING_REVIEW'
+  system_pending_request_id?: string | null
+  /** 待审申请单的提交时间，卡片冻结条显示「等了多久」 */
+  system_requested_at?: string | null
   is_enabled: boolean
   created_by?: string
+  /** 创建者显示名（real_name 优先），管理员辨认归属用 */
+  created_by_name?: string
   owner_group?: string
   is_editable?: boolean
   engine_type?: 'LOCAL' | 'RAGFLOW' | 'OPENCLAW'
@@ -328,4 +335,122 @@ export interface ContextCompactionsResponse {
   records: ContextCompactionRecord[]
   count: number
   retention_seconds: number
+}
+
+// ---------------------------------------------------------------------------
+// 系统级发布（A 期）：申请 → 审核 → 上架 → 下架，以及发布历史
+//
+// 「发布为系统级」只改 is_system 状态，不选版本、不改任何版本状态——
+// 运行时用哪个版本完全由既有的「发布版本」流程决定。
+// ---------------------------------------------------------------------------
+
+export interface AgentSystemRequestItem {
+  id: string
+  agent_id: string
+  agent_name: string
+  agent_identifier: string
+  engine_type?: string | null
+  status: string
+  request_comment?: string | null
+  requested_by?: number | null
+  /** 审核队列要显示「谁提交的」 */
+  requested_by_name?: string | null
+  requested_at: string
+  waiting_hours: number
+}
+
+export interface AgentSystemRequestDetail extends AgentSystemRequestItem {
+  snapshot?: Record<string, any> | null
+  requested_by_name?: string | null
+  reviewed_by?: number | null
+  reviewed_by_name?: string | null
+  reviewed_at?: string | null
+  review_comment?: string | null
+}
+
+export interface AgentSystemHistoryEntry {
+  kind: 'request' | 'event'
+  id: string
+  at?: string | null
+  /** at 对已审完的申请取审核时间，提交时间另存以便同时展示 */
+  requested_at?: string | null
+  reviewed_at?: string | null
+  status?: string | null
+  action?: string | null
+  actor_name?: string | null
+  comment?: string | null
+  review_comment?: string | null
+  reason?: string | null
+  version_number?: number | null
+  affected_user_count?: number | null
+  notified?: boolean | null
+  snapshot?: Record<string, any> | null
+}
+
+export interface AgentSystemHistoryResponse {
+  total: number
+  items: AgentSystemHistoryEntry[]
+}
+
+export interface AgentSystemUnpublishPreview {
+  agent_id: string
+  affected_user_count: number
+  sample_user_names: string[]
+}
+
+export const agentSystemApi = {
+  submitRequest: (agentId: string, data: { comment?: string } = {}) =>
+    axios.post<{ request_id: string; status: string }>(
+      `/api/portal/agents/${agentId}/system/requests`,
+      data,
+    ),
+
+  cancelRequest: (agentId: string) =>
+    axios.delete<{ request_id: string; status: string }>(
+      `/api/portal/agents/${agentId}/system/requests`,
+    ),
+
+  listRequests: (params: { status?: string; page?: number; page_size?: number } = {}) =>
+    axios.get<AgentSystemRequestItem[]>('/api/portal/agents/system/requests', { params }),
+
+  countRequests: () =>
+    axios.get<{ count: number }>('/api/portal/agents/system/requests/count'),
+
+  getRequest: (requestId: string) =>
+    axios.get<AgentSystemRequestDetail>(
+      `/api/portal/agents/system/requests/${requestId}`,
+    ),
+
+  approveRequest: (requestId: string, data: { comment?: string } = {}) =>
+    axios.post<{ agent_id: string; is_system: boolean; message: string }>(
+      `/api/portal/agents/system/requests/${requestId}/approve`,
+      data,
+    ),
+
+  rejectRequest: (requestId: string, data: { comment: string }) =>
+    axios.post<{ request_id: string; status: string }>(
+      `/api/portal/agents/system/requests/${requestId}/reject`,
+      data,
+    ),
+
+  publish: (agentId: string, data: { reason?: string; notify_restore?: boolean } = {}) =>
+    axios.post<AIAgent>(`/api/portal/agents/${agentId}/system/publish`, data),
+
+  previewUnpublish: (agentId: string) =>
+    axios.get<AgentSystemUnpublishPreview>(
+      `/api/portal/agents/${agentId}/system/unpublish-preview`,
+    ),
+
+  unpublish: (agentId: string, data: { reason: string; notify: boolean }) =>
+    axios.post<{
+      agent_id: string
+      affected_user_count: number
+      notified_user_count: number
+    }>(`/api/portal/agents/${agentId}/system/unpublish`, data),
+
+  history: (agentId: string, params: { page?: number; page_size?: number } = {}) =>
+    axios.get<AgentSystemHistoryResponse>(
+      `/api/portal/agents/${agentId}/system/history`,
+      { params },
+    ),
 }

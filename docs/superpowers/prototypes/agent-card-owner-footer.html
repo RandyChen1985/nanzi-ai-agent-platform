@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>卡片底部：归属信息</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #eef1f6; color: #111827; padding: 28px 26px 40px;
+  }
+  .title { font-size: 15px; font-weight: 700; color: #334155; margin-bottom: 20px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 980px; }
+  .col-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .tag { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 6px; }
+  .tag.before { background: #fee2e2; color: #b91c1c; }
+  .tag.after { background: #dcfce7; color: #15803d; }
+  .sub { font-size: 11.5px; color: #64748b; }
+
+  .card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(15,23,42,.04); overflow: hidden;
+  }
+  .accent { height: 6px; background: #2563eb; }
+  .body { padding: 18px; }
+  .top { display: flex; align-items: flex-start; gap: 11px; }
+  .avatar { width: 42px; height: 42px; border-radius: 11px; background: #dbeafe; display: flex; align-items: center; justify-content: center; font-size: 19px; }
+  h3 { font-size: 14.5px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .shield { color: #c7d2fe; font-size: 12px; }
+  .switch { margin-left: auto; width: 34px; height: 19px; border-radius: 999px; background: #22c55e; position: relative; flex-shrink: 0; }
+  .switch::after { content: ''; position: absolute; top: 2px; right: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; }
+  .meta { display: flex; gap: 5px; margin-top: 7px; }
+  .chip { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: #f3f4f6; color: #4b5563; display: inline-flex; align-items: center; gap: 4px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
+  .desc { font-size: 12.5px; color: #64748b; line-height: 1.6; margin-top: 12px; }
+  .caps { display: flex; gap: 5px; margin-top: 12px; }
+  .cap { font-size: 11px; padding: 2px 7px; border-radius: 5px; background: #f3f4f6; color: #4b5563; }
+
+  .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; border-top: 1px solid #f1f5f9; background: #fafafa; }
+  .btn-ghost { height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid #e5e7eb; background: #fff; font-size: 11.5px; color: #374151; display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; }
+  .btn-primary { height: 28px; padding: 0 12px; border-radius: 8px; background: #1677ff; color: #fff; font-size: 11.5px; font-weight: 500; display: inline-flex; align-items: center; flex-shrink: 0; }
+  .kebab { color: #9ca3af; font-size: 15px; letter-spacing: 1px; }
+  .icon-btn { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; color: #9ca3af; font-size: 13px; flex-shrink: 0; }
+
+  .owner { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 1.25; }
+  .owner .who { font-size: 11px; color: #6b7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .owner .when { font-size: 11px; color: #9ca3af; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .right-group { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="title">卡片底部：用归属信息替换「预览对话」文字按钮</div>
+
+<div class="cols">
+  <div>
+    <div class="col-head"><span class="tag before">改 前</span><span class="sub">底部左边是预览对话，看不出谁建的</span></div>
+    <div class="card">
+      <div class="accent"></div>
+      <div class="body">
+        <div class="top">
+          <div class="avatar">🤖</div>
+          <div style="flex:1;min-width:0">
+            <h3>主助手(Main) <span class="shield">🛡</span><span class="switch"></span></h3>
+            <div class="meta">
+              <span class="chip">通用助手 · NanZi</span>
+              <span class="chip"><span class="dot"></span>已就绪</span>
+            </div>
+          </div>
+        </div>
+        <div class="desc">处理日常闲聊、通用问答、代码编写辅助以及无法明确分类的请求。作为系统的兜底助手。</div>
+        <div class="caps">
+          <span class="cap">工具 29</span><span class="cap">MCP 8</span><span class="cap">技能 11</span><span class="cap">2720 次调用</span>
+        </div>
+      </div>
+      <div class="foot">
+        <span class="btn-ghost">💬 预览对话</span>
+        <div class="right-group"><span class="kebab">⋯</span><span class="btn-primary">配置与发布</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="col-head"><span class="tag after">改 后</span><span class="sub">两行小字：创建者 / 更新时间；预览对话收成图标</span></div>
+    <div class="card">
+      <div class="accent"></div>
+      <div class="body">
+        <div class="top">
+          <div class="avatar">🤖</div>
+          <div style="flex:1;min-width:0">
+            <h3>主助手(Main) <span class="shield">🛡</span><span class="switch"></span></h3>
+            <div class="meta">
+              <span class="chip">通用助手 · NanZi</span>
+              <span class="chip"><span class="dot"></span>已就绪</span>
+            </div>
+          </div>
+        </div>
+        <div class="desc">处理日常闲聊、通用问答、代码编写辅助以及无法明确分类的请求。作为系统的兜底助手。</div>
+        <div class="caps">
+          <span class="cap">工具 29</span><span class="cap">MCP 8</span><span class="cap">技能 11</span><span class="cap">2720 次调用</span>
+        </div>
+      </div>
+      <div class="foot">
+        <div class="owner">
+          <span class="who">创建者：陈小龙</span>
+          <span class="when">更新于 2026-10-24</span>
+        </div>
+        <div class="right-group">
+          <span class="icon-btn">💬</span>
+          <span class="kebab">⋯</span>
+          <span class="btn-primary">配置与发布</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

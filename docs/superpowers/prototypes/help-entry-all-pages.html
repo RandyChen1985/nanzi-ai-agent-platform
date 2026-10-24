@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>帮助入口 · 全站统一</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #eef1f6; color: #111827; padding: 28px 26px 40px;
+  }
+  .page-title { font-size: 15px; font-weight: 700; color: #334155; margin-bottom: 6px; }
+  .page-sub { font-size: 12px; color: #64748b; margin-bottom: 22px; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; max-width: 1240px; }
+  .col-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .tag { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 6px; }
+  .tag.before { background: #fee2e2; color: #b91c1c; }
+  .tag.after { background: #dcfce7; color: #15803d; }
+  .sub { font-size: 11.5px; color: #64748b; }
+
+  .row {
+    background: #f5f7fa; border: 1px solid #e5e9f0; border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .left { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .name { font-size: 17px; font-weight: 800; letter-spacing: -0.2px; white-space: nowrap; }
+  .count { font-size: 11px; color: #6b7280; white-space: nowrap; }
+
+  .q { flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .q.old {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 1px solid #e5e7eb; background: #fff;
+    font-size: 14px; font-weight: 700;
+    box-shadow: 0 1px 2px rgba(15,23,42,.05);
+  }
+  .q.new { color: #9ca3af; }
+
+  .guide {
+    flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px;
+    height: 24px; padding: 0 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 500; white-space: nowrap;
+  }
+  .guide.new { height: auto; padding: 0; border: 0; background: none; color: #6b7280; }
+
+  .btn { height: 30px; padding: 0 11px; border-radius: 8px; font-size: 12.5px; display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; }
+  .btn.ghost { border: 1px solid #e5e7eb; background: #fff; color: #374151; }
+  .btn.primary { background: #1677ff; color: #fff; font-weight: 500; }
+
+  .note { max-width: 1240px; margin-top: 20px; font-size: 12px; color: #475569; line-height: 1.9; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; }
+  .note b { color: #0f172a; }
+  .note code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<div class="page-title">帮助入口 · 全站统一</div>
+<div class="page-sub">9 个页面各有自己的主题色，同一个「? + 显示指引」在每页呈现成不同颜色</div>
+
+<div class="cols">
+  <!-- 改前 -->
+  <div>
+    <div class="col-head"><span class="tag before">改 前</span><span class="sub">每页一套主题色，9 种配色</span></div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">任务中心</span><span class="count">共 12 个</span>
+        <span class="q old" style="color:#ea580c">?</span>
+        <span class="guide" style="border:1px solid #fed7aa;background:rgba(255,247,237,.8);color:#c2410c">ⓘ 显示指引</span>
+      </div>
+      <div class="btn ghost">+ 新建任务</div>
+    </div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">知识库管理</span><span class="count">共 6 个</span>
+        <span class="q old" style="color:#059669">?</span>
+        <span class="guide" style="border:1px solid #a7f3d0;background:rgba(236,253,245,.8);color:#047857">ⓘ 显示指引</span>
+      </div>
+      <div class="btn ghost">+ 新建知识库</div>
+    </div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">MCP 管理</span><span class="count">共 4 个</span>
+        <span class="q old" style="color:#4f46e5">?</span>
+        <span class="guide" style="border:1px solid #c7d2fe;background:rgba(238,242,255,.8);color:#4338ca">ⓘ 显示指引</span>
+      </div>
+      <div class="btn ghost">+ 新建服务</div>
+    </div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">元数据集</span><span class="count">共 18 个</span>
+        <span class="q old" style="color:#2563eb">?</span>
+        <span class="guide" style="border:1px solid #bfdbfe;background:rgba(239,246,255,.7);color:#1d4ed8">ⓘ 显示指引</span>
+      </div>
+      <div class="btn ghost">+ 新建数据集</div>
+    </div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">记忆管理</span>
+        <span class="q old" style="color:#9333ea">?</span>
+        <span class="guide" style="border:1px solid #e9d5ff;background:rgba(250,245,255,.8);color:#7e22ce">ⓘ 显示指引</span>
+      </div>
+      <div class="btn ghost">+ 新建记忆</div>
+    </div>
+  </div>
+
+  <!-- 改后 -->
+  <div>
+    <div class="col-head"><span class="tag after">改 后</span><span class="sub">全部统一为灰阶，与主题色解耦</span></div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">任务中心</span><span class="count">共 12 个</span>
+        <span class="q new"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
+        <span class="guide new">显示指引</span>
+      </div>
+      <div class="btn primary">+ 新建任务</div>
+    </div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">知识库管理</span><span class="count">共 6 个</span>
+        <span class="q new"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
+        <span class="guide new">显示指引</span>
+      </div>
+      <div class="btn primary">+ 新建知识库</div>
+    </div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">MCP 管理</span><span class="count">共 4 个</span>
+        <span class="q new"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
+        <span class="guide new">显示指引</span>
+      </div>
+      <div class="btn primary">+ 新建服务</div>
+    </div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">元数据集</span><span class="count">共 18 个</span>
+        <span class="q new"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
+        <span class="guide new">显示指引</span>
+      </div>
+      <div class="btn primary">+ 新建数据集</div>
+    </div>
+
+    <div class="row">
+      <div class="left">
+        <span class="name">记忆管理</span>
+        <span class="q new"><svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
+        <span class="guide new">显示指引</span>
+      </div>
+      <div class="btn primary">+ 新建记忆</div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>覆盖范围：9 个页面</b><br/>
+  <code>TaskCenter</code>（橙）、<code>KnowledgeBaseManagement</code>（绿）、<code>McpManagement</code>（靛）、<code>ExampleManagement</code>（青）、<code>MetadataDatasets</code>（蓝）、<code>SkillsManagement</code>（绿）、<code>DataSourceManagement</code>（蓝）、<code>MemoryManagement</code>（紫）、<code>PromptStudio</code>（靛）。<br/><br/>
+  <b>统一规则：</b><br/>
+  · 「?」：<code>h-7 w-7</code> 带边框圆按钮 → <code>h-5 w-5</code> 裸图标，<code>text-gray-400</code>，hover 浅灰底 + 加深；<br/>
+  · 「显示指引」：彩色胶囊（每页跟着主题色变）→ 灰字链接，hover 变主题蓝 + 下划线；<br/>
+  · 「显示指引」的 <code>ⓘ</code> 图标去掉——它和「?」都是圆圈符号，并排看着像重复。<br/><br/>
+  <b>为什么值得改：</b>这 9 个页面各有主题色，原来同一个帮助入口在每页呈现成不同颜色（橙/绿/靛/青/蓝/紫），配合卡片本身的彩色徽标，一屏下来颜色太多。帮助入口是「需要时才找」的元素，不承认识别功能，用灰阶最合适——<b>主题色只留给各页真正的主操作</b>。<br/><br/>
+  <b>保留：</b>MetadataDatasets 与 SkillsManagement 的 <code>hidden sm:inline</code> 响应式行为（窄屏不显示该链接）保持不变。
+</div>
+
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>卡片菜单溢出修复</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #eef1f6; color: #111827; padding: 28px 26px 40px;
+  }
+  .title { font-size: 15px; font-weight: 700; color: #334155; margin-bottom: 20px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; max-width: 1100px; }
+  .col-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .tag { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 6px; }
+  .tag.before { background: #fee2e2; color: #b91c1c; }
+  .tag.after { background: #dcfce7; color: #15803d; }
+  .sub { font-size: 11.5px; color: #64748b; }
+
+  .stage { position: relative; padding: 46px 10px 10px; }
+
+  .card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(15,23,42,.04); position: relative;
+    display: flex; flex-direction: column;
+  }
+  .card.clip { overflow: hidden; }
+  .accent { height: 6px; width: 100%; background: #6366f1; border-radius: 12px 12px 0 0; }
+  .card-body { padding: 18px; }
+  .top { display: flex; align-items: flex-start; gap: 10px; }
+  .avatar { width: 42px; height: 42px; border-radius: 11px; background: #eef2ff; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  h3 { font-size: 14.5px; font-weight: 700; }
+  .meta { display: flex; gap: 5px; margin-top: 6px; }
+  .chip-sm { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: #f3f4f6; color: #4b5563; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; display: inline-block; margin-right: 3px; }
+  .desc { font-size: 12.5px; color: #64748b; margin-top: 12px; line-height: 1.6; }
+  .caps { display: flex; gap: 5px; margin-top: 12px; }
+  .cap { font-size: 11px; padding: 2px 7px; border-radius: 5px; background: #f3f4f6; color: #4b5563; }
+  .foot { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-top: 1px solid #f1f5f9; background: #fafafa; border-radius: 0 0 12px 12px; }
+  .btn-ghost { height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid #e5e7eb; background: #fff; font-size: 11.5px; color: #374151; display: inline-flex; align-items: center; gap: 5px; }
+  .btn-primary { height: 28px; padding: 0 12px; border-radius: 8px; background: #1677ff; color: #fff; font-size: 11.5px; font-weight: 500; display: inline-flex; align-items: center; }
+
+  .menu-anchor { position: relative; }
+  .kebab { color: #9ca3af; font-size: 15px; letter-spacing: 1px; padding: 4px; }
+
+  .menu {
+    position: absolute; right: 0; bottom: 100%; margin-bottom: 4px;
+    width: 176px; background: #fff; border: 1px solid #f1f5f9; border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(15,23,42,.14); padding: 4px 0; z-index: 30;
+  }
+  .menu-item { display: flex; align-items: center; gap: 10px; padding: 7px 12px; font-size: 12px; color: #374151; }
+  .menu-item .ico { width: 16px; color: #9ca3af; font-size: 12px; text-align: center; }
+  .menu-item.danger { color: #dc2626; }
+  .menu-item.danger .ico { color: #dc2626; }
+  .menu-sep { height: 1px; background: #f1f5f9; margin: 4px 0; }
+
+  .cut {
+    position: absolute; left: 10px; right: 10px; height: 76px; top: 46px;
+    background: repeating-linear-gradient(135deg, rgba(239,68,68,.10) 0 8px, transparent 8px 16px);
+    border: 1px dashed #f87171; border-radius: 12px 12px 0 0; pointer-events: none;
+  }
+  .cut-label { position: absolute; top: 52px; left: 20px; font-size: 10.5px; color: #b91c1c; font-weight: 700; }
+
+  .note { max-width: 1100px; margin-top: 22px; font-size: 12px; color: #475569; line-height: 1.9; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; }
+  .note b { color: #0f172a; }
+  .note code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<div class="title">卡片「更多操作」菜单溢出 · 修复</div>
+
+<div class="cols">
+  <div>
+    <div class="col-head"><span class="tag before">改 前</span><span class="sub">卡片 overflow-hidden 把菜单上半截裁掉了</span></div>
+    <div class="stage">
+      <div class="cut"></div>
+      <div class="cut-label">↑ 这块被裁掉：「预览对话」「编辑智能体」</div>
+      <div class="card clip">
+        <div class="accent"></div>
+        <div class="card-body">
+          <div class="top">
+            <div class="avatar" style="background:#eef2ff">◈</div>
+            <div style="flex:1">
+              <h3>test</h3>
+              <div class="meta">
+                <span class="chip-sm">通用助手 · NanZi</span>
+                <span class="chip-sm"><span class="dot"></span>已就绪</span>
+              </div>
+            </div>
+          </div>
+          <div class="desc">test</div>
+          <div class="caps">
+            <span class="cap">工具 29</span><span class="cap">MCP 0</span><span class="cap">技能 11</span>
+          </div>
+        </div>
+        <div class="foot">
+          <span class="btn-ghost">💬 预览对话</span>
+          <div class="menu-anchor">
+            <span class="kebab">⋯</span>
+            <div class="menu">
+              <div class="menu-item"><span class="ico">💬</span>预览对话</div>
+              <div class="menu-item"><span class="ico">✏️</span>编辑智能体</div>
+              <div class="menu-item"><span class="ico">📄</span>复制智能体</div>
+              <div class="menu-item"><span class="ico">🕐</span>历史记录</div>
+              <div class="menu-sep"></div>
+              <div class="menu-item"><span class="ico">🛡</span>发布为系统级</div>
+              <div class="menu-item"><span class="ico">📋</span>发布历史</div>
+              <div class="menu-sep"></div>
+              <div class="menu-item danger"><span class="ico">🗑</span>删除</div>
+            </div>
+          </div>
+          <span class="btn-primary">配置与发布</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="col-head"><span class="tag after">改 后</span><span class="sub">卡片不再裁剪，色带自带圆角</span></div>
+    <div class="stage">
+      <div class="card">
+        <div class="accent"></div>
+        <div class="card-body">
+          <div class="top">
+            <div class="avatar" style="background:#eef2ff">◈</div>
+            <div style="flex:1">
+              <h3>test</h3>
+              <div class="meta">
+                <span class="chip-sm">通用助手 · NanZi</span>
+                <span class="chip-sm"><span class="dot"></span>已就绪</span>
+              </div>
+            </div>
+          </div>
+          <div class="desc">test</div>
+          <div class="caps">
+            <span class="cap">工具 29</span><span class="cap">MCP 0</span><span class="cap">技能 11</span>
+          </div>
+        </div>
+        <div class="foot">
+          <span class="btn-ghost">💬 预览对话</span>
+          <div class="menu-anchor">
+            <span class="kebab">⋯</span>
+            <div class="menu">
+              <div class="menu-item"><span class="ico">💬</span>预览对话</div>
+              <div class="menu-item"><span class="ico">✏️</span>编辑智能体</div>
+              <div class="menu-item"><span class="ico">📄</span>复制智能体</div>
+              <div class="menu-item"><span class="ico">🕐</span>历史记录</div>
+              <div class="menu-sep"></div>
+              <div class="menu-item"><span class="ico">🛡</span>发布为系统级</div>
+              <div class="menu-item"><span class="ico">📋</span>发布历史</div>
+              <div class="menu-sep"></div>
+              <div class="menu-item danger"><span class="ico">🗑</span>删除</div>
+            </div>
+          </div>
+          <span class="btn-primary">配置与发布</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>根因不是菜单定位写错了，是卡片容器裁掉了它。</b><br/>
+  卡片根元素带 <code>overflow-hidden</code>（原本是为了让顶部色带跟着卡片圆角走），而菜单是 <code>absolute bottom-full</code> 向上展开、高约 240px；
+  按钮又在卡片底部，于是菜单上半截跑到卡片外面，被 <code>overflow-hidden</code> 直接裁掉——「预览对话」和「编辑智能体」正好在最上面。<br/><br/>
+  <b>改法：</b>卡片根去掉 <code>overflow-hidden</code>，顶部色带自己加 <code>rounded-t-xl</code>。视觉上没有任何变化（色带仍然和卡片圆角吻合），但菜单能正常溢出显示。<br/><br/>
+  <b>「编辑智能体」没有丢。</b>它一直在菜单里第二项，只是被裁掉了。裁掉之后看起来就像功能消失了，这也是这类 bug 最误导人的地方——<b>入口还在，只是看不见</b>。
+</div>
+
+</body>
+</html>

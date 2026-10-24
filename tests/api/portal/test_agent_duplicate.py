@@ -30,11 +30,14 @@ async def _create_source_agent(
     client: AsyncClient,
     admin_key: str,
     *,
-    is_system: bool = False,
     engine_type: str = "LOCAL",
     publish: bool = True,
 ):
-    """建一个源智能体（可选发布 1 号版本），返回其创建响应与版本 id。"""
+    """建一个源智能体（可选发布 1 号版本），返回其创建响应与版本 id。
+
+    系统级不再由创建/编辑表单指定，需要系统级的用例请另调
+    ``POST /agents/{id}/system/publish``（见 test_duplicate_system_agent_yields_normal_agent）。
+    """
     name = f"dup-src-{unique_id()}"
     resp = await client.post(
         "/api/portal/agents/",
@@ -42,7 +45,6 @@ async def _create_source_agent(
             "name": name,
             "display_name": "复制源",
             "description": "源智能体描述",
-            "is_system": is_system,
             "is_enabled": True,
             "engine_type": engine_type,
             # RAGFLOW 模式强制要求 app_id，其余引擎用数据集配置
@@ -179,8 +181,15 @@ async def test_duplicate_system_agent_yields_normal_agent(db_session):
         f"dup_sys_{unique_id()}", role="admin", db=db_session
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        source, _ = await _create_source_agent(client, admin_key, is_system=True)
-        assert source["is_system"] is True
+        source, _ = await _create_source_agent(client, admin_key)
+        # 系统级只能通过「发布为系统级」获得：创建表单里的 is_system 已被忽略
+        published = await client.post(
+            f"/api/portal/agents/{source['id']}/system/publish",
+            json={"reason": "测试系统级复制"},
+            headers={"X-API-Key": admin_key},
+        )
+        assert published.status_code == 200, published.text
+        assert published.json()["is_system"] is True
 
         resp = await client.post(
             f"/api/portal/agents/{source['id']}/duplicate",

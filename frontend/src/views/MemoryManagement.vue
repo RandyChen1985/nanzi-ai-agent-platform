@@ -713,11 +713,13 @@ onMounted(async () => {
       <h1 class="text-xl sm:text-2xl font-bold tracking-normal text-gray-900 dark:text-white">记忆工作台</h1>
       <button
         type="button"
-        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-purple-600 shadow-sm transition-colors hover:border-purple-300 hover:bg-purple-50 cursor-pointer"
+        class="hidden sm:flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300 cursor-pointer"
         title="记忆系统设计规范与使用指南"
         @click="showSpecsModal = true"
       >
-        <span class="text-sm font-bold">?</span>
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
       </button>
       <span class="hidden sm:inline text-xs text-gray-400 truncate max-w-md">
         跨会话摘要 · 向量检索 · Redis 会话明细

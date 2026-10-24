@@ -105,10 +105,15 @@ async def test_list_agents_admin(mock_session, mock_user_admin):
     }
     mock_versions_result = MagicMock()
     mock_versions_result.scalars.return_value.all.return_value = [published]
-    
+
+    # 创建者显示名反查（real_name 优先，回落 user_name）
+    mock_creator_result = MagicMock()
+    mock_creator_result.all.return_value = [("other", "其他用户")]
+
     mock_session.execute.side_effect = [
         mock_list_result, # list agents
         mock_count_result, # counts
+        mock_creator_result, # creator display names
         mock_versions_result, # published versions
     ]
     

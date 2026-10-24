@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>智能体中心 · 顶部区域重排</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #eef1f6;
+    color: #111827;
+    padding: 32px 28px 64px;
+  }
+  .page-title { font-size: 15px; font-weight: 700; color: #334155; margin-bottom: 6px; }
+  .page-note { font-size: 12.5px; color: #64748b; margin-bottom: 28px; line-height: 1.7; max-width: 1100px; }
+  .page-note code { background: #e2e8f0; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+
+  .section { margin-bottom: 40px; }
+  .section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .section-tag {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 6px;
+    background: #1677ff; color: #fff; font-size: 12px; font-weight: 700;
+  }
+  .section-title { font-size: 14px; font-weight: 700; color: #1e293b; }
+  .section-desc { font-size: 12px; color: #64748b; margin-left: 4px; }
+
+  /* 模拟应用内容区 */
+  .app {
+    background: #f5f7fa;
+    border: 1px solid #dfe4ec;
+    border-radius: 14px;
+    padding: 26px 28px 30px;
+    position: relative;
+  }
+  .app.narrow { max-width: 1024px; }
+  /* 故意留出浮层空间：真实页面里浮层盖住下方卡片，原型里要能看全 */
+  .app.has-popover { margin-bottom: 330px; }
+
+  /* ── 第 1 行：标题 + 主操作 ── */
+  .head-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 18px;
+  }
+  .head-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.4px; }
+  .icon-btn {
+    width: 26px; height: 26px; border-radius: 50%;
+    border: 1px solid #d7dde8; background: #fff;
+    color: #64748b; font-size: 13px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .guide-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 26px; padding: 0 11px; border-radius: 999px;
+    border: 1px solid #bfdbfe; background: #eff6ff;
+    color: #1d4ed8; font-size: 12px; font-weight: 600;
+  }
+  .head-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 38px; padding: 0 15px; border-radius: 9px;
+    font-size: 13.5px; font-weight: 600; cursor: pointer;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .btn-ghost { background: #fff; border-color: #dfe4ec; color: #334155; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+  .btn-ghost .badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 17px; height: 17px; padding: 0 4px; margin-left: 2px;
+    border-radius: 999px; background: #f59e0b; color: #fff;
+    font-size: 10.5px; font-weight: 700;
+  }
+  .btn-primary { background: #1677ff; color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,.25); }
+  .btn-primary .caret { margin-left: 4px; font-size: 10px; opacity: .9; }
+
+  /* ── 第 2 行：搜索 + 视图 + 高级筛选 ── */
+  .search-row {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 12px;
+  }
+  .search-box {
+    position: relative; flex: 1 1 auto; min-width: 220px;
+  }
+  .search-box input {
+    width: 100%; height: 40px; padding: 0 14px 0 40px;
+    border-radius: 10px; border: 1px solid #dfe4ec; background: #fff;
+    font-size: 13.5px; color: #334155; outline: none;
+    box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  }
+  .search-box input::placeholder { color: #94a3b8; }
+  .search-box .glass {
+    position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
+    width: 15px; height: 15px; border: 2px solid #94a3b8; border-radius: 50%;
+  }
+  .search-box .glass::after {
+    content: ''; position: absolute; right: -5px; bottom: -4px;
+    width: 6px; height: 2px; background: #94a3b8; transform: rotate(45deg);
+  }
+
+  .tool-group {
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  }
+  .seg {
+    display: flex; align-items: center; gap: 2px;
+    padding: 3px; border-radius: 10px;
+    border: 1px solid #dfe4ec; background: #eef1f6;
+  }
+  .seg button {
+    height: 32px; padding: 0 11px; border: 0; border-radius: 7px;
+    background: transparent; color: #64748b; font-size: 12.5px; font-weight: 600;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .seg button.on {
+    background: #fff; color: #1677ff; box-shadow: 0 1px 3px rgba(15,23,42,.10);
+  }
+  .seg .sq { width: 14px; height: 14px; border: 2px solid currentColor; border-radius: 3px; opacity: .75; }
+  .seg .ln { width: 14px; height: 14px; display: flex; flex-direction: column; justify-content: space-between; opacity: .75; }
+  .seg .ln i { display: block; height: 2px; background: currentColor; border-radius: 1px; }
+
+  .filter-btn { position: relative; }
+  .filter-btn .dot {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 17px; height: 17px; padding: 0 4px; margin-left: 2px;
+    border-radius: 999px; background: #1677ff; color: #fff;
+    font-size: 10.5px; font-weight: 700;
+  }
+
+  /* ── 第 3 行：快捷分段 ── */
+  .tabs-row { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+  .tab {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 34px; padding: 0 13px; border-radius: 9px;
+    border: 1px solid #e5e7eb; background: #fff;
+    color: #475569; font-size: 12.5px; font-weight: 600;
+    white-space: nowrap; flex-shrink: 0; cursor: pointer;
+  }
+  .tab .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+    background: #f1f5f9; color: #64748b; font-size: 11px; font-weight: 700;
+  }
+  .tab.on { background: #1677ff; border-color: #1677ff; color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,.22); }
+  .tab.on .num { background: rgba(255,255,255,.22); color: #fff; }
+  .total-count { font-size: 12.5px; font-weight: 600; color: #64748b; margin-left: 6px; }
+  .tabs-spacer { flex: 1 1 auto; }
+  .tabs-hint { font-size: 11.5px; color: #94a3b8; white-space: nowrap; }
+
+  /* ── 激活筛选回显 ── */
+  .active-filters {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-top: 12px; font-size: 12px;
+  }
+  .active-filters .label { color: #64748b; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 26px; padding: 0 9px; border-radius: 7px;
+    background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8;
+    font-size: 12px; font-weight: 600;
+  }
+  .chip .x { color: #60a5fa; font-weight: 700; cursor: pointer; }
+  .clear-all { color: #64748b; font-size: 12px; text-decoration: underline; cursor: pointer; }
+
+  /* ── 高级筛选面板 ── */
+  .panel-wrap { position: relative; }
+  .panel {
+    position: absolute; right: 0; top: 46px; z-index: 30;
+    width: 580px; padding: 16px 16px 14px;
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+    box-shadow: 0 18px 40px rgba(15,23,42,.16);
+  }
+  .panel-title {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px; font-weight: 700; color: #1e293b; margin-bottom: 14px;
+  }
+  .panel-title .close { color: #94a3b8; font-size: 14px; cursor: pointer; }
+  .panel-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .field label { display: block; font-size: 11.5px; font-weight: 600; color: #64748b; margin-bottom: 6px; }
+  .field select {
+    width: 100%; height: 36px; padding: 0 10px;
+    border-radius: 8px; border: 1px solid #dfe4ec; background: #fff;
+    font-size: 13px; color: #334155; outline: none;
+  }
+  .panel-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 16px; padding-top: 13px; border-top: 1px solid #f1f5f9;
+  }
+  .panel-foot .reset { font-size: 12.5px; color: #64748b; cursor: pointer; }
+  .panel-foot .apply {
+    height: 34px; padding: 0 18px; border: 0; border-radius: 8px;
+    background: #1677ff; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+
+  /* 卡片占位 */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 26px; }
+  .card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+    overflow: hidden; box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  }
+  .card .accent { height: 5px; }
+  .card .body { padding: 16px 18px 14px; }
+  .card .top { display: flex; align-items: flex-start; gap: 11px; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 17px;
+  }
+  .card h3 { font-size: 14.5px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+  .badge-sys {
+    font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px;
+    background: #eef2ff; color: #4338ca; border: 1px solid #e0e7ff;
+  }
+  .badge-review {
+    font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px;
+    background: #fffbeb; color: #b45309; border: 1px solid #fde68a;
+  }
+  .card p { font-size: 12.5px; color: #64748b; line-height: 1.6; margin-top: 6px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+  .mini {
+    font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;
+    background: #f8fafc; border: 1px solid #eef2f7; color: #475569;
+  }
+  .freeze {
+    display: flex; align-items: center; gap: 7px;
+    margin: 12px 0 0; padding: 7px 10px; border-radius: 8px;
+    background: #fffbeb; border: 1px solid #fde68a;
+    color: #92400e; font-size: 11px; font-weight: 600;
+  }
+
+  /* 标注 */
+  .anno {
+    position: absolute; font-size: 11px; font-weight: 700;
+    background: #fff1f2; color: #be123c; border: 1px dashed #fda4af;
+    padding: 2px 7px; border-radius: 5px; white-space: nowrap;
+  }
+  .legend { margin-top: 14px; font-size: 12px; color: #475569; line-height: 1.9; }
+  .legend b { color: #0f172a; }
+  .legend .k { display: inline-block; min-width: 18px; height: 18px; line-height: 18px;
+    text-align: center; border-radius: 5px; background: #1677ff; color: #fff;
+    font-size: 11px; font-weight: 700; margin-right: 6px; }
+</style>
+</head>
+<body>
+
+<div class="page-title">智能体中心 · 顶部区域重排原型</div>
+<div class="page-note">
+  目标：<code>发布审核</code> 与 <code>新建智能体</code> 固定右上角；<code>搜索</code> 独占一栏；
+  <code>批量 / 卡片 / 列表</code> 跟在搜索后面；<code>状态 / 类型</code> 等低频条件收进「高级筛选」面板，
+  面板收起时用 chip 回显，避免「筛了但忘了」。
+</div>
+
+<!-- ═══════════ A. 默认态 ═══════════ -->
+<div class="section">
+  <div class="section-head">
+    <span class="section-tag">A</span>
+    <span class="section-title">默认态</span>
+    <span class="section-desc">— 1440 宽度，两行搞定，不再有第三行挤压</span>
+  </div>
+
+  <div class="app" style="max-width:1160px">
+    <div class="head-row">
+      <div class="head-left">
+        <span class="h1">智能体中心</span>
+        <span class="total-count">共 8 个</span>
+        <span class="icon-btn">?</span>
+        <span class="guide-pill">ⓘ 显示指引</span>
+      </div>
+      <div class="head-right">
+        <button class="btn btn-ghost">🛡 发布审核 <span class="badge">2</span></button>
+        <button class="btn btn-primary">＋ 新建智能体 <span class="caret">▾</span></button>
+      </div>
+    </div>
+
+    <div class="search-row">
+      <div class="search-box">
+        <span class="glass"></span>
+        <input placeholder="搜索名称或标识符…" />
+      </div>
+      <div class="tool-group">
+        <div class="seg">
+          <button>批量</button>
+          <button class="on"><span class="sq"></span></button>
+          <button><span class="ln"><i></i><i></i><i></i></span></button>
+        </div>
+        <button class="btn btn-ghost filter-btn">⚙ 筛选</button>
+      </div>
+    </div>
+
+
+    <div class="cards">
+      <div class="card">
+        <div class="accent" style="background:#4f46e5"></div>
+        <div class="body">
+          <div class="top">
+            <div class="avatar" style="background:#eef2ff;color:#4338ca">◈</div>
+            <div style="min-width:0">
+              <h3>合同审查助手 <span class="badge-sys">系统内置</span></h3>
+              <p>面向法务的合同条款审查，识别风险条款并给出修改建议。</p>
+            </div>
+          </div>
+          <div class="chips"><span class="mini">LOCAL</span><span class="mini">v3</span><span class="mini">6 工具</span><span class="mini">12 次调用</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="accent" style="background:#f59e0b"></div>
+        <div class="body">
+          <div class="top">
+            <div class="avatar" style="background:#fffbeb;color:#b45309">⏳</div>
+            <div style="min-width:0">
+              <h3>周报生成器 <span class="badge-review">审核中</span></h3>
+              <p>按周汇总任务与工时，生成可直接发送的周报草稿。</p>
+            </div>
+          </div>
+          <div class="chips"><span class="mini">LOCAL</span><span class="mini">v2</span><span class="mini">3 工具</span></div>
+          <div class="freeze">❄ 已冻结 · 10-24 08:24 提交审核，期间不能编辑</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="accent" style="background:#10b981"></div>
+        <div class="body">
+          <div class="top">
+            <div class="avatar" style="background:#ecfdf5;color:#047857">🧹</div>
+            <div style="min-width:0">
+              <h3>数据清洗专家</h3>
+              <p>对 CSV / Excel 做缺失值填充、去重与格式规整。</p>
+            </div>
+          </div>
+          <div class="chips"><span class="mini">LOCAL</span><span class="mini">v1（草稿）</span><span class="mini">2 工具</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="k">1</span><b>主操作右上角固定</b>——「发布审核」与「新建」不再和筛选挤在同一行，宽度再窄也不会掉到第二行。<br/>
+    <span class="k">2</span><b>搜索独占一栏</b>——输入框吃掉剩余宽度，长名称/标识符一眼看全，不再被压成 208px。<br/>
+    <span class="k">3</span><b>视图切换跟随搜索</b>——批量/卡片/列表属于「看的方式」，紧挨着搜索框更符合心智。<br/>
+    <span class="k">4</span><b>取消 tab，全部进面板</b>——原 tab 里的「就绪 / 待完善 / 系统级 / 自定义 / 类型」都在面板里，顶部少一整行。
+  </div>
+</div>
+
+<!-- ═══════════ B. 高级筛选展开 ═══════════ -->
+<div class="section">
+  <div class="section-head">
+    <span class="section-tag">B</span>
+    <span class="section-title">高级筛选面板展开</span>
+    <span class="section-desc">— 点「筛选」就地展开，选完点「应用」</span>
+  </div>
+
+  <div class="app has-popover" style="max-width:1160px">
+    <div class="head-row">
+      <div class="head-left">
+        <span class="h1">智能体中心</span>
+        <span class="total-count">共 8 个</span>
+        <span class="icon-btn">?</span>
+        <span class="guide-pill">ⓘ 显示指引</span>
+      </div>
+      <div class="head-right">
+        <button class="btn btn-ghost">🛡 发布审核 <span class="badge">2</span></button>
+        <button class="btn btn-primary">＋ 新建智能体 <span class="caret">▾</span></button>
+      </div>
+    </div>
+
+    <div class="search-row">
+      <div class="search-box">
+        <span class="glass"></span>
+        <input placeholder="搜索名称或标识符…" />
+      </div>
+      <div class="tool-group">
+        <div class="seg">
+          <button>批量</button>
+          <button class="on"><span class="sq"></span></button>
+          <button><span class="ln"><i></i><i></i><i></i></span></button>
+        </div>
+        <div class="panel-wrap">
+          <button class="btn btn-ghost filter-btn" style="border-color:#1677ff;color:#1677ff">⚙ 筛选 <span class="dot">2</span></button>
+
+          <div class="panel">
+            <div class="panel-title">高级筛选 <span class="close">✕</span></div>
+            <div class="panel-grid">
+              <div class="field">
+                <label>状态</label>
+                <select><option>全部</option><option>已启用</option><option>已禁用</option></select>
+              </div>
+              <div class="field">
+                <label>类型</label>
+                <select><option>通用助手</option><option>ChatBI</option><option>知识库助手</option></select>
+              </div>
+              <div class="field">
+                <label>引擎</label>
+                <select><option>LOCAL</option><option>RAGFlow</option><option>OpenClaw</option></select>
+              </div>
+              <div class="field">
+                <label>就绪度</label>
+                <select><option>全部</option><option>已就绪</option><option>待完善</option></select>
+              </div>
+              <div class="field">
+                <label>来源</label>
+                <select><option>全部</option><option>系统级</option><option>自定义</option></select>
+              </div>
+              <div class="field">
+                <label>排序</label>
+                <select><option>手动排序</option><option>最近更新</option><option>调用最多</option></select>
+              </div>
+            </div>
+            <div class="panel-foot">
+              <span class="reset">重置</span>
+              <button class="apply">应用</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="legend" style="margin-top:22px">
+      <span class="k">5</span><b>面板是弹层，不挤压列表</b>——打开时盖住下方内容，关闭即恢复，页面高度不变。<br/>
+      <span class="k">6</span><b>「筛选」带数字角标</b>——有几个条件生效一眼可见，不用打开面板确认。
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ C. 有生效筛选 ═══════════ -->
+<div class="section">
+  <div class="section-head">
+    <span class="section-tag">C</span>
+    <span class="section-title">筛选生效时的回显</span>
+    <span class="section-desc">— 面板收起来也得知道自己筛了什么</span>
+  </div>
+
+  <div class="app" style="max-width:1160px">
+    <div class="head-row">
+      <div class="head-left">
+        <span class="h1">智能体中心</span>
+        <span class="total-count">共 8 个</span>
+        <span class="icon-btn">?</span>
+        <span class="guide-pill">ⓘ 显示指引</span>
+      </div>
+      <div class="head-right">
+        <button class="btn btn-ghost">🛡 发布审核 <span class="badge">2</span></button>
+        <button class="btn btn-primary">＋ 新建智能体 <span class="caret">▾</span></button>
+      </div>
+    </div>
+
+    <div class="search-row">
+      <div class="search-box">
+        <span class="glass"></span>
+        <input placeholder="搜索名称或标识符…" value="合同" />
+      </div>
+      <div class="tool-group">
+        <div class="seg">
+          <button>批量</button>
+          <button class="on"><span class="sq"></span></button>
+          <button><span class="ln"><i></i><i></i><i></i></span></button>
+        </div>
+        <button class="btn btn-ghost filter-btn" style="border-color:#1677ff;color:#1677ff">⚙ 筛选 <span class="dot">2</span></button>
+      </div>
+    </div>
+
+
+    <div class="active-filters">
+      <span class="label">已筛选：</span>
+      <span class="chip">状态：已启用 <span class="x">✕</span></span>
+      <span class="chip">类型：知识库助手 <span class="x">✕</span></span>
+      <span class="chip">就绪度：已就绪 <span class="x">✕</span></span>
+      <span class="clear-all">清除全部</span>
+      <span class="label" style="margin-left:auto">找到 1 个智能体</span>
+    </div>
+
+    <div class="legend" style="margin-top:22px">
+      <span class="k">7</span><b>chip 回显 + 结果数</b>——条件在面板里也不怕「忘了自己筛过」，单个 ✕ 可移除，也能一键清空。<br/>
+      <span class="k">8</span><b>只在有条件时占一行</b>——没筛选时这行不渲染，日常浏览不多占高度。
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ D. 窄屏 ═══════════ -->
+<div class="section">
+  <div class="section-head">
+    <span class="section-tag">D</span>
+    <span class="section-title">窄屏（1024）</span>
+    <span class="section-desc">— 主操作仍在右上，搜索与工具自动换行但整组不拆散</span>
+  </div>
+
+  <div class="app narrow">
+    <div class="head-row">
+      <div class="head-left">
+        <span class="h1" style="font-size:22px">智能体中心</span>
+        <span class="icon-btn">?</span>
+      </div>
+      <div class="head-right">
+        <button class="btn btn-ghost" style="height:34px;padding:0 12px;font-size:12.5px">🛡 审核 <span class="badge">2</span></button>
+        <button class="btn btn-primary" style="height:34px;padding:0 12px;font-size:12.5px">＋ 新建 <span class="caret">▾</span></button>
+      </div>
+    </div>
+
+    <div class="search-row" style="flex-wrap:wrap">
+      <div class="search-box" style="flex:1 1 100%">
+        <span class="glass"></span>
+        <input placeholder="搜索名称或标识符…" />
+      </div>
+      <div class="tool-group" style="width:100%;justify-content:flex-end">
+        <div class="seg">
+          <button>批量</button>
+          <button class="on"><span class="sq"></span></button>
+          <button><span class="ln"><i></i><i></i><i></i></span></button>
+        </div>
+        <button class="btn btn-ghost filter-btn">⚙ 筛选</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="legend">
+    <span class="k">9</span><b>窄屏只换行、不拆组</b>——搜索框独占一行，工具组整体靠右换到第二行，主操作始终在头部右侧。<br/>
+    <span class="k">10</span><b>窄屏只剩两行</b>——没有 tab 行之后，1024 下顶部只占两行。<br/><span class="k">11</span><b>总数移到标题旁</b>——原来靠「全部 8」那个 tab 显示，tab 取消后由「共 8 个」承担。
+  </div>
+</div>
+
+<div class="page-note" style="margin-top:8px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px 18px">
+  <b style="color:#0f172a">tab 行已整排取消。</b><br/>
+  原来 7 个 tab（全部 / 就绪 / 待完善 / 通用助手 / ChatBI / 知识库 / 自定义）承载的筛选维度，现在全部落在「筛选」面板里：
+  <b>状态</b>、<b>类型</b>、<b>引擎</b>、<b>就绪度</b>（原「就绪 / 待完善」）、<b>来源</b>（原「系统级 / 自定义」）、<b>排序</b>。<br/>
+  <span style="color:#64748b">「全部 8」这个计数由标题旁的「共 8 个」承担，信息没丢。代价是少了一次点击直达——换来的是顶部永久少一整行、且所有维度只有一处入口，不会再出现「tab 和下拉各选一个、结果全空」。</span>
+</div>
+
+</body>
+</html>

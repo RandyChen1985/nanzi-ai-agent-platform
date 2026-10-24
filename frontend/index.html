@@ -20,9 +20,204 @@
       content="NanZi AI Agent - 统一 AI 智能体服务、ChatBI、实时分析"
     />
     <title>NanZi AI Agent</title>
+    <style>
+      /* 首屏骨架：主包下载解析期间替代白屏。
+         Vue 挂载到 #app 时会清空容器，骨架自动消失，不需要额外的移除逻辑。 */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #f5f7fa;
+      }
+      .boot-skeleton {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        background: #f5f7fa;
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        z-index: 1;
+      }
+      .boot-skeleton .sk-side {
+        width: 240px;
+        flex-shrink: 0;
+        background: #fff;
+        border-right: 1px solid #e8edf4;
+        padding: 18px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .boot-skeleton .sk-logo {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-bottom: 10px;
+      }
+      .boot-skeleton .sk-logo-mark {
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        background: #1677ff;
+        opacity: 0.85;
+      }
+      .boot-skeleton .sk-main {
+        flex: 1;
+        min-width: 0;
+        padding: 22px 26px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .boot-skeleton .sk-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 4px;
+      }
+      .boot-skeleton .sk-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 6px;
+      }
+      .boot-skeleton .sk-card {
+        background: #fff;
+        border: 1px solid #e8edf4;
+        border-radius: 12px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .boot-skeleton .sk-bar {
+        border-radius: 5px;
+        background: linear-gradient(90deg, #eef2f7 25%, #e3e9f2 37%, #eef2f7 63%);
+        background-size: 400% 100%;
+        animation: sk-shimmer 1.4s ease infinite;
+      }
+      @keyframes sk-shimmer {
+        0% {
+          background-position: 100% 50%;
+        }
+        100% {
+          background-position: 0 50%;
+        }
+      }
+      .boot-skeleton .sk-hint {
+        position: absolute;
+        left: 50%;
+        bottom: 28px;
+        transform: translateX(-50%);
+        font-size: 12px;
+        color: #94a3b8;
+        letter-spacing: 0.3px;
+        white-space: nowrap;
+      }
+      @media (max-width: 1023px) {
+        .boot-skeleton .sk-side {
+          display: none;
+        }
+        .boot-skeleton .sk-row {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-skeleton .sk-bar {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <!-- 骨架屏：主包加载完成后由 Vue 挂载自动清除 -->
+      <div class="boot-skeleton" aria-hidden="true">
+        <div class="sk-side">
+          <div class="sk-logo">
+            <div class="sk-logo-mark"></div>
+            <div class="sk-bar" style="width: 92px; height: 13px"></div>
+          </div>
+          <div class="sk-bar" style="width: 100%; height: 30px"></div>
+          <div class="sk-bar" style="width: 88%; height: 30px"></div>
+          <div class="sk-bar" style="width: 94%; height: 30px"></div>
+          <div class="sk-bar" style="width: 78%; height: 30px"></div>
+          <div class="sk-bar" style="width: 90%; height: 30px"></div>
+          <div class="sk-bar" style="width: 70%; height: 30px"></div>
+        </div>
+        <div class="sk-main">
+          <div class="sk-topbar">
+            <div class="sk-bar" style="width: 190px; height: 26px"></div>
+            <div style="display: flex; gap: 10px">
+              <div class="sk-bar" style="width: 96px; height: 34px"></div>
+              <div class="sk-bar" style="width: 124px; height: 34px"></div>
+            </div>
+          </div>
+          <div class="sk-bar" style="width: 100%; height: 38px"></div>
+          <div class="sk-row">
+            <div class="sk-card">
+              <div style="display: flex; gap: 10px; align-items: center">
+                <div class="sk-bar" style="width: 38px; height: 38px; border-radius: 10px"></div>
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+                  <div class="sk-bar" style="width: 62%; height: 13px"></div>
+                  <div class="sk-bar" style="width: 42%; height: 10px"></div>
+                </div>
+              </div>
+              <div class="sk-bar" style="width: 100%; height: 10px; margin-top: 4px"></div>
+              <div class="sk-bar" style="width: 82%; height: 10px"></div>
+              <div style="display: flex; gap: 6px; margin-top: 4px">
+                <div class="sk-bar" style="width: 54px; height: 20px"></div>
+                <div class="sk-bar" style="width: 44px; height: 20px"></div>
+                <div class="sk-bar" style="width: 62px; height: 20px"></div>
+              </div>
+            </div>
+            <div class="sk-card">
+              <div style="display: flex; gap: 10px; align-items: center">
+                <div class="sk-bar" style="width: 38px; height: 38px; border-radius: 10px"></div>
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+                  <div class="sk-bar" style="width: 55%; height: 13px"></div>
+                  <div class="sk-bar" style="width: 48%; height: 10px"></div>
+                </div>
+              </div>
+              <div class="sk-bar" style="width: 100%; height: 10px; margin-top: 4px"></div>
+              <div class="sk-bar" style="width: 68%; height: 10px"></div>
+              <div style="display: flex; gap: 6px; margin-top: 4px">
+                <div class="sk-bar" style="width: 48px; height: 20px"></div>
+                <div class="sk-bar" style="width: 58px; height: 20px"></div>
+              </div>
+            </div>
+            <div class="sk-card">
+              <div style="display: flex; gap: 10px; align-items: center">
+                <div class="sk-bar" style="width: 38px; height: 38px; border-radius: 10px"></div>
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+                  <div class="sk-bar" style="width: 58%; height: 13px"></div>
+                  <div class="sk-bar" style="width: 36%; height: 10px"></div>
+                </div>
+              </div>
+              <div class="sk-bar" style="width: 100%; height: 10px; margin-top: 4px"></div>
+              <div class="sk-bar" style="width: 76%; height: 10px"></div>
+              <div style="display: flex; gap: 6px; margin-top: 4px">
+                <div class="sk-bar" style="width: 52px; height: 20px"></div>
+                <div class="sk-bar" style="width: 40px; height: 20px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="sk-hint">正在加载…</div>
+      </div>
+    </div>
+    <script>
+      /* 骨架兜底：主包异常（构建中访问、网络中断）时骨架会一直转，不能让用户干等。
+         6 秒后补一句提示，告诉他刷新即可，而不是继续盯着动画。 */
+      (function () {
+        window.setTimeout(function () {
+          var sk = document.querySelector(".boot-skeleton");
+          if (!sk) return; // 已经挂载完成，骨架被 Vue 清掉了
+          var hint = sk.querySelector(".sk-hint");
+          if (hint) hint.textContent = "加载时间较长，若长时间无响应请刷新页面";
+        }, 6000);
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -109,9 +109,10 @@ def test_agent_action_labels_describe_editing_and_publishing():
 def test_agent_center_filters_and_labels_cards_by_primary_type():
     management = Path("frontend/src/views/AgentManagement.vue").read_text()
 
-    assert 'value="GENERAL">智能体类型：通用助手' in management
-    assert 'value="CHATBI">智能体类型：ChatBI' in management
-    assert 'value="KNOWLEDGE_BASE">智能体类型：知识库助手' in management
+    # 类型选项已移入「筛选」面板，字段名从下拉自带前缀改为面板 label「类型」
+    assert 'value="GENERAL">通用助手' in management
+    assert 'value="CHATBI">ChatBI' in management
+    assert 'value="KNOWLEDGE_BASE">知识库助手' in management
     assert "a.agent_type || 'GENERAL'" in management
     assert "getAgentTypeLabel(agent)" in management
     assert "getAgentTypeBadgeClass(agent)" in management
@@ -127,10 +128,23 @@ def test_agent_center_card_ux_hierarchy_and_primary_cta():
     assert "runPrimaryCardAction" in management
     assert "followReadinessGap" in management
     assert "formatReadinessMissing" in management
-    assert "line-clamp-2 min-h-[2.5rem]" in management
+    # 描述改为「有才渲染」：原来固定 min-h-[2.5rem] 让「暂无描述」白占两行
+    assert 'v-if="agent.description"' in management
+    assert "line-clamp-2" in management
     assert "grayscale opacity-60" in management
+    assert "累计调用 ${agent.execution_count ?? 0} 次" in management
+    # 归属信息：卡片 footer 左侧两行小字（创建者 / 更新时间），替代原来的「预览对话」文字按钮位置。
+    # 管理员要能一眼看出是谁建的、多久没动过；创建者只对管理员渲染（普通用户只有自己的智能体）。
     assert "更新于 {{ formatDate(agent.updated_at) }}" in management
-    assert "调用 {{ agent.execution_count ?? 0 }} 次" in management
+    assert "创建者：{{ agent.created_by_name }}" in management
+    assert "isAdminViewer && agent.created_by_name" in management
+    # meta 行不重复展示创建者，避免同一信息在一张卡上出现两次
+    assert "· {{ agent.created_by_name }}" not in management
+    # 审核中：原型里的冻结条 + 主按钮锁定（点进去再吃 409 的体验太差）
+    assert "pendingReviewHint(agent)" in management
+    assert "已冻结 · " in management
+    assert "=== 'frozen'" in management
+    assert "审核中不能修改配置" in management
     assert ">工具</span>" in management or "font-normal\">工具</span>" in management
     assert ">技能</span>" in management or "font-normal\">技能</span>" in management
     assert "formatSkillCountLabel" in management
@@ -157,7 +171,10 @@ def test_main_agent_is_fixed_enabled_and_not_deletable_in_management():
     assert "固定启用" in management
     assert ':disabled="isMainAgent(agent)"' in management
     assert 'v-if="agent.is_editable !== false && !isMainAgent(agent)"' in management
-    assert '!agent.is_system && !isMainAgent(agent)' in management
+    # 删除入口的三个排除条件：系统级、主助手、审核中（条件已拆成多行可读形式）
+    assert "!agent.is_system &&" in management
+    assert "!isMainAgent(agent) &&" in management
+    assert "!isPendingReview(agent)" in management
 
 
 def test_agent_list_keeps_continue_configuration_action_horizontal():
@@ -226,11 +243,13 @@ def test_agent_edit_dialog_is_compact_and_locks_engine_type_only():
     edit_dialog = management[management.index('v-if="showAgentModal && isEditingAgent"'):]
 
     assert 'size="max-w-4xl"' in edit_dialog[:300]
-    # 系统智能体标记从 Modal 的 header-extra 槽位移入弹窗主体配置栏
-    assert "设为系统智能体" in management
+    # 系统级不再通过编辑表单切换：只能走「发布为系统级」或申请审核（有事件、有流程），
+    # 表单里只保留一条只读说明
+    assert "设为系统智能体" not in management
+    assert "「是否系统级」不在此处切换" in management
+    assert "发布为系统级" in management
     assert '<template #footer>' in management
-    assert "系统智能体" in management
-    assert "平台官方内置智能体" in management
+    assert "系统级智能体" in management
     assert "排序权重 (Sort Order)" not in edit_dialog[:5000]
     assert 'title="仅影响聊天页面的智能体选择列表顺序，值越大越靠前"' in management
     assert "执行引擎不可修改" in management

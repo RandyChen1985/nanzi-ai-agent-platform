@@ -1143,22 +1143,21 @@ onMounted(async () => {
           <h1 class="text-2xl font-bold tracking-normal text-gray-900">元数据管理</h1>
           <button
             type="button"
-            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 cursor-pointer"
+            class="hidden sm:flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300 cursor-pointer"
             title="元数据流程与设计规范"
             @click="showSpecModal = true"
           >
-            <span class="text-sm font-bold">?</span>
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
           </button>
           <button
             v-if="!showFlowGuide"
             type="button"
-            class="hidden sm:inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50/70 px-2.5 py-0.5 text-xs font-medium text-blue-700 hover:bg-blue-100 hover:text-blue-800 transition-colors cursor-pointer"
+            class="hidden shrink-0 whitespace-nowrap text-xs font-medium text-gray-500 underline-offset-2 transition-colors hover:text-primary hover:underline cursor-pointer sm:inline"
             title="重新在页面顶部显示流程引导"
             @click="restoreFlowGuide"
           >
-            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
             <span class="whitespace-nowrap">显示指引</span>
           </button>
         </div>

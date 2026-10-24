@@ -547,6 +547,14 @@ _RAW_SEED: List[BuiltinMenuNode] = [
         parent_code="menu:agent_management",
     ),
     BuiltinMenuNode(
+        # 发布为系统级 / 下架 / 审核发布申请，一个权限点覆盖整条生命周期：
+        # 拆成三个只会让「谁能审核却不能下架」这类半吊子配置变多
+        code="element:agent:system_publish",
+        node_type=NODE_ELEMENT,
+        label="发布审核与系统级上下架",
+        parent_code="menu:agent_management",
+    ),
+    BuiltinMenuNode(
         code="element:skills:admin",
         node_type=NODE_ELEMENT,
         label="管理平台技能与审核",

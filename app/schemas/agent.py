@@ -111,6 +111,9 @@ class AIAgentResponse(AIAgentBase):
     created_at: datetime
     updated_at: datetime
     created_by: Optional[str] = None
+    # 创建者显示名（real_name 优先，回落 user_name）。列表接口批量反查后填充，
+    # 供管理员在卡片上辨认归属，不必再点进详情。
+    created_by_name: Optional[str] = None
     owner_group: Optional[str] = None
     is_editable: bool = True # Computed field: true if user is owner or admin
     execution_count: int = 0
@@ -129,6 +132,13 @@ class AIAgentResponse(AIAgentBase):
     # 已发布版本的工具失效摘要：null 表示正常或没有已发布版本
     tool_issue: Optional[AgentToolIssue] = None
     onboarding_step: str = "COMPLETE"
+    # 系统级流程状态：NONE / PENDING_REVIEW。
+    # 这两列刻意不在 ORM 声明（见 agent_system_columns.py），由 agent_manager 在返回前
+    # 用原生 SQL 批量填充到对象上；这里给默认值，保证未迁移时序列化不炸。
+    system_status: str = "NONE"
+    system_pending_request_id: Optional[str] = None
+    # 待审申请单的提交时间（仅 PENDING_REVIEW 有值），卡片冻结条据此显示「等了多久」
+    system_requested_at: Optional[datetime] = None
     # 已发布版本的「是否允许手动切换模型」；None 表示无已发布版本，前端按允许处理
     allow_model_switch: Optional[bool] = None
     # versions: List[AIAgentVersionResponse] = [] # Optional
@@ -239,3 +249,89 @@ class AgentExecutionHistoryListResponse(BaseModel):
     page: int
     page_size: int
     items: List[AgentExecutionHistoryResponse]
+
+
+# ---------------------------------------------------------------------------
+# 系统级发布（申请 / 审核 / 发布 / 下架 / 历史）
+# ---------------------------------------------------------------------------
+
+
+class AgentSystemRequestCreate(BaseModel):
+    """提交发布申请。理由可选，最多 500 字，供审核人参考。"""
+
+    comment: Optional[str] = Field(default=None, max_length=500)
+
+
+class AgentSystemReviewRequest(BaseModel):
+    """审核动作。通过时 comment 可选；驳回时必填（服务层校验）。"""
+
+    comment: Optional[str] = Field(default=None, max_length=500)
+
+
+class AgentSystemPublishRequest(BaseModel):
+    """直接发布为系统级。不涉及版本选择——发布只改状态。"""
+
+    reason: Optional[str] = Field(default=None, max_length=500)
+    # 上次下架若通知过用户，这次重新上架默认也通知；这里允许显式关掉
+    notify_restore: bool = True
+
+
+class AgentSystemUnpublishRequest(BaseModel):
+    """下架。原因必填；notify 默认开，关掉时只在事件里记受影响人数。"""
+
+    reason: str = Field(min_length=1, max_length=500)
+    notify: bool = True
+
+
+class AgentSystemRequestItem(BaseModel):
+    id: str
+    agent_id: str
+    agent_name: str
+    agent_identifier: str
+    engine_type: Optional[str] = None
+    status: str
+    request_comment: Optional[str] = None
+    requested_by: Optional[int] = None
+    # 审核人要看「谁提交的」，只有 user_id 等于没法判断
+    requested_by_name: Optional[str] = None
+    requested_at: datetime
+    waiting_hours: float = 0
+
+
+class AgentSystemRequestDetail(AgentSystemRequestItem):
+    snapshot: Optional[dict] = None
+    requested_by_name: Optional[str] = None
+    reviewed_by: Optional[int] = None
+    reviewed_by_name: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    review_comment: Optional[str] = None
+
+
+class AgentSystemHistoryEntry(BaseModel):
+    kind: str  # request / event
+    id: str
+    at: Optional[datetime] = None
+    # at 对已审完的申请取审核时间，原始提交时间另存，便于同时展示「提交于 / 审于」
+    requested_at: Optional[datetime] = None
+    reviewed_at: Optional[datetime] = None
+    status: Optional[str] = None
+    action: Optional[str] = None
+    actor_name: Optional[str] = None
+    comment: Optional[str] = None
+    review_comment: Optional[str] = None
+    reason: Optional[str] = None
+    version_number: Optional[int] = None
+    affected_user_count: Optional[int] = None
+    notified: Optional[bool] = None
+    snapshot: Optional[dict] = None
+
+
+class AgentSystemHistoryResponse(BaseModel):
+    total: int
+    items: List[AgentSystemHistoryEntry]
+
+
+class AgentSystemUnpublishPreview(BaseModel):
+    agent_id: str
+    affected_user_count: int
+    sample_user_names: List[str] = []

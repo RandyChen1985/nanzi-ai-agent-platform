@@ -16,6 +16,11 @@ class AIAgent(Base):
     onboarding_key = Column(String(64), nullable=True)
     onboarding_step = Column(String(20), nullable=False, default="COMPLETE")
     is_system = Column(Boolean, default=False)
+    # 注意：system_status / system_pending_request_id 两列**刻意不在这里声明**。
+    # 它们由 V185 / V85 迁移加入，但代码可能先于迁移上线；一旦映射进 ORM，
+    # SELECT/INSERT 都会带上不存在的列，迁移前智能体列表、对话、委派全部 1054。
+    # 读写统一走 app/services/ai/agent_system_columns.py 的原生 SQL + 列探测（同
+    # ResourcePermission.agent_id 的既有做法）。
     sort_order = Column(Integer, default=0)
     is_enabled = Column(Boolean, default=True)
     engine_type = Column(String(20), default='LOCAL')

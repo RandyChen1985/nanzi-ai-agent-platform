@@ -17,6 +17,7 @@ from app.core.orm import get_db_session
 from app.core.dependencies import require_admin, get_current_user, require_permission
 from typing import Dict, Any
 from app.services.ai.agent_manager import AgentManagerService
+from app.services.ai.agent_system_publication_service import AgentSystemPublicationService
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.mcp.tool_ref_health import find_stale_tool_refs
 from app.schemas.agent import (
@@ -27,6 +28,14 @@ from app.schemas.agent import (
     AgentExecutionHistoryResponse,
     AgentOnboardingCreateRequest,
     AgentOnboardingResponse,
+    AgentSystemHistoryResponse,
+    AgentSystemPublishRequest,
+    AgentSystemRequestCreate,
+    AgentSystemRequestDetail,
+    AgentSystemRequestItem,
+    AgentSystemReviewRequest,
+    AgentSystemUnpublishPreview,
+    AgentSystemUnpublishRequest,
 )
 
 router = APIRouter()
@@ -573,3 +582,208 @@ async def list_agent_executions(
     rows = result.scalars().all()
     
     return rows
+
+
+# ---------------------------------------------------------------------------
+# 系统级发布：申请 → 审核 → 上架 → 下架，以及发布历史
+#
+# 只有 LOCAL 引擎、且至少有一个 PUBLISHED 版本，才能被设为系统级——运行时按
+# status='PUBLISHED' 取配置，取不到等于一个点了就报错的智能体（服务层统一校验）。
+# 路由顺序：/system/requests/count 必须排在 /system/requests/{request_id} 之前。
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PUBLISH_PERM = "element:agent:system_publish"
+
+
+class AgentSystemApproveResponse(BaseModel):
+    agent_id: str
+    is_system: bool
+    message: str = "已发布为系统级"
+
+
+@router.post(
+    "/{agent_id}/system/requests",
+    dependencies=[Depends(require_permission("element", "element:agent:edit"))],
+)
+async def submit_system_request(
+    agent_id: str,
+    data: AgentSystemRequestCreate,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """提交「发布为系统级」申请：提交即快照，内容冻结，等管理员审核。"""
+    request = await AgentSystemPublicationService.submit_request(
+        session, agent_id, user, comment=data.comment
+    )
+    return {"request_id": request.id, "status": request.status}
+
+
+@router.delete(
+    "/{agent_id}/system/requests",
+    dependencies=[Depends(require_permission("element", "element:agent:edit"))],
+)
+async def cancel_system_request(
+    agent_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """撤回待审申请，立即解冻。"""
+    request = await AgentSystemPublicationService.cancel_request(session, agent_id, user)
+    return {"request_id": request.id, "status": request.status}
+
+
+@router.get(
+    "/system/requests/count",
+    dependencies=[Depends(require_permission("element", _SYSTEM_PUBLISH_PERM))],
+)
+async def count_system_requests(
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """待审数量，用于「发布审核」入口角标。"""
+    return {"count": await AgentSystemPublicationService.pending_count(session)}
+
+
+@router.get(
+    "/system/requests",
+    response_model=List[AgentSystemRequestItem],
+    dependencies=[Depends(require_permission("element", _SYSTEM_PUBLISH_PERM))],
+)
+async def list_system_requests(
+    status: str = "PENDING",
+    page: int = 1,
+    page_size: int = 20,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """待审列表（默认按等待时长升序，等得最久的排最前）。"""
+    return await AgentSystemPublicationService.list_requests(
+        session,
+        status=status,
+        limit=page_size,
+        offset=max(0, (max(1, page) - 1) * page_size),
+    )
+
+
+@router.get(
+    "/system/requests/{request_id}",
+    response_model=AgentSystemRequestDetail,
+    dependencies=[Depends(require_permission("element", _SYSTEM_PUBLISH_PERM))],
+)
+async def get_system_request(
+    request_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """申请单详情：包含提交时的完整内容快照（只读）。"""
+    return await AgentSystemPublicationService.request_detail(session, request_id)
+
+
+@router.post(
+    "/system/requests/{request_id}/approve",
+    response_model=AgentSystemApproveResponse,
+    dependencies=[Depends(require_permission("element", _SYSTEM_PUBLISH_PERM))],
+)
+async def approve_system_request(
+    request_id: str,
+    data: AgentSystemReviewRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """通过审核：只把智能体置为系统级并记事件，不改任何版本状态。
+
+    注意：通过后立即生效，该智能体马上进入自动委派与路由候选。
+    """
+    agent = await AgentSystemPublicationService.approve_request(
+        session, request_id, user, comment=data.comment
+    )
+    return AgentSystemApproveResponse(agent_id=agent.id, is_system=bool(agent.is_system))
+
+
+@router.post(
+    "/system/requests/{request_id}/reject",
+    dependencies=[Depends(require_permission("element", _SYSTEM_PUBLISH_PERM))],
+)
+async def reject_system_request(
+    request_id: str,
+    data: AgentSystemReviewRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """驳回申请：必须写理由，申请单关闭并解冻内容。"""
+    request = await AgentSystemPublicationService.reject_request(
+        session, request_id, user, comment=data.comment or ""
+    )
+    return {"request_id": request.id, "status": request.status}
+
+
+@router.post(
+    "/{agent_id}/system/publish",
+    response_model=AIAgentResponse,
+    dependencies=[Depends(require_permission("element", _SYSTEM_PUBLISH_PERM))],
+)
+async def publish_system_agent(
+    agent_id: str,
+    data: AgentSystemPublishRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """直接设为系统级（不选版本、不改版本状态）；会通知所有者并自动授权。"""
+    return await AgentSystemPublicationService.publish_system(
+        session,
+        agent_id,
+        user,
+        reason=data.reason,
+        notify_restore=data.notify_restore,
+    )
+
+
+@router.get(
+    "/{agent_id}/system/unpublish-preview",
+    response_model=AgentSystemUnpublishPreview,
+    dependencies=[Depends(require_permission("element", _SYSTEM_PUBLISH_PERM))],
+)
+async def preview_system_unpublish(
+    agent_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """下架前的影响范围：会影响多少「实际能用」的人，供弹窗展示。"""
+    return await AgentSystemPublicationService.unpublish_preview(session, agent_id)
+
+
+@router.post(
+    "/{agent_id}/system/unpublish",
+    dependencies=[Depends(require_permission("element", _SYSTEM_PUBLISH_PERM))],
+)
+async def unpublish_system_agent(
+    agent_id: str,
+    data: AgentSystemUnpublishRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """下架：取消系统级、物归原主、按需通知已分配用户；授权保留以便重新上架。"""
+    return await AgentSystemPublicationService.unpublish_system(
+        session, agent_id, user, reason=data.reason, notify=data.notify
+    )
+
+
+@router.get(
+    "/{agent_id}/system/history",
+    response_model=AgentSystemHistoryResponse,
+)
+async def get_system_history(
+    agent_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """发布历史：申请与事件合并的时间线，仅管理员与创建者可见。"""
+    return await AgentSystemPublicationService.history(
+        session,
+        agent_id,
+        user,
+        limit=page_size,
+        offset=max(0, (max(1, page) - 1) * page_size),
+    )

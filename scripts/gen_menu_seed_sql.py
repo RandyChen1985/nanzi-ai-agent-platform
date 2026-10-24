@@ -64,6 +64,19 @@ INCREMENTAL_MIGRATIONS = (
             "menu:system:menus": 40,
         },
     },
+    {
+        "key": "agent-system-publish",
+        "title": "系统级发布审核权限点",
+        "reason": "新增「发布审核与系统级上下架」功能点（element:agent:system_publish），"
+        "覆盖发布为系统级、下架、审核发布申请三个动作。",
+        "spec": "docs/superpowers/specs/2026-10-23-agent-system-publication-design.md",
+        # 建表 DDL 与它的权限种子属同一个功能，写在同一个迁移文件里（与 V178/V79 一致）
+        "targets": {
+            "mysql": ROOT / "db-prod" / "V185-create_agent_system_publication.sql",
+            "pg": ROOT / "db-prod-pg" / "V85-create_agent_system_publication.sql",
+        },
+        "codes": ("element:agent:system_publish",),
+    },
 )
 
 TABLE = "ai_agent_menus"

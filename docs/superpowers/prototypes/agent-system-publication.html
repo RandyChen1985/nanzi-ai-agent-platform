@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能体系统级发布 · 交互原型</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-hover:#4096ff; --primary-soft:#e8f2ff;
+    --bg:#f5f7fa; --card:#ffffff; --border:#e5e7eb; --border-soft:#f0f2f5;
+    --text:#111827; --text-2:#374151; --muted:#6b7280; --muted-2:#9ca3af;
+    --amber:#d97706; --amber-soft:#fffbeb; --amber-border:#fde68a;
+    --red:#dc2626; --red-soft:#fef2f2; --red-border:#fecaca;
+    --green:#059669; --green-soft:#ecfdf5; --green-border:#a7f3d0;
+    --indigo:#4f46e5; --indigo-soft:#eef2ff; --indigo-border:#c7d2fe;
+    --shadow-sm:0 1px 2px rgba(16,24,40,.05);
+    --shadow-md:0 4px 12px rgba(16,24,40,.08);
+    --shadow-lg:0 12px 32px rgba(16,24,40,.14);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:#eef1f6;color:var(--text);font-size:14px;line-height:1.5;
+  }
+  /* ---------- 原型工具条 ---------- */
+  .proto-bar{
+    position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:8px;
+    padding:10px 16px;background:#0b0f19;color:#fff;font-size:13px;
+  }
+  .proto-bar .dot{width:8px;height:8px;border-radius:50%;background:#22c55e}
+  .proto-bar .title{font-weight:600;letter-spacing:.3px}
+  .proto-bar .hint{color:#94a3b8;margin-left:8px;font-size:12px}
+  .tabs{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+  .tabs button{
+    border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#cbd5e1;
+    padding:6px 12px;border-radius:999px;font-size:12px;cursor:pointer;transition:.15s;
+  }
+  .tabs button:hover{background:rgba(255,255,255,.14);color:#fff}
+  .tabs button.active{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600}
+  /* ---------- 舞台 ---------- */
+  .stage-wrap{padding:22px;display:flex;justify-content:center}
+  .stage{
+    width:100%;max-width:1240px;background:var(--bg);border-radius:14px;overflow:hidden;
+    box-shadow:var(--shadow-lg);position:relative;min-height:760px;
+  }
+  .scene{display:none;min-height:760px}
+  .scene.active{display:block}
+  /* ---------- 应用骨架：侧边栏 + 内容 ---------- */
+  .app-shell{display:flex;min-height:760px}
+  .sidebar{
+    width:64px;background:#0b0f19;display:flex;flex-direction:column;align-items:center;
+    padding:14px 0;gap:18px;flex-shrink:0;
+  }
+  .sidebar .logo{
+    width:34px;height:34px;border-radius:9px;background:var(--primary);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px;
+  }
+  .sidebar .ico{
+    width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    color:#64748b;font-size:15px;
+  }
+  .sidebar .ico.on{background:rgba(22,119,255,.16);color:#60a5fa}
+  .content{flex:1;padding:22px 26px;position:relative;overflow:hidden}
+  /* ---------- 页头 ---------- */
+  .page-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px}
+  .page-head h1{font-size:22px;font-weight:700;letter-spacing:.2px}
+  .page-head p{color:var(--muted);font-size:13px;margin-top:4px}
+  .head-actions{margin-left:auto;display:flex;gap:10px;align-items:center}
+  .btn{
+    display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:8px 14px;
+    font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--border);
+    background:#fff;color:var(--text-2);transition:.15s;box-shadow:var(--shadow-sm);
+  }
+  .btn:hover{border-color:#cbd5e1;background:#fafbfc}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .btn.primary:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
+  .btn.danger{background:var(--red);border-color:var(--red);color:#fff}
+  .btn.danger:hover{background:#b91c1c;border-color:#b91c1c}
+  .btn.ghost{box-shadow:none;border-color:transparent;background:transparent}
+  .btn:disabled,.btn[disabled]{
+    opacity:.45;cursor:not-allowed;filter:grayscale(.3);
+  }
+  .badge{
+    display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;
+    font-size:11px;font-weight:600;border:1px solid transparent;white-space:nowrap;
+  }
+  .badge.sys{background:var(--indigo-soft);color:var(--indigo);border-color:var(--indigo-border)}
+  .badge.mine{background:#f8fafc;color:#64748b;border-color:#e2e8f0}
+  .badge.review{background:var(--amber-soft);color:var(--amber);border-color:var(--amber-border)}
+  .badge.count{
+    background:var(--red);color:#fff;border-radius:999px;min-width:18px;height:18px;
+    display:inline-flex;align-items:center;justify-content:center;font-size:11px;padding:0 5px;
+  }
+  /* ---------- 工具栏 ---------- */
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+  .search{
+    flex:1;min-width:220px;display:flex;align-items:center;gap:8px;background:#fff;
+    border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--muted-2);font-size:13px;
+  }
+  .seg{display:flex;background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .seg span{padding:8px 14px;font-size:12.5px;color:var(--muted);border-right:1px solid var(--border-soft);cursor:pointer}
+  .seg span:last-child{border-right:0}
+  .seg span.on{color:var(--primary);font-weight:600;background:var(--primary-soft)}
+  /* ---------- 卡片网格 ---------- */
+  .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+  @media (max-width:1080px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  .agent-card{
+    background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px;
+    display:flex;flex-direction:column;gap:12px;position:relative;box-shadow:var(--shadow-sm);
+    transition:.15s;
+  }
+  .agent-card:hover{box-shadow:var(--shadow-md);border-color:#dbe3ee}
+  .agent-card.frozen{background:#fcfcfd}
+  .card-top{display:flex;gap:12px;align-items:flex-start}
+  .avatar{
+    width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    font-size:17px;flex-shrink:0;background:var(--primary-soft);color:var(--primary);
+  }
+  .avatar.indigo{background:var(--indigo-soft);color:var(--indigo)}
+  .avatar.amber{background:var(--amber-soft);color:var(--amber)}
+  .card-title{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .card-desc{color:var(--muted);font-size:12.5px;margin-top:4px;line-height:1.55;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card-meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--muted)}
+  .kebab{
+    position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:7px;border:1px solid transparent;
+    background:transparent;color:var(--muted-2);cursor:pointer;display:flex;align-items:center;justify-content:center;
+    font-size:16px;line-height:1;
+  }
+  .kebab:hover{background:#f8fafc;border-color:var(--border);color:var(--text-2)}
+  .menu{
+    position:absolute;top:42px;right:10px;width:196px;background:#fff;border:1px solid var(--border);
+    border-radius:10px;box-shadow:var(--shadow-lg);padding:6px;z-index:30;
+  }
+  .menu button{
+    width:100%;display:flex;align-items:center;gap:9px;padding:8px 10px;border:0;background:transparent;
+    color:var(--text-2);font-size:12.5px;text-align:left;border-radius:7px;cursor:pointer;
+  }
+  .menu button:hover{background:#f8fafc}
+  .menu button .mi{width:16px;text-align:center;color:var(--muted-2);font-size:13px}
+  .menu .sep{height:1px;background:var(--border-soft);margin:5px 4px}
+  .menu button.danger{color:var(--red)}
+  .menu button.danger .mi{color:var(--red)}
+  .menu button.is-disabled{opacity:.4;cursor:not-allowed}
+  .menu .tip{font-size:11px;color:var(--muted-2);padding:4px 10px 6px;line-height:1.4}
+  /* ---------- 遮罩 / 抽屉 / 弹窗 ---------- */
+  .overlay{
+    position:fixed;inset:0;background:rgba(15,23,42,.36);z-index:40;
+    display:flex;justify-content:flex-end;
+    padding:64px 24px 24px;
+  }
+  .overlay.center{align-items:center;justify-content:center}
+  .drawer{
+    width:720px;max-width:94%;background:#fff;height:100%;display:flex;flex-direction:column;
+    box-shadow:var(--shadow-lg);border-radius:14px;overflow:hidden;
+  }
+  .drawer-head{
+    padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;
+    flex-shrink:0;
+  }
+  .drawer-head h2{font-size:16px;font-weight:700}
+  .drawer-head .close{
+    margin-left:auto;width:28px;height:28px;border-radius:7px;border:1px solid var(--border);
+    background:#fff;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;
+  }
+  .drawer-body{flex:1;display:flex;overflow:hidden}
+  .drawer-list{
+    width:268px;border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;background:#fcfcfd;
+  }
+  .req-item{padding:12px 14px;border-bottom:1px solid var(--border-soft);cursor:pointer;position:relative}
+  .req-item:hover{background:#f8fafc}
+  .req-item.on{background:#fff;box-shadow:inset 3px 0 0 var(--primary)}
+  .req-item .t{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+  .req-item .m{font-size:11.5px;color:var(--muted);margin-top:4px;display:flex;gap:8px;flex-wrap:wrap}
+  .req-item .late{color:var(--amber);font-weight:600}
+  .drawer-detail{flex:1;overflow-y:auto;padding:18px 20px}
+  .drawer-foot{
+    background:#fff;border-top:1px solid var(--border);flex-shrink:0;
+    padding:12px 20px;display:flex;gap:10px;align-items:center;
+  }
+  .drawer-foot .hint{margin-right:auto;font-size:12px;color:var(--muted)}
+  .modal{
+    width:480px;max-width:92%;background:#fff;border-radius:14px;box-shadow:var(--shadow-lg);overflow:hidden;
+  }
+  .modal-head{padding:16px 20px 6px;display:flex;align-items:center;gap:8px}
+  .modal-head h3{font-size:16px;font-weight:700}
+  .modal-head .x{margin-left:auto;border:0;background:transparent;color:var(--muted-2);font-size:16px;cursor:pointer}
+  .modal-body{padding:6px 20px 18px;display:flex;flex-direction:column;gap:12px}
+  .modal-foot{
+    padding:12px 20px;background:#fcfcfd;border-top:1px solid var(--border);
+    display:flex;justify-content:flex-end;gap:10px;
+  }
+  /* ---------- 表单元素 ---------- */
+  .field{display:flex;flex-direction:column;gap:6px}
+  .field label{font-size:12.5px;font-weight:600;color:var(--text-2)}
+  .field label .opt{font-weight:400;color:var(--muted-2);margin-left:4px}
+  textarea,input[type=text]{
+    width:100%;border:1px solid var(--border);border-radius:8px;padding:9px 11px;
+    font-size:13px;font-family:inherit;color:var(--text);background:#fff;outline:none;resize:vertical;
+  }
+  textarea:focus,input[type=text]:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(22,119,255,.12)}
+  textarea[readonly]{background:#f8fafc;color:var(--text-2);cursor:default}
+  .help{font-size:11.5px;color:var(--muted-2);line-height:1.5}
+  .check{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:var(--text-2)}
+  .check input{margin-top:2px;width:15px;height:15px;accent-color:var(--primary);cursor:pointer}
+  .check .sub{font-size:11.5px;color:var(--muted-2);margin-top:3px;line-height:1.5}
+  /* ---------- 提示条 ---------- */
+  .notice{
+    display:flex;gap:9px;padding:10px 12px;border-radius:9px;font-size:12.5px;line-height:1.55;
+  }
+  .notice .i{flex-shrink:0;font-size:13px;line-height:1.3}
+  .notice.info{background:var(--primary-soft);color:#0b4a9e;border:1px solid #c7dffe}
+  .notice.warn{background:var(--amber-soft);color:#92400e;border:1px solid var(--amber-border)}
+  .notice.danger{background:var(--red-soft);color:#991b1b;border:1px solid var(--red-border)}
+  .notice.ok{background:var(--green-soft);color:#065f46;border:1px solid var(--green-border)}
+  /* ---------- 快照 / 只读块 ---------- */
+  .snapshot{
+    border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff;
+  }
+  .snapshot-head{
+    padding:9px 12px;background:#fcfcfd;border-bottom:1px solid var(--border);font-size:12px;
+    font-weight:600;color:var(--text-2);display:flex;align-items:center;gap:6px;
+  }
+  .snapshot-body{padding:12px;display:flex;flex-direction:column;gap:10px}
+  .kv{display:grid;grid-template-columns:88px 1fr;gap:6px 10px;font-size:12.5px}
+  .kv dt{color:var(--muted);}
+  .kv dd{color:var(--text-2);word-break:break-all}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{
+    display:inline-flex;align-items:center;gap:4px;background:#f8fafc;border:1px solid var(--border);
+    border-radius:6px;padding:2px 8px;font-size:11.5px;color:var(--text-2);
+  }
+  .chip.blue{background:var(--primary-soft);border-color:#c7dffe;color:#0b4a9e}
+  /* ---------- 时间线 ---------- */
+  .timeline{position:relative;padding-left:26px}
+  .timeline:before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:var(--border)}
+  .tl-item{position:relative;padding:0 0 20px 0}
+  .tl-item:last-child{padding-bottom:0}
+  .tl-dot{
+    position:absolute;left:-26px;top:2px;width:20px;height:20px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;border:2px solid #fff;
+    box-shadow:0 0 0 1px var(--border);
+  }
+  .tl-dot.publish{background:var(--green)}
+  .tl-dot.unpublish{background:var(--red)}
+  .tl-dot.apply{background:#94a3b8}
+  .tl-dot.approve{background:var(--primary)}
+  .tl-dot.reject{background:var(--amber)}
+  .tl-dot.toggle{background:#64748b}
+  .tl-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;font-weight:600}
+  .tl-sub{font-size:12px;color:var(--muted);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap}
+  .tl-snap{
+    margin-top:8px;border:1px solid var(--border);border-radius:8px;background:#fcfcfd;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:#334155;
+    padding:10px 12px;white-space:pre-wrap;line-height:1.6;
+  }
+  .link{color:var(--primary);cursor:pointer;font-size:12px;background:none;border:0;padding:0}
+  .link:hover{text-decoration:underline}
+  /* ---------- 杂项 ---------- */
+  .row{display:flex;gap:10px;align-items:center}
+  .spacer{flex:1}
+  .section-title{font-size:13px;font-weight:700;color:var(--text);margin:16px 0 8px;display:flex;align-items:center;gap:6px}
+  .dim{color:var(--muted-2)}
+  .small{font-size:12px}
+  .strike{text-decoration:line-through;opacity:.6}
+  .state-chip{
+    display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);
+    background:#f8fafc;border:1px dashed var(--border);border-radius:6px;padding:1px 7px;
+  }
+  /* 审核中：卡片底部冻结提示条 */
+  .freeze-bar{
+    margin:12px -16px -16px;padding:7px 16px;background:var(--amber-soft);
+    border-top:1px solid var(--amber-border);color:#92400e;font-size:11.5px;
+    display:flex;align-items:center;gap:6px;border-radius:0 0 12px 12px;
+  }
+  /* 名单展开 */
+  .chip.more{cursor:pointer;color:var(--primary);background:var(--primary-soft);border-color:#c7dffe}
+  .chip.more:hover{background:#dbeafe}
+  /* 审核列表工具栏 */
+  .list-tools{
+    padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;background:#fff;
+  }
+  .list-tools input{border:1px solid var(--border);border-radius:7px;padding:6px 9px;font-size:12px;width:100%;outline:none}
+  .list-tools input:focus{border-color:var(--primary);box-shadow:0 0 0 2px rgba(22,119,255,.1)}
+  .seg.mini{display:flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;width:fit-content}
+  .seg.mini span{padding:4px 10px;font-size:11.5px}
+  /* 历史：字段级 diff */
+  .diff{margin-top:8px;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fff}
+  .diff-head{
+    padding:6px 10px;background:#fcfcfd;border-bottom:1px solid var(--border);font-size:11.5px;
+    color:var(--muted);font-weight:600;display:flex;align-items:center;gap:6px;
+  }
+  .diff-body{padding:8px 10px;display:flex;flex-direction:column;gap:6px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+  .diff-row{display:grid;grid-template-columns:104px 1fr 14px 1fr;gap:8px;align-items:start}
+  .diff-key{color:var(--muted)}
+  .diff-old{background:#fef2f2;color:#b91c1c;border-radius:4px;padding:1px 5px;text-decoration:line-through;word-break:break-all}
+  .diff-new{background:#ecfdf5;color:#047857;border-radius:4px;padding:1px 5px;word-break:break-all}
+  .diff-row .arrow{color:var(--muted-2);text-align:center}
+  .diff-row.added .diff-old,.diff-row.added .arrow{visibility:hidden}
+  .diff-legend{font-size:11px;color:var(--muted-2);display:flex;gap:12px;padding:0 2px}
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="dot"></span>
+  <span class="title">智能体系统级发布 · 交互原型</span>
+  <span class="hint">点击右上角切换场景 · 仅演示交互与文案，非最终视觉稿</span>
+  <div class="tabs" id="tabs">
+    <button data-scene="s1" class="active">① 列表与菜单</button>
+    <button data-scene="s2">② 发布为系统级</button>
+    <button data-scene="s3">③ 申请发布</button>
+    <button data-scene="s4">④ 下架确认</button>
+    <button data-scene="s5">⑤ 发布审核</button>
+    <button data-scene="s6">⑥ 发布历史</button>
+  </div>
+</div>
+
+<div class="stage-wrap">
+  <div class="stage" id="stage">
+
+    <!-- ============ 场景 1：列表与卡片菜单 ============ -->
+    <section class="scene active" id="s1">
+      <div class="app-shell">
+        <aside class="sidebar">
+          <div class="logo">N</div>
+          <div class="ico on">◈</div>
+          <div class="ico">◎</div>
+          <div class="ico">▤</div>
+          <div class="ico">⚙</div>
+        </aside>
+        <div class="content">
+          <div class="page-head">
+            <div>
+              <h1>智能体中心</h1>
+              <p>创建智能体并配置多版本；系统级智能体由管理员发布与维护</p>
+            </div>
+            <div class="head-actions">
+              <button class="btn" style="border-color:var(--indigo-border);color:var(--indigo);background:var(--indigo-soft)">
+                发布审核 <span class="badge count">2</span>
+              </button>
+              <button class="btn primary">＋ 新建智能体</button>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <div class="search">🔍 搜索名称或标识符…</div>
+            <div class="seg">
+              <span class="on">全部 5</span><span>就绪</span><span>待完善</span><span>🧩 自定义</span>
+            </div>
+          </div>
+
+          <div class="grid">
+            <!-- 卡片 A：系统级 -->
+            <article class="agent-card">
+              <button class="kebab" onclick="toggleMenu('mA', this)">⋯</button>
+              <div class="card-top">
+                <div class="avatar indigo">◈</div>
+                <div>
+                  <div class="card-title">合同审查助手 <span class="badge sys">系统内置</span></div>
+                  <div class="card-desc">面向法务的合同条款审查，识别风险条款并给出修改建议。</div>
+                </div>
+              </div>
+              <div class="card-meta">
+                <span class="chip">LOCAL</span><span class="chip">v3</span>
+                <span class="chip">6 工具</span><span class="chip">12 人可用</span>
+              </div>
+              <div class="menu" id="mA" style="display:none">
+                <button><span class="mi">◉</span>预览对话</button>
+                <button><span class="mi">↻</span>发布新基线</button>
+                <button><span class="mi">▤</span>发布历史</button>
+                <div class="sep"></div>
+                <button class="danger"><span class="mi">⊘</span>下架为普通智能体</button>
+              </div>
+            </article>
+
+            <!-- 卡片 B：审核中（所有者视角） -->
+            <article class="agent-card frozen">
+              <button class="kebab" onclick="toggleMenu('mB', this)">⋯</button>
+              <div class="card-top">
+                <div class="avatar amber">⏳</div>
+                <div>
+                  <div class="card-title">周报生成器 <span class="badge review">审核中</span></div>
+                  <div class="card-desc">按周汇总任务与工时，生成可直接发送的周报草稿。</div>
+                </div>
+              </div>
+              <div class="card-meta">
+                <span class="chip">LOCAL</span><span class="chip">v2</span>
+                <span class="chip">3 工具</span>
+              </div>
+              <div class="freeze-bar">❄ 已冻结 · 10-23 10:20 提交审核，期间不能编辑</div>
+              <div class="menu" id="mB" style="display:none">
+                <button><span class="mi">◉</span>预览对话</button>
+                <button><span class="mi">⧉</span>复制智能体</button>
+                <button><span class="mi">▤</span>查看申请进度</button>
+                <div class="sep"></div>
+                <button class="danger"><span class="mi">↩</span>撤回申请</button>
+                <div class="tip">撤回后立即解冻，可继续编辑后再提交</div>
+              </div>
+            </article>
+
+            <!-- 卡片 C：自建普通 -->
+            <article class="agent-card">
+              <button class="kebab" onclick="toggleMenu('mC', this)">⋯</button>
+              <div class="card-top">
+                <div class="avatar">🧹</div>
+                <div>
+                  <div class="card-title">数据清洗专家 <span class="badge mine">自定义</span></div>
+                  <div class="card-desc">对 CSV / Excel 做缺失值填充、去重与格式规整。</div>
+                </div>
+              </div>
+              <div class="card-meta">
+                <span class="chip">LOCAL</span><span class="chip">v1（草稿）</span>
+                <span class="chip">2 工具</span>
+              </div>
+              <div class="menu" id="mC" style="display:none">
+                <button><span class="mi">◉</span>预览对话</button>
+                <button><span class="mi">✎</span>编辑智能体</button>
+                <button><span class="mi">⧉</span>复制智能体</button>
+                <div class="sep"></div>
+                <button class="is-disabled" title="请先发布至少一个版本">
+                  <span class="mi">⬆</span>申请发布为系统级
+                </button>
+                <div class="tip">⬆ 无已发布版本时置灰：请先在版本配置里发布一个版本</div>
+                <div class="sep"></div>
+                <button class="danger"><span class="mi">🗑</span>删除</button>
+              </div>
+            </article>
+          </div>
+
+          <div class="section-title" style="margin-top:22px">状态说明（原型标注）</div>
+          <div class="row" style="gap:14px;flex-wrap:wrap">
+            <span class="badge sys">系统内置</span><span class="small dim">已发布为系统级 · 所有者只读 · 参与自动委派</span>
+          </div>
+          <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">
+            <span class="badge review">审核中</span><span class="small dim">申请中 · 内容冻结 · 仅可撤回 / 复制 / 预览</span>
+          </div>
+          <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">
+            <span class="badge mine">自定义</span><span class="small dim">普通智能体 · 所有者可编辑 · 可申请发布或分享（B 期）</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 场景 2：发布为系统级 ============ -->
+    <section class="scene" id="s2">
+      <div class="app-shell">
+        <aside class="sidebar">
+          <div class="logo">N</div><div class="ico on">◈</div><div class="ico">◎</div><div class="ico">▤</div><div class="ico">⚙</div>
+        </aside>
+        <div class="content" style="filter:blur(1px);opacity:.55">
+          <div class="page-head"><div><h1>智能体中心</h1><p>创建智能体并配置多版本</p></div></div>
+          <div class="grid">
+            <article class="agent-card"><div class="card-top"><div class="avatar">🧹</div>
+              <div><div class="card-title">数据清洗专家</div><div class="card-desc">对 CSV / Excel 做缺失值填充、去重与格式规整。</div></div></div></article>
+          </div>
+        </div>
+        <div class="overlay center">
+          <div class="modal">
+            <div class="modal-head">
+              <h3>发布为系统级</h3>
+              <button class="x">✕</button>
+            </div>
+            <div class="modal-body">
+              <div class="notice info">
+                <span class="i">ℹ</span>
+                <div>
+                  <strong>「数据清洗专家」将立即成为平台系统级智能体</strong><br>
+                  它会进入主助手的自动委派候选与路由，被授权的用户可直接使用。
+                </div>
+              </div>
+              <div class="notice warn">
+                <span class="i">⚠</span>
+                <div>发布后该智能体对所有者变为<strong>只读</strong>（只能复制另开一条继续开发），直到下架为止。系统会自动把你加入可用名单。</div>
+              </div>
+              <div class="field">
+                <label>发布说明<span class="opt">可选</span></label>
+                <textarea rows="3" placeholder="例如：面向全公司数据组，替代人工清洗流程"></textarea>
+                <div class="help">会记录到发布历史，便于日后追溯。</div>
+              </div>
+              <div class="field">
+                <label>版本状态</label>
+                <div class="help">
+                  当前已发布版本：<strong style="color:var(--text-2)">v1</strong>（运行时使用它）。<br>
+                  发布为系统级<strong>不会改变任何版本状态</strong>，只是把智能体标记为系统级。
+                </div>
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn">取消</button>
+              <button class="btn primary">确认发布</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 场景 3：申请发布（普通用户） ============ -->
+    <section class="scene" id="s3">
+      <div class="app-shell">
+        <aside class="sidebar">
+          <div class="logo">N</div><div class="ico on">◈</div><div class="ico">◎</div><div class="ico">▤</div><div class="ico">⚙</div>
+        </aside>
+        <div class="content" style="filter:blur(1px);opacity:.55">
+          <div class="page-head"><div><h1>智能体中心</h1><p>创建智能体并配置多版本</p></div></div>
+          <div class="grid">
+            <article class="agent-card"><div class="card-top"><div class="avatar">📊</div>
+              <div><div class="card-title">周报生成器</div><div class="card-desc">按周汇总任务与工时。</div></div></div></article>
+          </div>
+        </div>
+        <div class="overlay center">
+          <div class="modal">
+            <div class="modal-head">
+              <h3>申请发布为系统级</h3>
+              <button class="x">✕</button>
+            </div>
+            <div class="modal-body">
+              <div class="notice warn">
+                <span class="i">❄</span>
+                <div>
+                  <strong>提交后内容将被冻结</strong><br>
+                  审核期间不能编辑、建版本或发布。如需继续开发，请先「复制智能体」另开一条。
+                </div>
+              </div>
+              <div class="field">
+                <label>申请理由<span class="opt">可选</span></label>
+                <textarea rows="4" placeholder="例如：团队每周都要手写周报，这个智能体已稳定使用 2 个月，建议开放给全公司"></textarea>
+                <div class="help">审核人会看到这段说明，最多 500 字。</div>
+              </div>
+              <div class="snapshot">
+                <div class="snapshot-head">◧ 提交时的内容快照（自动）</div>
+                <div class="snapshot-body">
+                  <dl class="kv">
+                    <dt>名称</dt><dd>周报生成器</dd>
+                    <dt>版本</dt><dd>v2（PUBLISHED）</dd>
+                    <dt>模型</dt><dd>deepseek-chat · 温度 0.3</dd>
+                    <dt>工具</dt><dd class="chips"><span class="chip blue">task_list</span><span class="chip blue">time_report</span><span class="chip blue">doc_export</span></dd>
+                  </dl>
+                </div>
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn">取消</button>
+              <button class="btn primary">提交申请</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 场景 4：下架确认 ============ -->
+    <section class="scene" id="s4">
+      <div class="app-shell">
+        <aside class="sidebar">
+          <div class="logo">N</div><div class="ico on">◈</div><div class="ico">◎</div><div class="ico">▤</div><div class="ico">⚙</div>
+        </aside>
+        <div class="content" style="filter:blur(1px);opacity:.55">
+          <div class="page-head"><div><h1>智能体中心</h1><p>创建智能体并配置多版本</p></div></div>
+          <div class="grid">
+            <article class="agent-card"><div class="card-top"><div class="avatar indigo">◈</div>
+              <div><div class="card-title">合同审查助手</div><div class="card-desc">面向法务的合同条款审查。</div></div></div></article>
+          </div>
+        </div>
+        <div class="overlay center">
+          <div class="modal">
+            <div class="modal-head">
+              <h3>下架「合同审查助手」</h3>
+              <button class="x">✕</button>
+            </div>
+            <div class="modal-body">
+              <div class="notice danger">
+                <span class="i">⚠</span>
+                <div>下架后它<strong>不再是系统级</strong>：将从自动委派、路由与所有使用者的对话入口消失，智能体归还给所有者并可继续编辑。</div>
+              </div>
+
+              <div class="field">
+                <label>已分配给 12 位用户</label>
+                <div class="chips" id="nameList">
+                  <span class="chip">@张三</span><span class="chip">@李四</span><span class="chip">@王五</span>
+                  <span class="chip">@赵六</span><span class="chip">@钱七</span><span class="chip">@孙八</span>
+                  <span class="chip more" onclick="expandNames(this)">查看全部 12 人 ▾</span>
+                </div>
+                <div class="chips" id="nameListAll" style="display:none">
+                  <span class="chip">@张三</span><span class="chip">@李四</span><span class="chip">@王五</span>
+                  <span class="chip">@赵六</span><span class="chip">@钱七</span><span class="chip">@孙八</span>
+                  <span class="chip">@周九</span><span class="chip">@吴十</span><span class="chip">@郑一</span>
+                  <span class="chip">@王二</span><span class="chip">@冯三</span><span class="chip">@陈四</span>
+                  <span class="chip blue">法务组（6 人 · 角色）</span>
+                </div>
+                <div class="help">含通过角色继承权限的成员。授权记录会保留，重新上架后自动恢复。</div>
+              </div>
+
+              <div class="field">
+                <label>下架原因 <span style="color:var(--red)">*</span></label>
+                <textarea rows="3" placeholder="例如：业务已迁移到「合同智能审核 2.0」"></textarea>
+              </div>
+
+              <div class="check">
+                <input type="checkbox" id="notifyBox" checked onchange="toggleNotify(this)">
+                <div>
+                  <label for="notifyBox" style="cursor:pointer;font-weight:600">通知这 12 位用户</label>
+                  <div class="sub" id="notifyHintOn">下架后他们会在站内信收到：「智能体「合同审查助手」已下架，你暂时无法使用」。</div>
+                  <div class="sub" id="notifyHintOff" style="display:none;color:var(--amber)">
+                    取消后用户不会收到任何通知，可能不知道无法使用的原因。该选择会被记录，重新上架时也不会通知「已恢复」。
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn">取消</button>
+              <button class="btn danger">确认下架</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 场景 5：发布审核抽屉 ============ -->
+    <section class="scene" id="s5">
+      <div class="app-shell">
+        <aside class="sidebar">
+          <div class="logo">N</div><div class="ico on">◈</div><div class="ico">◎</div><div class="ico">▤</div><div class="ico">⚙</div>
+        </aside>
+        <div class="content" style="opacity:.6">
+          <div class="page-head">
+            <div><h1>智能体中心</h1><p>创建智能体并配置多版本</p></div>
+            <div class="head-actions">
+              <button class="btn" style="border-color:var(--indigo-border);color:var(--indigo);background:var(--indigo-soft)">
+                发布审核 <span class="badge count">2</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="overlay" style="justify-content:flex-end">
+          <div class="drawer">
+            <div class="drawer-head">
+              <h2>发布审核</h2>
+              <span class="badge review">2 条待审</span>
+              <button class="close">✕</button>
+            </div>
+            <div class="drawer-body">
+              <div class="drawer-list">
+                <div class="list-tools">
+                  <input type="text" placeholder="🔍 搜索申请人或智能体…">
+                  <div class="seg mini">
+                    <span class="on">最久优先</span><span>最新</span><span>仅超 24h</span>
+                  </div>
+                </div>
+                <div class="req-item on">
+                  <div class="t">周报生成器</div>
+                  <div class="m"><span>王五 提交</span><span class="late">等待 27 小时</span></div>
+                  <div class="m"><span>v2 · LOCAL</span></div>
+                </div>
+                <div class="req-item">
+                  <div class="t">数据清洗专家</div>
+                  <div class="m"><span>李四 提交</span><span>等待 3 小时</span></div>
+                  <div class="m"><span>v1 · LOCAL</span></div>
+                </div>
+                <div style="padding:12px 14px">
+                  <div class="help">驳回后申请单置为「已驳回」，智能体立即解冻；申请人会收到含理由的站内信。</div>
+                </div>
+              </div>
+              <div class="drawer-detail">
+                <div class="row" style="align-items:flex-start">
+                  <div>
+                    <div style="font-size:16px;font-weight:700">周报生成器</div>
+                    <div class="small dim" style="margin-top:4px">申请人 王五 · 提交于 2026-10-23 10:20 · 版本 v2（PUBLISHED）</div>
+                  </div>
+                  <div class="spacer"></div>
+                  <span class="badge mine">LOCAL</span>
+                </div>
+
+                <div class="notice warn" style="margin-top:14px">
+                  <span class="i">⚠</span>
+                  <div><strong>通过后将立即生效</strong>：该智能体马上进入主助手的自动委派候选与路由，被授权用户可用。请确认配置与工具已就绪。</div>
+                </div>
+
+                <div class="section-title">申请人理由</div>
+                <div style="font-size:12.5px;color:var(--text-2);background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+                  团队每周都要手写周报，这个智能体已稳定使用 2 个月，建议开放给全公司。
+                </div>
+
+                <div class="section-title">提交时的内容快照（只读）</div>
+                <div class="snapshot">
+                  <div class="snapshot-head">◧ 元数据</div>
+                  <div class="snapshot-body">
+                    <dl class="kv">
+                      <dt>显示名称</dt><dd>周报生成器</dd>
+                      <dt>标识符</dt><dd>weekly-report-gen</dd>
+                      <dt>描述</dt><dd>按周汇总任务与工时，生成可直接发送的周报草稿。</dd>
+                      <dt>引擎</dt><dd>LOCAL</dd>
+                    </dl>
+                  </div>
+                </div>
+
+                <div class="snapshot" style="margin-top:10px">
+                  <div class="snapshot-head">◧ 版本 v2 · 模型与工具</div>
+                  <div class="snapshot-body">
+                    <dl class="kv">
+                      <dt>模型</dt><dd>deepseek-chat · 温度 0.3</dd>
+                      <dt>工具</dt><dd class="chips"><span class="chip blue">task_list</span><span class="chip blue">time_report</span><span class="chip blue">doc_export</span></dd>
+                      <dt>技能</dt><dd class="chips"><span class="chip">公共技能 ×2</span></dd>
+                      <dt>一致性</dt><dd style="color:var(--green)">✓ 与当前版本内容一致</dd>
+                    </dl>
+                  </div>
+                </div>
+
+                <div class="snapshot" style="margin-top:10px">
+                  <div class="snapshot-head">◧ 系统提示词（只读）</div>
+                  <div class="snapshot-body">
+                    <textarea rows="6" readonly>你是一名周报助手。请根据用户提供的任务清单与工时记录，按「本周完成 / 进行中 / 下周计划 / 风险与求助」四段式输出周报，语言简洁，避免形容词堆砌。</textarea>
+                  </div>
+                </div>
+
+                <div class="section-title">审核意见</div>
+                <div class="field">
+                  <label>驳回理由 <span class="opt">仅驳回时必填</span></label>
+                  <textarea rows="3" placeholder="例如：工具 doc_export 依赖个人凭证，请先改成公共工具或移除后再提交"></textarea>
+                </div>
+
+              </div>
+            </div>
+            <div class="drawer-foot">
+              <span class="hint">通过后将记一条发布事件，申请人会收到通知</span>
+              <button class="btn">驳回</button>
+              <button class="btn primary">通过并发布</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 场景 6：发布历史抽屉 ============ -->
+    <section class="scene" id="s6">
+      <div class="app-shell">
+        <aside class="sidebar">
+          <div class="logo">N</div><div class="ico on">◈</div><div class="ico">◎</div><div class="ico">▤</div><div class="ico">⚙</div>
+        </aside>
+        <div class="content" style="opacity:.6">
+          <div class="page-head"><div><h1>智能体中心</h1><p>创建智能体并配置多版本</p></div></div>
+        </div>
+        <div class="overlay" style="justify-content:flex-end">
+          <div class="drawer" style="width:640px">
+            <div class="drawer-head">
+              <h2>发布历史</h2>
+              <span class="small dim">合同审查助手</span>
+              <button class="close">✕</button>
+            </div>
+            <div class="drawer-detail" style="padding-bottom:20px">
+              <div class="timeline">
+                <div class="tl-item">
+                  <div class="tl-dot unpublish">⊘</div>
+                  <div class="tl-head">下架为普通智能体 <span class="badge mine">已通知 12 人</span></div>
+                  <div class="tl-sub"><span>管理员 张三</span><span>2026-10-24 10:12</span><span>版本 v3</span></div>
+                  <div class="small" style="margin-top:6px;color:var(--text-2)">理由：业务已迁移到「合同智能审核 2.0」，原智能体保留给法务组自行维护。</div>
+                </div>
+
+                <div class="tl-item">
+                  <div class="tl-dot toggle">⏻</div>
+                  <div class="tl-head">临时禁用 <span class="badge mine">静默</span></div>
+                  <div class="tl-sub"><span>管理员 张三</span><span>2026-08-30 20:10</span><span>21:05 已启用</span></div>
+                  <div class="small" style="margin-top:6px;color:var(--text-2)">模型服务抖动，先关闭避免用户调用失败。</div>
+                </div>
+
+                <div class="tl-item">
+                  <div class="tl-dot publish">⬆</div>
+                  <div class="tl-head">发布新版本 v3</div>
+                  <div class="tl-sub"><span>管理员 张三</span><span>2026-09-02 15:40</span><span>由 v2 → v3</span></div>
+                  <div class="small" style="margin-top:6px;color:var(--text-2)">说明：新增「条款对比」工具，调整风险等级判定阈值。</div>
+                  <div class="row" style="margin-top:6px;gap:14px">
+                    <button class="link" onclick="toggleDiff('diff1')">查看变更 ▾</button>
+                    <button class="link" onclick="toggleSnap('snap1')">原文快照</button>
+                  </div>
+                  <div class="diff" id="diff1" style="display:none">
+                    <div class="diff-head">◧ 与上一版（v2）对比</div>
+                    <div class="diff-body">
+                      <div class="diff-row">
+                        <span class="diff-key">temperature</span>
+                        <span class="diff-old">0.3</span>
+                        <span class="arrow">→</span>
+                        <span class="diff-new">0.2</span>
+                      </div>
+                      <div class="diff-row">
+                        <span class="diff-key">tools</span>
+                        <span class="diff-old">["contract_parse","risk_score"]</span>
+                        <span class="arrow">→</span>
+                        <span class="diff-new">["contract_parse","clause_diff","risk_score"]</span>
+                      </div>
+                      <div class="diff-row">
+                        <span class="diff-key">system_prompt</span>
+                        <span class="diff-old">…按风险等级给出修改建议。</span>
+                        <span class="arrow">→</span>
+                        <span class="diff-new">…按风险等级给出修改建议，并标注依据条款。</span>
+                      </div>
+                    </div>
+                    <div class="diff-legend" style="padding:6px 10px;border-top:1px solid var(--border-soft)">
+                      <span style="color:#b91c1c">删除/旧值</span><span style="color:#047857">新增/新值</span>
+                    </div>
+                  </div>
+                  <div class="tl-snap" id="snap1" style="display:none">{
+  "version": 3,
+  "model_name": "deepseek-chat",
+  "temperature": 0.2,
+  "tools": ["contract_parse", "clause_diff", "risk_score"],
+  "skills": [],
+  "system_prompt": "你是法务合同审查专家…（完整提示词）"
+}</div>
+                </div>
+
+                <div class="tl-item">
+                  <div class="tl-dot approve">✓</div>
+                  <div class="tl-head">审核通过并发布为系统级</div>
+                  <div class="tl-sub"><span>管理员 李四</span><span>2026-08-30 09:15</span><span>版本 v2</span></div>
+                  <div class="small" style="margin-top:6px;color:var(--text-2)">申请理由：法务每月审查 200+ 合同，希望开放给全公司法务与销售支持。</div>
+                </div>
+
+                <div class="tl-item">
+                  <div class="tl-dot apply">◌</div>
+                  <div class="tl-head">提交发布申请</div>
+                  <div class="tl-sub"><span>王五</span><span>2026-08-29 18:02</span><span>版本 v2</span></div>
+                </div>
+
+                <div class="tl-item">
+                  <div class="tl-dot publish">⬆</div>
+                  <div class="tl-head">发布为系统级（直接发布）</div>
+                  <div class="tl-sub"><span>管理员 张三</span><span>2026-08-01 11:30</span><span>版本 v1</span></div>
+                  <div class="small" style="margin-top:6px;color:var(--text-2)">存量迁移前的首次发布。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script>
+  // 场景切换
+  document.getElementById('tabs').addEventListener('click', function (e) {
+    const btn = e.target.closest('button[data-scene]');
+    if (!btn) return;
+    document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.scene').forEach(s => s.classList.remove('active'));
+    document.getElementById(btn.dataset.scene).classList.add('active');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  // 卡片菜单开合（同时只开一个）
+  function toggleMenu(id, btn) {
+    const target = document.getElementById(id);
+    const open = target.style.display !== 'none';
+    document.querySelectorAll('.menu').forEach(m => (m.style.display = 'none'));
+    target.style.display = open ? 'none' : 'block';
+    event.stopPropagation();
+  }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.menu') && !e.target.closest('.kebab')) {
+      document.querySelectorAll('.menu').forEach(m => (m.style.display = 'none'));
+    }
+  });
+
+  // 下架通知勾选联动
+  function toggleNotify(box) {
+    document.getElementById('notifyHintOn').style.display = box.checked ? 'block' : 'none';
+    document.getElementById('notifyHintOff').style.display = box.checked ? 'none' : 'block';
+  }
+
+  // 历史快照 / diff 展开
+  function toggleSnap(id) {
+    const el = document.getElementById(id);
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  }
+  function toggleDiff(id) {
+    const el = document.getElementById(id);
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  }
+  // 名单展开
+  function expandNames(btn) {
+    document.getElementById('nameListAll').style.display = 'flex';
+    btn.style.display = 'none';
+  }
+</script>
+</body>
+</html>
