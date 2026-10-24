@@ -796,7 +796,6 @@ async def publish_agent_version(agent_id: str, version_id: str, session: AsyncSe
     if not success:
         raise HTTPException(status_code=403, detail="Forbidden: Failed to publish version (check ownership)")
     return {"status": "success"}
-    return {"status": "success"}
 
 @router.delete("/{agent_id}/versions/{version_id}", dependencies=[Depends(require_permission("element", "element:agent:edit"))])
 async def delete_agent_version(agent_id: str, version_id: str, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):

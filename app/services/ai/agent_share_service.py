@@ -586,6 +586,9 @@ class AgentShareService:
             engine_config=copy.deepcopy(meta.get("engine_config")),
             owner_group=meta.get("owner_group"),
         )
+        # 与复制接口保持一致：把被剔除的引用带到响应里，前端才能在弹窗里
+        # 立刻提示「跳过了 N 个你无权使用的工具」，而不是只在版本备注里留痕
+        agent.dropped_tool_refs = dropped_tools or ()
         session.add(agent)
 
         source_label = record.agent_display_name or record.agent_name or "他人分享"

@@ -1178,3 +1178,43 @@ async def test_pending_release_version_cannot_be_edited(db_session):
         await db_session.execute(delete(AIAgentVersion).where(AIAgentVersion.agent_id == agent.id))
         await db_session.execute(delete(AIAgent).where(AIAgent.id == agent.id))
         await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_pending_release_version_cannot_be_deleted(db_session):
+    """正在申请上线的版本不能被删除。
+
+    删掉之后审批时查不到版本 → 409，而申请单仍停在 PENDING，
+    智能体被 PENDING_REVIEW 永久锁住发布，只能人工驳回或撤回才能解开。
+    """
+    from app.services.ai.agent_manager import AgentManagerService
+
+    mark = uuid.uuid4().hex[:6]
+    agent = AIAgent(
+        id=str(uuid.uuid4()), name=f"del-pending-{mark}", display_name="待审删除",
+        created_by=f"owner-{mark}", is_system=True, is_enabled=True, engine_type="LOCAL",
+    )
+    version = AIAgentVersion(
+        id=str(uuid.uuid4()), agent_id=agent.id, version_number=2,
+        status="DRAFT", system_prompt="待审内容",
+    )
+    request = AgentSystemRequest(
+        id=str(uuid.uuid4()), agent_id=agent.id, request_type="VERSION_RELEASE",
+        snapshot_version_id=version.id, status="PENDING",
+        requested_by=1, requested_at=datetime.now(),
+    )
+    db_session.add_all([agent, version, request])
+    await db_session.commit()
+
+    try:
+        owner = {"role": "user", "user_name": f"owner-{mark}", "user_id": 1}
+        with pytest.raises(HTTPException) as exc:
+            await AgentManagerService.delete_version(db_session, agent.id, version.id, owner)
+        assert exc.value.status_code == 409
+        # 版本还在
+        assert await db_session.get(AIAgentVersion, version.id) is not None
+    finally:
+        await db_session.execute(delete(AgentSystemRequest).where(AgentSystemRequest.agent_id == agent.id))
+        await db_session.execute(delete(AIAgentVersion).where(AIAgentVersion.agent_id == agent.id))
+        await db_session.execute(delete(AIAgent).where(AIAgent.id == agent.id))
+        await db_session.commit()

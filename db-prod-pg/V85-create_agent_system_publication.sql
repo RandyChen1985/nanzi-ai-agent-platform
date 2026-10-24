@@ -73,7 +73,7 @@ COMMENT ON COLUMN "ai_agent_system_requests"."review_comment" IS '审核意见�
 CREATE TABLE IF NOT EXISTS ai_agent_system_events (
     id VARCHAR(36) PRIMARY KEY,
     agent_id VARCHAR(36) NOT NULL,
-    action VARCHAR(20) NOT NULL,
+    action VARCHAR(32) NOT NULL,
     version_id VARCHAR(36),
     version_number INTEGER,
     snapshot TEXT,

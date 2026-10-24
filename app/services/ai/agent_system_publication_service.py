@@ -323,9 +323,18 @@ class AgentSystemPublicationService:
 
     @staticmethod
     async def _get_request(
-        session: AsyncSession, request_id: str, *, expect_status: Optional[str] = None
+        session: AsyncSession,
+        request_id: str,
+        *,
+        expect_status: Optional[str] = None,
+        for_update: bool = False,
     ) -> AgentSystemRequest:
-        request = await session.get(AgentSystemRequest, str(request_id))
+        # 写路径要加行锁：两个管理员（或同一个人双击）几乎同时点「通过」和「驳回」时，
+        # 都会读到 PENDING 并通过校验，结果智能体已经被置为系统级，后提交的事务
+        # 又把申请单写成 REJECTED，状态流转和事件日志对不上。
+        request = await session.get(
+            AgentSystemRequest, str(request_id), with_for_update=for_update
+        )
         if not request:
             raise HTTPException(status_code=404, detail="申请单不存在")
         if expect_status and request.status != expect_status:
@@ -616,7 +625,7 @@ class AgentSystemPublicationService:
             raise HTTPException(status_code=400, detail="驳回时必须填写理由")
 
         request = await AgentSystemPublicationService._get_request(
-            session, request_id, expect_status=STATUS_PENDING
+            session, request_id, expect_status=STATUS_PENDING, for_update=True
         )
         # 智能体可能已经被删：这类孤儿申请单必须能直接关掉，
         # 否则它永远挂在待审里，角标一直亮、列表里又找不到人处理。
@@ -654,7 +663,7 @@ class AgentSystemPublicationService:
         await assert_migrated(session)
         _, username, user_id = AgentSystemPublicationService.resolve_actor(user)
         request = await AgentSystemPublicationService._get_request(
-            session, request_id, expect_status=STATUS_PENDING
+            session, request_id, expect_status=STATUS_PENDING, for_update=True
         )
         agent = await AgentSystemPublicationService._get_agent(session, request.agent_id)
 
@@ -1225,11 +1234,19 @@ class AgentSystemPublicationService:
         if not is_admin and agent.created_by != username:
             raise HTTPException(status_code=403, detail="只有管理员或创建者可以查看发布历史")
 
+        # 两张表都是「读全部再切片」，而每条记录还带一整个快照 LONGTEXT
+        # （完整提示词 + 工具清单）。智能体跑上一年、事件上几百条之后，翻第一页
+        # 也要把全部快照反序列化一遍。这里按需取 offset+limit 条：
+        # 两个来源各取前 N 条，合并排序后前 N 条一定落在这批里，切片结果不变。
+        window_size = max(1, min(limit, 100))
+        offset = max(0, offset)
+        fetch_limit = offset + window_size
         requests = (
             await session.execute(
                 select(AgentSystemRequest)
                 .where(AgentSystemRequest.agent_id == agent.id)
                 .order_by(desc(AgentSystemRequest.requested_at))
+                .limit(fetch_limit)
             )
         ).scalars().all()
         events = (
@@ -1237,6 +1254,7 @@ class AgentSystemPublicationService:
                 select(AgentSystemEvent)
                 .where(AgentSystemEvent.agent_id == agent.id)
                 .order_by(desc(AgentSystemEvent.created_at))
+                .limit(fetch_limit)
             )
         ).scalars().all()
 
@@ -1300,8 +1318,19 @@ class AgentSystemPublicationService:
             )
 
         entries.sort(key=lambda item: item["at"] or datetime.min, reverse=True)
-        total = len(entries)
-        window = entries[max(0, offset) : max(0, offset) + max(1, min(limit, 100))]
+        # total 必须单独数：同步列表已经截断，len(entries) 不再等于总数
+        request_total = await session.scalar(
+            select(func.count())
+            .select_from(AgentSystemRequest)
+            .where(AgentSystemRequest.agent_id == agent.id)
+        )
+        event_total = await session.scalar(
+            select(func.count())
+            .select_from(AgentSystemEvent)
+            .where(AgentSystemEvent.agent_id == agent.id)
+        )
+        total = int(request_total or 0) + int(event_total or 0)
+        window = entries[offset : offset + window_size]
         return {"total": total, "items": window}
 
     @staticmethod

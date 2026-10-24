@@ -62,7 +62,7 @@ class AgentSystemEvent(Base):
 
     id = Column(String(36), primary_key=True)
     agent_id = Column(String(36), nullable=False, index=True)
-    action = Column(String(20), nullable=False)
+    action = Column(String(32), nullable=False)
     version_id = Column(String(36), nullable=True)
     version_number = Column(Integer, nullable=True)
     snapshot = Column(_snapshot_text(), nullable=True)

@@ -60,7 +60,14 @@ class AgentSystemNotifier:
                 if user_id is not None:
                     user_ids.add(int(user_id))
 
-        return user_ids
+        if not user_ids:
+            return user_ids
+
+        # 授予了角色/权限但账号已停用的，同样不该收到待办
+        alive_rows = await session.execute(
+            select(User.id).where(User.id.in_(list(user_ids)), User.status == 1)
+        )
+        return {int(row[0]) for row in alive_rows if row[0] is not None}
 
     @staticmethod
     async def reviewer_user_ids(session: AsyncSession) -> Set[int]:
@@ -71,8 +78,9 @@ class AgentSystemNotifier:
         """
         user_ids: Set[int] = set()
 
+        # 只看启用账号：停用/离职的管理员仍会收到站内信，属于无效通知
         admin_rows = await session.execute(
-            select(User.id).where(User.role == "admin")
+            select(User.id).where(User.role == "admin", User.status == 1)
         )
         for (user_id,) in admin_rows:
             if user_id is not None:

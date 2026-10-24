@@ -1707,6 +1707,42 @@ class AgentManagerService:
         
         return version
 
+
+    @staticmethod
+    async def _assert_version_not_pending_release(
+        session: AsyncSession, version_id: str
+    ) -> None:
+        """正在申请上线的版本不能被改写或删除。
+
+        审批通过时是按 ``snapshot_version_id`` 现读内容发布的：
+        - 改写 → 管理员审的是快照，上线的是改后内容；
+        - 删除 → 审批时报 409，而申请单仍停在 PENDING，智能体被
+          ``PENDING_REVIEW`` 永久锁住发布，只能人工驳回或撤回才能解开。
+
+        未迁移环境没有这张表，此时应当放行普通草稿操作。
+        """
+        from fastapi import HTTPException
+
+        from app.models.agent_system import AgentSystemRequest
+
+        try:
+            pending = await session.execute(
+                select(AgentSystemRequest.id)
+                .where(
+                    AgentSystemRequest.snapshot_version_id == str(version_id),
+                    AgentSystemRequest.status == "PENDING",
+                )
+                .limit(1)
+            )
+            has_pending = pending.scalars().first() is not None
+        except OperationalError:
+            return
+        if has_pending:
+            raise HTTPException(
+                status_code=409,
+                detail="该版本正在审核中，暂不能修改或删除；如需调整请新建一个版本再提交申请",
+            )
+
     @staticmethod
     async def update_agent_version(session: AsyncSession, agent_id: str, version_id: str, data: AIAgentVersionBase, user: Any = None) -> Optional[AIAgentVersion]:
         """Update an existing DRAFT version (checks ownership)"""
@@ -1741,27 +1777,7 @@ class AgentManagerService:
         # 但「正在申请上线的那个版本」不能改：审批通过时是按 version_id 现读内容发布的，
         # 待审期间整份改写等于让管理员审的是 A、上线的是 B，审核就白做了。
         # 只冻这一版，建新版本、改别的草稿都不受影响。
-        try:
-            from fastapi import HTTPException
-
-            from app.models.agent_system import AgentSystemRequest
-
-            pending_release = await session.execute(
-                select(AgentSystemRequest.id)
-                .where(
-                    AgentSystemRequest.snapshot_version_id == str(version_id),
-                    AgentSystemRequest.status == "PENDING",
-                )
-                .limit(1)
-            )
-            if pending_release.scalars().first():
-                raise HTTPException(
-                    status_code=409,
-                    detail="该版本正在审核中，暂不能修改；如需调整请新建一个版本再提交申请",
-                )
-        except OperationalError:
-            # 未迁移环境没有这张表：不能因此挡住普通改草稿
-            pass
+        await AgentManagerService._assert_version_not_pending_release(session, version_id)
 
         skills_custom = bool(getattr(data, "skills_custom", False))
         skills_list = (
@@ -1996,6 +2012,9 @@ class AgentManagerService:
         # Cannot delete PUBLISHED version
         if version.status == "PUBLISHED":
             return False
+
+        # 正在申请上线的版本同样不能删（否则申请单变孤儿、智能体被审核状态锁死）
+        await AgentManagerService._assert_version_not_pending_release(session, version_id)
 
         # Permission Check
         if isinstance(user, dict):

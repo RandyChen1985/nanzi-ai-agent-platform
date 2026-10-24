@@ -66,3 +66,34 @@ def test_migrations_do_not_declare_physical_foreign_keys():
         ).upper()
         assert "FOREIGN KEY" not in ddl, f"{path} 不应有物理外键"
         assert "REFERENCES" not in ddl, f"{path} 不应有 REFERENCES"
+
+
+def test_action_column_length_matches_across_databases():
+    """MySQL、PostgreSQL、ORM 三处的 action 长度必须一致。
+
+    改了一个漏另外两个，就会出现「MySQL 存得下、PG 截断」这种只在某一套
+    数据库上复现的问题。
+    """
+    import re
+
+    mysql_ddl = MYSQL_PUBLISH.read_text(encoding="utf-8")
+    pg_ddl = PG_PUBLISH.read_text(encoding="utf-8")
+    model = Path("app/models/agent_system.py").read_text(encoding="utf-8")
+
+    mysql_len = re.search(r"`action` VARCHAR\((\d+)\)", mysql_ddl)
+    pg_len = re.search(r"\baction VARCHAR\((\d+)\)", pg_ddl)
+    orm_len = re.search(r"action = Column\(String\((\d+)\)", model)
+
+    assert mysql_len and pg_len and orm_len, "三处都应能找到 action 的长度定义"
+    lengths = {mysql_len.group(1), pg_len.group(1), orm_len.group(1)}
+    assert len(lengths) == 1, f"action 长度不一致：MySQL/PG/ORM = {lengths}"
+
+
+def test_share_user_id_type_matches_across_databases():
+    """两套库的用户 ID 列都必须是 64 位整数，且与 ai_agent_users 主键一致。"""
+    mysql_ddl = MYSQL_SHARE.read_text(encoding="utf-8").lower()
+    pg_ddl = PG_SHARE.read_text(encoding="utf-8").lower()
+
+    for column in ("owner_user_id", "recipient_user_id"):
+        assert f"{column}` bigint" in mysql_ddl, f"MySQL 的 {column} 应为 BIGINT"
+        assert f"{column} bigint" in pg_ddl, f"PG 的 {column} 应为 bigint"
