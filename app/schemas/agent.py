@@ -131,6 +131,8 @@ class AIAgentResponse(AIAgentBase):
     knowledge_base_count: Optional[int] = None
     # 线上版本号：卡片上要告诉所有者「现在生效的是哪一版」，改草稿时好心里有数
     published_version_number: Optional[int] = None
+    # 复制智能体时因无权使用而被跳过的工具引用（仅复制接口返回，其它接口为 null）
+    dropped_tool_refs: Optional[List[Dict[str, Any]]] = None
     readiness_ready: bool = False
     readiness_missing: List[str] = Field(default_factory=list)
     # 模型配置异常：null 表示正常；仅在列表接口计算，避免/health 之类的轻量接口多查库
@@ -161,6 +163,8 @@ class AgentOnboardingResponse(BaseModel):
     version: AIAgentVersionResponse
     onboarding_step: str
     template_fallback: bool = False
+    # 模板里因当前用户无权使用而被跳过的 MCP 工具引用
+    dropped_tool_refs: List[Dict[str, Any]] = Field(default_factory=list)
 
 # --- Chat Execution Schemas ---
 

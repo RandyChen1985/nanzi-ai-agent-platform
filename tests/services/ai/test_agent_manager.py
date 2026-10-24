@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.ai.agent_manager import AgentManagerService
 from app.models.agent import AIAgent, AIAgentVersion

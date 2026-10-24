@@ -269,6 +269,7 @@ async def create_agent_onboarding(
         version=result.version,
         onboarding_step=result.agent.onboarding_step,
         template_fallback=result.template_fallback,
+        dropped_tool_refs=list(result.dropped_tool_refs or []),
     )
 
 @router.put("/{agent_id}", response_model=AIAgentResponse, dependencies=[Depends(require_permission("element", "element:agent:edit"))])

@@ -81,6 +81,8 @@ export interface AIAgent {
   knowledge_base_count?: number | null
   /** 线上版本号：卡片上要显示「现在生效的是哪一版」 */
   published_version_number?: number | null
+  /** 复制时因无权使用被跳过的工具引用（仅复制接口返回） */
+  dropped_tool_refs?: Array<{ name: string; reason_label?: string }> | null
   readiness_ready?: boolean
   readiness_missing?: string[]
   /**

@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update, or_, case
 from sqlalchemy.orm import selectinload
@@ -42,6 +42,8 @@ class AgentOnboardingResult:
     agent: AIAgent
     version: AIAgentVersion
     template_fallback: bool
+    # 模板里因当前用户无权使用而被跳过的 MCP 工具引用（供前端提示）
+    dropped_tool_refs: tuple = ()
 
 def build_agent_identity_map(agents: Any) -> Dict[str, tuple]:
     """构建「智能体 ID → (slug 标识名, 显示名, 头像)」映射。
@@ -102,9 +104,55 @@ class AgentManagerService:
             raise ValueError("OpenClaw 模式必须填写地址和机器人 ID")
 
     @staticmethod
+    async def drop_inaccessible_mcp_tools(
+        session: AsyncSession,
+        tools: Any,
+        user: Any,
+    ) -> Tuple[Any, List[Dict[str, str]]]:
+        """剔除「源配置里有、但当前用户无权使用」的 MCP 工具引用。
+
+        新建（套模板）和复制都会把别人的工具配置整份搬过来，而「源的所有者能用」
+        不等于「搬过来的人能用」：管理员用自己私有 MCP 服务配好的智能体被普通用户
+        套用后，那些引用对用户永久不可见——工具选择器不渲染它们，用户既看不见也
+        取消不了，只能在列表页看到一堆「无权访问」告警。
+
+        只剔 ``server_forbidden``：服务被临时禁用、工具下线属于源侧状态问题，
+        照旧保留，否则搬一次就悄悄丢配置，比告警更难发现。
+
+        返回 (过滤后的工具列表, 被剔除的明细)，明细供接口层回带给前端。
+        """
+        if not tools:
+            return tools, []
+
+        from app.services.mcp.tool_ref_health import find_stale_tool_refs
+
+        stale_refs = await find_stale_tool_refs(session, tools, user=user)
+        forbidden_items = [
+            item for item in stale_refs if item.get("reason") == "server_forbidden"
+        ]
+        if not forbidden_items:
+            return tools, []
+
+        forbidden = {str(item.get("name")) for item in forbidden_items}
+        filtered = [
+            item
+            for item in tools
+            if (item if isinstance(item, str) else (item or {}).get("name")) not in forbidden
+        ]
+        dropped = [
+            {"name": str(item.get("name")), "reason_label": item.get("reason_label")}
+            for item in forbidden_items
+        ]
+        logger.info(
+            "[agent] 剔除 %d 个当前用户无权使用的 MCP 工具引用", len(dropped)
+        )
+        return filtered, dropped
+
+    @staticmethod
     async def _resolve_onboarding_template(
         session: AsyncSession,
         agent_type: Any,
+        user: Any = None,
     ) -> Dict[str, Any]:
         type_value = getattr(agent_type, "value", agent_type)
         template_name = AgentManagerService._ONBOARDING_TEMPLATE_AGENT_NAMES[str(type_value)]
@@ -113,14 +161,23 @@ class AgentManagerService:
             agent_name=template_name,
         )
         if config:
+            # 模板是拿某个真实智能体配的，里面的 MCP 引用可能只对模板作者可用
+            # （典型是管理员的私有服务）。套模板的人看不到那些服务，必须在这里剔掉，
+            # 否则新建出来的智能体一保存就挂着「无权访问该 MCP 服务」的告警。
+            template_tools, dropped_tools = await AgentManagerService.drop_inaccessible_mcp_tools(
+                session,
+                AgentManagerService._normalize_tools_for_db(config.tools),
+                user,
+            )
             return {
                 "model_name": config.model_name,
                 "temperature": config.temperature or 0.0,
                 "system_prompt": config.system_prompt,
-                "tools": AgentManagerService._normalize_tools_for_db(config.tools),
+                "tools": template_tools,
                 "skills_custom": bool(config.skills_custom),
                 "skills": list(config.skills or []),
                 "template_fallback": False,
+                "dropped_tool_refs": dropped_tools,
             }
 
         from fastapi import HTTPException
@@ -147,6 +204,7 @@ class AgentManagerService:
             "skills_custom": False,
             "skills": [],
             "template_fallback": True,
+            "dropped_tool_refs": [],
         }
 
     @staticmethod
@@ -204,6 +262,7 @@ class AgentManagerService:
                     agent=existing_agent,
                     version=existing_version,
                     template_fallback=False,
+                    dropped_tool_refs=(),
                 )
 
         conflict = await AgentManagerService.find_agent_name_conflict(session, data.name)
@@ -212,7 +271,9 @@ class AgentManagerService:
 
             raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
 
-        template = await AgentManagerService._resolve_onboarding_template(session, data.agent_type)
+        template = await AgentManagerService._resolve_onboarding_template(
+            session, data.agent_type, user
+        )
         from app.services.ai.agent_types import (
             normalize_agent_capabilities_for_agent,
             resolve_agent_type_for_engine,
@@ -300,6 +361,7 @@ class AgentManagerService:
             agent=agent,
             version=version,
             template_fallback=bool(template["template_fallback"]),
+            dropped_tool_refs=tuple(template.get("dropped_tool_refs") or ()),
         )
     @staticmethod
     def _tool_entry_name(tool: Any) -> str:
@@ -1172,6 +1234,17 @@ class AgentManagerService:
         source_version = await AgentManagerService._pick_duplicate_source_version(
             session, source.id
         )
+        # 复制会把源版本的工具引用整份带走，但「源的所有者能用」不等于「复制人能用」：
+        # 管理员用自己私有 MCP 服务的智能体被别人复制后，那些引用对复制人永久不可见，
+        # 工具选择器里既看不到也取消不了，只能在列表页看到一堆「无权访问」告警。
+        # 这里提前剔掉，副本从创建那一刻就是干净可用的配置。
+        # 只剔 server_forbidden：服务被临时禁用/工具下线是源侧的状态问题，副本照旧保留，
+        # 否则复制一次就悄悄丢配置，用户更难察觉。
+        copied_tools = copy.deepcopy(source_version.tools) if source_version else None
+        copied_tools, dropped_tools = await AgentManagerService.drop_inaccessible_mcp_tools(
+            session, copied_tools, user
+        )
+
         if source_version:
             session.add(
                 AIAgentVersion(
@@ -1185,7 +1258,7 @@ class AgentManagerService:
                     allow_model_switch=bool(getattr(source_version, "allow_model_switch", True)),
                     system_prompt=source_version.system_prompt,
                     # JSON 字段必须深拷贝，避免两个 ORM 实例共享同一可变对象
-                    tools=copy.deepcopy(source_version.tools),
+                    tools=copied_tools,
                     toolcall_timeout_seconds=source_version.toolcall_timeout_seconds,
                     skills_custom=source_version.skills_custom,
                     skills=copy.deepcopy(source_version.skills),
@@ -1205,6 +1278,8 @@ class AgentManagerService:
 
         router_service.invalidate_cache()
 
+        # 供接口层回带给前端：「有 N 个工具因为你无权使用而没有复制过来」
+        agent.dropped_tool_refs = dropped_tools
         return agent
 
     @staticmethod

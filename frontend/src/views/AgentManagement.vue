@@ -1906,10 +1906,33 @@ const submitDuplicate = async () => {
       name,
       display_name: displayName,
     });
-    showToast(`已复制为「${res.data.display_name}」`, "success");
+    const created = res.data;
+    const dropped = created.dropped_tool_refs || [];
+
+    // 复制会把源版本的工具引用整份带走，其中「源的所有者能用、复制人无权用」的那些
+    // 后端已经剔除；必须告诉用户剔了什么，否则他会以为副本和源完全一样。
+    showToast(
+      dropped.length
+        ? `已复制为「${created.display_name}」，跳过 ${dropped.length} 个你无权使用的工具`
+        : `已复制为「${created.display_name}」`,
+      "success",
+    );
     clearDuplicateNameTimer();
     showDuplicateModal.value = false;
-    fetchAgents();
+    await fetchAgents();
+
+    // 直接把副本的 V1 打开：失效引用卡片就摆在眼前，不用用户自己去找。
+    // 打不开也不影响复制结果，所以整段兜底。
+    try {
+      const versionsRes = await agentApi.listVersions(created.id);
+      const versions = Array.isArray(versionsRes.data) ? versionsRes.data : [];
+      const first = versions.find((v: any) => v.version_number === 1) || versions[0];
+      const opened = (agents.value || []).find((a: any) => a.id === created.id) || created;
+      selectedAgent.value = opened as AIAgent;
+      if (first) openVersionModal(first as AIAgentVersion);
+    } catch (openError) {
+      console.warn("副本创建成功，但自动打开配置失败", openError);
+    }
   } catch (error: any) {
     duplicateError.value =
       error.response?.data?.message ||
@@ -2174,10 +2197,15 @@ const saveAgent = async (exitAfterSave = false) => {
       selectedAgent.value = response.data.agent;
       versionForm.value = { ...response.data.version };
       onboardingStep.value = "VERSION";
+      // 模板里可能有「模板作者能用、你无权用」的 MCP 工具，后端已剔除；要说清楚
+      const droppedFromTemplate = response.data.dropped_tool_refs || [];
+      const baseMessage = response.data.template_fallback
+        ? "智能体和 V1 草稿已创建，当前使用安全基础模板"
+        : "智能体和 V1 草稿已创建";
       showToast(
-        response.data.template_fallback
-          ? "智能体和 V1 草稿已创建，当前使用安全基础模板"
-          : "智能体和 V1 草稿已创建",
+        droppedFromTemplate.length
+          ? `${baseMessage}，已跳过 ${droppedFromTemplate.length} 个你无权使用的工具`
+          : baseMessage,
         response.data.template_fallback ? "info" : "success",
       );
       if (!exitAfterSave) return;
