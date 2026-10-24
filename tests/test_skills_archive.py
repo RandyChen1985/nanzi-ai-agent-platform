@@ -2,6 +2,7 @@ import os
 import zipfile
 import tarfile
 import asyncio
+import threading
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -447,3 +448,63 @@ def test_extract_budget_limits_file_count(mock_skills_dir, monkeypatch):
         )
     assert exc_info.value.status_code == 400
     assert "文件数超过上限" in exc_info.value.detail
+
+
+def test_zero_byte_files_are_caught_only_by_file_count(mock_skills_dir, monkeypatch):
+    """0 字节文件让体积始终为 0，只有文件数上限能拦住这类洪水。
+
+    这是文件数校验不能删的原因：体积上限量的是「占多少空间」，量不了「要创建多少个
+    inode、跑多少次 write」。实测 45KB 的 zip 即可解出 500 个空文件（每条约 90 字节
+    归档开销），按 100MB 体积上限放行时条目数可达百万级。
+    """
+    monkeypatch.setattr(skills, "MAX_EXTRACTED_FILES", 3)
+    # 体积上限设到 1GB，确保这道拦截只可能来自文件数
+    monkeypatch.setattr(skills, "MAX_EXTRACTED_BYTES", 1024 * 1024 * 1024)
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-zero-byte-flood"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+
+    zip_bytes = create_in_memory_zip({f"empty{i}.txt": "" for i in range(6)})
+    upload = UploadFile(filename="empty.zip", file=BytesIO(zip_bytes))
+
+    with pytest.raises(HTTPException) as exc_info:
+        run(
+            skills.upload_skill_archive(
+                "test-zero-byte-flood", folder="scripts", file=upload, user=user
+            )
+        )
+    assert exc_info.value.status_code == 400
+    assert "文件数超过上限" in exc_info.value.detail
+
+
+def test_archive_extraction_runs_off_the_event_loop(mock_skills_dir, monkeypatch):
+    """解压必须交给线程池：同步解压会把整个 worker 的事件循环卡住。
+
+    文件数上限放开后，一个包可能要写几万个文件，几秒到几十秒的同步 IO 会让期间
+    所有请求一起排队。这里锁住「不在事件循环线程上执行解压」这个行为。
+    """
+    thread_names = []
+    original = skills.safe_extract_archive
+
+    def spy(*args, **kwargs):
+        thread_names.append(threading.current_thread().name)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(skills, "safe_extract_archive", spy)
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-threadpool"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+
+    zip_bytes = create_in_memory_zip({"a.txt": "hello"})
+    upload = UploadFile(filename="ok.zip", file=BytesIO(zip_bytes))
+
+    run(
+        skills.upload_skill_archive(
+            "test-threadpool", folder="scripts", file=upload, user=user
+        )
+    )
+
+    assert thread_names, "解压没有被调用"
+    assert thread_names[0] != threading.main_thread().name

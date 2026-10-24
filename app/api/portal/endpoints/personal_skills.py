@@ -10,6 +10,7 @@ import logging
 import re
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File, Form
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_api_key
@@ -675,7 +676,8 @@ async def upload_personal_skill_archive(
             )
 
         file_name = file.filename if file.filename else "archive.zip"
-        safe_extract_archive(content, file_name, target_dir)
+        # 解压是同步 IO，交给线程池，避免文件数多的包卡住事件循环
+        await run_in_threadpool(safe_extract_archive, content, file_name, target_dir)
         return {"status": "success", "message": f"技能压缩包 {file_name} 上传解压成功"}
     except HTTPException:
         raise
@@ -865,7 +867,7 @@ async def import_personal_skill_package(
                 detail=f"导入文件大小超出 {SKILL_PACKAGE_MAX_MB}MB 限制",
             )
 
-        atomic_import_skill_package(content, filename, skill_dir)
+        await run_in_threadpool(atomic_import_skill_package, content, filename, skill_dir)
 
         return {"status": "success", "message": f"个人技能 {skill_id} 导入成功"}
     except HTTPException:
