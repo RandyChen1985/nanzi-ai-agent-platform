@@ -26,7 +26,6 @@ from app.services.ai.temperature import (
     resolve_effective_temperature,
     session_temperature_override,
 )
-from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.executors.base import BaseExecutor
 from app.services.ai.grounding.ledger import EvidenceLedger
 from app.services.ai.grounding.models import EvidenceType, FactFreshness
@@ -628,6 +627,7 @@ class AssistantAgentRunner(BaseExecutor):
         try:
             from app.services.ai.tools.agent_delegate_tool import (
                 delegable_agent_name_aliases,
+                load_delegable_system_agent_candidates,
                 resolve_runnable_delegable_system_agents,
             )
 
@@ -637,7 +637,9 @@ class AssistantAgentRunner(BaseExecutor):
                 raw_user_id = self.user_info.get("user_id") or self.user_info.get("id")
                 is_admin = self.user_info.get("role") == "admin"
             async with AsyncSessionLocal() as session:
-                agents = await AgentManagerService.list_agents(session)
+                # 与目录/专家清单共用候选口径；走 UI 可见性口径会因拿不到 user 而恒空，
+                # 导致别名集合与能力候选都为空、模型挑不到委派目标。
+                agents = await load_delegable_system_agent_candidates(session)
                 delegable_agents = await resolve_runnable_delegable_system_agents(
                     session,
                     agents,

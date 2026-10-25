@@ -281,6 +281,26 @@ async def can_delegate_to_agent(
     return await perm_service.check_permission(int(user_id), "agent", str(target_agent_id))
 
 
+async def load_delegable_system_agent_candidates(session: Any) -> List[Any]:
+    """加载「可委派候选」：已启用的系统级智能体。
+
+    这是委派链的**唯一候选来源**（可用智能体目录、欢迎语专家清单、子代理通讯录、
+    子代理能力候选、``sub_agent_call`` 自身都用它）。不要在调用方各自复用
+    ``AgentManagerService.list_agents``：那是 **UI 可见性**口径，按 ``created_by``
+    归属过滤，而工具/后台链路普遍拿不到 user，会退化成「created_by 必须为空字符串」，
+    把全部系统级智能体（``created_by='admin'``）整批剃成空列表。
+    """
+    from sqlalchemy import select
+
+    from app.models.agent import AIAgent
+
+    stmt = select(AIAgent).where(
+        AIAgent.is_enabled == True,
+        AIAgent.is_system == True,
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def filter_delegable_system_agents(
     session: Any,
     agents: Iterable[Any],
@@ -675,11 +695,8 @@ async def sub_agent_call(
     # 2. 校验目标智能体是否存在并加载配置
     target_config = None
     async with AsyncSessionLocal() as session:
-        from app.models.agent import AIAgent
-        from sqlalchemy import select
-        # 强制只查询启用的系统内置智能体 (is_system = True)
-        stmt = select(AIAgent).where(AIAgent.is_enabled == True, AIAgent.is_system == True)
-        all_active_system = (await session.execute(stmt)).scalars().all()
+        # 与目录/专家清单共用同一候选口径（启用的系统级智能体）。
+        all_active_system = await load_delegable_system_agent_candidates(session)
         for a in all_active_system:
             if str(getattr(a, "id", "") or "") == str(main_ctx.agent_id) and _matches_requested_agent(a, agent_name):
                 return SubAgentResult(

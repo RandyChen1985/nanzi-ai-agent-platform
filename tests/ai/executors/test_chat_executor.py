@@ -1987,7 +1987,7 @@ async def test_general_runner_without_tools_preserves_hallucination_with_risk_wa
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.ai.runners.assistant_agent_runner.RegistryToolProvider.get_implicit_tool", AsyncMock(return_value=None)), \
          patch(
-             "app.services.ai.runners.assistant_agent_runner.AgentManagerService.list_allowed_agents",
+             "app.services.ai.agent_manager.AgentManagerService.list_allowed_agents",
              AsyncMock(return_value=[data_agent]),
          ):
         events = []
@@ -2047,7 +2047,7 @@ async def test_general_runner_without_data_tool_flags_fake_chatbi_handoff(chat_c
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.ai.runners.assistant_agent_runner.RegistryToolProvider.get_implicit_tool", AsyncMock(return_value=None)), \
          patch(
-             "app.services.ai.runners.assistant_agent_runner.AgentManagerService.list_allowed_agents",
+             "app.services.ai.agent_manager.AgentManagerService.list_allowed_agents",
              AsyncMock(return_value=[data_agent]),
          ):
         events = []

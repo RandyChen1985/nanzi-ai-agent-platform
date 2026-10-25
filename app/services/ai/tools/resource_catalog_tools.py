@@ -110,33 +110,59 @@ def _agent_item(agent: Any, *, current_agent_id: Optional[str] = None) -> dict[s
 
 @tool
 async def list_available_agents() -> str:
-    """列出当前用户有权限访问且可运行的可用智能体/专家目录（包含 agent_name、展示名称、职责描述、核心能力与当前会话标识 is_current）。
+    """列出当前用户有权委派且运行就绪的系统级智能体/专家目录（包含 agent_name、展示名称、职责描述、核心能力与当前会话标识 is_current）。
 
     使用规则：
     - 当用户问「我有哪些智能体」「能调用哪些专家」「可用智能体列表」时调用。
     - 在需要委派子任务前，若需查询或确认可委派的智能体标识 (agent_name) 与核心能力，可调用此工具。
-    - 返回当前用户有权限访问的全部可用智能体，当前正在对话的自身智能体标注为 is_current=true。
+    - 目录只包含**平台系统级智能体**：用户自建智能体即使由本人自动授权，也不能被委派，故不在此列。
+    - 返回体含 scope/items/count；当前对话的智能体若在列则标注 is_current=true。
+    - 空目录时返回体附带 note 说明原因，必须据此向用户解释（例如「你没被分配可委派的系统级智能体，自建的不可委派」），不要简化成「你没有任何智能体」。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:
         return "无法识别当前用户，拒绝列出可用智能体。"
 
     try:
-        from app.services.ai.agent_manager import AgentManagerService
-        from app.services.ai.tools.agent_delegate_tool import resolve_runnable_delegable_system_agents
+        from app.services.ai.tools.agent_delegate_tool import (
+            load_delegable_system_agent_candidates,
+            resolve_runnable_delegable_system_agents,
+        )
 
         current_agent_id = getattr(ctx, "agent_id", None)
         async with AsyncSessionLocal() as db:
-            active_agents = await AgentManagerService.list_agents(db)
+            # 候选口径与委派链其余环节共用同一来源（目录 / 专家清单 / 子代理候选 /
+            # sub_agent_call 全部走 load_delegable_system_agent_candidates）。
+            # 不能复用 AgentManagerService.list_agents：那是 UI 可见性口径，按 created_by
+            # 归属过滤，而工具侧没有 user 可传，会把候选整批剃成空目录。
+            active_agents = await load_delegable_system_agent_candidates(db)
             available_agents = await resolve_runnable_delegable_system_agents(
                 db,
                 active_agents,
                 user_id=ctx.user_id,
                 is_admin=bool(ctx.is_admin),
+                # 传 None 才能把自身也纳入目录（由 is_current 标识）；传当前 id 会把自己剔除。
                 current_agent_id=None,
             )
             items = [_agent_item(a, current_agent_id=current_agent_id) for a in available_agents]
-            return json.dumps({"items": items, "count": len(items)}, ensure_ascii=False)
+            payload: dict[str, Any] = {
+                "scope": "delegable_system_agents",
+                "items": items,
+                "count": len(items),
+            }
+            if not items:
+                # 空目录必须自带原因。只给 {"items": [], "count": 0} 时，模型很容易把它
+                # 转述成「你没有任何智能体」，与智能体中心里用户自建的条目直接冲突——
+                # 页面上有 3 个、对话里说 0 个。note 让模型能照着解释「为什么是 0」。
+                payload["note"] = (
+                    "当前平台没有可委派的系统级智能体（可能均未启用、未发布或运行不就绪）。"
+                    if bool(ctx.is_admin)
+                    else (
+                        "你没有被分配可委派的系统级智能体；自己创建的智能体不可委派，"
+                        "故不在本目录中（仍可在智能体中心直接使用）。"
+                    )
+                )
+            return json.dumps(payload, ensure_ascii=False)
     except Exception as e:
         logger.error("[list_available_agents] failed: %s", e, exc_info=True)
         return f"列出可用智能体失败: {e}"

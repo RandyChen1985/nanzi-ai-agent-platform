@@ -45,10 +45,15 @@ async def resolve_delegable_system_agents_for_user(
     user_info: Optional[dict],
     current_agent_id: Optional[str],
 ) -> List[Any]:
-    from app.services.ai.agent_manager import AgentManagerService
-    from app.services.ai.tools.agent_delegate_tool import resolve_runnable_delegable_system_agents
+    from app.services.ai.tools.agent_delegate_tool import (
+        load_delegable_system_agent_candidates,
+        resolve_runnable_delegable_system_agents,
+    )
 
-    active_agents = await AgentManagerService.list_agents(session)
+    # 候选口径与目录/sub_agent_call 共用：这里拿不到 user，若走 UI 可见性口径
+    # （list_agents 按 created_by 过滤）会把全部系统级智能体剃成空清单，
+    # 于是欢迎语永远显示「暂无其他可调度专家智能体」、子代理通讯录恒空。
+    active_agents = await load_delegable_system_agent_candidates(session)
     raw_user_id = None
     is_admin = False
     if user_info:

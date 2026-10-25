@@ -845,7 +845,10 @@ class AgentManagerService:
 
         # 模型健康：只校验 LOCAL 引擎的已启用智能体。OPENCLAW 的 model 是机器人 ID，
         # RAGFLOW 不走平台 LLM，拿模型表去比对只会误报。
-        agent.model_issue = None
+        # 先统一置空：写在循环外会让 visible_agents 为空时引用到未绑定的循环变量
+        # （UnboundLocalError），而「空列表」恰恰是权限过滤后的正常结果。
+        for agent in visible_agents:
+            agent.model_issue = None
         local_enabled = [
             agent
             for agent in visible_agents

@@ -164,7 +164,7 @@ async def test_auto_main_preserves_internal_asset_table_with_risk_warning(chat_c
         yield {"content": hallucinated}
 
     with patch.object(runner, "_execute_core", fake_core), patch(
-        "app.services.ai.runners.assistant_agent_runner.AgentManagerService.list_allowed_agents",
+        "app.services.ai.agent_manager.AgentManagerService.list_allowed_agents",
         AsyncMock(return_value=[data_agent]),
     ):
         events = []

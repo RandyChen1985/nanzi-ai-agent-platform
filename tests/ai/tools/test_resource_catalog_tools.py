@@ -208,6 +208,9 @@ async def test_list_available_agents_returns_lightweight_fields():
     )
 
     db = AsyncMock()
+    scalars_result = MagicMock()
+    scalars_result.scalars.return_value.all.return_value = [agent_target]
+    db.execute = AsyncMock(return_value=scalars_result)
     db_cm = MagicMock()
     db_cm.__aenter__ = AsyncMock(return_value=db)
     db_cm.__aexit__ = AsyncMock(return_value=None)
@@ -219,8 +222,10 @@ async def test_list_available_agents_returns_lightweight_fields():
         "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
         return_value=db_cm,
     ), patch(
+        # 目录口径不得复用 UI 可见性列表：list_agents 在 tool 侧拿不到 user，
+        # 会把 created_by 非空的候选（含全部系统智能体）剃成空列表。
         "app.services.ai.agent_manager.AgentManagerService.list_agents",
-        AsyncMock(return_value=[agent_target]),
+        AsyncMock(return_value=[]),
     ) as mock_list_agents, patch(
         "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
         AsyncMock(return_value=[agent_target]),
@@ -228,7 +233,9 @@ async def test_list_available_agents_returns_lightweight_fields():
         result = await list_available_agents.ainvoke({})
 
     payload = json.loads(result)
+    assert payload["scope"] == "delegable_system_agents"
     assert payload["count"] == 1
+    assert "note" not in payload
     assert payload["items"] == [
         {
             "agent_name": "data_expert",
@@ -238,7 +245,7 @@ async def test_list_available_agents_returns_lightweight_fields():
             "is_current": False,
         }
     ]
-    mock_list_agents.assert_awaited_once_with(db)
+    mock_list_agents.assert_not_awaited()
     mock_resolve_delegable.assert_awaited_once_with(
         db,
         [agent_target],
@@ -246,4 +253,86 @@ async def test_list_available_agents_returns_lightweight_fields():
         is_admin=False,
         current_agent_id=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_list_available_agents_empty_catalog_without_permitted_system_agents():
+    """未被分配任何系统级智能体时返回空目录，是正确的授权口径而非缺陷。
+
+    本工具只服务于「委派」场景，而委派本身只允许系统级智能体
+    （``sub_agent_call`` 的候选 SQL 即 ``is_system=True``）。用户自建智能体
+    即使由 owner 自动授权，也不进入该目录。
+
+    空目录必须自带 note：否则模型容易把「没有可委派的系统级智能体」转述成
+    「你没有任何智能体」，与智能体中心里用户自建的条目直接冲突。
+    """
+    from app.services.ai.tools.resource_catalog_tools import list_available_agents
+
+    ctx = MagicMock()
+    ctx.user_id = 7
+    ctx.is_admin = False
+    ctx.agent_id = "agent_current"
+
+    db = AsyncMock()
+    empty_result = MagicMock()
+    empty_result.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=empty_result)
+    db_cm = MagicMock()
+    db_cm.__aenter__ = AsyncMock(return_value=db)
+    db_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "app.services.ai.tools.resource_catalog_tools.get_current_agent_context",
+        return_value=ctx,
+    ), patch(
+        "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
+        return_value=db_cm,
+    ), patch(
+        "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
+        AsyncMock(return_value=[]),
+    ):
+        result = await list_available_agents.ainvoke({})
+
+    payload = json.loads(result)
+    assert payload["scope"] == "delegable_system_agents"
+    assert payload["items"] == []
+    assert payload["count"] == 0
+    assert "没有被分配" in payload["note"]
+    assert "自己创建" in payload["note"]
+
+
+@pytest.mark.asyncio
+async def test_list_available_agents_empty_catalog_note_for_admin():
+    """管理员没有「未分配」问题，空目录的 note 不能说成「你没有被分配」。"""
+    from app.services.ai.tools.resource_catalog_tools import list_available_agents
+
+    ctx = MagicMock()
+    ctx.user_id = 1
+    ctx.is_admin = True
+    ctx.agent_id = "agent_current"
+
+    db = AsyncMock()
+    empty_result = MagicMock()
+    empty_result.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=empty_result)
+    db_cm = MagicMock()
+    db_cm.__aenter__ = AsyncMock(return_value=db)
+    db_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "app.services.ai.tools.resource_catalog_tools.get_current_agent_context",
+        return_value=ctx,
+    ), patch(
+        "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
+        return_value=db_cm,
+    ), patch(
+        "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
+        AsyncMock(return_value=[]),
+    ):
+        result = await list_available_agents.ainvoke({})
+
+    payload = json.loads(result)
+    assert payload["count"] == 0
+    assert "没有可委派的系统级智能体" in payload["note"]
+    assert "没有被分配" not in payload["note"]
 
