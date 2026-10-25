@@ -3579,6 +3579,15 @@ const isProcessing = ref(false);
 // 流式读取是否在途：用于区分「流仍在读」与「流已死但界面还挂着 busy」。
 // @conversation-scoped: streamInFlight
 let streamInFlight = false;
+/**
+ * 写入方令牌：每次开流（主发送 / 权限确认 / 外部执行恢复）与切会话复位时自增。
+ *
+ * 恢复流的 finally 只能复位「自己这一次」的锁态：若期间已经换了会话或被新的流接管，
+ * 无条件写 `streamInFlight = false` 会把新会话的单写入方标志清掉（重复输出借道回归）；
+ * 反之若只看会话号，「在本会话里另开新会话」时旧流又会跳过复位，把锁永久留下。
+ */
+// @conversation-scoped: liveWriterToken
+let liveWriterToken = 0;
 // 组件是否已卸载：卸载后不再执行流收尾副作用（避免僵尸请求与会话轮询）。
 let embedUnmounted = false;
 const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
@@ -5224,6 +5233,14 @@ let streamReplayInFlight = false;
 // @conversation-scoped: streamReplayPrimed
 let streamReplayPrimed = false;
 /**
+ * 续显进度代次：任何「作废续显进度」的动作都自增一次。
+ *
+ * 在途轮询带的 after_seq 取自作废前的游标，回来时代次已变就必须整批丢弃——否则它会
+ * 把旧游标之后的事件写进已被别的写入方（实时流续写 / 新生轮次）推进过的草稿，正文重复。
+ */
+// @conversation-scoped: streamReplayGeneration
+let streamReplayGeneration = 0;
+/**
  * 本次恢复累计补回的事件条数（恢复卡片展示用）。
  *
  * 与游标分开记：游标是后端 INCR 分配的事件序号，和日志 list 索引解耦且受 LTRIM
@@ -5251,6 +5268,7 @@ const persistStreamSnapshot = (
   draft: Message,
   userMsg?: Message,
   cursor?: { lastSeq?: number },
+  resumeOwned = false,
 ) => {
   if (!cid) return;
   const snapshot = buildEmbedStreamSnapshot({
@@ -5258,6 +5276,9 @@ const persistStreamSnapshot = (
     traceId: draft.trace_id,
     lastSeq: cursor?.lastSeq,
     user: userMsg ? { content: userMsg.content, timestamp: userMsg.timestamp } : null,
+    // 标记同样要落盘：刷新后若丢掉它，首拉会按「只有挂起前事件」的日志重建，
+    // 把恢复流刚写出的正文换回旧内容。
+    resumeOwned,
     draft: {
       // 本端读流失败的错误只提示当前界面，不随快照还原（见 helper 注释）。
       content: stripClientStreamErrorSuffix(draft.content, draft.clientTransportErrorSuffix),
@@ -5306,7 +5327,18 @@ const readStreamSnapshot = (cid: string): EmbedStreamSnapshot | null => {
 
 /** 在途流式的草稿引用：供节流写入与卸载前强制落盘使用。 */
 // @conversation-scoped: activeStreamDraft
-let activeStreamDraft: { conversationId: string; msg: Message; lastAppliedSeq?: number } | null = null;
+let activeStreamDraft: {
+  conversationId: string;
+  msg: Message;
+  lastAppliedSeq?: number;
+  /**
+   * 本轮正文由「不写事件日志的恢复流」（权限确认 / 外部执行恢复）写出。
+   *
+   * 这类流只转发 SSE，事件日志里仍只有挂起前的事件；此时按日志首拉重建会把恢复流
+   * 刚写出的正文换回挂起前的旧内容（内容回退）。置位后本轮不再启动续显。
+   */
+  resumeOwned?: boolean;
+} | null = null;
 let lastStreamSnapshotAt = 0;
 
 /**
@@ -5342,14 +5374,39 @@ const maybePersistStreamSnapshot = (force = false) => {
   const now = Date.now();
   if (!force && now - lastStreamSnapshotAt < STREAM_SNAPSHOT_WRITE_INTERVAL_MS) return;
   lastStreamSnapshotAt = now;
-  persistStreamSnapshot(active.conversationId, active.msg, currentStreamUserMessage(), {
-    // 落盘进度取「游标」与「草稿已应用进度」的较大者：游标可能因会话重置归零，而草稿
-    // 的进度才是界面真实渲染到哪。取小了会让切回后重放旧事件、正文重复。
-    lastSeq: Math.max(
-      Number(streamReplayCursor.value.lastSeq || 0) || 0,
-      Number(active.lastAppliedSeq || 0) || 0,
-    ),
-  });
+  persistStreamSnapshot(
+    active.conversationId,
+    active.msg,
+    currentStreamUserMessage(),
+    {
+      // 落盘进度取「游标」与「草稿已应用进度」的较大者：游标可能因会话重置归零，而草稿
+      // 的进度才是界面真实渲染到哪。取小了会让切回后重放旧事件、正文重复。
+      lastSeq: Math.max(
+        Number(streamReplayCursor.value.lastSeq || 0) || 0,
+        Number(active.lastAppliedSeq || 0) || 0,
+      ),
+    },
+    active.resumeOwned === true,
+  );
+};
+
+/**
+ * 实时写入方接管：立刻停掉事件续显轮询，并作废在途轮询的结果。
+ *
+ * 一段回复同一时刻只允许一个写入方：要么是客户端实时流（/completions、权限确认、
+ * 外部执行恢复），要么是事件日志续显。SSE 帧不带事件序号，前端无法把游标推进到
+ * 「实时流已经渲染到哪」，两路同写会把已渲染过的正文再叠一遍（逐条 delta 达不到
+ * 32 字符去重阈值，思考内容则完全没有去重）。
+ *
+ * 刻意**不动**游标、草稿进度与快照：停下时游标与正文仍然一致；把游标归零反而会让
+ * 下次首拉清掉实时流刚写出的正文再按日志重建——权限确认 / 外部执行恢复流不写事件
+ * 日志，那等于把刚拿到的结果换回挂起前的旧内容（内容回退）。
+ */
+const stopReplayForLiveStream = () => {
+  clearStreamReplayTimer();
+  // 代次**无条件**自增：让位也可能发生在「别人刚清掉定时器、而首个轮询仍在途」的
+  // 窄窗里（恢复宽限期到期、切后台），此时只看 timer / primed 会漏掉那批在途结果。
+  streamReplayGeneration += 1;
 };
 
 /**
@@ -5372,6 +5429,29 @@ const hasRestorableDraft = (draft: EmbedStreamSnapshot["draft"] | null | undefin
       draft.userQuestion ||
       draft.businessConfirmation,
   );
+};
+
+/**
+ * 让「被中断的恢复轮」重新可提交。
+ *
+ * 恢复流的第一帧就会把卡片改成「已批准 / 已完成」；若这一轮**还没落库**（trace 不在
+ * 历史里），说明恢复轮被刷新 / 断网取消了，而后端挂起快照仍然留着（resume.py 改成
+ * 「跑完才消费」）。不复活的话，用户刷新后只能看到一张已批准的卡片，没有任何重试
+ * 入口——正文虽然保住了，这一轮却再也接不上。
+ *
+ * 用户主动拒绝（rejected）不复活：那是明确决定，不是被中断。
+ */
+const reviveInterruptedResumeCards = (msg: Message) => {
+  const permission = msg.pendingPermission;
+  if (permission && (permission.status === "approved" || permission.status === "error")) {
+    permission.status = "pending";
+    permission.isSubmitting = false;
+  }
+  const external = msg.pendingExternalExecution;
+  if (external && (external.status === "completed" || external.status === "error")) {
+    external.status = "pending";
+    external.isSubmitting = false;
+  }
 };
 
 /**
@@ -5457,6 +5537,12 @@ const restoreEmbedStreamSnapshot = async (expectedGeneration?: number) => {
         businessConfirmation:
           snapshot.draft?.businessConfirmation as unknown as Message["businessConfirmation"],
       };
+      // 恢复流写出的草稿 + 该轮还没落库（能走到这里就说明 trace 不在历史里）：
+      // 恢复轮被中断了，后端挂起快照还在（见 resume.py「跑完才消费」）。把被恢复流
+      // 改成「已批准 / 已完成」的卡片复活，用户可以直接重试。
+      if (snapshot.resumeOwned === true && traceId) {
+        reviveInterruptedResumeCards(restoredAgent);
+      }
       restored.push(restoredAgent);
     }
     if (!restored.length) return;
@@ -5469,6 +5555,9 @@ const restoreEmbedStreamSnapshot = async (expectedGeneration?: number) => {
         conversationId: cid,
         msg: restoredAgent,
         lastAppliedSeq: Number(snapshot.lastSeq || 0) || 0,
+        // 恢复流写出的正文不进事件日志：刷新后仍要禁止按日志重建，否则首拉会把
+        // 快照里的正文换回挂起前的旧内容。
+        resumeOwned: snapshot.resumeOwned === true,
       };
       recoveryGraceExpired.value = false;
       // 草稿已还原：恢复卡片立即反映「已接管续显」。
@@ -5569,6 +5658,8 @@ const pollConversationStreamEvents = async () => {
     // 草稿槽被清空后恢复器/输入锁判据要立刻跟上，避免残留的 recoveryPending 继续轮询。
     refreshRecoveryCard();
   }
+  // 本轮正文由恢复流（不写事件日志）写出：日志无法描述它，重放只会把正文重建回挂起前。
+  if (activeStreamDraft?.resumeOwned) return;
   streamReplayInFlight = true;
   try {
     // 幂等防线的最后一道：以「草稿已应用到哪」与游标的较大者作为起点。
@@ -5576,6 +5667,9 @@ const pollConversationStreamEvents = async () => {
     // 再叠加一遍——表现为同一条回复里整段正文重复。
     const draftAppliedSeq = Math.max(0, Number(activeStreamDraft?.lastAppliedSeq ?? 0) || 0);
     const afterSeq = Math.max(Number(streamReplayCursor.value.lastSeq || 0) || 0, draftAppliedSeq);
+    // 代次在发请求前取定：await 期间实时流可能已接管（或已换会话 / 开新一轮），那批结果
+    // 属于作废前的进度，必须整批丢弃，否则会把旧事件写进已推进过的草稿。
+    const replayGeneration = streamReplayGeneration;
     const response = await axios.get(
       `/api/v1/chat/conversation/${encodeURIComponent(cid)}/stream-events`,
       {
@@ -5586,6 +5680,8 @@ const pollConversationStreamEvents = async () => {
     // await 期间可能已经切走：这批结果属于上一个会话，直接丢弃，否则会把它的进度
     // 写进当前会话的草稿、或把游标推到一个不相干的序号上。
     if (conversationId.value !== cid) return;
+    // 期间实时流已接管续显：同样整批丢弃（见 stopReplayForLiveStream）。
+    if (replayGeneration !== streamReplayGeneration) return;
     const data = (response.data?.data || {}) as Record<string, any>;
     const plan = planStreamReplay(data.events, {
       lastSeq: afterSeq,
@@ -5609,18 +5705,23 @@ const pollConversationStreamEvents = async () => {
         },
         streamReplayPrimed,
       );
-      if (isFirstPoll && !plan.gap && replayEvents.length > 0) {
+      if (isFirstPoll && replayEvents.length > 0) {
         // 切回 / 刷新后的首次拉取：草稿只是「切走瞬间」的前缀，而日志含切走期间后台
         // 新产出的全部事件。直接重放会把前缀叠加一遍（逐条 delta 达不到去重阈值），
         // 只对齐游标又会让切走期间的内容永久缺失——所以先清空累加字段，再整体重建。
+        //
+        // 断层（日志已被 LTRIM 截断）时同样要重建，不能「保留前缀 + 追加存活窗口」：
+        // 前缀与窗口的重叠范围无法判定（SSE 帧不带事件序号），重叠段会被再写一遍——
+        // 正文短片段逃过去重阈值，思考内容完全没有去重。被截掉的头部只能在「该轮落库
+        // 且 trace 仍能命中」时由终态整段覆盖（此时 unsettled 为真，update 会写回
+        // summary）；审计缺失 / trace 命中不了时头部保持缺失——这是「宁可不完整也不
+        // 重复」的已知取舍。
         resetDraftForReplay(replayTarget);
         // 内容已清空：应用进度同步归位到本次起点，异常中断也不会跳过后续事件。
         if (activeStreamDraft) activeStreamDraft.lastAppliedSeq = afterSeq;
       }
-      // 断层（日志被 LTRIM 截断）时不清空重建：快照里的内容可能比残缺日志更完整，缺口
-      // 交给历史终态同步兜底。但**仍然要应用**这批事件——afterSeq 取自快照/游标进度，
-      // 拉到的都是进度之后的增量，不会覆盖已有内容；若在此丢弃，它们会随游标推进被永久
-      // 跳过（切走期间的过程时间线永久缺失）。
+      // 首拉在重建后应用全部存活事件；增量轮询只应用游标之后的增量。gap 只影响头部
+      // 是否完整，不再决定是否重建（见上）。
       const shouldReplayEvents = !isFirstPoll || replayEvents.length > 0;
       if (shouldReplayEvents) {
         for (const event of replayEvents) {
@@ -5659,9 +5760,18 @@ const pollConversationStreamEvents = async () => {
 
 /** 只在页面可见时轮询；hidden 时仅暂停，游标保留在原处。 */
 const scheduleStreamReplay = () => {
+  // 一段回复只允许一个写入方：客户端实时流在途时正文/思考由它推进，续显不得抢写
+  // （两路同写会让同一段正文出现两次）。这里再兜一层，防止调用方绕过恢复器的闸门；
+  // 必须先于 clearStreamReplayTimer()，否则会误判为「没有续显活动」而不丢弃在途结果。
+  if (streamInFlight) {
+    stopReplayForLiveStream();
+    return;
+  }
   clearStreamReplayTimer();
   if (document.visibilityState !== "visible") return;
-  // 续显接管意味着 SSE 已不再推进（切页面回来 / 流已静默）。提示交给恢复卡片：
+  // 本轮正文由恢复流（不写事件日志）写出：按日志重建只会把它换回挂起前的旧内容。
+  if (activeStreamDraft?.resumeOwned) return;
+  // 续显接管意味着 SSE 已不再推进（切页面回来 / 流已结束）。提示交给恢复卡片：
   // 它装得下后台状态、执行阶段与同步进度，并且可以被用户手动关闭。
   refreshRecoveryCard();
   streamReplayTimer = setTimeout(async () => {
@@ -5849,6 +5959,8 @@ const settleRecoveredTimeline = () => {
 const finishRecoveredTurn = () => {
   settleRecoveredTimeline();
   activeStreamDraft = null;
+  // 目标已收敛：在途轮询带的是收敛前的位置，回来时不能再写游标/草稿。
+  streamReplayGeneration += 1;
   recoveryGraceExpired.value = false;
   recoveryUnknownCycles = 0;
   // 本端仍在读流时不要提前解锁：可见性同步可能在流健康推进期间也跑到这里。
@@ -5876,6 +5988,23 @@ const ensureRecoveryDraft = async () => {
   if (!cid || !hasPermission.value) return false;
   // 首屏/切会话历史尚未落地：此刻建草稿会被随后的历史整体替换掉。
   if (isLoadingHistory.value) return false;
+  // 客户端实时流在途：正文已有确定的写入方，补占位只会多出第二个气泡。
+  if (streamInFlight) return false;
+  // 界面末尾已有一条「实时流刚渲染完、尚未落库」的完整助手消息：那是本轮自己的产物，
+  // 此刻再补占位会在它下面多出第二个气泡（后续终态同步只 update 其中一条）。
+  // 判断正文时要先剥掉本端传输错误后缀：只有一句「[错误: …]」不等于真实产出，
+  // 否则该轮会既不补草稿、也拿不到续显，永久停在错误后缀上。
+  const lastMeaningful = [...messages.value].reverse().find((message) => message.role !== "system");
+  const lastMeaningfulBody = lastMeaningful
+    ? stripClientStreamErrorSuffix(lastMeaningful.content, lastMeaningful.clientTransportErrorSuffix)
+    : "";
+  if (
+    lastMeaningful?.role === "agent"
+    && lastMeaningful.isHistory !== true
+    && String(lastMeaningfulBody || "").trim()
+  ) {
+    return false;
+  }
   // 运行锁已确认释放：这一轮要么已落库（终态同步负责），要么已失败，不要伪造进行中。
   if (!remoteRunActive.value) return false;
   recoveryDraftInFlight = true;
@@ -6243,6 +6372,10 @@ const resetConversationScopedState = () => {
   streamReplayCursor.value = { lastSeq: 0, traceId: "" };
   clearStreamReplayTimer();
   streamReplayPrimed = false;
+  // 代次自增：切会话前发起的轮询即使回来也不能再写新会话的草稿。
+  streamReplayGeneration += 1;
+  // 旧的恢复流收尾时不得再复位锁态（新会话可能已有自己的写入方）。
+  liveWriterToken += 1;
   recoverySyncedEventCount = 0;
   // 恢复卡片（含本轮关闭标记与完成态定时器）属于本轮。
   resetRecoveryCard();
@@ -10953,8 +11086,15 @@ const applyPermissionStreamEvent = (
       if (data.status === "awaiting_permission") msg.pendingPermission.expanded = true;
     }
     if (msg.pendingExternalExecution) {
+      // 恢复流末尾的 run_status 也可能表示「再次挂起」（awaiting_external_execution）：
+      // 一律写 completed 会把第二张卡提前判成已完成——提交区消失、刷新也找不回，而后端
+      // 还会一直挂到 TTL 到期。挂起态必须回到 pending。
       msg.pendingExternalExecution.status =
-        data.status === "error" || data.status === "failed" ? "error" : "completed";
+        data.status === "error" || data.status === "failed"
+          ? "error"
+          : data.status === "awaiting_external_execution"
+            ? "pending"
+            : "completed";
     }
     msg.isThinking = false;
     if (!replay) {
@@ -11046,7 +11186,31 @@ const submitPendingExternalExecution = async (msg: Message) => {
   const pending = msg.pendingExternalExecution;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
+  // 这段恢复流直接写这条消息，而事件日志并不记录它（恢复接口只转发 SSE）：
+  // 既要停掉可能还在跑的续显（两路同写会重复正文），也要让恢复器在它运行期间认
+  // 「流在途」，不去补占位 / 拉续显。
+  stopReplayForLiveStream();
+  // 主流结束时已把草稿置空（见 sendMessageInternal 的收尾），所以正常流程走到这里
+  // `activeStreamDraft` 一定是 null——必须把草稿重新绑定到这条消息，否则：
+  // ① 恢复流期间 pagehide / visibilitychange 触发的 maybePersistStreamSnapshot 会因
+  //    草稿为空直接 return，恢复流已经输出的正文一个字都存不进快照；
+  // ② `resumeOwned` 也无处可打，刷新后首拉会按「只有挂起前事件」的日志重建，正文回退。
+  if (activeStreamDraft?.msg === msg) {
+    activeStreamDraft.resumeOwned = true;
+  } else {
+    activeStreamDraft = {
+      conversationId: conversationId.value,
+      msg,
+      lastAppliedSeq: Number(streamReplayCursor.value.lastSeq || 0) || 0,
+      resumeOwned: true,
+    };
+  }
+  streamInFlight = true;
   isProcessing.value = true;
+  // 恢复流没有 AbortSignal：finally 只能复位「自己这一次」的锁态。令牌在此刻自增后，
+  // 只要期间切了会话或被新的流接管，后来者的令牌就不是它，收尾时必须让位——否则会把
+  // 新会话的 streamInFlight 清掉（SSE 与续显再次同写，重复输出借道回归）。
+  const resumeToken = ++liveWriterToken;
   msg.isThinking = true;
   startThoughtTimer(msg);
   msg.isThoughtExpanded = config.expandThoughts;
@@ -11060,30 +11224,42 @@ const submitPendingExternalExecution = async (msg: Message) => {
       output: pending.outputDraft || "(empty external result)",
       headers: embedAuthHeaders() || {},
       credentials: "include",
-      onEvent: (data) => applyPermissionStreamEvent(msg, data),
+      onEvent: (data) => {
+        applyPermissionStreamEvent(msg, data);
+        // 恢复流没有后台 producer，刷新/断流后只能靠本地快照；按 1.5s 节流把增量落盘。
+        maybePersistStreamSnapshot();
+      },
     });
   } catch (error: any) {
     pending.status = "error";
     msg.content += `\n[外部执行恢复失败: ${error.message || "Unknown error"}]`;
   } finally {
     pending.isSubmitting = false;
-    isProcessing.value = msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending";
-    msg.isThinking = false;
-    clearStallTimer();
-    showStalledPrompt.value = false;
-    if (thoughtTimer) {
-      clearInterval(thoughtTimer);
-      thoughtTimer = null;
-    }
-    if (msg.logs) {
-      msg.logs.forEach((l) => {
-        if (l.status === "pending" && l.category !== "permission" && l.category !== "external") l.status = "success";
+    // 刻意**不**在这里 finishRecoveredTurn：恢复流没有后台 producer，客户端读流中断时
+    // 后端可能既不落库也不写审计，提前清快照会让这一轮在刷新后永久消失。收尾统一交给
+    // 落库终态同步（syncLatestSessionHistory → planHistorySync → finishRecoveredTurn）。
+    if (liveWriterToken === resumeToken) {
+      streamInFlight = false;
+      isProcessing.value = Boolean(
+        msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending",
+      );
+      msg.isThinking = false;
+      clearStallTimer();
+      showStalledPrompt.value = false;
+      if (thoughtTimer) {
+        clearInterval(thoughtTimer);
+        thoughtTimer = null;
+      }
+      if (msg.logs) {
+        msg.logs.forEach((l) => {
+          if (l.status === "pending" && l.category !== "permission" && l.category !== "external") l.status = "success";
+        });
+      }
+      scrollToBottom();
+      nextTick(() => {
+        if (!isMobile.value) chatInputRef.value?.focus();
       });
     }
-    scrollToBottom();
-    nextTick(() => {
-      if (!isMobile.value) chatInputRef.value?.focus();
-    });
   }
 };
 
@@ -11166,7 +11342,27 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
+  // 与外部执行恢复同理：这段恢复流直接写这条消息，事件日志不记录它。先让续显让位，
+  // 再把自己标记为「流在途」，恢复器在此期间不会补占位或启动续显。
+  stopReplayForLiveStream();
+  // 与外部执行恢复同理：主流结束时草稿已被置空，这里必须重新绑定到被确认的这条消息，
+  // 否则恢复流期间刷新/切后台时快照不落盘，恢复流写出的正文会随首拉重建被换回挂起前。
+  if (activeStreamDraft?.msg === msg) {
+    activeStreamDraft.resumeOwned = true;
+  } else {
+    activeStreamDraft = {
+      conversationId: conversationId.value,
+      msg,
+      lastAppliedSeq: Number(streamReplayCursor.value.lastSeq || 0) || 0,
+      resumeOwned: true,
+    };
+  }
+  streamInFlight = true;
   isProcessing.value = true;
+  // 恢复流没有 AbortSignal：finally 只能复位「自己这一次」的锁态。令牌在此刻自增后，
+  // 只要期间切了会话或被新的流接管，后来者的令牌就不是它，收尾时必须让位——否则会把
+  // 新会话的 streamInFlight 清掉（SSE 与续显再次同写，重复输出借道回归）。
+  const resumeToken = ++liveWriterToken;
   if (confirmed) {
     msg.isThinking = true;
     startThoughtTimer(msg);
@@ -11201,6 +11397,8 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
           break;
         }
         applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+        // 恢复流没有后台 producer，刷新/断流后只能靠本地快照；按 1.5s 节流把增量落盘。
+        maybePersistStreamSnapshot();
       }
       scrollToBottom();
       if (isPermissionStreamDone) {
@@ -11213,30 +11411,38 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
       }
     }
     for (const dataStr of parser.flush()) {
-      if (dataStr !== "[DONE]") applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+      if (dataStr === "[DONE]") continue;
+      applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+      maybePersistStreamSnapshot();
     }
   } catch (error: any) {
     pending.status = "error";
     msg.content += `\n[工具确认失败: ${error.message || "Unknown error"}]`;
   } finally {
     pending.isSubmitting = false;
-    isProcessing.value = msg.pendingPermission?.status === "pending" || msg.pendingExternalExecution?.status === "pending";
-    msg.isThinking = false;
-    clearStallTimer();
-    showStalledPrompt.value = false;
-    if (thoughtTimer) {
-      clearInterval(thoughtTimer);
-      thoughtTimer = null;
-    }
-    if (msg.logs) {
-      msg.logs.forEach((l) => {
-        if (l.status === "pending" && l.category !== "permission") l.status = "success";
+    // 与外部执行恢复同理：不在这里 finishRecoveredTurn，收尾交给落库终态同步。
+    if (liveWriterToken === resumeToken) {
+      streamInFlight = false;
+      isProcessing.value = Boolean(
+        msg.pendingPermission?.status === "pending" || msg.pendingExternalExecution?.status === "pending",
+      );
+      msg.isThinking = false;
+      clearStallTimer();
+      showStalledPrompt.value = false;
+      if (thoughtTimer) {
+        clearInterval(thoughtTimer);
+        thoughtTimer = null;
+      }
+      if (msg.logs) {
+        msg.logs.forEach((l) => {
+          if (l.status === "pending" && l.category !== "permission") l.status = "success";
+        });
+      }
+      scrollToBottom();
+      nextTick(() => {
+        if (!isMobile.value) chatInputRef.value?.focus();
       });
     }
-    scrollToBottom();
-    nextTick(() => {
-      if (!isMobile.value) chatInputRef.value?.focus();
-    });
   }
 };
 
@@ -11444,11 +11650,17 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   markRunStarted();
   abortController = new AbortController();
   streamInFlight = true;
+  // 新一轮是新的写入方：令牌自增后，仍在收尾的旧恢复流就不能再复位本轮的锁态。
+  liveWriterToken += 1;
   // 新一轮开始：续显游标整体归零。后端在 producer 启动时会清空上一轮日志并让 _seq
   // 从 1 重新计数，所以这里必须同步归零——保留 lastSeq 会让本轮事件全部落在
   // after_seq 之内而被丢弃；保留 traceId 则会把上一轮的残留事件放行进来。
   streamReplayCursor.value = { lastSeq: 0, traceId: "" };
   streamReplayPrimed = false;
+  // 上一轮可能还排着续显定时器 / 在途轮询：必须在这里断掉并作废代次，否则它会按旧游标
+  // 把上一轮的事件写进本轮草稿（本轮 traceId 已清空，trace 过滤也拦不住）。
+  clearStreamReplayTimer();
+  streamReplayGeneration += 1;
   recoverySyncedEventCount = 0;
   // 本次流的会话归属：收尾副作用（落定时间线、置完成态、写全局锁态）只对「仍是当前
   // 会话」生效。切走之后在别的会话里收尾，会把那个会话正在 pending 的步骤落定、并用
@@ -12355,12 +12567,16 @@ onMounted(() => {
     clearRunRecoveryTimer();
     if (!remoteRunActive.value && !recoveryPending.value) return;
     if (document.visibilityState !== "visible") return;
-    // 流仍在正常推进时由 SSE 自己收敛界面：既不必额外拉历史，也不必启动事件续显。
-    // `remoteRunActive` 在每次正常发送时同样为 true，若不设这道闸门，普通对话会多出
-    // 每 3s 一次的 history 请求，以及每 1s 一次的 stream-events 请求（后者还会把 SSE
-    // 已经渲染过的事件重放一遍）。只有流已静默（复用既有 Stall 信号）或根本没有流在途
-    // （页面卸载重建 / 切回）才需要恢复同步。
-    if (streamInFlight && !showStalledPrompt.value) {
+    // 客户端实时流仍在途时，正文/思考一律由它推进：既不必额外拉历史，也不必启动事件
+    // 续显。`remoteRunActive` 在每次正常发送时同样为 true，若不设这道闸门，普通对话会
+    // 多出每 3s 一次的 history 请求与每 1s 一次的 stream-events 请求（后者还会把 SSE
+    // 已经渲染过的事件再重放一遍）。
+    //
+    // 闸门只看「流是否在途」，不看 Stall 提示：流只是静默时，「已渲染到哪」无从得知
+    // （SSE 帧不带事件序号），此时启动续显只能二选一——重复正文，或清掉已渲染内容。
+    // 静默由 keepalive + Stall 提示负责告知用户；真断线会走 fetch 失败 → streamInFlight
+    // 归零，恢复器随即接手；落库终态另有 syncLatestSessionHistory 兜底。
+    if (streamInFlight) {
       runRecoveryTimer = setTimeout(scheduleRunRecoverySync, RUN_RECOVERY_SYNC_INTERVAL_MS);
       return;
     }

@@ -38,6 +38,24 @@ def test_permission_resume_keeps_a_followup_request_pending():
         assert '"pending"' in body, relative_path
 
 
+def test_external_resume_keeps_a_followup_request_pending():
+    """第二次外部执行的 awaiting_external_execution 终态不能把新卡判成已完成。
+
+    否则卡片显示「已完成」、提交区消失（v-if status==='pending'），用户再也提交不了，
+    而后端会一直挂到挂起快照 TTL 到期。
+    """
+    for relative_path in (
+        "frontend/src/views/EmbedChat.vue",
+        "frontend/src/views/AgentDebug.vue",
+    ):
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        start = source.index('if (data?.type === "run_status")')
+        body = source[start : start + 2000]
+        external = body[body.index("msg.pendingExternalExecution") :]
+        assert 'data.status === "awaiting_external_execution"' in external, relative_path
+        assert '"pending"' in external, relative_path
+
+
 def test_initial_stream_keeps_composer_busy_while_continuation_is_pending():
     """首段流结束时，待确认的后续操作仍必须占用当前会话。"""
     expected = (
