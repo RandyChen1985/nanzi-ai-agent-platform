@@ -4031,8 +4031,14 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       if (data.status === "awaiting_permission") msg.pendingPermission.expanded = true;
     }
     if (msg.pendingExternalExecution) {
+      // 与 EmbedChat 对齐：恢复流的 run_status 也可能是「再次挂起」，写 completed 会让
+      // 第二张卡提前判完成、提交不出去（后端挂到 TTL）。
       msg.pendingExternalExecution.status =
-        data.status === "error" || data.status === "failed" ? "error" : "completed";
+        data.status === "error" || data.status === "failed"
+          ? "error"
+          : data.status === "awaiting_external_execution"
+            ? "pending"
+            : "completed";
     }
     msg.isThinking = false;
     markOutputCompleted();

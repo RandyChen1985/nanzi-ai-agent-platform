@@ -68,6 +68,37 @@ return api.buildEmbedStreamSnapshot({
     assert snapshot["savedAt"] == 1000
 
 
+def test_build_persists_the_resume_owned_flag():
+    """恢复流写出的正文必须把 `resumeOwned` 一起落盘。
+
+    刷新是恢复流程的核心场景：标记只存在内存里时，重启后首拉会按「只有挂起前事件」
+    的日志重建，把快照里恢复流刚写出的正文换回旧内容。
+    """
+    owned = _call(
+        """
+return api.buildEmbedStreamSnapshot({
+  conversationId: 'c1',
+  traceId: 't1',
+  resumeOwned: true,
+  draft: { content: '确认后继续输出的正文' },
+  now: 1000,
+})
+"""
+    )
+    assert owned["resumeOwned"] is True
+    plain = _call(
+        """
+return api.buildEmbedStreamSnapshot({
+  conversationId: 'c1',
+  traceId: 't1',
+  draft: { content: '普通实时流正文' },
+  now: 1000,
+})
+"""
+    )
+    assert "resumeOwned" not in plain
+
+
 def test_build_returns_null_without_any_visible_content():
     assert _call(
         """

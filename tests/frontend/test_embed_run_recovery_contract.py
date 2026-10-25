@@ -158,18 +158,25 @@ def test_embed_chat_reloads_full_history_when_message_list_is_empty():
 
 
 def test_embed_chat_skips_redundant_history_polling_while_stream_is_healthy():
-    """流在正常推进时由 SSE 自己收敛界面，恢复器不得额外拉历史。
+    """流在途时由 SSE 自己收敛界面，恢复器不得额外拉历史，也不得启动续显。
 
     `remoteRunActive` 在正常发送时同样为 true，若不设此闸门，每一次普通对话都会
-    多出每 3s 一次的 history 请求（并发用户下是纯浪费的后端 QPS）。只有流已静默
-    （复用既有 Stall 信号）或根本没有流在途（页面卸载重建）才需要恢复同步。
+    多出每 3s 一次的 history 请求（并发用户下是纯浪费的后端 QPS）。
+
+    闸门只看「流是否在途」，不看 Stall 提示：流只是静默时前端无从判断「已渲染到哪」
+    （SSE 帧不带事件序号），此时启动续显只能重复正文或清掉已渲染内容——见
+    `test_embed_replay_single_writer_contract.py`。
     """
     source = _embed_source()
-    assert "if (streamInFlight && !showStalledPrompt.value) {" in source
+    start = source.index("const scheduleRunRecoverySync = () => {")
+    body = source[start : source.index("runRecoveryTimer = setTimeout(async () => {", start)]
+    assert "if (streamInFlight) {" in body
+    assert "if (activeStreamDraft) scheduleStreamReplay();" in body
     assert (
         "runRecoveryTimer = setTimeout(scheduleRunRecoverySync, RUN_RECOVERY_SYNC_INTERVAL_MS);"
-        in source
+        in body
     )
+    assert "!showStalledPrompt.value" not in body, "Stall 提示不得再作为续显开闸条件"
 
 
 def test_embed_chat_clears_recovery_timer_on_hide_and_unmount():

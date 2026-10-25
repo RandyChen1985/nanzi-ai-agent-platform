@@ -78,8 +78,10 @@ def test_history_sync_gives_up_once_the_conversation_changed():
 def test_poll_keeps_applying_events_even_when_the_log_was_truncated():
     body = _body("const pollConversationStreamEvents = async () => {")
     assert "const shouldReplayEvents = !isFirstPoll || replayEvents.length > 0;" in body
-    # 断层时仍不清空重建：快照里的内容可能比残缺日志更完整。
-    assert "if (isFirstPoll && !plan.gap && replayEvents.length > 0) {" in body
+    # 断层时先清空再按存活窗口重建：保留前缀只会让重叠段再写一遍（正文短片段逃过
+    # 去重阈值、思考内容完全没有去重）。被截掉的头部由落库终态补齐。
+    assert "if (isFirstPoll && replayEvents.length > 0) {" in body
+    assert "!plan.gap" not in body
 
 
 # ---- F4：旧流收尾副作用限定在本轮自己的会话 ----

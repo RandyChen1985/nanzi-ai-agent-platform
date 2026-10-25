@@ -145,14 +145,17 @@ def test_embed_chat_rebuilds_draft_from_full_log_on_first_poll():
     """首次拉取必须「清空累加字段 + 全量重放」，而不是只对齐游标。
 
     只对齐会让「切走期间后台新产出的思考/正文/工具节点」永久缺失；直接重放又会
-    让快照前缀叠加两遍。断层（日志被截断）时必须放弃重建，避免把残缺日志当全集。
+    让快照前缀叠加两遍。断层（日志被截断）时同样要重建：前缀与存活窗口的重叠范围
+    无法判定（SSE 帧不带序号），「保留前缀 + 追加窗口」会把重叠段再写一遍；被截掉的
+    头部交给落库终态补齐。
     """
     source = _embed_source()
     # 必须断言「调用」而不是「符号出现」：import 语句同样包含这些名字
     assert "shouldResetDraftBeforeReplay(" in source
     assert "resetDraftForReplay(replayTarget);" in source, "首次拉取必须真的调用重建"
     assert "let streamReplayPrimed" in source
-    assert "!plan.gap" in source
+    assert "if (isFirstPoll && replayEvents.length > 0) {" in source
+    assert "!plan.gap" not in source, "gap 不得再决定「是否重建」"
     # 终态重置，保证下一轮任务仍会重新判定
     assert "streamReplayPrimed = false" in source
 
@@ -231,17 +234,28 @@ def test_reset_draft_for_replay_clears_accumulated_fields_only():
 
 
 def test_embed_chat_does_not_start_replay_polling_while_stream_is_healthy():
-    """正常流推进中不得启动续显轮询。
+    """正常流推进中不得启动续显轮询（同一时刻只允许一个写入方）。
 
     SSE 此时已在实时推送同一批事件，再轮询不仅会给普通对话叠加每秒一次的
-    stream-events 请求，还会把已渲染过的事件重放一遍。续显只应在「流已静默」
-    或「流不在途（页面卸载重建 / 切回）」时启动，因此它的调用必须位于
-    `streamInFlight && !showStalledPrompt.value` 这道闸门之后。
+    stream-events 请求，还会把已渲染过的事件再写一遍——正文短片段达不到 32 字符
+    去重阈值、思考内容完全没有去重，表现为同一条回复出现两段相同正文。
+    闸门只看「流是否在途」：Stall（2s 无帧）不代表流已死，此时「已渲染到哪」无从
+    得知（SSE 帧不带事件序号），放续显进来只能二选一（重复正文 / 清掉已渲染内容）。
     """
     source = _embed_source()
-    gate = source.index("if (streamInFlight && !showStalledPrompt.value) {")
-    call = source.index("if (activeStreamDraft) scheduleStreamReplay();")
-    assert call > gate, "scheduleStreamReplay 必须在 SSE 正常推进的闸门之后调用"
+    start = source.index("const scheduleRunRecoverySync = () => {")
+    body = source[start : source.index("runRecoveryTimer = setTimeout(async () => {", start)]
+    assert "if (streamInFlight) {" in body
+    assert body.index("if (streamInFlight) {") < body.index(
+        "if (activeStreamDraft) scheduleStreamReplay();"
+    ), "scheduleStreamReplay 必须在「流在途」闸门之后调用"
+    assert "!showStalledPrompt.value" not in body, "Stall 提示不得再作为续显开闸条件"
+
+    # 续显入口自身再兜一层：调用方绕过闸门时也必须让位（只停轮询，不回退游标）。
+    replay_start = source.index("const scheduleStreamReplay = () => {")
+    replay_body = source[replay_start : source.index("const {", replay_start)]
+    assert "if (streamInFlight) {" in replay_body
+    assert "stopReplayForLiveStream();" in replay_body
 
 
 def test_plan_should_reset_draft_before_replay_on_first_poll():

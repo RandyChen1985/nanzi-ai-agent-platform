@@ -129,15 +129,71 @@ def test_embedchat_mobile_bar_exposes_data_entry_and_sheet_trigger():
     ), "数据入口不得再带边框"
 
 
-def test_embedchat_mobile_bar_drops_inline_usage_and_continue_entries():
+def test_embedchat_mobile_bar_shows_inline_usage_as_icon_plus_value():
+    """移动端操作栏右侧还有空位：用量要露在行内，格式为「圆柱图标 + 数据」，不重复「用量」二字。"""
     source = _read("frontend/src/views/EmbedChat.vue")
-    # 移动端单独的用量图标按钮必须消失（能力进了抽屉）
-    assert (
-        'class="flex sm:hidden shrink-0 items-center justify-center text-gray-400 hover:text-primary '
-        'transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800 p-2.5"' not in source
-    )
-    # 桌面侧的用量 / 继续分析 / 更多浮层保持原样，但被 CSS 限制在 sm 以上
+    marker = 'sm:hidden flex shrink-0 items-center gap-1 whitespace-nowrap'
+    assert source.count(marker) == 1, "移动端用量按钮必须唯一（多一个就会串到别的行）"
+    start = source.index(marker)
+    start = source.rindex("<button", 0, start)  # 从按钮起始标签开始切，v-if 在 class 之上
+    block = source[start : start + 1600]
+
+    # 与桌面「用量」按钮同一判据，且点击复用同一个调用明细弹层
+    assert 'v-if="hasMessageTokenStats(msg)"' in block
+    assert '@click="openModelCallStats(msg)"' in block
+    # 图标 + 数据：数据文案不带「用量」前缀（移动端空间紧，图标已表意）
+    assert "<span>{{ getMessageTokenAmount(msg) }}</span>" in block
+    assert "用量 {{ getMessageTokenAmount(msg) }}" not in block
+    assert 'class="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-gray-500"' in block
+    # 移动端触摸没有 hover，语义交给 aria-label（不得只靠原生 title）
+    assert ':aria-label="`查看本次调用 Token 用量：${getMessageTokenAmount(msg)}`"' in block
+
+    # 位置必须在「▤ 数据」之后、「⋯ 更多」之前
+    assert "▤" in source[:start], "用量应排在移动端「▤ 数据」之后"
+    assert source.index('@click="openMobileActions(msg, null)"', start) != -1, "用量应排在「⋯ 更多」之前"
+
+    # 桌面侧保持原样：仍有「用量」文字，且仍被限制在 sm 以上
+    assert "<span>用量 {{ getMessageTokenAmount(msg) }}</span>" in source
     assert 'class="hidden sm:flex shrink-0 items-center space-x-1"' in source
+
+
+def test_embedchat_mobile_bar_does_not_become_a_vertical_scroll_area():
+    """操作栏只该横向滚动，绝不能长出一条纵向滚动条。
+
+    CSS 规范：`overflow-x` 不是 visible 时，`overflow-y: visible` 会被**计算**成 `auto`。
+    因此 `overflow-x-auto` 的容器其实是双向滚动容器——只要容器内有任何纵向溢出的子节点，
+    就会冒出纵向滚动条、并让这块区域能被上下拖动（用户实测反馈：「横条滚动我明白，
+    为什么还有上下固定条」，截图里操作栏右侧/底部多出灰条）。
+    纵向溢出的来源就是 4 个 hover 气泡（`absolute top-full`，向下伸出 20+px）；
+    它们挂在 `group-hover` 上，触摸端（<640px）根本不会触发，却实打实地撑高了滚动区域。
+    所以锁两件事：气泡在移动端不渲染，容器在移动端显式纵向裁剪。
+    """
+    source = _read("frontend/src/views/EmbedChat.vue")
+
+    # ① 4 个操作栏 hover 气泡（复制 / 重新生成 / 赞 / 踩）移动端必须不渲染
+    for label in ("复制", "重新生成", "很有帮助", "回答不准确"):
+        pattern = (
+            r'transition-all duration-150 hidden sm:flex flex-col items-center z-50[^\n]*\n'
+            r'\s*<div class="w-1\.5 h-1\.5[^\n]*\n'
+            r'\s*<div class="rounded-md[^\n]*\n'
+            rf'\s*{label}'
+        )
+        assert re.search(pattern, source), f"「{label}」气泡未在移动端隐藏，会继续撑高操作栏"
+
+    # ② 容器移动端纵向裁剪、桌面恢复 visible（桌面靠 overflow-x-visible 放气泡，不能被裁）
+    bar = re.search(r'class="flex min-w-0 max-w-full flex-nowrap items-center space-x-2[^"]*"', source)
+    assert bar, "未找到消息操作栏容器"
+    classes = bar.group(0)
+    assert "overflow-x-auto" in classes, "横向滚动必须保留"
+    assert "overflow-y-hidden" in classes, "移动端必须纵向裁剪，否则 overflow-y 被提升为 auto 出纵向滚动条"
+    assert "sm:overflow-x-visible" in classes, "桌面横向不得滚动（否则浮层被裁）"
+    assert "sm:overflow-y-visible" in classes, "桌面纵向必须可见，否则 hover 气泡被裁掉"
+
+    # 防回退：操作栏切片内不得再有「移动端也渲染的」旧气泡写法
+    # （页面别处还有 header 的桌面专属气泡，不在 scroll 容器内，不在此列）
+    bar_start = bar.start()
+    bar_end = source.index('@click="openMobileActions(msg, null)"', bar_start)
+    assert "transition-all duration-150 flex flex-col items-center z-50" not in source[bar_start:bar_end]
 
 
 def test_embedchat_mobile_sheet_content_and_breakpoint_close():

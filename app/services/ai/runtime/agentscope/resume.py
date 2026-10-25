@@ -121,20 +121,22 @@ class AgentScopeResumeHandler:
                 conversation_id=conversation_id,
                 trace_id=pending.trace_id,
             ):
-                # 进入会话锁后再消费快照：确保配额/会话忙等校验失败时快照仍保留、可重试，
-                # 避免「先消费后执行 validate」导致确认结果被永久丢失。
-                consumed = await pending_agentscope_confirmations.pop_async(
+                # 进入会话锁后**只复核、不消费**：会话锁保证同一轮只有一个恢复者，复核足以
+                # 挡住「排队等锁期间另一个请求已经跑完并消费掉快照」的重复恢复。真正的消费
+                # 放到本轮跑完之后（见循环后面的 pop_async）——客户端读流中断 / 刷新时快照
+                # 仍然在，用户可以直接重试，而不是拿着一个已经失效的 request_id。
+                still_pending = await pending_agentscope_confirmations.peek_async(
                     permission_request_id,
                     user_id=current_user_id,
                 )
-                if consumed is None:
+                if still_pending is None:
                     yield {
                         "type": "error",
                         "status": "error",
                         "content": "该工具确认已被另一请求处理，请重新发起或稍后重试。",
                     }
                     return
-                pending = consumed
+                pending = still_pending
                 async for chunk in runner.resume_agentscope_native_confirmation(
                     pending,
                     confirmed=confirmed,
@@ -152,6 +154,17 @@ class AgentScopeResumeHandler:
                     if confirmed:
                         execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
+                # 本轮已完整跑完：此刻才消费快照。放在锁内、落库之前（落库与审计在锁外）——
+                # 任何中途中断（断网 / 取消 / 刷新）都不会提前删掉挂起快照。
+                consumed = await pending_agentscope_confirmations.pop_async(
+                    permission_request_id,
+                    user_id=current_user_id,
+                )
+                if consumed is None:
+                    logger.warning(
+                        "[AgentScopeResume] 恢复轮跑完后挂起快照已不存在（过期或被消费）: request_id=%s",
+                        permission_request_id,
+                    )
         except ConversationRunBusyError:
             yield {
                 "type": "error",
@@ -362,19 +375,19 @@ class AgentScopeResumeHandler:
                 conversation_id=conversation_id,
                 trace_id=pending.trace_id,
             ):
-                # 进入会话锁后再消费快照：防止配额/会话忙校验失败时快照被提前删除而丢失。
-                consumed = await pending_agentscope_confirmations.pop_async(
+                # 与权限确认同理：锁内只复核、不消费；本轮跑完才消费快照。
+                still_pending = await pending_agentscope_confirmations.peek_async(
                     external_execution_request_id,
                     user_id=current_user_id,
                 )
-                if consumed is None:
+                if still_pending is None:
                     yield {
                         "type": "error",
                         "status": "error",
                         "content": "该外部执行请求已被另一请求处理，请重新发起或稍后重试。",
                     }
                     return
-                pending = consumed
+                pending = still_pending
                 async for chunk in runner.resume_agentscope_external_execution(
                     pending,
                     execution_results=execution_results,
@@ -391,6 +404,16 @@ class AgentScopeResumeHandler:
                     _track_process_timeline(process_timeline_state, chunk)
                     execution_status = _apply_turn_status_signal(execution_status, chunk)
                     yield chunk
+                # 本轮已完整跑完：此刻才消费快照（锁内、落库之前），中途中断不会提前删除。
+                consumed = await pending_agentscope_confirmations.pop_async(
+                    external_execution_request_id,
+                    user_id=current_user_id,
+                )
+                if consumed is None:
+                    logger.warning(
+                        "[AgentScopeResume] 恢复轮跑完后挂起快照已不存在（过期或被消费）: request_id=%s",
+                        external_execution_request_id,
+                    )
         except ConversationRunBusyError:
             yield {
                 "type": "error",

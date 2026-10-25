@@ -46,6 +46,13 @@ export interface EmbedStreamSnapshotInput {
   lastSeq?: number;
   user?: { content?: string; timestamp?: string } | null;
   draft?: EmbedStreamSnapshotDraft | null;
+  /**
+   * 本轮正文由「不写事件日志的恢复流」（权限确认 / 外部执行恢复）写出。
+   *
+   * 事件日志里只有挂起前的事件，恢复后若按日志首拉重建，会把恢复流刚写出的正文
+   * 换回旧内容。这个标记必须随快照持久化，否则刷新一次就丢。
+   */
+  resumeOwned?: boolean;
   now?: number;
 }
 
@@ -56,6 +63,8 @@ export interface EmbedStreamSnapshot {
   lastSeq?: number;
   user?: { content: string; timestamp?: string };
   draft: EmbedStreamSnapshotDraft;
+  /** 本轮正文由恢复流写出：恢复后禁止按事件日志重建（见 EmbedChat 的续显守卫）。 */
+  resumeOwned?: boolean;
   savedAt: number;
 }
 
@@ -191,6 +200,7 @@ export function buildEmbedStreamSnapshot(
     ...(userContent
       ? { user: { content: userContent, ...(userTimestamp ? { timestamp: userTimestamp } : {}) } }
       : {}),
+    ...(input?.resumeOwned ? { resumeOwned: true } : {}),
     draft: {
       content,
       ...(reasoningContent ? { reasoningContent } : {}),
