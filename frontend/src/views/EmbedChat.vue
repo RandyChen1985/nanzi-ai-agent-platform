@@ -1048,7 +1048,7 @@
             <ChatBIMetadataGuide v-if="msg.chatbiMetadataGuide" :guide="msg.chatbiMetadataGuide" @select="handleQuickQuestion" />
             <div
               v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"
-              class="flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto sm:overflow-x-visible mt-1 scrollbar-hide"
+              class="flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto sm:overflow-x-visible overflow-y-hidden sm:overflow-y-visible mt-1 scrollbar-hide"
             >
               <!-- Time -->
               <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1 whitespace-nowrap shrink-0">{{ formatBubbleTime(msg.timestamp) }}</span>
@@ -1073,7 +1073,7 @@
                     />
                   </svg>
                 </button>
-                <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 hidden sm:flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
                   <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
                   <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
                     复制
@@ -1095,7 +1095,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                 </button>
-                <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 hidden sm:flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
                   <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
                   <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
                     重新生成
@@ -1127,7 +1127,7 @@
                       />
                     </svg>
                   </button>
-                  <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                  <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 hidden sm:flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
                     <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
                     <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
                       很有帮助
@@ -1157,7 +1157,7 @@
                       />
                     </svg>
                   </button>
-                  <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                  <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 hidden sm:flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
                     <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
                     <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
                       回答不准确
@@ -1194,7 +1194,23 @@
                 <span v-if="currentMessageReusableCount(msg) > 0" class="rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white">数据 {{ currentMessageReusableCount(msg) }}</span>
                 <span v-if="msg.trace_id && artifactCount(msg.trace_id) > 0" class="rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white">文件 {{ artifactCount(msg.trace_id) }}</span>
               </button>
-              <!-- Token 消耗（桌面）：移动端不再占操作栏位置，能力进操作抽屉 -->
+              <!-- Token 消耗（移动端）：操作栏右侧还有空位，直接给出「圆柱图标 + 数据」，
+                   不重复「用量」二字（空间紧，图标已表意）；点击与桌面一致打开调用明细。 -->
+              <button
+                v-if="hasMessageTokenStats(msg)"
+                type="button"
+                class="sm:hidden flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                :aria-label="`查看本次调用 Token 用量：${getMessageTokenAmount(msg)}`"
+                @click="openModelCallStats(msg)"
+              >
+                <svg class="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <ellipse cx="12" cy="5" rx="9" ry="3" />
+                  <path d="M3 5v14a9 3 0 0 0 18 0V5" />
+                  <path d="M3 12a9 3 0 0 0 18 0" />
+                </svg>
+                <span>{{ getMessageTokenAmount(msg) }}</span>
+              </button>
+              <!-- Token 消耗（桌面）：移动端不占操作栏这段位置，能力见上方移动端按钮与操作抽屉 -->
               <button
                 v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined || msg.total_tokens !== undefined"
                 @click="openModelCallStats(msg)"
