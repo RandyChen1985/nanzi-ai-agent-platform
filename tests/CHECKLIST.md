@@ -564,3 +564,61 @@
 **草稿上线申请**：系统级智能体的线上基线只能由管理员变更，所有者改完草稿走 `POST /agents/{id}/system/release-requests` 提交上线申请（待审期间冻结，避免「申请的是这版、审核时被改成别的」）。管理员在发布审核队列能看到「V3 上线」标识，通过即发布该版本、旧线上版本归档、解冻并通知申请人；驳回则版本仍是草稿、解冻。申请单新增 `request_type`（SYSTEM_PUBLISH / VERSION_RELEASE），已合入 V185 / V85，**旧环境需重跑一次幂等脚本补列**，缺列时接口返回 400 提示而不是 500。
 
 **调试页可选版本**：`AgentDebug` 的「调试配置」面板新增「调试版本」下拉（位于「显示快捷指令栏」与「反幻觉校验」之间），默认「跟随线上版本」，可选当前智能体的任意非归档版本，标注线上/草稿与时间；选中非线上版本时给出橙色提示。请求链路的 `version_id` 本来就支持（预览模式走 URL query），本次只补 UI 入口并接线。切换智能体会自动解绑旧版本，避免拿错配置。**安全修复**：`get_version_config` 原先只按 id 查版本、不校验归属，任何人拿到他人的草稿 `version_id` 即可加载其提示词/工具配置执行；新增 `can_use_agent_version`（管理员放行、作者本人放行、其他人仅 PUBLISHED 可用），调用方 `context_manager.resolve_agent_config` 传入 `user_info`。**未做**：B 期「分享给同事 + 接受后克隆」（含私有 skills/MCP 清理提示与命名冲突）未实现；A 期不做「申请下架」；副本与原智能体无合并通道（上架后所有者只能复制或求管理员下架）；未跑 `./dev.sh`、未 `git commit`。 | ✅ 代码与测试通过；⚠️ 待你执行：① MySQL 已在本机执行过 `db-prod/V185`（**线上需你确认后执行**），PostgreSQL 环境执行 `db-prod-pg/V85`；② `./dev.sh` 重建前端并重启后端；③ 验收：普通用户卡片无「发布为系统级」、只能申请，提交后卡片显示审核中且编辑被拦；管理员顶部角标出现待审数量，通过后该智能体进自动委派候选、申请人收到站内信；下架弹窗显示人数与名单，勾选通知后受影响用户收到站内信，「发布历史」能看到完整时间线。 | 2026-10-24 |
+
+## 2026-10-26 知识库管理 A 批加固（治理与正确性，9 项）
+
+| 项 | 主要文件 | 说明 | 验证 |
+|---|---|---|---|
+| A1 建库重名拦截 | `app/api/portal/endpoints/ragflow.py`、`app/services/knowledge_base_service.py`、`tests/api/portal/test_ragflow_knowledge_platform.py` | 建库前按名称查未删除元数据，重名 409；RAGFlow 未返回 id 时只在「同名候选唯一」才认，否则 502。原来兜底取 `matched[0]` 会绑到别人的库并把归属人写成当前用户 | 新增 2 项（409、502） |
+| A2 智能体引用影响面 | `app/services/knowledge_reference_service.py`（新增）、`ragflow.py`、`KnowledgeBaseManagement.vue`、`tests/services/test_knowledge_reference_service.py`（新增）、`tests/frontend/test_knowledge_agent_reference_contract.py`（新增） | 新增 `GET /datasets/{id}/agents`，列表回填 `agent_ref_count/agent_refs`（前 5）；详情页头部「被 N 个智能体引用」可点开名单，删除确认弹窗强制列出受影响智能体 | 新增 2 项 service + 3 项契约 |
+| A3 审计修复 | `app/services/knowledge_audit_service.py`、`knowledge_base_service.py`、`ragflow.py`、`tests/api/portal/test_knowledge_audit_logs.py` | `datasets:sync` 按受影响库落条（无变化落 `__global__` 全局痕）；新增 `_audit_status_code()`，异常审计状态码还原为 502/503 而不是一律 500 | 新增 2 项 + 既有全绿 |
+| A4 目录结构独立端点 | `ragflow.py`（`PUT /datasets/{id}/folder-structure`）、`knowledge_base_service.py`（`update_extra_config_key`）、`KnowledgeBaseManagement.vue`、`tests/services/test_knowledge_base_metadata_service.py`、`tests/frontend/test_knowledge_folder_structure_contract.py`（新增） | 目录操作只写 `extra_config.folder_structure`，不再整份 PUT 元数据（去掉 lost update 与「挪文档改可见范围」）；删文档清理悬空引用 | 新增 2 项 service + 3 项契约 |
+| A5 上传统一限制 | `ragflow.py`、`KnowledgeBaseManagement.vue`、`tests/api/portal/test_knowledge_upload_limits.py`（新增）、`tests/frontend/test_knowledge_upload_limit_contract.py`（新增） | 256MB + 扩展名白名单；后端分块读取边读边卡上限（不再 `await file.read()` 全量进内存）；前端预校验并提示跳过原因 | 新增 3 项接口 + 2 项契约 |
+| A6 归属人授权不可撤销 | `ragflow.py`、`KnowledgeBaseManagement.vue`、`tests/api/portal/test_knowledge_grant_owner_guard.py`（新增） | `DELETE /permissions` 对归属人返回 400（要变更请走转移归属）；授权名单返回 `owner_user_id`，前端标「归属人」并隐藏取消按钮 | 新增 2 项 |
+| A7 批量操作 | `KnowledgeBaseManagement.vue`、`tests/frontend/test_knowledge_bulk_actions_contract.py`（新增） | 左栏「批量管理」开启后：库勾选批量删除、文档勾选批量解析/删除（限单库，避免把 A 库 docId 发到 B 库）；复用 `ConfirmModal` | 新增 4 项契约 |
+| A8 搜索文档懒加载 | `KnowledgeBaseManagement.vue`、`tests/frontend/test_knowledge_search_documents_contract.py`（新增） | 搜索时 300ms 防抖、并发 4 拉取未展开库的文档（失败静默），不再「没展开过的库里的文档永远搜不到」 | 新增 3 项契约 |
+| A9 失联库可见性 | `knowledge_base_service.py`（`missing_allow_ids`）、`ragflow.py`、`tests/services/test_knowledge_base_metadata_service.py` | 非管理员按 `accessible_ids` 过滤失联库（原来会看到全平台残留元数据）；归属人能看到自己的库「失联了」而不是凭空消失 | 新增 2 项 |
+
+**回归**：知识库相关后端 **79 passed**；`tests/services` + `tests/api/portal` 见下；`tests/frontend` 全量 **3150 passed / 1 skipped**；`vue-tsc --noEmit` 0 错误。**未做**：回收站/恢复（用户明确排除）、未跑 `./dev.sh`、未 `git commit`。
+
+## 2026-10-26 知识库管理 B 批（内容运维，B1–B3）
+
+| 项 | 主要文件 | 说明 | 验证 |
+|---|---|---|---|
+| B1 文档重命名 / 启停 | `app/services/ai/ragflow_client.py`（`update_document`）、`app/api/portal/endpoints/ragflow.py`（`PUT /datasets/{id}/documents/{doc_id}`）、`KnowledgeBaseManagement.vue`、`tests/api/portal/test_knowledge_document_update.py`（新增）、`tests/frontend/test_knowledge_document_update_contract.py`（新增） | 部分更新接口，严格按「None = 不动」组装 payload；权限复用 `element:knowledge:parse_document`；停用后切片保留但不召回，树里灰显 + 「已停用」 | 后端 4 + 契约 3 |
+| B2 同名上传三选一 | `ragflow.py`（`POST /documents/replace`）、`KnowledgeBaseManagement.vue`、`tests/api/portal/test_knowledge_document_replace.py`（新增）、`tests/frontend/test_knowledge_upload_replace_contract.py`（新增） | 顺序：查旧 → 传新 → 改名回旧 → 删旧 → 解析；删旧失败回滚删新，解析失败不回滚（否则两个都没）；前端弹窗三选一（替换 / 保留两者 / 跳过），提示历史引用会断 | 后端 4 + 契约 5 |
+| B3 切片增删改 + 启停 | `ragflow_client.py`（`create_chunk` / `update_chunk` / `delete_chunk`）、`ragflow.py`（三个 chunks 端点）、`KnowledgeBaseManagement.vue`、`tests/api/portal/test_knowledge_chunk_edit.py`（新增）、`tests/frontend/test_knowledge_chunk_edit_contract.py`（新增） | 复用 `parse_document` 权限码（按决策不新增）；审计 `chunks:create/update/delete`，正文只留前 120 字；抽屉内可编辑 / 停用 / 删除 / 手工新增，统一提示「向量重建需数秒」 | 后端 6 + 契约 5 |
+
+| B5 切片 ↔ 原文联动 | `KnowledgeBaseManagement.vue`、`tests/frontend/test_knowledge_chunk_source_contract.py`（新增） | 切片卡片加「查看原文 p.N」：页码优先 `page_no`、回退 `positions` JSON；PDF 带 `#page=N` 时**强制走 iframe**（file-viewer 的 pdf 渲染器不认这个 fragment），其余格式只打开文件并注明不支持跳页；关闭预览清空页锚 | 契约 5 |
+**回归**：`vue-tsc --noEmit` 0 错误。**未做**：B4 解析配置（用户明确不做）、B6 通知、B7 跨部门授权、B8 内容来源扩展。
+
+## 2026-10-26 知识库管理 C 批（平台能力，C1/C2/C4/C5/C7/C8）
+
+| 项 | 主要文件 | 说明 | 迁移 | 验证 |
+|---|---|---|---|---|
+| C1 列表性能与降级 | `ragflow_client.py`（`list_all_datasets` / `_cached` / `cached_datasets_snapshot` / `clear_dataset_list_cache`）、`ragflow.py`（`/datasets` 加 `refresh`）、`KnowledgeBaseManagement.vue` | 按 `total` 翻完所有页（修掉 >1000 条静默截断）、页间并发 + 按 id 去重、60s TTL + 单飞锁、`refresh=1` 绕过；引擎挂时返回上次快照并标 `stale`，前端顶部提示「这是缓存」 | 无 | `test_ragflow_client_list_all.py` 5 + 契约 3 |
+| C5 全局审计 | `ragflow.py`（`GET /audit-logs`）、`KnowledgeBaseManagement.vue` | 跨库按人/动作/时间/关键词查（含 `__global__` 记录），`export=csv` 带 UTF-8 BOM；仅管理员；知识库页盾牌入口 | 无 | `test_knowledge_global_audit.py` 5 + 契约 4 |
+| C8 配额与容量 | `app/services/knowledge_quota_service.py`（新）、`ragflow.py`（建库/上传校验 + `GET /datasets/{id}/quota`）、`ragflow_client.py`（`count_documents`）、`KnowledgeBaseManagement.vue` | 每人 50 库 / 每库 2000 文档，均可配置、非法值回退默认、`0` = 不限；超限文案带「现在多少 / 上限多少 / 怎么办」；统计失败不拦上传（配额是防滥用，不是可用性前提）；详情页显示用量进度条 | 无 | `test_knowledge_quota_service.py` 8 + 端点 3 + 契约 3 |
+| C7 访问申请与审批 | `app/models/knowledge.py`（`KnowledgeAccessRequest`）、`app/services/knowledge_access_request_service.py`（新）、`ragflow.py`（7 个端点）、`KnowledgeBaseManagement.vue`（发现抽屉）、`PersonalCenter.vue`（我的申请）、`Users.vue`（访问审批） | 未授权用户可在「发现」里看到 public/team 库并申请（private 不露出）；同一人同一库只能一条 pending；不能审批自己的申请；通过即写 `ResourcePermission`（与手工授权等价，撤回/审计沿用既有链路） | **V191 / PG91**（与 C2/C4 合用同一文件） | service 8 + 端点 5 + 契约 7 |
+| C2 检索日志与零结果率 | `app/models/knowledge.py`（`KnowledgeRetrievalLog`）、`app/services/knowledge_retrieval_log_service.py`（新）、`ragflow.py`（`GET /retrieval-stats`）、`knowledge_tool.py`（智能体埋点）、`KnowledgeMetrics.vue` | 记录每次检索的命中数与耗时（`test` / `agent` 两个来源），指标给出查询量、**零结果率**、平均命中、P95 延迟、Top 搜不到的 query；写入失败静默（检索是主流程） | 见 V191 / PG91 | `test_knowledge_retrieval_stats.py` 7 + 契约 4 |
+| C4 治理巡检 | `app/models/knowledge.py`（`KnowledgeHealthSnapshot`）、`app/services/knowledge_health_service.py`（新）、`ragflow.py`（`POST /health/scan`、`GET /health`）、`KnowledgeMetrics.vue` | 按天落快照：文档数 / 已解析 / 解析中 / 失败 / 未解析 / 切片数 / 是否失联 / 停留天数；汇总失联、空库、解析失败、90 天未更新；未知解析状态算「未解析」而非失败（避免长期挂着假告警）；同日重跑覆盖 | 见 V191 / PG91 | `test_knowledge_health_service.py` 4 + 契约 4 |
+
+**回归**：`tests/api/portal` + `tests/services` = 2912 passed / 11 skipped / 9 xfailed；受影响前端契约 494 passed；`vue-tsc --noEmit` 0 错误。
+**未做**：C3 评测集、C6 前端拆分（两项未列入本轮范围）。
+**执行顺序**：先跑 `db-prod/V191-create_knowledge_governance_tables.sql`（或 `db-prod-pg/V91-create_knowledge_governance_tables.sql`，一个文件建三张表），再重启后端 —— C7/C2/C4 依赖这三张表；C1/C5/C8 无迁移可先上。
+
+## 2026-10-26 知识库访问申请闭环（C7 收尾）
+
+C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走完：记录批完就看不见、审批人不知道有人申请、申请人和审批人都只能凭库名判断该不该批。
+
+| 项 | 主要文件 | 说明 | 迁移 | 验证 |
+|---|---|---|---|---|
+| 审批记录（已处理） | `ragflow.py`（`GET /access-requests/reviews`）、`Users.vue`（审批弹窗「待审批 / 已处理」两个 tab） | 审批通过后记录会离开待审批列表，没有已处理视图等于只看得见待办；管理员看全平台、归属人只看名下库（按 `writable_ids` 收窄，翻不到别人库的申请理由） | 无 | 端点 3 + 契约 1 |
+| 站内通知 | `ragflow.py`（`_notify_access_request`）、`PortalNotificationBell.vue`、`Users.vue`（`?review=1` 深链） | 提交时通知库归属人（只通知责任人，不群发管理员，否则全员开始无视）、审批后通知申请人（驳回带审批意见）；点消息分别落到审批弹窗与个人中心「我的申请」；通知失败一律吞掉，不影响审批与授权 | 无 | 契约 6 |
+| 审核入口 | `Users.vue` | 「访问审批」文字按钮改为「创建用户」左侧的 SVG 图标 + 角标；标题只写「审核」，为后续并入统一审核中心（注册审核等）留口 | 无 | 契约 1 |
+| 库画像 | `ragflow.py`（discover / pending 补字段）、`KnowledgeBaseManagement.vue`、`Users.vue` | 发现页与待审批页都补文档数、切片数、归属、标签、更新于；引擎不可用时计数显示「—」而非 0（0 会让人以为空库）；待审批额外标「引擎侧已失联」——批了也没用 | 无 | 端点 4 + 契约 4 |
+| 管理员短路 | `ragflow.py`（discover / create_access_request）、`KnowledgeBaseManagement.vue` | 管理员的 `accessible_ids` 是 `None`（不受限），`or set()` 会把它当空集，导致整站库全变成可申请对象、还能自批——discover 直接返回空、申请直接 400；前端两处「发现」入口加 `!isAdmin` | 无 | 端点 2 + 契约 1 |
+| 失联过滤 | `ragflow.py`（discover） | 失联标记是 `merge_with_ragflow` 现场算的（DB 里 `status` 仍是 `active`），所以发现列表必须与引擎当前库列表比对；引擎读取失败时**不过滤**（降级），避免一次抖动让整个列表凭空消失 | 无 | 端点 2 |
+
+**回归**：`tests/api/portal/test_knowledge_access_request_endpoints.py` 16 passed；用户页契约 342 passed、知识库页契约 236 passed；`vue-tsc --noEmit` 0 错误。
+**未做**：归属人离职/长期不登录时申请会烂在队列里（需要「超 N 天未处理」提醒，与 C4 定时巡检调度是同一件事）。

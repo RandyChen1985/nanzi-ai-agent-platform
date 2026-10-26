@@ -37,16 +37,19 @@ def perm() -> str:
 def test_edit_form_falls_back_to_same_visibility_as_detail_page(page):
     """`|| 'private'` 会让 visibility 为空的库在弹窗里显示成私有，保存即静默改范围。"""
     assert "dataset.visibility || 'private'" not in page
-    assert page.count("visibility: visibilityOf(dataset),") == 2
+    # 现在只剩编辑弹窗这一处需要 visibility：目录写入已改成独立端点，
+    # 不再整份 PUT 元数据（之前那个 silent save 是「挪个文档就改范围」的源头）
+    assert page.count("visibility: visibilityOf(dataset),") == 1
+    assert "saveDatasetExtraConfig" not in page
 
 
-def test_silent_metadata_save_does_not_change_visibility(page):
-    """saveDatasetExtraConfig 移动文档后会整份 PUT 元数据 —— 兜底写错等于挪个文档就改范围。"""
-    # 切到函数结尾的固定分隔注释：函数体里有对象字面量，按 "}" 切会截断
-    block = page.split("const saveDatasetExtraConfig", 1)[1].split(
+def test_folder_save_does_not_touch_visibility(page):
+    """目录结构只能写 folder_structure，绝不能顺带回写可见范围。"""
+    block = page.split("const saveFolderStructure", 1)[1].split(
         "虚拟文件夹层级管理结束", 1
     )[0]
-    assert "visibilityOf(dataset)" in block
+    assert "visibilityOf(dataset)" not in block
+    assert "/folder-structure" in block
 
 
 # ---------- 2. 从左侧树直接编辑时，授权列表要跟着换 ----------

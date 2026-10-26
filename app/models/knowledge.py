@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Column, DateTime, Date, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Date, Float, Index, Integer, JSON, String, Text, UniqueConstraint
 
 from app.core.orm import Base
 
@@ -112,3 +112,79 @@ class KnowledgeAuditLog(Base):
     client_ip = Column(String(50), nullable=True, comment="来源 IP")
     error_message = Column(Text, nullable=True, comment="失败原因")
     created_at = Column(DateTime, default=datetime.now, index=True, comment="操作时间")
+
+
+class KnowledgeAccessRequest(Base):
+    """知识库访问申请：未授权用户申请 → 库归属人/管理员审批 → 落授权记录。
+
+    审批通过只是写一条 ``ResourcePermission``（与手工授权完全等价），
+    所以后续撤回、审计、归属人转移都沿用既有链路，不需要第二套权限体系。
+    """
+
+    __tablename__ = "ai_agent_knowledge_access_requests"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    dataset_id = Column(String(64), nullable=False, index=True, comment="知识库（RAGFlow Dataset）ID")
+    dataset_name = Column(String(255), nullable=True, comment="提交时的库名快照")
+    applicant_user_id = Column(BigInteger, nullable=False, index=True, comment="申请人用户 ID")
+    applicant_user_name = Column(String(64), nullable=True, comment="申请人账号快照")
+    applicant_dept_id = Column(BigInteger, nullable=True, comment="申请人所属部门")
+    reason = Column(Text, nullable=True, comment="申请理由")
+    # pending / approved / rejected / cancelled
+    status = Column(String(16), nullable=False, default="pending", index=True, comment="审批状态")
+    reviewer_user_id = Column(BigInteger, nullable=True, comment="审批人用户 ID")
+    reviewer_user_name = Column(String(64), nullable=True, comment="审批人账号快照")
+    review_comment = Column(Text, nullable=True, comment="审批意见")
+    reviewed_at = Column(DateTime, nullable=True, comment="审批时间")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class KnowledgeRetrievalLog(Base):
+    """一次检索的结果记录：用来回答「哪些问题搜不到」。
+
+    与 ``KnowledgeAuditLog`` 刻意分开：审计记管理动作、长期保留；
+    这张表按时间聚合并可定期清理，混在一起会让聚合查询扫全表。
+    """
+
+    __tablename__ = "ai_agent_knowledge_retrieval_logs"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    query = Column(String(512), nullable=False, comment="检索词")
+    dataset_ids = Column(JSON, nullable=True, comment="涉及的知识库 ID 列表")
+    hit_count = Column(Integer, nullable=False, default=0, comment="命中切片数，0 即零结果")
+    top_score = Column(Float, nullable=True, comment="最高相似度")
+    latency_ms = Column(Integer, nullable=True, comment="检索耗时（毫秒）")
+    source = Column(String(32), nullable=False, default="test", comment="test / agent")
+    user_id = Column(BigInteger, nullable=True, comment="发起人用户 ID")
+    user_name = Column(String(64), nullable=True, comment="发起人账号快照")
+    created_at = Column(DateTime, default=datetime.now, index=True)
+
+
+class KnowledgeHealthSnapshot(Base):
+    """一次巡检里某个库的健康快照。
+
+    按天落表而不是实时算：实时算要对每个库调一次文档列表，库一多就是
+    一串慢请求，而且每次打开页面都要重算。
+    """
+
+    __tablename__ = "ai_agent_knowledge_health_snapshots"
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", "dataset_id", name="uix_khs_date_dataset"),
+    )
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    snapshot_date = Column(Date, nullable=False, index=True, comment="巡检日期")
+    dataset_id = Column(String(64), nullable=False, index=True, comment="知识库 ID")
+    name = Column(String(255), nullable=True, comment="巡检时的库名快照")
+    documents = Column(Integer, nullable=False, default=0)
+    parsed = Column(Integer, nullable=False, default=0, comment="已解析完成")
+    parsing = Column(Integer, nullable=False, default=0, comment="解析中")
+    failed = Column(Integer, nullable=False, default=0, comment="解析失败")
+    unparsed = Column(Integer, nullable=False, default=0, comment="尚未解析")
+    chunks = Column(Integer, nullable=False, default=0, comment="切片总数")
+    is_missing = Column(Boolean, nullable=False, default=False, comment="引擎侧不存在")
+    visibility = Column(String(32), nullable=True, comment="可见范围快照")
+    owner_user_id = Column(BigInteger, nullable=True, comment="归属人快照")
+    stale_days = Column(Integer, nullable=True, comment="距最近一次更新的天数")
+    created_at = Column(DateTime, default=datetime.now)

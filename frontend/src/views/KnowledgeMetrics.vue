@@ -139,6 +139,89 @@
       </button>
     </div>
 
+    <!-- 检索质量与治理：运营分析回答"被用了多少"，这里回答"用起来效果如何、库有没有烂摊子" -->
+    <div v-if="retrievalStats || healthSummary" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div v-if="retrievalStats" class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="text-sm font-bold text-gray-900">检索质量（近 {{ retrievalStats.days }} 天）</h2>
+          <button type="button" class="text-xs text-primary hover:underline" @click="loadRetrievalStats">刷新</button>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <p class="text-[11px] text-gray-400">检索次数</p>
+            <p class="mt-0.5 text-xl font-bold text-gray-900">{{ retrievalStats.total_queries }}</p>
+          </div>
+          <div>
+            <p class="text-[11px] text-gray-400">零结果率</p>
+            <p
+              class="mt-0.5 text-xl font-bold"
+              :class="retrievalStats.zero_result_rate >= 0.3 ? 'text-red-600' : retrievalStats.zero_result_rate >= 0.15 ? 'text-amber-600' : 'text-emerald-600'"
+            >{{ (retrievalStats.zero_result_rate * 100).toFixed(1) }}%</p>
+          </div>
+          <div>
+            <p class="text-[11px] text-gray-400">P95 延迟</p>
+            <p class="mt-0.5 text-xl font-bold text-gray-900">{{ retrievalStats.p95_latency_ms ?? '-' }}<span class="ml-0.5 text-xs font-normal text-gray-400">ms</span></p>
+          </div>
+        </div>
+        <p class="mt-2 text-[11px] text-gray-400 leading-relaxed">
+          零结果率 = 一条切片都没命中的检索占比。它持续偏高说明知识库没覆盖到这些问题，比"命中数"更能反映缺口。
+        </p>
+        <div v-if="retrievalStats.top_zero_queries?.length" class="mt-3 border-t pt-2">
+          <p class="mb-1 text-[11px] font-semibold text-gray-500">最常搜不到的：</p>
+          <ul class="space-y-1">
+            <li v-for="item in retrievalStats.top_zero_queries" :key="item.query" class="flex items-center justify-between gap-2 text-xs">
+              <span class="truncate text-gray-600">{{ item.query }}</span>
+              <span class="shrink-0 font-mono text-gray-400">{{ item.count }} 次</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div v-if="healthSummary" class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="text-sm font-bold text-gray-900">
+            治理巡检
+            <span v-if="healthSummary.date" class="ml-1 text-[11px] font-normal text-gray-400">{{ healthSummary.date }}</span>
+          </h2>
+          <button
+            type="button"
+            class="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            :disabled="healthScanning || healthLoading"
+            @click="runHealthScan"
+          >{{ healthScanning ? '巡检中…' : '立即巡检' }}</button>
+        </div>
+        <div v-if="!healthSummary.date" class="py-6 text-center text-xs text-gray-400 italic">
+          还没有巡检记录，点「立即巡检」跑一次
+        </div>
+        <template v-else>
+          <div class="grid grid-cols-4 gap-2">
+            <div class="rounded-xl bg-gray-50 px-2 py-2 text-center">
+              <p class="text-[11px] text-gray-400">总库数</p>
+              <p class="text-lg font-bold text-gray-900">{{ healthSummary.total }}</p>
+            </div>
+            <div class="rounded-xl bg-red-50 px-2 py-2 text-center">
+              <p class="text-[11px] text-red-500">失联</p>
+              <p class="text-lg font-bold" :class="healthSummary.missing ? 'text-red-600' : 'text-gray-400'">{{ healthSummary.missing }}</p>
+            </div>
+            <div class="rounded-xl bg-amber-50 px-2 py-2 text-center">
+              <p class="text-[11px] text-amber-600">解析失败</p>
+              <p class="text-lg font-bold" :class="healthSummary.failing ? 'text-amber-600' : 'text-gray-400'">{{ healthSummary.failing }}</p>
+            </div>
+            <div class="rounded-xl bg-gray-50 px-2 py-2 text-center">
+              <p class="text-[11px] text-gray-400">空库 / 90 天未更新</p>
+              <p class="text-lg font-bold text-gray-600">{{ healthSummary.empty }} / {{ healthSummary.stale }}</p>
+            </div>
+          </div>
+          <div v-if="healthSummary.missing_items?.length" class="mt-3 border-t pt-2">
+            <p class="mb-1 text-[11px] font-semibold text-red-500">引擎侧已不存在（本地还有配置）：</p>
+            <ul class="space-y-1">
+              <li v-for="item in healthSummary.missing_items" :key="item.dataset_id" class="truncate text-xs text-gray-600">{{ item.name || item.dataset_id }}</li>
+            </ul>
+          </div>
+        </template>
+      </div>
+    </div>
+
     <!-- Overview Cards -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       <KnowledgeMetricStatCard
@@ -636,7 +719,54 @@ const exportCsv = (scope: 'datasets' | 'documents') => {
   showToast('已导出 CSV', 'success')
 }
 
+// ---------- 检索质量 & 治理视图（管理员） ----------
+// 运营分析看的是"被用了多少"，这两块看的是"用起来效果如何、库里有没有烂摊子"。
+const retrievalStats = ref<any>(null)
+const healthSummary = ref<any>(null)
+const healthLoading = ref(false)
+const healthScanning = ref(false)
+
+const loadRetrievalStats = async () => {
+  try {
+    const response = await axios.get('/api/portal/ragflow/retrieval-stats', {
+      params: { days: period.value === 'custom' ? 7 : (PERIOD_OPTIONS.find(o => o.value === period.value)?.days ?? 7) },
+    })
+    retrievalStats.value = response.data?.data || null
+  } catch {
+    // 非管理员 / 未迁移时静默隐藏，不影响主报表
+    retrievalStats.value = null
+  }
+}
+
+const loadHealthSummary = async () => {
+  healthLoading.value = true
+  try {
+    const response = await axios.get('/api/portal/ragflow/health')
+    healthSummary.value = response.data?.data || null
+  } catch {
+    healthSummary.value = null
+  } finally {
+    healthLoading.value = false
+  }
+}
+
+const runHealthScan = async () => {
+  if (healthScanning.value) return
+  healthScanning.value = true
+  try {
+    await axios.post('/api/portal/ragflow/health/scan')
+    showToast('巡检完成', 'success')
+    await loadHealthSummary()
+  } catch (err: any) {
+    showToast(err?.response?.data?.detail || '巡检失败', 'error')
+  } finally {
+    healthScanning.value = false
+  }
+}
+
 onMounted(() => {
+  void loadRetrievalStats()
+  void loadHealthSummary()
   const initial = getQuickRange(7)
   customStart.value = initial.startDate
   customEnd.value = initial.endDate

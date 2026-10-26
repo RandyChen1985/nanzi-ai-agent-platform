@@ -98,6 +98,16 @@ def validate_config_update(key: str, value: str) -> None:
     elif key == AGENTSCOPE_MAX_CONCURRENT_TOOLS_KEY:
         limit = validate_agentscope_max_concurrent_tools(value)
         set_max_concurrency_limit(limit)
+    elif key in (
+        "knowledge_quota_max_datasets_per_user",
+        "knowledge_quota_max_documents_per_dataset",
+    ):
+        # 非法整数在这一步就拦住：读取侧（KnowledgeQuotaService）遇到坏值会静默回退默认值，
+        # 管理员会以为改成功了、实际没生效。
+        try:
+            int(str(value or "").strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{key} 必须是整数（填 0 表示不限）") from exc
     elif key == SANDBOX_AUTO_WARM_KEY:
         normalized = str(value or "").strip().lower()
         if normalized not in _BOOLEAN_LITERALS:

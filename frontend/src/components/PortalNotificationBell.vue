@@ -56,6 +56,8 @@ const notificationKindLabel = (item: any) => {
   if (item?.category === "agent") return "智能体";
   if (item?.category === "saved_report") return "报表";
   if (item?.category === "task_center") return "任务中心";
+  if (item?.category === "knowledge_access") return "知识库申请";
+  if (item?.category === "knowledge_access_result") return "申请结果";
   return "系统";
 };
 
@@ -220,6 +222,24 @@ const openNotification = async (item: any) => {
     : null;
 
   await markItemRead(item);
+
+  // 知识库访问申请：把审批人/申请人直接送到能动手的地方，别停在一条读完了也做不了事的消息上
+  if (item?.category === "knowledge_access") {
+    closeNotifications();
+    closeDetail();
+    await router
+      .push({ path: "/dashboard/users", query: { review: "1", request: String(meta.request_id || "") } })
+      .catch(() => undefined);
+    return;
+  }
+  if (item?.category === "knowledge_access_result") {
+    closeNotifications();
+    closeDetail();
+    await router
+      .push({ path: "/dashboard/personal", query: { tab: "permissions", subtab: "requests" } })
+      .catch(() => undefined);
+    return;
+  }
 
   // 技能分享：直接落到「我的技能」的对应二级页，而不是弹一个只能看不能操作的详情
   if (isSkillShareNotification(item)) {

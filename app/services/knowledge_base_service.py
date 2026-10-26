@@ -49,6 +49,26 @@ class KnowledgeBaseMetadataService:
         stmt = select(KnowledgeBaseMetadata).where(KnowledgeBaseMetadata.ragflow_dataset_id == dataset_id)
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
+    async def find_active_by_name(self, name: str) -> Optional[KnowledgeBaseMetadata]:
+        """按名称查未删除的知识库元数据（建库重名校验用）。
+
+        RAGFlow 侧允许同名 dataset，平台侧必须自己兜住：一旦重名，
+        「建库返回缺 id 时按名字反查」就会取到任意一个，可能绑到别人的库上，
+        随后还会把 owner_user_id 写成当前用户（越权）。宁可在建库前直接拒绝。
+        """
+        token = (name or "").strip()
+        if not token:
+            return None
+        stmt = (
+            select(KnowledgeBaseMetadata)
+            .where(
+                KnowledgeBaseMetadata.name == token,
+                KnowledgeBaseMetadata.status != "deleted",
+            )
+            .limit(1)
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
     async def upsert_metadata(
         self,
         *,
@@ -146,6 +166,36 @@ class KnowledgeBaseMetadataService:
         await self.db.flush()
         return record
 
+    async def update_extra_config_key(
+        self,
+        dataset_id: str,
+        *,
+        key: str,
+        value: Any,
+        user_name: Optional[str] = None,
+    ) -> Optional[KnowledgeBaseMetadata]:
+        """只改 extra_config 的一个子键，其余键原样保留。
+
+        虚拟文件夹原先走整份 ``PUT /metadata``：移动一个文档会把 name/visibility
+        等前端缓存值一起回写，并发操作就是 lost update。这里把「改目录结构」
+        收敛成一个明确的局部写。
+        """
+        record = await self.get_by_dataset_id(dataset_id)
+        if not record or record.status == "deleted":
+            return None
+        # 复制一份再赋值：SQLAlchemy 的 JSON 列靠引用变化检测变更，原地改不会落库
+        config = dict(record.extra_config or {})
+        if value in (None, {}, []):
+            config.pop(key, None)
+        else:
+            config[key] = value
+        record.extra_config = config
+        record.updated_by = user_name
+        record.updated_at = datetime.now()
+        if self.db is not None:
+            await self.db.flush()
+        return record
+
     async def transfer_owner(
         self,
         dataset_id: str,
@@ -184,8 +234,15 @@ class KnowledgeBaseMetadataService:
         self,
         ragflow_datasets: List[Dict[str, Any]],
         user_name: Optional[str] = None,
-    ) -> Dict[str, int]:
-        result = {"created": 0, "updated": 0, "skipped": 0}
+    ) -> Dict[str, Any]:
+        # dataset_ids 记录「本次真正被创建/更新的库」，供审计按库落条；
+        # skipped（meta-* 等）不算受影响，避免审计里出现噪音。
+        result: Dict[str, Any] = {
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "dataset_ids": [],
+        }
         for ds in ragflow_datasets:
             dataset_id = str(ds.get("id") or "").strip()
             name = str(ds.get("name") or "").strip()
@@ -202,6 +259,7 @@ class KnowledgeBaseMetadataService:
                 record.updated_by = user_name
                 record.updated_at = datetime.now()
                 result["updated"] += 1
+                result["dataset_ids"].append(dataset_id)
                 continue
 
             await self.upsert_metadata(
@@ -216,12 +274,18 @@ class KnowledgeBaseMetadataService:
                 user_name=user_name,
             )
             result["created"] += 1
+            result["dataset_ids"].append(dataset_id)
 
         if self.db is not None:
             await self.db.flush()
         return result
 
-    async def merge_with_ragflow(self, ragflow_datasets: List[Dict[str, Any]], include_missing: bool = True) -> List[Dict[str, Any]]:
+    async def merge_with_ragflow(
+        self,
+        ragflow_datasets: List[Dict[str, Any]],
+        include_missing: bool = True,
+        missing_allow_ids: Optional[set[str]] = None,
+    ) -> List[Dict[str, Any]]:
         metadata_rows = await self.list_metadata(include_deleted=False)
         metadata_by_id = {m.ragflow_dataset_id: m for m in metadata_rows}
         ragflow_by_id = {str(ds.get("id")): ds for ds in ragflow_datasets if ds.get("id")}
@@ -256,6 +320,10 @@ class KnowledgeBaseMetadataService:
                 # 过滤掉特殊的案例库和元数据管理库的失联记录
                 local_name = (local.name or "").lower()
                 if "chatbi-example" in local_name or local_name.startswith("meta-"):
+                    continue
+                # 非管理员只看到自己范围内的失联库：否则「失联」会变成
+                # 看穿全平台残留元数据的后门（库名、归属人、部门全暴露）。
+                if missing_allow_ids is not None and dataset_id not in missing_allow_ids:
                     continue
                 merged.append({
                     "id": dataset_id,

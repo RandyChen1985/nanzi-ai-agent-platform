@@ -46,8 +46,10 @@ def test_readonly_member_skips_the_request_and_reports_restricted(page):
 
 def test_panel_explains_restricted_instead_of_erroring(page):
     assert "仅创建人与管理员可查看授权名单" in page
-    # 顺序：无权查看优先于「读取失败」，否则只读成员永远看到红字
-    restricted_at = page.index('v-else-if="permissionsRestricted"')
+    # 顺序：无权查看优先于「读取失败」，否则只读成员永远看到红字。
+    # 授权面板已从「文档与设置」并入「引用与授权」，它是那里独立区块的第一分支，
+    # 所以是 v-if 而不是 v-else-if —— 优先顺序的意图不变。
+    restricted_at = page.index('v-if="permissionsRestricted"')
     error_at = page.index('v-else-if="permissionsError"')
     assert restricted_at < error_at
 

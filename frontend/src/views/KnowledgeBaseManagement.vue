@@ -56,6 +56,9 @@ type KnowledgeBase = {
   can_manage?: boolean
   can_view_chunks?: boolean
   is_read_only?: boolean
+  /** 被多少个智能体引用（删除/收窄可见范围前的影响面） */
+  agent_ref_count?: number
+  agent_refs?: { id: string; name: string; display_name: string; is_enabled: boolean }[]
   local_metadata?: {
     extra_config?: Record<string, unknown> & {
       folder_structure?: Record<string, string[]>
@@ -74,6 +77,8 @@ type KnowledgeDocument = {
   created_at?: string
   progress?: number
   progress_msg?: string
+  /** RAGFlow 侧是否参与检索；停用后切片保留但不召回 */
+  enabled?: boolean | number
 }
 
 type RagFlowConfigSummary = {
@@ -322,13 +327,85 @@ const MISSING_DATASET_HINT =
   '这里只剩平台保存的名称、描述和标签，文档列表为空，不能上传或解析。' +
   '确认不再需要时，直接删除即可——不会去 RAGFlow 侧执行删除。'
 
-const detailTab = ref<'documents' | 'audit'>('documents')
+const detailTab = ref<'documents' | 'audit' | 'references'>('documents')
+// 「高级设置」默认收起：绝大多数人不需要碰 JSON，展开就先把代价讲清楚
+const advancedConfigOpen = ref(false)
+// 详情页底部那块只读 JSON 同理，默认收起
+const detailConfigOpen = ref(false)
 const auditLogs = ref<any[]>([])
 const auditTotal = ref(0)
 const auditPage = ref(1)
 const auditLoading = ref(false)
 const auditAction = ref('')
 const auditCanManage = ref(false)
+
+// ---------- 全平台审计（管理员） ----------
+const showGlobalAudit = ref(false)
+const globalAuditItems = ref<any[]>([])
+const globalAuditTotal = ref(0)
+const globalAuditPage = ref(1)
+const globalAuditLoading = ref(false)
+const globalAuditKeyword = ref('')
+const globalAuditStart = ref('')
+const globalAuditEnd = ref('')
+const globalAuditAction = ref('')
+const GLOBAL_AUDIT_PAGE_SIZE = 20
+
+/** 审计表里落到具体库的记录显示库名，而不是一串 uuid */
+const datasetNameById = (id: string | null | undefined) => {
+  if (!id) return ''
+  const found = datasets.value.find((item: any) => (item.ragflow_dataset_id || item.id) === id)
+  return found?.platform_name || found?.name || ''
+}
+
+const globalAuditFilterParams = () => ({
+  keyword: globalAuditKeyword.value.trim() || undefined,
+  start: globalAuditStart.value || undefined,
+  end: globalAuditEnd.value || undefined,
+  action: globalAuditAction.value || undefined,
+})
+
+const openGlobalAudit = () => {
+  showGlobalAudit.value = true
+  globalAuditPage.value = 1
+  void fetchGlobalAudit(1)
+}
+
+const fetchGlobalAudit = async (page = 1) => {
+  globalAuditLoading.value = true
+  try {
+    const response = await axios.get('/api/portal/ragflow/audit-logs', {
+      params: { page, size: GLOBAL_AUDIT_PAGE_SIZE, ...globalAuditFilterParams() },
+    })
+    const data = response.data?.data || {}
+    globalAuditItems.value = data.items || []
+    globalAuditTotal.value = data.total || 0
+    globalAuditPage.value = page
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    globalAuditLoading.value = false
+  }
+}
+
+const exportGlobalAudit = async () => {
+  try {
+    const response = await axios.get('/api/portal/ragflow/audit-logs', {
+      params: { export: 'csv', ...globalAuditFilterParams() },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `knowledge-audit-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  }
+}
 
 const AUDIT_ACTION_LABELS: Record<string, string> = {
   'datasets:create': '创建知识库',
@@ -338,8 +415,15 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'datasets:revoke': '取消授权',
   'datasets:transfer_owner': '转移归属人',
   'documents:upload': '上传文档',
+  'documents:replace': '替换文档',
+  'documents:update': '重命名 / 启停文档',
   'documents:delete': '删除文档',
   'documents:parse': '解析文档',
+  'chunks:create': '新增切片',
+  'chunks:update': '修改切片',
+  'chunks:delete': '删除切片',
+  'datasets:sync': '从 RAGFlow 同步',
+  'datasets:update_layout': '调整文档目录结构',
   'retrieval-test': '检索测试',
 }
 
@@ -351,6 +435,7 @@ const ADMIN_ONLY_AUDIT_ACTIONS = [
   'datasets:grant',
   'datasets:revoke',
   'datasets:transfer_owner',
+  'datasets:sync',
 ]
 const auditActionOptions = computed(() => {
   const keys = Object.keys(AUDIT_ACTION_LABELS).filter(
@@ -424,6 +509,10 @@ const auditLogText = (log: any) => {
       return `${who} 取消了授权，影响 ${detail.affected_user_count ?? 0} 人`
     case 'datasets:transfer_owner':
       return `${who} 转移了知识库归属人`
+    case 'datasets:sync':
+      return `${who} 从 RAGFlow 同步了知识库（新增 ${detail.sync_result?.created ?? 0}、更新 ${detail.sync_result?.updated ?? 0}）`
+    case 'datasets:update_layout':
+      return `${who} 调整了文档目录结构`
     default:
       return `${who} 执行了 ${log?.action || '未知操作'}`
   }
@@ -432,8 +521,9 @@ const auditLogText = (log: any) => {
 // 切到日志 tab 就重新拉一次：
 // 只在"列表为空"时加载会导致——在文档 tab 传完文件再切回来，看到的还是旧列表，
 // 而"这条操作到底记没记上"恰恰是用户切回来的唯一目的。
-watch(detailTab, (tab: 'documents' | 'audit') => {
+watch(detailTab, (tab: 'documents' | 'audit' | 'references') => {
   if (tab === 'audit') loadAuditLogs(true)
+  if (tab === 'references') void loadDatasetReferences()
 })
 
 // 换库要清空，否则会短暂看到上一个库的记录
@@ -444,9 +534,122 @@ watch(
     auditTotal.value = 0
     auditPage.value = 1
     auditAction.value = ''
+    detailConfigOpen.value = false
+    agentRefs.value = []
+    void loadDatasetQuota()
     if (detailTab.value === 'audit') loadAuditLogs(true)
+    if (detailTab.value === 'references') void loadDatasetReferences()
   },
 )
+
+// ---------- 发现：看得见但还没权限的公共/部门库 ----------
+const showDiscover = ref(false)
+const discoverItems = ref<any[]>([])
+const discoverTotal = ref(0)
+const discoverPage = ref(1)
+const discoverLoading = ref(false)
+const discoverKeyword = ref('')
+const applyingDataset = ref<any>(null)
+const applyReason = ref('')
+const applySubmitting = ref(false)
+const DISCOVER_PAGE_SIZE = 10
+
+const openDiscover = () => {
+  showDiscover.value = true
+  discoverPage.value = 1
+  void fetchDiscover(1)
+}
+
+const fetchDiscover = async (page = 1) => {
+  discoverLoading.value = true
+  try {
+    const response = await axios.get('/api/portal/ragflow/datasets/discover', {
+      params: {
+        page,
+        size: DISCOVER_PAGE_SIZE,
+        keyword: discoverKeyword.value.trim() || undefined,
+      },
+    })
+    const data = response.data?.data || {}
+    discoverItems.value = data.items || []
+    discoverTotal.value = data.total || 0
+    discoverPage.value = page
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    discoverLoading.value = false
+  }
+}
+
+const startAccessRequest = (item: any) => {
+  applyingDataset.value = item
+  applyReason.value = ''
+}
+
+const submitAccessRequest = async () => {
+  const target = applyingDataset.value
+  if (!target || applySubmitting.value) return
+  applySubmitting.value = true
+  try {
+    await axios.post(
+      `/api/portal/ragflow/datasets/${encodeURIComponent(target.dataset_id)}/access-requests`,
+      { reason: applyReason.value.trim() || null },
+    )
+    showToast('申请已提交，等待库归属人审批', 'success')
+    applyingDataset.value = null
+    await fetchDiscover(discoverPage.value)
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    applySubmitting.value = false
+  }
+}
+
+const discoverUpdatedText = (item: any) => {
+  const raw = item?.engine_update_time || item?.updated_at
+  if (!raw) return ''
+  const ts = typeof raw === 'number' ? (raw > 1e12 ? raw : raw * 1000) : Date.parse(String(raw).replace(' ', 'T'))
+  if (!ts || Number.isNaN(ts)) return ''
+  const days = Math.floor((Date.now() - ts) / 86400000)
+  if (days <= 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 30) return `${days} 天前`
+  if (days < 365) return `${Math.floor(days / 30)} 个月前`
+  return `${Math.floor(days / 365)} 年前`
+}
+
+const discoverStatusLabel = (status: string | null) => {
+  if (status === 'pending') return '审批中'
+  if (status === 'approved') return '已通过'
+  if (status === 'rejected') return '已驳回'
+  if (status === 'cancelled') return '已撤回'
+  return ''
+}
+
+// ---------- 配额用量 ----------
+const datasetQuota = ref<any>(null)
+const docQuotaRatio = computed(() => {
+  const docs = datasetQuota.value?.documents
+  if (!docs || !docs.limit || docs.used == null) return 0
+  return Math.min(1, Number(docs.used) / Number(docs.limit))
+})
+const docQuotaTone = computed(() => {
+  if (docQuotaRatio.value >= 0.95) return 'bg-red-500 text-red-600'
+  if (docQuotaRatio.value >= 0.8) return 'bg-amber-500 text-amber-600'
+  return 'bg-emerald-500 text-gray-400'
+})
+
+const loadDatasetQuota = async () => {
+  const dsId = currentDatasetId()
+  datasetQuota.value = null
+  if (!dsId) return
+  try {
+    const response = await axios.get(`/api/portal/ragflow/datasets/${encodeURIComponent(dsId)}/quota`)
+    datasetQuota.value = response.data?.data || null
+  } catch {
+    // 配额只是辅助信息：拿不到就不显示，不影响文档列表
+  }
+}
 
 
 const canManagePermissions = computed(() => {
@@ -643,7 +846,9 @@ const openEdit = (dataset: KnowledgeBase) => {
     notes: dataset.notes || '',
     extraConfigText: JSON.stringify(dataset.local_metadata?.extra_config || {}, null, 2)
   }
-  
+
+  advancedConfigOpen.value = false
+
   customQuestions.value = []
   const localExtra = dataset.local_metadata?.extra_config || {}
   if (localExtra.custom_questions && Array.isArray(localExtra.custom_questions)) {
@@ -708,7 +913,10 @@ const retryAfterError = async () => {
   await fetchDatasets()
 }
 
-const fetchDatasets = async () => {
+/** 引擎挂了但还能看到旧数据时置为 true，页面顶部提示"这是缓存" */
+const datasetsStale = ref(false)
+
+const fetchDatasets = async (force = false) => {
   if (!isKnowledgeEnabled.value) {
     datasets.value = []
     engineStatus.value = 'disconnected'
@@ -719,8 +927,11 @@ const fetchDatasets = async () => {
   engineStatus.value = 'checking'
   errorMessage.value = ''
   try {
-    const response = await axios.get('/api/portal/ragflow/datasets', { params: { page_size: 1000 } })
+    const response = await axios.get('/api/portal/ragflow/datasets', {
+      params: { page_size: 5000, refresh: force ? 1 : 0 },
+    })
     datasets.value = apiData(response)
+    datasetsStale.value = response.data?.stale === true
     engineStatus.value = 'connected'
     
     // 如果没有选中的节点，默认选中第一个 —— 但要优先落在当前 Tab 的范围内，
@@ -779,7 +990,7 @@ const toggleDatasetExpand = async (dataset: KnowledgeBase, forceExpand = false) 
 // 同一知识库可能被轮询、手动刷新、上传后刷新同时触发，用序号只认最后一次请求
 const documentsReqSeq: Record<string, number> = {}
 
-const fetchDocumentsForDataset = async (dsId: string) => {
+const fetchDocumentsForDataset = async (dsId: string, options: { silent?: boolean } = {}) => {
   const seq = (documentsReqSeq[dsId] = (documentsReqSeq[dsId] || 0) + 1)
   documentsLoadingMap.value[dsId] = true
   try {
@@ -819,7 +1030,8 @@ const fetchDocumentsForDataset = async (dsId: string) => {
     if (seq !== documentsReqSeq[dsId]) return
     // 显式区分「加载失败」与「确实没有文档」，否则树里会显示成「暂无文档」
     documentsErrorMap.value[dsId] = true
-    showToast(extractError(err), 'error')
+    // 搜索会一次性拉多个库，失败时逐个弹 toast 会把界面刷屏
+    if (!options.silent) showToast(extractError(err), 'error')
     documentsMap.value[dsId] = []
   } finally {
     // 只有最后一次请求才有权关掉 loading，否则早返回的请求会让 spinner 提前消失
@@ -827,7 +1039,11 @@ const fetchDocumentsForDataset = async (dsId: string) => {
   }
 }
 
-const datasetPermissions = ref<{ users: any[], roles: any[] }>({ users: [], roles: [] })
+const datasetPermissions = ref<{ users: any[], roles: any[], ownerUserId: number | null }>({
+  users: [],
+  roles: [],
+  ownerUserId: null,
+})
 const loadingPermissions = ref(false)
 const permissionsError = ref(false)
 /** 只读成员查不到授权名单（后端按写权限校验），这是既定权限而不是故障 */
@@ -851,17 +1067,22 @@ const fetchDatasetPermissions = async (datasetId: string) => {
   if (target && !canManageDataset(target)) {
     permissionsRestricted.value = true
     permissionsError.value = false
-    datasetPermissions.value = { users: [], roles: [] }
+    datasetPermissions.value = { users: [], roles: [], ownerUserId: null }
     loadingPermissions.value = false
     return
   }
   permissionsRestricted.value = false
   loadingPermissions.value = true
   permissionsError.value = false
-  datasetPermissions.value = { users: [], roles: [] }
+  datasetPermissions.value = { users: [], roles: [], ownerUserId: null }
   try {
     const response = await axios.get(`/api/portal/ragflow/datasets/${datasetId}/permissions`)
-    datasetPermissions.value = response.data?.data || { users: [], roles: [] }
+    const data = response.data?.data || {}
+    datasetPermissions.value = {
+      users: data.users || [],
+      roles: data.roles || [],
+      ownerUserId: data.owner_user_id ?? null,
+    }
   } catch (err) {
     // 必须显式区分失败：静默时界面会显示「未分配权限」，让管理员误判为无人有权限
     permissionsError.value = true
@@ -1175,6 +1396,46 @@ const filteredDatasets = computed(() => {
 })
 
 /**
+ * 搜索文档名时按需加载文档列表。
+ *
+ * 文档是「展开才懒加载」的，但搜索框承诺能搜文档名：不补这一步，
+ * 没展开过的库里的文档永远搜不到，用户会以为文档不存在。
+ * 并发上限 4，避免一次打爆 RAGFlow；300ms 防抖避免连续输入触发请求风暴。
+ */
+const SEARCH_DOC_CONCURRENCY = 4
+const SEARCH_DOC_DEBOUNCE_MS = 300
+const searchDocLoading = ref(false)
+let searchDocTimer: ReturnType<typeof setTimeout> | null = null
+
+const ensureDocumentsForSearch = async () => {
+  const targets = visibilityScopeDatasets.value
+    .filter((dataset) => !dataset.is_missing_in_ragflow)
+    .map((dataset) => dataset.ragflow_dataset_id || dataset.id)
+    .filter((id) => id && !documentsMap.value[id] && !documentsLoadingMap.value[id])
+  if (!targets.length) return
+  searchDocLoading.value = true
+  try {
+    for (let i = 0; i < targets.length; i += SEARCH_DOC_CONCURRENCY) {
+      await Promise.all(
+        targets
+          .slice(i, i + SEARCH_DOC_CONCURRENCY)
+          .map((id) => fetchDocumentsForDataset(id, { silent: true })),
+      )
+    }
+  } finally {
+    searchDocLoading.value = false
+  }
+}
+
+watch(searchQuery, (value) => {
+  if (searchDocTimer) clearTimeout(searchDocTimer)
+  if (!value.trim()) return
+  searchDocTimer = setTimeout(() => {
+    void ensureDocumentsForSearch()
+  }, SEARCH_DOC_DEBOUNCE_MS)
+})
+
+/**
  * 左侧树的一级节点。
  *
  * 两个模式：
@@ -1322,7 +1583,8 @@ const syncFromRagFlow = async () => {
       `同步完成：新增 ${result.created || 0} 个，更新 ${result.updated || 0} 个，跳过 ${result.skipped || 0} 个`,
       'success'
     )
-    await fetchDatasets()
+    // 同步的语义就是「我要最新」，绕过 60s 列表缓存
+    await fetchDatasets(true)
   } catch (err) {
     errorMessage.value = extractError(err)
     // 用户可能已关闭过横幅，失败时必须重新展开，否则只剩 3 秒 toast
@@ -1476,21 +1738,19 @@ const confirmCreateFolder = async (dataset: KnowledgeBase) => {
     return
   }
 
-  const localMetadata = dataset.local_metadata || {}
-  const extraConfig = { ...(localMetadata.extra_config || {}) }
-  if (!extraConfig.folder_structure) {
-    extraConfig.folder_structure = {}
+  const structure = {
+    ...(dataset.local_metadata?.extra_config?.folder_structure || {}),
   }
 
-  if (extraConfig.folder_structure[name]) {
+  if (structure[name]) {
     showToast('该文件夹已存在', 'warning')
     return
   }
 
-  extraConfig.folder_structure[name] = []
-  
+  structure[name] = []
+
   try {
-    await saveDatasetExtraConfig(dataset, extraConfig)
+    await saveFolderStructure(dataset, structure)
     showToast('文件夹创建成功', 'success')
     editingDatasetIdForFolder.value = null
     newFolderName.value = ''
@@ -1519,9 +1779,9 @@ const confirmRenameFolder = async (dataset: KnowledgeBase, oldName: string) => {
     return
   }
 
-  const localMetadata = dataset.local_metadata || {}
-  const extraConfig = { ...(localMetadata.extra_config || {}) }
-  const structure = { ...(extraConfig.folder_structure || {}) }
+  const structure = {
+    ...(dataset.local_metadata?.extra_config?.folder_structure || {}),
+  }
 
   if (structure[newName]) {
     showToast('该名称的文件夹已存在', 'warning')
@@ -1531,10 +1791,9 @@ const confirmRenameFolder = async (dataset: KnowledgeBase, oldName: string) => {
   // 替换键名并保持文档列表不变
   structure[newName] = structure[oldName] || []
   delete structure[oldName]
-  extraConfig.folder_structure = structure
 
   try {
-    await saveDatasetExtraConfig(dataset, extraConfig)
+    await saveFolderStructure(dataset, structure)
     showToast('文件夹重命名成功', 'success')
     editingFolderKey.value = null
   } catch (err) {
@@ -1553,15 +1812,14 @@ const confirmRemoveFolder = async () => {
   if (!pending || removingFolder.value) return
   removingFolder.value = true
   const { dataset, folderName } = pending
-  const localMetadata = dataset.local_metadata || {}
-  const extraConfig = { ...(localMetadata.extra_config || {}) }
-  const structure = { ...(extraConfig.folder_structure || {}) }
+  const structure = {
+    ...(dataset.local_metadata?.extra_config?.folder_structure || {}),
+  }
 
   delete structure[folderName]
-  extraConfig.folder_structure = structure
 
   try {
-    await saveDatasetExtraConfig(dataset, extraConfig)
+    await saveFolderStructure(dataset, structure)
     showToast('文件夹已删除', 'success')
   } catch (err) {
     showToast('删除文件夹失败: ' + extractError(err), 'error')
@@ -1573,9 +1831,9 @@ const confirmRemoveFolder = async () => {
 
 // 移动文档至文件夹
 const moveDocumentToFolder = async (dataset: KnowledgeBase, docId: string, targetFolderName: string | null) => {
-  const localMetadata = dataset.local_metadata || {}
-  const extraConfig = { ...(localMetadata.extra_config || {}) }
-  const structure = { ...(extraConfig.folder_structure || {}) }
+  const structure: Record<string, string[]> = {
+    ...(dataset.local_metadata?.extra_config?.folder_structure || {}),
+  }
 
   // 1. 从之前所在的文件夹中移除 docId
   for (const fName in structure) {
@@ -1594,10 +1852,8 @@ const moveDocumentToFolder = async (dataset: KnowledgeBase, docId: string, targe
     }
   }
 
-  extraConfig.folder_structure = structure
-
   try {
-    await saveDatasetExtraConfig(dataset, extraConfig)
+    await saveFolderStructure(dataset, structure)
     showToast('移动文档成功', 'success')
     activeFileMoveMenuDocId.value = null
   } catch (err) {
@@ -1605,22 +1861,44 @@ const moveDocumentToFolder = async (dataset: KnowledgeBase, docId: string, targe
   }
 }
 
-// 内部方法：静默保存数据集的本地 extra_config
-const saveDatasetExtraConfig = async (dataset: KnowledgeBase, extraConfig: any) => {
+// 内部方法：只保存虚拟文件夹映射
+// 这里刻意不再走整份 PUT /metadata：移动一个文档会把前端缓存的 name/visibility
+// 一起回写，并发操作就是 lost update（最坏情况是把公开库改成私有）。
+const saveFolderStructure = async (
+  dataset: KnowledgeBase,
+  structure: Record<string, string[]>,
+) => {
   const datasetId = dataset.ragflow_dataset_id || dataset.id
-  await axios.put(`/api/portal/ragflow/datasets/${datasetId}/metadata`, {
-    name: dataset.platform_name || dataset.name,
-    description: dataset.platform_description || dataset.description,
-    owner: dataset.owner || '',
-    // 这个函数是「移动文档后静默保存 extra_config」，但它会整份 PUT 元数据。
-    // 兜底值写错时的后果比编辑弹窗更隐蔽：用户只是挪了个文档，库就被改成私有了。
-    visibility: visibilityOf(dataset),
-    tags: dataset.tags || [],
-    notes: dataset.notes || '',
-    extra_config: extraConfig
-  })
-  // 静默更新本地数据集列表以触发界面状态渲染刷新
-  await fetchDatasets()
+  const res = await axios.put(
+    `/api/portal/ragflow/datasets/${datasetId}/folder-structure`,
+    { folder_structure: structure },
+  )
+  const saved = res.data?.data?.extra_config?.folder_structure || {}
+  if (!dataset.local_metadata) dataset.local_metadata = {}
+  dataset.local_metadata.extra_config = {
+    ...(dataset.local_metadata.extra_config || {}),
+    folder_structure: saved,
+  }
+}
+
+/** 文档被删除后清理目录里的悬空引用，避免树里出现点不开的条目。 */
+const removeDocumentFromFolders = async (dataset: KnowledgeBase, docId: string) => {
+  const structure = dataset.local_metadata?.extra_config?.folder_structure
+  if (!structure) return
+  const next: Record<string, string[]> = {}
+  let changed = false
+  for (const [folder, ids] of Object.entries(structure)) {
+    const filtered = (ids || []).filter((id) => id !== docId)
+    if (filtered.length !== (ids || []).length) changed = true
+    next[folder] = filtered
+  }
+  if (!changed) return
+  try {
+    await saveFolderStructure(dataset, next)
+  } catch (err) {
+    // 清理失败不影响文档删除本身，但要让用户知道目录里可能有残留
+    showToast('文档已删除，但目录引用清理失败：' + extractError(err), 'warning')
+  }
 }
 // ==================== 虚拟文件夹层级管理结束 ====================
 
@@ -1630,6 +1908,27 @@ const triggerDeleteDataset = (dataset: KnowledgeBase) => {
   if (dsId) {
     // 异步静默拉取该知识库的最新授权记录，以便在确认弹窗中即时呈现正确的同步警告
     fetchDatasetPermissions(dsId)
+    // 引用关系同理：删除前必须让用户看见「会打挂哪些智能体」
+    void loadDeleteAgentRefs(dataset)
+  }
+}
+
+/** 删除确认弹窗里的智能体引用影响面。 */
+const deleteAgentRefs = ref<{ id: string; name: string; display_name: string; is_enabled: boolean }[]>([])
+const deleteAgentRefsUnknown = ref(false)
+
+const loadDeleteAgentRefs = async (dataset: KnowledgeBase) => {
+  const dsId = dataset.ragflow_dataset_id || dataset.id
+  deleteAgentRefs.value = []
+  deleteAgentRefsUnknown.value = false
+  if (!dsId) return
+  try {
+    const res = await axios.get(`/api/portal/ragflow/datasets/${dsId}/agents`)
+    deleteAgentRefs.value = res.data?.data?.items || []
+  } catch {
+    // 读不到影响面不阻断删除，但弹窗要说清「引用关系未知」，
+    // 否则「没有警告」会被误解成「没有智能体在用」。
+    deleteAgentRefsUnknown.value = true
   }
 }
 
@@ -1644,13 +1943,23 @@ const deleteDatasetMessage = computed(() => {
   const permWarning = permsUnknown
     ? '（⚠️ 授权信息读取失败，无法确认该知识库是否存在授权关系）'
     : '（⚠️ 该知识库当前已授权的角色/用户访问权限关系也将被同步清除）'
+
+  const assetRefs = deleteAgentRefs.value
+  const refWarning = assetRefs.length
+    ? `（⚠️ 该库正被 ${assetRefs.length} 个智能体引用：${assetRefs
+        .map((agent) => agent.display_name)
+        .slice(0, 3)
+        .join('、')}${assetRefs.length > 3 ? ' 等' : ''}；删除后这些智能体将检索不到本库内容）`
+    : deleteAgentRefsUnknown.value
+      ? '（⚠️ 引用关系读取失败，无法确认是否仍有智能体在使用本库）'
+      : ''
   
   if (deletingDataset.value.is_missing_in_ragflow) {
     let baseMsg = '检测到该知识库已在 RAGFlow 端不存在或已被物理删除，确定清理平台本地残留的相关配置和元数据信息吗？'
     if (hasPerms || permsUnknown) {
       baseMsg += permWarning
     }
-    return baseMsg
+    return baseMsg + refWarning
   } else {
     let baseMsg = `确定真实删除知识库「${name}」吗？RAGFlow 侧相应集群数据也将同步卸载，此操作不可逆。`
     if (permsUnknown) {
@@ -1658,7 +1967,7 @@ const deleteDatasetMessage = computed(() => {
     } else if (hasPerms) {
       baseMsg += '（⚠️ 注意：该知识库当前已授权给角色/用户，删除后系统关联的全部授权记录将被同步擦除清理）'
     }
-    return baseMsg
+    return baseMsg + refWarning
   }
 })
 
@@ -1695,15 +2004,63 @@ const confirmDeleteDataset = async () => {
   }
 }
 
+// 与后端 KNOWLEDGE_UPLOAD_MAX_BYTES / ALLOWED_EXTENSIONS 保持一致；
+// 前端先拦一道，用户不用等整个文件传上去才看到 413。
+const KNOWLEDGE_UPLOAD_MAX_MB = 256
+const KNOWLEDGE_UPLOAD_EXTENSIONS = [
+  'pdf', 'doc', 'docx', 'txt', 'md', 'csv', 'xls', 'xlsx',
+  'ppt', 'pptx', 'html', 'htm', 'epub', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tif', 'tiff',
+]
+
 const onFileChange = (event: Event) => {
   const input = event.target as HTMLInputElement
-  if (input.files) {
-    const files = Array.from(input.files)
-    const newFiles = files.filter(f => !uploadFiles.value.some(existing => existing.name === f.name && existing.size === f.size))
-    uploadFiles.value = [...uploadFiles.value, ...newFiles]
+  if (!input.files) return
+  const rejected: string[] = []
+  const accepted = Array.from(input.files).filter((f) => {
+    const ext = f.name.split('.').pop()?.toLowerCase() || ''
+    if (!KNOWLEDGE_UPLOAD_EXTENSIONS.includes(ext)) {
+      rejected.push(`${f.name}（类型不支持）`)
+      return false
+    }
+    if (f.size > KNOWLEDGE_UPLOAD_MAX_MB * 1024 * 1024) {
+      rejected.push(`${f.name}（超过 ${KNOWLEDGE_UPLOAD_MAX_MB}MB）`)
+      return false
+    }
+    return true
+  })
+  if (rejected.length) {
+    showToast(
+      `已跳过 ${rejected.length} 个文件：${rejected.slice(0, 3).join('、')}${rejected.length > 3 ? ' 等' : ''}`,
+      'warning',
+    )
   }
+  const newFiles = accepted.filter(
+    (f) => !uploadFiles.value.some((existing) => existing.name === f.name && existing.size === f.size),
+  )
+  uploadFiles.value = [...uploadFiles.value, ...newFiles]
+  // 允许用户重复选择同一个被拒文件（清空后二次选择仍能触发 change）
+  input.value = ''
 }
 
+const uploadConflicts = ref<{ file: File; oldDocumentId: string; oldName: string }[]>([])
+const pendingUploadClean = ref<File[]>([])
+
+/** 查重用：优先用已加载的列表，避免每个文件都打一次接口 */
+const fetchDatasetDocumentsForUpload = async (dsId: string): Promise<KnowledgeDocument[]> => {
+  const cached = documentsMap.value[dsId]
+  if (cached?.length) return cached
+  const response = await axios.get(`/api/portal/ragflow/datasets/${dsId}/documents`, {
+    params: { page_size: 1000 },
+  })
+  return (apiData(response) || []) as KnowledgeDocument[]
+}
+
+/**
+ * 上传入口：先查重，有同名文档就弹「跳过 / 替换 / 保留两者」。
+ *
+ * 重名在 RAGFlow 侧不会报错，只会静默多存一份（或被加上 "(1)" 后缀），
+ * 用户看到的却是「我明明替换了，怎么有两份」——所以必须在客户端先问清楚。
+ */
 const uploadDocument = async () => {
   if (!isEngineReady.value) {
     showToast('知识库引擎未连接，暂不能上传文档', 'warning')
@@ -1713,29 +2070,101 @@ const uploadDocument = async () => {
     showToast('请先选择要上传的文件', 'warning')
     return
   }
+  const targetDatasetId = selectedDatasetId.value
+
+  let existing: KnowledgeDocument[] = []
+  try {
+    existing = await fetchDatasetDocumentsForUpload(targetDatasetId)
+  } catch {
+    // 查重失败不阻断上传：宁可让用户传，也不要因为列表接口抖动就传不了
+    existing = []
+  }
+
+  const conflicts: { file: File; oldDocumentId: string; oldName: string }[] = []
+  const clean: File[] = []
+  for (const file of uploadFiles.value) {
+    const hit = existing.find((doc) => (doc.name || '') === file.name)
+    if (hit) conflicts.push({ file, oldDocumentId: hit.id, oldName: hit.name || file.name })
+    else clean.push(file)
+  }
+
+  if (conflicts.length) {
+    pendingUploadClean.value = clean
+    uploadConflicts.value = conflicts
+    return
+  }
+  await runUpload(clean, new Map())
+}
+
+const resolveUploadConflicts = async (strategy: 'skip' | 'replace' | 'keep') => {
+  const conflicts = uploadConflicts.value
+  const clean = pendingUploadClean.value
+  uploadConflicts.value = []
+  pendingUploadClean.value = []
+  if (!conflicts.length) return
+
+  const conflictFiles = conflicts.map((item) => item.file)
+  if (strategy === 'skip') {
+    await runUpload(clean, new Map())
+    return
+  }
+  if (strategy === 'keep') {
+    await runUpload([...clean, ...conflictFiles], new Map())
+    return
+  }
+  const replaceMap = new Map<File, string>(
+    conflicts.map((item) => [item.file, item.oldDocumentId] as const),
+  )
+  await runUpload([...clean, ...conflictFiles], replaceMap)
+}
+
+const runUpload = async (files: File[], replaceMap: Map<File, string>) => {
+  const targetDatasetId = selectedDatasetId.value
+  if (!targetDatasetId || !files.length) {
+    showToast('没有需要上传的文件', 'warning')
+    return
+  }
   // 上传期间左侧知识库树仍可点击，必须固定目标库，
   // 否则中途切换会把剩余文件传到另一个知识库、刷新也会落到错误的库
-  const targetDatasetId = selectedDatasetId.value
   uploading.value = true
-  
-  const total = uploadFiles.value.length
+
+  const total = files.length
   let successCount = 0
   let failCount = 0
   let parseFailCount = 0
-  
+
   for (let i = 0; i < total; i++) {
-    const file = uploadFiles.value[i]
+    const file = files[i]
     if (!file) continue
     uploadProgressText.value = `正在上传并解析: ${i + 1} / ${total} (${file.name})`
-    
-    const payload = new FormData()
-    payload.append('file', file)
-    
+
     try {
-      const response = await axios.post(`/api/portal/ragflow/datasets/${targetDatasetId}/documents/upload`, payload)
+      if (replaceMap.has(file)) {
+        // 替换由后端编排（上传→改名→删旧→解析），前端不再单独触发解析
+        const payload = new FormData()
+        payload.append('file', file)
+        payload.append('old_document_id', replaceMap.get(file) as string)
+        const response = await axios.post(
+          `/api/portal/ragflow/datasets/${targetDatasetId}/documents/replace`,
+          payload,
+        )
+        const newId = response.data?.data?.id
+        if (newId) {
+          parsingDocIds.value = { ...parsingDocIds.value, [newId]: true }
+        }
+        successCount++
+        continue
+      }
+
+      const payload = new FormData()
+      payload.append('file', file)
+      const response = await axios.post(
+        `/api/portal/ragflow/datasets/${targetDatasetId}/documents/upload`,
+        payload,
+      )
       const resData = response.data?.data || {}
       const docId = resData.id
-      
+
       if (docId) {
         parsingDocIds.value = { ...parsingDocIds.value, [docId]: true }
         try {
@@ -1757,7 +2186,7 @@ const uploadDocument = async () => {
       console.error(`文档 ${file.name} 上传失败:`, err)
     }
   }
-  
+
   if (failCount === total) {
     showToast('全部文档上传失败，请检查网络或知识库配置', 'error')
   } else if (parseFailCount > 0) {
@@ -1767,7 +2196,7 @@ const uploadDocument = async () => {
   } else {
     showToast(`成功批量上传并触发解析了 ${successCount} 个文档`, 'success')
   }
-  
+
   clearAllUploadFiles()
   await fetchDocumentsForDataset(targetDatasetId)
   uploading.value = false
@@ -1796,7 +2225,13 @@ const confirmDeleteDocument = async () => {
       selectedId.value = selectedDatasetId.value
       selectedDocument.value = null
     }
-    
+
+    // 目录里还留着这个 docId 的话，树里会出现点不开的条目
+    const targetDataset = datasets.value.find(
+      (item) => (item.ragflow_dataset_id || item.id) === selectedDatasetId.value,
+    )
+    if (targetDataset) await removeDocumentFromFolders(targetDataset, docId)
+
     await fetchDocumentsForDataset(selectedDatasetId.value)
   } catch (err) {
     showToast(extractError(err), 'error')
@@ -2047,8 +2482,255 @@ const isReadOnlyDataset = (dataset?: KnowledgeBase | null) => {
   return false
 }
 
+// ==================== 批量操作 ====================
+// 后端早就支持 ids 数组，只是没暴露入口：库一多，逐个删/逐个解析是纯体力活。
+// 默认关闭，避免破坏现有紧凑布局；开启后才在节点左侧出现勾选框。
+const bulkSelectMode = ref(false)
+const selectedDatasetIds = ref<string[]>([])
+const selectedDocIds = ref<string[]>([])
+/** 文档批量操作限定在单库内：跨库混选时「批量解析」的目标库会不明确 */
+const bulkDocDatasetId = ref('')
+const bulkWorking = ref(false)
+const pendingBulkDelete = ref<string[] | null>(null)
+
+const exitBulkMode = () => {
+  bulkSelectMode.value = false
+  selectedDatasetIds.value = []
+  selectedDocIds.value = []
+  bulkDocDatasetId.value = ''
+}
+
+const toggleDatasetSelection = (dataset: KnowledgeBase) => {
+  const id = dataset.ragflow_dataset_id || dataset.id
+  if (!id || !canManageDataset(dataset)) return
+  selectedDatasetIds.value = selectedDatasetIds.value.includes(id)
+    ? selectedDatasetIds.value.filter((item) => item !== id)
+    : [...selectedDatasetIds.value, id]
+}
+
+const toggleDocSelection = (doc: KnowledgeDocument, datasetId: string) => {
+  if (!doc?.id) return
+  if (bulkDocDatasetId.value && bulkDocDatasetId.value !== datasetId) {
+    // 换库了：清掉上一批，避免把 A 库的 docId 发到 B 库
+    selectedDocIds.value = []
+  }
+  bulkDocDatasetId.value = datasetId
+  selectedDocIds.value = selectedDocIds.value.includes(doc.id)
+    ? selectedDocIds.value.filter((item) => item !== doc.id)
+    : [...selectedDocIds.value, doc.id]
+}
+
+/**
+ * 可批量选中的库：当前 tab + 当前搜索结果里、有管理权限的。
+ * 刻意不跨 tab、不跨搜索：全选把看不见的库也选上，等于给自己埋雷。
+ *
+ * 失联库必须能选：单个勾选一直是允许的（toggleDatasetSelection 不限失联），
+ * 只有全选把它排除了，两处口径打架。而失联库唯一的用途就是**批量清理**——
+ * 元数据还在、RAGFlow 里已经没了，挨个点太折磨人。删除端点对这类 ID 会跳过
+ * 远删、只标本地 deleted，选上批量删是安全的。
+ */
+const bulkSelectableDatasets = computed(() =>
+  filteredDatasets.value.filter((dataset) => canManageDataset(dataset)),
+)
+
+const bulkAllSelected = computed(() => {
+  if (selectedDocIds.value.length) {
+    const docs = documentsMap.value[bulkDocDatasetId.value] || []
+    return docs.length > 0 && docs.every((doc) => selectedDocIds.value.includes(doc.id))
+  }
+  return bulkSelectableDatasets.value.length > 0
+    && bulkSelectableDatasets.value.every((dataset) =>
+      selectedDatasetIds.value.includes(dataset.ragflow_dataset_id || dataset.id),
+    )
+})
+
+const toggleSelectAll = () => {
+  // 文档分支：全选当前库的文档
+  if (selectedDocIds.value.length) {
+    const docs = documentsMap.value[bulkDocDatasetId.value] || []
+    selectedDocIds.value = bulkAllSelected.value ? [] : docs.map((doc) => doc.id)
+    return
+  }
+  selectedDatasetIds.value = bulkAllSelected.value
+    ? []
+    : bulkSelectableDatasets.value.map((dataset) => dataset.ragflow_dataset_id || dataset.id)
+}
+
+const bulkDeleteDatasets = async () => {
+  const ids = pendingBulkDelete.value
+  if (!ids?.length || bulkWorking.value) return
+  bulkWorking.value = true
+  try {
+    await axios.delete('/api/portal/ragflow/datasets', { data: { ids } })
+    showToast(`已删除 ${ids.length} 个知识库`, 'success')
+    pendingBulkDelete.value = null
+    selectedDatasetIds.value = []
+    await fetchDatasets()
+    if (selectedType.value === 'dataset' && ids.includes(selectedId.value)) {
+      if (datasets.value[0]) selectDatasetNode(datasets.value[0])
+    }
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    bulkWorking.value = false
+  }
+}
+
+const bulkParseDocuments = async () => {
+  const datasetId = bulkDocDatasetId.value
+  const ids = [...selectedDocIds.value]
+  if (!datasetId || !ids.length || bulkWorking.value) return
+  bulkWorking.value = true
+  try {
+    await axios.post(`/api/portal/ragflow/datasets/${datasetId}/documents/parse`, { ids })
+    ids.forEach((id) => {
+      parsingDocIds.value = { ...parsingDocIds.value, [id]: true }
+    })
+    showToast(`已触发 ${ids.length} 个文档解析`, 'success')
+    selectedDocIds.value = []
+    await fetchDocumentsForDataset(datasetId)
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    bulkWorking.value = false
+  }
+}
+
+const bulkDeleteDocuments = async () => {
+  const datasetId = bulkDocDatasetId.value
+  const ids = [...selectedDocIds.value]
+  if (!datasetId || !ids.length || bulkWorking.value) return
+  bulkWorking.value = true
+  try {
+    await axios.delete(`/api/portal/ragflow/datasets/${datasetId}/documents`, {
+      data: { ids },
+    })
+    showToast(`已删除 ${ids.length} 个文档`, 'success')
+    const targetDataset = datasets.value.find(
+      (item) => (item.ragflow_dataset_id || item.id) === datasetId,
+    )
+    if (targetDataset) {
+      for (const docId of ids) await removeDocumentFromFolders(targetDataset, docId)
+    }
+    selectedDocIds.value = []
+    await fetchDocumentsForDataset(datasetId)
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    bulkWorking.value = false
+  }
+}
+// ==================== 批量操作结束 ====================
+
 /** 当前详情页的库是否可写：只读成员只能看内容，不能改元数据/上传/授权 */
 const selectedDatasetWritable = computed(() => canManageDataset(selectedDataset.value))
+
+// ==================== 引用与授权（影响面） ====================
+// 两件事必须分开看：
+// - 智能体引用 = 智能体 engine_config.dataset_ids 里选中了本库，删库会让它检索不到内容；
+// - 授权访问 = ResourcePermission 里给了角色/用户访问权，删库会让这些人失去入口。
+// 给角色分配知识库**不会**产生智能体引用，两者不是同一件事，所以在同一个 tab 里并列说明。
+const agentRefs = ref<{ id: string; name: string; display_name: string; is_enabled: boolean }[]>([])
+const referencesLoading = ref(false)
+const referencesError = ref('')
+
+const loadDatasetReferences = async () => {
+  const dsId = currentDatasetId()
+  if (!dsId) return
+  referencesLoading.value = true
+  referencesError.value = ''
+  try {
+    const res = await axios.get(`/api/portal/ragflow/datasets/${dsId}/agents`)
+    agentRefs.value = res.data?.data?.items || []
+  } catch (err) {
+    referencesError.value = extractError(err)
+    agentRefs.value = []
+  } finally {
+    referencesLoading.value = false
+  }
+  // 授权名单是另一个接口，tab 里要一起展示；已加载过就不重复拉
+  if (
+    !permissionsRestricted.value
+    && !datasetPermissions.value.users.length
+    && !datasetPermissions.value.roles.length
+  ) {
+    void fetchDatasetPermissions(dsId)
+  }
+}
+
+const openDatasetReferences = () => {
+  detailTab.value = 'references'
+  void loadDatasetReferences()
+}
+
+/** RAGFlow 用 enabled=0/1 表示文档是否参与检索；停用后切片仍在，只是不召回 */
+const isDocDisabled = (doc?: KnowledgeDocument | null) => {
+  if (!doc) return false
+  // RAGFlow 可能回 0/1、也可能回 "0"/"1"，两种都要认，否则停用了却显示"参与检索"
+  const enabled = (doc as { enabled?: unknown }).enabled
+  return enabled === false || enabled === 0 || enabled === '0'
+
+}
+
+const renamingDoc = ref<KnowledgeDocument | null>(null)
+const docRenameValue = ref('')
+const docRenameBusy = ref(false)
+const docToggleBusy = ref(false)
+
+const currentDocDatasetId = () =>
+  selectedDataset.value?.ragflow_dataset_id || selectedDataset.value?.id || ''
+
+/** 本地就地更新，省一次列表请求：改名/启停只影响这一条 */
+const patchDocumentLocally = (dsId: string, doc: KnowledgeDocument, patch: Partial<KnowledgeDocument>) => {
+  const list = documentsMap.value[dsId]
+  if (list) {
+    const index = list.findIndex((item) => item.id === doc.id)
+    const existing = index >= 0 ? list[index] : undefined
+    if (existing) list[index] = { ...existing, ...patch }
+  }
+  if (selectedDocument.value?.id === doc.id) {
+    selectedDocument.value = { ...selectedDocument.value, ...patch }
+  }
+}
+
+const startRenameDocument = (doc: KnowledgeDocument) => {
+  renamingDoc.value = doc
+  docRenameValue.value = doc.name || ''
+}
+
+const confirmRenameDocument = async () => {
+  const doc = renamingDoc.value
+  const name = docRenameValue.value.trim()
+  const dsId = currentDocDatasetId()
+  if (!doc || !name || !dsId || docRenameBusy.value) return
+  docRenameBusy.value = true
+  try {
+    await axios.put(`/api/portal/ragflow/datasets/${dsId}/documents/${doc.id}`, { name })
+    patchDocumentLocally(dsId, doc, { name })
+    renamingDoc.value = null
+    showToast('已重命名。改名不会触发重新解析，已有切片保持不变', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    docRenameBusy.value = false
+  }
+}
+
+const toggleDocumentEnabled = async (doc: KnowledgeDocument) => {
+  const dsId = currentDocDatasetId()
+  if (!dsId || docToggleBusy.value) return
+  const next = isDocDisabled(doc)
+  docToggleBusy.value = true
+  try {
+    await axios.put(`/api/portal/ragflow/datasets/${dsId}/documents/${doc.id}`, { enabled: next })
+    patchDocumentLocally(dsId, doc, { enabled: next })
+    showToast(next ? '已启用，重新参与检索' : '已停用，不再参与检索召回（切片仍保留）', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    docToggleBusy.value = false
+  }
+}
 
 const canViewChunks = (dataset?: KnowledgeBase | null) => {
   if (!dataset) return false
@@ -2101,6 +2783,7 @@ const chunksError = ref(false)
 const openChunksModal = async (doc: any) => {
   viewingDocument.value = doc
   showChunksModal.value = true
+  previewPage.value = null
   chunksPage.value = 1
   chunksList.value = []
   chunksTotal.value = 0
@@ -2114,13 +2797,134 @@ const closeChunksModal = () => {
   chunksTotal.value = 0
 }
 
+// ---------- 切片增删改 ----------
+const editingChunkId = ref<string | null>(null)
+const editingChunkContent = ref('')
+const newChunkContent = ref('')
+const showNewChunkForm = ref(false)
+const chunkSaving = ref(false)
+
+/** RAGFlow 用 available / available_int 表示切片是否参与召回，两种都认 */
+const isChunkDisabled = (chunk: any) => {
+  const value = chunk?.available ?? chunk?.available_int
+  return value === 0 || value === '0' || value === false
+}
+
+const currentChunkDatasetId = () =>
+  selectedDataset.value?.ragflow_dataset_id || selectedDataset.value?.id || ''
+
+const chunkTargetPath = (chunkId?: string) => {
+  const dsId = currentChunkDatasetId()
+  const docId = viewingDocument.value?.id
+  if (!dsId || !docId) return ''
+  const base = `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/chunks`
+  return chunkId ? `${base}/${chunkId}` : base
+}
+
+const startEditChunk = (chunk: any) => {
+  editingChunkId.value = chunk.id
+  editingChunkContent.value = chunk.content || ''
+}
+
+const cancelEditChunk = () => {
+  editingChunkId.value = null
+  editingChunkContent.value = ''
+}
+
+const saveChunk = async () => {
+  const chunkId = editingChunkId.value
+  const content = editingChunkContent.value.trim()
+  const url = chunkTargetPath(chunkId || undefined)
+  if (!chunkId || !content || !url || chunkSaving.value) return
+  chunkSaving.value = true
+  try {
+    await axios.put(url, { content })
+    const target = chunksList.value.find((item: any) => item.id === chunkId)
+    if (target) {
+      target.content = content
+      target.content_with_weight = content
+    }
+    editingChunkId.value = null
+    showToast('已保存，向量重建需数秒后生效', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    chunkSaving.value = false
+  }
+}
+
+const toggleChunk = async (chunk: any) => {
+  const url = chunkTargetPath(chunk.id)
+  if (!url || chunkSaving.value) return
+  const next = isChunkDisabled(chunk)
+  chunkSaving.value = true
+  try {
+    await axios.put(url, { available: next })
+    chunk.available = next ? 1 : 0
+    chunk.available_int = next ? 1 : 0
+    showToast(next ? '已启用，重新参与召回' : '已停用，不再参与召回（内容仍保留）', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    chunkSaving.value = false
+  }
+}
+
+const removeChunk = async (chunk: any) => {
+  const url = chunkTargetPath(chunk.id)
+  if (!url || chunkSaving.value) return
+  chunkSaving.value = true
+  try {
+    await axios.delete(url)
+    chunksList.value = chunksList.value.filter((item: any) => item.id !== chunk.id)
+    chunksTotal.value = Math.max(0, chunksTotal.value - 1)
+    showToast('已删除切片', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    chunkSaving.value = false
+  }
+}
+
+const createChunk = async () => {
+  const content = newChunkContent.value.trim()
+  const url = chunkTargetPath()
+  if (!content || !url || chunkSaving.value) return
+  chunkSaving.value = true
+  try {
+    await axios.post(url, { content })
+    newChunkContent.value = ''
+    showNewChunkForm.value = false
+    showToast('已新增切片，向量重建需数秒后生效', 'success')
+    await fetchChunks()
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    chunkSaving.value = false
+  }
+}
+
 const showDocPreview = ref(false)
+/** 从切片跳原文时的目标页；null 表示普通预览（不带页锚） */
+const previewPage = ref<number | null>(null)
 const previewDocUrl = computed(() => {
   if (!selectedDatasetId.value || !selectedDocument.value) return ''
   const dsId = encodeURIComponent(selectedDatasetId.value)
   const docId = encodeURIComponent(selectedDocument.value.id)
-  return `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/file`
+  const base = `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/file`
+  return previewPage.value ? `${base}#page=${previewPage.value}` : base
 })
+
+const isPdfSelectedDocument = computed(() =>
+  PDF_EXTENSIONS.has(getWorkspaceFileExtension(selectedDocument.value?.name || '')),
+)
+/**
+ * PDF 要跳页时必须用 iframe：浏览器原生 PDF 阅读器认 `#page=N`，
+ * 而 file-viewer 的 pdf 渲染器不认这个 fragment。
+ */
+const mustUseIframeForPage = computed(
+  () => isPdfSelectedDocument.value && previewPage.value !== null,
+)
 
 /**
  * 交给 DocumentViewer 渲染的格式：Office + 文本（canPreviewWithDocumentViewer），
@@ -2137,6 +2941,8 @@ const previewDocUrl = computed(() => {
  * 其余 file-viewer 不支持的格式（.rst/.env/.ppt 等）继续走 iframe 兜底。
  */
 const canPreviewSelectedDocument = computed(() => {
+  // 需要跳页的 PDF 交给 iframe，DocumentViewer 不认 #page
+  if (mustUseIframeForPage.value) return false
   const name = selectedDocument.value?.name || ''
   return (
     canPreviewWithDocumentViewer(name) ||
@@ -2161,6 +2967,39 @@ const openDocPreview = () => {
 }
 const closeDocPreview = () => {
   showDocPreview.value = false
+  previewPage.value = null
+}
+
+/** 切片里能拿到的页码：优先 page_no，其次 positions[].page_no（JSON 字符串） */
+const resolveChunkPage = (chunk: any): number | null => {
+  const direct = Number(chunk?.page_no ?? chunk?.page ?? chunk?.page_number)
+  if (Number.isFinite(direct) && direct > 0) return Math.floor(direct)
+
+  const raw = chunk?.positions ?? chunk?.position
+  if (!raw) return null
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    const list = Array.isArray(parsed) ? parsed : [parsed]
+    for (const item of list) {
+      const candidate = Number(item?.page_no ?? item?.page ?? item?.page_number)
+      if (Number.isFinite(candidate) && candidate > 0) return Math.floor(candidate)
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+const openChunkSource = (chunk: any) => {
+  const page = resolveChunkPage(chunk)
+  if (!selectedDocument.value || selectedDocument.value.id !== viewingDocument.value?.id) {
+    // 抽屉里的文档必须就是详情页选中的那份，否则预览会打开另一份文件
+    showToast('请从文档详情页打开切片后再查看原文', 'warning')
+    return
+  }
+  previewPage.value = page
+  closeChunksModal()
+  showDocPreview.value = true
 }
 
 const CHUNKS_PAGE_SIZE = 30
@@ -2458,12 +3297,24 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           type="button"
           class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"
           aria-label="刷新知识库列表"
-          @click="fetchDatasets"
+          @click="fetchDatasets(true)"
         >
           <svg class="h-5 w-5 lg:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
           </svg>
           <span class="hidden whitespace-nowrap text-sm font-medium lg:inline">刷新</span>
+        </button>
+        <button
+          v-if="isAdmin"
+          type="button"
+          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50"
+          aria-label="全平台审计"
+          title="全平台审计：按人 / 动作 / 时间查所有库的操作记录"
+          @click="openGlobalAudit"
+        >
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751A11.959 11.959 0 0112 2.714z" />
+          </svg>
         </button>
         <button
           v-if="canCreate"
@@ -2527,22 +3378,54 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       
       <!-- Left Side: Knowledge base & Document tree navigation -->
       <section class="w-full lg:w-96 flex-shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+        <!-- 引擎挂了但本地有上次快照：明确告诉用户"这是旧数据"，别让他以为库真的被删了 -->
+        <div
+          v-if="datasetsStale"
+          class="mx-3 mt-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-700 flex items-start gap-2"
+        >
+          <span class="shrink-0">⚠️</span>
+          <span class="flex-1 leading-relaxed">知识库引擎连接异常，当前展示的是上次成功获取的数据，可能不是最新。</span>
+          <button type="button" class="shrink-0 font-semibold hover:underline" @click="fetchDatasets(true)">刷新</button>
+        </div>
         <div class="p-4 border-b border-gray-100/80 bg-gray-50/50">
-          <div class="relative">
-            <input
-              v-model="searchQuery"
-              type="search"
-              placeholder="搜索知识库、文档或业务归属部门..."
-              class="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400"
-            />
-            <svg class="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <button v-if="searchQuery" class="absolute right-3 top-3 text-gray-400 hover:text-gray-600" @click="searchQuery = ''">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          <!-- 搜索框 + 批量入口同一行：开关常驻但不占额外一行，点开才在树顶展开操作条 -->
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1 min-w-0">
+              <input
+                v-model="searchQuery"
+                type="search"
+                placeholder="搜索知识库、文档或业务归属部门..."
+                class="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400"
+              />
+              <svg class="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
+              <button v-if="searchQuery" class="absolute right-3 top-3 text-gray-400 hover:text-gray-600" @click="searchQuery = ''">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <button
+              v-if="!bulkSelectMode && !isAdmin"
+              type="button"
+              class="shrink-0 px-2.5 py-2 rounded-xl border border-gray-200 bg-white text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary transition-all flex items-center gap-1"
+              title="发现：浏览你还没有权限的公共 / 部门知识库，直接申请访问"
+              @click="openDiscover"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              发现
             </button>
+            <button
+              v-if="!bulkSelectMode && datasets.length"
+              type="button"
+              class="shrink-0 px-2.5 py-2 rounded-xl border border-gray-200 bg-white text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary transition-all"
+              title="批量删除知识库、批量解析/删除文档"
+              @click="bulkSelectMode = true"
+            >批量</button>
           </div>
 
           <!-- 可见范围 tab：三档对应真实权限语义（公共级需授权 / 部门级自动只读 / 个人私有仅自己） -->
@@ -2572,10 +3455,56 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               >{{ visibilityTabCount(tab.key) }}</span>
             </button>
           </div>
+          <div v-if="searchDocLoading" class="mt-1.5 text-[11px] text-gray-400">正在检索文档名…</div>
         </div>
 
         <!-- Scrollable tree region -->
         <div class="flex-1 overflow-y-auto p-4 space-y-1 select-none">
+          <!-- 批量操作条：默认隐藏，点「批量管理」才出现，避免破坏现有紧凑布局 -->
+          <div
+            v-if="bulkSelectMode"
+            class="flex items-center justify-between gap-2 rounded-xl bg-primary/5 border border-primary/20 px-2.5 py-2 mb-2 text-[11px]"
+          >
+            <span class="flex items-center gap-1.5 min-w-0 font-semibold text-primary">
+              <span class="truncate">
+                <template v-if="selectedDocIds.length">已选 {{ selectedDocIds.length }} 个文档</template>
+                <template v-else>已选 {{ selectedDatasetIds.length }} 个知识库</template>
+              </span>
+              <button
+                type="button"
+                class="shrink-0 font-normal text-primary/70 hover:text-primary hover:underline"
+                :disabled="(!selectedDocIds.length && !bulkSelectableDatasets.length) || bulkWorking"
+                :title="selectedDocIds.length
+                  ? '全选当前知识库的所有文档'
+                  : '全选当前 Tab 与搜索结果里的知识库'"
+                @click="toggleSelectAll"
+              >{{ bulkAllSelected ? '取消全选' : '全选' }}</button>
+            </span>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <template v-if="selectedDocIds.length">
+                <button
+                  type="button"
+                  class="px-2 py-1 rounded-lg bg-white border border-gray-200 text-gray-600 font-semibold hover:bg-gray-50 disabled:opacity-50"
+                  :disabled="bulkWorking"
+                  @click="bulkParseDocuments"
+                >批量解析</button>
+                <button
+                  type="button"
+                  class="px-2 py-1 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+                  :disabled="bulkWorking"
+                  @click="bulkDeleteDocuments"
+                >批量删除</button>
+              </template>
+              <button
+                v-else
+                type="button"
+                class="px-2 py-1 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+                :disabled="!selectedDatasetIds.length || bulkWorking"
+                @click="pendingBulkDelete = [...selectedDatasetIds]"
+              >批量删除</button>
+              <button type="button" class="text-gray-500 hover:text-gray-700" @click="exitBulkMode">退出</button>
+            </div>
+          </div>
           <div v-if="loading" class="text-center text-gray-400 py-12 text-sm flex flex-col items-center gap-3">
             <span class="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
             <span>加载数据中...</span>
@@ -2586,14 +3515,24 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
           <div v-else-if="deptDatasetGroups.length === 0" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
             <span>{{ emptyVisibilityText }}</span>
-            <button
-              v-if="canCreate"
-              type="button"
-              class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all"
-              @click="openCreate"
-            >
-              新建知识库
-            </button>
+            <div class="flex items-center gap-2">
+              <button
+                v-if="canCreate"
+                type="button"
+                class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all"
+                @click="openCreate"
+              >
+                新建知识库
+              </button>
+              <button
+                v-if="!isAdmin"
+                type="button"
+                class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:border-primary hover:text-primary transition-all"
+                @click="openDiscover"
+              >
+                去发现已有的库
+              </button>
+            </div>
           </div>
           <div v-else class="space-y-1">
             <div v-for="group in deptDatasetGroups" :key="group.key" class="space-y-1">
@@ -2648,6 +3587,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 @click="selectDatasetNode(dataset)"
               >
                 <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                  <input
+                    v-if="bulkSelectMode && canManageDataset(dataset)"
+                    type="checkbox"
+                    class="w-3.5 h-3.5 shrink-0 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                    :checked="selectedDatasetIds.includes(dataset.ragflow_dataset_id || dataset.id)"
+                    :aria-label="`选择 ${dataset.platform_name || dataset.name}`"
+                    @click.stop
+                    @change="toggleDatasetSelection(dataset)"
+                  />
                   <!-- Toggle arrow -->
                   <button
                     class="p-0.5 rounded hover:bg-gray-200/50 text-gray-400 hover:text-gray-600 transition-transform duration-200 shrink-0"
@@ -2681,6 +3629,21 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                           失联
                         </span>
                       </HoverTip>
+                      <!--
+                        引用数徽章也放名称旁：原先它在右侧指标区，而那片区域在悬停时
+                        会被绝对定位的操作按钮覆盖 —— 徽章不会隐藏，于是和按钮叠在一起。
+                        状态类信息统一靠左，右侧整块留给按钮。
+                      -->
+                      <HoverTip
+                        v-if="(dataset.agent_ref_count || 0) > 0"
+                        class="shrink-0"
+                        :text="`被 ${dataset.agent_ref_count} 个智能体引用，删除后它们将检索不到本库内容`"
+                        :width="240"
+                      >
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 font-semibold select-none whitespace-nowrap">
+                          🤖 {{ dataset.agent_ref_count }}
+                        </span>
+                      </HoverTip>
                     </div>
                     <span v-if="dataset.created_by" class="truncate text-[10px] text-gray-400">创建人: {{ dataset.created_by }}</span>
                   </div>
@@ -2699,36 +3662,48 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
                   <!-- Hover Action Buttons -->
                   <div class="flex opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 items-center gap-1 bg-inherit pl-2 absolute right-3 top-1/2 -translate-y-1/2">
-                    <button
+                    <HoverTip
                       v-if="canEdit && canManageDataset(dataset)"
-                      class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
-                      title="新建虚拟文件夹"
-                      @click.stop="startCreateFolder(dataset)"
+                      text="新建虚拟文件夹"
+                      :width="160"
                     >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                      </svg>
-                    </button>
-                    <button
+                      <button
+                        class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
+                        @click.stop="startCreateFolder(dataset)"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                        </svg>
+                      </button>
+                    </HoverTip>
+                    <HoverTip
                       v-if="canEdit && canManageDataset(dataset)"
-                      class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
-                      title="修改元数据"
-                      @click.stop="openEdit(dataset)"
+                      text="修改元数据"
+                      :width="140"
                     >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                    <button
+                      <button
+                        class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
+                        @click.stop="openEdit(dataset)"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                    </HoverTip>
+                    <HoverTip
                       v-if="canDelete && canManageDataset(dataset)"
-                      class="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-all bg-inherit"
-                      title="删除知识库"
-                      @click.stop="triggerDeleteDataset(dataset)"
+                      :text="dataset.is_missing_in_ragflow ? '清理失效残留配置（不会去 RAGFlow 删除）' : '删除知识库'"
+                      :width="dataset.is_missing_in_ragflow ? 240 : 140"
                     >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                      <button
+                        class="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-all bg-inherit"
+                        @click.stop="triggerDeleteDataset(dataset)"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </HoverTip>
                   </div>
                 </div>
               </div>
@@ -2886,10 +3861,27 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                               @click="selectDocumentNode(doc, dataset)"
                             >
                               <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                                <input
+                                  v-if="bulkSelectMode && canEdit"
+                                  type="checkbox"
+                                  class="w-3 h-3 shrink-0 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                                  :checked="selectedDocIds.includes(doc.id)"
+                                  :aria-label="`选择文档 ${doc.name || doc.id}`"
+                                  @click.stop
+                                  @change="toggleDocSelection(doc, dataset.ragflow_dataset_id || dataset.id)"
+                                />
                                 <svg class="w-3.5 h-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                                 </svg>
-                                <span class="truncate text-xs">{{ doc.name || doc.id }}</span>
+                                <span
+                                  class="truncate text-xs"
+                                  :class="isDocDisabled(doc) ? 'text-gray-400 line-through' : ''"
+                                >{{ doc.name || doc.id }}</span>
+                                <span
+                                  v-if="isDocDisabled(doc)"
+                                  class="shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold"
+                                  title="已停用：切片保留，但不参与检索召回"
+                                >已停用</span>
                               </div>
                               
                               <!-- 状态指示灯与悬浮移动/删除操作 -->
@@ -2978,10 +3970,27 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                       @click="selectDocumentNode(doc, dataset)"
                     >
                       <div class="flex items-center gap-2 min-w-0 flex-1">
+                        <input
+                          v-if="bulkSelectMode && canEdit"
+                          type="checkbox"
+                          class="w-3 h-3 shrink-0 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                          :checked="selectedDocIds.includes(doc.id)"
+                          :aria-label="`选择文档 ${doc.name || doc.id}`"
+                          @click.stop
+                          @change="toggleDocSelection(doc, dataset.ragflow_dataset_id || dataset.id)"
+                        />
                         <svg class="w-3.5 h-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                         </svg>
-                        <span class="truncate text-xs">{{ doc.name || doc.id }}</span>
+                        <span
+                          class="truncate text-xs"
+                          :class="isDocDisabled(doc) ? 'text-gray-400 line-through' : ''"
+                        >{{ doc.name || doc.id }}</span>
+                        <span
+                          v-if="isDocDisabled(doc)"
+                          class="shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold"
+                          title="已停用：切片保留，但不参与检索召回"
+                        >已停用</span>
                       </div>
 
                       <div class="flex items-center gap-1 shrink-0 justify-end relative" @click.stop>
@@ -3112,6 +4121,27 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <span class="font-medium text-gray-700">{{ selectedDataset.chunk_count ?? '—' }}</span> 段
                 </span>
                 <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
+                <!-- 一律显示：只在有引用时才出现的话，没人知道这里还有个「引用」维度 -->
+                <span class="whitespace-nowrap">
+                  <template v-if="(selectedDataset.agent_ref_count || 0) > 0">
+                    被
+                    <button
+                      type="button"
+                      class="font-semibold text-primary hover:underline"
+                      title="查看引用该知识库的智能体，以及被授权访问的角色/用户"
+                      @click="openDatasetReferences"
+                    >
+                      {{ selectedDataset.agent_ref_count }} 个智能体
+                    </button>
+                    引用
+                  </template>
+                  <span
+                    v-else
+                    class="text-gray-400"
+                    title="智能体在「知识库绑定 / 默认 Dataset IDs」里选中本库后，这里会显示被引用数量"
+                  >未被智能体引用</span>
+                </span>
+                <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
                 <span class="whitespace-nowrap max-w-[18rem] truncate" :title="datasetOwnerLabel(selectedDataset) || ''">
                   业务归属部门/负责人
                   <span class="font-medium text-gray-700">{{ datasetOwnerLabel(selectedDataset) || '未指派' }}</span>
@@ -3170,20 +4200,44 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <!-- 视图切换：文档与设置 / 操作日志 -->
           <div class="flex items-center gap-1 -mt-2 border-b border-gray-100">
             <button
-              v-for="tab in [{ key: 'documents', label: '文档与设置' }, { key: 'audit', label: '操作日志' }]"
+              v-for="tab in [{ key: 'documents', label: '文档与设置' }, { key: 'audit', label: '操作日志' }, { key: 'references', label: '引用与授权' }]"
               :key="tab.key"
               type="button"
               class="px-3 py-1.5 text-xs font-semibold rounded-t-lg transition-all -mb-px border-b-2"
               :class="detailTab === tab.key
                 ? 'text-primary border-primary'
                 : 'text-gray-400 border-transparent hover:text-gray-600'"
-              @click="detailTab = (tab.key as 'documents' | 'audit')"
+              @click="detailTab = (tab.key as 'documents' | 'audit' | 'references')"
             >
               {{ tab.label }}
             </button>
           </div>
 
           <template v-if="detailTab === 'documents'">
+
+          <!-- 配额用量：接近上限时提前预警，别等传不进去才发现 -->
+          <div
+            v-if="datasetQuota?.documents?.limit"
+            class="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2"
+          >
+            <span class="text-[11px] font-medium text-gray-500 select-none">文档配额</span>
+            <span class="text-xs font-semibold font-mono" :class="docQuotaTone.split(' ')[1]">
+              {{ datasetQuota.documents.used ?? '-' }} / {{ datasetQuota.documents.limit }}
+            </span>
+            <div class="h-1.5 w-24 overflow-hidden rounded-full bg-gray-100">
+              <div
+                class="h-full rounded-full transition-all"
+                :class="docQuotaTone.split(' ')[0]"
+                :style="{ width: `${Math.round(docQuotaRatio * 100)}%` }"
+              ></div>
+            </div>
+            <span v-if="docQuotaRatio >= 0.9" class="text-[11px] font-semibold text-red-600">
+              快满了，建议先清理不再需要的文档
+            </span>
+            <span v-if="datasetQuota.owned_datasets" class="ml-auto text-[11px] text-gray-400 select-none">
+              你已拥有 {{ datasetQuota.owned_datasets.used }} / {{ datasetQuota.owned_datasets.limit }} 个知识库
+            </span>
+          </div>
 
           <!-- Tags & Notes -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
@@ -3216,116 +4270,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <p class="text-sm text-gray-600 bg-amber-50/20 p-3.5 rounded-xl border border-amber-100/50 leading-relaxed">
                 {{ selectedDataset.notes || '暂无备注说明。' }}
               </p>
-            </div>
-          </div>
-
-          <!-- 权限分配说明卡片 -->
-          <div class="space-y-2 bg-gray-50/20 p-4 rounded-xl border border-gray-200">
-            <div class="flex items-center justify-between">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider select-none">系统授权分配详情</h3>
-              <div class="flex items-center gap-2">
-                <span v-if="loadingPermissions" class="text-xs text-gray-400 animate-pulse flex items-center gap-1 select-none">
-                  <span class="w-2.5 h-2.5 rounded-full border border-gray-300 border-t-transparent animate-spin"></span>
-                  正在读取权限分配...
-                </span>
-                <button
-                  v-if="canManagePermissions && !loadingPermissions && !isPrivateDataset"
-                  type="button"
-                  class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold shadow-sm transition-all flex items-center gap-0.5 cursor-pointer"
-                  @click="openAddPermissionModal"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                  </svg>
-                  分配授权成员
-                </button>
-              </div>
-            </div>
-            
-            <div class="text-xs space-y-3 mt-1.5">
-              <!-- 可见范围说明：三档语义真实生效，这里必须与后端判定一致 -->
-              <p class="text-gray-500 leading-normal select-none">
-                可见范围为
-                <span class="font-bold text-gray-800 uppercase px-1.5 py-0.5 rounded bg-gray-100 text-[10px]">{{ visibilityLabel(selectedDataset) }}</span>。
-                <span v-if="visibilityOf(selectedDataset) === 'public'">公共级：创建人自动可用，其他人<b>必须</b>在下方被显式授权才能访问（不会被自动放行）。</span>
-                <span v-else-if="visibilityOf(selectedDataset) === 'team'">部门级：{{ datasetOwnerLabel(selectedDataset) || '未设置归属部门' }} 的成员（<b>含下级部门</b>）自动获得只读权限<template v-if="selectedDatasetWritable">；也可在下方额外授权给其他用户/角色</template>。</span>
-                <span v-else>
-                  个人私有：仅你自己可见，<b>不支持</b>分配授权。如需共享，请先把可见范围改为公共级或部门级。
-                  <template v-if="datasetPermissions.users.length || datasetPermissions.roles.length">
-                    下方的历史授权在当前范围内<b>不生效</b>，可逐条清除。
-                  </template>
-                </span>
-              </p>
-
-              <!-- 被指派的用户/角色列表 -->
-              <div v-if="!loadingPermissions && (datasetPermissions.users.length || datasetPermissions.roles.length)" class="flex flex-col gap-2.5 pt-2 border-t border-gray-100">
-                <div v-if="datasetPermissions.roles.length" class="flex items-start gap-2">
-                  <span class="text-gray-400 font-medium shrink-0 mt-0.5 select-none">授权角色:</span>
-                  <div class="flex flex-wrap gap-1.5">
-                    <span 
-                      v-for="r in datasetPermissions.roles" 
-                      :key="r.code"
-                      class="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold border border-blue-100/50 flex items-center gap-1 select-none group/tag"
-                    >
-                      <svg class="w-3 h-3 text-blue-500 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3zM3.31 9.397L5 10.12v4.102a8.969 8.969 0 00-1.05-.174 1 1 0 01-.89-.89 11.115 11.115 0 01.25-3.762zM9.3 16.573A9.026 9.026 0 007 14.935v-3.957l1.818.78a3 3 0 002.364 0l5.508-2.361a11.026 11.026 0 01.25 3.762 1 1 0 01-.89.89 8.968 8.968 0 00-5.35 2.524 1 1 0 01-1.4 0z" />
-                      </svg>
-                      {{ r.name }} ({{ r.code }})
-                      <button
-                        v-if="canManagePermissions"
-                        type="button"
-                        class="text-blue-400 hover:text-red-500 font-bold ml-1.5 focus:outline-none cursor-pointer text-xs"
-                        title="取消授权"
-                        @click.stop="removePermission('role', r.id, r.name)"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  </div>
-                </div>
-                
-                <div v-if="datasetPermissions.users.length" class="flex items-start gap-2">
-                  <span class="text-gray-400 font-medium shrink-0 mt-0.5 select-none">授权用户:</span>
-                  <div class="flex flex-wrap gap-1.5">
-                    <span 
-                      v-for="u in datasetPermissions.users" 
-                      :key="u.user_name"
-                      class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-100/50 flex items-center gap-1 select-none group/tag"
-                    >
-                      <svg class="w-3 h-3 text-emerald-500 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
-                      </svg>
-                      {{ u.real_name || u.user_name }} ({{ u.user_name }})
-                      <button
-                        v-if="canManagePermissions"
-                        type="button"
-                        class="text-emerald-400 hover:text-red-500 font-bold ml-1.5 focus:outline-none cursor-pointer text-xs"
-                        title="取消授权"
-                        @click.stop="removePermission('user', u.id, u.real_name || u.user_name)"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  </div>
-                </div>
-              </div>
-              
-              <div v-else-if="permissionsRestricted" class="text-gray-400 italic pt-2 border-t border-gray-100 select-none">
-                仅创建人与管理员可查看授权名单；您对该知识库是只读访问。
-              </div>
-              <div v-else-if="permissionsError" class="pt-2 border-t border-gray-100 select-none flex items-center justify-between gap-3">
-                <span class="text-amber-600 text-xs">授权信息读取失败，当前无法确认谁有访问权限</span>
-                <button
-                  type="button"
-                  class="text-xs font-semibold text-primary hover:underline shrink-0"
-                  @click="fetchDatasetPermissions(selectedDatasetId)"
-                >
-                  重试
-                </button>
-              </div>
-              <div v-else-if="!loadingPermissions" class="text-gray-400 italic pt-2 border-t border-gray-100 select-none">
-                {{ isPrivateDataset ? '个人私有知识库不支持分配授权。' : '未分配额外的用户或角色访问权限。' }}
-              </div>
             </div>
           </div>
 
@@ -3379,7 +4323,9 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <p class="text-sm font-medium text-gray-700 mt-3">
                   将一个或多个文件拖拽至此处，或 <span class="text-primary hover:underline font-semibold">点击上传</span>
                 </p>
-                <p class="text-xs text-gray-400 mt-1.5">支持多文件上传，类型包含 PDF, DOCX, TXT, MD, XLSX 等</p>
+                <p class="text-xs text-gray-400 mt-1.5">
+                  支持多文件上传，类型包含 PDF, DOCX, TXT, MD, XLSX 等，单文件不超过 {{ KNOWLEDGE_UPLOAD_MAX_MB }}MB
+                </p>
               </div>
 
               <!-- 2. 已选择文件时的批量卡片队列展示 -->
@@ -3452,18 +4398,43 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </div>
           </div>
 
-          <!-- Extended config JSON -->
-          <div class="space-y-2 flex-1 flex flex-col min-h-[150px]">
-            <div class="flex items-center justify-between">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">业务元数据扩展配置 (JSON)</h3>
+          <!--
+            Extended config JSON：与编辑弹窗的「高级设置」同一口径——默认收起。
+            这坨 JSON 只有 folder_structure / custom_questions 两个键有消费者，
+            平时挂在详情页最底部纯属视觉噪音，还把左右分栏的高度全吃掉了。
+          -->
+          <div class="flex flex-col shrink-0">
+            <div class="flex items-center justify-between gap-2">
               <button
-                class="text-xs text-primary hover:underline font-semibold"
-                @click="copyToClipboard(JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2))"
+                type="button"
+                class="flex items-center gap-1.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-400 transition-colors hover:text-gray-600"
+                :aria-expanded="detailConfigOpen"
+                @click="detailConfigOpen = !detailConfigOpen"
               >
-                复制配置
+                <svg
+                  class="h-3 w-3 shrink-0 transition-transform duration-200"
+                  :class="{ 'rotate-90': detailConfigOpen }"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+                业务元数据扩展配置 (JSON)
               </button>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  v-if="detailConfigOpen"
+                  class="text-xs font-semibold text-primary hover:underline"
+                  @click="copyToClipboard(JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2))"
+                >
+                  复制配置
+                </button>
+                <span class="text-[10px] text-gray-300 select-none">{{ detailConfigOpen ? '收起' : '展开' }}</span>
+              </div>
             </div>
-            <pre class="flex-1 overflow-auto bg-gray-900 text-emerald-400 p-4 rounded-xl font-mono text-xs shadow-inner leading-relaxed">{{ JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2) }}</pre>
+            <pre
+              v-show="detailConfigOpen"
+              class="mt-2 max-h-[280px] overflow-auto rounded-xl bg-gray-900 p-4 font-mono text-xs leading-relaxed text-emerald-400 shadow-inner"
+            >{{ JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2) }}</pre>
           </div>
           </template>
 
@@ -3530,6 +4501,144 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </template>
           </div>
 
+          <!-- 引用与授权：智能体绑定了本库 / 谁被授权访问本库 -->
+          <div v-if="detailTab === 'references'" class="flex-1 space-y-4 pt-2 min-h-0 overflow-y-auto">
+            <section class="rounded-xl border border-gray-200 bg-white p-4">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-sm font-semibold text-gray-800">
+                  智能体引用
+                  <span class="ml-1 text-xs font-normal text-gray-400">{{ agentRefs.length }} 个</span>
+                </h3>
+                <button
+                  type="button"
+                  class="text-[11px] text-gray-400 hover:text-primary transition-colors disabled:opacity-50"
+                  :disabled="referencesLoading"
+                  @click="loadDatasetReferences"
+                >刷新</button>
+              </div>
+              <p class="mt-1 text-[11px] text-gray-400 leading-relaxed">
+                这些智能体在「知识库绑定 / 默认 Dataset IDs」里选中了本库。删除本库或收窄可见范围后，它们将检索不到本库内容。
+              </p>
+              <div v-if="referencesLoading" class="py-6 text-center text-xs text-gray-400 select-none">正在读取…</div>
+              <div v-else-if="referencesError" class="py-4 text-xs text-red-500">{{ referencesError }}</div>
+              <div v-else-if="!agentRefs.length" class="py-6 text-center text-xs text-gray-400 italic select-none">
+                暂无智能体引用本库
+              </div>
+              <ul v-else class="mt-3 divide-y divide-gray-100">
+                <li v-for="agent in agentRefs" :key="agent.id" class="flex items-center justify-between gap-3 py-2">
+                  <div class="min-w-0">
+                    <p class="text-sm text-gray-800 truncate">{{ agent.display_name }}</p>
+                    <p class="text-[11px] text-gray-400 font-mono truncate">{{ agent.name }}</p>
+                  </div>
+                  <span
+                    class="shrink-0 text-[11px] px-2 py-0.5 rounded-full border"
+                    :class="agent.is_enabled
+                      ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                      : 'bg-gray-50 text-gray-400 border-gray-200'"
+                  >
+                    {{ agent.is_enabled ? '已启用' : '已停用' }}
+                  </span>
+                </li>
+              </ul>
+            </section>
+
+            <section class="rounded-xl border border-gray-200 bg-white p-4">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-sm font-semibold text-gray-800">
+                  授权访问
+                  <span class="ml-1 text-xs font-normal text-gray-400">{{ datasetPermissions.roles.length + datasetPermissions.users.length }} 个</span>
+                </h3>
+                <div class="flex items-center gap-2">
+                  <span v-if="loadingPermissions" class="text-[11px] text-gray-400 animate-pulse select-none">读取中…</span>
+                  <button
+                    v-if="canManagePermissions && !loadingPermissions && !isPrivateDataset"
+                    type="button"
+                    class="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                    @click="openAddPermissionModal"
+                  >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                    </svg>
+                    分配授权成员
+                  </button>
+                </div>
+              </div>
+              <p class="mt-1 text-[11px] text-gray-400 leading-relaxed">
+                被授权的人能打开本库、检索里面的内容。这只是访问权限 —— 给角色分配知识库不等于智能体会用它。删除本库会一并清除这些授权。
+              </p>
+
+              <!-- 可见范围说明：三档语义真实生效，这里必须与后端判定一致 -->
+              <p class="mt-2 rounded-lg bg-gray-50 px-2.5 py-2 text-[11px] leading-relaxed text-gray-500 select-none">
+                可见范围为
+                <span class="font-bold text-gray-800 uppercase px-1.5 py-0.5 rounded bg-white border border-gray-200 text-[10px]">{{ visibilityLabel(selectedDataset) }}</span>。
+                <span v-if="visibilityOf(selectedDataset) === 'public'">公共级：创建人自动可用，其他人<b>必须</b>在下方被显式授权才能访问（不会被自动放行）。</span>
+                <span v-else-if="visibilityOf(selectedDataset) === 'team'">部门级：{{ datasetOwnerLabel(selectedDataset) || '未设置归属部门' }} 的成员（<b>含下级部门</b>）自动获得只读权限<template v-if="selectedDatasetWritable">；也可在下方额外授权给其他用户/角色</template>。</span>
+                <span v-else>
+                  个人私有：仅你自己可见，<b>不支持</b>分配授权。如需共享，请先把可见范围改为公共级或部门级。
+                  <template v-if="datasetPermissions.users.length || datasetPermissions.roles.length">
+                    下面的历史授权在当前范围内<b>不生效</b>，可逐条清除。
+                  </template>
+                </span>
+              </p>
+
+              <div v-if="permissionsRestricted" class="mt-3 py-3 text-xs text-gray-400 italic select-none">
+                仅创建人与管理员可查看授权名单。
+              </div>
+              <div v-else-if="permissionsError" class="mt-3 flex items-center justify-between gap-3 text-xs">
+                <span class="text-amber-600">授权信息读取失败，当前无法确认谁有访问权限</span>
+                <button
+                  type="button"
+                  class="font-semibold text-primary hover:underline shrink-0"
+                  @click="fetchDatasetPermissions(selectedDatasetId)"
+                >重试</button>
+              </div>
+              <div v-else-if="!loadingPermissions && !datasetPermissions.roles.length && !datasetPermissions.users.length" class="mt-3 py-3 text-xs text-gray-400 italic select-none">
+                {{ isPrivateDataset ? '个人私有知识库不支持分配授权。' : '尚未授权给任何角色或用户' }}
+              </div>
+              <div v-else class="mt-3 space-y-2.5">
+                <div v-if="datasetPermissions.roles.length" class="flex items-start gap-2">
+                  <span class="text-gray-400 font-medium shrink-0 mt-0.5 text-[11px] select-none">授权角色:</span>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="role in datasetPermissions.roles"
+                      :key="`ref-role-${role.id}`"
+                      class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[11px] font-semibold border border-indigo-100 flex items-center gap-1"
+                    >
+                      角色 · {{ role.name }}
+                      <button
+                        v-if="canManagePermissions"
+                        type="button"
+                        class="text-indigo-400 hover:text-red-500 font-bold focus:outline-none cursor-pointer"
+                        title="取消授权"
+                        @click.stop="removePermission('role', role.id, role.name)"
+                      >×</button>
+                    </span>
+                  </div>
+                </div>
+                <div v-if="datasetPermissions.users.length" class="flex items-start gap-2">
+                  <span class="text-gray-400 font-medium shrink-0 mt-0.5 text-[11px] select-none">授权用户:</span>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="user in datasetPermissions.users"
+                      :key="`ref-user-${user.id}`"
+                      class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-100 flex items-center gap-1"
+                    >
+                      {{ user.real_name || user.user_name }}
+                      <span v-if="user.id === datasetPermissions.ownerUserId" class="text-[10px] text-primary">归属人</span>
+                      <button
+                        v-if="canManagePermissions && user.id !== datasetPermissions.ownerUserId"
+                        type="button"
+                        class="text-emerald-400 hover:text-red-500 font-bold focus:outline-none cursor-pointer"
+                        title="取消授权"
+                        @click.stop="removePermission('user', user.id, user.real_name || user.user_name)"
+                      >×</button>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
         </div>
 
         <!-- Case 2: Document details and parsing node selected -->
@@ -3563,6 +4672,29 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </div>
             
             <div class="flex gap-2 shrink-0 ml-4">
+              <button
+                v-if="canEdit && !isReadOnlyDataset(selectedDataset)"
+                class="px-3 py-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold rounded-xl transition-all whitespace-nowrap shrink-0"
+                :disabled="!isEngineReady"
+                @click="startRenameDocument(selectedDocument)"
+              >重命名</button>
+              <label
+                v-if="canEdit && !isReadOnlyDataset(selectedDataset)"
+                class="px-3 py-2 border rounded-xl text-sm font-semibold flex items-center gap-2 select-none cursor-pointer whitespace-nowrap shrink-0 transition-all"
+                :class="isDocDisabled(selectedDocument)
+                  ? 'border-amber-200 bg-amber-50 text-amber-700'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-700'"
+                title="停用后切片仍保留，但不再参与检索召回；随时可以重新启用"
+              >
+                <input
+                  type="checkbox"
+                  class="w-3.5 h-3.5 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                  :checked="!isDocDisabled(selectedDocument)"
+                  :disabled="docToggleBusy || !isEngineReady"
+                  @change="toggleDocumentEnabled(selectedDocument)"
+                />
+                {{ isDocDisabled(selectedDocument) ? '已停用（不参与检索）' : '参与检索' }}
+              </label>
               <button
                 v-if="canParse && !isReadOnlyDataset(selectedDataset)"
                 class="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-xl hover:bg-primary/95 transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shrink-0"
@@ -3836,7 +4968,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             <span>当前为<b>个人私有</b>：建好后只有你能看到，其他人无法访问、也不能被授权。要共享请先改成部门级或公共级。</span>
           </p>
           <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员（含下级部门）会自动获得只读权限；未选归属部门时会退化为公共级。</p>
-          <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人需要你在详情页「分配授权成员」后才能访问。</p>
+          <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人需要你在详情页「引用与授权」里点「分配授权成员」后才能访问。</p>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -4130,9 +5262,49 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
         </div>
 
-        <div>
-          <label class="block text-xs font-semibold text-gray-400 mb-1.5">额外扩展配置 JSON</label>
-          <textarea v-model="form.extraConfigText" class="w-full border border-gray-200 rounded-xl px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-white disabled:bg-gray-100" rows="3" placeholder="扩展配置 JSON"></textarea>
+        <!--
+          额外扩展配置：本质是开发者的逃生舱口，不该摆在一级表单里。
+          只有 folder_structure 与 custom_questions 会被读取，其余键写了没人用；
+          而保存是整份覆盖——手滑删掉 folder_structure，所有文档会掉回「未分类」且无法撤销。
+          因此折叠起来 + 把代价写在脸上。
+        -->
+        <div class="overflow-hidden rounded-xl border border-gray-200">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between bg-gray-50/60 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
+            :aria-expanded="advancedConfigOpen"
+            @click="advancedConfigOpen = !advancedConfigOpen"
+          >
+            <span class="flex items-center gap-1.5">
+              <svg
+                class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform duration-200"
+                :class="{ 'rotate-90': advancedConfigOpen }"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+              <span class="text-xs font-semibold text-gray-500">高级设置</span>
+              <span class="text-[11px] text-gray-400">· 额外扩展配置 JSON</span>
+            </span>
+            <span class="shrink-0 text-[10px] text-gray-400">{{ advancedConfigOpen ? '收起' : '展开' }}</span>
+          </button>
+
+          <div v-show="advancedConfigOpen" class="space-y-2 border-t border-gray-100 px-3 pb-3 pt-2.5">
+            <div class="space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
+              <p><b>保存是整份覆盖。</b>删掉 <code class="font-mono">folder_structure</code> 会让所有文档掉回「未分类」，虚拟文件夹丢失且无法撤销。</p>
+              <p>只有下面两个键会被读取，其余键写了也不会生效：</p>
+              <ul class="list-disc space-y-0.5 pl-4">
+                <li><code class="font-mono">folder_structure</code>：虚拟文件夹映射，由「新建文件夹 / 移动文档」自动维护，一般无需手改。</li>
+                <li><code class="font-mono">custom_questions</code>：知识库门户的快捷提问，形如 <code class="font-mono">[{label:'总结核心内容', query:'请帮我梳理要点'}]</code>。</li>
+              </ul>
+            </div>
+            <textarea
+              v-model="form.extraConfigText"
+              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+              rows="4"
+              placeholder="{}"
+            ></textarea>
+          </div>
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showEditModal = false">取消</button>
@@ -4168,6 +5340,83 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       confirm-text="确认移除"
       @confirm="confirmRemovePermission"
       @cancel="pendingPermissionRemoval = null"
+    />
+    <Modal
+      :show="uploadConflicts.length > 0"
+      title="同名文档已存在"
+      size="max-w-lg"
+      @close="resolveUploadConflicts('skip')"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600">
+          本次上传中有 <b class="text-primary">{{ uploadConflicts.length }}</b> 个文件名与库中已有文档重名：
+        </p>
+        <ul class="max-h-40 overflow-y-auto rounded-lg bg-gray-50 border border-gray-100 p-2 text-xs space-y-1">
+          <li v-for="item in uploadConflicts" :key="item.oldDocumentId" class="truncate text-gray-500">
+            · {{ item.oldName }}
+          </li>
+        </ul>
+        <div class="rounded-lg bg-amber-50 border border-amber-100 p-3 text-[11px] text-amber-700 leading-relaxed">
+          替换 = 删除旧文档后上传新文件并重新切片。<b>历史引用（对话引用、智能体检索）会指向已删除的旧文档</b>，需要重新提问才会命中新内容。
+        </div>
+        <div class="flex flex-col gap-2">
+          <button
+            type="button"
+            class="w-full px-3 py-2 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
+            :disabled="uploading"
+            @click="resolveUploadConflicts('replace')"
+          >替换这 {{ uploadConflicts.length }} 个（重新切片）</button>
+          <button
+            type="button"
+            class="w-full px-3 py-2 rounded-xl border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50"
+            :disabled="uploading"
+            @click="resolveUploadConflicts('keep')"
+          >保留两者（新文件另存一份）</button>
+          <button
+            type="button"
+            class="w-full px-3 py-2 rounded-xl border border-gray-200 text-gray-400 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50"
+            :disabled="uploading"
+            @click="resolveUploadConflicts('skip')"
+          >跳过这 {{ uploadConflicts.length }} 个</button>
+        </div>
+      </div>
+    </Modal>
+    <Modal :show="!!renamingDoc" title="重命名文档" size="max-w-md" @close="renamingDoc = null">
+      <div class="space-y-4">
+        <input
+          v-model="docRenameValue"
+          type="text"
+          maxlength="255"
+          class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+          placeholder="文档名称"
+          @keyup.enter="confirmRenameDocument"
+        />
+        <p class="text-xs text-gray-400 leading-relaxed">
+          改名不会触发重新解析，已有切片与引用保持不变；只影响列表里显示的名字。
+        </p>
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-50"
+            @click="renamingDoc = null"
+          >取消</button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
+            :disabled="docRenameBusy || !docRenameValue.trim()"
+            @click="confirmRenameDocument"
+          >{{ docRenameBusy ? '保存中…' : '保存' }}</button>
+        </div>
+      </div>
+    </Modal>
+    <ConfirmModal
+      v-if="pendingBulkDelete"
+      title="确认批量删除知识库"
+      :loading="bulkWorking"
+      :message="`确定删除选中的 ${pendingBulkDelete.length} 个知识库吗？RAGFlow 侧集群数据将同步卸载，此操作不可逆。`"
+      confirm-text="确认删除"
+      @confirm="bulkDeleteDatasets"
+      @cancel="pendingBulkDelete = null"
     />
     <ConfirmModal
       v-if="pendingFolderRemoval"
@@ -4217,13 +5466,216 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       </template>
     </Modal>
 
+    <!-- 发现：看得见存在、但还没拿到权限的公共 / 部门库 -->
+    <Modal :show="showDiscover" title="发现知识库" size="max-w-3xl" @close="showDiscover = false">
+      <div class="space-y-3">
+        <div class="flex items-center gap-2">
+          <input
+            v-model="discoverKeyword"
+            type="search"
+            placeholder="按名称 / 描述 / 归属部门搜索"
+            class="min-w-0 flex-1 rounded-xl border border-gray-300 px-3 py-2 text-sm"
+            @keyup.enter="fetchDiscover(1)"
+          />
+          <button type="button" class="px-3 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90" @click="fetchDiscover(1)">搜索</button>
+        </div>
+        <p class="text-[11px] text-gray-400 leading-relaxed">
+          这里只列公共级与部门级知识库。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
+        </p>
+
+        <div v-if="discoverLoading" class="py-10 text-center text-sm text-gray-400">加载中…</div>
+        <div v-else-if="!discoverItems.length" class="py-10 text-center text-sm text-gray-400 italic">
+          没有可发现的知识库。你可能已经拥有全部可见库的权限，或者平台还没有公共库。
+        </div>
+        <ul v-else class="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+          <li v-for="item in discoverItems" :key="item.dataset_id" class="rounded-xl border border-gray-200 p-3 hover:border-gray-300 transition-colors">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2">
+                  <p class="truncate text-sm font-semibold text-gray-900">{{ item.name }}</p>
+                  <span
+                    class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                    :class="item.visibility === 'public' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'"
+                  >{{ item.visibility === 'public' ? '公共级' : '部门级' }}</span>
+                </div>
+                <p class="mt-1 text-xs text-gray-500 line-clamp-2 leading-relaxed">{{ item.description || '暂无描述' }}</p>
+
+                <!-- 规模与新鲜度：判断「值不值得申请」主要看这几个数 -->
+                <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400">
+                  <span class="inline-flex items-center gap-1">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 002-2V9l-6-6H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                    {{ item.doc_count === null || item.doc_count === undefined ? '—' : item.doc_count }} 个文档
+                  </span>
+                  <span class="inline-flex items-center gap-1">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10" />
+                    </svg>
+                    {{ item.chunk_count === null || item.chunk_count === undefined ? '—' : item.chunk_count }} 个切片
+                  </span>
+                  <span v-if="item.owner" class="truncate">归属 {{ item.owner }}</span>
+                  <span v-if="discoverUpdatedText(item)">更新于 {{ discoverUpdatedText(item) }}</span>
+                </div>
+
+                <div v-if="item.tags && item.tags.length" class="mt-1.5 flex flex-wrap gap-1">
+                  <span v-for="tag in item.tags" :key="tag" class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{{ tag }}</span>
+                </div>
+              </div>
+              <div class="shrink-0 pt-0.5">
+                <span
+                  v-if="item.request_status"
+                  class="text-[11px] font-semibold"
+                  :class="{
+                    'text-amber-600': item.request_status === 'pending',
+                    'text-emerald-600': item.request_status === 'approved',
+                    'text-red-500': item.request_status === 'rejected',
+                    'text-gray-400': item.request_status === 'cancelled',
+                  }"
+                >{{ discoverStatusLabel(item.request_status) }}</span>
+                <button
+                  v-else
+                  type="button"
+                  class="rounded-lg bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-primary/90"
+                  @click="startAccessRequest(item)"
+                >申请访问</button>
+              </div>
+            </div>
+          </li>
+        </ul>
+
+        <div class="flex items-center justify-between border-t pt-2">
+          <span class="text-xs text-gray-500">共 {{ discoverTotal }} 个可申请</span>
+          <div class="flex items-center gap-2">
+            <button type="button" class="px-2.5 py-1.5 border rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40" :disabled="discoverPage <= 1 || discoverLoading" @click="fetchDiscover(discoverPage - 1)">上一页</button>
+            <span class="text-xs text-gray-600 font-mono">{{ discoverPage }} / {{ Math.max(1, Math.ceil(discoverTotal / DISCOVER_PAGE_SIZE)) }}</span>
+            <button type="button" class="px-2.5 py-1.5 border rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40" :disabled="discoverPage >= Math.ceil(discoverTotal / DISCOVER_PAGE_SIZE) || discoverLoading" @click="fetchDiscover(discoverPage + 1)">下一页</button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+
+    <!-- 申请理由 -->
+    <Modal :show="!!applyingDataset" title="申请访问知识库" size="max-w-lg" @close="applyingDataset = null">
+      <div class="space-y-3">
+        <div class="rounded-xl bg-gray-50 px-3 py-2">
+          <p class="text-sm font-semibold text-gray-900">{{ applyingDataset?.name }}</p>
+          <p class="mt-0.5 text-xs text-gray-500">{{ applyingDataset?.description || '暂无描述' }}</p>
+        </div>
+        <label class="block">
+          <span class="mb-1 block text-xs font-medium text-gray-700">申请理由（可选，写清楚更容易通过）</span>
+          <textarea
+            v-model="applyReason"
+            rows="3"
+            maxlength="2000"
+            placeholder="例如：季度对账需要查 2024 年的报销制度"
+            class="w-full rounded-lg border border-gray-300 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+          />
+        </label>
+        <p class="text-[11px] text-gray-400 leading-relaxed">
+          提交后由库归属人审批，通过时会直接给你加上访问授权。审批进度可以在「个人中心 → 我的申请」里看。
+        </p>
+        <div class="flex justify-end gap-2 border-t pt-2">
+          <button type="button" class="px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 font-semibold hover:bg-gray-50" @click="applyingDataset = null">取消</button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 disabled:opacity-50"
+            :disabled="applySubmitting"
+            @click="submitAccessRequest"
+          >{{ applySubmitting ? '提交中…' : '提交申请' }}</button>
+        </div>
+      </div>
+    </Modal>
+
+    <!-- 全平台审计（管理员）：逐库的操作日志只回答"这个库发生了什么"，
+         这里回答"某个人今天动了哪些库" -->
+    <Modal :show="showGlobalAudit" title="全平台审计日志" size="max-w-5xl" @close="showGlobalAudit = false">
+      <div class="space-y-3">
+        <div class="flex flex-wrap items-end gap-2 rounded-xl bg-gray-50 border border-gray-200 px-3 py-2.5">
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] font-medium text-gray-500">关键词（操作人 / 错误信息）</span>
+            <input v-model="globalAuditKeyword" type="search" placeholder="如 alice" class="w-40 rounded-lg border border-gray-300 px-2 py-1.5 text-xs" @keyup.enter="fetchGlobalAudit(1)" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] font-medium text-gray-500">开始日期</span>
+            <input v-model="globalAuditStart" type="date" class="rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] font-medium text-gray-500">结束日期</span>
+            <input v-model="globalAuditEnd" type="date" class="rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] font-medium text-gray-500">动作</span>
+            <select v-model="globalAuditAction" class="rounded-lg border border-gray-300 px-2 py-1.5 text-xs">
+              <option value="">全部动作</option>
+              <option v-for="(label, key) in AUDIT_ACTION_LABELS" :key="key" :value="key">{{ label }}</option>
+            </select>
+          </label>
+          <button type="button" class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90" @click="fetchGlobalAudit(1)">查询</button>
+          <button type="button" class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:bg-gray-50" @click="exportGlobalAudit">导出 CSV</button>
+        </div>
+
+        <div class="max-h-[60vh] overflow-y-auto border border-gray-200 rounded-xl">
+          <table class="min-w-full text-xs">
+            <thead class="bg-gray-50 sticky top-0">
+              <tr class="text-left text-gray-500">
+                <th class="px-3 py-2 font-semibold whitespace-nowrap">时间</th>
+                <th class="px-3 py-2 font-semibold whitespace-nowrap">动作</th>
+                <th class="px-3 py-2 font-semibold">知识库</th>
+                <th class="px-3 py-2 font-semibold whitespace-nowrap">操作人</th>
+                <th class="px-3 py-2 font-semibold whitespace-nowrap">结果</th>
+                <th class="px-3 py-2 font-semibold">详情</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <tr v-if="globalAuditLoading">
+                <td colspan="6" class="px-3 py-8 text-center text-gray-400">加载中…</td>
+              </tr>
+              <tr v-else-if="globalAuditItems.length === 0">
+                <td colspan="6" class="px-3 py-8 text-center text-gray-400 italic">没有匹配的记录</td>
+              </tr>
+              <template v-else>
+              <tr v-for="item in globalAuditItems" :key="item.id" class="hover:bg-gray-50/60">
+                <td class="px-3 py-2 font-mono text-gray-500 whitespace-nowrap">{{ String(item.created_at || '').replace('T', ' ').slice(0, 19) }}</td>
+                <td class="px-3 py-2 whitespace-nowrap text-gray-700">{{ AUDIT_ACTION_LABELS[item.action] || item.action }}</td>
+                <td class="px-3 py-2 font-mono text-gray-500">
+                  <span v-if="item.dataset_id === '__global__'" class="text-gray-400">（全局）</span>
+                  <span v-else>{{ datasetNameById(item.dataset_id) || item.dataset_id }}</span>
+                </td>
+                <td class="px-3 py-2 whitespace-nowrap text-gray-700">{{ item.user_name || item.user_id || '-' }}</td>
+                <td class="px-3 py-2 whitespace-nowrap">
+                  <span v-if="item.status_code === 200" class="text-emerald-600">成功</span>
+                  <span v-else class="text-red-600" :title="item.error_message || ''">{{ item.status_code || '失败' }}</span>
+                </td>
+                <td class="px-3 py-2 text-gray-500 max-w-[22rem] truncate" :title="JSON.stringify(item.detail || {})">{{ item.error_message || JSON.stringify(item.detail || {}) }}</td>
+              </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-gray-500">共 {{ globalAuditTotal }} 条</span>
+          <div class="flex items-center gap-2">
+            <button type="button" class="px-2.5 py-1.5 border rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40" :disabled="globalAuditPage <= 1 || globalAuditLoading" @click="fetchGlobalAudit(globalAuditPage - 1)">上一页</button>
+            <span class="text-xs text-gray-600 font-mono">{{ globalAuditPage }} / {{ Math.max(1, Math.ceil(globalAuditTotal / GLOBAL_AUDIT_PAGE_SIZE)) }}</span>
+            <button type="button" class="px-2.5 py-1.5 border rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40" :disabled="globalAuditPage >= Math.ceil(globalAuditTotal / GLOBAL_AUDIT_PAGE_SIZE) || globalAuditLoading" @click="fetchGlobalAudit(globalAuditPage + 1)">下一页</button>
+          </div>
+          <button type="button" class="px-4 py-2 rounded-xl bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800" @click="showGlobalAudit = false">关闭</button>
+        </div>
+      </div>
+    </Modal>
+
     <!-- View chunks modal -->
     <Modal :show="showChunksModal" title="文档切片内容查看" size="max-w-4xl" @close="closeChunksModal">
       <div class="space-y-4">
         <div class="flex items-center justify-between border-b pb-3">
           <div>
             <h3 class="text-sm font-bold text-gray-900 truncate max-w-lg">{{ viewingDocument?.name }}</h3>
-            <p class="text-xs text-gray-400 mt-1">共 {{ chunksTotal }} 个分块，当前展示第 {{ chunksPage }} 页</p>
+            <p class="text-xs text-gray-400 mt-1">
+              共 {{ chunksTotal }} 个分块，当前展示第 {{ chunksPage }} 页
+              <span class="ml-1 text-gray-300">·「查看原文」对 PDF 会跳到对应页，其余格式只打开文件</span>
+            </p>
           </div>
           <div class="flex items-center gap-2">
             <button
@@ -4261,11 +5713,92 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             :key="chunk.id || idx"
             class="bg-gray-50 p-4 rounded-xl border border-gray-200 hover:border-gray-200 transition-all flex flex-col gap-2"
           >
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-2">
               <span class="text-xs font-bold text-gray-400 font-mono">#{{ (chunksPage - 1) * 30 + idx + 1 }} (ID: {{ chunk.id || '-' }})</span>
+              <div v-if="canEdit" class="flex items-center gap-2 shrink-0">
+                <label
+                  class="flex items-center gap-1 text-[11px] cursor-pointer select-none"
+                  :class="isChunkDisabled(chunk) ? 'text-amber-600' : 'text-gray-500'"
+                  title="停用后这条切片仍保留，但不再参与召回"
+                >
+                  <input
+                    type="checkbox"
+                    class="w-3 h-3 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                    :checked="!isChunkDisabled(chunk)"
+                    :disabled="chunkSaving"
+                    @change="toggleChunk(chunk)"
+                  />
+                  {{ isChunkDisabled(chunk) ? '已停用' : '参与召回' }}
+                </label>
+                <button
+                  type="button"
+                  class="text-[11px] text-primary hover:underline disabled:text-gray-300 disabled:no-underline"
+                  :disabled="!resolveChunkPage(chunk)"
+                  :title="resolveChunkPage(chunk)
+                    ? `在原文第 ${resolveChunkPage(chunk)} 页查看`
+                    : '这条切片没有页码信息（纯文本类文档无法定位原页）'"
+                  @click="openChunkSource(chunk)"
+                >查看原文{{ resolveChunkPage(chunk) ? ` p.${resolveChunkPage(chunk)}` : '' }}</button>
+                <button type="button" class="text-[11px] text-primary hover:underline" @click="startEditChunk(chunk)">编辑</button>
+                <button type="button" class="text-[11px] text-red-500 hover:underline" @click="removeChunk(chunk)">删除</button>
+              </div>
             </div>
-            <p class="text-sm text-gray-700 leading-relaxed font-mono whitespace-pre-wrap select-text bg-white p-3 rounded-lg border border-gray-200/50 shadow-inner">{{ chunk.content_with_weight || chunk.content || '-' }}</p>
+            <template v-if="editingChunkId === chunk.id">
+              <textarea
+                v-model="editingChunkContent"
+                rows="6"
+                class="w-full text-xs font-mono leading-relaxed rounded-lg border border-primary/40 p-3 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-gray-400">保存后需要数秒重建向量，期间召回可能仍是旧内容</span>
+                <div class="flex gap-2">
+                  <button type="button" class="px-2.5 py-1 rounded-lg border border-gray-200 text-[11px] text-gray-600 font-semibold hover:bg-white" @click="cancelEditChunk">取消</button>
+                  <button
+                    type="button"
+                    class="px-2.5 py-1 rounded-lg bg-primary text-white text-[11px] font-semibold hover:bg-primary/90 disabled:opacity-50"
+                    :disabled="chunkSaving || !editingChunkContent.trim()"
+                    @click="saveChunk"
+                  >{{ chunkSaving ? '保存中…' : '保存' }}</button>
+                </div>
+              </div>
+            </template>
+            <p
+              v-else
+              class="text-sm text-gray-700 leading-relaxed font-mono whitespace-pre-wrap select-text bg-white p-3 rounded-lg border border-gray-200/50 shadow-inner"
+              :class="isChunkDisabled(chunk) ? 'opacity-60 line-through decoration-gray-300' : ''"
+            >{{ chunk.content_with_weight || chunk.content || '-' }}</p>
           </div>
+        </div>
+
+        <!-- 手工补切片：把 QA / 口径 / 注意事项直接塞进知识库，不必先造个文档 -->
+        <div v-if="canEdit" class="border-t pt-3">
+          <div v-if="showNewChunkForm" class="space-y-2">
+            <textarea
+              v-model="newChunkContent"
+              rows="4"
+              placeholder="粘贴要补充的内容（QA、口径、注意事项均可）。新增后需要数秒重建向量。"
+              class="w-full text-xs font-mono leading-relaxed rounded-lg border border-gray-300 p-3 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            <div class="flex justify-end gap-2">
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 font-semibold hover:bg-gray-50"
+                @click="showNewChunkForm = false; newChunkContent = ''"
+              >取消</button>
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
+                :disabled="chunkSaving || !newChunkContent.trim()"
+                @click="createChunk"
+              >{{ chunkSaving ? '新增中…' : '新增切片' }}</button>
+            </div>
+          </div>
+          <button
+            v-else
+            type="button"
+            class="w-full py-2 rounded-xl border border-dashed border-gray-300 text-xs font-semibold text-gray-500 hover:border-primary hover:text-primary transition-all"
+            @click="showNewChunkForm = true"
+          >+ 手工新增一条切片</button>
         </div>
 
         <div class="flex justify-end pt-2 border-t">

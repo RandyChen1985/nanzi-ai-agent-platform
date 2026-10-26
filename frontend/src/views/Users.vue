@@ -210,6 +210,25 @@
             </div>
           </div>
 
+        <!-- 审核入口：图标常驻，待办数走角标。后续会并入统一审核中心（访问申请 / 注册审核等），
+             所以这里先只表达「有待处理」，不写死成「访问审批」四个字。 -->
+        <button
+          type="button"
+          class="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
+          :title="pendingReviewCount ? `审核：${pendingReviewCount} 条待处理的知识库访问申请` : '审核：知识库访问申请'"
+          aria-label="审核"
+          @click="openAccessReviews"
+        >
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3l7 3v6c0 4.2-2.9 8.1-7 9-4.1-.9-7-4.8-7-9V6l7-3z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.5l2 2 4-4" />
+          </svg>
+          <span
+            v-if="pendingReviewCount"
+            class="pointer-events-none absolute -right-1.5 -top-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white ring-2 ring-white"
+          >{{ pendingReviewCount }}</span>
+        </button>
+
         <!-- 创建用户：主操作放最后，与角色管理一致 -->
         <button
           v-if="canEditUser && activeView === 'list'"
@@ -1741,6 +1760,145 @@
       @saved="onAgentRestrictionSaved"
     />
 
+    <!-- 知识库访问审批：申请人是同事，审批人是库归属人 -->
+    <Teleport to="body">
+      <div
+        v-if="showAccessReviews"
+        class="fixed inset-0 z-[9990] flex items-center justify-center bg-black bg-opacity-50"
+        @click.self="showAccessReviews = false"
+      >
+        <div class="flex w-full max-w-2xl flex-col rounded-lg bg-white p-4 shadow-xl sm:p-6">
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-lg font-bold text-gray-900">知识库访问审批</h2>
+            <button type="button" class="text-sm text-gray-400 hover:text-gray-600" @click="showAccessReviews = false">关闭</button>
+          </div>
+          <p class="mb-2 text-xs leading-relaxed text-gray-500">
+            只列出你名下有管理权、或你是管理员的那些库的申请。通过后会直接给对方加上访问授权；驳回建议写清原因，对方在「个人中心 → 我的申请」里能看到。
+          </p>
+
+          <div class="mb-3 flex items-center gap-1 rounded-lg bg-gray-100 p-1 text-xs font-semibold">
+            <button
+              type="button"
+              class="flex-1 rounded-md px-3 py-1.5 transition-all"
+              :class="accessReviewTab === 'pending' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+              @click="switchAccessReviewTab('pending')"
+            >待审批<span v-if="pendingReviewCount" class="ml-1 text-red-500">{{ pendingReviewCount }}</span></button>
+            <button
+              type="button"
+              class="flex-1 rounded-md px-3 py-1.5 transition-all"
+              :class="accessReviewTab === 'reviews' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+              @click="switchAccessReviewTab('reviews')"
+            >已处理</button>
+          </div>
+
+          <template v-if="accessReviewTab === 'pending'">
+          <div v-if="accessReviewsLoading" class="py-10 text-center text-sm text-gray-400">加载中…</div>
+          <div v-else-if="!accessReviews.length" class="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
+            没有待审批的申请
+          </div>
+          <ul v-else class="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+            <li v-for="item in accessReviews" :key="item.id" class="rounded-xl border border-gray-200 p-3">
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <p class="truncate text-sm font-semibold text-gray-900">{{ item.dataset_name || item.dataset_id }}</p>
+                    <span
+                      v-if="item.visibility"
+                      class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                      :class="item.visibility === 'public' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'"
+                    >{{ item.visibility === 'public' ? '公共级' : item.visibility === 'team' ? '部门级' : '私有' }}</span>
+                    <span
+                      v-if="item.dataset_exists === false"
+                      class="shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600"
+                    >引擎侧已失联</span>
+                  </div>
+                  <p class="mt-0.5 text-xs text-gray-500">
+                    申请人：<span class="font-medium text-gray-700">{{ item.applicant_user_name || item.applicant_user_id }}</span>
+                    · {{ String(item.created_at || '').replace('T', ' ').slice(0, 16) }}
+                  </p>
+                  <!-- 审批要有依据：这几个数决定「批了对方能用到什么」 -->
+                  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
+                    <span>{{ item.doc_count === null || item.doc_count === undefined ? '—' : item.doc_count }} 个文档</span>
+                    <span>{{ item.chunk_count === null || item.chunk_count === undefined ? '—' : item.chunk_count }} 个切片</span>
+                    <span v-if="item.owner" class="truncate">归属 {{ item.owner }}</span>
+                  </div>
+                  <p v-if="item.reason" class="mt-1.5 rounded-lg bg-gray-50 px-2 py-1.5 text-xs leading-relaxed text-gray-600">理由：{{ item.reason }}</p>
+                </div>
+              </div>
+              <div class="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                  v-model="reviewComments[item.id]"
+                  type="text"
+                  maxlength="2000"
+                  placeholder="审批意见（驳回时建议填写）"
+                  class="min-w-0 flex-1 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs"
+                />
+                <div class="flex gap-2">
+                  <button
+                    type="button"
+                    class="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                    :disabled="reviewingRequestId === item.id"
+                    @click="decideAccessReview(item, true)"
+                  >通过</button>
+                  <button
+                    type="button"
+                    class="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    :disabled="reviewingRequestId === item.id"
+                    @click="decideAccessReview(item, false)"
+                  >驳回</button>
+                </div>
+              </div>
+            </li>
+          </ul>
+          </template>
+
+          <template v-else>
+            <div v-if="reviewedLoading" class="py-10 text-center text-sm text-gray-400">加载中…</div>
+            <div v-else-if="!reviewedRequests.length" class="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
+              还没有审批记录
+            </div>
+            <ul v-else class="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+              <li v-for="item in reviewedRequests" :key="`reviewed-${item.id}`" class="rounded-xl border border-gray-200 p-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate text-sm font-semibold text-gray-900">{{ item.dataset_name || item.dataset_id }}</p>
+                    <p class="mt-0.5 text-xs text-gray-500">
+                      申请人：<span class="font-medium text-gray-700">{{ item.applicant_user_name || item.applicant_user_id }}</span>
+                      <span v-if="item.reviewer_user_name"> · 审批人 {{ item.reviewer_user_name }}</span>
+                    </p>
+                    <p v-if="item.reason" class="mt-1.5 rounded-lg bg-gray-50 px-2 py-1.5 text-xs leading-relaxed text-gray-600">申请理由：{{ item.reason }}</p>
+                    <p v-if="item.review_comment" class="mt-1 text-xs leading-relaxed" :class="item.status === 'rejected' ? 'text-red-500' : 'text-gray-500'">
+                      审批意见：{{ item.review_comment }}
+                    </p>
+                    <p class="mt-1.5 text-[11px] text-gray-400">
+                      {{ String(item.reviewed_at || item.created_at || '').replace('T', ' ').slice(0, 16) }}
+                    </p>
+                  </div>
+                  <span
+                    class="shrink-0 text-[11px] font-semibold"
+                    :class="item.status === 'approved' ? 'text-emerald-600' : 'text-red-500'"
+                  >{{ item.status === 'approved' ? '已通过' : '已驳回' }}</span>
+                </div>
+              </li>
+            </ul>
+          </template>
+
+          <div class="mt-3 flex items-center justify-between border-t pt-2">
+            <span class="text-xs text-gray-500">
+              <template v-if="accessReviewTab === 'pending'">共 {{ accessReviewTotal }} 条待审批</template>
+              <template v-else>最近 {{ reviewedRequests.length }} 条审批记录</template>
+            </span>
+            <button
+              type="button"
+              class="text-xs text-blue-600 hover:underline disabled:opacity-50"
+              :disabled="accessReviewTab === 'pending' ? accessReviewsLoading : reviewedLoading"
+              @click="accessReviewTab === 'pending' ? fetchAccessReviews() : fetchReviewedRequests()"
+            >刷新</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- View API Key Dialog -->
     <Teleport to="body">
       <div
@@ -2729,6 +2887,92 @@ const rejectUser = async () => {
 
 // Filters
 const searchQuery = ref("");
+
+// ---------- 知识库访问审批 ----------
+// 审批人是「库归属人」而不是管理员，所以这个入口按"我能审批什么"来查，
+// 而不是按"谁有用户管理权限"。
+const showAccessReviews = ref(false);
+const accessReviews = ref<any[]>([]);
+const accessReviewsLoading = ref(false);
+const accessReviewTotal = ref(0);
+const reviewComments = ref<Record<number, string>>({});
+const reviewingRequestId = ref<number | null>(null);
+const pendingReviewCount = ref(0);
+/** 待审批 / 已处理：审批完的记录不该凭空消失，否则只看得见待办、看不见做过什么 */
+const accessReviewTab = ref<"pending" | "reviews">("pending");
+const reviewedRequests = ref<any[]>([]);
+const reviewedLoading = ref(false);
+
+const fetchReviewedRequests = async () => {
+  reviewedLoading.value = true;
+  try {
+    const response = await axios.get("/api/portal/ragflow/access-requests/reviews", {
+      params: { size: 100 },
+    });
+    reviewedRequests.value = response.data?.data?.items || [];
+  } catch (err: any) {
+    showToast(err?.response?.data?.detail || "读取审批记录失败", "error");
+  } finally {
+    reviewedLoading.value = false;
+  }
+};
+
+const switchAccessReviewTab = (tab: "pending" | "reviews") => {
+  accessReviewTab.value = tab;
+  if (tab === "pending") {
+    void fetchAccessReviews();
+  } else {
+    void fetchReviewedRequests();
+  }
+};
+
+const fetchPendingReviewCount = async () => {
+  try {
+    const response = await axios.get("/api/portal/ragflow/access-requests/pending");
+    pendingReviewCount.value = response.data?.data?.total || 0;
+  } catch {
+    pendingReviewCount.value = 0;
+  }
+};
+
+const openAccessReviews = () => {
+  showAccessReviews.value = true;
+  accessReviewTab.value = "pending";
+  void fetchAccessReviews();
+};
+
+const fetchAccessReviews = async () => {
+  accessReviewsLoading.value = true;
+  try {
+    const response = await axios.get("/api/portal/ragflow/access-requests/pending");
+    const data = response.data?.data || {};
+    accessReviews.value = data.items || [];
+    accessReviewTotal.value = data.total || 0;
+    pendingReviewCount.value = accessReviewTotal.value;
+  } catch (err: any) {
+    showToast(err?.response?.data?.detail || "读取待审批申请失败", "error");
+  } finally {
+    accessReviewsLoading.value = false;
+  }
+};
+
+const decideAccessReview = async (item: any, approve: boolean) => {
+  if (reviewingRequestId.value) return;
+  reviewingRequestId.value = item.id;
+  try {
+    await axios.post(
+      `/api/portal/ragflow/access-requests/${item.id}/${approve ? "approve" : "reject"}`,
+      { comment: (reviewComments.value[item.id] || "").trim() || null },
+    );
+    showToast(approve ? "已通过，对方现在可以访问" : "已驳回", "success");
+    delete reviewComments.value[item.id];
+    await fetchAccessReviews();
+  } catch (err: any) {
+    showToast(err?.response?.data?.detail || "审批失败", "error");
+  } finally {
+    reviewingRequestId.value = null;
+  }
+};
 // 角色成员抽屉里的「↗」会带 ?q=<user_name> 跳过来，这里只做搜索预填
 const route = useRoute();
 const router = useRouter();
@@ -4397,6 +4641,15 @@ onMounted(async () => {
   fetchBusinessRoles();
   fetchPublicConfig();
   fetchPendingCount();
+  // 待我审批的知识库访问申请：有就亮红点，否则入口还在但不打扰
+  void fetchPendingReviewCount();
+  // 深链 ?review=1 来自站内消息里那条「有人申请访问」：直接开审批弹窗，
+  // 别让人看完消息还得自己找入口。query 立刻抹掉，避免刷新又弹一次。
+  if (String(route.query.review || "") === "1") {
+    openAccessReviews();
+    const { review: _review, request: _request, ...restQuery } = route.query;
+    router.replace({ query: restQuery });
+  }
   if (deepLinkEditId) {
     const target = users.value.find((item: any) => String(item.id) === deepLinkEditId);
     if (target) {

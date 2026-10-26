@@ -1,9 +1,12 @@
 import json
+import logging
+import os
 import time
 import uuid
 import datetime
 import httpx
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,13 +14,86 @@ from app.core.orm import get_db_session
 from app.services.config_service import ConfigService
 from app.core.dependencies import require_admin, get_current_user, require_permission
 from app.services.permission_service import VISIBILITY_PRIVATE, PermissionService
-from app.services.ai.ragflow_client import RagFlowClient
+from app.services.ai.ragflow_client import RagFlowClient, clear_dataset_list_cache
 from app.services.knowledge_base_service import KnowledgeBaseMetadataService
+from app.services.knowledge_access_request_service import (
+    STATUS_APPROVED,
+    STATUS_PENDING,
+    STATUS_REJECTED,
+    AccessRequestError,
+    KnowledgeAccessRequestService,
+)
+from app.services.knowledge_health_service import KnowledgeHealthService
+from app.services.portal_notification_service import PortalNotificationService
+from app.services.knowledge_quota_service import KnowledgeQuotaService, QuotaExceeded
+from app.services.knowledge_retrieval_log_service import (
+    SOURCE_TEST,
+    KnowledgeRetrievalLogService,
+)
+from app.services.knowledge_reference_service import KnowledgeReferenceService
 from app.services.audit_service import AuditService
-from app.services.knowledge_audit_service import KnowledgeAuditService
+from app.services.knowledge_audit_service import (
+    GLOBAL_AUDIT_DATASET_ID,
+    KnowledgeAuditService,
+)
 from app.models.permission import ResourcePermission
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+#: 平台侧单文件上限 256MB：提前拦住，避免整个文件流到上游才报错。
+#: 超过这个量级的文档解析质量通常也不好，宁可让用户拆分。
+KNOWLEDGE_UPLOAD_MAX_BYTES = 256 * 1024 * 1024
+KNOWLEDGE_UPLOAD_MAX_MB = KNOWLEDGE_UPLOAD_MAX_BYTES // (1024 * 1024)
+
+#: 与 RAGFlow 解析器支持的格式保持一致；不在白名单的直接拒绝，不做静默透传。
+KNOWLEDGE_UPLOAD_ALLOWED_EXTENSIONS = {
+    ".pdf", ".doc", ".docx", ".txt", ".md", ".csv",
+    ".xls", ".xlsx", ".ppt", ".pptx", ".html", ".htm",
+    ".epub", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff",
+}
+
+
+def _validate_knowledge_upload(file_name: str, size: int) -> None:
+    """类型 + 大小前置校验。
+
+    顺序是先类型后大小：类型不符时没必要为一个几 GB 的文件先读一遍。
+    """
+    ext = os.path.splitext(file_name or "")[1].lower()
+    if ext not in KNOWLEDGE_UPLOAD_ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"不支持的文件类型「{ext or '无扩展名'}」，"
+                "支持 PDF/Word/Excel/PPT/Markdown/TXT/HTML/图片/EPUB"
+            ),
+        )
+    if size > KNOWLEDGE_UPLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件超过 {KNOWLEDGE_UPLOAD_MAX_MB}MB 上限，请拆分后再上传",
+        )
+
+
+async def _read_upload_with_limit(file: UploadFile) -> bytes:
+    """分块读取并卡上限，避免 ``await file.read()`` 把整个文件读进内存。
+
+    不能只信 ``file.size``：部分客户端不传 Content-Length，边读边卡才可靠。
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > KNOWLEDGE_UPLOAD_MAX_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"文件超过 {KNOWLEDGE_UPLOAD_MAX_MB}MB 上限，请拆分后再上传",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 class CreateDatasetRequest(BaseModel):
@@ -31,6 +107,12 @@ class CreateDatasetRequest(BaseModel):
     tags: List[str] = Field(default_factory=list)
     notes: Optional[str] = None
     extra_config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class UpdateFolderStructureRequest(BaseModel):
+    #: 虚拟文件夹 → 文档 ID 列表。前端把整份映射发上来（覆盖语义），
+    #: 服务端只替换 extra_config.folder_structure 这一个子键。
+    folder_structure: Dict[str, List[str]] = Field(default_factory=dict)
 
 
 class UpdateDatasetMetadataRequest(BaseModel):
@@ -261,6 +343,18 @@ async def record_knowledge_audit(
     )
 
 
+def _audit_status_code(error: Exception) -> int:
+    """审计里的状态码要尽量还原真实原因，不能一律 500。
+
+    RAGFlow 的 4xx / 5xx 会被包装成 ``RagFlowServiceError``（status_code=502）
+    或 ``RagFlowUnavailableError``（503）；如果不还原，事后只能看到「500」，
+    既分不清是平台 bug 还是上游拒绝，也做不到按错误类型统计。
+    """
+    if isinstance(error, HTTPException):
+        return int(error.status_code)
+    return int(getattr(error, "status_code", 500) or 500)
+
+
 async def _attach_owner_user_names(db: AsyncSession, items: List[Dict[str, Any]]) -> None:
     """给列表项补归属人显示名。
 
@@ -286,6 +380,24 @@ async def _attach_owner_user_names(db: AsyncSession, items: List[Dict[str, Any]]
         owner_user_id = item.get("owner_user_id")
         if owner_user_id:
             item["owner_user_name"] = name_by_id.get(int(owner_user_id))
+
+
+async def _attach_agent_refs(db: AsyncSession, items: List[Dict[str, Any]]) -> None:
+    """给列表项补「被几个智能体引用」，只回前 5 个，避免响应膨胀。
+
+    引用关系是删除/收窄可见范围前的影响面依据。列表里给数量与少量样本，
+    完整名单走 ``GET /datasets/{id}/agents``。
+    """
+    dataset_ids = [
+        str(item.get("ragflow_dataset_id") or item.get("id") or "")
+        for item in items
+    ]
+    grouped = await KnowledgeReferenceService(db).agents_by_dataset(dataset_ids)
+    for item in items:
+        dataset_id = str(item.get("ragflow_dataset_id") or item.get("id") or "")
+        agents = grouped.get(dataset_id, [])
+        item["agent_ref_count"] = len(agents)
+        item["agent_refs"] = agents[:5]
 
 
 def _normalize_ragflow_items(data: Any) -> List[Dict[str, Any]]:
@@ -409,8 +521,10 @@ async def list_ragflow_datasets(
     # 默认一次拉全量：这个接口的语义是「列出我能看的库」，而 RAGFlow 的
     # /datasets 里混着成百上千个 meta-* 元数据数据集。传 100 只拿到第一页，
     # 过滤 meta-* 后可能为空，于是本地知识库全被判成「已失联」。
-    # 客户端在 page_size > 100 时会自动翻页聚合。
-    page_size: int = 1000,
+    # 现在由 client 按 total 翻完所有页（不再有 1000 条上限），这里只是返回窗口。
+    page_size: int = 5000,
+    # 1 = 绕过 60s 列表缓存强制回源（同步按钮 / 手动刷新用）
+    refresh: int = 0,
     override_url: Optional[str] = None,
     override_key: Optional[str] = None,
     include_missing: bool = True,
@@ -440,7 +554,19 @@ async def list_ragflow_datasets(
     metadata_service = KnowledgeBaseMetadataService(db)
 
     try:
-        items = await client.list_datasets(page=page, page_size=page_size)
+        stale = False
+        try:
+            items = await client.list_all_datasets_cached(refresh=bool(refresh))
+        except Exception as cache_err:
+            # 引擎抖了但本地有上次快照：给一份旧数据 + stale 标记，
+            # 总比整页报错、看起来像「所有库都没了」要好
+            snapshot = RagFlowClient.cached_datasets_snapshot(client.base_url)
+            if snapshot is None:
+                raise
+            items = snapshot
+            stale = True
+            logger.warning("[Knowledge] RAGFlow 列表拉取失败，降级为缓存快照: %s", cache_err)
+
         items = [
             item for item in items 
             if not item.get("name", "").startswith("meta-")
@@ -452,18 +578,685 @@ async def list_ragflow_datasets(
             items = [item for item in items if item.get("id") in allowed]
 
         # 结合参数决定是否包含失联知识库（如果临时覆写了 RAGFlow 地址则不包含）
-        real_include_missing = include_missing and is_admin
+        real_include_missing = include_missing
         if override_url:
             real_include_missing = False
+        # 归属人得能看见「自己的库在引擎侧失联了」，否则它只是从列表里消失，
+        # 看起来像被别人删了；但非管理员只能看到自己范围内的失联记录。
+        missing_allow_ids = None if is_admin else (access["accessible_ids"] or set())
 
-        merged = await metadata_service.merge_with_ragflow(items, include_missing=real_include_missing)
+        merged = await metadata_service.merge_with_ragflow(
+            items,
+            include_missing=real_include_missing,
+            missing_allow_ids=missing_allow_ids,
+        )
         _apply_knowledge_permission_flags(merged, access)
         await _attach_owner_user_names(db, merged)
-        return {"code": 0, "data": merged, "total": len(merged)}
+        await _attach_agent_refs(db, merged)
+        total = len(merged)
+        if page_size and page_size > 0:
+            start = max(0, (page - 1) * page_size)
+            merged = merged[start:start + page_size]
+        return {"code": 0, "data": merged, "total": total, "stale": stale}
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Failed to connect to RAGFlow: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class AccessRequestBody(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=2000)
+
+
+@router.get("/datasets/discover")
+async def discover_datasets(
+    keyword: Optional[str] = None,
+    page: int = 1,
+    size: int = 20,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """「发现」：我能看见存在、但还没拿到权限的公共/部门库，可直接申请。
+
+    private 库不出现——它连存在这件事都不该暴露给无关的人。
+    """
+    from app.models.knowledge import KnowledgeAccessRequest
+
+    service = PermissionService(db)
+    access = await service.get_knowledge_base_access(
+        int(user["user_id"]), user.get("user_name")
+    )
+    if access.get("is_admin"):
+        # 管理员的 accessible_ids 是 None（"不受限"），按集合算会得出"一个库都访问不了"，
+        # 于是整站的库全被当成可申请对象。管理员本来就对所有库有权限，「发现」对他没有意义。
+        return {"code": 0, "data": {"items": [], "total": 0, "is_admin": True}}
+
+    accessible = access["accessible_ids"] or set()
+
+    metadata_service = KnowledgeBaseMetadataService(db)
+    rows = await metadata_service.list_metadata()
+
+    # 失联库（引擎侧已不存在）不该出现在「发现」里：申请了也打不开内容，
+    # 审批人点了通过才发现库是空的。引擎不可用时不过滤——宁可多列几条，
+    # 也不要因为一次抖动让整个发现列表凭空消失。
+    try:
+        engine_items = await RagFlowClient(
+            config_prefix="knowledge_ragflow"
+        ).list_all_datasets_cached()
+        engine_map = {
+            str(item.get("id")): item for item in engine_items if item.get("id")
+        }
+        engine_ids = set(engine_map)
+    except Exception as engine_exc:
+        logger.warning("[Knowledge] 发现列表无法读取引擎侧库列表，跳过失联过滤: %s", engine_exc)
+        engine_ids = None
+        engine_map = {}
+
+    candidates = [
+        row
+        for row in rows
+        if row.ragflow_dataset_id not in accessible
+        and (row.visibility or "private") in ("public", "team")
+        and (engine_ids is None or row.ragflow_dataset_id in engine_ids)
+    ]
+
+    kw = (keyword or "").strip().lower()
+    if kw:
+        candidates = [
+            row
+            for row in candidates
+            if kw in (row.name or "").lower()
+            or kw in (row.description or "").lower()
+            or kw in (row.owner or "").lower()
+        ]
+
+    # 我在这批库上的申请状态（取最近一条）
+    my_requests = {}
+    if candidates:
+        from sqlalchemy import select
+
+        result = await db.execute(
+            select(KnowledgeAccessRequest)
+            .where(
+                KnowledgeAccessRequest.applicant_user_id == int(user["user_id"]),
+                KnowledgeAccessRequest.dataset_id.in_([row.ragflow_dataset_id for row in candidates]),
+            )
+            .order_by(KnowledgeAccessRequest.created_at.desc(), KnowledgeAccessRequest.id.desc())
+        )
+        for item in result.scalars().all():
+            my_requests.setdefault(item.dataset_id, item)
+
+    page = max(1, int(page or 1))
+    size = min(100, max(1, int(size or 20)))
+    total = len(candidates)
+    window = candidates[(page - 1) * size: (page - 1) * size + size]
+
+    return {
+        "code": 0,
+        "data": {
+            "total": total,
+            "page": page,
+            "size": size,
+            "items": [
+                {
+                    "dataset_id": row.ragflow_dataset_id,
+                    "name": row.name,
+                    "description": row.description,
+                    "owner": row.owner,
+                    "visibility": row.visibility,
+                    "tags": list(getattr(row, "tags", None) or [])[:6],
+                    # 规模与新鲜度是「值不值得申请」的主要依据：
+                    # 只有名字和描述的话，用户只能凭感觉点申请。
+                    "doc_count": _safe_int(
+                        (engine_map.get(row.ragflow_dataset_id) or {}).get("document_count")
+                    ),
+                    "chunk_count": _safe_int(
+                        (engine_map.get(row.ragflow_dataset_id) or {}).get("chunk_count")
+                    ),
+                    "engine_update_time": (
+                        engine_map.get(row.ragflow_dataset_id) or {}
+                    ).get("update_time"),
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                    "request_status": (
+                        my_requests[row.ragflow_dataset_id].status
+                        if row.ragflow_dataset_id in my_requests
+                        else None
+                    ),
+                }
+                for row in window
+            ],
+        },
+    }
+
+
+def _safe_int(value) -> Optional[int]:
+    """引擎侧的计数可能是字符串、空串或缺失；拿不到就返回 None，别显示成 0。"""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _notify_access_request(
+    db: AsyncSession,
+    *,
+    kind: str,
+    row,
+    meta,
+    applicant: dict,
+) -> None:
+    """申请/审批的站内通知。
+
+    - ``created``：告诉库归属人「有人申请了」——他才是审批责任人；
+    - ``decided``：告诉申请人结果，驳回带审批意见。
+
+    通知失败一律吞掉：审批与授权本身已经成功，不该因为一条消息回滚。
+    """
+    try:
+        if kind == "created":
+            owner_id = getattr(meta, "owner_user_id", None)
+            if not owner_id or int(owner_id) == int(applicant["user_id"]):
+                return
+            await PortalNotificationService.create(
+                db,
+                user_id=int(owner_id),
+                title=f"{applicant.get('user_name') or '有同事'} 申请访问「{meta.name or row.dataset_id}」"[:200],
+                content=(row.reason or "对方未填写理由。"),
+                level="info",
+                category="knowledge_access",
+                resource_type="dataset",
+                resource_id=row.dataset_id,
+                metadata={
+                    "open": "knowledge_access_review",
+                    "dataset_id": row.dataset_id,
+                    "request_id": row.id,
+                },
+            )
+        else:
+            approved = row.status == "approved"
+            await PortalNotificationService.create(
+                db,
+                user_id=int(row.applicant_user_id),
+                title=(
+                    f"你申请访问「{row.dataset_name or row.dataset_id}」已通过"
+                    if approved
+                    else f"你申请访问「{row.dataset_name or row.dataset_id}」被驳回"
+                )[:200],
+                content=(row.review_comment or ("现在可以打开并检索这个知识库了。" if approved else "对方未填写驳回原因。")),
+                level="success" if approved else "warning",
+                category="knowledge_access_result",
+                resource_type="dataset",
+                resource_id=row.dataset_id,
+                metadata={
+                    "open": "knowledge_access_mine",
+                    "dataset_id": row.dataset_id,
+                    "request_id": row.id,
+                    "status": row.status,
+                },
+            )
+        await db.commit()
+    except Exception as notify_exc:  # pragma: no cover - 通知失败不影响主流程
+        logger.warning("[Knowledge] 访问申请通知发送失败: %s", notify_exc)
+
+
+@router.post("/datasets/{dataset_id}/access-requests")
+async def create_access_request(
+    dataset_id: str,
+    payload: AccessRequestBody,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """提交访问申请。已有权限就别申请了，直接告诉用户。"""
+    started = time.time()
+    metadata_service = KnowledgeBaseMetadataService(db)
+    meta = await metadata_service.get_by_dataset_id(dataset_id)
+    if not meta or meta.status == "deleted":
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    if (meta.visibility or "private") == "private":
+        raise HTTPException(status_code=400, detail="个人私有知识库不接受访问申请")
+
+    service = PermissionService(db)
+    access = await service.get_knowledge_base_access(
+        int(user["user_id"]), user.get("user_name")
+    )
+    if access.get("is_admin"):
+        raise HTTPException(status_code=400, detail="管理员对所有知识库都有访问权，无需申请")
+    if dataset_id in (access["accessible_ids"] or set()):
+        raise HTTPException(status_code=400, detail="你已经可以访问这个知识库")
+
+    try:
+        row = await KnowledgeAccessRequestService(db).create(
+            dataset_id=dataset_id,
+            dataset_name=meta.name,
+            user=user,
+            reason=payload.reason,
+            dept_id=meta.owner_dept_id,
+        )
+    except AccessRequestError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+    await _notify_access_request(db, kind="created", row=row, meta=meta, applicant=user)
+    await record_knowledge_audit(request, user, "datasets:request_access", 200, {
+        "action": "request_access",
+        "dataset_id": dataset_id,
+        "request_id": row.id,
+        "reason": row.reason,
+    }, started_at=started)
+    return {"code": 0, "data": {"id": row.id, "status": row.status}, "message": "申请已提交，等待审批"}
+
+
+@router.get("/access-requests/mine")
+async def list_my_access_requests(
+    status: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """我的申请（个人中心）。"""
+    from app.models.knowledge import KnowledgeAccessRequest
+    from sqlalchemy import select
+
+    conditions = [KnowledgeAccessRequest.applicant_user_id == int(user["user_id"])]
+    if status:
+        conditions.append(KnowledgeAccessRequest.status == status)
+    rows = (
+        (
+            await db.execute(
+                select(KnowledgeAccessRequest)
+                .where(*conditions)
+                .order_by(KnowledgeAccessRequest.created_at.desc(), KnowledgeAccessRequest.id.desc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "code": 0,
+        "data": {
+            "items": [
+                {
+                    "id": row.id,
+                    "dataset_id": row.dataset_id,
+                    "dataset_name": row.dataset_name,
+                    "status": row.status,
+                    "reason": row.reason,
+                    "review_comment": row.review_comment,
+                    "reviewer_user_name": row.reviewer_user_name,
+                    "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in rows
+            ]
+        },
+    }
+
+
+@router.get("/access-requests/pending")
+async def list_pending_access_requests(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """待我审批：我是这些库的归属人（或管理员）。"""
+    from app.models.knowledge import KnowledgeAccessRequest
+    from sqlalchemy import select
+
+    service = PermissionService(db)
+    access = await service.get_knowledge_base_access(
+        int(user["user_id"]), user.get("user_name")
+    )
+    is_admin = bool(access.get("is_admin"))
+    manageable = access.get("writable_ids") or set()
+    if not is_admin and not manageable:
+        return {"code": 0, "data": {"items": [], "total": 0}}
+
+    conditions = [KnowledgeAccessRequest.status == STATUS_PENDING]
+    if not is_admin:
+        conditions.append(KnowledgeAccessRequest.dataset_id.in_(list(manageable)))
+
+    rows = (
+        (
+            await db.execute(
+                select(KnowledgeAccessRequest)
+                .where(*conditions)
+                .order_by(KnowledgeAccessRequest.created_at.asc(), KnowledgeAccessRequest.id.asc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # 审批人判断「该不该批」需要看库本身：规模、可见范围、归属。
+    # 只给一个库名的话，他得自己开另一个标签页去翻。
+    dataset_ids = {row.dataset_id for row in rows}
+    meta_map = {}
+    engine_map = {}
+    if dataset_ids:
+        from app.models.knowledge import KnowledgeBaseMetadata
+        from sqlalchemy import select as _select
+
+        meta_rows = (
+            (
+                await db.execute(
+                    _select(KnowledgeBaseMetadata).where(
+                        KnowledgeBaseMetadata.ragflow_dataset_id.in_(list(dataset_ids))
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        meta_map = {row.ragflow_dataset_id: row for row in meta_rows}
+        try:
+            engine_items = await RagFlowClient(
+                config_prefix="knowledge_ragflow"
+            ).list_all_datasets_cached()
+            engine_map = {
+                str(item.get("id")): item for item in engine_items if item.get("id")
+            }
+        except Exception as engine_exc:
+            logger.warning("[Knowledge] 待审批列表无法读取引擎侧计数: %s", engine_exc)
+
+    return {
+        "code": 0,
+        "data": {
+            "total": len(rows),
+            "items": [
+                {
+                    "id": row.id,
+                    "dataset_id": row.dataset_id,
+                    "dataset_name": row.dataset_name,
+                    "applicant_user_name": row.applicant_user_name,
+                    "applicant_user_id": row.applicant_user_id,
+                    "reason": row.reason,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "visibility": getattr(meta_map.get(row.dataset_id), "visibility", None),
+                    "owner": getattr(meta_map.get(row.dataset_id), "owner", None),
+                    "doc_count": _safe_int(
+                        (engine_map.get(row.dataset_id) or {}).get("document_count")
+                    ),
+                    "chunk_count": _safe_int(
+                        (engine_map.get(row.dataset_id) or {}).get("chunk_count")
+                    ),
+                    "dataset_exists": (
+                        row.dataset_id in engine_map if engine_map else None
+                    ),
+                }
+                for row in rows
+            ],
+        },
+    }
+
+
+@router.get("/access-requests/reviews")
+async def list_reviewed_access_requests(
+    status: Optional[str] = None,
+    size: int = 50,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """审批记录：管理员看全平台，归属人看自己名下的库。
+
+    审批通过后记录就从「待审批」消失了，不给一个已处理视图，
+    管理侧等于只看得见待办、看不见做过什么。
+    """
+    from app.models.knowledge import KnowledgeAccessRequest
+    from sqlalchemy import select
+
+    service = PermissionService(db)
+    access = await service.get_knowledge_base_access(
+        int(user["user_id"]), user.get("user_name")
+    )
+    is_admin = bool(access.get("is_admin"))
+    manageable = access.get("writable_ids") or set()
+    if not is_admin and not manageable:
+        return {"code": 0, "data": {"items": [], "total": 0}}
+
+    target = (status or "").strip().lower()
+    conditions = [
+        KnowledgeAccessRequest.status.in_([STATUS_APPROVED, STATUS_REJECTED])
+    ]
+    if target in (STATUS_APPROVED, STATUS_REJECTED):
+        conditions = [KnowledgeAccessRequest.status == target]
+    if not is_admin:
+        conditions.append(KnowledgeAccessRequest.dataset_id.in_(list(manageable)))
+
+    size = min(200, max(1, int(size or 50)))
+    rows = (
+        (
+            await db.execute(
+                select(KnowledgeAccessRequest)
+                .where(*conditions)
+                .order_by(
+                    # MySQL 没有 NULLS LAST；先按"是否为空"排，非空在前
+                    KnowledgeAccessRequest.reviewed_at.is_(None),
+                    KnowledgeAccessRequest.reviewed_at.desc(),
+                    KnowledgeAccessRequest.id.desc(),
+                )
+                .limit(size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "code": 0,
+        "data": {
+            "total": len(rows),
+            "items": [
+                {
+                    "id": row.id,
+                    "dataset_id": row.dataset_id,
+                    "dataset_name": row.dataset_name,
+                    "applicant_user_id": row.applicant_user_id,
+                    "applicant_user_name": row.applicant_user_name,
+                    "reason": row.reason,
+                    "status": row.status,
+                    "reviewer_user_name": row.reviewer_user_name,
+                    "review_comment": row.review_comment,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+                }
+                for row in rows
+            ],
+        },
+    }
+
+
+class AccessReviewBody(BaseModel):
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+async def _require_reviewer(user: dict, db: AsyncSession, dataset_id: str) -> None:
+    """审批人必须是这个库的归属人或有管理权；管理员放行。"""
+    service = PermissionService(db)
+    access = await service.get_knowledge_base_access(
+        int(user["user_id"]), user.get("user_name")
+    )
+    if access.get("is_admin"):
+        return
+    if dataset_id not in (access.get("writable_ids") or set()):
+        raise HTTPException(status_code=403, detail="只有该知识库的归属人或管理员可以审批")
+
+
+@router.post("/access-requests/{request_id}/approve")
+async def approve_access_request(
+    request_id: int,
+    payload: AccessReviewBody,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    started = time.time()
+    service = KnowledgeAccessRequestService(db)
+    try:
+        row = await service.get(request_id)
+        await _require_reviewer(user, db, row.dataset_id)
+        decided = await service.decide(
+            request_id=request_id, reviewer=user, approve=True, comment=payload.comment
+        )
+    except AccessRequestError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+    await _notify_access_request(db, kind="decided", row=decided, meta=None, applicant=user)
+    await record_knowledge_audit(request, user, "datasets:grant", 200, {
+        "action": "approve_access_request",
+        "dataset_id": decided.dataset_id,
+        "request_id": request_id,
+        "applicant_user_id": decided.applicant_user_id,
+        "comment": decided.review_comment,
+    }, started_at=started)
+    return {"code": 0, "data": {"id": decided.id, "status": decided.status}, "message": "已通过，对方现在可以访问"}
+
+
+@router.post("/access-requests/{request_id}/reject")
+async def reject_access_request(
+    request_id: int,
+    payload: AccessReviewBody,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    started = time.time()
+    service = KnowledgeAccessRequestService(db)
+    try:
+        row = await service.get(request_id)
+        await _require_reviewer(user, db, row.dataset_id)
+        decided = await service.decide(
+            request_id=request_id, reviewer=user, approve=False, comment=payload.comment
+        )
+    except AccessRequestError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+    await _notify_access_request(db, kind="decided", row=decided, meta=None, applicant=user)
+    await record_knowledge_audit(request, user, "datasets:revoke", 200, {
+        "action": "reject_access_request",
+        "dataset_id": decided.dataset_id,
+        "request_id": request_id,
+        "applicant_user_id": decided.applicant_user_id,
+        "comment": decided.review_comment,
+    }, started_at=started)
+    return {"code": 0, "data": {"id": decided.id, "status": decided.status}, "message": "已驳回"}
+
+
+@router.post("/access-requests/{request_id}/cancel")
+async def cancel_access_request(
+    request_id: int,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        row = await KnowledgeAccessRequestService(db).cancel(request_id, user)
+    except AccessRequestError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+    return {"code": 0, "data": {"id": row.id, "status": row.status}, "message": "已撤回申请"}
+
+
+async def _require_knowledge_admin(user: dict, db: AsyncSession) -> None:
+    access = await PermissionService(db).get_knowledge_base_access(
+        int(user["user_id"]), user.get("user_name")
+    )
+    if not access.get("is_admin"):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+
+
+@router.post("/health/scan")
+async def scan_knowledge_health(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """跑一次巡检并把结果落成当天快照（管理员）。
+
+    重复执行是覆盖当天快照，不会堆重复行——巡检本来就可能手动补跑。
+    """
+    started = time.time()
+    await _require_knowledge_admin(user, db)
+    data = await KnowledgeHealthService.scan(db)
+    await record_knowledge_audit(request, user, "datasets:health_scan", 200, {
+        "action": "scan_health",
+        "summary": {key: data.get(key) for key in ("total", "missing", "empty", "failing", "stale")},
+    }, started_at=started)
+    return {"code": 0, "data": data, "message": "巡检完成"}
+
+
+@router.get("/health")
+async def get_knowledge_health(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """最近一次巡检结果（治理视图）。"""
+    await _require_knowledge_admin(user, db)
+    return {"code": 0, "data": await KnowledgeHealthService.latest(db)}
+
+
+@router.get("/retrieval-stats")
+async def get_retrieval_stats(
+    days: int = 7,
+    source: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """检索效果指标（管理员）：量、零结果率、P95 延迟、搜不到的 query。
+
+    零结果率是判断「知识库覆盖到哪」最直接的信号——只命中数看不出问题，
+    因为命中 1 条和零结果在平均值里差别不大。
+    """
+    service = PermissionService(db)
+    access = await service.get_knowledge_base_access(
+        int(user["user_id"]), user.get("user_name")
+    )
+    if not access.get("is_admin"):
+        raise HTTPException(status_code=403, detail="需要管理员权限才能查看检索指标")
+    data = await KnowledgeRetrievalLogService.stats(db, days=days, source=source)
+    return {"code": 0, "data": data}
+
+
+@router.get("/datasets/{dataset_id}/quota")
+async def get_dataset_quota(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """当前用量与上限（详情页显示「文档 312 / 2000」）。
+
+    与上传同口径：只要求可读，成员也应该知道这个库还剩多少空间。
+    """
+    await require_dataset_access(user, db, [dataset_id])
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        data = await KnowledgeQuotaService.snapshot(
+            client, dataset_id, db=db, user_id=int(user["user_id"])
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"读取配额失败：{e}")
+    return {"code": 0, "data": data}
+
+
+@router.get("/datasets/{dataset_id}/agents")
+async def list_dataset_agents(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """该知识库当前被哪些智能体引用（删除/收窄可见范围前的影响面提示）。
+
+    只要求「可读」：被授权进来的成员也应该知道自己的库喂给了哪些智能体，
+    这不是敏感信息，不需要管理级权限。
+    """
+    await require_dataset_access(user, db, [dataset_id])
+    grouped = await KnowledgeReferenceService(db).agents_by_dataset([dataset_id])
+    agents = grouped.get(dataset_id, [])
+    return {
+        "code": 0,
+        "data": {
+            "total": len(agents),
+            "enabled_total": sum(1 for agent in agents if agent["is_enabled"]),
+            "items": agents,
+        },
+    }
 
 
 @router.post("/datasets/sync")
@@ -482,6 +1275,16 @@ async def sync_ragflow_datasets(
             datasets,
             user_name=user.get("user_name"),
         )
+        touched_ids = result.get("dataset_ids") or []
+        audit_detail = {
+            "action": "sync_datasets_from_ragflow",
+            "created": result["created"],
+            "updated": result["updated"],
+            "skipped": result["skipped"],
+        }
+        clear_dataset_list_cache()
+        # 按受影响库拆条；一次都没同步到也留一条全局痕 —— 否则「点过同步、
+        # 什么都没发生」与「根本没点」在事后无法区分。
         await record_knowledge_audit(
             request=request,
             user=user,
@@ -489,7 +1292,8 @@ async def sync_ragflow_datasets(
             status_code=200,
             payload={
                 "action": "sync_datasets_from_ragflow",
-                "sync_result": result,
+                "sync_result": audit_detail,
+                "dataset_ids": touched_ids or [GLOBAL_AUDIT_DATASET_ID],
             },
             started_at=started,
         )
@@ -499,7 +1303,7 @@ async def sync_ragflow_datasets(
             request=request,
             user=user,
             action="datasets:sync",
-            status_code=500,
+            status_code=_audit_status_code(e),
             payload={"action": "sync_datasets_from_ragflow"},
             error_message=str(e),
             started_at=started,
@@ -516,8 +1320,23 @@ async def create_ragflow_dataset(
 ):
     started = time.time()
     await require_element_permission(user, db, "element:knowledge:create")
+    try:
+        await KnowledgeQuotaService.ensure_can_create_dataset(db, int(user["user_id"]))
+    except QuotaExceeded as quota_err:
+        raise HTTPException(status_code=400, detail=str(quota_err))
     client = RagFlowClient(config_prefix="knowledge_ragflow")
     metadata_service = KnowledgeBaseMetadataService(db)
+
+    # 平台侧先做唯一性校验：RAGFlow 允许多个同名 dataset，而本函数在「建库返回缺 id」
+    # 时会按名字反查列表 —— 重名等于可能绑到别人的库，并把 owner_user_id 写成当前用户
+    # （越权）。宁可在调用上游之前直接拒绝。
+    exists = await metadata_service.find_active_by_name(payload.name)
+    if exists:
+        raise HTTPException(
+            status_code=409,
+            detail=f"知识库名称「{payload.name}」已存在，请换一个名称",
+        )
+
     try:
         created = await client.create_dataset(
             name=payload.name,
@@ -527,9 +1346,18 @@ async def create_ragflow_dataset(
         dataset_id = created.get("id") or created.get("dataset_id")
         if not dataset_id:
             matched = await client.list_datasets(name=payload.name)
-            dataset_id = matched[0].get("id") if matched else None
-        if not dataset_id:
-            raise HTTPException(status_code=502, detail="RAGFlow 创建成功但未返回 Dataset ID")
+            matched_ids = [str(item.get("id")) for item in matched if item.get("id")]
+            if len(matched_ids) == 1:
+                dataset_id = matched_ids[0]
+            else:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "RAGFlow 创建成功但未能确定 Dataset ID"
+                        f"（同名候选 {len(matched_ids)} 个）。"
+                        "请到 RAGFlow 核对后手动同步，避免元数据绑错库。"
+                    ),
+                )
 
         owner_text, owner_dept_id = await _resolve_owner_department(db, payload.owner_dept_id)
         record = await metadata_service.upsert_metadata(
@@ -552,6 +1380,7 @@ async def create_ragflow_dataset(
         # 还会让编辑弹窗误报"保存后 N 个授权对象将失去访问权"。
         if str(payload.visibility or "").strip().lower() != VISIBILITY_PRIVATE:
             await _grant_dataset_to_creator(db, user, dataset_id)
+        clear_dataset_list_cache()
         await record_knowledge_audit(request, user, "datasets:create", 200, {
             "action": "create_dataset",
             "dataset_id": dataset_id,
@@ -559,10 +1388,15 @@ async def create_ragflow_dataset(
         }, started_at=started)
         return {"code": 0, "data": {"ragflow": created, "metadata_id": record.id, "id": dataset_id}}
     except Exception as e:
-        await record_knowledge_audit(request, user, "datasets:create", 500, {
-            "action": "create_dataset",
-            "name": payload.name,
-        }, error_message=str(e), started_at=started)
+        await record_knowledge_audit(
+            request=request,
+            user=user,
+            action="datasets:create",
+            status_code=_audit_status_code(e),
+            payload={"action": "create_dataset", "name": payload.name},
+            error_message=str(e),
+            started_at=started,
+        )
         raise
 
 
@@ -609,6 +1443,7 @@ async def update_dataset_metadata(
         raise HTTPException(status_code=404, detail="Knowledge base metadata not found")
     # 改可见范围会直接改变「谁能访问」：从 public 改 private 是撤权，反向是扩权，
     # 都必须留痕，否则事后无法解释"某个库怎么突然多/少了一批访问者"。
+    clear_dataset_list_cache()
     await record_knowledge_audit(request, user, "datasets:update_metadata", 200, {
         "action": "update_metadata",
         "dataset_id": dataset_id,
@@ -616,6 +1451,48 @@ async def update_dataset_metadata(
         "owner_dept_id": record.owner_dept_id,
     }, started_at=started)
     return {"code": 0, "data": metadata_service._serialize_metadata(record)}
+
+
+@router.put("/datasets/{dataset_id}/folder-structure")
+async def update_folder_structure(
+    dataset_id: str,
+    payload: UpdateFolderStructureRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """只更新虚拟文件夹映射，不触碰名称/可见范围等治理字段。
+
+    以前移动一个文档要走整份 ``PUT /metadata``：前端把缓存的 name/visibility
+    一起回写，两个人同时操作就是 lost update，最坏情况是把公开库改成私有。
+    """
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:edit")
+    await require_dataset_write_access(user, db, [dataset_id])
+
+    record = await KnowledgeBaseMetadataService(db).update_extra_config_key(
+        dataset_id,
+        key="folder_structure",
+        value=payload.folder_structure,
+        user_name=user.get("user_name"),
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="知识库元数据不存在或已删除")
+
+    await record_knowledge_audit(
+        request=request,
+        user=user,
+        action="datasets:update_layout",
+        status_code=200,
+        payload={
+            "action": "update_folder_structure",
+            "dataset_id": dataset_id,
+            "folder_count": len(payload.folder_structure),
+            "document_count": sum(len(ids) for ids in payload.folder_structure.values()),
+        },
+        started_at=started,
+    )
+    return {"code": 0, "data": {"extra_config": record.extra_config or {}}}
 
 
 @router.delete("/datasets")
@@ -663,13 +1540,14 @@ async def delete_ragflow_datasets(
             await PermissionService(db).invalidate_cached_permissions_for_users(affected_user_ids)
 
         await metadata_service.mark_deleted(payload.ids, user_name=user.get("user_name"))
+        clear_dataset_list_cache()
         await record_knowledge_audit(request, user, "datasets:delete", 200, {
             "action": "delete_dataset",
             "dataset_ids": payload.ids,
         }, started_at=started)
         return {"code": 0, "message": "删除成功"}
     except Exception as e:
-        await record_knowledge_audit(request, user, "datasets:delete", 500, {
+        await record_knowledge_audit(request, user, "datasets:delete", _audit_status_code(e), {
             "action": "delete_dataset",
             "dataset_ids": payload.ids,
         }, error_message=str(e), started_at=started)
@@ -692,6 +1570,158 @@ async def list_dataset_documents(
         return {"code": 0, "data": docs, "total": len(docs)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class CreateChunkRequest(BaseModel):
+    content: str
+    important_keywords: Optional[List[str]] = None
+
+
+class UpdateChunkRequest(BaseModel):
+    content: Optional[str] = None
+    available: Optional[bool] = None
+    important_keywords: Optional[List[str]] = None
+
+
+def _chunk_content_preview(content: Optional[str]) -> str:
+    """审计只留前 120 字：切片正文动辄上千字，整段进日志表会很快撑爆。"""
+    return (content or "")[:120]
+
+
+@router.post("/datasets/{dataset_id}/documents/{document_id}/chunks")
+async def create_document_chunk(
+    dataset_id: str,
+    document_id: str,
+    payload: CreateChunkRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """手工新增一条切片（把 QA、笔记之类补进知识库）。"""
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:parse_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    content = (payload.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="切片内容不能为空")
+
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        created = await client.create_chunk(
+            dataset_id,
+            document_id,
+            content,
+            important_keywords=payload.important_keywords,
+        )
+        await record_knowledge_audit(request, user, "chunks:create", 200, {
+            "action": "create_chunk",
+            "dataset_id": dataset_id,
+            "document_id": document_id,
+            "chunk_id": str((created or {}).get("id") or ""),
+            "content_preview": _chunk_content_preview(content),
+        }, started_at=started)
+        return {"code": 0, "message": "已新增切片，向量重建需数秒", "data": created}
+    except Exception as e:
+        await record_knowledge_audit(request, user, "chunks:create", _audit_status_code(e), {
+            "action": "create_chunk",
+            "dataset_id": dataset_id,
+            "document_id": document_id,
+            "content_preview": _chunk_content_preview(content),
+        }, error_message=str(e), started_at=started)
+        raise
+
+
+@router.put("/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}")
+async def update_document_chunk(
+    dataset_id: str,
+    document_id: str,
+    chunk_id: str,
+    payload: UpdateChunkRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """改切片内容或启停。停用后切片保留，但不参与召回。"""
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:parse_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    content = payload.content.strip() if payload.content is not None else None
+    if content is not None and not content:
+        raise HTTPException(status_code=400, detail="切片内容不能为空")
+    if content is None and payload.available is None and payload.important_keywords is None:
+        raise HTTPException(
+            status_code=400,
+            detail="没有要更新的字段（content / available / important_keywords 至少给一个）",
+        )
+
+    audit_detail = {
+        "action": "toggle_chunk" if content is None and payload.available is not None else "update_chunk",
+        "dataset_id": dataset_id,
+        "document_id": document_id,
+        "chunk_id": chunk_id,
+        "available": payload.available,
+        "content_preview": _chunk_content_preview(content),
+    }
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        updated = await client.update_chunk(
+            dataset_id,
+            document_id,
+            chunk_id,
+            content=content,
+            available=payload.available,
+            important_keywords=payload.important_keywords,
+        )
+        await record_knowledge_audit(
+            request, user, "chunks:update", 200, dict(audit_detail), started_at=started
+        )
+        return {"code": 0, "message": "已更新，向量重建需数秒", "data": updated}
+    except Exception as e:
+        await record_knowledge_audit(
+            request,
+            user,
+            "chunks:update",
+            _audit_status_code(e),
+            dict(audit_detail),
+            error_message=str(e),
+            started_at=started,
+        )
+        raise
+
+
+@router.delete("/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}")
+async def delete_document_chunk(
+    dataset_id: str,
+    document_id: str,
+    chunk_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:parse_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        await client.delete_chunk(dataset_id, document_id, chunk_id)
+        await record_knowledge_audit(request, user, "chunks:delete", 200, {
+            "action": "delete_chunk",
+            "dataset_id": dataset_id,
+            "document_id": document_id,
+            "chunk_id": chunk_id,
+        }, started_at=started)
+        return {"code": 0, "message": "已删除切片"}
+    except Exception as e:
+        await record_knowledge_audit(request, user, "chunks:delete", _audit_status_code(e), {
+            "action": "delete_chunk",
+            "dataset_id": dataset_id,
+            "document_id": document_id,
+            "chunk_id": chunk_id,
+        }, error_message=str(e), started_at=started)
+        raise
 
 
 @router.get("/datasets/{dataset_id}/documents/{document_id}/chunks")
@@ -725,28 +1755,137 @@ async def upload_dataset_document(
     await require_element_permission(user, db, "element:knowledge:upload_document")
     await require_dataset_content_write_access(user, db, [dataset_id])
     client = RagFlowClient(config_prefix="knowledge_ragflow")
+    file_name = file.filename or "upload.bin"
     try:
-        blob = await file.read()
+        _validate_knowledge_upload(file_name, int(getattr(file, "size", 0) or 0))
+        await KnowledgeQuotaService.ensure_can_upload(client, dataset_id, incoming=1)
+        blob = await _read_upload_with_limit(file)
         uploaded = await client.upload_document(
             dataset_id,
-            file.filename or "upload.bin",
+            file_name,
             blob,
             file.content_type or "application/octet-stream",
         )
         await record_knowledge_audit(request, user, "documents:upload", 200, {
             "action": "upload_document",
             "dataset_id": dataset_id,
-            "file_name": file.filename,
+            "file_name": file_name,
             "content_type": file.content_type,
             "size": len(blob),
         }, started_at=started)
         return {"code": 0, "data": uploaded}
+    except QuotaExceeded as quota_err:
+        # 配额不足是用户可自行处理的问题（清文档 / 找管理员），不该混进 500
+        await record_knowledge_audit(request, user, "documents:upload", 400, {
+            "action": "upload_document",
+            "dataset_id": dataset_id,
+            "file_name": file_name,
+        }, error_message=str(quota_err), started_at=started)
+        raise HTTPException(status_code=400, detail=str(quota_err))
     except Exception as e:
-        await record_knowledge_audit(request, user, "documents:upload", 500, {
+        await record_knowledge_audit(request, user, "documents:upload", _audit_status_code(e), {
             "action": "upload_document",
             "dataset_id": dataset_id,
             "file_name": file.filename,
         }, error_message=str(e), started_at=started)
+        raise
+
+
+@router.post("/datasets/{dataset_id}/documents/replace")
+async def replace_dataset_document(
+    dataset_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    old_document_id: str = Form(...),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """同名上传的「替换」：先上传新文件，改名回旧名，再删旧文档，最后触发解析。
+
+    反向做（先删后传）一旦上传失败，用户就直接失去文档；而删旧失败必须回滚
+    掉新文件，否则库里同时躺着两个同名文档。
+    """
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:upload_document")
+    await require_element_permission(user, db, "element:knowledge:delete_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    file_name = file.filename or "upload.bin"
+    audit_detail = {
+        "action": "replace_document",
+        "dataset_id": dataset_id,
+        "document_id": old_document_id,
+        "file_name": file_name,
+    }
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    new_document_id: Optional[str] = None
+    old_deleted = False
+    try:
+        _validate_knowledge_upload(file_name, int(getattr(file, "size", 0) or 0))
+        blob = await _read_upload_with_limit(file)
+
+        # 旧文档必须属于本库：否则等于借「替换」删掉别的库（或已不存在）的文档
+        existing = await client.list_documents(dataset_id, page_size=1000)
+        old_doc = next(
+            (doc for doc in existing if str(doc.get("id")) == old_document_id), None
+        )
+        if old_doc is None:
+            raise HTTPException(status_code=404, detail="要替换的文档不存在或已被删除")
+
+        uploaded = await client.upload_document(
+            dataset_id, file_name, blob, file.content_type or "application/octet-stream"
+        )
+        new_document_id = str(uploaded.get("id") or "") or None
+        if not new_document_id:
+            raise HTTPException(status_code=502, detail="RAGFlow 上传成功但未返回文档 ID")
+
+        # 同名上传时 RAGFlow 可能把新文件存成 "xxx (1).pdf"，改回原名再删旧
+        await client.update_document(
+            dataset_id, new_document_id, name=old_doc.get("name") or file_name
+        )
+
+        await client.delete_documents(dataset_id, [old_document_id])
+        old_deleted = True
+
+        try:
+            await client.parse_documents(dataset_id, [new_document_id])
+        except Exception as parse_err:
+            # 旧文档已删、新文档已就位：此时再删新的等于两个都没，只能留给用户重试
+            logger.warning(
+                "[Knowledge] 替换后触发解析失败 doc=%s: %s", new_document_id, parse_err
+            )
+
+        await record_knowledge_audit(
+            request,
+            user,
+            "documents:replace",
+            200,
+            {
+                **audit_detail,
+                "old_document_id": old_document_id,
+                "new_document_id": new_document_id,
+            },
+            started_at=started,
+        )
+        return {"code": 0, "message": "已替换", "data": {"id": new_document_id}}
+    except Exception as e:
+        # 只在旧文档还没删时回滚：否则会把用户仅存的文档也删掉
+        if new_document_id and not old_deleted:
+            try:
+                await client.delete_documents(dataset_id, [new_document_id])
+            except Exception as rollback_err:
+                logger.error(
+                    "[Knowledge] 替换回滚失败，残留文档 %s: %s", new_document_id, rollback_err
+                )
+        await record_knowledge_audit(
+            request,
+            user,
+            "documents:replace",
+            _audit_status_code(e),
+            dict(audit_detail),
+            error_message=str(e),
+            started_at=started,
+        )
         raise
 
 
@@ -773,11 +1912,72 @@ async def delete_dataset_documents(
         }, started_at=started)
         return {"code": 0, "message": "删除成功"}
     except Exception as e:
-        await record_knowledge_audit(request, user, "documents:delete", 500, {
+        await record_knowledge_audit(request, user, "documents:delete", _audit_status_code(e), {
             "action": "delete_document",
             "dataset_id": dataset_id,
             "document_ids": payload.ids,
         }, error_message=str(e), started_at=started)
+        raise
+
+
+class UpdateDocumentRequest(BaseModel):
+    """只传要改的字段：None 表示"不动"，避免只停用文档时把名字一并重置。"""
+
+    name: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+@router.put("/datasets/{dataset_id}/documents/{document_id}")
+async def update_dataset_document(
+    dataset_id: str,
+    document_id: str,
+    payload: UpdateDocumentRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """改名 / 启停文档。停用后文档仍保留切片，只是不再参与召回。"""
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:parse_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    name = payload.name.strip() if payload.name is not None else None
+    if name is not None and not name:
+        raise HTTPException(status_code=400, detail="文档名称不能为空")
+    if name is not None and len(name) > 255:
+        raise HTTPException(status_code=400, detail="文档名称过长（最多 255 个字符）")
+    if name is None and payload.enabled is None:
+        raise HTTPException(
+            status_code=400,
+            detail="没有要更新的字段（name / enabled 至少给一个）",
+        )
+
+    audit_detail = {
+        "action": "update_document" if payload.enabled is None else "toggle_document",
+        "dataset_id": dataset_id,
+        "document_id": document_id,
+        "name": name,
+        "enabled": payload.enabled,
+    }
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        updated = await client.update_document(
+            dataset_id, document_id, name=name, enabled=payload.enabled
+        )
+        await record_knowledge_audit(
+            request, user, "documents:update", 200, dict(audit_detail), started_at=started
+        )
+        return {"code": 0, "message": "已更新", "data": updated}
+    except Exception as e:
+        await record_knowledge_audit(
+            request,
+            user,
+            "documents:update",
+            _audit_status_code(e),
+            dict(audit_detail),
+            error_message=str(e),
+            started_at=started,
+        )
         raise
 
 
@@ -804,7 +2004,7 @@ async def parse_dataset_documents(
         }, started_at=started)
         return {"code": 0, "message": "解析任务已触发"}
     except Exception as e:
-        await record_knowledge_audit(request, user, "documents:parse", 500, {
+        await record_knowledge_audit(request, user, "documents:parse", _audit_status_code(e), {
             "action": "parse_document",
             "dataset_id": dataset_id,
             "document_ids": payload.ids,
@@ -831,6 +2031,30 @@ async def retrieval_test(
             similarity_threshold=payload.similarity_threshold,
             vector_similarity_weight=payload.vector_similarity_weight,
         )
+        try:
+            await KnowledgeRetrievalLogService.log(
+                query=payload.query,
+                dataset_ids=payload.dataset_ids,
+                hit_count=len(chunks),
+                top_score=(
+                    max(
+                        (
+                            float(chunk.get("similarity") or 0)
+                            for chunk in chunks
+                            if isinstance(chunk, dict)
+                        ),
+                        default=None,
+                    )
+                    if chunks
+                    else None
+                ),
+                latency_ms=int((time.time() - started) * 1000),
+                source=SOURCE_TEST,
+                user=user,
+            )
+        except Exception as log_exc:  # pragma: no cover - 埋点失败不影响检索
+            logger.debug("[Knowledge] 检索日志写入跳过: %s", log_exc)
+
         await record_knowledge_audit(request, user, "retrieval-test", 200, {
             "action": "retrieval_test",
             "dataset_ids": payload.dataset_ids,
@@ -842,7 +2066,7 @@ async def retrieval_test(
         }, started_at=started)
         return {"code": 0, "data": chunks, "total": len(chunks)}
     except Exception as e:
-        await record_knowledge_audit(request, user, "retrieval-test", 500, {
+        await record_knowledge_audit(request, user, "retrieval-test", _audit_status_code(e), {
             "action": "retrieval_test",
             "dataset_ids": payload.dataset_ids,
             "query_summary": payload.query[:200],
@@ -889,11 +2113,15 @@ async def get_dataset_permissions(
         role_res = await db.execute(role_stmt)
         granted_roles = [{"id": r.id, "code": r.code, "name": r.name} for r in role_res.all()]
 
+    record = await KnowledgeBaseMetadataService(db).get_by_dataset_id(dataset_id)
     return {
         "code": 0,
         "data": {
             "users": granted_users,
-            "roles": granted_roles
+            "roles": granted_roles,
+            # 前端据此标记「归属人」并禁用取消按钮：不加这个字段，
+            # 名单里就分不清哪一条是撤销不掉的。
+            "owner_user_id": getattr(record, "owner_user_id", None) if record else None,
         }
     }
 
@@ -997,6 +2225,7 @@ async def transfer_dataset_owner(
     }
     await PermissionService(db).invalidate_cached_permissions_for_users(affected_user_ids)
 
+    clear_dataset_list_cache()
     await record_knowledge_audit(request, user, "datasets:transfer_owner", 200, {
         "action": "transfer_owner",
         "dataset_id": dataset_id,
@@ -1586,6 +2815,170 @@ async def list_dataset_audit_logs(
     }
 
 
+def _parse_audit_time(value: Optional[str], *, end_of_day: bool = False) -> Optional[datetime.datetime]:
+    """接受 `2026-10-01` 与 `2026-10-01T12:00:00`；按天给 end 时补到 23:59:59。"""
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    try:
+        if len(raw) == 10:
+            parsed = datetime.datetime.strptime(raw, "%Y-%m-%d")
+            return parsed.replace(hour=23, minute=59, second=59) if end_of_day else parsed
+        return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="时间格式不合法，请用 2026-10-01 或 2026-10-01T12:00:00",
+        )
+
+
+def _audit_log_csv(rows) -> StreamingResponse:
+    """导出 CSV。带 UTF-8 BOM，否则 Excel 打开中文全是乱码。"""
+    import csv
+    import io
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["时间", "操作", "知识库", "操作人", "状态码", "详情", "错误信息", "来源 IP"])
+    for row in rows:
+        writer.writerow([
+            row.created_at.strftime("%Y-%m-%d %H:%M:%S") if row.created_at else "",
+            row.action or "",
+            row.dataset_id or "",
+            f"{row.user_name or ''} ({row.user_id or ''})".strip(),
+            row.status_code if row.status_code is not None else "",
+            json.dumps(row.detail, ensure_ascii=False) if row.detail else "",
+            row.error_message or "",
+            row.client_ip or "",
+        ])
+    body = "\ufeff" + buffer.getvalue()
+    filename = f"knowledge-audit-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
+    return StreamingResponse(
+        iter([body.encode("utf-8")]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/audit-logs")
+async def list_global_audit_logs(
+    page: int = 1,
+    size: int = 50,
+    action: Optional[str] = None,
+    dataset_id: Optional[str] = None,
+    user_id: Optional[int] = None,
+    keyword: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    export: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """跨库审计日志（管理员）。
+
+    逐库的「操作日志」tab 只解决"这个库发生了什么"；这里解决"某个人今天动了
+    哪些库"。`__global__` 记录（同步、巡检这类没落到具体库的动作）同样列出——
+    否则「点过同步但什么都没发生」这种事查不到。
+    """
+    from app.models.knowledge import KnowledgeAuditLog
+    from sqlalchemy import func, or_, select
+
+    service = PermissionService(db)
+    access = await service.get_knowledge_base_access(
+        int(user["user_id"]), user.get("user_name")
+    )
+    if not access.get("is_admin"):
+        raise HTTPException(status_code=403, detail="需要管理员权限才能查看全平台审计")
+
+    page = max(1, int(page or 1))
+    size = min(200, max(1, int(size or 50)))
+
+    start_dt = _parse_audit_time(start)
+    end_dt = _parse_audit_time(end, end_of_day=True)
+
+    conditions = []
+    if action:
+        conditions.append(KnowledgeAuditLog.action == action)
+    if dataset_id:
+        conditions.append(KnowledgeAuditLog.dataset_id == dataset_id)
+    if user_id:
+        conditions.append(KnowledgeAuditLog.user_id == user_id)
+    if keyword:
+        like = f"%{keyword.strip()}%"
+        conditions.append(
+            or_(
+                KnowledgeAuditLog.user_name.like(like),
+                KnowledgeAuditLog.error_message.like(like),
+            )
+        )
+    if start_dt:
+        conditions.append(KnowledgeAuditLog.created_at >= start_dt)
+    if end_dt:
+        conditions.append(KnowledgeAuditLog.created_at <= end_dt)
+
+    if export == "csv":
+        # 导出上限：再大就该走离线任务，别让一次点击把内存打满
+        export_rows = (
+            (
+                await db.execute(
+                    select(KnowledgeAuditLog)
+                    .where(*conditions)
+                    .order_by(KnowledgeAuditLog.created_at.desc(), KnowledgeAuditLog.id.desc())
+                    .limit(5000)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return _audit_log_csv(export_rows)
+
+    total = (
+        await db.execute(
+            select(func.count()).select_from(KnowledgeAuditLog).where(*conditions)
+        )
+    ).scalar() or 0
+
+    rows = (
+        (
+            await db.execute(
+                select(KnowledgeAuditLog)
+                .where(*conditions)
+                .order_by(KnowledgeAuditLog.created_at.desc(), KnowledgeAuditLog.id.desc())
+                .offset((page - 1) * size)
+                .limit(size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    return {
+        "code": 0,
+        "data": {
+            "total": int(total),
+            "page": page,
+            "size": size,
+            "items": [
+                {
+                    "id": row.id,
+                    "dataset_id": row.dataset_id,
+                    "action": row.action,
+                    "user_id": row.user_id,
+                    "user_name": row.user_name,
+                    "status_code": row.status_code,
+                    "detail": row.detail,
+                    "client_ip": row.client_ip,
+                    "error_message": row.error_message,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in rows
+            ],
+        },
+    }
+
+
 @router.post("/datasets/{dataset_id}/permissions", dependencies=[Depends(require_permission("element", "element:user:edit"))])
 async def add_dataset_permissions(
     dataset_id: str,
@@ -1679,6 +3072,19 @@ async def delete_dataset_permission(
     # 这里**不**校验 require_dataset_shareable：改成个人私有之前写下的历史授权，
     # 需要能逐条清理（新增授权仍被上面的 add 端点拒绝）。否则会出现
     # "看得见这条授权记录、点删除却 400"的死角。
+
+    # 但归属人的那条授权是例外：他的可读可写来自 owner_user_id，删掉记录
+    # 只是让名单看起来「撤销成功」，实际仍能访问。要变更请走转移归属。
+    record = await KnowledgeBaseMetadataService(db).get_by_dataset_id(dataset_id)
+    if (
+        payload.target_type == "user"
+        and record is not None
+        and getattr(record, "owner_user_id", None) == payload.target_id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="归属人的访问权不可撤销，如需变更请先把知识库转移给其他同事",
+        )
 
     perm_service = PermissionService(db)
     affected_user_ids = set()
