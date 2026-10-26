@@ -79,6 +79,8 @@ async def search_knowledge_base(query: str, dataset_ids: Optional[str | list[str
             agent_granted_ids -= await perm.find_private_datasets_not_owned(
                 agent_granted_ids,
                 user_name,
+                # 归属判定必须带 user_id：私有库转移给同事后，原创建人不能再被当成主人
+                user_id=int(ctx.user_id),
             )
             restricted_datasets = [
                 dataset_id

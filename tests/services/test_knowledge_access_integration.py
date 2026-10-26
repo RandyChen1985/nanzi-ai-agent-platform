@@ -26,6 +26,26 @@ class _Fixture:
         self.mark = mark
 
 
+
+@pytest.fixture(autouse=True)
+async def _require_owner_user_id_column(db_session):
+    """V189 迁移未执行时跳过：缺列会直接报 1054，与判定逻辑无关。
+
+    迁移执行后本 fixture 自动放行（不是永久跳过），避免为了跑测试去手动改库。
+    """
+    from sqlalchemy import text
+
+    try:
+        await db_session.execute(
+            text("SELECT owner_user_id FROM knowledge_base_metadata LIMIT 0")
+        )
+    except Exception:
+        pytest.skip(
+            "需要先执行 db-prod/V189-add_owner_user_id_to_knowledge_base_metadata.sql"
+        )
+    yield
+
+
 async def _build(db_session):
     mark = uuid.uuid4().hex[:8]
     fixture = _Fixture(mark)
@@ -288,5 +308,44 @@ async def test_admin_can_see_and_write_other_users_private_dataset(db_session):
         assert access["writable_ids"] is None
         assert service.is_admin_user(["admin"]) is True
         assert service.is_admin_user(["default"]) is False
+    finally:
+        await _cleanup(db_session, fixture.mark)
+
+
+@pytest.mark.asyncio
+async def test_transfer_owner_moves_management_and_revokes_previous(db_session):
+    """转移归属是「换人」不是「加人」：旧归属人必须立刻失去访问。
+
+    集成层要验的是 SQL 列真的查出来并参与判定（纯函数测试喂的是内存元组）。
+    """
+    from app.services.knowledge_base_service import KnowledgeBaseMetadataService
+
+    fixture, data = await _build(db_session)
+    service = PermissionService(db_session)
+    metadata_service = KnowledgeBaseMetadataService(db_session)
+    try:
+        before = await service.get_knowledge_base_access(
+            data["creator"].id, data["creator"].user_name
+        )
+        assert data["private"] in before["writable_ids"]
+
+        await metadata_service.transfer_owner(
+            data["private"],
+            target_user_id=data["teammate"].id,
+            user_name=data["creator"].user_name,
+        )
+        await db_session.flush()
+
+        previous_owner = await service.get_knowledge_base_access(
+            data["creator"].id, data["creator"].user_name
+        )
+        assert data["private"] not in previous_owner["accessible_ids"]
+        assert data["private"] not in previous_owner["writable_ids"]
+
+        new_owner = await service.get_knowledge_base_access(
+            data["teammate"].id, data["teammate"].user_name
+        )
+        assert data["private"] in new_owner["accessible_ids"]
+        assert data["private"] in new_owner["writable_ids"]
     finally:
         await _cleanup(db_session, fixture.mark)

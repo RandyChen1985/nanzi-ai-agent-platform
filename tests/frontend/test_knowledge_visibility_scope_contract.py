@@ -240,21 +240,24 @@ def test_old_misleading_copy_is_gone():
 # ---------------------------------------------------------------- 存量迁移
 
 
-def test_migration_normalizes_existing_visibility_to_public():
-    mysql = list((ROOT / "db-prod").glob("V189-*.sql"))
-    postgres = list((ROOT / "db-prod-pg").glob("V89-*.sql"))
-    assert mysql, "缺少 MySQL 迁移 db-prod/V189-*.sql"
-    assert postgres, "缺少 PostgreSQL 迁移 db-prod-pg/V89-*.sql"
+def test_migration_adds_owner_user_id_for_handover():
+    """归属人改造必须双库同步，且要按用户表回填存量库。
 
-    mysql_sql = mysql[0].read_text(encoding="utf-8")
-    pg_sql = postgres[0].read_text(encoding="utf-8")
-    for sql in (mysql_sql, pg_sql):
-        assert "visibility" in sql and "'public'" in sql
-        # 必须同时覆盖 private 与 team：只改 private 会让存量 team 库静默扩权
-        assert "'private'" in sql and "'team'" in sql
-        # created_at 列可空，NULL 行必须显式纳入：`NULL < 时间点` 求值为 NULL，
-        # 漏掉这些行会让它们保留旧值，切换语义后静默撤权/扩权
-        assert "IS NULL" in sql and "created_at" in sql
+    可见范围归一（原 V189/V89）已从仓库移除，改由运维按发布说明手动执行一次，
+    因此这里不再断言那两个文件存在。
+    """
+    mysql = list((ROOT / "db-prod").glob("V189-add_owner_user_id_*.sql"))
+    postgres = list((ROOT / "db-prod-pg").glob("V89-add_owner_user_id_*.sql"))
+    assert mysql, "缺少 MySQL 迁移 db-prod/V189-add_owner_user_id_*.sql"
+    assert postgres, "缺少 PostgreSQL 迁移 db-prod-pg/V89-add_owner_user_id_*.sql"
+
+    for sql in (mysql[0], postgres[0]):
+        text = sql.read_text(encoding="utf-8")
+        assert "owner_user_id" in text
+        # 回填必须按用户表关联 created_by：否则存量库的归属人全靠人工补
+        assert "ai_agent_users" in text and "created_by" in text
+        # 只补空值，重跑不能覆盖已经转移过的归属
+        assert "IS NULL" in text
 
 def test_only_adding_permissions_is_blocked_for_private_datasets():
     """私有库：新增授权必须拒绝，但删除历史授权要放行（否则脏记录清不掉）。"""

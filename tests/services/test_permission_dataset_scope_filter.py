@@ -18,6 +18,26 @@ from app.schemas.permission import PermissionUpdate
 from app.services.permission_service import PermissionService
 
 
+
+@pytest.fixture(autouse=True)
+async def _require_owner_user_id_column(db_session):
+    """V189 迁移未执行时跳过：缺列会直接报 1054，与判定逻辑无关。
+
+    迁移执行后本 fixture 自动放行（不是永久跳过），避免为了跑测试去手动改库。
+    """
+    from sqlalchemy import text
+
+    try:
+        await db_session.execute(
+            text("SELECT owner_user_id FROM knowledge_base_metadata LIMIT 0")
+        )
+    except Exception:
+        pytest.skip(
+            "需要先执行 db-prod/V189-add_owner_user_id_to_knowledge_base_metadata.sql"
+        )
+    yield
+
+
 async def _make_user(db_session):
     from app.models.user import User
 

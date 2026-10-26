@@ -29,6 +29,15 @@ class KnowledgeBaseMetadata(Base):
         index=True,
         comment="业务归属部门 ID（team 级下的自动只读依据）",
     )
+    # 归属人（管理权唯一真源）：非空时判定只看它，created_by 文本不再参与 ——
+    # 否则「把库转交给同事」之后，原创建人仍能凭文本快照保留管理权，转移等于没做。
+    # 为空时回落 created_by 比较，兼容未回填与已离职的老库。
+    owner_user_id = Column(
+        BigInteger,
+        nullable=True,
+        index=True,
+        comment="归属人用户ID（管理权判定依据；为空时回落 created_by 文本）",
+    )
     visibility = Column(
         String(32),
         default="private",
@@ -38,7 +47,9 @@ class KnowledgeBaseMetadata(Base):
     notes = Column(Text, nullable=True, comment="平台侧备注")
     extra_config = Column(JSON, nullable=True, comment="扩展配置")
     status = Column(String(32), default="active", index=True, comment="状态: active/deleted/missing")
-    created_by = Column(String(64), nullable=True, comment="创建人")
+    # 创建人用户名**快照**，仅用于展示与「转移前的兜底判定」：
+    # 转移归属只改 owner_user_id，不改这里，避免真实的创建记录被覆盖掉。
+    created_by = Column(String(64), nullable=True, comment="创建人用户名快照（展示用；判定见 owner_user_id）")
     updated_by = Column(String(64), nullable=True, comment="更新人")
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

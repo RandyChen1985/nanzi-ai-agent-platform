@@ -181,3 +181,67 @@ async def test_sync_from_ragflow_creates_missing_and_preserves_local_fields():
     # 同步新建的库必须是公共级：否则一次同步就把 RAGFlow 侧存量库
     # 全变成执行同步者的个人私有库，其他人连访问入口都没有
     assert created_payloads[0]["visibility"] == "public"
+
+
+class _FakeDb:
+    """transfer_owner 只依赖 flush；这里给个最小实现，避免引入真库。"""
+
+    def __init__(self):
+        self.flushed = 0
+
+    async def flush(self):
+        self.flushed += 1
+
+
+@pytest.mark.asyncio
+async def test_transfer_owner_moves_owner_and_keeps_created_by():
+    db = _FakeDb()
+    service = KnowledgeBaseMetadataService(db=db)
+    local = KnowledgeBaseMetadata(
+        ragflow_dataset_id="ds-handover",
+        name="待交接知识库",
+        created_by="alice",
+        owner_user_id=1,
+        status="active",
+    )
+
+    async def fake_get(dataset_id):
+        return local if dataset_id == "ds-handover" else None
+
+    service.get_by_dataset_id = fake_get
+
+    result = await service.transfer_owner(
+        "ds-handover", target_user_id=2, user_name="admin"
+    )
+
+    assert result is not None
+    record, previous_owner_user_id = result
+    assert record.owner_user_id == 2
+    # 创建人快照不能被转移覆盖：否则再也查不清这个库最初是谁建的
+    assert record.created_by == "alice"
+    assert previous_owner_user_id == 1
+    assert record.updated_by == "admin"
+    assert db.flushed == 1
+
+
+@pytest.mark.asyncio
+async def test_transfer_owner_returns_none_for_missing_or_deleted():
+    service = KnowledgeBaseMetadataService(db=_FakeDb())
+
+    async def missing(dataset_id):
+        return None
+
+    service.get_by_dataset_id = missing
+    assert await service.transfer_owner("ds-gone", target_user_id=2) is None
+
+    deleted = KnowledgeBaseMetadata(
+        ragflow_dataset_id="ds-deleted",
+        name="已删除",
+        status="deleted",
+    )
+
+    async def soft_deleted(dataset_id):
+        return deleted
+
+    service.get_by_dataset_id = soft_deleted
+    assert await service.transfer_owner("ds-deleted", target_user_id=2) is None

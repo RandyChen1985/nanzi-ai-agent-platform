@@ -108,14 +108,19 @@ def resolve_knowledge_dataset_access(
     owner_dept_paths: dict,
     default_ids: Iterable[str],
     user_name: Optional[str],
+    user_id: Optional[int] = None,
 ) -> dict:
     """按三档可见范围计算可读/可写集合（纯函数，便于穷举边界）。
 
-    ``dataset_rows`` 每项为 ``(ragflow_dataset_id, visibility, owner_dept_id, created_by)``。
+    ``dataset_rows`` 每项为
+    ``(ragflow_dataset_id, visibility, owner_dept_id, created_by, owner_user_id)``。
 
     规则（按序判定，命中即止）：
 
-    1. ``created_by == user_name``：可读可写，且不受 visibility 影响；
+    1. **归属人**：``owner_user_id == user_id``，可读可写，且不受 visibility 影响；
+       ``owner_user_id`` 为空时回落 ``created_by == user_name``（兼容未回填/已离职的老库）。
+       两者是**互斥**关系而非"或"：一旦显式转移过归属，``created_by`` 文本就不再
+       赋予任何人权限，否则原创建人仍能凭旧快照继续管理，转移等于没做；
     2. ``private``：只有创建人，**授权记录被刻意忽略**；
     3. ``dataset_id`` 在授权集合里：可读（public / team 都适用）；
     4. ``team`` 且归属部门非空：当前用户的任一部门位于该部门子树内即可读
@@ -144,14 +149,27 @@ def resolve_knowledge_dataset_access(
     known_ids: set[str] = set()
     private_ids: set[str] = set()
 
+    current_user_id = int(user_id) if user_id is not None else None
+
     for row in dataset_rows or []:
-        dataset_id, raw_visibility, raw_owner_dept_id, created_by = row
+        dataset_id, raw_visibility, raw_owner_dept_id, created_by, raw_owner_user_id = row
         dataset_id = str(dataset_id or "").strip()
         if not dataset_id:
             continue
         known_ids.add(dataset_id)
 
-        if user_name and created_by and str(created_by) == str(user_name):
+        owner_user_id = int(raw_owner_user_id) if raw_owner_user_id else None
+        is_owner = (
+            owner_user_id is not None
+            and current_user_id is not None
+            and owner_user_id == current_user_id
+        ) or (
+            owner_user_id is None
+            and bool(user_name)
+            and bool(created_by)
+            and str(created_by) == str(user_name)
+        )
+        if is_owner:
             accessible.add(dataset_id)
             writable.add(dataset_id)
             content_writable.add(dataset_id)
@@ -652,13 +670,17 @@ class PermissionService:
           这是明确的产品决策（运维排障需要能看到/清理全平台的知识库），
           不是漏判：``accessible_ids`` 返回 ``None`` 即代表"不受限"，
           调用方必须先判 ``is_admin`` 再用集合，别把 ``None`` 当空权限。
-        - ``public``（公共级）：创建人 + 显式授权的用户/角色；
+        - ``public``（公共级）：归属人 + 显式授权的用户/角色；
         - ``team``（部门级）：在 public 的基础上，业务归属部门（**含下级部门**）
           的成员自动只读；
-        - ``private``（个人私有）：只有创建人，授权记录不生效（也不允许新增授权）；
-        - 任何情况下都叠加：自己创建的库可读可写、系统默认库全员可读、管理员全量。
+        - ``private``（个人私有）：只有归属人，授权记录不生效（也不允许新增授权）；
+        - 任何情况下都叠加：自己是归属人的库可读可写、系统默认库全员可读、管理员全量。
 
-        ``writable_ids``（管理级）恒为「自己创建的库」：改元数据/可见范围/归属部门、
+        「归属人」是 ``owner_user_id``（管理权唯一真源）；它为空时回落 ``created_by``
+        用户名比较，兼容未回填与已离职的老库。两者**互斥**：一旦显式转移过归属，
+        ``created_by`` 文本就不再赋予任何人权限，否则原创建人仍能凭旧快照继续管理。
+
+        ``writable_ids``（管理级）恒为「自己是归属人的库」：改元数据/可见范围/归属部门、
         删库、分配授权、查看授权名单都要求这一级。``content_writable_ids``（内容级）
         在此基础上加上 team 库的归属部门成员 —— 他们能上传/删除/解析文档、看切片，
         但不能改变这个库的可见范围。授权成员两级都只有读权限。
@@ -680,6 +702,7 @@ class PermissionService:
                     KnowledgeBaseMetadata.visibility,
                     KnowledgeBaseMetadata.owner_dept_id,
                     KnowledgeBaseMetadata.created_by,
+                    KnowledgeBaseMetadata.owner_user_id,
                 ).where(KnowledgeBaseMetadata.status != "deleted")
             )
         ).all()
@@ -687,7 +710,7 @@ class PermissionService:
         # 只有存在 team 库时才去查部门，普通用户的常规路径不额外付一次查询
         team_owner_ids = {
             int(owner_dept_id)
-            for _, visibility, owner_dept_id, _ in rows
+            for _, visibility, owner_dept_id, _, _ in rows
             if owner_dept_id and normalize_knowledge_visibility(visibility) == VISIBILITY_TEAM
         }
         owner_dept_paths: dict[int, str] = {}
@@ -739,6 +762,7 @@ class PermissionService:
             owner_dept_paths=owner_dept_paths,
             default_ids=default_ids,
             user_name=user_name,
+            user_id=user_id,
         )
         return {"is_admin": False, **access}
 
@@ -746,14 +770,19 @@ class PermissionService:
         self,
         dataset_ids: Iterable[str],
         user_name: Optional[str],
+        user_id: Optional[int] = None,
     ) -> set[str]:
-        """返回给定集合里「个人私有且当前用户不是创建人」的库 ID。
+        """返回给定集合里「个人私有且当前用户不是归属人」的库 ID。
 
         **检索侧专用**。智能体绑定的知识库会跳过使用者权限校验（智能体作者
         已经决定了它的知识范围），但 ``private`` 不能跟着被代理放行：
-        它的语义是「有且仅有创建人」，否则任何被授权过某库的人都能建个智能体
+        它的语义是「有且仅有归属人」，否则任何被授权过某库的人都能建个智能体
         把它二次分发给全体使用者。因此调用方应把这批 ID 从「智能体绑定」里摘掉，
-        让它们回落到正常的用户权限判定（那里 private 只对创建人成立）。
+        让它们回落到正常的用户权限判定（那里 private 只对归属人成立）。
+
+        归属判定与 ``resolve_knowledge_dataset_access`` 必须逐字同源：
+        ``owner_user_id`` 优先，为空才回落 ``created_by``。否则「把私有库转交给
+        同事」之后，原创建人仍会被当成主人，智能体代理时继续把库放行给所有人。
 
         元数据里查不到的库不返回 —— 与「未同步库按授权放行」的既有口径一致。
         """
@@ -767,6 +796,7 @@ class PermissionService:
                     KnowledgeBaseMetadata.ragflow_dataset_id,
                     KnowledgeBaseMetadata.visibility,
                     KnowledgeBaseMetadata.created_by,
+                    KnowledgeBaseMetadata.owner_user_id,
                 ).where(
                     KnowledgeBaseMetadata.ragflow_dataset_id.in_(ids),
                     # 软删的库按「查不到」处理（与 docstring 的口径一致）：
@@ -776,12 +806,24 @@ class PermissionService:
             )
         ).all()
 
+        current_user_id = int(user_id) if user_id is not None else None
         denied: set[str] = set()
-        for dataset_id, raw_visibility, created_by in rows:
+        for dataset_id, raw_visibility, created_by, raw_owner_user_id in rows:
             if normalize_knowledge_visibility(raw_visibility) != VISIBILITY_PRIVATE:
                 continue
-            # 创建人本人照常可用；created_by 缺失（无主私有库）时按拒绝处理
-            if user_name and created_by and str(created_by) == str(user_name):
+            owner_user_id = int(raw_owner_user_id) if raw_owner_user_id else None
+            is_owner = (
+                owner_user_id is not None
+                and current_user_id is not None
+                and owner_user_id == current_user_id
+            ) or (
+                owner_user_id is None
+                and bool(user_name)
+                and bool(created_by)
+                and str(created_by) == str(user_name)
+            )
+            # 归属人本人照常可用；归属人与 created_by 都缺失（无主私有库）时按拒绝处理
+            if is_owner:
                 continue
             denied.add(str(dataset_id))
         return denied

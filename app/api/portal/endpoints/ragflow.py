@@ -252,6 +252,33 @@ async def record_knowledge_audit(
     )
 
 
+async def _attach_owner_user_names(db: AsyncSession, items: List[Dict[str, Any]]) -> None:
+    """给列表项补归属人显示名。
+
+    前端只拿到 ``owner_user_id`` 的话只能显示一串数字；这里一次查完所有涉及的
+    用户，避免逐库回查（列表是几十到几百条量级）。
+    已离职/已删除的用户查不到，``owner_user_name`` 保持缺失，前端回落显示创建人。
+    """
+    from app.models.user import User
+    from sqlalchemy import select
+
+    owner_ids = {
+        int(item["owner_user_id"]) for item in items if item.get("owner_user_id")
+    }
+    if not owner_ids:
+        return
+    rows = (
+        await db.execute(
+            select(User.id, User.user_name, User.real_name).where(User.id.in_(owner_ids))
+        )
+    ).all()
+    name_by_id = {int(uid): (real_name or user_name) for uid, user_name, real_name in rows}
+    for item in items:
+        owner_user_id = item.get("owner_user_id")
+        if owner_user_id:
+            item["owner_user_name"] = name_by_id.get(int(owner_user_id))
+
+
 def _normalize_ragflow_items(data: Any) -> List[Dict[str, Any]]:
     items = data.get("data") if isinstance(data, dict) else data
     if isinstance(items, dict):
@@ -422,6 +449,7 @@ async def list_ragflow_datasets(
 
         merged = await metadata_service.merge_with_ragflow(items, include_missing=real_include_missing)
         _apply_knowledge_permission_flags(merged, access)
+        await _attach_owner_user_names(db, merged)
         return {"code": 0, "data": merged, "total": len(merged)}
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Failed to connect to RAGFlow: {str(e)}")
@@ -502,6 +530,8 @@ async def create_ragflow_dataset(
             # 选了部门就以部门名为准，未选部门才沿用调用方传入的文本（兼容旧前端）
             owner=owner_text if owner_dept_id else payload.owner,
             owner_dept_id=owner_dept_id,
+            # 建库人就是归属人：此后交接走「转移归属」，不再依赖 created_by 文本
+            owner_user_id=int(user["user_id"]),
             visibility=payload.visibility,
             tags=payload.tags,
             notes=payload.notes,
@@ -856,6 +886,111 @@ async def get_dataset_permissions(
             "users": granted_users,
             "roles": granted_roles
         }
+    }
+
+
+class TransferDatasetOwnerRequest(BaseModel):
+    user_id: int = Field(..., ge=1)
+
+
+@router.get("/owner-candidates")
+async def list_owner_candidates(
+    keyword: str = "",
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """转移归属时的候选用户（只返回启用账号）。
+
+    刻意不复用 ``/api/portal/metadata/candidates``：那个端点要求
+    ``element:metadata:edit``（数据源编辑权），而知识库负责人通常只有
+    ``element:knowledge:edit``，会拿到 403 后看到空列表 —— 按钮点开一片空白。
+    """
+    await require_element_permission(user, db, "element:knowledge:edit")
+    from app.models.user import User
+    from sqlalchemy import or_, select
+
+    stmt = select(User.id, User.user_name, User.real_name).where(User.status == 1)
+    token = keyword.strip()
+    if token:
+        like = f"%{token}%"
+        stmt = stmt.where(or_(User.user_name.like(like), User.real_name.like(like)))
+    rows = (await db.execute(stmt.order_by(User.user_name).limit(200))).all()
+    return {
+        "code": 0,
+        "data": [
+            {"id": row.id, "user_name": row.user_name, "real_name": row.real_name}
+            for row in rows
+        ],
+    }
+
+
+@router.post("/datasets/{dataset_id}/owner")
+async def transfer_dataset_owner(
+    dataset_id: str,
+    payload: TransferDatasetOwnerRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """把知识库归属人转给另一个用户（离职 / 调岗交接）。
+
+    权限：管理级写权限（现归属人或管理员）+ ``element:knowledge:edit``。
+
+    影响面（必须在 UI 上说清，否则会被当成 bug 报上来）：
+
+    - ``private`` 库：原归属人**立刻失去访问**，这是转移的本意；
+    - ``public`` / ``team`` 库：授权名单与部门可见范围都不变，只是管理权换人
+      —— ``team`` 的可见范围由 ``owner_dept_id`` 决定，与归属人无关。
+
+    刻意只改 ``owner_user_id``：``created_by`` 是真实创建记录，覆盖掉就再也
+    没人能说出这个库最初是谁建的。
+    """
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:edit")
+    await require_dataset_write_access(user, db, [dataset_id])
+
+    from app.models.user import User
+
+    target = await db.get(User, payload.user_id)
+    if not target:
+        raise HTTPException(status_code=400, detail="目标用户不存在")
+    if int(target.status or 0) != 1:
+        raise HTTPException(status_code=400, detail="目标用户已停用，不能作为归属人")
+
+    metadata_service = KnowledgeBaseMetadataService(db)
+    result = await metadata_service.transfer_owner(
+        dataset_id,
+        target_user_id=int(target.id),
+        user_name=user.get("user_name"),
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="知识库元数据不存在或已删除")
+    record, previous_owner_user_id = result
+
+    # 旧归属人失去管理权、新归属人获得管理权，两人的权限缓存都必须失效；
+    # 少失效一侧会出现「页面还能改、接口已 403」或反过来的错位。
+    affected_user_ids = {
+        int(uid) for uid in (previous_owner_user_id, target.id) if uid
+    }
+    await PermissionService(db).invalidate_cached_permissions_for_users(affected_user_ids)
+
+    await record_knowledge_audit(request, user, "datasets:transfer_owner", 200, {
+        "action": "transfer_owner",
+        "dataset_id": dataset_id,
+        "from_owner_user_id": previous_owner_user_id,
+        "to_owner_user_id": int(target.id),
+        "to_user_name": target.user_name,
+    }, started_at=started)
+
+    return {
+        "code": 0,
+        "data": {
+            "ragflow_dataset_id": record.ragflow_dataset_id,
+            "owner_user_id": record.owner_user_id,
+            "owner_user_name": target.real_name or target.user_name,
+            "previous_owner_user_id": previous_owner_user_id,
+        },
+        "message": "归属人已转移",
     }
 
 

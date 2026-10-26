@@ -57,6 +57,7 @@ class KnowledgeBaseMetadataService:
         description: Optional[str] = None,
         owner: Optional[str] = None,
         owner_dept_id: Optional[int] = None,
+        owner_user_id: Optional[int] = None,
         visibility: Optional[str] = None,
         tags: Optional[List[str]] = None,
         notes: Optional[str] = None,
@@ -78,6 +79,9 @@ class KnowledgeBaseMetadataService:
         record.description = description
         record.owner = owner
         record.owner_dept_id = int(owner_dept_id) if owner_dept_id else None
+        # 归属人只在显式传值时改写：同步/批量更新不能把已转移的归属重置成"同步者"。
+        if owner_user_id is not None:
+            record.owner_user_id = int(owner_user_id)
         # 只在显式传值时改写可见范围：更新路径漏传参数不能把库悄悄重置成 private
         # （默认值曾经是 "private"，任何一次不带 visibility 的 upsert 都会静默降级）
         if visibility is not None:
@@ -101,6 +105,7 @@ class KnowledgeBaseMetadataService:
         description: Optional[str] = None,
         owner: Any = _UNSET,
         owner_dept_id: Any = _UNSET,
+        owner_user_id: Any = _UNSET,
         visibility: Optional[str] = None,
         tags: Optional[List[str]] = None,
         notes: Optional[str] = None,
@@ -125,6 +130,9 @@ class KnowledgeBaseMetadataService:
             record.owner = owner or None
         if owner_dept_id is not _UNSET:
             record.owner_dept_id = int(owner_dept_id) if owner_dept_id else None
+        if owner_user_id is not _UNSET:
+            # 传 0/None = 清空归属人（此后判定回落 created_by 文本）
+            record.owner_user_id = int(owner_user_id) if owner_user_id else None
         if visibility is not None:
             record.visibility = _normalize_visibility(visibility, fallback="public")
         if tags is not None:
@@ -137,6 +145,31 @@ class KnowledgeBaseMetadataService:
         record.updated_at = datetime.now()
         await self.db.flush()
         return record
+
+    async def transfer_owner(
+        self,
+        dataset_id: str,
+        *,
+        target_user_id: int,
+        user_name: Optional[str] = None,
+    ) -> Optional[tuple[KnowledgeBaseMetadata, Optional[int]]]:
+        """把知识库归属人转给另一个用户，返回 ``(记录, 原归属人 ID)``。
+
+        只改 ``owner_user_id``，**刻意不改** ``created_by``：那是真实的创建记录，
+        转移时覆盖掉就再没人能说出这个库最初是谁建的。归属人本就是独立的业务概念。
+
+        元数据不存在或已软删时返回 ``None``（调用方按 404 处理）；目标用户的合法性
+        由调用方校验，这里只负责落库。
+        """
+        record = await self.get_by_dataset_id(dataset_id)
+        if not record or record.status == "deleted":
+            return None
+        previous_owner_user_id = record.owner_user_id
+        record.owner_user_id = int(target_user_id)
+        record.updated_by = user_name
+        record.updated_at = datetime.now()
+        await self.db.flush()
+        return record, previous_owner_user_id
 
     async def mark_deleted(self, dataset_ids: Iterable[str], user_name: Optional[str] = None) -> None:
         for dataset_id in dataset_ids:
@@ -204,6 +237,7 @@ class KnowledgeBaseMetadataService:
             item["platform_description"] = local.description if local else ds.get("description")
             item["owner"] = local.owner if local else None
             item["owner_dept_id"] = local.owner_dept_id if local else None
+            item["owner_user_id"] = local.owner_user_id if local else None
             item["tags"] = local.tags if local else []
             item["notes"] = local.notes if local else None
             # 元数据缺失（RAGFlow 已建、本地尚未同步）时按 public 兜底：
@@ -236,6 +270,7 @@ class KnowledgeBaseMetadataService:
                     "platform_description": local.description,
                     "owner": local.owner,
                     "owner_dept_id": local.owner_dept_id,
+                    "owner_user_id": local.owner_user_id,
                     "created_by": local.created_by,
                     "tags": local.tags or [],
                     "notes": local.notes,
@@ -256,6 +291,7 @@ class KnowledgeBaseMetadataService:
             "description": record.description,
             "owner": record.owner,
             "owner_dept_id": record.owner_dept_id,
+            "owner_user_id": record.owner_user_id,
             "visibility": record.visibility,
             "tags": record.tags or [],
             "notes": record.notes,

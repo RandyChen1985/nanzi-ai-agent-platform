@@ -46,6 +46,9 @@ type KnowledgeBase = {
   status?: string
   is_missing_in_ragflow?: boolean
   created_by?: string
+  /** 归属人（管理权真源）。为空时后端回落 created_by 文本，兼容未回填的老库 */
+  owner_user_id?: number
+  owner_user_name?: string
   can_write?: boolean
   /** 管理级：改元数据/可见范围/删库/授权。部门成员只有内容级（can_write） */
   can_manage?: boolean
@@ -274,6 +277,15 @@ const deletingDataset = ref<KnowledgeBase | null>(null)
 const deletingDocument = ref<KnowledgeDocument | null>(null)
 const pendingPermissionRemoval = ref<{ type: string; id: number; name: string } | null>(null)
 const pendingFolderRemoval = ref<{ dataset: KnowledgeBase; folderName: string } | null>(null)
+
+// 转移归属：知识库的管理权从一个人交给另一个人（离职/调岗）
+const showTransferOwnerModal = ref(false)
+const transferTarget = ref<KnowledgeBase | null>(null)
+const transferCandidates = ref<{ id: number; user_name: string; real_name?: string }[]>([])
+const transferKeyword = ref('')
+const transferUserId = ref<number | null>(null)
+const transferring = ref(false)
+const loadingTransferCandidates = ref(false)
 
 const form = ref({
   name: '',
@@ -739,9 +751,13 @@ const availableUsers = computed(() => {
   let filtered = (candidates.value.users || []).filter(u => !grantedNames.includes(u.user_name))
   if (candidateSearchQuery.value) {
     const q = candidateSearchQuery.value.toLowerCase()
-    filtered = filtered.filter(u => 
-      (u.real_name && u.real_name.toLowerCase().includes(q)) || 
-      (u.user_name && u.user_name.toLowerCase().includes(q))
+    filtered = filtered.filter(u =>
+      (u.real_name && u.real_name.toLowerCase().includes(q)) ||
+      (u.user_name && u.user_name.toLowerCase().includes(q)) ||
+      // 按部门名搜：想找"开发部的人"时不用逐个点开看
+      (u.departments || []).some((dept: any) =>
+        String(dept?.name || '').toLowerCase().includes(q),
+      )
     )
   }
   return filtered
@@ -1804,6 +1820,72 @@ const canManageDataset = (dataset?: KnowledgeBase | null) => {
   return dataset.can_manage ?? true
 }
 
+/** 归属人显示名：优先归属人，回退历史创建人（未回填 owner_user_id 的老库） */
+const datasetOwnerUserLabel = (dataset?: KnowledgeBase | null) => {
+  if (!dataset) return '未知'
+  return dataset.owner_user_name || dataset.created_by || '未知'
+}
+
+/**
+ * 能否转移归属：编辑权限码 + 对该库的管理级写权限，与后端
+ * `require_element_permission(element:knowledge:edit) + require_dataset_write_access` 同口径。
+ * 部门成员只有内容级写权限，看不到这个入口。
+ */
+const canTransferOwner = (dataset?: KnowledgeBase | null) =>
+  canEdit.value && canManageDataset(dataset)
+
+const fetchTransferCandidates = async () => {
+  loadingTransferCandidates.value = true
+  try {
+    const res = await axios.get('/api/portal/ragflow/owner-candidates', {
+      params: { keyword: transferKeyword.value.trim() },
+    })
+    transferCandidates.value = apiData(res) || []
+  } catch (err) {
+    transferCandidates.value = []
+    showToast('加载候选用户失败: ' + extractError(err), 'error')
+  } finally {
+    loadingTransferCandidates.value = false
+  }
+}
+
+const openTransferOwner = async (dataset: KnowledgeBase) => {
+  transferTarget.value = dataset
+  transferUserId.value = null
+  transferKeyword.value = ''
+  showTransferOwnerModal.value = true
+  await fetchTransferCandidates()
+}
+
+const closeTransferOwner = () => {
+  showTransferOwnerModal.value = false
+  transferTarget.value = null
+  transferUserId.value = null
+  transferCandidates.value = []
+}
+
+const submitTransferOwner = async () => {
+  const target = transferTarget.value
+  const userId = transferUserId.value
+  if (!target || !userId || transferring.value) return
+  transferring.value = true
+  try {
+    await axios.post(
+      `/api/portal/ragflow/datasets/${target.ragflow_dataset_id || target.id}/owner`,
+      { user_id: userId },
+    )
+    showToast('归属人已转移，原归属人的管理权已收回', 'success')
+    closeTransferOwner()
+    await fetchDatasets()
+  } catch (err) {
+    // 常见失败：目标账号在你打开弹窗后被停用、或你已被别人抢先转移走了管理权
+    showToast(extractError(err), 'error')
+    await fetchDatasets()
+  } finally {
+    transferring.value = false
+  }
+}
+
 const isReadOnlyDataset = (dataset?: KnowledgeBase | null) => {
   if (!dataset) return false
   const name = dataset.platform_name || dataset.name
@@ -2840,9 +2922,18 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
               <!-- 元信息条：创建人 · 切片 · 归属部门 · ID（可复制） -->
               <div class="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-gray-500">
-                <span class="whitespace-nowrap">
-                  创建人
-                  <span class="font-medium text-gray-700">{{ selectedDataset.created_by || '未知' }}</span>
+                <span class="whitespace-nowrap" :title="`创建人：${selectedDataset.created_by || '未知'}`">
+                  归属人
+                  <span class="font-medium text-gray-700">{{ datasetOwnerUserLabel(selectedDataset) }}</span>
+                  <button
+                    v-if="canTransferOwner(selectedDataset)"
+                    type="button"
+                    class="ml-1 align-baseline text-[11px] font-semibold text-primary hover:underline"
+                    title="把该知识库的管理权转交给其他同事（离职 / 调岗交接）"
+                    @click="openTransferOwner(selectedDataset)"
+                  >
+                    转移
+                  </button>
                 </span>
                 <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
                 <span class="whitespace-nowrap">
@@ -3931,6 +4022,83 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       </div>
     </Modal>
 
+    <!-- Transfer owner modal -->
+    <Modal
+      :show="showTransferOwnerModal"
+      title="转移知识库归属人"
+      size="max-w-lg"
+      @close="closeTransferOwner"
+    >
+      <div class="space-y-4">
+        <div class="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 text-xs text-amber-700 leading-relaxed">
+          转移后，<b>你不再拥有该库的管理权</b>（不能改元数据、删库、分配授权）。<br />
+          <template v-if="transferTarget && visibilityOf(transferTarget) === 'private'">
+            这是<b>个人私有</b>库：原归属人会立刻失去访问，之后只有新归属人能看到。
+          </template>
+          <template v-else>
+            公共级 / 部门级的授权名单与部门可见范围不变，只是管理权换人。
+          </template>
+        </div>
+
+        <div>
+          <label class="mb-1 block text-xs font-medium text-gray-700">搜索用户</label>
+          <div class="flex gap-2">
+            <input
+              v-model="transferKeyword"
+              type="search"
+              class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              placeholder="按姓名或登录名搜索"
+              @keyup.enter="fetchTransferCandidates"
+            />
+            <button
+              type="button"
+              class="rounded-lg border border-gray-300 px-3 text-xs text-gray-600 hover:bg-gray-50"
+              :disabled="loadingTransferCandidates"
+              @click="fetchTransferCandidates"
+            >
+              搜索
+            </button>
+          </div>
+        </div>
+
+        <div class="max-h-64 overflow-y-auto rounded-xl border border-gray-200 divide-y divide-gray-100">
+          <div v-if="loadingTransferCandidates" class="py-8 text-center text-xs text-gray-400">加载中...</div>
+          <div v-else-if="!transferCandidates.length" class="py-8 text-center text-xs text-gray-400">
+            没有匹配的启用用户
+          </div>
+          <button
+            v-for="candidate in transferCandidates"
+            :key="candidate.id"
+            type="button"
+            class="w-full px-4 py-2.5 text-left text-sm flex items-center justify-between hover:bg-gray-50 transition-colors"
+            :class="transferUserId === candidate.id ? 'bg-primary/5' : ''"
+            @click="transferUserId = candidate.id"
+          >
+            <span class="font-medium text-gray-800">{{ candidate.real_name || candidate.user_name }}</span>
+            <span class="text-xs text-gray-400 font-mono">{{ candidate.user_name }}</span>
+          </button>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t">
+          <button
+            type="button"
+            class="px-4 py-2 rounded-xl border border-gray-200 text-sm hover:bg-gray-50"
+            @click="closeTransferOwner"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold transition-all disabled:opacity-40"
+            :disabled="!transferUserId || transferring"
+            @click="submitTransferOwner"
+          >
+            {{ transferring ? '转移中...' : '确认转移' }}
+          </button>
+        </div>
+      </div>
+    </Modal>
+
     <!-- Add Permission Modal -->
     <Modal :show="showAddPermissionModal" title="分配知识库授权成员" size="max-w-md" @close="closeAddPermissionModal">
       <div class="space-y-4">
@@ -3968,7 +4136,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             v-model="candidateSearchQuery"
             type="search"
             class="block w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl leading-5 bg-gray-50 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary sm:text-xs transition-all focus:bg-white"
-            :placeholder="assignType === 'role' ? '搜索角色名称或代码...' : '搜索用户姓名或账号...'"
+            :placeholder="assignType === 'role' ? '搜索角色名称或代码...' : '搜索用户姓名、账号或部门...'"
           />
         </div>
 
@@ -4016,10 +4184,19 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   class="rounded text-emerald-600 border-gray-300 focus:ring-emerald-500" 
                   @click.stop="toggleCandidateSelection(u.id)"
                 />
-                <div class="flex flex-col">
-                  <span class="text-sm font-semibold text-gray-800">{{ u.real_name || u.user_name }}</span>
-                  <span class="text-[10px] text-gray-400 font-mono mt-0.5">{{ u.user_name }}</span>
+                <div class="flex flex-col min-w-0">
+                  <span class="text-sm font-semibold text-gray-800 truncate">{{ u.real_name || u.user_name }}</span>
+                  <span class="text-[10px] text-gray-400 font-mono mt-0.5 truncate">{{ u.user_name }}</span>
                 </div>
+                <!-- 部门：授权时最难判断的就是「这个人到底在不在我要授权的部门」 -->
+                <span v-if="u.departments?.length" class="ml-auto flex flex-wrap gap-1 justify-end shrink-0 max-w-[45%]">
+                  <span
+                    v-for="dept in u.departments"
+                    :key="dept.id"
+                    class="text-[10px] leading-none px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200/70"
+                  >{{ dept.name }}</span>
+                </span>
+                <span v-else class="ml-auto text-[10px] text-gray-300 shrink-0">未分配部门</span>
               </div>
               <div v-if="!availableUsers.length" class="text-xs text-gray-400 text-center py-8 select-none">
                 所有活跃用户已完成分配授权。

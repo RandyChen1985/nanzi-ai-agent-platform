@@ -31,11 +31,26 @@ MY_DEPT_PATH = "/1/7/23/"  # 平台组的子部门，用于验证"含下级"
 SIBLING_DEPT_PATH = "/3/"
 
 
-def _row(dataset_id: str, visibility: str | None, owner_dept_id=None, created_by=None):
-    return (dataset_id, visibility, owner_dept_id, created_by)
+def _row(
+    dataset_id: str,
+    visibility: str | None,
+    owner_dept_id=None,
+    created_by=None,
+    owner_user_id=None,
+):
+    return (dataset_id, visibility, owner_dept_id, created_by, owner_user_id)
 
 
-def _resolve(rows, *, granted=(), my_paths=(), owner_paths=None, defaults=(), user_name="alice"):
+def _resolve(
+    rows,
+    *,
+    granted=(),
+    my_paths=(),
+    owner_paths=None,
+    defaults=(),
+    user_name="alice",
+    user_id=None,
+):
     return resolve_knowledge_dataset_access(
         dataset_rows=rows,
         granted_ids=list(granted),
@@ -43,6 +58,7 @@ def _resolve(rows, *, granted=(), my_paths=(), owner_paths=None, defaults=(), us
         owner_dept_paths=owner_paths if owner_paths is not None else {OWNER_DEPT_ID: OWNER_DEPT_PATH},
         default_ids=list(defaults),
         user_name=user_name,
+        user_id=user_id,
     )
 
 
@@ -244,3 +260,47 @@ def test_default_dataset_is_read_only_for_everyone_but_creator():
     assert "ds-default" in access["accessible_ids"]
     assert "ds-default" not in access["content_writable_ids"]
     assert "ds-default" not in access["writable_ids"]
+
+
+# ---------------------------------------------------------------- 归属人（owner_user_id）
+#
+# 归属人是管理权的唯一真源：`owner_user_id` 非空时只认它，`created_by` 文本不再参与。
+# 这一组锁的正是「把库转交给同事后，原创建人必须立刻失去管理权」。
+
+
+def test_owner_user_id_grants_management_without_name_match():
+    """登录名与 created_by 完全不同，仅凭 owner_user_id 也能拿到管理权。"""
+    rows = [_row("ds-handed", VISIBILITY_PRIVATE, None, "alice", 42)]
+    access = _resolve(rows, user_name="bob", user_id=42)
+
+    assert "ds-handed" in access["accessible_ids"]
+    assert "ds-handed" in access["writable_ids"]
+    assert "ds-handed" in access["content_writable_ids"]
+
+
+def test_previous_creator_loses_access_after_transfer():
+    """转移后 created_by 仍是旧人文本，但 owner_user_id 已换人 —— 旧人必须失权。
+
+    「只改 owner_user_id、不改 created_by」的设计成立的前提就是这里：判定必须
+    「归属人优先」而不是「归属人或创建人」，否则转移等于没做（旧人继续凭文本管理）。
+    """
+    rows = [_row("ds-handed", VISIBILITY_PRIVATE, None, "alice", 42)]
+
+    old_owner = _resolve(rows, user_name="alice", user_id=1)
+    assert "ds-handed" not in old_owner["accessible_ids"]
+    assert "ds-handed" not in old_owner["writable_ids"]
+
+
+def test_missing_owner_user_id_falls_back_to_created_by():
+    """未回填（owner_user_id 为空）时保持改造前口径：created_by 文本仍然有效。"""
+    rows = [_row("ds-legacy", VISIBILITY_PRIVATE, None, "alice", None)]
+
+    assert "ds-legacy" in _resolve(rows, user_name="alice")["writable_ids"]
+
+
+def test_owner_user_id_wins_over_same_named_text():
+    """owner_user_id 生效时，同名文本不会被别人冒用（改名 / 重名的防线）。"""
+    rows = [_row("ds-handed", VISIBILITY_PRIVATE, None, "alice", 42)]
+
+    access = _resolve(rows, user_name="alice", user_id=99)
+    assert "ds-handed" not in access["accessible_ids"]
