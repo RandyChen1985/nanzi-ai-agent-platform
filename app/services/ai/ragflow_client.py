@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import AsyncGenerator, Dict, List, Optional, Any
 import httpx
 
@@ -22,6 +23,17 @@ logger = logging.getLogger(__name__)
 DEFAULT_METADATA_TIMEOUT = 20.0
 DEFAULT_WRITE_TIMEOUT = 30.0
 DEFAULT_RETRIEVE_TIMEOUT = 30.0
+
+# 库列表的短缓存：首屏要翻 10+ 页，不加缓存等于每个用户每次进页面都重打一遍；
+# 但也不能久，否则刚建的库要等很久才出现。写操作会显式 clear。
+DATASET_LIST_TTL = 60.0
+_datasets_cache: Dict[str, "tuple[float, List[Dict[str, Any]]]"] = {}
+_datasets_cache_locks: Dict[str, asyncio.Lock] = {}
+
+
+def clear_dataset_list_cache() -> None:
+    """建库 / 删库 / 同步后调用：否则用户会看到 60 秒前的旧列表。"""
+    _datasets_cache.clear()
 
 
 def _wrap_transport_error(
@@ -314,6 +326,102 @@ class RagFlowClient:
             
         return datasets
 
+    @staticmethod
+    def _extract_dataset_page(data: Any) -> "tuple[List[Dict[str, Any]], Optional[int]]":
+        """RAGFlow 各版本把 datasets / total 放在不同层级，这里统一归一。"""
+        if isinstance(data, list):
+            return data, None
+        if isinstance(data, dict):
+            items = data.get("datasets") or data.get("items") or data.get("data") or []
+            raw_total = data.get("total")
+            try:
+                total = int(raw_total) if raw_total is not None else None
+            except (TypeError, ValueError):
+                total = None
+            return (items if isinstance(items, list) else []), total
+        return [], None
+
+    async def list_all_datasets(
+        self,
+        concurrency: int = 4,
+        max_pages: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """按 total 翻完所有库。
+
+        RAGFlow 的 page_size 上限是 100，而原来调用方传 1000 时只拼 10 页，
+        库超过 1000 个就**静默丢库**。这里先取第一页拿 total，再并发取剩余页；
+        并发过程中若有人建库，同一页可能重复出现，最后按 id 去重。
+        """
+        await self._ensure_config()
+        url = f"{self.base_url}/api/v1/datasets"
+        page_size = 100
+        semaphore = asyncio.Semaphore(max(1, concurrency))
+
+        async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as http:
+            async def fetch(page: int) -> "tuple[List[Dict[str, Any]], Optional[int]]":
+                async with semaphore:
+                    resp = await http.get(
+                        url,
+                        headers=self._get_headers(),
+                        params={"page": page, "page_size": page_size},
+                    )
+                    data = await self._handle_response(resp, f"List Datasets Page {page}")
+                    return self._extract_dataset_page(data)
+
+            first_items, total = await fetch(1)
+            items = list(first_items)
+
+            if total is None:
+                # 拿不到 total：顺序翻到不足一页为止
+                page = 2
+                while len(first_items) == page_size and page <= max_pages:
+                    first_items, _ = await fetch(page)
+                    items.extend(first_items)
+                    page += 1
+            elif total > len(first_items):
+                page_count = min(max_pages, -(-total // page_size))
+                rest = await asyncio.gather(*(fetch(p) for p in range(2, page_count + 1)))
+                for page_items, _ in rest:
+                    items.extend(page_items)
+
+        seen: set[str] = set()
+        unique: List[Dict[str, Any]] = []
+        for item in items:
+            key = str(item.get("id") or "")
+            if key and key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+        return [self._normalize_dataset(d) for d in unique]
+
+    async def list_all_datasets_cached(self, *, refresh: bool = False) -> List[Dict[str, Any]]:
+        """带 60s TTL 与单飞锁的全量列表：并发请求只让一个真去打 RAGFlow。"""
+        # 缓存键是 base_url，而它要等 _ensure_config 之后才有值
+        await self._ensure_config()
+        key = self.base_url or ""
+        if not refresh:
+            cached = _datasets_cache.get(key)
+            if cached and time.monotonic() - cached[0] < DATASET_LIST_TTL:
+                return [dict(item) for item in cached[1]]
+
+        lock = _datasets_cache_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if not refresh:
+                cached = _datasets_cache.get(key)
+                if cached and time.monotonic() - cached[0] < DATASET_LIST_TTL:
+                    return [dict(item) for item in cached[1]]
+            items = await self.list_all_datasets()
+            _datasets_cache[key] = (time.monotonic(), [dict(item) for item in items])
+            return [dict(item) for item in items]
+
+    @classmethod
+    def cached_datasets_snapshot(cls, base_url: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+        """降级用：不看 TTL，返回上次成功拉到的那份（RAGFlow 挂了好歹有得看）。"""
+        cached = _datasets_cache.get(base_url or "")
+        if not cached:
+            return None
+        return [dict(item) for item in cached[1]]
+
     # 不同 RAGFlow 发行版的「建库」字段契约不同：
     #   chunk_method —— 官方 Python 版：chunk_method + description + permission
     #   parse_type   —— Go 版内置解析器：parse_type(int, 1=BuiltIn) + parser_id，
@@ -469,6 +577,25 @@ class RagFlowClient:
             await self._handle_response(resp, "Delete Datasets")
 
     # --- Document Management ---
+
+    async def count_documents(self, dataset_id: str) -> Optional[int]:
+        """只要文档总数：上传前做配额校验，不值得把上千个文档全拉回来。"""
+        await self._ensure_config()
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents"
+        async with httpx.AsyncClient(timeout=DEFAULT_METADATA_TIMEOUT) as client:
+            resp = await client.get(
+                url, headers=self._get_headers(), params={"page": 1, "page_size": 1}
+            )
+            data = await self._handle_response(resp, "Count Documents")
+        if isinstance(data, dict):
+            try:
+                return int(data.get("total"))
+            except (TypeError, ValueError):
+                pass
+            return len(self._extract_documents(data))
+        if isinstance(data, list):
+            return len(self._extract_documents(data))
+        return None
 
     async def list_documents(self, dataset_id: str, name: Optional[str] = None, page: int = 1, page_size: int = 100) -> List[Dict[str, Any]]:
         """List documents in a dataset"""

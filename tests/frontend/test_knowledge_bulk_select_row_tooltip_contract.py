@@ -51,3 +51,28 @@ def test_row_action_buttons_use_custom_tooltip(page):
         assert f'title="{text}"' not in page
         assert f'text="{text}"' in page   # 文案仍在，改由 HoverTip 承载
     assert 'title="删除知识库"' not in page
+
+
+# ------------------------------------------------- 引用徽章不能压在操作按钮下面
+
+
+def test_agent_ref_badge_moved_next_to_the_name(page):
+    """徽章原本在右侧指标区，而那片在悬停时被绝对定位的操作按钮覆盖：
+    文档数会 group-hover:hidden 让位，徽章不会 —— 于是和按钮叠在一起。
+    状态类信息统一靠左，右侧整块留给按钮。
+    """
+    name_block = page.split("<!-- Display name + creator -->", 1)[1].split("创建人:", 1)[0]
+    assert "agent_ref_count" in name_block
+
+
+def test_agent_ref_badge_gone_from_the_right_slot(page):
+    right_slot = page.split("<!-- Indicators & Actions -->", 1)[1].split("<!-- Display doc count -->", 1)[0]
+    assert "agent_ref_count" not in right_slot
+
+
+def test_right_slot_only_renders_things_that_yield_on_hover(page):
+    """留在右侧的常驻元素必须会在悬停时隐藏，否则还是会和按钮重叠。"""
+    right_slot = page.split("<!-- Indicators & Actions -->", 1)[1].split("<!-- Hover Action Buttons -->", 1)[0]
+    for line in right_slot.splitlines():
+        if "rounded-full" in line and "doc_count" in line:
+            assert "group-hover:hidden" in line

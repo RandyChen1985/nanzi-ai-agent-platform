@@ -1807,6 +1807,19 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
     'knowledge_ragflow_api_url': '对接的 RAGFlow 语义检索平台后端 API 服务地址，用于常规智能体的知识库问答检索。',
     'knowledge_ragflow_api_key': '用于与 RAGFlow 知识库服务进行安全 API 调用的身份验证令牌（API Key）。',
     'knowledge_ragflow_dataset_ids': '当前系统关联绑定的默认知识库 ID（可多选），用于为智能体问答检索背景文档和常识参考。',
+    'knowledge_quota_max_datasets_per_user': `【每人可建知识库上限 (knowledge_quota_max_datasets_per_user)】
+防止一个人无限建库把平台撑成一堆空壳。默认 50。
+
+* 只统计「自己拥有」的库：被授权进来的库不占他的额度，否则共享越多越建不了库。
+* 填 0（或负数）表示不限。
+* 代码里留有同值兜底：这一项即使从配置表里被删掉，也不会变成"无上限"。`,
+
+    'knowledge_quota_max_documents_per_dataset': `【单库文档上限 (knowledge_quota_max_documents_per_dataset)】
+防止单个库被传成垃圾场——只进不出、不解析、不整理，检索时全是噪音。默认 2000。
+
+* 只拦「新上传」：已有文档不会被删，改小上限也不会影响存量。
+* 填 0（或负数）表示不限。
+* 文档数是从 RAGFlow 实时数的；数不出来时放行上传而不是拦住——配额是防滥用，不该成为可用性的前提。`,
     'knowledge_ragflow_similarity_threshold': `【相似度阈值 (knowledge_ragflow_similarity_threshold)】
 这个参数是一个过滤器（门槛），用来决定什么样的知识库文档片段“足够相关”，可以被送给大模型。
 
@@ -2688,6 +2701,8 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'knowledge_ragflow_api_url',
       'knowledge_ragflow_api_key',
       'knowledge_ragflow_dataset_ids',
+      'knowledge_quota_max_datasets_per_user',
+      'knowledge_quota_max_documents_per_dataset',
       'knowledge_ragflow_similarity_threshold',
       'knowledge_ragflow_vector_weight',
       'knowledge_ragflow_metadata_top_k'
@@ -5685,6 +5700,48 @@ onUnmounted(() => {
                                   {{ preset.label }}
                                 </button>
                              </div>
+                          </div>
+                          <div v-else-if="['knowledge_quota_max_datasets_per_user', 'knowledge_quota_max_documents_per_dataset'].includes(item.key)">
+                             <input
+                               type="text"
+                               v-model="item.value"
+                               @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                               @input="item.value = item.value.replace(/\D/g, '')"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               :placeholder="item.key === 'knowledge_quota_max_datasets_per_user' ? '如 50' : '如 2000'"
+                             />
+                             <div class="flex flex-wrap items-center gap-1.5 mt-2">
+                                <span class="text-[11px] text-gray-400 select-none mr-0.5">常用预设:</span>
+                                <button
+                                  v-for="preset in (item.key === 'knowledge_quota_max_datasets_per_user'
+                                    ? [
+                                        { label: '20', value: '20' },
+                                        { label: '50 (默认)', value: '50' },
+                                        { label: '100', value: '100' },
+                                        { label: '不限', value: '0' },
+                                      ]
+                                    : [
+                                        { label: '500', value: '500' },
+                                        { label: '2000 (默认)', value: '2000' },
+                                        { label: '5000', value: '5000' },
+                                        { label: '不限', value: '0' },
+                                      ])"
+                                  :key="preset.value"
+                                  type="button"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  @click="item.value = preset.value"
+                                  class="px-2 py-0.5 text-xs rounded-md border transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                  :class="item.value === preset.value
+                                    ? 'bg-primary/10 text-primary border-primary/30 font-medium shadow-xs ring-1 ring-primary/20'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900'"
+                                >
+                                  {{ preset.label }}
+                                </button>
+                             </div>
+                             <p class="mt-1.5 text-[11px] text-gray-400 leading-relaxed">
+                               填 0 表示不限。超限时用户会被拒绝并看到「现在多少 / 上限多少」，不会静默失败。
+                             </p>
                           </div>
                           <div v-else-if="item.key === 'agent_context_compaction_max_chars'">
                              <input

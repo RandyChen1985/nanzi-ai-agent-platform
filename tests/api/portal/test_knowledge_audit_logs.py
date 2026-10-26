@@ -281,6 +281,10 @@ async def test_audit_records_upstream_status_code(monkeypatch):
     monkeypatch.setattr(ragflow, "KnowledgeBaseMetadataService", FakeMetaService)
     monkeypatch.setattr(ragflow, "RagFlowClient", BoomClient)
     monkeypatch.setattr(ragflow, "require_element_permission", _allow)
+    async def _no_quota(db, user_id):
+        return None
+
+    monkeypatch.setattr(ragflow.KnowledgeQuotaService, "ensure_can_create_dataset", _no_quota)
     monkeypatch.setattr(ragflow, "record_knowledge_audit", fake_record)
 
     with pytest.raises(RagFlowServiceError):

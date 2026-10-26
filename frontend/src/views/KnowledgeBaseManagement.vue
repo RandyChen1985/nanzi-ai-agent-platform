@@ -339,6 +339,74 @@ const auditLoading = ref(false)
 const auditAction = ref('')
 const auditCanManage = ref(false)
 
+// ---------- 全平台审计（管理员） ----------
+const showGlobalAudit = ref(false)
+const globalAuditItems = ref<any[]>([])
+const globalAuditTotal = ref(0)
+const globalAuditPage = ref(1)
+const globalAuditLoading = ref(false)
+const globalAuditKeyword = ref('')
+const globalAuditStart = ref('')
+const globalAuditEnd = ref('')
+const globalAuditAction = ref('')
+const GLOBAL_AUDIT_PAGE_SIZE = 20
+
+/** 审计表里落到具体库的记录显示库名，而不是一串 uuid */
+const datasetNameById = (id: string | null | undefined) => {
+  if (!id) return ''
+  const found = datasets.value.find((item: any) => (item.ragflow_dataset_id || item.id) === id)
+  return found?.platform_name || found?.name || ''
+}
+
+const globalAuditFilterParams = () => ({
+  keyword: globalAuditKeyword.value.trim() || undefined,
+  start: globalAuditStart.value || undefined,
+  end: globalAuditEnd.value || undefined,
+  action: globalAuditAction.value || undefined,
+})
+
+const openGlobalAudit = () => {
+  showGlobalAudit.value = true
+  globalAuditPage.value = 1
+  void fetchGlobalAudit(1)
+}
+
+const fetchGlobalAudit = async (page = 1) => {
+  globalAuditLoading.value = true
+  try {
+    const response = await axios.get('/api/portal/ragflow/audit-logs', {
+      params: { page, size: GLOBAL_AUDIT_PAGE_SIZE, ...globalAuditFilterParams() },
+    })
+    const data = response.data?.data || {}
+    globalAuditItems.value = data.items || []
+    globalAuditTotal.value = data.total || 0
+    globalAuditPage.value = page
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    globalAuditLoading.value = false
+  }
+}
+
+const exportGlobalAudit = async () => {
+  try {
+    const response = await axios.get('/api/portal/ragflow/audit-logs', {
+      params: { export: 'csv', ...globalAuditFilterParams() },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `knowledge-audit-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  }
+}
+
 const AUDIT_ACTION_LABELS: Record<string, string> = {
   'datasets:create': '创建知识库',
   'datasets:update_metadata': '修改设置',
@@ -347,8 +415,13 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'datasets:revoke': '取消授权',
   'datasets:transfer_owner': '转移归属人',
   'documents:upload': '上传文档',
+  'documents:replace': '替换文档',
+  'documents:update': '重命名 / 启停文档',
   'documents:delete': '删除文档',
   'documents:parse': '解析文档',
+  'chunks:create': '新增切片',
+  'chunks:update': '修改切片',
+  'chunks:delete': '删除切片',
   'datasets:sync': '从 RAGFlow 同步',
   'datasets:update_layout': '调整文档目录结构',
   'retrieval-test': '检索测试',
@@ -463,10 +536,107 @@ watch(
     auditAction.value = ''
     detailConfigOpen.value = false
     agentRefs.value = []
+    void loadDatasetQuota()
     if (detailTab.value === 'audit') loadAuditLogs(true)
     if (detailTab.value === 'references') void loadDatasetReferences()
   },
 )
+
+// ---------- 发现：看得见但还没权限的公共/部门库 ----------
+const showDiscover = ref(false)
+const discoverItems = ref<any[]>([])
+const discoverTotal = ref(0)
+const discoverPage = ref(1)
+const discoverLoading = ref(false)
+const discoverKeyword = ref('')
+const applyingDataset = ref<any>(null)
+const applyReason = ref('')
+const applySubmitting = ref(false)
+const DISCOVER_PAGE_SIZE = 10
+
+const openDiscover = () => {
+  showDiscover.value = true
+  discoverPage.value = 1
+  void fetchDiscover(1)
+}
+
+const fetchDiscover = async (page = 1) => {
+  discoverLoading.value = true
+  try {
+    const response = await axios.get('/api/portal/ragflow/datasets/discover', {
+      params: {
+        page,
+        size: DISCOVER_PAGE_SIZE,
+        keyword: discoverKeyword.value.trim() || undefined,
+      },
+    })
+    const data = response.data?.data || {}
+    discoverItems.value = data.items || []
+    discoverTotal.value = data.total || 0
+    discoverPage.value = page
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    discoverLoading.value = false
+  }
+}
+
+const startAccessRequest = (item: any) => {
+  applyingDataset.value = item
+  applyReason.value = ''
+}
+
+const submitAccessRequest = async () => {
+  const target = applyingDataset.value
+  if (!target || applySubmitting.value) return
+  applySubmitting.value = true
+  try {
+    await axios.post(
+      `/api/portal/ragflow/datasets/${encodeURIComponent(target.dataset_id)}/access-requests`,
+      { reason: applyReason.value.trim() || null },
+    )
+    showToast('申请已提交，等待库归属人审批', 'success')
+    applyingDataset.value = null
+    await fetchDiscover(discoverPage.value)
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    applySubmitting.value = false
+  }
+}
+
+const discoverStatusLabel = (status: string | null) => {
+  if (status === 'pending') return '审批中'
+  if (status === 'approved') return '已通过'
+  if (status === 'rejected') return '已驳回'
+  if (status === 'cancelled') return '已撤回'
+  return ''
+}
+
+// ---------- 配额用量 ----------
+const datasetQuota = ref<any>(null)
+const docQuotaRatio = computed(() => {
+  const docs = datasetQuota.value?.documents
+  if (!docs || !docs.limit || docs.used == null) return 0
+  return Math.min(1, Number(docs.used) / Number(docs.limit))
+})
+const docQuotaTone = computed(() => {
+  if (docQuotaRatio.value >= 0.95) return 'bg-red-500 text-red-600'
+  if (docQuotaRatio.value >= 0.8) return 'bg-amber-500 text-amber-600'
+  return 'bg-emerald-500 text-gray-400'
+})
+
+const loadDatasetQuota = async () => {
+  const dsId = currentDatasetId()
+  datasetQuota.value = null
+  if (!dsId) return
+  try {
+    const response = await axios.get(`/api/portal/ragflow/datasets/${encodeURIComponent(dsId)}/quota`)
+    datasetQuota.value = response.data?.data || null
+  } catch {
+    // 配额只是辅助信息：拿不到就不显示，不影响文档列表
+  }
+}
 
 
 const canManagePermissions = computed(() => {
@@ -730,7 +900,10 @@ const retryAfterError = async () => {
   await fetchDatasets()
 }
 
-const fetchDatasets = async () => {
+/** 引擎挂了但还能看到旧数据时置为 true，页面顶部提示"这是缓存" */
+const datasetsStale = ref(false)
+
+const fetchDatasets = async (force = false) => {
   if (!isKnowledgeEnabled.value) {
     datasets.value = []
     engineStatus.value = 'disconnected'
@@ -741,8 +914,11 @@ const fetchDatasets = async () => {
   engineStatus.value = 'checking'
   errorMessage.value = ''
   try {
-    const response = await axios.get('/api/portal/ragflow/datasets', { params: { page_size: 1000 } })
+    const response = await axios.get('/api/portal/ragflow/datasets', {
+      params: { page_size: 5000, refresh: force ? 1 : 0 },
+    })
     datasets.value = apiData(response)
+    datasetsStale.value = response.data?.stale === true
     engineStatus.value = 'connected'
     
     // 如果没有选中的节点，默认选中第一个 —— 但要优先落在当前 Tab 的范围内，
@@ -1394,7 +1570,8 @@ const syncFromRagFlow = async () => {
       `同步完成：新增 ${result.created || 0} 个，更新 ${result.updated || 0} 个，跳过 ${result.skipped || 0} 个`,
       'success'
     )
-    await fetchDatasets()
+    // 同步的语义就是「我要最新」，绕过 60s 列表缓存
+    await fetchDatasets(true)
   } catch (err) {
     errorMessage.value = extractError(err)
     // 用户可能已关闭过横幅，失败时必须重新展开，否则只剩 3 秒 toast
@@ -2495,7 +2672,8 @@ const patchDocumentLocally = (dsId: string, doc: KnowledgeDocument, patch: Parti
   const list = documentsMap.value[dsId]
   if (list) {
     const index = list.findIndex((item) => item.id === doc.id)
-    if (index >= 0) list[index] = { ...list[index], ...patch }
+    const existing = index >= 0 ? list[index] : undefined
+    if (existing) list[index] = { ...existing, ...patch }
   }
   if (selectedDocument.value?.id === doc.id) {
     selectedDocument.value = { ...selectedDocument.value, ...patch }
@@ -3106,12 +3284,24 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           type="button"
           class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"
           aria-label="刷新知识库列表"
-          @click="fetchDatasets"
+          @click="fetchDatasets(true)"
         >
           <svg class="h-5 w-5 lg:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
           </svg>
           <span class="hidden whitespace-nowrap text-sm font-medium lg:inline">刷新</span>
+        </button>
+        <button
+          v-if="isAdmin"
+          type="button"
+          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50"
+          aria-label="全平台审计"
+          title="全平台审计：按人 / 动作 / 时间查所有库的操作记录"
+          @click="openGlobalAudit"
+        >
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751A11.959 11.959 0 0112 2.714z" />
+          </svg>
         </button>
         <button
           v-if="canCreate"
@@ -3175,6 +3365,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       
       <!-- Left Side: Knowledge base & Document tree navigation -->
       <section class="w-full lg:w-96 flex-shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+        <!-- 引擎挂了但本地有上次快照：明确告诉用户"这是旧数据"，别让他以为库真的被删了 -->
+        <div
+          v-if="datasetsStale"
+          class="mx-3 mt-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-700 flex items-start gap-2"
+        >
+          <span class="shrink-0">⚠️</span>
+          <span class="flex-1 leading-relaxed">知识库引擎连接异常，当前展示的是上次成功获取的数据，可能不是最新。</span>
+          <button type="button" class="shrink-0 font-semibold hover:underline" @click="fetchDatasets(true)">刷新</button>
+        </div>
         <div class="p-4 border-b border-gray-100/80 bg-gray-50/50">
           <!-- 搜索框 + 批量入口同一行：开关常驻但不占额外一行，点开才在树顶展开操作条 -->
           <div class="flex items-center gap-2">
@@ -3194,6 +3393,19 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </svg>
               </button>
             </div>
+            <button
+              v-if="!bulkSelectMode"
+              type="button"
+              class="shrink-0 px-2.5 py-2 rounded-xl border border-gray-200 bg-white text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary transition-all flex items-center gap-1"
+              title="发现：浏览你还没有权限的公共 / 部门知识库，直接申请访问"
+              @click="openDiscover"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              发现
+            </button>
             <button
               v-if="!bulkSelectMode && datasets.length"
               type="button"
@@ -3290,14 +3502,23 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
           <div v-else-if="deptDatasetGroups.length === 0" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
             <span>{{ emptyVisibilityText }}</span>
-            <button
-              v-if="canCreate"
-              type="button"
-              class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all"
-              @click="openCreate"
-            >
-              新建知识库
-            </button>
+            <div class="flex items-center gap-2">
+              <button
+                v-if="canCreate"
+                type="button"
+                class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all"
+                @click="openCreate"
+              >
+                新建知识库
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:border-primary hover:text-primary transition-all"
+                @click="openDiscover"
+              >
+                去发现已有的库
+              </button>
+            </div>
           </div>
           <div v-else class="space-y-1">
             <div v-for="group in deptDatasetGroups" :key="group.key" class="space-y-1">
@@ -3394,6 +3615,21 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                           失联
                         </span>
                       </HoverTip>
+                      <!--
+                        引用数徽章也放名称旁：原先它在右侧指标区，而那片区域在悬停时
+                        会被绝对定位的操作按钮覆盖 —— 徽章不会隐藏，于是和按钮叠在一起。
+                        状态类信息统一靠左，右侧整块留给按钮。
+                      -->
+                      <HoverTip
+                        v-if="(dataset.agent_ref_count || 0) > 0"
+                        class="shrink-0"
+                        :text="`被 ${dataset.agent_ref_count} 个智能体引用，删除后它们将检索不到本库内容`"
+                        :width="240"
+                      >
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 font-semibold select-none whitespace-nowrap">
+                          🤖 {{ dataset.agent_ref_count }}
+                        </span>
+                      </HoverTip>
                     </div>
                     <span v-if="dataset.created_by" class="truncate text-[10px] text-gray-400">创建人: {{ dataset.created_by }}</span>
                   </div>
@@ -3401,16 +3637,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 
                 <!-- Indicators & Actions -->
                 <div class="flex items-center gap-2 shrink-0 min-w-[24px] justify-end">
-                  <!-- 被智能体引用：列表上直接可见，不用点进详情才知道这个库在喂谁 -->
-                  <HoverTip
-                    v-if="(dataset.agent_ref_count || 0) > 0"
-                    :text="`被 ${dataset.agent_ref_count} 个智能体引用，删除后它们将检索不到本库内容`"
-                    :width="240"
-                  >
-                    <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 font-semibold select-none whitespace-nowrap">
-                      🤖 {{ dataset.agent_ref_count }}
-                    </span>
-                  </HoverTip>
                   <!-- Display doc count -->
                   <span
                     v-if="!dataset.is_missing_in_ragflow"
@@ -3975,6 +4201,30 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
           <template v-if="detailTab === 'documents'">
 
+          <!-- 配额用量：接近上限时提前预警，别等传不进去才发现 -->
+          <div
+            v-if="datasetQuota?.documents?.limit"
+            class="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2"
+          >
+            <span class="text-[11px] font-medium text-gray-500 select-none">文档配额</span>
+            <span class="text-xs font-semibold font-mono" :class="docQuotaTone.split(' ')[1]">
+              {{ datasetQuota.documents.used ?? '-' }} / {{ datasetQuota.documents.limit }}
+            </span>
+            <div class="h-1.5 w-24 overflow-hidden rounded-full bg-gray-100">
+              <div
+                class="h-full rounded-full transition-all"
+                :class="docQuotaTone.split(' ')[0]"
+                :style="{ width: `${Math.round(docQuotaRatio * 100)}%` }"
+              ></div>
+            </div>
+            <span v-if="docQuotaRatio >= 0.9" class="text-[11px] font-semibold text-red-600">
+              快满了，建议先清理不再需要的文档
+            </span>
+            <span v-if="datasetQuota.owned_datasets" class="ml-auto text-[11px] text-gray-400 select-none">
+              你已拥有 {{ datasetQuota.owned_datasets.used }} / {{ datasetQuota.owned_datasets.limit }} 个知识库
+            </span>
+          </div>
+
           <!-- Tags & Notes -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
             <div class="space-y-2.5">
@@ -4006,120 +4256,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <p class="text-sm text-gray-600 bg-amber-50/20 p-3.5 rounded-xl border border-amber-100/50 leading-relaxed">
                 {{ selectedDataset.notes || '暂无备注说明。' }}
               </p>
-            </div>
-          </div>
-
-          <!-- 权限分配说明卡片 -->
-          <div class="space-y-2 bg-gray-50/20 p-4 rounded-xl border border-gray-200">
-            <div class="flex items-center justify-between">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider select-none">系统授权分配详情</h3>
-              <div class="flex items-center gap-2">
-                <span v-if="loadingPermissions" class="text-xs text-gray-400 animate-pulse flex items-center gap-1 select-none">
-                  <span class="w-2.5 h-2.5 rounded-full border border-gray-300 border-t-transparent animate-spin"></span>
-                  正在读取权限分配...
-                </span>
-                <button
-                  v-if="canManagePermissions && !loadingPermissions && !isPrivateDataset"
-                  type="button"
-                  class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold shadow-sm transition-all flex items-center gap-0.5 cursor-pointer"
-                  @click="openAddPermissionModal"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                  </svg>
-                  分配授权成员
-                </button>
-              </div>
-            </div>
-            
-            <div class="text-xs space-y-3 mt-1.5">
-              <!-- 可见范围说明：三档语义真实生效，这里必须与后端判定一致 -->
-              <p class="text-gray-500 leading-normal select-none">
-                可见范围为
-                <span class="font-bold text-gray-800 uppercase px-1.5 py-0.5 rounded bg-gray-100 text-[10px]">{{ visibilityLabel(selectedDataset) }}</span>。
-                <span v-if="visibilityOf(selectedDataset) === 'public'">公共级：创建人自动可用，其他人<b>必须</b>在下方被显式授权才能访问（不会被自动放行）。</span>
-                <span v-else-if="visibilityOf(selectedDataset) === 'team'">部门级：{{ datasetOwnerLabel(selectedDataset) || '未设置归属部门' }} 的成员（<b>含下级部门</b>）自动获得只读权限<template v-if="selectedDatasetWritable">；也可在下方额外授权给其他用户/角色</template>。</span>
-                <span v-else>
-                  个人私有：仅你自己可见，<b>不支持</b>分配授权。如需共享，请先把可见范围改为公共级或部门级。
-                  <template v-if="datasetPermissions.users.length || datasetPermissions.roles.length">
-                    下方的历史授权在当前范围内<b>不生效</b>，可逐条清除。
-                  </template>
-                </span>
-              </p>
-
-              <!-- 被指派的用户/角色列表 -->
-              <div v-if="!loadingPermissions && (datasetPermissions.users.length || datasetPermissions.roles.length)" class="flex flex-col gap-2.5 pt-2 border-t border-gray-100">
-                <div v-if="datasetPermissions.roles.length" class="flex items-start gap-2">
-                  <span class="text-gray-400 font-medium shrink-0 mt-0.5 select-none">授权角色:</span>
-                  <div class="flex flex-wrap gap-1.5">
-                    <span 
-                      v-for="r in datasetPermissions.roles" 
-                      :key="r.code"
-                      class="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold border border-blue-100/50 flex items-center gap-1 select-none group/tag"
-                    >
-                      <svg class="w-3 h-3 text-blue-500 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3zM3.31 9.397L5 10.12v4.102a8.969 8.969 0 00-1.05-.174 1 1 0 01-.89-.89 11.115 11.115 0 01.25-3.762zM9.3 16.573A9.026 9.026 0 007 14.935v-3.957l1.818.78a3 3 0 002.364 0l5.508-2.361a11.026 11.026 0 01.25 3.762 1 1 0 01-.89.89 8.968 8.968 0 00-5.35 2.524 1 1 0 01-1.4 0z" />
-                      </svg>
-                      {{ r.name }} ({{ r.code }})
-                      <button
-                        v-if="canManagePermissions"
-                        type="button"
-                        class="text-blue-400 hover:text-red-500 font-bold ml-1.5 focus:outline-none cursor-pointer text-xs"
-                        title="取消授权"
-                        @click.stop="removePermission('role', r.id, r.name)"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  </div>
-                </div>
-                
-                <div v-if="datasetPermissions.users.length" class="flex items-start gap-2">
-                  <span class="text-gray-400 font-medium shrink-0 mt-0.5 select-none">授权用户:</span>
-                  <div class="flex flex-wrap gap-1.5">
-                    <span 
-                      v-for="u in datasetPermissions.users" 
-                      :key="u.user_name"
-                      class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-100/50 flex items-center gap-1 select-none group/tag"
-                    >
-                      <svg class="w-3 h-3 text-emerald-500 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
-                      </svg>
-                      {{ u.real_name || u.user_name }} ({{ u.user_name }})
-                      <span
-                        v-if="u.id === datasetPermissions.ownerUserId"
-                        class="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-semibold"
-                      >归属人</span>
-                      <button
-                        v-if="canManagePermissions && u.id !== datasetPermissions.ownerUserId"
-                        type="button"
-                        class="text-emerald-400 hover:text-red-500 font-bold ml-1.5 focus:outline-none cursor-pointer text-xs"
-                        title="取消授权"
-                        @click.stop="removePermission('user', u.id, u.real_name || u.user_name)"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  </div>
-                </div>
-              </div>
-              
-              <div v-else-if="permissionsRestricted" class="text-gray-400 italic pt-2 border-t border-gray-100 select-none">
-                仅创建人与管理员可查看授权名单；您对该知识库是只读访问。
-              </div>
-              <div v-else-if="permissionsError" class="pt-2 border-t border-gray-100 select-none flex items-center justify-between gap-3">
-                <span class="text-amber-600 text-xs">授权信息读取失败，当前无法确认谁有访问权限</span>
-                <button
-                  type="button"
-                  class="text-xs font-semibold text-primary hover:underline shrink-0"
-                  @click="fetchDatasetPermissions(selectedDatasetId)"
-                >
-                  重试
-                </button>
-              </div>
-              <div v-else-if="!loadingPermissions" class="text-gray-400 italic pt-2 border-t border-gray-100 select-none">
-                {{ isPrivateDataset ? '个人私有知识库不支持分配授权。' : '未分配额外的用户或角色访问权限。' }}
-              </div>
             </div>
           </div>
 
@@ -4398,36 +4534,92 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   授权访问
                   <span class="ml-1 text-xs font-normal text-gray-400">{{ datasetPermissions.roles.length + datasetPermissions.users.length }} 个</span>
                 </h3>
+                <div class="flex items-center gap-2">
+                  <span v-if="loadingPermissions" class="text-[11px] text-gray-400 animate-pulse select-none">读取中…</span>
+                  <button
+                    v-if="canManagePermissions && !loadingPermissions && !isPrivateDataset"
+                    type="button"
+                    class="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                    @click="openAddPermissionModal"
+                  >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                    </svg>
+                    分配授权成员
+                  </button>
+                </div>
               </div>
               <p class="mt-1 text-[11px] text-gray-400 leading-relaxed">
                 被授权的人能打开本库、检索里面的内容。这只是访问权限 —— 给角色分配知识库不等于智能体会用它。删除本库会一并清除这些授权。
               </p>
-              <div v-if="permissionsRestricted" class="py-4 text-xs text-gray-400 italic select-none">
-                仅归属人与管理员可查看授权名单。
+
+              <!-- 可见范围说明：三档语义真实生效，这里必须与后端判定一致 -->
+              <p class="mt-2 rounded-lg bg-gray-50 px-2.5 py-2 text-[11px] leading-relaxed text-gray-500 select-none">
+                可见范围为
+                <span class="font-bold text-gray-800 uppercase px-1.5 py-0.5 rounded bg-white border border-gray-200 text-[10px]">{{ visibilityLabel(selectedDataset) }}</span>。
+                <span v-if="visibilityOf(selectedDataset) === 'public'">公共级：创建人自动可用，其他人<b>必须</b>在下方被显式授权才能访问（不会被自动放行）。</span>
+                <span v-else-if="visibilityOf(selectedDataset) === 'team'">部门级：{{ datasetOwnerLabel(selectedDataset) || '未设置归属部门' }} 的成员（<b>含下级部门</b>）自动获得只读权限<template v-if="selectedDatasetWritable">；也可在下方额外授权给其他用户/角色</template>。</span>
+                <span v-else>
+                  个人私有：仅你自己可见，<b>不支持</b>分配授权。如需共享，请先把可见范围改为公共级或部门级。
+                  <template v-if="datasetPermissions.users.length || datasetPermissions.roles.length">
+                    下面的历史授权在当前范围内<b>不生效</b>，可逐条清除。
+                  </template>
+                </span>
+              </p>
+
+              <div v-if="permissionsRestricted" class="mt-3 py-3 text-xs text-gray-400 italic select-none">
+                仅创建人与管理员可查看授权名单。
               </div>
-              <div v-else-if="permissionsError" class="py-4 text-xs text-amber-600">
-                授权信息读取失败，点「刷新」重试。
+              <div v-else-if="permissionsError" class="mt-3 flex items-center justify-between gap-3 text-xs">
+                <span class="text-amber-600">授权信息读取失败，当前无法确认谁有访问权限</span>
+                <button
+                  type="button"
+                  class="font-semibold text-primary hover:underline shrink-0"
+                  @click="fetchDatasetPermissions(selectedDatasetId)"
+                >重试</button>
               </div>
-              <div v-else-if="!datasetPermissions.roles.length && !datasetPermissions.users.length" class="py-6 text-center text-xs text-gray-400 italic select-none">
-                尚未授权给任何角色或用户
+              <div v-else-if="!loadingPermissions && !datasetPermissions.roles.length && !datasetPermissions.users.length" class="mt-3 py-3 text-xs text-gray-400 italic select-none">
+                {{ isPrivateDataset ? '个人私有知识库不支持分配授权。' : '尚未授权给任何角色或用户' }}
               </div>
-              <div v-else class="mt-3 space-y-2">
-                <div v-if="datasetPermissions.roles.length" class="flex flex-wrap gap-1.5">
-                  <span
-                    v-for="role in datasetPermissions.roles"
-                    :key="`ref-role-${role.id}`"
-                    class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[11px] font-semibold border border-indigo-100"
-                  >角色 · {{ role.name }}</span>
+              <div v-else class="mt-3 space-y-2.5">
+                <div v-if="datasetPermissions.roles.length" class="flex items-start gap-2">
+                  <span class="text-gray-400 font-medium shrink-0 mt-0.5 text-[11px] select-none">授权角色:</span>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="role in datasetPermissions.roles"
+                      :key="`ref-role-${role.id}`"
+                      class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[11px] font-semibold border border-indigo-100 flex items-center gap-1"
+                    >
+                      角色 · {{ role.name }}
+                      <button
+                        v-if="canManagePermissions"
+                        type="button"
+                        class="text-indigo-400 hover:text-red-500 font-bold focus:outline-none cursor-pointer"
+                        title="取消授权"
+                        @click.stop="removePermission('role', role.id, role.name)"
+                      >×</button>
+                    </span>
+                  </div>
                 </div>
-                <div v-if="datasetPermissions.users.length" class="flex flex-wrap gap-1.5">
-                  <span
-                    v-for="user in datasetPermissions.users"
-                    :key="`ref-user-${user.id}`"
-                    class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-100"
-                  >
-                    {{ user.real_name || user.user_name }}
-                    <span v-if="user.id === datasetPermissions.ownerUserId" class="ml-1 text-[10px] text-primary">归属人</span>
-                  </span>
+                <div v-if="datasetPermissions.users.length" class="flex items-start gap-2">
+                  <span class="text-gray-400 font-medium shrink-0 mt-0.5 text-[11px] select-none">授权用户:</span>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="user in datasetPermissions.users"
+                      :key="`ref-user-${user.id}`"
+                      class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-100 flex items-center gap-1"
+                    >
+                      {{ user.real_name || user.user_name }}
+                      <span v-if="user.id === datasetPermissions.ownerUserId" class="text-[10px] text-primary">归属人</span>
+                      <button
+                        v-if="canManagePermissions && user.id !== datasetPermissions.ownerUserId"
+                        type="button"
+                        class="text-emerald-400 hover:text-red-500 font-bold focus:outline-none cursor-pointer"
+                        title="取消授权"
+                        @click.stop="removePermission('user', user.id, user.real_name || user.user_name)"
+                      >×</button>
+                    </span>
+                  </div>
                 </div>
               </div>
             </section>
@@ -4762,7 +4954,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             <span>当前为<b>个人私有</b>：建好后只有你能看到，其他人无法访问、也不能被授权。要共享请先改成部门级或公共级。</span>
           </p>
           <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员（含下级部门）会自动获得只读权限；未选归属部门时会退化为公共级。</p>
-          <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人需要你在详情页「分配授权成员」后才能访问。</p>
+          <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人需要你在详情页「引用与授权」里点「分配授权成员」后才能访问。</p>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -5258,6 +5450,182 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         ></iframe>
       </div>
       </template>
+    </Modal>
+
+    <!-- 发现：看得见存在、但还没拿到权限的公共 / 部门库 -->
+    <Modal :show="showDiscover" title="发现知识库" size="max-w-3xl" @close="showDiscover = false">
+      <div class="space-y-3">
+        <div class="flex items-center gap-2">
+          <input
+            v-model="discoverKeyword"
+            type="search"
+            placeholder="按名称 / 描述 / 归属部门搜索"
+            class="min-w-0 flex-1 rounded-xl border border-gray-300 px-3 py-2 text-sm"
+            @keyup.enter="fetchDiscover(1)"
+          />
+          <button type="button" class="px-3 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90" @click="fetchDiscover(1)">搜索</button>
+        </div>
+        <p class="text-[11px] text-gray-400 leading-relaxed">
+          这里只列公共级与部门级知识库。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
+        </p>
+
+        <div v-if="discoverLoading" class="py-10 text-center text-sm text-gray-400">加载中…</div>
+        <div v-else-if="!discoverItems.length" class="py-10 text-center text-sm text-gray-400 italic">
+          没有可发现的知识库。你可能已经拥有全部可见库的权限，或者平台还没有公共库。
+        </div>
+        <ul v-else class="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+          <li v-for="item in discoverItems" :key="item.dataset_id" class="rounded-xl border border-gray-200 p-3 hover:border-gray-300 transition-colors">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm font-semibold text-gray-900">{{ item.name }}</p>
+                <p class="mt-0.5 text-xs text-gray-500 line-clamp-2">{{ item.description || '暂无描述' }}</p>
+                <p class="mt-1.5 text-[11px] text-gray-400">
+                  <span class="rounded bg-gray-100 px-1.5 py-0.5">{{ item.visibility === 'public' ? '公共级' : '部门级' }}</span>
+                  <span v-if="item.owner" class="ml-1.5">{{ item.owner }}</span>
+                </p>
+              </div>
+              <div class="shrink-0 pt-0.5">
+                <span
+                  v-if="item.request_status"
+                  class="text-[11px] font-semibold"
+                  :class="{
+                    'text-amber-600': item.request_status === 'pending',
+                    'text-emerald-600': item.request_status === 'approved',
+                    'text-red-500': item.request_status === 'rejected',
+                    'text-gray-400': item.request_status === 'cancelled',
+                  }"
+                >{{ discoverStatusLabel(item.request_status) }}</span>
+                <button
+                  v-else
+                  type="button"
+                  class="rounded-lg bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-primary/90"
+                  @click="startAccessRequest(item)"
+                >申请访问</button>
+              </div>
+            </div>
+          </li>
+        </ul>
+
+        <div class="flex items-center justify-between border-t pt-2">
+          <span class="text-xs text-gray-500">共 {{ discoverTotal }} 个可申请</span>
+          <div class="flex items-center gap-2">
+            <button type="button" class="px-2.5 py-1.5 border rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40" :disabled="discoverPage <= 1 || discoverLoading" @click="fetchDiscover(discoverPage - 1)">上一页</button>
+            <span class="text-xs text-gray-600 font-mono">{{ discoverPage }} / {{ Math.max(1, Math.ceil(discoverTotal / DISCOVER_PAGE_SIZE)) }}</span>
+            <button type="button" class="px-2.5 py-1.5 border rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40" :disabled="discoverPage >= Math.ceil(discoverTotal / DISCOVER_PAGE_SIZE) || discoverLoading" @click="fetchDiscover(discoverPage + 1)">下一页</button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+
+    <!-- 申请理由 -->
+    <Modal :show="!!applyingDataset" title="申请访问知识库" size="max-w-lg" @close="applyingDataset = null">
+      <div class="space-y-3">
+        <div class="rounded-xl bg-gray-50 px-3 py-2">
+          <p class="text-sm font-semibold text-gray-900">{{ applyingDataset?.name }}</p>
+          <p class="mt-0.5 text-xs text-gray-500">{{ applyingDataset?.description || '暂无描述' }}</p>
+        </div>
+        <label class="block">
+          <span class="mb-1 block text-xs font-medium text-gray-700">申请理由（可选，写清楚更容易通过）</span>
+          <textarea
+            v-model="applyReason"
+            rows="3"
+            maxlength="2000"
+            placeholder="例如：季度对账需要查 2024 年的报销制度"
+            class="w-full rounded-lg border border-gray-300 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+          />
+        </label>
+        <p class="text-[11px] text-gray-400 leading-relaxed">
+          提交后由库归属人审批，通过时会直接给你加上访问授权。审批进度可以在「个人中心 → 我的申请」里看。
+        </p>
+        <div class="flex justify-end gap-2 border-t pt-2">
+          <button type="button" class="px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 font-semibold hover:bg-gray-50" @click="applyingDataset = null">取消</button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 disabled:opacity-50"
+            :disabled="applySubmitting"
+            @click="submitAccessRequest"
+          >{{ applySubmitting ? '提交中…' : '提交申请' }}</button>
+        </div>
+      </div>
+    </Modal>
+
+    <!-- 全平台审计（管理员）：逐库的操作日志只回答"这个库发生了什么"，
+         这里回答"某个人今天动了哪些库" -->
+    <Modal :show="showGlobalAudit" title="全平台审计日志" size="max-w-5xl" @close="showGlobalAudit = false">
+      <div class="space-y-3">
+        <div class="flex flex-wrap items-end gap-2 rounded-xl bg-gray-50 border border-gray-200 px-3 py-2.5">
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] font-medium text-gray-500">关键词（操作人 / 错误信息）</span>
+            <input v-model="globalAuditKeyword" type="search" placeholder="如 alice" class="w-40 rounded-lg border border-gray-300 px-2 py-1.5 text-xs" @keyup.enter="fetchGlobalAudit(1)" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] font-medium text-gray-500">开始日期</span>
+            <input v-model="globalAuditStart" type="date" class="rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] font-medium text-gray-500">结束日期</span>
+            <input v-model="globalAuditEnd" type="date" class="rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] font-medium text-gray-500">动作</span>
+            <select v-model="globalAuditAction" class="rounded-lg border border-gray-300 px-2 py-1.5 text-xs">
+              <option value="">全部动作</option>
+              <option v-for="(label, key) in AUDIT_ACTION_LABELS" :key="key" :value="key">{{ label }}</option>
+            </select>
+          </label>
+          <button type="button" class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90" @click="fetchGlobalAudit(1)">查询</button>
+          <button type="button" class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:bg-gray-50" @click="exportGlobalAudit">导出 CSV</button>
+        </div>
+
+        <div class="max-h-[60vh] overflow-y-auto border border-gray-200 rounded-xl">
+          <table class="min-w-full text-xs">
+            <thead class="bg-gray-50 sticky top-0">
+              <tr class="text-left text-gray-500">
+                <th class="px-3 py-2 font-semibold whitespace-nowrap">时间</th>
+                <th class="px-3 py-2 font-semibold whitespace-nowrap">动作</th>
+                <th class="px-3 py-2 font-semibold">知识库</th>
+                <th class="px-3 py-2 font-semibold whitespace-nowrap">操作人</th>
+                <th class="px-3 py-2 font-semibold whitespace-nowrap">结果</th>
+                <th class="px-3 py-2 font-semibold">详情</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <tr v-if="globalAuditLoading">
+                <td colspan="6" class="px-3 py-8 text-center text-gray-400">加载中…</td>
+              </tr>
+              <tr v-else-if="globalAuditItems.length === 0">
+                <td colspan="6" class="px-3 py-8 text-center text-gray-400 italic">没有匹配的记录</td>
+              </tr>
+              <template v-else>
+              <tr v-for="item in globalAuditItems" :key="item.id" class="hover:bg-gray-50/60">
+                <td class="px-3 py-2 font-mono text-gray-500 whitespace-nowrap">{{ String(item.created_at || '').replace('T', ' ').slice(0, 19) }}</td>
+                <td class="px-3 py-2 whitespace-nowrap text-gray-700">{{ AUDIT_ACTION_LABELS[item.action] || item.action }}</td>
+                <td class="px-3 py-2 font-mono text-gray-500">
+                  <span v-if="item.dataset_id === '__global__'" class="text-gray-400">（全局）</span>
+                  <span v-else>{{ datasetNameById(item.dataset_id) || item.dataset_id }}</span>
+                </td>
+                <td class="px-3 py-2 whitespace-nowrap text-gray-700">{{ item.user_name || item.user_id || '-' }}</td>
+                <td class="px-3 py-2 whitespace-nowrap">
+                  <span v-if="item.status_code === 200" class="text-emerald-600">成功</span>
+                  <span v-else class="text-red-600" :title="item.error_message || ''">{{ item.status_code || '失败' }}</span>
+                </td>
+                <td class="px-3 py-2 text-gray-500 max-w-[22rem] truncate" :title="JSON.stringify(item.detail || {})">{{ item.error_message || JSON.stringify(item.detail || {}) }}</td>
+              </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-gray-500">共 {{ globalAuditTotal }} 条</span>
+          <div class="flex items-center gap-2">
+            <button type="button" class="px-2.5 py-1.5 border rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40" :disabled="globalAuditPage <= 1 || globalAuditLoading" @click="fetchGlobalAudit(globalAuditPage - 1)">上一页</button>
+            <span class="text-xs text-gray-600 font-mono">{{ globalAuditPage }} / {{ Math.max(1, Math.ceil(globalAuditTotal / GLOBAL_AUDIT_PAGE_SIZE)) }}</span>
+            <button type="button" class="px-2.5 py-1.5 border rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40" :disabled="globalAuditPage >= Math.ceil(globalAuditTotal / GLOBAL_AUDIT_PAGE_SIZE) || globalAuditLoading" @click="fetchGlobalAudit(globalAuditPage + 1)">下一页</button>
+          </div>
+          <button type="button" class="px-4 py-2 rounded-xl bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800" @click="showGlobalAudit = false">关闭</button>
+        </div>
+      </div>
     </Modal>
 
     <!-- View chunks modal -->

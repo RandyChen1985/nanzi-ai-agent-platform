@@ -973,6 +973,10 @@ async def test_create_dataset_rejects_duplicate_platform_name(monkeypatch):
     monkeypatch.setattr(ragflow, "KnowledgeBaseMetadataService", FakeMetaService)
     monkeypatch.setattr(ragflow, "RagFlowClient", FakeClient)
     monkeypatch.setattr(ragflow, "require_element_permission", _allow)
+    async def _no_quota(db, user_id):
+        return None
+
+    monkeypatch.setattr(ragflow.KnowledgeQuotaService, "ensure_can_create_dataset", _no_quota)
 
     with pytest.raises(ragflow.HTTPException) as exc:
         await ragflow.create_ragflow_dataset(
@@ -1013,6 +1017,10 @@ async def test_create_dataset_does_not_guess_id_when_names_ambiguous(monkeypatch
     monkeypatch.setattr(ragflow, "KnowledgeBaseMetadataService", FakeMetaService)
     monkeypatch.setattr(ragflow, "RagFlowClient", FakeClient)
     monkeypatch.setattr(ragflow, "require_element_permission", _allow)
+    async def _no_quota(db, user_id):
+        return None
+
+    monkeypatch.setattr(ragflow.KnowledgeQuotaService, "ensure_can_create_dataset", _no_quota)
 
     with pytest.raises(ragflow.HTTPException) as exc:
         await ragflow.create_ragflow_dataset(

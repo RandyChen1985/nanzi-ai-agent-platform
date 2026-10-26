@@ -650,10 +650,10 @@ import McpManagement from './McpManagement.vue'
 import TaskCenter from './TaskCenter.vue'
 import { useRoute, useRouter } from 'vue-router'
 
-type PersonalTab = 'info' | 'permissions' | 'memory' | 'tokens' | 'notifications' | 'data' | 'skills' | 'mcp' | 'tasks'
+type PersonalTab = 'info' | 'permissions' | 'requests' | 'memory' | 'tokens' | 'notifications' | 'data' | 'skills' | 'mcp' | 'tasks'
 const route = useRoute()
 const router = useRouter()
-const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp', 'tasks']
+const personalTabs: PersonalTab[] = ['info', 'permissions', 'requests', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp', 'tasks']
 const activeTab = ref<PersonalTab>(personalTabs.includes(route.query.tab as PersonalTab) ? route.query.tab as PersonalTab : 'info')
 const skillsInitialId = computed(() => String(route.query.skill_id || '').trim())
 /** 通知与深链共用的「我的技能」二级落点：mine / received / sent。 */
@@ -669,6 +669,47 @@ const permissionsSubTab = ref<'list' | 'about'>('list')
 const showAboutTab = computed(() => !!branding.value.contact_markdown?.trim())
 const contactHtml = computed(() => renderMarkdown(branding.value.contact_markdown || ''))
 const loadingPermissions = ref(false)
+
+// ---------- 我的访问申请 ----------
+const myRequests = ref<any[]>([])
+const loadingMyRequests = ref(false)
+
+const fetchMyRequests = async () => {
+    loadingMyRequests.value = true
+    try {
+        const response = await axios.get('/api/portal/ragflow/access-requests/mine')
+        myRequests.value = response.data?.data?.items || []
+    } catch {
+        // 个人中心的其他内容更重要，这里失败不弹窗，只是列表空着
+        myRequests.value = []
+    } finally {
+        loadingMyRequests.value = false
+    }
+}
+
+const cancelMyRequest = async (item: any) => {
+    try {
+        await axios.post(`/api/portal/ragflow/access-requests/${item.id}/cancel`)
+        await fetchMyRequests()
+    } catch (err: any) {
+        const detail = err?.response?.data?.detail
+        showToast(typeof detail === 'string' ? detail : '撤回失败', 'error')
+    }
+}
+
+const REQUEST_STATUS_LABELS: Record<string, string> = {
+    pending: '审批中',
+    approved: '已通过',
+    rejected: '已驳回',
+    cancelled: '已撤回',
+}
+
+const requestStatusClass = (status: string) => {
+    if (status === 'approved') return 'text-emerald-600'
+    if (status === 'rejected') return 'text-red-500'
+    if (status === 'pending') return 'text-amber-600'
+    return 'text-gray-400'
+}
 const permissions = ref<{
     roles?: string[],
     permissions?: {
@@ -755,6 +796,9 @@ watch(activeTab, (val) => {
     if (val === 'permissions' && !permissions.value.details) {
         fetchPermissions()
     }
+    if (val === 'requests') {
+        void fetchMyRequests()
+    }
 })
 
 const clearSkillsDeepLink = () => {
@@ -807,6 +851,17 @@ onMounted(() => {
                     ]"
                 >
                     我的权限
+                </button>
+                <button
+                    @click="activeTab = 'requests'"
+                    :class="[
+                        activeTab === 'requests'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
+                        'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
+                    ]"
+                >
+                    我的申请
                 </button>
                 <button 
                     @click="activeTab = 'memory'"
@@ -1415,6 +1470,48 @@ onMounted(() => {
         </div>
 
         <!-- Permissions Tab -->
+        <div v-else-if="activeTab === 'requests'">
+            <div class="mb-3 flex items-center justify-between">
+                <p class="text-xs text-gray-500">你提交的知识库访问申请。审批通过后授权自动生效，无需再找归属人手工加。</p>
+                <button type="button" class="text-xs text-blue-600 hover:underline disabled:opacity-50" :disabled="loadingMyRequests" @click="fetchMyRequests">刷新</button>
+            </div>
+
+            <div v-if="loadingMyRequests" class="flex justify-center py-10">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+            <div v-else-if="!myRequests.length" class="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
+                还没有提交过申请。可以在知识库页点「发现」，找到公共库后申请访问。
+            </div>
+            <ul v-else class="space-y-2">
+                <li v-for="item in myRequests" :key="item.id" class="rounded-xl border border-gray-200 p-3 sm:p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0 flex-1">
+                            <p class="truncate text-sm font-semibold text-gray-900">{{ item.dataset_name || item.dataset_id }}</p>
+                            <p v-if="item.reason" class="mt-1 text-xs text-gray-500 leading-relaxed line-clamp-2">理由：{{ item.reason }}</p>
+                            <p v-if="item.review_comment" class="mt-1 text-xs leading-relaxed" :class="item.status === 'rejected' ? 'text-red-500' : 'text-gray-500'">
+                                审批意见：{{ item.review_comment }}
+                            </p>
+                            <p class="mt-1.5 text-[11px] text-gray-400">
+                                {{ String(item.created_at || '').replace('T', ' ').slice(0, 16) }}
+                                <span v-if="item.reviewer_user_name"> · 审批人 {{ item.reviewer_user_name }}</span>
+                            </p>
+                        </div>
+                        <div class="shrink-0 text-right">
+                            <span class="text-[11px] font-semibold" :class="requestStatusClass(item.status)">
+                                {{ REQUEST_STATUS_LABELS[item.status] || item.status }}
+                            </span>
+                            <button
+                                v-if="item.status === 'pending'"
+                                type="button"
+                                class="mt-1.5 block w-full text-[11px] text-gray-400 hover:text-red-500 transition-colors"
+                                @click="cancelMyRequest(item)"
+                            >撤回</button>
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        </div>
+
         <div v-else-if="activeTab === 'permissions'">
             <div v-if="loadingPermissions" class="flex justify-center py-10">
                 <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>

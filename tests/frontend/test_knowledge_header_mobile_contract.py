@@ -35,12 +35,13 @@ def test_narrow_actions_are_icon_only_in_a_single_row():
     assert "grid-cols-2" not in actions
     assert "col-span-2" not in actions
 
-    # 三个操作按钮：窄屏 40x40 方形，lg 恢复文字按钮的自动宽度
-    assert actions.count("inline-flex h-10 w-10 shrink-0") == 3
+    # 四个操作按钮（引擎状态 → 同步 → 刷新 → 新建）：窄屏 40x40 方形，
+    # lg 恢复文字按钮的自动宽度。加按钮时这里要跟着改。
+    assert actions.count("inline-flex h-10 w-10 shrink-0") == 4
     assert actions.count("lg:h-auto lg:w-auto") == 3
 
     # 图标按钮没有可见文字，必须有可读名称（带引号，避开注释里的提法）
-    assert actions.count('aria-label="') == 3
+    assert actions.count('aria-label="') == 4
     assert "刷新知识库列表" in actions
     assert "新建知识库" in actions
     assert "从 RAGFlow 同步" in actions

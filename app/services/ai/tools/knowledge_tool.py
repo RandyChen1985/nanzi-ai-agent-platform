@@ -1,5 +1,6 @@
 import logging
 import json
+import time
 from app.services.ai.tools.tool_compat import tool
 from typing import Any, Optional, List
 from app.services.ai.ragflow_client import RagFlowClient
@@ -131,6 +132,7 @@ async def search_knowledge_base(query: str, dataset_ids: Optional[str | list[str
     )
 
     try:
+        retrieval_started = time.time()
         chunks = await client.retrieve(
             query,
             target_datasets,
@@ -138,6 +140,42 @@ async def search_knowledge_base(query: str, dataset_ids: Optional[str | list[str
             similarity_threshold=threshold,
             vector_similarity_weight=vector_weight,
         )
+
+        # 效果埋点：零结果率是判断"知识库覆盖到哪"的关键信号，
+        # 所以命中与否都要记。旁路统计，失败绝不能影响检索。
+        try:
+            from app.services.knowledge_retrieval_log_service import (
+                SOURCE_AGENT,
+                KnowledgeRetrievalLogService,
+            )
+
+            ctx_user = get_current_agent_context()
+            await KnowledgeRetrievalLogService.log(
+                query=query,
+                dataset_ids=target_datasets,
+                hit_count=len(chunks),
+                top_score=(
+                    max(
+                        (
+                            float(chunk.get("similarity") or 0)
+                            for chunk in chunks
+                            if isinstance(chunk, dict)
+                        ),
+                        default=None,
+                    )
+                    if chunks
+                    else None
+                ),
+                latency_ms=int((time.time() - retrieval_started) * 1000),
+                source=SOURCE_AGENT,
+                user=(
+                    {"user_id": ctx_user.user_id, "user_name": None}
+                    if ctx_user and ctx_user.user_id
+                    else None
+                ),
+            )
+        except Exception as log_exc:  # pragma: no cover - 埋点失败不影响检索
+            logger.debug("[KnowledgeTool] 检索日志写入跳过: %s", log_exc)
 
         if not chunks:
             empty_payload = {

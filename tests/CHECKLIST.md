@@ -591,3 +591,18 @@
 
 | B5 切片 ↔ 原文联动 | `KnowledgeBaseManagement.vue`、`tests/frontend/test_knowledge_chunk_source_contract.py`（新增） | 切片卡片加「查看原文 p.N」：页码优先 `page_no`、回退 `positions` JSON；PDF 带 `#page=N` 时**强制走 iframe**（file-viewer 的 pdf 渲染器不认这个 fragment），其余格式只打开文件并注明不支持跳页；关闭预览清空页锚 | 契约 5 |
 **回归**：`vue-tsc --noEmit` 0 错误。**未做**：B4 解析配置（用户明确不做）、B6 通知、B7 跨部门授权、B8 内容来源扩展。
+
+## 2026-10-26 知识库管理 C 批（平台能力，C1/C2/C4/C5/C7/C8）
+
+| 项 | 主要文件 | 说明 | 迁移 | 验证 |
+|---|---|---|---|---|
+| C1 列表性能与降级 | `ragflow_client.py`（`list_all_datasets` / `_cached` / `cached_datasets_snapshot` / `clear_dataset_list_cache`）、`ragflow.py`（`/datasets` 加 `refresh`）、`KnowledgeBaseManagement.vue` | 按 `total` 翻完所有页（修掉 >1000 条静默截断）、页间并发 + 按 id 去重、60s TTL + 单飞锁、`refresh=1` 绕过；引擎挂时返回上次快照并标 `stale`，前端顶部提示「这是缓存」 | 无 | `test_ragflow_client_list_all.py` 5 + 契约 3 |
+| C5 全局审计 | `ragflow.py`（`GET /audit-logs`）、`KnowledgeBaseManagement.vue` | 跨库按人/动作/时间/关键词查（含 `__global__` 记录），`export=csv` 带 UTF-8 BOM；仅管理员；知识库页盾牌入口 | 无 | `test_knowledge_global_audit.py` 5 + 契约 4 |
+| C8 配额与容量 | `app/services/knowledge_quota_service.py`（新）、`ragflow.py`（建库/上传校验 + `GET /datasets/{id}/quota`）、`ragflow_client.py`（`count_documents`）、`KnowledgeBaseManagement.vue` | 每人 50 库 / 每库 2000 文档，均可配置、非法值回退默认、`0` = 不限；超限文案带「现在多少 / 上限多少 / 怎么办」；统计失败不拦上传（配额是防滥用，不是可用性前提）；详情页显示用量进度条 | 无 | `test_knowledge_quota_service.py` 8 + 端点 3 + 契约 3 |
+| C7 访问申请与审批 | `app/models/knowledge.py`（`KnowledgeAccessRequest`）、`app/services/knowledge_access_request_service.py`（新）、`ragflow.py`（7 个端点）、`KnowledgeBaseManagement.vue`（发现抽屉）、`PersonalCenter.vue`（我的申请）、`Users.vue`（访问审批） | 未授权用户可在「发现」里看到 public/team 库并申请（private 不露出）；同一人同一库只能一条 pending；不能审批自己的申请；通过即写 `ResourcePermission`（与手工授权等价，撤回/审计沿用既有链路） | **V191 / PG91**（与 C2/C4 合用同一文件） | service 8 + 端点 5 + 契约 7 |
+| C2 检索日志与零结果率 | `app/models/knowledge.py`（`KnowledgeRetrievalLog`）、`app/services/knowledge_retrieval_log_service.py`（新）、`ragflow.py`（`GET /retrieval-stats`）、`knowledge_tool.py`（智能体埋点）、`KnowledgeMetrics.vue` | 记录每次检索的命中数与耗时（`test` / `agent` 两个来源），指标给出查询量、**零结果率**、平均命中、P95 延迟、Top 搜不到的 query；写入失败静默（检索是主流程） | 见 V191 / PG91 | `test_knowledge_retrieval_stats.py` 7 + 契约 4 |
+| C4 治理巡检 | `app/models/knowledge.py`（`KnowledgeHealthSnapshot`）、`app/services/knowledge_health_service.py`（新）、`ragflow.py`（`POST /health/scan`、`GET /health`）、`KnowledgeMetrics.vue` | 按天落快照：文档数 / 已解析 / 解析中 / 失败 / 未解析 / 切片数 / 是否失联 / 停留天数；汇总失联、空库、解析失败、90 天未更新；未知解析状态算「未解析」而非失败（避免长期挂着假告警）；同日重跑覆盖 | 见 V191 / PG91 | `test_knowledge_health_service.py` 4 + 契约 4 |
+
+**回归**：`tests/api/portal` + `tests/services` = 2912 passed / 11 skipped / 9 xfailed；受影响前端契约 494 passed；`vue-tsc --noEmit` 0 错误。
+**未做**：C3 评测集、C6 前端拆分（两项未列入本轮范围）。
+**执行顺序**：先跑 `db-prod/V191-create_knowledge_governance_tables.sql`（或 `db-prod-pg/V91-create_knowledge_governance_tables.sql`，一个文件建三张表），再重启后端 —— C7/C2/C4 依赖这三张表；C1/C5/C8 无迁移可先上。
