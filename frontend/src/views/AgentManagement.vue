@@ -2309,6 +2309,19 @@ const openAgentModal = (agent?: AIAgent) => {
   showAgentModal.value = true;
 };
 
+/**
+ * 提交给创建接口的智能体元数据：剥离 `is_system`。
+ *
+ * 系统级是生产发布基线，只能通过「发布为系统级」或提交申请审核获得（每次都有
+ * 事件与留痕）。后端 `create_agent` / `create_agent_onboarding` 对 `is_system=true`
+ * 直接 400，所以新建链路不能整包透传 `agentForm`——旧前端或残留的开关状态会让
+ * 保存「看起来能点、一点就报错」。
+ */
+const agentPayloadWithoutSystemFlag = (): Partial<AIAgentBase> => {
+  const { is_system: _ignoredSystemFlag, ...payload } = agentForm.value as Record<string, any>;
+  return payload as Partial<AIAgentBase>;
+};
+
 const saveAgent = async (exitAfterSave = false) => {
   if (selectedAgent.value && selectedAgent.value.is_editable === false) {
     showToast("无权限修改此智能体", "error");
@@ -2391,7 +2404,7 @@ const saveAgent = async (exitAfterSave = false) => {
   // 「是否系统级」不能由表单改动：新建/复制路径必须剔除它（后端会 400）。
   // 必须放在上面所有 agentForm 同步**之后**：这是浅拷贝，早一步取值会把
   // engine_config / agent_type / capabilities 的改动全部丢掉。
-  const { is_system: _ignoredSystemFlag, ...agentPayload } = agentForm.value as Record<string, any>;
+  const agentPayload = agentPayloadWithoutSystemFlag();
 
   try {
     if (isEditingAgent.value && selectedAgent.value) {
@@ -2728,7 +2741,7 @@ const createExternalEngineAgent = async () => {
     agentForm.value.capabilities,
     agentForm.value.engine_type,
   );
-  const created = await agentApi.createAgent(agentForm.value);
+  const created = await agentApi.createAgent(agentPayloadWithoutSystemFlag() as any);
   selectedAgent.value = created.data;
   isCreatingAgent.value = false;
   showVersionModal.value = false;
@@ -2789,7 +2802,7 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
       return await createExternalEngineAgent();
     }
     const created = await agentApi.createAgentOnboarding({
-      ...agentForm.value,
+      ...agentPayloadWithoutSystemFlag(),
       onboarding_key: onboardingKey.value,
     });
     onboardingAgent.value = created.data.agent;
@@ -4987,41 +5000,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
 
         <div v-if="!isOnboardingFlow || onboardingStep === 'BASIC'" class="space-y-4">
-          <!-- 系统级不在这里切换：只能走「发布为系统级」或提交申请审核，
-               每次上架/下架/配置变更都会留事件（见 AgentSystemPublishModal / 发布历史） -->
-          <div
-            v-if="selectedAgent && selectedAgent.is_system"
-            class="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3"
-          >
-            <div
-              class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-white text-blue-600"
-            >
-              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                />
-              </svg>
-            </div>
-            <div class="space-y-0.5">
-              <p class="flex flex-wrap items-center gap-2 text-sm font-semibold text-blue-900">
-                系统级智能体
-                <span
-                  v-if="isMainAgent(selectedAgent)"
-                  class="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
-                >
-                  主助手固定锁定
-                </span>
-              </p>
-              <p class="text-xs leading-relaxed text-blue-800/80">
-                「是否系统级」不在此处切换：由管理员「发布为系统级」，或所有者提交申请后审核通过。
-                下架前所有者对内容只读（只能复制一份继续开发），每次上架、下架与配置变更都会记入发布历史。
-              </p>
-            </div>
-          </div>
-
         <div class="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_8rem]">
         <AgentNameField
           v-model="agentForm.name"
@@ -5647,7 +5625,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :is-creating-agent="isCreatingAgent"
       :is-onboarding-flow="isOnboardingFlow"
       :agent-form="agentForm"
-      :can-configure-system-agent="userInfo?.role === 'admin'"
       :version-form="versionForm"
       :global-agent-toolcall-timeout="globalAgentToolcallTimeout"
       :selected-agent="selectedAgent"

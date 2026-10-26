@@ -94,7 +94,11 @@ def test_agent_payload_snapshot_taken_after_form_sync():
     """
     src = _source()
 
-    snapshot_at = src.index("...agentPayload }")
+    # 剥离 is_system 的 helper 自身必须真的剔除该字段（后端对新建传 true 直接 400）
+    helper = src[src.index("const agentPayloadWithoutSystemFlag = "):src.index("const saveAgent = ")]
+    assert "is_system: _ignoredSystemFlag" in helper
+
+    snapshot_at = src.index("const agentPayload = agentPayloadWithoutSystemFlag();")
     for later_write in (
         "agentForm.value.engine_config = {",
         "agentForm.value.agent_type = 'GENERAL';",
@@ -108,3 +112,6 @@ def test_agent_payload_snapshot_taken_after_form_sync():
     assert "agentApi.updateAgent(selectedAgent.value.id, {" in src
     assert "is_system: selectedAgent.value.is_system" in src
     assert "await agentApi.createAgent(agentPayload as any)" in src
+    # 新建链路（外部引擎直建 / onboarding）一律走剥离 helper，不得整包透传 agentForm
+    assert "createAgent(agentForm.value)" not in src
+    assert "await agentApi.createAgent(agentPayloadWithoutSystemFlag() as any)" in src

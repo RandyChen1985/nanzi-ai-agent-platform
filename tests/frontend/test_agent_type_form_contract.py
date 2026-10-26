@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 import pytest
 
@@ -44,14 +45,9 @@ def test_agent_creation_reuses_version_drawer_with_agent_step():
     assert "OpenClaw" in drawer_source
     assert "https://api.openclaw.example.com" in drawer_source
     assert "bot-123" in drawer_source
-    assert "系统智能体" in drawer_source
-    assert "Admin Only" in drawer_source
-    # 系统智能体开关改为独立配置栏，激活态仍为蓝色高亮
-    assert ':class="agentForm.is_system' in drawer_source
-    assert "'border-blue-200 bg-blue-50" in drawer_source
-    # 旧提示“系统预置智能体，防止误删并提高路由权重”改写为内置与委派说明
-    assert "平台官方内置智能体" in drawer_source
-    assert "只有系统智能体才能被自动委派" in drawer_source
+    # 系统级不接受新建/编辑表单设置：抽屉里不放任何开关或说明块（发布入口在卡片菜单）
+    assert "系统级状态" not in drawer_source
+    assert "发布为系统级" in drawer_source
     assert "扩展能力标签" in drawer_source
     assert "系统内置标签" in drawer_source
     assert "lockedPrimaryCapability" in drawer_source
@@ -242,10 +238,10 @@ def test_agent_edit_dialog_is_compact_and_locks_engine_type_only():
     edit_dialog = management[management.index('v-if="showAgentModal && isEditingAgent"'):]
 
     assert 'size="max-w-4xl"' in edit_dialog[:300]
-    # 系统级不再通过编辑表单切换：只能走「发布为系统级」或申请审核（有事件、有流程），
-    # 表单里只保留一条只读说明
+    # 系统级不再通过编辑表单切换：只能走「发布为系统级」或申请审核（有事件、有流程）。
+    # 表单里也不再解释这块——发布/下架/发布历史都在智能体卡片的操作菜单里。
     assert "设为系统智能体" not in management
-    assert "「是否系统级」不在此处切换" in management
+    assert "「是否系统级」不在此处切换" not in management
     assert "发布为系统级" in management
     assert '<template #footer>' in management
     assert "系统级智能体" in management
@@ -269,6 +265,71 @@ def test_agent_edit_dialog_is_compact_and_locks_engine_type_only():
     assert '<slot name="footer"></slot>' in modal
     assert "max-h-[calc(100vh-2rem)]" in modal
     assert "min-h-0 flex-1" in modal
+
+
+def test_system_agent_flag_is_read_only_in_version_drawer():
+    """新建/编辑智能体的版本抽屉里不得再有「设为系统智能体」开关。
+
+    系统级是生产发布基线：后端 `create_agent` / `create_agent_onboarding` 对
+    `is_system=true` 直接 400，只能走「发布为系统级」或提交申请审核。抽屉里残留
+    开关会让管理员勾选后保存必失败（主助手 watch 强制置位同样会 400），因此这里
+    同时断言「开关 / 强制置位 / 整包透传」三件事都不存在。
+    """
+    drawer = Path("frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text()
+    management = Path("frontend/src/views/AgentManagement.vue").read_text()
+
+    assert "设为系统智能体" not in drawer
+    assert 'v-model="agentForm.is_system"' not in drawer
+    assert "agentForm.is_system = true" not in drawer
+    assert "Admin Only" not in drawer
+
+    # 说明块整体移除：新建与编辑都不再占位，发布/下架/发布历史都在卡片菜单
+    assert "系统级状态" not in drawer
+    assert "主专家固定锁定" not in drawer
+    assert "showSystemStatusNotice" not in drawer
+    assert "发布为系统级" in drawer
+    assert "当前以普通智能体创建" not in drawer
+
+    # 新建链路（外部引擎直建、onboarding、统一 saveAgent）都必须剥离 is_system，
+    # 否则整包透传 agentForm 会让后端 400。
+    assert "createAgent(agentForm.value)" not in management
+    assert "agentPayloadWithoutSystemFlag" in management
+    assert re.search(
+        r"createAgentOnboarding\(\{\s*\.\.\.agentPayloadWithoutSystemFlag\(\)", management
+    )
+    assert re.search(r"createAgent\(agentPayloadWithoutSystemFlag\(\)", management)
+
+
+def test_edited_system_agent_keeps_only_compact_badge_in_drawer_header():
+    """编辑系统级智能体时，只在「智能体信息」标题旁留一枚小徽章。
+
+    用户反馈：整块说明太占位，但完全看不到「这是系统级」又没底。折中为标题旁的
+    小标记：只表白状态，发布/下架入口仍只在卡片菜单，不再重复整段解释。
+    """
+    drawer = Path("frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text()
+
+    assert 'v-if="!isCreatingAgent && selectedAgent?.is_system"' in drawer
+    assert "系统级智能体：发布、下架请走智能体卡片的操作菜单" in drawer
+    # 仍是徽章，不是重新长回来的说明块
+    assert "系统级状态" not in drawer
+    assert "主专家固定锁定" not in drawer
+
+
+def test_creation_review_step_points_system_publish_to_approval_flow():
+    """新建态不显示系统级状态块，改为在「确认保存」步给一条发布审批提示。
+
+    用户反馈：新建时那块只读说明占位置又没有可操作项，应该收进最后一步。
+    LOCAL 引擎说明「走发布审批流程」，外部引擎直接说明不支持系统级。
+    """
+    drawer = Path("frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text()
+
+    review_section = drawer[drawer.index("<!-- Step 5: Review -->"):]
+    assert "温馨提示" in review_section
+    assert "系统发布审批流程" in review_section
+    assert "申请发布为系统级" in review_section
+    assert "不支持设为系统级" in review_section
+    # 提示只在新建流程出现，编辑既有智能体不重复打扰
+    assert 'v-if="isCreatingAgent"' in review_section
 
 
 def test_onboarding_columns_are_in_v103_migration():
