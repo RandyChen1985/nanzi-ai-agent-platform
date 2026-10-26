@@ -673,12 +673,20 @@ class PermissionService:
         owner_dept_paths: dict[int, str] = {}
         my_dept_paths: list[str] = []
         if team_owner_ids:
-            from app.models.department import Department, UserDepartment
+            from app.models.department import (
+                DEPARTMENT_STATUS_ENABLED,
+                Department,
+                UserDepartment,
+            )
 
+            # 停用部门（status=0）不再构成可见范围：与 user_dimension_service 的
+            # 部门遍历口径保持一致，否则「维度里看不到这个部门」但「它的 team 库
+            # 仍然自动可见」，两边对不上。
             dept_rows = (
                 await self.db.execute(
                     select(Department.id, Department.path).where(
-                        Department.id.in_(team_owner_ids)
+                        Department.id.in_(team_owner_ids),
+                        Department.status == DEPARTMENT_STATUS_ENABLED,
                     )
                 )
             ).all()
@@ -690,7 +698,10 @@ class PermissionService:
                     select(Department.path)
                     .select_from(UserDepartment)
                     .join(Department, Department.id == UserDepartment.dept_id)
-                    .where(UserDepartment.user_id == int(user_id))
+                    .where(
+                        UserDepartment.user_id == int(user_id),
+                        Department.status == DEPARTMENT_STATUS_ENABLED,
+                    )
                 )
             ).all()
             my_dept_paths = [str(path) for (path,) in my_rows if path]
@@ -736,7 +747,12 @@ class PermissionService:
                     KnowledgeBaseMetadata.ragflow_dataset_id,
                     KnowledgeBaseMetadata.visibility,
                     KnowledgeBaseMetadata.created_by,
-                ).where(KnowledgeBaseMetadata.ragflow_dataset_id.in_(ids))
+                ).where(
+                    KnowledgeBaseMetadata.ragflow_dataset_id.in_(ids),
+                    # 软删的库按「查不到」处理（与 docstring 的口径一致）：
+                    # 它已经不会被检索到，不必再参与私有库摘除判定。
+                    KnowledgeBaseMetadata.status != "deleted",
+                )
             )
         ).all()
 
@@ -1247,7 +1263,10 @@ class PermissionService:
                 select(
                     KnowledgeBaseMetadata.ragflow_dataset_id,
                     KnowledgeBaseMetadata.visibility,
-                ).where(KnowledgeBaseMetadata.ragflow_dataset_id.in_(ids))
+                ).where(
+                    KnowledgeBaseMetadata.ragflow_dataset_id.in_(ids),
+                    KnowledgeBaseMetadata.status != "deleted",
+                )
             )
         ).all()
         private_ids = {

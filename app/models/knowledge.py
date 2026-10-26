@@ -20,12 +20,14 @@ class KnowledgeBaseMetadata(Base):
     # 展示用文本快照：可能是历史自由文本，也可能是写入时按部门名回填的快照。
     # 部门改名后以 owner_dept_id 关联出的最新部门名为准，这里只做兜底。
     owner = Column(String(100), nullable=True, comment="业务归属部门/负责人（文本快照）")
-    # 业务归属部门：**仅用于浏览/过滤维度**，不参与任何权限判定。
+    # 业务归属部门。public/private 下只用于浏览分组与搜索；
+    # team（部门级）下它同时是权限判定依据：归属部门（含下级部门）成员据此
+    # 自动获得只读权（见 PermissionService.resolve_knowledge_dataset_access）。
     owner_dept_id = Column(
         BigInteger,
         nullable=True,
         index=True,
-        comment="业务归属部门 ID（仅浏览过滤，不参与权限）",
+        comment="业务归属部门 ID（team 级下的自动只读依据）",
     )
     visibility = Column(
         String(32),

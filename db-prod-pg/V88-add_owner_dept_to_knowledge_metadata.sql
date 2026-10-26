@@ -3,8 +3,9 @@
 -- 与 MySQL V188 对齐：新增 `owner_dept_id` 指向 `ai_agent_departments.id`，
 -- 供左侧知识库树做部门分组与「包含下级部门」过滤。
 --
--- 明确边界：该列**不参与任何权限模型**，可读/可写仍由
--- `PermissionService.get_knowledge_base_access()` 判定。
+-- 明确边界：该列**不是纯展示字段**。public/private 下只影响左侧树分组与搜索；
+-- 但 team（部门级）下它是自动只读权限的判定依据（归属部门含下级部门的成员自动可读）。
+-- 可写判定仍由 created_by / 管理员决定。
 --
 -- 存量数据：历史 `owner` 文本保留，`owner_dept_id` 为 NULL 者归入「未关联部门」。
 --

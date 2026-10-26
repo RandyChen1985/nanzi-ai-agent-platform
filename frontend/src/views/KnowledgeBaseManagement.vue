@@ -460,7 +460,15 @@ const openEdit = (dataset: KnowledgeBase) => {
     showToast('知识库引擎未连接，暂不能编辑知识库', 'warning')
     return
   }
-  selectedDataset.value = dataset
+  // 从左侧树直接点「编辑」时，详情页可能还停在上一个库：datasetPermissions
+  // 会是别人的数据，弹窗里「将失去 N 个授权」的数字就错位了。走 selectDatasetNode
+  // 顺带把权限列表刷成这个库的；已经选中时只更新引用，不重复请求。
+  const editingDsId = dataset.ragflow_dataset_id || dataset.id || ''
+  if (editingDsId && editingDsId !== selectedId.value) {
+    selectDatasetNode(dataset)
+  } else {
+    selectedDataset.value = dataset
+  }
   visibilityMenuOpen.value = false
   deptMenuOpen.value = false
   form.value = {
@@ -469,7 +477,10 @@ const openEdit = (dataset: KnowledgeBase) => {
     chunk_method: 'naive',
     ownerDeptId: dataset.owner_dept_id || 0,
     ownerText: dataset.owner || '',
-    visibility: dataset.visibility || 'private',
+    // 与详情页展示口径一致：元数据缺失 / visibility 为空时按 public 兜底。
+    // 原先写 `|| 'private'`，这类库在弹窗里会显示成「个人私有」，用户只改个
+    // 名称保存就把它静默改成 private，其他被授权的人瞬间失去访问。
+    visibility: visibilityOf(dataset),
     tagsText: (dataset.tags || []).join(', '),
     notes: dataset.notes || '',
     extraConfigText: JSON.stringify(dataset.local_metadata?.extra_config || {}, null, 2)
@@ -554,10 +565,15 @@ const fetchDatasets = async () => {
     datasets.value = apiData(response)
     engineStatus.value = 'connected'
     
-    // 如果没有选中的节点，默认选中第一个
+    // 如果没有选中的节点，默认选中第一个 —— 但要优先落在当前 Tab 的范围内，
+    // 否则会出现「左侧公共级 0 个、右侧却显示着一个部门级知识库」的错位。
     if (!selectedId.value && datasets.value.length > 0) {
-      const firstDataset = datasets.value[0]
-      if (firstDataset) selectDatasetNode(firstDataset)
+      const firstDataset = visibilityScopeDatasets.value[0] ?? datasets.value[0]
+      if (firstDataset) {
+        const scope = visibilityOf(firstDataset)
+        if (scope !== activeVisibility.value) activeVisibility.value = scope
+        selectDatasetNode(firstDataset)
+      }
     } else if (selectedType.value === 'dataset' && selectedId.value) {
       // 保持之前的选中，更新数据引用
       const found = datasets.value.find(d => (d.ragflow_dataset_id || d.id) === selectedId.value)
@@ -1434,7 +1450,9 @@ const saveDatasetExtraConfig = async (dataset: KnowledgeBase, extraConfig: any) 
     name: dataset.platform_name || dataset.name,
     description: dataset.platform_description || dataset.description,
     owner: dataset.owner || '',
-    visibility: dataset.visibility || 'private',
+    // 这个函数是「移动文档后静默保存 extra_config」，但它会整份 PUT 元数据。
+    // 兜底值写错时的后果比编辑弹窗更隐蔽：用户只是挪了个文档，库就被改成私有了。
+    visibility: visibilityOf(dataset),
     tags: dataset.tags || [],
     notes: dataset.notes || '',
     extra_config: extraConfig
@@ -2056,7 +2074,11 @@ const applyDeepLinkFromQuery = () => {
   const dataset = datasets.value.find(
     (item) => (item.ragflow_dataset_id || item.id) === targetDatasetId
   )
-  if (dataset) selectDatasetNode(dataset)
+  if (!dataset) return
+  // 目标库可能是部门级/私有：左侧 Tab 若停在公共级就根本看不到这个节点，
+  // 表现为「右侧凭空选中了一个左侧不存在的库」。
+  activeVisibility.value = visibilityOf(dataset)
+  selectDatasetNode(dataset)
 }
 
 onMounted(async () => {

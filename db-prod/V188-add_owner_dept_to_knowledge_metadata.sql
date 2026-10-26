@@ -8,9 +8,10 @@
 --   与「包含下级部门」过滤。
 --
 -- 明确边界（重要）：
---   该列**不参与任何权限模型**。知识库的可读/可写判定仍由
---   `PermissionService.get_knowledge_base_access()` 决定（管理员 / ResourcePermission 授权 /
---   created_by 创建人 / 系统默认公开库），与 owner、owner_dept_id、visibility 均无关。
+--   该列**不是纯展示字段**。在 public / private 下它只用于左侧树分组与搜索；
+--   但在 team（部门级）下它是**自动只读权限的判定依据**：归属该部门（含下级部门）
+--   的成员据此自动获得只读权（见 PermissionService.resolve_knowledge_dataset_access）。
+--   换言之，改归属部门 = 改可见人群。可写判定仍由 created_by / 管理员决定。
 --
 -- 存量数据：
 --   历史 `owner` 文本原样保留（继续展示在详情页），`owner_dept_id` 保持 NULL，

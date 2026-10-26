@@ -3569,7 +3569,11 @@ const methodBadgeClass = (method: string) => {
 };
 
 const selectableResources = computed(() =>
-  currentResources.value.filter((r: any) => !isMissingKnowledgeBase(r)),
+  // 私有库不能参与「全选」：它在卡片上是 disabled 的，一旦被全选写进
+  // permissionData 就会出现「置灰却被勾上」的矛盾状态，且保存时被后端静默剔除。
+  currentResources.value.filter(
+    (r: any) => !isMissingKnowledgeBase(r) && !isPrivateKnowledgeBase(r),
+  ),
 );
 
 const isAllSelected = computed(

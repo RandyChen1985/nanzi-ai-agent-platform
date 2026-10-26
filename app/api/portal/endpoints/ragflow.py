@@ -133,7 +133,9 @@ async def _resolve_owner_department(
     这样部门改名后展示以部门表为准（前端按 owner_dept_id 映射），这里的快照
     仅用于兼容旧数据与直接读库的场景。
 
-    注意：该字段**不参与权限判定**，只用于左侧树的部门分组与过滤。
+    注意：该字段并非纯展示字段。public/private 下它只影响浏览分组与搜索，
+    但 team（部门级）下它是**自动只读权限的判定依据**：归属部门（含下级部门）
+    的成员据此自动获得只读权。改归属部门等于改可见人群。
     """
     if not owner_dept_id:
         return None, None
