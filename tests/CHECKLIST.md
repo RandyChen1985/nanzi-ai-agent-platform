@@ -580,3 +580,14 @@
 | A9 失联库可见性 | `knowledge_base_service.py`（`missing_allow_ids`）、`ragflow.py`、`tests/services/test_knowledge_base_metadata_service.py` | 非管理员按 `accessible_ids` 过滤失联库（原来会看到全平台残留元数据）；归属人能看到自己的库「失联了」而不是凭空消失 | 新增 2 项 |
 
 **回归**：知识库相关后端 **79 passed**；`tests/services` + `tests/api/portal` 见下；`tests/frontend` 全量 **3150 passed / 1 skipped**；`vue-tsc --noEmit` 0 错误。**未做**：回收站/恢复（用户明确排除）、未跑 `./dev.sh`、未 `git commit`。
+
+## 2026-10-26 知识库管理 B 批（内容运维，B1–B3）
+
+| 项 | 主要文件 | 说明 | 验证 |
+|---|---|---|---|
+| B1 文档重命名 / 启停 | `app/services/ai/ragflow_client.py`（`update_document`）、`app/api/portal/endpoints/ragflow.py`（`PUT /datasets/{id}/documents/{doc_id}`）、`KnowledgeBaseManagement.vue`、`tests/api/portal/test_knowledge_document_update.py`（新增）、`tests/frontend/test_knowledge_document_update_contract.py`（新增） | 部分更新接口，严格按「None = 不动」组装 payload；权限复用 `element:knowledge:parse_document`；停用后切片保留但不召回，树里灰显 + 「已停用」 | 后端 4 + 契约 3 |
+| B2 同名上传三选一 | `ragflow.py`（`POST /documents/replace`）、`KnowledgeBaseManagement.vue`、`tests/api/portal/test_knowledge_document_replace.py`（新增）、`tests/frontend/test_knowledge_upload_replace_contract.py`（新增） | 顺序：查旧 → 传新 → 改名回旧 → 删旧 → 解析；删旧失败回滚删新，解析失败不回滚（否则两个都没）；前端弹窗三选一（替换 / 保留两者 / 跳过），提示历史引用会断 | 后端 4 + 契约 5 |
+| B3 切片增删改 + 启停 | `ragflow_client.py`（`create_chunk` / `update_chunk` / `delete_chunk`）、`ragflow.py`（三个 chunks 端点）、`KnowledgeBaseManagement.vue`、`tests/api/portal/test_knowledge_chunk_edit.py`（新增）、`tests/frontend/test_knowledge_chunk_edit_contract.py`（新增） | 复用 `parse_document` 权限码（按决策不新增）；审计 `chunks:create/update/delete`，正文只留前 120 字；抽屉内可编辑 / 停用 / 删除 / 手工新增，统一提示「向量重建需数秒」 | 后端 6 + 契约 5 |
+
+| B5 切片 ↔ 原文联动 | `KnowledgeBaseManagement.vue`、`tests/frontend/test_knowledge_chunk_source_contract.py`（新增） | 切片卡片加「查看原文 p.N」：页码优先 `page_no`、回退 `positions` JSON；PDF 带 `#page=N` 时**强制走 iframe**（file-viewer 的 pdf 渲染器不认这个 fragment），其余格式只打开文件并注明不支持跳页；关闭预览清空页锚 | 契约 5 |
+**回归**：`vue-tsc --noEmit` 0 错误。**未做**：B4 解析配置（用户明确不做）、B6 通知、B7 跨部门授权、B8 内容来源扩展。

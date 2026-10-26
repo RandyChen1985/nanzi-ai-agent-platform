@@ -558,6 +558,45 @@ class RagFlowClient:
             json=payload,
         )
 
+    async def update_document(
+        self,
+        dataset_id: str,
+        document_id: str,
+        *,
+        name: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        chunk_method: Optional[str] = None,
+        parser_config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """部分更新文档：改名 / 启停 / 解析配置。
+
+        RAGFlow 的 ``PUT /documents/{id}`` 只改传过去的字段，所以这里严格按
+        「None = 不动」组装 payload —— 否则只想停用文档时会顺手把名字写成空。
+        """
+        await self._ensure_config()
+        payload: Dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if enabled is not None:
+            payload["enabled"] = enabled
+        if chunk_method is not None:
+            payload["chunk_method"] = chunk_method
+        if parser_config is not None:
+            payload["parser_config"] = parser_config
+        if not payload:
+            raise ValueError("update_document requires at least one field")
+
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}"
+        data = await self._request(
+            "PUT",
+            url,
+            action="Update Document",
+            timeout=DEFAULT_WRITE_TIMEOUT,
+            headers=self._get_headers(),
+            json=payload,
+        )
+        return data if isinstance(data, dict) else {}
+
     async def parse_documents(self, dataset_id: str, document_ids: List[str]):
         """Trigger parsing for documents"""
         await self._ensure_config()
@@ -571,6 +610,76 @@ class RagFlowClient:
             timeout=DEFAULT_WRITE_TIMEOUT,
             headers=self._get_headers(),
             json=payload,
+        )
+
+    async def create_chunk(
+        self,
+        dataset_id: str,
+        document_id: str,
+        content: str,
+        important_keywords: Optional[List[str]] = None,
+        questions: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """手工新增切片（QA / 笔记），content 必填。"""
+        await self._ensure_config()
+        payload: Dict[str, Any] = {"content": content}
+        if important_keywords:
+            payload["important_keywords"] = important_keywords
+        if questions:
+            payload["questions"] = questions
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks"
+        data = await self._request(
+            "POST",
+            url,
+            action="Create Chunk",
+            timeout=DEFAULT_WRITE_TIMEOUT,
+            headers=self._get_headers(),
+            json=payload,
+        )
+        return data if isinstance(data, dict) else {}
+
+    async def update_chunk(
+        self,
+        dataset_id: str,
+        document_id: str,
+        chunk_id: str,
+        *,
+        content: Optional[str] = None,
+        available: Optional[bool] = None,
+        important_keywords: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """改切片内容 / 启停 / 关键词。available=False 表示保留但不参与召回。"""
+        await self._ensure_config()
+        payload: Dict[str, Any] = {}
+        if content is not None:
+            payload["content"] = content
+        if available is not None:
+            payload["available"] = available
+        if important_keywords is not None:
+            payload["important_keywords"] = important_keywords
+        if not payload:
+            raise ValueError("update_chunk requires at least one field")
+
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}"
+        data = await self._request(
+            "PUT",
+            url,
+            action="Update Chunk",
+            timeout=DEFAULT_WRITE_TIMEOUT,
+            headers=self._get_headers(),
+            json=payload,
+        )
+        return data if isinstance(data, dict) else {}
+
+    async def delete_chunk(self, dataset_id: str, document_id: str, chunk_id: str) -> None:
+        await self._ensure_config()
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}"
+        await self._request(
+            "DELETE",
+            url,
+            action="Delete Chunk",
+            timeout=DEFAULT_WRITE_TIMEOUT,
+            headers=self._get_headers(),
         )
 
     async def list_document_chunks(

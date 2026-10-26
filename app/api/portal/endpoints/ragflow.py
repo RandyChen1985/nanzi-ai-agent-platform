@@ -1,10 +1,11 @@
 import json
+import logging
 import os
 import time
 import uuid
 import datetime
 import httpx
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,7 @@ from app.services.knowledge_audit_service import (
 from app.models.permission import ResourcePermission
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 #: 平台侧单文件上限 256MB：提前拦住，避免整个文件流到上游才报错。
 #: 超过这个量级的文档解析质量通常也不好，宁可让用户拆分。
@@ -898,6 +900,158 @@ async def list_dataset_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class CreateChunkRequest(BaseModel):
+    content: str
+    important_keywords: Optional[List[str]] = None
+
+
+class UpdateChunkRequest(BaseModel):
+    content: Optional[str] = None
+    available: Optional[bool] = None
+    important_keywords: Optional[List[str]] = None
+
+
+def _chunk_content_preview(content: Optional[str]) -> str:
+    """审计只留前 120 字：切片正文动辄上千字，整段进日志表会很快撑爆。"""
+    return (content or "")[:120]
+
+
+@router.post("/datasets/{dataset_id}/documents/{document_id}/chunks")
+async def create_document_chunk(
+    dataset_id: str,
+    document_id: str,
+    payload: CreateChunkRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """手工新增一条切片（把 QA、笔记之类补进知识库）。"""
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:parse_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    content = (payload.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="切片内容不能为空")
+
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        created = await client.create_chunk(
+            dataset_id,
+            document_id,
+            content,
+            important_keywords=payload.important_keywords,
+        )
+        await record_knowledge_audit(request, user, "chunks:create", 200, {
+            "action": "create_chunk",
+            "dataset_id": dataset_id,
+            "document_id": document_id,
+            "chunk_id": str((created or {}).get("id") or ""),
+            "content_preview": _chunk_content_preview(content),
+        }, started_at=started)
+        return {"code": 0, "message": "已新增切片，向量重建需数秒", "data": created}
+    except Exception as e:
+        await record_knowledge_audit(request, user, "chunks:create", _audit_status_code(e), {
+            "action": "create_chunk",
+            "dataset_id": dataset_id,
+            "document_id": document_id,
+            "content_preview": _chunk_content_preview(content),
+        }, error_message=str(e), started_at=started)
+        raise
+
+
+@router.put("/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}")
+async def update_document_chunk(
+    dataset_id: str,
+    document_id: str,
+    chunk_id: str,
+    payload: UpdateChunkRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """改切片内容或启停。停用后切片保留，但不参与召回。"""
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:parse_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    content = payload.content.strip() if payload.content is not None else None
+    if content is not None and not content:
+        raise HTTPException(status_code=400, detail="切片内容不能为空")
+    if content is None and payload.available is None and payload.important_keywords is None:
+        raise HTTPException(
+            status_code=400,
+            detail="没有要更新的字段（content / available / important_keywords 至少给一个）",
+        )
+
+    audit_detail = {
+        "action": "toggle_chunk" if content is None and payload.available is not None else "update_chunk",
+        "dataset_id": dataset_id,
+        "document_id": document_id,
+        "chunk_id": chunk_id,
+        "available": payload.available,
+        "content_preview": _chunk_content_preview(content),
+    }
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        updated = await client.update_chunk(
+            dataset_id,
+            document_id,
+            chunk_id,
+            content=content,
+            available=payload.available,
+            important_keywords=payload.important_keywords,
+        )
+        await record_knowledge_audit(
+            request, user, "chunks:update", 200, dict(audit_detail), started_at=started
+        )
+        return {"code": 0, "message": "已更新，向量重建需数秒", "data": updated}
+    except Exception as e:
+        await record_knowledge_audit(
+            request,
+            user,
+            "chunks:update",
+            _audit_status_code(e),
+            dict(audit_detail),
+            error_message=str(e),
+            started_at=started,
+        )
+        raise
+
+
+@router.delete("/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}")
+async def delete_document_chunk(
+    dataset_id: str,
+    document_id: str,
+    chunk_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:parse_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        await client.delete_chunk(dataset_id, document_id, chunk_id)
+        await record_knowledge_audit(request, user, "chunks:delete", 200, {
+            "action": "delete_chunk",
+            "dataset_id": dataset_id,
+            "document_id": document_id,
+            "chunk_id": chunk_id,
+        }, started_at=started)
+        return {"code": 0, "message": "已删除切片"}
+    except Exception as e:
+        await record_knowledge_audit(request, user, "chunks:delete", _audit_status_code(e), {
+            "action": "delete_chunk",
+            "dataset_id": dataset_id,
+            "document_id": document_id,
+            "chunk_id": chunk_id,
+        }, error_message=str(e), started_at=started)
+        raise
+
+
 @router.get("/datasets/{dataset_id}/documents/{document_id}/chunks")
 async def list_document_chunks(
     dataset_id: str,
@@ -956,6 +1110,104 @@ async def upload_dataset_document(
         raise
 
 
+@router.post("/datasets/{dataset_id}/documents/replace")
+async def replace_dataset_document(
+    dataset_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    old_document_id: str = Form(...),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """同名上传的「替换」：先上传新文件，改名回旧名，再删旧文档，最后触发解析。
+
+    反向做（先删后传）一旦上传失败，用户就直接失去文档；而删旧失败必须回滚
+    掉新文件，否则库里同时躺着两个同名文档。
+    """
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:upload_document")
+    await require_element_permission(user, db, "element:knowledge:delete_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    file_name = file.filename or "upload.bin"
+    audit_detail = {
+        "action": "replace_document",
+        "dataset_id": dataset_id,
+        "document_id": old_document_id,
+        "file_name": file_name,
+    }
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    new_document_id: Optional[str] = None
+    old_deleted = False
+    try:
+        _validate_knowledge_upload(file_name, int(getattr(file, "size", 0) or 0))
+        blob = await _read_upload_with_limit(file)
+
+        # 旧文档必须属于本库：否则等于借「替换」删掉别的库（或已不存在）的文档
+        existing = await client.list_documents(dataset_id, page_size=1000)
+        old_doc = next(
+            (doc for doc in existing if str(doc.get("id")) == old_document_id), None
+        )
+        if old_doc is None:
+            raise HTTPException(status_code=404, detail="要替换的文档不存在或已被删除")
+
+        uploaded = await client.upload_document(
+            dataset_id, file_name, blob, file.content_type or "application/octet-stream"
+        )
+        new_document_id = str(uploaded.get("id") or "") or None
+        if not new_document_id:
+            raise HTTPException(status_code=502, detail="RAGFlow 上传成功但未返回文档 ID")
+
+        # 同名上传时 RAGFlow 可能把新文件存成 "xxx (1).pdf"，改回原名再删旧
+        await client.update_document(
+            dataset_id, new_document_id, name=old_doc.get("name") or file_name
+        )
+
+        await client.delete_documents(dataset_id, [old_document_id])
+        old_deleted = True
+
+        try:
+            await client.parse_documents(dataset_id, [new_document_id])
+        except Exception as parse_err:
+            # 旧文档已删、新文档已就位：此时再删新的等于两个都没，只能留给用户重试
+            logger.warning(
+                "[Knowledge] 替换后触发解析失败 doc=%s: %s", new_document_id, parse_err
+            )
+
+        await record_knowledge_audit(
+            request,
+            user,
+            "documents:replace",
+            200,
+            {
+                **audit_detail,
+                "old_document_id": old_document_id,
+                "new_document_id": new_document_id,
+            },
+            started_at=started,
+        )
+        return {"code": 0, "message": "已替换", "data": {"id": new_document_id}}
+    except Exception as e:
+        # 只在旧文档还没删时回滚：否则会把用户仅存的文档也删掉
+        if new_document_id and not old_deleted:
+            try:
+                await client.delete_documents(dataset_id, [new_document_id])
+            except Exception as rollback_err:
+                logger.error(
+                    "[Knowledge] 替换回滚失败，残留文档 %s: %s", new_document_id, rollback_err
+                )
+        await record_knowledge_audit(
+            request,
+            user,
+            "documents:replace",
+            _audit_status_code(e),
+            dict(audit_detail),
+            error_message=str(e),
+            started_at=started,
+        )
+        raise
+
+
 @router.delete("/datasets/{dataset_id}/documents")
 async def delete_dataset_documents(
     dataset_id: str,
@@ -984,6 +1236,67 @@ async def delete_dataset_documents(
             "dataset_id": dataset_id,
             "document_ids": payload.ids,
         }, error_message=str(e), started_at=started)
+        raise
+
+
+class UpdateDocumentRequest(BaseModel):
+    """只传要改的字段：None 表示"不动"，避免只停用文档时把名字一并重置。"""
+
+    name: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+@router.put("/datasets/{dataset_id}/documents/{document_id}")
+async def update_dataset_document(
+    dataset_id: str,
+    document_id: str,
+    payload: UpdateDocumentRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """改名 / 启停文档。停用后文档仍保留切片，只是不再参与召回。"""
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:parse_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    name = payload.name.strip() if payload.name is not None else None
+    if name is not None and not name:
+        raise HTTPException(status_code=400, detail="文档名称不能为空")
+    if name is not None and len(name) > 255:
+        raise HTTPException(status_code=400, detail="文档名称过长（最多 255 个字符）")
+    if name is None and payload.enabled is None:
+        raise HTTPException(
+            status_code=400,
+            detail="没有要更新的字段（name / enabled 至少给一个）",
+        )
+
+    audit_detail = {
+        "action": "update_document" if payload.enabled is None else "toggle_document",
+        "dataset_id": dataset_id,
+        "document_id": document_id,
+        "name": name,
+        "enabled": payload.enabled,
+    }
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        updated = await client.update_document(
+            dataset_id, document_id, name=name, enabled=payload.enabled
+        )
+        await record_knowledge_audit(
+            request, user, "documents:update", 200, dict(audit_detail), started_at=started
+        )
+        return {"code": 0, "message": "已更新", "data": updated}
+    except Exception as e:
+        await record_knowledge_audit(
+            request,
+            user,
+            "documents:update",
+            _audit_status_code(e),
+            dict(audit_detail),
+            error_message=str(e),
+            started_at=started,
+        )
         raise
 
 

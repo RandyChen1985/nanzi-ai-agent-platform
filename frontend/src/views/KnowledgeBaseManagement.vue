@@ -77,6 +77,8 @@ type KnowledgeDocument = {
   created_at?: string
   progress?: number
   progress_msg?: string
+  /** RAGFlow 侧是否参与检索；停用后切片保留但不召回 */
+  enabled?: boolean | number
 }
 
 type RagFlowConfigSummary = {
@@ -1850,6 +1852,25 @@ const onFileChange = (event: Event) => {
   input.value = ''
 }
 
+const uploadConflicts = ref<{ file: File; oldDocumentId: string; oldName: string }[]>([])
+const pendingUploadClean = ref<File[]>([])
+
+/** 查重用：优先用已加载的列表，避免每个文件都打一次接口 */
+const fetchDatasetDocumentsForUpload = async (dsId: string): Promise<KnowledgeDocument[]> => {
+  const cached = documentsMap.value[dsId]
+  if (cached?.length) return cached
+  const response = await axios.get(`/api/portal/ragflow/datasets/${dsId}/documents`, {
+    params: { page_size: 1000 },
+  })
+  return (apiData(response) || []) as KnowledgeDocument[]
+}
+
+/**
+ * 上传入口：先查重，有同名文档就弹「跳过 / 替换 / 保留两者」。
+ *
+ * 重名在 RAGFlow 侧不会报错，只会静默多存一份（或被加上 "(1)" 后缀），
+ * 用户看到的却是「我明明替换了，怎么有两份」——所以必须在客户端先问清楚。
+ */
 const uploadDocument = async () => {
   if (!isEngineReady.value) {
     showToast('知识库引擎未连接，暂不能上传文档', 'warning')
@@ -1859,29 +1880,101 @@ const uploadDocument = async () => {
     showToast('请先选择要上传的文件', 'warning')
     return
   }
+  const targetDatasetId = selectedDatasetId.value
+
+  let existing: KnowledgeDocument[] = []
+  try {
+    existing = await fetchDatasetDocumentsForUpload(targetDatasetId)
+  } catch {
+    // 查重失败不阻断上传：宁可让用户传，也不要因为列表接口抖动就传不了
+    existing = []
+  }
+
+  const conflicts: { file: File; oldDocumentId: string; oldName: string }[] = []
+  const clean: File[] = []
+  for (const file of uploadFiles.value) {
+    const hit = existing.find((doc) => (doc.name || '') === file.name)
+    if (hit) conflicts.push({ file, oldDocumentId: hit.id, oldName: hit.name || file.name })
+    else clean.push(file)
+  }
+
+  if (conflicts.length) {
+    pendingUploadClean.value = clean
+    uploadConflicts.value = conflicts
+    return
+  }
+  await runUpload(clean, new Map())
+}
+
+const resolveUploadConflicts = async (strategy: 'skip' | 'replace' | 'keep') => {
+  const conflicts = uploadConflicts.value
+  const clean = pendingUploadClean.value
+  uploadConflicts.value = []
+  pendingUploadClean.value = []
+  if (!conflicts.length) return
+
+  const conflictFiles = conflicts.map((item) => item.file)
+  if (strategy === 'skip') {
+    await runUpload(clean, new Map())
+    return
+  }
+  if (strategy === 'keep') {
+    await runUpload([...clean, ...conflictFiles], new Map())
+    return
+  }
+  const replaceMap = new Map<File, string>(
+    conflicts.map((item) => [item.file, item.oldDocumentId] as const),
+  )
+  await runUpload([...clean, ...conflictFiles], replaceMap)
+}
+
+const runUpload = async (files: File[], replaceMap: Map<File, string>) => {
+  const targetDatasetId = selectedDatasetId.value
+  if (!targetDatasetId || !files.length) {
+    showToast('没有需要上传的文件', 'warning')
+    return
+  }
   // 上传期间左侧知识库树仍可点击，必须固定目标库，
   // 否则中途切换会把剩余文件传到另一个知识库、刷新也会落到错误的库
-  const targetDatasetId = selectedDatasetId.value
   uploading.value = true
-  
-  const total = uploadFiles.value.length
+
+  const total = files.length
   let successCount = 0
   let failCount = 0
   let parseFailCount = 0
-  
+
   for (let i = 0; i < total; i++) {
-    const file = uploadFiles.value[i]
+    const file = files[i]
     if (!file) continue
     uploadProgressText.value = `正在上传并解析: ${i + 1} / ${total} (${file.name})`
-    
-    const payload = new FormData()
-    payload.append('file', file)
-    
+
     try {
-      const response = await axios.post(`/api/portal/ragflow/datasets/${targetDatasetId}/documents/upload`, payload)
+      if (replaceMap.has(file)) {
+        // 替换由后端编排（上传→改名→删旧→解析），前端不再单独触发解析
+        const payload = new FormData()
+        payload.append('file', file)
+        payload.append('old_document_id', replaceMap.get(file) as string)
+        const response = await axios.post(
+          `/api/portal/ragflow/datasets/${targetDatasetId}/documents/replace`,
+          payload,
+        )
+        const newId = response.data?.data?.id
+        if (newId) {
+          parsingDocIds.value = { ...parsingDocIds.value, [newId]: true }
+        }
+        successCount++
+        continue
+      }
+
+      const payload = new FormData()
+      payload.append('file', file)
+      const response = await axios.post(
+        `/api/portal/ragflow/datasets/${targetDatasetId}/documents/upload`,
+        payload,
+      )
       const resData = response.data?.data || {}
       const docId = resData.id
-      
+
       if (docId) {
         parsingDocIds.value = { ...parsingDocIds.value, [docId]: true }
         try {
@@ -1903,7 +1996,7 @@ const uploadDocument = async () => {
       console.error(`文档 ${file.name} 上传失败:`, err)
     }
   }
-  
+
   if (failCount === total) {
     showToast('全部文档上传失败，请检查网络或知识库配置', 'error')
   } else if (parseFailCount > 0) {
@@ -1913,7 +2006,7 @@ const uploadDocument = async () => {
   } else {
     showToast(`成功批量上传并触发解析了 ${successCount} 个文档`, 'success')
   }
-  
+
   clearAllUploadFiles()
   await fetchDocumentsForDataset(targetDatasetId)
   uploading.value = false
@@ -2238,13 +2331,16 @@ const toggleDocSelection = (doc: KnowledgeDocument, datasetId: string) => {
 }
 
 /**
- * 可批量选中的库：当前 tab + 当前搜索结果里、有管理权限、且引擎侧还在的。
+ * 可批量选中的库：当前 tab + 当前搜索结果里、有管理权限的。
  * 刻意不跨 tab、不跨搜索：全选把看不见的库也选上，等于给自己埋雷。
+ *
+ * 失联库必须能选：单个勾选一直是允许的（toggleDatasetSelection 不限失联），
+ * 只有全选把它排除了，两处口径打架。而失联库唯一的用途就是**批量清理**——
+ * 元数据还在、RAGFlow 里已经没了，挨个点太折磨人。删除端点对这类 ID 会跳过
+ * 远删、只标本地 deleted，选上批量删是安全的。
  */
 const bulkSelectableDatasets = computed(() =>
-  filteredDatasets.value.filter(
-    (dataset) => canManageDataset(dataset) && !dataset.is_missing_in_ragflow,
-  ),
+  filteredDatasets.value.filter((dataset) => canManageDataset(dataset)),
 )
 
 const bulkAllSelected = computed(() => {
@@ -2377,6 +2473,74 @@ const openDatasetReferences = () => {
   void loadDatasetReferences()
 }
 
+/** RAGFlow 用 enabled=0/1 表示文档是否参与检索；停用后切片仍在，只是不召回 */
+const isDocDisabled = (doc?: KnowledgeDocument | null) => {
+  if (!doc) return false
+  // RAGFlow 可能回 0/1、也可能回 "0"/"1"，两种都要认，否则停用了却显示"参与检索"
+  const enabled = (doc as { enabled?: unknown }).enabled
+  return enabled === false || enabled === 0 || enabled === '0'
+
+}
+
+const renamingDoc = ref<KnowledgeDocument | null>(null)
+const docRenameValue = ref('')
+const docRenameBusy = ref(false)
+const docToggleBusy = ref(false)
+
+const currentDocDatasetId = () =>
+  selectedDataset.value?.ragflow_dataset_id || selectedDataset.value?.id || ''
+
+/** 本地就地更新，省一次列表请求：改名/启停只影响这一条 */
+const patchDocumentLocally = (dsId: string, doc: KnowledgeDocument, patch: Partial<KnowledgeDocument>) => {
+  const list = documentsMap.value[dsId]
+  if (list) {
+    const index = list.findIndex((item) => item.id === doc.id)
+    if (index >= 0) list[index] = { ...list[index], ...patch }
+  }
+  if (selectedDocument.value?.id === doc.id) {
+    selectedDocument.value = { ...selectedDocument.value, ...patch }
+  }
+}
+
+const startRenameDocument = (doc: KnowledgeDocument) => {
+  renamingDoc.value = doc
+  docRenameValue.value = doc.name || ''
+}
+
+const confirmRenameDocument = async () => {
+  const doc = renamingDoc.value
+  const name = docRenameValue.value.trim()
+  const dsId = currentDocDatasetId()
+  if (!doc || !name || !dsId || docRenameBusy.value) return
+  docRenameBusy.value = true
+  try {
+    await axios.put(`/api/portal/ragflow/datasets/${dsId}/documents/${doc.id}`, { name })
+    patchDocumentLocally(dsId, doc, { name })
+    renamingDoc.value = null
+    showToast('已重命名。改名不会触发重新解析，已有切片保持不变', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    docRenameBusy.value = false
+  }
+}
+
+const toggleDocumentEnabled = async (doc: KnowledgeDocument) => {
+  const dsId = currentDocDatasetId()
+  if (!dsId || docToggleBusy.value) return
+  const next = isDocDisabled(doc)
+  docToggleBusy.value = true
+  try {
+    await axios.put(`/api/portal/ragflow/datasets/${dsId}/documents/${doc.id}`, { enabled: next })
+    patchDocumentLocally(dsId, doc, { enabled: next })
+    showToast(next ? '已启用，重新参与检索' : '已停用，不再参与检索召回（切片仍保留）', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    docToggleBusy.value = false
+  }
+}
+
 const canViewChunks = (dataset?: KnowledgeBase | null) => {
   if (!dataset) return false
   if (dataset.can_view_chunks === true) return true
@@ -2428,6 +2592,7 @@ const chunksError = ref(false)
 const openChunksModal = async (doc: any) => {
   viewingDocument.value = doc
   showChunksModal.value = true
+  previewPage.value = null
   chunksPage.value = 1
   chunksList.value = []
   chunksTotal.value = 0
@@ -2441,13 +2606,134 @@ const closeChunksModal = () => {
   chunksTotal.value = 0
 }
 
+// ---------- 切片增删改 ----------
+const editingChunkId = ref<string | null>(null)
+const editingChunkContent = ref('')
+const newChunkContent = ref('')
+const showNewChunkForm = ref(false)
+const chunkSaving = ref(false)
+
+/** RAGFlow 用 available / available_int 表示切片是否参与召回，两种都认 */
+const isChunkDisabled = (chunk: any) => {
+  const value = chunk?.available ?? chunk?.available_int
+  return value === 0 || value === '0' || value === false
+}
+
+const currentChunkDatasetId = () =>
+  selectedDataset.value?.ragflow_dataset_id || selectedDataset.value?.id || ''
+
+const chunkTargetPath = (chunkId?: string) => {
+  const dsId = currentChunkDatasetId()
+  const docId = viewingDocument.value?.id
+  if (!dsId || !docId) return ''
+  const base = `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/chunks`
+  return chunkId ? `${base}/${chunkId}` : base
+}
+
+const startEditChunk = (chunk: any) => {
+  editingChunkId.value = chunk.id
+  editingChunkContent.value = chunk.content || ''
+}
+
+const cancelEditChunk = () => {
+  editingChunkId.value = null
+  editingChunkContent.value = ''
+}
+
+const saveChunk = async () => {
+  const chunkId = editingChunkId.value
+  const content = editingChunkContent.value.trim()
+  const url = chunkTargetPath(chunkId || undefined)
+  if (!chunkId || !content || !url || chunkSaving.value) return
+  chunkSaving.value = true
+  try {
+    await axios.put(url, { content })
+    const target = chunksList.value.find((item: any) => item.id === chunkId)
+    if (target) {
+      target.content = content
+      target.content_with_weight = content
+    }
+    editingChunkId.value = null
+    showToast('已保存，向量重建需数秒后生效', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    chunkSaving.value = false
+  }
+}
+
+const toggleChunk = async (chunk: any) => {
+  const url = chunkTargetPath(chunk.id)
+  if (!url || chunkSaving.value) return
+  const next = isChunkDisabled(chunk)
+  chunkSaving.value = true
+  try {
+    await axios.put(url, { available: next })
+    chunk.available = next ? 1 : 0
+    chunk.available_int = next ? 1 : 0
+    showToast(next ? '已启用，重新参与召回' : '已停用，不再参与召回（内容仍保留）', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    chunkSaving.value = false
+  }
+}
+
+const removeChunk = async (chunk: any) => {
+  const url = chunkTargetPath(chunk.id)
+  if (!url || chunkSaving.value) return
+  chunkSaving.value = true
+  try {
+    await axios.delete(url)
+    chunksList.value = chunksList.value.filter((item: any) => item.id !== chunk.id)
+    chunksTotal.value = Math.max(0, chunksTotal.value - 1)
+    showToast('已删除切片', 'success')
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    chunkSaving.value = false
+  }
+}
+
+const createChunk = async () => {
+  const content = newChunkContent.value.trim()
+  const url = chunkTargetPath()
+  if (!content || !url || chunkSaving.value) return
+  chunkSaving.value = true
+  try {
+    await axios.post(url, { content })
+    newChunkContent.value = ''
+    showNewChunkForm.value = false
+    showToast('已新增切片，向量重建需数秒后生效', 'success')
+    await fetchChunks()
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    chunkSaving.value = false
+  }
+}
+
 const showDocPreview = ref(false)
+/** 从切片跳原文时的目标页；null 表示普通预览（不带页锚） */
+const previewPage = ref<number | null>(null)
 const previewDocUrl = computed(() => {
   if (!selectedDatasetId.value || !selectedDocument.value) return ''
   const dsId = encodeURIComponent(selectedDatasetId.value)
   const docId = encodeURIComponent(selectedDocument.value.id)
-  return `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/file`
+  const base = `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/file`
+  return previewPage.value ? `${base}#page=${previewPage.value}` : base
 })
+
+const isPdfSelectedDocument = computed(() =>
+  PDF_EXTENSIONS.has(getWorkspaceFileExtension(selectedDocument.value?.name || '')),
+)
+/**
+ * PDF 要跳页时必须用 iframe：浏览器原生 PDF 阅读器认 `#page=N`，
+ * 而 file-viewer 的 pdf 渲染器不认这个 fragment。
+ */
+const mustUseIframeForPage = computed(
+  () => isPdfSelectedDocument.value && previewPage.value !== null,
+)
 
 /**
  * 交给 DocumentViewer 渲染的格式：Office + 文本（canPreviewWithDocumentViewer），
@@ -2464,6 +2750,8 @@ const previewDocUrl = computed(() => {
  * 其余 file-viewer 不支持的格式（.rst/.env/.ppt 等）继续走 iframe 兜底。
  */
 const canPreviewSelectedDocument = computed(() => {
+  // 需要跳页的 PDF 交给 iframe，DocumentViewer 不认 #page
+  if (mustUseIframeForPage.value) return false
   const name = selectedDocument.value?.name || ''
   return (
     canPreviewWithDocumentViewer(name) ||
@@ -2488,6 +2776,39 @@ const openDocPreview = () => {
 }
 const closeDocPreview = () => {
   showDocPreview.value = false
+  previewPage.value = null
+}
+
+/** 切片里能拿到的页码：优先 page_no，其次 positions[].page_no（JSON 字符串） */
+const resolveChunkPage = (chunk: any): number | null => {
+  const direct = Number(chunk?.page_no ?? chunk?.page ?? chunk?.page_number)
+  if (Number.isFinite(direct) && direct > 0) return Math.floor(direct)
+
+  const raw = chunk?.positions ?? chunk?.position
+  if (!raw) return null
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    const list = Array.isArray(parsed) ? parsed : [parsed]
+    for (const item of list) {
+      const candidate = Number(item?.page_no ?? item?.page ?? item?.page_number)
+      if (Number.isFinite(candidate) && candidate > 0) return Math.floor(candidate)
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+const openChunkSource = (chunk: any) => {
+  const page = resolveChunkPage(chunk)
+  if (!selectedDocument.value || selectedDocument.value.id !== viewingDocument.value?.id) {
+    // 抽屉里的文档必须就是详情页选中的那份，否则预览会打开另一份文件
+    showToast('请从文档详情页打开切片后再查看原文', 'warning')
+    return
+  }
+  previewPage.value = page
+  closeChunksModal()
+  showDocPreview.value = true
 }
 
 const CHUNKS_PAGE_SIZE = 30
@@ -3101,36 +3422,48 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
                   <!-- Hover Action Buttons -->
                   <div class="flex opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 items-center gap-1 bg-inherit pl-2 absolute right-3 top-1/2 -translate-y-1/2">
-                    <button
+                    <HoverTip
                       v-if="canEdit && canManageDataset(dataset)"
-                      class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
-                      title="新建虚拟文件夹"
-                      @click.stop="startCreateFolder(dataset)"
+                      text="新建虚拟文件夹"
+                      :width="160"
                     >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                      </svg>
-                    </button>
-                    <button
+                      <button
+                        class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
+                        @click.stop="startCreateFolder(dataset)"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                        </svg>
+                      </button>
+                    </HoverTip>
+                    <HoverTip
                       v-if="canEdit && canManageDataset(dataset)"
-                      class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
-                      title="修改元数据"
-                      @click.stop="openEdit(dataset)"
+                      text="修改元数据"
+                      :width="140"
                     >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                    <button
+                      <button
+                        class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
+                        @click.stop="openEdit(dataset)"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                    </HoverTip>
+                    <HoverTip
                       v-if="canDelete && canManageDataset(dataset)"
-                      class="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-all bg-inherit"
-                      title="删除知识库"
-                      @click.stop="triggerDeleteDataset(dataset)"
+                      :text="dataset.is_missing_in_ragflow ? '清理失效残留配置（不会去 RAGFlow 删除）' : '删除知识库'"
+                      :width="dataset.is_missing_in_ragflow ? 240 : 140"
                     >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                      <button
+                        class="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-all bg-inherit"
+                        @click.stop="triggerDeleteDataset(dataset)"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </HoverTip>
                   </div>
                 </div>
               </div>
@@ -3300,7 +3633,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                                 <svg class="w-3.5 h-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                                 </svg>
-                                <span class="truncate text-xs">{{ doc.name || doc.id }}</span>
+                                <span
+                                  class="truncate text-xs"
+                                  :class="isDocDisabled(doc) ? 'text-gray-400 line-through' : ''"
+                                >{{ doc.name || doc.id }}</span>
+                                <span
+                                  v-if="isDocDisabled(doc)"
+                                  class="shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold"
+                                  title="已停用：切片保留，但不参与检索召回"
+                                >已停用</span>
                               </div>
                               
                               <!-- 状态指示灯与悬浮移动/删除操作 -->
@@ -3401,7 +3742,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                         <svg class="w-3.5 h-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                         </svg>
-                        <span class="truncate text-xs">{{ doc.name || doc.id }}</span>
+                        <span
+                          class="truncate text-xs"
+                          :class="isDocDisabled(doc) ? 'text-gray-400 line-through' : ''"
+                        >{{ doc.name || doc.id }}</span>
+                        <span
+                          v-if="isDocDisabled(doc)"
+                          class="shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold"
+                          title="已停用：切片保留，但不参与检索召回"
+                        >已停用</span>
                       </div>
 
                       <div class="flex items-center gap-1 shrink-0 justify-end relative" @click.stop>
@@ -4118,6 +4467,29 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             
             <div class="flex gap-2 shrink-0 ml-4">
               <button
+                v-if="canEdit && !isReadOnlyDataset(selectedDataset)"
+                class="px-3 py-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold rounded-xl transition-all whitespace-nowrap shrink-0"
+                :disabled="!isEngineReady"
+                @click="startRenameDocument(selectedDocument)"
+              >重命名</button>
+              <label
+                v-if="canEdit && !isReadOnlyDataset(selectedDataset)"
+                class="px-3 py-2 border rounded-xl text-sm font-semibold flex items-center gap-2 select-none cursor-pointer whitespace-nowrap shrink-0 transition-all"
+                :class="isDocDisabled(selectedDocument)
+                  ? 'border-amber-200 bg-amber-50 text-amber-700'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-700'"
+                title="停用后切片仍保留，但不再参与检索召回；随时可以重新启用"
+              >
+                <input
+                  type="checkbox"
+                  class="w-3.5 h-3.5 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                  :checked="!isDocDisabled(selectedDocument)"
+                  :disabled="docToggleBusy || !isEngineReady"
+                  @change="toggleDocumentEnabled(selectedDocument)"
+                />
+                {{ isDocDisabled(selectedDocument) ? '已停用（不参与检索）' : '参与检索' }}
+              </label>
+              <button
                 v-if="canParse && !isReadOnlyDataset(selectedDataset)"
                 class="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-xl hover:bg-primary/95 transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shrink-0"
                 :disabled="isParseButtonDisabled(selectedDocument)"
@@ -4763,6 +5135,74 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       @confirm="confirmRemovePermission"
       @cancel="pendingPermissionRemoval = null"
     />
+    <Modal
+      :show="uploadConflicts.length > 0"
+      title="同名文档已存在"
+      size="max-w-lg"
+      @close="resolveUploadConflicts('skip')"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600">
+          本次上传中有 <b class="text-primary">{{ uploadConflicts.length }}</b> 个文件名与库中已有文档重名：
+        </p>
+        <ul class="max-h-40 overflow-y-auto rounded-lg bg-gray-50 border border-gray-100 p-2 text-xs space-y-1">
+          <li v-for="item in uploadConflicts" :key="item.oldDocumentId" class="truncate text-gray-500">
+            · {{ item.oldName }}
+          </li>
+        </ul>
+        <div class="rounded-lg bg-amber-50 border border-amber-100 p-3 text-[11px] text-amber-700 leading-relaxed">
+          替换 = 删除旧文档后上传新文件并重新切片。<b>历史引用（对话引用、智能体检索）会指向已删除的旧文档</b>，需要重新提问才会命中新内容。
+        </div>
+        <div class="flex flex-col gap-2">
+          <button
+            type="button"
+            class="w-full px-3 py-2 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
+            :disabled="uploading"
+            @click="resolveUploadConflicts('replace')"
+          >替换这 {{ uploadConflicts.length }} 个（重新切片）</button>
+          <button
+            type="button"
+            class="w-full px-3 py-2 rounded-xl border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50"
+            :disabled="uploading"
+            @click="resolveUploadConflicts('keep')"
+          >保留两者（新文件另存一份）</button>
+          <button
+            type="button"
+            class="w-full px-3 py-2 rounded-xl border border-gray-200 text-gray-400 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50"
+            :disabled="uploading"
+            @click="resolveUploadConflicts('skip')"
+          >跳过这 {{ uploadConflicts.length }} 个</button>
+        </div>
+      </div>
+    </Modal>
+    <Modal :show="!!renamingDoc" title="重命名文档" size="max-w-md" @close="renamingDoc = null">
+      <div class="space-y-4">
+        <input
+          v-model="docRenameValue"
+          type="text"
+          maxlength="255"
+          class="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+          placeholder="文档名称"
+          @keyup.enter="confirmRenameDocument"
+        />
+        <p class="text-xs text-gray-400 leading-relaxed">
+          改名不会触发重新解析，已有切片与引用保持不变；只影响列表里显示的名字。
+        </p>
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-50"
+            @click="renamingDoc = null"
+          >取消</button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
+            :disabled="docRenameBusy || !docRenameValue.trim()"
+            @click="confirmRenameDocument"
+          >{{ docRenameBusy ? '保存中…' : '保存' }}</button>
+        </div>
+      </div>
+    </Modal>
     <ConfirmModal
       v-if="pendingBulkDelete"
       title="确认批量删除知识库"
@@ -4826,7 +5266,10 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         <div class="flex items-center justify-between border-b pb-3">
           <div>
             <h3 class="text-sm font-bold text-gray-900 truncate max-w-lg">{{ viewingDocument?.name }}</h3>
-            <p class="text-xs text-gray-400 mt-1">共 {{ chunksTotal }} 个分块，当前展示第 {{ chunksPage }} 页</p>
+            <p class="text-xs text-gray-400 mt-1">
+              共 {{ chunksTotal }} 个分块，当前展示第 {{ chunksPage }} 页
+              <span class="ml-1 text-gray-300">·「查看原文」对 PDF 会跳到对应页，其余格式只打开文件</span>
+            </p>
           </div>
           <div class="flex items-center gap-2">
             <button
@@ -4864,11 +5307,92 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             :key="chunk.id || idx"
             class="bg-gray-50 p-4 rounded-xl border border-gray-200 hover:border-gray-200 transition-all flex flex-col gap-2"
           >
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-2">
               <span class="text-xs font-bold text-gray-400 font-mono">#{{ (chunksPage - 1) * 30 + idx + 1 }} (ID: {{ chunk.id || '-' }})</span>
+              <div v-if="canEdit" class="flex items-center gap-2 shrink-0">
+                <label
+                  class="flex items-center gap-1 text-[11px] cursor-pointer select-none"
+                  :class="isChunkDisabled(chunk) ? 'text-amber-600' : 'text-gray-500'"
+                  title="停用后这条切片仍保留，但不再参与召回"
+                >
+                  <input
+                    type="checkbox"
+                    class="w-3 h-3 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                    :checked="!isChunkDisabled(chunk)"
+                    :disabled="chunkSaving"
+                    @change="toggleChunk(chunk)"
+                  />
+                  {{ isChunkDisabled(chunk) ? '已停用' : '参与召回' }}
+                </label>
+                <button
+                  type="button"
+                  class="text-[11px] text-primary hover:underline disabled:text-gray-300 disabled:no-underline"
+                  :disabled="!resolveChunkPage(chunk)"
+                  :title="resolveChunkPage(chunk)
+                    ? `在原文第 ${resolveChunkPage(chunk)} 页查看`
+                    : '这条切片没有页码信息（纯文本类文档无法定位原页）'"
+                  @click="openChunkSource(chunk)"
+                >查看原文{{ resolveChunkPage(chunk) ? ` p.${resolveChunkPage(chunk)}` : '' }}</button>
+                <button type="button" class="text-[11px] text-primary hover:underline" @click="startEditChunk(chunk)">编辑</button>
+                <button type="button" class="text-[11px] text-red-500 hover:underline" @click="removeChunk(chunk)">删除</button>
+              </div>
             </div>
-            <p class="text-sm text-gray-700 leading-relaxed font-mono whitespace-pre-wrap select-text bg-white p-3 rounded-lg border border-gray-200/50 shadow-inner">{{ chunk.content_with_weight || chunk.content || '-' }}</p>
+            <template v-if="editingChunkId === chunk.id">
+              <textarea
+                v-model="editingChunkContent"
+                rows="6"
+                class="w-full text-xs font-mono leading-relaxed rounded-lg border border-primary/40 p-3 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-gray-400">保存后需要数秒重建向量，期间召回可能仍是旧内容</span>
+                <div class="flex gap-2">
+                  <button type="button" class="px-2.5 py-1 rounded-lg border border-gray-200 text-[11px] text-gray-600 font-semibold hover:bg-white" @click="cancelEditChunk">取消</button>
+                  <button
+                    type="button"
+                    class="px-2.5 py-1 rounded-lg bg-primary text-white text-[11px] font-semibold hover:bg-primary/90 disabled:opacity-50"
+                    :disabled="chunkSaving || !editingChunkContent.trim()"
+                    @click="saveChunk"
+                  >{{ chunkSaving ? '保存中…' : '保存' }}</button>
+                </div>
+              </div>
+            </template>
+            <p
+              v-else
+              class="text-sm text-gray-700 leading-relaxed font-mono whitespace-pre-wrap select-text bg-white p-3 rounded-lg border border-gray-200/50 shadow-inner"
+              :class="isChunkDisabled(chunk) ? 'opacity-60 line-through decoration-gray-300' : ''"
+            >{{ chunk.content_with_weight || chunk.content || '-' }}</p>
           </div>
+        </div>
+
+        <!-- 手工补切片：把 QA / 口径 / 注意事项直接塞进知识库，不必先造个文档 -->
+        <div v-if="canEdit" class="border-t pt-3">
+          <div v-if="showNewChunkForm" class="space-y-2">
+            <textarea
+              v-model="newChunkContent"
+              rows="4"
+              placeholder="粘贴要补充的内容（QA、口径、注意事项均可）。新增后需要数秒重建向量。"
+              class="w-full text-xs font-mono leading-relaxed rounded-lg border border-gray-300 p-3 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            <div class="flex justify-end gap-2">
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 font-semibold hover:bg-gray-50"
+                @click="showNewChunkForm = false; newChunkContent = ''"
+              >取消</button>
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
+                :disabled="chunkSaving || !newChunkContent.trim()"
+                @click="createChunk"
+              >{{ chunkSaving ? '新增中…' : '新增切片' }}</button>
+            </div>
+          </div>
+          <button
+            v-else
+            type="button"
+            class="w-full py-2 rounded-xl border border-dashed border-gray-300 text-xs font-semibold text-gray-500 hover:border-primary hover:text-primary transition-all"
+            @click="showNewChunkForm = true"
+          >+ 手工新增一条切片</button>
         </div>
 
         <div class="flex justify-end pt-2 border-t">
