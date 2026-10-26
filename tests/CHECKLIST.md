@@ -606,3 +606,19 @@
 **回归**：`tests/api/portal` + `tests/services` = 2912 passed / 11 skipped / 9 xfailed；受影响前端契约 494 passed；`vue-tsc --noEmit` 0 错误。
 **未做**：C3 评测集、C6 前端拆分（两项未列入本轮范围）。
 **执行顺序**：先跑 `db-prod/V191-create_knowledge_governance_tables.sql`（或 `db-prod-pg/V91-create_knowledge_governance_tables.sql`，一个文件建三张表），再重启后端 —— C7/C2/C4 依赖这三张表；C1/C5/C8 无迁移可先上。
+
+## 2026-10-26 知识库访问申请闭环（C7 收尾）
+
+C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走完：记录批完就看不见、审批人不知道有人申请、申请人和审批人都只能凭库名判断该不该批。
+
+| 项 | 主要文件 | 说明 | 迁移 | 验证 |
+|---|---|---|---|---|
+| 审批记录（已处理） | `ragflow.py`（`GET /access-requests/reviews`）、`Users.vue`（审批弹窗「待审批 / 已处理」两个 tab） | 审批通过后记录会离开待审批列表，没有已处理视图等于只看得见待办；管理员看全平台、归属人只看名下库（按 `writable_ids` 收窄，翻不到别人库的申请理由） | 无 | 端点 3 + 契约 1 |
+| 站内通知 | `ragflow.py`（`_notify_access_request`）、`PortalNotificationBell.vue`、`Users.vue`（`?review=1` 深链） | 提交时通知库归属人（只通知责任人，不群发管理员，否则全员开始无视）、审批后通知申请人（驳回带审批意见）；点消息分别落到审批弹窗与个人中心「我的申请」；通知失败一律吞掉，不影响审批与授权 | 无 | 契约 6 |
+| 审核入口 | `Users.vue` | 「访问审批」文字按钮改为「创建用户」左侧的 SVG 图标 + 角标；标题只写「审核」，为后续并入统一审核中心（注册审核等）留口 | 无 | 契约 1 |
+| 库画像 | `ragflow.py`（discover / pending 补字段）、`KnowledgeBaseManagement.vue`、`Users.vue` | 发现页与待审批页都补文档数、切片数、归属、标签、更新于；引擎不可用时计数显示「—」而非 0（0 会让人以为空库）；待审批额外标「引擎侧已失联」——批了也没用 | 无 | 端点 4 + 契约 4 |
+| 管理员短路 | `ragflow.py`（discover / create_access_request）、`KnowledgeBaseManagement.vue` | 管理员的 `accessible_ids` 是 `None`（不受限），`or set()` 会把它当空集，导致整站库全变成可申请对象、还能自批——discover 直接返回空、申请直接 400；前端两处「发现」入口加 `!isAdmin` | 无 | 端点 2 + 契约 1 |
+| 失联过滤 | `ragflow.py`（discover） | 失联标记是 `merge_with_ragflow` 现场算的（DB 里 `status` 仍是 `active`），所以发现列表必须与引擎当前库列表比对；引擎读取失败时**不过滤**（降级），避免一次抖动让整个列表凭空消失 | 无 | 端点 2 |
+
+**回归**：`tests/api/portal/test_knowledge_access_request_endpoints.py` 16 passed；用户页契约 342 passed、知识库页契约 236 passed；`vue-tsc --noEmit` 0 错误。
+**未做**：归属人离职/长期不登录时申请会烂在队列里（需要「超 N 天未处理」提醒，与 C4 定时巡检调度是同一件事）。
