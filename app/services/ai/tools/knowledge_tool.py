@@ -71,6 +71,17 @@ async def search_knowledge_base(query: str, dataset_ids: Optional[str | list[str
         async with AsyncSessionLocal() as session:
             perm = PermissionService(session)
             agent_granted_ids = set(ctx.agent_dataset_ids or [])
+            # 智能体绑定的库对使用者放行（作者已经决定了它的知识范围），
+            # 但「个人私有」不能跟着被代理放行：它的语义是有且仅有创建人。
+            # 摘掉这批 ID 后，它们会落到下面的用户权限判定里 —— 那里 private
+            # 只对创建人成立，于是「A 被授权过的库 / A 的个人笔记」不会再被
+            # 智能体二次分发给全体使用者。
+            agent_granted_ids -= await perm.find_private_datasets_not_owned(
+                agent_granted_ids,
+                user_name,
+                # 归属判定必须带 user_id：私有库转移给同事后，原创建人不能再被当成主人
+                user_id=int(ctx.user_id),
+            )
             restricted_datasets = [
                 dataset_id
                 for dataset_id in target_datasets

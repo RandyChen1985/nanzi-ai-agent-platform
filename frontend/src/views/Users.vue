@@ -1494,8 +1494,30 @@
                       </ForbiddenResourceTabs>
                     </div>
 
+                    <!-- 失联知识库开关：默认隐藏，但已授权的失联库始终保留 -->
                     <div
-                      v-else-if="currentResources.length === 0"
+                      v-if="activeResTab === 'datasets' && missingDatasetCount"
+                      class="flex items-center justify-end mb-1"
+                    >
+                      <label
+                        class="flex items-center gap-1.5 text-[11px] text-gray-500 select-none cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          v-model="showMissingDatasets"
+                          class="h-3.5 w-3.5 rounded text-blue-600 focus:ring-blue-500"
+                        />
+                        显示失联知识库（{{ missingDatasetCount }}）
+                      </label>
+                    </div>
+                    <!--
+                      注意：上面的失联开关是独立工具条，**不能**和这里串成
+                      v-if / v-else-if / v-else 链。曾经写成 v-else-if 时，
+                      只要存在失联库（开关显示），列表分支就永远不渲染 ——
+                      表现为"勾了『显示失联知识库』依然一片空白"。
+                    -->
+                    <div
+                      v-if="modelResourceEntries.length === 0"
                       class="text-center py-4 text-gray-500 text-xs"
                     >
                       {{ emptyResourceText }}
@@ -1513,21 +1535,33 @@
                         v-else
                         class="flex items-start p-2 rounded border bg-white transition-colors"
                         :class="
-                          isMissingKnowledgeBase(res)
-                            ? 'opacity-70 cursor-not-allowed border-amber-200 bg-amber-50/40'
-                            : 'hover:bg-gray-50 cursor-pointer'
+                          isPrivateKnowledgeBase(res)
+                            ? 'opacity-70 cursor-not-allowed border-gray-200 bg-gray-50/60'
+                            : isMissingKnowledgeBase(res)
+                              ? isSelectedDatasetResource(res)
+                                // 已授权 + 失联：保持可读、可取消，不做灰化
+                                ? 'border-amber-300 bg-amber-50/60 cursor-pointer'
+                                : 'opacity-70 cursor-not-allowed border-amber-200 bg-amber-50/40'
+                              : 'hover:bg-gray-50 cursor-pointer'
                         "
                         :title="
-                          isMissingKnowledgeBase(res)
-                            ? '该知识库已在 RAGFlow 失联，不可分配权限'
-                            : undefined
+                          isPrivateKnowledgeBase(res)
+                            ? '个人私有知识库不参与授权：只有创建人自己可见，勾选后对方也不会获得访问权'
+                            : isMissingKnowledgeBase(res)
+                              ? isSelectedDatasetResource(res)
+                                ? '该知识库已在 RAGFlow 失联：此前分配的授权仍保留，库恢复后自动生效；取消勾选并保存即可移除'
+                                : '该知识库已在 RAGFlow 失联，不可分配权限'
+                              : undefined
                         "
                       >
                         <input
                           type="checkbox"
                           :value="res.id"
                           v-model="(permissionData as any)[activeResTab]"
-                          :disabled="isMissingKnowledgeBase(res)"
+                          :disabled="
+                            isPrivateKnowledgeBase(res) ||
+                            (isMissingKnowledgeBase(res) && !isSelectedDatasetResource(res))
+                          "
                           class="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
                         />
                         <div class="ml-2 min-w-0 flex-1">
@@ -1547,6 +1581,12 @@
                               v-if="isMissingKnowledgeBase(res)"
                               class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold leading-none"
                               >失联</span
+                            >
+                            <span
+                              v-if="activeResTab === 'datasets'"
+                              class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-semibold leading-none"
+                              :class="knowledgeScopeBadge(res).cls"
+                              >{{ knowledgeScopeBadge(res).label }}</span
                             >
                             <span
                               v-if="isDisabledModel(res)"
@@ -3397,7 +3437,8 @@ const currentResources = computed(() => {
  */
 const modelResourceEntries = computed<any[]>(() => {
   if (activeResTab.value !== "models") {
-    return currentResources.value.map((res: any) => ({
+    // 走 visibleResources：失联知识库按开关隐藏，已授权的除外
+    return visibleResources.value.map((res: any) => ({
       ...res,
       entryType: "item",
       entryKey: res.id,
@@ -3429,16 +3470,75 @@ const modelResourceEntries = computed<any[]>(() => {
 });
 
 /** 空列表文案：区分「搜索没命中」与「本来就没有可用资源」。 */
-const emptyResourceText = computed(() =>
-  activeResTab.value === "models" && modelSearchQuery.value.trim()
-    ? "没有匹配的模型"
-    : "暂无可用资源",
-);
+const emptyResourceText = computed(() => {
+  if (activeResTab.value === "models" && modelSearchQuery.value.trim()) {
+    return "没有匹配的模型";
+  }
+  // 全部失联且未勾选「显示失联」时，要说清楚是这个原因，否则看起来像"没有资源可分配"
+  if (activeResTab.value === "datasets" && missingDatasetCount.value) {
+    return `已隐藏 ${missingDatasetCount.value} 个失联知识库`;
+  }
+  return "暂无可用资源";
+});
 
 const isMissingKnowledgeBase = (res: any) => {
   if (activeResTab.value !== "datasets") return false;
   return Boolean(res?.is_missing_in_ragflow || res?.status === "missing");
 };
+
+/** 失联知识库开关：默认隐藏，但「已授权」的失联库始终保留（见 visibleResources） */
+const showMissingDatasets = ref(false)
+
+/** 当前 tab 下失联知识库的数量：0 时不显示开关，避免无谓的干扰 */
+const missingDatasetCount = computed(() =>
+  activeResTab.value === "datasets"
+    ? currentResources.value.filter((res: any) => isMissingKnowledgeBase(res)).length
+    : 0,
+)
+
+/** 该资源是否已被授权：已授权的失联库必须保留，否则用户看不到自己配过什么 */
+const isSelectedDatasetResource = (res: any) =>
+  Boolean(((permissionData.value as any)[activeResTab.value] as string[] | undefined)?.includes(res.id))
+
+/**
+ * 实际渲染的资源：隐藏失联知识库。
+ *
+ * 已授权的失联库不会被隐藏 —— 用户想看的正是「我之前配过的那个库现在失联了」，
+ * 藏起来会导致保存时把它静默剔除。
+ */
+const visibleResources = computed(() => {
+  if (activeResTab.value !== "datasets" || showMissingDatasets.value) {
+    return currentResources.value
+  }
+  return currentResources.value.filter(
+    (res: any) => !isMissingKnowledgeBase(res) || isSelectedDatasetResource(res),
+  )
+})
+
+/** 可见范围徽标：与知识库页三档口径保持一致 */
+const KNOWLEDGE_SCOPE_BADGE: Record<string, { label: string; cls: string }> = {
+  public: { label: "公共级", cls: "bg-blue-50 text-blue-600" },
+  team: { label: "部门级", cls: "bg-violet-50 text-violet-600" },
+  private: { label: "个人私有", cls: "bg-amber-50 text-amber-700" },
+};
+
+const knowledgeScopeOf = (res: any): "public" | "team" | "private" => {
+  const token = String(res?.visibility || "").trim().toLowerCase();
+  return token === "team" || token === "private" ? token : "public";
+};
+
+/** 兜底项：字段异常时也不让徽标消失 */
+const FALLBACK_SCOPE_BADGE = { label: "公共级", cls: "bg-blue-50 text-blue-600" };
+
+const knowledgeScopeBadge = (res: any) =>
+  KNOWLEDGE_SCOPE_BADGE[knowledgeScopeOf(res)] ?? FALLBACK_SCOPE_BADGE;
+
+/**
+ * 个人私有知识库不参与授权：判定时会被直接跳过，勾选它也拿不到访问权。
+ * 这里禁用勾选并标注原因，避免管理员做一次「配了但没生效」的空操作。
+ */
+const isPrivateKnowledgeBase = (res: any) =>
+  activeResTab.value === "datasets" && knowledgeScopeOf(res) === "private";
 
 /** 「可用模型」页里的停用项：保留勾选态并打标，不做自动清除。 */
 const isDisabledModel = (res: any) =>
@@ -3469,7 +3569,11 @@ const methodBadgeClass = (method: string) => {
 };
 
 const selectableResources = computed(() =>
-  currentResources.value.filter((r: any) => !isMissingKnowledgeBase(r)),
+  // 私有库不能参与「全选」：它在卡片上是 disabled 的，一旦被全选写进
+  // permissionData 就会出现「置灰却被勾上」的矛盾状态，且保存时被后端静默剔除。
+  currentResources.value.filter(
+    (r: any) => !isMissingKnowledgeBase(r) && !isPrivateKnowledgeBase(r),
+  ),
 );
 
 const isAllSelected = computed(
@@ -3677,22 +3781,22 @@ const fetchResources = async () => {
 
     // 2. Fetch RagFlow Datasets (Optional/External)
     try {
+      // page_size 必须远大于 100：RAGFlow 侧还有大量 meta-* 元数据数据集，
+      // 传 100 只会拿到第一页（往往被 meta-* 占满），过滤后为空 —— 于是
+      // merge 把所有知识库都判成「已失联」，分配权限时一个都选不到。
+      // >100 时后端会自动翻页聚合，这里直接要全量。
       const r1 = await axios.get("/api/portal/ragflow/datasets", {
-        params: { page_size: 100 },
+        params: { page_size: 1000 },
       });
       const datasets = r1.data.data || r1.data || [];
       allResources.value.datasets = datasets;
-      const missingIds = new Set(
-        datasets
-          .filter(
-            (d: any) => d?.is_missing_in_ragflow || d?.status === "missing",
-          )
-          .map((d: any) => d.id),
-      );
-      if (missingIds.size > 0) {
+      // 失联知识库**不**从勾选里剔除：它很可能正是用户之前授权过的库，
+      // 剔掉会让卡片「看得见但没勾选」，一保存就把授权静默删掉。
+      const privateIds = collectPrivateDatasetIds();
+      if (privateIds.size > 0) {
         permissionData.value.datasets = (
           permissionData.value.datasets || []
-        ).filter((id: string) => !missingIds.has(id));
+        ).filter((id: string) => !privateIds.has(id));
       }
     } catch (ragErr) {
       console.warn(
@@ -3708,15 +3812,12 @@ const fetchResources = async () => {
   }
 };
 
-/**
- * 已在 RAGFlow 失联的知识库：回显时剔除（不可再授权），保存时也不写回 payload，
- * 否则会把一个已经坏掉的授权反复提交上去。
- */
-const collectMissingDatasetIds = (): Set<string> =>
+/** 个人私有知识库：授权对它无效，回显与保存时都剔除，避免留下永不生效的记录。 */
+const collectPrivateDatasetIds = (): Set<string> =>
   new Set(
     (allResources.value.datasets || [])
-      .filter((d: any) => d?.is_missing_in_ragflow || d?.status === "missing")
-      .map((d: any) => d.id),
+      .filter((d: any) => knowledgeScopeOf(d) === "private")
+      .map((d: any) => String(d.id)),
   );
 
 const fetchUserPermissions = async (userId: number) => {
@@ -3732,10 +3833,12 @@ const fetchUserPermissions = async (userId: number) => {
     // 直接拿并集回显再整份 PUT，会把角色级禁用固化成用户级记录：角色页之后取消禁用，
     // 该用户仍被禁；反方向在用户页取消角色级禁用也无效，却提示成功。
     const state = resolveUserPermissionEditState(response.data);
-    const missingIds = collectMissingDatasetIds();
+    // 只剔除私有库（授权对它无效）；失联库保留勾选状态，
+    // 让用户一眼看到「这个库我之前授权过，现在失联了」
+    const privateIds = collectPrivateDatasetIds();
     permissionData.value = {
       ...state.direct,
-      datasets: state.direct.datasets.filter((id: string) => !missingIds.has(id)),
+      datasets: state.direct.datasets.filter((id: string) => !privateIds.has(id)),
     };
     inheritedForbidden.value = state.inherited;
     inheritedMenus.value = state.inheritedMenus;
@@ -3802,7 +3905,11 @@ const saveUser = async () => {
         // payload 只由直配缓冲构建：角色来源的禁用项没有任何进 payload 的通道。
         const permissionPayload = buildUserPermissionPayload(
           permissionData.value,
-          { missingDatasetIds: Array.from(collectMissingDatasetIds()) },
+          {
+            // 私有库授权不生效：别再把它写回数据库。
+            // 失联库的授权必须原样提交，否则一次保存就把它丢了。
+            excludedDatasetIds: Array.from(collectPrivateDatasetIds()),
+          },
         );
         try {
           await axios.put(

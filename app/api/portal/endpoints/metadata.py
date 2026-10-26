@@ -390,9 +390,21 @@ class DeletePermissionRequest(BaseModel):
 @router.get("/candidates")
 async def get_metadata_auth_candidates(
     conn: AsyncSession = Depends(get_db_session),
-    user: dict = Depends(require_permission("element", "element:metadata:edit"))
+    # 只读端点，接受任一边的权限：这个接口既服务于元数据管理页
+    # （element:metadata:edit），也服务于知识库详情的「分配授权成员」弹窗
+    # （element:user:edit）。只认前者会让有用户管理权但没有元数据编辑权的
+    # 管理员打开弹窗时拿到空列表 —— 看起来像"没有可选用户"。
+    user: dict = Depends(
+        require_any_permission(
+            ("element", "element:metadata:edit"),
+            ("element", "element:user:edit"),
+        )
+    ),
 ):
-    """获取可用于数据集权限分配的活跃角色和用户候选列表 (需数据集编辑权限)"""
+    """获取可用于权限分配的活跃角色和用户候选列表
+
+    准入：``element:metadata:edit`` 或 ``element:user:edit`` 任一。
+    """
     from app.models.permission import Role
     from app.models.user import User
     from sqlalchemy import select
@@ -403,7 +415,35 @@ async def get_metadata_auth_candidates(
 
     user_stmt = select(User.id, User.user_name, User.real_name).where(User.status == 1)
     user_res = await conn.execute(user_stmt)
-    users = [{"id": u.id, "user_name": u.user_name, "real_name": u.real_name} for u in user_res.all()]
+    user_rows = user_res.all()
+
+    # 带上部门归属：授权时最容易搞混的就是「这个人到底在不在我要授权的那个部门」，
+    # 只显示姓名和账号根本判断不了。停用部门不展示，与权限判定口径保持一致。
+    from app.models.department import DEPARTMENT_STATUS_ENABLED, Department, UserDepartment
+
+    dept_rows = (
+        await conn.execute(
+            select(UserDepartment.user_id, Department.id, Department.name)
+            .join(Department, Department.id == UserDepartment.dept_id)
+            .where(Department.status == DEPARTMENT_STATUS_ENABLED)
+            .order_by(Department.path)
+        )
+    ).all()
+    depts_by_user: dict[int, list[dict]] = {}
+    for uid, dept_id, dept_name in dept_rows:
+        depts_by_user.setdefault(int(uid), []).append(
+            {"id": int(dept_id), "name": str(dept_name or "")}
+        )
+
+    users = [
+        {
+            "id": u.id,
+            "user_name": u.user_name,
+            "real_name": u.real_name,
+            "departments": depts_by_user.get(int(u.id), []),
+        }
+        for u in user_rows
+    ]
 
     return {
         "code": 0,

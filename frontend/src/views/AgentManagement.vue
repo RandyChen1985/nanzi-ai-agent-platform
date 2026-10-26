@@ -5932,6 +5932,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           ? engineConfigUI.dataset_ids.split(',').filter(Boolean)
           : engineConfigUI.app_id
       "
+      :exclude-private="ragSelectorType === 'dataset'"
       @select="handleRagSelect"
     />
 

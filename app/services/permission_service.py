@@ -77,6 +77,135 @@ def normalize_permission_resource_type(resource_id: object, default_type: str) -
     return default_type
 
 
+# ---------------------------------------------------------------- 知识库可见范围
+#
+# 三档语义（`knowledge_base_metadata.visibility`）：
+#   public  —— 公共级：**需要显式授权**才能访问（创建人自动可用），可继续分配给用户/角色；
+#   team    —— 部门级：业务归属部门（含下级部门）成员自动**只读**，也可继续分配；
+#   private —— 个人私有：仅创建人可访问，**不允许**分配授权，已有授权记录一律不生效。
+#
+# 空值/未知值一律按 public 处理：历史数据可能缺列或写入过脏值，按 public 兜底
+# 等于保持改造前的行为（授权即可见），不会因为读到一个陌生值把人的权限收紧。
+
+VISIBILITY_PUBLIC = "public"
+VISIBILITY_TEAM = "team"
+VISIBILITY_PRIVATE = "private"
+
+
+def normalize_knowledge_visibility(value: object) -> str:
+    """归一化可见范围；空值/未知值按 public 处理。"""
+    token = str(value or "").strip().lower()
+    if token in (VISIBILITY_TEAM, VISIBILITY_PRIVATE):
+        return token
+    return VISIBILITY_PUBLIC
+
+
+def resolve_knowledge_dataset_access(
+    *,
+    dataset_rows: Iterable[tuple],
+    granted_ids: Iterable[str],
+    my_dept_paths: Iterable[str],
+    owner_dept_paths: dict,
+    default_ids: Iterable[str],
+    user_name: Optional[str],
+    user_id: Optional[int] = None,
+) -> dict:
+    """按三档可见范围计算可读/可写集合（纯函数，便于穷举边界）。
+
+    ``dataset_rows`` 每项为
+    ``(ragflow_dataset_id, visibility, owner_dept_id, created_by, owner_user_id)``。
+
+    规则（按序判定，命中即止）：
+
+    1. **归属人**：``owner_user_id == user_id``，可读可写，且不受 visibility 影响；
+       ``owner_user_id`` 为空时回落 ``created_by == user_name``（兼容未回填/已离职的老库）。
+       两者是**互斥**关系而非"或"：一旦显式转移过归属，``created_by`` 文本就不再
+       赋予任何人权限，否则原创建人仍能凭旧快照继续管理，转移等于没做；
+    2. ``private``：只有创建人，**授权记录被刻意忽略**；
+    3. ``dataset_id`` 在授权集合里：可读（public / team 都适用）；
+    4. ``team`` 且归属部门非空：当前用户的任一部门位于该部门子树内即可读
+       —— ``path`` 前缀匹配天然包含下级部门，且 ``/1/7/`` 不会误匹配 ``/1/70/``；
+    5. 元数据缺失（RAGFlow 有、本地尚未同步）的库保持改造前口径：授权即可见；
+    6. 系统级默认库（``knowledge_ragflow_dataset_ids``）对所有人可读，**但 ``private`` 除外**：
+       否则把某个私有库配进默认列表就等于把它公开给全平台，与「仅创建人」直接矛盾。
+
+    写权限分两级：
+
+    - ``writable_ids``（管理级）：仅「自己创建的」+ 管理员。改元数据、改可见范围、
+      改归属部门、删库、分配/撤销授权、查看授权名单都走这一级；
+    - ``content_writable_ids``（内容级）：管理级 **+ team 库的归属部门成员**。
+      只用于维护文档内容（上传、删除、解析、查看切片明细）。部门成员能改库里
+      的文档，但不能改这个库"归谁看"。
+
+    授权成员（被显式分配给某人/角色）恒为只读，两级都不含他们。
+    """
+    granted = {str(token).strip() for token in granted_ids or [] if str(token).strip()}
+    defaults = {str(token).strip() for token in default_ids or [] if str(token).strip()}
+    paths = [str(path) for path in my_dept_paths or [] if str(path or "").strip()]
+
+    accessible: set[str] = set()
+    writable: set[str] = set()
+    content_writable: set[str] = set()
+    known_ids: set[str] = set()
+    private_ids: set[str] = set()
+
+    current_user_id = int(user_id) if user_id is not None else None
+
+    for row in dataset_rows or []:
+        dataset_id, raw_visibility, raw_owner_dept_id, created_by, raw_owner_user_id = row
+        dataset_id = str(dataset_id or "").strip()
+        if not dataset_id:
+            continue
+        known_ids.add(dataset_id)
+
+        owner_user_id = int(raw_owner_user_id) if raw_owner_user_id else None
+        is_owner = (
+            owner_user_id is not None
+            and current_user_id is not None
+            and owner_user_id == current_user_id
+        ) or (
+            owner_user_id is None
+            and bool(user_name)
+            and bool(created_by)
+            and str(created_by) == str(user_name)
+        )
+        if is_owner:
+            accessible.add(dataset_id)
+            writable.add(dataset_id)
+            content_writable.add(dataset_id)
+            continue
+
+        visibility = normalize_knowledge_visibility(raw_visibility)
+        if visibility == VISIBILITY_PRIVATE:
+            # 个人私有：即使历史上有授权记录也不生效；
+            # 记下来是因为下面的「系统默认库」合并也必须跳过它
+            private_ids.add(dataset_id)
+            continue
+
+        if dataset_id in granted:
+            accessible.add(dataset_id)
+            # 刻意不 continue：同一个人可能既是授权成员又是归属部门成员，
+            # 后者应该拿到内容级写权限，不能被「已授权」提前短路掉。
+
+        if visibility == VISIBILITY_TEAM and raw_owner_dept_id:
+            owner_path = (owner_dept_paths or {}).get(int(raw_owner_dept_id))
+            if owner_path and any(path.startswith(str(owner_path)) for path in paths):
+                accessible.add(dataset_id)
+                # 部门（含下级部门）成员可以维护文档内容，但不能改库的设置
+                content_writable.add(dataset_id)
+
+    # 未同步到元数据表的库：沿用旧口径（有授权即可见），避免刚建/刚同步的库突然不可见
+    accessible |= {dataset_id for dataset_id in granted if dataset_id not in known_ids}
+    # 默认库对全员可读，但私有库不能借此"被公开"：private 的语义是有且仅有创建人
+    accessible |= {dataset_id for dataset_id in defaults if dataset_id not in private_ids}
+
+    return {
+        "accessible_ids": accessible,
+        "writable_ids": writable,
+        "content_writable_ids": content_writable,
+    }
+
+
 class PermissionService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -535,10 +664,26 @@ class PermissionService:
         user_name: Optional[str] = None,
     ) -> dict:
         """
-        知识库（RAGFlow Dataset）访问口径：
-        - 管理员：全部可访问、可写
-        - 其他用户：角色+用户直连权限并集（permissions.datasets）+ 自己创建的知识库
-        - 仅被分配、非创建人：只读（不可改元数据/文档，不可查看 chunk 明细）
+        知识库（RAGFlow Dataset）访问口径（三档可见范围，见模块顶部常量）：
+
+        - 管理员：全部可访问、可写，**包括他人创建的个人私有库**。
+          这是明确的产品决策（运维排障需要能看到/清理全平台的知识库），
+          不是漏判：``accessible_ids`` 返回 ``None`` 即代表"不受限"，
+          调用方必须先判 ``is_admin`` 再用集合，别把 ``None`` 当空权限。
+        - ``public``（公共级）：归属人 + 显式授权的用户/角色；
+        - ``team``（部门级）：在 public 的基础上，业务归属部门（**含下级部门**）
+          的成员自动只读；
+        - ``private``（个人私有）：只有归属人，授权记录不生效（也不允许新增授权）；
+        - 任何情况下都叠加：自己是归属人的库可读可写、系统默认库全员可读、管理员全量。
+
+        「归属人」是 ``owner_user_id``（管理权唯一真源）；它为空时回落 ``created_by``
+        用户名比较，兼容未回填与已离职的老库。两者**互斥**：一旦显式转移过归属，
+        ``created_by`` 文本就不再赋予任何人权限，否则原创建人仍能凭旧快照继续管理。
+
+        ``writable_ids``（管理级）恒为「自己是归属人的库」：改元数据/可见范围/归属部门、
+        删库、分配授权、查看授权名单都要求这一级。``content_writable_ids``（内容级）
+        在此基础上加上 team 库的归属部门成员 —— 他们能上传/删除/解析文档、看切片，
+        但不能改变这个库的可见范围。授权成员两级都只有读权限。
         """
         perms = await self.get_user_permissions(user_id)
         if self.is_admin_user(perms.roles):
@@ -546,38 +691,142 @@ class PermissionService:
                 "is_admin": True,
                 "accessible_ids": None,
                 "writable_ids": None,
+                "content_writable_ids": None,
             }
 
-        accessible: set[str] = set()
-        for dataset_id in perms.permissions.datasets:
-            token = (dataset_id or "").strip()
-            if token:
-                accessible.add(token)
-
-        created_ids: set[str] = set()
-        if user_name:
-            stmt = select(KnowledgeBaseMetadata.ragflow_dataset_id).where(
-                KnowledgeBaseMetadata.status != "deleted",
-                KnowledgeBaseMetadata.created_by == user_name,
+        # 一次取出判定所需的全部列：库数量是几十到几百量级，逐库回查反而更慢
+        rows = (
+            await self.db.execute(
+                select(
+                    KnowledgeBaseMetadata.ragflow_dataset_id,
+                    KnowledgeBaseMetadata.visibility,
+                    KnowledgeBaseMetadata.owner_dept_id,
+                    KnowledgeBaseMetadata.created_by,
+                    KnowledgeBaseMetadata.owner_user_id,
+                ).where(KnowledgeBaseMetadata.status != "deleted")
             )
-            rows = (await self.db.execute(stmt)).scalars().all()
-            created_ids = {row for row in rows if row}
+        ).all()
 
-        # 合并系统级配置的默认公开知识库
-        from app.services.config_service import ConfigService
-        default_ids_str = await ConfigService.get("knowledge_ragflow_dataset_ids")
-        if default_ids_str:
-            for item in default_ids_str.split(","):
-                token = item.strip()
-                if token:
-                    accessible.add(token)
-
-        accessible |= created_ids
-        return {
-            "is_admin": False,
-            "accessible_ids": accessible,
-            "writable_ids": created_ids,
+        # 只有存在 team 库时才去查部门，普通用户的常规路径不额外付一次查询
+        team_owner_ids = {
+            int(owner_dept_id)
+            for _, visibility, owner_dept_id, _, _ in rows
+            if owner_dept_id and normalize_knowledge_visibility(visibility) == VISIBILITY_TEAM
         }
+        owner_dept_paths: dict[int, str] = {}
+        my_dept_paths: list[str] = []
+        if team_owner_ids:
+            from app.models.department import (
+                DEPARTMENT_STATUS_ENABLED,
+                Department,
+                UserDepartment,
+            )
+
+            # 停用部门（status=0）不再构成可见范围：与 user_dimension_service 的
+            # 部门遍历口径保持一致，否则「维度里看不到这个部门」但「它的 team 库
+            # 仍然自动可见」，两边对不上。
+            dept_rows = (
+                await self.db.execute(
+                    select(Department.id, Department.path).where(
+                        Department.id.in_(team_owner_ids),
+                        Department.status == DEPARTMENT_STATUS_ENABLED,
+                    )
+                )
+            ).all()
+            owner_dept_paths = {
+                int(dept_id): str(path or "") for dept_id, path in dept_rows if path
+            }
+            my_rows = (
+                await self.db.execute(
+                    select(Department.path)
+                    .select_from(UserDepartment)
+                    .join(Department, Department.id == UserDepartment.dept_id)
+                    .where(
+                        UserDepartment.user_id == int(user_id),
+                        Department.status == DEPARTMENT_STATUS_ENABLED,
+                    )
+                )
+            ).all()
+            my_dept_paths = [str(path) for (path,) in my_rows if path]
+
+        # 合并系统级配置的默认公开知识库（与 visibility 无关，全员可读）
+        from app.services.config_service import ConfigService
+
+        default_ids_str = await ConfigService.get("knowledge_ragflow_dataset_ids")
+        default_ids = [item.strip() for item in (default_ids_str or "").split(",") if item.strip()]
+
+        access = resolve_knowledge_dataset_access(
+            dataset_rows=[tuple(row) for row in rows],
+            granted_ids=perms.permissions.datasets or [],
+            my_dept_paths=my_dept_paths,
+            owner_dept_paths=owner_dept_paths,
+            default_ids=default_ids,
+            user_name=user_name,
+            user_id=user_id,
+        )
+        return {"is_admin": False, **access}
+
+    async def find_private_datasets_not_owned(
+        self,
+        dataset_ids: Iterable[str],
+        user_name: Optional[str],
+        user_id: Optional[int] = None,
+    ) -> set[str]:
+        """返回给定集合里「个人私有且当前用户不是归属人」的库 ID。
+
+        **检索侧专用**。智能体绑定的知识库会跳过使用者权限校验（智能体作者
+        已经决定了它的知识范围），但 ``private`` 不能跟着被代理放行：
+        它的语义是「有且仅有归属人」，否则任何被授权过某库的人都能建个智能体
+        把它二次分发给全体使用者。因此调用方应把这批 ID 从「智能体绑定」里摘掉，
+        让它们回落到正常的用户权限判定（那里 private 只对归属人成立）。
+
+        归属判定与 ``resolve_knowledge_dataset_access`` 必须逐字同源：
+        ``owner_user_id`` 优先，为空才回落 ``created_by``。否则「把私有库转交给
+        同事」之后，原创建人仍会被当成主人，智能体代理时继续把库放行给所有人。
+
+        元数据里查不到的库不返回 —— 与「未同步库按授权放行」的既有口径一致。
+        """
+        ids = {str(dataset_id).strip() for dataset_id in dataset_ids or [] if str(dataset_id).strip()}
+        if not ids:
+            return set()
+
+        rows = (
+            await self.db.execute(
+                select(
+                    KnowledgeBaseMetadata.ragflow_dataset_id,
+                    KnowledgeBaseMetadata.visibility,
+                    KnowledgeBaseMetadata.created_by,
+                    KnowledgeBaseMetadata.owner_user_id,
+                ).where(
+                    KnowledgeBaseMetadata.ragflow_dataset_id.in_(ids),
+                    # 软删的库按「查不到」处理（与 docstring 的口径一致）：
+                    # 它已经不会被检索到，不必再参与私有库摘除判定。
+                    KnowledgeBaseMetadata.status != "deleted",
+                )
+            )
+        ).all()
+
+        current_user_id = int(user_id) if user_id is not None else None
+        denied: set[str] = set()
+        for dataset_id, raw_visibility, created_by, raw_owner_user_id in rows:
+            if normalize_knowledge_visibility(raw_visibility) != VISIBILITY_PRIVATE:
+                continue
+            owner_user_id = int(raw_owner_user_id) if raw_owner_user_id else None
+            is_owner = (
+                owner_user_id is not None
+                and current_user_id is not None
+                and owner_user_id == current_user_id
+            ) or (
+                owner_user_id is None
+                and bool(user_name)
+                and bool(created_by)
+                and str(created_by) == str(user_name)
+            )
+            # 归属人本人照常可用；归属人与 created_by 都缺失（无主私有库）时按拒绝处理
+            if is_owner:
+                continue
+            denied.add(str(dataset_id))
+        return denied
 
     async def filter_knowledge_dataset_ids(
         self,
@@ -1062,6 +1311,35 @@ class PermissionService:
         rows = (await self.db.execute(model_stmt)).scalars().all()
         return self._resolve_allowed_model_ids(user_role, list(rows))
 
+    async def _exclude_private_datasets(self, dataset_ids):
+        """剔除「个人私有」知识库 id：授权对它无效，写进去只会留下永不生效的记录。
+
+        判定侧本来就会跳过 private（见 resolve_knowledge_dataset_access），
+        前端也已禁用这类项的勾选；这里再兜一层，挡住旧前端/脚本直接调接口。
+        """
+        ids = [str(i) for i in (dataset_ids or []) if str(i).strip()]
+        if not ids:
+            return []
+        rows = (
+            await self.db.execute(
+                select(
+                    KnowledgeBaseMetadata.ragflow_dataset_id,
+                    KnowledgeBaseMetadata.visibility,
+                ).where(
+                    KnowledgeBaseMetadata.ragflow_dataset_id.in_(ids),
+                    KnowledgeBaseMetadata.status != "deleted",
+                )
+            )
+        ).all()
+        private_ids = {
+            str(row[0])
+            for row in rows
+            if normalize_knowledge_visibility(row[1]) == VISIBILITY_PRIVATE
+        }
+        if not private_ids:
+            return ids
+        return [i for i in ids if i not in private_ids]
+
     async def update_user_permissions(self, user_id: int, updates: PermissionUpdate):
         """Update DIRECT user permissions"""
         try:
@@ -1091,7 +1369,7 @@ class PermissionService:
             new_perms = []
             for agent_id in updates.agents:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="agent", resource_id=agent_id))
-            for dataset_id in updates.datasets:
+            for dataset_id in await self._exclude_private_datasets(updates.datasets):
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="dataset", resource_id=dataset_id))
             for api_id in updates.apis:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="api", resource_id=api_id))
@@ -1231,7 +1509,7 @@ class PermissionService:
             new_perms = []
             for agent_id in updates.agents:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="agent", resource_id=agent_id))
-            for dataset_id in updates.datasets:
+            for dataset_id in await self._exclude_private_datasets(updates.datasets):
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="dataset", resource_id=dataset_id))
             for api_id in updates.apis:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="api", resource_id=api_id))
@@ -1369,6 +1647,66 @@ class PermissionService:
         )
         for uid in (await self.db.execute(user_ids_stmt)).scalars().all():
             await self._invalidate_user_cache(uid)
+
+    async def get_users_with_element_permission(
+        self, user_ids: Iterable[int], permission_code: str
+    ) -> set[int]:
+        """批量判断「给出的这批人里，谁具备某个功能点权限」。
+
+        给候选用户列表打标用（转移归属前提示"这人接手了也管不了"）。逐人调
+        ``get_user_permissions`` 是每人 4 次查询，200 个候选会打出 800 次；这里
+        压成 4 条 SQL，口径对齐它的三条来源：系统/业务 ``admin`` 角色、用户直配、
+        业务角色继承。
+
+        ``agent_id`` 作用域刻意不参与：功能点权限是全局行，智能体级只影响资源禁用；
+        这里宁可"多说他有"——调用方只用它做提示，不拿它做拦截。
+        """
+        ids = {int(uid) for uid in user_ids if uid}
+        code = str(permission_code or "").strip()
+        if not ids or not code:
+            return set()
+
+        granted: set[int] = set()
+
+        # A. 系统角色 admin 与业务角色 code = admin（与 is_admin_user 同口径）
+        admin_stmt = select(User.id).where(User.id.in_(ids), User.role == "admin")
+        granted.update((await self.db.execute(admin_stmt)).scalars().all())
+
+        admin_role_stmt = (
+            select(UserRoleRelation.user_id)
+            .join(Role, Role.id == UserRoleRelation.role_id)
+            .where(UserRoleRelation.user_id.in_(ids), Role.code == "admin")
+        )
+        granted.update((await self.db.execute(admin_role_stmt)).scalars().all())
+
+        # B. 用户直配的功能点
+        direct_stmt = select(ResourcePermission.user_id).where(
+            ResourcePermission.user_id.in_(ids),
+            ResourcePermission.resource_type == "element",
+            ResourcePermission.resource_id == code,
+            ResourcePermission.enabled == True,  # noqa: E712 - 与既有查询写法保持一致
+        )
+        granted.update(
+            uid for uid in (await self.db.execute(direct_stmt)).scalars().all() if uid
+        )
+
+        # C. 通过业务角色继承
+        role_stmt = (
+            select(UserRoleRelation.user_id)
+            .join(
+                ResourcePermission,
+                ResourcePermission.role_id == UserRoleRelation.role_id,
+            )
+            .where(
+                UserRoleRelation.user_id.in_(ids),
+                ResourcePermission.resource_type == "element",
+                ResourcePermission.resource_id == code,
+                ResourcePermission.enabled == True,  # noqa: E712
+            )
+        )
+        granted.update((await self.db.execute(role_stmt)).scalars().all())
+
+        return {int(uid) for uid in granted}
 
     async def invalidate_cached_permissions_for_users(self, user_ids: Iterable[int]) -> None:
         """Clear permission cache for users (e.g. after role membership changes outside update_user_roles)."""

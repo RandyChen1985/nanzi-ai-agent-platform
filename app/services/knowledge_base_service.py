@@ -8,6 +8,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import KnowledgeBaseMetadata
 
+# 区分"未提供该字段"与"显式清空"（传 None/0）。
+# 元数据更新是 PATCH 语义，owner 与 owner_dept_id 都需要支持被清空：
+#   - 未提供 → 保持原值
+#   - 提供了 None/0 → 置空
+_UNSET: Any = object()
+
+
+# 可见范围三档：判定侧（permission_service）有同名归一化，这里独立实现是为了
+# 避免 service 之间互相 import。空值/未知值按 public 兜底，与判定口径一致。
+_VISIBILITY_ALLOWED = {"public", "team", "private"}
+
+
+def _normalize_visibility(value: object, *, fallback: str) -> str:
+    """把外部传入的可见范围归一成三档之一。
+
+    ``fallback`` 区分两条路径：新建默认 ``private``（用户没说就是自己的草稿），
+    更新时缺省按 ``public``（与判定侧"未知即可授权"的兜底一致）。
+    """
+    token = str(value or "").strip().lower()
+    if token in _VISIBILITY_ALLOWED:
+        return token
+    return fallback
+
 
 class KnowledgeBaseMetadataService:
     """Manage local metadata for RAGFlow knowledge bases."""
@@ -33,7 +56,9 @@ class KnowledgeBaseMetadataService:
         name: str,
         description: Optional[str] = None,
         owner: Optional[str] = None,
-        visibility: str = "private",
+        owner_dept_id: Optional[int] = None,
+        owner_user_id: Optional[int] = None,
+        visibility: Optional[str] = None,
         tags: Optional[List[str]] = None,
         notes: Optional[str] = None,
         extra_config: Optional[Dict[str, Any]] = None,
@@ -41,7 +66,8 @@ class KnowledgeBaseMetadataService:
         user_name: Optional[str] = None,
     ) -> KnowledgeBaseMetadata:
         record = await self.get_by_dataset_id(ragflow_dataset_id)
-        if not record:
+        is_new = record is None
+        if is_new:
             record = KnowledgeBaseMetadata(
                 ragflow_dataset_id=ragflow_dataset_id,
                 name=name,
@@ -52,7 +78,16 @@ class KnowledgeBaseMetadataService:
         record.name = name
         record.description = description
         record.owner = owner
-        record.visibility = visibility or "private"
+        record.owner_dept_id = int(owner_dept_id) if owner_dept_id else None
+        # 归属人只在显式传值时改写：同步/批量更新不能把已转移的归属重置成"同步者"。
+        if owner_user_id is not None:
+            record.owner_user_id = int(owner_user_id)
+        # 只在显式传值时改写可见范围：更新路径漏传参数不能把库悄悄重置成 private
+        # （默认值曾经是 "private"，任何一次不带 visibility 的 upsert 都会静默降级）
+        if visibility is not None:
+            record.visibility = _normalize_visibility(visibility, fallback="private")
+        elif is_new:
+            record.visibility = _normalize_visibility("private", fallback="private")
         record.tags = tags or []
         record.notes = notes
         record.extra_config = extra_config or {}
@@ -68,7 +103,9 @@ class KnowledgeBaseMetadataService:
         *,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        owner: Optional[str] = None,
+        owner: Any = _UNSET,
+        owner_dept_id: Any = _UNSET,
+        owner_user_id: Any = _UNSET,
         visibility: Optional[str] = None,
         tags: Optional[List[str]] = None,
         notes: Optional[str] = None,
@@ -89,10 +126,15 @@ class KnowledgeBaseMetadataService:
             record.name = name
         if description is not None:
             record.description = description
-        if owner is not None:
-            record.owner = owner
+        if owner is not _UNSET:
+            record.owner = owner or None
+        if owner_dept_id is not _UNSET:
+            record.owner_dept_id = int(owner_dept_id) if owner_dept_id else None
+        if owner_user_id is not _UNSET:
+            # 传 0/None = 清空归属人（此后判定回落 created_by 文本）
+            record.owner_user_id = int(owner_user_id) if owner_user_id else None
         if visibility is not None:
-            record.visibility = visibility
+            record.visibility = _normalize_visibility(visibility, fallback="public")
         if tags is not None:
             record.tags = tags
         if notes is not None:
@@ -103,6 +145,31 @@ class KnowledgeBaseMetadataService:
         record.updated_at = datetime.now()
         await self.db.flush()
         return record
+
+    async def transfer_owner(
+        self,
+        dataset_id: str,
+        *,
+        target_user_id: int,
+        user_name: Optional[str] = None,
+    ) -> Optional[tuple[KnowledgeBaseMetadata, Optional[int]]]:
+        """把知识库归属人转给另一个用户，返回 ``(记录, 原归属人 ID)``。
+
+        只改 ``owner_user_id``，**刻意不改** ``created_by``：那是真实的创建记录，
+        转移时覆盖掉就再没人能说出这个库最初是谁建的。归属人本就是独立的业务概念。
+
+        元数据不存在或已软删时返回 ``None``（调用方按 404 处理）；目标用户的合法性
+        由调用方校验，这里只负责落库。
+        """
+        record = await self.get_by_dataset_id(dataset_id)
+        if not record or record.status == "deleted":
+            return None
+        previous_owner_user_id = record.owner_user_id
+        record.owner_user_id = int(target_user_id)
+        record.updated_by = user_name
+        record.updated_at = datetime.now()
+        await self.db.flush()
+        return record, previous_owner_user_id
 
     async def mark_deleted(self, dataset_ids: Iterable[str], user_name: Optional[str] = None) -> None:
         for dataset_id in dataset_ids:
@@ -141,6 +208,10 @@ class KnowledgeBaseMetadataService:
                 ragflow_dataset_id=dataset_id,
                 name=name or dataset_id,
                 description=description,
+                # 同步进来的库不是"某人新建的私有资料"，而是平台已存在的共享资源：
+                # 沿用迁移后的统一口径 public（需授权），否则一次同步就会把它们
+                # 全部变成执行同步者的个人私有库，其他人连访问入口都没有。
+                visibility="public",
                 status="active",
                 user_name=user_name,
             )
@@ -165,9 +236,14 @@ class KnowledgeBaseMetadataService:
             item["platform_name"] = local.name if local else ds.get("name")
             item["platform_description"] = local.description if local else ds.get("description")
             item["owner"] = local.owner if local else None
+            item["owner_dept_id"] = local.owner_dept_id if local else None
+            item["owner_user_id"] = local.owner_user_id if local else None
             item["tags"] = local.tags if local else []
             item["notes"] = local.notes if local else None
-            item["visibility"] = local.visibility if local else "private"
+            # 元数据缺失（RAGFlow 已建、本地尚未同步）时按 public 兜底：
+            # 与权限判定的兜底口径一致（未知可见范围按"需要授权"处理），避免前端
+            # 显示"个人私有"、隐藏授权入口，实际却又按 public 判定。
+            item["visibility"] = local.visibility if local else "public"
             item["status"] = local.status if local else "active"
             item["created_by"] = local.created_by if local else None
             item["is_missing_in_ragflow"] = False
@@ -193,6 +269,8 @@ class KnowledgeBaseMetadataService:
                     "platform_name": local.name,
                     "platform_description": local.description,
                     "owner": local.owner,
+                    "owner_dept_id": local.owner_dept_id,
+                    "owner_user_id": local.owner_user_id,
                     "created_by": local.created_by,
                     "tags": local.tags or [],
                     "notes": local.notes,
@@ -212,6 +290,8 @@ class KnowledgeBaseMetadataService:
             "name": record.name,
             "description": record.description,
             "owner": record.owner,
+            "owner_dept_id": record.owner_dept_id,
+            "owner_user_id": record.owner_user_id,
             "visibility": record.visibility,
             "tags": record.tags or [],
             "notes": record.notes,

@@ -144,14 +144,31 @@ async def create_role(
 ):
     """
     Create a new role.
+
+    保留 code（``SYSTEM_ROLE_CODES``）一律拒绝：``get_user_permissions`` 会把
+    业务角色的 ``code`` 一并并进 ``roles`` 列表，而 ``is_admin_user`` 判的就是
+    ``"admin" in roles``。若允许建一个 code=admin 的业务角色，把任何人加进去
+    就等于给他系统管理员权限（``check_permission`` 对 admin 直接放行）。
     """
+    code = (request.code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Role code is required")
+    if code.lower() in SYSTEM_ROLE_CODES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Role code '{code}' is reserved by the system "
+                f"({', '.join(sorted(SYSTEM_ROLE_CODES))})"
+            ),
+        )
+
     # Check duplicate code
-    existing = await db.execute(select(Role).where(Role.code == request.code))
+    existing = await db.execute(select(Role).where(Role.code == code))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Role code already exists")
         
     new_role = Role(
-        code=request.code,
+        code=code,
         name=request.name,
         description=request.description
     )

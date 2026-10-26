@@ -25,6 +25,8 @@ export interface RagFlowDataset {
     can_write?: boolean;
     can_view_chunks?: boolean;
     is_read_only?: boolean;
+    /** 可见范围：public（需授权）/ team（部门只读）/ private（仅创建人） */
+    visibility?: string;
 }
 
 export interface RagFlowConfigSummary {

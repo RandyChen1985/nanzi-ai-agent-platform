@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import require_any_permission, require_permission
+from app.core.dependencies import get_current_user, require_any_permission, require_permission
 from app.core.orm import get_db_session
 from app.models.department import Department, UserDepartment
 from app.models.user import User
@@ -117,6 +117,37 @@ async def get_department_tree(
         # 去重人数：各节点 member_count 相加是"人次"，多部门用户会重复计数
         "member_total": await service.count_unique_members(),
     }
+
+
+def _option_node(node: dict) -> dict:
+    """只读目录节点：只保留结构字段，剔除成员数与描述。"""
+    return {
+        "id": node["id"],
+        "parent_id": node["parent_id"],
+        "code": node["code"],
+        "name": node["name"],
+        "path": node["path"],
+        "status": node["status"],
+        "children": [_option_node(child) for child in node.get("children") or []],
+    }
+
+
+@router.get("/options")
+async def get_department_options(
+    include_disabled: bool = Query(True, description="是否包含已停用部门"),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """只读部门目录，供业务侧（如知识库「业务归属部门」）选择器与过滤器使用。
+
+    与 ``/tree`` 的差别：
+
+    - 权限只要求登录。知识库编辑者通常只有 ``element:knowledge:edit``，
+      复用 ``/tree`` 会直接 403，页面上的部门选择器根本加载不出来；
+    - 只返回结构字段，**不含成员数与成员名单**，不扩大部门管理信息的暴露面。
+    """
+    roots = await DepartmentService(db).build_tree(include_disabled=include_disabled)
+    return {"items": [_option_node(node) for node in roots]}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

@@ -316,6 +316,11 @@ export interface UserPermissionPayloadOptions {
   datasets?: string[] | null
   /** 已在 RAGFlow 失联的知识库（不可再授权，也不该继续留在 payload 里） */
   missingDatasetIds?: string[] | null
+  /**
+   * 其他不该写进 payload 的知识库：目前是「个人私有」。
+   * 私有库的授权在判定时会被直接跳过，提交上去只会留下一条永远不生效的记录。
+   */
+  excludedDatasetIds?: string[] | null
 }
 
 /**
@@ -326,11 +331,14 @@ export function buildUserPermissionPayload(
   direct: PermissionLists,
   options: UserPermissionPayloadOptions = {},
 ): PermissionLists {
-  const missing = new Set((options.missingDatasetIds || []).map((id) => String(id)))
+  const excluded = new Set([
+    ...(options.missingDatasetIds || []).map((id) => String(id)),
+    ...(options.excludedDatasetIds || []).map((id) => String(id)),
+  ])
   const datasets = (options.datasets ?? direct.datasets ?? []).map((id) => String(id))
   return {
     agents: [...(direct.agents || [])],
-    datasets: datasets.filter((id) => !missing.has(id)),
+    datasets: datasets.filter((id) => !excluded.has(id)),
     metadata: [...(direct.metadata || [])],
     apis: [...(direct.apis || [])],
     menus: [...(direct.menus || [])],
