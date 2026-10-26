@@ -48,9 +48,17 @@ def test_apply_dialog_has_reason_field(knowledge: str) -> None:
 
 
 def test_personal_center_has_my_requests_tab(personal: str) -> None:
-    assert "'requests'" in personal
+    """「我的申请」现在挂在「我的权限」里的子 tab 上，不再是顶层 tab。
+
+    申请结果是权限的一部分，两个顶层 tab 并列会让人以为互不相干。
+    """
+    assert "permissionSubTab" in personal
+    assert "switchPermissionSubTab" in personal
     assert "我的申请" in personal
     assert "/access-requests/mine" in personal
+    # 顶层 tab 列表里不能再有 requests
+    tabs_line = personal.split("const personalTabs: PersonalTab[] = [", 1)[1].split("]", 1)[0]
+    assert "requests" not in tabs_line
 
 
 def test_my_requests_supports_cancel(personal: str) -> None:

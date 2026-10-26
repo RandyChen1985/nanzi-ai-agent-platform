@@ -72,7 +72,8 @@ def test_applicant_lands_on_my_requests(bell: str) -> None:
         "// 技能分享", 1
     )[0]
     assert "/dashboard/personal" in block
-    assert 'tab: "requests"' in block
+    assert 'tab: "permissions"' in block
+    assert 'subtab: "requests"' in block
 
 
 def test_users_page_opens_review_from_deep_link(users: str) -> None:

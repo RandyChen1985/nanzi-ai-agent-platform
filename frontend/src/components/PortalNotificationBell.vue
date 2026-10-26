@@ -236,7 +236,7 @@ const openNotification = async (item: any) => {
     closeNotifications();
     closeDetail();
     await router
-      .push({ path: "/dashboard/personal", query: { tab: "requests" } })
+      .push({ path: "/dashboard/personal", query: { tab: "permissions", subtab: "requests" } })
       .catch(() => undefined);
     return;
   }

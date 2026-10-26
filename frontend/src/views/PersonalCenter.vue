@@ -650,11 +650,21 @@ import McpManagement from './McpManagement.vue'
 import TaskCenter from './TaskCenter.vue'
 import { useRoute, useRouter } from 'vue-router'
 
-type PersonalTab = 'info' | 'permissions' | 'requests' | 'memory' | 'tokens' | 'notifications' | 'data' | 'skills' | 'mcp' | 'tasks'
+type PersonalTab = 'info' | 'permissions' | 'memory' | 'tokens' | 'notifications' | 'data' | 'skills' | 'mcp' | 'tasks'
 const route = useRoute()
 const router = useRouter()
-const personalTabs: PersonalTab[] = ['info', 'permissions', 'requests', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp', 'tasks']
-const activeTab = ref<PersonalTab>(personalTabs.includes(route.query.tab as PersonalTab) ? route.query.tab as PersonalTab : 'info')
+const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data', 'skills', 'mcp', 'tasks']
+/** 申请并进「我的权限」后，旧深链 ?tab=requests 仍然要能用 */
+const wantsRequestView =
+    route.query.tab === 'requests' || route.query.subtab === 'requests'
+const activeTab = ref<PersonalTab>(
+    personalTabs.includes(route.query.tab as PersonalTab)
+        ? (route.query.tab as PersonalTab)
+        : wantsRequestView
+          ? 'permissions'
+          : 'info'
+)
+const permissionSubTab = ref<'list' | 'requests'>(wantsRequestView ? 'requests' : 'list')
 const skillsInitialId = computed(() => String(route.query.skill_id || '').trim())
 /** 通知与深链共用的「我的技能」二级落点：mine / received / sent。 */
 const skillsInitialMenu = computed<'mine' | 'received' | 'sent'>(() => {
@@ -684,6 +694,25 @@ const fetchMyRequests = async () => {
         myRequests.value = []
     } finally {
         loadingMyRequests.value = false
+    }
+}
+
+/** 「我的申请」里还在审批中的条数，挂在子 tab 上做提示 */
+const pendingMyRequests = computed(
+    () => myRequests.value.filter((item: any) => item.status === 'pending').length
+)
+
+const switchPermissionSubTab = (sub: 'list' | 'requests') => {
+    permissionSubTab.value = sub
+    const nextQuery: Record<string, any> = { ...route.query, tab: 'permissions' }
+    if (sub === 'requests') {
+        nextQuery.subtab = 'requests'
+    } else {
+        delete nextQuery.subtab
+    }
+    router.replace({ query: nextQuery })
+    if (sub === 'requests') {
+        void fetchMyRequests()
     }
 }
 
@@ -793,11 +822,14 @@ watch(activeTab, (val) => {
         delete nextQuery.skill_id
     }
     router.replace({ query: nextQuery })
-    if (val === 'permissions' && !permissions.value.details) {
-        fetchPermissions()
-    }
-    if (val === 'requests') {
-        void fetchMyRequests()
+    if (val === 'permissions') {
+        if (!permissions.value.details) {
+            fetchPermissions()
+        }
+        // 从别的 tab 切回来时停在「我的申请」，列表可能是几分钟前的旧状态
+        if (permissionSubTab.value === 'requests') {
+            void fetchMyRequests()
+        }
     }
 })
 
@@ -808,12 +840,21 @@ const clearSkillsDeepLink = () => {
     router.replace({ query: nextQuery })
 }
 watch(() => route.query.tab, (value) => {
+    if (value === 'requests') {
+        activeTab.value = 'permissions'
+        permissionSubTab.value = 'requests'
+        void fetchMyRequests()
+        return
+    }
     activeTab.value = personalTabs.includes(value as PersonalTab) ? value as PersonalTab : 'info'
 }, { immediate: true })
 
 watch(() => route.query.subtab, (value) => {
     if (value === 'security' || value === 'profile' || value === 'browser') {
         infoSubTab.value = value
+    }
+    if (value === 'requests' && activeTab.value === 'permissions') {
+        permissionSubTab.value = 'requests'
     }
 }, { immediate: true })
 
@@ -851,17 +892,6 @@ onMounted(() => {
                     ]"
                 >
                     我的权限
-                </button>
-                <button
-                    @click="activeTab = 'requests'"
-                    :class="[
-                        activeTab === 'requests'
-                            ? 'border-blue-500 text-blue-600'
-                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
-                        'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
-                    ]"
-                >
-                    我的申请
                 </button>
                 <button 
                     @click="activeTab = 'memory'"
@@ -1470,7 +1500,24 @@ onMounted(() => {
         </div>
 
         <!-- Permissions Tab -->
-        <div v-else-if="activeTab === 'requests'">
+        <div v-else-if="activeTab === 'permissions'">
+            <!-- 申请结果是权限的一部分：拆成两个顶层 tab，用户看到「我的申请」和「我的权限」会以为互不相干 -->
+            <div class="mb-4 flex items-center gap-1 rounded-lg bg-gray-100 p-1 text-xs font-semibold sm:w-fit">
+                <button
+                    type="button"
+                    class="rounded-md px-3 py-1.5 transition-all"
+                    :class="permissionSubTab === 'list' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                    @click="switchPermissionSubTab('list')"
+                >权限清单</button>
+                <button
+                    type="button"
+                    class="rounded-md px-3 py-1.5 transition-all"
+                    :class="permissionSubTab === 'requests' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                    @click="switchPermissionSubTab('requests')"
+                >我的申请<span v-if="pendingMyRequests" class="ml-1 text-amber-600">{{ pendingMyRequests }}</span></button>
+            </div>
+
+            <template v-if="permissionSubTab === 'requests'">
             <div class="mb-3 flex items-center justify-between">
                 <p class="text-xs text-gray-500">你提交的知识库访问申请。审批通过后授权自动生效，无需再找归属人手工加。</p>
                 <button type="button" class="text-xs text-blue-600 hover:underline disabled:opacity-50" :disabled="loadingMyRequests" @click="fetchMyRequests">刷新</button>
@@ -1510,9 +1557,9 @@ onMounted(() => {
                     </div>
                 </li>
             </ul>
-        </div>
+            </template>
 
-        <div v-else-if="activeTab === 'permissions'">
+            <template v-else>
             <div v-if="loadingPermissions" class="flex justify-center py-10">
                 <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             </div>
@@ -1672,6 +1719,7 @@ onMounted(() => {
                 </div>
                 </template>
             </div>
+            </template>
         </div>
 
         <!-- Token Usage Tab -->
