@@ -175,3 +175,72 @@ def test_system_default_ids_still_apply_to_unsynced_datasets():
         user_name="someone",
     )
     assert "ds-not-synced" in result["accessible_ids"]
+
+
+# ---------------------------------------------------------------- 两级写权限
+#
+# 内容级（content_writable_ids）：上传 / 删除 / 解析文档、查看切片明细。
+# 管理级（writable_ids）：改元数据、改可见范围、改归属部门、删库、分配授权、看授权名单。
+#
+# 部门成员落在内容级：能维护本部门资料，但改不了这个库"归谁看"。
+
+
+def test_team_member_gets_content_write_but_not_management():
+    rows = [_row("ds-team", VISIBILITY_TEAM, OWNER_DEPT_ID, "bob")]
+    access = _resolve(rows, my_paths=[MY_DEPT_PATH])
+
+    assert "ds-team" in access["accessible_ids"]
+    # 能上传/删/解析文档、看切片
+    assert "ds-team" in access["content_writable_ids"]
+    # 但不能改元数据/可见范围/删库/分配授权
+    assert "ds-team" not in access["writable_ids"]
+
+
+def test_granted_member_of_public_stays_read_only():
+    """被显式授权的非创建人恒为只读 —— 两级都不含。"""
+    rows = [_row("ds-public", VISIBILITY_PUBLIC, None, "bob")]
+    access = _resolve(rows, granted=["ds-public"], my_paths=[MY_DEPT_PATH])
+
+    assert "ds-public" in access["accessible_ids"]
+    assert "ds-public" not in access["content_writable_ids"]
+    assert "ds-public" not in access["writable_ids"]
+
+
+def test_team_member_from_sibling_department_is_read_only():
+    rows = [_row("ds-team", VISIBILITY_TEAM, OWNER_DEPT_ID, "bob")]
+    access = _resolve(rows, my_paths=[SIBLING_DEPT_PATH])
+
+    assert "ds-team" not in access["accessible_ids"]
+    assert "ds-team" not in access["content_writable_ids"]
+
+
+def test_team_member_who_is_also_granted_keeps_content_write():
+    """既是部门成员又是授权成员时，不能被「已授权」提前短路掉写权限。
+
+    这条曾经是真 bug：granted 分支里 `continue` 会跳过后续的 team 判定，
+    结果是部门成员反而因为"被额外授权"而丢掉了内容写权限。
+    """
+    rows = [_row("ds-team", VISIBILITY_TEAM, OWNER_DEPT_ID, "bob")]
+    access = _resolve(rows, granted=["ds-team"], my_paths=[MY_DEPT_PATH])
+
+    assert "ds-team" in access["content_writable_ids"]
+    assert "ds-team" not in access["writable_ids"]
+
+
+def test_creator_has_both_levels():
+    rows = [_row("ds-mine", VISIBILITY_PRIVATE, None, "alice")]
+    access = _resolve(rows)
+
+    assert "ds-mine" in access["accessible_ids"]
+    assert "ds-mine" in access["content_writable_ids"]
+    assert "ds-mine" in access["writable_ids"]
+
+
+def test_default_dataset_is_read_only_for_everyone_but_creator():
+    """系统默认库对全员可读，但不给写权限 —— 否则任何人都能改公共资料。"""
+    rows = [_row("ds-default", VISIBILITY_PUBLIC, None, "bob")]
+    access = _resolve(rows, defaults=["ds-default"])
+
+    assert "ds-default" in access["accessible_ids"]
+    assert "ds-default" not in access["content_writable_ids"]
+    assert "ds-default" not in access["writable_ids"]

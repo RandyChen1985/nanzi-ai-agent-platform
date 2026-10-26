@@ -124,8 +124,15 @@ def resolve_knowledge_dataset_access(
     6. 系统级默认库（``knowledge_ragflow_dataset_ids``）对所有人可读，**但 ``private`` 除外**：
        否则把某个私有库配进默认列表就等于把它公开给全平台，与「仅创建人」直接矛盾。
 
-    ``writable_ids`` 恒为「自己创建的」：部门成员与授权成员一律只读，
-    这与改造前「被分配的非创建人只读」保持一致。
+    写权限分两级：
+
+    - ``writable_ids``（管理级）：仅「自己创建的」+ 管理员。改元数据、改可见范围、
+      改归属部门、删库、分配/撤销授权、查看授权名单都走这一级；
+    - ``content_writable_ids``（内容级）：管理级 **+ team 库的归属部门成员**。
+      只用于维护文档内容（上传、删除、解析、查看切片明细）。部门成员能改库里
+      的文档，但不能改这个库"归谁看"。
+
+    授权成员（被显式分配给某人/角色）恒为只读，两级都不含他们。
     """
     granted = {str(token).strip() for token in granted_ids or [] if str(token).strip()}
     defaults = {str(token).strip() for token in default_ids or [] if str(token).strip()}
@@ -133,6 +140,7 @@ def resolve_knowledge_dataset_access(
 
     accessible: set[str] = set()
     writable: set[str] = set()
+    content_writable: set[str] = set()
     known_ids: set[str] = set()
     private_ids: set[str] = set()
 
@@ -146,6 +154,7 @@ def resolve_knowledge_dataset_access(
         if user_name and created_by and str(created_by) == str(user_name):
             accessible.add(dataset_id)
             writable.add(dataset_id)
+            content_writable.add(dataset_id)
             continue
 
         visibility = normalize_knowledge_visibility(raw_visibility)
@@ -157,19 +166,26 @@ def resolve_knowledge_dataset_access(
 
         if dataset_id in granted:
             accessible.add(dataset_id)
-            continue
+            # 刻意不 continue：同一个人可能既是授权成员又是归属部门成员，
+            # 后者应该拿到内容级写权限，不能被「已授权」提前短路掉。
 
         if visibility == VISIBILITY_TEAM and raw_owner_dept_id:
             owner_path = (owner_dept_paths or {}).get(int(raw_owner_dept_id))
             if owner_path and any(path.startswith(str(owner_path)) for path in paths):
                 accessible.add(dataset_id)
+                # 部门（含下级部门）成员可以维护文档内容，但不能改库的设置
+                content_writable.add(dataset_id)
 
     # 未同步到元数据表的库：沿用旧口径（有授权即可见），避免刚建/刚同步的库突然不可见
     accessible |= {dataset_id for dataset_id in granted if dataset_id not in known_ids}
     # 默认库对全员可读，但私有库不能借此"被公开"：private 的语义是有且仅有创建人
     accessible |= {dataset_id for dataset_id in defaults if dataset_id not in private_ids}
 
-    return {"accessible_ids": accessible, "writable_ids": writable}
+    return {
+        "accessible_ids": accessible,
+        "writable_ids": writable,
+        "content_writable_ids": content_writable,
+    }
 
 
 class PermissionService:
@@ -642,7 +658,10 @@ class PermissionService:
         - ``private``（个人私有）：只有创建人，授权记录不生效（也不允许新增授权）；
         - 任何情况下都叠加：自己创建的库可读可写、系统默认库全员可读、管理员全量。
 
-        ``writable_ids`` 恒为「自己创建的库」——部门成员与授权成员一律只读。
+        ``writable_ids``（管理级）恒为「自己创建的库」：改元数据/可见范围/归属部门、
+        删库、分配授权、查看授权名单都要求这一级。``content_writable_ids``（内容级）
+        在此基础上加上 team 库的归属部门成员 —— 他们能上传/删除/解析文档、看切片，
+        但不能改变这个库的可见范围。授权成员两级都只有读权限。
         """
         perms = await self.get_user_permissions(user_id)
         if self.is_admin_user(perms.roles):
@@ -650,6 +669,7 @@ class PermissionService:
                 "is_admin": True,
                 "accessible_ids": None,
                 "writable_ids": None,
+                "content_writable_ids": None,
             }
 
         # 一次取出判定所需的全部列：库数量是几十到几百量级，逐库回查反而更慢

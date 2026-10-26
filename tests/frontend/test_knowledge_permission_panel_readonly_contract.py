@@ -31,7 +31,7 @@ def test_grant_button_requires_dataset_write_permission(page):
     assert "const canManagePermissions = computed(() => {" in page
     block = page.split("const canManagePermissions = computed(() => {", 1)[1].split("})", 1)[0]
     assert "hasPermission('element:user:edit')" in block
-    assert "isReadOnlyDataset(dataset)" in block
+    assert "canManageDataset(" in block
 
 
 def test_readonly_member_skips_the_request_and_reports_restricted(page):
@@ -40,7 +40,7 @@ def test_readonly_member_skips_the_request_and_reports_restricted(page):
     fetch_block = page.split("const fetchDatasetPermissions = async", 1)[1].split(
         "} catch (err)", 1
     )[0]
-    assert "isReadOnlyDataset(target)" in fetch_block
+    assert "canManageDataset(target)" in fetch_block
     assert "permissionsRestricted.value = true" in fetch_block
 
 

@@ -79,13 +79,22 @@ def test_team_branch_uses_path_prefix_for_sub_departments():
     assert "owner_dept_paths" in service
 
 
-def test_writable_is_always_creator_only():
+def test_management_write_is_still_creator_only():
+    """管理级写权限（改元数据/可见范围/删库/授权）恒为创建人。
+
+    部门成员拿到的是**内容级**（content_writable）：能上传/删/解析文档、看切片，
+    但不能改这个库归谁看。两者必须分开，否则部门成员能把团队的库改成私有独占。
+    """
     service = _service()
-    marker = "def resolve_knowledge_dataset_access("
-    body = service.split(marker, 1)[1][:4000]
-    # 只有创建人分支同时写入 accessible 与 writable
-    assert "writable.add(dataset_id)" in body
-    assert body.count("writable.add(dataset_id)") == 1
+    body = service.split("def resolve_knowledge_dataset_access(", 1)[1][:4000]
+    # 按整行比对：`content_writable.add(...)` 会把 `writable.add(...)` 误判成子串
+    body_lines = [line.strip() for line in body.split("\n")]
+    assert body_lines.count("writable.add(dataset_id)") == 1
+    # 部门匹配分支只加内容级，不加管理级
+    team_branch = body.split("if visibility == VISIBILITY_TEAM", 1)[1][:400]
+    team_lines = [line.strip() for line in team_branch.split("\n")]
+    assert "content_writable.add(dataset_id)" in team_lines
+    assert "writable.add(dataset_id)" not in team_lines
 
 
 # ---------------------------------------------------------------- 授权端点

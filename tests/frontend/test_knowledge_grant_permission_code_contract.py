@@ -52,7 +52,11 @@ def test_frontend_button_uses_the_same_code(backend, page):
     assert 'element:user:edit' in backend
 
 
-def test_grant_button_still_requires_write_access(page):
-    """权限码只是第一道；对库没写权限的人仍然不该看到入口。"""
+def test_grant_button_requires_management_write_access(page):
+    """权限码只是第一道；对库没有**管理级**写权限的人仍然不该看到入口。
+
+    部门成员有内容级写权限（能传文档），但改不了授权 —— 授权名单也只对
+    创建人与管理员开放（后端 GET/POST /permissions 走同一道管理级闸门）。
+    """
     block = page.split("const canManagePermissions = computed(() => {", 1)[1].split("})", 1)[0]
-    assert "isReadOnlyDataset(dataset)" in block
+    assert "canManageDataset(" in block

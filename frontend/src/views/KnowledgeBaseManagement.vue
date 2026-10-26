@@ -47,6 +47,8 @@ type KnowledgeBase = {
   is_missing_in_ragflow?: boolean
   created_by?: string
   can_write?: boolean
+  /** 管理级：改元数据/可见范围/删库/授权。部门成员只有内容级（can_write） */
+  can_manage?: boolean
   can_view_chunks?: boolean
   is_read_only?: boolean
   local_metadata?: {
@@ -295,10 +297,8 @@ const canParse = computed(() => hasPermission('element:knowledge:parse_document'
 const canManagePermissions = computed(() => {
   // 与后端 authorization 同码：element:user:edit（菜单可见不等于有权改授权）
   if (!(isAdmin.value || hasPermission('element:user:edit'))) return false
-  const dataset = selectedDataset.value
-  // 后端的 GET/POST /permissions 都要求对该库有写权限，只读成员一律 403。
-  // 只看菜单权限会让部门成员看到一个点了必然失败的「分配授权成员」按钮。
-  return !!dataset && !isReadOnlyDataset(dataset)
+  // 后端的 GET/POST /permissions 都要求**管理级**写权限（部门成员也不行）。
+  return canManageDataset(selectedDataset.value)
 })
 const canSync = computed(() => canEdit.value)
 const isKnowledgeEnabled = computed(() => ragflowConfig.value?.knowledge_base_enabled !== false)
@@ -690,7 +690,7 @@ const fetchDatasetPermissions = async (datasetId: string) => {
   // 与其发一个注定失败的请求再显示"读取失败"，不如直接说明"看不到名单是权限所致"，
   // 否则用户会以为系统故障（红色报错 + 重试按钮）。
   const target = datasets.value.find(d => (d.ragflow_dataset_id || d.id) === datasetId)
-  if (target && isReadOnlyDataset(target)) {
+  if (target && !canManageDataset(target)) {
     permissionsRestricted.value = true
     permissionsError.value = false
     datasetPermissions.value = { users: [], roles: [] }
@@ -1792,6 +1792,18 @@ const formatSize = (value?: number) => {
   return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
+/**
+ * 管理级写权限：改元数据、可见范围、归属部门、删库、分配授权、看授权名单。
+ * 部门成员拿到的是内容级（能传/删/解析文档、看切片），到这里一律为 false。
+ * `can_manage` 缺省（旧接口 / 未刷新）时沿用「能写就能管」的老口径，避免全站变只读。
+ */
+const canManageDataset = (dataset?: KnowledgeBase | null) => {
+  if (!dataset) return false
+  if (isAdmin.value) return true
+  if (isReadOnlyDataset(dataset)) return false
+  return dataset.can_manage ?? true
+}
+
 const isReadOnlyDataset = (dataset?: KnowledgeBase | null) => {
   if (!dataset) return false
   const name = dataset.platform_name || dataset.name
@@ -1802,9 +1814,7 @@ const isReadOnlyDataset = (dataset?: KnowledgeBase | null) => {
 }
 
 /** 当前详情页的库是否可写：只读成员只能看内容，不能改元数据/上传/授权 */
-const selectedDatasetWritable = computed(
-  () => !!selectedDataset.value && !isReadOnlyDataset(selectedDataset.value),
-)
+const selectedDatasetWritable = computed(() => canManageDataset(selectedDataset.value))
 
 const canViewChunks = (dataset?: KnowledgeBase | null) => {
   if (!dataset) return false
@@ -2444,7 +2454,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <!-- Hover Action Buttons -->
                   <div class="flex opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 items-center gap-1 bg-inherit pl-2 absolute right-3 top-1/2 -translate-y-1/2">
                     <button
-                      v-if="canEdit && !isReadOnlyDataset(dataset)"
+                      v-if="canEdit && canManageDataset(dataset)"
                       class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
                       title="新建虚拟文件夹"
                       @click.stop="startCreateFolder(dataset)"
@@ -2454,7 +2464,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                       </svg>
                     </button>
                     <button
-                      v-if="canEdit && !isReadOnlyDataset(dataset)"
+                      v-if="canEdit && canManageDataset(dataset)"
                       class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
                       title="修改元数据"
                       @click.stop="openEdit(dataset)"
@@ -2464,7 +2474,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                       </svg>
                     </button>
                     <button
-                      v-if="canDelete && !isReadOnlyDataset(dataset)"
+                      v-if="canDelete && canManageDataset(dataset)"
                       class="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-all bg-inherit"
                       title="删除知识库"
                       @click.stop="triggerDeleteDataset(dataset)"
@@ -2587,7 +2597,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
                           <!-- 文件夹重命名/删除按钮 -->
                           <div 
-                            v-if="canEdit && !isReadOnlyDataset(dataset)"
+                            v-if="canEdit && canManageDataset(dataset)"
                             class="flex opacity-100 md:opacity-0 md:group-hover/folder:opacity-100 md:focus-within:opacity-100 items-center gap-1 bg-inherit pl-2 z-30"
                             @click.stop
                           >
@@ -2650,7 +2660,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                                 
                                 <div class="flex opacity-100 md:opacity-0 md:group-hover/doc:opacity-100 md:focus-within:opacity-100 items-center bg-inherit pl-2 gap-1 z-30">
                                   <!-- 移动到文件夹按钮 -->
-                                  <div v-if="canEdit && !isReadOnlyDataset(dataset)" class="relative">
+                                  <div v-if="canEdit && canManageDataset(dataset)" class="relative">
                                     <button 
                                       class="p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-primary transition-all bg-inherit cursor-pointer"
                                       title="移动到文件夹"
@@ -2742,7 +2752,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                         <div class="flex opacity-100 md:opacity-0 md:group-hover/doc:opacity-100 md:focus-within:opacity-100 items-center bg-inherit pl-2 gap-1 z-30">
                           <!-- 移动至文件夹按钮 -->
                           <div 
-                            v-if="canEdit && !isReadOnlyDataset(dataset) && dataset.local_metadata?.extra_config?.folder_structure && Object.keys(dataset.local_metadata.extra_config.folder_structure).length"
+                            v-if="canEdit && canManageDataset(dataset) && dataset.local_metadata?.extra_config?.folder_structure && Object.keys(dataset.local_metadata.extra_config.folder_structure).length"
                             class="relative"
                           >
                             <button 
@@ -2885,7 +2895,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </svg>
               </button>
               <button
-                v-if="canEdit && !isReadOnlyDataset(selectedDataset)"
+                v-if="canEdit && canManageDataset(selectedDataset)"
                 class="px-4 py-2 text-sm font-medium border border-gray-200 rounded-xl hover:bg-gray-50 transition-all flex items-center gap-1.5"
                 @click="openEdit(selectedDataset)"
               >

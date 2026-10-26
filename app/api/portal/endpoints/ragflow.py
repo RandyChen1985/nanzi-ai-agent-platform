@@ -123,6 +123,37 @@ async def require_dataset_write_access(user: dict, db: AsyncSession, dataset_ids
         )
 
 
+async def require_dataset_content_write_access(
+    user: dict,
+    db: AsyncSession,
+    dataset_ids: List[str],
+):
+    """内容级可写：管理员 / 创建人 / team 库的归属部门（含下级部门）成员。
+
+    与 ``require_dataset_write_access``（管理级）的区别只在「能不能改库的设置」：
+
+    - 内容级：上传文档、删除文档、触发解析、查看切片明细；
+    - 管理级：改元数据、改可见范围、改归属部门、删库、分配/撤销授权、看授权名单。
+
+    部门成员能维护本部门的资料，但不能把这个库改成别人才看得到、也不能删库。
+    授权成员（被显式分配的人）恒为只读，两级都不含。
+    """
+    service = PermissionService(db)
+    access = await service.get_knowledge_base_access(
+        int(user["user_id"]),
+        user.get("user_name"),
+    )
+    if access["is_admin"]:
+        return
+    writable = access.get("content_writable_ids") or set()
+    denied = [dataset_id for dataset_id in dataset_ids if dataset_id not in writable]
+    if denied:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Read-only or no permission for dataset: {', '.join(denied)}",
+        )
+
+
 async def _resolve_owner_department(
     db: AsyncSession,
     owner_dept_id: Optional[int],
@@ -180,12 +211,17 @@ def _apply_knowledge_permission_flags(
         ds_id = str(item.get("ragflow_dataset_id") or item.get("id") or "")
         if access.get("is_admin"):
             item["can_write"] = True
+            item["can_manage"] = True
             item["can_view_chunks"] = True
             item["is_read_only"] = False
             continue
         writable = access.get("writable_ids") or set()
+        content_writable = access.get("content_writable_ids") or set()
         accessible = access.get("accessible_ids") or set()
-        item["can_write"] = ds_id in writable
+        # can_write  = 内容级（上传/删文档/解析/看切片）：创建人 + team 部门成员
+        # can_manage = 管理级（改元数据/可见范围/删库/授权）：仅创建人
+        item["can_write"] = ds_id in content_writable
+        item["can_manage"] = ds_id in writable
         item["can_view_chunks"] = bool(item["can_write"])
         item["is_read_only"] = ds_id in accessible and not item["can_write"]
 
@@ -628,7 +664,8 @@ async def list_document_chunks(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session)
 ):
-    await require_dataset_write_access(user, db, [dataset_id])
+    # 内容级：部门成员也能看切片明细（原先要求管理级，等于逼他们靠全文猜测）
+    await require_dataset_content_write_access(user, db, [dataset_id])
     client = RagFlowClient(config_prefix="knowledge_ragflow")
     try:
         data = await client.list_document_chunks(dataset_id, document_id, page=page, page_size=page_size)
@@ -647,7 +684,7 @@ async def upload_dataset_document(
 ):
     started = time.time()
     await require_element_permission(user, db, "element:knowledge:upload_document")
-    await require_dataset_write_access(user, db, [dataset_id])
+    await require_dataset_content_write_access(user, db, [dataset_id])
     client = RagFlowClient(config_prefix="knowledge_ragflow")
     try:
         blob = await file.read()
@@ -684,7 +721,7 @@ async def delete_dataset_documents(
 ):
     started = time.time()
     await require_element_permission(user, db, "element:knowledge:delete_document")
-    await require_dataset_write_access(user, db, [dataset_id])
+    await require_dataset_content_write_access(user, db, [dataset_id])
     if not payload.ids:
         raise HTTPException(status_code=400, detail="No document ids provided")
     client = RagFlowClient(config_prefix="knowledge_ragflow")
@@ -715,7 +752,7 @@ async def parse_dataset_documents(
 ):
     started = time.time()
     await require_element_permission(user, db, "element:knowledge:parse_document")
-    await require_dataset_write_access(user, db, [dataset_id])
+    await require_dataset_content_write_access(user, db, [dataset_id])
     if not payload.ids:
         raise HTTPException(status_code=400, detail="No document ids provided")
     client = RagFlowClient(config_prefix="knowledge_ragflow")

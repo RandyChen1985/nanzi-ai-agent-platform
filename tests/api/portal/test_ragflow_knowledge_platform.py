@@ -850,3 +850,93 @@ def test_permission_endpoints_are_audited():
     assert "record_knowledge_audit" in delete_src
     assert "datasets:revoke" in delete_src
     assert "target_id" in delete_src
+
+
+# ---------------------------------------------------------------- 两级写权限
+
+def _fake_access(monkeypatch, **overrides):
+    class FakePermissionService:
+        def __init__(self, db):
+            pass
+
+        async def get_knowledge_base_access(self, user_id, user_name=None):
+            return {
+                "is_admin": False,
+                "accessible_ids": {"ds-team"},
+                "writable_ids": set(),
+                "content_writable_ids": {"ds-team"},
+                **overrides,
+            }
+
+    monkeypatch.setattr(ragflow, "PermissionService", FakePermissionService)
+
+
+@pytest.mark.asyncio
+async def test_team_member_can_write_content_but_not_manage(monkeypatch):
+    """部门成员：能传文档（内容级），不能改元数据/授权（管理级）。"""
+    _fake_access(monkeypatch)
+    user = {"user_id": 1, "user_name": "chenxiaolong"}
+
+    # 内容级放行，不抛异常
+    await ragflow.require_dataset_content_write_access(user, None, ["ds-team"])
+
+    # 管理级拒绝
+    with pytest.raises(ragflow.HTTPException) as exc:
+        await ragflow.require_dataset_write_access(user, None, ["ds-team"])
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_read_only_grantee_is_rejected_by_both_levels(monkeypatch):
+    """被显式授权的非创建人在两级都不通过。"""
+    _fake_access(monkeypatch, content_writable_ids=set())
+    user = {"user_id": 1, "user_name": "chenxiaolong"}
+
+    for check in (
+        ragflow.require_dataset_content_write_access,
+        ragflow.require_dataset_write_access,
+    ):
+        with pytest.raises(ragflow.HTTPException) as exc:
+            await check(user, None, ["ds-team"])
+        assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_passes_every_level(monkeypatch):
+    _fake_access(monkeypatch, is_admin=True)
+    user = {"user_id": 1, "user_name": "admin", "role": "admin"}
+
+    await ragflow.require_dataset_content_write_access(user, None, ["ds-team"])
+    await ragflow.require_dataset_write_access(user, None, ["ds-team"])
+
+
+def test_permission_flags_expose_both_levels():
+    """列表接口必须同时给出 can_write（内容级）与 can_manage（管理级）。"""
+    items = [{"ragflow_dataset_id": "ds-team"}]
+    ragflow._apply_knowledge_permission_flags(
+        items,
+        {
+            "is_admin": False,
+            "accessible_ids": {"ds-team"},
+            "writable_ids": set(),
+            "content_writable_ids": {"ds-team"},
+        },
+    )
+    assert items[0]["can_write"] is True       # 能传文档
+    assert items[0]["can_manage"] is False     # 不能改设置
+    assert items[0]["can_view_chunks"] is True
+    assert items[0]["is_read_only"] is False
+
+
+def test_permission_flags_creator_gets_management():
+    items = [{"ragflow_dataset_id": "ds-mine"}]
+    ragflow._apply_knowledge_permission_flags(
+        items,
+        {
+            "is_admin": False,
+            "accessible_ids": {"ds-mine"},
+            "writable_ids": {"ds-mine"},
+            "content_writable_ids": {"ds-mine"},
+        },
+    )
+    assert items[0]["can_manage"] is True
