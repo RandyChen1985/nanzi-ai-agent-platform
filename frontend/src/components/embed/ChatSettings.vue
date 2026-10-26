@@ -21,6 +21,7 @@ const props = defineProps<{
   isAdmin?: boolean;
   /** 引导上次完成时间（ISO），空表示未完成 */
   tourCompletedAt?: string;
+  tourSkippedAt?: string;
 }>();
 
 const emit = defineEmits<{
@@ -35,6 +36,13 @@ const emit = defineEmits<{
   (e: 'switch-to-expert', agentId: string): void;
   (e: 'replay-tour'): void;
 }>();
+
+/** 完成优先：看完了就显示完成，跳过只在没看完时展示 */
+const tourStatusText = computed(() => {
+  if (props.tourCompletedAt) return `上次完成：${formatTourCompletedAt(props.tourCompletedAt)}`;
+  if (props.tourSkippedAt) return '已跳过，不再自动播放';
+  return '尚未完成';
+});
 
 const formatTourCompletedAt = (value?: string) => {
   if (!value) return '';
@@ -1001,7 +1009,7 @@ const handleLogout = () => {
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                 重新播放功能引导
               </button>
-              <span class="shrink-0 text-[9.5px] text-gray-400">{{ tourCompletedAt ? `上次完成：${formatTourCompletedAt(tourCompletedAt)}` : '尚未完成' }}</span>
+              <span class="shrink-0 text-[9.5px] text-gray-400">{{ tourStatusText }}</span>
             </div>
           </div>
 

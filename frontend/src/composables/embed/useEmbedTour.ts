@@ -26,9 +26,16 @@ export interface EmbedTourState {
   version: number
   step: number
   completed_at: string
+  /** 点过「跳过」的时间。跳过是明确的「不想看」，必须记住，否则每次进入都会续播 */
+  skipped_at: string
 }
 
-const emptyState = (): EmbedTourState => ({ version: 0, step: 0, completed_at: '' })
+const emptyState = (): EmbedTourState => ({
+  version: 0,
+  step: 0,
+  completed_at: '',
+  skipped_at: '',
+})
 
 const readLocal = (): EmbedTourState | null => {
   try {
@@ -39,6 +46,7 @@ const readLocal = (): EmbedTourState | null => {
       version: Number(parsed.version) || 0,
       step: Number(parsed.step) || 0,
       completed_at: String(parsed.completed_at || ''),
+      skipped_at: String(parsed.skipped_at || ''),
     }
   } catch {
     return null
@@ -86,6 +94,7 @@ export function useEmbedTour(options: { isMobile: () => boolean }) {
         version: Number(data.embed_tour_version) || 0,
         step: Number(data.embed_tour_step) || 0,
         completed_at: String(data.embed_tour_completed_at || ''),
+        skipped_at: String(data.embed_tour_skipped_at || ''),
       }
     } catch {
       state.value = readLocal() || emptyState()
@@ -101,6 +110,9 @@ export function useEmbedTour(options: { isMobile: () => boolean }) {
     // 版本不一致：文案改过版，视为需要重播
     if (state.value.version !== TOUR_VERSION) return true
     if (state.value.completed_at) return false
+    // 跳过也是「处理过了」：首次进入就直接跳过时 completed_at 还是空的，
+    // 只判 completed_at 会让他在下次进入时从同一位置继续弹
+    if (state.value.skipped_at) return false
     if (state.value.step >= total) return false
     return true
   }
@@ -120,6 +132,7 @@ export function useEmbedTour(options: { isMobile: () => boolean }) {
           version: body.version,
           step: body.step,
           completed_at: body.completed_at,
+          skipped_at: body.skipped_at,
         })
         .catch(() => writeLocal(body))
     }, PERSIST_DEBOUNCE_MS)
@@ -142,6 +155,8 @@ export function useEmbedTour(options: { isMobile: () => boolean }) {
       version: TOUR_VERSION,
       step: total,
       completed_at: new Date().toISOString(),
+      // 看完了就不该再留「跳过」的痕迹，设置里显示「上次完成」而不是「已跳过」
+      skipped_at: '',
     }
     state.value = done
     persist(done)
@@ -152,8 +167,9 @@ export function useEmbedTour(options: { isMobile: () => boolean }) {
     const current: EmbedTourState = {
       version: TOUR_VERSION,
       step: stepIndex.value,
-      // 保留「已看完」标记：否则设置里重播后点跳过，下次进入又会自动播
       completed_at: state.value.completed_at,
+      // 记下跳过：首次进入就跳过时 completed_at 是空的，只靠它拦不住自动播放
+      skipped_at: state.value.skipped_at || new Date().toISOString(),
     }
     state.value = current
     persist(current)

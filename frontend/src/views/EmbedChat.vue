@@ -1910,6 +1910,7 @@
     <ChatSettings
       v-model:visible="showSettings"
       :tour-completed-at="tourCompletedAt"
+      :tour-skipped-at="tourSkippedAt"
       :config="config"
       :allowed-agents="allowedAgents"
       :routing-locked="isRoutingSettingsLocked"
@@ -3186,6 +3187,7 @@ const tourRef = ref<any>(null);
 /** 只有引导自己打开过上下文弹层，退出时才替用户收起 */
 const tourOwnsContextPanel = ref(false);
 const tourCompletedAt = computed(() => tour.state.value.completed_at);
+const tourSkippedAt = computed(() => tour.state.value.skipped_at);
 
 const handleTourEnter = async (_index: number, step: { opensContextPanel?: boolean }) => {
   if (!step?.opensContextPanel) return;
