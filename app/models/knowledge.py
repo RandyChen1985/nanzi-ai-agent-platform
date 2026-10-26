@@ -17,8 +17,21 @@ class KnowledgeBaseMetadata(Base):
     ragflow_dataset_id = Column(String(64), nullable=False, index=True, comment="RAGFlow Dataset ID")
     name = Column(String(255), nullable=False, comment="知识库名称快照")
     description = Column(Text, nullable=True, comment="知识库描述快照")
-    owner = Column(String(100), nullable=True, comment="业务归属/负责人")
-    visibility = Column(String(32), default="private", comment="可见性: private/team/public")
+    # 展示用文本快照：可能是历史自由文本，也可能是写入时按部门名回填的快照。
+    # 部门改名后以 owner_dept_id 关联出的最新部门名为准，这里只做兜底。
+    owner = Column(String(100), nullable=True, comment="业务归属部门/负责人（文本快照）")
+    # 业务归属部门：**仅用于浏览/过滤维度**，不参与任何权限判定。
+    owner_dept_id = Column(
+        BigInteger,
+        nullable=True,
+        index=True,
+        comment="业务归属部门 ID（仅浏览过滤，不参与权限）",
+    )
+    visibility = Column(
+        String(32),
+        default="private",
+        comment="可见范围: private(仅创建人，新建默认)/team(部门自动只读)/public(需授权)",
+    )
     tags = Column(JSON, nullable=True, comment="平台侧标签")
     notes = Column(Text, nullable=True, comment="平台侧备注")
     extra_config = Column(JSON, nullable=True, comment="扩展配置")

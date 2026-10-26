@@ -6219,6 +6219,7 @@ onUnmounted(() => {
         :override-url="datasetSelectorUrl"
         :override-key="datasetSelectorKey"
         :include-missing="false"
+        exclude-private
         @select="handleDatasetSelect"
     />
 

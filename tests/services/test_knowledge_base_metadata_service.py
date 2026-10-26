@@ -12,6 +12,7 @@ async def test_merge_with_ragflow_prefers_local_metadata():
         name="平台名称",
         description="平台描述",
         owner="数据团队",
+        owner_dept_id=42,
         visibility="team",
         tags=["faq", "policy"],
         notes="内部备注",
@@ -36,6 +37,9 @@ async def test_merge_with_ragflow_prefers_local_metadata():
     assert merged[0]["platform_name"] == "平台名称"
     assert merged[0]["platform_description"] == "平台描述"
     assert merged[0]["owner"] == "数据团队"
+    # 业务归属部门随合并结果透出，供前端左侧树按部门分组
+    assert merged[0]["owner_dept_id"] == 42
+    assert merged[0]["local_metadata"]["owner_dept_id"] == 42
     assert merged[0]["tags"] == ["faq", "policy"]
     assert merged[0]["doc_count"] == 2
     assert merged[0]["is_missing_in_ragflow"] is False
@@ -62,6 +66,66 @@ async def test_merge_with_ragflow_marks_local_record_missing():
     assert merged[0]["id"] == "lost-ds"
     assert merged[0]["status"] == "missing"
     assert merged[0]["is_missing_in_ragflow"] is True
+
+
+class _FakeSession:
+    """最小 db 会话：update_metadata 只会调用 add() 与 flush()。"""
+
+    def __init__(self):
+        self.flush_count = 0
+
+    def add(self, obj):
+        pass
+
+    async def flush(self):
+        self.flush_count += 1
+
+
+@pytest.mark.asyncio
+async def test_update_metadata_keeps_owner_fields_when_not_provided():
+    service = KnowledgeBaseMetadataService(db=_FakeSession())
+    record = KnowledgeBaseMetadata(
+        ragflow_dataset_id="ds-keep",
+        name="知识库",
+        owner="数据团队",
+        owner_dept_id=42,
+        status="active",
+    )
+
+    async def fake_get_by_dataset_id(dataset_id):
+        return record
+
+    service.get_by_dataset_id = fake_get_by_dataset_id
+
+    updated = await service.update_metadata("ds-keep", name="新名称")
+
+    # PATCH 语义：未出现的字段必须保持原值，不能被 None 覆盖
+    assert updated.owner == "数据团队"
+    assert updated.owner_dept_id == 42
+    assert updated.name == "新名称"
+
+
+@pytest.mark.asyncio
+async def test_update_metadata_can_clear_owner_department():
+    service = KnowledgeBaseMetadataService(db=_FakeSession())
+    record = KnowledgeBaseMetadata(
+        ragflow_dataset_id="ds-clear",
+        name="知识库",
+        owner="数据团队",
+        owner_dept_id=42,
+        status="active",
+    )
+
+    async def fake_get_by_dataset_id(dataset_id):
+        return record
+
+    service.get_by_dataset_id = fake_get_by_dataset_id
+
+    updated = await service.update_metadata("ds-clear", owner_dept_id=0)
+
+    # 传 0 表示显式清空归属部门；owner 文本未被显式清空，因此保留为历史文本
+    assert updated.owner_dept_id is None
+    assert updated.owner == "数据团队"
 
 
 @pytest.mark.asyncio
@@ -114,3 +178,6 @@ async def test_sync_from_ragflow_creates_missing_and_preserves_local_fields():
     assert existing.extra_config == {"keep": True}
     assert created_payloads[0]["ragflow_dataset_id"] == "ds-new"
     assert created_payloads[0]["status"] == "active"
+    # 同步新建的库必须是公共级：否则一次同步就把 RAGFlow 侧存量库
+    # 全变成执行同步者的个人私有库，其他人连访问入口都没有
+    assert created_payloads[0]["visibility"] == "public"

@@ -15,6 +15,13 @@ const props = defineProps<{
   overrideUrl?: string;
   overrideKey?: string;
   includeMissing?: boolean;
+  /**
+   * 隐藏「个人私有」知识库。仅用于"配了要给所有人用"的场景（智能体绑定、系统默认库）：
+   * 智能体绑定的库在检索时会跳过使用者权限校验（见 knowledge_tool 的 agent_granted_ids），
+   * 所以把私有库绑上去 = 把个人资料扩散给所有使用者，不该给这个机会。
+   * 知识检索测试页不传此参数，否则用户没法测自己的私有库。
+   */
+  excludePrivate?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +38,47 @@ const engineStatus = ref<"checking" | "connected" | "disconnected">("checking");
 const ragflowConfig = ref<RagFlowConfigSummary | null>(null);
 
 const selectedIds = ref<string[]>([]); // Always array for internal logic
+
+/** 可见范围归一：未知/空值按 public 兜底，与后端判定一致 */
+const visibilityKey = (ds: RagFlowDataset): "public" | "team" | "private" => {
+  const token = String(ds.visibility || "").trim().toLowerCase();
+  return token === "team" || token === "private" ? token : "public";
+};
+
+const SCOPE_BADGE: Record<
+  "public" | "team" | "private",
+  { label: string; cls: string }
+> = {
+  public: { label: "公共级", cls: "bg-blue-50 text-blue-600 border-blue-100" },
+  team: { label: "部门级", cls: "bg-violet-50 text-violet-600 border-violet-100" },
+  private: { label: "个人私有", cls: "bg-amber-50 text-amber-600 border-amber-100" },
+};
+
+const scopeBadge = (ds: RagFlowDataset) => SCOPE_BADGE[visibilityKey(ds)];
+
+/** 列表渲染用的数据集（按需剔除私有库） */
+const visibleDatasets = computed(() =>
+  props.excludePrivate
+    ? datasets.value.filter((ds) => visibilityKey(ds) !== "private")
+    : datasets.value
+);
+
+/** 被隐藏的私有库数量：用来在底部解释"我的库怎么不见了" */
+const hiddenPrivateCount = computed(() =>
+  props.excludePrivate
+    ? datasets.value.filter((ds) => visibilityKey(ds) === "private").length
+    : 0
+);
+
+/** 已选中但仍留在配置里的私有库：不能静默丢弃，否则保存后配置悄悄消失 */
+const selectedPrivateNames = computed(() =>
+  datasets.value
+    .filter(
+      (ds) =>
+        selectedIds.value.includes(ds.id) && visibilityKey(ds) === "private"
+    )
+    .map((ds) => ds.platform_name || ds.name)
+);
 
 type DatasetSelectionDetail = { id: string; name: string };
 
@@ -93,7 +141,9 @@ const loadData = async () => {
         }
       }
     } else {
-      const res = await ragflowApi.listDatasets(1, 100, props.overrideUrl, props.overrideKey, props.includeMissing);
+      // page_size 必须 > 100：客户端只在超过 100 时才自动翻页聚合，
+      // 传 100 会静默截断——库多了以后排在后面的库"凭空消失"，选都选不到
+      const res = await ragflowApi.listDatasets(1, 1000, props.overrideUrl, props.overrideKey, props.includeMissing);
       const rawData = res.data as any;
 
       // Robust parsing for RAGFlow response
@@ -339,7 +389,7 @@ const formatDate = (ts?: number | string) => {
         <!-- Dataset List -->
         <template v-else>
           <div
-            v-for="ds in datasets"
+            v-for="ds in visibleDatasets"
             :key="ds.id"
             @click="toggleSelection(ds.id)"
             class="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-green-50 transition-colors group"
@@ -399,6 +449,11 @@ const formatDate = (ts?: number | string) => {
               </h4>
               <div class="flex items-center space-x-2 mt-0.5">
                 <span
+                  class="text-[10px] px-1.5 rounded border font-semibold"
+                  :class="scopeBadge(ds).cls"
+                  >{{ scopeBadge(ds).label }}</span
+                >
+                <span
                   class="text-[10px] bg-gray-100 px-1.5 rounded text-gray-500"
                   >{{ ds.doc_count ?? ds.document_count ?? 0 }} Docs</span
                 >
@@ -418,13 +473,34 @@ const formatDate = (ts?: number | string) => {
             </div>
           </div>
           <div
-            v-if="datasets.length === 0"
+            v-if="visibleDatasets.length === 0"
             class="text-center py-10 text-gray-400"
           >
-            暂无知识库数据
+            {{
+              hiddenPrivateCount
+                ? "没有可选的知识库（个人私有库已隐藏，见下方说明）"
+                : "暂无知识库数据"
+            }}
           </div>
         </template>
       </div>
+
+      <!-- 私有库说明：解释被隐藏的库，以及仍留在配置里的私有库 -->
+      <p
+        v-if="excludePrivate && hiddenPrivateCount"
+        class="flex-shrink-0 mt-3 text-[11px] leading-snug text-gray-400"
+      >
+        已隐藏 {{ hiddenPrivateCount }} 个个人私有知识库：它们只属于创建人，
+        一旦绑定到智能体或系统默认库，所有使用者都能检索到其中的内容。
+      </p>
+      <p
+        v-if="excludePrivate && selectedPrivateNames.length"
+        class="flex-shrink-0 mt-1 text-[11px] leading-snug text-amber-600"
+      >
+        当前配置里仍包含 {{ selectedPrivateNames.length }} 个个人私有知识库（{{
+          selectedPrivateNames.join("、")
+        }}）：绑定后所有使用者都能检索到它们，建议改选公共级或部门级。
+      </p>
 
       <!-- Footer (Multi-select only) -->
       <div

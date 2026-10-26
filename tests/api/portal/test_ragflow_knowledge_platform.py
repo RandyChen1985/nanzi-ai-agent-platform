@@ -6,6 +6,15 @@ import pytest
 from app.api.portal.endpoints import ragflow
 
 
+def _fake_request(method: str = "POST"):
+    """端点里只用到 method / client / state.trace_id，构造一个够用的替身。"""
+    return SimpleNamespace(
+        method=method,
+        client=SimpleNamespace(host="127.0.0.1"),
+        state=SimpleNamespace(trace_id="test-trace"),
+    )
+
+
 @pytest.mark.asyncio
 async def test_require_dataset_access_rejects_invisible_dataset(monkeypatch):
     class FakePermissionService:
@@ -456,9 +465,17 @@ async def test_add_dataset_permissions_success(monkeypatch):
     payload = ragflow.AddDatasetPermissionsRequest(target_type="user", target_ids=[123])
     db_session = FakeSession()
 
+    audit = {}
+
+    async def fake_audit(request, user, action, status_code, payload_, error_message=None, started_at=None):
+        audit.update(action=action, status_code=status_code, payload=payload_)
+
+    monkeypatch.setattr(ragflow, "record_knowledge_audit", fake_audit)
+
     res = await ragflow.add_dataset_permissions(
         dataset_id="ds-1",
         payload=payload,
+        request=_fake_request(),
         db=db_session,
         user={"user_id": 1, "role": "admin"}
     )
@@ -467,6 +484,11 @@ async def test_add_dataset_permissions_success(monkeypatch):
     assert calls["require_write_ids"] == ["ds-1"]
     assert calls["flushed"] is True
     assert calls["invalidated_user_ids"] == {123}
+    # 授权是敏感操作，必须留痕
+    assert audit["action"] == "datasets:grant"
+    assert audit["payload"]["dataset_id"] == "ds-1"
+    assert audit["payload"]["target_type"] == "user"
+    assert audit["payload"]["target_ids"] == [123]
     assert len(db_session.added) == 1
     assert db_session.added[0].user_id == 123
     assert db_session.added[0].resource_type == "dataset"
@@ -493,6 +515,10 @@ async def test_delete_dataset_permission_success(monkeypatch):
         async def execute(self, stmt):
             self.executed.append(stmt)
             class FakeResult:
+                def scalar_one_or_none(self):
+                    # 元数据缺失 → visibility 按 public 兜底，不拦截授权
+                    return None
+
                 def scalars(self):
                     class FakeScalars:
                         def all(self):
@@ -506,12 +532,20 @@ async def test_delete_dataset_permission_success(monkeypatch):
     monkeypatch.setattr(ragflow, "require_dataset_write_access", fake_require_write)
     monkeypatch.setattr(ragflow, "PermissionService", FakePermissionService)
 
+    audit = {}
+
+    async def fake_audit(request, user, action, status_code, payload_, error_message=None, started_at=None):
+        audit.update(action=action, status_code=status_code, payload=payload_)
+
+    monkeypatch.setattr(ragflow, "record_knowledge_audit", fake_audit)
+
     payload = ragflow.DeleteDatasetPermissionRequest(target_type="user", target_id=123)
     db_session = FakeSession()
 
     res = await ragflow.delete_dataset_permission(
         dataset_id="ds-1",
         payload=payload,
+        request=_fake_request("DELETE"),
         db=db_session,
         user={"user_id": 1, "role": "admin"}
     )
@@ -520,7 +554,76 @@ async def test_delete_dataset_permission_success(monkeypatch):
     assert calls["require_write_ids"] == ["ds-1"]
     assert calls["flushed"] is True
     assert calls["invalidated_user_ids"] == {123}
+    # 删除侧刻意不查可见范围（要让私有库的历史授权能清理），只发一条 DELETE
     assert len(db_session.executed) == 1
+    # 撤销授权同样要留痕，action 与新增区分开
+    assert audit["action"] == "datasets:revoke"
+    assert audit["payload"]["dataset_id"] == "ds-1"
+    assert audit["payload"]["target_id"] == 123
+
+
+@pytest.mark.asyncio
+async def test_dataset_permission_endpoints_reject_private_dataset(monkeypatch):
+    """个人私有知识库不允许**新增**授权；但已有授权必须能删除。
+
+    private 的语义是「仅创建人」，若允许写授权记录，页面会出现"加了人却看不到"
+    的假操作，所以新增侧拦下并提示先改可见范围；而清理侧的放行是为了不留下
+    "能看见但删不掉"的脏记录。
+    """
+
+    async def fake_require_write(user, db, ids):
+        return None
+
+    class FakeSession:
+        def __init__(self):
+            self.added = []
+            self.flushed = False
+
+        def add(self, model):
+            self.added.append(model)
+
+        async def execute(self, stmt):
+            class FakeResult:
+                def scalar_one_or_none(self):
+                    return "private"
+
+            return FakeResult()
+
+        async def flush(self):
+            self.flushed = True
+
+    monkeypatch.setattr(ragflow, "require_dataset_write_access", fake_require_write)
+
+    async def fake_audit(request, user, action, status_code, payload_, error_message=None, started_at=None):
+        return None
+
+    monkeypatch.setattr(ragflow, "record_knowledge_audit", fake_audit)
+
+    add_session = FakeSession()
+    with pytest.raises(ragflow.HTTPException) as add_exc:
+        await ragflow.add_dataset_permissions(
+            dataset_id="ds-private",
+            payload=ragflow.AddDatasetPermissionsRequest(target_type="user", target_ids=[123]),
+            request=_fake_request(),
+            db=add_session,
+            user={"user_id": 1, "role": "admin"},
+        )
+    assert add_exc.value.status_code == 400
+    assert "个人私有" in add_exc.value.detail
+    assert add_session.added == []
+
+    # 删除侧必须放行：改成私有之前留下的历史授权要能逐条清理，
+    # 否则会出现「看得见这条授权、点删除却 400」的死角
+    delete_session = FakeSession()
+    res = await ragflow.delete_dataset_permission(
+        dataset_id="ds-private",
+        payload=ragflow.DeleteDatasetPermissionRequest(target_type="user", target_id=123),
+        request=_fake_request("DELETE"),
+        db=delete_session,
+        user={"user_id": 1, "role": "admin"},
+    )
+    assert res["code"] == 0
+    assert delete_session.flushed is True
 
 
 @pytest.mark.asyncio
@@ -691,3 +794,59 @@ async def test_list_ragflow_agents_keeps_non_auth_upstream_status(monkeypatch):
         )
 
     assert exc.value.status_code == 404
+
+
+def test_permission_flags_give_admin_full_control():
+    """管理员在列表里必须拿到完整的读写标志。
+
+    后端判定返回的是 ``accessible_ids=None``（不受限），前端只能靠这几个
+    ``can_*`` 标志决定按钮是否可点；这里漏掉 admin 分支会让「管理员可以操作
+    别人的私有库」在界面上变成灰色按钮。
+    """
+    from app.api.portal.endpoints.ragflow import _apply_knowledge_permission_flags
+
+    items = [
+        {"ragflow_dataset_id": "ds-a", "id": "ds-a"},
+        {"ragflow_dataset_id": "ds-b", "id": "ds-b"},
+    ]
+    _apply_knowledge_permission_flags(
+        items,
+        {"is_admin": True, "accessible_ids": None, "writable_ids": None},
+    )
+    for item in items:
+        assert item["can_write"] is True
+        assert item["can_view_chunks"] is True
+        assert item["is_read_only"] is False
+
+
+def test_permission_flags_keep_non_admin_write_narrow():
+    """非管理员的写权限只给创建人：被授权者与部门成员都是只读。"""
+    from app.api.portal.endpoints.ragflow import _apply_knowledge_permission_flags
+
+    items = [{"ragflow_dataset_id": "ds-a", "id": "ds-a"}]
+    _apply_knowledge_permission_flags(
+        items,
+        {"is_admin": False, "accessible_ids": {"ds-a"}, "writable_ids": set()},
+    )
+    assert items[0]["can_write"] is False
+    assert items[0]["can_view_chunks"] is False
+    assert items[0]["is_read_only"] is True
+
+
+def test_permission_endpoints_are_audited():
+    """授权增删必须留痕。
+
+    同一个数据集授权有两个入口：知识库页（增量增删）与用户/角色页（整份保存）。
+    没有审计时，一旦出现「授权莫名消失」，无法判断是谁在什么时候改的。
+    """
+    import inspect
+
+    post_src = inspect.getsource(ragflow.add_dataset_permissions)
+    delete_src = inspect.getsource(ragflow.delete_dataset_permission)
+
+    assert "record_knowledge_audit" in post_src
+    assert "datasets:grant" in post_src
+    assert "target_ids" in post_src
+    assert "record_knowledge_audit" in delete_src
+    assert "datasets:revoke" in delete_src
+    assert "target_id" in delete_src

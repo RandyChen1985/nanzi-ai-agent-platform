@@ -27,6 +27,12 @@ type KnowledgeBase = {
   platform_name?: string
   platform_description?: string
   owner?: string
+  // 业务归属部门：仅用于左侧树分组与过滤，不参与权限判定
+  owner_dept_id?: number | null
+  /**
+   * 可见范围（真实权限语义，见后端 PermissionService）：
+   * public = 公共级（需授权）；team = 部门级（归属部门含下级自动只读）；private = 个人私有（仅创建人）
+   */
   visibility?: string
   tags?: string[]
   notes?: string
@@ -70,6 +76,141 @@ type RagFlowConfigSummary = {
   knowledge_base_enabled?: boolean
 }
 
+/** 只读部门目录节点（来自 /api/portal/departments/options，不含成员数） */
+type DeptOptionNode = {
+  id: number
+  parent_id: number | null
+  code: string
+  name: string
+  path: string
+  status: number
+  children?: DeptOptionNode[]
+}
+
+/** 左侧树的一级节点：部门分组（deptId=null 表示「未关联部门」或平铺模式） */
+type DeptDatasetGroup = {
+  key: string
+  deptId: number | null
+  label: string
+  path: string
+  level: number
+  ancestors: number[]
+  datasets: KnowledgeBase[]
+  /** 含下级部门的库总数 */
+  totalCount: number
+  hasChildren: boolean
+  isUnassigned: boolean
+  /** 平铺模式（公共级 / 个人私有 tab）：不渲染分组头，只列出库 */
+  isFlat?: boolean
+}
+
+/** 可见范围三档（与后端 PermissionService 的常量一致） */
+type VisibilityScope = 'public' | 'team' | 'private'
+
+const VISIBILITY_TABS: { key: VisibilityScope; label: string; hint: string }[] = [
+  { key: 'public', label: '公共级', hint: '需要授权才能访问，创建人自动可用' },
+  { key: 'team', label: '部门级', hint: '归属部门（含下级部门）成员自动只读' },
+  { key: 'private', label: '个人私有', hint: '仅自己可见，不支持分配授权' },
+]
+
+/**
+ * 可见范围下拉的选项：下拉里双行展示「名称 + 适用场景」。
+ * 顺序按「默认项在前」排，`private` 是新建库的默认值，所以加了「默认」徽标，
+ * 避免用户没注意就建出一个只有自己能看到的库。
+ */
+const VISIBILITY_SCOPE_OPTIONS: {
+  key: VisibilityScope
+  label: string
+  hint: string
+  scene: string
+  /** 图标路径（heroicons 24 描边风格），用 currentColor 上色 */
+  iconPath: string
+  /** 图标颜色：与三个 tab / 徽标的配色保持一致，便于扫读时按颜色识别 */
+  iconClass: string
+  isDefault?: boolean
+}[] = [
+  {
+    key: 'private',
+    label: '个人私有',
+    hint: '仅自己可见，不能分配授权',
+    scene: '草稿、个人笔记、待整理资料',
+    // 锁：仅自己能打开
+    iconPath:
+      'M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z',
+    iconClass: 'text-amber-500',
+    isDefault: true,
+  },
+  {
+    key: 'team',
+    label: '部门级',
+    hint: '归属部门（含下级部门）成员自动只读',
+    scene: '部门内部资料、团队对齐',
+    // 楼宇：代表部门/组织
+    iconPath:
+      'M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21',
+    iconClass: 'text-violet-500',
+  },
+  {
+    key: 'public',
+    label: '公共级',
+    hint: '需要授权才能访问，创建人自动可用',
+    scene: '跨部门共享、需要精确控制名单',
+    // 地球：代表跨部门/可对外共享
+    iconPath:
+      'M12 21a9 9 0 100-18 9 9 0 000 18zM3.6 9h16.8M3.6 15h16.8M12 3c2.4 2.4 3.6 5.4 3.6 9s-1.2 6.6-3.6 9c-2.4-2.4-3.6-5.4-3.6-9S9.6 5.4 12 3z',
+    iconClass: 'text-blue-500',
+  },
+]
+
+/** 可见范围徽标配色：与下拉图标色、权限配置页徽标保持一致 */
+const VISIBILITY_BADGE_CLASS: Record<VisibilityScope, string> = {
+  public: 'bg-blue-50 text-blue-600 border-blue-100',
+  team: 'bg-violet-50 text-violet-600 border-violet-100',
+  private: 'bg-amber-50 text-amber-700 border-amber-100',
+}
+
+/** 归一化可见范围：空值/未知值按 public 兜底，与后端判定口径保持一致 */
+const visibilityOf = (dataset: KnowledgeBase): VisibilityScope => {
+  const token = String(dataset.visibility || '').trim().toLowerCase()
+  return token === 'team' || token === 'private' ? token : 'public'
+}
+
+/** 可见范围的中文标签（详情页/提示文案用） */
+const visibilityLabel = (dataset: KnowledgeBase): string => {
+  const labels: Record<VisibilityScope, string> = {
+    public: '公共级',
+    team: '部门级',
+    private: '个人私有',
+  }
+  return labels[visibilityOf(dataset)]
+}
+
+/** 详情页标题旁的可见范围徽标配色 */
+const visibilityBadgeClass = (dataset: KnowledgeBase) =>
+  VISIBILITY_BADGE_CLASS[visibilityOf(dataset)]
+
+/** 徽标 hover 提示：取下拉选项的说明，与切换可见范围时看到的是同一句话 */
+const visibilityHint = (dataset: KnowledgeBase) =>
+  visibilityOptionOf(visibilityOf(dataset)).hint
+
+type VisibilityScopeOption = (typeof VISIBILITY_SCOPE_OPTIONS)[number]
+
+/** 兜底项：字段取值异常时也不让下拉显示空白（与默认值 private 保持一致） */
+const FALLBACK_VISIBILITY_OPTION: VisibilityScopeOption = {
+  key: 'private',
+  label: '个人私有',
+  hint: '仅自己可见，不能分配授权',
+  scene: '草稿、个人笔记、待整理资料',
+  iconPath:
+    'M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z',
+  iconClass: 'text-amber-500',
+  isDefault: true,
+}
+
+/** 按档位取下拉选项（未知值回落到默认项） */
+const visibilityOptionOf = (scope: string): VisibilityScopeOption =>
+  VISIBILITY_SCOPE_OPTIONS.find(option => option.key === scope) ?? FALLBACK_VISIBILITY_OPTION
+
 const { showToast } = useToast()
 const { hasPermission, isAdmin } = useUser()
 
@@ -82,6 +223,31 @@ const showErrorBanner = ref(true)
 const datasets = ref<KnowledgeBase[]>([])
 const errorMessage = ref('')
 const ragflowConfig = ref<RagFlowConfigSummary | null>(null)
+
+// 部门目录（只读）：用于「业务归属部门」选择器与左侧树部门分组。
+// 与部门管理页的 /departments/tree 分开取：知识库编辑者通常没有部门管理权限。
+const departmentOptions = ref<DeptOptionNode[]>([])
+const departmentOptionsError = ref('')
+// 部门分组折叠状态，key 为分组 key（dept:<id> 或 unassigned）
+const collapsedDeptGroups = ref<Record<string, boolean>>({})
+// 左栏可见范围 tab：公共级 / 部门级 / 个人私有（对应 visibility 三档）
+const activeVisibility = ref<VisibilityScope>('public')
+
+// 自定义下拉的展开状态：可见范围（两个弹窗共用）+ 解析算法（创建弹窗）。
+// 靠 data 属性判断"点了别处"，避免两个菜单同时展开时互相干扰。
+const visibilityMenuOpen = ref(false)
+const chunkMenuOpen = ref(false)
+const closeFloatingMenusOnOutsideClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('[data-visibility-select]')) return
+  if (target?.closest('[data-chunk-select]')) return
+  if (target?.closest('[data-dept-select]')) return
+  visibilityMenuOpen.value = false
+  chunkMenuOpen.value = false
+  deptMenuOpen.value = false
+}
+onMounted(() => document.addEventListener('click', closeFloatingMenusOnOutsideClick))
+onUnmounted(() => document.removeEventListener('click', closeFloatingMenusOnOutsideClick))
 
 // 选中状态
 const selectedType = ref<'dataset' | 'document' | null>(null)
@@ -111,7 +277,9 @@ const form = ref({
   name: '',
   description: '',
   chunk_method: 'naive',
-  owner: '',
+  // 业务归属部门：0 表示未关联部门；ownerText 是历史自由文本（只读兜底，不参与新写入）
+  ownerDeptId: 0 as number,
+  ownerText: '',
   visibility: 'private',
   tagsText: '',
   notes: '',
@@ -124,7 +292,14 @@ const canDelete = computed(() => hasPermission('element:knowledge:delete'))
 const canUpload = computed(() => hasPermission('element:knowledge:upload_document'))
 const canDeleteDocument = computed(() => hasPermission('element:knowledge:delete_document'))
 const canParse = computed(() => hasPermission('element:knowledge:parse_document'))
-const canManagePermissions = computed(() => isAdmin.value || hasPermission('menu:system:users'))
+const canManagePermissions = computed(() => {
+  // 与后端 authorization 同码：element:user:edit（菜单可见不等于有权改授权）
+  if (!(isAdmin.value || hasPermission('element:user:edit'))) return false
+  const dataset = selectedDataset.value
+  // 后端的 GET/POST /permissions 都要求对该库有写权限，只读成员一律 403。
+  // 只看菜单权限会让部门成员看到一个点了必然失败的「分配授权成员」按钮。
+  return !!dataset && !isReadOnlyDataset(dataset)
+})
 const canSync = computed(() => canEdit.value)
 const isKnowledgeEnabled = computed(() => ragflowConfig.value?.knowledge_base_enabled !== false)
 const isEngineReady = computed(() => isKnowledgeEnabled.value && engineStatus.value === 'connected' && !loading.value)
@@ -148,31 +323,77 @@ const engineStatusShort = computed(() => {
 
 const selectedDatasetId = computed(() => selectedDataset.value?.ragflow_dataset_id || selectedDataset.value?.id || '')
 
-const chunkMethodDescription = computed(() => {
-  const method = form.value.chunk_method
-  switch (method) {
-    case 'naive':
-      return '💡 通用切分：适合绝大部分规则文档。基于段落与 Token 长度限制进行物理切分，简单高效。'
-    case 'manual':
-      return '💡 手动微调：适合对分块有严苛要求的文件。支持在解析后由人工手动调整切分边界。'
-    case 'qa':
-      return '💡 问答对模型：适合 FAQ 常见问答库、客服指引。自动调用大模型从文档中提取匹配的 Q&A 问答对。'
-    case 'table':
-      return '💡 表格切片：适合报表、带有密集表格的 PDF 或 Excel。专门优化并保留表格的行/列逻辑特征。'
-    case 'paper':
-      return '💡 学术论文：针对论文报告结构设计。自动识别标题和段落，智能排除参考文献等噪音。'
-    case 'laws':
-      return '💡 法律法规：适合条规文件。精准按“第X条、第X款”进行层级解析切片。'
-    case 'resume':
-      return '💡 简历解析：专门解析个人履历。智能识别并提取出教育背景、工作经历等核心属性。'
-    case 'book':
-      return '💡 图书解析：针对长篇连贯文学作品。按大篇幅连续小说段落逻辑进行切片。'
-    case 'one':
-      return '💡 单文件不切分：将整个文档作为一个 Chunk。适合短语列表、特定规则名称等无需分割的文件。'
-    default:
-      return ''
-  }
-})
+/**
+ * 解析算法选项：说明文案内联到下拉里（第一行名称 + 算法码，第二行说明），
+ * 不再在下拉外面挂一条蓝色提示框——选完就得往下看半天才知道它是什么意思。
+ */
+const CHUNK_METHOD_OPTIONS: { value: string; label: string; code: string; desc: string }[] = [
+  {
+    value: 'naive',
+    label: '通用切分',
+    code: 'Naive',
+    desc: '适合绝大部分规则文档，按段落与 Token 长度物理切分，简单高效。',
+  },
+  {
+    value: 'qa',
+    label: '问答对模型',
+    code: 'QA',
+    desc: '适合 FAQ 常见问答库、客服指引，自动调用大模型提取匹配的 Q&A 问答对。',
+  },
+  {
+    value: 'table',
+    label: '表格切片',
+    code: 'Table',
+    desc: '适合报表、带密集表格的 PDF 或 Excel，专门保留表格的行列逻辑特征。',
+  },
+  {
+    value: 'laws',
+    label: '法律法规',
+    code: 'Laws',
+    desc: '适合条规文件，按「第 X 条 / 第 X 款」进行层级解析切片。',
+  },
+  {
+    value: 'paper',
+    label: '学术论文',
+    code: 'Paper',
+    desc: '针对论文报告结构设计，自动识别标题和段落，智能排除参考文献等噪音。',
+  },
+  {
+    value: 'resume',
+    label: '简历解析',
+    code: 'Resume',
+    desc: '专门解析个人履历，智能识别并提取教育背景、工作经历等核心属性。',
+  },
+  {
+    value: 'book',
+    label: '图书解析',
+    code: 'Book',
+    desc: '针对长篇连贯文学作品，按大篇幅连续小说段落逻辑进行切片。',
+  },
+  {
+    value: 'manual',
+    label: '手动微调',
+    code: 'Manual',
+    desc: '适合对分块有严苛要求的文件，解析后由人工手动调整切分边界。',
+  },
+  {
+    value: 'one',
+    label: '单文件不切分',
+    code: 'One',
+    desc: '将整个文档作为一个 Chunk，适合短语列表、特定规则名称等无需分割的文件。',
+  },
+]
+
+/** 兜底项：历史脏值也不让下拉显示空白（显式写字面量，避免下标访问被判为可能 undefined） */
+const FALLBACK_CHUNK_OPTION = {
+  value: 'naive',
+  label: '通用切分',
+  code: 'Naive',
+  desc: '适合绝大部分规则文档，按段落与 Token 长度物理切分，简单高效。',
+}
+
+const chunkMethodOptionOf = (value: string) =>
+  CHUNK_METHOD_OPTIONS.find(option => option.value === value) ?? FALLBACK_CHUNK_OPTION
 
 const extractError = (err: unknown) => {
   const anyErr = err as any
@@ -212,7 +433,8 @@ const resetForm = () => {
     name: '',
     description: '',
     chunk_method: 'naive',
-    owner: '',
+    ownerDeptId: 0,
+    ownerText: '',
     visibility: 'private',
     tagsText: '',
     notes: '',
@@ -226,6 +448,10 @@ const openCreate = () => {
     return
   }
   resetForm()
+  // 下拉展开态是弹窗级状态，重新打开时必须收起，避免"上次没关掉的菜单"
+  visibilityMenuOpen.value = false
+  chunkMenuOpen.value = false
+  deptMenuOpen.value = false
   showCreateModal.value = true
 }
 
@@ -235,11 +461,14 @@ const openEdit = (dataset: KnowledgeBase) => {
     return
   }
   selectedDataset.value = dataset
+  visibilityMenuOpen.value = false
+  deptMenuOpen.value = false
   form.value = {
     name: dataset.platform_name || dataset.name || '',
     description: dataset.platform_description || dataset.description || '',
     chunk_method: 'naive',
-    owner: dataset.owner || '',
+    ownerDeptId: dataset.owner_dept_id || 0,
+    ownerText: dataset.owner || '',
     visibility: dataset.visibility || 'private',
     tagsText: (dataset.tags || []).join(', '),
     notes: dataset.notes || '',
@@ -321,7 +550,7 @@ const fetchDatasets = async () => {
   engineStatus.value = 'checking'
   errorMessage.value = ''
   try {
-    const response = await axios.get('/api/portal/ragflow/datasets', { params: { page_size: 200 } })
+    const response = await axios.get('/api/portal/ragflow/datasets', { params: { page_size: 1000 } })
     datasets.value = apiData(response)
     engineStatus.value = 'connected'
     
@@ -340,6 +569,18 @@ const fetchDatasets = async () => {
     showErrorBanner.value = true
   } finally {
     loading.value = false
+  }
+}
+
+// 只读部门目录：失败不阻塞知识库列表，仅在归属部门选择器里提示
+const fetchDepartmentOptions = async () => {
+  try {
+    const response = await axios.get('/api/portal/departments/options')
+    departmentOptions.value = response.data?.items || []
+    departmentOptionsError.value = ''
+  } catch (err) {
+    departmentOptions.value = []
+    departmentOptionsError.value = extractError(err) || '部门目录加载失败'
   }
 }
 
@@ -371,7 +612,7 @@ const fetchDocumentsForDataset = async (dsId: string) => {
     // 后端默认 page_size=100，且客户端仅在 page_size>100 时才自动翻页，
     // 不显式放大时文档超过 100 个会被静默截断，列表与文档数都会少算
     const response = await axios.get(`/api/portal/ragflow/datasets/${dsId}/documents`, {
-      params: { page_size: 200 }
+      params: { page_size: 1000 }
     })
     if (seq !== documentsReqSeq[dsId]) return
     const docs = apiData(response)
@@ -415,8 +656,32 @@ const fetchDocumentsForDataset = async (dsId: string) => {
 const datasetPermissions = ref<{ users: any[], roles: any[] }>({ users: [], roles: [] })
 const loadingPermissions = ref(false)
 const permissionsError = ref(false)
+/** 只读成员查不到授权名单（后端按写权限校验），这是既定权限而不是故障 */
+const permissionsRestricted = ref(false)
+
+/** 当前选中的库是否为个人私有：private 的语义是「仅创建人」，因此不允许分配授权 */
+const isPrivateDataset = computed(
+  () => !!selectedDataset.value && visibilityOf(selectedDataset.value) === 'private'
+)
+
+/** 当前库是否已有授权对象：把可见范围改成 private 前必须提示"授权会失效" */
+const hasExistingPermissions = computed(
+  () => datasetPermissions.value.users.length > 0 || datasetPermissions.value.roles.length > 0
+)
 
 const fetchDatasetPermissions = async (datasetId: string) => {
+  // 只读成员对这个库没有写权限，后端 GET /permissions 必然 403。
+  // 与其发一个注定失败的请求再显示"读取失败"，不如直接说明"看不到名单是权限所致"，
+  // 否则用户会以为系统故障（红色报错 + 重试按钮）。
+  const target = datasets.value.find(d => (d.ragflow_dataset_id || d.id) === datasetId)
+  if (target && isReadOnlyDataset(target)) {
+    permissionsRestricted.value = true
+    permissionsError.value = false
+    datasetPermissions.value = { users: [], roles: [] }
+    loadingPermissions.value = false
+    return
+  }
+  permissionsRestricted.value = false
   loadingPermissions.value = true
   permissionsError.value = false
   datasetPermissions.value = { users: [], roles: [] }
@@ -566,18 +831,160 @@ const selectDocumentNode = (doc: KnowledgeDocument, dataset: KnowledgeBase) => {
   }
 }
 
+// ==================== 业务归属部门：只读目录 + 左侧树部门分组 ====================
+// 说明：owner_dept_id 只用于"按部门浏览/过滤"，不参与任何权限判定——
+// 谁能看到、谁能修改知识库仍由后端的 get_knowledge_base_access 决定。
+
+/** 部门 id → 节点（含停用部门：历史归属仍要能显示名称） */
+const deptById = computed(() => {
+  const map = new Map<number, DeptOptionNode>()
+  const walk = (nodes: DeptOptionNode[]) => {
+    for (const node of nodes) {
+      map.set(node.id, node)
+      if (node.children?.length) walk(node.children)
+    }
+  }
+  walk(departmentOptions.value)
+  return map
+})
+
+/** 先序索引：保证下拉与分组顺序与部门管理页（sort_order → id）一致 */
+const deptOrderIndex = computed(() => {
+  const index = new Map<number, number>()
+  let cursor = 0
+  const walk = (nodes: DeptOptionNode[]) => {
+    for (const node of nodes) {
+      index.set(node.id, cursor++)
+      if (node.children?.length) walk(node.children)
+    }
+  }
+  walk(departmentOptions.value)
+  return index
+})
+
+const deptDepth = (id: number): number => {
+  const path = deptById.value.get(id)?.path || ''
+  return Math.max(path.split('/').filter(Boolean).length - 1, 0)
+}
+
+const deptName = (id?: number | null): string => {
+  if (!id) return ''
+  return deptById.value.get(Number(id))?.name || ''
+}
+
+/** 归属部门的展示文本：部门名优先（部门改名后自动跟随），历史自由文本兜底 */
+const datasetOwnerLabel = (dataset: KnowledgeBase): string => {
+  return deptName(dataset.owner_dept_id) || dataset.owner || ''
+}
+
+/** 原生 select 无法渲染树，用全角空格表达层级 */
+const deptSelectOptions = computed(() => {
+  const rows = [...deptById.value.values()]
+    .sort((a, b) => (deptOrderIndex.value.get(a.id) ?? 0) - (deptOrderIndex.value.get(b.id) ?? 0))
+    .map((node) => ({
+      id: node.id,
+      label: `${'　'.repeat(deptDepth(node.id))}${node.name}${node.status === 0 ? '（已停用）' : ''}`,
+    }))
+  return rows
+})
+
+/** 部门下拉的展开态；与可见范围/解析算法共用「点空白处收起」的处理 */
+const deptMenuOpen = ref(false)
+
+/** 下拉选项：0 号是「未关联部门」，其后是带层级缩进的部门树 */
+const deptMenuOptions = computed(() => [
+  { id: 0, label: '未关联部门' },
+  ...deptSelectOptions.value,
+])
+
+/** 选项 label 用全角空格表示层级缩进，回填到按钮上时要剥掉，否则文字会整体右移 */
+const stripDeptIndent = (label: string) => label.replace(/^[　\s]+/, '').trim()
+
+/** 当前选中的部门名；0 / 已删除部门都回落到「未关联部门」 */
+const selectedDeptLabel = computed(() => {
+  const id = Number(form.value.ownerDeptId || 0)
+  if (!id) return '未关联部门'
+  const hit = deptSelectOptions.value.find((option) => option.id === id)
+  return hit ? stripDeptIndent(hit.label) : '未关联部门'
+})
+
+/**
+ * 下拉下方的说明行（双行结构的第二行）。
+ * 右侧「解析算法」也是两行，高度对齐靠这行撑起来；文案按当前可见范围给出。
+ */
+const deptHintText = computed(() => {
+  if (form.value.visibility !== 'team') {
+    // 已选的部门不会被清空，切回部门级即生效——这一点必须说明，否则用户以为白选了
+    return form.value.ownerDeptId
+      ? '仅「部门级」需要归属部门；已选值会保留'
+      : '仅「部门级」需要归属部门'
+  }
+  if (!form.value.ownerDeptId) {
+    if (form.value.ownerText) return `历史归属：${form.value.ownerText}`
+    return '未选部门会退化为公共级'
+  }
+  return '含下级部门，成员自动只读'
+})
+
+/** 未选部门的告警色：切回部门级却忘了选，是要提醒的 */
+const deptHintClass = computed(() =>
+  form.value.visibility === 'team' && !form.value.ownerDeptId && !form.value.ownerText
+    ? 'text-amber-600'
+    : 'text-gray-400'
+)
+
+/** 搜索命中的部门及其所有下级部门（按部门名匹配，含下级是刻意的） */
+const searchMatchedDeptIds = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  const ids = new Set<number>()
+  if (!query) return ids
+  const matchedRoots = [...deptById.value.values()].filter((node) =>
+    node.name.toLowerCase().includes(query)
+  )
+  if (!matchedRoots.length) return ids
+  for (const node of deptById.value.values()) {
+    // path 末尾带 `/`，因此 `/1/7/` 不会误匹配 `/1/70/`
+    if (matchedRoots.some((root) => node.path && node.path.startsWith(root.path))) {
+      ids.add(node.id)
+    }
+  }
+  return ids
+})
+
 // 计算过滤后的知识库树
 const isSearchEmpty = computed(
   () => searchQuery.value.trim().length > 0 && filteredDatasets.value.length === 0
 )
 
+/** 当前 tab 下的库（可见范围维度）：与搜索正交，先按 tab 圈定范围再搜 */
+const visibilityScopeDatasets = computed(() =>
+  datasets.value.filter(dataset => visibilityOf(dataset) === activeVisibility.value)
+)
+
+/** 每个 tab 的库数量（用全量而非搜索结果，避免搜索时角标乱跳） */
+const visibilityTabCount = (scope: VisibilityScope): number =>
+  datasets.value.filter(dataset => visibilityOf(dataset) === scope).length
+
+/** 空态文案随 tab 变化：三档的「为什么这里是空的」并不相同 */
+const emptyVisibilityText = computed(() => {
+  if (activeVisibility.value === 'team') return '还没有可访问的部门知识库'
+  if (activeVisibility.value === 'private') return '你还没有个人私有知识库'
+  return '还没有可访问的公共知识库'
+})
+
 const filteredDatasets = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return datasets.value
+  if (!query) return visibilityScopeDatasets.value
 
-  return datasets.value.filter(ds => {
+  const deptHit = searchMatchedDeptIds.value
+
+  return visibilityScopeDatasets.value.filter(ds => {
+    // 部门名命中（含下级部门）时，该部门下的库整体命中
+    if (ds.owner_dept_id && deptHit.has(ds.owner_dept_id)) return true
+
     const nameMatch = (ds.platform_name || ds.name || '').toLowerCase().includes(query)
     const descMatch = (ds.platform_description || ds.description || '').toLowerCase().includes(query)
+    // owner 文本可能是历史自由文本（未关联部门），仍允许被搜到
     const ownerMatch = (ds.owner || '').toLowerCase().includes(query)
     const tagsMatch = (ds.tags || []).some(t => t.toLowerCase().includes(query))
 
@@ -588,6 +995,140 @@ const filteredDatasets = computed(() => {
     return nameMatch || descMatch || ownerMatch || tagsMatch || docMatch
   })
 })
+
+/**
+ * 左侧树的一级节点。
+ *
+ * 两个模式：
+ * - **部门级 tab**：按业务归属部门分组。只渲染「子树内有知识库」的部门，但父部门
+ *   即使自身没有库也会出现以保留层级；`totalCount` 是含下级部门的库数，用于徽标；
+ *   `owner_dept_id` 为空（含历史自由文本）统一归入「未关联部门」。
+ * - **公共级 / 个人私有 tab**：平铺（`isFlat`），不渲染分组头——这两档里部门归属
+ *   只是附带信息，多套一层分组反而增加点击成本。
+ */
+const deptDatasetGroups = computed<DeptDatasetGroup[]>(() => {
+  if (activeVisibility.value !== 'team') {
+    const list = filteredDatasets.value
+    if (!list.length) return []
+    return [
+      {
+        key: `flat:${activeVisibility.value}`,
+        deptId: null,
+        label: '',
+        path: '',
+        level: 0,
+        ancestors: [],
+        datasets: list,
+        totalCount: list.length,
+        hasChildren: false,
+        isUnassigned: false,
+        isFlat: true,
+      },
+    ]
+  }
+
+  const direct = new Map<number, KnowledgeBase[]>()
+  const unassigned: KnowledgeBase[] = []
+  for (const dataset of filteredDatasets.value) {
+    const deptId = dataset.owner_dept_id
+    if (deptId && deptById.value.has(deptId)) {
+      const list = direct.get(deptId)
+      if (list) list.push(dataset)
+      else direct.set(deptId, [dataset])
+    } else {
+      unassigned.push(dataset)
+    }
+  }
+
+  if (!direct.size && !unassigned.length) return []
+
+  // 有库的部门 + 其祖先链（父部门可能自身无库，仍需作为层级展示）
+  const needed = new Set<number>()
+  for (const deptId of direct.keys()) {
+    let cursor: DeptOptionNode | undefined = deptById.value.get(deptId)
+    while (cursor) {
+      needed.add(cursor.id)
+      cursor = cursor.parent_id ? deptById.value.get(cursor.parent_id) : undefined
+    }
+  }
+
+  const totalInSubtree = (node: DeptOptionNode): number => {
+    let total = direct.get(node.id)?.length || 0
+    for (const [deptId, list] of direct) {
+      if (deptId === node.id) continue
+      const child = deptById.value.get(deptId)
+      if (child && node.path && child.path.startsWith(node.path)) total += list.length
+    }
+    return total
+  }
+
+  const groups: DeptDatasetGroup[] = []
+  const emitted = new Set<number>()
+  const walk = (node: DeptOptionNode, ancestors: number[], level: number) => {
+    if (!needed.has(node.id)) return
+    const children = (node.children || []).filter(child => needed.has(child.id))
+    groups.push({
+      key: `dept:${node.id}`,
+      deptId: node.id,
+      label: node.name,
+      path: node.path,
+      level,
+      ancestors,
+      datasets: direct.get(node.id) || [],
+      totalCount: totalInSubtree(node),
+      hasChildren: children.length > 0,
+      isUnassigned: false,
+    })
+    emitted.add(node.id)
+    for (const child of children) walk(child, [...ancestors, node.id], level + 1)
+  }
+  for (const root of departmentOptions.value) walk(root, [], 0)
+
+  // 兜底：owner_dept_id 指向部门树里已不存在的部门时，不能把库藏起来
+  const orphanIds = [...direct.keys()].filter(id => !emitted.has(id))
+  for (const orphanId of orphanIds) unassigned.push(...(direct.get(orphanId) || []))
+
+  if (unassigned.length) {
+    groups.push({
+      key: 'unassigned',
+      deptId: null,
+      label: '未关联部门',
+      path: '',
+      level: 0,
+      ancestors: [],
+      datasets: unassigned,
+      totalCount: unassigned.length,
+      hasChildren: false,
+      isUnassigned: true,
+    })
+  }
+
+  return groups
+})
+
+const isDeptGroupCollapsed = (group: DeptDatasetGroup): boolean =>
+  !!collapsedDeptGroups.value[group.key]
+
+const toggleDeptGroup = (group: DeptDatasetGroup) => {
+  collapsedDeptGroups.value = {
+    ...collapsedDeptGroups.value,
+    [group.key]: !collapsedDeptGroups.value[group.key],
+  }
+}
+
+/** 祖先部门折叠时，子部门分组整体隐藏；搜索态强制展开，避免命中结果被折叠藏起来 */
+const isDeptGroupHidden = (group: DeptDatasetGroup): boolean => {
+  if (searchQuery.value.trim()) return false
+  return group.ancestors.some(ancestorId => !!collapsedDeptGroups.value[`dept:${ancestorId}`])
+}
+
+/** 分组内容是否展开：搜索时一律展开，平铺模式没有分组头可点，恒展开 */
+const isDeptGroupOpen = (group: DeptDatasetGroup): boolean => {
+  if (group.isFlat) return true
+  if (searchQuery.value.trim()) return true
+  return !isDeptGroupHidden(group) && !isDeptGroupCollapsed(group)
+}
+
 
 const syncFromRagFlow = async () => {
   if (!isEngineReady.value) {
@@ -639,7 +1180,8 @@ const createDataset = async () => {
       name: form.value.name.trim(),
       description: form.value.description,
       chunk_method: form.value.chunk_method,
-      owner: form.value.owner,
+      // 业务归属部门：只影响左侧树分组，不参与权限
+      owner_dept_id: form.value.ownerDeptId || null,
       visibility: form.value.visibility,
       tags: normalizeTags(form.value.tagsText),
       notes: form.value.notes,
@@ -653,7 +1195,11 @@ const createDataset = async () => {
     const newId = res.data?.data?.id
     if (newId) {
       const found = datasets.value.find(d => (d.ragflow_dataset_id || d.id) === newId)
-      if (found) selectDatasetNode(found)
+      if (found) {
+        // 新库按所选可见范围落在对应 tab，否则刚建完在左栏里"消失"
+        activeVisibility.value = visibilityOf(found)
+        selectDatasetNode(found)
+      }
     }
   } catch (err) {
     showToast(extractError(err), 'error')
@@ -679,18 +1225,33 @@ const updateMetadata = async () => {
     const extraConfig = parseExtraConfig()
     extraConfig.custom_questions = customQuestions.value.filter(q => q.label.trim() && q.query.trim())
 
-    await axios.put(`/api/portal/ragflow/datasets/${selectedDatasetId.value}/metadata`, {
+    const payload: Record<string, unknown> = {
       name: form.value.name,
       description: form.value.description,
-      owner: form.value.owner,
+      // 0 表示清空部门归属；后端据 owner_dept_id 回填 owner 文本快照
+      owner_dept_id: form.value.ownerDeptId || 0,
       visibility: form.value.visibility,
       tags: normalizeTags(form.value.tagsText),
       notes: form.value.notes,
       extra_config: extraConfig
-    })
+    }
+    // 未关联部门时，历史自由文本由前端决定保留还是清除；选了部门则由后端按部门名回填
+    if (!form.value.ownerDeptId) {
+      payload.owner = form.value.ownerText
+    }
+
+    await axios.put(`/api/portal/ragflow/datasets/${selectedDatasetId.value}/metadata`, payload)
     showToast('知识库元数据已更新', 'success')
     showEditModal.value = false
     await fetchDatasets()
+    // 可见范围改到别的档后，库会落到另一个 tab；不跟随切换会让它看起来"消失了"
+    const saved = datasets.value.find(
+      d => (d.ragflow_dataset_id || d.id) === selectedDatasetId.value
+    )
+    if (saved) {
+      activeVisibility.value = visibilityOf(saved)
+      selectedDataset.value = saved
+    }
   } catch (err) {
     showToast(extractError(err), 'error')
   } finally {
@@ -1222,6 +1783,11 @@ const isReadOnlyDataset = (dataset?: KnowledgeBase | null) => {
   return false
 }
 
+/** 当前详情页的库是否可写：只读成员只能看内容，不能改元数据/上传/授权 */
+const selectedDatasetWritable = computed(
+  () => !!selectedDataset.value && !isReadOnlyDataset(selectedDataset.value),
+)
+
 const canViewChunks = (dataset?: KnowledgeBase | null) => {
   if (!dataset) return false
   if (dataset.can_view_chunks === true) return true
@@ -1495,7 +2061,8 @@ const applyDeepLinkFromQuery = () => {
 
 onMounted(async () => {
   await fetchRagFlowConfig()
-  await fetchDatasets()
+  // 部门目录与知识库列表互不依赖：并行取，部门加载失败不影响列表可用
+  await Promise.all([fetchDepartmentOptions(), fetchDatasets()])
   applyDeepLinkFromQuery()
 })
 
@@ -1699,7 +2266,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             <input
               v-model="searchQuery"
               type="search"
-              placeholder="搜索知识库、文档或归属部门..."
+              placeholder="搜索知识库、文档或业务归属部门..."
               class="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400"
             />
             <svg class="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1709,6 +2276,34 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
+            </button>
+          </div>
+
+          <!-- 可见范围 tab：三档对应真实权限语义（公共级需授权 / 部门级自动只读 / 个人私有仅自己） -->
+          <div class="mt-2 flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
+            <button
+              v-for="tab in VISIBILITY_TABS"
+              :key="tab.key"
+              type="button"
+              class="flex-1 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              :class="activeVisibility === tab.key ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+              :title="tab.hint"
+              @click="activeVisibility = tab.key"
+            >
+              <!-- 图标与切换弹窗共用同一份定义（visibilityOptionOf），不另写字面量 -->
+              <svg
+                class="w-3.5 h-3.5 shrink-0"
+                :class="visibilityOptionOf(tab.key).iconClass"
+                fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path :d="visibilityOptionOf(tab.key).iconPath" />
+              </svg>
+              <span class="truncate">{{ tab.label }}</span>
+              <span
+                class="text-[10px] px-1 rounded-full font-bold"
+                :class="activeVisibility === tab.key ? 'bg-primary/10 text-primary' : 'bg-gray-200 text-gray-500'"
+              >{{ visibilityTabCount(tab.key) }}</span>
             </button>
           </div>
         </div>
@@ -1723,8 +2318,8 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             <span>没有匹配「{{ searchQuery }}」的知识库</span>
             <button type="button" class="text-xs font-semibold text-primary hover:underline" @click="searchQuery = ''">清除搜索条件</button>
           </div>
-          <div v-else-if="filteredDatasets.length === 0" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
-            <span>还没有可访问的知识库</span>
+          <div v-else-if="deptDatasetGroups.length === 0" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
+            <span>{{ emptyVisibilityText }}</span>
             <button
               v-if="canCreate"
               type="button"
@@ -1735,7 +2330,46 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </button>
           </div>
           <div v-else class="space-y-1">
-            <div v-for="dataset in filteredDatasets" :key="dataset.ragflow_dataset_id || dataset.id" class="space-y-1">
+            <div v-for="group in deptDatasetGroups" :key="group.key" class="space-y-1">
+              <!-- 部门分组头：仅部门级 tab 渲染，公共级/个人私有 tab 是平铺列表 -->
+              <div
+                v-if="!group.isFlat && !isDeptGroupHidden(group)"
+                class="group/dept flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg cursor-pointer select-none hover:bg-gray-50 transition-all"
+                :class="group.isUnassigned ? 'text-gray-500' : 'text-gray-600'"
+                :style="{ marginLeft: `${group.level * 12}px` }"
+                :title="group.isUnassigned
+                  ? '未关联部门的库（含历史自由文本归属）'
+                  : `业务归属部门：${group.label}`"
+                @click="toggleDeptGroup(group)"
+              >
+                <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                  <svg
+                    class="w-3 h-3 shrink-0 text-gray-400 transition-transform duration-200"
+                    :class="{ '-rotate-90': isDeptGroupCollapsed(group) }"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+                  </svg>
+                  <svg class="w-3.5 h-3.5 shrink-0" :class="group.isUnassigned ? 'text-gray-400' : 'text-indigo-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                  </svg>
+                  <span class="truncate text-[11px] font-bold uppercase tracking-wider">{{ group.label }}</span>
+                </div>
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0"
+                  :class="group.isUnassigned ? 'bg-gray-100 text-gray-500' : 'bg-indigo-50 text-indigo-600'"
+                  :title="group.hasChildren ? `含下级部门共 ${group.totalCount} 个知识库` : `${group.totalCount} 个知识库`"
+                >
+                  {{ group.totalCount }}
+                </span>
+              </div>
+
+              <div
+                v-show="isDeptGroupOpen(group)"
+                class="space-y-1"
+                :class="group.isFlat ? '' : 'pl-3 ml-2 border-l border-gray-100'"
+              >
+                <div v-for="dataset in group.datasets" :key="dataset.ragflow_dataset_id || dataset.id" class="space-y-1">
               
               <!-- Dataset Node (Parent) -->
               <div
@@ -2133,6 +2767,8 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </div>
               </transition>
 
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -2143,20 +2779,71 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         
         <!-- Case 1: Knowledge base metadata details selected -->
         <div v-if="selectedType === 'dataset' && selectedDataset" class="space-y-6 flex-1 flex flex-col">
-          <div class="flex items-start justify-between border-b border-gray-100 pb-5">
-            <div>
-              <div class="flex items-center gap-3">
-                <h2 class="text-xl font-bold text-gray-900">{{ selectedDataset.platform_name || selectedDataset.name }}</h2>
-                <span v-if="selectedDataset.is_missing_in_ragflow" class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">RAGFlow 侧已失联</span>
+          <!--
+            头部信息：可见范围/更新时间这类"一眼确认状态"的字段收进标题与右上角，
+            其余元数据压成一行小字。原先 7 张等宽卡片要占掉三行高度，
+            在右侧详情区里把真正的内容（文档列表）挤到首屏之外。
+          -->
+          <div class="flex items-start justify-between gap-3 border-b border-gray-100 pb-4">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 flex-wrap">
+                <h2 class="text-xl font-bold text-gray-900 truncate">{{ selectedDataset.platform_name || selectedDataset.name }}</h2>
+                <span
+                  class="shrink-0 px-2 py-0.5 rounded-full border text-[11px] font-semibold leading-normal cursor-default"
+                  :class="visibilityBadgeClass(selectedDataset)"
+                  :title="visibilityHint(selectedDataset)"
+                >{{ visibilityLabel(selectedDataset) }}</span>
+                <span
+                  v-if="selectedDataset.is_missing_in_ragflow"
+                  class="shrink-0 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold"
+                >RAGFlow 侧已失联</span>
               </div>
-              <div v-if="selectedDataset.platform_description || selectedDataset.description" class="mt-3 pl-3.5 border-l-[3px] border-primary bg-gray-50/80 py-2.5 pr-4 rounded-r-xl max-w-3xl">
+
+              <div v-if="selectedDataset.platform_description || selectedDataset.description" class="mt-2.5 pl-3.5 border-l-[3px] border-primary bg-gray-50/80 py-2 pr-4 rounded-r-xl max-w-3xl">
                 <p class="text-sm text-gray-600 leading-relaxed italic">
                   "{{ selectedDataset.platform_description || selectedDataset.description }}"
                 </p>
               </div>
-              <p v-else class="text-xs text-gray-400 italic mt-2.5 select-none">暂无对该知识库的描述说明</p>
+              <p v-else class="text-xs text-gray-400 italic mt-2 select-none">暂无对该知识库的描述说明</p>
+
+              <!-- 元信息条：创建人 · 切片 · 归属部门 · ID（可复制） -->
+              <div class="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-gray-500">
+                <span class="whitespace-nowrap">
+                  创建人
+                  <span class="font-medium text-gray-700">{{ selectedDataset.created_by || '未知' }}</span>
+                </span>
+                <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
+                <span class="whitespace-nowrap">
+                  切片
+                  <span class="font-medium text-gray-700">{{ selectedDataset.chunk_method || '未设置' }}</span>
+                  <span class="text-gray-400">·</span>
+                  <span class="font-medium text-gray-700">{{ selectedDataset.chunk_count ?? '—' }}</span> 段
+                </span>
+                <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
+                <span class="whitespace-nowrap max-w-[18rem] truncate" :title="datasetOwnerLabel(selectedDataset) || ''">
+                  业务归属部门/负责人
+                  <span class="font-medium text-gray-700">{{ datasetOwnerLabel(selectedDataset) || '未指派' }}</span>
+                </span>
+                <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 text-gray-400 hover:text-primary transition-colors"
+                  title="复制知识库 ID"
+                  @click="copyToClipboard(selectedDataset.ragflow_dataset_id || selectedDataset.id || '')"
+                >
+                  <span class="font-mono">{{ (selectedDataset.ragflow_dataset_id || selectedDataset.id || '').slice(0, 8) }}…</span>
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </button>
+              </div>
             </div>
+
             <div class="flex items-center gap-2 shrink-0">
+              <div class="text-right hidden sm:block mr-1">
+                <span class="block text-[10px] text-gray-400 leading-none">更新时间</span>
+                <span class="block text-[11px] font-medium text-gray-600 mt-1 whitespace-nowrap">{{ formatTime(selectedDataset.update_time || selectedDataset.updated_at) }}</span>
+              </div>
               <button
                 v-if="!selectedDataset.is_missing_in_ragflow"
                 class="p-2 border border-gray-200 rounded-xl hover:bg-gray-50 transition-all flex items-center justify-center text-gray-500 hover:text-primary hover:border-primary/30 shrink-0"
@@ -2185,45 +2872,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </svg>
                 编辑
               </button>
-            </div>
-          </div>
-
-          <!-- RAG Parameters cards grid -->
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
-              <span class="text-xs text-gray-400 font-medium">知识库 ID</span>
-              <div class="flex items-center justify-between mt-1">
-                <span class="text-sm font-mono text-gray-700 truncate mr-2">{{ selectedDataset.ragflow_dataset_id || selectedDataset.id }}</span>
-                <button class="text-primary hover:text-primary-dark shrink-0" @click="copyToClipboard(selectedDataset.ragflow_dataset_id || selectedDataset.id || '')">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
-              <span class="text-xs text-gray-400 font-medium">创建人</span>
-              <span class="text-sm font-medium text-gray-800 mt-1">{{ selectedDataset.created_by || '未知' }}</span>
-            </div>
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
-              <span class="text-xs text-gray-400 font-medium">业务归属部门 (Owner)</span>
-              <span class="text-sm font-medium text-gray-800 mt-1">{{ selectedDataset.owner || '未指派' }}</span>
-            </div>
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
-              <span class="text-xs text-gray-400 font-medium">切片方法 (Chunk Method)</span>
-              <span class="text-sm font-medium text-gray-800 mt-1">{{ selectedDataset.chunk_method || '未设置' }}</span>
-            </div>
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
-              <span class="text-xs text-gray-400 font-medium">切片总数 (Chunks)</span>
-              <span class="text-sm font-medium text-gray-800 mt-1">{{ selectedDataset.chunk_count ?? '—' }}</span>
-            </div>
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
-              <span class="text-xs text-gray-400 font-medium">公开属性 (Visibility)</span>
-              <span class="text-sm font-medium text-gray-800 mt-1 capitalize">{{ selectedDataset.visibility || 'Private' }}</span>
-            </div>
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
-              <span class="text-xs text-gray-400 font-medium">最后同步/更新时间</span>
-              <span class="text-sm font-medium text-gray-800 mt-1 truncate">{{ formatTime(selectedDataset.update_time || selectedDataset.updated_at) }}</span>
             </div>
           </div>
 
@@ -2271,7 +2919,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   正在读取权限分配...
                 </span>
                 <button
-                  v-if="canManagePermissions && !loadingPermissions"
+                  v-if="canManagePermissions && !loadingPermissions && !isPrivateDataset"
                   type="button"
                   class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold shadow-sm transition-all flex items-center gap-0.5 cursor-pointer"
                   @click="openAddPermissionModal"
@@ -2285,13 +2933,18 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </div>
             
             <div class="text-xs space-y-3 mt-1.5">
-              <!-- 可见性基本说明 -->
+              <!-- 可见范围说明：三档语义真实生效，这里必须与后端判定一致 -->
               <p class="text-gray-500 leading-normal select-none">
-                公开级别为 
-                <span class="font-bold text-gray-800 uppercase px-1.5 py-0.5 rounded bg-gray-100 text-[10px]">{{ selectedDataset.visibility || 'Private' }}</span>。
-                <span v-if="selectedDataset.visibility === 'public'">此知识库全平台公开，所有配置该权限的角色或平台用户均有权进行检索。</span>
-                <span v-else-if="selectedDataset.visibility === 'team'">此知识库部门公开，创建者、系统管理员以及业务归属部门（{{ selectedDataset.owner || '未指派' }}）的用户有权访问。</span>
-                <span v-else>此知识库为私有，仅创建者、系统管理员以及下方被额外明确指派了权限的角色/用户有权进行访问。</span>
+                可见范围为
+                <span class="font-bold text-gray-800 uppercase px-1.5 py-0.5 rounded bg-gray-100 text-[10px]">{{ visibilityLabel(selectedDataset) }}</span>。
+                <span v-if="visibilityOf(selectedDataset) === 'public'">公共级：创建人自动可用，其他人<b>必须</b>在下方被显式授权才能访问（不会被自动放行）。</span>
+                <span v-else-if="visibilityOf(selectedDataset) === 'team'">部门级：{{ datasetOwnerLabel(selectedDataset) || '未设置归属部门' }} 的成员（<b>含下级部门</b>）自动获得只读权限<template v-if="selectedDatasetWritable">；也可在下方额外授权给其他用户/角色</template>。</span>
+                <span v-else>
+                  个人私有：仅你自己可见，<b>不支持</b>分配授权。如需共享，请先把可见范围改为公共级或部门级。
+                  <template v-if="datasetPermissions.users.length || datasetPermissions.roles.length">
+                    下方的历史授权在当前范围内<b>不生效</b>，可逐条清除。
+                  </template>
+                </span>
               </p>
 
               <!-- 被指派的用户/角色列表 -->
@@ -2347,6 +3000,9 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </div>
               </div>
               
+              <div v-else-if="permissionsRestricted" class="text-gray-400 italic pt-2 border-t border-gray-100 select-none">
+                仅创建人与管理员可查看授权名单；您对该知识库是只读访问。
+              </div>
               <div v-else-if="permissionsError" class="pt-2 border-t border-gray-100 select-none flex items-center justify-between gap-3">
                 <span class="text-amber-600 text-xs">授权信息读取失败，当前无法确认谁有访问权限</span>
                 <button
@@ -2358,7 +3014,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </button>
               </div>
               <div v-else-if="!loadingPermissions" class="text-gray-400 italic pt-2 border-t border-gray-100 select-none">
-                未分配额外的用户或角色访问权限。
+                {{ isPrivateDataset ? '个人私有知识库不支持分配授权。' : '未分配额外的用户或角色访问权限。' }}
               </div>
             </div>
           </div>
@@ -2736,29 +3392,148 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">业务描述</label>
           <textarea v-model="form.description" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" rows="2" placeholder="请输入知识库描述"></textarea>
         </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 mb-1.5">可见范围</label>
+          <div data-visibility-select class="relative">
+            <button
+              type="button"
+              class="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-left bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+              @click="visibilityMenuOpen = !visibilityMenuOpen"
+            >
+              <span class="flex items-center gap-2 min-w-0 flex-1">
+                <svg
+                  class="w-5 h-5 shrink-0"
+                  :class="visibilityOptionOf(form.visibility).iconClass"
+                  fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path :d="visibilityOptionOf(form.visibility).iconPath" />
+                </svg>
+                <span class="min-w-0 flex-1">
+                  <span class="flex items-center gap-1.5">
+                    <span class="text-sm font-semibold text-gray-800">{{ visibilityOptionOf(form.visibility).label }}</span>
+                    <span v-if="visibilityOptionOf(form.visibility).isDefault" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold shrink-0">默认</span>
+                  </span>
+                  <span class="block text-[11px] text-gray-400 truncate">{{ visibilityOptionOf(form.visibility).hint }}</span>
+                </span>
+              </span>
+              <svg class="w-4 h-4 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': visibilityMenuOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            <div v-if="visibilityMenuOpen" class="absolute z-30 mt-1 w-full rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+              <button
+                v-for="option in VISIBILITY_SCOPE_OPTIONS"
+                :key="option.key"
+                type="button"
+                class="w-full text-left rounded-lg px-2.5 py-2 transition-colors"
+                :class="form.visibility === option.key ? 'bg-primary/5' : 'hover:bg-gray-50'"
+                @click="form.visibility = option.key; visibilityMenuOpen = false"
+              >
+                <span class="flex items-start gap-2">
+                  <svg
+                    class="w-5 h-5 shrink-0 mt-px"
+                    :class="option.iconClass"
+                    fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path :d="option.iconPath" />
+                  </svg>
+                  <span class="min-w-0 flex-1">
+                    <span class="flex items-center gap-1.5">
+                      <span class="text-sm font-semibold text-gray-800">{{ option.label }}</span>
+                      <span v-if="option.isDefault" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold shrink-0">默认</span>
+                      <svg v-if="form.visibility === option.key" class="w-3.5 h-3.5 text-primary ml-auto shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                    <span class="block text-[11px] text-gray-500 mt-0.5 leading-snug">{{ option.hint }}</span>
+                    <span class="block text-[11px] text-gray-400 leading-snug">适合：{{ option.scene }}</span>
+                  </span>
+                </span>
+              </button>
+            </div>
+          </div>
+          <p v-if="form.visibility === 'private'" class="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 leading-snug">
+            <svg class="w-3.5 h-3.5 shrink-0 mt-px" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            <span>当前为<b>个人私有</b>：建好后只有你能看到，其他人无法访问、也不能被授权。要共享请先改成部门级或公共级。</span>
+          </p>
+          <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员（含下级部门）会自动获得只读权限；未选归属部门时会退化为公共级。</p>
+          <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人需要你在详情页「分配授权成员」后才能访问。</p>
+        </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs font-semibold text-gray-400 mb-1.5">归属部门/人员</label>
-            <input v-model="form.owner" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" placeholder="归属" />
+            <label class="block text-xs font-semibold mb-1.5" :class="form.visibility === 'team' ? 'text-gray-400' : 'text-gray-300'">业务归属部门/负责人</label>
+            <div data-dept-select class="relative">
+              <button
+                type="button"
+                :disabled="form.visibility !== 'team'"
+                class="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-left bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:bg-gray-50 disabled:cursor-not-allowed disabled:hover:border-gray-200"
+                @click="deptMenuOpen = !deptMenuOpen"
+              >
+                <span class="min-w-0 flex-1">
+                  <span class="block text-sm font-semibold truncate" :class="form.visibility === 'team' ? 'text-gray-800' : 'text-gray-400'">{{ selectedDeptLabel }}</span>
+                  <span class="block text-[11px] truncate" :class="deptHintClass">{{ deptHintText }}</span>
+                </span>
+                <svg class="w-4 h-4 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': deptMenuOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div v-if="deptMenuOpen && form.visibility === 'team'" class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+                <button
+                  v-for="option in deptMenuOptions"
+                  :key="option.id"
+                  type="button"
+                  class="w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors"
+                  :class="form.ownerDeptId === option.id ? 'bg-primary/5 text-primary font-semibold' : 'text-gray-700 hover:bg-gray-50'"
+                  @click="form.ownerDeptId = option.id; deptMenuOpen = false"
+                >{{ option.label }}</button>
+              </div>
+            </div>
+            <p v-if="departmentOptionsError" class="mt-1 text-[11px] text-amber-600">{{ departmentOptionsError }}</p>
           </div>
           <div>
             <label class="block text-xs font-semibold text-gray-400 mb-1.5">解析算法 *</label>
-            <select v-model="form.chunk_method" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-white">
-              <option value="naive">Naive (通用切片)</option>
-              <option value="qa">QA (大模型问答对)</option>
-              <option value="table">Table (表格切片)</option>
-              <option value="laws">Laws (法律法规)</option>
-              <option value="paper">Paper (学术论文)</option>
-              <option value="resume">Resume (简历解析)</option>
-              <option value="book">Book (图书解析)</option>
-              <option value="manual">Manual (手动分块)</option>
-              <option value="one">One (单文件整体)</option>
-            </select>
+            <div data-chunk-select class="relative">
+              <button
+                type="button"
+                class="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-left bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+                @click="chunkMenuOpen = !chunkMenuOpen"
+              >
+                <span class="min-w-0 flex-1">
+                  <span class="flex items-center gap-1.5">
+                    <span class="text-sm font-semibold text-gray-800">{{ chunkMethodOptionOf(form.chunk_method).label }}</span>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-mono font-bold leading-none shrink-0">{{ chunkMethodOptionOf(form.chunk_method).code }}</span>
+                  </span>
+                  <span class="block text-[11px] text-gray-400 truncate">{{ chunkMethodOptionOf(form.chunk_method).desc }}</span>
+                </span>
+                <svg class="w-4 h-4 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': chunkMenuOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div v-if="chunkMenuOpen" class="absolute z-30 mt-1 w-full max-h-72 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+                <button
+                  v-for="option in CHUNK_METHOD_OPTIONS"
+                  :key="option.value"
+                  type="button"
+                  class="w-full text-left rounded-lg px-2.5 py-2 transition-colors"
+                  :class="form.chunk_method === option.value ? 'bg-primary/5' : 'hover:bg-gray-50'"
+                  @click="form.chunk_method = option.value; chunkMenuOpen = false"
+                >
+                  <span class="flex items-center gap-1.5">
+                    <span class="text-sm font-semibold text-gray-800">{{ option.label }}</span>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-mono font-bold leading-none shrink-0">{{ option.code }}</span>
+                    <svg v-if="form.chunk_method === option.value" class="w-3.5 h-3.5 text-primary ml-auto shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </span>
+                  <span class="block text-[11px] text-gray-500 mt-0.5 leading-snug">{{ option.desc }}</span>
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
-        <!-- 动态解析指引说明 -->
-        <div v-if="chunkMethodDescription" class="rounded-xl border border-blue-100 bg-blue-50/40 p-3 text-xs text-blue-700 leading-relaxed shadow-sm">
-          {{ chunkMethodDescription }}
         </div>
         <div>
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">标签 (英文逗号分隔)</label>
@@ -2807,16 +3582,116 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs font-semibold text-gray-400 mb-1.5">业务归属人员</label>
-            <input v-model="form.owner" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" placeholder="归属" />
+            <label class="block text-xs font-semibold text-gray-400 mb-1.5">可见范围</label>
+            <div data-visibility-select class="relative">
+              <button
+                type="button"
+                class="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-left bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+                @click="visibilityMenuOpen = !visibilityMenuOpen"
+              >
+                <span class="flex items-center gap-2 min-w-0 flex-1">
+                  <svg
+                    class="w-5 h-5 shrink-0"
+                    :class="visibilityOptionOf(form.visibility).iconClass"
+                    fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path :d="visibilityOptionOf(form.visibility).iconPath" />
+                  </svg>
+                  <span class="min-w-0 flex-1">
+                    <span class="flex items-center gap-1.5">
+                      <span class="text-sm font-semibold text-gray-800">{{ visibilityOptionOf(form.visibility).label }}</span>
+                      <span v-if="visibilityOptionOf(form.visibility).isDefault" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold shrink-0">默认</span>
+                    </span>
+                    <span class="block text-[11px] text-gray-400 truncate">{{ visibilityOptionOf(form.visibility).hint }}</span>
+                  </span>
+                </span>
+                <svg class="w-4 h-4 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': visibilityMenuOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div v-if="visibilityMenuOpen" class="absolute z-30 mt-1 w-full rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+                <button
+                  v-for="option in VISIBILITY_SCOPE_OPTIONS"
+                  :key="option.key"
+                  type="button"
+                  class="w-full text-left rounded-lg px-2.5 py-2 transition-colors"
+                  :class="form.visibility === option.key ? 'bg-primary/5' : 'hover:bg-gray-50'"
+                  @click="form.visibility = option.key; visibilityMenuOpen = false"
+                >
+                  <span class="flex items-start gap-2">
+                    <svg
+                      class="w-5 h-5 shrink-0 mt-px"
+                      :class="option.iconClass"
+                      fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path :d="option.iconPath" />
+                    </svg>
+                    <span class="min-w-0 flex-1">
+                      <span class="flex items-center gap-1.5">
+                        <span class="text-sm font-semibold text-gray-800">{{ option.label }}</span>
+                        <span v-if="option.isDefault" class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold shrink-0">默认</span>
+                        <svg v-if="form.visibility === option.key" class="w-3.5 h-3.5 text-primary ml-auto shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </span>
+                      <span class="block text-[11px] text-gray-500 mt-0.5 leading-snug">{{ option.hint }}</span>
+                      <span class="block text-[11px] text-gray-400 leading-snug">适合：{{ option.scene }}</span>
+                    </span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <p v-if="form.visibility === 'private'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">仅你自己可用；个人私有库不支持分配授权。</p>
+            <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员会自动获得只读权限，也可额外分配授权；未选归属部门时退化为公共级，更换归属部门会立即改变可访问人群。</p>
+            <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人必须在这里「分配授权成员」后才能访问。</p>
+            <!-- 改成个人私有会让已有授权失效，必须显式提示，避免静默撤权 -->
+            <p
+              v-if="form.visibility === 'private' && hasExistingPermissions"
+              class="mt-1 text-[11px] text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-2 py-1.5"
+            >
+              <template v-if="isPrivateDataset">
+                当前范围内这 {{ datasetPermissions.users.length + datasetPermissions.roles.length }} 个历史授权不生效，可逐条清除。
+              </template>
+              <template v-else>
+                保存后，现有的 {{ datasetPermissions.users.length + datasetPermissions.roles.length }} 个授权对象将失去访问权。
+              </template>
+            </p>
           </div>
           <div>
-            <label class="block text-xs font-semibold text-gray-400 mb-1.5">可见范围</label>
-            <select v-model="form.visibility" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-white">
-              <option value="private">Private (私有)</option>
-              <option value="team">Team (团队可见)</option>
-              <option value="public">Public (公开)</option>
-            </select>
+            <label class="block text-xs font-semibold mb-1.5" :class="form.visibility === 'team' ? 'text-gray-400' : 'text-gray-300'">业务归属部门/负责人</label>
+            <div data-dept-select class="relative">
+              <button
+                type="button"
+                :disabled="form.visibility !== 'team'"
+                class="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-left bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:bg-gray-50 disabled:cursor-not-allowed disabled:hover:border-gray-200"
+                @click="deptMenuOpen = !deptMenuOpen"
+              >
+                <span class="min-w-0 flex-1">
+                  <span class="block text-sm font-semibold truncate" :class="form.visibility === 'team' ? 'text-gray-800' : 'text-gray-400'">{{ selectedDeptLabel }}</span>
+                  <span class="block text-[11px] truncate" :class="deptHintClass">{{ deptHintText }}</span>
+                </span>
+                <svg class="w-4 h-4 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': deptMenuOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div v-if="deptMenuOpen && form.visibility === 'team'" class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+                <button
+                  v-for="option in deptMenuOptions"
+                  :key="option.id"
+                  type="button"
+                  class="w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors"
+                  :class="form.ownerDeptId === option.id ? 'bg-primary/5 text-primary font-semibold' : 'text-gray-700 hover:bg-gray-50'"
+                  @click="form.ownerDeptId = option.id; deptMenuOpen = false"
+                >{{ option.label }}</button>
+              </div>
+            </div>
+            <p v-if="departmentOptionsError" class="mt-1 text-[11px] text-amber-600">{{ departmentOptionsError }}</p>
+            <p v-else-if="form.visibility === 'team' && !form.ownerDeptId && form.ownerText" class="mt-1 flex items-center gap-2 text-[11px] text-gray-400">
+              <span class="truncate">历史归属「{{ form.ownerText }}」归入未关联部门</span>
+              <button type="button" class="text-primary hover:underline shrink-0" @click="form.ownerText = ''">清除</button>
+            </p>
           </div>
         </div>
         <div>

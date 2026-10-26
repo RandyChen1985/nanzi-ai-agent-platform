@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import get_db_session
 from app.services.config_service import ConfigService
 from app.core.dependencies import require_admin, get_current_user, require_permission
-from app.services.permission_service import PermissionService
+from app.services.permission_service import VISIBILITY_PRIVATE, PermissionService
 from app.services.ai.ragflow_client import RagFlowClient
 from app.services.knowledge_base_service import KnowledgeBaseMetadataService
 from app.services.audit_service import AuditService
@@ -23,7 +23,9 @@ class CreateDatasetRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str = ""
     chunk_method: str = "naive"
+    # 业务归属：owner_dept_id 是唯一真源，owner 仅为兼容旧调用方的文本快照。
     owner: Optional[str] = None
+    owner_dept_id: Optional[int] = None
     visibility: str = "private"
     tags: List[str] = Field(default_factory=list)
     notes: Optional[str] = None
@@ -33,7 +35,9 @@ class CreateDatasetRequest(BaseModel):
 class UpdateDatasetMetadataRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    # 业务归属：字段不出现 = 保持原值；owner_dept_id 传 0/None = 清空部门归属。
     owner: Optional[str] = None
+    owner_dept_id: Optional[int] = None
     visibility: Optional[str] = None
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
@@ -116,6 +120,53 @@ async def require_dataset_write_access(user: dict, db: AsyncSession, dataset_ids
         raise HTTPException(
             status_code=403,
             detail=f"Read-only or no permission for dataset: {', '.join(denied)}",
+        )
+
+
+async def _resolve_owner_department(
+    db: AsyncSession,
+    owner_dept_id: Optional[int],
+) -> tuple[Optional[str], Optional[int]]:
+    """校验业务归属部门并回填文本快照。
+
+    owner_dept_id 是唯一真源，owner 文本只在写库时按部门当前名称派生，
+    这样部门改名后展示以部门表为准（前端按 owner_dept_id 映射），这里的快照
+    仅用于兼容旧数据与直接读库的场景。
+
+    注意：该字段**不参与权限判定**，只用于左侧树的部门分组与过滤。
+    """
+    if not owner_dept_id:
+        return None, None
+    from app.services.department_service import DepartmentService
+
+    dept = await DepartmentService(db).get_by_ref(str(int(owner_dept_id)))
+    if not dept:
+        raise HTTPException(status_code=400, detail="业务归属部门不存在或已被删除")
+    return dept.name, int(dept.id)
+
+
+async def require_dataset_shareable(db: AsyncSession, dataset_id: str) -> None:
+    """个人私有（private）知识库不允许分配授权。
+
+    private 的语义就是「仅创建人可访问」，因此授权端点必须拒绝写授权记录，
+    否则会出现"页面上加了人、对方却依然看不到"的假操作。元数据缺失时按
+    public 处理，与 `PermissionService` 的兜底口径保持一致。
+    """
+    from app.models.knowledge import KnowledgeBaseMetadata
+    from sqlalchemy import select
+
+    visibility = (
+        await db.execute(
+            select(KnowledgeBaseMetadata.visibility).where(
+                KnowledgeBaseMetadata.ragflow_dataset_id == dataset_id,
+                KnowledgeBaseMetadata.status != "deleted",
+            )
+        )
+    ).scalar_one_or_none()
+    if visibility is not None and str(visibility).strip().lower() == "private":
+        raise HTTPException(
+            status_code=400,
+            detail="个人私有知识库不支持分配授权，请先把「可见范围」改为公共级或部门级",
         )
 
 
@@ -281,7 +332,11 @@ async def list_ragflow_agents(
 @router.get("/datasets")
 async def list_ragflow_datasets(
     page: int = 1, 
-    page_size: int = 100,
+    # 默认一次拉全量：这个接口的语义是「列出我能看的库」，而 RAGFlow 的
+    # /datasets 里混着成百上千个 meta-* 元数据数据集。传 100 只拿到第一页，
+    # 过滤 meta-* 后可能为空，于是本地知识库全被判成「已失联」。
+    # 客户端在 page_size > 100 时会自动翻页聚合。
+    page_size: int = 1000,
     override_url: Optional[str] = None,
     override_key: Optional[str] = None,
     include_missing: bool = True,
@@ -401,18 +456,25 @@ async def create_ragflow_dataset(
         if not dataset_id:
             raise HTTPException(status_code=502, detail="RAGFlow 创建成功但未返回 Dataset ID")
 
+        owner_text, owner_dept_id = await _resolve_owner_department(db, payload.owner_dept_id)
         record = await metadata_service.upsert_metadata(
             ragflow_dataset_id=dataset_id,
             name=payload.name,
             description=payload.description,
-            owner=payload.owner,
+            # 选了部门就以部门名为准，未选部门才沿用调用方传入的文本（兼容旧前端）
+            owner=owner_text if owner_dept_id else payload.owner,
+            owner_dept_id=owner_dept_id,
             visibility=payload.visibility,
             tags=payload.tags,
             notes=payload.notes,
             extra_config=payload.extra_config,
             user_name=user.get("user_name"),
         )
-        await _grant_dataset_to_creator(db, user, dataset_id)
+        # 个人私有库不落创建人授权行：判定侧本来就"创建人自动可读"，而私有库里
+        # 出现一条授权记录会让详情页显示"授权用户：创建人"，与"不支持分配授权"矛盾，
+        # 还会让编辑弹窗误报"保存后 N 个授权对象将失去访问权"。
+        if str(payload.visibility or "").strip().lower() != VISIBILITY_PRIVATE:
+            await _grant_dataset_to_creator(db, user, dataset_id)
         await record_knowledge_audit(request, user, "datasets:create", 200, {
             "action": "create_dataset",
             "dataset_id": dataset_id,
@@ -431,25 +493,51 @@ async def create_ragflow_dataset(
 async def update_dataset_metadata(
     dataset_id: str,
     payload: UpdateDatasetMetadataRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session)
 ):
+    started = time.time()
     await require_element_permission(user, db, "element:knowledge:edit")
     await require_dataset_write_access(user, db, [dataset_id])
     metadata_service = KnowledgeBaseMetadataService(db)
+
+    # owner/owner_dept_id 是 PATCH 语义，必须区分「未提供」与「显式清空」：
+    # 只有请求体里真的出现该字段才进入 kwargs，否则保持库里原值。
+    owner_kwargs: Dict[str, Any] = {}
+    if "owner_dept_id" in payload.model_fields_set:
+        owner_text, owner_dept_id = await _resolve_owner_department(db, payload.owner_dept_id)
+        owner_kwargs["owner_dept_id"] = owner_dept_id
+        # 选了部门 → 文本快照按部门名回填；清空部门但没显式给 owner 文本时，
+        # 保留历史自由文本（它在左侧树里归入「未关联部门」）。
+        if owner_dept_id:
+            owner_kwargs["owner"] = owner_text
+        elif "owner" in payload.model_fields_set:
+            owner_kwargs["owner"] = payload.owner
+    elif "owner" in payload.model_fields_set:
+        owner_kwargs["owner"] = payload.owner
+
     record = await metadata_service.update_metadata(
         dataset_id,
         name=payload.name,
         description=payload.description,
-        owner=payload.owner,
         visibility=payload.visibility,
         tags=payload.tags,
         notes=payload.notes,
         extra_config=payload.extra_config,
         user_name=user.get("user_name"),
+        **owner_kwargs,
     )
     if not record:
         raise HTTPException(status_code=404, detail="Knowledge base metadata not found")
+    # 改可见范围会直接改变「谁能访问」：从 public 改 private 是撤权，反向是扩权，
+    # 都必须留痕，否则事后无法解释"某个库怎么突然多/少了一批访问者"。
+    await record_knowledge_audit(request, user, "datasets:update_metadata", 200, {
+        "action": "update_metadata",
+        "dataset_id": dataset_id,
+        "visibility": record.visibility,
+        "owner_dept_id": record.owner_dept_id,
+    }, started_at=started)
     return {"code": 0, "data": metadata_service._serialize_metadata(record)}
 
 
@@ -472,7 +560,9 @@ async def delete_ragflow_datasets(
 
         # 获取当前 RAGFlow 侧的所有有效数据集，以防删除已不存在的知识库时报错
         try:
-            ragflow_datasets = await client.list_datasets(page=1, page_size=500)
+            # 必须拿全集：漏掉的库会被判成「RAGFlow 侧已不存在」而跳过删除，
+            # 于是只删了本地元数据、RAGFlow 里留下不再受管的孤儿库
+            ragflow_datasets = await client.list_datasets(page=1, page_size=1000)
             existing_ids = {str(ds.get("id")) for ds in ragflow_datasets if ds.get("id")}
         except Exception:
             # 列表获取失败时的安全降级兜底：假设所有传入 ID 都在 RAGFlow 侧存在
@@ -1189,20 +1279,27 @@ class DeleteDatasetPermissionRequest(BaseModel):
     target_id: int
 
 
-@router.post("/datasets/{dataset_id}/permissions", dependencies=[Depends(require_permission("menu", "menu:system:users"))])
+# 权限码用 element:user:edit（「编辑用户信息」）而不是 menu:system:users：
+# 菜单码只负责侧栏是否可见，拿它当功能校验等于「看得见菜单 = 有权改授权」。
+# 而且用户页/角色页的整份保存用的就是 element:* 系列，两处口径必须一致，
+# 否则同一个人会在一个入口能授权、另一个入口被拒。
+@router.post("/datasets/{dataset_id}/permissions", dependencies=[Depends(require_permission("element", "element:user:edit"))])
 async def add_dataset_permissions(
     dataset_id: str,
     payload: AddDatasetPermissionsRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
     user: dict = Depends(get_current_user)
 ):
     """
     添加知识库的反向授权角色或用户 (仅有用户管理权限的用户可用)
     """
+    started = time.time()
     from app.models.permission import ResourcePermission, UserRoleRelation
     from sqlalchemy import select
 
     await require_dataset_write_access(user, db, [dataset_id])
+    await require_dataset_shareable(db, dataset_id)
     
     perm_service = PermissionService(db)
     affected_user_ids = set()
@@ -1247,23 +1344,38 @@ async def add_dataset_permissions(
     if affected_user_ids:
         await perm_service.invalidate_cached_permissions_for_users(affected_user_ids)
 
+    # 授权变更是敏感操作：谁在什么时候把哪个库授给了谁，必须留痕。
+    # 两个入口（知识库页反向授权 / 用户页整份保存）都会改这张表，没有审计就查不出是谁改的。
+    await record_knowledge_audit(request, user, "datasets:grant", 200, {
+        "action": "add_dataset_permissions",
+        "dataset_id": dataset_id,
+        "target_type": payload.target_type,
+        "target_ids": payload.target_ids,
+        "affected_user_count": len(affected_user_ids),
+    }, started_at=started)
+
     return {"code": 0, "message": "权限配置已成功添加"}
 
 
-@router.delete("/datasets/{dataset_id}/permissions", dependencies=[Depends(require_permission("menu", "menu:system:users"))])
+@router.delete("/datasets/{dataset_id}/permissions", dependencies=[Depends(require_permission("element", "element:user:edit"))])
 async def delete_dataset_permission(
     dataset_id: str,
     payload: DeleteDatasetPermissionRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
     user: dict = Depends(get_current_user)
 ):
     """
     移除知识库关联的某个角色或用户授权 (仅有用户管理权限的用户可用)
     """
+    started = time.time()
     from app.models.permission import ResourcePermission, UserRoleRelation
     from sqlalchemy import select, delete
 
     await require_dataset_write_access(user, db, [dataset_id])
+    # 这里**不**校验 require_dataset_shareable：改成个人私有之前写下的历史授权，
+    # 需要能逐条清理（新增授权仍被上面的 add 端点拒绝）。否则会出现
+    # "看得见这条授权记录、点删除却 400"的死角。
 
     perm_service = PermissionService(db)
     affected_user_ids = set()
@@ -1293,6 +1405,14 @@ async def delete_dataset_permission(
     # 清理 Redis 缓存
     if affected_user_ids:
         await perm_service.invalidate_cached_permissions_for_users(affected_user_ids)
+
+    await record_knowledge_audit(request, user, "datasets:revoke", 200, {
+        "action": "delete_dataset_permission",
+        "dataset_id": dataset_id,
+        "target_type": payload.target_type,
+        "target_id": payload.target_id,
+        "affected_user_count": len(affected_user_ids),
+    }, started_at=started)
 
     return {"code": 0, "message": "授权已成功取消"}
 
