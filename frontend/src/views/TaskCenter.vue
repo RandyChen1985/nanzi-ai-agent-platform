@@ -14,6 +14,10 @@ import {
 } from '@heroicons/vue/24/outline'
 import { useRoute, useRouter } from 'vue-router'
 import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
+import HoverTip from '../components/HoverTip.vue'
+import CronAdvancedBuilder from '@/components/task/CronAdvancedBuilder.vue'
+import { validateCronExpression } from '@/utils/cronSchedule'
+import { describeScene, inferScene } from '@/utils/cronScenes'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
 import TaskFlowGuideBanner from '@/components/task/TaskFlowGuideBanner.vue'
 import TaskPromptComposer, {
@@ -681,6 +685,23 @@ const cronConfig = ref({
   intervalUnit: 'minutes' as 'minutes' | 'hours'
 })
 
+// Cron 可视化生成器（自定义模式下的面板）
+const showCronBuilder = ref(false)
+const cronDraft = ref('* * * * *')
+const cronDraftValid = computed(() => validateCronExpression(cronDraft.value).valid)
+
+const openCronBuilder = () => {
+  const current = String(editingTask.value.cron_expr || '').trim()
+  cronDraft.value = current || '* * * * *'
+  showCronBuilder.value = true
+}
+
+const applyCronDraft = () => {
+  if (!cronDraftValid.value) return
+  editingTask.value.cron_expr = cronDraft.value.trim()
+  showCronBuilder.value = false
+}
+
 // Cron Sync: UI -> Expression
 watch([cronMode, cronConfig], () => {
   if (!editingTask.value) return
@@ -1188,18 +1209,27 @@ const formatNextRunCompact = (d: string | undefined) => {
 }
 
 const formatTaskSchedule = (cron: string) => {
-  const parts = String(cron || '').trim().split(/\s+/)
-  if (parts.length !== 5) return cron || '未配置'
-  const [minute, hour, day, month, weekday] = parts
-  const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-  const fixedTime = /^\d+$/.test(String(hour)) && /^\d+$/.test(String(minute))
-  if (fixedTime && day === '*' && month === '*' && weekday === '*') return `每天 ${time}`
-  if (fixedTime && day === '*' && month === '*' && weekday !== '*') {
-    const weekLabels = ['日', '一', '二', '三', '四', '五', '六']
-    return `每周${weekLabels[Number(weekday)] ?? weekday} ${time}`
+  const text = String(cron || '').trim()
+  if (!text) return '未配置'
+  const inferred = inferScene(text)
+  if (inferred.scene !== 'custom') {
+    // 场景摘要比 cronstrue 的完整描述短，表格列不会被撑爆
+    return describeScene(inferred.scene, inferred.state).summary.replace(/ 执行$/, '')
   }
-  if (fixedTime && day !== '*' && month === '*' && weekday === '*') return `每月${day}日 ${time}`
-  try { return cronstrue.toString(cron, { locale: 'zh_CN' }) } catch { return cron }
+  return text
+}
+
+const formatTaskScheduleFull = (cron: string) => {
+  const text = String(cron || '').trim()
+  if (!text) return '未配置'
+  try { return cronstrue.toString(text, { locale: 'zh_CN' }) } catch { return text }
+}
+
+const cronScheduleTip = (cron: string) => {
+  const text = String(cron || '').trim()
+  if (!text) return '未配置'
+  const full = formatTaskScheduleFull(text)
+  return full === text ? `Cron: ${text}` : `${full}；Cron: ${text}`
 }
 
 const taskHealthMeta = (task: AgentTask) => {
@@ -1653,16 +1683,17 @@ onMounted(async () => {
                     class="w-2 h-2 rounded-full mr-2"
                     :class="task.status === 1 ? 'bg-green-500 animate-pulse' : 'bg-gray-300'"
                   ></span>
-                  <span
+                  <HoverTip
                     v-if="task.cron_valid === false"
-                    class="text-[10px] font-bold text-red-500 bg-red-50 px-1.5 py-0.5 rounded mr-1"
-                    :title="`无效 Cron: ${task.cron_expr}`"
-                  >⚠️ Cron无效</span>
-                  <span
-                    v-else
-                    class="text-[10px] font-bold text-blue-600"
-                    :title="`Cron: ${task.cron_expr}`"
-                  >{{ formatTaskSchedule(task.cron_expr) }}</span>
+                    class="mr-1"
+                    :text="`无效 Cron：${task.cron_expr}`"
+                    :width="280"
+                  >
+                    <span class="text-[10px] font-bold text-red-500 bg-red-50 px-1.5 py-0.5 rounded">⚠️ Cron无效</span>
+                  </HoverTip>
+                  <HoverTip v-else :text="cronScheduleTip(task.cron_expr)" :width="300">
+                    <span class="inline-block max-w-[220px] truncate align-middle text-[10px] font-bold text-blue-600">{{ formatTaskSchedule(task.cron_expr) }}</span>
+                  </HoverTip>
                 </div>
               </div>
             </div>
@@ -1776,10 +1807,10 @@ onMounted(async () => {
       <table class="w-full min-w-[1080px] table-fixed text-left border-collapse">
         <thead>
           <tr class="bg-gray-50/50 border-b border-gray-200">
-            <th class="w-[30%] px-5 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">任务名称</th>
-            <th class="w-[12%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">执行对象</th>
+            <th class="w-[28%] px-5 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">任务名称</th>
+            <th class="w-[11%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">执行对象</th>
             <th class="w-[8%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center">执行次数</th>
-            <th class="w-[12%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden md:table-cell">运行周期</th>
+            <th class="w-[15%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden md:table-cell">运行周期</th>
             <th class="w-[12%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">预计下次运行</th>
             <th class="w-[8%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center">状态</th>
             <th class="w-[18%] px-5 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-right">操作</th>
@@ -1826,13 +1857,18 @@ onMounted(async () => {
             </td>
             <td class="px-4 py-4 hidden md:table-cell">
               <template v-if="task.cron_valid === false">
-                <span
-                  class="inline-flex whitespace-nowrap rounded-lg bg-red-50 px-2 py-1 text-[11px] font-bold text-red-600"
-                  :title="`无效 Cron: ${task.cron_expr}`"
-                >⚠️ Cron无效</span>
+                <HoverTip :text="`无效 Cron：${task.cron_expr}`" :width="280">
+                  <span
+                    class="inline-flex whitespace-nowrap rounded-lg bg-red-50 px-2 py-1 text-[11px] font-bold text-red-600"
+                  >⚠️ Cron无效</span>
+                </HoverTip>
               </template>
               <template v-else>
-                <span class="inline-flex whitespace-nowrap rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-bold text-blue-700" :title="`Cron: ${task.cron_expr}`">{{ formatTaskSchedule(task.cron_expr) }}</span>
+                <HoverTip class="w-full" :text="cronScheduleTip(task.cron_expr)" :width="320">
+                  <span class="inline-block max-w-full truncate rounded-lg bg-blue-50 px-2 py-1 align-middle text-[11px] font-bold text-blue-700">
+                    {{ formatTaskSchedule(task.cron_expr) }}
+                  </span>
+                </HoverTip>
               </template>
             </td>
             <td class="px-4 py-4">
@@ -2393,7 +2429,7 @@ onMounted(async () => {
                       m === 'daily' ? '每天' : 
                       m === 'weekly' ? '每周' : 
                       m === 'monthly' ? '每月' : 
-                      m === 'interval' ? '间隔' : '自定义'
+                      m === 'interval' ? '间隔' : '高级'
                    }}
                  </button>
               </div>
@@ -2448,9 +2484,18 @@ onMounted(async () => {
                    <span class="text-xs text-gray-500">执行一次</span>
                </div>
                <!-- Custom -->
-               <div v-if="cronMode === 'custom'">
-                   <input v-model="editingTask.cron_expr" placeholder="* * * * *" class="w-full px-3 py-2 border rounded-xl font-mono text-sm outline-none focus:border-primary bg-white" />
-                   <p class="text-[10px] text-gray-400 mt-1">请使用标准 Cron 表达式</p>
+               <div v-if="cronMode === 'custom'" class="space-y-2">
+                   <div class="flex items-center gap-2">
+                       <input v-model="editingTask.cron_expr" placeholder="* * * * *" class="min-w-0 flex-1 px-3 py-2 border rounded-xl font-mono text-sm outline-none focus:border-primary bg-white" />
+                       <button
+                         type="button"
+                         class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary transition hover:bg-primary/10"
+                         @click="openCronBuilder"
+                       >
+                         🎛 可视化生成
+                       </button>
+                   </div>
+                   <p class="text-[10px] text-gray-400">请使用标准 Cron 表达式，或点击「可视化生成」按分钟 / 小时 / 日 / 月 / 周组合</p>
                </div>
             </div>
 
@@ -2636,6 +2681,30 @@ onMounted(async () => {
           <button @click="saveTask" class="px-8 py-2 bg-primary text-white rounded-xl shadow-lg shadow-primary/20 hover:bg-primary-dark transition-all font-bold text-sm">确认保存</button>
         </div>
       </div>
+    </Modal>
+
+    <Modal
+      v-if="showCronBuilder"
+      title="Cron 表达式生成器"
+      size="max-w-2xl"
+      :z-index="80"
+      @close="showCronBuilder = false"
+    >
+      <CronAdvancedBuilder v-model="cronDraft" />
+      <template #footer>
+        <div class="flex items-center justify-between gap-2">
+          <p class="text-[11px] text-gray-400">组合完成后点击「应用到表达式」回填到表达式输入框</p>
+          <div class="flex items-center gap-2">
+            <button type="button" class="rounded-lg px-4 py-2 text-sm font-bold text-gray-400 hover:text-gray-600" @click="showCronBuilder = false">取消</button>
+            <button
+              type="button"
+              :disabled="!cronDraftValid"
+              class="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+              @click="applyCronDraft"
+            >应用到表达式</button>
+          </div>
+        </div>
+      </template>
     </Modal>
 
     <Modal
