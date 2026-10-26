@@ -176,7 +176,7 @@ def test_settings_has_replay_entry():
     assert "功能引导 / Feature Tour" in settings
     assert "重新播放功能引导" in settings
     assert "emit('replay-tour')" in settings
-    assert "tourCompletedAt ?" in settings
+    assert "tourStatusText" in settings
 
 
 def test_tour_opens_empty_conversation_before_playing():
@@ -197,3 +197,33 @@ def test_embedchat_waits_for_permission_before_autoplay():
 
     assert "tour.resumeOrStart(true)" in source
     assert "if (!hasPermission.value) return;" in source
+
+
+def test_skipping_is_remembered_and_stops_autoplay():
+    """跳过 = 明确「不想看」。
+
+    首次进入就点「跳过」时 completed_at 还是空的，如果只判 completed_at，
+    下次进入又会从同一位置续播，跳过按钮等于没用。
+    """
+    tour = _read("frontend/src/composables/embed/useEmbedTour.ts")
+
+    # 自动播判定要认 skipped_at
+    assert "if (state.value.skipped_at) return false" in tour
+    # 跳过时写入时间戳（已有值就不覆盖）
+    assert "skipped_at: state.value.skipped_at || new Date().toISOString()" in tour
+    # 看完要把跳过痕迹清掉，否则设置里会一直显示「已跳过」
+    block = tour.split("const finish = () => {", 1)[1].split("const skip = () => {", 1)[0]
+    assert "skipped_at: ''" in block
+
+
+def test_skip_state_is_persisted_per_account():
+    """跳过状态也要走账号级 prefs，否则换设备又会被播一遍。"""
+    tour = _read("frontend/src/composables/embed/useEmbedTour.ts")
+    assert "embed_tour_skipped_at" in tour
+    assert "skipped_at: body.skipped_at" in tour
+
+
+def test_settings_distinguishes_skipped_from_completed():
+    settings = _read("frontend/src/components/embed/ChatSettings.vue")
+    assert "已跳过" in settings
+    assert "上次完成" in settings

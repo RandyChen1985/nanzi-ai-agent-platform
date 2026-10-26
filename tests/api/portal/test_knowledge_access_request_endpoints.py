@@ -67,7 +67,15 @@ class _MetaService:
         pass
 
     async def list_metadata(self, include_deleted=False):
-        return [_meta(), _meta(ragflow_dataset_id="ds-2", name="私有库", visibility="private")]
+        return [
+            _meta(),
+            _meta(ragflow_dataset_id="ds-2", name="私有库", visibility="private"),
+            _meta(
+                ragflow_dataset_id="ds-meta",
+                name="chatbi-example-meta",
+                visibility="public",
+            ),
+        ]
 
     async def get_by_dataset_id(self, dataset_id):
         if dataset_id == "ds-1":
@@ -441,3 +449,17 @@ async def test_pending_flags_dataset_missing_in_engine(monkeypatch):
     item = res["data"]["items"][0]
     assert item["dataset_exists"] is False
     assert item["doc_count"] is None
+
+
+@pytest.mark.asyncio
+async def test_discover_hides_platform_builtin_datasets(monkeypatch):
+    """chatbi-example-meta 是平台自动建的，用户申请了也用不上，不该占列表位。"""
+    _patch(monkeypatch, _PermService(None), engine_ids={"ds-1", "ds-meta"})
+
+    res = await ragflow.discover_datasets(
+        user={"user_id": 9, "user_name": "bob"},
+        db=_Session(),
+    )
+
+    names = [item["name"] for item in res["data"]["items"]]
+    assert names == ["制度库"]

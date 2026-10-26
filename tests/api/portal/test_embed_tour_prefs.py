@@ -64,6 +64,7 @@ async def test_update_embed_tour_preserves_other_preferences(monkeypatch):
         "embed_tour_version": 1,
         "embed_tour_step": 5,
         "embed_tour_completed_at": "",
+        "embed_tour_skipped_at": "",
     }
     assert saved["pinned_group_ids"] == ["group-1"]
     assert saved["markdown_theme"] == "academic"
@@ -129,3 +130,24 @@ async def test_full_preference_update_keeps_embed_tour_state(monkeypatch):
     assert saved["embed_tour_step"] == 10
     assert saved["embed_tour_completed_at"] == "2026-10-22T20:15:00+08:00"
     assert saved["pinned_group_ids"] == ["group-1"]
+
+
+@pytest.mark.asyncio
+async def test_update_embed_tour_records_skip(monkeypatch):
+    """跳过必须被记住：首次进入就跳过时 completed_at 还是空的，
+    只靠它拦不住自动播放，用户每次进来都会被从同一位置续播。
+    """
+    redis = FakeRedis()
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    result = await portal_prefs.update_embed_tour(
+        portal_prefs.EmbedTourUpdate(
+            version=1, step=2, skipped_at="2026-10-26T19:30:00+08:00"
+        ),
+        user_info(),
+    )
+
+    assert result["data"]["embed_tour_skipped_at"] == "2026-10-26T19:30:00+08:00"
+    assert result["data"]["embed_tour_completed_at"] == ""
+    saved = json.loads(redis.saved)
+    assert saved["embed_tour_skipped_at"] == "2026-10-26T19:30:00+08:00"

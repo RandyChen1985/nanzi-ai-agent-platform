@@ -622,3 +622,13 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **回归**：`tests/api/portal/test_knowledge_access_request_endpoints.py` 16 passed；用户页契约 342 passed、知识库页契约 236 passed；`vue-tsc --noEmit` 0 错误。
 **未做**：归属人离职/长期不登录时申请会烂在队列里（需要「超 N 天未处理」提醒，与 C4 定时巡检调度是同一件事）。
+
+## 2026-10-26 EmbedChat 引导跳过修复 + 平台内置库过滤
+
+| 项 | 主要文件 | 说明 | 迁移 | 验证 |
+|---|---|---|---|---|
+| 引导「跳过」被记住 | `portal_prefs.py`（`embed_tour_skipped_at`）、`useEmbedTour.ts`、`EmbedChat.vue`、`ChatSettings.vue` | `skip()` 原先只保留 `completed_at`，而首次进入时它本来就是空的，等于什么都没记——于是「看到第 3 步 → 跳过 → 下次从第 3 步继续弹」永远卡住。新增 `embed_tour_skipped_at` 走账号级 prefs：跳过写时间戳、自动播判定认它、看完清空它；设置页区分「上次完成 / 已跳过 / 尚未完成」 | 无（Redis JSON 增字段，旧数据反序列化为空串） | 后端 7 + 契约 20（新增 1 + 3） |
+| 平台内置库过滤 | `app/services/knowledge_dataset_filters.py`（新）、`ragflow.py`（`/datasets`、`discover`）、`knowledge_base_service.py` | `chatbi-example-meta` 由平台自动建、public 可见，但 discover 候选集直接读元数据表、没带内置库规则，于是变成「可申请、批了也用不上」的库。规则此前散在四处各写一份，收敛为 `is_internal_dataset_name`（`meta-` 前缀 / 含 `chatbi-example` / 空名）；顺带统一大小写（原 `META-x` 漏过）与空名口径 | 无 | 新增 13 + 端点 17（桩里加 chatbi-example-meta）+ 知识库相关后端 343 |
+
+**回归**：`tests/frontend` 全量 3220 passed / 1 skipped；知识库相关后端 343 passed / 1 xfailed；`vue-tsc --noEmit` 0 错误。
+**未做**：存量对 `chatbi-example-meta` 的申请记录仍在表里（「我的申请」与待审批列表仍会显示），过滤只作用于列表来源，不动历史数据。

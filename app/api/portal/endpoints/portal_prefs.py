@@ -80,6 +80,7 @@ class PortalPrefs(BaseModel):
     embed_tour_version: int = Field(default=0, description="EmbedChat 功能引导的内容版本；文案改版时 +1，旧版本视为未完成")
     embed_tour_step: int = Field(default=0, description="引导进行到第几步（0 基，10 表示已完成）")
     embed_tour_completed_at: str = Field(default="", description="引导完成时间（ISO 8601），空表示未完成")
+    embed_tour_skipped_at: str = Field(default="", description="引导跳过时间（ISO 8601）。跳过 = 用户明确表示不想看，与「看完」同等对待，否则每次进入都会从上次停的位置继续弹")
 
 
 class PortalPrefsUpdate(BaseModel):
@@ -114,17 +115,19 @@ class RoutingPreferenceUpdate(BaseModel):
 class EmbedTourUpdate(BaseModel):
     """功能引导进度（账号级，跨设备）。
 
-    只存「版本 + 步数 + 完成时间」三件事：版本用于文案改版后重播，
-    步数用于断点续播，完成时间用于设置页展示「上次完成」。
+    存「版本 + 步数 + 完成时间 + 跳过时间」：版本用于文案改版后重播，
+    步数用于断点续播，完成时间用于设置页展示「上次完成」，跳过时间用于
+    「跳过之后别再自动弹」。
     """
 
     version: int = Field(default=0, ge=0, le=999, description="引导内容版本，与前端 TOUR_VERSION 对齐")
     step: int = Field(default=0, ge=0, le=10, description="进行到第几步（0 基，10 = 已完成）")
+    skipped_at: str = Field(default="", description="跳过时间；有值即不再自动播放")
     completed_at: str = Field(default="", description="完成时间（ISO 8601），空表示未完成")
 
-    @field_validator("completed_at")
+    @field_validator("completed_at", "skipped_at")
     @classmethod
-    def _trim_completed_at(cls, value: str) -> str:
+    def _trim_timestamp(cls, value: str) -> str:
         # 只做长度兜底：正常值是 ISO 字符串，超长输入不应写进 Redis。
         return (value or "").strip()[:40]
 
@@ -335,6 +338,7 @@ async def update_portal_prefs(
         embed_tour_version=existing.embed_tour_version,
         embed_tour_step=existing.embed_tour_step,
         embed_tour_completed_at=existing.embed_tour_completed_at,
+        embed_tour_skipped_at=existing.embed_tour_skipped_at,
     )
 
     try:
@@ -440,6 +444,7 @@ async def update_embed_tour(
     prefs.embed_tour_version = int(body.version)
     prefs.embed_tour_step = int(body.step)
     prefs.embed_tour_completed_at = body.completed_at
+    prefs.embed_tour_skipped_at = body.skipped_at
 
     try:
         # 与全量偏好一致：不设 TTL，长期保留
@@ -457,6 +462,7 @@ async def update_embed_tour(
             "embed_tour_version": prefs.embed_tour_version,
             "embed_tour_step": prefs.embed_tour_step,
             "embed_tour_completed_at": prefs.embed_tour_completed_at,
+            "embed_tour_skipped_at": prefs.embed_tour_skipped_at,
         },
         "message": "引导进度已保存",
     }
