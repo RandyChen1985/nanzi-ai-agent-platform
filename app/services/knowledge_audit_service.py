@@ -18,6 +18,10 @@ from app.models.knowledge import KnowledgeAuditLog
 
 logger = logging.getLogger(__name__)
 
+#: 没有单一库归属的全局操作（如「从 RAGFlow 同步」）。按库查询不会命中它，
+#: 只出现在全局审计视图里，避免与真实 dataset_id 混淆。
+GLOBAL_AUDIT_DATASET_ID = "__global__"
+
 
 def _normalize_dataset_ids(dataset_ids: Iterable[Any]) -> list[str]:
     """去重保序地归一化数据集 ID，丢掉空值。"""

@@ -56,6 +56,9 @@ type KnowledgeBase = {
   can_manage?: boolean
   can_view_chunks?: boolean
   is_read_only?: boolean
+  /** 被多少个智能体引用（删除/收窄可见范围前的影响面） */
+  agent_ref_count?: number
+  agent_refs?: { id: string; name: string; display_name: string; is_enabled: boolean }[]
   local_metadata?: {
     extra_config?: Record<string, unknown> & {
       folder_structure?: Record<string, string[]>
@@ -322,7 +325,11 @@ const MISSING_DATASET_HINT =
   '这里只剩平台保存的名称、描述和标签，文档列表为空，不能上传或解析。' +
   '确认不再需要时，直接删除即可——不会去 RAGFlow 侧执行删除。'
 
-const detailTab = ref<'documents' | 'audit'>('documents')
+const detailTab = ref<'documents' | 'audit' | 'references'>('documents')
+// 「高级设置」默认收起：绝大多数人不需要碰 JSON，展开就先把代价讲清楚
+const advancedConfigOpen = ref(false)
+// 详情页底部那块只读 JSON 同理，默认收起
+const detailConfigOpen = ref(false)
 const auditLogs = ref<any[]>([])
 const auditTotal = ref(0)
 const auditPage = ref(1)
@@ -340,6 +347,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'documents:upload': '上传文档',
   'documents:delete': '删除文档',
   'documents:parse': '解析文档',
+  'datasets:sync': '从 RAGFlow 同步',
+  'datasets:update_layout': '调整文档目录结构',
   'retrieval-test': '检索测试',
 }
 
@@ -351,6 +360,7 @@ const ADMIN_ONLY_AUDIT_ACTIONS = [
   'datasets:grant',
   'datasets:revoke',
   'datasets:transfer_owner',
+  'datasets:sync',
 ]
 const auditActionOptions = computed(() => {
   const keys = Object.keys(AUDIT_ACTION_LABELS).filter(
@@ -424,6 +434,10 @@ const auditLogText = (log: any) => {
       return `${who} 取消了授权，影响 ${detail.affected_user_count ?? 0} 人`
     case 'datasets:transfer_owner':
       return `${who} 转移了知识库归属人`
+    case 'datasets:sync':
+      return `${who} 从 RAGFlow 同步了知识库（新增 ${detail.sync_result?.created ?? 0}、更新 ${detail.sync_result?.updated ?? 0}）`
+    case 'datasets:update_layout':
+      return `${who} 调整了文档目录结构`
     default:
       return `${who} 执行了 ${log?.action || '未知操作'}`
   }
@@ -432,8 +446,9 @@ const auditLogText = (log: any) => {
 // 切到日志 tab 就重新拉一次：
 // 只在"列表为空"时加载会导致——在文档 tab 传完文件再切回来，看到的还是旧列表，
 // 而"这条操作到底记没记上"恰恰是用户切回来的唯一目的。
-watch(detailTab, (tab: 'documents' | 'audit') => {
+watch(detailTab, (tab: 'documents' | 'audit' | 'references') => {
   if (tab === 'audit') loadAuditLogs(true)
+  if (tab === 'references') void loadDatasetReferences()
 })
 
 // 换库要清空，否则会短暂看到上一个库的记录
@@ -444,7 +459,10 @@ watch(
     auditTotal.value = 0
     auditPage.value = 1
     auditAction.value = ''
+    detailConfigOpen.value = false
+    agentRefs.value = []
     if (detailTab.value === 'audit') loadAuditLogs(true)
+    if (detailTab.value === 'references') void loadDatasetReferences()
   },
 )
 
@@ -643,7 +661,9 @@ const openEdit = (dataset: KnowledgeBase) => {
     notes: dataset.notes || '',
     extraConfigText: JSON.stringify(dataset.local_metadata?.extra_config || {}, null, 2)
   }
-  
+
+  advancedConfigOpen.value = false
+
   customQuestions.value = []
   const localExtra = dataset.local_metadata?.extra_config || {}
   if (localExtra.custom_questions && Array.isArray(localExtra.custom_questions)) {
@@ -779,7 +799,7 @@ const toggleDatasetExpand = async (dataset: KnowledgeBase, forceExpand = false) 
 // 同一知识库可能被轮询、手动刷新、上传后刷新同时触发，用序号只认最后一次请求
 const documentsReqSeq: Record<string, number> = {}
 
-const fetchDocumentsForDataset = async (dsId: string) => {
+const fetchDocumentsForDataset = async (dsId: string, options: { silent?: boolean } = {}) => {
   const seq = (documentsReqSeq[dsId] = (documentsReqSeq[dsId] || 0) + 1)
   documentsLoadingMap.value[dsId] = true
   try {
@@ -819,7 +839,8 @@ const fetchDocumentsForDataset = async (dsId: string) => {
     if (seq !== documentsReqSeq[dsId]) return
     // 显式区分「加载失败」与「确实没有文档」，否则树里会显示成「暂无文档」
     documentsErrorMap.value[dsId] = true
-    showToast(extractError(err), 'error')
+    // 搜索会一次性拉多个库，失败时逐个弹 toast 会把界面刷屏
+    if (!options.silent) showToast(extractError(err), 'error')
     documentsMap.value[dsId] = []
   } finally {
     // 只有最后一次请求才有权关掉 loading，否则早返回的请求会让 spinner 提前消失
@@ -827,7 +848,11 @@ const fetchDocumentsForDataset = async (dsId: string) => {
   }
 }
 
-const datasetPermissions = ref<{ users: any[], roles: any[] }>({ users: [], roles: [] })
+const datasetPermissions = ref<{ users: any[], roles: any[], ownerUserId: number | null }>({
+  users: [],
+  roles: [],
+  ownerUserId: null,
+})
 const loadingPermissions = ref(false)
 const permissionsError = ref(false)
 /** 只读成员查不到授权名单（后端按写权限校验），这是既定权限而不是故障 */
@@ -851,17 +876,22 @@ const fetchDatasetPermissions = async (datasetId: string) => {
   if (target && !canManageDataset(target)) {
     permissionsRestricted.value = true
     permissionsError.value = false
-    datasetPermissions.value = { users: [], roles: [] }
+    datasetPermissions.value = { users: [], roles: [], ownerUserId: null }
     loadingPermissions.value = false
     return
   }
   permissionsRestricted.value = false
   loadingPermissions.value = true
   permissionsError.value = false
-  datasetPermissions.value = { users: [], roles: [] }
+  datasetPermissions.value = { users: [], roles: [], ownerUserId: null }
   try {
     const response = await axios.get(`/api/portal/ragflow/datasets/${datasetId}/permissions`)
-    datasetPermissions.value = response.data?.data || { users: [], roles: [] }
+    const data = response.data?.data || {}
+    datasetPermissions.value = {
+      users: data.users || [],
+      roles: data.roles || [],
+      ownerUserId: data.owner_user_id ?? null,
+    }
   } catch (err) {
     // 必须显式区分失败：静默时界面会显示「未分配权限」，让管理员误判为无人有权限
     permissionsError.value = true
@@ -1175,6 +1205,46 @@ const filteredDatasets = computed(() => {
 })
 
 /**
+ * 搜索文档名时按需加载文档列表。
+ *
+ * 文档是「展开才懒加载」的，但搜索框承诺能搜文档名：不补这一步，
+ * 没展开过的库里的文档永远搜不到，用户会以为文档不存在。
+ * 并发上限 4，避免一次打爆 RAGFlow；300ms 防抖避免连续输入触发请求风暴。
+ */
+const SEARCH_DOC_CONCURRENCY = 4
+const SEARCH_DOC_DEBOUNCE_MS = 300
+const searchDocLoading = ref(false)
+let searchDocTimer: ReturnType<typeof setTimeout> | null = null
+
+const ensureDocumentsForSearch = async () => {
+  const targets = visibilityScopeDatasets.value
+    .filter((dataset) => !dataset.is_missing_in_ragflow)
+    .map((dataset) => dataset.ragflow_dataset_id || dataset.id)
+    .filter((id) => id && !documentsMap.value[id] && !documentsLoadingMap.value[id])
+  if (!targets.length) return
+  searchDocLoading.value = true
+  try {
+    for (let i = 0; i < targets.length; i += SEARCH_DOC_CONCURRENCY) {
+      await Promise.all(
+        targets
+          .slice(i, i + SEARCH_DOC_CONCURRENCY)
+          .map((id) => fetchDocumentsForDataset(id, { silent: true })),
+      )
+    }
+  } finally {
+    searchDocLoading.value = false
+  }
+}
+
+watch(searchQuery, (value) => {
+  if (searchDocTimer) clearTimeout(searchDocTimer)
+  if (!value.trim()) return
+  searchDocTimer = setTimeout(() => {
+    void ensureDocumentsForSearch()
+  }, SEARCH_DOC_DEBOUNCE_MS)
+})
+
+/**
  * 左侧树的一级节点。
  *
  * 两个模式：
@@ -1476,21 +1546,19 @@ const confirmCreateFolder = async (dataset: KnowledgeBase) => {
     return
   }
 
-  const localMetadata = dataset.local_metadata || {}
-  const extraConfig = { ...(localMetadata.extra_config || {}) }
-  if (!extraConfig.folder_structure) {
-    extraConfig.folder_structure = {}
+  const structure = {
+    ...(dataset.local_metadata?.extra_config?.folder_structure || {}),
   }
 
-  if (extraConfig.folder_structure[name]) {
+  if (structure[name]) {
     showToast('该文件夹已存在', 'warning')
     return
   }
 
-  extraConfig.folder_structure[name] = []
-  
+  structure[name] = []
+
   try {
-    await saveDatasetExtraConfig(dataset, extraConfig)
+    await saveFolderStructure(dataset, structure)
     showToast('文件夹创建成功', 'success')
     editingDatasetIdForFolder.value = null
     newFolderName.value = ''
@@ -1519,9 +1587,9 @@ const confirmRenameFolder = async (dataset: KnowledgeBase, oldName: string) => {
     return
   }
 
-  const localMetadata = dataset.local_metadata || {}
-  const extraConfig = { ...(localMetadata.extra_config || {}) }
-  const structure = { ...(extraConfig.folder_structure || {}) }
+  const structure = {
+    ...(dataset.local_metadata?.extra_config?.folder_structure || {}),
+  }
 
   if (structure[newName]) {
     showToast('该名称的文件夹已存在', 'warning')
@@ -1531,10 +1599,9 @@ const confirmRenameFolder = async (dataset: KnowledgeBase, oldName: string) => {
   // 替换键名并保持文档列表不变
   structure[newName] = structure[oldName] || []
   delete structure[oldName]
-  extraConfig.folder_structure = structure
 
   try {
-    await saveDatasetExtraConfig(dataset, extraConfig)
+    await saveFolderStructure(dataset, structure)
     showToast('文件夹重命名成功', 'success')
     editingFolderKey.value = null
   } catch (err) {
@@ -1553,15 +1620,14 @@ const confirmRemoveFolder = async () => {
   if (!pending || removingFolder.value) return
   removingFolder.value = true
   const { dataset, folderName } = pending
-  const localMetadata = dataset.local_metadata || {}
-  const extraConfig = { ...(localMetadata.extra_config || {}) }
-  const structure = { ...(extraConfig.folder_structure || {}) }
+  const structure = {
+    ...(dataset.local_metadata?.extra_config?.folder_structure || {}),
+  }
 
   delete structure[folderName]
-  extraConfig.folder_structure = structure
 
   try {
-    await saveDatasetExtraConfig(dataset, extraConfig)
+    await saveFolderStructure(dataset, structure)
     showToast('文件夹已删除', 'success')
   } catch (err) {
     showToast('删除文件夹失败: ' + extractError(err), 'error')
@@ -1573,9 +1639,9 @@ const confirmRemoveFolder = async () => {
 
 // 移动文档至文件夹
 const moveDocumentToFolder = async (dataset: KnowledgeBase, docId: string, targetFolderName: string | null) => {
-  const localMetadata = dataset.local_metadata || {}
-  const extraConfig = { ...(localMetadata.extra_config || {}) }
-  const structure = { ...(extraConfig.folder_structure || {}) }
+  const structure: Record<string, string[]> = {
+    ...(dataset.local_metadata?.extra_config?.folder_structure || {}),
+  }
 
   // 1. 从之前所在的文件夹中移除 docId
   for (const fName in structure) {
@@ -1594,10 +1660,8 @@ const moveDocumentToFolder = async (dataset: KnowledgeBase, docId: string, targe
     }
   }
 
-  extraConfig.folder_structure = structure
-
   try {
-    await saveDatasetExtraConfig(dataset, extraConfig)
+    await saveFolderStructure(dataset, structure)
     showToast('移动文档成功', 'success')
     activeFileMoveMenuDocId.value = null
   } catch (err) {
@@ -1605,22 +1669,44 @@ const moveDocumentToFolder = async (dataset: KnowledgeBase, docId: string, targe
   }
 }
 
-// 内部方法：静默保存数据集的本地 extra_config
-const saveDatasetExtraConfig = async (dataset: KnowledgeBase, extraConfig: any) => {
+// 内部方法：只保存虚拟文件夹映射
+// 这里刻意不再走整份 PUT /metadata：移动一个文档会把前端缓存的 name/visibility
+// 一起回写，并发操作就是 lost update（最坏情况是把公开库改成私有）。
+const saveFolderStructure = async (
+  dataset: KnowledgeBase,
+  structure: Record<string, string[]>,
+) => {
   const datasetId = dataset.ragflow_dataset_id || dataset.id
-  await axios.put(`/api/portal/ragflow/datasets/${datasetId}/metadata`, {
-    name: dataset.platform_name || dataset.name,
-    description: dataset.platform_description || dataset.description,
-    owner: dataset.owner || '',
-    // 这个函数是「移动文档后静默保存 extra_config」，但它会整份 PUT 元数据。
-    // 兜底值写错时的后果比编辑弹窗更隐蔽：用户只是挪了个文档，库就被改成私有了。
-    visibility: visibilityOf(dataset),
-    tags: dataset.tags || [],
-    notes: dataset.notes || '',
-    extra_config: extraConfig
-  })
-  // 静默更新本地数据集列表以触发界面状态渲染刷新
-  await fetchDatasets()
+  const res = await axios.put(
+    `/api/portal/ragflow/datasets/${datasetId}/folder-structure`,
+    { folder_structure: structure },
+  )
+  const saved = res.data?.data?.extra_config?.folder_structure || {}
+  if (!dataset.local_metadata) dataset.local_metadata = {}
+  dataset.local_metadata.extra_config = {
+    ...(dataset.local_metadata.extra_config || {}),
+    folder_structure: saved,
+  }
+}
+
+/** 文档被删除后清理目录里的悬空引用，避免树里出现点不开的条目。 */
+const removeDocumentFromFolders = async (dataset: KnowledgeBase, docId: string) => {
+  const structure = dataset.local_metadata?.extra_config?.folder_structure
+  if (!structure) return
+  const next: Record<string, string[]> = {}
+  let changed = false
+  for (const [folder, ids] of Object.entries(structure)) {
+    const filtered = (ids || []).filter((id) => id !== docId)
+    if (filtered.length !== (ids || []).length) changed = true
+    next[folder] = filtered
+  }
+  if (!changed) return
+  try {
+    await saveFolderStructure(dataset, next)
+  } catch (err) {
+    // 清理失败不影响文档删除本身，但要让用户知道目录里可能有残留
+    showToast('文档已删除，但目录引用清理失败：' + extractError(err), 'warning')
+  }
 }
 // ==================== 虚拟文件夹层级管理结束 ====================
 
@@ -1630,6 +1716,27 @@ const triggerDeleteDataset = (dataset: KnowledgeBase) => {
   if (dsId) {
     // 异步静默拉取该知识库的最新授权记录，以便在确认弹窗中即时呈现正确的同步警告
     fetchDatasetPermissions(dsId)
+    // 引用关系同理：删除前必须让用户看见「会打挂哪些智能体」
+    void loadDeleteAgentRefs(dataset)
+  }
+}
+
+/** 删除确认弹窗里的智能体引用影响面。 */
+const deleteAgentRefs = ref<{ id: string; name: string; display_name: string; is_enabled: boolean }[]>([])
+const deleteAgentRefsUnknown = ref(false)
+
+const loadDeleteAgentRefs = async (dataset: KnowledgeBase) => {
+  const dsId = dataset.ragflow_dataset_id || dataset.id
+  deleteAgentRefs.value = []
+  deleteAgentRefsUnknown.value = false
+  if (!dsId) return
+  try {
+    const res = await axios.get(`/api/portal/ragflow/datasets/${dsId}/agents`)
+    deleteAgentRefs.value = res.data?.data?.items || []
+  } catch {
+    // 读不到影响面不阻断删除，但弹窗要说清「引用关系未知」，
+    // 否则「没有警告」会被误解成「没有智能体在用」。
+    deleteAgentRefsUnknown.value = true
   }
 }
 
@@ -1644,13 +1751,23 @@ const deleteDatasetMessage = computed(() => {
   const permWarning = permsUnknown
     ? '（⚠️ 授权信息读取失败，无法确认该知识库是否存在授权关系）'
     : '（⚠️ 该知识库当前已授权的角色/用户访问权限关系也将被同步清除）'
+
+  const assetRefs = deleteAgentRefs.value
+  const refWarning = assetRefs.length
+    ? `（⚠️ 该库正被 ${assetRefs.length} 个智能体引用：${assetRefs
+        .map((agent) => agent.display_name)
+        .slice(0, 3)
+        .join('、')}${assetRefs.length > 3 ? ' 等' : ''}；删除后这些智能体将检索不到本库内容）`
+    : deleteAgentRefsUnknown.value
+      ? '（⚠️ 引用关系读取失败，无法确认是否仍有智能体在使用本库）'
+      : ''
   
   if (deletingDataset.value.is_missing_in_ragflow) {
     let baseMsg = '检测到该知识库已在 RAGFlow 端不存在或已被物理删除，确定清理平台本地残留的相关配置和元数据信息吗？'
     if (hasPerms || permsUnknown) {
       baseMsg += permWarning
     }
-    return baseMsg
+    return baseMsg + refWarning
   } else {
     let baseMsg = `确定真实删除知识库「${name}」吗？RAGFlow 侧相应集群数据也将同步卸载，此操作不可逆。`
     if (permsUnknown) {
@@ -1658,7 +1775,7 @@ const deleteDatasetMessage = computed(() => {
     } else if (hasPerms) {
       baseMsg += '（⚠️ 注意：该知识库当前已授权给角色/用户，删除后系统关联的全部授权记录将被同步擦除清理）'
     }
-    return baseMsg
+    return baseMsg + refWarning
   }
 })
 
@@ -1695,13 +1812,42 @@ const confirmDeleteDataset = async () => {
   }
 }
 
+// 与后端 KNOWLEDGE_UPLOAD_MAX_BYTES / ALLOWED_EXTENSIONS 保持一致；
+// 前端先拦一道，用户不用等整个文件传上去才看到 413。
+const KNOWLEDGE_UPLOAD_MAX_MB = 256
+const KNOWLEDGE_UPLOAD_EXTENSIONS = [
+  'pdf', 'doc', 'docx', 'txt', 'md', 'csv', 'xls', 'xlsx',
+  'ppt', 'pptx', 'html', 'htm', 'epub', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tif', 'tiff',
+]
+
 const onFileChange = (event: Event) => {
   const input = event.target as HTMLInputElement
-  if (input.files) {
-    const files = Array.from(input.files)
-    const newFiles = files.filter(f => !uploadFiles.value.some(existing => existing.name === f.name && existing.size === f.size))
-    uploadFiles.value = [...uploadFiles.value, ...newFiles]
+  if (!input.files) return
+  const rejected: string[] = []
+  const accepted = Array.from(input.files).filter((f) => {
+    const ext = f.name.split('.').pop()?.toLowerCase() || ''
+    if (!KNOWLEDGE_UPLOAD_EXTENSIONS.includes(ext)) {
+      rejected.push(`${f.name}（类型不支持）`)
+      return false
+    }
+    if (f.size > KNOWLEDGE_UPLOAD_MAX_MB * 1024 * 1024) {
+      rejected.push(`${f.name}（超过 ${KNOWLEDGE_UPLOAD_MAX_MB}MB）`)
+      return false
+    }
+    return true
+  })
+  if (rejected.length) {
+    showToast(
+      `已跳过 ${rejected.length} 个文件：${rejected.slice(0, 3).join('、')}${rejected.length > 3 ? ' 等' : ''}`,
+      'warning',
+    )
   }
+  const newFiles = accepted.filter(
+    (f) => !uploadFiles.value.some((existing) => existing.name === f.name && existing.size === f.size),
+  )
+  uploadFiles.value = [...uploadFiles.value, ...newFiles]
+  // 允许用户重复选择同一个被拒文件（清空后二次选择仍能触发 change）
+  input.value = ''
 }
 
 const uploadDocument = async () => {
@@ -1796,7 +1942,13 @@ const confirmDeleteDocument = async () => {
       selectedId.value = selectedDatasetId.value
       selectedDocument.value = null
     }
-    
+
+    // 目录里还留着这个 docId 的话，树里会出现点不开的条目
+    const targetDataset = datasets.value.find(
+      (item) => (item.ragflow_dataset_id || item.id) === selectedDatasetId.value,
+    )
+    if (targetDataset) await removeDocumentFromFolders(targetDataset, docId)
+
     await fetchDocumentsForDataset(selectedDatasetId.value)
   } catch (err) {
     showToast(extractError(err), 'error')
@@ -2047,8 +2199,183 @@ const isReadOnlyDataset = (dataset?: KnowledgeBase | null) => {
   return false
 }
 
+// ==================== 批量操作 ====================
+// 后端早就支持 ids 数组，只是没暴露入口：库一多，逐个删/逐个解析是纯体力活。
+// 默认关闭，避免破坏现有紧凑布局；开启后才在节点左侧出现勾选框。
+const bulkSelectMode = ref(false)
+const selectedDatasetIds = ref<string[]>([])
+const selectedDocIds = ref<string[]>([])
+/** 文档批量操作限定在单库内：跨库混选时「批量解析」的目标库会不明确 */
+const bulkDocDatasetId = ref('')
+const bulkWorking = ref(false)
+const pendingBulkDelete = ref<string[] | null>(null)
+
+const exitBulkMode = () => {
+  bulkSelectMode.value = false
+  selectedDatasetIds.value = []
+  selectedDocIds.value = []
+  bulkDocDatasetId.value = ''
+}
+
+const toggleDatasetSelection = (dataset: KnowledgeBase) => {
+  const id = dataset.ragflow_dataset_id || dataset.id
+  if (!id || !canManageDataset(dataset)) return
+  selectedDatasetIds.value = selectedDatasetIds.value.includes(id)
+    ? selectedDatasetIds.value.filter((item) => item !== id)
+    : [...selectedDatasetIds.value, id]
+}
+
+const toggleDocSelection = (doc: KnowledgeDocument, datasetId: string) => {
+  if (!doc?.id) return
+  if (bulkDocDatasetId.value && bulkDocDatasetId.value !== datasetId) {
+    // 换库了：清掉上一批，避免把 A 库的 docId 发到 B 库
+    selectedDocIds.value = []
+  }
+  bulkDocDatasetId.value = datasetId
+  selectedDocIds.value = selectedDocIds.value.includes(doc.id)
+    ? selectedDocIds.value.filter((item) => item !== doc.id)
+    : [...selectedDocIds.value, doc.id]
+}
+
+/**
+ * 可批量选中的库：当前 tab + 当前搜索结果里、有管理权限、且引擎侧还在的。
+ * 刻意不跨 tab、不跨搜索：全选把看不见的库也选上，等于给自己埋雷。
+ */
+const bulkSelectableDatasets = computed(() =>
+  filteredDatasets.value.filter(
+    (dataset) => canManageDataset(dataset) && !dataset.is_missing_in_ragflow,
+  ),
+)
+
+const bulkAllSelected = computed(() => {
+  if (selectedDocIds.value.length) {
+    const docs = documentsMap.value[bulkDocDatasetId.value] || []
+    return docs.length > 0 && docs.every((doc) => selectedDocIds.value.includes(doc.id))
+  }
+  return bulkSelectableDatasets.value.length > 0
+    && bulkSelectableDatasets.value.every((dataset) =>
+      selectedDatasetIds.value.includes(dataset.ragflow_dataset_id || dataset.id),
+    )
+})
+
+const toggleSelectAll = () => {
+  // 文档分支：全选当前库的文档
+  if (selectedDocIds.value.length) {
+    const docs = documentsMap.value[bulkDocDatasetId.value] || []
+    selectedDocIds.value = bulkAllSelected.value ? [] : docs.map((doc) => doc.id)
+    return
+  }
+  selectedDatasetIds.value = bulkAllSelected.value
+    ? []
+    : bulkSelectableDatasets.value.map((dataset) => dataset.ragflow_dataset_id || dataset.id)
+}
+
+const bulkDeleteDatasets = async () => {
+  const ids = pendingBulkDelete.value
+  if (!ids?.length || bulkWorking.value) return
+  bulkWorking.value = true
+  try {
+    await axios.delete('/api/portal/ragflow/datasets', { data: { ids } })
+    showToast(`已删除 ${ids.length} 个知识库`, 'success')
+    pendingBulkDelete.value = null
+    selectedDatasetIds.value = []
+    await fetchDatasets()
+    if (selectedType.value === 'dataset' && ids.includes(selectedId.value)) {
+      if (datasets.value[0]) selectDatasetNode(datasets.value[0])
+    }
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    bulkWorking.value = false
+  }
+}
+
+const bulkParseDocuments = async () => {
+  const datasetId = bulkDocDatasetId.value
+  const ids = [...selectedDocIds.value]
+  if (!datasetId || !ids.length || bulkWorking.value) return
+  bulkWorking.value = true
+  try {
+    await axios.post(`/api/portal/ragflow/datasets/${datasetId}/documents/parse`, { ids })
+    ids.forEach((id) => {
+      parsingDocIds.value = { ...parsingDocIds.value, [id]: true }
+    })
+    showToast(`已触发 ${ids.length} 个文档解析`, 'success')
+    selectedDocIds.value = []
+    await fetchDocumentsForDataset(datasetId)
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    bulkWorking.value = false
+  }
+}
+
+const bulkDeleteDocuments = async () => {
+  const datasetId = bulkDocDatasetId.value
+  const ids = [...selectedDocIds.value]
+  if (!datasetId || !ids.length || bulkWorking.value) return
+  bulkWorking.value = true
+  try {
+    await axios.delete(`/api/portal/ragflow/datasets/${datasetId}/documents`, {
+      data: { ids },
+    })
+    showToast(`已删除 ${ids.length} 个文档`, 'success')
+    const targetDataset = datasets.value.find(
+      (item) => (item.ragflow_dataset_id || item.id) === datasetId,
+    )
+    if (targetDataset) {
+      for (const docId of ids) await removeDocumentFromFolders(targetDataset, docId)
+    }
+    selectedDocIds.value = []
+    await fetchDocumentsForDataset(datasetId)
+  } catch (err) {
+    showToast(extractError(err), 'error')
+  } finally {
+    bulkWorking.value = false
+  }
+}
+// ==================== 批量操作结束 ====================
+
 /** 当前详情页的库是否可写：只读成员只能看内容，不能改元数据/上传/授权 */
 const selectedDatasetWritable = computed(() => canManageDataset(selectedDataset.value))
+
+// ==================== 引用与授权（影响面） ====================
+// 两件事必须分开看：
+// - 智能体引用 = 智能体 engine_config.dataset_ids 里选中了本库，删库会让它检索不到内容；
+// - 授权访问 = ResourcePermission 里给了角色/用户访问权，删库会让这些人失去入口。
+// 给角色分配知识库**不会**产生智能体引用，两者不是同一件事，所以在同一个 tab 里并列说明。
+const agentRefs = ref<{ id: string; name: string; display_name: string; is_enabled: boolean }[]>([])
+const referencesLoading = ref(false)
+const referencesError = ref('')
+
+const loadDatasetReferences = async () => {
+  const dsId = currentDatasetId()
+  if (!dsId) return
+  referencesLoading.value = true
+  referencesError.value = ''
+  try {
+    const res = await axios.get(`/api/portal/ragflow/datasets/${dsId}/agents`)
+    agentRefs.value = res.data?.data?.items || []
+  } catch (err) {
+    referencesError.value = extractError(err)
+    agentRefs.value = []
+  } finally {
+    referencesLoading.value = false
+  }
+  // 授权名单是另一个接口，tab 里要一起展示；已加载过就不重复拉
+  if (
+    !permissionsRestricted.value
+    && !datasetPermissions.value.users.length
+    && !datasetPermissions.value.roles.length
+  ) {
+    void fetchDatasetPermissions(dsId)
+  }
+}
+
+const openDatasetReferences = () => {
+  detailTab.value = 'references'
+  void loadDatasetReferences()
+}
 
 const canViewChunks = (dataset?: KnowledgeBase | null) => {
   if (!dataset) return false
@@ -2528,21 +2855,31 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       <!-- Left Side: Knowledge base & Document tree navigation -->
       <section class="w-full lg:w-96 flex-shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
         <div class="p-4 border-b border-gray-100/80 bg-gray-50/50">
-          <div class="relative">
-            <input
-              v-model="searchQuery"
-              type="search"
-              placeholder="搜索知识库、文档或业务归属部门..."
-              class="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400"
-            />
-            <svg class="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <button v-if="searchQuery" class="absolute right-3 top-3 text-gray-400 hover:text-gray-600" @click="searchQuery = ''">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          <!-- 搜索框 + 批量入口同一行：开关常驻但不占额外一行，点开才在树顶展开操作条 -->
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1 min-w-0">
+              <input
+                v-model="searchQuery"
+                type="search"
+                placeholder="搜索知识库、文档或业务归属部门..."
+                class="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400"
+              />
+              <svg class="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
-            </button>
+              <button v-if="searchQuery" class="absolute right-3 top-3 text-gray-400 hover:text-gray-600" @click="searchQuery = ''">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <button
+              v-if="!bulkSelectMode && datasets.length"
+              type="button"
+              class="shrink-0 px-2.5 py-2 rounded-xl border border-gray-200 bg-white text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary transition-all"
+              title="批量删除知识库、批量解析/删除文档"
+              @click="bulkSelectMode = true"
+            >批量</button>
           </div>
 
           <!-- 可见范围 tab：三档对应真实权限语义（公共级需授权 / 部门级自动只读 / 个人私有仅自己） -->
@@ -2572,10 +2909,56 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               >{{ visibilityTabCount(tab.key) }}</span>
             </button>
           </div>
+          <div v-if="searchDocLoading" class="mt-1.5 text-[11px] text-gray-400">正在检索文档名…</div>
         </div>
 
         <!-- Scrollable tree region -->
         <div class="flex-1 overflow-y-auto p-4 space-y-1 select-none">
+          <!-- 批量操作条：默认隐藏，点「批量管理」才出现，避免破坏现有紧凑布局 -->
+          <div
+            v-if="bulkSelectMode"
+            class="flex items-center justify-between gap-2 rounded-xl bg-primary/5 border border-primary/20 px-2.5 py-2 mb-2 text-[11px]"
+          >
+            <span class="flex items-center gap-1.5 min-w-0 font-semibold text-primary">
+              <span class="truncate">
+                <template v-if="selectedDocIds.length">已选 {{ selectedDocIds.length }} 个文档</template>
+                <template v-else>已选 {{ selectedDatasetIds.length }} 个知识库</template>
+              </span>
+              <button
+                type="button"
+                class="shrink-0 font-normal text-primary/70 hover:text-primary hover:underline"
+                :disabled="(!selectedDocIds.length && !bulkSelectableDatasets.length) || bulkWorking"
+                :title="selectedDocIds.length
+                  ? '全选当前知识库的所有文档'
+                  : '全选当前 Tab 与搜索结果里的知识库'"
+                @click="toggleSelectAll"
+              >{{ bulkAllSelected ? '取消全选' : '全选' }}</button>
+            </span>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <template v-if="selectedDocIds.length">
+                <button
+                  type="button"
+                  class="px-2 py-1 rounded-lg bg-white border border-gray-200 text-gray-600 font-semibold hover:bg-gray-50 disabled:opacity-50"
+                  :disabled="bulkWorking"
+                  @click="bulkParseDocuments"
+                >批量解析</button>
+                <button
+                  type="button"
+                  class="px-2 py-1 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+                  :disabled="bulkWorking"
+                  @click="bulkDeleteDocuments"
+                >批量删除</button>
+              </template>
+              <button
+                v-else
+                type="button"
+                class="px-2 py-1 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+                :disabled="!selectedDatasetIds.length || bulkWorking"
+                @click="pendingBulkDelete = [...selectedDatasetIds]"
+              >批量删除</button>
+              <button type="button" class="text-gray-500 hover:text-gray-700" @click="exitBulkMode">退出</button>
+            </div>
+          </div>
           <div v-if="loading" class="text-center text-gray-400 py-12 text-sm flex flex-col items-center gap-3">
             <span class="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
             <span>加载数据中...</span>
@@ -2648,6 +3031,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 @click="selectDatasetNode(dataset)"
               >
                 <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                  <input
+                    v-if="bulkSelectMode && canManageDataset(dataset)"
+                    type="checkbox"
+                    class="w-3.5 h-3.5 shrink-0 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                    :checked="selectedDatasetIds.includes(dataset.ragflow_dataset_id || dataset.id)"
+                    :aria-label="`选择 ${dataset.platform_name || dataset.name}`"
+                    @click.stop
+                    @change="toggleDatasetSelection(dataset)"
+                  />
                   <!-- Toggle arrow -->
                   <button
                     class="p-0.5 rounded hover:bg-gray-200/50 text-gray-400 hover:text-gray-600 transition-transform duration-200 shrink-0"
@@ -2688,6 +3080,16 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 
                 <!-- Indicators & Actions -->
                 <div class="flex items-center gap-2 shrink-0 min-w-[24px] justify-end">
+                  <!-- 被智能体引用：列表上直接可见，不用点进详情才知道这个库在喂谁 -->
+                  <HoverTip
+                    v-if="(dataset.agent_ref_count || 0) > 0"
+                    :text="`被 ${dataset.agent_ref_count} 个智能体引用，删除后它们将检索不到本库内容`"
+                    :width="240"
+                  >
+                    <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 font-semibold select-none whitespace-nowrap">
+                      🤖 {{ dataset.agent_ref_count }}
+                    </span>
+                  </HoverTip>
                   <!-- Display doc count -->
                   <span
                     v-if="!dataset.is_missing_in_ragflow"
@@ -2886,6 +3288,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                               @click="selectDocumentNode(doc, dataset)"
                             >
                               <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                                <input
+                                  v-if="bulkSelectMode && canEdit"
+                                  type="checkbox"
+                                  class="w-3 h-3 shrink-0 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                                  :checked="selectedDocIds.includes(doc.id)"
+                                  :aria-label="`选择文档 ${doc.name || doc.id}`"
+                                  @click.stop
+                                  @change="toggleDocSelection(doc, dataset.ragflow_dataset_id || dataset.id)"
+                                />
                                 <svg class="w-3.5 h-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                                 </svg>
@@ -2978,6 +3389,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                       @click="selectDocumentNode(doc, dataset)"
                     >
                       <div class="flex items-center gap-2 min-w-0 flex-1">
+                        <input
+                          v-if="bulkSelectMode && canEdit"
+                          type="checkbox"
+                          class="w-3 h-3 shrink-0 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                          :checked="selectedDocIds.includes(doc.id)"
+                          :aria-label="`选择文档 ${doc.name || doc.id}`"
+                          @click.stop
+                          @change="toggleDocSelection(doc, dataset.ragflow_dataset_id || dataset.id)"
+                        />
                         <svg class="w-3.5 h-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                         </svg>
@@ -3112,6 +3532,27 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <span class="font-medium text-gray-700">{{ selectedDataset.chunk_count ?? '—' }}</span> 段
                 </span>
                 <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
+                <!-- 一律显示：只在有引用时才出现的话，没人知道这里还有个「引用」维度 -->
+                <span class="whitespace-nowrap">
+                  <template v-if="(selectedDataset.agent_ref_count || 0) > 0">
+                    被
+                    <button
+                      type="button"
+                      class="font-semibold text-primary hover:underline"
+                      title="查看引用该知识库的智能体，以及被授权访问的角色/用户"
+                      @click="openDatasetReferences"
+                    >
+                      {{ selectedDataset.agent_ref_count }} 个智能体
+                    </button>
+                    引用
+                  </template>
+                  <span
+                    v-else
+                    class="text-gray-400"
+                    title="智能体在「知识库绑定 / 默认 Dataset IDs」里选中本库后，这里会显示被引用数量"
+                  >未被智能体引用</span>
+                </span>
+                <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
                 <span class="whitespace-nowrap max-w-[18rem] truncate" :title="datasetOwnerLabel(selectedDataset) || ''">
                   业务归属部门/负责人
                   <span class="font-medium text-gray-700">{{ datasetOwnerLabel(selectedDataset) || '未指派' }}</span>
@@ -3170,14 +3611,14 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <!-- 视图切换：文档与设置 / 操作日志 -->
           <div class="flex items-center gap-1 -mt-2 border-b border-gray-100">
             <button
-              v-for="tab in [{ key: 'documents', label: '文档与设置' }, { key: 'audit', label: '操作日志' }]"
+              v-for="tab in [{ key: 'documents', label: '文档与设置' }, { key: 'audit', label: '操作日志' }, { key: 'references', label: '引用与授权' }]"
               :key="tab.key"
               type="button"
               class="px-3 py-1.5 text-xs font-semibold rounded-t-lg transition-all -mb-px border-b-2"
               :class="detailTab === tab.key
                 ? 'text-primary border-primary'
                 : 'text-gray-400 border-transparent hover:text-gray-600'"
-              @click="detailTab = (tab.key as 'documents' | 'audit')"
+              @click="detailTab = (tab.key as 'documents' | 'audit' | 'references')"
             >
               {{ tab.label }}
             </button>
@@ -3296,8 +3737,12 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                         <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
                       </svg>
                       {{ u.real_name || u.user_name }} ({{ u.user_name }})
+                      <span
+                        v-if="u.id === datasetPermissions.ownerUserId"
+                        class="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-semibold"
+                      >归属人</span>
                       <button
-                        v-if="canManagePermissions"
+                        v-if="canManagePermissions && u.id !== datasetPermissions.ownerUserId"
                         type="button"
                         class="text-emerald-400 hover:text-red-500 font-bold ml-1.5 focus:outline-none cursor-pointer text-xs"
                         title="取消授权"
@@ -3379,7 +3824,9 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <p class="text-sm font-medium text-gray-700 mt-3">
                   将一个或多个文件拖拽至此处，或 <span class="text-primary hover:underline font-semibold">点击上传</span>
                 </p>
-                <p class="text-xs text-gray-400 mt-1.5">支持多文件上传，类型包含 PDF, DOCX, TXT, MD, XLSX 等</p>
+                <p class="text-xs text-gray-400 mt-1.5">
+                  支持多文件上传，类型包含 PDF, DOCX, TXT, MD, XLSX 等，单文件不超过 {{ KNOWLEDGE_UPLOAD_MAX_MB }}MB
+                </p>
               </div>
 
               <!-- 2. 已选择文件时的批量卡片队列展示 -->
@@ -3452,18 +3899,43 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </div>
           </div>
 
-          <!-- Extended config JSON -->
-          <div class="space-y-2 flex-1 flex flex-col min-h-[150px]">
-            <div class="flex items-center justify-between">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">业务元数据扩展配置 (JSON)</h3>
+          <!--
+            Extended config JSON：与编辑弹窗的「高级设置」同一口径——默认收起。
+            这坨 JSON 只有 folder_structure / custom_questions 两个键有消费者，
+            平时挂在详情页最底部纯属视觉噪音，还把左右分栏的高度全吃掉了。
+          -->
+          <div class="flex flex-col shrink-0">
+            <div class="flex items-center justify-between gap-2">
               <button
-                class="text-xs text-primary hover:underline font-semibold"
-                @click="copyToClipboard(JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2))"
+                type="button"
+                class="flex items-center gap-1.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-400 transition-colors hover:text-gray-600"
+                :aria-expanded="detailConfigOpen"
+                @click="detailConfigOpen = !detailConfigOpen"
               >
-                复制配置
+                <svg
+                  class="h-3 w-3 shrink-0 transition-transform duration-200"
+                  :class="{ 'rotate-90': detailConfigOpen }"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+                业务元数据扩展配置 (JSON)
               </button>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  v-if="detailConfigOpen"
+                  class="text-xs font-semibold text-primary hover:underline"
+                  @click="copyToClipboard(JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2))"
+                >
+                  复制配置
+                </button>
+                <span class="text-[10px] text-gray-300 select-none">{{ detailConfigOpen ? '收起' : '展开' }}</span>
+              </div>
             </div>
-            <pre class="flex-1 overflow-auto bg-gray-900 text-emerald-400 p-4 rounded-xl font-mono text-xs shadow-inner leading-relaxed">{{ JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2) }}</pre>
+            <pre
+              v-show="detailConfigOpen"
+              class="mt-2 max-h-[280px] overflow-auto rounded-xl bg-gray-900 p-4 font-mono text-xs leading-relaxed text-emerald-400 shadow-inner"
+            >{{ JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2) }}</pre>
           </div>
           </template>
 
@@ -3528,6 +4000,88 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 {{ auditLoading ? '加载中...' : '加载更多' }}
               </button>
             </template>
+          </div>
+
+          <!-- 引用与授权：智能体绑定了本库 / 谁被授权访问本库 -->
+          <div v-if="detailTab === 'references'" class="flex-1 space-y-4 pt-2 min-h-0 overflow-y-auto">
+            <section class="rounded-xl border border-gray-200 bg-white p-4">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-sm font-semibold text-gray-800">
+                  智能体引用
+                  <span class="ml-1 text-xs font-normal text-gray-400">{{ agentRefs.length }} 个</span>
+                </h3>
+                <button
+                  type="button"
+                  class="text-[11px] text-gray-400 hover:text-primary transition-colors disabled:opacity-50"
+                  :disabled="referencesLoading"
+                  @click="loadDatasetReferences"
+                >刷新</button>
+              </div>
+              <p class="mt-1 text-[11px] text-gray-400 leading-relaxed">
+                这些智能体在「知识库绑定 / 默认 Dataset IDs」里选中了本库。删除本库或收窄可见范围后，它们将检索不到本库内容。
+              </p>
+              <div v-if="referencesLoading" class="py-6 text-center text-xs text-gray-400 select-none">正在读取…</div>
+              <div v-else-if="referencesError" class="py-4 text-xs text-red-500">{{ referencesError }}</div>
+              <div v-else-if="!agentRefs.length" class="py-6 text-center text-xs text-gray-400 italic select-none">
+                暂无智能体引用本库
+              </div>
+              <ul v-else class="mt-3 divide-y divide-gray-100">
+                <li v-for="agent in agentRefs" :key="agent.id" class="flex items-center justify-between gap-3 py-2">
+                  <div class="min-w-0">
+                    <p class="text-sm text-gray-800 truncate">{{ agent.display_name }}</p>
+                    <p class="text-[11px] text-gray-400 font-mono truncate">{{ agent.name }}</p>
+                  </div>
+                  <span
+                    class="shrink-0 text-[11px] px-2 py-0.5 rounded-full border"
+                    :class="agent.is_enabled
+                      ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                      : 'bg-gray-50 text-gray-400 border-gray-200'"
+                  >
+                    {{ agent.is_enabled ? '已启用' : '已停用' }}
+                  </span>
+                </li>
+              </ul>
+            </section>
+
+            <section class="rounded-xl border border-gray-200 bg-white p-4">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-sm font-semibold text-gray-800">
+                  授权访问
+                  <span class="ml-1 text-xs font-normal text-gray-400">{{ datasetPermissions.roles.length + datasetPermissions.users.length }} 个</span>
+                </h3>
+              </div>
+              <p class="mt-1 text-[11px] text-gray-400 leading-relaxed">
+                被授权的人能打开本库、检索里面的内容。这只是访问权限 —— 给角色分配知识库不等于智能体会用它。删除本库会一并清除这些授权。
+              </p>
+              <div v-if="permissionsRestricted" class="py-4 text-xs text-gray-400 italic select-none">
+                仅归属人与管理员可查看授权名单。
+              </div>
+              <div v-else-if="permissionsError" class="py-4 text-xs text-amber-600">
+                授权信息读取失败，点「刷新」重试。
+              </div>
+              <div v-else-if="!datasetPermissions.roles.length && !datasetPermissions.users.length" class="py-6 text-center text-xs text-gray-400 italic select-none">
+                尚未授权给任何角色或用户
+              </div>
+              <div v-else class="mt-3 space-y-2">
+                <div v-if="datasetPermissions.roles.length" class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="role in datasetPermissions.roles"
+                    :key="`ref-role-${role.id}`"
+                    class="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[11px] font-semibold border border-indigo-100"
+                  >角色 · {{ role.name }}</span>
+                </div>
+                <div v-if="datasetPermissions.users.length" class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="user in datasetPermissions.users"
+                    :key="`ref-user-${user.id}`"
+                    class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-100"
+                  >
+                    {{ user.real_name || user.user_name }}
+                    <span v-if="user.id === datasetPermissions.ownerUserId" class="ml-1 text-[10px] text-primary">归属人</span>
+                  </span>
+                </div>
+              </div>
+            </section>
           </div>
 
         </div>
@@ -4130,9 +4684,49 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
         </div>
 
-        <div>
-          <label class="block text-xs font-semibold text-gray-400 mb-1.5">额外扩展配置 JSON</label>
-          <textarea v-model="form.extraConfigText" class="w-full border border-gray-200 rounded-xl px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-white disabled:bg-gray-100" rows="3" placeholder="扩展配置 JSON"></textarea>
+        <!--
+          额外扩展配置：本质是开发者的逃生舱口，不该摆在一级表单里。
+          只有 folder_structure 与 custom_questions 会被读取，其余键写了没人用；
+          而保存是整份覆盖——手滑删掉 folder_structure，所有文档会掉回「未分类」且无法撤销。
+          因此折叠起来 + 把代价写在脸上。
+        -->
+        <div class="overflow-hidden rounded-xl border border-gray-200">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between bg-gray-50/60 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
+            :aria-expanded="advancedConfigOpen"
+            @click="advancedConfigOpen = !advancedConfigOpen"
+          >
+            <span class="flex items-center gap-1.5">
+              <svg
+                class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform duration-200"
+                :class="{ 'rotate-90': advancedConfigOpen }"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+              <span class="text-xs font-semibold text-gray-500">高级设置</span>
+              <span class="text-[11px] text-gray-400">· 额外扩展配置 JSON</span>
+            </span>
+            <span class="shrink-0 text-[10px] text-gray-400">{{ advancedConfigOpen ? '收起' : '展开' }}</span>
+          </button>
+
+          <div v-show="advancedConfigOpen" class="space-y-2 border-t border-gray-100 px-3 pb-3 pt-2.5">
+            <div class="space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
+              <p><b>保存是整份覆盖。</b>删掉 <code class="font-mono">folder_structure</code> 会让所有文档掉回「未分类」，虚拟文件夹丢失且无法撤销。</p>
+              <p>只有下面两个键会被读取，其余键写了也不会生效：</p>
+              <ul class="list-disc space-y-0.5 pl-4">
+                <li><code class="font-mono">folder_structure</code>：虚拟文件夹映射，由「新建文件夹 / 移动文档」自动维护，一般无需手改。</li>
+                <li><code class="font-mono">custom_questions</code>：知识库门户的快捷提问，形如 <code class="font-mono">[{label:'总结核心内容', query:'请帮我梳理要点'}]</code>。</li>
+              </ul>
+            </div>
+            <textarea
+              v-model="form.extraConfigText"
+              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+              rows="4"
+              placeholder="{}"
+            ></textarea>
+          </div>
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showEditModal = false">取消</button>
@@ -4168,6 +4762,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       confirm-text="确认移除"
       @confirm="confirmRemovePermission"
       @cancel="pendingPermissionRemoval = null"
+    />
+    <ConfirmModal
+      v-if="pendingBulkDelete"
+      title="确认批量删除知识库"
+      :loading="bulkWorking"
+      :message="`确定删除选中的 ${pendingBulkDelete.length} 个知识库吗？RAGFlow 侧集群数据将同步卸载，此操作不可逆。`"
+      confirm-text="确认删除"
+      @confirm="bulkDeleteDatasets"
+      @cancel="pendingBulkDelete = null"
     />
     <ConfirmModal
       v-if="pendingFolderRemoval"

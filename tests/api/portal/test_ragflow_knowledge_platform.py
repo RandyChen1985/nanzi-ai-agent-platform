@@ -557,8 +557,9 @@ async def test_delete_dataset_permission_success(monkeypatch):
     assert calls["require_write_ids"] == ["ds-1"]
     assert calls["flushed"] is True
     assert calls["invalidated_user_ids"] == {123}
-    # 删除侧刻意不查可见范围（要让私有库的历史授权能清理），只发一条 DELETE
-    assert len(db_session.executed) == 1
+    # 删除侧刻意不查可见范围（要让私有库的历史授权能清理）；
+    # 但要多一次元数据查询来做「归属人不可撤销」的校验，所以是 1 查 + 1 删
+    assert len(db_session.executed) == 2
     # 撤销授权同样要留痕，action 与新增区分开
     assert audit["action"] == "datasets:revoke"
     assert audit["payload"]["dataset_id"] == "ds-1"
@@ -943,3 +944,83 @@ def test_permission_flags_creator_gets_management():
         },
     )
     assert items[0]["can_manage"] is True
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_rejects_duplicate_platform_name(monkeypatch):
+    """同名库已存在时必须 409，而不是再建一个同名库（后续按名字反查必然出错）。"""
+
+    class FakeMetaService:
+        def __init__(self, db):
+            pass
+
+        async def find_active_by_name(self, name):
+            return SimpleNamespace(id=7)
+
+        async def upsert_metadata(self, **kwargs):  # pragma: no cover - 不应走到
+            raise AssertionError("重名时不应写元数据")
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def create_dataset(self, **kwargs):  # pragma: no cover - 不应走到
+            raise AssertionError("重名时不应调用 RAGFlow 建库")
+
+    async def _allow(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(ragflow, "KnowledgeBaseMetadataService", FakeMetaService)
+    monkeypatch.setattr(ragflow, "RagFlowClient", FakeClient)
+    monkeypatch.setattr(ragflow, "require_element_permission", _allow)
+
+    with pytest.raises(ragflow.HTTPException) as exc:
+        await ragflow.create_ragflow_dataset(
+            payload=ragflow.CreateDatasetRequest(name="制度库"),
+            request=_fake_request(),
+            user={"role": "user", "user_id": "1", "user_name": "alice"},
+            db=SimpleNamespace(),
+        )
+
+    assert exc.value.status_code == 409
+    assert "已存在" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_does_not_guess_id_when_names_ambiguous(monkeypatch):
+    """RAGFlow 未返回 id 且按名字查到多个时，必须失败而不是取第一个。"""
+
+    class FakeMetaService:
+        def __init__(self, db):
+            pass
+
+        async def find_active_by_name(self, name):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def create_dataset(self, **kwargs):
+            return {}
+
+        async def list_datasets(self, **kwargs):
+            return [{"id": "ds-a", "name": "制度库"}, {"id": "ds-b", "name": "制度库"}]
+
+    async def _allow(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(ragflow, "KnowledgeBaseMetadataService", FakeMetaService)
+    monkeypatch.setattr(ragflow, "RagFlowClient", FakeClient)
+    monkeypatch.setattr(ragflow, "require_element_permission", _allow)
+
+    with pytest.raises(ragflow.HTTPException) as exc:
+        await ragflow.create_ragflow_dataset(
+            payload=ragflow.CreateDatasetRequest(name="制度库"),
+            request=_fake_request(),
+            user={"role": "user", "user_id": "1", "user_name": "alice"},
+            db=SimpleNamespace(),
+        )
+
+    assert exc.value.status_code == 502
+    assert "Dataset ID" in exc.value.detail

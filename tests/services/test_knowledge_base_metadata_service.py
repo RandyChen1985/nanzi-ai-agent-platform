@@ -168,7 +168,13 @@ async def test_sync_from_ragflow_creates_missing_and_preserves_local_fields():
         user_name="tester",
     )
 
-    assert result == {"created": 1, "updated": 1, "skipped": 1}
+    assert {key: result[key] for key in ("created", "updated", "skipped")} == {
+        "created": 1,
+        "updated": 1,
+        "skipped": 1,
+    }
+    # 审计要按受影响的库落条，meta-* 的 skipped 不算
+    assert result["dataset_ids"] == ["ds-existing", "ds-new"]
     assert existing.name == "新名称"
     assert existing.description == "新描述"
     assert existing.status == "active"
@@ -245,3 +251,89 @@ async def test_transfer_owner_returns_none_for_missing_or_deleted():
 
     service.get_by_dataset_id = soft_deleted
     assert await service.transfer_owner("ds-deleted", target_user_id=2) is None
+
+
+@pytest.mark.asyncio
+async def test_update_extra_config_key_preserves_other_keys():
+    """改目录结构不能顺手把 custom_questions 等其它键抹掉。"""
+    service = KnowledgeBaseMetadataService(db=None)
+    record = KnowledgeBaseMetadata(
+        ragflow_dataset_id="ds-1",
+        name="库",
+        status="active",
+        extra_config={
+            "custom_questions": [{"label": "a", "query": "b"}],
+            "folder_structure": {"旧": ["d1"]},
+        },
+    )
+
+    async def fake_get(dataset_id):
+        return record
+
+    service.get_by_dataset_id = fake_get
+
+    updated = await service.update_extra_config_key(
+        "ds-1", key="folder_structure", value={"新": ["d2"]}
+    )
+
+    assert updated.extra_config["folder_structure"] == {"新": ["d2"]}
+    assert updated.extra_config["custom_questions"] == [{"label": "a", "query": "b"}]
+
+
+@pytest.mark.asyncio
+async def test_update_extra_config_key_drops_empty_value():
+    service = KnowledgeBaseMetadataService(db=None)
+    record = KnowledgeBaseMetadata(
+        ragflow_dataset_id="ds-1",
+        name="库",
+        status="active",
+        extra_config={"folder_structure": {"旧": ["d1"]}, "keep": 1},
+    )
+
+    async def fake_get(dataset_id):
+        return record
+
+    service.get_by_dataset_id = fake_get
+
+    updated = await service.update_extra_config_key(
+        "ds-1", key="folder_structure", value={}
+    )
+
+    assert "folder_structure" not in updated.extra_config
+    assert updated.extra_config["keep"] == 1
+
+
+@pytest.mark.asyncio
+async def test_merge_with_ragflow_filters_missing_by_allow_ids():
+    """非管理员的失联库只看自己有权访问的，不能借「失联」看到全平台残留。"""
+    service = KnowledgeBaseMetadataService(db=None)
+    mine = KnowledgeBaseMetadata(ragflow_dataset_id="ds-mine", name="我的库", status="active")
+    others = KnowledgeBaseMetadata(ragflow_dataset_id="ds-others", name="别人的库", status="active")
+
+    async def fake_list_metadata(include_deleted=False):
+        return [mine, others]
+
+    service.list_metadata = fake_list_metadata
+
+    merged = await service.merge_with_ragflow(
+        [], include_missing=True, missing_allow_ids={"ds-mine"}
+    )
+
+    assert [item["id"] for item in merged] == ["ds-mine"]
+    assert merged[0]["is_missing_in_ragflow"] is True
+
+
+@pytest.mark.asyncio
+async def test_merge_with_ragflow_shows_all_missing_for_admin():
+    service = KnowledgeBaseMetadataService(db=None)
+    a = KnowledgeBaseMetadata(ragflow_dataset_id="ds-a", name="A", status="active")
+    b = KnowledgeBaseMetadata(ragflow_dataset_id="ds-b", name="B", status="active")
+
+    async def fake_list_metadata(include_deleted=False):
+        return [a, b]
+
+    service.list_metadata = fake_list_metadata
+
+    merged = await service.merge_with_ragflow([], include_missing=True, missing_allow_ids=None)
+
+    assert {item["id"] for item in merged} == {"ds-a", "ds-b"}
