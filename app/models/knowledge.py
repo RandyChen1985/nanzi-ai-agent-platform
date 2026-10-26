@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Column, DateTime, Date, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Column, DateTime, Date, Index, Integer, JSON, String, Text, UniqueConstraint
 
 from app.core.orm import Base
 
@@ -73,3 +73,42 @@ class KnowledgeBaseMetric(Base):
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
+
+
+class KnowledgeAuditLog(Base):
+    """知识库业务审计：谁在什么时候对这个库做了什么。
+
+    刻意独立于 ``ai_agent_access_logs``：那张表是全站 API 访问日志（每个请求一条，
+    默认只查 90 天，通常还会定期清理），而业务审计要求「谁把库转交出去了」这类记录
+    长期可查。``dataset_id`` 也必须是一等列 —— 埋在访问日志的 ``request_params``
+    JSON 文本里就只能全表 LIKE，库一多就查不动。
+    """
+
+    __tablename__ = "ai_agent_knowledge_audit_logs"
+    __table_args__ = (
+        # 详情页「操作日志」tab 的主查询路径：按库倒序翻页
+        Index("idx_kal_dataset_created", "dataset_id", "created_at"),
+        Index("idx_kal_action", "action", "created_at"),
+    )
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    dataset_id = Column(
+        String(64),
+        nullable=False,
+        index=True,
+        comment="知识库（RAGFlow Dataset）ID；库被删除后日志保留",
+    )
+    action = Column(
+        String(64),
+        nullable=False,
+        comment="操作码：datasets:create / documents:upload / datasets:grant ...",
+    )
+    # 执行人。user_id 用于改名后仍能追溯，user_name 是当时的快照。
+    user_id = Column(BigInteger, nullable=True, comment="操作人用户 ID")
+    user_name = Column(String(64), nullable=True, index=True, comment="操作人账号快照")
+    status_code = Column(Integer, nullable=False, default=200, comment="HTTP 状态码（>=400 即失败）")
+    # 操作细节：文件名、文档数、授权对象、变更前后……各 action 结构不同，统一存 JSON
+    detail = Column(JSON, nullable=True, comment="操作细节（文件名/文档数/授权对象/变更前后）")
+    client_ip = Column(String(50), nullable=True, comment="来源 IP")
+    error_message = Column(Text, nullable=True, comment="失败原因")
+    created_at = Column(DateTime, default=datetime.now, index=True, comment="操作时间")

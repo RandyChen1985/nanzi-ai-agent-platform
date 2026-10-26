@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from '../utils/axios'
 import Modal from '../components/Modal.vue'
@@ -309,6 +309,139 @@ const canDelete = computed(() => hasPermission('element:knowledge:delete'))
 const canUpload = computed(() => hasPermission('element:knowledge:upload_document'))
 const canDeleteDocument = computed(() => hasPermission('element:knowledge:delete_document'))
 const canParse = computed(() => hasPermission('element:knowledge:parse_document'))
+
+// ---------------------------------------------------------------- 操作日志
+// 后端已经把「谁上传/删除/解析/改设置/授权/转移」写进专用审计表
+// （ai_agent_knowledge_audit_logs），这里只负责按库取回来并翻成人话。
+const detailTab = ref<'documents' | 'audit'>('documents')
+const auditLogs = ref<any[]>([])
+const auditTotal = ref(0)
+const auditPage = ref(1)
+const auditLoading = ref(false)
+const auditAction = ref('')
+const auditCanManage = ref(false)
+
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  'datasets:create': '创建知识库',
+  'datasets:update_metadata': '修改设置',
+  'datasets:delete': '删除知识库',
+  'datasets:grant': '新增授权',
+  'datasets:revoke': '取消授权',
+  'datasets:transfer_owner': '转移归属人',
+  'documents:upload': '上传文档',
+  'documents:delete': '删除文档',
+  'documents:parse': '解析文档',
+  'retrieval-test': '检索测试',
+}
+
+/** 敏感操作只对管理级可见；部门成员/被授权成员只看文档内容类。 */
+const ADMIN_ONLY_AUDIT_ACTIONS = [
+  'datasets:create',
+  'datasets:update_metadata',
+  'datasets:delete',
+  'datasets:grant',
+  'datasets:revoke',
+  'datasets:transfer_owner',
+]
+const auditActionOptions = computed(() => {
+  const keys = Object.keys(AUDIT_ACTION_LABELS).filter(
+    (key) => auditCanManage.value || !ADMIN_ONLY_AUDIT_ACTIONS.includes(key),
+  )
+  return keys.map((key) => ({ value: key, label: AUDIT_ACTION_LABELS[key] }))
+})
+
+const currentDatasetId = () => {
+  const dataset = selectedDataset.value
+  return dataset ? (dataset.ragflow_dataset_id || dataset.id || '') : ''
+}
+
+const loadAuditLogs = async (reset = false) => {
+  const datasetId = currentDatasetId()
+  if (!datasetId || auditLoading.value) return
+  if (reset) {
+    auditPage.value = 1
+    auditLogs.value = []
+  }
+  auditLoading.value = true
+  try {
+    const res = await axios.get(
+      `/api/portal/ragflow/datasets/${encodeURIComponent(datasetId)}/audit-logs`,
+      {
+        params: {
+          page: auditPage.value,
+          size: 20,
+          ...(auditAction.value ? { action: auditAction.value } : {}),
+        },
+      },
+    )
+    const data = res.data?.data || {}
+    const items = data.items || []
+    auditLogs.value = reset ? items : [...auditLogs.value, ...items]
+    auditTotal.value = data.total ?? items.length
+    auditCanManage.value = data.can_manage === true
+    auditPage.value += 1
+  } catch (err) {
+    console.error('获取操作日志失败:', err)
+    if (reset) {
+      auditLogs.value = []
+      auditTotal.value = 0
+    }
+  } finally {
+    auditLoading.value = false
+  }
+}
+
+/** 把审计 payload 翻成一句人话——原始 JSON 给使用者看没有意义。 */
+const auditLogText = (log: any) => {
+  const detail = log?.detail || {}
+  const who = log?.user_name || '未知用户'
+  const count = (list: any) => (Array.isArray(list) ? list.length : 0)
+  switch (log?.action) {
+    case 'documents:upload':
+      return `${who} 上传了「${detail.file_name || '文档'}」`
+    case 'documents:delete':
+      return `${who} 删除了 ${count(detail.document_ids) || 1} 个文档`
+    case 'documents:parse':
+      return `${who} 触发了 ${count(detail.document_ids) || 1} 个文档的解析`
+    case 'retrieval-test':
+      return `${who} 做了检索测试（命中 ${detail.hit_count ?? 0} 段）`
+    case 'datasets:create':
+      return `${who} 创建了知识库「${detail.name || ''}」`
+    case 'datasets:update_metadata':
+      return `${who} 修改了知识库设置`
+    case 'datasets:delete':
+      return `${who} 删除了知识库`
+    case 'datasets:grant':
+      return `${who} 新增授权：${detail.target_type === 'role' ? '角色' : '用户'} ${count(detail.target_ids)} 项，影响 ${detail.affected_user_count ?? 0} 人`
+    case 'datasets:revoke':
+      return `${who} 取消了授权，影响 ${detail.affected_user_count ?? 0} 人`
+    case 'datasets:transfer_owner':
+      return `${who} 转移了知识库归属人`
+    default:
+      return `${who} 执行了 ${log?.action || '未知操作'}`
+  }
+}
+
+// 切到日志 tab 时才请求，避免每次点开知识库都多打一次接口
+watch(detailTab, (tab: 'documents' | 'audit') => {
+  if (tab === 'audit' && !auditLogs.value.length) {
+    loadAuditLogs(true)
+  }
+})
+
+// 换库要清空，否则会短暂看到上一个库的记录
+watch(
+  () => currentDatasetId(),
+  () => {
+    auditLogs.value = []
+    auditTotal.value = 0
+    auditPage.value = 1
+    auditAction.value = ''
+    if (detailTab.value === 'audit') loadAuditLogs(true)
+  },
+)
+
+
 const canManagePermissions = computed(() => {
   // 与后端 authorization 同码：element:user:edit（菜单可见不等于有权改授权）
   if (!(isAdmin.value || hasPermission('element:user:edit'))) return false
@@ -3007,6 +3140,24 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </div>
           </div>
 
+          <!-- 视图切换：文档与设置 / 操作日志 -->
+          <div class="flex items-center gap-1 -mt-2 border-b border-gray-100">
+            <button
+              v-for="tab in [{ key: 'documents', label: '文档与设置' }, { key: 'audit', label: '操作日志' }]"
+              :key="tab.key"
+              type="button"
+              class="px-3 py-1.5 text-xs font-semibold rounded-t-lg transition-all -mb-px border-b-2"
+              :class="detailTab === tab.key
+                ? 'text-primary border-primary'
+                : 'text-gray-400 border-transparent hover:text-gray-600'"
+              @click="detailTab = (tab.key as 'documents' | 'audit')"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
+
+          <template v-if="detailTab === 'documents'">
+
           <!-- Tags & Notes -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
             <div class="space-y-2.5">
@@ -3287,6 +3438,71 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </div>
             <pre class="flex-1 overflow-auto bg-gray-900 text-emerald-400 p-4 rounded-xl font-mono text-xs shadow-inner leading-relaxed">{{ JSON.stringify(selectedDataset.local_metadata?.extra_config || {}, null, 2) }}</pre>
           </div>
+          </template>
+
+          <!-- 操作日志：谁在什么时候对这个库做了什么 -->
+          <div v-if="detailTab === 'audit'" class="flex-1 flex flex-col min-h-0">
+            <div class="flex items-center justify-between gap-2 border-b border-gray-100 pb-2 shrink-0">
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-gray-400 select-none">{{ auditTotal }} 条记录</span>
+                <select
+                  v-model="auditAction"
+                  class="text-[11px] rounded-lg border border-gray-200 px-2 py-1 bg-white text-gray-600"
+                  @change="loadAuditLogs(true)"
+                >
+                  <option value="">全部操作</option>
+                  <option v-for="opt in auditActionOptions" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+              <button
+                type="button"
+                class="text-[11px] text-gray-400 hover:text-primary transition-colors disabled:opacity-50"
+                :disabled="auditLoading"
+                @click="loadAuditLogs(true)"
+              >
+                刷新
+              </button>
+            </div>
+
+            <div v-if="auditLoading && !auditLogs.length" class="text-xs text-gray-400 text-center py-10 select-none">
+              正在读取操作日志...
+            </div>
+            <div v-else-if="!auditLogs.length" class="text-xs text-gray-400 text-center py-10 select-none">
+              暂无操作记录
+            </div>
+            <template v-else>
+              <ul class="divide-y divide-gray-100 overflow-y-auto flex-1 min-h-0">
+                <li v-for="log in auditLogs" :key="log.id" class="py-2.5 flex items-start gap-2.5">
+                  <span
+                    class="mt-1.5 w-1.5 h-1.5 rounded-full shrink-0"
+                    :class="log.status_code >= 400 ? 'bg-red-400' : 'bg-emerald-400'"
+                  ></span>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs text-gray-700 leading-relaxed">
+                      {{ auditLogText(log) }}
+                      <span v-if="log.status_code >= 400" class="ml-1 text-red-500 font-semibold">· 失败</span>
+                    </p>
+                    <p class="text-[10px] text-gray-400 mt-0.5">
+                      {{ formatTime(log.created_at) }}
+                      <span v-if="log.client_ip"> · {{ log.client_ip }}</span>
+                    </p>
+                  </div>
+                </li>
+              </ul>
+              <button
+                v-if="auditLogs.length < auditTotal"
+                type="button"
+                class="mt-2 shrink-0 w-full py-1.5 text-[11px] text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-all disabled:opacity-50"
+                :disabled="auditLoading"
+                @click="loadAuditLogs(false)"
+              >
+                {{ auditLoading ? '加载中...' : '加载更多' }}
+              </button>
+            </template>
+          </div>
+
         </div>
 
         <!-- Case 2: Document details and parsing node selected -->

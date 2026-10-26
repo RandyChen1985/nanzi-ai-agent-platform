@@ -14,6 +14,7 @@ from app.services.permission_service import VISIBILITY_PRIVATE, PermissionServic
 from app.services.ai.ragflow_client import RagFlowClient
 from app.services.knowledge_base_service import KnowledgeBaseMetadataService
 from app.services.audit_service import AuditService
+from app.services.knowledge_audit_service import KnowledgeAuditService
 from app.models.permission import ResourcePermission
 
 router = APIRouter()
@@ -237,17 +238,25 @@ async def record_knowledge_audit(
 ):
     safe_payload = dict(payload)
     safe_payload.pop("api_key", None)
-    process_time_ms = ((time.time() - started_at) * 1000) if started_at else 0
-    await AuditService.log_request_data(
-        trace_id=getattr(request.state, "trace_id", str(uuid.uuid4())),
-        user_name=user.get("user_name"),
-        endpoint=f"/api/portal/ragflow/{action}",
-        method=request.method,
+    # 按库拆条：批量删库 / 跨库检索要落到每一个 dataset_id 上，
+    # 否则查其中一个库时会看不到「它自己被删了」。
+    raw_ids: list = []
+    single = safe_payload.pop("dataset_id", None)
+    if single:
+        raw_ids.append(single)
+    batch = safe_payload.pop("dataset_ids", None)
+    if batch:
+        raw_ids.extend(batch if isinstance(batch, (list, tuple, set)) else [batch])
+
+    # 只写业务审计表：HTTP 访问日志已由中间件统一记录，
+    # 同一个操作再往访问日志写一条纯属重复。
+    await KnowledgeAuditService.log(
+        dataset_ids=raw_ids,
+        action=action,
+        user=user,
         status_code=status_code,
-        process_time_ms=process_time_ms,
+        detail=safe_payload,
         client_ip=request.client.host if request.client else None,
-        request_params=json.dumps(safe_payload, ensure_ascii=False, default=str),
-        response_body=json.dumps({"status": "success" if status_code < 400 else "error"}, ensure_ascii=False),
         error_message=error_message,
     )
 
@@ -1471,6 +1480,112 @@ class DeleteDatasetPermissionRequest(BaseModel):
 # 菜单码只负责侧栏是否可见，拿它当功能校验等于「看得见菜单 = 有权改授权」。
 # 而且用户页/角色页的整份保存用的就是 element:* 系列，两处口径必须一致，
 # 否则同一个人会在一个入口能授权、另一个入口被拒。
+# 文档内容类操作：对该库**可读**的人都能看这些流水（谁传了什么、删了什么）。
+# 授权变更、转移归属、改可见范围、删库这些只对管理级（创建人 / 管理员）可见 ——
+# 被授权进来的外部成员不该看到本库的授权名单变更历史。
+KNOWLEDGE_CONTENT_AUDIT_ACTIONS = (
+    "documents:upload",
+    "documents:delete",
+    "documents:parse",
+    "retrieval-test",
+)
+
+
+@router.get("/datasets/{dataset_id}/audit-logs")
+async def list_dataset_audit_logs(
+    dataset_id: str,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    action: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """知识库操作日志（详情页「操作日志」tab）。
+
+    可见范围分两级：
+
+    - 管理级（创建人 / 管理员）：全部操作，含授权变更、归属转移、改可见范围、删库；
+    - 其余可读成员（部门成员、被授权成员）：仅文档内容类操作，
+      但含失败记录 —— 「谁试过删除失败」同样是有用信息。
+    """
+    from app.models.knowledge import KnowledgeAuditLog
+    from sqlalchemy import func, select
+
+    await require_dataset_access(user, db, [dataset_id])
+
+    service = PermissionService(db)
+    access = await service.get_knowledge_base_access(
+        int(user["user_id"]), user.get("user_name")
+    )
+    can_manage = bool(access.get("is_admin")) or dataset_id in (
+        access.get("writable_ids") or set()
+    )
+
+    conditions = [KnowledgeAuditLog.dataset_id == dataset_id]
+    if not can_manage:
+        conditions.append(KnowledgeAuditLog.action.in_(KNOWLEDGE_CONTENT_AUDIT_ACTIONS))
+    if action:
+        if can_manage or action in KNOWLEDGE_CONTENT_AUDIT_ACTIONS:
+            conditions.append(KnowledgeAuditLog.action == action)
+        else:
+            # 请求了对自己不可见的 action（如部门成员想看「授权变更」）：
+            # 返回空列表，既不泄露"确实存在这类记录"，也避免拼出矛盾条件。
+            return {
+                "code": 0,
+                "data": {
+                    "total": 0,
+                    "page": page,
+                    "size": size,
+                    "can_manage": can_manage,
+                    "items": [],
+                },
+            }
+
+    total = (
+        await db.execute(
+            select(func.count()).select_from(KnowledgeAuditLog).where(*conditions)
+        )
+    ).scalar() or 0
+
+    rows = (
+        (
+            await db.execute(
+                select(KnowledgeAuditLog)
+                .where(*conditions)
+                .order_by(KnowledgeAuditLog.created_at.desc(), KnowledgeAuditLog.id.desc())
+                .offset((page - 1) * size)
+                .limit(size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    return {
+        "code": 0,
+        "data": {
+            "total": int(total),
+            "page": page,
+            "size": size,
+            "can_manage": can_manage,
+            "items": [
+                {
+                    "id": row.id,
+                    "action": row.action,
+                    "user_id": row.user_id,
+                    "user_name": row.user_name,
+                    "status_code": row.status_code,
+                    "detail": row.detail,
+                    "client_ip": row.client_ip,
+                    "error_message": row.error_message,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in rows
+            ],
+        },
+    }
+
+
 @router.post("/datasets/{dataset_id}/permissions", dependencies=[Depends(require_permission("element", "element:user:edit"))])
 async def add_dataset_permissions(
     dataset_id: str,

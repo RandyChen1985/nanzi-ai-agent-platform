@@ -405,10 +405,11 @@ async def test_document_file_passes_dataset_id_to_ragflow_client(monkeypatch):
 async def test_record_knowledge_audit_masks_api_key(monkeypatch):
     captured = {}
 
-    async def fake_log_request_data(**kwargs):
+    async def fake_log(**kwargs):
         captured.update(kwargs)
+        return True
 
-    monkeypatch.setattr(ragflow.AuditService, "log_request_data", fake_log_request_data)
+    monkeypatch.setattr(ragflow.KnowledgeAuditService, "log", fake_log)
 
     request = SimpleNamespace(
         state=SimpleNamespace(trace_id="trace-1"),
@@ -417,17 +418,19 @@ async def test_record_knowledge_audit_masks_api_key(monkeypatch):
     )
     await ragflow.record_knowledge_audit(
         request=request,
-        user={"user_name": "tester"},
+        user={"user_name": "tester", "user_id": 9},
         action="retrieval-test",
         status_code=200,
-        payload={"dataset_ids": ["ds-1"], "api_key": "secret"},
+        payload={"dataset_ids": ["ds-1"], "api_key": "secret", "query_summary": "预算"},
     )
 
-    assert captured["trace_id"] == "trace-1"
-    assert captured["user_name"] == "tester"
-    assert captured["endpoint"] == "/api/portal/ragflow/retrieval-test"
-    request_params = json.loads(captured["request_params"])
-    assert request_params == {"dataset_ids": ["ds-1"]}
+    # api_key 不能进审计表
+    assert captured["detail"] == {"query_summary": "预算"}
+    # 批量操作的每个库都要落到自己的记录上
+    assert captured["dataset_ids"] == ["ds-1"]
+    assert captured["action"] == "retrieval-test"
+    assert captured["user"]["user_id"] == 9
+    assert captured["client_ip"] == "127.0.0.1"
 
 
 @pytest.mark.asyncio
