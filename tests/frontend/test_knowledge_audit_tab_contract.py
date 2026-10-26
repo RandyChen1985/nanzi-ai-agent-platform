@@ -41,8 +41,26 @@ def test_sensitive_actions_are_management_only(page):
         assert action in block
 
 
-def test_audit_tab_lazy_loads_and_resets_on_dataset_switch(page):
-    assert "if (tab === 'audit' && !auditLogs.value.length)" in page
+def test_audit_tab_refreshes_every_time_it_is_opened(page):
+    """每次切到日志 tab 都要重新拉。
+
+    只在"列表为空"时加载会让「在文档 tab 传完文件、切回日志看看记没记上」
+    看到一个旧列表 —— 而这恰恰是用户切回来的唯一目的。
+    """
+    block = page.split("watch(detailTab", 1)[1].split("})", 1)[0]
+    assert "if (tab === 'audit')" in block
+    assert "!auditLogs.value.length" not in block
+
+
+def test_refresh_keeps_previous_rows_on_failure(page):
+    """刷新失败时保留旧数据：把用户正在看的内容清空比不刷新更糟。"""
+    block = page.split("const loadAuditLogs = async", 1)[1].split("const auditLogText", 1)[0]
+    assert "不清空旧列表" in block
+    catch_block = block.split("} catch (err) {", 1)[1].split("} finally", 1)[0]
+    assert "auditLogs.value = []" not in catch_block
+
+
+def test_audit_logs_clear_when_switching_dataset(page):
     # 换库必须清空，否则会短暂显示上一个库的记录
     assert "auditLogs.value = []" in page
 

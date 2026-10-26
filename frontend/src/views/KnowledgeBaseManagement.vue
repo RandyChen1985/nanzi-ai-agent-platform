@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import HoverTip from '../components/HoverTip.vue'
+import TagInput from '../components/TagInput.vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from '../utils/axios'
 import Modal from '../components/Modal.vue'
@@ -298,7 +300,7 @@ const form = ref({
   ownerDeptId: 0 as number,
   ownerText: '',
   visibility: 'private',
-  tagsText: '',
+  tags: [] as string[],
   notes: '',
   extraConfigText: '{}'
 })
@@ -313,6 +315,13 @@ const canParse = computed(() => hasPermission('element:knowledge:parse_document'
 // ---------------------------------------------------------------- 操作日志
 // 后端已经把「谁上传/删除/解析/改设置/授权/转移」写进专用审计表
 // （ai_agent_knowledge_audit_logs），这里只负责按库取回来并翻成人话。
+// 「失联」到底是什么意思：平台元数据里有、RAGFlow 里找不到。
+// 只写四个字没人能懂，必须讲清成因和处理办法。
+const MISSING_DATASET_HINT =
+  'RAGFlow 侧已找不到这个知识库：可能被直接在 RAGFlow 里删除了，或 RAGFlow 重建后 ID 变了。' +
+  '这里只剩平台保存的名称、描述和标签，文档列表为空，不能上传或解析。' +
+  '确认不再需要时，直接删除即可——不会去 RAGFlow 侧执行删除。'
+
 const detailTab = ref<'documents' | 'audit'>('documents')
 const auditLogs = ref<any[]>([])
 const auditTotal = ref(0)
@@ -360,7 +369,8 @@ const loadAuditLogs = async (reset = false) => {
   if (!datasetId || auditLoading.value) return
   if (reset) {
     auditPage.value = 1
-    auditLogs.value = []
+    // 刻意不清空旧列表：切换 tab 会走到这里，先清空会让面板闪一下空白。
+    // 请求成功后再整体替换；失败则保留上一次的结果。
   }
   auditLoading.value = true
   try {
@@ -382,10 +392,7 @@ const loadAuditLogs = async (reset = false) => {
     auditPage.value += 1
   } catch (err) {
     console.error('获取操作日志失败:', err)
-    if (reset) {
-      auditLogs.value = []
-      auditTotal.value = 0
-    }
+    // 刷新失败保留旧数据：把用户正在看的内容清空，比不刷新更糟
   } finally {
     auditLoading.value = false
   }
@@ -422,11 +429,11 @@ const auditLogText = (log: any) => {
   }
 }
 
-// 切到日志 tab 时才请求，避免每次点开知识库都多打一次接口
+// 切到日志 tab 就重新拉一次：
+// 只在"列表为空"时加载会导致——在文档 tab 传完文件再切回来，看到的还是旧列表，
+// 而"这条操作到底记没记上"恰恰是用户切回来的唯一目的。
 watch(detailTab, (tab: 'documents' | 'audit') => {
-  if (tab === 'audit' && !auditLogs.value.length) {
-    loadAuditLogs(true)
-  }
+  if (tab === 'audit') loadAuditLogs(true)
 })
 
 // 换库要清空，否则会短暂看到上一个库的记录
@@ -565,7 +572,10 @@ const friendlyRagFlowError = computed(() => {
 
 const ragflowApiUrl = computed(() => ragflowConfig.value?.api_url || '未配置')
 const apiData = (response: any) => response?.data?.data ?? response?.data ?? []
-const normalizeTags = (text: string) => text.split(',').map(t => t.trim()).filter(Boolean)
+// 中英文逗号都认：手动粘贴或 AI 回填经常给中文逗号，
+// 只按半角拆会得到一个"财务，报税"这样的整标签。
+const normalizeTags = (text: string) =>
+  text.split(/[,，\n]/).map(t => t.trim()).filter(Boolean)
 
 const parseExtraConfig = () => {
   if (!form.value.extraConfigText.trim()) return {}
@@ -584,7 +594,7 @@ const resetForm = () => {
     ownerDeptId: 0,
     ownerText: '',
     visibility: 'private',
-    tagsText: '',
+    tags: [] as string[],
     notes: '',
     extraConfigText: '{}'
   }
@@ -629,7 +639,7 @@ const openEdit = (dataset: KnowledgeBase) => {
     // 原先写 `|| 'private'`，这类库在弹窗里会显示成「个人私有」，用户只改个
     // 名称保存就把它静默改成 private，其他被授权的人瞬间失去访问。
     visibility: visibilityOf(dataset),
-    tagsText: (dataset.tags || []).join(', '),
+    tags: [...(dataset.tags || [])],
     notes: dataset.notes || '',
     extraConfigText: JSON.stringify(dataset.local_metadata?.extra_config || {}, null, 2)
   }
@@ -655,7 +665,7 @@ const analyzeMetadataByAI = async () => {
 
   // AI 结果会直接写回表单，已填内容会被静默冲掉，先征得确认
   const hasContent = Boolean(
-    form.value.description?.trim() || form.value.tagsText?.trim() || form.value.notes?.trim()
+    form.value.description?.trim() || form.value.tags?.length || form.value.notes?.trim()
   )
   if (hasContent) {
     aiOverwritePending.value = true
@@ -680,7 +690,7 @@ const runAiAnalyze = async () => {
     const resData = apiData(response)
     if (resData) {
       if (resData.description) form.value.description = resData.description
-      if (resData.tags) form.value.tagsText = resData.tags
+      if (resData.tags) form.value.tags = normalizeTags(String(resData.tags))
       if (resData.notes) form.value.notes = resData.notes
       showToast('AI 智能分析完成，已自动填充元数据', 'success')
     }
@@ -1351,7 +1361,7 @@ const createDataset = async () => {
       // 业务归属部门：只影响左侧树分组，不参与权限
       owner_dept_id: form.value.ownerDeptId || null,
       visibility: form.value.visibility,
-      tags: normalizeTags(form.value.tagsText),
+      tags: form.value.tags,
       notes: form.value.notes,
       extra_config: parseExtraConfig()
     })
@@ -1399,7 +1409,7 @@ const updateMetadata = async () => {
       // 0 表示清空部门归属；后端据 owner_dept_id 回填 owner 文本快照
       owner_dept_id: form.value.ownerDeptId || 0,
       visibility: form.value.visibility,
-      tags: normalizeTags(form.value.tagsText),
+      tags: form.value.tags,
       notes: form.value.notes,
       extra_config: extraConfig
     }
@@ -2654,7 +2664,24 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   </svg>
                   <!-- Display name + creator -->
                   <div class="min-w-0 flex flex-col">
-                    <span class="truncate text-sm font-medium">{{ dataset.platform_name || dataset.name }}</span>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <span class="truncate text-sm font-medium">{{ dataset.platform_name || dataset.name }}</span>
+                      <!--
+                        失联标记常驻在名称旁：原先它挂在右侧、悬停即 hidden，
+                        鼠标一放上去标签就消失、被操作按钮顶替，于是既读不到状态
+                        也看不到解释——这正是"为什么放上去变成按钮"的由来。
+                      -->
+                      <HoverTip
+                        v-if="dataset.is_missing_in_ragflow"
+                        class="shrink-0"
+                        :text="MISSING_DATASET_HINT"
+                        :width="300"
+                      >
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold select-none">
+                          失联
+                        </span>
+                      </HoverTip>
+                    </div>
                     <span v-if="dataset.created_by" class="truncate text-[10px] text-gray-400">创建人: {{ dataset.created_by }}</span>
                   </div>
                 </div>
@@ -2668,12 +2695,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   >
                     {{ dataset.doc_count ?? dataset.document_count ?? 0 }}
                   </span>
-                  <span
-                    v-else
-                    class="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 group-hover:hidden transition-all duration-150"
-                  >
-                    失联
-                  </span>
+                  <!-- 失联时右侧不重复标注：状态已常驻在名称旁，避免悬停时被按钮顶替 -->
 
                   <!-- Hover Action Buttons -->
                   <div class="flex opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 items-center gap-1 bg-inherit pl-2 absolute right-3 top-1/2 -translate-y-1/2">
@@ -3049,10 +3071,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   :class="visibilityBadgeClass(selectedDataset)"
                   :title="visibilityHint(selectedDataset)"
                 >{{ visibilityLabel(selectedDataset) }}</span>
-                <span
+                <HoverTip
                   v-if="selectedDataset.is_missing_in_ragflow"
-                  class="shrink-0 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold"
-                >RAGFlow 侧已失联</span>
+                  :text="MISSING_DATASET_HINT"
+                  :width="320"
+                >
+                  <span class="shrink-0 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold cursor-help select-none">
+                    RAGFlow 侧已失联
+                  </span>
+                </HoverTip>
               </div>
 
               <div v-if="selectedDataset.platform_description || selectedDataset.description" class="mt-2.5 pl-3.5 border-l-[3px] border-primary bg-gray-50/80 py-2 pr-4 rounded-r-xl max-w-3xl">
@@ -3884,8 +3911,8 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
         </div>
         <div>
-          <label class="block text-xs font-semibold text-gray-400 mb-1.5">标签 (英文逗号分隔)</label>
-          <input v-model="form.tagsText" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" placeholder="例如: 财务, 报税, 2026" />
+          <label class="block text-xs font-semibold text-gray-400 mb-1.5">标签<span class="ml-1 font-normal text-gray-300">（回车或逗号分隔，可多个）</span></label>
+          <TagInput v-model="form.tags" placeholder="输入后按回车添加，例如：财务" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">平台备注</label>
@@ -4043,8 +4070,8 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
         </div>
         <div>
-          <label class="block text-xs font-semibold text-gray-400 mb-1.5">标签 (英文逗号分隔)</label>
-          <input v-model="form.tagsText" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" placeholder="标签" />
+          <label class="block text-xs font-semibold text-gray-400 mb-1.5">标签<span class="ml-1 font-normal text-gray-300">（回车或逗号分隔，可多个）</span></label>
+          <TagInput v-model="form.tags" placeholder="输入后按回车添加" />
         </div>
         <div>
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">备注信息</label>
