@@ -23,6 +23,7 @@ from app.services.knowledge_access_request_service import (
     AccessRequestError,
     KnowledgeAccessRequestService,
 )
+from app.services.knowledge_dataset_filters import is_internal_dataset_name
 from app.services.knowledge_health_service import KnowledgeHealthService
 from app.services.portal_notification_service import PortalNotificationService
 from app.services.knowledge_quota_service import KnowledgeQuotaService, QuotaExceeded
@@ -568,9 +569,7 @@ async def list_ragflow_datasets(
             logger.warning("[Knowledge] RAGFlow 列表拉取失败，降级为缓存快照: %s", cache_err)
 
         items = [
-            item for item in items 
-            if not item.get("name", "").startswith("meta-")
-            and "chatbi-example" not in item.get("name", "").lower()
+            item for item in items if not is_internal_dataset_name(item.get("name"))
         ]
 
         if not is_admin:
@@ -658,6 +657,8 @@ async def discover_datasets(
         if row.ragflow_dataset_id not in accessible
         and (row.visibility or "private") in ("public", "team")
         and (engine_ids is None or row.ragflow_dataset_id in engine_ids)
+        # 平台内置库（chatbi-example-meta 等）不是用户的库，申请了也用不上
+        and not is_internal_dataset_name(row.name)
     ]
 
     kw = (keyword or "").strip().lower()

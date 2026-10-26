@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import KnowledgeBaseMetadata
+from app.services.knowledge_dataset_filters import is_internal_dataset_name
 
 # 区分"未提供该字段"与"显式清空"（传 None/0）。
 # 元数据更新是 PATCH 语义，owner 与 owner_dept_id 都需要支持被清空：
@@ -246,7 +247,7 @@ class KnowledgeBaseMetadataService:
         for ds in ragflow_datasets:
             dataset_id = str(ds.get("id") or "").strip()
             name = str(ds.get("name") or "").strip()
-            if not dataset_id or name.startswith("meta-"):
+            if not dataset_id or is_internal_dataset_name(name):
                 result["skipped"] += 1
                 continue
 
@@ -318,8 +319,7 @@ class KnowledgeBaseMetadataService:
                 if dataset_id in ragflow_by_id:
                     continue
                 # 过滤掉特殊的案例库和元数据管理库的失联记录
-                local_name = (local.name or "").lower()
-                if "chatbi-example" in local_name or local_name.startswith("meta-"):
+                if is_internal_dataset_name(local.name):
                     continue
                 # 非管理员只看到自己范围内的失联库：否则「失联」会变成
                 # 看穿全平台残留元数据的后门（库名、归属人、部门全暴露）。
