@@ -154,3 +154,31 @@ def test_modal_explains_private_library_loses_access(page):
 def test_header_shows_owner_with_creator_in_title(page):
     assert "datasetOwnerUserLabel(selectedDataset)" in page
     assert "创建人：" in page
+
+
+def test_candidates_are_flagged_when_target_cannot_manage(backend):
+    """候选要带「能不能管」标记：转移本身不校验功能点，转错人库就成了无主状态。"""
+    body = backend.split("async def list_owner_candidates(", 1)[1][:3000]
+
+    assert "get_users_with_element_permission" in body
+    assert '"can_manage": int(row.id) in manageable' in body
+
+
+def test_modal_warns_about_missing_edit_permission(page):
+    modal = page.split("转移知识库归属人", 1)[1].split("</Modal>", 1)[0]
+
+    assert "can_manage === false" in modal
+    assert "无编辑权限" in modal
+    assert "element:knowledge:edit" in modal
+    # 提示归提示，提交按钮不能被锁死：交接时角色往往还没配好，硬拦会卡住流程
+    assert "selectedTransferCandidate && selectedTransferCandidate.can_manage === false" in modal
+
+
+def test_owner_label_does_not_fall_back_when_account_deleted(page):
+    """有 owner_user_id 却解析不出名字 = 账号已删，不能回落显示创建人。"""
+    block = page.split("const datasetOwnerUserLabel", 1)[1][:900]
+
+    assert "owner_user_id" in block
+    assert "（已删除）" in block
+    # 回落成创建人会让人以为「根本没转移过」，把问题藏起来
+    assert "dataset.owner_user_name || dataset.created_by" not in block

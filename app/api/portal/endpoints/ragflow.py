@@ -106,7 +106,7 @@ async def require_dataset_access(user: dict, db: AsyncSession, dataset_ids: List
 
 
 async def require_dataset_write_access(user: dict, db: AsyncSession, dataset_ids: List[str]):
-    """可写：管理员 / 创建人（仅被分配的非创建人只读）"""
+    """可写：管理员 / 归属人（仅被授权或被分配的非归属人只读）"""
     service = PermissionService(db)
     access = await service.get_knowledge_base_access(
         int(user["user_id"]),
@@ -915,10 +915,24 @@ async def list_owner_candidates(
         like = f"%{token}%"
         stmt = stmt.where(or_(User.user_name.like(like), User.real_name.like(like)))
     rows = (await db.execute(stmt.order_by(User.user_name).limit(200))).all()
+
+    # 打「是否有知识库编辑权限」标记：转移只校验账号存在且启用，但改元数据/再转移/
+    # 分配授权还有一道 element:knowledge:edit 闸门。转给没有该权限点的人，他会
+    # 成为归属人却打不开任何管理入口 —— 库变成「有主但管不了」。这里只做提示，
+    # 不拦截（交接时角色往往还没配好，硬拦会卡住流程）。
+    manageable = await PermissionService(db).get_users_with_element_permission(
+        [int(row.id) for row in rows], "element:knowledge:edit"
+    )
+
     return {
         "code": 0,
         "data": [
-            {"id": row.id, "user_name": row.user_name, "real_name": row.real_name}
+            {
+                "id": row.id,
+                "user_name": row.user_name,
+                "real_name": row.real_name,
+                "can_manage": int(row.id) in manageable,
+            }
             for row in rows
         ],
     }

@@ -1648,6 +1648,66 @@ class PermissionService:
         for uid in (await self.db.execute(user_ids_stmt)).scalars().all():
             await self._invalidate_user_cache(uid)
 
+    async def get_users_with_element_permission(
+        self, user_ids: Iterable[int], permission_code: str
+    ) -> set[int]:
+        """批量判断「给出的这批人里，谁具备某个功能点权限」。
+
+        给候选用户列表打标用（转移归属前提示"这人接手了也管不了"）。逐人调
+        ``get_user_permissions`` 是每人 4 次查询，200 个候选会打出 800 次；这里
+        压成 4 条 SQL，口径对齐它的三条来源：系统/业务 ``admin`` 角色、用户直配、
+        业务角色继承。
+
+        ``agent_id`` 作用域刻意不参与：功能点权限是全局行，智能体级只影响资源禁用；
+        这里宁可"多说他有"——调用方只用它做提示，不拿它做拦截。
+        """
+        ids = {int(uid) for uid in user_ids if uid}
+        code = str(permission_code or "").strip()
+        if not ids or not code:
+            return set()
+
+        granted: set[int] = set()
+
+        # A. 系统角色 admin 与业务角色 code = admin（与 is_admin_user 同口径）
+        admin_stmt = select(User.id).where(User.id.in_(ids), User.role == "admin")
+        granted.update((await self.db.execute(admin_stmt)).scalars().all())
+
+        admin_role_stmt = (
+            select(UserRoleRelation.user_id)
+            .join(Role, Role.id == UserRoleRelation.role_id)
+            .where(UserRoleRelation.user_id.in_(ids), Role.code == "admin")
+        )
+        granted.update((await self.db.execute(admin_role_stmt)).scalars().all())
+
+        # B. 用户直配的功能点
+        direct_stmt = select(ResourcePermission.user_id).where(
+            ResourcePermission.user_id.in_(ids),
+            ResourcePermission.resource_type == "element",
+            ResourcePermission.resource_id == code,
+            ResourcePermission.enabled == True,  # noqa: E712 - 与既有查询写法保持一致
+        )
+        granted.update(
+            uid for uid in (await self.db.execute(direct_stmt)).scalars().all() if uid
+        )
+
+        # C. 通过业务角色继承
+        role_stmt = (
+            select(UserRoleRelation.user_id)
+            .join(
+                ResourcePermission,
+                ResourcePermission.role_id == UserRoleRelation.role_id,
+            )
+            .where(
+                UserRoleRelation.user_id.in_(ids),
+                ResourcePermission.resource_type == "element",
+                ResourcePermission.resource_id == code,
+                ResourcePermission.enabled == True,  # noqa: E712
+            )
+        )
+        granted.update((await self.db.execute(role_stmt)).scalars().all())
+
+        return {int(uid) for uid in granted}
+
     async def invalidate_cached_permissions_for_users(self, user_ids: Iterable[int]) -> None:
         """Clear permission cache for users (e.g. after role membership changes outside update_user_roles)."""
         for uid in set(user_ids):

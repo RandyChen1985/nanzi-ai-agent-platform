@@ -281,11 +281,14 @@ const pendingFolderRemoval = ref<{ dataset: KnowledgeBase; folderName: string } 
 // 转移归属：知识库的管理权从一个人交给另一个人（离职/调岗）
 const showTransferOwnerModal = ref(false)
 const transferTarget = ref<KnowledgeBase | null>(null)
-const transferCandidates = ref<{ id: number; user_name: string; real_name?: string }[]>([])
+const transferCandidates = ref<{ id: number; user_name: string; real_name?: string; can_manage?: boolean }[]>([])
 const transferKeyword = ref('')
 const transferUserId = ref<number | null>(null)
 const transferring = ref(false)
 const loadingTransferCandidates = ref(false)
+const selectedTransferCandidate = computed(
+  () => transferCandidates.value.find((c) => c.id === transferUserId.value) || null,
+)
 
 const form = ref({
   name: '',
@@ -1820,10 +1823,16 @@ const canManageDataset = (dataset?: KnowledgeBase | null) => {
   return dataset.can_manage ?? true
 }
 
-/** 归属人显示名：优先归属人，回退历史创建人（未回填 owner_user_id 的老库） */
+/** 归属人显示名：优先归属人，未回填的老库才回退创建人 */
 const datasetOwnerUserLabel = (dataset?: KnowledgeBase | null) => {
   if (!dataset) return '未知'
-  return dataset.owner_user_name || dataset.created_by || '未知'
+  if (dataset.owner_user_id) {
+    // 有 owner_user_id 却解析不出名字 = 账号已被删除。这里回退成创建人会让页面
+    // 看起来「根本没转移过」，把问题藏起来；宁可显示成「用户#12（已删除）」，
+    // 一眼就知道该重新指派人。
+    return dataset.owner_user_name || `用户#${dataset.owner_user_id}（已删除）`
+  }
+  return dataset.created_by || '未知'
 }
 
 /**
@@ -4074,9 +4083,26 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             :class="transferUserId === candidate.id ? 'bg-primary/5' : ''"
             @click="transferUserId = candidate.id"
           >
-            <span class="font-medium text-gray-800">{{ candidate.real_name || candidate.user_name }}</span>
-            <span class="text-xs text-gray-400 font-mono">{{ candidate.user_name }}</span>
+            <span class="flex items-center gap-2 min-w-0">
+              <span class="font-medium text-gray-800 truncate">{{ candidate.real_name || candidate.user_name }}</span>
+              <span
+                v-if="candidate.can_manage === false"
+                class="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                title="缺少 element:knowledge:edit，转移后改元数据 / 再转移 / 分配授权会被拒"
+              >
+                无编辑权限
+              </span>
+            </span>
+            <span class="text-xs text-gray-400 font-mono shrink-0">{{ candidate.user_name }}</span>
           </button>
+        </div>
+
+        <div
+          v-if="selectedTransferCandidate && selectedTransferCandidate.can_manage === false"
+          class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700 leading-relaxed"
+        >
+          该用户没有<b>知识库编辑</b>权限：转移后他能接手归属，但改元数据、再转移、分配授权仍会被拒。
+          转移完成后需要管理员给他补上 <code class="font-mono">element:knowledge:edit</code>。
         </div>
 
         <div class="flex justify-end gap-2 pt-2 border-t">
