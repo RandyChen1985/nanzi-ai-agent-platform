@@ -605,6 +605,19 @@ const submitAccessRequest = async () => {
   }
 }
 
+const discoverUpdatedText = (item: any) => {
+  const raw = item?.engine_update_time || item?.updated_at
+  if (!raw) return ''
+  const ts = typeof raw === 'number' ? (raw > 1e12 ? raw : raw * 1000) : Date.parse(String(raw).replace(' ', 'T'))
+  if (!ts || Number.isNaN(ts)) return ''
+  const days = Math.floor((Date.now() - ts) / 86400000)
+  if (days <= 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 30) return `${days} 天前`
+  if (days < 365) return `${Math.floor(days / 30)} 个月前`
+  return `${Math.floor(days / 365)} 年前`
+}
+
 const discoverStatusLabel = (status: string | null) => {
   if (status === 'pending') return '审批中'
   if (status === 'approved') return '已通过'
@@ -3394,7 +3407,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               </button>
             </div>
             <button
-              v-if="!bulkSelectMode"
+              v-if="!bulkSelectMode && !isAdmin"
               type="button"
               class="shrink-0 px-2.5 py-2 rounded-xl border border-gray-200 bg-white text-[11px] font-semibold text-gray-500 hover:border-primary hover:text-primary transition-all flex items-center gap-1"
               title="发现：浏览你还没有权限的公共 / 部门知识库，直接申请访问"
@@ -3512,6 +3525,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 新建知识库
               </button>
               <button
+                v-if="!isAdmin"
                 type="button"
                 class="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:border-primary hover:text-primary transition-all"
                 @click="openDiscover"
@@ -5477,12 +5491,36 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <li v-for="item in discoverItems" :key="item.dataset_id" class="rounded-xl border border-gray-200 p-3 hover:border-gray-300 transition-colors">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0 flex-1">
-                <p class="truncate text-sm font-semibold text-gray-900">{{ item.name }}</p>
-                <p class="mt-0.5 text-xs text-gray-500 line-clamp-2">{{ item.description || '暂无描述' }}</p>
-                <p class="mt-1.5 text-[11px] text-gray-400">
-                  <span class="rounded bg-gray-100 px-1.5 py-0.5">{{ item.visibility === 'public' ? '公共级' : '部门级' }}</span>
-                  <span v-if="item.owner" class="ml-1.5">{{ item.owner }}</span>
-                </p>
+                <div class="flex items-center gap-2">
+                  <p class="truncate text-sm font-semibold text-gray-900">{{ item.name }}</p>
+                  <span
+                    class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                    :class="item.visibility === 'public' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'"
+                  >{{ item.visibility === 'public' ? '公共级' : '部门级' }}</span>
+                </div>
+                <p class="mt-1 text-xs text-gray-500 line-clamp-2 leading-relaxed">{{ item.description || '暂无描述' }}</p>
+
+                <!-- 规模与新鲜度：判断「值不值得申请」主要看这几个数 -->
+                <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400">
+                  <span class="inline-flex items-center gap-1">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 002-2V9l-6-6H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                    {{ item.doc_count === null || item.doc_count === undefined ? '—' : item.doc_count }} 个文档
+                  </span>
+                  <span class="inline-flex items-center gap-1">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10" />
+                    </svg>
+                    {{ item.chunk_count === null || item.chunk_count === undefined ? '—' : item.chunk_count }} 个切片
+                  </span>
+                  <span v-if="item.owner" class="truncate">归属 {{ item.owner }}</span>
+                  <span v-if="discoverUpdatedText(item)">更新于 {{ discoverUpdatedText(item) }}</span>
+                </div>
+
+                <div v-if="item.tags && item.tags.length" class="mt-1.5 flex flex-wrap gap-1">
+                  <span v-for="tag in item.tags" :key="tag" class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{{ tag }}</span>
+                </div>
               </div>
               <div class="shrink-0 pt-0.5">
                 <span
