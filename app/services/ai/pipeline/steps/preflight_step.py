@@ -136,6 +136,31 @@ class PreflightStep(BasePipelineStep):
                     cancelled=receipt["cancelled"],
                 )
                 context.user_question_cancelled = bool(receipt["cancelled"])
+                if context.user_question_cancelled:
+                    # 取消轮不会走 FinalizeStep 的 History 落库：ContextStep 把
+                    # execution_status 置为 cancelled 后 RouteStep 被跳过，finalize 拿不到
+                    # agent_config。这里补一条 status=cancelled 的历史轮次，并把终态写回
+                    # 提问轮自己的 timeline 快照——否则刷新后卡片会重新变成「等待回答」，
+                    # 那条「已取消本次提问」也不会出现在历史里。
+                    try:
+                        from app.services.ai.user_question_history import (
+                            CANCELLATION_MESSAGE,
+                            persist_user_question_cancellation,
+                        )
+
+                        await persist_user_question_cancellation(
+                            conversation_id=context.conversation_id,
+                            question_id=receipt["question_id"],
+                            trace_id=context.trace_id,
+                            user_query=str(incoming_content or ""),
+                            cancellation_message=CANCELLATION_MESSAGE,
+                            fallback_agent_id=str(getattr(context, "agent_id", "") or ""),
+                            fallback_user_id=str(context.lane_user_id or ""),
+                        )
+                    except Exception as exc:  # 审计写失败不能阻断取消流程
+                        logger.warning(
+                            "[Preflight] Failed to persist user-question cancellation: %s", exc
+                        )
                 restored_dataset_ids = metadata_dataset_ids_from_user_question_record(
                     submitted_question
                 )

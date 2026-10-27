@@ -123,10 +123,18 @@ export function userQuestionStateFromTimelineLog(
   if (!raw || typeof raw !== "object") return null;
   // 复用实时事件的解析校验（question_id/问题文本/至少两个选项/选项去重），
   // 避免历史回放与实时路径各有一套口径而漂移。
-  return parseUserQuestionEvent({
+  const state = parseUserQuestionEvent({
     ...(raw as Record<string, unknown>),
     type: "user_question",
   });
+  if (!state) return null;
+  // 取消轮不会落历史（execution_status=cancelled 时 Route 被跳过、拿不到 agent_config），
+  // 终态由后端写回提问轮自己的快照；旧数据没有 status 字段时仍按 pending 处理。
+  const persisted = String((raw as Record<string, unknown>).status || "").trim();
+  if (persisted === "submitted" || persisted === "cancelled" || persisted === "stale") {
+    state.status = persisted;
+  }
+  return state;
 }
 
 /**

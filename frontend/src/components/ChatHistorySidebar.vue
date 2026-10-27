@@ -806,7 +806,8 @@ const confirmDelete = (item: any) => {
                     <span
                       v-else
                       class="w-1.5 h-1.5 rounded-full"
-                      :class="item.status === 'success' ? 'bg-emerald-500' : 'bg-rose-500'"
+                      :class="item.status === 'success' ? 'bg-emerald-500' : item.status === 'cancelled' ? 'bg-slate-400' : 'bg-rose-500'"
+                      :title="item.status === 'cancelled' ? '已取消' : undefined"
                     ></span>
                     <span v-if="item.turn_count !== undefined">
                       {{ item.turn_count }} 轮交互

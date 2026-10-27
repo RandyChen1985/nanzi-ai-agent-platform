@@ -753,3 +753,14 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **回归**：`pytest tests/api/test_legacy_access_request_compat.py tests/services/test_knowledge_access_request_service.py tests/services/test_platform_database_dialect_sql.py tests/services/test_workbench_home_service.py` **50 passed**。
 **未做**：未跑全量后端回归、未执行 `./dev.sh`。
+
+## 2026-10-27 取消提问后刷新又变「等待回答」：取消状态持久化
+
+|---|---|---|---|
+| 取消提问不落历史 | `app/services/ai/user_question_history.py`、`app/services/ai/pipeline/steps/preflight_step.py` | 取消回执在 `ContextStep` 把 `execution_status` 置为 `cancelled` 并返回，`RouteStep` 被跳过 → `FinalizeStep` 拿不到 `agent_config`，`if agent_config:` 为假，既不写 `ai_agent_execution_history` 也不留回执。本地库实测：会话 `70326ae2…` 只有两条 `awaiting_user`，19:27 的取消请求没有 History 行、也没有 trace |
+| 刷新后卡片重新可点 | 同上 + `frontend/src/utils/userQuestion.ts` | 历史回放依赖回执把卡片回填为 cancelled；取消轮不存在时，卡片只能从提问轮 timeline 快照恢复，而快照恒为 `pending`。现在取消时同时做两件事：把终态写回提问轮快照（`user_question.status=cancelled`、日志项 `status=success`），并补一条 `status=cancelled` 的历史轮次（`query` 为回执原文，`summary` 为「已取消本次提问，本次任务已停止。」） |
+| 连点取消重复写 | 同上 | `trace_id` 唯一键挡不住连点（每次请求都会生成新 trace），再加「同一 `question_id` 只允许一条取消轮」；`agent_id` 是非空列，从会话最近一轮继承，没有历史时用请求上下文兜底，仍为空则只更新快照 |
+| 历史列表把取消显示成失败 | `frontend/src/components/ChatHistorySidebar.vue` | 状态点原先只分 success/失败两色，`cancelled` 会显示红点；改为中性灰 + title「已取消」 |
+
+**回归**：新增后端 10 项（快照写回 / 插入字段 / trace 幂等 / 连点幂等 / fallback / 无 agent 跳过）与前端契约 4 项；`pytest tests/ai/pipeline tests/ai/tools/test_user_question_tool.py` + 前端 `-k "user_question or history or session or preview or pinned"` **333 passed / 1 skipped**；`npx vue-tsc -b` 全仓 97 条（与改动前一致），本次 4 个文件 0 条。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；取消轮在历史里显示的是继承的上一轮智能体名（History 表没有 `agent_display_name` 列），与实时的「系统助手」是有意差异。
