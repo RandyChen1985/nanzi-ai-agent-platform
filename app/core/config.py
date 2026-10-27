@@ -69,6 +69,19 @@ class Settings(BaseSettings):
     MYSQL_MAX_OVERFLOW: int = 50
     MYSQL_POOL_RECYCLE: int = 3600
 
+    # 从连接池取连接的最长等待（秒）。不设时 SQLAlchemy 默认 30s，池耗尽会让所有
+    # DB 请求一起排队半分钟；显式给更短的值，失败得更早、日志也更好定位。
+    DATABASE_POOL_TIMEOUT: int = 10
+    # 建立 TCP 连接的超时（秒），MySQL(aiomysql) 与 PostgreSQL(psycopg) 都支持。
+    DATABASE_CONNECT_TIMEOUT: int = 10
+    # TCP keepalive：aiomysql 0.3.x 的 connect() 没有 read_timeout 参数（那是
+    # pymysql 的 API），半开连接无法靠「读超时」回收，只能让内核探测后断开。
+    # 空闲 60s 开始探测，间隔 10s，连续 3 次无响应即关闭 socket；客户端 read 随即
+    # 报错，SQLAlchemy 丢弃该连接并重建，池不会一直被「借出且不返回」的连接占死。
+    DATABASE_TCP_KEEPALIVE_IDLE: int = 60
+    DATABASE_TCP_KEEPALIVE_INTERVAL: int = 10
+    DATABASE_TCP_KEEPALIVE_COUNT: int = 3
+
     # PostgreSQL (used when DATABASE_TYPE=postgresql)
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432

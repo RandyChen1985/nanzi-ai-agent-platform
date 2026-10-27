@@ -24,6 +24,7 @@ from app.services.sso_user import LaplacePortalApiClient
 from app.services.db_connection_service import DbConnectionService
 import json
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,9 @@ async def get_sso_users(
         )
     try:
         # 1. Get all users from SSO
-        sso_users = LaplacePortalApiClient.get_all_users()
+        # 同步 requests 必须丢进线程池：它一旦阻塞，卡住的是整个 uvicorn 事件循环，
+        # 所有接口（含数据库查询）都会一起无响应，看起来就像「数据库挂了」。
+        sso_users = await asyncio.to_thread(LaplacePortalApiClient.get_all_users)
         
         # 2. Get all existing usernames from local DB
         stmt = select(User.user_name)
@@ -130,7 +133,8 @@ async def sync_sso_users(
         
     try:
         # 1. Get SSO data to fetch real names/emails
-        sso_users = LaplacePortalApiClient.get_all_users()
+        # 同上：把同步 HTTP 调用移出事件循环线程。
+        sso_users = await asyncio.to_thread(LaplacePortalApiClient.get_all_users)
         sso_map = {u["code"]: u for u in sso_users}
         
         # 2. Filter out already existing users

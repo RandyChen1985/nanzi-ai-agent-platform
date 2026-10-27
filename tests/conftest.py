@@ -79,6 +79,21 @@ async def init_infrastructure(request):
             await session.commit()
             
     yield
+
+    # 泄漏检测：dispose 不会关闭已 checkout 的连接。用例结束时若仍有连接未归还，
+    # 说明有 session / 异步生成器 / 后台任务没释放。先用告警观察，避免把偶发的
+    # 后台任务误判成测试失败；确认无噪音后可升级为断言。
+    try:
+        leaked = database.engine.pool.checkedout()
+    except Exception:  # pragma: no cover - 防御：engine 被替换时不做判定
+        leaked = 0
+    if leaked:
+        logger.warning(
+            "用例结束后仍有 %s 个数据库连接未归还（疑似 session/生成器泄漏）: %s",
+            leaked,
+            getattr(request.node, "nodeid", "unknown"),
+        )
+
     await database.close_db()
     await redis.close_redis()
 
