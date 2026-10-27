@@ -140,6 +140,10 @@ async function reloadAll() {
   await Promise.all([loadKnowledge(), loadDatasets()])
 }
 
+// 顶栏「刷新」只知道自己那份工作台数据，广场这两段是各自 onMounted 拉的。
+// 不暴露出来，站在这个 tab 点刷新就是「按钮转了、数据没动」——比没有刷新更糟。
+defineExpose({ reloadAll })
+
 /** 筛选变了就回到第一页：停在第三页看新条件的结果只会看到「空」 */
 watch([keyword, tab, stateFilter, visibility], () => {
   void reloadAll()

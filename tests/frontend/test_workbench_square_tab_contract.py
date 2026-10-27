@@ -11,6 +11,7 @@ WORKBENCH = ROOT / "frontend/src/views/PersonalWorkbench.vue"
 ROUTER = ROOT / "frontend/src/router/index.ts"
 KB_VIEW = ROOT / "frontend/src/views/ResourceSquareKnowledge.vue"
 DS_VIEW = ROOT / "frontend/src/views/ResourceSquareDataset.vue"
+PANEL = ROOT / "frontend/src/components/resource-square/ResourceSquarePanel.vue"
 
 
 def _read(path: Path) -> str:
@@ -70,3 +71,30 @@ def test_readonly_views_stay_within_readonly_boundary():
 
     kb_view = _read(KB_VIEW)
     assert "不提供原文下载" in kb_view
+
+
+def test_refresh_button_actually_refreshes_the_square_tab():
+    """站在资源广场点「刷新」必须真的重新拉数据。
+
+    工作台数据由 useWorkbenchHome 管，广场的知识库/数据集两段是面板自己
+    onMounted 拉的。只调 refresh()，按钮会转一圈而列表纹丝不动——比没有刷新更糟。
+    """
+    page = _read(WORKBENCH)
+    panel = _read(PANEL)
+
+    # 面板把重新加载暴露出来
+    assert "defineExpose({ reloadAll })" in panel
+
+    # 刷新入口按当前 tab 分发
+    assert "async function refreshCurrent()" in page
+    assert "squarePanel.value?.reloadAll()" in page
+    assert 'activeTab.value !== \'square\'' in page
+
+
+def test_refresh_button_reports_square_busy_state_and_label():
+    """广场刷新期间按钮要转、要禁用、文案要说在刷什么。"""
+    page = _read(WORKBENCH)
+    assert "squareRefreshing" in page
+    assert "const busy = computed(() =>" in page
+    assert ":disabled=\"loading || squareRefreshing\"" in page
+    assert "刷新资源广场" in page

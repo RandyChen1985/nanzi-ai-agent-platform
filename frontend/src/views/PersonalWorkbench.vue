@@ -18,14 +18,14 @@
         <button
           type="button"
           class="workbench-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-blue-400"
-          :disabled="loading"
-          :aria-busy="refreshing || loading"
-          :aria-label="refreshing || loading ? '刷新中' : '刷新工作台'"
-          @click="refresh"
+          :disabled="loading || squareRefreshing"
+          :aria-busy="busy"
+          :aria-label="busy ? '刷新中' : activeTab === 'square' ? '刷新资源广场' : '刷新工作台'"
+          @click="refreshCurrent"
         >
           <svg
             class="h-3.5 w-3.5"
-            :class="{ 'animate-spin': refreshing || loading }"
+            :class="{ 'animate-spin': busy }"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -38,7 +38,7 @@
               d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"
             />
           </svg>
-          <span>{{ refreshing || loading ? '刷新中' : '刷新' }}</span>
+          <span>{{ busy ? '刷新中' : '刷新' }}</span>
         </button>
       </div>
       <p class="mt-0.5 truncate text-sm text-gray-500 dark:text-gray-400">
@@ -232,7 +232,7 @@
       </template>
     </div>
 
-    <ResourceSquarePanel v-if="activeTab === 'square'" />
+    <ResourceSquarePanel v-if="activeTab === 'square'" ref="squarePanel" />
   </div>
 </template>
 
@@ -296,6 +296,30 @@ watch(
 
 const { branding } = useBranding()
 const { payload, loading, refreshing, error, load, refresh } = useWorkbenchHome()
+
+/**
+ * 顶栏「刷新」在资源广场 tab 下也要真的刷新。
+ *
+ * 工作台数据由 useWorkbenchHome 管，广场的知识库/数据集两段是面板自己 onMounted
+ * 拉的——只调 refresh()，站在广场点刷新就是按钮转一圈、列表纹丝不动。
+ */
+const squarePanel = ref<InstanceType<typeof ResourceSquarePanel> | null>(null)
+const squareRefreshing = ref(false)
+const busy = computed(() => refreshing.value || loading.value || squareRefreshing.value)
+
+async function refreshCurrent() {
+  if (activeTab.value !== 'square') {
+    await refresh()
+    return
+  }
+  squareRefreshing.value = true
+  try {
+    // 工作台那份也顺手刷新：切回去时不该是旧数据
+    await Promise.all([refresh(), squarePanel.value?.reloadAll() ?? Promise.resolve()])
+  } finally {
+    squareRefreshing.value = false
+  }
+}
 const workbenchPersonalResources = computed(() =>
   filterWorkbenchPersonalResources(payload.value?.personal_resources || []),
 )
