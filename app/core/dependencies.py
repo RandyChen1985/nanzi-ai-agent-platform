@@ -54,10 +54,11 @@ async def require_api_key(
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
     # scope="function"：鉴权链路只做一次短查询，session 应在路径函数返回后、响应
     # 开始发送前关闭。默认的 request scope 会让它活到整条响应结束——聊天 SSE 可持续
-    # 数分钟，等于每个进行中的对话都占着一条连接并开着事务，并发时把连接池耗尽。
-    # 同一 scope 的依赖会被 FastAPI 缓存复用，因此 require_permission /
-    # verify_v1_api_access 里的 db 也必须保持同一 scope，否则一个请求会开出两个
-    # 独立 session（其中一个仍然活到流结束）。
+    # 数分钟，等于每个进行中的对话都占着一条连接并开着事务，并发时把连接池耗尽；
+    # 事务迟迟不结束还会让读过的表一直持有共享 MDL，发版时的 ALTER TABLE 会被卡住。
+    # 同一 (callable, scope) 的依赖会被 FastAPI 缓存复用，因此 require_permission /
+    # require_any_permission / verify_v1_api_access 里的 db 也必须保持同一 scope，
+    # 否则一个请求会开出两个独立 session（其中一个仍然活到流结束）。
     db: AsyncSession = Depends(get_db_session, scope="function")
 ) -> Dict:
     api_key = api_key_header
