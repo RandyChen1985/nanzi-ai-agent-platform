@@ -32,6 +32,9 @@ class _Session:
 
 
 class _PermService:
+    #: 缓存失效记录：审批通过必须清掉申请人的权限缓存，否则要等 TTL 过期
+    invalidated: list = []
+
     def __init__(self, db, *, is_admin=False, accessible=None, writable=None):
         self.is_admin = is_admin
         # 管理员场景要保留 None 语义（"不受限"），不能悄悄变成空集合
@@ -44,6 +47,9 @@ class _PermService:
             "accessible_ids": self.accessible if self.is_admin else (self.accessible or set()),
             "writable_ids": self.writable,
         }
+
+    async def invalidate_cached_permissions_for_users(self, user_ids):
+        type(self).invalidated.append([int(uid) for uid in user_ids])
 
 
 def _meta(**kwargs):
@@ -463,3 +469,71 @@ async def test_discover_hides_platform_builtin_datasets(monkeypatch):
 
     names = [item["name"] for item in res["data"]["items"]]
     assert names == ["制度库"]
+
+
+class _ApproveSession(_Session):
+    """审批通过：只关心「写完授权后有没有清缓存」。"""
+
+    def __init__(self):
+        super().__init__()
+        self.commits = 0
+        self.refreshed = False
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, row):
+        self.refreshed = True
+
+
+@pytest.mark.asyncio
+async def test_approve_invalidates_applicant_permission_cache(monkeypatch):
+    """授权列表来自 get_user_permissions 的 Redis 缓存（TTL 1 小时）。
+
+    不清缓存的话，接口回「对方现在可以访问」，对方却要等最长一小时才真的看到库；
+    手工授权与撤销两个入口都做了这一步，审批是第三个写 ResourcePermission 的地方。
+    """
+    _patch(monkeypatch, _PermService(None, writable={"ds-1"}))
+    _PermService.invalidated = []
+
+    row = SimpleNamespace(
+        id=7,
+        dataset_id="ds-1",
+        status="pending",
+        applicant_user_id=42,
+        applicant_user_name="bob",
+        review_comment=None,
+    )
+
+    class _Service:
+        def __init__(self, db):
+            pass
+
+        async def get(self, request_id):
+            return row
+
+        async def decide(self, **kwargs):
+            row.status = "approved"
+            return row
+
+    monkeypatch.setattr(ragflow, "KnowledgeAccessRequestService", _Service)
+
+    async def _noop_notify(*args, **kwargs):
+        return None
+
+    async def _noop_audit(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(ragflow, "_notify_access_request", _noop_notify)
+    monkeypatch.setattr(ragflow, "record_knowledge_audit", _noop_audit)
+
+    res = await ragflow.approve_access_request(
+        request_id=7,
+        payload=ragflow.AccessReviewBody(comment="同意"),
+        request=_request(),
+        user={"user_id": 1, "user_name": "alice"},
+        db=_ApproveSession(),
+    )
+
+    assert res["data"]["status"] == "approved"
+    assert _PermService.invalidated == [[42]]

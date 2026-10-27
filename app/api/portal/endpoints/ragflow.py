@@ -1101,6 +1101,14 @@ async def approve_access_request(
     except AccessRequestError as err:
         raise HTTPException(status_code=400, detail=str(err))
 
+    # 授权列表来自 get_user_permissions 的 Redis 缓存（TTL 1 小时），
+    # 不清缓存的话申请人最长要等一小时才看得见这个库，
+    # 而接口已经回了「对方现在可以访问」——手工授权/撤销两个入口都做了这一步，
+    # 审批是第三个写 ResourcePermission 的地方，漏了。
+    await PermissionService(db).invalidate_cached_permissions_for_users(
+        [int(decided.applicant_user_id)]
+    )
+
     await _notify_access_request(db, kind="decided", row=decided, meta=None, applicant=user)
     await record_knowledge_audit(request, user, "datasets:grant", 200, {
         "action": "approve_access_request",
