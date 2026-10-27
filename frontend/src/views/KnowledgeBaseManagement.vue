@@ -5515,7 +5515,10 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <button type="button" class="px-3 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90" @click="fetchDiscover(1)">搜索</button>
         </div>
         <p class="text-[11px] text-gray-400 leading-relaxed">
-          这里只列公共级与部门级知识库。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
+          这里只列公共级与部门级知识库，且只列你还没有权限的库（申请中的也算没有）。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
+        </p>
+        <p class="text-[11px] text-gray-400 leading-relaxed">
+          没有知识库管理菜单？可以在「我的工作台 › 资源广场」看到完整目录（含已授权的库）并提交申请。
         </p>
 
         <div v-if="discoverLoading" class="py-10 text-center text-sm text-gray-400">加载中…</div>

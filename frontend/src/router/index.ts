@@ -144,6 +144,20 @@ const router = createRouter({
           meta: { title: '我的工作台' }
         },
         {
+          // 只读概览刻意不挂 meta.perm：被授权访问单个知识库的普通用户
+          // 没有知识库/元数据管理菜单权限，挂上就会被路由守卫弹回去。
+          path: 'resource-square/knowledge/:datasetId',
+          name: 'ResourceSquareKnowledge',
+          component: () => import('../views/ResourceSquareKnowledge.vue'),
+          meta: { title: '知识库概览' }
+        },
+        {
+          path: 'resource-square/datasets/:id',
+          name: 'ResourceSquareDataset',
+          component: () => import('../views/ResourceSquareDataset.vue'),
+          meta: { title: '数据集概览' }
+        },
+        {
           path: 'personal',
           name: 'PersonalCenter',
           component: () => import('../views/PersonalCenter.vue'),

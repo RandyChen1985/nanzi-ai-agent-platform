@@ -14,7 +14,8 @@ pytestmark = pytest.mark.no_infrastructure
 ROOT = Path(__file__).resolve().parents[2]
 BELL = ROOT / "frontend/src/components/PortalNotificationBell.vue"
 USERS = ROOT / "frontend/src/views/Users.vue"
-ENDPOINT = ROOT / "app/api/portal/endpoints/ragflow.py"
+SERVICE = ROOT / "app/services/resource_access_request_service.py"
+LEGACY_ENDPOINT = ROOT / "app/api/portal/endpoints/ragflow.py"
 
 
 @pytest.fixture(scope="module")
@@ -28,28 +29,59 @@ def users() -> str:
 
 
 @pytest.fixture(scope="module")
-def endpoint() -> str:
-    return ENDPOINT.read_text(encoding="utf-8")
+def service() -> str:
+    return SERVICE.read_text(encoding="utf-8")
 
 
-def test_backend_notifies_owner_and_applicant(endpoint: str) -> None:
-    assert "_notify_access_request" in endpoint
-    assert 'kind="created"' in endpoint
-    assert 'kind="decided"' in endpoint
-    assert "PortalNotificationService" in endpoint
+@pytest.fixture(scope="module")
+def legacy_endpoint() -> str:
+    return LEGACY_ENDPOINT.read_text(encoding="utf-8")
 
 
-def test_notification_failure_never_breaks_the_flow(endpoint: str) -> None:
-    block = endpoint.split("async def _notify_access_request", 1)[1].split(
-        "@router.post", 1
-    )[0]
+def test_backend_notifies_admins_and_applicant(service: str) -> None:
+    """提交后通知管理员、审批后通知申请人。
+
+    审批人从「库归属人」改为「管理员」之后，提交通知也要跟着换收件人——
+    只改审批入口不改通知，申请会堆在一个没人去看的地方。
+    """
+    assert "PortalNotificationService" in service
+    assert "_notify_created" in service
+    assert "_notify_decided" in service
+    assert "_admin_user_ids" in service
+    assert '"resource_access"' in service
+    assert '"resource_access_result"' in service
+
+
+def test_notification_failure_never_breaks_the_flow(service: str) -> None:
+    """通知失败不能把审批/提交一起回滚——主流程已经完成了。"""
+    block = service.split("async def _notify_created", 1)[1]
     assert "except Exception" in block
 
 
-def test_bell_labels_knowledge_access_messages(bell: str) -> None:
-    assert 'item?.category === "knowledge_access"' in bell
-    assert "知识库申请" in bell
+def test_legacy_endpoints_do_not_notify_twice(legacy_endpoint: str) -> None:
+    """旧端点只做转发：再发一次通知/再清一次缓存，副作用就重复了。
+
+    手工授权/撤销端点里的缓存清理是它们自己的职责，不在检查范围内——
+    只检查审批端点有没有自己再来一遍。
+    """
+    assert "_notify_access_request" not in legacy_endpoint
+    for name, following in (
+        ("approve_access_request", "reject_access_request"),
+        ("reject_access_request", "cancel_access_request"),
+    ):
+        block = legacy_endpoint.split(f"async def {name}", 1)[1].split(
+            f"async def {following}", 1
+        )[0]
+        assert "invalidate_cached_permissions_for_users" not in block
+        assert "record_knowledge_audit" not in block
+
+
+def test_bell_labels_resource_access_messages(bell: str) -> None:
+    assert 'item?.category === "resource_access"' in bell
+    assert "资源申请" in bell
     assert "申请结果" in bell
+    # 历史消息还带旧分类，分支不能删
+    assert 'item?.category === "knowledge_access"' in bell
 
 
 def _open_notification_body(bell: str) -> str:
@@ -59,16 +91,17 @@ def _open_notification_body(bell: str) -> str:
 
 def test_reviewer_lands_on_the_review_dialog(bell: str) -> None:
     body = _open_notification_body(bell)
-    block = body.split('if (item?.category === "knowledge_access")', 1)[1].split(
-        'if (item?.category === "knowledge_access_result")', 1
+    block = body.split('if (item?.category === "resource_access" ||', 1)[1].split(
+        'if (', 1
     )[0]
     assert "/dashboard/users" in block
     assert 'review: "1"' in block
+    assert "request: String(meta.request_id" in block
 
 
 def test_applicant_lands_on_my_requests(bell: str) -> None:
     body = _open_notification_body(bell)
-    block = body.split('if (item?.category === "knowledge_access_result")', 1)[1].split(
+    block = body.split('item?.category === "resource_access_result"', 1)[1].split(
         "// 技能分享", 1
     )[0]
     assert "/dashboard/personal" in block

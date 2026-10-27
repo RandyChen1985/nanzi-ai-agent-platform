@@ -2,6 +2,10 @@ import type { WorkbenchPersonalResource } from "@/types/workbench"
 
 /** 与 app/services/workbench_home_service.py PERSONAL_RESOURCE_DEFS 对齐 */
 export const PERSONAL_RESOURCE_DEFS = [
+  // 前两项是资源入口：打开工作台最想先知道「我有什么能用」，
+  // 所以排在记忆/Token 这些过程性数据之前。点击跳到工作台的资源广场 tab。
+  { key: "knowledge", label: "我的知识库", unit: "个", tab: "square" },
+  { key: "datasets", label: "我的数据集", unit: "个", tab: "square" },
   { key: "memory", label: "我的记忆", unit: "条", tab: "memory" },
   { key: "tokens", label: "我的 Token", unit: "本月", tab: "tokens" },
   { key: "data", label: "我的数据门户", unit: "份报表", tab: "data" },
@@ -13,13 +17,18 @@ export const PERSONAL_RESOURCE_DEFS = [
 
 export type PersonalResourceTab = Exclude<(typeof PERSONAL_RESOURCE_DEFS)[number]["tab"], "inbox">
 
-/** 「我的资源」弹层 Tab：不含站内消息（点击改为打开铃铛面板） */
+/** 「我的资源」弹层 Tab：不含站内消息（点击改为打开铃铛面板），
+ *  也不含广场两项——弹层是嵌入式对话里的浮层，跳不进工作台的资源广场 tab */
 export const PERSONAL_RESOURCE_MODAL_TABS = PERSONAL_RESOURCE_DEFS.filter(
-  (spec) => spec.key !== "inbox",
+  (spec) => spec.key !== "inbox" && spec.tab !== "square",
 )
 
 /** Embed 欢迎页资源条不展示：记忆有侧栏入口，数据门户有能力卡入口 */
 export const EMBED_WELCOME_HIDDEN_RESOURCE_KEYS = new Set(["memory", "data"])
+
+/** Embed 欢迎页另不展示资源广场两项：嵌入式对话窗口里没有工作台 tab 可跳，
+ *  点进去只会落到一个空壳页面 */
+export const EMBED_WELCOME_HIDDEN_SQUARE_KEYS = new Set(["knowledge", "datasets"])
 
 /** 工作台资源条不展示：顶栏铃铛已能看站内消息 */
 export const WORKBENCH_HIDDEN_RESOURCE_KEYS = new Set(["inbox"])
@@ -38,7 +47,11 @@ export function openPortalInboxPanel(): void {
 export function filterEmbedWelcomePersonalResources(
   items: WorkbenchPersonalResource[],
 ): WorkbenchPersonalResource[] {
-  return items.filter((item) => !EMBED_WELCOME_HIDDEN_RESOURCE_KEYS.has(item.key))
+  return items.filter(
+    (item) =>
+      !EMBED_WELCOME_HIDDEN_RESOURCE_KEYS.has(item.key) &&
+      !EMBED_WELCOME_HIDDEN_SQUARE_KEYS.has(item.key),
+  )
 }
 
 export function filterWorkbenchPersonalResources(

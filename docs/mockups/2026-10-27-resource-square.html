@@ -1,0 +1,1377 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>资源广场 · 交互原型</title>
+<style>
+  :root{
+    --bg:#f5f7fa;
+    --panel:#ffffff;
+    --panel-2:#fbfcfe;
+    --ink:#111827;
+    --ink-2:#374151;
+    --ink-3:#6b7280;
+    --ink-4:#9ca3af;
+    --line:#e5e7eb;
+    --line-soft:#f1f3f6;
+    --primary:#1677ff;
+    --primary-soft:rgba(22,119,255,.08);
+    --green:#059669; --green-soft:#ecfdf5; --green-line:#a7f3d0;
+    --amber:#b45309; --amber-soft:#fffbeb; --amber-line:#fde68a;
+    --red:#dc2626; --red-soft:#fef2f2; --red-line:#fecaca;
+    --indigo:#4f46e5; --indigo-soft:#eef2ff; --indigo-line:#c7d2fe;
+    --slate-soft:#f1f5f9;
+    --shadow:0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-lg:0 12px 32px -8px rgba(16,24,40,.18), 0 4px 12px -4px rgba(16,24,40,.08);
+    --radius:14px;
+  }
+  html[data-theme="dark"]{
+    --bg:#0b1120;
+    --panel:#111a2b;
+    --panel-2:#0f172a;
+    --ink:#f9fafb;
+    --ink-2:#e5e7eb;
+    --ink-3:#9ca3af;
+    --ink-4:#6b7280;
+    --line:#1f2a3d;
+    --line-soft:#182234;
+    --primary:#4096ff;
+    --primary-soft:rgba(64,150,255,.14);
+    --green:#34d399; --green-soft:rgba(16,185,129,.12); --green-line:rgba(52,211,153,.28);
+    --amber:#fbbf24; --amber-soft:rgba(245,158,11,.12); --amber-line:rgba(251,191,36,.26);
+    --red:#f87171; --red-soft:rgba(239,68,68,.12); --red-line:rgba(248,113,113,.26);
+    --indigo:#a5b4fc; --indigo-soft:rgba(99,102,241,.14); --indigo-line:rgba(165,180,252,.26);
+    --slate-soft:#16213a;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+    --shadow-lg:0 16px 40px -8px rgba(0,0,0,.6);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased;
+    font-size:14px; line-height:1.5;
+  }
+  button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+  input{font:inherit;color:inherit}
+  svg{display:block}
+  .muted{color:var(--ink-3);font-weight:400}
+
+  /* ============ 原型导航（不属于产品界面） ============ */
+  .proto{
+    position:sticky; top:0; z-index:60;
+    background:#0f172a; color:#e2e8f0;
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:10px 18px; font-size:12px;
+  }
+  .proto-title{font-weight:700;letter-spacing:.2px;white-space:nowrap}
+  .proto-title span{color:#64748b;font-weight:500;margin-left:6px}
+  .proto-seg{display:flex;gap:2px;background:#1e293b;padding:3px;border-radius:9px;flex-wrap:wrap}
+  .proto-seg button{
+    padding:6px 12px;border-radius:7px;font-size:12px;font-weight:600;color:#94a3b8;
+    transition:.15s; white-space:nowrap;
+  }
+  .proto-seg button:hover{color:#e2e8f0}
+  .proto-seg button.on{background:#334155;color:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+  .proto-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .proto-hint{color:#64748b;font-size:11px}
+  .proto-right button{
+    width:30px;height:30px;border-radius:8px;background:#1e293b;color:#cbd5e1;
+    display:grid;place-items:center;font-size:14px;
+  }
+  .proto-right button:hover{background:#334155}
+
+  /* ============ 模拟应用外壳 ============ */
+  .app{max-width:1240px;margin:0 auto;padding:22px 22px 64px}
+  .crumbs{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-3);margin-bottom:14px}
+  .crumbs .home{color:var(--ink-4)}
+  .crumbs b{color:var(--ink-2);font-weight:600}
+  .page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
+  .page-head h1{font-size:22px;font-weight:700;letter-spacing:-.2px}
+  .page-head p{font-size:12.5px;color:var(--ink-3);margin-top:3px}
+  .icon-btn{
+    display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink-3);
+    padding:7px 11px;border-radius:9px;transition:.15s;
+  }
+  .icon-btn:hover{background:var(--primary-soft);color:var(--primary)}
+
+  /* Tab 栏：与个人中心同款 */
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:18px}
+  .tabs button{
+    position:relative;padding:10px 4px 12px;margin-right:26px;font-size:14px;font-weight:600;
+    color:var(--ink-3);transition:.15s;
+  }
+  .tabs button:hover{color:var(--ink)}
+  .tabs button.on{color:var(--primary)}
+  .tabs button.on::after{
+    content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;border-radius:2px;background:var(--primary);
+  }
+  .tabs .dot{
+    display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 5px;margin-left:6px;
+    font-size:10px;font-weight:700;border-radius:999px;background:var(--amber-soft);color:var(--amber);
+    vertical-align:1px;
+  }
+
+  /* ============ 资源广场 ============ */
+  .square-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+  .square-head h2{font-size:17px;font-weight:700}
+  .square-head p{font-size:12.5px;color:var(--ink-3);margin-top:2px}
+  .stat-strip{display:flex;gap:8px;flex-wrap:wrap}
+  .stat{
+    display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;
+    padding:6px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel);
+  }
+  .stat i{width:6px;height:6px;border-radius:999px;display:block}
+  .stat.apply i{background:var(--primary)}
+  .stat.pending i{background:var(--amber)}
+  .stat.has i{background:var(--green)}
+  .stat b{font-weight:700}
+  .stat.apply b{color:var(--primary)}
+  .stat.pending b{color:var(--amber)}
+  .stat.has b{color:var(--green)}
+
+  .filters{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    box-shadow:var(--shadow); margin-bottom:16px;
+  }
+  .search{position:relative;flex:1 1 260px;min-width:210px}
+  .search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--ink-4)}
+  .search input{
+    width:100%;padding:9px 11px 9px 34px;border:1px solid var(--line);border-radius:9px;
+    background:var(--panel-2);font-size:13px;outline:none;transition:.15s;
+  }
+  .search input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);background:var(--panel)}
+  .seg{display:inline-flex;background:var(--line-soft);border-radius:9px;padding:3px;gap:2px}
+  .seg button{padding:6px 11px;border-radius:7px;font-size:12px;font-weight:600;color:var(--ink-3);transition:.15s;white-space:nowrap}
+  .seg button:hover{color:var(--ink-2)}
+  .seg button.on{background:var(--panel);color:var(--primary);box-shadow:0 1px 3px rgba(16,24,40,.12)}
+  .select{
+    padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);
+    font-size:12.5px;color:var(--ink-2);outline:none;
+  }
+
+  .section{margin-bottom:26px}
+  .section-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .section-head h3{font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .section-head .count{
+    font-size:11px;font-weight:700;color:var(--ink-3);background:var(--line-soft);
+    padding:1px 7px;border-radius:999px;
+  }
+  .section-head .note{font-size:11.5px;color:var(--ink-4);margin-left:auto}
+  .section-icon{width:26px;height:26px;border-radius:8px;display:grid;place-items:center}
+  .section-icon.kb{background:var(--primary-soft);color:var(--primary)}
+  .section-icon.ds{background:var(--indigo-soft);color:var(--indigo)}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
+  .card{
+    display:flex;flex-direction:column;gap:0;
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px 14px 12px;box-shadow:var(--shadow);
+    transition:border-color .15s, box-shadow .15s, transform .15s;
+  }
+  .card:hover{border-color:var(--primary);box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+  .card.granted{border-color:var(--green-line);background:linear-gradient(0deg,var(--green-soft),var(--green-soft)) , var(--panel);background-blend-mode:normal}
+  .card-top{display:flex;gap:10px;align-items:flex-start}
+  .type-icon{
+    width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex-shrink:0;
+  }
+  .type-icon.kb{background:var(--primary-soft);color:var(--primary)}
+  .type-icon.ds{background:var(--indigo-soft);color:var(--indigo)}
+  .card-title{min-width:0;flex:1}
+  .card-title h4{
+    font-size:13.5px;font-weight:700;line-height:1.35;
+    display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  }
+  .card-title h4 a{color:inherit;text-decoration:none;border-bottom:1px dashed transparent}
+  .card-title h4 a:hover{color:var(--primary);border-bottom-color:var(--primary)}
+  .card-title .sub{font-size:11px;color:var(--ink-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+  .badge{
+    font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;white-space:nowrap;
+    border:1px solid transparent;
+  }
+  .badge.public{background:var(--primary-soft);color:var(--primary);border-color:rgba(22,119,255,.18)}
+  .badge.team{background:var(--indigo-soft);color:var(--indigo);border-color:var(--indigo-line)}
+  .badge.src{background:var(--slate-soft);color:var(--ink-3);border-color:var(--line)}
+  .badge.tag{background:var(--line-soft);color:var(--ink-3);border-color:transparent;font-weight:600}
+  .badge.q-good{background:var(--green-soft);color:var(--green);border-color:var(--green-line)}
+  .badge.q-mid{background:var(--amber-soft);color:var(--amber);border-color:var(--amber-line)}
+  .badge.q-low{background:var(--red-soft);color:var(--red);border-color:var(--red-line)}
+  .badge.readonly{background:var(--indigo-soft);color:var(--indigo);border-color:var(--indigo-line)}
+
+  .desc{
+    font-size:12px;color:var(--ink-3);line-height:1.55;margin-top:9px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:37px;
+  }
+  .metrics{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    margin-top:9px;padding-top:9px;border-top:1px dashed var(--line-soft);
+    font-size:11px;color:var(--ink-3);
+  }
+  .metrics span{display:inline-flex;align-items:center;gap:4px}
+  .metrics svg{color:var(--ink-4)}
+  .card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}
+  .owner{font-size:11px;color:var(--ink-4);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:5px;
+    padding:7px 12px;border-radius:8px;font-size:12px;font-weight:600;transition:.15s;white-space:nowrap;
+  }
+  .btn-primary{background:var(--primary);color:#fff;box-shadow:0 1px 2px rgba(22,119,255,.3)}
+  .btn-primary:hover{filter:brightness(1.06)}
+  .btn-ghost{border:1px solid var(--line);color:var(--ink-2);background:var(--panel)}
+  .btn-ghost:hover{border-color:var(--primary);color:var(--primary)}
+  .btn-sm{padding:5px 9px;font-size:11px;border-radius:7px}
+
+  .state{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;padding:6px 9px;border-radius:8px}
+  .state.has{color:var(--green);background:var(--green-soft)}
+  .state.pending{color:var(--amber);background:var(--amber-soft)}
+  .state.rejected{color:var(--red);background:var(--red-soft)}
+  .state-actions{display:flex;align-items:center;gap:6px}
+
+  .empty{
+    border:1px dashed var(--line);border-radius:12px;padding:26px;text-align:center;
+    color:var(--ink-4);font-size:12.5px;background:var(--panel-2);
+  }
+  .pager{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;color:var(--ink-3);font-size:12px}
+  .pager button{
+    padding:5px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font-weight:600;font-size:11.5px;
+  }
+  .pager button:hover{border-color:var(--primary);color:var(--primary)}
+  .pager button:disabled{opacity:.4;cursor:not-allowed}
+  .pager .now{color:var(--ink-2);font-weight:700}
+
+  /* ============ 审核弹窗 ============ */
+  .mask{
+    position:fixed;inset:0;z-index:80;background:rgba(15,23,42,.5);backdrop-filter:blur(2px);
+    display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;
+  }
+  .mask[hidden]{display:none}
+  .modal{
+    width:760px;max-width:100%;background:var(--panel);border-radius:16px;box-shadow:0 24px 60px -12px rgba(0,0,0,.4);
+    overflow:hidden;border:1px solid var(--line);
+  }
+  .modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 20px 0}
+  .modal-head h3{font-size:16px;font-weight:700}
+  .modal-head p{font-size:12px;color:var(--ink-3);margin-top:4px;line-height:1.6;max-width:600px}
+  .modal-close{color:var(--ink-4);font-size:12px;font-weight:600;padding:4px 6px;border-radius:6px}
+  .modal-close:hover{background:var(--line-soft);color:var(--ink-2)}
+  .modal-body{padding:14px 20px 18px}
+  .review-tabs{display:flex;gap:2px;background:var(--line-soft);border-radius:9px;padding:3px;margin-bottom:12px}
+  .review-tabs button{flex:1;padding:7px;border-radius:7px;font-size:12px;font-weight:700;color:var(--ink-3)}
+  .review-tabs button.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 3px rgba(16,24,40,.12)}
+  .review-tabs .n{color:var(--red);margin-left:4px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .chips button{
+    font-size:11px;font-weight:600;padding:4px 9px;border-radius:999px;border:1px solid var(--line);
+    color:var(--ink-3);background:var(--panel);
+  }
+  .chips button.on{border-color:var(--primary);color:var(--primary);background:var(--primary-soft)}
+  .review-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow:auto;padding-right:2px}
+  .review-item{border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:var(--panel-2)}
+  .ri-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .ri-head strong{font-size:13px;font-weight:700}
+  .ri-time{margin-left:auto;font-size:11px;color:var(--ink-4)}
+  .ri-meta{font-size:11.5px;color:var(--ink-3);margin-top:4px}
+  .ri-reason{
+    margin-top:6px;padding:6px 8px;border-radius:8px;background:var(--line-soft);
+    font-size:11.5px;color:var(--ink-2);line-height:1.5;
+  }
+  .ri-actions{display:flex;gap:7px;margin-top:8px}
+  .ri-actions input{
+    flex:1;min-width:0;padding:6px 9px;border:1px solid var(--line);border-radius:7px;
+    background:var(--panel);font-size:11.5px;outline:none;
+  }
+  .ri-actions input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+  .btn-pass{background:var(--green);color:#fff}
+  .btn-reject{border:1px solid var(--red-line);color:var(--red);background:var(--panel)}
+  .modal-foot{
+    display:flex;align-items:center;gap:12px;padding:12px 20px;border-top:1px solid var(--line-soft);
+    background:var(--panel-2);font-size:11.5px;color:var(--ink-4);
+  }
+  .modal-foot .link{color:var(--primary);font-weight:600}
+
+  /* ============ 数据集只读概览 ============ */
+  .ro-head{
+    display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:var(--shadow);
+  }
+  .ro-title{display:flex;gap:12px;align-items:flex-start}
+  .ro-title h2{font-size:19px;font-weight:700;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ro-title .sub{font-size:12.5px;color:var(--ink-3);margin-top:3px}
+  .ro-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .notice{
+    display:flex;gap:9px;align-items:flex-start;margin:12px 0;padding:10px 12px;border-radius:11px;
+    background:var(--primary-soft);border:1px solid rgba(22,119,255,.16);color:var(--ink-2);font-size:12px;line-height:1.6;
+  }
+  .notice svg{color:var(--primary);flex-shrink:0;margin-top:1px}
+  .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
+  .kpi{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 13px;box-shadow:var(--shadow);
+  }
+  .kpi .k{font-size:11px;color:var(--ink-3);display:flex;align-items:center;gap:5px}
+  .kpi .v{font-size:21px;font-weight:700;margin-top:3px;letter-spacing:-.4px}
+  .kpi .v small{font-size:11px;font-weight:600;color:var(--ink-4);margin-left:3px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .panel-head{display:flex;align-items:center;gap:14px;padding:0 14px;border-bottom:1px solid var(--line)}
+  .panel-head button{
+    padding:12px 2px;margin-right:14px;font-size:12.5px;font-weight:700;color:var(--ink-3);position:relative;
+  }
+  .panel-head button.on{color:var(--primary)}
+  .panel-head button.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--primary);border-radius:2px}
+  table{width:100%;border-collapse:collapse}
+  th{
+    text-align:left;font-size:11px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.4px;
+    padding:9px 14px;background:var(--panel-2);border-bottom:1px solid var(--line);
+  }
+  td{padding:10px 14px;font-size:12.5px;border-bottom:1px solid var(--line-soft);color:var(--ink-2)}
+  tr:last-child td{border-bottom:0}
+  td code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;background:var(--line-soft);padding:1px 5px;border-radius:5px}
+  .lock{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--ink-4)}
+
+  /* ============ 我的申请 ============ */
+  .req-list{display:flex;flex-direction:column;gap:10px}
+  .req{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);
+  }
+  .req-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .req-head strong{font-size:13px;font-weight:700}
+  .req-status{margin-left:auto;font-size:11px;font-weight:700}
+  .req-status.approved{color:var(--green)}
+  .req-status.pending{color:var(--amber)}
+  .req-status.rejected{color:var(--red)}
+  .req-meta{font-size:11.5px;color:var(--ink-3);margin-top:4px}
+  .req-comment{margin-top:6px;font-size:11.5px;line-height:1.55}
+  .req-comment.rej{color:var(--red)}
+  .req-foot{display:flex;align-items:center;justify-content:space-between;margin-top:7px;font-size:11px;color:var(--ink-4)}
+  .req-foot button{font-size:11px;color:var(--ink-4);font-weight:600}
+  .req-foot button:hover{color:var(--red)}
+
+  /* ============ 工作台（对照视图） ============ */
+  .wb-res{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:14px}
+  .wb-res .r[data-jump]{cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
+  .wb-res .r[data-jump]:hover{border-color:var(--primary);box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+  .wb-res .r{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 11px;box-shadow:var(--shadow);
+  }
+  .wb-res .r .k{font-size:10.5px;color:var(--ink-3);display:flex;align-items:center;gap:5px}
+  .wb-res .r .v{font-size:17px;font-weight:700;margin-top:3px}
+  .wb-res .r .v small{font-size:10px;color:var(--ink-4);font-weight:600;margin-left:2px}
+  .wb-banner{
+    display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;
+    background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);margin-bottom:12px;
+    font-size:12.5px;color:var(--ink-2);
+  }
+  .wb-banner .pill{font-size:11px;font-weight:700;color:var(--amber);background:var(--amber-soft);padding:3px 8px;border-radius:999px}
+  .wb-cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .wb-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .wb-card h5{padding:12px 14px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line-soft);display:flex;justify-content:space-between}
+  .wb-card h5 span{font-size:11px;color:var(--primary);font-weight:600}
+  .wb-row{padding:10px 14px;border-bottom:1px solid var(--line-soft);font-size:12px}
+  .wb-row:last-child{border-bottom:0}
+  .wb-row .t{font-weight:600;color:var(--ink-2)}
+  .wb-row .m{font-size:11px;color:var(--ink-4);margin-top:2px}
+
+  /* ============ 申请理由弹窗内容 ============ */
+  .apply-target{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:11px;background:var(--panel-2);border:1px solid var(--line)}
+  .apply-target .n{font-size:13px;font-weight:700}
+  .apply-target .d{font-size:11.5px;color:var(--ink-3);margin-top:2px}
+  .field{margin-top:12px}
+  .field label{font-size:11.5px;font-weight:700;color:var(--ink-2);display:block;margin-bottom:5px}
+  .field textarea{
+    width:100%;min-height:82px;resize:vertical;padding:9px 10px;border:1px solid var(--line);border-radius:9px;
+    background:var(--panel-2);font:inherit;font-size:12.5px;outline:none;line-height:1.55;
+  }
+  .field textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);background:var(--panel)}
+  .field .tip{font-size:11px;color:var(--ink-4);margin-top:5px;line-height:1.55}
+  .quick{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+  .quick button{font-size:10.5px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink-3);background:var(--panel)}
+  .quick button:hover{border-color:var(--primary);color:var(--primary)}
+
+  @media (max-width:900px){
+    .wb-res{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .wb-cols{grid-template-columns:1fr}
+    .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  }
+  @media (max-width:640px){
+    .app{padding:16px 14px 48px}
+    .wb-res{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .grid{grid-template-columns:1fr}
+    .proto{position:static}
+    .tabs button{margin-right:18px}
+    .section-head .note{display:none}
+  }
+</style>
+</head>
+<body>
+
+<!-- ================= 原型导航 ================= -->
+<div class="proto">
+  <div class="proto-title">资源广场 · 交互原型 <span>2026-10-27</span></div>
+  <div class="proto-seg" id="protoSeg">
+    <button data-view="workbench">工作台（对照）</button>
+    <button data-view="square" class="on">资源广场</button>
+    <button data-view="review">审核（管理员）</button>
+    <button data-view="dataset">数据集只读</button>
+    <button data-view="kb">知识库只读</button>
+    <button data-view="mine">我的申请</button>
+  </div>
+  <div class="proto-right">
+    <span class="proto-hint">点击卡片上的「申请访问」看弹窗</span>
+    <button id="themeBtn" title="切换深浅色">◐</button>
+  </div>
+</div>
+
+<div class="app">
+  <div class="crumbs">
+    <svg class="home" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5"/></svg>
+    <span>›</span><b id="crumb">我的工作台</b>
+  </div>
+
+  <div class="page-head">
+    <div>
+      <h1 id="shellTitle">我的工作台</h1>
+      <p id="shellSub">先处理今天值得关注的事情，再继续最近的工作。</p>
+    </div>
+    <button class="icon-btn">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.6m14.8 2A8 8 0 0 0 4.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 0 1 4.6 13m14.8 2H15"/></svg>
+      刷新
+    </button>
+  </div>
+
+  <nav class="tabs" id="shellTabs">
+    <button data-tab="workbench">工作台</button>
+    <button data-tab="square" class="on">资源广场</button>
+  </nav>
+
+  <!-- ================= 视图：工作台（对照） ================= -->
+  <section id="view-workbench" hidden>
+    <div class="wb-banner">
+      <span class="pill">待处理 2</span>
+      <span>有 2 项任务需要你确认，另外 1 个知识库申请已通过。</span>
+    </div>
+    <div class="wb-res">
+      <div class="r" data-jump="kb" onclick="jumpSquare('kb')"><div class="k">📚 我的知识库</div><div class="v">6 <small>个</small></div></div>
+      <div class="r" data-jump="ds" onclick="jumpSquare('ds')"><div class="k">▦ 我的数据集</div><div class="v">4 <small>个</small></div></div>
+      <div class="r"><div class="k">🧠 我的记忆</div><div class="v">18 <small>条</small></div></div>
+      <div class="r"><div class="k">⚡ 我的 Token</div><div class="v">3.2k <small>本月</small></div></div>
+      <div class="r"><div class="k">▤ 我的数据门户</div><div class="v">7 <small>份报表</small></div></div>
+      <div class="r"><div class="k">🛠 我的技能</div><div class="v">4 <small>个</small></div></div>
+      <div class="r"><div class="k">🔌 我的 MCP</div><div class="v">2 <small>个服务</small></div></div>
+      <div class="r"><div class="k">🗂 我的任务</div><div class="v">5 <small>个</small></div></div>
+      <div class="r"><div class="k">🔔 我的站内消息</div><div class="v">3 <small>条未读</small></div></div>
+    </div>
+    <div class="wb-cols">
+      <div class="wb-card">
+        <h5>可以继续 <span>查看全部</span></h5>
+        <div class="wb-row"><div class="t">Q3 销售复盘分析</div><div class="m">3 小时前 · 智能助手</div></div>
+        <div class="wb-row"><div class="t">报销制度速查</div><div class="m">昨天 · 知识库问答</div></div>
+        <div class="wb-row"><div class="t">库存周转异常排查</div><div class="m">2 天前 · ChatBI</div></div>
+      </div>
+      <div class="wb-card">
+        <h5>最近产出 <span>查看全部</span></h5>
+        <div class="wb-row"><div class="t">华东区门店周报</div><div class="m">今天 09:10</div></div>
+        <div class="wb-row"><div class="t">客户流失预警清单</div><div class="m">昨天 18:32</div></div>
+        <div class="wb-row"><div class="t">供应商对账差异表</div><div class="m">10-25</div></div>
+      </div>
+      <div class="wb-card">
+        <h5>最近任务 <span>查看全部</span></h5>
+        <div class="wb-row"><div class="t">每日经营日报推送</div><div class="m">每天 08:30 · 成功</div></div>
+        <div class="wb-row"><div class="t">知识库增量同步</div><div class="m">每 6 小时 · 成功</div></div>
+        <div class="wb-row"><div class="t">元数据巡检</div><div class="m">每周一 · 成功</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 视图：资源广场 ================= -->
+  <section id="view-square">
+    <div class="square-head">
+      <div>
+        <h2>资源广场</h2>
+        <p>公共级与部门级知识库、平台数据集，找到需要的资源直接申请。</p>
+      </div>
+      <div class="stat-strip">
+        <span class="stat apply"><i></i>可申请 <b id="statApply">5</b></span>
+        <span class="stat pending"><i></i>审批中 <b id="statPending">1</b></span>
+        <span class="stat has"><i></i>已有权限 <b id="statHas">3</b></span>
+      </div>
+    </div>
+
+    <div class="filters">
+      <div class="search">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m20 20-3.2-3.2"/></svg>
+        <input id="q" type="search" placeholder="搜索名称 / 描述 / 归属部门 / 标签" autocomplete="off" />
+      </div>
+      <div class="seg" id="kindSeg">
+        <button data-kind="all" class="on">全部</button>
+        <button data-kind="kb">知识库</button>
+        <button data-kind="ds">数据集</button>
+      </div>
+      <select class="select" id="visSel">
+        <option value="all">全部范围</option>
+        <option value="public">公共级</option>
+        <option value="team">部门级</option>
+      </select>
+      <div class="seg" id="stateSeg">
+        <button data-state="all" class="on">全部状态</button>
+        <button data-state="apply">可申请</button>
+        <button data-state="pending">审批中</button>
+        <button data-state="has">已授权</button>
+      </div>
+    </div>
+
+    <!-- 知识库段 -->
+    <div class="section" id="secKb">
+      <div class="section-head">
+        <div class="section-icon kb">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.3v13m0-13C10.8 5.5 9.2 5 7.5 5S4.2 5.5 3 6.3v13C4.2 18.5 5.8 18 7.5 18s3.3.5 4.5 1.3m0-13C13.2 5.5 14.8 5 16.5 5s3.3.5 4.5 1.3v13c-1.2-.8-2.8-1.3-4.5-1.3s-3.3.5-4.5 1.3"/></svg>
+        </div>
+        <h3>知识库 <span class="count" id="kbCount">6</span></h3>
+        <span class="note">公共级与部门级；个人私有库不出现，也不接受申请</span>
+      </div>
+      <div class="grid" id="kbGrid">
+        <!-- 已授权 -->
+        <article class="card granted" data-kind="kb" data-state="has" data-vis="public" data-search="员工手册 人事制度 入职 考勤 假期 公共级">
+          <div class="card-top">
+            <span class="type-icon kb"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.3v13m0-13C10.8 5.5 9.2 5 7.5 5S4.2 5.5 3 6.3v13C4.2 18.5 5.8 18 7.5 18s3.3.5 4.5 1.3m0-13C13.2 5.5 14.8 5 16.5 5s3.3.5 4.5 1.3v13c-1.2-.8-2.8-1.3-4.5-1.3s-3.3.5-4.5 1.3"/></svg></span>
+            <div class="card-title">
+              <h4><a href="#" data-open-kb="1">员工手册与人事制度</a></h4>
+              <div class="badges">
+                <span class="badge public">公共级</span>
+                <span class="badge tag">入职</span><span class="badge tag">考勤</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">覆盖入职离职、考勤假期、绩效与晋升、员工关怀等制度条款，HR 每年 Q1 统一更新。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 0 0 2-2V9l-6-6H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z"/></svg>128 个文档</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h10"/></svg>1,842 切片</span>
+            <span>更新于 3 天前</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">归属 人力资源部 · 王敏</span>
+            <span class="state has"><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7"/></svg>已有权限</span>
+          </div>
+        </article>
+
+        <!-- 可申请 -->
+        <article class="card" data-kind="kb" data-state="apply" data-vis="team" data-search="财务 报销 预算 制度 发票 差旅 财务部 部门级">
+          <div class="card-top">
+            <span class="type-icon kb"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.3v13m0-13C10.8 5.5 9.2 5 7.5 5S4.2 5.5 3 6.3v13C4.2 18.5 5.8 18 7.5 18s3.3.5 4.5 1.3m0-13C13.2 5.5 14.8 5 16.5 5s3.3.5 4.5 1.3v13c-1.2-.8-2.8-1.3-4.5-1.3s-3.3.5-4.5 1.3"/></svg></span>
+            <div class="card-title">
+              <h4>财务报销与预算管理制度</h4>
+              <div class="badges">
+                <span class="badge team">部门级 · 财务部</span>
+                <span class="badge tag">报销</span><span class="badge tag">预算</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">差旅、招待、采购报销口径，发票要求与审批链路，含 2024–2026 年预算调整通知。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 0 0 2-2V9l-6-6H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z"/></svg>86 个文档</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h10"/></svg>964 切片</span>
+            <span>更新于 昨天</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">归属 财务部 · 李倩</span>
+            <button class="btn btn-primary btn-sm btn-apply" data-name="财务报销与预算管理制度" data-type="知识库">申请访问</button>
+          </div>
+        </article>
+
+        <!-- 审批中 -->
+        <article class="card" data-kind="kb" data-state="pending" data-vis="team" data-search="产品 需求 文档 原型 PRD 产品部 部门级">
+          <div class="card-top">
+            <span class="type-icon kb"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.3v13m0-13C10.8 5.5 9.2 5 7.5 5S4.2 5.5 3 6.3v13C4.2 18.5 5.8 18 7.5 18s3.3.5 4.5 1.3m0-13C13.2 5.5 14.8 5 16.5 5s3.3.5 4.5 1.3v13c-1.2-.8-2.8-1.3-4.5-1.3s-3.3.5-4.5 1.3"/></svg></span>
+            <div class="card-title">
+              <h4>产品需求文档库</h4>
+              <div class="badges">
+                <span class="badge team">部门级 · 产品部</span>
+                <span class="badge tag">PRD</span><span class="badge tag">原型</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">各业务线 PRD、需求评审记录与原型说明，按季度归档；含历史版本对照。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 0 0 2-2V9l-6-6H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z"/></svg>214 个文档</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h10"/></svg>3,106 切片</span>
+            <span>更新于 今天</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">归属 产品部 · 周航</span>
+            <span class="state pending">审批中 · 09:12</span>
+          </div>
+        </article>
+
+        <!-- 已驳回 -->
+        <article class="card" data-kind="kb" data-state="rejected" data-vis="public" data-search="客服 话术 工单 售后 公共级">
+          <div class="card-top">
+            <span class="type-icon kb"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.3v13m0-13C10.8 5.5 9.2 5 7.5 5S4.2 5.5 3 6.3v13C4.2 18.5 5.8 18 7.5 18s3.3.5 4.5 1.3m0-13C13.2 5.5 14.8 5 16.5 5s3.3.5 4.5 1.3v13c-1.2-.8-2.8-1.3-4.5-1.3s-3.3.5-4.5 1.3"/></svg></span>
+            <div class="card-title">
+              <h4>客服话术与工单知识</h4>
+              <div class="badges">
+                <span class="badge public">公共级</span>
+                <span class="badge tag">客服</span><span class="badge tag">工单</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">一线客服标准话术、常见问题处理 SOP、升级工单判定规则，按产品线分册。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 0 0 2-2V9l-6-6H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z"/></svg>64 个文档</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h10"/></svg>712 切片</span>
+            <span>更新于 12 天前</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">归属 客户成功部 · 陈璐</span>
+            <span class="state-actions">
+              <span class="state rejected" title="驳回原因：该库已迁移至新工单系统，暂不单独授权，请改用「客服知识库 v2」">已驳回</span>
+              <button class="btn btn-ghost btn-sm btn-apply" data-name="客服话术与工单知识" data-type="知识库">重新申请</button>
+            </span>
+          </div>
+        </article>
+
+        <!-- 可申请 -->
+        <article class="card" data-kind="kb" data-state="apply" data-vis="team" data-search="研发 编码 规范 架构 代码 CR 研发中心 部门级">
+          <div class="card-top">
+            <span class="type-icon kb"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.3v13m0-13C10.8 5.5 9.2 5 7.5 5S4.2 5.5 3 6.3v13C4.2 18.5 5.8 18 7.5 18s3.3.5 4.5 1.3m0-13C13.2 5.5 14.8 5 16.5 5s3.3.5 4.5 1.3v13c-1.2-.8-2.8-1.3-4.5-1.3s-3.3.5-4.5 1.3"/></svg></span>
+            <div class="card-title">
+              <h4>研发编码规范与架构决策</h4>
+              <div class="badges">
+                <span class="badge team">部门级 · 研发中心</span>
+                <span class="badge tag">规范</span><span class="badge tag">ADR</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">前后端编码规范、Code Review 清单、架构决策记录（ADR）与技术选型结论。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 0 0 2-2V9l-6-6H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z"/></svg>97 个文档</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h10"/></svg>1,458 切片</span>
+            <span>更新于 5 天前</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">归属 研发中心 · 赵磊</span>
+            <button class="btn btn-primary btn-sm btn-apply" data-name="研发编码规范与架构决策" data-type="知识库">申请访问</button>
+          </div>
+        </article>
+
+        <!-- 已授权 -->
+        <article class="card granted" data-kind="kb" data-state="has" data-vis="team" data-search="合同 模板 法务 条款 法务部 部门级">
+          <div class="card-top">
+            <span class="type-icon kb"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.3v13m0-13C10.8 5.5 9.2 5 7.5 5S4.2 5.5 3 6.3v13C4.2 18.5 5.8 18 7.5 18s3.3.5 4.5 1.3m0-13C13.2 5.5 14.8 5 16.5 5s3.3.5 4.5 1.3v13c-1.2-.8-2.8-1.3-4.5-1.3s-3.3.5-4.5 1.3"/></svg></span>
+            <div class="card-title">
+              <h4><a href="#" data-open-kb="1">合同模板与法务条款</a></h4>
+              <div class="badges">
+                <span class="badge team">部门级 · 法务部</span>
+                <span class="badge tag">合同</span><span class="badge tag">合规</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">采购、销售、NDA、外包四类标准合同模板与常见风险条款说明，含审批要件清单。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 0 0 2-2V9l-6-6H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z"/></svg>42 个文档</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h10"/></svg>386 切片</span>
+            <span>更新于 8 天前</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">归属 法务部 · 孙倩</span>
+            <span class="state has"><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7"/></svg>已有权限</span>
+          </div>
+        </article>
+      </div>
+      <div class="empty" id="kbEmpty" hidden>没有匹配的知识库，试试换个关键词或清空筛选。</div>
+    </div>
+
+    <!-- 数据集段 -->
+    <div class="section" id="secDs">
+      <div class="section-head">
+        <div class="section-icon ds">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path stroke-linecap="round" d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+        </div>
+        <h3>数据集 <span class="count" id="dsCount">6</span></h3>
+        <span class="note">全部启用数据集；审批通过后可进入只读概览，在对话中直接查</span>
+      </div>
+      <div class="grid" id="dsGrid">
+        <!-- 已授权：可点进只读概览 -->
+        <article class="card granted" data-kind="ds" data-state="has" data-vis="all" data-search="sales_order 销售 订单 明细 MySQL 交易 电商">
+          <div class="card-top">
+            <span class="type-icon ds"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path stroke-linecap="round" d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+            <div class="card-title">
+              <h4><a href="#" data-open-dataset="1">sales_order <span class="muted" style="font-weight:400">销售订单明细</span></a></h4>
+              <div class="badges">
+                <span class="badge src">MySQL</span>
+                <span class="badge q-good">质量 92</span>
+                <span class="badge readonly">只读</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">全渠道销售订单事实表，含下单、支付、发货、退货状态与渠道、门店、商品维度。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>32 张表</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 19V5m0 14h16M8 15l3-4 3 2 4-6"/></svg>86 个指标</span>
+            <span>同步于 2 小时前</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">数据源 main-mysql · 日更</span>
+            <span class="state has"><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7"/></svg>已有权限</span>
+          </div>
+        </article>
+
+        <!-- 可申请 -->
+        <article class="card" data-kind="ds" data-state="apply" data-vis="all" data-search="finance_ledger 财务 总账 凭证 科目 ClickHouse 会计">
+          <div class="card-top">
+            <span class="type-icon ds"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path stroke-linecap="round" d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+            <div class="card-title">
+              <h4>finance_ledger <span class="muted" style="font-weight:400">财务总账</span></h4>
+              <div class="badges">
+                <span class="badge src">ClickHouse</span>
+                <span class="badge q-mid">质量 88</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">集团合并口径的凭证、科目余额与期间损益，含法人主体与成本中心维度。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>48 张表</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 19V5m0 14h16M8 15l3-4 3 2 4-6"/></svg>120 个指标</span>
+            <span>同步于 4 小时前</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">数据源 finance-ck · 日更</span>
+            <button class="btn btn-primary btn-sm btn-apply" data-name="finance_ledger（财务总账）" data-type="数据集">申请访问</button>
+          </div>
+        </article>
+
+        <!-- 可申请 -->
+        <article class="card" data-kind="ds" data-state="apply" data-vis="all" data-search="user_behavior 用户 行为 埋点 事件 ClickHouse 增长 漏斗">
+          <div class="card-top">
+            <span class="type-icon ds"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path stroke-linecap="round" d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+            <div class="card-title">
+              <h4>user_behavior <span class="muted" style="font-weight:400">用户行为埋点</span></h4>
+              <div class="badges">
+                <span class="badge src">ClickHouse</span>
+                <span class="badge q-low">质量 76</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">App / 小程序 / Web 三端埋点事件，含页面浏览、点击、下单转化与漏斗路径。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>18 张表</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 19V5m0 14h16M8 15l3-4 3 2 4-6"/></svg>42 个指标</span>
+            <span>同步于 30 分钟前</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">数据源 dw-ck · 小时级</span>
+            <button class="btn btn-primary btn-sm btn-apply" data-name="user_behavior（用户行为埋点）" data-type="数据集">申请访问</button>
+          </div>
+        </article>
+
+        <!-- 审批中 -->
+        <article class="card" data-kind="ds" data-state="pending" data-vis="all" data-search="inventory_snapshot 库存 快照 仓库 MySQL 供应链">
+          <div class="card-top">
+            <span class="type-icon ds"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path stroke-linecap="round" d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+            <div class="card-title">
+              <h4>inventory_snapshot <span class="muted" style="font-weight:400">库存快照</span></h4>
+              <div class="badges">
+                <span class="badge src">MySQL</span>
+                <span class="badge q-mid">质量 81</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">仓、店、在途三级库存日快照，含可用量、锁定、周转天数与缺货预警。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>12 张表</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 19V5m0 14h16M8 15l3-4 3 2 4-6"/></svg>20 个指标</span>
+            <span>同步于 6 小时前</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">数据源 scm-mysql · 日更</span>
+            <span class="state pending">审批中 · 昨天</span>
+          </div>
+        </article>
+
+        <!-- 可申请 -->
+        <article class="card" data-kind="ds" data-state="apply" data-vis="all" data-search="hr_employee 人事 花名册 组织 员工 MySQL 人力">
+          <div class="card-top">
+            <span class="type-icon ds"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path stroke-linecap="round" d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+            <div class="card-title">
+              <h4>hr_employee <span class="muted" style="font-weight:400">人事花名册</span></h4>
+              <div class="badges">
+                <span class="badge src">MySQL</span>
+                <span class="badge q-good">质量 90</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">在职员工基本信息、组织归属、职级与入离职记录，敏感字段已做行级权限。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>9 张表</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 19V5m0 14h16M8 15l3-4 3 2 4-6"/></svg>15 个指标</span>
+            <span>同步于 昨天</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">数据源 hr-mysql · 日更</span>
+            <button class="btn btn-primary btn-sm btn-apply" data-name="hr_employee（人事花名册）" data-type="数据集">申请访问</button>
+          </div>
+        </article>
+
+        <!-- 已授权 -->
+        <article class="card granted" data-kind="ds" data-state="has" data-vis="all" data-search="marketing_campaign 营销 活动 投放 MySQL 市场 渠道">
+          <div class="card-top">
+            <span class="type-icon ds"><svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path stroke-linecap="round" d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+            <div class="card-title">
+              <h4><a href="#" data-open-dataset="1">marketing_campaign <span class="muted" style="font-weight:400">营销活动</span></a></h4>
+              <div class="badges">
+                <span class="badge src">MySQL</span>
+                <span class="badge q-mid">质量 84</span>
+                <span class="badge readonly">只读</span>
+              </div>
+            </div>
+          </div>
+          <p class="desc">活动主数据、渠道投放与预算消耗，含活动 ROI 与转化归因所需维度。</p>
+          <div class="metrics">
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>14 张表</span>
+            <span><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 19V5m0 14h16M8 15l3-4 3 2 4-6"/></svg>28 个指标</span>
+            <span>同步于 3 小时前</span>
+          </div>
+          <div class="card-foot">
+            <span class="owner">数据源 mkt-mysql · 日更</span>
+            <span class="state has"><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7"/></svg>已有权限</span>
+          </div>
+        </article>
+      </div>
+      <div class="empty" id="dsEmpty" hidden>没有匹配的数据集。找不到需要的？<a href="#" style="color:var(--primary);font-weight:600">联系管理员</a>。</div>
+    </div>
+
+    <div class="pager">
+      <button disabled>上一页</button>
+      <span class="now">1</span>
+      <span>/ 3</span>
+      <button>下一页</button>
+      <span style="margin-left:8px;color:var(--ink-4)">共 12 项</span>
+    </div>
+  </section>
+
+  <!-- ================= 视图：审核（管理员） ================= -->
+  <section id="view-review" hidden>
+    <div class="square-head" style="margin-bottom:10px">
+      <div>
+        <h2>用户管理 · 待审核</h2>
+        <p>知识库与数据集的访问申请统一在这里审批，通过后授权自动生效。</p>
+      </div>
+      <button class="btn btn-ghost" onclick="openReview()">打开审批弹窗</button>
+    </div>
+    <div class="panel" style="padding:16px">
+      <div class="review-tabs" style="max-width:420px">
+        <button class="on">待审批<span class="n">5</span></button>
+        <button>已处理</button>
+      </div>
+      <div class="chips">
+        <button class="on">全部 5</button><button>知识库 3</button><button>数据集 2</button>
+      </div>
+      <div class="review-list" style="max-height:none">
+        <div class="review-item">
+          <div class="ri-head">
+            <span class="badge public">知识库</span>
+            <strong>财务报销与预算管理制度</strong>
+            <span class="badge team">部门级</span>
+            <span class="ri-time">2026-10-27 09:12</span>
+          </div>
+          <p class="ri-meta">申请人 陈晓 · 财务部 · 86 个文档 / 964 个切片 · 归属 财务部 · 李倩</p>
+          <p class="ri-reason">理由：季度对账需要查 2024 年的报销制度与预算调整通知。</p>
+          <div class="ri-actions">
+            <input placeholder="审批意见（驳回时建议填写）" />
+            <button class="btn btn-pass btn-sm">通过</button>
+            <button class="btn btn-reject btn-sm">驳回</button>
+          </div>
+        </div>
+        <div class="review-item">
+          <div class="ri-head">
+            <span class="badge src" style="background:var(--indigo-soft);color:var(--indigo);border-color:var(--indigo-line)">数据集</span>
+            <strong>finance_ledger（财务总账）</strong>
+            <span class="badge q-mid">质量 88</span>
+            <span class="ri-time">2026-10-27 08:40</span>
+          </div>
+          <p class="ri-meta">申请人 陈晓 · 财务部 · 48 张表 / 120 个指标 · 数据源 finance-ck</p>
+          <p class="ri-reason">理由：搭建月度经营分析看板，需要科目余额与期间损益。</p>
+          <div class="ri-actions">
+            <input placeholder="审批意见（驳回时建议填写）" />
+            <button class="btn btn-pass btn-sm">通过</button>
+            <button class="btn btn-reject btn-sm">驳回</button>
+          </div>
+        </div>
+        <div class="review-item">
+          <div class="ri-head">
+            <span class="badge public">知识库</span>
+            <strong>产品需求文档库</strong>
+            <span class="badge team">部门级</span>
+            <span class="ri-time">2026-10-26 17:05</span>
+          </div>
+          <p class="ri-meta">申请人 周航 · 产品部 · 214 个文档 / 3,106 个切片 · 归属 产品部 · 周航</p>
+          <p class="ri-reason">理由：接手会员中心改版，需要历史 PRD 与评审结论。</p>
+          <div class="ri-actions">
+            <input placeholder="审批意见（驳回时建议填写）" />
+            <button class="btn btn-pass btn-sm">通过</button>
+            <button class="btn btn-reject btn-sm">驳回</button>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;padding-top:12px;border-top:1px solid var(--line-soft);margin-top:12px;font-size:11.5px;color:var(--ink-4)">
+        <button style="color:var(--primary);font-weight:600">刷新</button>
+        <span>共 5 条待审批</span>
+        <span style="margin-left:auto">审批人：管理员</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 视图：数据集只读概览 ================= -->
+  <section id="view-dataset" hidden>
+    <div class="ro-head">
+      <div class="ro-title">
+        <span class="type-icon ds" style="width:40px;height:40px;border-radius:12px"><svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path stroke-linecap="round" d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+        <div>
+          <h2>sales_order <span class="badge readonly">只读</span></h2>
+          <p class="sub">销售订单明细 · 数据源 main-mysql · 质量分 92 · 每天 02:00 同步</p>
+          <div class="badges" style="margin-top:7px">
+            <span class="badge tag">交易</span><span class="badge tag">订单</span><span class="badge tag">核心资产</span>
+          </div>
+        </div>
+      </div>
+      <div class="ro-actions">
+        <button class="btn btn-ghost">复制数据集名</button>
+        <button class="btn btn-primary">在对话中查询</button>
+      </div>
+    </div>
+
+    <div class="notice">
+      <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 11v5m0-8h.01"/></svg>
+      <div>你拥有这个数据集的只读权限，可以浏览表结构、指标口径，并直接在对话中查询；编辑元数据、改行级权限请联系管理员。</div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="k">物理表</div><div class="v">32<small>张</small></div></div>
+      <div class="kpi"><div class="k">指标</div><div class="v">86<small>个</small></div></div>
+      <div class="kpi"><div class="k">表关系</div><div class="v">41<small>条</small></div></div>
+      <div class="kpi"><div class="k">质量分</div><div class="v" style="color:var(--green)">92<small>分</small></div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <button class="on">表结构</button>
+        <button>指标</button>
+        <button>表关系</button>
+        <span style="margin-left:auto;padding:10px 0;font-size:11px;color:var(--ink-4)">字段级敏感信息按行级权限脱敏</span>
+      </div>
+      <table>
+        <thead><tr><th>物理表</th><th>业务术语</th><th>字段</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><code>dwd_order_main</code></td><td>订单主表</td><td>28</td><td>一行一个订单，含渠道、门店、支付与履约状态</td></tr>
+          <tr><td><code>dwd_order_item</code></td><td>订单明细</td><td>21</td><td>商品行级明细，含数量、单价、优惠分摊</td></tr>
+          <tr><td><code>dim_channel</code></td><td>渠道维表</td><td>9</td><td>线上平台、线下门店与分销渠道定义</td></tr>
+          <tr><td><code>dim_product</code></td><td>商品维表</td><td>16</td><td>SKU、品类、品牌与上下市状态</td></tr>
+          <tr><td><code>dws_order_day</code></td><td>订单日汇总</td><td>18</td><td>按天 × 渠道 × 品类聚合，供报表直连</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+
+  <!-- ================= 视图：知识库只读概览 ================= -->
+  <section id="view-kb" hidden>
+    <div class="ro-head">
+      <div class="ro-title">
+        <span class="type-icon kb" style="width:40px;height:40px;border-radius:12px"><svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.3v13m0-13C10.8 5.5 9.2 5 7.5 5S4.2 5.5 3 6.3v13C4.2 18.5 5.8 18 7.5 18s3.3.5 4.5 1.3m0-13C13.2 5.5 14.8 5 16.5 5s3.3.5 4.5 1.3v13c-1.2-.8-2.8-1.3-4.5-1.3s-3.3.5-4.5 1.3"/></svg></span>
+        <div>
+          <h2>员工手册与人事制度 <span class="badge public">公共级</span> <span class="badge readonly">只读</span></h2>
+          <p class="sub">归属 人力资源部 · 王敏 · 128 个文档 · 1,842 个切片 · 更新于 3 天前</p>
+          <div class="badges" style="margin-top:7px">
+            <span class="badge tag">入职</span><span class="badge tag">考勤</span><span class="badge tag">假期</span><span class="badge tag">绩效</span>
+          </div>
+        </div>
+      </div>
+      <div class="ro-actions">
+        <button class="btn btn-ghost">复制库名</button>
+        <button class="btn btn-primary">在对话中检索</button>
+      </div>
+    </div>
+
+    <div class="notice">
+      <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 11v5m0-8h.01"/></svg>
+      <div>你拥有这个知识库的只读权限，可以浏览文档目录并在对话中检索；上传、删除文档或调整可见范围请联系管理员。出于审计要求，这里不提供原文下载。</div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="k">文档</div><div class="v">128<small>个</small></div></div>
+      <div class="kpi"><div class="k">切片</div><div class="v">1,842<small>条</small></div></div>
+      <div class="kpi"><div class="k">本月检索</div><div class="v">46<small>次</small></div></div>
+      <div class="kpi"><div class="k">最近更新</div><div class="v">3<small>天前</small></div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <button class="on">文档目录</button>
+        <button>标签</button>
+        <button>库信息</button>
+        <span style="margin-left:auto;padding:10px 0;font-size:11px;color:var(--ink-4)">仅展示目录与解析状态，不含正文</span>
+      </div>
+      <table>
+        <thead><tr><th>文档</th><th>类型</th><th>切片</th><th>解析状态</th><th>更新时间</th></tr></thead>
+        <tbody>
+          <tr><td>员工手册（2026 版）.pdf</td><td>PDF</td><td>486</td><td><span class="badge q-good">已解析</span></td><td>3 天前</td></tr>
+          <tr><td>考勤与请假制度.docx</td><td>Word</td><td>212</td><td><span class="badge q-good">已解析</span></td><td>3 天前</td></tr>
+          <tr><td>假期政策速查.md</td><td>Markdown</td><td>64</td><td><span class="badge q-good">已解析</span></td><td>1 周前</td></tr>
+          <tr><td>绩效管理办法.pdf</td><td>PDF</td><td>398</td><td><span class="badge q-good">已解析</span></td><td>2 周前</td></tr>
+          <tr><td>新员工入职指引.pptx</td><td>PPT</td><td>302</td><td><span class="badge q-mid">解析中</span></td><td>今天</td></tr>
+          <tr><td>员工关怀与福利清单.xlsx</td><td>Excel</td><td>380</td><td><span class="badge q-good">已解析</span></td><td>1 个月前</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= 视图：我的申请 ================= -->
+  <section id="view-mine" hidden>
+    <div class="square-head" style="margin-bottom:10px">
+      <div>
+        <h2>我的申请</h2>
+        <p>你提交的资源访问申请。审批通过后授权自动生效，无需再找管理员手工加。</p>
+      </div>
+      <button class="btn btn-ghost">刷新</button>
+    </div>
+    <div class="req-list">
+      <div class="req">
+        <div class="req-head">
+          <span class="badge public">知识库</span>
+          <strong>员工手册与人事制度</strong>
+          <span class="req-status approved">已通过</span>
+        </div>
+        <p class="req-meta">2026-10-26 14:20 · 审批人 admin</p>
+        <p class="req-comment" style="color:var(--ink-3)">审批意见：ok</p>
+      </div>
+      <div class="req">
+        <div class="req-head">
+          <span class="badge src" style="background:var(--indigo-soft);color:var(--indigo);border-color:var(--indigo-line)">数据集</span>
+          <strong>finance_ledger（财务总账）</strong>
+          <span class="req-status pending">审批中</span>
+        </div>
+        <p class="req-meta">2026-10-27 08:40</p>
+        <p class="req-comment" style="color:var(--ink-3)">理由：搭建月度经营分析看板，需要科目余额与期间损益。</p>
+        <div class="req-foot"><span>审批通过后你会在站内消息里收到通知</span><button>撤回申请</button></div>
+      </div>
+      <div class="req">
+        <div class="req-head">
+          <span class="badge public">知识库</span>
+          <strong>客服话术与工单知识</strong>
+          <span class="req-status rejected">已驳回</span>
+        </div>
+        <p class="req-meta">2026-10-25 11:02 · 审批人 admin</p>
+        <p class="req-comment rej">审批意见：该库已迁移至新工单系统，暂不单独授权，请改用「客服知识库 v2」。</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ================= 申请理由弹窗 ================= -->
+<div class="mask" id="applyMask" hidden>
+  <div class="modal" style="width:520px">
+    <div class="modal-head">
+      <div>
+        <h3>申请访问</h3>
+        <p>提交后由管理员审批，通过时自动给你加上访问授权。</p>
+      </div>
+      <button class="modal-close" onclick="closeApply()">关闭</button>
+    </div>
+    <div class="modal-body">
+      <div class="apply-target">
+        <span class="type-icon kb" id="applyIcon" style="width:30px;height:30px;border-radius:9px">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.3v13m0-13C10.8 5.5 9.2 5 7.5 5S4.2 5.5 3 6.3v13C4.2 18.5 5.8 18 7.5 18s3.3.5 4.5 1.3m0-13C13.2 5.5 14.8 5 16.5 5s3.3.5 4.5 1.3v13c-1.2-.8-2.8-1.3-4.5-1.3s-3.3.5-4.5 1.3"/></svg>
+        </span>
+        <div>
+          <div class="n" id="applyName">财务报销与预算管理制度</div>
+          <div class="d" id="applyMeta">知识库 · 部门级 · 86 个文档</div>
+        </div>
+      </div>
+      <div class="field">
+        <label>申请理由（可选，写清楚更容易通过）</label>
+        <textarea id="applyReason" placeholder="例如：季度对账需要查 2024 年的报销制度"></textarea>
+        <div class="quick">
+          <button onclick="fillReason('季度对账需要核对历史报销口径')">季度对账</button>
+          <button onclick="fillReason('搭建经营分析看板需要该数据')">搭建看板</button>
+          <button onclick="fillReason('新接手业务，需要补齐背景资料')">接手业务</button>
+        </div>
+        <div class="tip">提交后管理员会在「用户管理 → 待审核」里处理，你可以在个人中心「我的申请」查看进度。</div>
+      </div>
+    </div>
+    <div class="modal-foot" style="justify-content:flex-end;gap:8px">
+      <button class="btn btn-ghost" onclick="closeApply()">取消</button>
+      <button class="btn btn-primary" onclick="submitApply()">提交申请</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 审核弹窗 ================= -->
+<div class="mask" id="reviewMask" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <h3>资源访问审批</h3>
+        <p>知识库与数据集的申请都在这里处理。通过后直接给对方加上访问授权；驳回建议写清原因，对方在「个人中心 → 我的申请」里能看到。</p>
+      </div>
+      <button class="modal-close" onclick="closeReview()">关闭</button>
+    </div>
+    <div class="modal-body">
+      <div class="review-tabs">
+        <button class="on">待审批<span class="n">5</span></button>
+        <button>已处理</button>
+      </div>
+      <div class="chips" id="reviewChips">
+        <button class="on" data-rk="all">全部 5</button>
+        <button data-rk="kb">知识库 3</button>
+        <button data-rk="ds">数据集 2</button>
+      </div>
+      <div class="review-list" id="reviewList">
+        <div class="review-item" data-rk="kb">
+          <div class="ri-head">
+            <span class="badge public">知识库</span>
+            <strong>财务报销与预算管理制度</strong>
+            <span class="badge team">部门级</span>
+            <span class="ri-time">2026-10-27 09:12</span>
+          </div>
+          <p class="ri-meta">申请人 陈晓 · 财务部 · 86 个文档 / 964 个切片 · 归属 财务部 · 李倩</p>
+          <p class="ri-reason">理由：季度对账需要查 2024 年的报销制度与预算调整通知。</p>
+          <div class="ri-actions">
+            <input placeholder="审批意见（驳回时建议填写）" />
+            <button class="btn btn-pass btn-sm">通过</button>
+            <button class="btn btn-reject btn-sm">驳回</button>
+          </div>
+        </div>
+        <div class="review-item" data-rk="ds">
+          <div class="ri-head">
+            <span class="badge" style="background:var(--indigo-soft);color:var(--indigo);border-color:var(--indigo-line)">数据集</span>
+            <strong>finance_ledger（财务总账）</strong>
+            <span class="badge q-mid">质量 88</span>
+            <span class="ri-time">2026-10-27 08:40</span>
+          </div>
+          <p class="ri-meta">申请人 陈晓 · 财务部 · 48 张表 / 120 个指标 · 数据源 finance-ck</p>
+          <p class="ri-reason">理由：搭建月度经营分析看板，需要科目余额与期间损益。</p>
+          <div class="ri-actions">
+            <input placeholder="审批意见（驳回时建议填写）" />
+            <button class="btn btn-pass btn-sm">通过</button>
+            <button class="btn btn-reject btn-sm">驳回</button>
+          </div>
+        </div>
+        <div class="review-item" data-rk="kb">
+          <div class="ri-head">
+            <span class="badge public">知识库</span>
+            <strong>产品需求文档库</strong>
+            <span class="badge team">部门级</span>
+            <span class="ri-time">2026-10-26 17:05</span>
+          </div>
+          <p class="ri-meta">申请人 周航 · 产品部 · 214 个文档 / 3,106 个切片 · 归属 产品部 · 周航</p>
+          <p class="ri-reason">理由：接手会员中心改版，需要历史 PRD 与评审结论。</p>
+          <div class="ri-actions">
+            <input placeholder="审批意见（驳回时建议填写）" />
+            <button class="btn btn-pass btn-sm">通过</button>
+            <button class="btn btn-reject btn-sm">驳回</button>
+          </div>
+        </div>
+        <div class="review-item" data-rk="ds">
+          <div class="ri-head">
+            <span class="badge" style="background:var(--indigo-soft);color:var(--indigo);border-color:var(--indigo-line)">数据集</span>
+            <strong>user_behavior（用户行为埋点）</strong>
+            <span class="badge q-low">质量 76</span>
+            <span class="ri-time">2026-10-26 15:22</span>
+          </div>
+          <p class="ri-meta">申请人 林然 · 增长部 · 18 张表 / 42 个指标 · 数据源 dw-ck</p>
+          <p class="ri-reason">理由：需要看新客首单转化漏斗，定位投放落地页流失。</p>
+          <div class="ri-actions">
+            <input placeholder="审批意见（驳回时建议填写）" />
+            <button class="btn btn-pass btn-sm">通过</button>
+            <button class="btn btn-reject btn-sm">驳回</button>
+          </div>
+        </div>
+        <div class="review-item" data-rk="kb">
+          <div class="ri-head">
+            <span class="badge public">知识库</span>
+            <strong>研发编码规范与架构决策</strong>
+            <span class="badge team">部门级</span>
+            <span class="ri-time">2026-10-26 10:11</span>
+          </div>
+          <p class="ri-meta">申请人 何宇 · 研发中心 · 97 个文档 / 1,458 个切片 · 归属 研发中心 · 赵磊</p>
+          <p class="ri-reason">理由：新项目要复用统一网关方案，想看 ADR 结论。</p>
+          <div class="ri-actions">
+            <input placeholder="审批意见（驳回时建议填写）" />
+            <button class="btn btn-pass btn-sm">通过</button>
+            <button class="btn btn-reject btn-sm">驳回</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="link">刷新</button>
+      <span>共 5 条待审批</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+  /* ---------- 视图切换 ---------- */
+  const shellMap = {
+    workbench: {crumb:'我的工作台', title:'我的工作台', sub:'先处理今天值得关注的事情，再继续最近的工作。', tabs:true},
+    square: {crumb:'我的工作台 / 资源广场', title:'我的工作台', sub:'先处理今天值得关注的事情，再继续最近的工作。', tabs:true},
+    review: {crumb:'用户管理 / 待审核', title:'用户管理', sub:'账号、身份角色与 API 访问凭证', tabs:false},
+    dataset: {crumb:'资源广场 / sales_order', title:'数据集概览', sub:'只读视图：浏览表结构与指标口径，或直接在对话中查询。', tabs:false},
+    kb: {crumb:'资源广场 / 员工手册与人事制度', title:'知识库概览', sub:'只读视图：浏览文档目录，或直接在对话中检索。', tabs:false},
+    mine: {crumb:'个人中心 / 我的申请', title:'个人中心', sub:'账号、权限与个人资源', tabs:false}
+  };
+  function setView(name){
+    $$('.proto-seg button').forEach(b => b.classList.toggle('on', b.dataset.view === name));
+    ['workbench','square','review','dataset','kb','mine'].forEach(v => {
+      const el = $('#view-' + v); if (el) el.hidden = (v !== name);
+    });
+    const meta = shellMap[name] || shellMap.workbench;
+    $('#crumb').textContent = meta.crumb;
+    $('#shellTitle').textContent = meta.title;
+    $('#shellSub').textContent = meta.sub;
+    $('#shellTabs').style.display = meta.tabs ? '' : 'none';
+    $$('#shellTabs button')[0].classList.toggle('on', name === 'workbench');
+    $$('#shellTabs button')[1].classList.toggle('on', name === 'square');
+    window.scrollTo({top:0});
+  }
+  $$('.proto-seg button').forEach(b => b.onclick = () => setView(b.dataset.view));
+  $$('.tabs button').forEach(b => b.onclick = () => setView(b.dataset.tab === 'square' ? 'square' : 'workbench'));
+  window.setView = setView;
+
+  /* ---------- 工作台资源卡 → 广场对应段 ---------- */
+  window.jumpSquare = (section) => {
+    setView('square');
+    const el = document.getElementById(section === 'kb' ? 'secKb' : 'secDs');
+    if (el) setTimeout(() => el.scrollIntoView({behavior: 'smooth', block: 'start'}), 80);
+  };
+
+  /* ---------- 主题 ---------- */
+  $('#themeBtn').onclick = () => {
+    const html = document.documentElement;
+    html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  };
+
+  /* ---------- 资源广场筛选 ---------- */
+  let kind = 'all', state = 'all', vis = 'all', kw = '';
+  function applyFilter(){
+    let kbShown = 0, dsShown = 0, apply = 0, pending = 0, has = 0;
+    $$('#kbGrid .card, #dsGrid .card').forEach(card => {
+      const k = card.dataset.kind, s = card.dataset.state, v = card.dataset.vis;
+      const text = (card.dataset.search || '') + ' ' + card.textContent;
+      const ok =
+        (kind === 'all' || kind === k) &&
+        (state === 'all' || state === s) &&
+        (vis === 'all' || k !== 'kb' || v === vis) &&
+        (!kw || text.toLowerCase().includes(kw));
+      card.style.display = ok ? '' : 'none';
+      if (ok) { if (k === 'kb') kbShown++; else dsShown++; }
+      // 统计用全量，不受筛选影响
+      if (s === 'apply') apply++;
+      else if (s === 'pending') pending++;
+      else if (s === 'has') has++;
+    });
+    $('#kbCount').textContent = kbShown;
+    $('#dsCount').textContent = dsShown;
+    $('#kbEmpty').hidden = kbShown !== 0;
+    $('#dsEmpty').hidden = dsShown !== 0;
+    $('#secKb').hidden = kind === 'ds';
+    $('#secDs').hidden = kind === 'kb';
+    $('#statApply').textContent = apply;
+    $('#statPending').textContent = pending;
+    $('#statHas').textContent = has;
+  }
+  $$('#kindSeg button').forEach(b => b.onclick = () => {
+    kind = b.dataset.kind;
+    $$('#kindSeg button').forEach(x => x.classList.toggle('on', x === b));
+    applyFilter();
+  });
+  $$('#stateSeg button').forEach(b => b.onclick = () => {
+    state = b.dataset.state;
+    $$('#stateSeg button').forEach(x => x.classList.toggle('on', x === b));
+    applyFilter();
+  });
+  $('#visSel').onchange = e => { vis = e.target.value; applyFilter(); };
+  $('#q').oninput = e => { kw = e.target.value.trim().toLowerCase(); applyFilter(); };
+  applyFilter();
+
+  /* ---------- 申请弹窗 ---------- */
+  const applyMask = $('#applyMask');
+  $$('.btn-apply').forEach(btn => btn.onclick = () => {
+    const name = btn.dataset.name || '';
+    const type = btn.dataset.type || '知识库';
+    $('#applyName').textContent = name;
+    $('#applyMeta').textContent = type + ' · ' + (type === '数据集' ? '只读权限，通过后可在对话中查询' : '申请通过后可在对话中检索');
+    $('#applyIcon').className = 'type-icon ' + (type === '数据集' ? 'ds' : 'kb');
+    $('#applyReason').value = '';
+    applyMask.hidden = false;
+    setTimeout(() => $('#applyReason').focus(), 50);
+    applyMask.dataset.target = name;
+  });
+  window.closeApply = () => { applyMask.hidden = true; };
+  window.submitApply = () => {
+    const name = applyMask.dataset.target;
+    $$('.card').forEach(card => {
+      const h = $('.card-title h4', card);
+      const title = h ? h.textContent.trim() : '';
+      const hit = name && (name === title || title.startsWith(name) || name.startsWith(title.split('（')[0]));
+      if (!hit) return;
+      const btn = $('.btn-apply', card);
+      if (btn) btn.outerHTML = '<span class="state pending">审批中 · 刚刚</span>';
+      card.dataset.state = 'pending';
+    });
+    applyMask.hidden = true;
+    applyFilter();
+  };
+  window.fillReason = t => { $('#applyReason').value = t; };
+
+  /* ---------- 审核弹窗 ---------- */
+  const reviewMask = $('#reviewMask');
+  window.openReview = () => { reviewMask.hidden = false; };
+  window.closeReview = () => { reviewMask.hidden = true; };
+  $$('#reviewChips button').forEach(b => b.onclick = () => {
+    $$('#reviewChips button').forEach(x => x.classList.toggle('on', x === b));
+    const t = b.dataset.rk;
+    $$('#reviewList .review-item').forEach(item => {
+      item.style.display = (t === 'all' || item.dataset.rk === t) ? '' : 'none';
+    });
+  });
+  $$('#view-review .review-tabs button').forEach(b => b.onclick = () => {
+    $$('#view-review .review-tabs button').forEach(x => x.classList.toggle('on', x === b));
+  });
+  $$('#view-review .chips button').forEach(b => b.onclick = () => {
+    $$('#view-review .chips button').forEach(x => x.classList.toggle('on', x === b));
+    const t = b.textContent.indexOf('知识库') === 0 ? 'kb' : b.textContent.indexOf('数据集') === 0 ? 'ds' : 'all';
+    $$('#view-review .review-item').forEach(item => {
+      item.style.display = (t === 'all' || item.dataset.rk === t) ? '' : 'none';
+    });
+  });
+
+  /* ---------- 从卡片进入只读概览 ---------- */
+  $$('[data-open-dataset]').forEach(a => a.onclick = e => {
+    e.preventDefault();
+    setView('dataset');
+  });
+  $$('[data-open-kb]').forEach(a => a.onclick = e => {
+    e.preventDefault();
+    setView('kb');
+  });
+
+  /* ---------- 审核弹窗里的通过/驳回（演示态） ---------- */
+  $$('#reviewList .btn-pass, #reviewList .btn-reject').forEach(btn => btn.onclick = () => {
+    const item = btn.closest('.review-item');
+    item.style.opacity = '.35';
+    item.style.pointerEvents = 'none';
+    const tag = document.createElement('span');
+    tag.className = 'badge ' + (btn.classList.contains('btn-pass') ? 'q-good' : 'q-low');
+    tag.style.marginLeft = 'auto';
+    tag.textContent = btn.classList.contains('btn-pass') ? '已通过' : '已驳回';
+    item.querySelector('.ri-head').appendChild(tag);
+  });
+})();
+</script>
+</body>
+</html>

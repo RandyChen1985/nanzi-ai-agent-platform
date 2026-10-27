@@ -52,6 +52,10 @@ SANDBOX_IDLE_TIME_DEFAULT = "15"
 #: 账号自主注册申请开关（默认关闭）。开启后登录页展示「申请账号」入口。
 USER_REGISTRATION_ENABLED_KEY = "user_registration_enabled"
 
+#: 资源广场是否向普通用户展示数据集目录。默认开：数据集自助申请是这次新增能力的
+#: 核心，默认关等于功能上线了却看不见；留开关是给「只走管理员手工授权」的团队。
+RESOURCE_SQUARE_SHOW_DATASETS_KEY = "resource_square_show_datasets"
+
 #: 布尔型开关允许的取值字面量（与前端开关写入的 'true'/'false' 对齐，兼容常见写法）
 _BOOLEAN_LITERALS = ("true", "false", "1", "0", "yes", "no", "on", "off")
 
@@ -116,6 +120,10 @@ def validate_config_update(key: str, value: str) -> None:
         normalized = str(value or "").strip().lower()
         if normalized not in _BOOLEAN_LITERALS:
             raise ValueError("user_registration_enabled 仅允许 true/false")
+    elif key == RESOURCE_SQUARE_SHOW_DATASETS_KEY:
+        normalized = str(value or "").strip().lower()
+        if normalized not in _BOOLEAN_LITERALS:
+            raise ValueError("resource_square_show_datasets 仅允许 true/false")
     elif key == SANDBOX_IDLE_TIME_KEY:
         try:
             minutes = float(str(value or "").strip())

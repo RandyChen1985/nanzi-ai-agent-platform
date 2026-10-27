@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, Boolean, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.orm import Base
@@ -138,3 +138,30 @@ class MetaSchemaDriftAlert(Base):
 
     dataset = relationship("MetaDataset", back_populates="drift_alerts")
 
+
+class MetadataAuditLog(Base):
+    """数据集业务审计：谁在什么时候对哪个数据集做了什么。
+
+    与 ``KnowledgeAuditLog`` 对称，独立于全站访问日志：访问日志每请求一条、
+    默认只查 90 天且会被定期清理，``resource_id`` 还埋在 ``request_params`` 的
+    JSON 文本里，按数据集查只能全表 LIKE；而 ``ResourcePermission`` 只有当前
+    状态没有历史，「这个数据集是谁授权给谁的」事后查不出来。
+    """
+
+    __tablename__ = "ai_agent_metadata_audit_logs"
+    __table_args__ = (
+        Index("idx_mal_dataset_created", "metadata_dataset_id", "created_at"),
+        Index("idx_mal_action_created", "action", "created_at"),
+        Index("idx_mal_user", "user_id"),
+    )
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    metadata_dataset_id = Column(BigInteger, nullable=False, comment="meta_datasets.id")
+    action = Column(String(64), nullable=False, comment="操作码: metadata:grant / metadata:reject ...")
+    user_id = Column(BigInteger, nullable=True, comment="操作人用户 ID")
+    user_name = Column(String(64), nullable=True, comment="操作人账号快照")
+    status_code = Column(Integer, nullable=False, default=200, comment="HTTP 状态码（>=400 即失败）")
+    detail = Column(JSON, nullable=True, comment="操作细节（申请ID/目标用户/审批意见）")
+    client_ip = Column(String(50), nullable=True, comment="来源 IP")
+    error_message = Column(Text, nullable=True, comment="失败原因")
+    created_at = Column(DateTime, default=datetime.now, index=True, comment="操作时间")

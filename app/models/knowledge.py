@@ -115,16 +115,30 @@ class KnowledgeAuditLog(Base):
 
 
 class KnowledgeAccessRequest(Base):
-    """知识库访问申请：未授权用户申请 → 库归属人/管理员审批 → 落授权记录。
+    """资源访问申请：未授权用户申请 → 管理员审批 → 落授权记录。
+
+    表名沿用 ``knowledge_access_requests``，但知识库与数据集共用一张表，
+    用 ``resource_type`` 区分（dataset=知识库 / metadata=数据集）。
+    共用而不是分表：统一审批页要两类混排分页，分表就得 UNION，排序与总数都要重写。
 
     审批通过只是写一条 ``ResourcePermission``（与手工授权完全等价），
     所以后续撤回、审计、归属人转移都沿用既有链路，不需要第二套权限体系。
     """
 
     __tablename__ = "ai_agent_knowledge_access_requests"
+    __table_args__ = (
+        Index("idx_kbar_type_status", "resource_type", "status"),
+    )
 
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
-    dataset_id = Column(String(64), nullable=False, index=True, comment="知识库（RAGFlow Dataset）ID")
+    dataset_id = Column(String(64), nullable=False, index=True, comment="资源 ID：知识库=RAGFlow Dataset ID / 数据集=meta_datasets.id")
+    resource_type = Column(
+        String(20),
+        nullable=False,
+        default="dataset",
+        server_default="dataset",
+        comment="资源类型: dataset=知识库 / metadata=数据集",
+    )
     dataset_name = Column(String(255), nullable=True, comment="提交时的库名快照")
     applicant_user_id = Column(BigInteger, nullable=False, index=True, comment="申请人用户 ID")
     applicant_user_name = Column(String(64), nullable=True, comment="申请人账号快照")

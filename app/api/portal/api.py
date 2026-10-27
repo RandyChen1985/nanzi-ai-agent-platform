@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview
+from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square
 
 portal_router = APIRouter()
 
@@ -92,6 +92,14 @@ portal_router.include_router(memory.router, prefix="/memory", tags=["记忆管�
 portal_router.include_router(saved_reports.router, prefix="/saved-reports", tags=["暂存报表"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(data_portal.router, prefix="/data-portal", tags=["数据门户"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(workbench.router, prefix="/workbench", tags=["个人业务工作台"], dependencies=[Depends(require_api_key)])
+
+# 19.1 资源访问申请（知识库 + 数据集统一审批）
+#     放在这里而不是挂在 ragflow 下面：数据集申请与知识库共用同一条链路，
+#     挂在任一资源模块下都会让另一类看起来像"顺带支持"。
+portal_router.include_router(access_requests.router, prefix="/access-requests", tags=["资源访问申请"], dependencies=[Depends(require_api_key)])
+
+# 19.2 资源广场（知识库 + 数据集目录与只读概览）
+portal_router.include_router(resource_square.router, prefix="/resource-square", tags=["资源广场"], dependencies=[Depends(require_api_key)])
 
 # 20. 数据门户个人偏好 (Portal Preferences)
 portal_router.include_router(portal_prefs.router, prefix="/portal-prefs", tags=["门户偏好"], dependencies=[Depends(require_api_key)])

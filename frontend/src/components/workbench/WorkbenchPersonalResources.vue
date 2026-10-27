@@ -23,6 +23,19 @@ const displayValue = (item: WorkbenchPersonalResource) => {
 
 const getResourceStyle = (key: string) => {
   switch (key) {
+    // 前两张是「我能用的资源」，与后面的用量类分开配色；
+    // 这两个 key 漏掉会落到 default 分支——也就是那个灰色感叹号，
+    // 看起来像「出错了」，比没有图标更糟
+    case "knowledge":
+      return {
+        iconBg: "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400",
+        hoverBorder: "hover:border-sky-300 dark:hover:border-sky-600/50",
+      }
+    case "datasets":
+      return {
+        iconBg: "bg-teal-50 text-teal-600 dark:bg-teal-950/40 dark:text-teal-400",
+        hoverBorder: "hover:border-teal-300 dark:hover:border-teal-600/50",
+      }
     case "memory":
       return {
         iconBg: "bg-purple-50 text-purple-600 dark:bg-purple-950/40 dark:text-purple-400",
@@ -68,12 +81,14 @@ const getResourceStyle = (key: string) => {
 </script>
 
 <template>
+  <!-- 工作台实际显示 8 张（站内消息由顶栏铃铛承担，这里隐藏）：
+       4 列正好两行，5 列会排成 5+3、右侧空两格 -->
   <section
     v-if="items.length"
     class="grid"
     :class="compact
       ? 'grid-cols-2 gap-2 sm:grid-cols-5'
-      : 'grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6'"
+      : 'grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4'"
   >
     <button
       v-for="item in items"
@@ -95,8 +110,18 @@ const getResourceStyle = (key: string) => {
           class="flex shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-110"
           :class="compact ? 'h-9 w-9 rounded-[10px]' : 'h-10 w-10 rounded-xl', getResourceStyle(item.key).iconBg"
         >
+          <!-- knowledge：书本，与「知识库」页的语义一致 -->
+          <svg v-if="item.key === 'knowledge'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 7v14" />
+            <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+          </svg>
+          <!-- datasets：表格，与「数据门户」的圆柱区分开 -->
+          <svg v-else-if="item.key === 'datasets'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M3 9h18" /><path d="M3 15h18" /><path d="M9 3v18" />
+          </svg>
           <!-- memory -->
-          <svg v-if="item.key === 'memory'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg v-else-if="item.key === 'memory'" :class="compact ? 'h-5 w-5' : 'h-[22px] w-[22px]'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
             <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
             <path d="M12 5v13" />
@@ -146,23 +171,28 @@ const getResourceStyle = (key: string) => {
           >
             {{ item.label }}
           </p>
-          <p
-            class="truncate font-bold tracking-tight text-gray-900 tabular-nums dark:text-gray-100"
-            :class="compact ? 'mt-0.5 text-lg sm:text-base' : 'mt-0.5 text-xl'"
-          >
-            {{ displayValue(item) }}
-          </p>
-          <div
-            class="flex items-center justify-between text-gray-400 dark:text-gray-500"
-            :class="compact ? 'mt-0.5 text-[10px] sm:text-[9px] sm:leading-tight' : 'mt-0.5 text-[11px]'"
-          >
-        <span v-if="item.status === 'error'" class="text-amber-500 dark:text-amber-400 font-medium">暂时无法获取</span>
-        <span v-else class="truncate">{{ item.unit }}</span>
-        <svg class="h-3 w-3 opacity-0 -translate-x-1 transition-all group-hover:opacity-100 group-hover:translate-x-0 text-gray-400 dark:text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="9 18 15 12 9 6" />
-          </svg>
+          <!-- 数字与单位同一行：拆成两行时单位孤零零挂在下面，卡片也白高 18px -->
+          <div class="mt-0.5 flex items-baseline gap-1">
+            <span
+              class="truncate font-bold tracking-tight text-gray-900 tabular-nums dark:text-gray-100"
+              :class="compact ? 'text-lg sm:text-base' : 'text-xl'"
+            >
+              {{ displayValue(item) }}
+            </span>
+            <span
+              v-if="item.status === 'error'"
+              class="truncate text-[10px] font-medium text-amber-500 dark:text-amber-400"
+            >暂时无法获取</span>
+            <span
+              v-else
+              class="truncate text-[11px] text-gray-400 dark:text-gray-500"
+              :class="compact ? 'text-[10px] sm:text-[9px]' : 'text-[11px]'"
+            >{{ item.unit }}</span>
           </div>
         </div>
+        <svg class="h-3 w-3 shrink-0 -translate-x-1 text-gray-400 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
       </div>
     </button>
   </section>

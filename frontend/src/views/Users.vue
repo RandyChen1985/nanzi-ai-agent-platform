@@ -215,7 +215,7 @@
         <button
           type="button"
           class="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
-          :title="pendingReviewCount ? `审核：${pendingReviewCount} 条待处理的知识库访问申请` : '审核：知识库访问申请'"
+          :title="pendingReviewCount ? `审核：${pendingReviewCount} 条待处理的资源访问申请` : '审核：资源访问申请'"
           aria-label="审核"
           @click="openAccessReviews"
         >
@@ -1769,12 +1769,23 @@
       >
         <div class="flex w-full max-w-2xl flex-col rounded-lg bg-white p-4 shadow-xl sm:p-6">
           <div class="mb-3 flex items-center justify-between">
-            <h2 class="text-lg font-bold text-gray-900">知识库访问审批</h2>
+            <h2 class="text-lg font-bold text-gray-900">资源访问审核</h2>
             <button type="button" class="text-sm text-gray-400 hover:text-gray-600" @click="showAccessReviews = false">关闭</button>
           </div>
           <p class="mb-2 text-xs leading-relaxed text-gray-500">
-            只列出你名下有管理权、或你是管理员的那些库的申请。通过后会直接给对方加上访问授权；驳回建议写清原因，对方在「个人中心 → 我的申请」里能看到。
+            知识库与数据集的申请都在这里处理。通过后会直接给对方加上只读访问授权；驳回建议写清原因，对方在「个人中心 → 我的申请」里能看到。
           </p>
+
+          <div class="mb-2 flex items-center gap-1.5 text-[11px]">
+            <button
+              v-for="option in resourceTypeOptions"
+              :key="option.key"
+              type="button"
+              class="rounded-full border px-2.5 py-1 font-semibold transition-colors"
+              :class="resourceTypeFilter === option.key ? 'border-primary bg-blue-50 text-primary' : 'border-gray-200 text-gray-500 hover:border-gray-300'"
+              @click="resourceTypeFilter = option.key"
+            >{{ option.label }}</button>
+          </div>
 
           <div class="mb-3 flex items-center gap-1 rounded-lg bg-gray-100 p-1 text-xs font-semibold">
             <button
@@ -1797,20 +1808,35 @@
             没有待审批的申请
           </div>
           <ul v-else class="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
-            <li v-for="item in accessReviews" :key="item.id" class="rounded-xl border border-gray-200 p-3">
+            <li
+              v-for="item in accessReviews"
+              :key="item.id"
+              class="rounded-xl border p-3"
+              :class="highlightRequestId === item.id ? 'border-primary bg-blue-50/40 ring-1 ring-primary/30' : 'border-gray-200'"
+            >
               <div class="flex items-start justify-between gap-2">
                 <div class="min-w-0">
-                  <div class="flex items-center gap-2">
-                    <p class="truncate text-sm font-semibold text-gray-900">{{ item.dataset_name || item.dataset_id }}</p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <p class="truncate text-sm font-semibold text-gray-900">
+                      {{ item.resource_name || item.resource_id }}
+                    </p>
+                    <span
+                      class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                      :class="item.resource_type === 'dataset' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600'"
+                    >{{ item.resource_type === 'dataset' ? '知识库' : '数据集' }}</span>
                     <span
                       v-if="item.visibility"
                       class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
                       :class="item.visibility === 'public' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'"
                     >{{ item.visibility === 'public' ? '公共级' : item.visibility === 'team' ? '部门级' : '私有' }}</span>
                     <span
-                      v-if="item.dataset_exists === false"
+                      v-if="item.resource_exists === false"
                       class="shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600"
-                    >引擎侧已失联</span>
+                    >资源已删除</span>
+                    <span
+                      v-else-if="item.resource_enabled === false"
+                      class="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600"
+                    >已停用</span>
                   </div>
                   <p class="mt-0.5 text-xs text-gray-500">
                     申请人：<span class="font-medium text-gray-700">{{ item.applicant_user_name || item.applicant_user_id }}</span>
@@ -1818,9 +1844,16 @@
                   </p>
                   <!-- 审批要有依据：这几个数决定「批了对方能用到什么」 -->
                   <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
-                    <span>{{ item.doc_count === null || item.doc_count === undefined ? '—' : item.doc_count }} 个文档</span>
-                    <span>{{ item.chunk_count === null || item.chunk_count === undefined ? '—' : item.chunk_count }} 个切片</span>
-                    <span v-if="item.owner" class="truncate">归属 {{ item.owner }}</span>
+                    <template v-if="item.resource_type === 'dataset'">
+                      <span>{{ item.doc_count === null || item.doc_count === undefined ? '文档数未知' : `${item.doc_count} 个文档` }}</span>
+                      <span v-if="item.owner" class="truncate">归属 {{ item.owner }}</span>
+                    </template>
+                    <template v-else>
+                      <span>{{ item.table_count ?? 0 }} 张表</span>
+                      <span>{{ item.metric_count ?? 0 }} 个指标</span>
+                      <span v-if="item.quality_score !== null && item.quality_score !== undefined">质量分 {{ item.quality_score }}</span>
+                      <span v-if="item.data_source" class="truncate">数据源 {{ item.data_source }}</span>
+                    </template>
                   </div>
                   <p v-if="item.reason" class="mt-1.5 rounded-lg bg-gray-50 px-2 py-1.5 text-xs leading-relaxed text-gray-600">理由：{{ item.reason }}</p>
                 </div>
@@ -1861,7 +1894,13 @@
               <li v-for="item in reviewedRequests" :key="`reviewed-${item.id}`" class="rounded-xl border border-gray-200 p-3">
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0 flex-1">
-                    <p class="truncate text-sm font-semibold text-gray-900">{{ item.dataset_name || item.dataset_id }}</p>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <p class="truncate text-sm font-semibold text-gray-900">{{ item.resource_name || item.resource_id }}</p>
+                      <span
+                        class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                        :class="item.resource_type === 'dataset' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600'"
+                      >{{ item.resource_type === 'dataset' ? '知识库' : '数据集' }}</span>
+                    </div>
                     <p class="mt-0.5 text-xs text-gray-500">
                       申请人：<span class="font-medium text-gray-700">{{ item.applicant_user_name || item.applicant_user_id }}</span>
                       <span v-if="item.reviewer_user_name"> · 审批人 {{ item.reviewer_user_name }}</span>
@@ -2888,10 +2927,13 @@ const rejectUser = async () => {
 // Filters
 const searchQuery = ref("");
 
-// ---------- 知识库访问审批 ----------
-// 审批人是「库归属人」而不是管理员，所以这个入口按"我能审批什么"来查，
-// 而不是按"谁有用户管理权限"。
+// ---------- 资源访问审核（知识库 + 数据集）----------
+// 审批人统一为管理员：知识库原本允许「库归属人」审批，但归属人未必有用户管理
+// 菜单权限，入口放在这里反而进不来；两类资源分开审批也会让「统一审核」名不副实。
+// 后端对该接口做了管理员校验，前端这里只是入口。
 const showAccessReviews = ref(false);
+/** 站内消息带 ?request=<id> 进来时高亮那一条，否则一屏 20 条要自己找 */
+const highlightRequestId = ref<number | null>(null);
 const accessReviews = ref<any[]>([]);
 const accessReviewsLoading = ref(false);
 const accessReviewTotal = ref(0);
@@ -2902,12 +2944,22 @@ const pendingReviewCount = ref(0);
 const accessReviewTab = ref<"pending" | "reviews">("pending");
 const reviewedRequests = ref<any[]>([]);
 const reviewedLoading = ref(false);
+/** 类型筛选：两类申请的审批人相同，但一次只想看其中一类 */
+const resourceTypeFilter = ref<"all" | "dataset" | "metadata">("all");
+const resourceTypeOptions = [
+  { key: "all", label: "全部" },
+  { key: "dataset", label: "知识库" },
+  { key: "metadata", label: "数据集" },
+] as const;
 
 const fetchReviewedRequests = async () => {
   reviewedLoading.value = true;
   try {
-    const response = await axios.get("/api/portal/ragflow/access-requests/reviews", {
-      params: { size: 100 },
+    const response = await axios.get("/api/portal/access-requests/reviews", {
+      params: {
+        size: 100,
+        ...(resourceTypeFilter.value === "all" ? {} : { resource_type: resourceTypeFilter.value }),
+      },
     });
     reviewedRequests.value = response.data?.data?.items || [];
   } catch (err: any) {
@@ -2926,9 +2978,20 @@ const switchAccessReviewTab = (tab: "pending" | "reviews") => {
   }
 };
 
+// 切类型时按当前 tab 重拉：在「已处理」页切类型却只刷新待审批，会看到旧数据
+watch(resourceTypeFilter, () => {
+  if (!showAccessReviews.value) return;
+  if (accessReviewTab.value === "pending") {
+    void fetchAccessReviews();
+  } else {
+    void fetchReviewedRequests();
+  }
+});
+
 const fetchPendingReviewCount = async () => {
   try {
-    const response = await axios.get("/api/portal/ragflow/access-requests/pending");
+    // 角标只统计总数，不带类型筛选：待办不该因为当前筛选看不到而被忽略
+    const response = await axios.get("/api/portal/access-requests/pending");
     pendingReviewCount.value = response.data?.data?.total || 0;
   } catch {
     pendingReviewCount.value = 0;
@@ -2944,7 +3007,10 @@ const openAccessReviews = () => {
 const fetchAccessReviews = async () => {
   accessReviewsLoading.value = true;
   try {
-    const response = await axios.get("/api/portal/ragflow/access-requests/pending");
+    const response = await axios.get("/api/portal/access-requests/pending", {
+      params:
+        resourceTypeFilter.value === "all" ? {} : { resource_type: resourceTypeFilter.value },
+    });
     const data = response.data?.data || {};
     accessReviews.value = data.items || [];
     accessReviewTotal.value = data.total || 0;
@@ -2958,13 +3024,24 @@ const fetchAccessReviews = async () => {
 
 const decideAccessReview = async (item: any, approve: boolean) => {
   if (reviewingRequestId.value) return;
+  // 资源在等待期间被删掉时，批准只会写一条指向不存在资源的授权——后端会拒，
+  // 这里提前拦住，免得用户点两下才明白
+  if (approve && item.resource_exists === false) {
+    showToast("该资源已被删除，无法通过；请驳回并告知申请人", "error");
+    return;
+  }
   reviewingRequestId.value = item.id;
   try {
     await axios.post(
-      `/api/portal/ragflow/access-requests/${item.id}/${approve ? "approve" : "reject"}`,
+      `/api/portal/access-requests/${item.id}/${approve ? "approve" : "reject"}`,
       { comment: (reviewComments.value[item.id] || "").trim() || null },
     );
-    showToast(approve ? "已通过，对方现在可以访问" : "已驳回", "success");
+    showToast(
+      approve
+        ? `已通过，对方现在可以${item.resource_type === "dataset" ? "检索这个知识库" : "查看这个数据集"}`
+        : "已驳回",
+      "success",
+    );
     delete reviewComments.value[item.id];
     await fetchAccessReviews();
   } catch (err: any) {
@@ -4646,6 +4723,8 @@ onMounted(async () => {
   // 深链 ?review=1 来自站内消息里那条「有人申请访问」：直接开审批弹窗，
   // 别让人看完消息还得自己找入口。query 立刻抹掉，避免刷新又弹一次。
   if (String(route.query.review || "") === "1") {
+    const targetRequestId = Number(route.query.request || 0);
+    highlightRequestId.value = targetRequestId > 0 ? targetRequestId : null;
     openAccessReviews();
     const { review: _review, request: _request, ...restQuery } = route.query;
     router.replace({ query: restQuery });
