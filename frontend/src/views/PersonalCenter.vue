@@ -1411,17 +1411,19 @@ onMounted(() => {
                                 </div>
                             </div>
 
-                            <div class="flex items-center justify-between pt-1">
-                                <span class="text-[11px] text-amber-600 flex items-center gap-1">
+                            <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                <span class="flex min-w-0 items-center gap-1 text-[11px] text-amber-600">
                                     <span>⚠</span>
                                     <span>修改密码后需重新登录（现有 API Key 依然有效）</span>
                                 </span>
+                                <!-- shrink-0 + whitespace-nowrap：窄屏时让左边的提示文字先换行，
+                                     而不是把按钮文字挤成两行（用户截图：按钮被压成上下两行） -->
                                 <button 
                                     type="submit" 
                                     :disabled="loadingPassword || !newPassword || !passwordPolicyResult.valid || newPassword !== confirmPassword"
-                                    class="py-2 px-4 border border-transparent rounded-lg shadow-xs text-xs sm:text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                                    class="shrink-0 whitespace-nowrap py-2 px-4 border border-transparent rounded-lg shadow-xs text-xs sm:text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                                 >
-                                    {{ loadingPassword ? '提交中...' : '确认修改密码' }}
+                                    {{ loadingPassword ? '提交中...' : '修改密码' }}
                                 </button>
                             </div>
                         </form>
