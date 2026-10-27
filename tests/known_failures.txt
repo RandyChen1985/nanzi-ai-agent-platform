@@ -83,7 +83,6 @@ tests/ai/executors/test_chat_executor.py::test_general_runner_emits_permission_r
 tests/ai/executors/test_chat_executor.py::test_general_runner_keeps_tool_preamble_as_process_narration  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
 tests/ai/executors/test_chat_executor.py::test_knowledge_runner_with_rag_but_no_citations_intercepts_hallucination  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
 tests/ai/executors/test_chat_executor.py::test_permission_resume_restores_user_context_for_user_scoped_tools  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
-tests/ai/runtime/test_agentscope_tool_evidence.py::test_mcp_tool_factory_uses_model_safe_name_and_preserves_remote_tool_name  # B-依赖升级适配: AgentScope 运行时特性断言与 2.0.9 不一致
 tests/ai/runtime/test_agentscope_v2_0_6_features.py::test_build_runtime_middlewares_includes_permission_and_stats  # B-依赖升级适配: AgentScope 运行时特性断言与 2.0.9 不一致
 tests/ai/runtime/test_agentscope_v2_0_6_features.py::test_load_injection_config_respects_system_flag  # B-依赖升级适配: AgentScope 运行时特性断言与 2.0.9 不一致
 

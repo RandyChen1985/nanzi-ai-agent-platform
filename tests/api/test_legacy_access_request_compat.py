@@ -85,6 +85,27 @@ async def test_admin_can_list_legacy_pending(db_session, keys):
 
 
 @pytest.mark.asyncio
+async def test_legacy_create_endpoint_passes_duplicate_check(db_session, keys, public_kb):
+    """回归：兼容层曾用两参数签名覆盖 ``pending_for``。
+
+    基类 ``create`` 按 ``pending_for(resource_type, resource_id, user_id)`` 调用，
+    覆盖后签名不匹配 → 旧端点（发现弹窗的「申请访问」）每提交一条都 TypeError→500，
+    而统一的 ``POST /access-requests`` 不经过这层包装，所以一直没被发现。
+    """
+    _admin_key, user_key = keys
+    url = f"/api/portal/ragflow/datasets/{public_kb}/access-requests"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(url, json={"reason": "看制度"}, headers={"X-API-Key": user_key})
+        assert created.status_code == 200, created.text
+        assert created.json()["data"]["status"] == "pending"
+
+        # 第二次提交必须落在「查重」分支（正是之前抛 TypeError 的那一步）
+        duplicated = await client.post(url, json={"reason": "再看一次"}, headers={"X-API-Key": user_key})
+        assert duplicated.status_code == 400, duplicated.text
+        assert "等待审批" in duplicated.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_legacy_item_keeps_old_field_names(db_session, keys, public_kb):
     _admin_key, user_key = keys
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

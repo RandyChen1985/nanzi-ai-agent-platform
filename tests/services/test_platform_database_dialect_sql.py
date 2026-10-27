@@ -234,7 +234,7 @@ async def test_scheduler_job_store_uses_selected_sync_database_url():
 
     with patch(
         "app.services.ai.scheduler_service.settings",
-        SimpleNamespace(DATABASE_SYNC_URL=postgresql_url),
+        SimpleNamespace(DATABASE_SYNC_URL=postgresql_url, MYSQL_POOL_RECYCLE=1800),
     ), patch(
         "app.services.ai.scheduler_service.SQLAlchemyJobStore",
         return_value=fake_job_store,
@@ -246,9 +246,12 @@ async def test_scheduler_job_store_uses_selected_sync_database_url():
     ), patch.object(service, "reload_saved_report_subscriptions", new=AsyncMock()):
         await service.start()
 
+    # jobstore 是长持有连接的同步 engine：必须显式带上 pool_pre_ping/recycle，
+    # 否则 MySQL 侧连接失效后调度会静默停摆（recycle 取自配置，可运维调整）。
     create_job_store.assert_called_once_with(
         url=postgresql_url,
         tablename="ai_agent_scheduler_jobs",
+        engine_options={"pool_pre_ping": True, "pool_recycle": 1800},
     )
 
 

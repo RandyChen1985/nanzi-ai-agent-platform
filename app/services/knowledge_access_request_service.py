@@ -39,5 +39,8 @@ class KnowledgeAccessRequestService(ResourceAccessRequestService):
             dept_id=dept_id,
         )
 
-    async def pending_for(self, dataset_id: str, user_id: int):  # type: ignore[override]
-        return await super().pending_for("dataset", dataset_id, user_id)
+    # 注意：不要再覆盖 ``pending_for``。基类 ``create`` 内部按
+    # ``pending_for(resource_type, resource_id, user_id)`` 调用，之前这里用两参数
+    # 签名覆盖（``pending_for(dataset_id, user_id)``），导致经旧端点提交的每一条
+    # 申请都在「查重」这一步抛 TypeError → 500。基类签名本身就是按
+    # ``resource_type`` 分派的，知识库场景传 ``"dataset"`` 即可，无需包装。
