@@ -17,6 +17,7 @@
       :filters="historyFilters"
       :available-agents="historyAgentOptions"
       :show-agent-filter="showAgentFilter"
+      :pinned-agent-name="historyPinnedAgentName"
       @update:filters="historyFilters = $event"
       @reset-filters="resetHistoryFilters"
       @fetch-history="fetchHistory()"
@@ -4237,6 +4238,25 @@ const headerExpertLabel = computed(() => {
   }
   return "";
 });
+/**
+ * 历史侧栏顶部「已锁定智能体」提示用的名称。
+ *
+ * 锁定后历史列表被后端按该智能体限定，侧栏必须把这件事说出来，否则用户会以为
+ * 「历史怎么少了」；同时筛选面板里的智能体选择会被隐藏。
+ */
+const historyPinnedAgentName = computed(() => {
+  if (!pinnedAgentScope()) return "";
+  const label = String(pinnedAgentLabel.value || "").trim();
+  // resolveUrlPinnedAgent 成功后 pinnedAgentLabel 就是 display_name；只剩 URL slug 时
+  // 说明宿主场景（没有 pinnedAgent 对象），从已加载的智能体列表按锁定 id 反查。
+  if (label && label !== String(urlPinnedAgentKey.value || "").trim()) return label;
+  const locked = (allowedAgents.value || []).find(
+    (agent: any) => String(agent?.id || "") === integrationAgentLockId.value,
+  );
+  return String(
+    locked?.display_name || locked?.name || label || integrationAgentLockId.value || "",
+  ).trim();
+});
 const agentHasCapability = (cap: string) => {
   const lockedAgent = allowedAgents.value.find(
     (agent: any) => String(agent?.id || "") === integrationAgentLockId.value,
@@ -7115,8 +7135,8 @@ const resetHistoryFilters = () => {
   historyFilters.value = { ...DEFAULT_HISTORY_FILTERS };
 };
 
-// 集成锁定场景下历史已被限定为单一智能体，智能体筛选无意义
-const showAgentFilter = computed(() => !config.agentId);
+// 集成锁定场景下历史已被限定为单一智能体，智能体筛选无意义（也不允许改）
+const showAgentFilter = computed(() => !pinnedAgentScope());
 
 const historyAgentOptions = computed(() =>
   (allowedAgents.value || []).map((agent: any) => ({

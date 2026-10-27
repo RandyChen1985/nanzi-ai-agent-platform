@@ -22,6 +22,13 @@ const props = withDefaults(
     filters?: ChatHistoryFilters;
     availableAgents?: AgentOption[];
     showAgentFilter?: boolean;
+    /**
+     * 本次会话被锁定的智能体显示名（URL `agent_id` / 宿主 INIT_CONFIG / ticket）。
+     *
+     * 非空时在搜索框上方显示锁定提示，并且不再渲染「智能体」筛选项：历史已被后端
+     * 按该智能体限定，允许改筛选只会让用户以为能看到别的智能体的会话。
+     */
+    pinnedAgentName?: string;
   }>(),
   {
     loadingMore: false,
@@ -32,6 +39,7 @@ const props = withDefaults(
     staleConversationIds: () => [],
     availableAgents: () => [],
     showAgentFilter: false,
+    pinnedAgentName: "",
     filters: () => ({
       scope: "all",
       agentId: "",
@@ -122,7 +130,9 @@ const activeFilterChips = computed(() => {
   const chips: Array<{ key: keyof ChatHistoryFilters; label: string }> = [];
   if (f.scope === "task") chips.push({ key: "scope", label: "任务会话" });
   if (f.scope === "chat") chips.push({ key: "scope", label: "普通对话" });
-  if (f.agentId) {
+  // 锁定智能体时不展示这条 chip：它可点删除，但删了也不会生效（请求仍按锁定值覆盖），
+  // 只会让用户误以为能切换智能体。
+  if (f.agentId && !props.pinnedAgentName) {
     const matched = props.availableAgents.find((a) => a.id === f.agentId);
     chips.push({ key: "agentId", label: matched?.display_name || "指定智能体" });
   }
@@ -354,6 +364,25 @@ const confirmDelete = (item: any) => {
             />
           </svg>
         </button>
+      </div>
+
+      <!-- 智能体锁定提示：URL / 宿主指定 agent 后，历史已被限定为该智能体，筛选里也不能改 -->
+      <div
+        v-if="pinnedAgentName"
+        class="mx-3 mt-2 flex items-start gap-1.5 rounded-xl border border-primary/15 bg-primary/5 px-2.5 py-2 text-[11px] leading-snug text-primary flex-shrink-0"
+        role="status"
+      >
+        <svg class="mt-0.5 w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+          />
+        </svg>
+        <span>
+          已锁定智能体「<span class="font-semibold">{{ pinnedAgentName }}</span>」，仅显示该智能体的历史会话
+        </span>
       </div>
 
       <!-- Search Bar with Debounce & Clear + Filter Entry -->
