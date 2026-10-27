@@ -2693,7 +2693,7 @@ onMounted(async () => {
       <CronAdvancedBuilder v-model="cronDraft" />
       <template #footer>
         <div class="flex items-center justify-between gap-2">
-          <p class="text-[11px] text-gray-400">组合完成后点击「应用到表达式」回填到表达式输入框</p>
+          <p class="text-[11px] text-gray-400">组合完成后点击「应用」回填到表达式输入框</p>
           <div class="flex items-center gap-2">
             <button type="button" class="rounded-lg px-4 py-2 text-sm font-bold text-gray-400 hover:text-gray-600" @click="showCronBuilder = false">取消</button>
             <button
@@ -2701,7 +2701,7 @@ onMounted(async () => {
               :disabled="!cronDraftValid"
               class="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
               @click="applyCronDraft"
-            >应用到表达式</button>
+            >应用</button>
           </div>
         </div>
       </template>

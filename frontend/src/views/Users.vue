@@ -1883,17 +1883,17 @@
             </ul>
           </template>
 
-          <div class="mt-3 flex items-center justify-between border-t pt-2">
-            <span class="text-xs text-gray-500">
-              <template v-if="accessReviewTab === 'pending'">共 {{ accessReviewTotal }} 条待审批</template>
-              <template v-else>最近 {{ reviewedRequests.length }} 条审批记录</template>
-            </span>
+          <div class="mt-3 flex items-center gap-3 border-t pt-2">
             <button
               type="button"
               class="text-xs text-blue-600 hover:underline disabled:opacity-50"
               :disabled="accessReviewTab === 'pending' ? accessReviewsLoading : reviewedLoading"
               @click="accessReviewTab === 'pending' ? fetchAccessReviews() : fetchReviewedRequests()"
             >刷新</button>
+            <span class="text-xs text-gray-500">
+              <template v-if="accessReviewTab === 'pending'">共 {{ accessReviewTotal }} 条待审批</template>
+              <template v-else>最近 {{ reviewedRequests.length }} 条审批记录</template>
+            </span>
           </div>
         </div>
       </div>

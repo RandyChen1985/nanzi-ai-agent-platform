@@ -330,6 +330,7 @@ const MISSING_DATASET_HINT =
 const detailTab = ref<'documents' | 'audit' | 'references'>('documents')
 // 「高级设置」默认收起：绝大多数人不需要碰 JSON，展开就先把代价讲清楚
 const advancedConfigOpen = ref(false)
+const createAdvancedConfigOpen = ref(false)
 // 详情页底部那块只读 JSON 同理，默认收起
 const detailConfigOpen = ref(false)
 const auditLogs = ref<any[]>([])
@@ -5050,9 +5051,43 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">平台备注</label>
           <textarea v-model="form.notes" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" rows="2" placeholder="请输入备注"></textarea>
         </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-400 mb-1.5">业务扩展配置 JSON</label>
-          <textarea v-model="form.extraConfigText" class="w-full border border-gray-200 rounded-xl px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-white disabled:bg-gray-100" rows="3" placeholder="{}"></textarea>
+        <div class="overflow-hidden rounded-xl border border-gray-200">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between bg-gray-50/60 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
+            :aria-expanded="createAdvancedConfigOpen"
+            @click="createAdvancedConfigOpen = !createAdvancedConfigOpen"
+          >
+            <span class="flex items-center gap-1.5">
+              <svg
+                class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform duration-200"
+                :class="{ 'rotate-90': createAdvancedConfigOpen }"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+              <span class="text-xs font-semibold text-gray-500">高级设置</span>
+              <span class="text-[11px] text-gray-400">· 业务扩展配置 JSON</span>
+            </span>
+            <span class="shrink-0 text-[10px] text-gray-400">{{ createAdvancedConfigOpen ? '收起' : '展开' }}</span>
+          </button>
+
+          <div v-show="createAdvancedConfigOpen" class="space-y-2 border-t border-gray-100 px-3 pb-3 pt-2.5">
+            <div class="space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
+              <p><b>保存是整份覆盖。</b>删掉 <code class="font-mono">folder_structure</code> 会让所有文档掉回「未分类」，虚拟文件夹丢失且无法撤销。</p>
+              <p>只有下面两个键会被读取，其余键写了也不会生效：</p>
+              <ul class="list-disc space-y-0.5 pl-4">
+                <li><code class="font-mono">folder_structure</code>：虚拟文件夹映射，由「新建文件夹 / 移动文档」自动维护，一般无需手改。</li>
+                <li><code class="font-mono">custom_questions</code>：知识库门户的快捷提问，形如 <code class="font-mono">[{label:'总结核心内容', query:'请帮我梳理要点'}]</code>。</li>
+              </ul>
+            </div>
+            <textarea
+              v-model="form.extraConfigText"
+              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+              rows="4"
+              placeholder="{}"
+            ></textarea>
+          </div>
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showCreateModal = false">取消</button>
