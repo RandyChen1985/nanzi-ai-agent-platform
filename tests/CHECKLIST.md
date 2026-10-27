@@ -677,3 +677,55 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **回归**：`tests/ai` **2783 passed / 32 xfailed / 1 xpassed**；`tests/frontend` 全量 **3342 passed / 1 skipped**；`vue-tsc --noEmit` 0 错误。
 **未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）。
+
+## 2026-10-27 用户管理入口按权限收敛（资源审核 / 系统默认额度）
+
+|---|---|---|---|---|
+| 资源访问审核入口仅管理员可见 | `frontend/src/views/Users.vue`、`tests/frontend/test_users_review_contract.py` | 盾牌按钮原来无任何判定，而后端 `pending` / `reviews` / `approve` 全是 `require_admin`——非管理员点进去只能收到 `Admin access required`。改为 `v-if="isAdmin"`；`onMounted` 只在管理员时拉待办计数（原先一进页面就打一个 403）；深链 `?review=1` 同样加守卫；`openAccessReviews()` 内再兜一层 `if (!isAdmin) return` |
+| 系统默认额度入口按编辑权限 | `frontend/src/views/Users.vue`、`app/api/portal/endpoints/quota.py`、`tests/api/portal/test_quota_permissions.py` | 入口判定由 `menu:system:users` 改为 `element:user:edit`（与用户专属额度一致）；「更多」面板整体只看 `canEditUser`，避免没权限的人看到点开全空的菜单；后端 `/quota/system` 的 GET/PUT/DELETE 同步由菜单码收紧为 `element:user:edit`，消除「前端隐藏、后端仍放行」的绕过口子；角色额度模板保持 `menu:system:roles` 不动 |
+| 权限口径测试 | `tests/frontend/test_users_review_contract.py`、`tests/api/portal/test_quota_permissions.py` | 前端 2 项（审核入口仅管理员 / 额度入口依赖编辑权限且不得回退 `canOpenSystemQuota`）；后端 10 项（系统额度 3 + 用户额度 3 + 角色额度 3 + 我的额度自助） |
+
+**回归**：`tests/frontend` 全量 **3344 passed / 1 skipped**；`tests/api/portal/test_quota_permissions.py` **10 passed**；`vue-tsc --noEmit` 0 错误。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）。
+
+## 2026-10-27 资源广场 / 统一访问申请 review 修复（28 项）
+
+对「资源广场 + 统一访问申请」做整体 review 后逐条修复，共 28 项（5 个 P1、11 个 P2、12 个 P3）。用户明确排除的两项不在本轮范围：知识库只读概览入口（路由与页面保留、入口已摘除，点开空白的原因未定位）、门禁通道 A（回执写 `knowledge_dataset_ids`）与埋点 `scope_mode` / 看板。
+
+|---|---|---|---|---|
+| 顶部角标切换 tab 就归零 | `app/api/portal/endpoints/resource_square.py` | `summary` 原来在 `_state_matches` 过滤之后的 `enriched` 上求和 —— 切到「审批中」，另两个数字直接变 0，用户以为权限丢了。改为在「关键词/可见范围过滤后、状态过滤前」统计；后端探针复现 `status=apply → {'apply':0,'pending':0,'has':0}` 已消失 |
+| 有权限后 pending 仍双计 | `resource_square.py` | `_state_matches('pending')` 只判 `request_status`，管理员手工授权后残留申请一直占着「审批中」角标。改为 `pending and not has_access`；卡片本身仍返回 `request_status=pending`，不影响展示 |
+| 工作台卡片 32 / 广场 29 | `app/services/workbench_home_service.py` | `_count_accessible_knowledge_bases` 管理员走 `COUNT(*)` 全表、普通用户走 `len(accessible_ids)`，而广场还会过滤 `status='deleted'`、内置库名、以及「有授权但元数据未同步」的 id。改为与广场同一候选集：查 `(dataset_id, name)` → `status != deleted` → 过滤内置名；`is_internal_dataset_name` 只在这一处与广场共用 |
+| 数据集被知识库命名规则误伤 | `resource_square.py` | `is_internal_dataset_name`（`chatbi-example` / `meta-` 前缀）描述的是 RAGFlow 平台自建库，却被套到 `MetaDataset` 循环上——名字叫 `meta-xxx` 的数据集在广场永久不可见。移除该过滤 |
+| 数据集目录关闭后卡片仍报数 | `workbench_home_service.py` | `_count_accessible_metadata_datasets` 不看 `resource_square_show_datasets`，关闭后卡片显示「11 个」、点进去是「管理员暂未开放」。改为先读开关，`false/0/no/off` 返回 0，读配置异常按默认开降级 |
+| 审批通过无视已改私有 | `app/services/resource_access_request_service.py` | 申请挂起期间库被改成 `private`，`_ensure_resource_available` 只校验存在性 → 批准返回 200、写授权、发「权限已生效」，但 `private` 的权限解析刻意忽略授权记录，申请人打开仍是 403。改为批准前拦下，文案「该知识库已改为个人私有，无法通过，请驳回」，申请保持 pending |
+| `resource_id` 未归一化 | `resource_access_request_service.py` | 元数据分支直接把原始串入库，传 `"05"` 会写出 `dataset_id="05"`：广场/只读/选择器都按 `str(int(id))` 判权限，授权永不生效；pending 去重也按原始串比较，同一资源能重复申请。改为入库前 `str(int(resource_id))`，非法值 400 |
+| 停用数据集仍可申请 / 直连 | `resource_access_request_service.py`、`resource_square.py` | 申请侧补 `status != 1 → 400「数据集已停用，不能申请」`；只读接口 `_require_metadata_access` 补 `status == 1`，停用集从「列表看不到、URL 能进」改为 404 |
+| 申请失败原因被吞成「提交申请失败」 | `frontend/src/api/resourceSquare.ts` | `applyResourceAccess` 已经 `throw new Error(detail)`，弹窗再读 `err.response.data.detail` 永远读不到。`messageOf` 改为优先取 `Error.message`（并过滤 axios 默认英文串），回落到 `detail` / fallback；同时新增 `toUserError` 在包装文案时把 HTTP 状态码挂到 `.status`，否则页面 `resourceSquareErrorStatus(err) === 403` 永远 false、403 退化成普通错误提示 |
+| 只读页弹英文 axios 错误 | `resourceSquare.ts`、`ResourceSquareDataset.vue` | `fetchDatasetReadonly` / `fetchKnowledgeReadonly` 补 try/catch 走 `messageOf`，403 时显示「你还没有访问…的权限」而不是 `Request failed with status code 403` |
+| 筛选变化时新请求被丢弃 | `frontend/src/components/resource-square/ResourceSquarePanel.vue` | `if (loading) return` 挡掉的恰是「条件已变」的新请求，列表停在旧条件上。改为请求序号 `kbRequestSeq` / `dsRequestSeq`，响应回来先比序号，旧响应直接丢弃；加载更多仍防重复点击 |
+| 搜索逐字发请求 + 旧响应覆盖 | `ResourceSquarePanel.vue` | `watch([keyword, tab, stateFilter, visibility])` 无防抖，快速输入会连发并乱序落盘。改为 `scheduleReload`：搜索 300ms 防抖、筛选按钮立即生效；配合序号保证「最后一次输入赢」 |
+| 加载更多失败抹掉整列表 | `ResourceSquarePanel.vue` | 错误块与列表原来是 `v-if/v-else-if` 互斥，加载更多失败会把已看到的卡片全部换成一句错误。改为错误条与列表各自独立显示，重试按钮按「是否已有列表」决定追加还是重载 |
+| 申请成功没有反馈 | `ResourceSquarePanel.vue` | 弹窗关闭 + 卡片状态变化容易被读成「失败了」。新增 `submitNotice` 顶部绿色提示（5s 自动消失）；`ApplyAccessModal` 原本已在提交时置 `submitting` 防重复提交 |
+| 超长理由/意见 → 500 | `resource_access_request_service.py` | 列是 `VARCHAR(1000)`，MySQL 严格模式抛 1406 变成 500。`create` / `decide` 入口校验长度，超限 400「最多 1000 个字符」 |
+| 引擎侧已失联仍显示「资源存在」 | `resource_access_request_service.py` | `_enrich` 的 `alive` 只看本地 `KnowledgeBaseMetadata.status`，而巡检只写 `is_missing` 快照、从不改 status → 库在 RAGFlow 被删了审批页照样可批、批完申请人只看到 `documents_error`。改为用 `list_all_datasets_cached()` 判定 `resource_enabled = alive and in_engine`，并把 `doc_count` / `chunk_count` 从「永远是 null」补成引擎规模；引擎读取失败降级为只看本地状态，不让整页 500 |
+| 缓存没清等于「批了没生效」 | `resource_access_request_service.py` | 权限缓存 TTL 3600s，单次清理失败只 warning 一句，用户要等满一小时才突然可用。改为重试一次，仍失败升 `error` 并写明后果；数据集菜单缓存同样处理 |
+| 并发双批 / 批准与撤回竞争 | `resource_access_request_service.py` | `decide` / `cancel` 读到的可能是同一份 pending 快照，导致重复授权与两条通知。`get(..., for_update=True)` 加行锁（`SELECT ... FOR UPDATE`） |
+| 并发重复申请穿透应用层检查 | `resource_access_request_service.py`、`db-prod/V194-unique_pending_access_request.sql`、`db-prod-pg/V94-unique_pending_access_request.sql` | `pending_for` 是 check-then-insert，两请求同时到会一起通过。新增迁移：先收敛存量重复 pending（保留最早一条、其余置 cancelled），再加唯一约束（MySQL 用生成列 `pending_uniq` + 唯一键；PG 用 `WHERE status='pending'` 部分唯一索引），`create` 捕获 `IntegrityError` 翻译回「你已经提交过申请，正在等待审批」 |
+| 审批列表无分页、总数是假的 | `app/api/portal/endpoints/access_requests.py`、`app/services/resource_access_request_service.py`、`frontend/src/views/Users.vue` | `/pending`、`/reviews` 原来 `limit` 截断后 `total=len(items)`，永远看不到「还有多少」。改为 `page` + `size`（上限 500），`total` 走 `COUNT(*)`；`Users.vue` 两个 tab 都按 20 条分页并提供「加载更多」，底部改为「共 N 条，已显示 M 条」；旧端点数 `size` 与新接口不一致的问题随之消失 |
+| 无菜单账号被守卫挡在只读页外 | `frontend/src/router/index.ts` | 守卫在 `userMenus.length === 0` 时直接送 `NoPermission`，而只读概览正是给「被授权但没有管理菜单」的账号用的。新增 `isReadonlySquarePage`（`ResourceSquareDataset` / `ResourceSquareKnowledge`）与工作台同等放行 |
+| `status=has` 残留在 URL | `frontend/src/views/PersonalWorkbench.vue`、`ResourceSquarePanel.vue` | 从工作台卡片带进的 `status` 在切 tab、改筛选后一直挂着，刷新又跳回「已授权」。工作台切回工作台时 `delete query.status`；面板内改状态筛选时 `router.replace` 同步 query（`all` 时移除） |
+| 数据集段显示可见范围下拉 | `ResourceSquarePanel.vue` | 数据集没有「可见范围」概念，下拉留在那里点了也不影响结果。加 `v-if="showKb"` 只在知识库段显示 |
+| 数据集按 id 升序 | `resource_square.py` | 新接入的数据集沉到最后一页，与知识库段行为不一致。改 `order_by(MetaDataset.id.desc())` |
+| 归属人对自己的历史库能再申请 | `resource_access_request_service.py` | `_has_access` 调 `get_knowledge_base_access(user_id)` 时漏传 `user_name`，`owner_user_id` 为空、靠 `created_by` 认归属的历史库被判「无权限」。补传 `user_name` |
+| 兼容层把「库归属部门」写进「申请人部门」 | `app/api/portal/endpoints/ragflow.py`、`resource_access_request_service.py` | 旧端点传 `dept_id=meta.owner_dept_id`，语义完全错位，后续按部门统计/审批会直接误判。兼容层改传 `None`，由统一服务按申请人查 `UserDepartment` 主部门（查不到留空，不因部门异常拒申请） |
+
+**新增/更新测试**：
+- `tests/api/portal/test_resource_square_review_fixes.py`（9 项）：summary 跨状态稳定、工作台与广场计数对齐（管理员 + 普通用户含内置库）、私有化后批准 400 且申请仍 pending、`"05" → "5"` 归一化与去重、停用数据集申请 400、已授权后 pending 不双计、数据集新→旧排序、老库归属人不可重复申请
+- `tests/api/portal/test_resource_square_review_fixes2.py`（9 项）：理由/意见超长 400、`meta-` 前缀数据集可见、数据集开关关闭后工作台归零、待审批/已处理分页与真实 `total`、引擎缺失标记 `resource_enabled=false`、迁移契约（含存量清理）、`with_for_update` 契约
+- `tests/frontend/test_resource_square_review_fixes_contract.py`（11 项）：错误文案透传、只读接口 catch、请求序号、防抖、提交提示、错误与列表共存、路由放行、切 tab 清 status、可见范围下拉只在知识库段、已处理分页
+- 同步更新 `tests/api/portal/test_knowledge_access_request_endpoints.py` 的 mock 签名（`list_pending` / `list_reviews` 现返回 `(items, total)`）
+
+**回归**：`tests/api/portal` 全量 **779 passed / 4 xfailed**；`tests/frontend` 全量 **3355 passed / 1 skipped**；改动涉及的 6 个前端文件 `npx vue-tsc -b` 0 错误（全仓另有 97 个既存错误，集中在 EmbedChat / MenuManagement / SystemConfig / TaskCenter 等本次未触碰的文件；默认 2GB 堆会 OOM，需 `NODE_OPTIONS=--max-old-space-size=8192`）。
+**迁移**：新增 `db-prod/V194-unique_pending_access_request.sql`（MySQL）与 `db-prod-pg/V94-unique_pending_access_request.sql`（PostgreSQL），**需由用户执行**；两者都会先收敛存量重复 pending 再建唯一约束，可重复执行。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；知识库只读概览入口与门禁通道 A 按用户要求不在本轮范围。

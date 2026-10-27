@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.models.knowledge import KnowledgeAccessRequest, KnowledgeBaseMetadata
 from app.models.metadata import MetaDataset, MetaMetric, MetaTable
@@ -38,6 +39,16 @@ RESOURCE_TYPE_KNOWLEDGE = "dataset"
 #: 数据集（meta_datasets）
 RESOURCE_TYPE_METADATA = "metadata"
 SUPPORTED_RESOURCE_TYPES = (RESOURCE_TYPE_KNOWLEDGE, RESOURCE_TYPE_METADATA)
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    """引擎侧的计数可能是字符串或空串；拿不到就返回 None，别显示成 0。"""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class AccessRequestError(Exception):
@@ -67,8 +78,15 @@ class ResourceAccessRequestService:
         )
         return result.scalars().first()
 
-    async def get(self, request_id: int) -> KnowledgeAccessRequest:
-        row = await self.db.get(KnowledgeAccessRequest, int(request_id))
+    async def get(
+        self, request_id: int, *, for_update: bool = False
+    ) -> KnowledgeAccessRequest:
+        stmt = select(KnowledgeAccessRequest).where(
+            KnowledgeAccessRequest.id == int(request_id)
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        row = (await self.db.execute(stmt)).scalars().first()
         if not row:
             raise AccessRequestError("申请不存在或已被删除")
         return row
@@ -97,6 +115,10 @@ class ResourceAccessRequestService:
         user_id = int(user["user_id"])
         if str(user.get("role") or "") == "admin":
             raise AccessRequestError("管理员对所有资源都有访问权，无需申请")
+        # 列是 VARCHAR(1000)：超长在 MySQL 严格模式会直接 1406 → 500，
+        # 前端只能看到「提交申请失败」。在这里挡住并给出可执行的文案。
+        if reason and len(str(reason)) > 1000:
+            raise AccessRequestError("申请理由最多 1000 个字符")
 
         if resource_type == RESOURCE_TYPE_KNOWLEDGE:
             meta = await self._require_knowledge(resource_id)
@@ -106,13 +128,27 @@ class ResourceAccessRequestService:
             # 记录里的名称快照要保证审批人看得懂当时申请的是什么
             resource_name = resource_name or meta.name
         else:
+            # 归一化成 str(int(id))：授权行与全站判定（广场 has_access、只读概览、
+            # 数据集选择器）都用规范值，传 "05"/"+5" 会写出一条永不生效的授权，
+            # 而且 pending 去重按原始串比较，同一资源能被重复申请。
+            try:
+                resource_id = str(int(resource_id))
+            except (TypeError, ValueError):
+                raise AccessRequestError("数据集 ID 不合法") from None
             dataset = await self._require_metadata(resource_id)
+            if int(dataset.status or 0) != 1:
+                raise AccessRequestError("数据集已停用，不能申请")
             resource_name = resource_name or dataset.display_name or dataset.name
 
-        if await self._has_access(resource_type, resource_id, user_id):
+        if await self._has_access(resource_type, resource_id, user_id, user.get("user_name")):
             raise AccessRequestError("你已经有访问权限，无需重复申请")
         if await self.pending_for(resource_type, resource_id, user_id):
             raise AccessRequestError("你已经提交过申请，正在等待审批")
+
+        # 申请人部门由服务端补：兼容层以前把「库归属部门」塞进这一列，
+        # 语义完全错位，一旦后续按部门审批/统计就会直接误判。
+        if dept_id is None:
+            dept_id = await self._resolve_applicant_dept(user_id)
 
         row = KnowledgeAccessRequest(
             resource_type=resource_type,
@@ -125,7 +161,14 @@ class ResourceAccessRequestService:
             status=STATUS_PENDING,
         )
         self.db.add(row)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            # 迁移 V194/V94 在 (申请人, 资源类型, 资源) 上对 pending 建了唯一索引。
+            # 应用层的 pending_for 是 check-then-insert，两个请求同时到会一起通过检查，
+            # 这里把数据库抛的冲突翻译回同一条业务文案。
+            await self.db.rollback()
+            raise AccessRequestError("你已经提交过申请，正在等待审批") from None
         await self.db.refresh(row)
 
         await self._audit(
@@ -152,8 +195,12 @@ class ResourceAccessRequestService:
     ) -> KnowledgeAccessRequest:
         if str(reviewer.get("role") or "") != "admin":
             raise AccessRequestError("只有管理员可以审批资源访问申请")
+        if comment and len(str(comment)) > 1000:
+            raise AccessRequestError("审批意见最多 1000 个字符")
 
-        row = await self.get(request_id)
+        # 行锁：两个管理员同时点「通过」会各自读到 pending，然后各写一次授权、
+        # 各发一条通知；批准与撤回并发时甚至会出现「已撤回却拿到权限」。
+        row = await self.get(request_id, for_update=True)
         if row.status != STATUS_PENDING:
             raise AccessRequestError(f"这条申请已经处理过（当前状态：{row.status}）")
         if int(row.applicant_user_id) == int(reviewer["user_id"]):
@@ -196,7 +243,7 @@ class ResourceAccessRequestService:
     async def cancel(
         self, request_id: int, user: Mapping[str, Any]
     ) -> KnowledgeAccessRequest:
-        row = await self.get(request_id)
+        row = await self.get(request_id, for_update=True)
         if int(row.applicant_user_id) != int(user["user_id"]):
             raise AccessRequestError("只能撤回自己的申请")
         if row.status != STATUS_PENDING:
@@ -228,33 +275,95 @@ class ResourceAccessRequestService:
         )
         return await self._enrich(list((await self.db.execute(stmt)).scalars().all()))
 
-    async def list_pending(self, *, resource_type: Optional[str] = None) -> List[Dict[str, Any]]:
-        stmt = select(KnowledgeAccessRequest).where(
-            KnowledgeAccessRequest.status == STATUS_PENDING
-        )
+    @staticmethod
+    def _page_window(page: int, size: int) -> tuple[int, int]:
+        page = max(1, int(page or 1))
+        size = max(1, min(500, int(size or 100)))
+        return (page - 1) * size, size
+
+    async def list_pending(
+        self,
+        *,
+        resource_type: Optional[str] = None,
+        page: int = 1,
+        size: int = 200,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        conditions = [KnowledgeAccessRequest.status == STATUS_PENDING]
         if resource_type:
-            stmt = stmt.where(KnowledgeAccessRequest.resource_type == resource_type)
-        stmt = stmt.order_by(
-            KnowledgeAccessRequest.created_at.asc(), KnowledgeAccessRequest.id.asc()
+            conditions.append(KnowledgeAccessRequest.resource_type == resource_type)
+        # 待审批积压时不能一次全量返回并逐个补资源信息，否则列表页越用越慢
+        total = (
+            await self.db.execute(
+                select(func.count())
+                .select_from(KnowledgeAccessRequest)
+                .where(*conditions)
+            )
+        ).scalar()
+        offset, limit = self._page_window(page, size)
+        stmt = (
+            select(KnowledgeAccessRequest)
+            .where(*conditions)
+            .order_by(
+                KnowledgeAccessRequest.created_at.asc(), KnowledgeAccessRequest.id.asc()
+            )
+            .offset(offset)
+            .limit(limit)
         )
-        return await self._enrich(list((await self.db.execute(stmt)).scalars().all()))
+        rows = list((await self.db.execute(stmt)).scalars().all())
+        return await self._enrich(rows), int(total or 0)
 
     async def list_reviews(
-        self, *, resource_type: Optional[str] = None, limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        stmt = select(KnowledgeAccessRequest).where(
+        self,
+        *,
+        resource_type: Optional[str] = None,
+        page: int = 1,
+        size: int = 100,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        conditions = [
             KnowledgeAccessRequest.status.in_([STATUS_APPROVED, STATUS_REJECTED])
-        )
+        ]
         if resource_type:
-            stmt = stmt.where(KnowledgeAccessRequest.resource_type == resource_type)
-        stmt = stmt.order_by(
-            KnowledgeAccessRequest.reviewed_at.desc(), KnowledgeAccessRequest.id.desc()
-        ).limit(max(1, min(500, int(limit))))
-        return await self._enrich(list((await self.db.execute(stmt)).scalars().all()))
+            conditions.append(KnowledgeAccessRequest.resource_type == resource_type)
+        total = (
+            await self.db.execute(
+                select(func.count())
+                .select_from(KnowledgeAccessRequest)
+                .where(*conditions)
+            )
+        ).scalar()
+        offset, limit = self._page_window(page, size)
+        stmt = (
+            select(KnowledgeAccessRequest)
+            .where(*conditions)
+            .order_by(
+                KnowledgeAccessRequest.reviewed_at.desc(), KnowledgeAccessRequest.id.desc()
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        rows = list((await self.db.execute(stmt)).scalars().all())
+        return await self._enrich(rows), int(total or 0)
 
     # ------------------------------------------------------------------ #
     # 内部：资源校验
     # ------------------------------------------------------------------ #
+
+    async def _resolve_applicant_dept(self, user_id: int) -> Optional[int]:
+        """申请人所属部门（取主部门）。查不到就留空，不能因为部门异常拒掉申请。"""
+        try:
+            from app.models.department import UserDepartment
+
+            value = (
+                await self.db.execute(
+                    select(UserDepartment.dept_id)
+                    .where(UserDepartment.user_id == int(user_id))
+                    .limit(1)
+                )
+            ).scalar()
+            return int(value) if value is not None else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("读取申请人部门失败（已忽略）: user_id=%s err=%s", user_id, exc)
+            return None
 
     async def _require_knowledge(self, resource_id: str) -> KnowledgeBaseMetadata:
         row = (
@@ -284,13 +393,28 @@ class ResourceAccessRequestService:
             if int(dataset.status or 0) != 1:
                 raise AccessRequestError("数据集已停用，不能通过这条申请")
         else:
-            await self._require_knowledge(row.dataset_id)
+            meta = await self._require_knowledge(row.dataset_id)
+            # 申请挂起期间库可能被改成个人私有。private 的语义是「有且仅有归属人」，
+            # 权限解析会刻意忽略授权记录——批了等于没批，还会给申请人发一条
+            # 「权限已生效」的通知，事后完全无法解释。
+            if (meta.visibility or "private") == "private":
+                raise AccessRequestError("该知识库已改为个人私有，无法通过，请驳回")
 
-    async def _has_access(self, resource_type: str, resource_id: str, user_id: int) -> bool:
+    async def _has_access(
+        self,
+        resource_type: str,
+        resource_id: str,
+        user_id: int,
+        user_name: Optional[str] = None,
+    ) -> bool:
         if resource_type == RESOURCE_TYPE_KNOWLEDGE:
             from app.services.permission_service import PermissionService
 
-            access = await PermissionService(self.db).get_knowledge_base_access(int(user_id))
+            # user_name 必须一起传：owner_user_id 为空的历史库靠 created_by 认归属，
+            # 漏传会让归属人对自己的库被判「无权限」，于是能再提一次无意义的申请
+            access = await PermissionService(self.db).get_knowledge_base_access(
+                int(user_id), user_name
+            )
             return resource_id in (access.get("accessible_ids") or set())
 
         role_ids = (
@@ -343,20 +467,49 @@ class ResourceAccessRequestService:
 
         两套缓存：权限缓存（accessible_ids）与智能体数据集菜单缓存。
         """
-        try:
-            from app.services.permission_service import PermissionService
+        from app.services.permission_service import PermissionService
 
-            await PermissionService(self.db).invalidate_cached_permissions_for_users([int(user_id)])
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("清理权限缓存失败（已忽略）: user=%s err=%s", user_id, exc)
+        # DB 已经提交、申请已经是 approved，此时缓存没清就是「批了但没生效」。
+        # 单次失败原来只 warning 一句，用户要等满 TTL（1 小时）才突然可用，中间
+        # 还会再提一次申请。这里重试一次，仍失败则升到 error 并写明后果。
+        for attempt in (1, 2):
+            try:
+                await PermissionService(self.db).invalidate_cached_permissions_for_users(
+                    [int(user_id)]
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                if attempt == 2:
+                    logger.error(
+                        "清理权限缓存失败（授权已生效，最长 1 小时内不可见）: user=%s err=%s",
+                        user_id,
+                        exc,
+                    )
+                else:
+                    logger.warning("清理权限缓存失败，重试一次: user=%s err=%s", user_id, exc)
 
         if resource_type == RESOURCE_TYPE_METADATA:
-            try:
-                from app.services.ai.config import AgentConfigProvider
+            for attempt in (1, 2):
+                try:
+                    from app.services.ai.config import AgentConfigProvider
 
-                await AgentConfigProvider.invalidate_dataset_menu_cache(user_id=int(user_id))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("清理数据集菜单缓存失败（已忽略）: user=%s err=%s", user_id, exc)
+                    await AgentConfigProvider.invalidate_dataset_menu_cache(
+                        user_id=int(user_id)
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    if attempt == 2:
+                        logger.error(
+                            "清理数据集菜单缓存失败（授权已生效）: user=%s err=%s",
+                            user_id,
+                            exc,
+                        )
+                    else:
+                        logger.warning(
+                            "清理数据集菜单缓存失败，重试一次: user=%s err=%s",
+                            user_id,
+                            exc,
+                        )
 
     # ------------------------------------------------------------------ #
     # 内部：审计与通知
@@ -497,6 +650,31 @@ class ResourceAccessRequestService:
             except (TypeError, ValueError):
                 continue
 
+        # 引擎侧（RAGFlow）当前到底还有没有这个库：本地 status 是平台自己的状态，
+        # 巡检只写 is_missing 快照、从不改 status，所以「库在 RAGFlow 被删了」
+        # 在审批页上一直显示成「资源存在」，批准后申请人打开只有 documents_error。
+        # 读取失败时（engine_ids is None）退回只看本地状态，避免一次抖动把整页标红。
+        engine_ids: Optional[set[str]] = None
+        engine_stats: Dict[str, Dict[str, Any]] = {}
+        if kb_ids:
+            try:
+                from app.services.ai.ragflow_client import RagFlowClient
+
+                engine_items = await RagFlowClient(
+                    config_prefix="knowledge_ragflow"
+                ).list_all_datasets_cached()
+                engine_ids = {str(item.get("id") or "") for item in (engine_items or [])}
+                engine_stats = {
+                    str(item.get("id") or ""): {
+                        "doc_count": item.get("document_count"),
+                        "chunk_count": item.get("chunk_count"),
+                    }
+                    for item in (engine_items or [])
+                }
+            except Exception as exc:  # noqa: BLE001 - 引擎失联不该让审批列表 500
+                logger.warning("读取引擎数据集清单失败（降级为只看本地状态）: %s", exc)
+                engine_ids = None
+
         kb_map: Dict[str, KnowledgeBaseMetadata] = {}
         if kb_ids:
             kb_rows = (
@@ -555,14 +733,17 @@ class ResourceAccessRequestService:
             if row.resource_type == RESOURCE_TYPE_KNOWLEDGE:
                 meta = kb_map.get(row.dataset_id)
                 alive = bool(meta) and (meta.status or "active") != "deleted"
+                in_engine = True if engine_ids is None else row.dataset_id in engine_ids
+                stats = engine_stats.get(row.dataset_id) or {}
                 item.update(
                     {
                         "resource_exists": alive,
-                        "resource_enabled": alive,
+                        # 本地还在、引擎里没了 = 批了也打不开，审批人必须看得见
+                        "resource_enabled": alive and in_engine,
                         "visibility": getattr(meta, "visibility", None),
                         "owner": getattr(meta, "owner", None),
-                        "doc_count": None,
-                        "chunk_count": None,
+                        "doc_count": _safe_int(stats.get("doc_count")),
+                        "chunk_count": _safe_int(stats.get("chunk_count")),
                     }
                 )
             else:

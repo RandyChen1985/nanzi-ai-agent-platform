@@ -112,3 +112,27 @@ def test_clear_action_lives_inside_the_panel():
 
     assert "清除全部" in panel
     assert '@click="resetFilters"' in panel
+
+
+def _panel_opening_tag() -> str:
+    """取面板自身的开标签：用 aria-label 定位，改动内部排版也不会指错元素。"""
+    source = _source()
+    idx = source.index('aria-label="筛选条件"')
+    return source[source.rindex("<div", 0, idx) : idx]
+
+
+def test_panel_opens_leftwards_from_the_button():
+    """面板要与按钮右边缘对齐、向左展开。
+
+    按钮在搜索框右侧、页面靠右，`left-0` 会让 320px 宽的面板右边缘越过视口，
+    末位的「普通用户」被裁掉一截，用户以为筛选少了选项。
+    """
+    panel = _panel_opening_tag()
+    assert "absolute" in panel
+    assert "right-0" in panel
+    assert "left-0" not in panel
+
+
+def test_panel_width_is_capped_by_viewport():
+    """窄屏时面板不能比视口还宽。"""
+    assert "calc(100vw" in _panel_opening_tag()

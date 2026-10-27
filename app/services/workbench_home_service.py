@@ -581,33 +581,52 @@ def _resource_card(
 async def _count_accessible_knowledge_bases(db: AsyncSession, user: Mapping[str, Any]) -> int:
     """我能访问的知识库数量。
 
-    管理员按「库里还剩多少个」算：管理员对所有库都有权限，用可见范围算没有意义。
+    与「资源广场 › 已授权」**同一口径**：只数广场里真能看到的那批库。
+    两处各写一份的后果是卡片写 32、点进去只有 29——内置库（chatbi-example-meta、
+    meta-*）与「有授权但元数据未同步」的 id 会被其中一边算成存在，用户以为库丢了。
     """
     from app.models.knowledge import KnowledgeBaseMetadata
+    from app.services.knowledge_dataset_filters import is_internal_dataset_name
     from app.services.permission_service import PermissionService
 
     user_id = int(user["user_id"])
-    if str(user.get("role") or "") == "admin":
-        total = (
-            await db.execute(
-                select(func.count())
-                .select_from(KnowledgeBaseMetadata)
-                .where(KnowledgeBaseMetadata.status != "deleted")
-            )
-        ).scalar()
-        return int(total or 0)
+    stmt = select(
+        KnowledgeBaseMetadata.ragflow_dataset_id, KnowledgeBaseMetadata.name
+    ).where(KnowledgeBaseMetadata.status != "deleted")
 
-    access = await PermissionService(db).get_knowledge_base_access(
-        user_id, user.get("user_name")
-    )
-    return len(access.get("accessible_ids") or set())
+    if str(user.get("role") or "") != "admin":
+        access = await PermissionService(db).get_knowledge_base_access(
+            user_id, user.get("user_name")
+        )
+        accessible = [str(item) for item in (access.get("accessible_ids") or set())]
+        if not accessible:
+            return 0
+        stmt = stmt.where(KnowledgeBaseMetadata.ragflow_dataset_id.in_(accessible))
+
+    rows = (await db.execute(stmt)).all()
+    return sum(1 for _dataset_id, name in rows if not is_internal_dataset_name(name))
 
 
 async def _count_accessible_metadata_datasets(
     db: AsyncSession, user: Mapping[str, Any]
 ) -> int:
-    """我能访问的数据集数量：与数据集选择器同一口径，避免两处数字打架。"""
+    """我能访问的数据集数量：与数据集选择器同一口径，避免两处数字打架。
+
+    广场的数据集目录可以被管理员关闭（只走手工授权）。关闭后广场里没有这一栏，
+    卡片却还显示「11 个」、点进去是「管理员暂未开放」，所以这里也必须归零。
+    """
+    from app.services.config_service import (
+        RESOURCE_SQUARE_SHOW_DATASETS_KEY,
+        ConfigService,
+    )
     from app.services.metadata_service import MetadataService
+
+    try:
+        raw = await ConfigService.get(RESOURCE_SQUARE_SHOW_DATASETS_KEY, "true")
+    except Exception:  # noqa: BLE001 - 读不到配置按默认开，别把整张卡片打挂
+        raw = "true"
+    if str(raw).strip().lower() in {"false", "0", "no", "off"}:
+        return 0
 
     rows = await MetadataService.list_accessible_dataset_options(
         db,

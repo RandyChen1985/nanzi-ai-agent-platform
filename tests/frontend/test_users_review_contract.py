@@ -53,3 +53,31 @@ def test_pending_badge_counts_all_types():
     page = _users()
     # 角标口径不受类型筛选影响，否则待办会被筛掉
     assert "角标只统计总数" in page
+
+
+def test_review_entry_is_admin_only():
+    """审核入口与整套接口都是管理员专属：缺权限时不该出现，也不该白打接口。
+
+    后端 pending / reviews / approve 全是 require_admin，前端若照样渲染按钮，
+    非管理员点进去只会收到一条 Admin access required —— 入口本身就是误导。
+    """
+    page = _users()
+    block = page[page.index("<!-- 审核入口"):]
+    block = block[: block.index("</button>")]
+    assert 'v-if="isAdmin"' in block
+    # 角标计数也只在管理员时拉，避免一进用户管理页就吃一个 403
+    assert "if (isAdmin.value) {" in page
+    # 深链 ?review=1 与其它调用方统一走守卫
+    assert "if (!isAdmin.value) return;" in page
+
+
+def test_quota_entry_requires_user_edit_permission():
+    """没有「用户编辑」权限时，「更多」与「系统默认额度」入口都该消失。"""
+    page = _users()
+    idx = page.index("系统默认额度")
+    # 按钮开标签在文案之前，取前面窗口断言它的显示条件
+    assert 'v-if="canEditUser"' in page[max(0, idx - 400): idx]
+    # 「更多」面板整体只看编辑权限：否则没有权限的人会看到一个点开全空的菜单
+    assert "const showMoreMenuPanel = computed(() => canEditUser.value)" in page
+    # 旧的菜单权限判定不得回退（它会让只有菜单权限的人看到额度入口）
+    assert "canOpenSystemQuota" not in page

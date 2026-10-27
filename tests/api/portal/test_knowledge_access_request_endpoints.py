@@ -293,9 +293,9 @@ async def test_reviews_for_admin_returns_mapped_items(monkeypatch):
         def __init__(self, db):
             pass
 
-        async def list_reviews(self, *, resource_type=None, limit=50):
+        async def list_reviews(self, *, resource_type=None, page=1, size=50):
             assert resource_type == "dataset"
-            return items
+            return items, len(items)
 
     monkeypatch.setattr(ragflow, "KnowledgeAccessRequestService", _Service)
 
@@ -459,9 +459,9 @@ async def test_pending_items_carry_resource_context(monkeypatch):
         def __init__(self, db):
             pass
 
-        async def list_pending(self, *, resource_type=None):
+        async def list_pending(self, *, resource_type=None, page=1, size=200):
             assert resource_type == "dataset"
-            return items
+            return items, len(items)
 
     monkeypatch.setattr(ragflow, "KnowledgeAccessRequestService", _Service)
 
@@ -506,8 +506,8 @@ async def test_pending_flags_deleted_resource(monkeypatch):
         def __init__(self, db):
             pass
 
-        async def list_pending(self, *, resource_type=None):
-            return items
+        async def list_pending(self, *, resource_type=None, page=1, size=200):
+            return items, len(items)
 
     monkeypatch.setattr(ragflow, "KnowledgeAccessRequestService", _Service)
 

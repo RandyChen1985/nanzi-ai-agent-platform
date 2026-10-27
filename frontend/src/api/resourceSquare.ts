@@ -21,12 +21,37 @@ import type {
 const BASE = '/api/portal'
 
 function messageOf(error: unknown, fallback: string): string {
+  // 本模块多数函数已经把后端 detail 包成 new Error(detail) 再抛，
+  // 调用方拿到的是普通 Error（没有 .response）。只读 .response.data.detail
+  // 会让「你已经提交过申请，正在等待审批」全部退化成「提交申请失败」。
+  if (error instanceof Error && error.message) {
+    const raw = error.message
+    // 没经过包装的 axios 错误形如 "Request failed with status code 400"，
+    // 这种英文串对用户没有信息量，交给 fallback
+    if (!/^Request failed with status code \d+$/.test(raw)) return raw
+  }
   const detail = (error as AxiosError<{ detail?: string }>)?.response?.data?.detail
   return typeof detail === 'string' && detail ? detail : fallback
 }
 
 function statusOf(error: unknown): number | undefined {
+  // 本模块包装过的错误把状态码挂在 .status 上：页面靠它区分「没权限」与「读取失败」
+  const carried = (error as { status?: number })?.status
+  if (typeof carried === 'number') return carried
   return (error as AxiosError)?.response?.status
+}
+
+/**
+ * 把 axios 错误包成「带人话文案 + 状态码」的 Error。
+ *
+ * 只包文案不包状态码的话，调用方 `resourceSquareErrorStatus(err) === 403` 永远
+ * 是 false，403 会退化成一条普通错误提示，而不是「去申请权限」的引导。
+ */
+function toUserError(error: unknown, fallback: string): Error {
+  const wrapped = new Error(messageOf(error, fallback)) as Error & { status?: number }
+  const status = (error as AxiosError)?.response?.status
+  if (typeof status === "number") wrapped.status = status
+  return wrapped
 }
 
 export { messageOf as resourceSquareErrorMessage, statusOf as resourceSquareErrorStatus }
@@ -42,7 +67,7 @@ export async function fetchSquareKnowledge(params: {
     const resp = await axios.get(`${BASE}/resource-square/knowledge`, { params })
     return resp.data.data as SquareKnowledgePage
   } catch (error) {
-    throw new Error(messageOf(error, '读取知识库列表失败'))
+    throw toUserError(error, '读取知识库列表失败')
   }
 }
 
@@ -56,7 +81,7 @@ export async function fetchSquareDatasets(params: {
     const resp = await axios.get(`${BASE}/resource-square/datasets`, { params })
     return resp.data.data as SquareDatasetPage
   } catch (error) {
-    throw new Error(messageOf(error, '读取数据集列表失败'))
+    throw toUserError(error, '读取数据集列表失败')
   }
 }
 
@@ -67,7 +92,7 @@ export async function applyResourceAccess(
     const resp = await axios.post(`${BASE}/access-requests`, payload)
     return resp.data.data as { id: number; status: string }
   } catch (error) {
-    throw new Error(messageOf(error, '提交申请失败'))
+    throw toUserError(error, '提交申请失败')
   }
 }
 
@@ -110,7 +135,7 @@ export async function decideAccessRequest(
       comment: comment?.trim() || null,
     })
   } catch (error) {
-    throw new Error(messageOf(error, action === 'approve' ? '审批失败' : '驳回失败'))
+    throw toUserError(error, action === 'approve' ? '审批失败' : '驳回失败')
   }
 }
 
@@ -119,10 +144,16 @@ export async function fetchKnowledgeReadonly(
   page = 1,
   size = 100,
 ): Promise<KnowledgeReadonly> {
-  const resp = await axios.get(
-    `${BASE}/resource-square/knowledge/${encodeURIComponent(datasetId)}`,
-    { params: { page, size } },
-  )
+  let resp
+  try {
+    resp = await axios.get(
+      `${BASE}/resource-square/knowledge/${encodeURIComponent(datasetId)}`,
+      { params: { page, size } },
+    )
+  } catch (error) {
+    // 403「你还没有访问这个知识库的权限」比 "Request failed with status code 403" 有用
+    throw toUserError(error, '读取知识库概览失败')
+  }
   const raw = (resp.data?.data ?? {}) as Partial<KnowledgeReadonly>
   // 模板里直接读 data.documents.length：少一个数组字段就是渲染期 TypeError，
   // 而渲染期抛错不走 catch —— 页面只剩面包屑、正文全白，最难查的一种坏法。
@@ -143,7 +174,12 @@ export async function fetchKnowledgeReadonly(
 }
 
 export async function fetchDatasetReadonly(datasetId: number): Promise<DatasetReadonly> {
-  const resp = await axios.get(`${BASE}/resource-square/datasets/${datasetId}`)
+  let resp
+  try {
+    resp = await axios.get(`${BASE}/resource-square/datasets/${datasetId}`)
+  } catch (error) {
+    throw toUserError(error, '读取数据集概览失败')
+  }
   const raw = (resp.data?.data ?? {}) as Partial<DatasetReadonly>
   return {
     id: raw.id ?? datasetId,

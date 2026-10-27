@@ -131,7 +131,9 @@ def _state_matches(
     if state == "apply":
         return not has_access and request_status != "pending"
     if state == "pending":
-        return request_status == "pending"
+        # 已经有权限的申请不该继续算「审批中」：管理员手工授权后旧申请会一直挂着，
+        # 角标和筛选结果都会多出一条早就没意义的待办
+        return request_status == "pending" and not has_access
     if state == "has":
         return has_access
     return True
@@ -198,6 +200,10 @@ async def list_square_knowledge(
 
     keyword_text = (keyword or "").strip().lower()
     enriched: List[Dict[str, Any]] = []
+    # 顶部三个角标记的是「当前可见候选集」里各状态的数量，与 status 筛选无关。
+    # 在 _state_matches 之后统计会出现「切到审批中，已有权限变 0」——用户会以为
+    # 权限丢了，而这正是资源广场首屏最容易看到的数字。
+    counts = {"apply": 0, "pending": 0, "has": 0}
     for row in candidates:
         if keyword_text and not (
             keyword_text in (row.name or "").lower()
@@ -212,6 +218,12 @@ async def list_square_knowledge(
         latest = request_map.get(row.ragflow_dataset_id)
         request_status = latest.status if latest else None
         has_access = is_admin or row.ragflow_dataset_id in accessible
+        if not has_access and request_status != "pending":
+            counts["apply"] += 1
+        if request_status == "pending" and not has_access:
+            counts["pending"] += 1
+        if has_access:
+            counts["has"] += 1
         if not _state_matches(status, has_access=has_access, request_status=request_status):
             continue
 
@@ -244,13 +256,7 @@ async def list_square_knowledge(
             "size": size,
             # 引擎读不到时前端提示「规模可能不是最新」，而不是显示一堆 0
             "stale": not engine_stats and bool(candidates),
-            "summary": {
-                "apply": sum(
-                    1 for item in enriched if not item["has_access"] and item["request_status"] != "pending"
-                ),
-                "pending": sum(1 for item in enriched if item["request_status"] == "pending"),
-                "has": sum(1 for item in enriched if item["has_access"]),
-            },
+            "summary": counts,
         }
     )
 
@@ -284,7 +290,9 @@ async def list_square_datasets(
             await db.execute(
                 select(MetaDataset)
                 .where(MetaDataset.status == 1)
-                .order_by(MetaDataset.id.asc())
+                # 最新登记的数据集排前面：广场是「找新资源」的入口，
+                # 按 id 升序会让刚接入的数据集沉到最后一页，与知识库段的行为也不一致
+                .order_by(MetaDataset.id.desc())
             )
         ).scalars().all()
     )
@@ -319,9 +327,11 @@ async def list_square_datasets(
 
     keyword_text = (keyword or "").strip().lower()
     enriched: List[Dict[str, Any]] = []
+    # 与知识库段同一口径：角标统计在 status 过滤之前，否则切 tab 会让另两个数字归零
+    counts = {"apply": 0, "pending": 0, "has": 0}
     for row in rows:
-        if is_internal_dataset_name(row.name):
-            continue
+        # 刻意不套 is_internal_dataset_name：那条规则描述的是 RAGFlow 平台自建库
+        # （chatbi-example-meta / meta-*），数据集是用户资产，叫 meta-xxx 也得能申请
         has_access = is_admin or str(row.id) in permitted_ids
         latest = request_map.get(str(row.id))
         request_status = latest.status if latest else None
@@ -333,6 +343,12 @@ async def list_square_datasets(
             or keyword_text in " ".join(str(tag) for tag in (row.tags or [])).lower()
         ):
             continue
+        if not has_access and request_status != "pending":
+            counts["apply"] += 1
+        if request_status == "pending" and not has_access:
+            counts["pending"] += 1
+        if has_access:
+            counts["has"] += 1
         if not _state_matches(status, has_access=has_access, request_status=request_status):
             continue
 
@@ -363,13 +379,7 @@ async def list_square_datasets(
             "page": page,
             "size": size,
             "enabled": True,
-            "summary": {
-                "apply": sum(
-                    1 for item in enriched if not item["has_access"] and item["request_status"] != "pending"
-                ),
-                "pending": sum(1 for item in enriched if item["request_status"] == "pending"),
-                "has": sum(1 for item in enriched if item["has_access"]),
-            },
+            "summary": counts,
         }
     )
 
@@ -380,6 +390,10 @@ async def _require_metadata_access(
     dataset = await db.get(MetaDataset, int(dataset_id))
     if not dataset:
         raise HTTPException(status_code=404, detail="数据集不存在")
+    # 停用数据集在广场列表里已经不出现，URL 直连也要一致：
+    # 否则「列表没有、地址能进」会让人以为停用只是藏了入口
+    if int(dataset.status or 0) != 1:
+        raise HTTPException(status_code=404, detail="数据集不存在或已停用")
     if str(user.get("role") or "") == "admin":
         return dataset
 

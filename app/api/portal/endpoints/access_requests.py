@@ -69,22 +69,33 @@ async def list_my_access_requests(
 @router.get("/pending", response_model=StandardResponse[Dict[str, Any]], summary="待审批申请（管理员）")
 async def list_pending_access_requests(
     resource_type: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=100, ge=1, le=500),
     _admin: Dict[str, Any] = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    items = await _service(db).list_pending(resource_type=resource_type)
-    return StandardResponse(data={"items": items, "total": len(items)})
+    items, total = await _service(db).list_pending(
+        resource_type=resource_type, page=page, size=size
+    )
+    return StandardResponse(
+        data={"items": items, "total": total, "page": page, "size": size}
+    )
 
 
 @router.get("/reviews", response_model=StandardResponse[Dict[str, Any]], summary="已处理申请（管理员）")
 async def list_reviewed_access_requests(
     resource_type: Optional[str] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=100, ge=1, le=500),
     _admin: Dict[str, Any] = Depends(require_admin),
     db: AsyncSession = Depends(get_db_session),
 ):
-    items = await _service(db).list_reviews(resource_type=resource_type, limit=limit)
-    return StandardResponse(data={"items": items, "total": len(items)})
+    items, total = await _service(db).list_reviews(
+        resource_type=resource_type, page=page, size=size
+    )
+    return StandardResponse(
+        data={"items": items, "total": total, "page": page, "size": size}
+    )
 
 
 @router.post("/{request_id}/approve", response_model=StandardResponse[Dict[str, Any]], summary="通过申请")
