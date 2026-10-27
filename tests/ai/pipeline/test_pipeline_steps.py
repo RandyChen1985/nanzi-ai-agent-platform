@@ -912,6 +912,87 @@ async def test_finalize_awaiting_user_records_audit_for_history_replay():
 
 
 @pytest.mark.asyncio
+async def test_finalize_awaiting_user_fills_empty_content_with_question_text():
+    """提问轮正文为空时，必须用提问原文补一条正文，否则模型上下文里是空 assistant。
+
+    提问（ask_user_question）轮模型通常只调工具不说话，正文为空；历史里每条这样的
+    消息都会变成空的 assistant。模型下一轮只能靠 tool_run_text 反推问过什么，一旦该
+    通道缺失（多智能体/子代理/压缩后），用户回答就成了没来由的一句话。
+    """
+    context = PipelineContext(
+        messages=[{"role": "user", "content": "帮我配扣费规则"}],
+        user_info={"user_id": 123},
+        conversation_id="conv_ask_fill",
+    )
+    context.lane_user_id = 123
+    context.user_query = "帮我配扣费规则"
+    context.execution_status = "awaiting_user"
+    context.full_response_content = ""
+    context.shared_state["process_timeline"] = [
+        {
+            "kind": "log",
+            "id": "user_question_uq_1",
+            "category": "user_question",
+            "title": "需要用户回答",
+            "details": "在线率达标线设多少？",
+            "status": "pending",
+            "user_question": {
+                "question": "在线率达标线设多少？",
+                "options": [{"id": "a", "label": "98%"}, {"id": "b", "label": "95%"}],
+            },
+        }
+    ]
+
+    with patch(
+        "app.services.ai.agent_service._persist_assistant_message_and_summary",
+        new_callable=AsyncMock,
+    ) as persist, patch(
+        "app.services.ai.agent_service._should_persist_turn_history",
+        return_value=True,
+    ), patch(
+        "app.services.ai.agent_service.AuditManager.log_transaction",
+        new_callable=AsyncMock,
+    ) as audit:
+        chunks = [chunk async for chunk in FinalizeStep().run(context)]
+
+    retraction = next(chunk for chunk in chunks if chunk.get("type") == "retraction")
+    assert "在线率达标线设多少？" in retraction["content"]
+    assert context.full_response_content == retraction["content"]
+    assert "在线率达标线设多少？" in persist.await_args.kwargs["content"]
+    assert "在线率达标线设多少？" in audit.await_args.args[3]
+
+
+@pytest.mark.asyncio
+async def test_finalize_awaiting_user_keeps_model_text_when_present():
+    """模型自己已经说了话时不得被补全文本覆盖。"""
+    context = PipelineContext(
+        messages=[{"role": "user", "content": "帮我配扣费规则"}],
+        user_info={"user_id": 123},
+    )
+    context.execution_status = "awaiting_user"
+    context.full_response_content = "我需要确认一下你的口径。"
+    context.shared_state["process_timeline"] = [
+        {
+            "kind": "log",
+            "id": "user_question_uq_1",
+            "category": "user_question",
+            "title": "需要用户回答",
+            "details": "在线率达标线设多少？",
+            "user_question": {"question": "在线率达标线设多少？"},
+        }
+    ]
+
+    with patch(
+        "app.services.ai.agent_service.AuditManager.log_transaction",
+        new_callable=AsyncMock,
+    ):
+        chunks = [chunk async for chunk in FinalizeStep().run(context)]
+
+    assert context.full_response_content == "我需要确认一下你的口径。"
+    assert not any(chunk.get("type") == "retraction" for chunk in chunks)
+
+
+@pytest.mark.asyncio
 async def test_finalize_awaiting_permission_still_defers_audit():
     """授权/外部执行仍是同轮可恢复暂停态，由恢复轮收尾，本轮不写审计。"""
     context = PipelineContext(

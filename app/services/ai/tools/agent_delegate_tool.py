@@ -10,7 +10,13 @@ from typing import Optional, Dict, Any, List, Tuple, Iterable
 from pydantic import BaseModel, Field, field_validator
 from app.services.ai.tools.tool_compat import tool
 from app.services.ai.tools.tool_compat import BaseTool
-from app.core.context import get_current_agent_context, AgentContext, set_agent_context
+from app.core.context import (
+    get_current_agent_context,
+    AgentContext,
+    execution_options_context,
+    set_agent_context,
+    set_execution_options_context,
+)
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.permission_service import PermissionService
@@ -956,8 +962,12 @@ async def sub_agent_call(
         turn_decision=TurnDecision.for_direct_agent_selection(target_config),
     )
 
-    # 临时切换到子 Context 运行
+    # 临时切换到子 Context 运行。execution_options 也要一并保存：
+    # 子代理 setup_context 会把它覆盖成 {"delegated_sub_agent": True}，
+    # 只恢复 agent_context 会让主智能体在同一 task 的后续轮次被误判成无人值守，
+    # 连它自己的 ask_user_question 都会被拒。
     original_ctx = get_current_agent_context()
+    original_execution_options = dict(execution_options_context.get() or {})
     set_agent_context(sub_ctx)
 
     full_output = ""
@@ -1069,6 +1079,7 @@ async def sub_agent_call(
             except Exception as close_err:
                 logger.warning(f"Failed to close sub-agent generator stream: {close_err}")
         set_agent_context(original_ctx)
+        set_execution_options_context(original_execution_options)
 
     if interrupt_type:
         interrupt_status = (
@@ -1347,7 +1358,11 @@ async def _dispatch_sub_agent_executor(
         sub_history,
         trace_id=trace_id,
         trace_buffer=trace_buffer,
-        execution_options=None,
+        # 委派链没有「向用户提问」的通道：子代理发出的事件只会被
+        # _consume_sub_agent_stream 的白名单过滤掉（user_question 既不在中断类型里，
+        # 也不在转发类型里），而且子代理跑在 child_session_{run_id} 独立会话上，
+        # 就算卡片冒到前端，回执也查不到登记记录。打上标记让下游别再尝试交互。
+        execution_options={"delegated_sub_agent": True},
         permission_options=permission_options,
         user_info=user_info,
         conversation_id=conversation_id,

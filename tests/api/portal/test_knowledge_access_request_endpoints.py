@@ -32,6 +32,9 @@ class _Session:
 
 
 class _PermService:
+    #: 缓存失效记录：审批通过必须清掉申请人的权限缓存，否则要等 TTL 过期
+    invalidated: list = []
+
     def __init__(self, db, *, is_admin=False, accessible=None, writable=None):
         self.is_admin = is_admin
         # 管理员场景要保留 None 语义（"不受限"），不能悄悄变成空集合
@@ -44,6 +47,9 @@ class _PermService:
             "accessible_ids": self.accessible if self.is_admin else (self.accessible or set()),
             "writable_ids": self.writable,
         }
+
+    async def invalidate_cached_permissions_for_users(self, user_ids):
+        type(self).invalidated.append([int(uid) for uid in user_ids])
 
 
 def _meta(**kwargs):
@@ -191,25 +197,19 @@ async def test_cannot_request_what_i_already_have(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reviewer_must_be_owner_or_admin(monkeypatch):
-    _patch(monkeypatch, _PermService(None, writable={"ds-other"}))
+async def test_non_admin_cannot_approve(monkeypatch):
+    """审批权统一收归管理员，库归属人也不能从旧接口批。
 
-    row = SimpleNamespace(
-        id=5,
-        dataset_id="ds-1",
-        status="pending",
-        applicant_user_id=9,
-        applicant_user_name="bob",
-    )
+    归属人往往没有用户管理菜单权限，把审批权留给他等于留了个进不去的后门。
+    """
+    reached = {"decide": False}
 
     class _Service:
         def __init__(self, db):
             pass
 
-        async def get(self, request_id):
-            return row
-
         async def decide(self, **kwargs):  # pragma: no cover - 不应走到
+            reached["decide"] = True
             raise AssertionError("越权审批不该进入 decide")
 
     monkeypatch.setattr(ragflow, "KnowledgeAccessRequestService", _Service)
@@ -218,12 +218,12 @@ async def test_reviewer_must_be_owner_or_admin(monkeypatch):
         await ragflow.approve_access_request(
             request_id=5,
             payload=ragflow.AccessReviewBody(comment="同意"),
-            request=_request(),
-            user={"user_id": 1, "user_name": "alice"},
+            user={"user_id": 1, "user_name": "alice", "role": "user"},
             db=_Session(),
         )
 
     assert exc.value.status_code == 403
+    assert reached["decide"] is False
 
 
 class _ReviewedSession:
@@ -258,42 +258,72 @@ def _reviewed_row(**kwargs):
 
 
 @pytest.mark.asyncio
-async def test_reviews_for_admin_returns_all(monkeypatch):
-    _patch(monkeypatch, _PermService(None, is_admin=True))
-    db = _ReviewedSession([_reviewed_row(), _reviewed_row(id=2, dataset_id="ds-2", name=None)])
+async def test_reviews_for_admin_returns_mapped_items(monkeypatch):
+    """已处理列表来自统一服务，但要映射回旧前端认识的字段名。"""
+    items = [
+        {
+            "id": 1,
+            "resource_type": "dataset",
+            "resource_id": "ds-1",
+            "resource_name": "制度库",
+            "status": "approved",
+            "review_comment": "同意",
+            "applicant_user_id": 9,
+            "applicant_user_name": "bob",
+            "reviewer_user_name": "root",
+            "created_at": None,
+            "reviewed_at": None,
+        },
+        {
+            "id": 2,
+            "resource_type": "metadata",
+            "resource_id": "3",
+            "resource_name": "订单集",
+            "status": "rejected",
+            "review_comment": "口径待确认",
+            "applicant_user_id": 9,
+            "applicant_user_name": "bob",
+            "reviewer_user_name": "root",
+            "created_at": None,
+            "reviewed_at": None,
+        },
+    ]
+
+    class _Service:
+        def __init__(self, db):
+            pass
+
+        async def list_reviews(self, *, resource_type=None, limit=50):
+            assert resource_type == "dataset"
+            return items
+
+    monkeypatch.setattr(ragflow, "KnowledgeAccessRequestService", _Service)
 
     res = await ragflow.list_reviewed_access_requests(
-        user={"user_id": 1, "user_name": "root"}, db=db
+        user={"user_id": 1, "user_name": "root", "role": "admin"}, db=_Session()
     )
 
     assert res["data"]["total"] == 2
     assert res["data"]["items"][0]["review_comment"] == "同意"
     assert res["data"]["items"][0]["status"] == "approved"
+    # 旧前端读 dataset_id / dataset_name，少了就渲染成 undefined
+    assert res["data"]["items"][0]["dataset_id"] == "ds-1"
+    assert res["data"]["items"][0]["dataset_name"] == "制度库"
 
 
 @pytest.mark.asyncio
-async def test_reviews_scoped_to_manageable_datasets(monkeypatch):
-    _patch(monkeypatch, _PermService(None, is_admin=False, writable={"ds-1"}))
-    db = _ReviewedSession([])
+async def test_reviews_requires_admin(monkeypatch):
+    """审批记录含申请理由，普通用户不能翻。
 
-    res = await ragflow.list_reviewed_access_requests(
-        user={"user_id": 8, "user_name": "owner"}, db=db
-    )
+    旧实现按「我名下的库」过滤，现在审批人只有管理员，作用域概念随之消失：
+    非管理员直接 403，不再有「返回空列表」这种模糊地带。
+    """
+    with pytest.raises(ragflow.HTTPException) as exc:
+        await ragflow.list_reviewed_access_requests(
+            user={"user_id": 8, "user_name": "owner", "role": "user"}, db=_Session()
+        )
 
-    assert res["data"]["total"] == 0
-    # 非管理员必须带上库范围条件，否则能翻到别人库的申请理由
-    assert "ds-1" in str(db.statement.compile(compile_kwargs={"literal_binds": True}))
-
-
-@pytest.mark.asyncio
-async def test_reviews_returns_empty_when_nothing_manageable(monkeypatch):
-    _patch(monkeypatch, _PermService(None, is_admin=False))
-
-    res = await ragflow.list_reviewed_access_requests(
-        user={"user_id": 8, "user_name": "nobody"}, db=_ReviewedSession()
-    )
-
-    assert res["data"] == {"items": [], "total": 0}
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -396,59 +426,98 @@ class _QueuedSession:
 
 
 @pytest.mark.asyncio
-async def test_pending_items_carry_dataset_scale(monkeypatch):
-    """审批人判断「该不该批」要看库本身，不能只有一个库名。"""
-    _patch(monkeypatch, _PermService(None, is_admin=True), engine_ids={"ds-1"})
+async def test_pending_items_carry_resource_context(monkeypatch):
+    """审批人判断「该不该批」要看资源本身，不能只有一个名字。
 
-    request_row = SimpleNamespace(
-        id=7,
-        dataset_id="ds-1",
-        dataset_name="制度库",
-        applicant_user_id=9,
-        applicant_user_name="bob",
-        reason="要看考勤制度",
-        created_at=None,
-    )
-    meta_row = SimpleNamespace(
-        ragflow_dataset_id="ds-1", visibility="public", owner="财务部/张三"
-    )
+    文档数不再在列表里实时查 RAGFlow：一次审批打开就要多打一次引擎接口，
+    引擎慢的时候整个待办列表跟着转圈。规模放到打开库里看，列表只给归属与可见性。
+    """
+    items = [
+        {
+            "id": 7,
+            "resource_type": "dataset",
+            "resource_id": "ds-1",
+            "resource_name": "制度库",
+            "status": "pending",
+            "applicant_user_id": 9,
+            "applicant_user_name": "bob",
+            "reason": "要看考勤制度",
+            "reviewer_user_name": None,
+            "review_comment": None,
+            "created_at": None,
+            "reviewed_at": None,
+            "visibility": "public",
+            "owner": "财务部/张三",
+            "resource_exists": True,
+            "resource_enabled": True,
+            "doc_count": None,
+            "chunk_count": None,
+        }
+    ]
+
+    class _Service:
+        def __init__(self, db):
+            pass
+
+        async def list_pending(self, *, resource_type=None):
+            assert resource_type == "dataset"
+            return items
+
+    monkeypatch.setattr(ragflow, "KnowledgeAccessRequestService", _Service)
 
     res = await ragflow.list_pending_access_requests(
-        user={"user_id": 1, "user_name": "root"},
-        db=_QueuedSession([request_row], [meta_row]),
+        user={"user_id": 1, "user_name": "root", "role": "admin"}, db=_Session()
     )
 
     item = res["data"]["items"][0]
     assert item["visibility"] == "public"
     assert item["owner"] == "财务部/张三"
-    assert item["doc_count"] == 12
-    assert item["chunk_count"] == 345
     assert item["dataset_exists"] is True
+    assert item["doc_count"] is None
 
 
 @pytest.mark.asyncio
-async def test_pending_flags_dataset_missing_in_engine(monkeypatch):
-    """库在引擎侧已经没了：批准也没用，界面要先标出来。"""
-    _patch(monkeypatch, _PermService(None, is_admin=True), engine_ids={"ds-other"})
+async def test_pending_flags_deleted_resource(monkeypatch):
+    """资源已经删了：批准也没用，界面要先标出来。"""
+    items = [
+        {
+            "id": 8,
+            "resource_type": "metadata",
+            "resource_id": "42",
+            "resource_name": "订单集",
+            "status": "pending",
+            "applicant_user_id": 9,
+            "applicant_user_name": "bob",
+            "reason": None,
+            "reviewer_user_name": None,
+            "review_comment": None,
+            "created_at": None,
+            "reviewed_at": None,
+            "data_source": "mysql",
+            "table_count": 12,
+            "metric_count": 3,
+            "quality_score": 88,
+            "resource_exists": False,
+            "resource_enabled": False,
+        }
+    ]
 
-    request_row = SimpleNamespace(
-        id=8,
-        dataset_id="ds-1",
-        dataset_name="制度库",
-        applicant_user_id=9,
-        applicant_user_name="bob",
-        reason=None,
-        created_at=None,
-    )
+    class _Service:
+        def __init__(self, db):
+            pass
+
+        async def list_pending(self, *, resource_type=None):
+            return items
+
+    monkeypatch.setattr(ragflow, "KnowledgeAccessRequestService", _Service)
 
     res = await ragflow.list_pending_access_requests(
-        user={"user_id": 1, "user_name": "root"},
-        db=_QueuedSession([request_row], []),
+        user={"user_id": 1, "user_name": "root", "role": "admin"}, db=_Session()
     )
 
     item = res["data"]["items"][0]
     assert item["dataset_exists"] is False
-    assert item["doc_count"] is None
+    assert item["table_count"] == 12
 
 
 @pytest.mark.asyncio
@@ -463,3 +532,37 @@ async def test_discover_hides_platform_builtin_datasets(monkeypatch):
 
     names = [item["name"] for item in res["data"]["items"]]
     assert names == ["制度库"]
+
+
+@pytest.mark.asyncio
+async def test_approve_delegates_to_service(monkeypatch):
+    """清缓存、发通知、写审计都在统一服务里。
+
+    端点自己再写一遍的话：申请人收到两条结果通知、审计里两条 grant、
+    缓存被清两次——这类重复在功能上看不出来，但排查问题时会误导人。
+    """
+    calls = {}
+
+    class _Service:
+        def __init__(self, db):
+            pass
+
+        async def decide(self, *, request_id, reviewer, approve, comment=None):
+            calls.update(
+                request_id=request_id, reviewer=reviewer, approve=approve, comment=comment
+            )
+            return SimpleNamespace(id=request_id, status="approved" if approve else "rejected")
+
+    monkeypatch.setattr(ragflow, "KnowledgeAccessRequestService", _Service)
+
+    res = await ragflow.approve_access_request(
+        request_id=7,
+        payload=ragflow.AccessReviewBody(comment="同意"),
+        user={"user_id": 1, "user_name": "alice", "role": "admin"},
+        db=_Session(),
+    )
+
+    assert res["data"] == {"id": 7, "status": "approved"}
+    assert calls["approve"] is True
+    assert calls["comment"] == "同意"
+    assert calls["reviewer"]["user_id"] == 1

@@ -687,7 +687,8 @@ const loadingMyRequests = ref(false)
 const fetchMyRequests = async () => {
     loadingMyRequests.value = true
     try {
-        const response = await axios.get('/api/portal/ragflow/access-requests/mine')
+        // 知识库与数据集共用一条申请链路，统一接口才拿得到两类记录
+        const response = await axios.get('/api/portal/access-requests/mine')
         myRequests.value = response.data?.data?.items || []
     } catch {
         // 个人中心的其他内容更重要，这里失败不弹窗，只是列表空着
@@ -695,6 +696,31 @@ const fetchMyRequests = async () => {
     } finally {
         loadingMyRequests.value = false
     }
+}
+
+/** 资源类型徽标：两类申请混在一起，不标类型就看不出批的是什么 */
+const requestResourceLabel = (item: any): string =>
+    item?.resource_type === 'dataset' ? '知识库' : '数据集'
+
+const requestResourceName = (item: any): string =>
+    item?.resource_name || item?.resource_id || '—'
+
+/** 已授权的申请可以点进只读概览——申请通过后最想做的就是去看看 */
+const openGrantedResource = (item: any) => {
+    if (item?.status !== 'approved') return
+    if (item.resource_type === 'dataset') {
+        // 知识库只读概览当前不挂入口（点开是空白，原因未定位）：
+        // 已授权就去资源广场的已授权列表里找它，而不是跳一个白屏页
+        router.push({
+            path: '/dashboard/workbench',
+            query: { tab: 'square', section: 'knowledge', status: 'has' },
+        })
+        return
+    }
+    router.push({
+        name: 'ResourceSquareDataset',
+        params: { id: String(item.resource_id) },
+    })
 }
 
 /** 「我的申请」里还在审批中的条数，挂在子 tab 上做提示 */
@@ -713,12 +739,19 @@ const switchPermissionSubTab = (sub: 'list' | 'requests') => {
     router.replace({ query: nextQuery })
     if (sub === 'requests') {
         void fetchMyRequests()
+        return
+    }
+    // 深链直达「我的申请」（?tab=requests）时 activeTab 初始就是 permissions，
+    // 而负责加载权限的 watch(activeTab) 不是 immediate，一次都没跑过。
+    // 于是切回「权限清单」看到的是空面板——连角色标识都没有，不是"数据旧"而是"从没加载"。
+    if (!permissions.value.details) {
+        void fetchPermissions()
     }
 }
 
 const cancelMyRequest = async (item: any) => {
     try {
-        await axios.post(`/api/portal/ragflow/access-requests/${item.id}/cancel`)
+        await axios.post(`/api/portal/access-requests/${item.id}/cancel`)
         await fetchMyRequests()
     } catch (err: any) {
         const detail = err?.response?.data?.detail
@@ -862,6 +895,11 @@ onMounted(() => {
     fetchUserInfo()
     loadBranding()
     fetchBrowserCacheSize()
+    // 初始 tab 就是「我的权限」时（深链 / 通知跳转），watch(activeTab) 不会触发，
+    // 必须在这里主动拉一次，否则面板一直是空的。
+    if (activeTab.value === 'permissions' && !permissions.value.details) {
+        void fetchPermissions()
+    }
 })
 </script>
 
@@ -1527,13 +1565,28 @@ onMounted(() => {
                 <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             </div>
             <div v-else-if="!myRequests.length" class="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
-                还没有提交过申请。可以在知识库页点「发现」，找到公共库后申请访问。
+                还没有提交过申请。可以在「我的工作台 → 资源广场」里找到需要的知识库或数据集，点「申请访问」。
             </div>
             <ul v-else class="space-y-2">
                 <li v-for="item in myRequests" :key="item.id" class="rounded-xl border border-gray-200 p-3 sm:p-4">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0 flex-1">
-                            <p class="truncate text-sm font-semibold text-gray-900">{{ item.dataset_name || item.dataset_id }}</p>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    class="truncate text-sm font-semibold text-gray-900"
+                                    :class="item.status === 'approved' ? 'cursor-pointer hover:text-primary' : 'cursor-default'"
+                                    @click="openGrantedResource(item)"
+                                >{{ requestResourceName(item) }}</button>
+                                <span
+                                    class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                                    :class="item.resource_type === 'dataset' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600'"
+                                >{{ requestResourceLabel(item) }}</span>
+                                <span
+                                    v-if="item.resource_exists === false"
+                                    class="shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600"
+                                >资源已删除</span>
+                            </div>
                             <p v-if="item.reason" class="mt-1 text-xs text-gray-500 leading-relaxed line-clamp-2">理由：{{ item.reason }}</p>
                             <p v-if="item.review_comment" class="mt-1 text-xs leading-relaxed" :class="item.status === 'rejected' ? 'text-red-500' : 'text-gray-500'">
                                 审批意见：{{ item.review_comment }}

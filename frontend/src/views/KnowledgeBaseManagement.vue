@@ -330,6 +330,7 @@ const MISSING_DATASET_HINT =
 const detailTab = ref<'documents' | 'audit' | 'references'>('documents')
 // 「高级设置」默认收起：绝大多数人不需要碰 JSON，展开就先把代价讲清楚
 const advancedConfigOpen = ref(false)
+const createAdvancedConfigOpen = ref(false)
 // 详情页底部那块只读 JSON 同理，默认收起
 const detailConfigOpen = ref(false)
 const auditLogs = ref<any[]>([])
@@ -1387,11 +1388,15 @@ const filteredDatasets = computed(() => {
     const ownerMatch = (ds.owner || '').toLowerCase().includes(query)
     const tagsMatch = (ds.tags || []).some(t => t.toLowerCase().includes(query))
 
-    const dsId = ds.ragflow_dataset_id || ds.id || ''
+    const dsId = String(ds.ragflow_dataset_id || ds.id || '')
+    // 支持按知识库 ID 搜索：详情页展示的就是这个 ID，复制后粘回搜索框要能定位到库。
+    // 用 includes 而不是精确比较，方便只粘前缀（排障时拿到的往往是被截断的 ID）。
+    const idMatch = !!dsId && dsId.toLowerCase().includes(query)
+
     const subDocs = documentsMap.value[dsId] || []
     const docMatch = subDocs.some(doc => (doc.name || '').toLowerCase().includes(query))
 
-    return nameMatch || descMatch || ownerMatch || tagsMatch || docMatch
+    return nameMatch || descMatch || ownerMatch || tagsMatch || idMatch || docMatch
   })
 })
 
@@ -1429,7 +1434,19 @@ const ensureDocumentsForSearch = async () => {
 
 watch(searchQuery, (value) => {
   if (searchDocTimer) clearTimeout(searchDocTimer)
-  if (!value.trim()) return
+  const query = value.trim().toLowerCase()
+  if (!query) return
+  // 只在「搜到的是 ID」这件事上短路文档预加载：粘贴 32 位 Dataset ID 时用户显然在找库，
+  // 没必要为此把所有库的文档列表都拉一遍（库一多就是一串串行 RAGFlow 请求）。
+  // 加 8 位长度阈值，避免 "test" 这类短词恰好是某个 ID 的子串就把文档搜索整段跳过。
+  if (
+    query.length >= 8 &&
+    visibilityScopeDatasets.value.some((ds) =>
+      String(ds.ragflow_dataset_id || ds.id || '').toLowerCase().includes(query)
+    )
+  ) {
+    return
+  }
   searchDocTimer = setTimeout(() => {
     void ensureDocumentsForSearch()
   }, SEARCH_DOC_DEBOUNCE_MS)
@@ -3394,7 +3411,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <input
                 v-model="searchQuery"
                 type="search"
-                placeholder="搜索知识库、文档或业务归属部门..."
+                placeholder="搜索知识库名称、ID、文档或业务归属部门..."
                 class="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400"
               />
               <svg class="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3511,6 +3528,13 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
           <div v-else-if="isSearchEmpty" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
             <span>没有匹配「{{ searchQuery }}」的知识库</span>
+            <!--
+              搜索只在当前分类（公共级/部门级/个人私有）内进行：按 ID 搜索时，
+              库若在别的分类里就会「查无此库」，不说清楚容易被误判成 ID 错了。
+            -->
+            <span class="text-[11px] text-gray-400 not-italic">
+              当前只在「{{ visibilityOptionOf(activeVisibility).label }}」分类下搜索，可切换上方分类再试
+            </span>
             <button type="button" class="text-xs font-semibold text-primary hover:underline" @click="searchQuery = ''">清除搜索条件</button>
           </div>
           <div v-else-if="deptDatasetGroups.length === 0" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
@@ -4147,14 +4171,20 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <span class="font-medium text-gray-700">{{ datasetOwnerLabel(selectedDataset) || '未指派' }}</span>
                 </span>
                 <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
+                <!--
+                  ID 完整展示而不是截成 "54af42d5…"：这个值就是 RAGFlow Dataset ID，
+                  排查问题时要能直接对照 RAGFlow 后台、也要能整段复制出去。
+                  用 break-all 允许在元信息条里折行，避免长 ID 撑破布局。
+                -->
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 text-gray-400 hover:text-primary transition-colors"
-                  title="复制知识库 ID"
+                  class="inline-flex max-w-full items-start gap-1 text-left text-gray-400 hover:text-primary transition-colors"
+                  :title="`点击复制知识库 ID：${selectedDataset.ragflow_dataset_id || selectedDataset.id || ''}`"
                   @click="copyToClipboard(selectedDataset.ragflow_dataset_id || selectedDataset.id || '')"
                 >
-                  <span class="font-mono">{{ (selectedDataset.ragflow_dataset_id || selectedDataset.id || '').slice(0, 8) }}…</span>
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <span class="shrink-0">ID</span>
+                  <span class="font-mono break-all text-gray-500">{{ selectedDataset.ragflow_dataset_id || selectedDataset.id || '—' }}</span>
+                  <svg class="mt-0.5 w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
                 </button>
@@ -5050,9 +5080,43 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">平台备注</label>
           <textarea v-model="form.notes" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" rows="2" placeholder="请输入备注"></textarea>
         </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-400 mb-1.5">业务扩展配置 JSON</label>
-          <textarea v-model="form.extraConfigText" class="w-full border border-gray-200 rounded-xl px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-white disabled:bg-gray-100" rows="3" placeholder="{}"></textarea>
+        <div class="overflow-hidden rounded-xl border border-gray-200">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between bg-gray-50/60 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
+            :aria-expanded="createAdvancedConfigOpen"
+            @click="createAdvancedConfigOpen = !createAdvancedConfigOpen"
+          >
+            <span class="flex items-center gap-1.5">
+              <svg
+                class="h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform duration-200"
+                :class="{ 'rotate-90': createAdvancedConfigOpen }"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+              <span class="text-xs font-semibold text-gray-500">高级设置</span>
+              <span class="text-[11px] text-gray-400">· 业务扩展配置 JSON</span>
+            </span>
+            <span class="shrink-0 text-[10px] text-gray-400">{{ createAdvancedConfigOpen ? '收起' : '展开' }}</span>
+          </button>
+
+          <div v-show="createAdvancedConfigOpen" class="space-y-2 border-t border-gray-100 px-3 pb-3 pt-2.5">
+            <div class="space-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
+              <p><b>保存是整份覆盖。</b>删掉 <code class="font-mono">folder_structure</code> 会让所有文档掉回「未分类」，虚拟文件夹丢失且无法撤销。</p>
+              <p>只有下面两个键会被读取，其余键写了也不会生效：</p>
+              <ul class="list-disc space-y-0.5 pl-4">
+                <li><code class="font-mono">folder_structure</code>：虚拟文件夹映射，由「新建文件夹 / 移动文档」自动维护，一般无需手改。</li>
+                <li><code class="font-mono">custom_questions</code>：知识库门户的快捷提问，形如 <code class="font-mono">[{label:'总结核心内容', query:'请帮我梳理要点'}]</code>。</li>
+              </ul>
+            </div>
+            <textarea
+              v-model="form.extraConfigText"
+              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+              rows="4"
+              placeholder="{}"
+            ></textarea>
+          </div>
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showCreateModal = false">取消</button>
@@ -5480,7 +5544,10 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <button type="button" class="px-3 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90" @click="fetchDiscover(1)">搜索</button>
         </div>
         <p class="text-[11px] text-gray-400 leading-relaxed">
-          这里只列公共级与部门级知识库。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
+          这里只列公共级与部门级知识库，且只列你还没有权限的库（申请中的也算没有）。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
+        </p>
+        <p class="text-[11px] text-gray-400 leading-relaxed">
+          没有知识库管理菜单？可以在「我的工作台 › 资源广场」看到完整目录（含已授权的库）并提交申请。
         </p>
 
         <div v-if="discoverLoading" class="py-10 text-center text-sm text-gray-400">加载中…</div>

@@ -79,6 +79,21 @@ async def init_infrastructure(request):
             await session.commit()
             
     yield
+
+    # 泄漏检测：dispose 不会关闭已 checkout 的连接。用例结束时若仍有连接未归还，
+    # 说明有 session / 异步生成器 / 后台任务没释放。先用告警观察，避免把偶发的
+    # 后台任务误判成测试失败；确认无噪音后可升级为断言。
+    try:
+        leaked = database.engine.pool.checkedout()
+    except Exception:  # pragma: no cover - 防御：engine 被替换时不做判定
+        leaked = 0
+    if leaked:
+        logger.warning(
+            "用例结束后仍有 %s 个数据库连接未归还（疑似 session/生成器泄漏）: %s",
+            leaked,
+            getattr(request.node, "nodeid", "unknown"),
+        )
+
     await database.close_db()
     await redis.close_redis()
 
@@ -101,6 +116,22 @@ def _release_loop_bound_singletons():
     yield
     redis.redis_client = None
     redis.redis_client_binary = None
+
+
+@pytest.fixture(scope="function", autouse=True)
+def _reset_agent_context():
+    """兜底清理全局 agent 上下文。
+
+    不少用例直接调 ``set_agent_context(...)`` 注入上下文却不恢复，而 ``ContextVar``
+    在同步测试里是整条线程共享的，于是上一个测试的 ``agent_id`` 会留到下一个测试里。
+    真实踩到：``tests/ai/test_knowledge_utils.py`` 注入 ``agent_id="kb"`` 之后，
+    ``tests/services`` 里的纯函数断言 ``_scoped_cache_key("42")`` 拿到 ``"42|kb"``
+    而不是 ``"42|-"``——单独跑每条都过，整目录一起跑就红，属于典型的顺序依赖。
+    """
+    yield
+    from app.core import context as agent_context_module
+
+    agent_context_module.set_agent_context(None)
 
 
 @pytest.fixture(autouse=True)

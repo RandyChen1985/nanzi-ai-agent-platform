@@ -53,9 +53,12 @@ def test_remaining_metadata_collapses_into_one_line():
     page = _page()
     for text in ("创建人", "切片", "业务归属部门/负责人"):
         assert text in page
-    # ID 保留可复制，但只显示短 ID
+    # ID 完整展示，不再截成 8 位 + 省略号：这个值就是 RAGFlow Dataset ID，
+    # 排障时要能和 RAGFlow 后台逐字符对照，也要能整段复制出去。
     assert "复制知识库 ID" in page
-    assert ".slice(0, 8)" in page
+    assert ".slice(0, 8)" not in page
+    # 长 ID 用 break-all 在元信息条里折行，避免撑破布局
+    assert "break-all" in page
     # 失联标记仍然跟着标题走
     assert "RAGFlow 侧已失联" in page
 

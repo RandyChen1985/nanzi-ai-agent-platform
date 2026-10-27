@@ -1301,6 +1301,92 @@ KNOWN_SANDBOX_POLICIES = frozenset(
     }
 )
 
+#: 沙箱策略 → Bash 看到的逻辑工作区根。``local`` 不在表里：它没有逻辑根，
+#: Bash 与宿主文件工具共用后端真实路径。
+#:
+#: - docker / k8s：平台把宿主用户工作区挂到 ``/workspace``；
+#: - e2b：AgentScope ``E2BWorkspace`` 的 workdir（``_e2b/_constants.SANDBOX_WORKDIR``），
+#:   平台没有覆盖它，所以是 ``/home/user/workspace`` 而不是 ``/workspace``；
+#: - ssh：取系统配置 ``sandbox_ssh_remote_workdir``（默认 ``/workspace``），
+#:   由 :func:`resolve_sandbox_logical_root` 异步读取。
+SANDBOX_POLICY_LOGICAL_ROOTS: dict[str, str] = {
+    SANDBOX_POLICY_DOCKER: DOCKER_WORKSPACE_LOGICAL_ROOT,
+    SANDBOX_POLICY_K8S: DOCKER_WORKSPACE_LOGICAL_ROOT,
+    SANDBOX_POLICY_E2B: "/home/user/workspace",
+}
+
+#: 沙箱内技能目录的布局形态（技能根固定是 ``<逻辑根>/skills``）：
+#:
+#: - ``seed``：AgentScope 工作区基类的 ``skills/.seed`` 模板 + 各智能体分区。
+#:   docker / k8s 由平台自己维护 ``.seed``，e2b 交给 AgentScope ``_setup_skills``；
+#: - ``flat``：平台自研 ``SshWorkspace`` 的 ``skills/<id>/SKILL.md`` 平铺复制（无 ``.seed``）。
+SANDBOX_SKILL_LAYOUTS: dict[str, str] = {
+    SANDBOX_POLICY_DOCKER: "seed",
+    SANDBOX_POLICY_K8S: "seed",
+    SANDBOX_POLICY_E2B: "seed",
+    SANDBOX_POLICY_SSH: "flat",
+}
+
+#: 个人技能**源目录**以只读方式挂进沙箱的策略。e2b / ssh 只把技能复制进
+#: ``skills/`` 副本，没有源目录挂载，提示词不能声称 ``/workspace/personal-skills``。
+SANDBOX_PERSONAL_SKILLS_MOUNTED_POLICIES = frozenset(
+    {SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S}
+)
+
+#: 沙箱内技能目录名（对齐 AgentScope ``DEFAULT_SKILLS_DIR``）。
+SANDBOX_SKILLS_DIR_NAME = "skills"
+
+
+def sandbox_policy_is_sandbox(policy: str | None) -> bool:
+    """该策略是否真的把 Bash 放进隔离环境。
+
+    与 ``assemble_step._effective_policy_is_sandbox`` / ``agent_service`` 预检同口径
+    （local 以外都算沙箱）。历史教训：这里曾只认 docker/k8s，导致 e2b/ssh 被当成
+    「Bash 跑在后端」，提示词给出后端技能路径，与真实执行环境相反。
+    """
+    return str(policy or "").strip().lower() in (
+        SANDBOX_POLICY_DOCKER,
+        SANDBOX_POLICY_K8S,
+        SANDBOX_POLICY_E2B,
+        SANDBOX_POLICY_SSH,
+    )
+
+
+def sandbox_skill_layout(policy: str | None) -> str:
+    """沙箱内技能目录布局；``local`` 与未知策略按 ``seed`` 返回（调用方只在沙箱内使用）。"""
+    return SANDBOX_SKILL_LAYOUTS.get(str(policy or "").strip().lower(), "seed")
+
+
+def sandbox_personal_skills_path(policy: str | None) -> str | None:
+    """个人技能源目录在沙箱内的只读挂载点；未挂载（e2b/ssh/local）返回 None。"""
+    if str(policy or "").strip().lower() not in SANDBOX_PERSONAL_SKILLS_MOUNTED_POLICIES:
+        return None
+    return DOCKER_WORKSPACE_PERSONAL_SKILLS_PATH
+
+
+async def resolve_sandbox_logical_root(
+    policy: str | None,
+    *,
+    config_overrides: Mapping[str, Any] | None = None,
+) -> str | None:
+    """该策略下 Bash 的逻辑工作区根；``local`` 返回 None（Bash 直接用后端真实路径）。
+
+    提示词、目录清单、工具元数据展示统一走这里，别再各自硬编码 ``/workspace``
+    ——e2b 的根是 ``/home/user/workspace``，ssh 的根由管理员配置。
+    """
+    normalized = str(policy or "").strip().lower()
+    if normalized == SANDBOX_POLICY_SSH:
+        remote = (
+            await _sandbox_config_value(
+                "sandbox_ssh_remote_workdir",
+                DOCKER_WORKSPACE_LOGICAL_ROOT,
+                config_overrides,
+            )
+        ).strip()
+        return remote or DOCKER_WORKSPACE_LOGICAL_ROOT
+    return SANDBOX_POLICY_LOGICAL_ROOTS.get(normalized)
+
+
 
 def _resolve_docker_sandbox_host_workdir(
     workspace_root: str | None,
@@ -5744,30 +5830,54 @@ async def append_session_workspace_sandbox_to_system_prompt(
     except Exception as exc:  # pragma: no cover - infrastructure fallback
         logger.warning("[workspace] Failed to resolve sandbox policy for prompt: %s", exc)
         effective_policy = SANDBOX_POLICY_LOCAL
-    # Docker 与 K8s 沙箱内 Bash 都使用 /workspace 逻辑路径（两者技能布局已对齐，
-    # 见 _policy_k8s_workspace），因此按「是否沙箱策略」给出逻辑根。
-    sandbox_logical_root = (
-        DOCKER_WORKSPACE_LOGICAL_ROOT
-        if effective_policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S)
-        else None
-    )
+    # 逻辑工作区根按策略解析：docker/k8s = /workspace，e2b = /home/user/workspace，
+    # ssh = 系统配置的 remote_workdir；local 为空（Bash 直接用后端真实路径）。
+    # 提示词、目录清单、工具元数据展示都从这里取，别再各自硬编码 /workspace。
+    try:
+        sandbox_logical_root = await resolve_sandbox_logical_root(effective_policy)
+    except Exception as exc:  # pragma: no cover - 提示词降级
+        logger.warning("[workspace] Failed to resolve sandbox logical root: %s", exc)
+        sandbox_logical_root = None
     logical_session_workdir = None
     logical_docs_dir = None
     logical_public_docs_dir = None
     if sandbox_logical_root:
-        logical_session_workdir = os.path.join(
-            sandbox_logical_root,
-            USER_SESSIONS_DIR_NAME,
-            os.path.basename(session_workdir),
-        )
-        logical_docs_dir = os.path.join(sandbox_logical_root, USER_DOCS_DIR_NAME)
-        # K8s 适配器固定挂载 subPath docs（k8s_workspace.py 传 public_docs_mounted=True），
-        # 与目录清单 resource_catalog_tools 的判定保持一致；否则同一轮里提示词会说
-        # 「公共 docs 未挂载」而目录清单说已挂载，模型无所适从。
-        if effective_policy == SANDBOX_POLICY_K8S:
-            logical_public_docs_dir = DOCKER_WORKSPACE_PUBLIC_DOCS_PATH
-        elif _resolve_docker_public_docs_source() is not None:
-            logical_public_docs_dir = DOCKER_WORKSPACE_PUBLIC_DOCS_PATH
+        # 只有 docker/k8s 把宿主用户工作区（docs/sessions）挂进沙箱；e2b/ssh 的
+        # `<root>/docs`、`<root>/sessions/<id>` 并不存在，不能在提示词里声称。
+        if effective_policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
+            logical_session_workdir = os.path.join(
+                sandbox_logical_root,
+                USER_SESSIONS_DIR_NAME,
+                os.path.basename(session_workdir),
+            )
+            logical_docs_dir = os.path.join(sandbox_logical_root, USER_DOCS_DIR_NAME)
+            # K8s 适配器固定挂载 subPath docs（k8s_workspace.py 传 public_docs_mounted=True），
+            # 与目录清单 resource_catalog_tools 的判定保持一致；否则同一轮里提示词会说
+            # 「公共 docs 未挂载」而目录清单说已挂载，模型无所适从。
+            if effective_policy == SANDBOX_POLICY_K8S:
+                logical_public_docs_dir = DOCKER_WORKSPACE_PUBLIC_DOCS_PATH
+            elif _resolve_docker_public_docs_source() is not None:
+                logical_public_docs_dir = DOCKER_WORKSPACE_PUBLIC_DOCS_PATH
+    # 技能路径提示必须与 Bash 的真实执行环境一致：local 下公共技能就是后端
+    # SKILLS_DIR（容器内 /app/data/skills），沙箱内则是 `<逻辑根>/skills` 副本。
+    # 取实际值而不是硬编码，宿主开发环境会回退到 ~/.agents/skills。
+    from app.utils.fs_access import get_platform_skills_root
+    from app.utils.fs_paths import get_data_base_dir
+
+    public_skills_path = get_platform_skills_root() or os.path.join(get_data_base_dir(), "skills")
+    personal_skills_path = None
+    if not sandbox_logical_root:
+        try:
+            from app.services.ai.skill_resolver import get_user_personal_skills_dir
+
+            personal_skills_path = get_user_personal_skills_dir(user_info)
+        except Exception as exc:  # pragma: no cover - 提示词降级
+            logger.debug("[workspace] Failed to resolve personal skills dir for prompt: %s", exc)
+    sandbox_skills_dir = (
+        os.path.join(sandbox_logical_root, SANDBOX_SKILLS_DIR_NAME)
+        if sandbox_logical_root
+        else None
+    )
     block = AgentServicePrompts.session_workspace_sandbox_block(
         session_workdir=session_workdir,
         docs_dir=docs_dir,
@@ -5776,6 +5886,11 @@ async def append_session_workspace_sandbox_to_system_prompt(
         logical_session_workdir=logical_session_workdir,
         logical_docs_dir=logical_docs_dir,
         logical_public_docs_dir=logical_public_docs_dir,
+        public_skills_path=public_skills_path,
+        personal_skills_path=personal_skills_path,
+        sandbox_skills_dir=sandbox_skills_dir,
+        sandbox_skill_layout=sandbox_skill_layout(effective_policy),
+        personal_skills_container_path=sandbox_personal_skills_path(effective_policy),
     )
     base = (system_content or "").strip()
     if base:

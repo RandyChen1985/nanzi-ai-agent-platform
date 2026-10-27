@@ -141,6 +141,27 @@ def _item_signals(item: KnowledgeBaseCatalogItem) -> tuple[set[str], set[str]]:
     return name_signals, all_signals
 
 
+def _score_item(
+    item: KnowledgeBaseCatalogItem,
+    query_signals: set[str],
+) -> tuple[float, int] | None:
+    """单个知识库与查询的匹配分：``(score, overlap_count)``，不相关返回 None。
+
+    路由判定（``match_knowledge_catalog``）与范围推荐（``rank_knowledge_catalog``）
+    必须用同一套权重：各写一份的话，调完权重只改一处，就会出现「路由认为是知识轮、
+    但推荐不出对应库」的口径漂移。
+    """
+    name_signals, all_signals = _item_signals(item)
+    overlap = query_signals & all_signals
+    if not overlap:
+        return None
+    query_coverage = len(overlap) / len(query_signals)
+    metadata_coverage = len(overlap) / max(len(all_signals), 1)
+    score = 0.68 * query_coverage + 0.22 * metadata_coverage
+    score += min(len(query_signals & name_signals), 3) * 0.1
+    return score, len(overlap)
+
+
 def match_knowledge_catalog(
     query: str,
     catalog: AuthorizedKnowledgeCatalog | None,
@@ -157,16 +178,11 @@ def match_knowledge_catalog(
 
     scored: list[tuple[float, int, str]] = []
     for item in catalog.items:
-        name_signals, all_signals = _item_signals(item)
-        overlap = query_signals & all_signals
-        name_overlap = query_signals & name_signals
-        if not overlap:
+        scored_item = _score_item(item, query_signals)
+        if scored_item is None:
             continue
-        query_coverage = len(overlap) / len(query_signals)
-        metadata_coverage = len(overlap) / max(len(all_signals), 1)
-        score = 0.68 * query_coverage + 0.22 * metadata_coverage
-        score += min(len(name_overlap), 3) * 0.1
-        scored.append((score, len(overlap), item.ragflow_dataset_id))
+        score, overlap_count = scored_item
+        scored.append((score, overlap_count, item.ragflow_dataset_id))
 
     if not scored:
         return KnowledgeCatalogMatch(status="available")
@@ -193,6 +209,43 @@ def match_knowledge_catalog(
         matched_ids=(best_id,),
         confidence="weak",
     )
+
+
+def rank_knowledge_catalog(
+    query: str,
+    catalog: AuthorizedKnowledgeCatalog | None,
+    *,
+    limit: int = 3,
+    min_score: float = 0.12,
+) -> list[tuple[str, float]]:
+    """按相关性返回 top-N ``(dataset_id, score)``。
+
+    与 :func:`match_knowledge_catalog` 共用同一套信号与打分公式，区别只是返回排序列表，
+    供检索范围门禁挑选「最相关的几个库」。``match_knowledge_catalog`` 的 strong/weak
+    语义保持不变（外层路由仍依赖它）。
+    """
+    if catalog is None or catalog.status != "available" or not catalog.items:
+        return []
+
+    query_signals = _signals(query)
+    if not query_signals:
+        return []
+
+    scored: list[tuple[float, int, str]] = []
+    for item in catalog.items:
+        scored_item = _score_item(item, query_signals)
+        if scored_item is None:
+            continue
+        score, overlap_count = scored_item
+        if score < min_score:
+            continue
+        scored.append((score, overlap_count, item.ragflow_dataset_id))
+
+    scored.sort(reverse=True)
+    return [
+        (dataset_id, round(score, 4))
+        for score, _overlap_count, dataset_id in scored[: max(int(limit), 1)]
+    ]
 
 
 def _to_item(row: Any) -> KnowledgeBaseCatalogItem | None:
@@ -284,4 +337,5 @@ __all__ = [
     "fetch_authorized_knowledge_catalog",
     "load_authorized_knowledge_catalog",
     "match_knowledge_catalog",
+    "rank_knowledge_catalog",
 ]

@@ -105,14 +105,24 @@ def test_discover_card_does_not_fake_zero_counts(knowledge: str) -> None:
     assert "item.doc_count === null" in knowledge
 
 
-def test_review_card_shows_dataset_context(users: str) -> None:
-    """审批人要和申请人看到同样的库画像，否则只能靠库名猜。"""
+def test_review_card_shows_resource_context(users: str) -> None:
+    """审批人要和申请人看到同样的资源画像，否则只能靠名字猜。
+
+    统一审核上线后这里同时承载知识库与数据集：知识库看文档数与归属，
+    数据集看表数、指标数与数据源——两类字段不同，不能只断言其中一类。
+    """
     assert "item.doc_count" in users
-    assert "item.chunk_count" in users
     assert "item.visibility" in users
+    assert "item.table_count" in users
+    assert "item.metric_count" in users
 
 
-def test_review_card_flags_missing_dataset(users: str) -> None:
-    """库在引擎侧已经没了，批准也没用，得先标出来。"""
-    assert "引擎侧已失联" in users
-    assert 'item.dataset_exists === false' in users
+def test_review_card_flags_missing_resource(users: str) -> None:
+    """资源已经没了，批准也没用，得先标出来。
+
+    判定从「引擎侧是否失联」扩展到「记录是否还存在 / 是否被停用」：
+    知识库被删、数据集被停用，两种都不该批。
+    """
+    assert "资源已删除" in users
+    assert 'item.resource_exists === false' in users
+    assert 'item.resource_enabled === false' in users

@@ -89,6 +89,22 @@ class AskUserQuestionTool(BaseTool):
     args_schema = AskUserQuestionArgs
 
     async def ainvoke(self, arguments: dict[str, Any] | None = None) -> str:
+        # 无人值守上下文（委派、定时任务、订阅任务）没有回传通道：卡片事件会被
+        # agent_delegate_tool 的流白名单吞掉，等待的回执永远不会到，模型只会空等到超时。
+        # 这里直接拒绝并说明原因，让它转成正常回答，而不是发一张没人能看到的卡。
+        from app.core.context import execution_options_context
+        from app.services.ai.tool_nudge_policy import is_automatic_delivery_context
+
+        if is_automatic_delivery_context(None, execution_options_context.get()):
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "当前为无人值守上下文（委派或定时/订阅任务），没有可交互的用户。",
+                    "hint": "不要再尝试向用户提问。请基于现有信息直接给出结论；若确实缺少关键条件，"
+                    "在回答中说明缺少什么，由主智能体决定是否转问用户。",
+                },
+                ensure_ascii=False,
+            )
         try:
             args = AskUserQuestionArgs.model_validate(arguments or {})
         except Exception as exc:

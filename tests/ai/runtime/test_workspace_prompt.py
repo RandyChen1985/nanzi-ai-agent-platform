@@ -64,9 +64,76 @@ def test_workspace_prompt_enforces_host_file_tools_and_docs_rules():
 
     assert "文件读写与搜索工具优先原则" in prompt
     assert "文件读写与搜索一律走宿主侧文件工具（Read/Write/Edit/Glob/Grep），不要用 Bash 访问文件" in prompt
-    assert "平台公共文档（如 `data/docs/` 手册、FAQ.md）仅宿主侧可读，沙箱 Bash 不可见；请用 Read/Glob/Grep 直接读取" in prompt
+    # local 策略（未传 logical root）下 Bash 就跑在后端，公共文档并非「沙箱不可见」；
+    # 提示词只要求走文件工具读取，不能宣称沙箱专属的可见性结论。
+    assert "平台公共文档（如 `data/docs/` 手册、FAQ.md）为只读" in prompt
+    assert "沙箱 Bash 不可见" not in prompt
+    assert "Bash 文件操作边界" in prompt
+    assert "只有在触发运行环境操作" in prompt
+
+
+def test_workspace_prompt_sandbox_keeps_public_docs_invisible_to_bash():
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.session_workspace_sandbox_block(
+        session_workdir="/app/data/agent_workspaces/u1/sessions/conv-1",
+        docs_dir="/app/data/agent_workspaces/u1/docs",
+        file_tool_names=["Read", "Write", "Bash", "Grep"],
+        logical_workspace_root="/workspace",
+        logical_session_workdir="/workspace/sessions/conv-1",
+        logical_docs_dir="/workspace/docs",
+    )
+
+    assert "平台公共文档（如 `data/docs/` 手册、FAQ.md）在沙箱内仅宿主侧可读，沙箱 Bash 不可见" in prompt
     assert "沙箱内 Bash 文件操作边界" in prompt
-    assert "只有在触发沙箱内的运行环境操作" in prompt
+
+
+def test_workspace_prompt_local_points_skills_at_backend_path():
+    """local：公共技能提示必须是后端真实路径，禁止出现沙箱专属路径。"""
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.session_workspace_sandbox_block(
+        session_workdir="/app/data/agent_workspaces/u1/sessions/conv-1",
+        docs_dir="/app/data/agent_workspaces/u1/docs",
+        file_tool_names=["Bash", "Read", "Glob"],
+        public_skills_path="/app/data/skills",
+        personal_skills_path="/app/data/agent_workspaces/u1/skills",
+    )
+
+    assert "/app/data/skills" in prompt
+    assert "`/app/data/agent_workspaces/u1/skills`" in prompt
+    assert "Bash 与文件工具同根" in prompt
+    # 沙箱专属路径一个都不能出现，否则模型会先 ls 一个不存在的目录再被迫摸索
+    assert "/workspace/skills" not in prompt
+    assert "/workspace/personal-skills" not in prompt
+    assert ".seed" not in prompt
+    assert "ls -a /workspace/skills" not in prompt
+    # 技能文本统一走 read_skill_instruction；Bash 只用于执行技能脚本
+    assert "read_skill_instruction(skill_id)" in prompt
+    assert "只有需要执行技能自带脚本" in prompt
+
+
+def test_workspace_prompt_sandbox_points_skills_at_workspace_copy():
+    """Docker/K8s：Bash 用 /workspace/skills 副本，且与文件工具路径分开描述。"""
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.session_workspace_sandbox_block(
+        session_workdir="/app/data/agent_workspaces/u1/sessions/conv-1",
+        docs_dir="/app/data/agent_workspaces/u1/docs",
+        file_tool_names=["Bash", "Read", "Glob"],
+        logical_workspace_root="/workspace",
+        logical_session_workdir="/workspace/sessions/conv-1",
+        logical_docs_dir="/workspace/docs",
+        logical_public_docs_dir="/workspace/public/docs",
+    )
+
+    assert "/workspace/skills" in prompt
+    assert "/workspace/personal-skills" in prompt
+    assert ".seed" in prompt
+    assert "只有需要执行技能自带脚本时才" in prompt
+    assert "read_skill_instruction(skill_id)" in prompt
+    # 沙箱 Bash 看不到后端技能根，提示词不得把它当成可访问路径
+    assert "/app/data/skills" not in prompt
 
 
 
@@ -153,3 +220,185 @@ async def test_append_workspace_prompt_skips_without_conversation_or_file_tools(
         tools=file_tools,
     )
     assert result_no_conv == "Base prompt"
+
+
+@pytest.mark.asyncio
+async def test_append_local_workspace_prompt_uses_backend_skill_path(monkeypatch):
+    """回归：sandbox_policy=local 时不得注入 /workspace/skills 与 .seed 布局。"""
+
+    async def _root():
+        return "/app/data/agent_workspaces"
+
+    async def _config(key, default=None):
+        return "local" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        _root,
+    )
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config)
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root",
+        lambda: "/app/data/skills",
+    )
+
+    result = await append_session_workspace_sandbox_to_system_prompt(
+        "Base prompt",
+        user_id="u1",
+        conversation_id="conv-1",
+        tools=[SimpleNamespace(name="Bash"), SimpleNamespace(name="Read")],
+    )
+
+    assert "/app/data/skills" in result
+    assert "/workspace/skills" not in result
+    assert "/workspace/personal-skills" not in result
+    assert ".seed" not in result
+    assert "Bash 与文件工具同根" in result
+
+
+@pytest.mark.asyncio
+async def test_append_k8s_workspace_prompt_uses_sandbox_skill_path(monkeypatch):
+    async def _root():
+        return "/app/data/agent_workspaces"
+
+    async def _config(key, default=None):
+        return "k8s" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        _root,
+    )
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config)
+
+    result = await append_session_workspace_sandbox_to_system_prompt(
+        "Base prompt",
+        user_id="u1",
+        conversation_id="conv-1",
+        tools=[SimpleNamespace(name="Bash"), SimpleNamespace(name="Read")],
+    )
+
+    assert "/workspace/skills" in result
+    assert "/workspace/personal-skills" in result
+    assert ".seed" in result
+    # K8s 适配器固定挂载 subPath docs，提示词必须与目录清单一致地说已挂载
+    assert "/workspace/public/docs" in result
+    assert "公共 docs 未挂载" not in result
+
+
+
+def test_workspace_prompt_e2b_uses_e2b_workdir_skills():
+    """E2B：Bash 的逻辑根是 /home/user/workspace（AgentScope E2BWorkspace 的 workdir）。"""
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.session_workspace_sandbox_block(
+        session_workdir="/app/data/agent_workspaces/u1/sessions/conv-1",
+        docs_dir="/app/data/agent_workspaces/u1/docs",
+        file_tool_names=["Bash", "Read"],
+        logical_workspace_root="/home/user/workspace",
+        logical_public_docs_dir=None,
+        sandbox_skills_dir="/home/user/workspace/skills",
+        sandbox_skill_layout="seed",
+        personal_skills_container_path=None,
+    )
+
+    assert "/home/user/workspace/skills" in prompt
+    assert ".seed" in prompt
+    # e2b 没有 personal-skills 挂载，也没有公共 docs 挂载
+    assert "/workspace/personal-skills" not in prompt
+    assert "/workspace/public/docs" not in prompt
+    assert "个人技能源目录以只读方式挂载" not in prompt
+    assert "个人技能没有独立挂载点" in prompt
+    # 后端技能根在沙箱里不可访问
+    assert "/app/data/skills" not in prompt
+    assert "公共技能用 `/workspace/skills` 下的副本" not in prompt
+
+
+def test_workspace_prompt_ssh_uses_flat_skill_layout_without_seed():
+    """SSH：平台自研 SshWorkspace 把技能平铺到 <remote_workdir>/skills，没有 .seed。"""
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.session_workspace_sandbox_block(
+        session_workdir="/app/data/agent_workspaces/u1/sessions/conv-1",
+        docs_dir="/app/data/agent_workspaces/u1/docs",
+        file_tool_names=["Bash", "Read"],
+        logical_workspace_root="/srv/agent",
+        logical_public_docs_dir=None,
+        sandbox_skills_dir="/srv/agent/skills",
+        sandbox_skill_layout="flat",
+        personal_skills_container_path=None,
+    )
+
+    assert "/srv/agent/skills" in prompt
+    assert "平铺副本" in prompt
+    assert "/srv/agent/skills/<skill_id>/SKILL.md" in prompt
+    assert ".seed/" not in prompt
+    assert "/workspace/skills" not in prompt
+    assert "/workspace/personal-skills" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_append_e2b_workspace_prompt_uses_e2b_logical_root(monkeypatch):
+    async def _root():
+        return "/app/data/agent_workspaces"
+
+    async def _config(key, default=None):
+        return "e2b" if key == "sandbox_policy" else default
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        _root,
+    )
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config)
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root",
+        lambda: "/app/data/skills",
+    )
+
+    result = await append_session_workspace_sandbox_to_system_prompt(
+        "Base prompt",
+        user_id="u1",
+        conversation_id="conv-1",
+        tools=[SimpleNamespace(name="Bash"), SimpleNamespace(name="Read")],
+    )
+
+    assert "/home/user/workspace/skills" in result
+    assert "/home/user/workspace" in result
+    assert "/app/data/skills" not in result
+    assert "/workspace/personal-skills" not in result
+    assert "/workspace/public/docs" not in result
+
+
+@pytest.mark.asyncio
+async def test_append_ssh_workspace_prompt_uses_configured_remote_workdir(monkeypatch):
+    async def _root():
+        return "/app/data/agent_workspaces"
+
+    async def _config(key, default=None):
+        if key == "sandbox_policy":
+            return "ssh"
+        if key == "sandbox_ssh_remote_workdir":
+            return "/srv/agent"
+        return default
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.workspace.resolve_workspace_root",
+        _root,
+    )
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config)
+    monkeypatch.setattr(
+        "app.utils.fs_access.get_platform_skills_root",
+        lambda: "/app/data/skills",
+    )
+
+    result = await append_session_workspace_sandbox_to_system_prompt(
+        "Base prompt",
+        user_id="u1",
+        conversation_id="conv-1",
+        tools=[SimpleNamespace(name="Bash"), SimpleNamespace(name="Read")],
+    )
+
+    assert "/srv/agent/skills" in result
+    assert "平铺副本" in result
+    assert "/workspace/skills" not in result
+    assert "/workspace/personal-skills" not in result
+    assert "/app/data/skills" not in result

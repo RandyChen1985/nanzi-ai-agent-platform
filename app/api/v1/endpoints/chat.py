@@ -1867,7 +1867,11 @@ async def create_chat_completion(
     completion_request: ChatCompletionRequest,
     request: Request,
     user_info: Dict[str, Any] = Depends(require_api_key),
-    db: AsyncSession = Depends(get_db_session)
+    # scope="function"：db 只在前置校验（归属、模型白名单、资源快照）里用，随后
+    # 返回 StreamingResponse。默认 scope 会让 session 活到整条 SSE 结束（producer
+    # 硬超时默认 600s、可配到 3600s），把连接和事务一直占着；function scope 让它在
+    # 流开始前归还，事务立刻结束、读过的表上的共享 MDL 随之释放。
+    db: AsyncSession = Depends(get_db_session, scope="function")
 ):
     """
     Unified Chat Completion endpoint (V1).

@@ -17,6 +17,7 @@ import ConfirmModal from "../components/ConfirmModal.vue";
 import Toast from "../components/Toast.vue";
 import AgentVersionsDrawer from "../components/agent/AgentVersionsDrawer.vue"; // New Component
 import AgentVersionEditorDrawer from "../components/agent/AgentVersionEditorDrawer.vue";
+import ScopeGateSelect from "../components/agent/ScopeGateSelect.vue";
 import AgentAvatarField from "../components/agent/AgentAvatarField.vue";
 import AgentNameField from "../components/agent/AgentNameField.vue";
 import AgentHistoryModal from "../components/agent/AgentHistoryModal.vue";
@@ -259,6 +260,45 @@ const ensureAgentNameUsable = async (): Promise<string | null> => {
 };
 
 const isEditingAgent = ref(false);
+
+// 编辑表单里低频配置默认折叠：一次看到的信息少一点，改常见项时不用滚过一堆卡片。
+const COLLAPSIBLE_SECTIONS = ['capabilities', 'scopeGate', 'markdownTheme'] as const;
+const collapsedSections = ref<Record<string, boolean>>({
+  capabilities: false,
+  scopeGate: true,
+  markdownTheme: true,
+});
+const isSectionOpen = (key: string) => !collapsedSections.value[key];
+const toggleSection = (key: string) => {
+  collapsedSections.value = { ...collapsedSections.value, [key]: !collapsedSections.value[key] };
+};
+const allSectionsCollapsed = computed(() =>
+  COLLAPSIBLE_SECTIONS.every((key) => collapsedSections.value[key]),
+);
+const toggleAllSections = () => {
+  const next: Record<string, boolean> = {};
+  for (const key of COLLAPSIBLE_SECTIONS) next[key] = !allSectionsCollapsed.value;
+  collapsedSections.value = next;
+};
+
+// 「跟随全局」不落键，保持 engine_config 干净；后端缺省即 inherit。
+// 选项文案与图标在 ScopeGateSelect 内部维护（双行下拉），这里只管取值与落库。
+const scopeGateMode = computed(() => {
+  const raw = String(agentForm.value.engine_config?.scope_gate || '').trim().toLowerCase();
+  return ['inherit', 'on', 'off', 'bound_only'].includes(raw) ? raw : 'inherit';
+});
+const scopeGateModeModel = computed({
+  get: () => scopeGateMode.value,
+  set: (mode: string) => setScopeGateMode(mode),
+});
+const setScopeGateMode = (mode: string) => {
+  if (!agentForm.value.engine_config) agentForm.value.engine_config = {};
+  if (mode === 'inherit') {
+    delete agentForm.value.engine_config.scope_gate;
+    return;
+  }
+  agentForm.value.engine_config.scope_gate = mode;
+};
 const showCapabilityHelp = ref(false);
 const showEngineHelp = ref(false);
 const showAdvancedSafety = ref(false);
@@ -2350,7 +2390,10 @@ const saveAgent = async (exitAfterSave = false) => {
 
   // Sync UI to Engine Config
   if (agentForm.value.engine_type === "RAGFLOW") {
+    // 必须带上原配置里的其他键：这里是局部重建，整体赋值会把
+    // scope_gate / default_markdown_theme 这类只在这里挂着的设置一并丢掉。
     agentForm.value.engine_config = {
+      ...(agentForm.value.engine_config || {}),
       app_id: engineConfigUI.value.app_id,
       dataset_ids: engineConfigUI.value.dataset_ids
         .split(",")
@@ -2365,6 +2408,7 @@ const saveAgent = async (exitAfterSave = false) => {
     }
   } else if (agentForm.value.engine_type === "OPENCLAW") {
     agentForm.value.engine_config = {
+      ...(agentForm.value.engine_config || {}),
       base_url: engineConfigUI.value.base_url,
       api_key: engineConfigUI.value.api_key,
       model: engineConfigUI.value.model,
@@ -2388,6 +2432,7 @@ const saveAgent = async (exitAfterSave = false) => {
     // Always attach RAG params if datasets are present or if params are set
     // Or just save them if customized? Yes, LOCAL engine agent can still use KB tool with custom params.
     agentForm.value.engine_config = {
+        ...(agentForm.value.engine_config || {}),
         dataset_ids: dsIds,
         ragflow_similarity_threshold: engineConfigUI.value.ragflow_similarity_threshold,
         ragflow_vector_weight: engineConfigUI.value.ragflow_vector_weight,
@@ -2852,6 +2897,43 @@ const handleVersionEditorClose = async () => {
   showVersionModal.value = false;
 };
 
+/**
+ * 版本抽屉里的「检索范围确认」写的是智能体级 engine_config，而版本保存只提交
+ * versionForm。给已有智能体建新版本时若不补这一步，用户改了设置、保存成功、
+ * 重开还是旧值。新建流程不在这里处理：engine_config 随创建一起提交。
+ */
+const syncAgentEngineConfigFromForm = async () => {
+  const agent = selectedAgent.value;
+  if (!agent || isCreatingAgent.value) return;
+  const nextConfig = { ...(agent.engine_config || {}) };
+  const formConfig = agentForm.value.engine_config || {};
+  const nextMode = String(formConfig.scope_gate || '').trim();
+  const savedMode = String((agent.engine_config || {}).scope_gate || '').trim();
+  if (nextMode === savedMode) return;
+
+  if (nextMode) {
+    nextConfig.scope_gate = nextMode;
+  } else {
+    delete nextConfig.scope_gate;
+  }
+  try {
+    // 回传整份智能体：后端缺省会取 is_system=False，与本值不等就 400。
+    await agentApi.updateAgent(agent.id, { ...agent, engine_config: nextConfig } as any);
+    agent.engine_config = nextConfig;
+    // 表单侧只对齐这一个键，避免把用户其他尚未保存的改动冲掉
+    const synced = { ...formConfig };
+    if (nextMode) {
+      synced.scope_gate = nextMode;
+    } else {
+      delete synced.scope_gate;
+    }
+    agentForm.value.engine_config = synced;
+  } catch (e: any) {
+    // 版本已保存成功，这里失败只影响伴随配置，用 warning 而不是 error
+    showToast(e?.response?.data?.detail || '检索范围设置未同步保存', 'warning');
+  }
+};
+
 const saveVersion = async () => {
   if (isCreatingAgent.value) {
     await persistNewAgentDraft(isLocalCreationEngine.value);
@@ -2889,6 +2971,7 @@ const saveVersion = async () => {
       await agentApi.createVersion(selectedAgent.value.id, payload);
       showToast("版本创建成功", "success");
     }
+    await syncAgentEngineConfigFromForm();
     showVersionModal.value = false;
     showVersionModal.value = false;
     // Notify Drawer to update if open?
@@ -5000,6 +5083,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
 
         <div v-if="!isOnboardingFlow || onboardingStep === 'BASIC'" class="space-y-4">
+          <div class="flex items-center justify-end">
+            <button
+              type="button"
+              class="rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:border-primary hover:text-primary"
+              @click="toggleAllSections"
+            >{{ allSectionsCollapsed ? '全部展开' : '全部折叠' }}</button>
+          </div>
         <div class="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_8rem]">
         <AgentNameField
           v-model="agentForm.name"
@@ -5041,9 +5131,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <!-- Agent Avatar：与新建流程共用同一控件，保证两处外观与能力完全一致 -->
         <AgentAvatarField v-model="agentForm.avatar_url" :agent-id="selectedAgent?.id" />
 
-        <!-- Engine Selection -->
-        <div class="rounded-xl border border-gray-200 bg-gray-50/70 p-3">
-          <div class="flex items-center gap-1.5">
+        <!-- Engine Selection：编辑时引擎不可改，LOCAL 下没有可编辑参数，整块不必占地方 -->
+        <div
+          v-if="!isEditingAgent || agentForm.engine_type !== 'LOCAL'"
+          class="rounded-xl border border-gray-200 bg-gray-50/70 p-3"
+        >
+          <div v-if="!isEditingAgent" class="flex items-center gap-1.5">
             <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400"
               >执行引擎 (Execution Engine)</label
             >
@@ -5098,17 +5191,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
               </div>
             </div>
-          </div>
-
-          <div v-else class="mt-2 flex items-center gap-2 text-sm">
-            <span class="inline-flex items-center rounded-full border px-3 py-1 font-semibold"
-              :class="agentForm.engine_type === 'RAGFLOW'
-                ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                : agentForm.engine_type === 'OPENCLAW'
-                  ? 'border-orange-200 bg-orange-50 text-orange-700'
-                  : 'border-blue-200 bg-blue-50 text-blue-700'"
-            >{{ agentForm.engine_type === 'RAGFLOW' ? '🌊 RAGFlow' : agentForm.engine_type === 'OPENCLAW' ? '🦞 OpenClaw' : '🧠 NanZi Engine' }}</span>
-            <span class="text-xs text-gray-400">执行引擎不可修改；当前引擎参数仍可编辑</span>
           </div>
 
           <!-- Engine Config Fields -->
@@ -5391,6 +5473,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
 
         <div v-if="agentForm.engine_type === 'LOCAL'">
+          <!-- 编辑时类型不可改，三张卡只是占位；蓝色提示仍保留，用来说明当前类型的运行行为 -->
+          <template v-if="!isEditingAgent">
           <label class="block text-sm font-medium text-gray-700 mb-2">
             智能体类型 <span class="text-red-500">*</span>
           </label>
@@ -5421,9 +5505,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </p>
             </button>
           </div>
-          <p v-if="isEditingAgent" class="mt-2 text-xs text-gray-500">
-            智能体类型决定运行流程和门禁规则，创建保存后不可修改。
-          </p>
+          </template>
 
           <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-gray-600">
             <template v-if="agentForm.agent_type === 'CHATBI'">
@@ -5449,6 +5531,11 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
 
         <div v-if="supportsCapabilityTags" class="rounded-xl border border-gray-200 p-4">
+          <div
+            class="flex cursor-pointer items-center justify-between gap-2"
+            role="button"
+            @click="toggleSection('capabilities')"
+          >
           <div class="flex items-center gap-1.5">
             <label class="text-sm font-bold text-gray-800">扩展能力标签</label>
             <button
@@ -5456,9 +5543,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
               aria-label="查看扩展能力标签说明"
               title="查看扩展能力标签说明"
-              @click="showCapabilityHelp = true"
+              @click.stop="showCapabilityHelp = true"
             >?</button>
           </div>
+          <svg class="h-4 w-4 shrink-0 text-gray-400 transition-transform" :class="isSectionOpen('capabilities') ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+          <div v-show="isSectionOpen('capabilities')">
           <p class="mt-1 text-xs text-gray-500">主类型能力由系统锁定；这里可补充 contract_review 等自定义委派标签。</p>
           <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2">
             <div class="text-[10px] font-bold uppercase tracking-wider text-blue-600">系统内置标签</div>
@@ -5497,10 +5587,39 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 class="text-xs text-gray-400"
               >暂无扩展能力</span>
           </div>
+          </div>
+        </div>
+
+        <!-- 知识库检索范围确认：智能体级配置，随「保存」一并提交 -->
+        <div
+          v-if="agentForm.agent_type === 'KNOWLEDGE_BASE'"
+          class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4"
+        >
+          <div
+            class="flex cursor-pointer items-center justify-between gap-2"
+            role="button"
+            @click="toggleSection('scopeGate')"
+          >
+            <label class="text-sm font-bold text-gray-800">知识库检索范围确认</label>
+            <svg class="h-4 w-4 shrink-0 text-gray-400 transition-transform" :class="isSectionOpen('scopeGate') ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+          <div v-show="isSectionOpen('scopeGate')">
+          <p class="mt-1 text-xs leading-5 text-gray-500">
+            可检索的知识库较多、且用户本轮没有指定库时，先让用户在「全部 / 仅智能体默认 / 最相关几个」里确认范围，避免在几十上百个库中做无差别检索。触发阈值与推荐库数量由系统配置统一控制，这里只决定本智能体是否参与。
+          </p>
+          <div class="mt-3">
+            <ScopeGateSelect v-model="scopeGateModeModel" />
+          </div>
+          </div>
         </div>
 
         <!-- 推荐排版样式选择 -->
         <div class="rounded-xl border border-gray-200 p-4">
+          <div
+            class="flex cursor-pointer items-center justify-between gap-2"
+            role="button"
+            @click="toggleSection('markdownTheme')"
+          >
           <div class="flex items-center gap-1.5">
             <label class="text-sm font-bold text-gray-800">推荐排版样式</label>
             <button
@@ -5508,9 +5627,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
               aria-label="查看排版样式效果预览说明"
               title="查看排版样式效果预览说明"
-              @click="showThemePreviewHelp = true"
+              @click.stop="showThemePreviewHelp = true"
             >?</button>
           </div>
+          <svg class="h-4 w-4 shrink-0 text-gray-400 transition-transform" :class="isSectionOpen('markdownTheme') ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+          <div v-show="isSectionOpen('markdownTheme')">
           <p class="mt-1 text-xs text-gray-500">指定该智能体默认推荐给用户的 Markdown 排版呈现样式，历史数据未指定则默认为现代样式。</p>
           
           <!-- 6个预置样式卡片选择 -->
@@ -5541,6 +5663,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <span class="h-4 w-4 rounded-full bg-white shadow-sm transition-transform" :class="hideMessageBorder ? 'translate-x-4' : 'translate-x-0.5'"></span>
             </span>
           </label>
+          </div>
         </div>
         </div>
 

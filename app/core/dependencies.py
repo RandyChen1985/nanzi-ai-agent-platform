@@ -52,7 +52,14 @@ async def require_api_key(
     response: Response,
     api_key_header: Optional[str] = Header(default=None, alias="X-API-Key"),
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
-    db: AsyncSession = Depends(get_db_session)
+    # scope="function"：鉴权链路只做一次短查询，session 应在路径函数返回后、响应
+    # 开始发送前关闭。默认的 request scope 会让它活到整条响应结束——聊天 SSE 可持续
+    # 数分钟，等于每个进行中的对话都占着一条连接并开着事务，并发时把连接池耗尽；
+    # 事务迟迟不结束还会让读过的表一直持有共享 MDL，发版时的 ALTER TABLE 会被卡住。
+    # 同一 (callable, scope) 的依赖会被 FastAPI 缓存复用，因此 require_permission /
+    # require_any_permission / verify_v1_api_access 里的 db 也必须保持同一 scope，
+    # 否则一个请求会开出两个独立 session（其中一个仍然活到流结束）。
+    db: AsyncSession = Depends(get_db_session, scope="function")
 ) -> Dict:
     api_key = api_key_header
     
@@ -145,7 +152,7 @@ def require_permission(resource_type: str, resource_id: str):
     """
     async def _check_perm(
         user: Dict = Depends(require_api_key),
-        db: AsyncSession = Depends(get_db_session)
+        db: AsyncSession = Depends(get_db_session, scope="function")
     ) -> Dict:
         if user.get("role") == "admin":
             return user
@@ -173,7 +180,7 @@ def require_any_permission(*checks: tuple[str, str]):
     """
     async def _check_any_perm(
         user: Dict = Depends(require_api_key),
-        db: AsyncSession = Depends(get_db_session)
+        db: AsyncSession = Depends(get_db_session, scope="function")
     ) -> Dict:
         if user.get("role") == "admin":
             return user
@@ -199,7 +206,7 @@ get_current_user = require_api_key
 async def verify_v1_api_access(
     request: Request,
     user_info: Dict = Depends(require_api_key),
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_db_session, scope="function")
 ):
     """
     Enforce permission check for V1 External APIs.

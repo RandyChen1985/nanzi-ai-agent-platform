@@ -1,4 +1,7 @@
-fastapi>=0.100.0
+# >=0.115.0：Depends(..., scope="function") 依赖 scope 自 0.115 引入；
+# 低于该版本会在路由构建期 TypeError（缺 scope 参数），鉴权与聊天端点的
+# session 又会活到整条 SSE 结束。见 app/core/dependencies.py 的说明。
+fastapi>=0.115.0
 uvicorn[standard]>=0.20.0
 gunicorn==20.1.0
 redis>=4.5.1

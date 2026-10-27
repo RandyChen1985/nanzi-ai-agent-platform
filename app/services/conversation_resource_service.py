@@ -48,6 +48,9 @@ class ConversationResourceService:
             "knowledge_bases": [],
             "skills": [],
             "mcp_tools": [],
+            # 知识库检索范围门禁：已确认范围 / 待回答的候选快照（见 knowledge_scope_gate.py）
+            "knowledge_scope": None,
+            "pending_scope_gate": None,
         }
 
     @classmethod
@@ -55,16 +58,21 @@ class ConversationResourceService:
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
         try:
-            value = json.loads(raw or "{}")
+            value_raw = json.loads(raw or "{}")
         except (TypeError, ValueError):
-            value = {}
-        if not isinstance(value, dict):
-            value = {}
-        result: Dict[str, Any] = {"project_name": str(value.get("project_name") or "").strip()}
+            value_raw = {}
+        if not isinstance(value_raw, dict):
+            value_raw = {}
+        result: Dict[str, Any] = {"project_name": str(value_raw.get("project_name") or "").strip()}
         result.update({
-            key: [item for item in value.get(key, []) if isinstance(item, dict)]
+            key: [item for item in value_raw.get(key, []) if isinstance(item, dict)]
             for key in cls._LIST_KEYS
         })
+        # 新增的两个字段按"要么是字典、要么是 None"收敛：历史数据没有这两个键时保持 None，
+        # 而不是伪造一个空结构（否则门禁会把"没确认过"误判成"确认过空范围"）。
+        for key in ("knowledge_scope", "pending_scope_gate"):
+            candidate = value_raw.get(key)
+            result[key] = candidate if isinstance(candidate, dict) else None
         return result
 
     @classmethod
@@ -138,6 +146,19 @@ class ConversationResourceService:
             key: [item for item in scope.get(key, []) if isinstance(item, dict) and item.get("id")]
             for key in cls._LIST_KEYS
         })
+        # 门禁字段必须对「调用方没传」的情况做继承，而不是一律写 None：
+        # PUT /conversation/{id}/resource-scope 的请求模型只声明了 project_name + 4 个列表，
+        # 规范化器也只返回这 5 个键，所以「没传」是常态而不是例外。若照旧写 None，
+        # 用户挂一个技能/数据集就会把刚确认的检索范围抹掉，下一轮门禁再弹一次；
+        # 卡片正开着时 pending 快照也会一起没，点了选项还原不到 ID 又弹一张新卡。
+        current = await cls.get(user_id, conversation_id)
+        for key in ("knowledge_scope", "pending_scope_gate"):
+            if key in scope:
+                candidate = scope.get(key)
+                normalized[key] = candidate if isinstance(candidate, dict) else None
+                continue
+            existing = current.get(key) if isinstance(current, dict) else None
+            normalized[key] = existing if isinstance(existing, dict) else None
         try:
             redis = await get_redis()
             if redis:
@@ -149,6 +170,26 @@ class ConversationResourceService:
         except Exception:
             pass
         return normalized
+
+    @classmethod
+    async def patch_scope(
+        cls,
+        user_id: Any,
+        conversation_id: str,
+        **fields: Any,
+    ) -> Dict[str, Any]:
+        """只更新指定字段，其余保持原样。
+
+        ``replace`` 是整体覆盖，直接拿部分字段去写会清掉其他挂载项，所以这里先读再写。
+        Redis 没有事务，同一会话的并发写会「后写者胜出」；会话挂载与门禁都是低频操作，
+        这个窗口可以接受。将来若出现高频并发写，再换成 Lua 脚本原子更新。
+        """
+        conversation = str(conversation_id or "").strip()
+        if not conversation:
+            return cls._empty_scope()
+        current = await cls.get(user_id, conversation)
+        current.update(fields)
+        return await cls.replace(user_id, conversation, current)
 
     @staticmethod
     def _mount_scope_matches(item: Dict[str, Any], scope: str | None) -> bool:

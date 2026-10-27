@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><title>资源广场卡片 · 复制浮标</title><link rel="stylesheet" href="./tw2.css" /></head>
+<body class="bg-[#f5f6f8] p-6 text-gray-900">
+
+<p class="text-sm font-bold">资源广场卡片 · 复制浮标</p>
+<p class="mt-1 text-xs text-gray-500">复制的物理名（meta_pgdemo_ds），鼠标移入卡片才出现；触屏常显</p>
+
+<div class="mt-4 grid gap-4" style="grid-template-columns: repeat(3, minmax(0,1fr)); max-width: 1200px;">
+
+  <!-- 常态 -->
+  <div>
+    <p class="mb-2 text-[11px] font-semibold text-gray-500">常态（无 hover）</p>
+    <article class="group flex flex-col rounded-2xl border border-gray-100 bg-white p-4">
+      <div class="flex items-start gap-3">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+          <svg class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>
+        </span>
+        <div class="min-w-0 flex-1">
+          <h4 class="flex min-w-0 items-baseline gap-1 text-[13.5px] font-semibold">
+            <button type="button" class="min-w-0 truncate text-left cursor-default">meta_pgdemo_ds</button>
+            <span class="min-w-0 truncate text-xs font-normal text-gray-400">pgdemo主数据表数据集</span>
+            <button type="button" class="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-normal text-gray-400 opacity-0">
+              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            </button>
+          </h4>
+          <div class="mt-1.5 flex flex-wrap gap-1.5">
+            <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">销售</span>
+            <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">客户</span>
+            <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">订单</span>
+          </div>
+        </div>
+      </div>
+      <p class="mt-2.5 line-clamp-2 text-xs leading-relaxed text-gray-500">该数据集整合客户主数据、订单交易事实和产品基础信息，用于支持销售分析、客户行为洞察及产品绩效评估。</p>
+      <div class="mt-3 flex items-center gap-3 border-t border-dashed border-gray-100 pt-2.5 text-[11px] text-gray-400">
+        <span>0 张表</span><span>0 个指标</span><span>质量 100</span>
+      </div>
+      <div class="mt-2.5 flex items-center justify-between">
+        <span class="truncate text-[11px] text-gray-400">postgresql_demo</span>
+        <span class="rounded-md bg-amber-50 px-1.5 py-1 text-[11px] font-semibold text-amber-600">审批中</span>
+      </div>
+    </article>
+  </div>
+
+  <!-- hover：浮标出现 -->
+  <div>
+    <p class="mb-2 text-[11px] font-semibold text-emerald-600">hover（浮标出现）</p>
+    <article class="group flex flex-col rounded-2xl border border-blue-300 bg-white p-4 shadow-md">
+      <div class="flex items-start gap-3">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+          <svg class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>
+        </span>
+        <div class="min-w-0 flex-1">
+          <h4 class="flex min-w-0 items-baseline gap-1 text-[13.5px] font-semibold">
+            <button type="button" class="min-w-0 truncate text-left cursor-default">meta_pgdemo_ds</button>
+            <span class="min-w-0 truncate text-xs font-normal text-gray-400">pgdemo主数据表数据集</span>
+            <button type="button" class="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-normal text-gray-500 opacity-100 bg-gray-100">
+              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            </button>
+          </h4>
+          <div class="mt-1.5 flex flex-wrap gap-1.5">
+            <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">销售</span>
+            <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">客户</span>
+            <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">订单</span>
+          </div>
+        </div>
+      </div>
+      <p class="mt-2.5 line-clamp-2 text-xs leading-relaxed text-gray-500">该数据集整合客户主数据、订单交易事实和产品基础信息，用于支持销售分析、客户行为洞察及产品绩效评估。</p>
+      <div class="mt-3 flex items-center gap-3 border-t border-dashed border-gray-100 pt-2.5 text-[11px] text-gray-400">
+        <span>0 张表</span><span>0 个指标</span><span>质量 100</span>
+      </div>
+      <div class="mt-2.5 flex items-center justify-between">
+        <span class="truncate text-[11px] text-gray-400">postgresql_demo</span>
+        <span class="rounded-md bg-amber-50 px-1.5 py-1 text-[11px] font-semibold text-amber-600">审批中</span>
+      </div>
+    </article>
+  </div>
+
+  <!-- 已复制 -->
+  <div>
+    <p class="mb-2 text-[11px] font-semibold text-emerald-600">点击后（绿勾 1.5 秒）</p>
+    <article class="group flex flex-col rounded-2xl border border-emerald-200 bg-white p-4">
+      <div class="flex items-start gap-3">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+          <svg class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>
+        </span>
+        <div class="min-w-0 flex-1">
+          <h4 class="flex min-w-0 items-baseline gap-1 text-[13.5px] font-semibold">
+            <button type="button" class="min-w-0 truncate text-left cursor-default">meta_pgdemo_ds</button>
+            <span class="min-w-0 truncate text-xs font-normal text-gray-400">pgdemo主数据表数据集</span>
+            <button type="button" title="已复制" class="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-normal text-emerald-600 opacity-100">
+              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+          </h4>
+          <div class="mt-1.5 flex flex-wrap gap-1.5">
+            <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">销售</span>
+            <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">客户</span>
+            <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">订单</span>
+          </div>
+        </div>
+      </div>
+      <p class="mt-2.5 line-clamp-2 text-xs leading-relaxed text-gray-500">该数据集整合客户主数据、订单交易事实和产品基础信息，用于支持销售分析、客户行为洞察及产品绩效评估。</p>
+      <div class="mt-3 flex items-center gap-3 border-t border-dashed border-gray-100 pt-2.5 text-[11px] text-gray-400">
+        <span>0 张表</span><span>0 个指标</span><span>质量 100</span>
+      </div>
+      <div class="mt-2.5 flex items-center justify-between">
+        <span class="truncate text-[11px] text-gray-400">postgresql_demo</span>
+        <span class="rounded-md bg-emerald-50 px-1.5 py-1 text-[11px] font-semibold text-emerald-600">已有权限</span>
+      </div>
+    </article>
+  </div>
+
+  <!-- 长标题：验证不裁掉浮标 -->
+  <div class="col-span-3">
+    <p class="mb-2 text-[11px] font-semibold text-gray-500">长标题（浮标仍可见，名字截断）</p>
+    <article class="group flex flex-col rounded-2xl border border-gray-100 bg-white p-4" style="max-width: 380px;">
+      <div class="flex items-start gap-3">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+          <svg class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>
+        </span>
+        <div class="min-w-0 flex-1">
+          <h4 class="flex min-w-0 items-baseline gap-1 text-[13.5px] font-semibold">
+            <button type="button" class="min-w-0 truncate text-left cursor-default">meta_very_long_dataset_physical_name_for_testing</button>
+            <button type="button" class="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-normal text-gray-500 opacity-100 bg-gray-100">
+              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            </button>
+          </h4>
+        </div>
+      </div>
+    </article>
+  </div>
+
+</div>
+</body>
+</html>

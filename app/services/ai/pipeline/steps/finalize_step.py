@@ -122,6 +122,29 @@ class FinalizeStep(BasePipelineStep):
                     "content": guarded_response_content,
                 }
 
+            # 提问轮模型通常只调用 ask_user_question、不输出可见正文。若原样落库，
+            # 历史里每条提问都会多一条正文为空的 assistant 消息；模型下一轮只能靠
+            # tool_run_text 反推问过什么，一旦该通道缺失（多智能体/子代理/压缩后），
+            # 用户的「【用户回答】」就成了没来由的一句话。这里用提问卡原文补一条正文。
+            if (
+                context.execution_status == "awaiting_user"
+                and not str(context.full_response_content or "").strip()
+            ):
+                from app.services.ai.user_question import (
+                    build_user_question_fallback_content,
+                )
+
+                fallback_content = build_user_question_fallback_content(
+                    shared_state.get("process_timeline")
+                )
+                if fallback_content:
+                    context.full_response_content = fallback_content
+                    shared_state["full_response_content"] = fallback_content
+                    yield {
+                        "type": "retraction",
+                        "content": fallback_content,
+                    }
+
             todo_completion = _finalize_todo_success(
                 shared_state.get("process_timeline"),
                 execution_status=context.execution_status,

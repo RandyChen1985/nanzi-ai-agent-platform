@@ -24,7 +24,7 @@ def test_generator_is_opened_from_custom_mode_without_new_tab():
     assert "showCronBuilder" in TASK_CENTER
     assert "CronAdvancedBuilder" in TASK_CENTER
     assert ':z-index="80"' in TASK_CENTER
-    assert "应用到表达式" in TASK_CENTER
+    assert "点击「应用」回填到表达式输入框" in TASK_CENTER
 
 
 def test_generator_panel_supports_scenes_and_preview():

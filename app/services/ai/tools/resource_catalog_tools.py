@@ -196,6 +196,10 @@ async def list_accessible_directories() -> str:
             default_workspace_root,
             USER_SESSIONS_DIR_NAME,
             _resolve_docker_public_docs_source,
+            resolve_sandbox_logical_root,
+            sandbox_policy_is_sandbox,
+            sandbox_skill_layout,
+            sandbox_personal_skills_path,
             SANDBOX_POLICY_DOCKER,
             SANDBOX_POLICY_K8S,
             SANDBOX_POLICY_LOCAL,
@@ -223,15 +227,25 @@ async def list_accessible_directories() -> str:
 
         policy_raw = await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL)
         effective_policy = resolve_effective_sandbox_policy(policy_raw, SANDBOX_POLICY_LOCAL)
-        # Docker 与 K8s 沙箱内 Bash 都走 /workspace 逻辑路径，且两者技能布局现已对齐
-        # （/workspace/skills = 打包副本、/workspace/personal-skills = 个人技能源只读挂载），
-        # 因此清单里所有「容器路径 vs 宿主路径」的判断统一按是否沙箱策略处理。
-        is_sandbox = effective_policy in (
+        # 是否「Bash 跑在隔离环境」统一走 workspace 侧口径（含 e2b / ssh）：只认 docker/k8s
+        # 会让 e2b/ssh 报成 backend_service，模型据此去访问后端技能路径，方向反了。
+        is_sandbox = sandbox_policy_is_sandbox(effective_policy)
+        # Bash 侧逻辑工作区根：docker/k8s=/workspace、e2b=/home/user/workspace、
+        # ssh=系统配置的 remote_workdir。local 时为空（Bash 直接用后端真实路径）。
+        sandbox_root = (
+            await resolve_sandbox_logical_root(effective_policy) if is_sandbox else None
+        )
+        if is_sandbox and not sandbox_root:  # 配置读失败时退回历史默认，避免拼出 None/
+            sandbox_root = "/workspace"
+        # 宿主用户工作区（docs/sessions/uploads）只挂进 docker/k8s；e2b/ssh 只同步技能副本。
+        workspace_mounted = is_sandbox and effective_policy in (
             SANDBOX_POLICY_DOCKER,
             SANDBOX_POLICY_K8S,
         )
-        # 机读命名空间：Docker 与 K8s 都是沙箱，但值必须可区分，否则模型在 K8s 下
-        # 读到的执行环境仍是 "docker_sandbox"，容易做出错误的路径/工具推断。
+        personal_skills_container_path = sandbox_personal_skills_path(effective_policy)
+        skill_layout = sandbox_skill_layout(effective_policy)
+        # 机读命名空间：几种沙箱的值必须可区分，否则模型在 K8s 下读到的执行环境仍是
+        # "docker_sandbox"，容易做出错误的路径/工具推断。
         sandbox_namespace = (
             f"{effective_policy}_sandbox" if is_sandbox else "backend_service"
         )
@@ -273,6 +287,18 @@ async def list_accessible_directories() -> str:
                 "file_tools": "backend_service",
             }
 
+        def _workspace_container_path(*parts: str) -> str | None:
+            """宿主用户工作区子目录在沙箱内的路径。
+
+            只有 docker/k8s 把宿主用户工作区（docs/sessions/uploads/.trash）挂进沙箱；
+            e2b/ssh 只同步技能副本，这些子目录在沙箱内不存在，必须返回 None，
+            否则模型会照着清单去 Bash 里访问一个不存在的目录。
+            """
+            if not workspace_mounted:
+                return None
+            suffix = "/".join(str(part).strip("/") for part in parts if str(part or "").strip("/"))
+            return f"{sandbox_root.rstrip('/')}/{suffix}" if suffix else sandbox_root
+
         # 用户私有目录详细路径
         docs_service_path = os.path.join(user_host_workspace, "docs")
         uploads_service_path = os.path.join(user_host_workspace, "uploads")
@@ -282,15 +308,17 @@ async def list_accessible_directories() -> str:
         user_directories: list[dict[str, Any]] = [
             {
                 "directory_name": "docs",
-                "container_sandbox_path": "/workspace/docs" if is_sandbox else docs_service_path,
+                "container_sandbox_path": (
+                    _workspace_container_path("docs") if is_sandbox else docs_service_path
+                ),
                 "backend_service_path": docs_service_path,
                 "paths": _tool_paths(
-                    container_path="/workspace/docs" if is_sandbox else None,
+                    container_path=_workspace_container_path("docs"),
                     backend_path=docs_service_path,
                     file_tool_path="docs",
                 ),
                 "path_namespace": _path_namespace(
-                    "/workspace/docs" if is_sandbox else None,
+                    _workspace_container_path("docs"),
                 ),
                 "permission": "read_write",
                 "category": "user_persistent_docs",
@@ -308,7 +336,7 @@ async def list_accessible_directories() -> str:
                 user_info=user_info,
             )
             session_container_path = (
-                f"/workspace/sessions/{os.path.basename(session_phys)}"
+                _workspace_container_path("sessions", os.path.basename(session_phys))
                 if is_sandbox
                 else None
             )
@@ -339,15 +367,17 @@ async def list_accessible_directories() -> str:
         user_directories.extend([
             {
                 "directory_name": "uploads",
-                "container_sandbox_path": "/workspace/uploads" if is_sandbox else uploads_service_path,
+                "container_sandbox_path": (
+                    _workspace_container_path("uploads") if is_sandbox else uploads_service_path
+                ),
                 "backend_service_path": uploads_service_path,
                 "paths": _tool_paths(
-                    container_path="/workspace/uploads" if is_sandbox else None,
+                    container_path=_workspace_container_path("uploads"),
                     backend_path=uploads_service_path,
                     file_tool_path="uploads",
                 ),
                 "path_namespace": _path_namespace(
-                    "/workspace/uploads" if is_sandbox else None,
+                    _workspace_container_path("uploads"),
                 ),
                 "permission": "read_write",
                 "category": "user_uploads",
@@ -357,24 +387,24 @@ async def list_accessible_directories() -> str:
             {
                 "directory_name": "skills",
                 # 两个 skills 路径必须分清：
-                #   - /workspace/skills 是运行时合并后的**公共技能副本**（AgentScope 的 .seed
+                #   - <逻辑根>/skills 是运行时合并后的**公共技能副本**（AgentScope 的 .seed
                 #     模板 + 各智能体分区，平台按公共技能库指纹在下次容器启动时自动重建），
                 #     归 platform_global_skills 条目；
-                #   - /workspace/personal-skills 是本用户**个人技能源目录**的只读挂载，实时
+                #   - <逻辑根>/personal-skills 是本用户**个人技能源目录**的只读挂载（仅 docker/k8s），实时
                 #     包含用户当前所有个人技能，技能自带脚本可以直接用 Bash 执行，
                 #     不需要先复制到会话目录。
                 # 宿主文件工具仍然使用用户工作区下的 skills/（清单相对路径 skills）。
                 "container_sandbox_path": (
-                    "/workspace/personal-skills" if is_sandbox else skills_service_path
+                    personal_skills_container_path if is_sandbox else skills_service_path
                 ),
                 "backend_service_path": skills_service_path,
                 "paths": _tool_paths(
-                    container_path="/workspace/personal-skills" if is_sandbox else None,
+                    container_path=personal_skills_container_path,
                     backend_path=skills_service_path,
                     file_tool_path="skills",
                 ),
                 "path_namespace": _path_namespace(
-                    "/workspace/personal-skills" if is_sandbox else None,
+                    personal_skills_container_path,
                 ),
                 "path_semantics": "user_personal_skills_source",
                 "access_via": ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
@@ -384,8 +414,14 @@ async def list_accessible_directories() -> str:
                 "description": (
                     "用户个人专属自定义技能目录（技能源目录，含 SKILL.md 与自带脚本）。"
                     + (
-                        "Docker 模式下以**只读**方式挂载到 /workspace/personal-skills"
-                        "（实时、不是副本），可用 Bash 直接执行技能自带脚本；写操作请用宿主文件工具。"
+                        (
+                            f"沙箱内以**只读**方式挂载到 {personal_skills_container_path}"
+                            "（实时、不是副本），可用 Bash 直接执行技能自带脚本；写操作请用宿主文件工具。"
+                            if personal_skills_container_path
+                            else "当前沙箱策略只把技能复制进 skills/ 副本，没有个人技能源挂载；"
+                            "技能文本请用 read_skill_instruction(skill_id) 读取，"
+                            "需要改技能请用宿主文件工具。"
+                        )
                         if is_sandbox
                         else "通过宿主文件工具读写。"
                     )
@@ -394,15 +430,17 @@ async def list_accessible_directories() -> str:
             },
             {
                 "directory_name": ".trash",
-                "container_sandbox_path": "/workspace/.trash" if is_sandbox else trash_service_path,
+                "container_sandbox_path": (
+                    _workspace_container_path(".trash") if is_sandbox else trash_service_path
+                ),
                 "backend_service_path": trash_service_path,
                 "paths": _tool_paths(
-                    container_path="/workspace/.trash" if is_sandbox else None,
+                    container_path=_workspace_container_path(".trash"),
                     backend_path=trash_service_path,
                     file_tool_path=".trash",
                 ),
                 "path_namespace": _path_namespace(
-                    "/workspace/.trash" if is_sandbox else None,
+                    _workspace_container_path(".trash"),
                 ),
                 "permission": "read_write",
                 "category": "trash",
@@ -413,10 +451,15 @@ async def list_accessible_directories() -> str:
 
         # 构建公共目录（只读）
         global_skills_service_path = get_platform_skills_root() or os.path.join(data_base, "skills")
+        # 沙箱内技能根随逻辑根走：docker/k8s -> /workspace/skills、e2b -> /home/user/workspace/skills、
+        # ssh -> <remote_workdir>/skills。local 不用它（Bash 直接用上面那个后端路径）。
+        sandbox_skills_root = (
+            f"{sandbox_root.rstrip('/')}/skills" if is_sandbox else None
+        )
         branding_service_path = os.path.join(data_base, "branding")
         global_docs_service_path = os.path.join(data_base, "docs")
         public_docs_mounted = bool(
-            is_sandbox
+            workspace_mounted
             and (
                 # K8s 适配器固定挂载 subPath docs（k8s_workspace.py 传
                 # public_docs_mounted=True），无需探测宿主 docs 目录。
@@ -451,7 +494,7 @@ async def list_accessible_directories() -> str:
             {
                 "directory_name": "docs",
                 "container_sandbox_path": (
-                    "/workspace/public/docs"
+                    f"{sandbox_root.rstrip('/')}/public/docs"
                     if public_docs_mounted
                     else None
                     if is_sandbox
@@ -460,7 +503,9 @@ async def list_accessible_directories() -> str:
                 "backend_service_path": global_docs_service_path,
                 "paths": _tool_paths(
                     container_path=(
-                        "/workspace/public/docs" if public_docs_mounted else None
+                        f"{sandbox_root.rstrip('/')}/public/docs"
+                        if public_docs_mounted
+                        else None
                     ),
                     backend_path=global_docs_service_path,
                     # When the read-only Docker mount exists, expose the same
@@ -469,13 +514,17 @@ async def list_accessible_directories() -> str:
                     # backend absolute path makes the model confuse it with a
                     # host physical path.
                     file_tool_path=(
-                        "/workspace/public/docs"
+                        f"{sandbox_root.rstrip('/')}/public/docs"
                         if public_docs_mounted
                         else global_docs_service_path
                     ),
                 ),
                 "path_namespace": _path_namespace(
-                    "/workspace/public/docs" if public_docs_mounted else None,
+                    (
+                        f"{sandbox_root.rstrip('/')}/public/docs"
+                        if public_docs_mounted
+                        else None
+                    ),
                 ),
                 "access_via": (
                     ["Bash", "Read", "Glob", "Grep"]
@@ -487,7 +536,7 @@ async def list_accessible_directories() -> str:
                 "description": (
                     "平台全局公共文档与模板库（data/docs）。"
                     + (
-                        "Docker 模式下以只读方式挂载到 /workspace/public/docs；"
+                        f"沙箱内以只读方式挂载到 {sandbox_root.rstrip('/')}/public/docs；"
                         if public_docs_mounted
                         else "当前 Docker 沙箱未挂载，通过宿主文件工具只读查阅；"
                         if is_sandbox
@@ -498,15 +547,17 @@ async def list_accessible_directories() -> str:
             },
             {
                 "directory_name": "skills",
-                "container_sandbox_path": "/workspace/skills" if is_sandbox else global_skills_service_path,
+                "container_sandbox_path": (
+                    sandbox_skills_root if is_sandbox else global_skills_service_path
+                ),
                 "backend_service_path": global_skills_service_path,
                 "paths": _tool_paths(
-                    container_path="/workspace/skills" if is_sandbox else None,
+                    container_path=sandbox_skills_root if is_sandbox else None,
                     backend_path=global_skills_service_path,
                     file_tool_path=global_skills_service_path,
                 ),
                 "path_namespace": _path_namespace(
-                    "/workspace/skills" if is_sandbox else None,
+                    sandbox_skills_root if is_sandbox else None,
                 ),
                 "path_semantics": (
                     "per_user_seeded_copy" if is_sandbox else "platform_directory"
@@ -519,13 +570,30 @@ async def list_accessible_directories() -> str:
                 "forbidden_skill_ids": sorted(forbidden_skill_ids),
                 "description": (
                     "平台全局公共技能库。包含所有预置的专业 Agent 技能与工作流模板，"
-                    "Docker 模式下通过当前用户工作区内的 /workspace/skills 副本访问，"
-                    "不是直接挂载 /app/data/skills；副本沿用 AgentScope 的 seed 布局，"
-                    "技能目录在其点开头的隐藏子目录 .seed/ 下，"
-                    "请用 Bash `ls -a /workspace/skills` 查看实际布局，不要假设固定子路径；"
-                    "该副本按当前可用技能打包，"
-                    "技能新增/修改/删除/禁用后会在下次容器启动时自动重建"
-                    "（正在运行的容器不会立即刷新）。"
+                    + (
+                        (
+                            f"沙箱内通过 {sandbox_skills_root} 下的副本访问，"
+                            "不是直接挂载 /app/data/skills；副本沿用 AgentScope 的 seed 布局，"
+                            "技能目录在其点开头的隐藏子目录 .seed/ 下，"
+                            f"仅在需要执行技能自带脚本时才用 Bash `ls -a {sandbox_skills_root}` "
+                            "定位实际布局，不要假设固定子路径；该副本按当前可用技能打包，"
+                            "技能新增/修改/删除/禁用后会在下次沙箱启动时自动重建"
+                            "（正在运行的沙箱不会立即刷新）。"
+                            if skill_layout != "flat"
+                            else
+                            f"沙箱内通过 {sandbox_skills_root} 下的平铺副本访问"
+                            f"（形如 {sandbox_skills_root}/<skill_id>/SKILL.md，平铺副本，没有隐藏的种子模板子目录）；"
+                            "技能变更后会在下次沙箱启动时重新复制。"
+                        )
+                        if is_sandbox
+                        else (
+                            f"local 执行策略下 Bash 与宿主文件工具（Read/Glob/Grep）使用同一套后端真实路径 "
+                            f"{global_skills_service_path}，每个技能一个平铺子目录"
+                            "（<skill_id>/SKILL.md），没有容器路径命名空间、也不存在沙箱专属的隐藏技能目录布局；"
+                            "技能文本一律用 read_skill_instruction(skill_id) 读取，"
+                            "只有需要执行技能自带脚本时才用 Bash 进入技能目录。"
+                        )
+                    )
                     + (
                         "其中 forbidden_skill_ids 里的技能已被管理员禁用，"
                         "其目录不可读取，禁止尝试读取或检索。"
@@ -594,10 +662,12 @@ async def list_accessible_directories() -> str:
                 "is_admin": bool(ctx.is_admin),
             },
             "user_workspace": {
-                "container_sandbox_root": "/workspace" if is_sandbox else user_host_workspace,
+                "container_sandbox_root": (
+                    sandbox_root if is_sandbox else user_host_workspace
+                ),
                 "backend_service_root": user_host_workspace,
                 "paths": {
-                    "bash": "/workspace" if is_sandbox else user_host_workspace,
+                    "bash": sandbox_root if is_sandbox else user_host_workspace,
                     "file_tools": ".",
                 },
                 "path_namespace": {
@@ -613,25 +683,55 @@ async def list_accessible_directories() -> str:
             },
             "platform_help_files": platform_help_files,
             "usage_guidelines": [
-                "1. 在沙箱环境（Docker/K8s）下执行 Bash 命令或 Python 脚本时，请使用 paths.bash（通常以 /workspace 开头）；调用 Read/Write/Edit/Glob/Grep 时请使用 paths.file_tools，不能把 Bash 的容器路径直接当作文件工具路径；",
+                (
+                    f"1. 在沙箱环境（{effective_policy}）下执行 Bash 命令或 Python 脚本时，请使用 paths.bash"
+                    f"（沙箱内以 {sandbox_root} 开头）；调用 Read/Write/Edit/Glob/Grep 时请使用 paths.file_tools，"
+                    "不能把 Bash 的容器路径直接当作文件工具路径；"
+                    if is_sandbox
+                    else "1. 当前为 local 执行策略：Bash 与 Read/Write/Edit/Glob/Grep 使用同一套后端真实路径"
+                    "（见各目录的 paths.bash / paths.file_tools），不存在 /workspace 容器命名空间；"
+                ),
                 "2. 生成给用户的分析报告、导出的 Excel/PDF 或需长期保存的文件，请统一写入 docs/ 目录；",
                 "3. 当前会话的临时计算脚本、中间缓存请写入 sessions/{conversation_id}/ 目录；",
                 "4. 公共技能库 skills/ 和 branding/ 为只读空间，禁止尝试写入；",
                 (
-                    "5. 公共 docs 在沙箱中通过 paths.bash=/workspace/public/docs 只读访问；"
+                    f"5. 公共 docs 在沙箱中通过 paths.bash={sandbox_root.rstrip('/')}/public/docs 只读访问；"
                     if public_docs_mounted
                     else "5. 公共 docs 当前未挂载到沙箱 Bash；"
                     if is_sandbox
                     else "5. 公共 docs 通过宿主文件工具只读访问；"
                 )
                 + (
-                    "Read/Glob/Grep 也使用 paths.file_tools=/workspace/public/docs，系统会自动映射到后端公共 docs；"
+                    "Read/Glob/Grep 也使用 paths.file_tools 指向的公共 docs 路径，系统会自动映射到后端公共 docs；"
                     if public_docs_mounted
                     else "文件工具使用 paths.file_tools 对应的后端 data/docs 路径；"
                 )
                 + "未命中时，可按 platform_help_files 使用宿主 Read/Glob/Grep 查阅服务根目录一级 *.md，禁止 Bash 或递归扫描 /app；",
                 "6. 严禁尝试访问或臆造其他用户的私有目录路径（系统底层安全沙箱会自动拦截）。",
-                "7. 注意两份 skills 的区别：公共技能库的 /workspace/skills 是按当前可用技能打包的副本（沿用 AgentScope 的 seed 布局，技能目录在其点开头的隐藏子目录 .seed/ 下，请用 Bash `ls -a /workspace/skills` 查看实际布局、不要假设固定子路径；技能变更后会在下次容器启动时自动重建，运行中的容器不会立即刷新）；个人技能（category=user_personal_skills）源目录实时只读挂载（paths.bash，Docker 下为 /workspace/personal-skills），技能自带脚本可直接用 Bash 执行，无需先复制到会话目录；写入技能文件请用宿主文件工具（paths.file_tools）。",
+                (
+                    (
+                        f"7. 注意两份 skills 的区别：公共技能库的 {sandbox_skills_root} 是按当前可用技能打包的副本"
+                        + (
+                            "（沿用 AgentScope 的 seed 布局，技能目录在其点开头的隐藏子目录 .seed/ 下，"
+                            f"仅在需要执行技能自带脚本时才用 Bash `ls -a {sandbox_skills_root}` 定位实际目录、"
+                            "不要假设固定子路径；技能变更后会在下次沙箱启动时自动重建，运行中的沙箱不会立即刷新）；"
+                            if skill_layout != "flat"
+                            else (
+                                f"（平铺复制，形如 {sandbox_skills_root}/<skill_id>/SKILL.md，没有隐藏的种子模板子目录；"
+                                "技能变更后会在下次沙箱启动时重新复制）；"
+                            )
+                        )
+                        + (
+                            f"个人技能（category=user_personal_skills）源目录实时只读挂载在 "
+                            f"{personal_skills_container_path}，技能自带脚本可直接用 Bash 执行，无需先复制到会话目录；"
+                            if personal_skills_container_path
+                            else "个人技能（category=user_personal_skills）没有源目录挂载，已随技能副本一起打包；"
+                        )
+                        + "技能文本请用 read_skill_instruction(skill_id) 读取；写入技能文件请用宿主文件工具（paths.file_tools）。"
+                    )
+                )
+                if is_sandbox
+                else f"7. 注意两份 skills 的区别：public_directories.skills 就是平台公共技能库本身（paths.bash 与 paths.file_tools 同值，均为后端真实路径 {global_skills_service_path}），每个技能一个平铺子目录（<skill_id>/SKILL.md），没有容器路径命名空间也没有沙箱专属的隐藏技能目录布局；个人技能（category=user_personal_skills）源目录在本人工作区的 skills/ 下；技能文本一律用 read_skill_instruction(skill_id) 读取，只有需要执行技能自带脚本时才用 Bash 进入技能目录；写入技能文件请用宿主文件工具（paths.file_tools）。",
             ],
         }
 

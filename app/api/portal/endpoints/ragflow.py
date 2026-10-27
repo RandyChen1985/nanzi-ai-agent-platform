@@ -669,6 +669,8 @@ async def discover_datasets(
             if kw in (row.name or "").lower()
             or kw in (row.description or "").lower()
             or kw in (row.owner or "").lower()
+            # 支持按 Dataset ID 搜索：用户常从详情页复制完整 ID 过来确认库是否存在
+            or kw in (row.ragflow_dataset_id or "").lower()
         ]
 
     # 我在这批库上的申请状态（取最近一条）
@@ -740,68 +742,6 @@ def _safe_int(value) -> Optional[int]:
         return None
 
 
-async def _notify_access_request(
-    db: AsyncSession,
-    *,
-    kind: str,
-    row,
-    meta,
-    applicant: dict,
-) -> None:
-    """申请/审批的站内通知。
-
-    - ``created``：告诉库归属人「有人申请了」——他才是审批责任人；
-    - ``decided``：告诉申请人结果，驳回带审批意见。
-
-    通知失败一律吞掉：审批与授权本身已经成功，不该因为一条消息回滚。
-    """
-    try:
-        if kind == "created":
-            owner_id = getattr(meta, "owner_user_id", None)
-            if not owner_id or int(owner_id) == int(applicant["user_id"]):
-                return
-            await PortalNotificationService.create(
-                db,
-                user_id=int(owner_id),
-                title=f"{applicant.get('user_name') or '有同事'} 申请访问「{meta.name or row.dataset_id}」"[:200],
-                content=(row.reason or "对方未填写理由。"),
-                level="info",
-                category="knowledge_access",
-                resource_type="dataset",
-                resource_id=row.dataset_id,
-                metadata={
-                    "open": "knowledge_access_review",
-                    "dataset_id": row.dataset_id,
-                    "request_id": row.id,
-                },
-            )
-        else:
-            approved = row.status == "approved"
-            await PortalNotificationService.create(
-                db,
-                user_id=int(row.applicant_user_id),
-                title=(
-                    f"你申请访问「{row.dataset_name or row.dataset_id}」已通过"
-                    if approved
-                    else f"你申请访问「{row.dataset_name or row.dataset_id}」被驳回"
-                )[:200],
-                content=(row.review_comment or ("现在可以打开并检索这个知识库了。" if approved else "对方未填写驳回原因。")),
-                level="success" if approved else "warning",
-                category="knowledge_access_result",
-                resource_type="dataset",
-                resource_id=row.dataset_id,
-                metadata={
-                    "open": "knowledge_access_mine",
-                    "dataset_id": row.dataset_id,
-                    "request_id": row.id,
-                    "status": row.status,
-                },
-            )
-        await db.commit()
-    except Exception as notify_exc:  # pragma: no cover - 通知失败不影响主流程
-        logger.warning("[Knowledge] 访问申请通知发送失败: %s", notify_exc)
-
-
 @router.post("/datasets/{dataset_id}/access-requests")
 async def create_access_request(
     dataset_id: str,
@@ -810,8 +750,11 @@ async def create_access_request(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """提交访问申请。已有权限就别申请了，直接告诉用户。"""
-    started = time.time()
+    """提交访问申请。已有权限就别申请了，直接告诉用户。
+
+    这是「发现」弹窗用的旧入口，保留是为了不打断已有前端；申请本身走统一服务，
+    与资源广场、数据集申请是同一条链路、同一个审批队列。
+    """
     metadata_service = KnowledgeBaseMetadataService(db)
     meta = await metadata_service.get_by_dataset_id(dataset_id)
     if not meta or meta.status == "deleted":
@@ -839,13 +782,8 @@ async def create_access_request(
     except AccessRequestError as err:
         raise HTTPException(status_code=400, detail=str(err))
 
-    await _notify_access_request(db, kind="created", row=row, meta=meta, applicant=user)
-    await record_knowledge_audit(request, user, "datasets:request_access", 200, {
-        "action": "request_access",
-        "dataset_id": dataset_id,
-        "request_id": row.id,
-        "reason": row.reason,
-    }, started_at=started)
+    # 通知管理员与写审计都在统一服务里做了：这里再写一遍，管理员会收到两条同样的
+    # 提醒、审计里也会出现两条 request_access。
     return {"code": 0, "data": {"id": row.id, "status": row.status}, "message": "申请已提交，等待审批"}
 
 
@@ -855,43 +793,20 @@ async def list_my_access_requests(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """我的申请（个人中心）。"""
-    from app.models.knowledge import KnowledgeAccessRequest
-    from sqlalchemy import select
+    """我的申请（个人中心）。
 
-    conditions = [KnowledgeAccessRequest.applicant_user_id == int(user["user_id"])]
-    if status:
-        conditions.append(KnowledgeAccessRequest.status == status)
-    rows = (
-        (
-            await db.execute(
-                select(KnowledgeAccessRequest)
-                .where(*conditions)
-                .order_by(KnowledgeAccessRequest.created_at.desc(), KnowledgeAccessRequest.id.desc())
-                .limit(200)
-            )
-        )
-        .scalars()
-        .all()
+    数据来自统一申请服务：知识库与数据集共用一条链路，这里只做「知识库视角」的
+    过滤与字段映射，保证旧前端不改也能继续用。
+    """
+    items = await KnowledgeAccessRequestService(db).list_mine(
+        int(user["user_id"]), resource_type="dataset"
     )
+    target = (status or "").strip().lower()
+    if target:
+        items = [item for item in items if item["status"] == target]
     return {
         "code": 0,
-        "data": {
-            "items": [
-                {
-                    "id": row.id,
-                    "dataset_id": row.dataset_id,
-                    "dataset_name": row.dataset_name,
-                    "status": row.status,
-                    "reason": row.reason,
-                    "review_comment": row.review_comment,
-                    "reviewer_user_name": row.reviewer_user_name,
-                    "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                }
-                for row in rows
-            ]
-        },
+        "data": {"items": [_legacy_access_request_item(item) for item in items]},
     }
 
 
@@ -900,93 +815,14 @@ async def list_pending_access_requests(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """待我审批：我是这些库的归属人（或管理员）。"""
-    from app.models.knowledge import KnowledgeAccessRequest
-    from sqlalchemy import select
-
-    service = PermissionService(db)
-    access = await service.get_knowledge_base_access(
-        int(user["user_id"]), user.get("user_name")
-    )
-    is_admin = bool(access.get("is_admin"))
-    manageable = access.get("writable_ids") or set()
-    if not is_admin and not manageable:
-        return {"code": 0, "data": {"items": [], "total": 0}}
-
-    conditions = [KnowledgeAccessRequest.status == STATUS_PENDING]
-    if not is_admin:
-        conditions.append(KnowledgeAccessRequest.dataset_id.in_(list(manageable)))
-
-    rows = (
-        (
-            await db.execute(
-                select(KnowledgeAccessRequest)
-                .where(*conditions)
-                .order_by(KnowledgeAccessRequest.created_at.asc(), KnowledgeAccessRequest.id.asc())
-                .limit(200)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    # 审批人判断「该不该批」需要看库本身：规模、可见范围、归属。
-    # 只给一个库名的话，他得自己开另一个标签页去翻。
-    dataset_ids = {row.dataset_id for row in rows}
-    meta_map = {}
-    engine_map = {}
-    if dataset_ids:
-        from app.models.knowledge import KnowledgeBaseMetadata
-        from sqlalchemy import select as _select
-
-        meta_rows = (
-            (
-                await db.execute(
-                    _select(KnowledgeBaseMetadata).where(
-                        KnowledgeBaseMetadata.ragflow_dataset_id.in_(list(dataset_ids))
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        meta_map = {row.ragflow_dataset_id: row for row in meta_rows}
-        try:
-            engine_items = await RagFlowClient(
-                config_prefix="knowledge_ragflow"
-            ).list_all_datasets_cached()
-            engine_map = {
-                str(item.get("id")): item for item in engine_items if item.get("id")
-            }
-        except Exception as engine_exc:
-            logger.warning("[Knowledge] 待审批列表无法读取引擎侧计数: %s", engine_exc)
-
+    """待审批。审批人统一为管理员——归属人不再有审批权，理由见 approve 端点。"""
+    _require_admin_reviewer(user)
+    items = await KnowledgeAccessRequestService(db).list_pending(resource_type="dataset")
     return {
         "code": 0,
         "data": {
-            "total": len(rows),
-            "items": [
-                {
-                    "id": row.id,
-                    "dataset_id": row.dataset_id,
-                    "dataset_name": row.dataset_name,
-                    "applicant_user_name": row.applicant_user_name,
-                    "applicant_user_id": row.applicant_user_id,
-                    "reason": row.reason,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "visibility": getattr(meta_map.get(row.dataset_id), "visibility", None),
-                    "owner": getattr(meta_map.get(row.dataset_id), "owner", None),
-                    "doc_count": _safe_int(
-                        (engine_map.get(row.dataset_id) or {}).get("document_count")
-                    ),
-                    "chunk_count": _safe_int(
-                        (engine_map.get(row.dataset_id) or {}).get("chunk_count")
-                    ),
-                    "dataset_exists": (
-                        row.dataset_id in engine_map if engine_map else None
-                    ),
-                }
-                for row in rows
-            ],
+            "items": [_legacy_access_request_item(item) for item in items],
+            "total": len(items),
         },
     }
 
@@ -998,70 +834,19 @@ async def list_reviewed_access_requests(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """审批记录：管理员看全平台，归属人看自己名下的库。
-
-    审批通过后记录就从「待审批」消失了，不给一个已处理视图，
-    管理侧等于只看得见待办、看不见做过什么。
-    """
-    from app.models.knowledge import KnowledgeAccessRequest
-    from sqlalchemy import select
-
-    service = PermissionService(db)
-    access = await service.get_knowledge_base_access(
-        int(user["user_id"]), user.get("user_name")
+    """审批记录。审批通过后记录会从「待审批」消失，没有这个视图就只看得见待办。"""
+    _require_admin_reviewer(user)
+    items = await KnowledgeAccessRequestService(db).list_reviews(
+        resource_type="dataset", limit=min(200, max(1, int(size or 50)))
     )
-    is_admin = bool(access.get("is_admin"))
-    manageable = access.get("writable_ids") or set()
-    if not is_admin and not manageable:
-        return {"code": 0, "data": {"items": [], "total": 0}}
-
     target = (status or "").strip().lower()
-    conditions = [
-        KnowledgeAccessRequest.status.in_([STATUS_APPROVED, STATUS_REJECTED])
-    ]
     if target in (STATUS_APPROVED, STATUS_REJECTED):
-        conditions = [KnowledgeAccessRequest.status == target]
-    if not is_admin:
-        conditions.append(KnowledgeAccessRequest.dataset_id.in_(list(manageable)))
-
-    size = min(200, max(1, int(size or 50)))
-    rows = (
-        (
-            await db.execute(
-                select(KnowledgeAccessRequest)
-                .where(*conditions)
-                .order_by(
-                    # MySQL 没有 NULLS LAST；先按"是否为空"排，非空在前
-                    KnowledgeAccessRequest.reviewed_at.is_(None),
-                    KnowledgeAccessRequest.reviewed_at.desc(),
-                    KnowledgeAccessRequest.id.desc(),
-                )
-                .limit(size)
-            )
-        )
-        .scalars()
-        .all()
-    )
+        items = [item for item in items if item["status"] == target]
     return {
         "code": 0,
         "data": {
-            "total": len(rows),
-            "items": [
-                {
-                    "id": row.id,
-                    "dataset_id": row.dataset_id,
-                    "dataset_name": row.dataset_name,
-                    "applicant_user_id": row.applicant_user_id,
-                    "applicant_user_name": row.applicant_user_name,
-                    "reason": row.reason,
-                    "status": row.status,
-                    "reviewer_user_name": row.reviewer_user_name,
-                    "review_comment": row.review_comment,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
-                }
-                for row in rows
-            ],
+            "items": [_legacy_access_request_item(item) for item in items],
+            "total": len(items),
         },
     }
 
@@ -1070,75 +855,91 @@ class AccessReviewBody(BaseModel):
     comment: Optional[str] = Field(default=None, max_length=2000)
 
 
-async def _require_reviewer(user: dict, db: AsyncSession, dataset_id: str) -> None:
-    """审批人必须是这个库的归属人或有管理权；管理员放行。"""
-    service = PermissionService(db)
-    access = await service.get_knowledge_base_access(
-        int(user["user_id"]), user.get("user_name")
-    )
-    if access.get("is_admin"):
-        return
-    if dataset_id not in (access.get("writable_ids") or set()):
-        raise HTTPException(status_code=403, detail="只有该知识库的归属人或管理员可以审批")
+def _legacy_access_request_item(item: dict) -> dict:
+    """统一服务结构 → 旧前端结构。
+
+    这是兼容层：新前端走 ``/api/portal/access-requests/*``，旧前端（用户管理页、
+    个人中心）还在读这里的字段。已授权库的规模统计不再实时查引擎（那会给列表
+    接口加一次 RAGFlow 调用），旧前端缺失时显示「—」。
+    """
+    return {
+        "id": item["id"],
+        "dataset_id": item["resource_id"],
+        "dataset_name": item["resource_name"],
+        "applicant_user_id": item.get("applicant_user_id"),
+        "applicant_user_name": item.get("applicant_user_name"),
+        "reason": item.get("reason"),
+        "status": item.get("status"),
+        "reviewer_user_name": item.get("reviewer_user_name"),
+        "review_comment": item.get("review_comment"),
+        "created_at": item.get("created_at"),
+        "reviewed_at": item.get("reviewed_at"),
+        "visibility": item.get("visibility"),
+        "owner": item.get("owner"),
+        "doc_count": item.get("doc_count"),
+        "chunk_count": item.get("chunk_count"),
+        "dataset_exists": item.get("resource_exists"),
+        # 数据集侧字段一并带上：旧端点目前只转发知识库申请，
+        # 但统一服务返回的结构里两类资源都在，少映射一半会让调试时看不出差异
+        "resource_type": item.get("resource_type"),
+        "data_source": item.get("data_source"),
+        "table_count": item.get("table_count"),
+        "metric_count": item.get("metric_count"),
+        "quality_score": item.get("quality_score"),
+    }
+
+
+def _require_admin_reviewer(user: dict) -> None:
+    """审批人统一为管理员。
+
+    知识库原本允许「库归属人」审批，但归属人未必有用户管理菜单权限，把入口放在
+    用户管理页会让人被路由守卫挡在外面；两类资源各有一个审批人集合也会让「统一
+    审核」名不副实。这里收口，旧接口也不再给归属人留后门。
+    """
+    if str(user.get("role") or "") != "admin":
+        raise HTTPException(status_code=403, detail="只有管理员可以审批资源访问申请")
 
 
 @router.post("/access-requests/{request_id}/approve")
 async def approve_access_request(
     request_id: int,
     payload: AccessReviewBody,
-    request: Request,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    started = time.time()
-    service = KnowledgeAccessRequestService(db)
+    """通过申请。
+
+    清缓存、发通知、写审计都在 ``ResourceAccessRequestService.decide`` 里做——
+    这里再写一遍会让申请人收到两条通知、审计里出现两条 grant。
+    """
+    _require_admin_reviewer(user)
     try:
-        row = await service.get(request_id)
-        await _require_reviewer(user, db, row.dataset_id)
-        decided = await service.decide(
+        decided = await KnowledgeAccessRequestService(db).decide(
             request_id=request_id, reviewer=user, approve=True, comment=payload.comment
         )
     except AccessRequestError as err:
-        raise HTTPException(status_code=400, detail=str(err))
-
-    await _notify_access_request(db, kind="decided", row=decided, meta=None, applicant=user)
-    await record_knowledge_audit(request, user, "datasets:grant", 200, {
-        "action": "approve_access_request",
-        "dataset_id": decided.dataset_id,
-        "request_id": request_id,
-        "applicant_user_id": decided.applicant_user_id,
-        "comment": decided.review_comment,
-    }, started_at=started)
-    return {"code": 0, "data": {"id": decided.id, "status": decided.status}, "message": "已通过，对方现在可以访问"}
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    return {
+        "code": 0,
+        "data": {"id": decided.id, "status": decided.status},
+        "message": "已通过，对方现在可以访问",
+    }
 
 
 @router.post("/access-requests/{request_id}/reject")
 async def reject_access_request(
     request_id: int,
     payload: AccessReviewBody,
-    request: Request,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    started = time.time()
-    service = KnowledgeAccessRequestService(db)
+    _require_admin_reviewer(user)
     try:
-        row = await service.get(request_id)
-        await _require_reviewer(user, db, row.dataset_id)
-        decided = await service.decide(
+        decided = await KnowledgeAccessRequestService(db).decide(
             request_id=request_id, reviewer=user, approve=False, comment=payload.comment
         )
     except AccessRequestError as err:
-        raise HTTPException(status_code=400, detail=str(err))
-
-    await _notify_access_request(db, kind="decided", row=decided, meta=None, applicant=user)
-    await record_knowledge_audit(request, user, "datasets:revoke", 200, {
-        "action": "reject_access_request",
-        "dataset_id": decided.dataset_id,
-        "request_id": request_id,
-        "applicant_user_id": decided.applicant_user_id,
-        "comment": decided.review_comment,
-    }, started_at=started)
+        raise HTTPException(status_code=400, detail=str(err)) from err
     return {"code": 0, "data": {"id": decided.id, "status": decided.status}, "message": "已驳回"}
 
 

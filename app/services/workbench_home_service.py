@@ -23,6 +23,10 @@ SOURCE_NAMES = (
 )
 
 PERSONAL_RESOURCE_DEFS = (
+    # 前两项是资源入口：打开工作台最想先看到「我有什么能用」，
+    # 所以排在记忆/Token 这些过程性数据之前。
+    {"key": "knowledge", "label": "我的知识库", "unit": "个", "tab": "square"},
+    {"key": "datasets", "label": "我的数据集", "unit": "个", "tab": "square"},
     {"key": "memory", "label": "我的记忆", "unit": "条", "tab": "memory"},
     {"key": "tokens", "label": "我的 Token", "unit": "本月", "tab": "tokens"},
     {"key": "data", "label": "我的数据门户", "unit": "份报表", "tab": "data"},
@@ -574,6 +578,46 @@ def _resource_card(
     }
 
 
+async def _count_accessible_knowledge_bases(db: AsyncSession, user: Mapping[str, Any]) -> int:
+    """我能访问的知识库数量。
+
+    管理员按「库里还剩多少个」算：管理员对所有库都有权限，用可见范围算没有意义。
+    """
+    from app.models.knowledge import KnowledgeBaseMetadata
+    from app.services.permission_service import PermissionService
+
+    user_id = int(user["user_id"])
+    if str(user.get("role") or "") == "admin":
+        total = (
+            await db.execute(
+                select(func.count())
+                .select_from(KnowledgeBaseMetadata)
+                .where(KnowledgeBaseMetadata.status != "deleted")
+            )
+        ).scalar()
+        return int(total or 0)
+
+    access = await PermissionService(db).get_knowledge_base_access(
+        user_id, user.get("user_name")
+    )
+    return len(access.get("accessible_ids") or set())
+
+
+async def _count_accessible_metadata_datasets(
+    db: AsyncSession, user: Mapping[str, Any]
+) -> int:
+    """我能访问的数据集数量：与数据集选择器同一口径，避免两处数字打架。"""
+    from app.services.metadata_service import MetadataService
+
+    rows = await MetadataService.list_accessible_dataset_options(
+        db,
+        user_id=int(user["user_id"]),
+        is_admin=str(user.get("role") or "") == "admin",
+        status=1,
+    )
+    return len(rows)
+
+
 async def _count_memory_items(user_id: int) -> int:
     from app.services.ai.daily_summary_service import DailySummaryService
     from app.services.ai.memory_index_service import MemoryIndexService
@@ -707,6 +751,8 @@ async def _load_personal_resources(
             logger.warning("Workbench personal resource %s failed", key, exc_info=True)
             cards[key] = _resource_card(key, value=0, status="error")
 
+    await _put("knowledge", lambda: _count_accessible_knowledge_bases(db, user))
+    await _put("datasets", lambda: _count_accessible_metadata_datasets(db, user))
     await _put("memory", lambda: _count_memory_items(user_id))
     await _put("tokens", lambda: _count_month_tokens(db, user, now))
     await _put("data", lambda: _count_data_portal_reports(db, user_id, role_ids))

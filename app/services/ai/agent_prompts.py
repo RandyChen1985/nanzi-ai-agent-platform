@@ -1075,8 +1075,18 @@ class AgentServicePrompts:
         logical_session_workdir: str | None = None,
         logical_docs_dir: str | None = None,
         logical_public_docs_dir: str | None = None,
+        public_skills_path: str | None = None,
+        personal_skills_path: str | None = None,
+        sandbox_skills_dir: str | None = None,
+        sandbox_skill_layout: str = "seed",
+        personal_skills_container_path: str | None = "/workspace/personal-skills",
     ) -> str:
         """本会话 AgentScope workspace 与路径沙箱说明（仅在有文件/Shell 工具时注入）。
+
+        ``logical_workspace_root`` 有值 = Bash 跑在沙箱容器里（Docker/K8s）；为空 =
+        ``sandbox_policy=local``，Bash 与宿主文件工具都直接跑在后端服务环境。技能目录
+        提示必须跟着这条分叉走：local 下再提 `/workspace/skills`、`.seed` 只会让模型
+        去 ls 一个不存在的目录（公共技能实际在 ``public_skills_path``）。
 
         注意：本段的「文件读写优先」「路径防盲猜」「目录清单优先」主题与动态段的
         _PLATFORM_FILE_PATH_ANTI_BLIND_GUESS_RULES / _PLATFORM_DIRECTORY_CATALOG_RULE 存在措辞重叠，
@@ -1085,10 +1095,11 @@ class AgentServicePrompts:
         tools_text = "、".join(file_tool_names) if file_tool_names else "Read/Write/Grep/Glob/Bash"
         visible_session_workdir = session_workdir
         visible_docs_dir = docs_dir
+        is_sandbox = bool(logical_workspace_root)
         logical_root_text = (
             f"- **Bash 沙箱工作区**：`{logical_workspace_root}`（沙箱模式下仅 Bash 使用此容器路径；宿主机持久化路径由平台管理）\n"
-            if logical_workspace_root
-            else ""
+            if is_sandbox
+            else "- **Bash 与文件工具同根**：当前为 local 执行策略，Bash 直接运行在后端服务环境；公共目录（公共技能、公共文档、branding）的 `paths.bash` 与 `paths.file_tools` 是同一套真实路径，用户工作区内的相对路径相对工作区根，不要去猜 `/workspace` 容器路径。\n"
         )
         sandbox_path_text = (
             "- **Bash 使用沙箱路径**：沙箱模式下 Bash 使用 `/workspace/...` 路径；\n"
@@ -1105,17 +1116,96 @@ class AgentServicePrompts:
                 if logical_session_workdir and logical_docs_dir
                 else ""
             )
-            if logical_workspace_root
+            if is_sandbox
             else ""
         )
-        sandbox_boundary_text = (
-            (
-                "- **沙箱挂载边界（Docker/K8s 一致）**：Bash 只可访问当前用户工作区、只读公共文档 `/workspace/public/docs`，以及只读个人技能目录 `/workspace/personal-skills`；"
-                if logical_public_docs_dir
-                else "- **沙箱挂载边界（Docker/K8s 一致）**：Bash 当前只可访问用户工作区与只读个人技能目录 `/workspace/personal-skills`，公共 docs 未挂载；"
+        # 沙箱边界与技能布局：docker/k8s 有个人技能源只读挂载、可能挂公共 docs；
+        # e2b/ssh 只把技能复制进 skills 副本，既没有 personal-skills 也没有 docs 挂载。
+        personal_skills_mounted = bool(is_sandbox and personal_skills_container_path)
+        if is_sandbox:
+            boundary_text = (
+                (
+                    f"- **沙箱挂载边界**：Bash 只可访问本次沙箱工作目录 `{logical_workspace_root}`、"
+                    f"只读公共文档 `{logical_public_docs_dir or '/workspace/public/docs'}`，"
+                    f"以及只读个人技能目录 `{personal_skills_container_path}`；\n"
+                    if logical_public_docs_dir
+                    else f"- **沙箱挂载边界**：Bash 当前只可访问本次沙箱工作目录 `{logical_workspace_root}`"
+                    + (
+                        f"与只读个人技能目录 `{personal_skills_container_path}`，公共 docs 未挂载；\n"
+                        if personal_skills_mounted
+                        else "，公共 docs 与个人技能源都未挂载；\n"
+                    )
+                )
+                if personal_skills_mounted
+                else (
+                    f"- **沙箱挂载边界**：Bash 只可访问本次沙箱工作目录 `{logical_workspace_root}`"
+                    "（技能副本在其 `skills/` 下）；平台 branding、公共文档与个人技能源都不挂载进沙箱，"
+                    "只能用宿主侧 Read/Glob/Grep 读取。\n"
+                )
             )
-            if logical_workspace_root
-            else "- **沙箱挂载边界**：Bash 只可访问当前用户工作区，以及只读公共文档 `/workspace/public/docs`；"
+        else:
+            boundary_text = (
+                "- **执行边界**：Bash 与宿主文件工具都运行在后端服务环境，可访问本人工作区与只读公共目录"
+                "（公共文档、公共技能库、branding）；越界仍会被工具层拒绝。\n"
+            )
+        # 技能目录提示必须跟随实际执行环境：沙箱内是 `<逻辑根>/skills`（docker/k8s/e2b 为
+        # AgentScope 的 .seed 布局，ssh 为平铺复制），local 下 Bash 与文件工具共用后端真实路径。
+        # 历史事故：local 下仍提示 `/workspace/skills`，模型先 ls 一个不存在的目录，失败后才被迫
+        # 改用 pwd + ls /app/data/skills 摸索。
+        if is_sandbox:
+            sandbox_skills_root = sandbox_skills_dir or "/workspace/skills"
+            layout_text = (
+                (
+                    f"技能目录是 `{sandbox_skills_root}` 下的平铺副本"
+                    f"（形如 `{sandbox_skills_root}/<skill_id>/SKILL.md`，没有隐藏的种子模板子目录）；"
+                    if sandbox_skill_layout == "flat"
+                    else (
+                        f"公共技能用 `{sandbox_skills_root}` 下的副本（沿用 AgentScope 的 seed 布局，"
+                        "技能目录在其点开头的隐藏子目录 `.seed/` 下；"
+                        f"**只有需要执行技能自带脚本时才**用 Bash `ls -a {sandbox_skills_root}` 定位实际目录，"
+                        "不要假设固定子路径；副本按当前可用技能打包，技能变更后下次沙箱启动自动重建）；"
+                    )
+                )
+                + (
+                    f"个人技能源目录以只读方式挂载在 `{personal_skills_container_path}`，"
+                    "个人技能自带的脚本可直接用 Bash 执行，无需先复制到会话目录。"
+                    if personal_skills_mounted
+                    else "个人技能没有独立挂载点，它们已随技能副本一起打包进上面的技能目录。"
+                )
+            )
+            skills_text = f"技能文件按目录清单提供的位置读取——{layout_text}"
+        else:
+            public_skills_text = (
+                public_skills_path or "目录清单中的 `paths.file_tools`（公共技能库根目录）"
+            )
+            personal_skills_text = (
+                f"个人技能源在本人工作区的 `{personal_skills_path}` 下"
+                if personal_skills_path
+                else "个人技能源在本人工作区的 `skills/` 子目录下"
+            )
+            skills_text = (
+                f"技能文件按目录清单提供的位置读取——公共技能目录是后端服务上的 `{public_skills_text}`"
+                "（每个技能一个平铺子目录，形如 `<公共技能目录>/<skill_id>/SKILL.md`）；"
+                "local 策略下 Bash 与 Read/Glob/Grep 使用同一套真实路径，没有容器路径命名空间，"
+                "也不存在沙箱专属的隐藏技能目录布局；"
+                f"{personal_skills_text}，技能自带的脚本可直接用 Bash 执行，无需先复制到会话目录。"
+            )
+        skills_read_guide = (
+            " **技能包内的文本资源（SKILL.md、references/*.md、rules/*.json 等）一律用 "
+            "`read_skill_instruction(skill_id)` 读取**——先取资源清单、再用 "
+            "`read_skill_instruction(skill_id, path=\"相对路径\")` 按需读取，该入口按技能可见范围校验；"
+            "不要用 Bash `ls`/`cat` 铺读技能目录，也不要猜内部布局。"
+            "**只有需要执行技能自带脚本或处理二进制文件时**才用 Bash 进入技能目录。\n"
+        )
+        docs_read_rule = (
+            "- **平台公共文档读取原则**：平台公共文档（如 `data/docs/` 手册、FAQ.md）在沙箱内仅宿主侧可读，沙箱 Bash 不可见；请用 Read/Glob/Grep 直接读取，严禁在 Bash 中盲目尝试访问 `data/docs/`、`/workspace/docs` 或 `/app/data/docs`。\n"
+            if is_sandbox
+            else "- **平台公共文档读取原则**：平台公共文档（如 `data/docs/` 手册、FAQ.md）为只读，均可由 Read/Glob/Grep 直接读取；不要用 Bash cat/head 铺读（文件读取一律走文件工具）。\n"
+        )
+        bash_file_boundary = (
+            "- **沙箱内 Bash 文件操作边界**：只有在触发沙箱内的运行环境操作（如执行脚本生成的输出文件、`/tmp` 容器临时文件、命令管道流转或系统诊断）时，才允许在 Bash 中读写沙箱内部生成的文件。\n"
+            if is_sandbox
+            else "- **Bash 文件操作边界**：只有在触发运行环境操作（如执行脚本生成的输出文件、`/tmp` 临时文件、命令管道流转或系统诊断）时，才允许在 Bash 中读写这些运行时产物。\n"
         )
         return (
             "[Session Workspace & Path Sandbox]\n"
@@ -1125,17 +1215,18 @@ class AgentServicePrompts:
             + "- **文件工具路径**：用户工作区根目录（文件工具的相对路径默认相对用户工作区根目录；优先使用目录清单中的 `paths.file_tools`）\n"
             + f"- **默认文档目录**：`{visible_docs_dir}`（跨会话集中存放；用户要求「保存到文档/报告/文件」且**未指定路径**时，写入此目录，如 `{visible_docs_dir}/report.md` 或相对路径 `../docs/report.md`）\n"
             f"- **本轮文件/Shell 工具**：{tools_text}\n"
-            + sandbox_boundary_text
-            + "平台 branding 与服务根目录帮助文档不挂载到沙箱，禁止递归扫描 `/app`，服务根目录文档只能通过宿主侧 Read/Glob/Grep 读取（根目录兜底仅限 `/app/*.md`）。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件按目录清单提供的位置读取——公共技能用 `/workspace/skills` 下的副本（沿用 AgentScope 的 seed 布局，技能目录在其点开头的隐藏子目录 `.seed/` 下，用 Bash `ls -a /workspace/skills` 查看实际布局、不要假设固定子路径；按当前可用技能打包，技能变更后下次容器启动自动重建），个人技能源目录以只读方式挂载在 `/workspace/personal-skills`，个人技能自带的脚本可直接用 Bash 执行，无需先复制到会话目录。"
-            " **技能包内的文本资源（references/*.md、rules/*.json 等）优先用 `read_skill_instruction(skill_id)` 取资源清单、再用 `read_skill_instruction(skill_id, path=\"相对路径\")` 按需读取**——该入口按技能可见范围校验，不必探索 `.seed` 布局；仅当需要**执行脚本**或处理二进制文件时才在技能目录内使用 Bash。\n"
+            + boundary_text
+            + "- 平台 branding 只读（沙箱内不挂载，禁止尝试写入）；服务根目录帮助文档只能通过宿主侧 Read/Glob/Grep 读取（根目录兜底仅限 `/app/*.md`），禁止递归扫描 `/app`。用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；"
+            + skills_text
+            + skills_read_guide
             + "用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
             "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"
             "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"
             "- 禁止访问其他用户或其他会话的 agent_workspaces 目录；不得臆造路径。\n"
             "- **文件读写与搜索工具优先原则**：文件读写与搜索一律走宿主侧文件工具（Read/Write/Edit/Glob/Grep），不要用 Bash 访问文件（严禁通过 Bash 运行 cat、head、echo >、sed 等命令读写或修改常规文件）。\n"
-            "- **平台公共文档读取原则**：平台公共文档（如 `data/docs/` 手册、FAQ.md）仅宿主侧可读，沙箱 Bash 不可见；请用 Read/Glob/Grep 直接读取，严禁在 Bash 中盲目尝试访问 `data/docs/`、`/workspace/docs` 或 `/app/data/docs`。\n"
-            "- **沙箱内 Bash 文件操作边界**：只有在触发沙箱内的运行环境操作（如执行脚本生成的输出文件、`/tmp` 容器临时文件、命令管道流转或系统诊断）时，才允许在 Bash 中读写沙箱内部生成的文件。\n"
-            "- 不清楚文件在当前环境中的实际路径结构、公共文档（如 data/docs/ 手册）与个人空间映射，或遇到找不到文件/写入被拒时，**直接调用 list_accessible_directories**（平台内置、始终可用）获取全量目录清单与读写权限。\n"
+            + docs_read_rule
+            + bash_file_boundary
+            + "- 不清楚文件在当前环境中的实际路径结构、公共文档（如 data/docs/ 手册）与个人空间映射，或遇到找不到文件/写入被拒时，**直接调用 list_accessible_directories**（平台内置、始终可用）获取全量目录清单与读写权限。\n"
             "- 有 Grep/Glob 时优先于 Bash 做文本/文件搜索；Bash 用于 Grep/Glob 无法完成的管道、系统诊断或通用命令行操作。\n"
             "- **容器常见基础命令与工具心智**：运行环境通常预装 `bash`, `curl`, `wget`, `gnupg`, `node`, `npm`, `telnet`, `netstat`, `ping`, `dig`, `nslookup`, `ps`, `git`, `jq`, `unzip`, `nc` 等命令。智能体没有针对 `git`、`curl` 等独立绑定的专用工具；当用户要求进行版本控制（如 `git pull`、`git status`）或拉取网络数据等通用 CLI 操作时，应当直接调用 `Bash`（即 `exec_command`）工具去执行对应的 shell 命令，绝不能因为没有名为 `git` 的独立工具而拒绝任务。\n"
             "- 若回答依赖某命令是否存在，先用 `command -v <cmd>` 或 `which <cmd>` 快速确认，不要凭记忆断言未安装。\n"

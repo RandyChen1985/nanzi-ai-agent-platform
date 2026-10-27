@@ -1417,7 +1417,17 @@ class TaskSchedulerService:
         db_url = settings.DATABASE_SYNC_URL
         # Use a custom table name to ensure a clean slate and match project conventions
         job_stores = {
-            'default': SQLAlchemyJobStore(url=db_url, tablename='ai_agent_scheduler_jobs')
+            # jobstore 是同步 engine，且会长期持有连接：MySQL 重启或 wait_timeout
+            # 到点后旧连接失效且不会自愈（默认没有 pre_ping/recycle），表现为
+            # 调度任务静默停摆。这里与主库保持同样的回收策略。
+            'default': SQLAlchemyJobStore(
+                url=db_url,
+                tablename='ai_agent_scheduler_jobs',
+                engine_options={
+                    "pool_pre_ping": True,
+                    "pool_recycle": settings.MYSQL_POOL_RECYCLE,
+                },
+            )
         }
         from pytz import timezone
         from app.services.platform_timezone import get_cached_platform_timezone, refresh_platform_timezone

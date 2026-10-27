@@ -104,6 +104,7 @@ import {
 } from "@/utils/skillFlowBadges";
 
 import ChatInput from "@/components/embed/ChatInput.vue";
+import ScopeBoundBanner from "@/components/chat/ScopeBoundBanner.vue";
 import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
 import K8sTerminalModal from "@/components/chat/K8sTerminalModal.vue";
 import { useSandboxWorkspace } from "@/composables/chat/useSandboxWorkspace";
@@ -516,6 +517,38 @@ const hideDebugLikeDislikeForHostedAgent = computed(() => {
   const ag = agents.value.find((a) => a.id === agentParams.agent_id);
   const t = ag?.engine_type;
   return t === "RAGFLOW" || t === "OPENCLAW";
+});
+
+/**
+ * 当前调试的智能体是否把检索范围钉死在绑定库上。
+ *
+ * 调试页最容易踩这个坑：作者以为在输入框挂个库就能验证召回，实际范围根本没变，
+ * 于是在错误的前提下调 prompt。Auto Router 模式没有固定智能体，无法预判，不提示。
+ */
+const scopeBoundOnlyAgent = computed(() => {
+  const id = agentParams.agent_id;
+  if (!id) return null;
+  const agent: any = agents.value.find((a: any) => a.id === id) || null;
+  if (!agent) return null;
+  const mode = String(agent?.engine_config?.scope_gate || "").trim().toLowerCase();
+  return mode === "bound_only" ? agent : null;
+});
+const scopeBoundAgentId = computed(() => String((scopeBoundOnlyAgent.value as any)?.id || ""));
+const scopeBoundAgentName = computed(() => {
+  const agent: any = scopeBoundOnlyAgent.value;
+  return String(agent?.display_name || agent?.name || "");
+});
+const scopeBoundBoundCount = computed(() => {
+  const agent: any = scopeBoundOnlyAgent.value;
+  if (!agent) return 0;
+  const ids = agent?.agent_dataset_ids || agent?.engine_config?.dataset_ids || [];
+  return Array.isArray(ids) ? ids.length : 0;
+});
+// 关闭状态按智能体记：换一个智能体重新提示。
+const scopeBoundDismissedAgentId = ref<string>("");
+const showScopeBoundBanner = computed(() => {
+  if (!scopeBoundOnlyAgent.value) return false;
+  return scopeBoundAgentId.value !== scopeBoundDismissedAgentId.value;
 });
 
 const fetchSlashCommands = async () => {
@@ -5236,6 +5269,13 @@ onUnmounted(() => {
             @dismiss="dismissCreatedSkill"
           />
         </div>
+        <div v-if="showScopeBoundBanner" class="mb-2">
+          <ScopeBoundBanner
+            :agent-name="scopeBoundAgentName"
+            :bound-count="scopeBoundBoundCount"
+            @dismiss="scopeBoundDismissedAgentId = scopeBoundAgentId"
+          />
+        </div>
         <ChatInput
           ref="chatInputRef"
           v-model="userInput"
@@ -5638,6 +5678,7 @@ onUnmounted(() => {
     :document-recommendations="documentRecommendations"
     :loading="loadingKnowledgeDatasets"
     :load-error="knowledgeLoadError"
+    :scope-locked="!!scopeBoundOnlyAgent"
     @toggle-active="(id) => toggleDatasetActive(id, chatInputRef)"
     @load-recommendations="fetchRecommendations"
     @quick-question="handleQuickQuestion"

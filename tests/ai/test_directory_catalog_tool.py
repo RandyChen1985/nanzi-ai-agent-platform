@@ -390,3 +390,137 @@ async def test_list_accessible_directories_k8s_sandbox_uses_docker_aligned_paths
         )
         assert subdirs["skills"]["paths"]["bash"] == "/workspace/personal-skills"
         assert subdirs["skills"]["path_namespace"]["bash"] == "k8s_sandbox"
+
+
+@pytest.mark.asyncio
+async def test_list_accessible_directories_local_skills_use_backend_path():
+    """回归：local 策略下清单里的技能路径与描述都必须是后端真实路径。"""
+    mock_ctx = SimpleNamespace(
+        user_id=104,
+        is_admin=False,
+        conversation_id="conv-local-skills",
+        user_dimensions={"username": "zhaoliu"},
+    )
+
+    with (
+        patch("app.services.ai.tools.resource_catalog_tools.get_current_agent_context", return_value=mock_ctx),
+        patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="local")),
+        patch("app.utils.fs_access.get_platform_skills_root", return_value="/app/data/skills"),
+    ):
+        raw = await list_accessible_directories.ainvoke({})
+        data = json.loads(raw)
+
+    skills = next(
+        item
+        for item in data["public_directories"]["directories"]
+        if item["directory_name"] == "skills"
+    )
+    # Bash 与宿主文件工具同根：两条路径都是后端技能库
+    assert skills["container_sandbox_path"] == "/app/data/skills"
+    assert skills["backend_service_path"] == "/app/data/skills"
+    assert skills["paths"] == {"bash": "/app/data/skills", "file_tools": "/app/data/skills"}
+    assert skills["path_namespace"]["bash"] == "backend_service"
+    assert skills["path_semantics"] == "platform_directory"
+
+    # local 下不得再出现沙箱专属路径 / .seed 布局 / ls -a 探测指令
+    assert "/workspace/skills" not in skills["description"]
+    assert ".seed" not in skills["description"]
+    assert "ls -a" not in skills["description"]
+    assert "read_skill_instruction(skill_id)" in skills["description"]
+
+    guideline = next(item for item in data["usage_guidelines"] if item.startswith("7."))
+    assert "/workspace/skills" not in guideline
+    assert ".seed" not in guideline
+    assert "/app/data/skills" in guideline
+    assert "read_skill_instruction(skill_id)" in guideline
+
+
+
+@pytest.mark.asyncio
+async def test_list_accessible_directories_e2b_skills_use_e2b_logical_root():
+    """回归：e2b 的逻辑根是 /home/user/workspace，且它没有 personal-skills / docs 挂载。"""
+    mock_ctx = SimpleNamespace(
+        user_id=105,
+        is_admin=False,
+        conversation_id="conv-e2b-skills",
+        user_dimensions={"username": "sunqi"},
+    )
+
+    async def _config(key, default=None):
+        return "e2b" if key == "sandbox_policy" else default
+
+    with (
+        patch("app.services.ai.tools.resource_catalog_tools.get_current_agent_context", return_value=mock_ctx),
+        patch("app.services.config_service.ConfigService.get", AsyncMock(side_effect=_config)),
+        patch("app.utils.fs_access.get_platform_skills_root", return_value="/app/data/skills"),
+    ):
+        raw = await list_accessible_directories.ainvoke({})
+        data = json.loads(raw)
+
+    assert data["sandbox_execution_mode"] == "e2b_sandbox"
+    skills = next(
+        item
+        for item in data["public_directories"]["directories"]
+        if item["directory_name"] == "skills"
+    )
+    assert skills["paths"]["bash"] == "/home/user/workspace/skills"
+    assert skills["paths"]["file_tools"] == "/app/data/skills"
+    assert skills["path_namespace"]["bash"] == "e2b_sandbox"
+    assert ".seed" in skills["description"]
+
+    subdirs = {d["directory_name"]: d for d in data["user_workspace"]["subdirectories"]}
+    # 宿主用户工作区没有挂进 e2b：这些子目录在 Bash 内不存在
+    assert subdirs["docs"]["paths"]["bash"] is None
+    assert subdirs["skills"]["paths"]["bash"] is None
+    assert subdirs["uploads"]["paths"]["bash"] is None
+    assert data["user_workspace"]["paths"]["bash"] == "/home/user/workspace"
+
+    docs = next(
+        item
+        for item in data["public_directories"]["directories"]
+        if item["directory_name"] == "docs"
+    )
+    assert docs["paths"]["bash"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_accessible_directories_ssh_skills_use_configured_workdir():
+    """回归：ssh 的技能根跟随 sandbox_ssh_remote_workdir，且是平铺复制（无 .seed）。"""
+    mock_ctx = SimpleNamespace(
+        user_id=106,
+        is_admin=False,
+        conversation_id="conv-ssh-skills",
+        user_dimensions={"username": "wuba"},
+    )
+
+    async def _config(key, default=None):
+        if key == "sandbox_policy":
+            return "ssh"
+        if key == "sandbox_ssh_remote_workdir":
+            return "/srv/agent"
+        return default
+
+    with (
+        patch("app.services.ai.tools.resource_catalog_tools.get_current_agent_context", return_value=mock_ctx),
+        patch("app.services.config_service.ConfigService.get", AsyncMock(side_effect=_config)),
+        patch("app.utils.fs_access.get_platform_skills_root", return_value="/app/data/skills"),
+    ):
+        raw = await list_accessible_directories.ainvoke({})
+        data = json.loads(raw)
+
+    assert data["sandbox_execution_mode"] == "ssh_sandbox"
+    skills = next(
+        item
+        for item in data["public_directories"]["directories"]
+        if item["directory_name"] == "skills"
+    )
+    assert skills["paths"]["bash"] == "/srv/agent/skills"
+    assert skills["path_namespace"]["bash"] == "ssh_sandbox"
+    # ssh 是平铺复制，脚本里不生成 .seed 布局
+    assert ".seed" not in skills["description"]
+    assert "平铺副本" in skills["description"]
+
+    guideline = next(item for item in data["usage_guidelines"] if item.startswith("7."))
+    assert "/srv/agent/skills" in guideline
+    assert "平铺" in guideline
+    assert ".seed" not in guideline
