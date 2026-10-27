@@ -32,6 +32,32 @@
             </div>
         </div>
     </div>
+
+    <!--
+      移动端「我的账号」把手：与 Dashboard 顶部把手的**同一套视觉语言**——一道 32×4 的
+      圆角灰线，只是旋转 90°。顶部把手长这样：
+
+          ▬▬▬▬            （32×4 的圆角灰线，撑满 10px 高的白色顶条）
+
+      顶部那条白条之所以不显眼，是因为它撑满宽度、与页面底色是同一块白；
+      右侧照抄「白条」就会变成一条莫名其妙的**白边**（用户截图反馈）。
+      所以这里只保留那道竖灰线，其余完全透明，不加背景色、图标、阴影与圆角。
+      - 放在 Chat.vue 而不是 Dashboard：**谁持有 iframe，谁负责跟它通信**。
+      - 只在 `embedView === 'chat'` 时出现：挂件切到 /embed/personal 后会上报
+        EMBED_VIEW=personal，此时必须让位给账号页那颗同坐标的把手（否则上层那颗盖住下层，
+        表现为「点了没反应」）。
+      - 视觉 10px 宽，热区用 before 伪元素向左扩 44px（约 54×44），不影响可点性。
+    -->
+    <button
+      v-if="embedView === 'chat'"
+      type="button"
+      class="group fixed right-0 top-1/2 z-40 -mt-[22px] flex h-11 w-2.5 items-center justify-center before:absolute before:inset-y-0 before:-left-11 before:w-11 before:content-[''] lg:hidden"
+      title="我的账号"
+      aria-label="我的账号"
+      @click="openEmbeddedAccount"
+    >
+      <span class="h-8 w-1 rounded-full bg-gray-300 transition-colors group-hover:bg-gray-400 dark:bg-gray-600 dark:group-hover:bg-gray-500" />
+    </button>
   </div>
 </template>
 
@@ -43,7 +69,6 @@ import {
     createSavedReportOpenMessage,
     type SavedReportOpenRequest,
 } from '../utils/savedReportOpenProtocol';
-
 const route = useRoute();
 const router = useRouter();
 
@@ -52,6 +77,8 @@ const iframeUrl = ref('');
 const loading = ref(true);
 const isInitTimedOut = ref(false);
 const widgetReady = ref(false);
+/** 挂件当前停在哪一屏：chat（对话）/ personal（我的账号）。 */
+const embedView = ref<'chat' | 'personal'>('chat');
 let timeoutTimer: any = null;
 /** 挂件主动新开会话后清 URL 钉选时，跳过一次 query watch 触发的 INIT，避免重复初始化 */
 let skipNextQueryInit = false;
@@ -129,6 +156,18 @@ const handleSavedReportOpenEvent = (event: Event) => {
     sendSavedReportOpenRequest((event as CustomEvent<SavedReportOpenRequest>).detail);
 };
 
+/**
+ * 右侧把手 → 让挂件切到「我的账号」。
+ *
+ * 走 postMessage 而不是改 iframe src：改 src 会把整个挂件重新加载，
+ * 对话上下文、流式状态、未发完的消息全部丢失。挂件内部是 SPA 跳转，代价最小。
+ */
+const openEmbeddedAccount = () => {
+    const frame = chatFrame.value?.contentWindow;
+    if (!frame) return;
+    frame.postMessage({ type: 'OPEN_ACCOUNT' }, '*');
+};
+
 const clearHostConversationPin = () => {
     if (!route.query.conversation_id) return;
     const nextQuery = { ...route.query };
@@ -152,6 +191,13 @@ const handleMessage = (event: MessageEvent) => {
         return;
     }
     
+    // 挂件上报当前视图：切到账号页时要收起宿主自己的「我的账号」把手，
+    // 否则两颗按钮叠在同一像素上，点到的永远是上层那颗（表现为「点了没反应」）
+    if (data.source === 'nanzi-agent-embed' && data.type === 'EMBED_VIEW') {
+        embedView.value = data.view === 'personal' ? 'personal' : 'chat';
+        return;
+    }
+
     // 当挂件准备好后，注入当前用户信息
     if (data.source === 'nanzi-agent-embed' && data.type === 'NANZI_WIDGET_READY') {
         widgetReady.value = true;

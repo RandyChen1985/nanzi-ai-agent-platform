@@ -38,6 +38,14 @@ const dashboardContentRef = ref<HTMLElement | null>(null);
 // 避免拖动窗口时每个 resize 事件都触发侧边栏（20+ 菜单项）重渲染
 const desktopMediaQuery = window.matchMedia("(min-width: 1024px)");
 const isMobile = ref(!desktopMediaQuery.matches);
+/** chat 页（/dashboard/chat）整页只有一个 iframe，挂件自带标题栏与「更多」菜单；
+ *  移动端再叠一条平台顶栏就是两条 header 抢同一块屏幕，所以这里默认收起。 */
+const isChatRoute = computed(() => route.name === "AIChat");
+/** chat 页移动端顶栏是否被唤出：默认 false，只留顶部一条把手可点开 */
+const chatChromeOpen = ref(false);
+const showDashboardHeader = computed(
+  () => !isMobile.value || !isChatRoute.value || chatChromeOpen.value,
+);
 const displayVersion = computed(() => {
   const raw = (import.meta.env.VITE_APP_VERSION || "").trim();
   if (!raw || raw.toLowerCase() === "dev build" || raw.toLowerCase() === "dev" || raw.toLowerCase() === "development") {
@@ -441,6 +449,8 @@ watch(() => route.path, async () => {
   if (isMobile.value) {
     showMobileSidebar.value = false;
   }
+  // 换页后顶栏回到收起态：chat 页进来应当是沉浸式全屏，不要沿用上一次的唤出状态
+  chatChromeOpen.value = false;
 });
 
 const breadcrumbs = computed(() => {
@@ -486,6 +496,8 @@ const handleBreakpointChange = (event: MediaQueryListEvent) => {
   if (!isMobile.value) {
     showMobileSidebar.value = false;
   }
+  // 断点来回切时不要停留在「唤出态」：移动端 chat 页默认仍是沉浸式
+  chatChromeOpen.value = false;
 };
 
 onMounted(() => {
@@ -841,6 +853,7 @@ onMounted(() => {
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
       <!-- Top Header -->
       <header
+        v-if="showDashboardHeader"
         class="relative bg-white shadow-sm h-12 flex justify-between items-center px-4 z-30 border-b border-gray-200 flex-shrink-0"
       >
         <div class="flex items-center">
@@ -993,8 +1006,36 @@ onMounted(() => {
             </svg>
             <span class="hidden xs:inline">退出</span>
           </button>
+          <!-- chat 页移动端：顶栏是唤出态，给一个明确收起入口（否则只能靠再点把手） -->
+          <button
+            v-if="isMobile && isChatRoute"
+            type="button"
+            aria-label="收起顶栏"
+            title="收起顶栏"
+            class="p-1.5 rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary dark:hover:bg-gray-800"
+            @click="chatChromeOpen = false"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 14l8-8 8 8" />
+            </svg>
+          </button>
         </div>
       </header>
+
+      <!-- chat 页移动端顶栏收起后的把手：只占 10px，居中一条灰条，点一下把完整顶栏唤出。
+           用布局内元素而不是 fixed 覆盖，避免挡住挂件自己标题栏顶部的点击热区。 -->
+      <button
+        v-if="!showDashboardHeader"
+        type="button"
+        aria-label="展开顶栏"
+        title="展开顶栏"
+        class="group flex h-2.5 w-full flex-shrink-0 items-center justify-center bg-white dark:bg-gray-900"
+        @click="chatChromeOpen = true"
+      >
+        <span
+          class="h-1 w-8 rounded-full bg-gray-300 transition-colors group-hover:bg-gray-400 dark:bg-gray-600 dark:group-hover:bg-gray-500"
+        />
+      </button>
 
       <!-- 全局密码到期/即将到期常驻横幅 (Top Banner) -->
       <transition

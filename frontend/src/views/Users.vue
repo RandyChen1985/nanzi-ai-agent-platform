@@ -12,8 +12,9 @@
       </div>
     </Teleport>
 
-    <!-- Header：与角色管理一致：标题在左，搜索 / 筛选 / 操作在右同一行（lg 以上）；
-         窄屏自动折行——搜索框独占一行，按钮组在下一行换行排列 -->
+    <!-- Header：与角色管理一致：标题在左，搜索 / 筛选 / 操作在右同一行（lg 以上）。
+         窄屏也要同一行——搜索 `flex-1` 可收缩、按钮 `shrink-0` 不换行，只有控件总宽
+         连 7rem 的搜索底线都放不下时才折行（移动端上按钮不再被挤到搜索下面单独一行） -->
     <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
       <div class="min-w-0">
         <h1 class="text-xl font-bold text-gray-900 sm:text-2xl">用户管理</h1>
@@ -21,7 +22,7 @@
       </div>
 
       <div class="flex flex-wrap items-center gap-2.5 sm:gap-3">
-        <div class="relative w-full sm:w-56 lg:w-64">
+        <div class="relative min-w-[7rem] flex-1 sm:w-56 sm:flex-none lg:w-64">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />

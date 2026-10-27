@@ -797,3 +797,43 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **回归**：`pytest --confcutdir=tests/frontend tests/frontend/test_personal_workbench_contract.py tests/frontend/test_workbench*.py` **20 passed**；SFC 模板编译 **277 files / 0 problems**；`vue-tsc --noEmit` **0 错误**。同步改写契约里的两条文案断言，并新增「不得把 `summarySecondary` 拼回提示条」的反向锁。
 **未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做浏览器手工验收。
+
+## 2026-10-27 移动端「用户管理 / 角色管理」工具栏收敛为一行
+
+|---|---|---|---|
+| 搜索框与筛选/刷新被拆成两行 | `frontend/src/views/Users.vue`、`frontend/src/views/Roles.vue`、`tests/frontend/test_admin_toolbar_single_row_contract.py`（新增） | 现象：窄屏下搜索框独占一行，「筛选 / 刷新」被挤到下一行（角色管理只剩一个孤零零的刷新按钮）。根因：搜索容器是 `w-full`（角色管理还把按钮容器写成 `flex-col sm:flex-row`）。改为搜索 `min-w-[7rem] flex-1 sm:w-{56,64} sm:flex-none lg:w-{64,72}`、按钮容器 `flex flex-wrap`，窄屏优先压缩搜索框而不是让按钮换行；仅当控件总宽连 7rem 底线都放不下时才折行 |
+| 纵向堆叠残留的按钮对齐 | `frontend/src/views/Roles.vue` | 工具栏按钮上的 `self-start sm:self-auto` 是纵向堆叠时代留下的，横排后会贴着顶部与搜索框错位，已删；「缺失 default 角色」提示条里的同类写法处于纵向容器中，保留 |
+
+**回归**：`pytest --confcutdir=tests/frontend -k "users or roles or api_key_display or department"` **218 passed / 1 skipped**；新增布局契约 **3 项**；SFC 模板编译 **277 files / 0 problems**。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做真机窄屏手工验收——需重建前端后在移动端视图确认。
+
+## 2026-10-27 chat 页移动端顶栏改为「收起 + 把手唤出」
+
+|---|---|---|---|
+| 移动端 chat 页两条 header 抢屏幕 | `frontend/src/views/Dashboard.vue`、`tests/frontend/test_chat_mobile_header_collapse_contract.py`（新增） | `/dashboard/chat` 整页是一个 iframe，EmbedChat 挂件自带标题栏（产品名 / 就绪状态 / 会话菜单 / 更多 ⋮），外面再叠 48px 的平台顶栏，正文可视区被挤掉一大截。改为：`isMobile && route.name === 'AIChat'` 时顶栏默认收起，只留 10px 高、布局内的把手（居中一条灰条）；点把手唤出完整顶栏（汉堡 / 通知 / 主题 / 退出），点顶栏右侧收起按钮回到把手。桌面端与其它 dashboard 页面不受影响 |
+| 把手不能用 fixed 覆盖 | 同上 | 把手做成布局内 `flex-shrink-0` 元素而不是 `fixed`：`fixed` 会压在挂件标题栏顶部，挡掉它自己的点击热区 |
+| 状态串屏 | 同上 | 路由 watcher 与跨断点（`matchMedia` change）各重置一次 `chatChromeOpen`，避免把上一次的唤出状态带到下一页或另一个视口宽度 |
+
+**回归**：新增契约 **5 项**；`-k "dashboard or sidebar or chat or navigation"` **477 passed / 1 skipped**；SFC 模板编译 **277 files / 0 problems**；`vue-tsc --noEmit` **0 错误**。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做真机窄屏手工验收。
+
+## 2026-10-27 移动端「我的账号」右侧把手：chat 页进、账号页出
+
+|---|---|---|---|
+| chat 页（/dashboard/chat）右侧要一条进「我的账号」的把手 | `frontend/src/views/Chat.vue`、`frontend/src/views/EmbedChat.vue` | chat 页整页是一个 iframe，「我的账号」是挂件内部 SPA 路由（`/embed/personal`）。**把手由 Chat.vue 渲染**（谁持有 iframe 谁负责通信）：`postMessage {type:'OPEN_ACCOUNT'}` → EmbedChat `handlePostMessage` 新增 `case "OPEN_ACCOUNT"` 走 `router.push({name:"EmbedPersonal"})`。**刻意不改 iframe 的 src**：那会整页重载，对话上下文与流式状态全丢。第一版把把手放 Dashboard、靠 window 事件转发给 Chat.vue，多一跳后实测「点击没反应」，已重构 |
+| 账号页要一条收起的把手 | `frontend/src/views/EmbedPersonal.vue` | 原有的右下角「返回对话」胶囊按用户要求改成与 chat 页同位同形的实体按钮（右侧中部、44×36、`-mt-[22px]` 垂直居中、明确的「‹」左箭头），`aria-label` 改为「收起我的账号」；收起动效改走 `translate-x`（不能再叠 `-translate-y-1/2`，两个 translate 会互相覆盖）。拖动、滚动方向感知收起、`lg:hidden`、实底 + 阴影这些既有能力全部保留 |
+| 把手形态三轮反复（用户实测反馈） | `frontend/src/views/Chat.vue`、`frontend/src/views/EmbedPersonal.vue` | ①16px 窄条无图标 → 「太小了，回不去」；②44×36 实体按钮 + 人像图标 → 「太大了，影响视线」；③定稿分两种：**chat 页那颗**改成与 Dashboard 顶部把手同款（一道 32×4 圆角灰线，**无背景色**/图标/阴影/圆角），**账号页那颗**保持 12px 竖条 + 「‹」（用户明确「返回的那个可以不变」）。两颗高度都是 44px，热区都靠 `before:` 向左扩 44px（约 54×44）。试错记录写进注释，避免以后再来回改 |
+| 右侧把手显出一条白边（用户截图反馈） | `frontend/src/views/Chat.vue` | 照抄顶部把手的「10px 白条」在右侧变成一条压在正文上的白边——顶部那条白条之所以不显眼，是因为它撑满宽度、与页面底色是同一块白。现去掉全部背景色，只留中间那道灰竖线，其余透明；契约加断言禁止 button 上出现任何 `bg-*` |
+| 两颗把手坐标重合互相遮挡（自查发现） | `frontend/src/views/Chat.vue`、`frontend/src/views/EmbedChat.vue`、`frontend/src/views/EmbedPersonal.vue` | chat 页把手与账号页把手在同一像素位置；进入账号页后宿主那颗仍在最上层，会把账号页的「‹」整个盖住——点到的永远是上层、而它此时无事可做，表现就是「点了没反应」。现由挂件上报 `EMBED_VIEW`（EmbedChat 报 `chat`、EmbedPersonal 报 `personal`），Chat.vue 收到后收起自己的把手 |
+| 两侧把手断点不一致（自查发现） | `frontend/src/views/EmbedPersonal.vue`、`tests/frontend/test_embed_personal_contract.py` | chat 页把手用 Dashboard 的 `isMobile`（`min-width:1024px` 取反），账号页把手原本是 `sm:hidden`（640px）——640–1023px 之间会出现「chat 页有把手能进来、账号页没有把手出不去」。账号页把手统一改为 `lg:hidden`（1024px），并新增「两侧断点必须一致」的契约 |
+
+**回归**：新增契约 **6 项**（含 1 项 Node 真跑 `embed_account_bridge.mjs`：事件名稳定、注入 dispatch 生效、消息体只含 `OPEN_ACCOUNT`、不共享实例）；改写的既有返回入口契约 `test_embed_personal_contract.py` **24 passed**；`-k "embed or personal or dashboard"` **620 passed / 1 skipped**；SFC 模板编译 **277 files / 0 problems**；`vue-tsc --noEmit` **0 错误**。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做真机窄屏手工验收。
+
+## 2026-10-27 「修改登录密码」按钮：文案缩短 + 禁止折行
+
+|---|---|---|---|
+| 窄屏按钮文字折成两行 | `frontend/src/views/PersonalCenter.vue` | 「确认修改密码」在 683px 视口下被左侧的黄色提示语挤成上下两行。文案改为「修改密码」，按钮加 `shrink-0 whitespace-nowrap`（窄屏优先让提示文字换行），容器改 `flex-wrap ... gap-2`（实在放不下时整颗按钮换行，而不是被压扁） |
+
+**回归**：`-k "personal or password"` **200 passed / 1 skipped**；SFC 模板编译 **277 files / 0 problems**；`vue-tsc --noEmit` **0 错误**。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做真机窄屏手工验收。

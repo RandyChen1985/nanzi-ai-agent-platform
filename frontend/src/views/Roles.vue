@@ -1,14 +1,16 @@
 <template>
   <div class="space-y-5">
-    <!-- Header：与技能工作台一致，搜索进顶栏 -->
+    <!-- Header：与技能工作台一致，搜索进顶栏。
+         窄屏也保持「搜索 + 按钮」同一行——搜索 `flex-1` 可收缩、按钮 `shrink-0` 不换行，
+         只有控件总宽连 7rem 的搜索底线都放不下时才折行（不再让刷新按钮单独占一行） -->
     <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
       <div class="min-w-0">
         <h1 class="text-xl sm:text-2xl font-bold text-gray-900">角色管理</h1>
         <p class="text-sm text-gray-500 mt-1">配置角色权限、菜单能力与用户归属</p>
       </div>
 
-      <div class="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
-        <div class="relative w-full sm:w-64 lg:w-72">
+      <div class="flex flex-wrap items-center gap-2.5 sm:gap-3">
+        <div class="relative min-w-[7rem] flex-1 sm:w-64 sm:flex-none lg:w-72">
           <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -27,14 +29,14 @@
           v-if="searchQuery.trim()"
           type="button"
           @click="resetFilters"
-          class="px-3 py-2 text-sm text-gray-500 hover:text-gray-800 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors shrink-0 self-start sm:self-auto"
+          class="px-3 py-2 text-sm text-gray-500 hover:text-gray-800 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors shrink-0"
         >
           清除
         </button>
 
         <button
           @click="fetchRoles"
-          class="p-2 text-gray-500 hover:text-primary bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors shrink-0 self-start sm:self-auto"
+          class="p-2 text-gray-500 hover:text-primary bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors shrink-0"
           title="刷新列表"
         >
           <svg class="w-4 h-4" :class="{ 'animate-spin': loading }" fill="none" stroke="currentColor" viewBox="0 0 24 24">

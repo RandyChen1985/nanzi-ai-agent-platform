@@ -5,12 +5,19 @@
 **小程序 web-view 里小程序的返回键是退出整个 web-view，而不是回退站内路由**，
 没有返回入口用户就会卡在个人中心并丢掉对话上下文。
 
-因此：从 `/embed/chat` 跳进来时必须出现「返回对话」；而第三方 iframe 直接打开本页时
-不该凭空多出一个返回键。
+因此：从 `/embed/chat` 跳进来时必须出现「收起我的账号」把手；而第三方 iframe 直接打开本页时
+不该凭空多出一个把手。
 
-浮标的五条约束（均为实测反馈后逐轮修正）：右下角（左上角会压住 tab 栏）、
-`sm:hidden`（宽屏 Web 有完整导航可回退，浮标多余）、`min-h-11` 达到 44px 触控热区、
-实底 + 可见边界（压在内容之上仍要读得清）。
+把手形态在 2026-10-27 按用户要求改为与 chat 页右侧「我的账号」把手一致的贴边竖条
+（原来是一个写着「返回对话」的右下角胶囊），一开一合形成开关式对称。
+
+把手的约束（均为实测反馈后逐轮修正）：贴右侧中部（左上角会压住 tab 栏、左侧中部会压正文）、
+`lg:hidden`（宽屏 Web 有完整导航可回退，按钮多余）、h-11（44px）细把手且用
+`before:` 伪元素向左扩 44px 补足可点区域、实底 + 可见边界（压在内容之上仍要读得清）。
+
+2026-10-27 二次修正：先做成 16px 宽的细竖条（视觉低调、靠伪元素扩热区），用户实测
+「这个返回怎么点啊，回不去，是不是太小了」——热区够大也没用，**看不见的图标 + 窄条
+等于不知道该点哪里**。现改为 44×36 的实体按钮 + 明确的「‹」箭头。
 其中「低调」只指**不用强调色**，不指降尺寸、也不指降对比度。
 
 只做源码静态断言（沿用 tests/frontend 既有风格），不启动浏览器。
@@ -74,28 +81,39 @@ def _return_button_tag() -> str:
 
 
 def test_return_entry_is_fixed_out_of_flow():
-    """返回键必须 fixed：本页约定「只出现个人中心本身」，不该占布局、不该随滚动移出视口。"""
+    """把手必须 fixed：本页约定「只出现个人中心本身」，不该占布局、不该随滚动移出视口。"""
     tag = _return_button_tag()
-    assert "fixed" in tag, "返回键未使用 fixed 定位"
-    assert "absolute" not in tag, "返回键用了 absolute——容器滚动时会移出视口"
-    assert 'aria-label="返回对话"' in tag, "返回键缺少可访问名称"
+    assert "fixed" in tag, "把手未使用 fixed 定位"
+    # 唯一的 absolute 只能是 before: 伪元素（扩可点热区），标签自身必须是 fixed
+    assert tag.count("absolute") == 1 and "before:absolute" in tag, "把手用了 absolute——容器滚动时会移出视口"
+    assert 'aria-label="收起我的账号"' in tag, "把手缺少可访问名称"
 
 
-def test_return_entry_is_anchored_bottom_right():
-    """必须落在右下角：放左上角会压住个人中心的 tab 栏（我的权限 / 我的记忆 / 我的 Token…）。"""
+def test_return_entry_is_anchored_right_middle():
+    """必须贴右侧中部：与 chat 页右侧「我的账号」按钮同位，一开一合形成对称。
+
+    左上角会压住个人中心的 tab 栏（我的权限 / 我的记忆 / 我的 Token…），
+    左侧中部会压住正文首列；右下角则要越过整屏内容才够得到。
+    垂直居中用 -mt-[22px]（44px 的一半）而不是 -translate-y-1/2：收起动画要走
+    translate-x，两个 translate 会互相覆盖。
+    """
     tag = _return_button_tag()
-    assert "bottom-4" in tag and "right-4" in tag, "返回键未锚定右下角"
-    assert "top-3" not in tag, "返回键仍在顶部，会遮挡 tab 栏"
-    assert "left-3" not in tag, "返回键仍在左侧，会遮挡 tab 栏"
+    assert "right-0" in tag, "按钮未贴右边"
+    assert "top-1/2" in tag and "-mt-[22px]" in tag, "按钮未垂直居中于右侧中部"
+    assert "bottom-4" not in tag, "按钮仍是旧的右下角位置"
+    assert "top-3" not in tag, "把手在顶部，会遮挡 tab 栏"
+    assert "left-3" not in tag, "把手在左侧，会遮挡 tab 栏"
 
 
 def test_return_entry_is_mobile_only():
     """宽屏（Web）下不显示：此页有完整导航可回退，浮标纯属多余。
 
-    断点用 sm:hidden（640px），与 EmbedChat 的 isMobile 口径一致。
+    断点必须与 chat 页把手、Dashboard 的 isMobile 一致：都是 1024px。
+    曾经写成 sm:hidden（640px），640–1023px 之间 chat 页有把手、账号页却有进无出。
     """
     tag = _return_button_tag()
-    assert "sm:hidden" in tag, "返回键未在 ≥640px 隐藏，Web 下会多出浮标"
+    assert "lg:hidden" in tag, "把手未在 ≥1024px 隐藏，Web 下会多出浮标"
+    assert "sm:hidden" not in tag, "把手断点回退到 640px，会与 chat 页把手（1024px）不对齐"
 
 
 def test_return_entry_is_readable_over_content():
@@ -103,12 +121,13 @@ def test_return_entry_is_readable_over_content():
 
     初版用 bg-white/70 半透明 + text-gray-400，用户反馈「是不是有点看不清」。
     浮层控件的可读性优先于「低调」。
-    按用户偏好不用边框（bg-white/90），因此 shadow-sm 是**唯一**的分隔手段，不能一起删。
+    按用户偏好不用边框（bg-white/95），因此阴影是**唯一**的分隔手段，不能一起删。
     """
     tag = _return_button_tag()
-    assert "bg-white/90" in tag, "返回键背景过透，会与内容糊在一起"
-    assert "text-gray-400" not in tag, "返回键文字过浅，压在内容上读不清"
-    assert "shadow-sm" in tag, "返回键与正文缺少可见边界（已去边框，阴影是唯一分隔手段）"
+    assert "bg-white/95" in tag, "按钮背景过透，会与内容糊在一起"
+    # 浅色模式不能用 text-gray-400（深色模式的 dark:text-gray-400 是另一回事）
+    assert not re.search(r"(?<!dark:)text-gray-400", tag), "把手文字过浅，压在内容上读不清"
+    assert "shadow-md" in tag, "按钮与正文缺少可见边界（已去边框，阴影是唯一分隔手段）"
     assert "border" not in tag, "返回键按用户偏好不用边框"
 
 
@@ -131,9 +150,14 @@ def test_return_entry_meets_touch_target():
     「低调」不该降尺寸。
     """
     tag = _return_button_tag()
-    assert "min-h-11" in tag, "返回键未达 44px 触控热区下限"
-    assert "text-xs" not in tag, "返回键文字过小"
-    assert "py-1.5" not in tag, "返回键用 py-1.5 撑高度，实际不足 44px"
+    # 细把手（视觉 12px）但热区要够：高度 44px，宽度靠伪元素向左扩 44px（约 56×44）。
+    # 只做窄条会被反馈「太小、点不到」；只做实体块会被反馈「太大」——两者都不行。
+    assert "h-11" in tag, "把手高度不足 44px 触控热区下限"
+    assert "w-3" in tag, "把手视觉宽度不是 12px（细把手形态）"
+    assert "before:-left-11" in tag and "before:w-11" in tag, "把手未向左扩出可点热区"
+    assert "w-9" not in tag, "把手回退成了 36px 宽的实体按钮（用户反馈「太大了」）"
+    assert "text-xs" not in tag, "把手文字过小"
+    assert "py-1.5" not in tag, "把手用 py-1.5 撑高度，实际不足 44px"
 
 
 def test_return_uses_history_back():
@@ -321,6 +345,6 @@ def test_dragged_position_switches_to_absolute_coordinates():
     tag = _return_button_tag()
     assert ":style" in tag and "fabPos" in tag, "模板未把拖动位置绑到 style"
     assert "left" in tag and "top" in tag, "未使用绝对坐标"
-    assert "bottom-4 right-4" in tag, "未保留默认右下角"
+    assert "-mt-[22px] right-0 top-1/2" in tag, "未保留默认的右侧中部位置"
     assert "touchstart" in tag, "模板未绑定触摸事件"
 
