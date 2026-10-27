@@ -732,3 +732,24 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 **回归**：`tests/api/portal` 全量 **779 passed / 4 xfailed**；`tests/frontend` 全量 **3355 passed / 1 skipped**；改动涉及的 6 个前端文件 `npx vue-tsc -b` 0 错误（全仓另有 97 个既存错误，集中在 EmbedChat / MenuManagement / SystemConfig / TaskCenter 等本次未触碰的文件；默认 2GB 堆会 OOM，需 `NODE_OPTIONS=--max-old-space-size=8192`）。
 **迁移**：新增 `db-prod/V194-unique_pending_access_request.sql`（MySQL）与 `db-prod-pg/V94-unique_pending_access_request.sql`（PostgreSQL），**需由用户执行**；两者都会先收敛存量重复 pending 再建唯一约束，可重复执行。
 **未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；知识库只读概览入口与门禁通道 A 按用户要求不在本轮范围。
+
+## 2026-10-27 EmbedChat 会话隔离收尾：历史侧栏锁定提示 + 首屏历史补拉
+
+|---|---|---|---|
+| 锁定智能体的历史侧栏提示 | `frontend/src/components/ChatHistorySidebar.vue`、`frontend/src/views/EmbedChat.vue`、`tests/frontend/test_embed_history_pinned_agent_notice_contract.py` | URL `agent_id` / 宿主 `INIT_CONFIG` / ticket 锁定智能体后，历史已被后端按该智能体限定，但侧栏没有任何说明，用户会以为「历史怎么少了」。侧栏搜索框上方新增「已锁定智能体 X，仅显示该智能体的历史会话」，名称优先取解析后的 `display_name`，宿主场景从已加载智能体列表按锁定 id 反查 |
+| 锁定后不能改智能体筛选 | 同上 | 筛选面板里的「智能体」在锁定时不再渲染（`showAgentFilter = !pinnedAgentScope()`），锁定场景也不显示可删除的 agent chip——删了也不会生效（请求最后仍被锁定值覆盖），只会误导 |
+| 首屏历史空白需手动刷新 | `frontend/src/views/EmbedChat.vue`、`tests/frontend/test_embed_history_sidebar_bootstrap_contract.py` | 侧栏从本地偏好自动展开时，那一轮 `fetchHistory` 早于认证与 agent 解析：`config.token` 为空且 `hasPermission` false 会直接 return，或带着 URL 里的 slug 去过滤（历史表存的是解析后的 id）→ 列表停在「暂无会话历史」。深链 agent 未解析出 id 时先跳过，`initChat` 收尾（凭据/身份/agent 锁定就绪）后补拉一次 |
+
+**回归**：`pytest --confcutdir=tests/frontend -k "embed or conversation or history or sidebar"` **633 passed / 1 skipped**；新增契约 3 项；`npx vue-tsc -b` 全仓 97 条（与改动前一致），`ChatHistorySidebar.vue` 0 条、`EmbedChat.vue` 改动行范围 0 条。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；预览模式仍可打开历史侧栏（未按用户要求隐藏）。
+
+## 2026-10-27 知识库资源申请查重签名修复 + 测试补强
+
+|---|---|---|---|
+| 旧端点提交知识库申请 500 | `app/services/knowledge_access_request_service.py`、`tests/api/test_legacy_access_request_compat.py`、`tests/services/test_knowledge_access_request_service.py` | `KnowledgeAccessRequestService.pending_for` 用两参数签名覆盖了基类，而基类 `create` 内部按 `pending_for(resource_type, resource_id, user_id)` 调用，查重这一步直接 `TypeError` → 500。移除覆盖，基类本身按 `resource_type` 分派 |
+| 调度 jobstore 缺连接健康参数断言 | `tests/services/test_platform_database_dialect_sql.py` | 长持有连接的同步 engine 必须带 `pool_pre_ping` + `pool_recycle`，否则 MySQL 连接失效后调度静默停摆；补断言（recycle 取自配置） |
+| 工作台卡片顺序与空壳 | `tests/services/test_workbench_home_service.py` | 资源入口（知识库/数据集）在前、过程性数据在后；无数据时统一空壳（`value=0` + `status=empty`） |
+| 已知失败清单收敛 | `tests/known_failures.txt` | 移除已修复的 agentscope tool evidence 用例 |
+
+**回归**：`pytest tests/api/test_legacy_access_request_compat.py tests/services/test_knowledge_access_request_service.py tests/services/test_platform_database_dialect_sql.py tests/services/test_workbench_home_service.py` **50 passed**。
+**未做**：未跑全量后端回归、未执行 `./dev.sh`。
