@@ -53,3 +53,44 @@ def test_apply_modal_states_are_reset_when_reopened():
     # 上一次的报错与理由不能带到下一张卡
     assert "reason.value = ''" in modal
     assert "error.value = ''" in modal
+
+
+def test_card_offers_a_copy_affordance_for_the_resource_name():
+    """卡片标题旁要能一键复制资源名。
+
+    复制的是物理名（`meta_pgdemo_ds` 这类），不是中文副标题——后者复制出去
+    没法拿去查库、写 SQL 或配数据源。
+    """
+    card = _read(CARD)
+    assert "import { copyToClipboard } from '@/utils/clipboard'" in card
+    assert "await copyToClipboard(props.name)" in card
+    # 必须是 stop：卡片标题自己有点击行为，不拦会被一起触发
+    assert '@click.stop="copyName"' in card
+    assert "复制 ${name}" in card
+
+
+def test_copy_affordance_only_shows_on_hover_but_not_on_touch():
+    """每张卡都常显一个复制图标会把标题挤掉；触屏没有 hover 又必须常显。"""
+    card = _read(CARD)
+    assert 'class="group flex flex-col' in card
+    assert "group-hover:opacity-100" in card
+    assert "max-sm:opacity-100" in card
+
+
+def test_copy_success_gives_short_feedback_then_resets():
+    card = _read(CARD)
+    assert "copied.value = true" in card
+    # 提示在 title/aria-label 里，不占标题行的宽度
+    assert "copied ? '已复制'" in card
+    assert '<span v-if="copied" class="text-emerald-600">已复制</span>' not in card
+    # 定时器要在卸载时清掉，避免已销毁组件里 setState
+    assert "onBeforeUnmount" in card
+    assert "clearTimeout(copyTimer)" in card
+
+
+def test_title_row_is_flex_so_long_names_do_not_clip_the_copy_button():
+    """h4 上的 truncate 是 overflow:hidden，标题一长会把浮标整块裁掉。"""
+    card = _read(CARD)
+    assert "flex min-w-0 items-baseline gap-1" in card
+    assert "min-w-0 truncate text-left" in card
+    assert "ml-auto inline-flex shrink-0" in card
