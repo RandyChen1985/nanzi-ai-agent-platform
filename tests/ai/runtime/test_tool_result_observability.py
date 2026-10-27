@@ -234,6 +234,44 @@ def test_file_tool_metadata_does_not_expose_unknown_host_absolute_path():
     assert "file_metadata" not in result["log"]
 
 
+def test_file_tool_metadata_local_policy_keeps_backend_path():
+    """local 策略下 Bash 与文件工具同根：元数据不得把后端路径改写成 /workspace。"""
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="read-local-skill",
+        tool_name="Read",
+        tool_args={"file_path": "/app/data/skills/my-skill/SKILL.md"},
+        tool_output="ok",
+        duration_tool=12,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+        sandbox_policy="local",
+    )
+
+    metadata = result["log"]["file_metadata"]
+    assert metadata["path"] == "/app/data/skills/my-skill/SKILL.md"
+    assert metadata["file_name"] == "SKILL.md"
+
+
+def test_file_tool_metadata_sandbox_policy_uses_logical_namespace():
+    """沙箱策略下保持历史的 /workspace 逻辑命名空间（与系统提示词一致）。"""
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="read-docker-skill",
+        tool_name="Read",
+        tool_args={"file_path": "/app/data/skills/my-skill/SKILL.md"},
+        tool_output="ok",
+        duration_tool=12,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+        sandbox_policy="docker",
+    )
+
+    metadata = result["log"]["file_metadata"]
+    assert metadata["path"] == "/workspace/skills/my-skill/SKILL.md"
+
+
+
 @pytest.mark.parametrize(
     ("tool_name", "tool_args", "tool_output", "expected"),
     [
@@ -473,3 +511,41 @@ def test_bash_tool_summary_is_normalized_and_capped():
     assert len(summary) <= 60
     assert summary.startswith("把 前端 每个契约用例都跑一遍")
     assert summary.endswith("…")
+
+
+def test_file_tool_metadata_e2b_policy_uses_e2b_logical_root():
+    """e2b 的逻辑根是 /home/user/workspace：元数据不能写死 /workspace。"""
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="read-e2b-skill",
+        tool_name="Read",
+        tool_args={"file_path": "/app/data/skills/my-skill/SKILL.md"},
+        tool_output="ok",
+        duration_tool=12,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+        sandbox_policy="e2b",
+        logical_root="/home/user/workspace",
+    )
+
+    metadata = result["log"]["file_metadata"]
+    assert metadata["path"] == "/home/user/workspace/skills/my-skill/SKILL.md"
+
+
+def test_file_tool_metadata_ssh_policy_uses_configured_workdir():
+    """ssh 的 remote workdir 可被管理员改：元数据跟随它而不是 /workspace。"""
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="write-ssh-doc",
+        tool_name="Write",
+        tool_args={"file_path": "/app/data/agent_workspaces/u__1/docs/report.md"},
+        tool_output="ok",
+        duration_tool=12,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+        sandbox_policy="ssh",
+        logical_root="/srv/agent",
+    )
+
+    metadata = result["log"]["file_metadata"]
+    assert metadata["path"] == "/srv/agent/docs/report.md"

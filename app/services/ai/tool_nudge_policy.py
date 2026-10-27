@@ -421,6 +421,11 @@ def is_automatic_delivery_context(
                 "quick_suggestions_forbidden",
                 "is_scheduled_task",
                 "is_subscription_task",
+                # 委派链没有回传通道：子代理发出的 user_question 事件会被
+                # agent_delegate_tool 的流白名单丢掉，而且子代理跑在
+                # child_session_{run_id} 独立会话上，回执校验必然失败。
+                # 判定为非交互后，原生 ask_user_question 与范围确认卡都不会再尝试。
+                "delegated_sub_agent",
             )
         ):
             return True

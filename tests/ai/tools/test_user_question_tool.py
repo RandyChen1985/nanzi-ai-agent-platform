@@ -207,3 +207,62 @@ def test_dataset_question_record_can_restore_only_validated_numeric_ids():
     assert metadata_dataset_ids_from_user_question_record({**record, "purpose": "other"}) is None
     assert metadata_dataset_ids_from_user_question_record({**record, "selected_option_ids": ["ds-name"]}) is None
     assert metadata_dataset_ids_from_user_question_record({**record, "status": "cancelled"}) is None
+
+
+def test_question_fallback_content_uses_latest_question_in_nested_timeline():
+    """补全正文必须取最近一条提问卡，且能穿透子代理的嵌套步骤。"""
+    from app.services.ai.user_question import build_user_question_fallback_content
+
+    timeline = [
+        {"category": "user_question", "user_question": {"question": "第一个问题"}},
+        {
+            "category": "tool",
+            "children": [
+                {"category": "user_question", "user_question": {"question": "子代理问题"}}
+            ],
+        },
+        {"category": "user_question", "user_question": {"question": "最新问题"}},
+    ]
+
+    assert build_user_question_fallback_content(timeline) == "我需要你补充确认：最新问题"
+
+
+def test_question_fallback_content_is_empty_without_question_card():
+    """没有提问卡时不得伪造正文，避免把普通轮次写成「需要补充确认」。"""
+    from app.services.ai.user_question import build_user_question_fallback_content
+
+    assert build_user_question_fallback_content(None) == ""
+    assert build_user_question_fallback_content([]) == ""
+    assert build_user_question_fallback_content([{"category": "tool", "title": "Bash"}]) == ""
+
+
+@pytest.fixture
+def _delegated_options():
+    """模拟委派链：子代理的 execution_options 只带委派标记。"""
+    from app.core.context import execution_options_context
+
+    token = execution_options_context.set({"delegated_sub_agent": True})
+    yield
+    execution_options_context.reset(token)
+
+
+async def test_ask_user_question_refuses_in_delegated_context(_delegated_options):
+    """委派链没有回传通道，发卡只会让子代理空等一个永远不会到的回执。"""
+    result = json.loads(await ask_user_question.ainvoke(_question_args()))
+
+    assert result["status"] == "error"
+    assert "无人值守" in result["error"]
+    assert "不要再尝试向用户提问" in result["hint"]
+
+
+async def test_ask_user_question_still_works_for_interactive_turn():
+    from app.core.context import execution_options_context
+
+    token = execution_options_context.set({})
+    try:
+        result = json.loads(await ask_user_question.ainvoke(_question_args()))
+    finally:
+        execution_options_context.reset(token)
+
+    assert result["status"] == "awaiting_user"
+    assert result["question_id"].startswith("uq_")

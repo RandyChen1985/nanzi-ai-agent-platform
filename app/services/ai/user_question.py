@@ -148,6 +148,48 @@ def parse_user_question_receipt(text: str | None) -> dict[str, Any] | None:
     }
 
 
+def _iter_timeline_items(timeline: Any):
+    """按执行顺序深度遍历时间线（含子代理的 children）。"""
+    if not isinstance(timeline, list):
+        return
+    for item in timeline:
+        if not isinstance(item, dict):
+            continue
+        yield item
+        children = item.get("children")
+        if isinstance(children, list):
+            yield from _iter_timeline_items(children)
+
+
+def user_question_text_from_timeline(timeline: Any) -> str:
+    """从 process_timeline 提取最近一条提问卡的问题原文。
+
+    提问轮模型的可见正文通常为空，问题只存在于这张卡里；落库前用它补一条正文，
+    模型下一轮才能看到「我问过什么」，而不是一条空的 assistant 消息。
+    """
+    found = ""
+    for item in _iter_timeline_items(timeline):
+        if str(item.get("category") or "") != "user_question":
+            continue
+        payload = item.get("user_question")
+        text = ""
+        if isinstance(payload, dict):
+            text = str(payload.get("question") or "").strip()
+        if not text:
+            text = str(item.get("details") or "").strip()
+        if text:
+            found = text
+    return found
+
+
+def build_user_question_fallback_content(timeline: Any) -> str:
+    """提问轮正文为空时的补全正文；没有提问卡时返回空串。"""
+    question = user_question_text_from_timeline(timeline)
+    if not question:
+        return ""
+    return f"我需要你补充确认：{question}"
+
+
 async def persist_user_question_event(
     *,
     event: dict[str, Any],

@@ -91,6 +91,35 @@ def history_messages_for_token_budget(
     return drop_unfinished_turns(history)
 
 
+def _is_question_receipt_message(message: Any) -> bool:
+    """是否是 ask_user_question 提交后生成的「【用户回答】」回执。"""
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return False
+    content = message.get("content")
+    if not isinstance(content, str):
+        return False
+    from app.services.ai.user_question import is_user_question_receipt_message
+
+    return is_user_question_receipt_message(content)
+
+
+def _protect_question_receipt_pair(history: List[Dict[str, Any]], start: int) -> int:
+    """窗口不得以一条「用户回答」开头而丢掉它前面的提问轮。
+
+    提问轮的 assistant 正文通常为空、问题文本只在该轮的工具转录里；一旦切点正好落在
+    这条 assistant 上，窗口首条就成了孤立的「【用户回答】」，模型看不到回答的是哪个
+    问题，只能重新猜。这里把配对的 assistant 一并纳入（最多多一条消息，预算略超可接受）。
+    """
+    if start <= 0 or start >= len(history):
+        return start
+    if not _is_question_receipt_message(history[start]):
+        return start
+    previous = history[start - 1]
+    if isinstance(previous, dict) and previous.get("role") == "assistant":
+        return start - 1
+    return start
+
+
 def window_for_context(
     server_history: List[Dict[str, Any]],
     max_context_messages: int,
@@ -118,12 +147,13 @@ def window_for_context(
             break
     if cut_index is None:
         return server_history
-    # 绝不返回空窗口：当最新一条消息本身已超预算（cut_index == len-1）时，
-    # server_history[cut_index+1:] 会得到 []，导致全部历史（含最新一条）被清空、
-    # 下游只收到孤立的 user 消息。此时至少保留最新这一条最相关的上下文。
-    if cut_index >= len(server_history) - 1:
-        return server_history[-1:]
-    return server_history[cut_index + 1 :]
+    start = cut_index + 1
+    # 绝不返回空窗口：当最新一条消息本身已超预算（start == len）时，全部历史（含最新
+    # 一条）都会被清空、下游只收到孤立的 user 消息。此时至少保留最新这一条。
+    if start >= len(server_history):
+        start = len(server_history) - 1
+    start = _protect_question_receipt_pair(server_history, start)
+    return server_history[start:]
 
 
 async def apply_context_snapshot(

@@ -599,6 +599,18 @@ def test_automatic_delivery_flags_disable_explicit_question_nudge():
     ) is None
 
 
+def test_delegated_sub_agent_counts_as_automatic_delivery():
+    """委派链同样没有可回传的交互通道，必须与定时任务同等对待。
+
+    子代理发出的提问卡会被 agent_delegate_tool 的流白名单丢弃，而且它跑在
+    child_session_{run_id} 上，回执校验必然失败——允许它提问只会换来一次空结果。
+    """
+    assert is_automatic_delivery_context(None, {"delegated_sub_agent": True}) is True
+    assert is_automatic_delivery_context(None, {"delegated_sub_agent": "true"}) is True
+    assert is_automatic_delivery_context(None, {"delegated_sub_agent": False}) is False
+    assert is_automatic_delivery_context({}, {}) is False
+
+
 def test_explicit_interactive_request_does_not_nudge_without_question_tool():
     assert resolve_tool_nudge("随便问我几个问题", [_tool("Bash", "执行命令")]) is None
 

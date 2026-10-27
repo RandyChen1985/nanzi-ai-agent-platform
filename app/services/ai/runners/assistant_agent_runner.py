@@ -220,15 +220,34 @@ def _resolve_agentscope_tool_args(
     return {"input": streamed_args} if streamed_args else {}
 
 
-def _logical_file_tool_path(raw_path: Any) -> str | None:
-    """Convert an authorized backend file-tool path to a safe logical path."""
+def _logical_file_tool_path(
+    raw_path: Any,
+    *,
+    sandbox_policy: str | None = None,
+    logical_root: str = "/workspace",
+) -> str | None:
+    """Convert an authorized backend file-tool path to a safe logical path.
+
+    ``sandbox_policy="local"`` 时 Bash 与宿主文件工具同根，后端真实路径就是模型
+    实际使用的路径，不能再映射进沙箱命名空间——否则 local 模式下时间线展示的
+    技能/文档路径与实际执行环境不符（与系统提示词、目录清单自相矛盾）。
+    ``logical_root`` 是沙箱内的逻辑工作区根：docker/k8s 为 ``/workspace``，
+    e2b 为 ``/home/user/workspace``，ssh 为管理员配置的 remote workdir。
+    ``sandbox_policy`` 未传（``None``）时保持历史的 ``/workspace`` 行为。
+    """
     raw = str(raw_path or "").strip().replace("\\", "/")
     if not raw:
         return None
     normalized = posixpath.normpath(raw)
     if normalized in {".", ".."} or normalized.startswith("../"):
         return None
-    if normalized == "/workspace" or normalized.startswith("/workspace/"):
+    policy = str(sandbox_policy or "").strip().lower()
+    if policy == "local":
+        # local：后端路径即真实路径，绝对路径原样展示；相对路径保持相对形态，
+        # 不再臆造 /workspace 前缀（那里在 local 下不存在）。
+        return normalized
+    root = (logical_root or "/workspace").rstrip("/") or "/workspace"
+    if normalized == root or normalized.startswith(root + "/"):
         return normalized
 
     parts = [part for part in normalized.split("/") if part and part != "."]
@@ -240,29 +259,29 @@ def _logical_file_tool_path(raw_path: Any) -> str | None:
     for index in range(len(parts) - 1):
         if parts[index : index + 2] == ["data", "docs"]:
             suffix = parts[index + 2 :]
-            return posixpath.join("/workspace/public/docs", *suffix) if suffix else "/workspace/public/docs"
+            return posixpath.join(root, "public", "docs", *suffix) if suffix else posixpath.join(root, "public", "docs")
         # 公共技能：/workspace/skills 是**逻辑根**，实际技能目录在其点开头的隐藏子目录
         # .seed/ 下（AgentScope 的 seed 布局，会随其装配状态变化）。这里产出的是展示用
         # 元数据，保持与目录清单一致的逻辑命名空间即可，不追到 seed 子目录内部——把
         # 内部布局写死迟早失效（历史教训：曾把 /app/data/skills/<id>/SKILL.md 写进提示词）。
         if parts[index : index + 2] == ["data", "skills"]:
             suffix = parts[index + 2 :]
-            return posixpath.join("/workspace/skills", *suffix) if suffix else "/workspace/skills"
+            return posixpath.join(root, "skills", *suffix) if suffix else posixpath.join(root, "skills")
 
     if "agent_workspaces" in parts:
         index = parts.index("agent_workspaces")
         suffix = parts[index + 2 :]
         allowed_roots = {"docs", "sessions", "uploads", "skills", ".trash"}
         if not suffix:
-            return "/workspace"
+            return root
         if suffix[0] in allowed_roots:
-            return posixpath.join("/workspace", *suffix)
+            return posixpath.join(root, *suffix)
         return None
 
     # Relative file-tool arguments are relative to the user workspace. Keep
     # them in the same logical namespace instead of dropping the metadata.
     if not normalized.startswith("/"):
-        return posixpath.join("/workspace", normalized)
+        return posixpath.join(root, normalized)
 
     # Service-root help files are intentionally not mounted into Bash, but
     # /app/<name>.md is the documented backend path for Read/Glob/Grep.
@@ -275,6 +294,9 @@ def _build_file_tool_metadata(
     tool_name: str,
     tool_args: Dict[str, Any],
     tool_output: Any = None,
+    *,
+    sandbox_policy: str | None = None,
+    logical_root: str = "/workspace",
 ) -> Dict[str, Any] | None:
     """Build safe, logical-path metadata for workspace file tools."""
     tool_name = str(tool_name or "")
@@ -327,7 +349,11 @@ def _build_file_tool_metadata(
         return None
 
     path_key = "file_path" if tool_name in {"Read", "Write", "Edit"} else "path"
-    raw_path = _logical_file_tool_path(tool_args.get(path_key))
+    raw_path = _logical_file_tool_path(
+        tool_args.get(path_key),
+        sandbox_policy=sandbox_policy,
+        logical_root=logical_root,
+    )
     if raw_path is None:
         return None
 
@@ -2482,6 +2508,27 @@ class AssistantAgentRunner(BaseExecutor):
         tool_data: Dict[str, List[Dict[str, Any]]] = state.setdefault("tool_data", {})
         tool_started_at: Dict[str, float] = state["tool_started_at"]
 
+        # 工具调用元数据里的路径展示要跟随执行策略：local 下后端真实路径就是模型
+        # 实际使用的路径，不能再映射成 /workspace 逻辑路径（一轮读一次即可，命中配置缓存）。
+        display_sandbox_policy: str | None = None
+        display_logical_root = "/workspace"
+        try:
+            from app.services.config_service import ConfigService, resolve_effective_sandbox_policy
+            from app.services.ai.runtime.agentscope.workspace import (
+                resolve_sandbox_logical_root,
+            )
+
+            display_sandbox_policy = resolve_effective_sandbox_policy(
+                await ConfigService.get("sandbox_policy", "local"), "local"
+            )
+            # e2b 的逻辑根是 /home/user/workspace、ssh 由管理员配置，展示不能写死 /workspace。
+            display_logical_root = (
+                await resolve_sandbox_logical_root(display_sandbox_policy) or "/workspace"
+            )
+        except Exception:  # pragma: no cover - 展示层降级
+            display_sandbox_policy = None
+            display_logical_root = "/workspace"
+
         async def on_tool_result_end(event: Any) -> AsyncGenerator[Dict[str, Any], None]:
             process_narration_events.on_tool_result_end(state)
             tool_id = getattr(event, "tool_call_id", "")
@@ -2561,6 +2608,8 @@ class AssistantAgentRunner(BaseExecutor):
                 target_tool=target_tool,
                 tool_index=0,
                 tool_result_state=tool_result_state,
+                sandbox_policy=display_sandbox_policy,
+                logical_root=display_logical_root,
             )
             if result.get("log"):
                 yield result["log"]
@@ -3573,6 +3622,8 @@ class AssistantAgentRunner(BaseExecutor):
         target_tool: Any,
         tool_index: int,
         tool_result_state: Any = None,
+        sandbox_policy: str | None = None,
+        logical_root: str = "/workspace",
     ) -> Dict[str, Any]:
         is_error = is_tool_result_error(
             tool_name,
@@ -3653,7 +3704,13 @@ class AssistantAgentRunner(BaseExecutor):
         tool_summary = extract_tool_summary(tool_args, tool_name=tool_name)
         if tool_summary:
             log_event["tool_summary"] = tool_summary
-        file_metadata = _build_file_tool_metadata(tool_name, tool_args, tool_output)
+        file_metadata = _build_file_tool_metadata(
+            tool_name,
+            tool_args,
+            tool_output,
+            sandbox_policy=sandbox_policy,
+            logical_root=logical_root,
+        )
         if file_metadata:
             log_event["file_metadata"] = file_metadata
         normalized_result_state = normalize_tool_result_state(tool_result_state)
