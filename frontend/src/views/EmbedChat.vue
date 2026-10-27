@@ -9304,6 +9304,13 @@ const handlePostMessage = (event: MessageEvent) => {
         handleQuickQuestion(data.command);
       }
       break;
+    case "OPEN_ACCOUNT":
+      // 宿主（网页面板移动端右侧把手）要求切到「我的账号」。与「更多 → 我的账号」
+      // 走同一跳转：/embed/personal 与本页同 layout、同为 public，iframe 内 SPA 切换即可，
+      // 不需要重新加载挂件。
+      closeHeaderMore();
+      void router.push({ name: "EmbedPersonal" });
+      break;
   }
 };
 const applyTheme = (theme: string, styleVars?: Record<string, string>) => {
@@ -12586,6 +12593,10 @@ onMounted(() => {
   // 忽略键在 instance_id 与 agent_id 都解析完成后才能确定（agent_id 晚于 token 分支赋值）
   loadLegacyTokenHintIgnored();
   postMessageToHost({ type: "NANZI_WIDGET_READY" });
+  // 告诉宿主「当前挂件停在 chat 视图」：宿主据此决定右侧「我的账号」把手要不要露出来。
+  // 不报的话，进了 /embed/personal 之后宿主的把手还压在上面，正好盖住账号页自己的
+  // 收起按钮——用户点了没反应，实际点的是被盖住的那一层。
+  postMessageToHost({ type: "EMBED_VIEW", view: "chat" });
   if (config.token && !ticketFromUrl) {
     console.log("[LifeCycle] Initializing chat from existing token...");
     scheduleUrlTokenInitialization();

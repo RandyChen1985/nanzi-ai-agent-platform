@@ -26,16 +26,26 @@
     class="h-full w-full overflow-y-auto overflow-x-hidden bg-gray-100 custom-scrollbar"
   >
     <!--
-      返回对话：仅当本次是**从 /embed/chat 跳进来**时出现（判定见 script 的 detectBackToChat）。
-      四条约束，都是踩过之后定下来的：
-      1. fixed 而非文档流内元素——本页约定「只出现个人中心本身」，返回键不该占据布局，
+      「收起我的账号」按钮：仅当本次是**从 /embed/chat 跳进来**时出现（判定见 script 的 detectBackToChat）。
+      位置与 chat 页右侧的「我的账号」把手**同位**（贴右边、垂直居中、44px 高），一开一合互相对应；
+      但**形态不跟它同款**——用户明确要求「返回的那个可以不变」：chat 页那颗为了不挡视线已经
+      降成一道灰线，本页这颗是唯一出口，需要可辨认的「‹」和一点实体感。
+      下面这些都是踩过之后定下来的：
+      1. fixed 而非文档流内元素——本页约定「只出现个人中心本身」，把手不该占据布局，
          也不该在滚动时移出视口；
-      2. 放**右下角**：左上角会压住个人中心的 tab 栏（我的权限 / 我的记忆 / 我的 Token 消耗…）；
-      3. **sm:hidden**：宽屏（Web）下此页有完整导航可回退，浮标纯属多余；
-         断点 640px 与 EmbedChat 的 isMobile 口径一致；
-      4. **min-h-11（44px）**：它是移动端**唯一**的返回入口，必须够大够点。
-         初版为了「低调」写成 text-xs + py-1.5，实际高度仅约 26px——与头部按钮
-         44px 的标准自相矛盾，是明确的可用性缺陷。
+      2. 贴**右侧中部**：左上角会压住个人中心的 tab 栏（我的权限 / 我的记忆 / 我的 Token 消耗…）；
+         与 chat 页按钮同位，用户不用重新找位置。左侧中部会压住正文首列。
+         用 `-mt-[22px]`（44px 的一半）做垂直居中而不是 `-translate-y-1/2`：收起动画要走
+         `translate-x`，两个 translate 会互相覆盖。
+      3. **lg:hidden（1024px）**：宽屏（Web）下此页有完整导航可回退，把手纯属多余。
+         断点必须与 chat 页把手、Dashboard 的 isMobile（min-width:1024px 取反）**严格一致**：
+         曾经写成 sm:hidden（640px），结果 640–1023px 时 chat 页有把手、账号页有进无出，
+         用户会卡在账号页。
+      4. **触控热区**：h-11（44px）× w-9（36px）实体按钮，再用 `before:` 伪元素向左扩 24px，
+         实际可点区域约 60×44。
+         曾经做成 16px 宽的细竖条（靠伪元素扩热区）：用户反馈「这个返回怎么点啊，回不去，
+         是不是太小了」——**看不见的图标 + 窄条 = 不知道该点哪里**，热区够大也救不回来。
+         这里先后退到「明显的 ‹ 按钮」，尺寸与可见性都属于可用性，不是装饰。
       5. **实底 + 靠阴影与正文分隔**：它压在内容之上，背景必须近乎不透明、并与正文
          有可见边界，否则底下的字会透出来糊成一片。初版用 bg-white/70 + text-gray-400，
          用户反馈「是不是有点看不清」。
@@ -45,34 +55,37 @@
       而**不是降低可读性**——它只降视觉权重，不降尺寸、不降对比度。
       6. **滚动时收起**：它是 fixed 浮层，滚动正文时必然压住内容。方向感知：
          向下滚（在看内容）收起、向上滚（想回上面）立即恢复，另加 1.2 秒兜底恢复，
-         防「滚到底才想返回、浮标恰好收起」。详见 script 的 handleContainerScroll。
+         防「滚到底才想返回、把手恰好收起」。详见 script 的 handleContainerScroll。
       7. **可拖动、但不记忆位置**：滚动收起解决的是「滚动时的遮挡」，但静止时它仍可能
          压住某个按钮（用户截图：正好盖住「访问凭证」的查看按钮）。所以允许触摸拖动。
-         **位置不持久化**——用户明确要求，刷新或重新进入即回到右下角。
+         **位置不持久化**——用户明确要求，刷新或重新进入即回到右侧中部。
          拖动与点击、拖动与滚动都必须区分开，详见 script 的 handleFabTouchStart 一段。
     -->
     <button
       v-if="backToChat"
       ref="backFabRef"
       type="button"
-      class="fixed z-30 inline-flex min-h-11 items-center gap-2 rounded-full bg-white/90 px-4 text-sm font-medium text-gray-600 shadow-sm transition-opacity duration-200 hover:bg-white hover:text-primary hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:scale-95 sm:hidden dark:bg-gray-900/90 dark:text-gray-300 dark:hover:bg-gray-900 dark:hover:text-primary"
+      class="fixed z-40 flex h-11 w-3 items-center justify-center rounded-l-lg bg-white/95 text-gray-500 shadow-md transition-colors duration-200 hover:bg-white hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 before:absolute before:inset-y-0 before:-left-11 before:w-11 before:content-[''] lg:hidden dark:bg-gray-900/95 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-primary"
       :class="[
-        fabPos ? '' : 'bottom-4 right-4',
-        backFabHidden ? 'pointer-events-none translate-y-2 opacity-0' : 'translate-y-0 opacity-100',
+        fabPos ? '' : '-mt-[22px] right-0 top-1/2',
+        backFabHidden ? 'pointer-events-none translate-x-2 opacity-0' : 'translate-x-0 opacity-100',
       ]"
       :style="fabPos ? { left: fabPos.left + 'px', top: fabPos.top + 'px' } : undefined"
       :aria-hidden="backFabHidden ? 'true' : undefined"
-      aria-label="返回对话"
+      title="收起我的账号"
+      aria-label="收起我的账号"
       @click="goBackToChat"
       @touchstart.passive="handleFabTouchStart"
       @touchmove="handleFabTouchMove"
       @touchend="handleFabTouchEnd"
       @touchcancel="handleFabTouchEnd"
     >
-      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+      <!-- 这一颗**不跟** chat 页把手同形（用户明确：返回的那个保持现状）。
+           chat 页那颗要「不影响视线」，做成顶部把手同款的一道灰线；
+           本页这颗是唯一出口，必须有可辨认的「‹」+ 一点实体感，否则又回到「点不到」。 -->
+      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7" />
       </svg>
-      返回对话
     </button>
     <PersonalCenter />
   </div>
@@ -655,6 +668,9 @@ const verifyCredential = async () => {
 // 先注册监听再宣告就绪：宿主可能在收到 NANZI_WIDGET_READY 后立刻回传 ticket。
 onMounted(() => {
   window.addEventListener("message", handleHostMessage);
+  // 告诉宿主「挂件已经切到账号视图」：宿主据此收起自己的「我的账号」把手，
+  // 否则那颗把手会浮在本页的『‹』收起按钮上方，点击落到它身上就变成「没反应」。
+  postMessageToHost({ type: "EMBED_VIEW", view: "personal" });
 });
 onMounted(verifyCredential);
 // 挂载后再判定来源：setup 阶段首次导航可能尚未落定 history.state.back。
