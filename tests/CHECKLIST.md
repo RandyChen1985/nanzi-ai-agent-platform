@@ -662,3 +662,18 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 4. `ConversationResourceService.replace()` 是整体覆盖写，而 `PUT resource-scope` 的请求模型只有 5 个键 → 用户挂技能/设默认数据集时会静默清空已确认范围与待回答快照；改为未提供字段从 Redis 现值继承。
 
 **未做**：前端通道 A（回执写 `knowledge_dataset_ids`）、埋点 `scope_mode` 与看板、范围徽标与微调（v1 用通道 B 兜底，已在 spec §5 标注未实施）。
+
+## 2026-10-27 知识库 ID 可读性 + 按 ID 搜索（含门禁收尾）
+
+|---|---|---|---|---|
+| 详情页完整展示 Dataset ID | `frontend/src/views/KnowledgeBaseManagement.vue`、`tests/frontend/test_knowledge_detail_header_layout_contract.py` | 头部元信息条原来只渲染 `id.slice(0,8) + '…'`，排障时没法跟 RAGFlow 后台逐字符对照。改为整段 `ragflow_dataset_id` 展示，加「ID」前缀、`break-all` 折行避免撑破布局，复制按钮与 title 都带完整值；契约由「只显示短 ID」反转为「不得再截断 + 必须 break-all」 |
+| 搜索支持按 Dataset ID 命中 | `KnowledgeBaseManagement.vue`、`app/api/portal/endpoints/ragflow.py`、`app/api/portal/endpoints/resource_square.py`、`tests/frontend/test_knowledge_search_documents_contract.py` | 左侧搜索新增 `idMatch`（大小写不敏感、`includes` 支持只粘前缀）；placeholder 改为「搜索知识库名称、ID、文档或业务归属部门」；空态提示当前只在哪个可见范围分类下搜索（按 ID 搜不到时最常见的原因就是切错 tab）；「发现」面板与资源广场知识库列表的 keyword 过滤同步支持 Dataset ID |
+| 按 ID 搜索跳过文档预加载 | `KnowledgeBaseManagement.vue` | 原逻辑一输入关键词就并发拉全部库的文档列表；ID 命中（长度 ≥ 8）时短路，避免为一串无用 RAGFlow 请求买单，短词仍走正常文档搜索 |
+| 越界 Dataset ID 明确阻断 | `app/services/ai/knowledge_utils.py`、`tests/ai/test_bound_only_dataset_scope.py` | `bound_only` 下工具显式指定范围外的库，原会静默回落到绑定库（模型以为搜 A、实际搜 B，用户只看到「没找到相关内容」）。改为直接阻断并返回提示；部分越界只收窄、不整体拒绝，两条用例分别锁定 |
+| 知识库中心挂载开关随门禁锁定 | `frontend/src/components/knowledge/KnowledgePortalDrawer.vue`、`AgentDebug.vue`、`EmbedChat.vue`、`ScopeBoundBanner.vue`、`tests/frontend/test_knowledge_scope_gate_config_contract.py` | `scopeLocked` 时禁用「新增挂载」但放行「取消挂载」，已挂载的库仍能点掉，避免锁定态成死锁；提示文案改为「这类检索会被直接拒绝并提示范围无效」 |
+| 编辑弹窗收起不可改项 | `frontend/src/views/AgentManagement.vue`、`tests/frontend/test_agent_type_form_contract.py` | 编辑态下「智能体类型」「执行引擎」都不可改，收起两块只读占位；引擎参数区（RAGFlow / OpenClaw）与类型行为说明保留，避免把可编辑项一起藏掉 |
+| 嵌入页 ReferenceError 修复 | `frontend/src/components/embed/ChatSettings.vue` | 用在 `tourStatusText` 里的 `computed` 从未从 vue 导入，嵌入页 setup 阶段直接抛 `ReferenceError`；补导入 |
+| 测试顺序依赖 | `tests/conftest.py` | `set_agent_context(...)` 只注入不恢复，ContextVar 在线程内串味（`test_knowledge_utils` 的 `agent_id="kb"` 漏到 `tests/services` 的缓存键断言，单跑绿、整目录红），新增 autouse fixture 每条用例后兜底清理 |
+
+**回归**：`tests/ai` **2783 passed / 32 xfailed / 1 xpassed**；`tests/frontend` 全量 **3342 passed / 1 skipped**；`vue-tsc --noEmit` 0 错误。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）。
