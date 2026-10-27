@@ -247,7 +247,9 @@ def test_agent_edit_dialog_is_compact_and_locks_engine_type_only():
     assert "系统级智能体" in management
     assert "排序权重 (Sort Order)" not in edit_dialog[:5000]
     assert 'title="仅影响聊天页面的智能体选择列表顺序，值越大越靠前"' in management
-    assert "执行引擎不可修改" in management
+    # 编辑态下引擎与类型都不可改，两块直接收起，不再用只读胶囊/说明占版面
+    assert "执行引擎不可修改" not in management
+    assert 'v-if="!isEditingAgent || agentForm.engine_type !== \'LOCAL\'"' in management
     assert ':disabled="isEditingAgent"' in management
     assert "🔒 当前类型" in management
     assert "当前类型：" not in edit_dialog[:6000]

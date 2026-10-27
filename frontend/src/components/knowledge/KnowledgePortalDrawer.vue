@@ -565,9 +565,18 @@
                       <!-- Toggle switch -->
                       <button
                         type="button"
-                        class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-green-500/20"
-                        :class="[activeDatasetIds.includes(ds.id) ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700']"
-                        @click="emit('toggle-active', ds.id)"
+                        class="relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-green-500/20"
+                        :class="[
+                          activeDatasetIds.includes(ds.id) ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700',
+                          toggleLocked(ds.id) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+                        ]"
+                        :disabled="toggleLocked(ds.id)"
+                        :title="scopeLocked
+                          ? (activeDatasetIds.includes(ds.id)
+                            ? '当前智能体只检索已绑定的知识库，可取消挂载'
+                            : '当前智能体只检索已绑定的知识库，挂载其他知识库不会生效')
+                          : '挂载 / 取消挂载'"
+                        @click="!toggleLocked(ds.id) && emit('toggle-active', ds.id)"
                       >
                         <span
                           class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
@@ -1023,6 +1032,8 @@ const props = defineProps<{
   loading?: boolean;
   loadError?: boolean;
   generatedAt?: string;
+  /** 智能体设为「仅检索绑定库」时锁定：挂载别的库不会生效，别给用户点 */
+  scopeLocked?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -1063,6 +1074,9 @@ const isMyCreated = (ds: any) => {
 
 // 卡片折叠状态管理
 const collapsedDatasetIds = ref<string[]>([]);
+/** 锁定「仅检索绑定库」时只能减、不能加：已挂载的仍要能取消，否则成了死锁 */
+const toggleLocked = (id: string) => !!props.scopeLocked && !props.activeDatasetIds.includes(id);
+
 const isCollapsed = (datasetId: string) => collapsedDatasetIds.value.includes(datasetId);
 const toggleCollapse = (datasetId: string) => {
   const index = collapsedDatasetIds.value.indexOf(datasetId);

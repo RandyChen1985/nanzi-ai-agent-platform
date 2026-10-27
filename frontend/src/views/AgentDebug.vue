@@ -5678,6 +5678,7 @@ onUnmounted(() => {
     :document-recommendations="documentRecommendations"
     :loading="loadingKnowledgeDatasets"
     :load-error="knowledgeLoadError"
+    :scope-locked="!!scopeBoundOnlyAgent"
     @toggle-active="(id) => toggleDatasetActive(id, chatInputRef)"
     @load-recommendations="fetchRecommendations"
     @quick-question="handleQuickQuestion"

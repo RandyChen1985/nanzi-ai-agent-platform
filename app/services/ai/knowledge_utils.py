@@ -545,6 +545,26 @@ async def resolve_knowledge_dataset_ids(
     Returns:
         (dataset_ids, error_message)。error_message 非空表示应阻断检索。
     """
+    # 「仅检索绑定库」且模型明确点名了范围外的库：必须明确阻断。
+    # 不能落到 resolve_bound_dataset_ids 的「交集为空回落到绑定库」分支——
+    # 那样检索会静默换成另一个库，模型以为搜了 A、实际搜了 B，最后告诉用户
+    # "没找到相关内容"，用户完全不知道是自己选的库被忽略了。
+    explicit_ids = normalize_dataset_ids(explicit_tool_ids)
+    if explicit_ids:
+        gate_ctx = get_current_agent_context()
+        if gate_ctx is not None and _bound_only_enabled(gate_ctx):
+            bound_for_check = normalize_dataset_ids(gate_ctx.agent_dataset_ids)
+            if bound_for_check and not (set(explicit_ids) & set(bound_for_check)):
+                logger.warning(
+                    "[KnowledgeUtils] bound_only rejected out-of-scope dataset ids: requested=%s bound=%s",
+                    explicit_ids,
+                    bound_for_check,
+                )
+                return [], (
+                    "⚠️ 当前智能体只检索已绑定的知识库，本次指定的知识库不在绑定范围内，检索已终止。\n"
+                    "请直接提问由系统按绑定范围检索，或改用该智能体已绑定的知识库。"
+                )
+
     bound_ids = resolve_bound_dataset_ids(
         explicit_tool_ids=explicit_tool_ids,
         query=query,

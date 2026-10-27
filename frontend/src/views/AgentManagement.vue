@@ -5131,9 +5131,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <!-- Agent Avatar：与新建流程共用同一控件，保证两处外观与能力完全一致 -->
         <AgentAvatarField v-model="agentForm.avatar_url" :agent-id="selectedAgent?.id" />
 
-        <!-- Engine Selection -->
-        <div class="rounded-xl border border-gray-200 bg-gray-50/70 p-3">
-          <div class="flex items-center gap-1.5">
+        <!-- Engine Selection：编辑时引擎不可改，LOCAL 下没有可编辑参数，整块不必占地方 -->
+        <div
+          v-if="!isEditingAgent || agentForm.engine_type !== 'LOCAL'"
+          class="rounded-xl border border-gray-200 bg-gray-50/70 p-3"
+        >
+          <div v-if="!isEditingAgent" class="flex items-center gap-1.5">
             <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400"
               >执行引擎 (Execution Engine)</label
             >
@@ -5188,17 +5191,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
               </div>
             </div>
-          </div>
-
-          <div v-else class="mt-2 flex items-center gap-2 text-sm">
-            <span class="inline-flex items-center rounded-full border px-3 py-1 font-semibold"
-              :class="agentForm.engine_type === 'RAGFLOW'
-                ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                : agentForm.engine_type === 'OPENCLAW'
-                  ? 'border-orange-200 bg-orange-50 text-orange-700'
-                  : 'border-blue-200 bg-blue-50 text-blue-700'"
-            >{{ agentForm.engine_type === 'RAGFLOW' ? '🌊 RAGFlow' : agentForm.engine_type === 'OPENCLAW' ? '🦞 OpenClaw' : '🧠 NanZi Engine' }}</span>
-            <span class="text-xs text-gray-400">执行引擎不可修改；当前引擎参数仍可编辑</span>
           </div>
 
           <!-- Engine Config Fields -->
@@ -5481,6 +5473,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
 
         <div v-if="agentForm.engine_type === 'LOCAL'">
+          <!-- 编辑时类型不可改，三张卡只是占位；蓝色提示仍保留，用来说明当前类型的运行行为 -->
+          <template v-if="!isEditingAgent">
           <label class="block text-sm font-medium text-gray-700 mb-2">
             智能体类型 <span class="text-red-500">*</span>
           </label>
@@ -5511,9 +5505,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </p>
             </button>
           </div>
-          <p v-if="isEditingAgent" class="mt-2 text-xs text-gray-500">
-            智能体类型决定运行流程和门禁规则，创建保存后不可修改。
-          </p>
+          </template>
 
           <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-gray-600">
             <template v-if="agentForm.agent_type === 'CHATBI'">

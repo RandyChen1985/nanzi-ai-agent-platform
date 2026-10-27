@@ -119,3 +119,35 @@ def test_tool_explicit_ids_keep_allowed_subset():
 
     _install_ctx({"scope_gate": "BOUND_ONLY"}, bound=[BOUND])
     assert resolve_bound_dataset_ids(explicit_tool_ids=[BOUND, EXTERNAL]) == [BOUND]
+
+
+async def test_out_of_scope_explicit_ids_are_rejected_instead_of_silently_swapped():
+    """越界 ID 必须明确阻断，不能静默换成绑定库。
+
+    静默换库比直接拒绝更糟：模型以为检索了自己指定的库，实际搜的是另一个库，
+    最后告诉用户「没找到相关内容」——用户既不知道选择被忽略，也不知道搜了哪里。
+    """
+    from app.services.ai.knowledge_utils import resolve_knowledge_dataset_ids
+
+    _install_ctx({"scope_gate": "bound_only"}, bound=[BOUND])
+    ids, error = await resolve_knowledge_dataset_ids(explicit_tool_ids=[EXTERNAL])
+
+    assert ids == []
+    assert error and "不在绑定范围内" in error
+
+
+async def test_partially_valid_explicit_ids_are_narrowed_not_rejected(monkeypatch):
+    """部分越界只收窄、不整体拒绝；越界的那个不该让整次检索失败。"""
+    from app.services.ai import knowledge_utils
+
+    async def _alive(ids):
+        return list(ids)
+
+    monkeypatch.setattr(knowledge_utils, "filter_alive_knowledge_dataset_ids", _alive)
+    _install_ctx({"scope_gate": "bound_only"}, bound=[BOUND])
+    ids, error = await knowledge_utils.resolve_knowledge_dataset_ids(
+        explicit_tool_ids=[BOUND, EXTERNAL]
+    )
+
+    assert error is None
+    assert ids == [BOUND]

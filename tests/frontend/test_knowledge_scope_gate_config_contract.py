@@ -272,3 +272,48 @@ def test_template_helpers_are_declared_in_script(agent_management_source):
         "setScopeGateMode",
     ):
         assert f"const {name}" in script, f"模板用到的 {name} 没有在 script 中定义"
+
+
+def test_knowledge_portal_toggle_is_locked_under_bound_only():
+    """「仅用绑定库」时知识库中心的挂载开关要禁用。
+
+    只提示不禁用会让人以为挂上了就生效，实际后端会拒绝——用户既白操作一次，
+    也读不懂为什么搜不到。
+    """
+    drawer = (ROOT / "frontend/src/components/knowledge/KnowledgePortalDrawer.vue").read_text(
+        encoding="utf-8"
+    )
+    assert "scopeLocked?: boolean" in drawer
+    toggle = drawer[drawer.index('<!-- Toggle switch -->'):]
+    toggle = toggle[: toggle.index("</button>")]
+    assert ':disabled="toggleLocked(ds.id)"' in toggle
+    assert "!toggleLocked(ds.id) && emit('toggle-active', ds.id)" in toggle
+    assert "只检索已绑定的知识库" in toggle
+    # 只挡新增、放行取消：已挂载的库必须还能点掉，否则锁定态成了死锁
+    assert "const toggleLocked = (id: string) => !!props.scopeLocked && !props.activeDatasetIds.includes(id);" in drawer
+
+    for page in (EMBED_CHAT, AGENT_DEBUG):
+        source = page.read_text(encoding="utf-8")
+        start = source.index("<KnowledgePortalDrawer")
+        portal = source[start : source.index("/>", start)]
+        assert ':scope-locked="!!scopeBoundOnlyAgent"' in portal, f"{page.name} 未锁定挂载开关"
+
+
+def test_editing_hides_read_only_type_and_engine_pickers(agent_management_source):
+    """编辑态下「智能体类型」「执行引擎」都不可改，不该继续占版面。
+
+    注意不能把整块删掉就完事：类型卡片的蓝色提示仍要留（说明当前类型的运行行为），
+    引擎参数区（RAGFlow / OpenClaw）也必须保留，否则等于把可编辑项一起藏了。
+    """
+    # 引擎：编辑 + LOCAL 时整块收起，但引擎参数字段仍在
+    assert 'v-if="!isEditingAgent || agentForm.engine_type !== \'LOCAL\'"' in agent_management_source
+    assert 'v-if="agentForm.engine_type !== \'LOCAL\'"' in agent_management_source
+    # 类型：三张卡片包在 !isEditingAgent 里
+    type_block = agent_management_source[
+        agent_management_source.index("<!-- 编辑时类型不可改"):
+    ]
+    type_block = type_block[: type_block.index("<!-- 推荐排版样式选择 -->")]
+    assert "<template v-if=\"!isEditingAgent\">" in type_block
+    assert "创建保存后不可修改" not in type_block
+    # 当前类型的行为说明保留
+    assert "发布前需要绑定知识库和检索工具" in type_block

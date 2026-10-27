@@ -23,7 +23,7 @@ const detail = computed(() => {
   const count = Number(props.boundCount || 0)
   const scope = count > 0 ? `已绑定的 ${count} 个知识库` : '智能体绑定的知识库'
   const owner = name ? `当前智能体「${name}」` : '当前智能体'
-  return `${owner}已设置只检索${scope}，在输入框选择其他知识库不会生效。`
+  return `${owner}已设置只检索${scope}，在输入框或知识库中心选择其他知识库不会生效：这类检索会被直接拒绝并提示范围无效。`
 })
 </script>
 
