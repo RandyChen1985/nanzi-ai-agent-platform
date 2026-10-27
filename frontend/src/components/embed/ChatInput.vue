@@ -8,13 +8,21 @@ import type { SkillItem } from "@/components/embed/SkillCascadeMenu.vue";
 import McpCascadeMenu from "@/components/embed/McpCascadeMenu.vue";
 import type { McpToolItem } from "@/components/embed/McpCascadeMenu.vue";
 import ExpertCascadeMenu from "@/components/embed/ExpertCascadeMenu.vue";
+import DataKnowledgeCascadeMenu from "@/components/embed/DataKnowledgeCascadeMenu.vue";
+import {
+  readKnowledgeBaseIds,
+  readMetadataDatasetIds,
+  syncKnowledgeBaseChip,
+  syncMetadataDatasetChips,
+  toggleMountId,
+} from "@/utils/sessionMountChips";
 import type { ReasoningEffort } from "@/api/model";
 import type { ContextCompactionRecord } from "@/api/agent";
 import ContextCompactionTimeline from "@/components/chat/ContextCompactionTimeline.vue";
 import { formatContextTokens, type ContextUsage } from "@/composables/useContextUsage";
 import { isUserVisibleContextCompaction } from "@/composables/useContextCompactions";
 import { isImageAttachment } from "@/utils/attachmentImages";
-import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
+import { DATASET_PORTAL_SYSTEM_COMMAND_ID, KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
 import { getTemperatureGuidance } from "@/utils/temperatureGuidance";
 import {
   ArchiveBoxIcon,
@@ -24,6 +32,7 @@ import {
   ChartBarIcon,
   ChatBubbleLeftRightIcon,
   ChevronDownIcon,
+  CircleStackIcon,
   ClockIcon,
   CloudIcon,
   CommandLineIcon,
@@ -119,6 +128,12 @@ const props = withDefaults(defineProps<{
   agentId?: string | null;
   /** 会话已挂载的 MCP 工具名 */
   attachedMcpToolNames?: string[];
+  /**
+   * 项目会话资源范围：非空时「数据&知识库」浮层只列范围内的资源，
+   * 与知识库面板 / 数据门户同口径。`null` / 未传表示不限制。
+   */
+  allowedDatasetIds?: string[] | null;
+  allowedKnowledgeBaseIds?: string[] | null;
   /** 路由模式：auto | expert */
   routingMode?: string;
   /** 专家模式下选中的智能体 ID */
@@ -162,6 +177,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   showGeneratingAnimation: true,
   allowModelSwitch: true,
+  allowedDatasetIds: null,
+  allowedKnowledgeBaseIds: null,
   sandboxWarmHintTitle: "沙箱已预热就绪",
   sandboxWarmHintSubtitle: "点这里查看运行状态",
 });
@@ -951,6 +968,7 @@ const openDataPortalFromPlusMenu = () => {
     showPlusMenu.value = false;
     showSkillCascade.value = false;
     showExpertCascade.value = false;
+    showDataKnowledgeCascade.value = false;
     const cmd = filteredSystemCommands.value.find((c) => c.id === DATASET_PORTAL_SYSTEM_COMMAND_ID);
     handleShortcutClick(cmd);
 };
@@ -1565,6 +1583,10 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
       showSkillCascade.value = false;
       return;
     }
+    if (showDataKnowledgeCascade.value) {
+      closeDataKnowledgeCascade();
+      return;
+    }
     if (showNewConversationMenu.value) {
       showNewConversationMenu.value = false;
       return;
@@ -1617,6 +1639,8 @@ const showPlusMenu = ref(false);
 const showSkillCascade = ref(false);
 const showMcpCascade = ref(false);
 const showExpertCascade = ref(false);
+const showDataKnowledgeCascade = ref(false);
+const dataKnowledgeCascadeRef = ref<InstanceType<typeof DataKnowledgeCascadeMenu> | null>(null);
 const skillCascadeRef = ref<InstanceType<typeof SkillCascadeMenu> | null>(null);
 const mcpCascadeRef = ref<InstanceType<typeof McpCascadeMenu> | null>(null);
 const showExpertSelector = ref(false);
@@ -1647,6 +1671,21 @@ const attachedSkillIds = computed(() =>
     .filter((f) => f.type === "skill")
     .map((f) => String(f.url)),
 );
+
+/** 本轮已挂载的元数据集 / 知识库：只读派生，写入统一走 sessionMountChips */
+const attachedMetadataDatasetIds = computed(() => readMetadataDatasetIds(uploadedFiles.value));
+const attachedKnowledgeBaseIds = computed(() => readKnowledgeBaseIds(uploadedFiles.value));
+
+/** 智能体是否具备数据查询 / 知识库能力（与「打开数据门户」「打开知识库中心」同一判据） */
+const canMountDatasets = computed(() =>
+  filteredSystemCommands.value.some((c) => c.id === DATASET_PORTAL_SYSTEM_COMMAND_ID),
+);
+const canMountKnowledgeBases = computed(() =>
+  filteredSystemCommands.value.some((c) => c.id === KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID)
+  && !isKnowledgePortalDisabled.value,
+);
+/** 两个 tab 都不可用时不渲染入口，避免点开一个全灰的浮层 */
+const showDataKnowledgeEntry = computed(() => canMountDatasets.value || canMountKnowledgeBases.value);
 
 const isExpertMode = computed(
   () => props.routingMode === "expert" && !!props.expertAgentId,
@@ -1687,11 +1726,15 @@ const togglePlusMenu = () => {
     // 移动端抽屉与加号菜单互斥
     if (isMobileViewport.value) {
       showSkillCascade.value = false;
+      showMcpCascade.value = false;
       showExpertCascade.value = false;
+      showDataKnowledgeCascade.value = false;
     }
   } else if (!isMobileViewport.value) {
     showSkillCascade.value = false;
+    showMcpCascade.value = false;
     showExpertCascade.value = false;
+    showDataKnowledgeCascade.value = false;
   }
 };
 
@@ -1701,7 +1744,9 @@ const toggleExpertSelector = () => {
   if (showExpertSelector.value) {
     showPlusMenu.value = false;
     showSkillCascade.value = false;
+    showMcpCascade.value = false;
     showExpertCascade.value = false;
+    showDataKnowledgeCascade.value = false;
     showApprovalMenu.value = false;
     emit("refresh-agents");
     nextTick(() => {
@@ -1729,6 +1774,7 @@ const selectExpertAgent = (agentId: string) => {
 const openSkillCascade = () => {
   showExpertCascade.value = false;
   showMcpCascade.value = false;
+  showDataKnowledgeCascade.value = false;
   showSkillCascade.value = true;
   if (isMobileViewport.value) {
     showPlusMenu.value = false;
@@ -1741,6 +1787,7 @@ const openSkillCascade = () => {
 const openMcpCascade = () => {
   showExpertCascade.value = false;
   showSkillCascade.value = false;
+  showDataKnowledgeCascade.value = false;
   showMcpCascade.value = true;
   if (isMobileViewport.value) {
     showPlusMenu.value = false;
@@ -1754,11 +1801,45 @@ const openExpertCascade = () => {
   if (props.lockExpertAgent) return;
   showSkillCascade.value = false;
   showMcpCascade.value = false;
+  showDataKnowledgeCascade.value = false;
   showExpertCascade.value = true;
   if (isMobileViewport.value) {
     showPlusMenu.value = false;
   }
   emit("refresh-agents");
+};
+
+const openDataKnowledgeCascade = () => {
+  if (!showDataKnowledgeEntry.value) return;
+  showSkillCascade.value = false;
+  showMcpCascade.value = false;
+  showExpertCascade.value = false;
+  showDataKnowledgeCascade.value = true;
+  if (isMobileViewport.value) {
+    showPlusMenu.value = false;
+  }
+  nextTick(() => {
+    dataKnowledgeCascadeRef.value?.resetSearch?.();
+  });
+};
+
+/**
+ * 勾选 / 取消一个元数据集：chip 由 `sessionMountChips` 统一重建，
+ * 与数据门户里的 📊 勾选写出的格式完全一致。
+ */
+const toggleDatasetMountFromCascade = (datasetId: string, datasetName?: string) => {
+  const files = uploadedFiles.value;
+  const nextIds = toggleMountId(readMetadataDatasetIds(files), datasetId);
+  uploadedFiles.value = syncMetadataDatasetChips(files, nextIds, (id) =>
+    id === datasetId ? datasetName : undefined,
+  );
+};
+
+/** 勾选 / 取消一个知识库：汇总到同一个 `knowledge_base` chip */
+const toggleKnowledgeBaseMountFromCascade = (datasetId: string) => {
+  const files = uploadedFiles.value;
+  const nextIds = toggleMountId(readKnowledgeBaseIds(files), datasetId);
+  uploadedFiles.value = syncKnowledgeBaseChip(files, nextIds);
 };
 
 const closeSkillCascade = () => {
@@ -1773,12 +1854,17 @@ const closeExpertCascade = () => {
   showExpertCascade.value = false;
 };
 
-/** 桌面端：悬停到加号菜单的非级联项时，收起技能/MCP/专家飞出层 */
+const closeDataKnowledgeCascade = () => {
+  showDataKnowledgeCascade.value = false;
+};
+
+/** 桌面端：悬停到加号菜单的非级联项时，收起技能/MCP/专家/数据&知识库飞出层 */
 const closePlusCascadesOnHover = () => {
   if (isMobileViewport.value) return;
   showSkillCascade.value = false;
   showMcpCascade.value = false;
   showExpertCascade.value = false;
+  showDataKnowledgeCascade.value = false;
 };
 
 const mountSkillFromCascade = (skill: SkillItem) => {
@@ -1825,6 +1911,7 @@ const triggerFileInput = () => {
   showSkillCascade.value = false;
   showMcpCascade.value = false;
   showExpertCascade.value = false;
+  showDataKnowledgeCascade.value = false;
   fileInputRef.value?.click();
 };
 
@@ -1833,6 +1920,7 @@ watch(showPlusMenu, (open) => {
     showSkillCascade.value = false;
     showMcpCascade.value = false;
     showExpertCascade.value = false;
+    showDataKnowledgeCascade.value = false;
   }
 });
 
@@ -2749,6 +2837,27 @@ defineExpose({
                                         <span class="font-medium text-left">选择记忆记录</span>
                                     </button>
 
+                                    <!-- 数据 & 知识库：两个 tab 直接挂载，省去打开两个面板 -->
+                                    <button
+                                      v-if="showDataKnowledgeEntry"
+                                      type="button"
+                                      data-testid="plus-menu-data-knowledge"
+                                      class="w-full flex items-center justify-between px-3 py-2 text-sm transition-all duration-150"
+                                      :class="showDataKnowledgeCascade
+                                        ? 'bg-gray-100 dark:bg-gray-700/80 text-gray-900 dark:text-gray-100'
+                                        : 'text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary'"
+                                      @mouseenter="!isMobileViewport && openDataKnowledgeCascade()"
+                                      @click.stop="openDataKnowledgeCascade"
+                                    >
+                                        <div class="flex items-center space-x-3">
+                                            <CircleStackIcon class="h-5 w-5 shrink-0 text-cyan-600" aria-hidden="true" />
+                                            <span class="font-medium text-left">数据&amp;知识库</span>
+                                        </div>
+                                        <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                                        </svg>
+                                    </button>
+
                                     <!-- Skills cascade -->
                                     <button
                                       type="button"
@@ -2873,6 +2982,26 @@ defineExpose({
                                     @select-expert="selectExpertAgent"
                                     @refresh="emit('refresh-agents')"
                                     @close="closeExpertCascade"
+                                  />
+                                </div>
+
+                                <!-- Desktop flyout: 数据 & 知识库（两个 tab 直接挂载） -->
+                                <div
+                                  v-if="showDataKnowledgeCascade && !isMobileViewport"
+                                  class="absolute z-[60] left-full top-0 bottom-0 ml-1.5 flex flex-col"
+                                  @click.stop
+                                >
+                                  <DataKnowledgeCascadeMenu
+                                    ref="dataKnowledgeCascadeRef"
+                                    fill-height
+                                    :active-dataset-ids="attachedMetadataDatasetIds"
+                                    :active-knowledge-base-ids="attachedKnowledgeBaseIds"
+                                    :allowed-dataset-ids="allowedDatasetIds"
+                                    :allowed-knowledge-base-ids="allowedKnowledgeBaseIds"
+                                    :dataset-disabled="!canMountDatasets"
+                                    :knowledge-disabled="!canMountKnowledgeBases"
+                                    @toggle-dataset="toggleDatasetMountFromCascade"
+                                    @toggle-knowledge-base="toggleKnowledgeBaseMountFromCascade"
                                   />
                                 </div>
                             </div>
@@ -3015,6 +3144,58 @@ defineExpose({
                               @refresh="emit('refresh-agents')"
                               @close="closeExpertCascade"
                             />
+                          </div>
+                        </div>
+                      </transition>
+                    </Teleport>
+
+                    <!-- Mobile drawer: 数据 & 知识库 -->
+                    <Teleport to="body">
+                      <transition
+                        enter-active-class="transition ease-out duration-200"
+                        enter-from-class="opacity-0"
+                        enter-to-class="opacity-100"
+                        leave-active-class="transition ease-in duration-150"
+                        leave-from-class="opacity-100"
+                        leave-to-class="opacity-0"
+                      >
+                        <div
+                          v-if="showDataKnowledgeCascade && isMobileViewport"
+                          class="fixed inset-0 z-[1200]"
+                          @click="closeDataKnowledgeCascade"
+                        >
+                          <div class="absolute inset-0 bg-black/40" />
+                          <div
+                            class="absolute inset-x-0 bottom-0 flex flex-col max-h-[min(80vh,36rem)] overflow-hidden rounded-t-2xl border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+                            @click.stop
+                          >
+                            <div class="shrink-0 flex justify-center pt-2 pb-1" aria-hidden="true">
+                              <div class="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+                            </div>
+                            <div class="flex items-center justify-between px-3 pb-1 shrink-0">
+                              <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">数据&amp;知识库</span>
+                              <button
+                                type="button"
+                                class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 p-1"
+                                @click="closeDataKnowledgeCascade"
+                              >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            </div>
+                            <div class="min-h-0 flex-1 overflow-hidden">
+                              <DataKnowledgeCascadeMenu
+                                ref="dataKnowledgeCascadeRef"
+                                full-width
+                                :active-dataset-ids="attachedMetadataDatasetIds"
+                                :active-knowledge-base-ids="attachedKnowledgeBaseIds"
+                                :allowed-dataset-ids="allowedDatasetIds"
+                                :allowed-knowledge-base-ids="allowedKnowledgeBaseIds"
+                                :dataset-disabled="!canMountDatasets"
+                                :knowledge-disabled="!canMountKnowledgeBases"
+                                @toggle-dataset="toggleDatasetMountFromCascade"
+                                @toggle-knowledge-base="toggleKnowledgeBaseMountFromCascade"
+                              />
+                            </div>
                           </div>
                         </div>
                       </transition>

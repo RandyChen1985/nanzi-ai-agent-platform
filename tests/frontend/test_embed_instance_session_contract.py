@@ -25,7 +25,9 @@ def test_embedchat_defines_dual_track_conversation_storage_policy():
     assert "const conversationStorageKey = (): string =>" in source
     assert "const readStoredConversationId = (): string =>" in source
     assert "const persistConversationId = (cid: string) =>" in source
-    assert "const shouldUseServerActiveConversation = () => Boolean(config.token);" in source
+    # 服务端活跃会话通道在「指定智能体」时关闭：账号级指针会把别的智能体的会话带进来。
+    assert "const shouldUseServerActiveConversation = () =>" in source
+    assert "Boolean(config.token) && !pinnedAgentScope()" in source
     assert 'localStorage.setItem("yovole_embed_conv_id",' not in source
 
 
