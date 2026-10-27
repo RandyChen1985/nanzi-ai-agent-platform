@@ -9,7 +9,13 @@ from app.services.ai.knowledge_catalog import (
     AuthorizedKnowledgeCatalog,
     KnowledgeBaseCatalogItem,
 )
-from app.services.ai.knowledge_scope_gate import SCOPE_RANKED, ScopeGate
+from app.services.ai.knowledge_scope_gate import (
+    SCOPE_ALL,
+    SCOPE_PICK,
+    SCOPE_RANKED,
+    ScopeGate,
+    build_scope_options,
+)
 from app.services.ai.runners import knowledge_agent_runner as mod
 
 
@@ -149,7 +155,7 @@ async def test_gate_failure_never_blocks_request(monkeypatch):
     assert gate is None
 
 
-async def test_build_scope_gate_chunk_filters_disabled_options(monkeypatch):
+async def test_build_scope_gate_chunk_passes_disabled_options_through(monkeypatch):
     persisted = {}
 
     async def _fake_persist(*, event, user_id, conversation_id):
@@ -181,12 +187,16 @@ async def test_build_scope_gate_chunk_filters_disabled_options(monkeypatch):
     assert chunk["type"] == "user_question"
     assert chunk["purpose"] == "knowledge_scope_gate"
     assert chunk["is_multi_select"] is False
+    # 禁用项透传而不是删掉：用户能看到「有这一项、当前用不了」，前端负责置灰
     assert [option["id"] for option in chunk["options"]] == [
         SCOPE_RANKED,
         "__scope_all__",
+        "__scope_bound__",
         "__scope_pick__",
     ]
-    assert all("disabled" not in option for option in chunk["options"])
+    bound_option = next(item for item in chunk["options"] if item["id"] == "__scope_bound__")
+    assert bound_option["disabled"] is True
+    assert chunk["options"][0]["disabled"] is False
 
 
 async def test_build_scope_gate_chunk_registers_pending_question(monkeypatch):
@@ -573,3 +583,37 @@ def test_confirmed_scope_expires_after_ttl():
     assert mod.KnowledgeAgentRunner._scope_expired(stale) is True
     # 老记录没有时间戳时按有效处理，不要当场作废
     assert mod.KnowledgeAgentRunner._scope_expired({"mode": "ranked"}) is False
+
+
+async def test_scope_gate_chunk_carries_open_dataset_picker_action(monkeypatch):
+    """「我自己指定」的页面动作要活到 SSE 事件里，否则前端拉不起知识库门户。
+
+    这条是端到端字段链路：build_scope_options → ScopeGate → user_question 事件。
+    中间任何一层剥掉未知字段，动作就静默失效，而且前端看不出异常（只是不弹面板）。
+    """
+    async def _fake_persist(*, event, user_id, conversation_id):
+        return {}
+
+    monkeypatch.setattr(
+        "app.services.ai.user_question.persist_user_question_event", _fake_persist
+    )
+
+    options = build_scope_options(
+        total_count=8, bound_count=0, ranked_names=["A", "B"], ranked_count=2
+    )
+    gate = ScopeGate(
+        gate_id="sg_action",
+        options=options,
+        ranked_ids=("ds_0", "ds_1"),
+        all_ids=tuple(f"ds_{index}" for index in range(8)),
+        total_count=8,
+        bound_count=0,
+    )
+
+    chunk = await _runner()._build_scope_gate_chunk(gate=gate)
+
+    assert chunk is not None
+    pick_option = next(item for item in chunk["options"] if item["id"] == SCOPE_PICK)
+    assert pick_option["action"] == "open_dataset_picker"
+    all_option = next(item for item in chunk["options"] if item["id"] == SCOPE_ALL)
+    assert "action" not in all_option or all_option["action"] is None

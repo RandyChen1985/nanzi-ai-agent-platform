@@ -9,6 +9,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: "submit", payload: { selectedOptionIds: string[]; customInput: string; cancelled: boolean }): void;
+  /** 选项附带的页面动作；与选中/提交并行，不改变回执内容 */
+  (event: "option-action", action: string): void;
 }>();
 
 const selectedOptionIds = ref<string[]>([]);
@@ -60,15 +62,26 @@ const statusLabel = computed(() => {
   return "等待回答";
 });
 
+function isOptionDisabled(id: string) {
+  return props.payload.options.some((option) => option.id === id && option.disabled === true);
+}
+
 function toggleOption(id: string) {
-  if (locked.value) return;
+  if (locked.value || isOptionDisabled(id)) return;
+  const action = props.payload.options.find((option) => option.id === id)?.action;
   if (props.payload.is_multi_select) {
-    selectedOptionIds.value = selectedOptionIds.value.includes(id)
+    const next = selectedOptionIds.value.includes(id)
       ? selectedOptionIds.value.filter((item) => item !== id)
       : [...selectedOptionIds.value, id];
+    selectedOptionIds.value = next;
+    // 取消选中时不该再触发动作，只有"选上"才算点它
+    if (action && next.includes(id)) emit("option-action", action);
     return;
   }
   selectedOptionIds.value = [id];
+  // 只是"顺手做一件事"，绝不替代选中与提交：回执照旧发出去，
+  // 否则后端 pending_scope_gate 快照清不掉，后续轮次会当成还有待回答的卡。
+  if (action) emit("option-action", action);
 }
 
 function toggleExpand() {
@@ -79,7 +92,9 @@ async function submit() {
   if (locked.value || isSubmitting.value) return;
   isSubmitting.value = true;
   emit("submit", {
-    selectedOptionIds: [...selectedOptionIds.value],
+    // 剔除禁用项：多选场景下可能先选中、之后才因状态变化被置灰，
+    // 带着它提交等于送出后端预期收不到的 id。
+    selectedOptionIds: selectedOptionIds.value.filter((id) => !isOptionDisabled(id)),
     customInput: customInput.value.trim(),
     cancelled: false,
   });
@@ -185,10 +200,13 @@ async function cancel() {
               :key="option.id"
               type="button"
               class="group/opt flex w-full items-start gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-all"
-              :class="selectedOptionIds.includes(option.id)
-                ? 'border-violet-500 bg-white dark:bg-violet-950/40 shadow-xs ring-1 ring-violet-400/40'
-                : 'border-violet-100/90 bg-white/75 hover:bg-white hover:border-violet-300 dark:border-violet-900/30 dark:bg-gray-950/30 dark:hover:bg-gray-950/50 dark:hover:border-violet-800'"
-              :disabled="locked"
+              :class="option.disabled
+                ? 'cursor-not-allowed border-dashed border-gray-200 bg-gray-50/70 opacity-60 dark:border-gray-800 dark:bg-gray-950/20'
+                : selectedOptionIds.includes(option.id)
+                  ? 'border-violet-500 bg-white dark:bg-violet-950/40 shadow-xs ring-1 ring-violet-400/40'
+                  : 'border-violet-100/90 bg-white/75 hover:bg-white hover:border-violet-300 dark:border-violet-900/30 dark:bg-gray-950/30 dark:hover:bg-gray-950/50 dark:hover:border-violet-800'"
+              :disabled="locked || option.disabled"
+              :title="option.disabled ? (option.description || '当前不可选') : undefined"
               @click="toggleOption(option.id)"
             >
               <!-- Indicator: rounded-full for single, rounded-[3px] for multi-select -->
@@ -196,7 +214,7 @@ async function cancel() {
                 class="mt-0.5 flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center border transition-colors"
                 :class="[
                   payload.is_multi_select ? 'rounded-[3px]' : 'rounded-full',
-                  selectedOptionIds.includes(option.id)
+                  !option.disabled && selectedOptionIds.includes(option.id)
                     ? 'border-violet-600 bg-violet-600 dark:border-violet-500 dark:bg-violet-500'
                     : 'border-violet-300 bg-transparent group-hover/opt:border-violet-400 dark:border-violet-700'
                 ]"

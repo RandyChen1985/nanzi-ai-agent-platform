@@ -140,3 +140,98 @@ def test_cards_collapsible_and_toggle_contract():
     assert "msg.pendingPermission.expanded" in debug
     assert "msg.pendingExternalExecution.expanded" in debug
 
+
+
+def test_option_disabled_survives_parsing_and_renders_locked():
+    """禁用态要一路活到渲染：解析时丢了，卡片就又是一片可点。"""
+    result = _run_typescript(
+        "frontend/src/utils/userQuestion.ts",
+        """
+const parsed = api.parseUserQuestionEvent({
+  type: 'user_question',
+  question_id: 'uq_scope',
+  question: '要检索哪些知识库？',
+  options: [
+    { id: '__scope_all__', label: '全部 12 个库' },
+    { id: '__scope_bound__', label: '仅智能体默认（未绑定）', description: '该智能体尚未绑定知识库', disabled: true },
+  ],
+  is_multi_select: false,
+  allow_custom_input: true,
+});
+return { options: parsed.options };
+""",
+    )
+    options = result["options"]
+    assert options[0]["disabled"] is False
+    assert options[1]["disabled"] is True
+    assert options[1]["description"] == "该智能体尚未绑定知识库"
+
+
+def test_card_blocks_toggling_and_submitting_disabled_options():
+    card = (ROOT / "frontend/src/components/UserQuestionCard.vue").read_text(encoding="utf-8")
+
+    assert ":disabled=\"locked || option.disabled\"" in card
+    assert "if (locked.value || isOptionDisabled(id)) return;" in card
+    # 多选场景下可能先选中、之后才被置灰，提交时必须剔除
+    assert "selectedOptionIds: selectedOptionIds.value.filter((id) => !isOptionDisabled(id))," in card
+    assert "cursor-not-allowed" in card
+
+
+def test_option_action_is_parsed_and_fires_alongside_selection():
+    """选项可以带页面动作，但动作是"顺手做"，不替代选中与提交。"""
+    result = _run_typescript(
+        "frontend/src/utils/userQuestion.ts",
+        """
+const parsed = api.parseUserQuestionEvent({
+  type: 'user_question',
+  question_id: 'uq_scope',
+  question: '要检索哪些知识库？',
+  options: [
+    { id: '__scope_all__', label: '全部 12 个库' },
+    { id: '__scope_pick__', label: '我自己指定', action: 'open_dataset_picker' },
+  ],
+  is_multi_select: false,
+  allow_custom_input: true,
+});
+return { options: parsed.options };
+""",
+    )
+    # 未带 action 的选项序列化后不出现该键（undefined 被 JSON 丢弃），不是 None
+    assert result["options"][0].get("action") is None
+    assert result["options"][1]["action"] == "open_dataset_picker"
+
+
+def test_card_emits_option_action_without_swallowing_submit():
+    card = (ROOT / "frontend/src/components/UserQuestionCard.vue").read_text(encoding="utf-8")
+    assert '(event: "option-action", action: string): void;' in card
+    # 单选：选中之后再发动作
+    assert 'selectedOptionIds.value = [id];' in card
+    assert 'if (action) emit("option-action", action);' in card
+    # 多选：取消选中不该触发动作，只有选上才算点它
+    assert 'if (action && next.includes(id)) emit("option-action", action);' in card
+    # 提交逻辑不能被动作影响
+    assert 'emit("submit", {' in card
+
+
+@pytest.mark.parametrize(
+    "page", ["frontend/src/views/EmbedChat.vue", "frontend/src/views/AgentDebug.vue"]
+)
+def test_pages_wire_option_action_to_knowledge_portal(page):
+    """「我自己指定」点了就该把知识库门户拉出来，省得用户自己找入口。"""
+    source = (ROOT / page).read_text(encoding="utf-8")
+
+    assert '@option-action="handleUserQuestionOptionAction"' in source
+    assert "function handleUserQuestionOptionAction(action: string)" in source
+    handler = source[source.index("function handleUserQuestionOptionAction"):]
+    handler = handler[: handler.index("\n}") + 2]
+    assert 'action === "open_dataset_picker"' in handler
+    # 必须走统一入口：它才会 await fetchDatasets()，只翻开关会得到空面板
+    assert "void openKnowledgePortal();" in handler
+    assert "showKnowledgePortal.value = true" not in handler
+
+
+def test_scope_pick_option_carries_the_action():
+    gate = (ROOT / "app/services/ai/knowledge_scope_gate.py").read_text(encoding="utf-8")
+    pick_block = gate[gate.index('"id": SCOPE_PICK,'):]
+    pick_block = pick_block[: pick_block.index("},")]
+    assert '"action": "open_dataset_picker"' in pick_block

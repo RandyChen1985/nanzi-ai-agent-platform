@@ -1015,6 +1015,7 @@
                 :payload="msg.userQuestion"
                 :disabled="isProcessing"
                 @submit="(payload) => submitUserQuestion(msg, payload)"
+                @option-action="handleUserQuestionOptionAction"
               />
 
                                 <!-- AI Stalled Thinking Prompt (Moved out to be sibling to msg.content) -->
@@ -11338,6 +11339,20 @@ const submitBusinessConfirmation = async (
   userInput.value = content;
   await sendMessage();
 };
+
+/** 提问卡选项附带的页面动作（如「我自己指定」→ 直接打开知识库门户）。
+ *  只负责唤起入口，不碰选中与回执：回执仍由卡片正常提交，
+ *  否则后端 pending_scope_gate 快照清不掉。
+ *  未知动作一律忽略，以后加新点子只改这里。
+ */
+function handleUserQuestionOptionAction(action: string) {
+  if (action === "open_dataset_picker") {
+    // 必须走统一入口，不能只置 showKnowledgePortal：入口里还负责关掉另一个抽屉，
+    // 并 await fetchDatasets() 拉数据。只翻开关会得到一个"0 个知识库"的空面板，
+    // 用户得手动点刷新才有内容——看起来像没权限，其实是根本没发请求。
+    void openKnowledgePortal();
+  }
+}
 
 const submitUserQuestion = async (
   msg: Message,

@@ -69,8 +69,9 @@ def build_scope_options(
 ) -> list[dict[str, Any]]:
     """构造四个卡片选项。
 
-    ``disabled`` 是本模块的约定字段，出卡片前由调用方过滤——``ask_user_question``
-    的选项 schema 没有禁用态，置灰无法表达，只能不展示。
+    ``disabled`` 与 ``ask_user_question`` 的选项 schema 同名字段对齐：前端置灰不可点，
+    用户能看到「有这一项、当前用不了」。注意它只是提示，不是门禁——回执仍可能带着
+    被禁的 id 回来，范围还原侧要按业务自行判断（见 ``resolve_dataset_ids_for_choice``）。
     """
     if ranked_count > 0:
         preview = "、".join(list(ranked_names)[:3])
@@ -110,6 +111,9 @@ def build_scope_options(
             "label": "我自己指定（加知识库附件）",
             "description": "在输入框添加知识库附件即可精确指定；带附件提问时不会再有本提示",
             "disabled": False,
+            # 点了就顺手把知识库门户拉出来，省得用户自己找入口；
+            # 与选中/提交并行，不替代回执（pending 快照仍要靠回执清掉）。
+            "action": "open_dataset_picker",
         },
     ]
 

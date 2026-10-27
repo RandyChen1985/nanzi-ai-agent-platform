@@ -643,8 +643,8 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         preflight 判为「问题不存在或不属于当前会话」——卡片看得见、点了必然失败。
         登记失败时返回 None，由调用方退回原有的全量检索行为。
 
-        ``__scope_bound__`` 在智能体未绑库时被标记为 disabled，而卡片 schema 没有禁用态，
-        因此这里直接过滤掉，避免用户点到必然失败的选项。
+        ``__scope_bound__`` 在智能体未绑库时被标记为 disabled：现在选项支持禁用态了，
+        直接透传给前端置灰——比整项删掉好，用户能看见「有这一项，但当前用不了」以及原因。
         """
         from app.services.ai.user_question import persist_user_question_event
 
@@ -652,11 +652,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             "type": "user_question",
             "question_id": f"uq_{uuid.uuid4().hex[:16]}",
             "question": build_gate_question(gate),
-            "options": [
-                {key: value for key, value in option.items() if key != "disabled"}
-                for option in gate.options
-                if not option.get("disabled")
-            ],
+            "options": [dict(option) for option in gate.options],
             "is_multi_select": False,
             "allow_custom_input": True,
             "context": "范围较大时先确认，可以避免在无关知识库中检索，提高命中率与速度。",
