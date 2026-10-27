@@ -569,7 +569,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="h-screen bg-gray-50 flex overflow-hidden relative">
+  <!-- h-screen 只是兜底：真实高度走 --app-height（visualViewport 实测，见
+       composables/useAppViewportHeight.ts）。移动端地址栏伸缩、软键盘弹出时
+       100vh 不变，会把底部输入框压住一截。 -->
+  <div
+    class="h-screen bg-gray-50 flex overflow-hidden relative"
+    :style="{ height: 'var(--app-height, 100dvh)' }"
+  >
     <!-- Mobile Overlay -->
     <div 
       v-if="isMobile && showMobileSidebar" 
