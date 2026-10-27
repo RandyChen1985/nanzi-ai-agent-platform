@@ -235,7 +235,15 @@ const handleTwoFactorLogin = async () => {
     }
 }
 
-const hideLoginApiKey = ref(false)
+/**
+ * 是否隐藏「API Key」登录 Tab。
+ *
+ * 取值来自公开配置 `hide_login_apikey`，只能等 `/api/portal/auth/config/public` 返回才知道。
+ * 初值必须是「隐藏」：按「显示」渲染会在首帧多出一个 Tab，配置回来后再删掉，
+ * 肉眼就是「API Key 闪一下然后消失」。默认隐藏则隐藏环境从不出现，允许 API Key 的环境
+ * 是 Tab 稍后出现（不刺眼），配置没拿到时由 fetchPublicConfig 的 finally 回退为显示。
+ */
+const hideLoginApiKey = ref(true)
 
 // ---------------------------------------------------------------------------
 // 账号自主注册申请
@@ -511,9 +519,14 @@ const panelSubtitle = computed(() => {
 })
 
 const fetchPublicConfig = async () => {
+    // 配置是否真的拿到了：只有拿到才相信 hide_login_apikey，否则回退为「不隐藏」。
+    // 不能用 catch 兜底来判定——时区动态导入等后续步骤失败也会落到那里，
+    // 那时把配置读到的 true 覆盖成 false，就会把该藏的 Tab 又放出来。
+    let configLoaded = false
     try {
         const response = await axios.get('/api/portal/auth/config/public')
         if (response.data?.status === 'success') {
+            configLoaded = true
             ssoEnabled.value = response.data.data?.yovole_sso_enabled === true
             hideLoginApiKey.value = response.data.data?.hide_login_apikey === true
             registrationEnabled.value = response.data.data?.user_registration_enabled === true
@@ -532,6 +545,10 @@ const fetchPublicConfig = async () => {
         }
     } catch (e) {
         console.error('获取公开配置失败:', e)
+    } finally {
+        // 初值是「隐藏」，拿不到配置时必须回退为显示：宁可让 API Key Tab 迟一点出现，
+        // 也不能因为一次接口抖动就把这条登录通道永久藏掉。
+        if (!configLoaded) hideLoginApiKey.value = false
     }
 }
 

@@ -536,8 +536,8 @@
         <span class="text-[11px] font-bold text-gray-400 uppercase tracking-widest">这是您对话的起点</span>
         <div class="w-12 h-[1px] bg-gradient-to-r from-transparent via-gray-200 dark:via-gray-700 to-transparent mt-2"></div>
       </div>
-      <!-- History Loading Indicator -->
-      <div v-if="isLoadingHistory" class="w-full flex justify-center py-4 animate-fade-in-up">
+      <!-- History Loading Indicator（首屏骨架期间由骨架负责表达进度，避免两套 loading 叠加） -->
+      <div v-if="isLoadingHistory && !isInitialLoading" class="w-full flex justify-center py-4 animate-fade-in-up">
         <div class="flex items-center gap-2 bg-gray-50/90 dark:bg-gray-800/90 px-4 py-1.5 rounded-full border border-gray-100 dark:border-gray-700 shadow-sm backdrop-blur-sm">
             <svg class="w-4 h-4 text-primary animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -2551,6 +2551,7 @@ import { createActiveRunsController, type ActiveRunItem } from "@/composables/ch
 import { cancelConversationRun, cancelConversationRunDetailed } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
 import { shouldStartConversationHistoryLoad } from "@/utils/conversationHistoryRequest";
+import { FIRST_SCREEN_SKELETON_TIMEOUT_MS, shouldStartThreadSkeleton, threadSkeletonRemainingVisibleMs } from "@/utils/embedFirstScreen";
 import { isApiSuccess } from "@/utils/apiEnvelope";
 import { isSkillForbidden } from "@/utils/skillForbidden";
 import { planHistorySync, shouldKeepRecoverySync } from "@/utils/runRecoverySync";
@@ -3871,7 +3872,89 @@ const activeTodoTimeline = computed(() => {
   return undefined;
 });
 const datasetMenuLoading = ref(false);
+/**
+ * 骨架屏：语义是「当前线程还没准备好」，而不是「鉴权中」。
+ *
+ * 旧实现鉴权一过就撤骨架，但「确定会话 → 拉首屏历史 → 还原流式草稿」还在后面串行
+ * await：这段空档里 `messages` 还是空的，模板的 `messages.length === 0` 分支必然先渲染
+ * 欢迎页，历史回来后再整块替换——用户看到的就是「欢迎页闪一下，跳成消息列表」。
+ * 现在只有历史与快照都落地（详见 finishThreadSkeleton）才撤。
+ */
 const isInitialLoading = ref(true);
+// 代会令牌：连续切换会话时，只有最后一次开启骨架的那条加载链允许撤骨架。
+let threadSkeletonToken = 0;
+let threadSkeletonTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+// 骨架出现时刻：用于保证最短可见时长，避免「刚出现就撤」的一两帧闪烁。
+let threadSkeletonShownAt = 0;
+// 历史请求仍在飞时不能撤骨架（会露出欢迎页），先挂起，等历史落地后再撤。
+let pendingThreadSkeletonReleaseToken = 0;
+
+const clearThreadSkeletonTimer = () => {
+  if (threadSkeletonTimeoutTimer === null) return;
+  clearTimeout(threadSkeletonTimeoutTimer);
+  threadSkeletonTimeoutTimer = null;
+};
+
+/**
+ * 开启一次骨架，返回本次的代会令牌；返回 0 表示这次不显示骨架。
+ *
+ * `force`：切会话时旧消息已被清空，必须强制遮挡清空到历史落地之间的空档。
+ * 非 force 且已有消息时跳过——宿主重推 INIT_CONFIG 会让 initChat 再跑一遍，
+ * 把看得见的对话盖成骨架再闪回来，比不遮挡更糟。
+ */
+const beginThreadSkeleton = (options?: { force?: boolean }): number => {
+  const shouldShow = shouldStartThreadSkeleton({
+    force: options?.force === true,
+    hasMessages: messages.value.length > 0,
+  });
+  if (!shouldShow) return 0;
+  const token = ++threadSkeletonToken;
+  pendingThreadSkeletonReleaseToken = 0;
+  isInitialLoading.value = true;
+  threadSkeletonShownAt = Date.now();
+  clearThreadSkeletonTimer();
+  // 兜底：历史/快照请求挂死时也不能让骨架永久停留。
+  threadSkeletonTimeoutTimer = setTimeout(() => {
+    threadSkeletonTimeoutTimer = null;
+    if (token === threadSkeletonToken) isInitialLoading.value = false;
+  }, FIRST_SCREEN_SKELETON_TIMEOUT_MS);
+  return token;
+};
+
+/** 撤骨架：只有本次代会仍是最新、且目标会话的历史已经落地时才真正撤。 */
+const finishThreadSkeleton = (token: number) => {
+  if (!token || token !== threadSkeletonToken) return;
+  if (isLoadingHistory.value) {
+    // 目标会话的历史还在飞：此刻撤骨架就会露出欢迎页，等它落地后再撤。
+    pendingThreadSkeletonReleaseToken = token;
+    return;
+  }
+  pendingThreadSkeletonReleaseToken = 0;
+  clearThreadSkeletonTimer();
+  const remaining = threadSkeletonRemainingVisibleMs(Date.now() - threadSkeletonShownAt);
+  if (remaining > 0) {
+    // 请求太快（本地十几毫秒）：骨架只出现一两帧反而更像「闪一下」，补足时长再撤。
+    threadSkeletonTimeoutTimer = setTimeout(() => {
+      threadSkeletonTimeoutTimer = null;
+      if (token === threadSkeletonToken) isInitialLoading.value = false;
+    }, remaining);
+    return;
+  }
+  isInitialLoading.value = false;
+};
+
+/**
+ * 失败/异常分支：无条件撤骨架（不等历史，也不做代会判断）。
+ *
+ * 自增代会令牌是必须的——调用方随后一定会 return，但并发的旧加载链若还拿着旧令牌，
+ * 不能在之后把新一代刚立起来的骨架撤掉。
+ */
+const abortThreadSkeleton = () => {
+  threadSkeletonToken += 1;
+  pendingThreadSkeletonReleaseToken = 0;
+  clearThreadSkeletonTimer();
+  isInitialLoading.value = false;
+};
 const messagesContainer = ref<HTMLDivElement | null>(null);
 // Scroll State
 const isAtBottom = ref(true);
@@ -7528,10 +7611,16 @@ const handleHistoryClick = async (item: any) => {
     messages.value = [];
     historyOffset.value = 0;
     hasMoreHistory.value = true;
+    // 与首屏同一条路径：清空后到历史落地之间 `messages` 是空的，不遮住就会闪一次欢迎页。
+    // 这里强制显示骨架——按「是否已有消息」判断的话，清空后就没有消息了，会漏掉遮挡。
+    const switchSkeletonToken = beginThreadSkeleton({ force: true });
 
     // Load the full history for this conversation
     // 顺序与初始化路径一致（先历史、后快照）：历史会整体替换消息列表，先恢复快照会被冲掉。
-    void fetchConversationHistory(false).then(() => restoreEmbedStreamSnapshot());
+    void fetchConversationHistory(false)
+      .then(() => restoreEmbedStreamSnapshot())
+      .catch(e => console.warn("[Switch] History load failed:", e))
+      .finally(() => finishThreadSkeleton(switchSkeletonToken));
 
     // Auto-close sidebar on mobile
     if (isMobile.value) {
@@ -9697,7 +9786,8 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
 };
 const initChat = async (options?: { skipAuth?: boolean }) => {
   const initGeneration = conversationInitializationGeneration;
-  isInitialLoading.value = true;
+  // 骨架要一直撑到「会话确定 + 首屏历史 + 流式快照」全部落地，否则中间会闪欢迎页。
+  const skeletonToken = beginThreadSkeleton();
   try {
     // 1. Validate Token First (The only blocking step)
     if (!options?.skipAuth) {
@@ -9707,7 +9797,7 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
         // 有 token 说明是凭据本身被拒；无 token 则说明同源 Cookie 会话回落也失败
         authFailureReason.value = config.token ? "invalid_token" : "no_session";
         hasPermission.value = false;
-        isInitialLoading.value = false;
+        abortThreadSkeleton();
         return;
       }
     }
@@ -9722,8 +9812,8 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
     }
     // 会话置顶是账号级偏好：身份确定后再加载（上面的 reset 已清掉上一位用户的置顶）。
     void loadPinnedConversations();
-    // 2. Clear skeleton as soon as auth is confirmed
-    isInitialLoading.value = false;
+    // 2. 骨架不在这里撤：此刻 messages 还是空的，撤掉就会先渲染欢迎页，
+    //    等第 8 步历史到达再整块替换，形成「欢迎页闪一下」的跳变。
     // 3. Set default welcome message if not provided
     if (!config.welcomeMessage) {
       const displayName = accountInfo.value?.real_name || accountInfo.value?.user_name || "";
@@ -9741,7 +9831,7 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       const ok = await resolveUrlPinnedAgent();
       if (initGeneration !== conversationInitializationGeneration) return;
       if (!ok) {
-        isInitialLoading.value = false;
+        abortThreadSkeleton();
         return;
       }
     }
@@ -9872,11 +9962,17 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
     }
 
     // 8. Load history if exists
+    //    撤骨架挂在链尾（历史落地后），但这里**刻意不 await**：宿主的 INIT_CONFIG 处理是
+    //    `await initChat(...)`，让握手多等一次历史往返会把「正在获取登录信息」遮罩一起拖长，
+    //    遮罩压在骨架之上，用户反而看不到这里刚立起来的骨架动效。
     if (conversationId.value) {
-      fetchConversationHistory(false, initGeneration)
+      void fetchConversationHistory(false, initGeneration)
         // 历史加载完成后再还原流式草稿：已有落库终态时草稿会被丢弃，不会被重复注入。
         .then(() => restoreEmbedStreamSnapshot(initGeneration))
-        .catch(e => console.error("[Init] History load failed:", e));
+        .catch(e => console.error("[Init] History load failed:", e))
+        .finally(() => finishThreadSkeleton(skeletonToken));
+    } else {
+      finishThreadSkeleton(skeletonToken);
     }
 
     // 9. 侧栏若已展开（上次开着，挂载时自动恢复），在这里补拉一次会话列表。
@@ -9889,7 +9985,7 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
     }
   } catch (e) {
     console.error("Init chat failed", e);
-    isInitialLoading.value = false;
+    abortThreadSkeleton();
   }
 };
 // History State
@@ -10082,6 +10178,10 @@ const fetchConversationHistory = async (
       isLoadingHistory.value = false;
       historyLoadingConversationId = "";
       if (historyAbortController === abortController) historyAbortController = null;
+    }
+    // 骨架曾因「目标会话历史仍在飞」被挂起：历史已经落地，现在才允许撤，否则会闪欢迎页。
+    if (pendingThreadSkeletonReleaseToken && !isLoadingHistory.value) {
+      finishThreadSkeleton(pendingThreadSkeletonReleaseToken);
     }
   }
 };
@@ -12936,6 +13036,8 @@ onMounted(() => {
 });
 onUnmounted(() => {
   if (activeRunsRefreshTimer !== null) clearTimeout(activeRunsRefreshTimer);
+  // 骨架兜底定时器随组件一起清掉：卸载后它只会改一个没人看的 ref。
+  clearThreadSkeletonTimer();
   stopActiveRunsWatch();
   // 卸载前把在途草稿强制落盘：重建后先还原已输出的思考与正文，等落库终态再覆盖。
   maybePersistStreamSnapshot(true);

@@ -73,7 +73,7 @@
         class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium"
         :class="summaryToneClass"
       >
-        <span class="h-1.5 w-1.5 rounded-full" :class="activeMode ? 'bg-amber-500 animate-pulse' : quietMode ? 'bg-emerald-500' : 'bg-blue-500'" />
+        <span class="h-1.5 w-1.5 rounded-full" :class="activeMode ? 'bg-amber-500 animate-pulse' : quietMode ? 'bg-gray-400' : 'bg-blue-500'" />
         {{ summaryPrimary }}
       </span>
       <span
@@ -144,10 +144,15 @@
         </template>
 
         <template v-else-if="quietMode">
-          <div class="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3.5 dark:border-emerald-800/50 dark:bg-emerald-950/30">
-            <p class="text-sm font-medium text-emerald-800 dark:text-emerald-300">{{ quietPrimary }}</p>
-            <p class="mt-0.5 text-xs text-emerald-700/80 dark:text-emerald-400/80">
-              暂无失败任务和待确认事项。{{ quietDescription }}{{ summarySecondary }}，可以从下方继续。
+          <!-- 静默态用中性灰：这是「一切正常」的低优先级旁白，不是需要处理的信号。
+               原先的 emerald 底色在整页灰白卡片里过于抢眼（像成功 toast 常驻）。 -->
+          <div class="rounded-2xl border border-gray-200 bg-gray-50/80 px-4 py-3.5 dark:border-gray-700/60 dark:bg-gray-800/40">
+            <p class="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
+              <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-300 dark:bg-gray-600" aria-hidden="true" />
+              {{ quietPrimary }}
+            </p>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              {{ quietDescription }}
             </p>
           </div>
           <WorkbenchRunning
@@ -356,6 +361,8 @@ const bannerMessage = computed(() => {
 const summaryPrimary = computed(() => {
   if (!payload.value) return ""
   if (activeMode.value) return `待处理 ${payload.value.attention.length}`
+  // 静默态的顶部 chip 当前不渲染（提示条自己承担了状态），这里保留一份等价兜底，
+  // 免得将来放开 chip 时冒出「开始第一项工作」这种新用户语义。
   if (quietMode.value) {
     if (payload.value.running_items.length) return `进行中 ${payload.value.running_items.length}`
     if (payload.value.resume_items.length) return `可继续 ${payload.value.resume_items.length}`
@@ -370,30 +377,40 @@ const summarySecondary = computed(() => {
   if (activeMode.value) {
     return `进行中 ${payload.value.running_items.length} · 最新结果 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length} · 任务 ${payload.value.recent_tasks.length}`
   }
-  if (quietMode.value) {
-    return `最近产出 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length} · 任务 ${payload.value.recent_tasks.length}`
-  }
+  // 静默态有自己的提示条，顶部这一组 chip 不渲染；数字也只在下方的卡片里出现一次，
+  // 不再在这里重复罗列（旧实现会把「最近产出 0 · 可继续 4 · 任务 0」拼进提示条文案）。
+  if (quietMode.value) return ""
   return `推荐场景 ${payload.value.recommended_scenarios.length} · 可用助手 ${payload.value.favorite_agents.length}`
 })
 
+/**
+ * 静默态的标题与副文案。
+ *
+ * 旧文案是「有 N 项工作可以继续」+「暂无失败任务和待确认事项。最近没有新的产出。
+ * 最近产出 0 · 可继续 4 · 任务 0，可以从下方继续。」：三句话在说同一件事，数字又在
+ * 同页卡片里重复一遍，读起来像模板拼接。现在标题只留「状态 + 数量」，副文案只给
+ * 一句「接下来能做什么」，数字交给下方卡片。
+ */
 const quietPrimary = computed(() => {
   if (!payload.value) return "今日运行正常"
-  if (payload.value.running_items.length) return `有 ${payload.value.running_items.length} 项工作进行中`
-  if (payload.value.resume_items.length) return `有 ${payload.value.resume_items.length} 项工作可以继续`
+  if (payload.value.running_items.length) return `${payload.value.running_items.length} 项工作进行中`
+  if (payload.value.resume_items.length) return `${payload.value.resume_items.length} 项可以继续`
   if (payload.value.latest_results.length) return `最近有 ${payload.value.latest_results.length} 项产出`
   return "今日运行正常"
 })
 
 const quietDescription = computed(() => {
   if (!payload.value) return ""
-  if (payload.value.running_items.length) return "当前工作仍在处理中。"
-  if (payload.value.resume_items.length) return "最近没有新的产出。"
-  return "暂无进行中的工作。"
+  if (payload.value.running_items.length) return "暂无失败任务或待确认事项，完成后会在这里提示。"
+  if (payload.value.resume_items.length) return "暂无失败任务或待确认事项，可从下方「继续工作」接着上次的进度。"
+  if (payload.value.latest_results.length) return "暂无失败任务或待确认事项，可从下方「最新结果」查看。"
+  return "没有进行中的工作，也没有待处理事项。"
 })
 
 const summaryToneClass = computed(() => {
   if (activeMode.value) return "border-amber-200 bg-amber-50 text-amber-800"
-  if (quietMode.value) return "border-emerald-200 bg-emerald-50 text-emerald-800"
+  // 静默态与下方提示条同口径用中性灰：绿色是「成功」信号，常驻会显得刺眼。
+  if (quietMode.value) return "border-gray-200 bg-gray-50 text-gray-700"
   return "border-blue-200 bg-blue-50 text-blue-800"
 })
 
