@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "知识库智能体运行时流程",
+    "quality_profile": "showcase",
+    "viewBox": [
+      720,
+      860
+    ],
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "主链路",
+        "focus": [
+          "user",
+          "route",
+          "prefetch",
+          "rag",
+          "react",
+          "guard",
+          "answer"
+        ],
+        "note": "从提问到带引用的回答：先定范围与检索，再生成，最后过值守网关。"
+      },
+      {
+        "id": "degrade",
+        "label": "终止与降级",
+        "focus": [
+          "route",
+          "abort",
+          "rag",
+          "unavail",
+          "react"
+        ],
+        "note": "没库就终止、服务不可用就不编；召回太弱时才联网补事实。"
+      },
+      {
+        "id": "assurance",
+        "label": "质量与观测",
+        "focus": [
+          "react",
+          "guard",
+          "answer",
+          "metrics"
+        ],
+        "note": "网关最多重写两次；引用量与过程时间线在收尾统一记录。"
+      }
+    ],
+    "legend": {
+      "entries": {
+        "external": {
+          "label": "外部系统"
+        },
+        "frontend": {
+          "label": "界面"
+        },
+        "backend": {
+          "label": "平台服务"
+        },
+        "security": {
+          "label": "策略与校验"
+        },
+        "cloud": {
+          "label": "外部服务"
+        },
+        "database": {
+          "label": "存储与观测"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "ui",
+      "label": "用户界面"
+    },
+    {
+      "id": "pipeline",
+      "label": "平台编排"
+    },
+    {
+      "id": "kb",
+      "label": "知识库检索"
+    },
+    {
+      "id": "gate",
+      "label": "质量值守"
+    },
+    {
+      "id": "exception",
+      "label": "终止与降级",
+      "variant": "exception"
+    },
+    {
+      "id": "obs",
+      "label": "埋点与观测"
+    }
+  ],
+  "phases": [
+    {
+      "id": "intake",
+      "label": "进入与路由",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "prepare",
+      "label": "定范围与召回",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "respond",
+      "label": "生成与值守",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "user",
+    "route",
+    "prefetch",
+    "rag",
+    "react",
+    "guard",
+    "answer"
+  ],
+  "nodes": [
+    {
+      "id": "user",
+      "lane": "ui",
+      "col": 0,
+      "type": "external",
+      "label": "用户提问",
+      "sublabel": "Agent / EmbedChat",
+      "width": 96
+    },
+    {
+      "id": "route",
+      "lane": "pipeline",
+      "col": 0,
+      "type": "backend",
+      "label": "路由派发",
+      "sublabel": "定范围 + 权限",
+      "width": 62
+    },
+    {
+      "id": "abort",
+      "lane": "exception",
+      "col": 1,
+      "type": "security",
+      "label": "无可用库",
+      "sublabel": "告知并终止",
+      "width": 72
+    },
+    {
+      "id": "prefetch",
+      "lane": "pipeline",
+      "col": 2,
+      "type": "backend",
+      "label": "平台预检索",
+      "sublabel": "自动调工具",
+      "width": 62
+    },
+    {
+      "id": "rag",
+      "lane": "kb",
+      "col": 3,
+      "type": "cloud",
+      "label": "RAGFlow 检索",
+      "sublabel": "POST /retrieval",
+      "width": 88
+    },
+    {
+      "id": "unavail",
+      "lane": "exception",
+      "col": 3,
+      "type": "security",
+      "label": "服务不可用",
+      "sublabel": "明说，不编造",
+      "width": 62
+    },
+    {
+      "id": "react",
+      "lane": "pipeline",
+      "col": 4,
+      "type": "backend",
+      "label": "ReAct 生成",
+      "sublabel": "片段注入 prompt",
+      "width": 88
+    },
+    {
+      "id": "guard",
+      "lane": "gate",
+      "col": 4,
+      "type": "security",
+      "label": "反幻觉网关",
+      "sublabel": "评估 + 规则双判",
+      "width": 88
+    },
+    {
+      "id": "answer",
+      "lane": "ui",
+      "col": 5,
+      "type": "frontend",
+      "label": "流式回答 + 引用",
+      "sublabel": "[ID:n] 可溯源",
+      "width": 110
+    },
+    {
+      "id": "metrics",
+      "lane": "obs",
+      "col": 5,
+      "type": "database",
+      "label": "埋点与时间线",
+      "sublabel": "检索量 / 引用量",
+      "width": 110
+    }
+  ],
+  "edges": [
+    {
+      "id": "ask",
+      "from": "user",
+      "to": "route",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "route-prefetch",
+      "from": "route",
+      "to": "prefetch",
+      "label": "范围就绪",
+      "role": "main",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "route-abort",
+      "from": "route",
+      "to": "abort",
+      "label": "无可用库",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "id": "prefetch-rag",
+      "from": "prefetch",
+      "to": "rag",
+      "label": "检索",
+      "role": "main"
+    },
+    {
+      "id": "rag-react",
+      "from": "rag",
+      "to": "react",
+      "role": "main"
+    },
+    {
+      "id": "rag-unavail",
+      "from": "rag",
+      "to": "unavail",
+      "label": "服务不可用",
+      "variant": "security",
+      "role": "error",
+      "labelDx": -48
+    },
+    {
+      "id": "react-guard",
+      "from": "react",
+      "to": "guard",
+      "label": "回答文本",
+      "role": "main",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        504,
+        280
+      ]
+    },
+    {
+      "id": "guard-rewrite",
+      "from": "guard",
+      "to": "react",
+      "label": "重写 ≤ 2 次",
+      "variant": "security",
+      "role": "return",
+      "fromSide": "right",
+      "toSide": "right",
+      "route": "outside-right"
+    },
+    {
+      "id": "guard-answer",
+      "from": "guard",
+      "to": "answer",
+      "label": "通过",
+      "variant": "emphasis",
+      "role": "main",
+      "fromSide": "right",
+      "toSide": "bottom"
+    },
+    {
+      "id": "guard-metrics",
+      "from": "guard",
+      "to": "metrics",
+      "label": "引用量",
+      "variant": "dashed",
+      "role": "async",
+      "fromSide": "right",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "平台侧预检索",
+      "items": [
+        "ReAct 之前就调用 search_knowledge_base",
+        "检索量只在这里记一次，避免重复计数",
+        "工具缺失或无可用库时直接终止，不猜"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "引用可溯源",
+      "items": [
+        "[ID:n] 整轮全局唯一，二次检索不重排",
+        "台账登记「编号 → 切片」映射，供反查",
+        "前端可展开片段并查看原档"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "不编造的兜底",
+      "items": [
+        "弱召回自动联网补事实并合并引用",
+        "空结果要求明确告知无依据",
+        "重写两次仍未过则附风险提示"
+      ]
+    }
+  ]
+}

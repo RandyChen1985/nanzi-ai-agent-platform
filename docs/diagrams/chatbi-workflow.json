@@ -1,0 +1,353 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "ChatBI 查数流程",
+    "quality_profile": "showcase",
+    "viewBox": [
+      720,
+      900
+    ],
+    "legend": {
+      "entries": {
+        "external": {
+          "label": "外部系统"
+        },
+        "frontend": {
+          "label": "界面"
+        },
+        "backend": {
+          "label": "平台服务"
+        },
+        "security": {
+          "label": "策略与校验"
+        },
+        "database": {
+          "label": "存储与结果"
+        }
+      }
+    },
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "查数主链路",
+        "focus": [
+          "user",
+          "main_entry",
+          "classifier",
+          "schema_prep",
+          "sql_gen",
+          "gate",
+          "db",
+          "result",
+          "answer"
+        ],
+        "note": "从提问到出数：分诊、语义准备、写 SQL、过门禁、执行、落结果栈。"
+      },
+      {
+        "id": "guards",
+        "label": "门禁与修复",
+        "focus": [
+          "sql_gen",
+          "gate",
+          "db",
+          "repair"
+        ],
+        "note": "门禁拦截不会直接失败，而是按失败类型扣预算重新生成。"
+      },
+      {
+        "id": "branches",
+        "label": "分支处置",
+        "focus": [
+          "classifier",
+          "nondata",
+          "schema_prep"
+        ],
+        "note": "非查数留在本地或委派；结果分析与格式调整不重新跑 SQL。"
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "ui",
+      "label": "用户界面"
+    },
+    {
+      "id": "main",
+      "label": "外层承接"
+    },
+    {
+      "id": "chatbi",
+      "label": "ChatBI 分诊"
+    },
+    {
+      "id": "query",
+      "label": "语义与生成"
+    },
+    {
+      "id": "guard",
+      "label": "门禁与修复"
+    },
+    {
+      "id": "exec",
+      "label": "执行与结果"
+    }
+  ],
+  "phases": [
+    {
+      "id": "intake",
+      "label": "进入与分诊",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "prepare",
+      "label": "准备与生成",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "execute",
+      "label": "校验与执行",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "user",
+    "main_entry",
+    "classifier",
+    "schema_prep",
+    "sql_gen",
+    "gate",
+    "db",
+    "result",
+    "answer"
+  ],
+  "nodes": [
+    {
+      "id": "user",
+      "lane": "ui",
+      "col": 0,
+      "type": "external",
+      "label": "用户提问",
+      "sublabel": "看数 / 追问",
+      "width": 96
+    },
+    {
+      "id": "main_entry",
+      "lane": "main",
+      "col": 1,
+      "type": "backend",
+      "label": "Main 承接",
+      "sublabel": "按需委派",
+      "width": 72
+    },
+    {
+      "id": "classifier",
+      "lane": "chatbi",
+      "col": 1,
+      "type": "backend",
+      "label": "请求分诊",
+      "sublabel": "12 类 turn",
+      "width": 62
+    },
+    {
+      "id": "nondata",
+      "lane": "chatbi",
+      "col": 0,
+      "type": "security",
+      "label": "非查数处置",
+      "sublabel": "本地答或委派",
+      "width": 88
+    },
+    {
+      "id": "schema_prep",
+      "lane": "query",
+      "col": 2,
+      "type": "backend",
+      "label": "语义准备",
+      "sublabel": "改写 + Schema",
+      "width": 62
+    },
+    {
+      "id": "sql_gen",
+      "lane": "query",
+      "col": 4,
+      "type": "backend",
+      "label": "ReAct 写 SQL",
+      "sublabel": "Schema 绑定",
+      "width": 88
+    },
+    {
+      "id": "repair",
+      "lane": "guard",
+      "col": 2,
+      "type": "security",
+      "label": "修复轮",
+      "sublabel": "预算内重写",
+      "width": 62
+    },
+    {
+      "id": "gate",
+      "lane": "guard",
+      "col": 4,
+      "type": "security",
+      "label": "门禁预检",
+      "sublabel": "静态 + 沙箱 + 表列",
+      "width": 88
+    },
+    {
+      "id": "db",
+      "lane": "exec",
+      "col": 4,
+      "type": "external",
+      "label": "SQL 执行",
+      "sublabel": "权限 + 行级",
+      "width": 62
+    },
+    {
+      "id": "result",
+      "lane": "exec",
+      "col": 5,
+      "type": "database",
+      "label": "结果栈",
+      "sublabel": "版本化引用",
+      "width": 110
+    },
+    {
+      "id": "answer",
+      "lane": "ui",
+      "col": 5,
+      "type": "frontend",
+      "label": "回答 + 图表",
+      "sublabel": "可导出 / 订阅",
+      "width": 110
+    }
+  ],
+  "edges": [
+    {
+      "id": "ask",
+      "from": "user",
+      "to": "main_entry",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "delegate",
+      "from": "main_entry",
+      "to": "classifier",
+      "label": "进 ChatBI",
+      "role": "main"
+    },
+    {
+      "id": "to-nondata",
+      "from": "classifier",
+      "to": "nondata",
+      "label": "非查数",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "to-prep",
+      "from": "classifier",
+      "to": "schema_prep",
+      "label": "查数 / 追问",
+      "role": "main",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "prep-gen",
+      "from": "schema_prep",
+      "to": "sql_gen",
+      "label": "授权 Schema",
+      "role": "main",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "gen-gate",
+      "from": "sql_gen",
+      "to": "gate",
+      "label": "待执行",
+      "role": "main"
+    },
+    {
+      "id": "gate-repair",
+      "from": "gate",
+      "to": "repair",
+      "label": "拦截",
+      "variant": "security",
+      "role": "branch",
+      "fromSide": "left",
+      "toSide": "right",
+      "route": "straight"
+    },
+    {
+      "id": "repair-gen",
+      "from": "repair",
+      "to": "sql_gen",
+      "label": "按预算",
+      "variant": "security",
+      "role": "return"
+    },
+    {
+      "id": "gate-exec",
+      "from": "gate",
+      "to": "db",
+      "label": "通过",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "exec-result",
+      "from": "db",
+      "to": "result",
+      "role": "main"
+    },
+    {
+      "id": "result-answer",
+      "from": "result",
+      "to": "answer",
+      "label": "表格 / 图表",
+      "role": "main",
+      "labelAt": [
+        612,
+        645
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "门禁不止一道",
+      "items": [
+        "静态风险、时间范围、沙箱、表列预检各有关口",
+        "重复 SQL、失败重试、多步计划缺失分别单独拦截",
+        "SqlQueryBinding 一次绑定，预检与执行共用同一份"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "修复带预算",
+      "items": [
+        "按失败类型扣次数：SQL 报错 8 次、缺 Schema 2 次",
+        "LLM 修复轮最多 2 轮，墙钟 240 秒到点即收",
+        "预算耗尽交给 final guard 兜底，不无限重试"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "结果可续查",
+      "items": [
+        "结果栈保留最多 10 个版本化引用",
+        "追问继承指标与筛选，但禁止照抄上一条 SQL",
+        "简报与监控复用同一份查询证据"
+      ]
+    }
+  ]
+}
