@@ -713,6 +713,13 @@ const switchPermissionSubTab = (sub: 'list' | 'requests') => {
     router.replace({ query: nextQuery })
     if (sub === 'requests') {
         void fetchMyRequests()
+        return
+    }
+    // 深链直达「我的申请」（?tab=requests）时 activeTab 初始就是 permissions，
+    // 而负责加载权限的 watch(activeTab) 不是 immediate，一次都没跑过。
+    // 于是切回「权限清单」看到的是空面板——连角色标识都没有，不是"数据旧"而是"从没加载"。
+    if (!permissions.value.details) {
+        void fetchPermissions()
     }
 }
 
@@ -862,6 +869,11 @@ onMounted(() => {
     fetchUserInfo()
     loadBranding()
     fetchBrowserCacheSize()
+    // 初始 tab 就是「我的权限」时（深链 / 通知跳转），watch(activeTab) 不会触发，
+    // 必须在这里主动拉一次，否则面板一直是空的。
+    if (activeTab.value === 'permissions' && !permissions.value.details) {
+        void fetchPermissions()
+    }
 })
 </script>
 
