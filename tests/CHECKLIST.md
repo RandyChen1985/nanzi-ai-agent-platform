@@ -764,3 +764,27 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **回归**：新增后端 10 项（快照写回 / 插入字段 / trace 幂等 / 连点幂等 / fallback / 无 agent 跳过）与前端契约 4 项；`pytest tests/ai/pipeline tests/ai/tools/test_user_question_tool.py` + 前端 `-k "user_question or history or session or preview or pinned"` **333 passed / 1 skipped**；`npx vue-tsc -b` 全仓 97 条（与改动前一致），本次 4 个文件 0 条。
 **未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；取消轮在历史里显示的是继承的上一轮智能体名（History 表没有 `agent_display_name` 列），与实时的「系统助手」是有意差异。
+
+## 2026-10-27 EmbedChat 首屏骨架延后：消除「欢迎页闪一下再跳消息列表」
+
+|---|---|---|---|
+| 首屏闪欢迎页 | `frontend/src/views/EmbedChat.vue`、`frontend/src/utils/embedFirstScreen.ts`（新增）、`tests/frontend/embed_first_screen_skeleton.mjs`（新增）、`tests/frontend/test_embed_first_screen_skeleton_contract.py`（新增）、`docs/superpowers/specs/2026-10-27-embed-first-screen-skeleton-design.md`（新增） | 现象：打开 embedchat 先渲染欢迎页，再整块跳成消息列表，没有 loading 过渡。根因：`isInitialLoading` 被当「鉴权中」用，`validateToken()` 一过就在 `initChat` 里撤骨架，而「确定会话 → 拉首屏历史 → 还原流式快照」还在后面串行 await，这段空档 `messages` 为空，模板 `messages.length === 0` 分支必然先渲染欢迎页。改为「当前线程未就绪」语义：入口 `beginThreadSkeleton()` 立骨架（`FIRST_SCREEN_SKELETON_TIMEOUT_MS` 8s 超时兜底），`finishThreadSkeleton(token)` 在历史 + 快照都 await 落地后才撤；失败/异常走 `abortThreadSkeleton()` |
+| 切会话同样闪 | 同上 | `switchConversation` 清空 `messages` 后才拉历史，空档同样命中欢迎页分支。清空后 `beginThreadSkeleton({ force: true })`（清空即无消息，必须强制遮挡），历史 + 快照落地后撤骨架；令牌自增保证连点会话时只有最后一次能撤 |
+| 历史在飞时撤骨架会露欢迎页 | 同上 | `finishThreadSkeleton` 在 `isLoadingHistory` 为真时挂起为 `pendingThreadSkeletonReleaseToken`，由 `fetchConversationHistory` 的 `finally` 在历史落地后补撤 |
+| 宿主重推 INIT_CONFIG 不糊掉已有内容 | 同上 | 非 force 且 `messages` 非空时 `beginThreadSkeleton` 返回 0 不显示骨架——第二次 `initChat` 不应把看得见的对话盖住再闪回来 |
+| 两套 loading 叠加 | 同上 | 首屏骨架期间隐藏消息区顶部「正在加载历史记录...」胶囊（`isLoadingHistory && !isInitialLoading`） |
+| 初始化握手被历史拖慢（反噬） | 同上 | 首屏改成 `await` 历史会让宿主 `await initChat()` 一起变慢，把「正在获取登录信息」遮罩拖到历史落地——遮罩压在骨架之上，骨架动效白做。因此第 8 步刻意不 await，撤骨架挂在 `.finally()` 链尾 |
+| 请求太快导致骨架闪一帧 | 同上 | 本地历史请求十几毫秒返回时骨架只出现一两帧，同样是「闪一下」。新增 `THREAD_SKELETON_MIN_VISIBLE_MS`（180ms），`finishThreadSkeleton` 用 `threadSkeletonRemainingVisibleMs()` 补足剩余时长再撤 |
+
+**回归**：`pytest --confcutdir=tests/frontend tests/frontend -k "embed or conversation_history or host_chat_loading or welcome or user_question or routing"` **529 passed / 1 skipped**；新增契约 **12 项**（含 Node 行为测试 `embed_first_screen_skeleton.mjs`）；`vue-tsc --noEmit` **0 错误**。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做浏览器手工验收——骨架 → 内容的实际观感需重建前端后在控制台确认。
+
+## 2026-10-27 登录页「API Key」Tab 闪现修复
+
+|---|---|---|---|
+| API Key Tab 先出现再消失 | `frontend/src/views/Login.vue`、`tests/frontend/test_login_apikey_tab_flash_contract.py`（新增）、`docs/superpowers/specs/2026-10-27-login-apikey-tab-flash-design.md`（新增） | 现象：打开登录页先渲染三个 Tab，随后 API Key 那个消失。根因：`hideLoginApiKey` 初值 `false`（不隐藏），而真实取值来自异步的 `GET /api/portal/auth/config/public`，配置回来后才置 `true`。改为初值隐藏（`ref(true)`），未拿到配置前不渲染该 Tab；隐藏环境全程无闪现，允许环境是 Tab 稍后出现 |
+| 配置失败不能把登录通道藏掉 | 同上 | `fetchPublicConfig` 新增 `configLoaded` 标志，在 `finally` 里 `if (!configLoaded) hideLoginApiKey.value = false` 回退为显示。判定不能写在 `catch`：时区动态导入失败也会进 `catch`，会把已读到的 `true` 覆盖成 `false` |
+| SSO Tab 同类风险排查 | 同上 | `onMounted` 是 `await loadBranding()` 之后才 `fetchPublicConfig()`，`hide_login_sso` 先落地，因此 SSO Tab 只在 `ssoEnabled` 为真时出现，不会「出现又消失」，本次不改 |
+
+**回归**：`pytest --confcutdir=tests/frontend -k "login or auth or config_public or boolean_config"` **99 passed / 1 skipped**；新增契约 **4 项**；`vue-tsc --noEmit` **0 错误**。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做浏览器手工验收。
