@@ -118,6 +118,22 @@ def _release_loop_bound_singletons():
     redis.redis_client_binary = None
 
 
+@pytest.fixture(scope="function", autouse=True)
+def _reset_agent_context():
+    """兜底清理全局 agent 上下文。
+
+    不少用例直接调 ``set_agent_context(...)`` 注入上下文却不恢复，而 ``ContextVar``
+    在同步测试里是整条线程共享的，于是上一个测试的 ``agent_id`` 会留到下一个测试里。
+    真实踩到：``tests/ai/test_knowledge_utils.py`` 注入 ``agent_id="kb"`` 之后，
+    ``tests/services`` 里的纯函数断言 ``_scoped_cache_key("42")`` 拿到 ``"42|kb"``
+    而不是 ``"42|-"``——单独跑每条都过，整目录一起跑就红，属于典型的顺序依赖。
+    """
+    yield
+    from app.core import context as agent_context_module
+
+    agent_context_module.set_agent_context(None)
+
+
 @pytest.fixture(autouse=True)
 async def mock_audit_manager():
     """Global mock for AuditManager."""
