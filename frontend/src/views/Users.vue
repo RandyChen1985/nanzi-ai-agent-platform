@@ -65,7 +65,7 @@
 
           <div
             v-if="showFilterPanel"
-            class="absolute left-0 z-30 mt-1.5 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-gray-200 bg-white p-3 shadow-lg"
+            class="absolute right-0 z-30 mt-1.5 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-gray-200 bg-white p-3 shadow-lg"
             role="group"
             aria-label="筛选条件"
           >
@@ -199,7 +199,7 @@
                 批量导入用户
               </button>
               <button
-                v-if="canOpenSystemQuota"
+                v-if="canEditUser"
                 type="button"
                 class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
                 @click="showMoreMenu = false; showSystemQuotaModal = true"
@@ -211,8 +211,11 @@
           </div>
 
         <!-- 审核入口：图标常驻，待办数走角标。后续会并入统一审核中心（访问申请 / 注册审核等），
-             所以这里先只表达「有待处理」，不写死成「访问审批」四个字。 -->
+             所以这里先只表达「有待处理」，不写死成「访问审批」四个字。
+             整枚按钮只给管理员：后端 pending / reviews / approve 全是 require_admin，
+             没权限的人点进来只会吃一个 Admin access required，入口本身就是误导。 -->
         <button
+          v-if="isAdmin"
           type="button"
           class="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
           :title="pendingReviewCount ? `审核：${pendingReviewCount} 条待处理的资源访问申请` : '审核：资源访问申请'"
@@ -1929,9 +1932,22 @@
               :disabled="accessReviewTab === 'pending' ? accessReviewsLoading : reviewedLoading"
               @click="accessReviewTab === 'pending' ? fetchAccessReviews() : fetchReviewedRequests()"
             >刷新</button>
+            <button
+              v-if="accessReviewTab === 'pending'
+                ? accessReviews.length < accessReviewTotal
+                : reviewedRequests.length < reviewedTotal"
+              type="button"
+              class="text-xs text-blue-600 hover:underline disabled:opacity-50"
+              :disabled="accessReviewTab === 'pending' ? accessReviewsLoading : reviewedLoading"
+              @click="accessReviewTab === 'pending' ? fetchAccessReviews(true) : fetchReviewedRequests(true)"
+            >加载更多</button>
             <span class="text-xs text-gray-500">
-              <template v-if="accessReviewTab === 'pending'">共 {{ accessReviewTotal }} 条待审批</template>
-              <template v-else>最近 {{ reviewedRequests.length }} 条审批记录</template>
+              <template v-if="accessReviewTab === 'pending'">
+                共 {{ accessReviewTotal }} 条待审批，已显示 {{ accessReviews.length }} 条
+              </template>
+              <template v-else>
+                共 {{ reviewedTotal }} 条审批记录，已显示 {{ reviewedRequests.length }} 条
+              </template>
             </span>
           </div>
         </div>
@@ -2682,19 +2698,15 @@ import {
 
 const { showToast } = useToast();
 const { branding } = useBranding();
-const { hasPermission } = useUser();
+const { hasPermission, isAdmin } = useUser();
 
 const canEditUser = computed(() => hasPermission("element:user:edit"));
 const canViewUserKey = computed(() => hasPermission("element:user:view_key"));
 const canResetUserKey = computed(() => hasPermission("element:user:reset_key"));
 const canDeleteUser = computed(() => hasPermission("element:user:delete"));
-const canOpenSystemQuota = computed(() => hasPermission("menu:system:users"));
-const showMoreMenuPanel = computed(
-  () =>
-    (showSsoSync.value && canEditUser.value) ||
-    canEditUser.value ||
-    canOpenSystemQuota.value,
-);
+// 「更多」里的每一项（同步 SSO / 同步第三方 / 批量导入 / 系统默认额度）都要编辑权限，
+// 所以面板本身也只看 canEditUser：否则没有编辑权限的人会看到一个点开全空的「更多」。
+const showMoreMenuPanel = computed(() => canEditUser.value);
 const hasRowMoreActions = computed(
   () => canEditUser.value || canResetUserKey.value || canDeleteUser.value,
 );
@@ -2944,6 +2956,12 @@ const pendingReviewCount = ref(0);
 const accessReviewTab = ref<"pending" | "reviews">("pending");
 const reviewedRequests = ref<any[]>([]);
 const reviewedLoading = ref(false);
+/** 已处理记录可能有成百上千条，一次只取一页，底部按需加载 */
+const reviewedTotal = ref(0);
+const reviewedPage = ref(1);
+const reviewedSize = 20;
+const accessReviewPage = ref(1);
+const accessReviewSize = 20;
 /** 类型筛选：两类申请的审批人相同，但一次只想看其中一类 */
 const resourceTypeFilter = ref<"all" | "dataset" | "metadata">("all");
 const resourceTypeOptions = [
@@ -2952,16 +2970,23 @@ const resourceTypeOptions = [
   { key: "metadata", label: "数据集" },
 ] as const;
 
-const fetchReviewedRequests = async () => {
+const fetchReviewedRequests = async (append = false) => {
+  if (append && reviewedLoading.value) return;
   reviewedLoading.value = true;
   try {
+    const page = append ? reviewedPage.value + 1 : 1;
     const response = await axios.get("/api/portal/access-requests/reviews", {
       params: {
-        size: 100,
+        page,
+        size: reviewedSize,
         ...(resourceTypeFilter.value === "all" ? {} : { resource_type: resourceTypeFilter.value }),
       },
     });
-    reviewedRequests.value = response.data?.data?.items || [];
+    const data = response.data?.data || {};
+    const items = data.items || [];
+    reviewedRequests.value = append ? [...reviewedRequests.value, ...items] : items;
+    reviewedTotal.value = data.total || 0;
+    reviewedPage.value = page;
   } catch (err: any) {
     showToast(err?.response?.data?.detail || "读取审批记录失败", "error");
   } finally {
@@ -2999,21 +3024,31 @@ const fetchPendingReviewCount = async () => {
 };
 
 const openAccessReviews = () => {
+  // 兜底守卫：入口已按 isAdmin 隐藏，这里再拦一道——将来若有别的调用方
+  // （消息、深链、快捷键）打开它，也不至于让非管理员看到一堆 403。
+  if (!isAdmin.value) return;
   showAccessReviews.value = true;
   accessReviewTab.value = "pending";
   void fetchAccessReviews();
 };
 
-const fetchAccessReviews = async () => {
+const fetchAccessReviews = async (append = false) => {
+  if (append && accessReviewsLoading.value) return;
   accessReviewsLoading.value = true;
   try {
+    const page = append ? accessReviewPage.value + 1 : 1;
     const response = await axios.get("/api/portal/access-requests/pending", {
-      params:
-        resourceTypeFilter.value === "all" ? {} : { resource_type: resourceTypeFilter.value },
+      params: {
+        page,
+        size: accessReviewSize,
+        ...(resourceTypeFilter.value === "all" ? {} : { resource_type: resourceTypeFilter.value }),
+      },
     });
     const data = response.data?.data || {};
-    accessReviews.value = data.items || [];
+    const items = data.items || [];
+    accessReviews.value = append ? [...accessReviews.value, ...items] : items;
     accessReviewTotal.value = data.total || 0;
+    accessReviewPage.value = page;
     pendingReviewCount.value = accessReviewTotal.value;
   } catch (err: any) {
     showToast(err?.response?.data?.detail || "读取待审批申请失败", "error");
@@ -4718,11 +4753,15 @@ onMounted(async () => {
   fetchBusinessRoles();
   fetchPublicConfig();
   fetchPendingCount();
-  // 待我审批的知识库访问申请：有就亮红点，否则入口还在但不打扰
-  void fetchPendingReviewCount();
+  // 资源访问审核整条链路都是管理员专属（pending / reviews / approve 后端全是 require_admin），
+  // 非管理员不必白打一个 403；入口本身也只在管理员时渲染。
+  if (isAdmin.value) {
+    void fetchPendingReviewCount();
+  }
   // 深链 ?review=1 来自站内消息里那条「有人申请访问」：直接开审批弹窗，
   // 别让人看完消息还得自己找入口。query 立刻抹掉，避免刷新又弹一次。
-  if (String(route.query.review || "") === "1") {
+  // 同样只对管理员生效：非管理员点这条消息进来只会吃一个 Admin access required。
+  if (isAdmin.value && String(route.query.review || "") === "1") {
     const targetRequestId = Number(route.query.request || 0);
     highlightRequestId.value = targetRequestId > 0 ? targetRequestId : null;
     openAccessReviews();

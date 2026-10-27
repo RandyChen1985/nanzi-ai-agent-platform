@@ -63,8 +63,10 @@ const parseSavedReportDetailTab = (value: unknown): SavedReportOpenRequest["deta
 };
 
 const initChat = () => {
-    // 基础路径
-    iframeUrl.value = '/embed/chat';
+    // 基础路径。预览入口（/dashboard/chat?preview=1）需把标记透传给挂件：
+    // 挂件据此开一个干净的临时会话，而不是续接上次对话。
+    const previewQuery = String(route.query.preview || '') === '1' ? '?preview=1' : '';
+    iframeUrl.value = `/embed/chat${previewQuery}`;
     
     // 设置超时检测 (5秒)
     isInitTimedOut.value = false;

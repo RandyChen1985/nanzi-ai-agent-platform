@@ -200,9 +200,12 @@ def test_host_supplied_conversation_id_is_not_persisted_before_the_check():
     apply_body = source[
         source.index("const applyInitConfigPayload = "):source.index("const applyInitConfigPayload = ") + 6000
     ]
-    block = apply_body[apply_body.index("if (data.conversation_id) {"):]
+    block = apply_body[apply_body.index("if (data.conversation_id"):]
     block = block[:block.index("} else if (!data.agent_id) {")]
 
+    # 预览页（preview=1）必须开临时会话，因此不采纳宿主下发的会话 ID；
+    # 其余场景仍只登记为「待采用」，未过归属校验前不得写入内存或 localStorage。
+    assert "if (data.conversation_id && !isPreviewSession) {" in block
     assert "requestedConversationId = String(data.conversation_id);" in block
     assert "conversationId.value = requestedConversationId;" not in block
     assert "persistConversationId(requestedConversationId);" not in block

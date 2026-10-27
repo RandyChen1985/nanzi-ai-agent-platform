@@ -281,6 +281,9 @@ function switchTab(next: "workbench" | "square") {
   } else {
     delete query.tab
     delete query.section
+    // status 是资源广场的状态筛选，工作台没有这个概念。留着下次进广场
+    // 还是「已授权」，用户会以为筛选按钮点了没反应。
+    delete query.status
   }
   router.replace({ query })
 }

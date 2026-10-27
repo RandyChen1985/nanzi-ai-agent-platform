@@ -115,7 +115,9 @@ def test_integration_agent_lock_covers_all_host_entry_points():
     assert "isRoutingSettingsLocked" in source
     assert ':routing-locked="isRoutingSettingsLocked"' in source
 
-    init_segment = source.split("const applyInitConfigPayload", 1)[1].split("if (data.conversation_id)", 1)[0]
+    # 该分支条件后续可能追加预览模式等前置判定（如 `if (data.conversation_id && !isPreviewSession)`），
+    # 因此只按前缀切分，避免把整段都当成 agent 锁定分支。
+    init_segment = source.split("const applyInitConfigPayload", 1)[1].split("if (data.conversation_id", 1)[0]
     assert "applyIntegrationAgentLock(agentId)" in init_segment
     assert "switchToExpert(agentId)" not in init_segment
 

@@ -8,6 +8,11 @@ from app.models.user import User
 from app.schemas.quota import QuotaPolicyResponse, QuotaPolicyUpdate, QuotaStatusResponse
 from app.services.quota_service import QuotaService
 
+# 额度口径：系统默认额度与用户专属额度都是**编辑**动作，统一校验
+# ``element:user:edit``，与用户管理页入口的判定（前端 canEditUser）一致。
+# 早先系统默认额度只校验 ``menu:system:users``（能进菜单就能改），于是前端按编辑
+# 权限隐藏入口、后端却仍然放行——留下「没有编辑权限也能调接口改全站额度」的口子。
+# 角色额度模板仍归角色管理菜单（``menu:system:roles``），不在用户管理页。
 router = APIRouter()
 
 
@@ -25,7 +30,7 @@ async def get_my_quota(
 
 @router.get("/system", response_model=QuotaPolicyResponse)
 async def get_system_quota(
-    admin: dict = Depends(require_permission("menu", "menu:system:users")),
+    editor: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session),
 ):
     service = QuotaService(db)
@@ -35,7 +40,7 @@ async def get_system_quota(
 @router.put("/system", response_model=QuotaPolicyResponse)
 async def update_system_quota(
     body: QuotaPolicyUpdate,
-    admin: dict = Depends(require_permission("menu", "menu:system:users")),
+    editor: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session),
 ):
     service = QuotaService(db)
@@ -49,7 +54,7 @@ async def update_system_quota(
 
 @router.delete("/system")
 async def delete_system_quota(
-    admin: dict = Depends(require_permission("menu", "menu:system:users")),
+    editor: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session),
 ):
     service = QuotaService(db)
@@ -60,7 +65,7 @@ async def delete_system_quota(
 @router.get("/users/{user_id}", response_model=QuotaPolicyResponse)
 async def get_user_quota_policy(
     user_id: int,
-    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    editor: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session),
 ):
     user = await db.get(User, user_id)
@@ -79,7 +84,7 @@ async def get_user_quota_policy(
 async def update_user_quota_policy(
     user_id: int,
     body: QuotaPolicyUpdate,
-    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    editor: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session),
 ):
     user = await db.get(User, user_id)
@@ -99,7 +104,7 @@ async def update_user_quota_policy(
 @router.delete("/users/{user_id}")
 async def delete_user_quota_policy(
     user_id: int,
-    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    editor: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session),
 ):
     user = await db.get(User, user_id)

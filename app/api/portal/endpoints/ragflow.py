@@ -817,7 +817,9 @@ async def list_pending_access_requests(
 ):
     """待审批。审批人统一为管理员——归属人不再有审批权，理由见 approve 端点。"""
     _require_admin_reviewer(user)
-    items = await KnowledgeAccessRequestService(db).list_pending(resource_type="dataset")
+    items, _total = await KnowledgeAccessRequestService(db).list_pending(
+        resource_type="dataset", page=1, size=500
+    )
     return {
         "code": 0,
         "data": {
@@ -836,8 +838,8 @@ async def list_reviewed_access_requests(
 ):
     """审批记录。审批通过后记录会从「待审批」消失，没有这个视图就只看得见待办。"""
     _require_admin_reviewer(user)
-    items = await KnowledgeAccessRequestService(db).list_reviews(
-        resource_type="dataset", limit=min(200, max(1, int(size or 50)))
+    items, _total = await KnowledgeAccessRequestService(db).list_reviews(
+        resource_type="dataset", page=1, size=min(200, max(1, int(size or 50)))
     )
     target = (status or "").strip().lower()
     if target in (STATUS_APPROVED, STATUS_REJECTED):

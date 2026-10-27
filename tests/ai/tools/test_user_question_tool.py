@@ -266,3 +266,45 @@ async def test_ask_user_question_still_works_for_interactive_turn():
 
     assert result["status"] == "awaiting_user"
     assert result["question_id"].startswith("uq_")
+
+
+def test_option_disabled_is_accepted_and_passed_through():
+    """禁用态要能透传到前端，否则「看得到但用不了」只能靠删选项表达。"""
+    from app.services.ai.tools.user_question_tools import AskUserQuestionArgs
+
+    args = AskUserQuestionArgs(
+        question="要检索哪些知识库？",
+        options=[
+            {"id": "__scope_all__", "label": "全部 12 个库"},
+            {
+                "id": "__scope_bound__",
+                "label": "仅智能体默认（未绑定）",
+                "description": "该智能体尚未绑定知识库",
+                "disabled": True,
+            },
+        ],
+    )
+    dumped = [option.model_dump(mode="json") for option in args.options]
+
+    assert dumped[0]["disabled"] is False
+    assert dumped[1]["disabled"] is True
+    assert dumped[1]["description"] == "该智能体尚未绑定知识库"
+
+
+def test_all_options_disabled_is_rejected():
+    """全禁等于把用户堵死：卡片看得见、一项都点不了，还占着待回答状态。"""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.services.ai.tools.user_question_tools import AskUserQuestionArgs
+
+    with pytest.raises(ValidationError) as excinfo:
+        AskUserQuestionArgs(
+            question="选一个",
+            options=[
+                {"id": "a", "label": "A", "disabled": True},
+                {"id": "b", "label": "B", "disabled": True},
+            ],
+        )
+
+    assert "至少要保留一项可选" in str(excinfo.value)

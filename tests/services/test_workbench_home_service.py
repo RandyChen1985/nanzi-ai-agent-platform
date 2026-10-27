@@ -175,7 +175,10 @@ def test_personal_resources_are_normalized_into_payload():
         ]
     )
 
+    # 顺序即工作台卡片顺序：资源入口（知识库/数据集）在前，过程性数据在后。
     assert [item["key"] for item in payload["personal_resources"]] == [
+        "knowledge",
+        "datasets",
         "memory",
         "tokens",
         "data",
@@ -194,10 +197,12 @@ def test_personal_resources_are_normalized_into_payload():
 
 def test_personal_resources_default_to_empty_shell_when_missing():
     payload = _payload()
-    assert len(payload["personal_resources"]) == 7
-    assert payload["personal_resources"][0]["key"] == "memory"
+    assert len(payload["personal_resources"]) == 9
+    assert payload["personal_resources"][0]["key"] == "knowledge"
     assert payload["personal_resources"][-1]["key"] == "inbox"
     assert all(item["tab"] for item in payload["personal_resources"])
+    # 没有数据时统一是空壳卡片，不能显示 0 以外的占位或漏掉单位
+    assert all(item["value"] == 0 and item["status"] == "empty" for item in payload["personal_resources"])
 
     payload = _payload(
         running_items=[

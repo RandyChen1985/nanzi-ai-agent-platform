@@ -17,6 +17,7 @@
       :filters="historyFilters"
       :available-agents="historyAgentOptions"
       :show-agent-filter="showAgentFilter"
+      :pinned-agent-name="historyPinnedAgentName"
       @update:filters="historyFilters = $event"
       @reset-filters="resetHistoryFilters"
       @fetch-history="fetchHistory()"
@@ -1015,6 +1016,7 @@
                 :payload="msg.userQuestion"
                 :disabled="isProcessing"
                 @submit="(payload) => submitUserQuestion(msg, payload)"
+                @option-action="handleUserQuestionOptionAction"
               />
 
                                 <!-- AI Stalled Thinking Prompt (Moved out to be sibling to msg.content) -->
@@ -1395,6 +1397,8 @@
         :active-ltm-preference="activeLtmPreference"
         :agent-id="effectiveEmbedChatAgentId"
         :attached-mcp-tool-names="(resourceScope.mcp_tools || []).map((item: any) => String(item.name || '')).filter(Boolean)"
+        :allowed-dataset-ids="mountableDatasetScopeIds"
+        :allowed-knowledge-base-ids="mountableKnowledgeScopeIds"
         :routing-mode="config.routingMode"
         :expert-agent-id="config.expertAgentId"
         :allow-model-switch="chatModelSwitch.visible"
@@ -4234,6 +4238,25 @@ const headerExpertLabel = computed(() => {
   }
   return "";
 });
+/**
+ * 历史侧栏顶部「已锁定智能体」提示用的名称。
+ *
+ * 锁定后历史列表被后端按该智能体限定，侧栏必须把这件事说出来，否则用户会以为
+ * 「历史怎么少了」；同时筛选面板里的智能体选择会被隐藏。
+ */
+const historyPinnedAgentName = computed(() => {
+  if (!pinnedAgentScope()) return "";
+  const label = String(pinnedAgentLabel.value || "").trim();
+  // resolveUrlPinnedAgent 成功后 pinnedAgentLabel 就是 display_name；只剩 URL slug 时
+  // 说明宿主场景（没有 pinnedAgent 对象），从已加载的智能体列表按锁定 id 反查。
+  if (label && label !== String(urlPinnedAgentKey.value || "").trim()) return label;
+  const locked = (allowedAgents.value || []).find(
+    (agent: any) => String(agent?.id || "") === integrationAgentLockId.value,
+  );
+  return String(
+    locked?.display_name || locked?.name || label || integrationAgentLockId.value || "",
+  ).trim();
+});
 const agentHasCapability = (cap: string) => {
   const lockedAgent = allowedAgents.value.find(
     (agent: any) => String(agent?.id || "") === integrationAgentLockId.value,
@@ -4621,6 +4644,35 @@ const scopedActiveDatasetIds = computed(() => {
   if (!resourceScope.value.project_name) return activeDatasetIds.value;
   const allowed = new Set(scopedKnowledgeDatasets.value.map((item: any) => String(item.id || item.ragflow_dataset_id || item.dataset_id)));
   return activeDatasetIds.value.filter((id: string) => allowed.has(String(id)));
+});
+
+/**
+ * 加号菜单「数据&知识库」浮层的可见范围：
+ * 与知识库面板 / 数据门户同口径——会话设了项目资源范围时只列范围内的资源，
+ * 否则传 `null` 表示不限制（`null` 与「空数组」语义不同，空数组会把列表过滤成空）。
+ *
+ * 这里直接取 `resourceScope` 的字段并集，**不能**从 `knowledgeDatasets` 反推：
+ * 用户没打开过知识库面板时那份列表还是空的，会把这个浮层过滤成空。
+ */
+const mountableDatasetScopeIds = computed<string[] | null>(() => {
+  if (!projectSessionHasDatasetScope.value) return null;
+  return Array.from(new Set(
+    resourceScope.value.datasets
+      .flatMap((item: any) => [item.id, item.name, item.dataset_name, item.display_name])
+      .filter(Boolean)
+      .map((value: any) => String(value).trim())
+      .filter(Boolean),
+  ));
+});
+const mountableKnowledgeScopeIds = computed<string[] | null>(() => {
+  if (!projectSessionHasKnowledgeScope.value) return null;
+  return Array.from(new Set(
+    resourceScope.value.knowledge_bases
+      .flatMap((item: any) => [item.id, item.name, item.dataset_id, item.ragflow_dataset_id])
+      .filter(Boolean)
+      .map((value: any) => String(value).trim())
+      .filter(Boolean),
+  ));
 });
 const scopedPortalNavigationPayload = computed(() => {
   if (!projectSessionHasDatasetScope.value || !portalNavigationPayload.value) return portalNavigationPayload.value;
@@ -5098,6 +5150,17 @@ const saveResourceScope = async () => {
 
 let requestedConversationId = "";
 /**
+ * 预览模式（智能体中心卡片上的「预览对话」，URL 携带 `preview=1`）。
+ *
+ * 预览必须是**干净的临时会话**：既不续接本标签/跨标签/服务端的任何会话指针，
+ * 也不把自己的临时会话写回去。否则预览一次就会顶掉用户正式对话的续接记录，
+ * 先预览「主助手」再预览「数据智能助手」时还会落到同一个 cid、看到上一段历史。
+ *
+ * 所有持久化入口（本地指针、服务端活跃指针）统一在这里收口，避免散落各处的
+ * `persist: true` 调用点漏掉一处就把临时会话泄漏出去。
+ */
+let isPreviewSession = false;
+/**
  * 当前界面上的会话所属身份。身份与它不一致时（同一 tab 换用户登录、宿主换票），
  * 必须把上一位用户的会话现场整个丢掉，而不能只是换个存储键。
  */
@@ -5111,6 +5174,27 @@ const LEGACY_CONVERSATION_STORAGE_KEY = "yovole_embed_conv_id";
 const INSTANCE_CONVERSATION_STORAGE_PREFIX = "yovole_embed_conv_id:";
 /** 用户维度标记：键形如 `yovole_embed_conv_id:u:<identity>[:<instance>]`。 */
 const USER_SCOPED_STORAGE_SEGMENT = "u";
+/**
+ * 智能体维度标记：仅用于「本标签」指针，键形如
+ * `nzi_embed_tab_conv_id:u:<identity>:a:<agentId>[:<instance>]`。
+ *
+ * 指定了智能体的入口（URL `agent_id`、宿主 INIT_CONFIG）必须与平台对话、以及其他
+ * 智能体的会话隔开：会话指针本身不带智能体信息，续接时不区分「这是谁的对话」，
+ * 于是带 ChatBI 的链接会加载上次主助手那段历史，新回复又写进同一个 conversation_id。
+ */
+const AGENT_SCOPED_STORAGE_SEGMENT = "a";
+
+/**
+ * 本次页面会话锁定的智能体维度；未指定时返回空串。
+ *
+ * 判定依据是 `integrationAgentLockId`——URL `agent_id` 与宿主下发都会走
+ * `applyIntegrationAgentLock`，用户手动切专家（switchToExpert）不会，因此它正好
+ * 对应「这条页面链接/这个嵌入实例指定了谁」。
+ */
+const pinnedAgentScope = (): string => {
+  const agentId = String(integrationAgentLockId.value || "").trim();
+  return agentId ? `${AGENT_SCOPED_STORAGE_SEGMENT}:${encodeURIComponent(agentId)}` : "";
+};
 
 const normalizeEmbedInstanceId = (value: unknown): string => {
   const normalized = String(value ?? "").trim();
@@ -5166,18 +5250,25 @@ const tabConversationStorageKey = (): string => {
   const identity = currentIdentityKey();
   if (!identity) return "";
   const scope = `${USER_SCOPED_STORAGE_SEGMENT}:${encodeURIComponent(identity)}`;
+  // 指定智能体时再叠一层智能体维度：同一标签里把地址从 agent A 换成 agent B，
+  // 读不到 A 的指针，自然开新会话。
+  const agentScope = pinnedAgentScope();
   const instanceId = normalizeEmbedInstanceId(config.instanceId);
-  return instanceId
-    ? `${TAB_CONVERSATION_STORAGE_PREFIX}${scope}:${encodeURIComponent(instanceId)}`
-    : `${TAB_CONVERSATION_STORAGE_PREFIX}${scope}`;
+  const base = `${TAB_CONVERSATION_STORAGE_PREFIX}${scope}${agentScope ? `:${agentScope}` : ""}`;
+  return instanceId ? `${base}:${encodeURIComponent(instanceId)}` : base;
 };
 
 const readStoredConversationId = (): string => {
+  // 预览页从不续接：读指针就等于把「上一次对话」带回临时会话。
+  if (isPreviewSession) return "";
   try {
     // 本标签的指针优先：它代表「这个窗口正在看哪个会话」，不能被别的标签覆盖。
     const tabKey = tabConversationStorageKey();
     const tabValue = tabKey ? (sessionStorage.getItem(tabKey) || "").trim() : "";
     if (tabValue) return tabValue;
+    // 指定了智能体：跨标签共享那条指针属于平台对话、也可能属于别的智能体，一律不续接。
+    // 否则带 `?agent_id=chatbi-…` 打开会把上次主助手的会话整段加载进来。
+    if (pinnedAgentScope()) return "";
     // 新标签没有自己的指针时，退回跨标签共享的那条，保留「新开窗口续接上次会话」的体验。
     const key = conversationStorageKey();
     return key ? (localStorage.getItem(key) || "").trim() : "";
@@ -5187,9 +5278,13 @@ const readStoredConversationId = (): string => {
 };
 
 const clearStoredConversationId = () => {
+  // 预览页的归属校验失败只影响它自己的临时会话，不能顺手抹掉正式对话的续接指针。
+  if (isPreviewSession) return;
   try {
     const tabKey = tabConversationStorageKey();
     if (tabKey) sessionStorage.removeItem(tabKey);
+    // 指定智能体时只清本标签：共享指针属于平台对话，不能因嵌入侧的校验失败被抹掉。
+    if (pinnedAgentScope()) return;
     const key = conversationStorageKey();
     if (key) localStorage.removeItem(key);
   } catch {
@@ -5199,10 +5294,16 @@ const clearStoredConversationId = () => {
 
 const persistConversationId = (cid: string) => {
   if (!cid) return;
+  // 临时会话只存在于内存：写进 storage 后，下次打开预览会续接它（「干净会话」失效），
+  // 正式对话再打开时也会落到这条临时会话上。
+  if (isPreviewSession) return;
   try {
-    // 既写本标签（隔离用），也写共享那份（新标签续接用）。
+    // 本标签那份总是写：同标签刷新要能续接回同一会话。
     const tabKey = tabConversationStorageKey();
     if (tabKey) sessionStorage.setItem(tabKey, cid);
+    // 指定了智能体：不写跨标签共享指针。它会被平台对话与其他智能体读到，一旦写入，
+    // 下次不带 agent_id 打开对话页就会续接到这条嵌入会话。
+    if (pinnedAgentScope()) return;
     const key = conversationStorageKey();
     if (key) localStorage.setItem(key, cid);
   } catch {
@@ -5646,7 +5747,15 @@ const restoreEmbedStreamSnapshot = async (expectedGeneration?: number) => {
   }
 };
 
-const shouldUseServerActiveConversation = () => Boolean(config.token);
+/**
+ * 是否使用「服务端活跃会话」这条续接/登记通道。
+ *
+ * 指定了智能体时整体关闭：服务端活跃会话是**账号级**的（只按 user + instance 存），
+ * 里面可能躺着另一个智能体的会话；读会把别人的对话带进来，写又会让平台对话下次
+ * 续接到这条嵌入会话。嵌入实例要的是「独立、可预期」的会话。
+ */
+const shouldUseServerActiveConversation = () =>
+  Boolean(config.token) && !pinnedAgentScope();
 const activeConversationRequestParams = () => (
   config.instanceId ? { instance_id: config.instanceId } : undefined
 );
@@ -6299,6 +6408,9 @@ const finalizeConversationInBackground = (cid: string) => {
 const updateActiveConversationOnServer = async (cid: string) => {
   if (!config.token) return;
   if (!shouldUseServerActiveConversation()) return;
+  // 预览的临时会话不登记为服务端活跃会话：否则用户下次正常打开对话页会续接到预览页，
+  // 跨设备/无痕场景下也会被这条临时指针顶掉。
+  if (isPreviewSession) return;
   try {
     await axios.post("/api/v1/chat/active", {
       conversation_id: cid
@@ -7023,8 +7135,8 @@ const resetHistoryFilters = () => {
   historyFilters.value = { ...DEFAULT_HISTORY_FILTERS };
 };
 
-// 集成锁定场景下历史已被限定为单一智能体，智能体筛选无意义
-const showAgentFilter = computed(() => !config.agentId);
+// 集成锁定场景下历史已被限定为单一智能体，智能体筛选无意义（也不允许改）
+const showAgentFilter = computed(() => !pinnedAgentScope());
 
 const historyAgentOptions = computed(() =>
   (allowedAgents.value || []).map((agent: any) => ({
@@ -7110,6 +7222,10 @@ const copyToClipboard = async (text: string, id?: string) => {
 };
 const fetchHistory = async (isLoadMore = false) => {
   if (!config.token && !hasPermission.value) return;
+  // 深链锁定的智能体（URL ?agent_id=）还没解析出数据库 id 时先不查：历史表里存的是
+  // 解析后的 id，用 URL 里的 slug 过滤必然为空，列表会先闪一次「暂无会话历史」。
+  // 解析完成后由 initChat 末尾的补拉负责首屏数据。
+  if (urlPinnedAgentKey.value && !pinnedAgentId.value) return;
 
   if (isLoadMore) {
     if (!historyHasMore.value || loadingMoreHistory.value || loadingHistory.value) return;
@@ -8819,13 +8935,14 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
     const agentId = String(data.agent_id);
     applyIntegrationAgentLock(agentId);
     void loadWelcomeCards(agentId);
-    if (!data.conversation_id) {
+    // 预览页的临时会话由 initChat 建立：宿主若重推 agent 配置，不该把它清掉重开。
+    if (!data.conversation_id && !isPreviewSession) {
       messages.value = [];
       generateNewConversation();
       requestedConversationId = conversationId.value;
     }
   }
-  if (data.conversation_id) {
+  if (data.conversation_id && !isPreviewSession) {
     // 宿主下发的会话 ID 只登记为「待采用」，**不写内存、不持久化**：它还没过归属校验，
     // 直接持久化会把它写进当前身份的桶、覆盖本人原有的续接记录；直接采用会让界面在
     // 校验完成前短暂停在一个可能属于他人的会话上。真正的采用在 initChat 校验通过后完成。
@@ -9652,6 +9769,18 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
     // 归属判定「暂时拿不到结论」（unknown）与「确实是别人的」（foreign）必须分开处理：
     // 前者绝不能被后面的兜底新建会话顺手覆盖掉用户的续接指针。
     let adoptionUnknown = false;
+    // 预览模式：不采用任何可续接的会话来源（宿主下发的 resume id、本标签/跨标签指针、
+    // 服务端活跃会话），直接开一个不落盘的临时会话。`loadedCid` 必须同时置真，否则下面
+    // 的续接块仍会去读本地指针与 `/chat/active`，等于把「上次对话」又接回来。
+    // 只在本页签还没有会话时新建：initChat 可能因重连/宿主重推被再次调用，那时应继续用
+    // 这个临时会话，而不是把它丢掉。
+    if (isPreviewSession) {
+      requestedConversationId = "";
+      if (!conversationId.value) {
+        generateNewConversation({ persist: false });
+      }
+      loadedCid = true;
+    }
     if (requestedConversationId) {
       const requested = String(requestedConversationId);
       const requestedAdoption = await checkConversationAdoption(requested);
@@ -9748,6 +9877,15 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
         // 历史加载完成后再还原流式草稿：已有落库终态时草稿会被丢弃，不会被重复注入。
         .then(() => restoreEmbedStreamSnapshot(initGeneration))
         .catch(e => console.error("[Init] History load failed:", e));
+    }
+
+    // 9. 侧栏若已展开（上次开着，挂载时自动恢复），在这里补拉一次会话列表。
+    //    挂载早期那轮 fetchHistory 会早于认证与 agent 锁定：那时 config.token 为空、
+    //    hasPermission 仍为 false，请求被直接跳过（或带上了 URL 里的 agent slug 而不是
+    //    解析后的 id），侧栏就停在「暂无会话历史」，用户只能手动点刷新。等到凭据、身份
+    //    与智能体锁定都就绪后再收敛一次。
+    if (showHistorySidebar.value) {
+      void fetchHistory();
     }
   } catch (e) {
     console.error("Init chat failed", e);
@@ -11339,6 +11477,20 @@ const submitBusinessConfirmation = async (
   await sendMessage();
 };
 
+/** 提问卡选项附带的页面动作（如「我自己指定」→ 直接打开知识库门户）。
+ *  只负责唤起入口，不碰选中与回执：回执仍由卡片正常提交，
+ *  否则后端 pending_scope_gate 快照清不掉。
+ *  未知动作一律忽略，以后加新点子只改这里。
+ */
+function handleUserQuestionOptionAction(action: string) {
+  if (action === "open_dataset_picker") {
+    // 必须走统一入口，不能只置 showKnowledgePortal：入口里还负责关掉另一个抽屉，
+    // 并 await fetchDatasets() 拉数据。只翻开关会得到一个"0 个知识库"的空面板，
+    // 用户得手动点刷新才有内容——看起来像没权限，其实是根本没发请求。
+    void openKnowledgePortal();
+  }
+}
+
 const submitUserQuestion = async (
   msg: Message,
   payload: { selectedOptionIds: string[]; customInput: string; cancelled: boolean },
@@ -12278,6 +12430,13 @@ onMounted(() => {
   localStorage.removeItem("yovole_embed_agent_avatar");
   void fetchUserPortalPreferences();
   const query = new URLSearchParams(window.location.search);
+  // 「预览对话」入口带 `preview=1`：本次打开必须是一个干净的临时会话。
+  // 该参数不在 stripUrlCredentials 的清理范围内（它只删 token/ticket），所以刷新后仍然
+  // 是预览模式——不会在刷新时退回「续接上次对话」。
+  if (query.get("preview") === "1") {
+    isPreviewSession = true;
+    console.log("[LifeCycle] Preview mode: clean temporary conversation, no resume.");
+  }
   const queryInstanceId = normalizeEmbedInstanceId(query.get("instance_id"));
   if (queryInstanceId) config.instanceId = queryInstanceId;
   if (query.get("strict_token") === "1") {

@@ -4,6 +4,10 @@ export interface UserQuestionOption {
   id: string;
   label: string;
   description?: string;
+  /** 置灰不可选：仅作提示，后端仍可能收到该选项的回执，业务侧需自行判断 */
+  disabled?: boolean;
+  /** 点击该项时额外触发的页面动作（如 open_dataset_picker）；未知动作忽略即可 */
+  action?: string;
 }
 
 export interface UserQuestionState {
@@ -29,6 +33,8 @@ function normalizeOptions(raw: unknown): UserQuestionOption[] {
       id: String(item.id || "").trim(),
       label: String(item.label || item.id || "选项").trim(),
       description: item.description ? String(item.description) : undefined,
+      disabled: item.disabled === true,
+      action: item.action ? String(item.action) : undefined,
     }))
     .filter((item) => item.id && item.label);
 }

@@ -307,9 +307,13 @@ router.beforeEach((to: any, _from: any, next: any) => {
 
       const userMenus = userInfo.permissions?.menus || []
       const isPublicWorkbench = to.name === 'PersonalWorkbench'
+      // 只读概览是给「被授权但没有对应管理菜单」的账号用的：
+      // 它们本来就该由后端按数据权限放行，不能因为没有系统菜单就被挡在守卫外
+      const isReadonlySquarePage =
+        to.name === 'ResourceSquareDataset' || to.name === 'ResourceSquareKnowledge'
       
       // 1. 本地会话没有任何菜单权限 → 无权限页（「尝试刷新」会重新拉取 /me）
-      if (userMenus.length === 0 && !isPublicWorkbench) {
+      if (userMenus.length === 0 && !isPublicWorkbench && !isReadonlySquarePage) {
         next({ name: 'NoPermission' })
         return
       }

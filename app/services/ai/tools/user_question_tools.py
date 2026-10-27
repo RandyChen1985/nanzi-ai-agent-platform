@@ -14,6 +14,22 @@ class QuestionOption(BaseModel):
     id: str = Field(description="选项稳定标识，回传时使用")
     label: str = Field(description="展示给用户的选项名称")
     description: str | None = Field(default=None, description="选项补充说明")
+    action: str | None = Field(
+        default=None,
+        description=(
+            "选项附带的页面动作标识（如 open_dataset_picker）。用户点击该项时，"
+            "前端在正常选中之外额外触发对应页面动作；未知 action 应被忽略。"
+            "动作不影响回执内容，选中与提交行为保持不变。"
+        ),
+    )
+    disabled: bool = Field(
+        default=False,
+        description=(
+            "置灰不可选，用于「看得到但当前用不了」的情形（如该知识库尚无权限、"
+            "智能体未绑定任何库）。仅作前端提示，不代表后端会拒绝该选项的回执——"
+            "真正的约束必须在业务侧判断。"
+        ),
+    )
 
     @field_validator("id", "label")
     @classmethod
@@ -54,6 +70,9 @@ class AskUserQuestionArgs(BaseModel):
             raise ValueError("options 的 id 必须唯一")
         if any(len(item.label) > 200 for item in value):
             raise ValueError("选项 label 不能超过 200 个字符")
+        # 全部置灰等于把用户堵死：卡片看得见、一项都点不了，还占着等待回答的状态。
+        if all(item.disabled for item in value):
+            raise ValueError("options 至少要保留一项可选，不能全部 disabled")
         return value
 
     @field_validator("context")

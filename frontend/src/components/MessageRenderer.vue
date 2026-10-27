@@ -4,6 +4,7 @@ import { linkifyGeneratedFileUrls, resolveGeneratedFileHref } from '@/utils/gene
 import { buildArtifactDownloadUrl, resolveGeneratedPreviewPlan } from '@/utils/generatedFilePreviewPlan';
 import { resolveDocumentViewerMime } from '@/utils/documentPreviewFormats';
 import { appendBrowserOpenActions, appendBrowserOpenActionsToCode, isBrowserOpenableUrl } from '@/utils/messageBrowserLinks';
+import { injectOpenLinksForPaths } from '@/utils/messageFilePathLinks';
 import { renderMarkdown } from '@/utils/markdown';
 import { enhanceMarkdownTablesForMobile } from '@/utils/markdownTableResponsive';
 import { parseQuickButtons, postProcessQuickButtonHtml, stripQuickButtons } from '@/utils/quickButtons';
@@ -156,24 +157,9 @@ interface ContentSegment {
     return lastOpen > lastClose;
   };
 
-  const FILE_PATH_EXTENSIONS =
-    'md|csv|txt|py|js|ts|sh|sql|json|pdf|html|css|yaml|yml|log|env|docx?|xlsx?|xlsm|pptx?';
-  const FILE_PATH_SEGMENT = String.raw`[^/#\s<>"'，。；：！？、]+`;
-  const filePathRegex = new RegExp(
-    String.raw`(?:\./|/)?(?:${FILE_PATH_SEGMENT}/)+${FILE_PATH_SEGMENT}\.(?:${FILE_PATH_EXTENSIONS})`,
-    'giu',
-  );
-
-  const appendOpenLinkToPath = (rawPathVal: string) => {
-    const pathVal = rawPathVal.replace(/###HTML_TAG_PLACEHOLDER_\d+###/g, '').trim();
-    if (!pathVal) return rawPathVal;
-    if (/^\/?(?:api|static|assets)\//i.test(pathVal)) return rawPathVal;
-    const canvasUrl = `canvas://file?path=${encodeURIComponent(pathVal)}`;
-    return `${pathVal}<a href="${canvasUrl}" class="inline-flex items-center text-blue-600 dark:text-blue-400 hover:underline font-bold ml-1.5 text-[10.5px]" title="点击在画布中打开文件" style="cursor: pointer;">[打开]</a>`;
-  };
-
-  const injectOpenLinksForPaths = (text: string) =>
-    text.replace(filePathRegex, (pathVal) => appendOpenLinkToPath(pathVal));
+  // 本地文件路径 →「打开」链接的识别（扩展名白名单 + 结束边界）已抽到
+  // `utils/messageFilePathLinks.ts`：那里能用 node 直接跑行为测试，避免再出现
+  // 「.json 被截成 .js、'on' 漏在正文里」这类只在真实渲染时才暴露的回归（#272）。
 
   /**
    * 产物能力链接（/api/v1/chat/generated-files/{32hex}?token=...）

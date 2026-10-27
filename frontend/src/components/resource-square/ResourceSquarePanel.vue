@@ -68,6 +68,8 @@ const showDs = computed(() => tab.value !== 'kb')
 const kbHasMore = computed(() => kbItems.value.length < kbTotal.value)
 const dsHasMore = computed(() => dsItems.value.length < dsTotal.value)
 
+let noticeTimer: ReturnType<typeof setTimeout> | null = null
+
 const applyTarget = ref<{
   resourceType: 'dataset' | 'metadata'
   resourceId: string
@@ -75,8 +77,28 @@ const applyTarget = ref<{
   resourceMeta?: string
 } | null>(null)
 
+/** 请求序号：谁最后发出，谁的结果生效；先回来的旧响应直接丢弃 */
+const kbRequestSeq = ref(0)
+const dsRequestSeq = ref(0)
+let reloadTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 搜索框每敲一个字都发一次请求既浪费也会让列表闪烁，
+ * 但筛选按钮是离散点击，立即生效更符合预期，所以延迟由调用方决定。
+ */
+function scheduleReload(delay = 200) {
+  if (reloadTimer) clearTimeout(reloadTimer)
+  reloadTimer = setTimeout(() => {
+    reloadTimer = null
+    void reloadAll()
+  }, delay)
+}
+
 async function loadKnowledge(append = false) {
-  if (append ? kbLoadingMore.value : kbLoading.value) return
+  // 旧实现用 `if (kbLoading) return` 挡并发，可被丢掉的是「筛选条件已变」后的新请求，
+  // 结果就是列表停在旧条件上、和顶部条件对不上。改由序号决定最终生效者。
+  if (append && (kbLoadingMore.value || kbLoading.value)) return
+  const seq = ++kbRequestSeq.value
   if (append) {
     kbLoadingMore.value = true
   } else {
@@ -92,22 +114,28 @@ async function loadKnowledge(append = false) {
       page: append ? kbPage.value + 1 : 1,
       size: PAGE_SIZE,
     })
+    if (seq !== kbRequestSeq.value) return
     kbItems.value = append ? [...kbItems.value, ...data.items] : data.items
     kbTotal.value = data.total
     kbStale.value = Boolean(data.stale)
     kbSummary.value = data.summary
     if (append) kbPage.value += 1
   } catch (error) {
+    if (seq !== kbRequestSeq.value) return
     kbError.value = error instanceof Error ? error.message : '读取知识库失败'
+    // 只有「重新加载」失败才清空列表：加载更多失败时，已经看到的条目必须留着
     if (!append) kbItems.value = []
   } finally {
-    kbLoading.value = false
-    kbLoadingMore.value = false
+    if (seq === kbRequestSeq.value) {
+      kbLoading.value = false
+      kbLoadingMore.value = false
+    }
   }
 }
 
 async function loadDatasets(append = false) {
-  if (append ? dsLoadingMore.value : dsLoading.value) return
+  if (append && (dsLoadingMore.value || dsLoading.value)) return
+  const seq = ++dsRequestSeq.value
   if (append) {
     dsLoadingMore.value = true
   } else {
@@ -122,17 +150,21 @@ async function loadDatasets(append = false) {
       page: append ? dsPage.value + 1 : 1,
       size: PAGE_SIZE,
     })
+    if (seq !== dsRequestSeq.value) return
     dsItems.value = append ? [...dsItems.value, ...data.items] : data.items
     dsTotal.value = data.total
     datasetsEnabled.value = data.enabled
     dsSummary.value = data.summary
     if (append) dsPage.value += 1
   } catch (error) {
+    if (seq !== dsRequestSeq.value) return
     dsError.value = error instanceof Error ? error.message : '读取数据集失败'
     if (!append) dsItems.value = []
   } finally {
-    dsLoading.value = false
-    dsLoadingMore.value = false
+    if (seq === dsRequestSeq.value) {
+      dsLoading.value = false
+      dsLoadingMore.value = false
+    }
   }
 }
 
@@ -144,9 +176,17 @@ async function reloadAll() {
 // 不暴露出来，站在这个 tab 点刷新就是「按钮转了、数据没动」——比没有刷新更糟。
 defineExpose({ reloadAll })
 
-/** 筛选变了就回到第一页：停在第三页看新条件的结果只会看到「空」 */
-watch([keyword, tab, stateFilter, visibility], () => {
-  void reloadAll()
+// 搜索框防抖；tab / 状态 / 可见范围是离散点击，立即重新加载
+watch([keyword], () => scheduleReload(300))
+watch([tab, stateFilter, visibility], () => scheduleReload(0))
+
+// 状态筛选写回 URL：否则从工作台带进来的 status=has 会一直挂着，
+// 用户手动切回「全部」再刷新又跳回「已授权」，看起来像筛选不生效。
+watch(stateFilter, (value) => {
+  const query = { ...route.query }
+  if (value === 'all') delete query.status
+  else query.status = value
+  void router.replace({ query })
 })
 
 function applyKb(item: SquareKnowledgeItem) {
@@ -181,7 +221,14 @@ function openDs(item: SquareDatasetItem) {
   router.push({ name: 'ResourceSquareDataset', params: { id: String(item.id) } })
 }
 
+const submitNotice = ref('')
+
 async function onSubmitted() {
+  submitNotice.value = '已提交申请，管理员审批后会收到通知'
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => {
+    submitNotice.value = ''
+  }, 5000)
   await reloadAll()
 }
 
@@ -224,6 +271,13 @@ onMounted(async () => {
     </div>
 
     <div
+      v-if="submitNotice"
+      class="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-300"
+    >
+      {{ submitNotice }}
+    </div>
+
+    <div
       class="flex flex-wrap items-center gap-2 rounded-xl border border-gray-100 bg-white p-3 dark:border-gray-700 dark:bg-gray-800"
     >
       <input
@@ -249,6 +303,7 @@ onMounted(async () => {
         </button>
       </div>
       <select
+        v-if="showKb"
         v-model="visibility"
         class="rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
       >
@@ -292,12 +347,18 @@ onMounted(async () => {
       </div>
       <div v-if="kbError" class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
         {{ kbError }}
-        <button type="button" class="ml-2 font-semibold underline" @click="loadKnowledge()">重试</button>
+        <button
+          type="button"
+          class="ml-2 font-semibold underline"
+          @click="loadKnowledge(kbItems.length > 0)"
+        >
+          重试
+        </button>
       </div>
-      <div v-else-if="kbLoading" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div v-if="kbLoading && !kbItems.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <div v-for="i in 6" :key="i" class="h-40 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800/60" />
       </div>
-      <div v-else-if="kbItems.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div v-if="kbItems.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <ResourceSquareCard
           v-for="item in kbItems"
           :key="item.dataset_id"
@@ -317,11 +378,14 @@ onMounted(async () => {
           @open="openKb(item)"
         />
       </div>
-      <div v-else class="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-xs text-gray-400 dark:border-gray-700">
+      <div
+        v-if="!kbLoading && !kbItems.length && !kbError"
+        class="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-xs text-gray-400 dark:border-gray-700"
+      >
         没有匹配的知识库，换个关键词或清空筛选试试。
       </div>
 
-      <div v-if="kbHasMore && !kbLoading && !kbError" class="text-center">
+      <div v-if="kbHasMore" class="text-center">
         <button
           type="button"
           class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:border-primary hover:text-primary disabled:opacity-60 dark:border-gray-600 dark:text-gray-300"
@@ -348,14 +412,23 @@ onMounted(async () => {
       <div v-if="!datasetsEnabled" class="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-xs text-gray-400 dark:border-gray-700">
         管理员暂未开放数据集目录，需要数据请联系管理员手工授权。
       </div>
-      <div v-else-if="dsError" class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+      <div v-if="datasetsEnabled && dsError" class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
         {{ dsError }}
-        <button type="button" class="ml-2 font-semibold underline" @click="loadDatasets()">重试</button>
+        <button
+          type="button"
+          class="ml-2 font-semibold underline"
+          @click="loadDatasets(dsItems.length > 0)"
+        >
+          重试
+        </button>
       </div>
-      <div v-else-if="dsLoading" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div
+        v-if="datasetsEnabled && dsLoading && !dsItems.length"
+        class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+      >
         <div v-for="i in 6" :key="i" class="h-40 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800/60" />
       </div>
-      <div v-else-if="dsItems.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div v-if="datasetsEnabled && dsItems.length" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <ResourceSquareCard
           v-for="item in dsItems"
           :key="item.id"
@@ -376,11 +449,14 @@ onMounted(async () => {
           @open="openDs(item)"
         />
       </div>
-      <div v-else class="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-xs text-gray-400 dark:border-gray-700">
+      <div
+        v-if="datasetsEnabled && !dsLoading && !dsItems.length && !dsError"
+        class="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-xs text-gray-400 dark:border-gray-700"
+      >
         没有匹配的数据集，换个关键词试试。
       </div>
 
-      <div v-if="dsHasMore && !dsLoading && !dsError" class="text-center">
+      <div v-if="datasetsEnabled && dsHasMore" class="text-center">
         <button
           type="button"
           class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:border-primary hover:text-primary disabled:opacity-60 dark:border-gray-600 dark:text-gray-300"

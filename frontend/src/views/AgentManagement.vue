@@ -2768,15 +2768,18 @@ const openPreview = async (agent: AIAgent) => {
     });
     if (res.data?.code === 200 && res.data.data?.ticket) {
       const ticket = res.data.data.ticket;
-      const url = `/embed/chat?ticket=${encodeURIComponent(ticket)}&agent_id=${encodeURIComponent(agentKey)}&theme=light`;
+      // preview=1：预览必须是干净的临时会话——不续接本浏览器上次的对话、也不把
+      // 这条临时会话写成续接指针（embed 侧统一收口）。否则先预览主助手再预览数据
+      // 智能助手会落到同一个会话、看到上一段历史。
+      const url = `/embed/chat?ticket=${encodeURIComponent(ticket)}&agent_id=${encodeURIComponent(agentKey)}&theme=light&preview=1`;
       window.open(url, "_blank");
       return;
     }
   } catch (e) {
     console.warn("Failed to generate embed ticket for preview, falling back to chat route", e);
   }
-  // 降级兜底：在平台内部对话页打开
-  window.open(`/dashboard/chat?agent_id=${encodeURIComponent(agentKey)}`, "_blank");
+  // 降级兜底：在平台内部对话页打开（同样带 preview=1，由宿主透传到 iframe）
+  window.open(`/dashboard/chat?agent_id=${encodeURIComponent(agentKey)}&preview=1`, "_blank");
 };
 
 const createExternalEngineAgent = async () => {

@@ -1,5 +1,6 @@
 import { ref, watch } from "vue";
 import axios from "@/utils/axios";
+import { readKnowledgeBaseIds, syncKnowledgeBaseChip, toggleMountId } from "@/utils/sessionMountChips";
 
 export interface KnowledgeDataset {
   id: string;
@@ -186,55 +187,20 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
   };
 
   // 从当前输入框附件中提取已激活的知识库
+  // chip 的格式与写入统一收敛在 `sessionMountChips`，这里只读不拼
   const syncActiveDatasetsFromInput = (chatInputRef: any) => {
-    if (!chatInputRef || !chatInputRef.uploadedFiles) {
-      activeDatasetIds.value = [];
-      return;
-    }
-    const files = chatInputRef.uploadedFiles || [];
-    const kbFile = files.find((f: any) => f.type === "knowledge_base");
-    if (kbFile && kbFile.url) {
-      activeDatasetIds.value = kbFile.url.split(",").map((id: string) => id.trim()).filter(Boolean);
-    } else {
-      activeDatasetIds.value = [];
-    }
+    activeDatasetIds.value = chatInputRef?.uploadedFiles
+      ? readKnowledgeBaseIds(chatInputRef.uploadedFiles)
+      : [];
   };
 
   // 开关切换激活状态
   const toggleDatasetActive = (datasetId: string, chatInputRef: any) => {
     if (!chatInputRef) return;
-    if (!chatInputRef.uploadedFiles) {
-      chatInputRef.uploadedFiles = [];
-    }
-
-    const files = chatInputRef.uploadedFiles || [];
-    const otherFiles = files.filter((f: any) => f.type !== "knowledge_base");
-    const kbFile = files.find((f: any) => f.type === "knowledge_base");
-
-    let currentIds = kbFile && kbFile.url
-      ? kbFile.url.split(",").map((id: string) => id.trim()).filter(Boolean)
-      : [];
-
-    if (currentIds.includes(datasetId)) {
-      currentIds = currentIds.filter((id: string) => id !== datasetId);
-    } else {
-      currentIds.push(datasetId);
-    }
-
-    activeDatasetIds.value = currentIds;
-
-    if (currentIds.length > 0) {
-      const newKbFile = {
-        type: "knowledge_base",
-        url: currentIds.join(","),
-        filename: `已选择 ${currentIds.length} 个知识库`,
-        size: 0,
-        ext: "knowledge_base",
-      };
-      chatInputRef.uploadedFiles = [...otherFiles, newKbFile];
-    } else {
-      chatInputRef.uploadedFiles = otherFiles;
-    }
+    const files = Array.isArray(chatInputRef.uploadedFiles) ? chatInputRef.uploadedFiles : [];
+    const nextIds = toggleMountId(readKnowledgeBaseIds(files), datasetId);
+    activeDatasetIds.value = nextIds;
+    chatInputRef.uploadedFiles = syncKnowledgeBaseChip(files, nextIds);
   };
 
   // 置顶状态管理
