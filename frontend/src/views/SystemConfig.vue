@@ -1853,6 +1853,22 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
 * 如果问题比较多样化、偏口语表述，调高该值（如 0.6 ~ 0.7）以强化语义召回。`,
     'knowledge_ragflow_metadata_top_k': '知识库问答检索时，最大召回匹配的候选文档片段数。值越大参考条数越多，但会消耗更多的模型 Token。',
     'knowledge_base_enabled': '总开关：关闭后隐藏下方 RAGFlow 配置项，并禁用知识库管理、检索测试及智能体的 search_knowledge_base 工具。',
+    'knowledge_scope_gate_enabled': `【检索范围确认 (knowledge_scope_gate_enabled)】
+当用户可检索的知识库较多、且本轮没有显式指定库时，先让用户确认检索范围，避免在几十上百个库中做无差别联合检索。
+
+* 填 true 开启，false 关闭。
+* 关闭后回到「全量检索」的旧行为，且优先级最高：即使某个智能体选了「强制开启」也会一并关闭，可以直接用来止血。
+* 智能体侧在「智能体配置」里单独选择「跟随全局 / 强制开启 / 关闭 / 仅用绑定库」（仅知识库类型智能体可见）；「强制开启」只在本开关开启时生效，含义是「该智能体不跟随后续灰度」。`,
+    'knowledge_scope_gate_threshold': `【触发阈值 (knowledge_scope_gate_threshold)】
+实际参与检索的知识库数量超过该值时才弹范围确认卡，默认 5。
+
+* 口径是「合并智能体绑定后真正会参与检索的库数」，不是「用户可访问的库总数」。
+* 智能体已绑定少量库时通常不会触发，避免无意义打扰。`,
+    'knowledge_scope_gate_ranked_limit': `【推荐库数量 (knowledge_scope_gate_ranked_limit)】
+范围确认卡里「在 N 个最相关库中检索」这一项的库数量，默认 3。
+
+* 按问题与知识库名称、描述的匹配度自动挑选。
+* 数值越大越可能包含相关库，但也越接近全量检索的效果。`,
     'third_party_user_sync_config': '配置从外部数据源定时同步用户信息到本平台的参数。包含启用状态、连接源、表名、字段对应关系和同步周期。此配置已在【用户管理】页面统一维护，在此处仅提供只读展示。',
     'agent_context_max_tokens': '发送给 LLM 的上下文 Token 预算上限（默认 65536 即 64k）。当历史会话上下文超过此预算时，系统优先触发早期对话压缩摘录或截断，避免超出大模型的上下文窗口限制。',
     'agent_max_context_messages': '发送给 LLM 的最大历史消息条目数（Token 预算优先，此处作为绝对兜底上限，默认 60 条）。',
@@ -2698,6 +2714,12 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     if (!enabled) {
       list = list.filter(x => x.key === 'knowledge_base_enabled')
     }
+    // 检索范围确认关闭时，阈值与推荐库数没有任何作用，留着只会让人以为还要配。
+    // 与 knowledge_base_enabled 同一惯例：只不渲染，值仍在 configGroups 里，保存不会清空。
+    const scopeGateEnabled = (list.find(x => x.key === 'knowledge_scope_gate_enabled')?.value ?? 'true') === 'true'
+    if (!scopeGateEnabled) {
+      list = list.filter(x => !['knowledge_scope_gate_threshold', 'knowledge_scope_gate_ranked_limit'].includes(x.key))
+    }
     const order = [
       'knowledge_base_enabled',
       'knowledge_ragflow_api_url',
@@ -2707,7 +2729,10 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'knowledge_quota_max_documents_per_dataset',
       'knowledge_ragflow_similarity_threshold',
       'knowledge_ragflow_vector_weight',
-      'knowledge_ragflow_metadata_top_k'
+      'knowledge_ragflow_metadata_top_k',
+      'knowledge_scope_gate_enabled',
+      'knowledge_scope_gate_threshold',
+      'knowledge_scope_gate_ranked_limit'
     ]
     list.sort((a, b) => {
       const idxA = order.indexOf(a.key)
@@ -4412,8 +4437,16 @@ onUnmounted(() => {
                       item.key === 'external_sql_api_url' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-t-xl border-x border-t border-emerald-200/80 bg-emerald-50/60 px-4 pt-4 -mx-4' : '',
                       item.key === 'external_sql_api_key' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group border-x border-emerald-200/80 bg-emerald-50/60 px-4 -mx-4 !mt-0' : '',
                       item.key === 'external_sql_data_source' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-b-xl border-x border-b border-emerald-200/80 bg-emerald-50/60 px-4 pb-4 -mx-4 !mt-0' : '',
+                      item.key === 'knowledge_scope_gate_enabled' ? 'scope-gate-config-group rounded-t-xl border-x border-t border-violet-200/80 bg-violet-50/50 px-4 pt-4 -mx-4' : '',
+                      item.key === 'knowledge_scope_gate_threshold' ? 'scope-gate-config-group border-x border-violet-200/80 bg-violet-50/50 px-4 py-3 -mx-4 !mt-0' : '',
+                      item.key === 'knowledge_scope_gate_ranked_limit' ? 'scope-gate-config-group rounded-b-xl border-x border-b border-violet-200/80 bg-violet-50/50 px-4 pt-3 pb-4 -mx-4 !mt-0' : '',
                       highlightedConfigKey === item.key ? 'ring-2 ring-primary/60 rounded-xl shadow-lg bg-primary/5 scroll-mt-24 -mx-1 px-1' : ''
                     ]">
+                      <div v-if="item.key === 'knowledge_scope_gate_enabled'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-violet-800">
+                        <ServerIcon class="h-4 w-4 shrink-0 text-violet-600" />
+                        <span>知识库检索范围确认</span>
+                        <span class="text-xs font-normal text-violet-700/80">可检索库较多时先让用户选定范围，避免上百个库无差别联合检索</span>
+                      </div>
                       <div v-if="item.key === 'ragflow_api_url'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-sky-800">
                         <ServerIcon class="h-4 w-4 shrink-0 text-sky-600" />
                         <span>RAGFlow 连接配置</span>
@@ -5518,7 +5551,7 @@ onUnmounted(() => {
                                 class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                               >{{ item.description }}</p>
                            </div>
-                           <div v-else-if="['user_registration_enabled', 'embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'email_service_enabled', 'agentscope_inject_runtime_state', 'miniprogram_enabled', 'resource_square_show_datasets'].includes(item.key)">
+                           <div v-else-if="['user_registration_enabled', 'embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'email_service_enabled', 'agentscope_inject_runtime_state', 'miniprogram_enabled', 'resource_square_show_datasets', 'knowledge_scope_gate_enabled'].includes(item.key)">
                              <div class="flex items-center">
                              <button
                                type="button"
@@ -5908,7 +5941,7 @@ onUnmounted(() => {
                              >+</button>
                              <span class="text-xs text-gray-500">次</span>
                           </div>
-                          <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'chatbi_sample_top_k'].includes(item.key)">
+                          <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'chatbi_sample_top_k', 'knowledge_scope_gate_threshold', 'knowledge_scope_gate_ranked_limit'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                           </div>
                           <div v-else-if="item.key === 'sandbox_docker_base_image'" class="space-y-2.5">

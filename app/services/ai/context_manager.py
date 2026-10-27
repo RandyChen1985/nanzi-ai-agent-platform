@@ -271,7 +271,15 @@ class AgentContextManager:
         engine_config = config.engine_config or {}
         if config.agent_dataset_ids is None:
             config.agent_dataset_ids = merge_dataset_id_sources(engine_config.get("dataset_ids"))
-        request_dataset_ids = merge_dataset_id_sources(knowledge_dataset_ids)
+        # 「仅检索智能体绑定的知识库」：把范围钉死在绑定上，忽略本轮传入的知识库 ID
+        # 与用户可访问的其他库。发布给外部使用的智能体常用它约束召回边界。
+        #
+        # 它与「范围确认」是同一个互斥四态里的一个取值（scope_gate=bound_only）：
+        # 范围一旦由配置钉死，就没有「问用户选哪个」的余地。
+        bound_only = str(engine_config.get("scope_gate") or "").strip().lower() == "bound_only"
+        request_dataset_ids = (
+            [] if bound_only else merge_dataset_id_sources(knowledge_dataset_ids)
+        )
         previous_context = get_current_agent_context()
         previous_agent_dataset_ids = (
             previous_context.agent_dataset_ids
@@ -287,7 +295,11 @@ class AgentContextManager:
                 else config.agent_dataset_ids
             )
         )
-        if request_dataset_ids:
+        if bound_only:
+            # 不查权限、不看显式选择：范围就是绑定本身。绑定为空则本轮检索范围为空，
+            # 由上层按「未配置知识库」处理——这比悄悄扩大范围去检索更安全。
+            effective_dataset_ids = list(configured_agent_dataset_ids)
+        elif request_dataset_ids:
             # 用户显式选择是硬范围，不能被智能体默认知识库扩展。
             effective_dataset_ids = request_dataset_ids
         else:

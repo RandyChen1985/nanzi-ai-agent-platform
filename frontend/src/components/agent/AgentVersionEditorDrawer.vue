@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ScopeGateSelect from "./ScopeGateSelect.vue";
 import { computed, ref } from 'vue';
 import type { AIAgent, AIAgentBase, AIAgentVersion, AgentType, StaleToolRef } from '../../api/agent';
 import type { AIModel } from '../../api/model';
@@ -441,6 +442,21 @@ const addCapability = () => {
   props.agentForm.capabilities = [...(props.agentForm.capabilities || []), value];
   newCapability.value = '';
 };
+// 「跟随全局」不落键，保持 engine_config 干净；后端缺省即 inherit。
+const scopeGateMode = computed(() => {
+  const raw = String(engineConfig.value.scope_gate || '').trim().toLowerCase();
+  return ['inherit', 'on', 'off', 'bound_only'].includes(raw) ? raw : 'inherit';
+});
+const scopeGateModeModel = computed({
+  get: () => scopeGateMode.value,
+  set: (mode: string) => {
+    if (mode === 'inherit') {
+      delete engineConfig.value.scope_gate;
+      return;
+    }
+    engineConfig.value.scope_gate = mode;
+  },
+});
 const removeCapability = (value: string) => {
   props.agentForm.capabilities = (props.agentForm.capabilities || []).filter((item) => item !== value);
 };
@@ -702,6 +718,20 @@ const externalCreationMissingFields = computed(() => {
               </div>
               <div class="mt-3 flex gap-2"><input v-model="newCapability" @keyup.enter="addCapability" placeholder="输入标签并回车" class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" /><button type="button" @click="addCapability" class="rounded-lg bg-gray-100 px-4 text-xs font-medium text-gray-700">添加</button></div>
               <div class="mt-3 flex min-h-8 flex-wrap gap-2"><span v-for="capability in extensionCapabilities" :key="capability" class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">{{ capability }}<button type="button" @click="removeCapability(capability)" class="ml-1 text-gray-400 hover:text-red-500">×</button></span><span v-if="extensionCapabilities.length === 0" class="text-xs text-gray-400">暂无扩展能力</span></div>
+            </div>
+
+            <!-- 知识库检索范围确认：智能体级 engine_config，保存版本时一并同步 -->
+            <div
+              v-if="agentForm.agent_type === 'KNOWLEDGE_BASE'"
+              class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4"
+            >
+              <label class="text-sm font-bold text-gray-800">知识库检索范围确认</label>
+              <p class="mt-1 text-xs leading-5 text-gray-500">
+                可检索的知识库较多、且用户本轮没有指定库时，先让用户在「全部 / 仅智能体默认 / 最相关几个」里确认范围。触发阈值与推荐库数量由系统配置统一控制，这里只决定本智能体是否参与。
+              </p>
+              <div class="mt-3">
+                <ScopeGateSelect v-model="scopeGateModeModel" :disabled="!canEditVersion" />
+              </div>
             </div>
 
             <!-- 推荐排版样式选择 -->

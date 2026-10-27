@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 from app.services.ai.config import AgentConfigProvider
 from app.services.ai.executors.common import (
@@ -28,6 +29,17 @@ from app.services.ai.runtime.agentscope.tools import (
 )
 from app.services.ai.runtime.agentscope.tool_result import build_tool_result_envelope
 from app.services.ai.tool_capability import RegistryToolProvider, resolve_tool_capabilities
+from app.services.ai.knowledge_scope_gate import (
+    SCOPE_PICK,
+    ScopeGate,
+    build_gate_question,
+    evaluate_scope_gate,
+    parse_scope_choice,
+    resolve_dataset_ids_for_choice,
+    resolve_scope_gate_settings,
+    scope_mode_for_choice,
+)
+from app.services.conversation_resource_service import ConversationResourceService
 from app.services.ai.knowledge_utils import (
     NO_KNOWLEDGE_DATASET_MESSAGE,
     KNOWLEDGE_BASE_DISABLED_USER_MESSAGE,
@@ -43,6 +55,10 @@ from app.services.ai.knowledge_utils import (
 from app.services.ai.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+# 已确认范围的存活时间：一次工作会话的尺度。
+# 太短会让用户连续追问时反复被问，太长则把范围钉死到换话题之后。
+CONFIRMED_SCOPE_TTL_SECONDS = 2 * 60 * 60
 
 class KnowledgeAgentRunner(AssistantAgentRunner):
     """知识库问答 Runner：自动检索 + AgentScope ReAct，可扩展挂载业务工具。"""
@@ -196,6 +212,12 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         """判断是否可以跳过知识库预检索，避免复用失败时误走历史追问短路。"""
         if is_catalog_query:
             return False
+        # 用户回答回执必须走预检：它带着范围选择，一旦被当成「追问上一轮结果」而短路，
+        # 门禁恢复就会静默失效，用户会看到复用的旧引用而不是新范围内的检索结果。
+        from app.services.ai.user_question import USER_QUESTION_MESSAGE_PREFIX
+
+        if str(user_question or "").strip().startswith(USER_QUESTION_MESSAGE_PREFIX):
+            return False
         if reusable_knowledge_result:
             return True
         if reusable_decision.mode == "reuse":
@@ -258,6 +280,450 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             resolved.specs,
             agent_timeout=getattr(self.config, "toolcall_timeout_seconds", None),
         )
+
+    async def _maybe_open_scope_gate(
+        self,
+        *,
+        query: str,
+        ctx: Any,
+    ) -> Optional[ScopeGate]:
+        """检索前判断是否需要让用户确认范围。
+
+        任何异常都返回 None（放行现有全量行为）——门禁是优化项，不能比现状更差。
+        """
+        try:
+            # 委派链没有交互通道：卡片事件会被委派工具的流白名单静默丢弃，
+            # 子代理还跑在 child_session_{run_id} 上，回执校验必然失败。
+            # 此时弹卡等于把「正常回答」换成「子代理无输出」，必须让路给自动收窄。
+            if self._has_no_interactive_user():
+                return None
+            conversation_id = str(self.conversation_id or "").strip()
+            user_id = self._runtime_user_id()
+            # 没有会话或用户身份，就无法登记待回答状态、也无法在回执时还原范围：
+            # 这种情况下弹卡只会弹出一张「点了必然失败」的卡，直接放行全量行为。
+            if not conversation_id or not user_id:
+                return None
+            conversation_scope = await ConversationResourceService.get(user_id, conversation_id)
+            conversation_scope = await self._drop_scope_if_agent_changed(
+                scope=conversation_scope,
+                agent_id=self._scope_agent_id(ctx),
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+            conversation_scope = await self._drop_expired_scope(
+                scope=conversation_scope,
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+            enabled, threshold, ranked_limit = await resolve_scope_gate_settings(
+                getattr(ctx, "engine_config", None)
+            )
+            if not enabled:
+                return None
+
+            from app.services.ai.knowledge_catalog import load_authorized_knowledge_catalog
+
+            catalog = await load_authorized_knowledge_catalog(
+                user_id=user_id,
+                user_name=(self.user_info or {}).get("user_name"),
+                is_admin=bool(getattr(ctx, "is_admin", False)),
+            )
+            gate = await evaluate_scope_gate(
+                query=query,
+                effective_ids=list(getattr(ctx, "dataset_ids", []) or []),
+                bound_ids=list(getattr(ctx, "agent_dataset_ids", []) or []),
+                explicit_request_ids=list(getattr(ctx, "knowledge_dataset_ids", []) or []),
+                conversation_scope=conversation_scope,
+                catalog=catalog,
+                enabled=enabled,
+                threshold=threshold,
+                ranked_limit=ranked_limit,
+            )
+            if gate is not None and conversation_id:
+                await ConversationResourceService.patch_scope(
+                    user_id,
+                    conversation_id,
+                    pending_scope_gate=gate.to_pending_payload(),
+                )
+            return gate
+        except Exception as exc:  # noqa: BLE001 - 门禁失败绝不阻塞提问
+            logger.warning("[KnowledgeAgentRunner] Scope gate skipped: %s", exc)
+            return None
+
+    def _has_no_interactive_user(self) -> bool:
+        """本轮是否有在线用户等待交互（委派、定时任务、订阅任务都没有）。
+
+        直接复用 tool_nudge_policy 的既有判定：它已经覆盖定时/订阅/禁止建议等无人值守
+        场景，把「能否弹卡」的判断收敛到一处，避免两边口径不一致。
+        """
+        from app.services.ai.tool_nudge_policy import is_automatic_delivery_context
+
+        return is_automatic_delivery_context(self.user_info, self.execution_options)
+
+    def _is_delegated(self) -> bool:
+        """本轮是否由其他智能体委派而来。
+
+        与 ``_has_no_interactive_user`` 分开判断：定时/订阅任务同样不能弹卡，
+        但它们不该被「静默收窄」——报表把 100 个库自动砍到 3 个且结果里没有任何提示，
+        属于悄悄降低召回，漏数据比慢更糟。只有委派场景（母智能体在场、问题明确）
+        才做自动收窄。
+        """
+        from app.services.ai.tool_nudge_policy import is_automatic_delivery_context
+
+        if not is_automatic_delivery_context(self.user_info, self.execution_options):
+            return False
+        return any(
+            str((context or {}).get("delegated_sub_agent") or "").strip().lower()
+            in {"1", "true", "yes", "on"}
+            for context in (self.user_info, self.execution_options)
+            if isinstance(context, dict)
+        )
+
+    def _scope_agent_id(self, ctx: Any = None) -> str:
+        """当前轮次的智能体标识，用于判断会话里存的范围是否还属于它。
+
+        写入与比较必须同源：``ctx.agent_id`` 优先，缺省才退回配置里的 agent_id。
+        两处用不同来源时，委派或配置复用场景会出现「每轮都判定智能体变了 → 清空 →
+        再弹卡」的循环。
+        """
+        if ctx is None:
+            from app.core.context import get_current_agent_context
+
+            ctx = get_current_agent_context()
+        runtime_agent_id = str(getattr(ctx, "agent_id", "") or "") if ctx else ""
+        return runtime_agent_id or str(
+            getattr(getattr(self, "config", None), "agent_id", "") or ""
+        )
+
+    async def _drop_expired_scope(
+        self,
+        *,
+        scope: Any,
+        user_id: Any,
+        conversation_id: str,
+    ) -> Any:
+        """超过 TTL 的已确认范围作废。
+
+        范围一旦确认，会话在 Redis 里会保留 30 天；不设 TTL 就等于把一个话题的
+        检索范围钉死一个月，用户后面换话题问到别的库时会静默搜不到——比他重新
+        确认一次要糟得多。
+        """
+        if not isinstance(scope, dict):
+            return scope
+        state = scope.get("knowledge_scope")
+        if not isinstance(state, dict) or not self._scope_expired(state):
+            return scope
+        logger.info(
+            "[KnowledgeAgentRunner] Confirmed scope expired (confirmed_at=%s), clearing",
+            state.get("confirmed_at"),
+        )
+        try:
+            await ConversationResourceService.patch_scope(
+                user_id,
+                conversation_id,
+                knowledge_scope=None,
+            )
+        except Exception as exc:  # noqa: BLE001 - 清理失败也按过期处理
+            logger.warning("[KnowledgeAgentRunner] Clear expired scope failed: %s", exc)
+        cleared = dict(scope)
+        cleared["knowledge_scope"] = None
+        return cleared
+
+    @staticmethod
+    def _scope_expired(state: Any) -> bool:
+        if not isinstance(state, dict):
+            return False
+        raw = str(state.get("confirmed_at") or "").strip()
+        if not raw:
+            # 早期写入没有时间戳，按仍在有效期处理：宁可多生效一次，
+            # 也不要因为字段缺失把用户刚确认的范围立刻作废。
+            return False
+        confirmed = None
+        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                confirmed = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+        if confirmed is None:
+            # 认不出格式就按仍在有效期处理：宁可多生效一次，也不要因为
+            # 一个格式差异把用户刚确认的范围当场作废。
+            return False
+        if confirmed.tzinfo is None:
+            confirmed = confirmed.astimezone()
+        return (datetime.now(confirmed.tzinfo) - confirmed).total_seconds() > CONFIRMED_SCOPE_TTL_SECONDS
+
+    async def _drop_scope_if_agent_changed(
+        self,
+        *,
+        scope: Any,
+        agent_id: str,
+        user_id: Any,
+        conversation_id: str,
+    ) -> Any:
+        """切换智能体后旧范围必须清空重判：不同智能体的知识范围本就不同，
+        沿用旧范围会检索到该智能体根本不该搜的库。
+        """
+        if not isinstance(scope, dict):
+            return scope
+        stored_agent = str((scope.get("knowledge_scope") or {}).get("agent_id") or "").strip()
+        if not stored_agent or not agent_id or stored_agent == agent_id:
+            return scope
+        logger.info(
+            "[KnowledgeAgentRunner] Agent changed (%s -> %s), clearing confirmed scope",
+            stored_agent,
+            agent_id,
+        )
+        try:
+            await ConversationResourceService.patch_scope(
+                user_id,
+                conversation_id,
+                knowledge_scope=None,
+                pending_scope_gate=None,
+            )
+        except Exception as exc:  # noqa: BLE001 - 清理失败也不阻塞，内存里按空处理
+            logger.warning("[KnowledgeAgentRunner] Clear stale scope failed: %s", exc)
+        cleared = dict(scope)
+        cleared["knowledge_scope"] = None
+        cleared["pending_scope_gate"] = None
+        return cleared
+
+    async def _narrow_scope_without_asking(
+        self,
+        *,
+        query: str,
+        dataset_ids: List[str],
+        ctx: Any,
+    ) -> List[str]:
+        """委派场景的降级策略：问不了用户，就按最相关的几个库自动收窄。
+
+        委派意味着用户已经把「怎么做」交给主智能体，此时打断他去选范围并不合适；
+        但直接把几十上百个库全量联合检索也没有意义。按问题与库名称/描述的匹配度
+        取前 N 个，既保留了收敛收益，也不用任何交互。
+        """
+        try:
+            # 只有委派场景收窄；定时/订阅任务保持全量（见 _is_delegated 说明）。
+            if not self._is_delegated() or not dataset_ids:
+                return dataset_ids
+            enabled, threshold, ranked_limit = await resolve_scope_gate_settings(
+                getattr(ctx, "engine_config", None)
+            )
+            if not enabled or len(dataset_ids) <= max(int(threshold), 1):
+                return dataset_ids
+
+            from app.services.ai.knowledge_catalog import (
+                load_authorized_knowledge_catalog,
+                rank_knowledge_catalog,
+            )
+
+            catalog = await load_authorized_knowledge_catalog(
+                user_id=self._runtime_user_id(),
+                user_name=(self.user_info or {}).get("user_name"),
+                is_admin=bool(getattr(ctx, "is_admin", False)),
+            )
+            allowed = set(dataset_ids)
+            ranked = [
+                dataset_id
+                for dataset_id, _score in rank_knowledge_catalog(
+                    query, catalog, limit=ranked_limit
+                )
+                if dataset_id in allowed
+            ]
+            if not ranked:
+                # 一个都没匹配上就别猜：保留原范围，宁可多检索，也不要因猜错而漏掉答案。
+                return dataset_ids
+            logger.info(
+                "[KnowledgeAgentRunner] Delegated scope auto-narrowed: %d -> %d",
+                len(dataset_ids),
+                len(ranked),
+            )
+            return ranked
+        except Exception as exc:  # noqa: BLE001 - 收窄失败按原范围检索
+            logger.warning("[KnowledgeAgentRunner] Delegated auto-narrow skipped: %s", exc)
+            return dataset_ids
+
+    @staticmethod
+    def _apply_scope_to_context(dataset_ids: List[str]) -> None:
+        """把本轮最终范围写回上下文，让工具层的二次检索使用同一份范围。
+
+        ``resolve_bound_dataset_ids`` 读的是 ``ctx.dataset_ids``。只把收窄结果传给
+        平台预检索，模型自己再调 ``search_knowledge_base`` 时仍是全量——
+        「只在这 3 个库里检索」的用户意图就只兑现了一半，召回稀释问题原样回来。
+        """
+        if not dataset_ids:
+            return
+        from app.core.context import get_current_agent_context
+
+        ctx = get_current_agent_context()
+        if ctx is None:
+            return
+        if list(ctx.dataset_ids or []) == list(dataset_ids):
+            return
+        ctx.dataset_ids = list(dataset_ids)
+        logger.info(
+            "[KnowledgeAgentRunner] Scope applied to context: %d datasets",
+            len(dataset_ids),
+        )
+
+    async def _apply_confirmed_scope(self, resolved_ids: List[str]) -> List[str]:
+        """把会话里已确认的检索范围应用到本轮，而不只是靠它「不再弹卡」。
+
+        门禁确认过的范围存在会话里；如果只在弹卡判定时读它、检索时不用它，
+        用户就会看到「不再提示」但检索范围又悄悄变回全量——那等于这个功能没生效。
+        """
+        conversation_id = str(self.conversation_id or "").strip()
+        user_id = self._runtime_user_id()
+        if not conversation_id or not user_id or not resolved_ids:
+            return resolved_ids
+        try:
+            scope = await ConversationResourceService.get(user_id, conversation_id)
+        except Exception as exc:  # noqa: BLE001 - 读不到就按原范围检索
+            logger.warning("[KnowledgeAgentRunner] Read confirmed scope failed: %s", exc)
+            return resolved_ids
+        state = scope.get("knowledge_scope")
+        if not isinstance(state, dict):
+            return resolved_ids
+        scope = await self._drop_scope_if_agent_changed(
+            scope=scope,
+            agent_id=self._scope_agent_id(),
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        scope = await self._drop_expired_scope(
+            scope=scope,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        state = scope.get("knowledge_scope")
+        if not isinstance(state, dict):
+            return resolved_ids
+        confirmed = [str(item).strip() for item in (state.get("dataset_ids") or []) if str(item).strip()]
+        if not confirmed:
+            return resolved_ids
+        # 库被删除或权限被收回后，旧范围可能包含已不可检索的 ID：只保留仍在可检索集合内的，
+        # 全部失效时退回本轮解析出的范围，避免用空集合搜出一片零结果。
+        allowed = set(resolved_ids)
+        still_valid = [dataset_id for dataset_id in confirmed if dataset_id in allowed]
+        if not still_valid:
+            logger.info(
+                "[KnowledgeAgentRunner] Confirmed scope fully stale, falling back to resolved ids"
+            )
+            return resolved_ids
+        logger.info(
+            "[KnowledgeAgentRunner] Apply confirmed scope: mode=%s kept=%d of resolved=%d",
+            state.get("mode"),
+            len(still_valid),
+            len(resolved_ids),
+        )
+        return still_valid
+
+    @staticmethod
+    def _original_query_before_receipt(history: List[Dict[str, str]]) -> str:
+        """取触发门禁的那条原始提问，跳过【用户回答】回执本身。
+
+        回执轮次的 ``current_user_query`` 是整段回执文本（问题、所选选项、question_id...），
+        拿它当检索词会搜回一堆无关内容，所以恢复范围时要把检索词换回原问题。
+        """
+        from app.services.ai.user_question import USER_QUESTION_MESSAGE_PREFIX
+
+        for message in reversed(history or []):
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("role") or "").lower() != "user":
+                continue
+            content = str(message.get("content") or "").strip()
+            if content and not content.startswith(USER_QUESTION_MESSAGE_PREFIX):
+                return content
+        return ""
+
+    async def _build_scope_gate_chunk(self, *, gate: ScopeGate) -> Optional[Dict[str, Any]]:
+        """把门禁快照转成与 ``ask_user_question`` 同款的 ``user_question`` 事件。
+
+        发卡前必须先在 ``UserQuestionStore`` 登记待回答状态，否则用户提交回执时会被
+        preflight 判为「问题不存在或不属于当前会话」——卡片看得见、点了必然失败。
+        登记失败时返回 None，由调用方退回原有的全量检索行为。
+
+        ``__scope_bound__`` 在智能体未绑库时被标记为 disabled，而卡片 schema 没有禁用态，
+        因此这里直接过滤掉，避免用户点到必然失败的选项。
+        """
+        from app.services.ai.user_question import persist_user_question_event
+
+        event = {
+            "type": "user_question",
+            "question_id": f"uq_{uuid.uuid4().hex[:16]}",
+            "question": build_gate_question(gate),
+            "options": [
+                {key: value for key, value in option.items() if key != "disabled"}
+                for option in gate.options
+                if not option.get("disabled")
+            ],
+            "is_multi_select": False,
+            "allow_custom_input": True,
+            "context": "范围较大时先确认，可以避免在无关知识库中检索，提高命中率与速度。",
+            "purpose": "knowledge_scope_gate",
+        }
+        try:
+            await persist_user_question_event(
+                event=event,
+                user_id=self._runtime_user_id(),
+                conversation_id=str(self.conversation_id or "").strip(),
+            )
+        except Exception as exc:  # noqa: BLE001 - 登记不上就不要发这张卡
+            logger.warning(
+                "[KnowledgeAgentRunner] Scope gate chunk dropped, persist failed: %s", exc
+            )
+            return None
+        return event
+
+    async def _restore_scope_from_reply(self) -> List[str]:
+        """用户回答门禁卡后，用会话里的 pending 快照还原具体 dataset_id（通道 B）。
+
+        前端已把选中库写进 ``knowledge_dataset_ids`` 时（通道 A）也能命中，
+        这里覆盖的是不实现通道 A 的第三方客户端。
+        """
+        try:
+            choice = parse_scope_choice(self.current_user_query or "")
+            if not choice:
+                return []
+            conversation_id = str(self.conversation_id or "").strip()
+            if not conversation_id:
+                return []
+            user_id = self._runtime_user_id()
+            if choice == SCOPE_PICK:
+                # 用户希望自己指定：不猜范围，交回原有解析（通常是全量），
+                # 卡片文案已引导他改用知识库附件精确指定。
+                # 顺手清掉待回答快照，避免它被后续轮次误用。
+                await ConversationResourceService.patch_scope(
+                    user_id,
+                    conversation_id,
+                    pending_scope_gate=None,
+                )
+                return []
+            scope = await ConversationResourceService.get(user_id, conversation_id)
+            pending = scope.get("pending_scope_gate")
+            dataset_ids = resolve_dataset_ids_for_choice(choice, pending)
+            if not dataset_ids:
+                return []
+            await ConversationResourceService.patch_scope(
+                user_id,
+                conversation_id,
+                knowledge_scope={
+                    "mode": scope_mode_for_choice(choice),
+                    "dataset_ids": dataset_ids,
+                    "confirmed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    "agent_id": self._scope_agent_id(),
+                },
+                pending_scope_gate=None,
+            )
+            logger.info(
+                "[KnowledgeAgentRunner] Scope confirmed from reply: mode=%s datasets=%d",
+                scope_mode_for_choice(choice),
+                len(dataset_ids),
+            )
+            return dataset_ids
+        except Exception as exc:  # noqa: BLE001 - 还原失败则不收窄，走原有解析
+            logger.warning("[KnowledgeAgentRunner] Restore scope from reply failed: %s", exc)
+            return []
 
     async def _auto_invoke_search_knowledge_base(
         self,
@@ -746,9 +1212,65 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 supplement_allowed=False,
             )
         else:
-            resolved_dataset_ids, dataset_error = await resolve_knowledge_dataset_ids(
-                query=user_question,
-            )
+            # 范围门禁：先看上一轮用户是否刚回答了范围卡（通道 B 还原），
+            # 再判断本轮的检索范围是否需要用户先确认。
+            restored_dataset_ids = await self._restore_scope_from_reply()
+            if restored_dataset_ids:
+                # 卡片弹出到用户点下去之间库可能已被删除或收回，这里要跟正常路径
+                # 一样做存活校验，否则会拿着死 ID 去打 RAGFlow。
+                from app.services.ai.knowledge_utils import filter_alive_knowledge_dataset_ids
+
+                resolved_dataset_ids = await filter_alive_knowledge_dataset_ids(
+                    list(restored_dataset_ids)
+                )
+                dataset_error = (
+                    None
+                    if resolved_dataset_ids
+                    else "⚠️ 已确认的知识库在 RAGFlow 侧已失联或不存在，本次知识库问答已终止。"
+                )
+                # 回执轮的检索词不能是【用户回答】全文，换回触发门禁的原始提问。
+                user_question = self._original_query_before_receipt(history) or user_question
+            else:
+                from app.core.context import get_current_agent_context
+
+                receipt_choice = parse_scope_choice(self.current_user_query or "")
+                scope_gate = None
+                if receipt_choice != SCOPE_PICK:
+                    # 选「我自己指定」时不重复弹卡：否则用户点完这张卡下一行又弹同一张。
+                    scope_gate = await self._maybe_open_scope_gate(
+                        query=user_question,
+                        ctx=get_current_agent_context() or self._ensure_agent_context(),
+                    )
+                if scope_gate is not None:
+                    gate_chunk = await self._build_scope_gate_chunk(gate=scope_gate)
+                    if gate_chunk is not None:
+                        yield gate_chunk
+                        return
+                if receipt_choice == SCOPE_PICK:
+                    # 回执轮的检索词同样要换回原问题，而不是整段【用户回答】。
+                    user_question = self._original_query_before_receipt(history) or user_question
+                resolved_dataset_ids, dataset_error = await resolve_knowledge_dataset_ids(
+                    query=user_question,
+                )
+                # 会话里确认过范围就按它检索（本轮没显式选库时才应用，显式选库优先）。
+                if not getattr(
+                    get_current_agent_context() or self._ensure_agent_context(),
+                    "knowledge_dataset_ids",
+                    None,
+                ):
+                    resolved_dataset_ids = await self._apply_confirmed_scope(
+                        list(resolved_dataset_ids or [])
+                    )
+                    # 委派场景问不了用户，改用「最相关 N 个库」自动收窄。
+                    resolved_dataset_ids = await self._narrow_scope_without_asking(
+                        query=user_question,
+                        dataset_ids=list(resolved_dataset_ids or []),
+                        ctx=get_current_agent_context() or self._ensure_agent_context(),
+                    )
+                # 最终范围必须写回上下文：模型随后自己调用 search_knowledge_base 时
+                # 走 resolve_bound_dataset_ids(ctx.dataset_ids)，不写回就变成
+                # 「预检索收窄了、二次检索仍全量」，用户确认的范围只兑现一半。
+                self._apply_scope_to_context(list(resolved_dataset_ids or []))
             if dataset_error and not resolved_dataset_ids:
                 async for chunk in self._yield_knowledge_no_dataset_abort():
                     yield chunk

@@ -70,6 +70,22 @@ const hiddenPrivateCount = computed(() =>
     : 0
 );
 
+/**
+ * 已绑定、但因 excludePrivate 不在可选列表里的私有库。
+ *
+ * 这些必须显式渲染出来：只给一句文字提示的话，用户看得到风险却取消不掉，
+ * 于是"配置里有、界面里没有"的绑定会一直留着。渲染成单独一段，只能解绑、
+ * 不能新增——把「能选什么」限制在设计意图内，同时让提交内容与界面完全一致。
+ */
+const pinnedPrivateDatasets = computed(() =>
+  props.excludePrivate
+    ? datasets.value.filter(
+        (ds) =>
+          selectedIds.value.includes(ds.id) && visibilityKey(ds) === "private"
+      )
+    : []
+);
+
 /** 已选中但仍留在配置里的私有库：不能静默丢弃，否则保存后配置悄悄消失 */
 const selectedPrivateNames = computed(() =>
   datasets.value
@@ -388,6 +404,38 @@ const formatDate = (ts?: number | string) => {
 
         <!-- Dataset List -->
         <template v-else>
+          <!-- 已绑定的个人私有库：只可解绑，不可新增 -->
+          <div
+            v-for="ds in pinnedPrivateDatasets"
+            :key="'pinned-' + ds.id"
+            class="mb-2 flex items-center p-3 border rounded-lg cursor-pointer border-amber-300 bg-amber-50/60 transition-colors hover:bg-amber-50"
+            role="button"
+            :aria-label="`解除绑定 ${ds.platform_name || ds.name}`"
+            title="已绑定的个人私有库：只有归属人能检索到，点击可解除绑定"
+            @click="toggleSelection(ds.id)"
+          >
+            <div class="mr-3">
+              <div class="flex h-5 w-5 items-center justify-center rounded border border-amber-500 bg-amber-500">
+                <svg class="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+            </div>
+            <div class="mr-3 flex h-10 w-10 items-center justify-center rounded border border-amber-200 bg-amber-100 text-amber-700 shadow-sm">
+              <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4" />
+              </svg>
+            </div>
+            <div class="flex-1">
+              <h4 class="text-sm font-bold text-gray-900">{{ ds.platform_name || ds.name }}</h4>
+              <div class="mt-0.5 flex items-center space-x-2">
+                <span class="rounded border border-amber-200 bg-white px-1.5 text-[10px] font-semibold text-amber-700">个人私有</span>
+                <span class="text-[10px] text-amber-700">已绑定 · 仅归属人可检索 · 点击取消</span>
+              </div>
+            </div>
+            <span class="text-[10px] font-mono text-gray-400">{{ ds.id.slice(0, 8) }}...</span>
+          </div>
+
           <div
             v-for="ds in visibleDatasets"
             :key="ds.id"
@@ -487,19 +535,20 @@ const formatDate = (ts?: number | string) => {
 
       <!-- 私有库说明：解释被隐藏的库，以及仍留在配置里的私有库 -->
       <p
-        v-if="excludePrivate && hiddenPrivateCount"
+        v-if="excludePrivate && hiddenPrivateCount > pinnedPrivateDatasets.length"
         class="flex-shrink-0 mt-3 text-[11px] leading-snug text-gray-400"
       >
-        已隐藏 {{ hiddenPrivateCount }} 个个人私有知识库：它们只属于创建人，
-        一旦绑定到智能体或系统默认库，所有使用者都能检索到其中的内容。
+        已隐藏 {{ hiddenPrivateCount - pinnedPrivateDatasets.length }} 个未绑定的个人私有知识库：
+        它们只对归属人可见，其他使用者检索不到，也不能绑定到智能体。
       </p>
       <p
         v-if="excludePrivate && selectedPrivateNames.length"
         class="flex-shrink-0 mt-1 text-[11px] leading-snug text-amber-600"
       >
-        当前配置里仍包含 {{ selectedPrivateNames.length }} 个个人私有知识库（{{
+        上方已列出 {{ selectedPrivateNames.length }} 个已绑定的个人私有知识库（{{
           selectedPrivateNames.join("、")
-        }}）：绑定后所有使用者都能检索到它们，建议改选公共级或部门级。
+        }}）：只有归属人能检索到，其他使用者仍会被权限校验剔除；但它会占用检索范围统计，
+        建议点击取消后改选公共级或部门级。
       </p>
 
       <!-- Footer (Multi-select only) -->

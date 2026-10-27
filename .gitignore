@@ -97,3 +97,7 @@ db-prod-pg/.last_applied_sql
 
 # 浏览器工具截图产物（DSH browser_* 工具的默认输出目录，仅本地预览用）
 browser-screenshots/
+
+# @file-viewer/vite-plugin 生成的渲染器静态资源（约 13MB，构建期产物，不入库）
+frontend/public/vendor/
+frontend/public/flyfish-viewer-assets.json

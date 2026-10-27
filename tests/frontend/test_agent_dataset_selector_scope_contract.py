@@ -49,7 +49,10 @@ def test_selected_private_dataset_is_not_silently_dropped():
     page = _read(SELECTOR)
     # 合法性校验用的是完整列表（datasets），不是 visibleDatasets
     assert "const validIds = new Set(datasets.value.map((d) => d.id))" in page
-    assert "建议改选公共级或部门级" in page
+    assert "改选公共级或部门级" in page
+    # 提示之外还要给出可执行的出口：能让用户当场解绑
+    assert 'v-for="ds in pinnedPrivateDatasets"' in page
+    assert '@click="toggleSelection(ds.id)"' in page
 
 
 def test_agent_and_system_config_exclude_private_but_retrieval_test_keeps_them():

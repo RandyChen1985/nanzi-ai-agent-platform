@@ -1519,6 +1519,13 @@
               />
             </Transition>
           </div>
+          <div v-if="showScopeBoundBanner" class="mx-3 mt-2">
+            <ScopeBoundBanner
+              :agent-name="scopeBoundAgentName"
+              :bound-count="scopeBoundBoundCount"
+              @dismiss="scopeBoundDismissedAgentId = scopeBoundAgentId"
+            />
+          </div>
         </template>
       </ChatInput>
     </div>
@@ -2684,6 +2691,7 @@ import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import ChatRecoveryCard from "@/components/chat/ChatRecoveryCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
+import ScopeBoundBanner from "@/components/chat/ScopeBoundBanner.vue";
 import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
 import K8sTerminalModal from "@/components/chat/K8sTerminalModal.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
@@ -3168,6 +3176,37 @@ const effectiveChatAgent = computed(() => {
   return allowedAgents.value.find((item: any) => String(item.id) === id)
     || (pinnedAgent.value && String(pinnedAgent.value.id) === id ? pinnedAgent.value : null);
 });
+/**
+ * 当前智能体是否把检索范围钉死在绑定库上。
+ *
+ * 这时用户在输入框里选别的库、挂别的库附件都不会改变检索范围，
+ * 需要在输入框上方常驻说明，否则用户会以为是功能坏了。
+ */
+const scopeBoundOnlyAgent = computed(() => {
+  const agent: any = effectiveChatAgent.value;
+  if (!agent) return null;
+  const mode = String(agent?.engine_config?.scope_gate || "").trim().toLowerCase();
+  return mode === "bound_only" ? agent : null;
+});
+const scopeBoundAgentId = computed(() => String((scopeBoundOnlyAgent.value as any)?.id || ""));
+const scopeBoundAgentName = computed(() => {
+  const agent: any = scopeBoundOnlyAgent.value;
+  return String(agent?.display_name || agent?.name || "");
+});
+const scopeBoundBoundCount = computed(() => {
+  const agent: any = scopeBoundOnlyAgent.value;
+  if (!agent) return 0;
+  const ids = agent?.agent_dataset_ids || agent?.engine_config?.dataset_ids || [];
+  return Array.isArray(ids) ? ids.length : 0;
+});
+// 关闭状态按智能体记：换一个智能体重新提示，避免「关过一次就再也看不到」。
+const scopeBoundDismissedAgentId = ref<string>("");
+const showScopeBoundBanner = computed(() => {
+  const agent: any = scopeBoundOnlyAgent.value;
+  if (!agent) return false;
+  return scopeBoundAgentId.value !== scopeBoundDismissedAgentId.value;
+});
+
 /**
  * 当前生效智能体的已发布版本是否允许在输入框手动切换模型。
  * 未选择智能体、无已发布版本或历史数据未配置该字段时一律按「允许」处理。

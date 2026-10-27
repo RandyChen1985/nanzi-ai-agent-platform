@@ -407,6 +407,15 @@ def merge_request_knowledge_dataset_ids(
     )
 
 
+def _bound_only_enabled(ctx: Any) -> bool:
+    """智能体是否声明了「仅检索绑定库」。
+
+    不复用 context_manager 的实现：``knowledge_utils`` 被它导入，反向依赖会成环。
+    """
+    engine_config = getattr(ctx, "engine_config", None) or {}
+    return str(engine_config.get("scope_gate") or "").strip().lower() == "bound_only"
+
+
 def resolve_bound_dataset_ids(
     *,
     explicit_tool_ids: Any = None,
@@ -416,6 +425,14 @@ def resolve_bound_dataset_ids(
     ctx = get_current_agent_context()
     explicit_ids = normalize_dataset_ids(explicit_tool_ids)
     if explicit_ids:
+        # 模型自己传的 ID 同样受「仅检索绑定库」约束：否则它传一个别的库就绕过了
+        # 智能体侧的范围设定，bound_only 会变成摆设。
+        if ctx is not None and _bound_only_enabled(ctx):
+            bound = normalize_dataset_ids(ctx.agent_dataset_ids)
+            if bound:
+                allowed = set(bound)
+                constrained = [dataset_id for dataset_id in explicit_ids if dataset_id in allowed]
+                return constrained or list(bound)
         return explicit_ids
     if ctx and ctx.knowledge_dataset_ids:
         return list(ctx.knowledge_dataset_ids)
