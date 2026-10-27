@@ -32,3 +32,21 @@ def test_search_loading_is_debounced_and_bounded(page: str) -> None:
 def test_search_fetch_is_silent(page: str) -> None:
     # 一次性拉多个库，失败时逐个弹 toast 会刷屏
     assert "silent: true" in page
+
+
+def test_search_matches_dataset_id(page: str) -> None:
+    """详情页展示的 Dataset ID 必须能被搜索框命中。
+
+    详情页现在完整展示 RAGFlow Dataset ID，用户会把它复制到搜索框里定位库；
+    不参与匹配的话这个 ID 就只能看不能用。
+    """
+    assert "idMatch" in page
+    assert "dsId.toLowerCase().includes(query)" in page
+
+
+def test_dataset_id_search_skips_document_prefetch(page: str) -> None:
+    """按 ID 搜索时不该再把所有库的文档列表拉一遍。
+
+    ID 命中说明用户在找库，文档预加载纯属浪费；短词仍然走正常文档搜索。
+    """
+    assert "query.length >= 8" in page

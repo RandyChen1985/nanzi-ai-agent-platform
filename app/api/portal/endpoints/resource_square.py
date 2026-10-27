@@ -204,6 +204,8 @@ async def list_square_knowledge(
             or keyword_text in (row.description or "").lower()
             or keyword_text in (row.owner or "").lower()
             or keyword_text in " ".join(str(tag) for tag in (row.tags or [])).lower()
+            # 与知识库管理页一致：Dataset ID 也参与搜索，方便按复制来的 ID 定位
+            or keyword_text in (row.ragflow_dataset_id or "").lower()
         ):
             continue
 

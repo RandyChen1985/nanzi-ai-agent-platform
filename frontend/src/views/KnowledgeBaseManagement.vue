@@ -1388,11 +1388,15 @@ const filteredDatasets = computed(() => {
     const ownerMatch = (ds.owner || '').toLowerCase().includes(query)
     const tagsMatch = (ds.tags || []).some(t => t.toLowerCase().includes(query))
 
-    const dsId = ds.ragflow_dataset_id || ds.id || ''
+    const dsId = String(ds.ragflow_dataset_id || ds.id || '')
+    // 支持按知识库 ID 搜索：详情页展示的就是这个 ID，复制后粘回搜索框要能定位到库。
+    // 用 includes 而不是精确比较，方便只粘前缀（排障时拿到的往往是被截断的 ID）。
+    const idMatch = !!dsId && dsId.toLowerCase().includes(query)
+
     const subDocs = documentsMap.value[dsId] || []
     const docMatch = subDocs.some(doc => (doc.name || '').toLowerCase().includes(query))
 
-    return nameMatch || descMatch || ownerMatch || tagsMatch || docMatch
+    return nameMatch || descMatch || ownerMatch || tagsMatch || idMatch || docMatch
   })
 })
 
@@ -1430,7 +1434,19 @@ const ensureDocumentsForSearch = async () => {
 
 watch(searchQuery, (value) => {
   if (searchDocTimer) clearTimeout(searchDocTimer)
-  if (!value.trim()) return
+  const query = value.trim().toLowerCase()
+  if (!query) return
+  // 只在「搜到的是 ID」这件事上短路文档预加载：粘贴 32 位 Dataset ID 时用户显然在找库，
+  // 没必要为此把所有库的文档列表都拉一遍（库一多就是一串串行 RAGFlow 请求）。
+  // 加 8 位长度阈值，避免 "test" 这类短词恰好是某个 ID 的子串就把文档搜索整段跳过。
+  if (
+    query.length >= 8 &&
+    visibilityScopeDatasets.value.some((ds) =>
+      String(ds.ragflow_dataset_id || ds.id || '').toLowerCase().includes(query)
+    )
+  ) {
+    return
+  }
   searchDocTimer = setTimeout(() => {
     void ensureDocumentsForSearch()
   }, SEARCH_DOC_DEBOUNCE_MS)
@@ -3395,7 +3411,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <input
                 v-model="searchQuery"
                 type="search"
-                placeholder="搜索知识库、文档或业务归属部门..."
+                placeholder="搜索知识库名称、ID、文档或业务归属部门..."
                 class="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400"
               />
               <svg class="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3512,6 +3528,13 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
           <div v-else-if="isSearchEmpty" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
             <span>没有匹配「{{ searchQuery }}」的知识库</span>
+            <!--
+              搜索只在当前分类（公共级/部门级/个人私有）内进行：按 ID 搜索时，
+              库若在别的分类里就会「查无此库」，不说清楚容易被误判成 ID 错了。
+            -->
+            <span class="text-[11px] text-gray-400 not-italic">
+              当前只在「{{ visibilityOptionOf(activeVisibility).label }}」分类下搜索，可切换上方分类再试
+            </span>
             <button type="button" class="text-xs font-semibold text-primary hover:underline" @click="searchQuery = ''">清除搜索条件</button>
           </div>
           <div v-else-if="deptDatasetGroups.length === 0" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
@@ -4148,14 +4171,20 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <span class="font-medium text-gray-700">{{ datasetOwnerLabel(selectedDataset) || '未指派' }}</span>
                 </span>
                 <span class="w-px h-3 bg-gray-200" aria-hidden="true"></span>
+                <!--
+                  ID 完整展示而不是截成 "54af42d5…"：这个值就是 RAGFlow Dataset ID，
+                  排查问题时要能直接对照 RAGFlow 后台、也要能整段复制出去。
+                  用 break-all 允许在元信息条里折行，避免长 ID 撑破布局。
+                -->
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 text-gray-400 hover:text-primary transition-colors"
-                  title="复制知识库 ID"
+                  class="inline-flex max-w-full items-start gap-1 text-left text-gray-400 hover:text-primary transition-colors"
+                  :title="`点击复制知识库 ID：${selectedDataset.ragflow_dataset_id || selectedDataset.id || ''}`"
                   @click="copyToClipboard(selectedDataset.ragflow_dataset_id || selectedDataset.id || '')"
                 >
-                  <span class="font-mono">{{ (selectedDataset.ragflow_dataset_id || selectedDataset.id || '').slice(0, 8) }}…</span>
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <span class="shrink-0">ID</span>
+                  <span class="font-mono break-all text-gray-500">{{ selectedDataset.ragflow_dataset_id || selectedDataset.id || '—' }}</span>
+                  <svg class="mt-0.5 w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
                 </button>

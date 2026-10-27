@@ -669,6 +669,8 @@ async def discover_datasets(
             if kw in (row.name or "").lower()
             or kw in (row.description or "").lower()
             or kw in (row.owner or "").lower()
+            # 支持按 Dataset ID 搜索：用户常从详情页复制完整 ID 过来确认库是否存在
+            or kw in (row.ragflow_dataset_id or "").lower()
         ]
 
     # 我在这批库上的申请状态（取最近一条）
