@@ -42,8 +42,10 @@ def test_workbench_page_has_three_dynamic_states_without_zero_dashboard():
     assert "hover:bg-blue-50 hover:text-blue-600" in page
     assert "h-9 w-9" not in page.split("workbench-refresh-btn", 1)[1].split("</button>", 1)[0]
     assert ">刷新<" in page or "'刷新'" in page
-    assert "有 ${payload.value.resume_items.length} 项工作可以继续" in page
-    assert "最近没有新的产出" in page
+    assert "${payload.value.resume_items.length} 项可以继续" in page
+    assert "可从下方「继续工作」接着上次的进度" in page
+    # 静默提示只留一句「接下来能做什么」：不允许再把数字罗列拼回正文
+    assert "{{ quietDescription }}{{ summarySecondary }}" not in page
     assert "WorkbenchAttention" in page
     assert "WorkbenchResults" in page
     assert "WorkbenchResume" in page

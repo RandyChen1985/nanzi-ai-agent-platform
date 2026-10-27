@@ -788,3 +788,12 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **回归**：`pytest --confcutdir=tests/frontend -k "login or auth or config_public or boolean_config"` **99 passed / 1 skipped**；新增契约 **4 项**；`vue-tsc --noEmit` **0 错误**。
 **未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做浏览器手工验收。
+
+## 2026-10-27 工作台静默提示条：绿色改中性灰 + 文案去重
+
+|---|---|---|---|
+| 常驻绿色太「AI 味」 | `frontend/src/views/PersonalWorkbench.vue` | 静默态提示条原用 emerald（`border-emerald-100 bg-emerald-50/60` + emerald 文字），在整页灰白卡片里像一条常驻的成功 toast。改为中性灰（`border-gray-200 bg-gray-50/80`、标题 `text-gray-700`、正文 `text-gray-500`，深色 `dark:bg-gray-800/40`）+ 标题前一枚灰点；`summaryToneClass` 与顶部状态点同步改灰（同一语义，避免以后又从别处冒绿）。页面内 emerald 仅剩功能态（进行中进度条、置顶徽标、hover），未动 |
+| 文案三句同义 + 数字重复 | 同上、`tests/frontend/test_personal_workbench_contract.py` | 原文案「有 N 项工作可以继续」+「暂无失败任务和待确认事项。最近没有新的产出。最近产出 0 · 可继续 4 · 任务 0，可以从下方继续。」三句在说同一件事，数字还和下方卡片重复。改为「N 项可以继续」+「暂无失败任务或待确认事项，可从下方「继续工作」接着上次的进度。」；四个分支各自一句，指路指向卡片真实 eyebrow（「继续工作」「最新结果」）。`summarySecondary` 静默分支返回空串，数字只在卡片出现一次 |
+
+**回归**：`pytest --confcutdir=tests/frontend tests/frontend/test_personal_workbench_contract.py tests/frontend/test_workbench*.py` **20 passed**；SFC 模板编译 **277 files / 0 problems**；`vue-tsc --noEmit` **0 错误**。同步改写契约里的两条文案断言，并新增「不得把 `summarySecondary` 拼回提示条」的反向锁。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做浏览器手工验收。
