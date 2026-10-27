@@ -837,3 +837,13 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **回归**：`-k "personal or password"` **200 passed / 1 skipped**；SFC 模板编译 **277 files / 0 problems**；`vue-tsc --noEmit` **0 错误**。
 **未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做真机窄屏手工验收。
+
+## 2026-10-27 移动端定高布局跟随 visualViewport（底部被地址栏/键盘压住）
+
+|---|---|---|---|
+| chat 页在手机上底部输入框被地址栏/键盘压住 | `frontend/src/composables/useAppViewportHeight.ts`（新增）、`frontend/src/App.vue`、`frontend/src/views/Dashboard.vue`、`frontend/src/layouts/EmbedLayout.vue`、`frontend/index.html` | 整页是「定高 + 内部滚动」：Dashboard 根 `h-screen`（100vh）、`/embed/*` 用 `position: fixed; inset: 0`。两者都取**大视口**高度，而地址栏展开时可视区更矮、软键盘弹出时 `100vh`/`100dvh` 都不缩。改由 `window.visualViewport.height`（唯一能同时反映两者的量）写入 CSS 变量 `--app-height`，消费方统一写 `height: var(--app-height, 100dvh)`；App.vue 只注册一次，rAF 合并、卸载解绑、缺失 visualViewport 时退回 `innerHeight`。`EmbedLayout` 去掉 `bottom: 0`（那会把高度重新钉回大视口），保留 `height: 100vh` 作为老浏览器兜底。`index.html` 的 viewport meta 补 `interactive-widget=resizes-content`，让 Android 上键盘弹出时压缩布局视口 |
+
+**Web 桌面端零影响**：composable 只在 `(max-width: 1023px)` 时写变量，桌面分支反而主动 `removeProperty`，让消费方回落到 CSS 的 `100dvh`（== `100vh`，与改动前的 `h-screen` / `inset: 0` 完全等价）；高度未变化时直接早退，`scrollTo(0,0)` 只可能出现在窄屏分支内，不会让桌面长页面「莫名跳回顶部」。另加一条契约 `test_desktop_is_left_completely_untouched` 反向锁死。
+
+**回归**：新增契约 `test_mobile_viewport_height_contract.py` **8 项**（visualViewport 取值与兜底、rAF 合并与解绑、文档滚动归零、只在 App.vue 注册一次、Dashboard 与 EmbedLayout 都走变量、EmbedLayout 不得用 `bottom:0`、meta 必须带 `interactive-widget`）；`-k "embed or dashboard or theme or layout or viewport or chat"` **827 passed / 1 skipped**；SFC 模板编译 **277 files / 0 problems**；`vue-tsc --noEmit` **0 错误**。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做真机键盘/地址栏手工验收。
