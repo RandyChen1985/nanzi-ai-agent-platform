@@ -9,6 +9,7 @@ import { copyToClipboard } from '../utils/clipboard'
 import { generateQRCodeDataUrl } from '../utils/qrcode'
 import { checkPasswordPolicy } from '../utils/passwordPolicy'
 import { clearUserSession } from '../utils/userSession'
+import { userInitialOf } from '../utils/userInitial'
 import PermissionSectionCard from '../components/personal/PermissionSectionCard.vue'
 import type { PermissionNode } from '../constants/permissions'
 import PersonalPermissionTree from '../components/personal/PersonalPermissionTree.vue'
@@ -1073,8 +1074,8 @@ onMounted(() => {
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 bg-gray-50/80 border border-gray-100 rounded-xl">
                         <!-- 左侧：头像与基本称谓 -->
                         <div class="flex items-center min-w-0">
-                            <div class="h-14 w-14 sm:h-16 sm:w-16 rounded-full bg-primary flex items-center justify-center text-xl sm:text-2xl font-bold text-white uppercase shadow-sm shrink-0">
-                                {{ (userInfo.real_name || userInfo.user_name || 'U').substring(0, 2) }}
+                            <div class="h-14 w-14 sm:h-16 sm:w-16 rounded-full bg-primary flex items-center justify-center text-xl sm:text-2xl font-bold text-white uppercase leading-none shadow-sm shrink-0">
+                                {{ userInitialOf(userInfo.real_name || userInfo.user_name) }}
                             </div>
                             <div class="ml-4 min-w-0">
                                 <p class="text-md sm:text-lg font-bold text-gray-900 truncate">{{ userInfo.real_name || userInfo.user_name }}</p>
