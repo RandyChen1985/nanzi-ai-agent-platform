@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"  # Aligned with .env
     ALLOWED_ORIGINS: List[str] = ["*"]
     APP_PUBLIC_URL: Optional[str] = None
+
+    # 沙箱镜像**构建期**的镜像源（由 docker_template_patch 读取，不影响运行时）。
+    # 不填 = 用内置默认（国内走清华）；显式填 off = 退回官方 apt 源 / PyPI。
+    # 做成配置项而不是只认进程环境变量：本项目习惯把配置写 .env，而
+    # pydantic-settings 只把 .env 读进 Settings 对象、并不会注入 os.environ，
+    # 只读 os.environ 会让 .env 里的设置静默失效。
+    SANDBOX_BUILD_PIP_INDEX: Optional[str] = None
+    SANDBOX_BUILD_APT_MIRROR: Optional[str] = None
+
     # 仅建议在一个节点开启，避免多节点部署重复启动 APScheduler。
     TASK_SCHEDULER_ENABLED: bool = True
 

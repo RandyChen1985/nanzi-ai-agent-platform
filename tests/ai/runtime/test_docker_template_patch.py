@@ -195,3 +195,125 @@ def test_rendered_dockerfile_pins_agentscope():
     assert f'"agentscope=={pinned}"' in dockerfile
     # 不允许残留无版本安装指令（那等于每次都拉最新版）
     assert '--no-deps "agentscope"' not in dockerfile
+
+
+# ---------------------------------------------------------------------------
+# 构建期镜像源加速（国内默认走清华，可用环境变量关闭或覆盖）
+# ---------------------------------------------------------------------------
+
+
+def _render_with_sources(monkeypatch, pip_index=None, apt_mirror=None):
+    """按给定的源配置渲染 Dockerfile；None 表示不设环境变量（走默认值）。"""
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        apply_agentscope_docker_patches,
+    )
+    import agentscope.workspace._docker._make_dockerfile as mk
+
+    apply_agentscope_docker_patches()
+    if pip_index is None:
+        monkeypatch.delenv("SANDBOX_BUILD_PIP_INDEX", raising=False)
+    else:
+        monkeypatch.setenv("SANDBOX_BUILD_PIP_INDEX", pip_index)
+    if apt_mirror is None:
+        monkeypatch.delenv("SANDBOX_BUILD_APT_MIRROR", raising=False)
+    else:
+        monkeypatch.setenv("SANDBOX_BUILD_APT_MIRROR", apt_mirror)
+    return mk.render_dockerfile(base_image="python:3.11-slim")
+
+
+def test_build_sources_default_to_domestic_mirrors(monkeypatch):
+    """默认应当走清华：apt 换源、uv 用 pip 装、UV_DEFAULT_INDEX 生效。"""
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        DEFAULT_APT_MIRROR,
+        DEFAULT_PIP_INDEX,
+    )
+
+    rendered = _render_with_sources(monkeypatch)
+
+    # apt 换源同时覆盖 bookworm 的 deb822 与旧 sources.list
+    assert f"{DEFAULT_APT_MIRROR}/debian" in rendered
+    assert f"{DEFAULT_APT_MIRROR}/debian-security" in rendered
+    assert "/etc/apt/sources.list.d/debian.sources" in rendered
+
+    # uv 不再走 astral.sh 的 shell installer（省一次 GitHub 往返）
+    assert "https://astral.sh/uv/install.sh" not in rendered
+    assert f"pip install --no-cache-dir --index-url {DEFAULT_PIP_INDEX} uv" in rendered
+
+    # index 由 ENV 统一下发，requirements 与 agentscope 两个安装步骤都跟着走
+    assert f"UV_DEFAULT_INDEX={DEFAULT_PIP_INDEX}" in rendered
+
+    # 排障工具包没有被换源逻辑破坏
+    assert "curl ca-certificates ripgrep git tree iputils-ping net-tools procps telnet" in rendered
+
+
+def test_build_sources_can_be_turned_off(monkeypatch):
+    """显式设为 off 时退回官方源：老网络/海外环境仍可构建。"""
+    rendered = _render_with_sources(monkeypatch, pip_index="off", apt_mirror="off")
+
+    assert "https://astral.sh/uv/install.sh" in rendered
+    assert "mirrors.tuna.tsinghua.edu.cn" not in rendered
+    assert "UV_DEFAULT_INDEX" not in rendered
+    # 上游模板只写 `apt-get update`、不写源地址，所以「关掉」的判据是换源脚本不存在
+    assert "sed -i 's|http://deb.debian.org/debian|" not in rendered
+
+
+def test_build_sources_accept_custom_mirror(monkeypatch):
+    """换成其它镜像站（阿里云等）同样生效。"""
+    rendered = _render_with_sources(
+        monkeypatch,
+        pip_index="https://mirrors.aliyun.com/pypi/simple",
+        apt_mirror="https://mirrors.aliyun.com",
+    )
+
+    assert "https://mirrors.aliyun.com/pypi/simple" in rendered
+    assert "https://mirrors.aliyun.com/debian" in rendered
+    assert "mirrors.tuna.tsinghua.edu.cn" not in rendered
+
+
+def test_build_source_switch_is_stable_for_repeated_render(monkeypatch):
+    """同一配置重复渲染必须逐字节一致——否则镜像 tag 每次构建都变，缓存全废。"""
+    first = _render_with_sources(monkeypatch)
+    second = _render_with_sources(monkeypatch)
+    assert first == second
+
+
+def test_build_sources_read_from_settings_when_env_absent(monkeypatch):
+    """写在 .env 里的开关同样生效。
+
+    两条构建入口（手动跑脚本、后台系统设置里点预构建）加载的是同一份 .env，
+    而 pydantic-settings 只把 .env 读进 Settings、不注入 os.environ——只读
+    os.environ 的话这里会静默退回官方源，配置等于没写。
+    """
+    from app.core.config import settings
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        apply_agentscope_docker_patches,
+    )
+    import agentscope.workspace._docker._make_dockerfile as mk
+
+    apply_agentscope_docker_patches()
+    monkeypatch.delenv("SANDBOX_BUILD_PIP_INDEX", raising=False)
+    monkeypatch.delenv("SANDBOX_BUILD_APT_MIRROR", raising=False)
+    monkeypatch.setattr(settings, "SANDBOX_BUILD_PIP_INDEX", "off", raising=False)
+    monkeypatch.setattr(settings, "SANDBOX_BUILD_APT_MIRROR", "off", raising=False)
+
+    rendered = mk.render_dockerfile(base_image="python:3.11-slim")
+
+    assert "UV_DEFAULT_INDEX" not in rendered
+    assert "https://astral.sh/uv/install.sh" in rendered
+
+
+def test_env_var_overrides_settings(monkeypatch):
+    """进程环境变量优先级高于 .env——临时强制加速时不用改配置。"""
+    from app.core.config import settings
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        apply_agentscope_docker_patches,
+    )
+    import agentscope.workspace._docker._make_dockerfile as mk
+
+    apply_agentscope_docker_patches()
+    monkeypatch.setattr(settings, "SANDBOX_BUILD_PIP_INDEX", "off", raising=False)
+    monkeypatch.setenv("SANDBOX_BUILD_PIP_INDEX", "https://mirrors.aliyun.com/pypi/simple")
+
+    rendered = mk.render_dockerfile(base_image="python:3.11-slim")
+
+    assert "https://mirrors.aliyun.com/pypi/simple" in rendered
