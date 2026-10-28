@@ -74,6 +74,7 @@ async def build_native_agent(
         tools,
         approval_mode=runner.permission_options.get("approval_mode"),
         user_id=runner._current_user_id(),
+        conversation_id=runner.conversation_id,
     )
     from app.services.ai.runtime.agentscope.agent_runtime import (
         build_runtime_middlewares,

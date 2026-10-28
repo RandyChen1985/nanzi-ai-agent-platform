@@ -201,6 +201,33 @@ def _sync_published_download_urls_from_context(state: Dict[str, Any], context: A
     state["published_download_urls"] = combined
 
 
+def _supports_session_grant(
+    tool_name: str,
+    *containers: Any,
+) -> bool:
+    """该工具调用是否可以提供「本会话总是允许」选项。
+
+    只读工具本来就不弹框，``dangerous`` 工具不允许放行，两者都不提供该选项。
+    查不到工具定义时保守地不提供，避免给出一按就无效的按钮。
+    """
+
+    from app.services.ai.runtime.agentscope.tools import supports_session_grant
+
+    for container in containers:
+        if not container:
+            continue
+        if isinstance(container, dict):
+            matched = container.get(tool_name)
+            if matched is not None:
+                return supports_session_grant(matched)
+            continue
+        if isinstance(container, (list, tuple, set)):
+            for tool in container:
+                if getattr(tool, "name", None) == tool_name:
+                    return supports_session_grant(tool)
+    return False
+
+
 async def stream_pending_tool_interrupt(
     *,
     event: Any,
@@ -286,6 +313,14 @@ async def stream_pending_tool_interrupt(
                 else f"需要外部执行工具: {display_name}"
             ),
             "details": f"参数: {json.dumps(tool_args, ensure_ascii=False)}",
+            "supports_session_grant": (
+                kind == "permission"
+                and _supports_session_grant(
+                    tool_name,
+                    tools,
+                    getattr(runner, "tools", None),
+                )
+            ),
             "tool_call": {
                 "id": tool_id,
                 "name": tool_name,

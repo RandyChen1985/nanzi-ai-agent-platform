@@ -27,6 +27,7 @@ class AgentScopeResumeHandler:
         *,
         permission_request_id: str,
         confirmed: bool,
+        grant_scope: str = "once",
         user_info: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         from app.services.ai.agent_service import (
@@ -87,6 +88,13 @@ class AgentScopeResumeHandler:
                 }
                 return
 
+        session_grant: Optional[Dict[str, Any]] = None
+        if confirmed and grant_scope == "session":
+            session_grant = await cls._grant_session_permission(
+                pending,
+                user_id=current_user_id or pending.user_id,
+            )
+
         runner = cls.build_agentscope_runner_from_pending(pending, user_info=user_info)
         await cls.restore_runner_execution_context(
             agent_service,
@@ -103,6 +111,8 @@ class AgentScopeResumeHandler:
             "permission_request_id": permission_request_id,
             "tool_call_id": getattr(pending.tool_call, "id", None),
         }
+        if session_grant is not None:
+            permission_chunk["session_grant"] = session_grant
         _track_process_timeline(process_timeline_state, permission_chunk)
         yield permission_chunk
 
@@ -570,6 +580,57 @@ class AgentScopeResumeHandler:
             restored_urls = _restore_published_download_urls_from_pending(pending)
             if restored_urls:
                 context.published_download_urls = restored_urls
+
+    @classmethod
+    async def _grant_session_permission(
+        cls,
+        pending: Any,
+        *,
+        user_id: Any,
+    ) -> Dict[str, Any]:
+        """写入「本会话总是允许」记录。
+
+        会话身份取自服务端挂起快照，不接受请求体传入的会话 ID——否则用户可以
+        把授权写到任意会话上。
+        """
+
+        from app.services.ai.runtime.agentscope.session_permission_grants import (
+            session_permission_grants,
+        )
+        from app.services.ai.runtime.agentscope.tools import supports_session_grant
+
+        tool_name = str(getattr(pending.tool_call, "name", "") or "").strip()
+        conversation_id = str(pending.snapshot.conversation_id or "").strip()
+
+        # 与卡片按钮同源：只读/危险工具不写授权，避免「接口能写、按钮不给」两套口径。
+        # 跨进程恢复时挂起句柄里没有工具定义，此时放行——真正的降级仍受 tools.py 里
+        # 先于判定返回的 DENY 顺序约束，写进去也只是一条永远不会被用到的记录。
+        target = next(
+            (
+                tool
+                for tool in (getattr(pending, "tools", None) or [])
+                if str(getattr(tool, "name", "") or "") == tool_name
+            ),
+            None,
+        )
+        if target is not None and not supports_session_grant(target):
+            return {
+                "granted": False,
+                "tool_name": tool_name,
+                "conversation_id": conversation_id,
+                "reason": "not_grantable",
+            }
+
+        granted = await session_permission_grants.grant(
+            user_id,
+            conversation_id,
+            tool_name,
+        )
+        return {
+            "granted": granted,
+            "tool_name": tool_name,
+            "conversation_id": conversation_id,
+        }
 
     @classmethod
     def build_agentscope_runner_from_pending(

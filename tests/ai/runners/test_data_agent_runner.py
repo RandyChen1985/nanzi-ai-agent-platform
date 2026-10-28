@@ -472,11 +472,12 @@ async def test_data_agent_runner_builds_chatbi_toolkit_without_workspace_file_to
     )
 
     build_chatbi.assert_awaited_once()
-    # 调用签名新增了 user_id（用于用户维度工具过滤）
+    # 调用签名新增了 user_id（用户维度工具过滤）与 conversation_id（会话级工具授权）
     build_toolkit.assert_called_once_with(
         tools,
         approval_mode=runner.permission_options.get("approval_mode"),
         user_id=None,
+        conversation_id=runner.conversation_id,
     )
     assert captured_agent_kwargs["toolkit"] is fake_toolkit
     assert captured_agent_kwargs["offloader"] is fake_workspace

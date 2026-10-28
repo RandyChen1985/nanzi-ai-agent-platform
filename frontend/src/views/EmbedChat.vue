@@ -872,7 +872,8 @@
               <ToolPermissionCard
                 v-if="msg.pendingPermission"
                 :payload="msg.pendingPermission"
-                @submit="(confirmed) => confirmPendingPermission(msg, confirmed)"
+                @submit="(confirmed, scope) => confirmPendingPermission(msg, confirmed, scope)"
+                @revoke="revokeSessionPermission(msg)"
               />
               <!-- External Tool Execution -->
               <div
@@ -5734,7 +5735,14 @@ const hasRestorableDraft = (draft: EmbedStreamSnapshot["draft"] | null | undefin
  */
 const reviveInterruptedResumeCards = (msg: Message) => {
   const permission = msg.pendingPermission;
-  if (permission && (permission.status === "approved" || permission.status === "error")) {
+  // approved_session 与 approved 同等对待：恢复轮被刷新/断网打断时，卡片不能停在
+  // 「已允许（本会话）」而没有重试入口——会话授权已落盘，重试这一轮会自动放行。
+  if (
+    permission
+    && (permission.status === "approved"
+      || permission.status === "approved_session"
+      || permission.status === "error")
+  ) {
     permission.status = "pending";
     permission.isSubmitting = false;
   }
@@ -11434,7 +11442,10 @@ const applyPermissionStreamEvent = (
           ? "rejected"
           : data.status === "error" || data.status === "failed"
             ? "error"
-            : "approved";
+            // 「本会话总是允许」的标记要留住：终态把它抹成 approved 会让撤销入口消失。
+            : msg.pendingPermission.status === "approved_session"
+              ? "approved_session"
+              : "approved";
       if (data.status === "awaiting_permission") msg.pendingPermission.expanded = true;
     }
     if (msg.pendingExternalExecution) {
@@ -11704,7 +11715,11 @@ const parseFetchErrorMessage = async (response: Response): Promise<string> => {
   return errorMessage;
 };
 
-const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
+const confirmPendingPermission = async (
+  msg: Message,
+  confirmed: boolean,
+  scope: "once" | "session" = "once",
+) => {
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
@@ -11744,7 +11759,7 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
         "Content-Type": "application/json",
         ...(embedAuthHeaders() || {}),
       },
-      body: JSON.stringify({ confirmed }),
+      body: JSON.stringify({ confirmed, scope }),
       credentials: "include",
     });
     if (!response.ok) throw new Error(await parseFetchErrorMessage(response));
@@ -11809,6 +11824,39 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
         if (!isMobile.value) chatInputRef.value?.focus();
       });
     }
+  }
+};
+
+/** 撤销「本会话总是允许」：撤销后该工具在会话内重新逐次确认。 */
+const revokeSessionPermission = async (msg: Message) => {
+  const pending = msg.pendingPermission;
+  const conversation = String(conversationId.value || "").trim();
+  const toolName = String(pending?.tool_call?.name || "").trim();
+  if (!pending || !toolName) return;
+  if (!conversation) {
+    msg.content += "\n[撤销会话授权失败: 当前会话尚未建立，无法定位授权记录]";
+    return;
+  }
+  try {
+    const response = await fetch(
+      `/api/v1/chat/permissions/grants/${encodeURIComponent(conversation)}/${encodeURIComponent(toolName)}`,
+      {
+        method: "DELETE",
+        headers: { ...(embedAuthHeaders() || {}) },
+        credentials: "include",
+      },
+    );
+    if (!response.ok) throw new Error(await parseFetchErrorMessage(response));
+    const payload = await response.json().catch(() => null);
+    // 服务端没删到记录（已过期 / 键不匹配）时不能假装成功：卡片若翻成「已允许」，
+    // 撤销入口又会消失，用户会以为撤销成功而授权其实还在。
+    if (!payload?.data?.revoked) {
+      throw new Error("服务端没有这条授权记录，可能已过期，请刷新后重试");
+    }
+    pending.status = "approved";
+    pending.sessionGrantRevoked = true;
+  } catch (error: any) {
+    msg.content += `\n[撤销会话授权失败: ${error.message || "Unknown error"}]`;
   }
 };
 

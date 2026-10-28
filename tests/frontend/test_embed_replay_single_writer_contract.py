@@ -24,7 +24,8 @@ pytestmark = pytest.mark.no_infrastructure
 
 RESUME_SIGNATURES = (
     "const submitPendingExternalExecution = async (msg: Message) => {",
-    "const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {",
+    # 确认函数的形参已展开成多行并新增 scope（「本会话总是允许」），只按函数头定位。
+    "const confirmPendingPermission = async (",
 )
 
 

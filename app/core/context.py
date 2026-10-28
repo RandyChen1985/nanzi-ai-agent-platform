@@ -98,6 +98,11 @@ class AgentContext(BaseModel):
     # response guard to reject model-invented artifact links.
     published_download_urls: List[str] = Field(default_factory=list)
 
+    # 本轮因「本会话总是允许」而自动放行的工具名队列（判定点入队，工具结果事件出队一次）。
+    # 只有真的走了会话授权判定才会入队：只读快通道、approval_mode=allow、被 DENY 的调用
+    # 都不经过该判定，因此不会被误标成「自动执行」。
+    session_grant_auto_approved: List[str] = Field(default_factory=list)
+
 agent_context: ContextVar[Optional[AgentContext]] = ContextVar("agent_context", default=None)
 
 def get_current_agent_context() -> Optional[AgentContext]:

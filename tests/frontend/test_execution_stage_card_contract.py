@@ -195,7 +195,8 @@ def test_both_chat_surfaces_use_the_shared_tool_permission_card():
     for source in (embed, debug):
         assert "import ToolPermissionCard from \"@/components/chat/ToolPermissionCard.vue\"" in source
         assert "<ToolPermissionCard" in source
-        assert "@submit=\"(confirmed) => confirmPendingPermission(msg, confirmed)\"" in source
+        assert "@submit=\"(confirmed, scope) => confirmPendingPermission(msg, confirmed, scope)\"" in source
+        assert '@revoke="revokeSessionPermission(msg)"' in source
         assert "<!-- Tool Permission Confirmation -->" not in source
 
 

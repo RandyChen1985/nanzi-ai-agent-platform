@@ -45,9 +45,13 @@ export interface PendingToolPermission {
     name?: string;
     args?: Record<string, unknown>;
   };
-  status: "pending" | "approved" | "rejected" | "expired" | "error";
+  status: "pending" | "approved" | "approved_session" | "rejected" | "expired" | "error";
   isSubmitting?: boolean;
   expanded?: boolean;
+  /** 后端判定该工具可以提供「本会话总是允许」选项。 */
+  supports_session_grant?: boolean;
+  /** 用户已点过「撤销本会话授权」：卡片据此给一句明确回执。 */
+  sessionGrantRevoked?: boolean;
 }
 
 export interface PendingExternalExecution {
@@ -183,6 +187,7 @@ export const formatPermissionStatus = (status: PendingToolPermission["status"]) 
   const labels: Record<PendingToolPermission["status"], string> = {
     pending: "待确认",
     approved: "已允许",
+    approved_session: "已允许（本会话）",
     rejected: "已拒绝",
     expired: "已过期",
     error: "错误",
@@ -214,6 +219,7 @@ export function handlePermissionRequired<T extends AgentStreamMessage>(
     tool_call: data.tool_call as PendingToolPermission["tool_call"],
     status: "pending",
     expanded: true,
+    supports_session_grant: Boolean(data.supports_session_grant),
   };
   msg.isThinking = false;
   addLog(msg, {
@@ -892,19 +898,34 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
         category: "external",
       });
       return true;
-    case "permission_result":
+    case "permission_result": {
+      const sessionGrant = data.session_grant as
+        | { granted?: boolean; tool_name?: string }
+        | undefined;
       if (msg.pendingPermission) {
-        msg.pendingPermission.status = data.status === "rejected" ? "rejected" : "approved";
+        if (data.status === "rejected") {
+          msg.pendingPermission.status = "rejected";
+        } else if (sessionGrant?.granted) {
+          msg.pendingPermission.status = "approved_session";
+        } else {
+          msg.pendingPermission.status = "approved";
+        }
         msg.pendingPermission.expanded = false;
       }
       addLog(msg, {
         id: `permission_${data.permission_request_id}`,
-        title: data.status === "rejected" ? "已拒绝工具调用" : "已允许工具调用",
+        title:
+          data.status === "rejected"
+            ? "已拒绝工具调用"
+            : sessionGrant?.granted
+              ? "已允许工具调用（本会话）"
+              : "已允许工具调用",
         details: `确认请求: ${data.permission_request_id}`,
         status: "success",
         category: "permission",
       });
       return true;
+    }
     case "tool_result_data":
       handleToolResultData(msg, data);
       return true;
