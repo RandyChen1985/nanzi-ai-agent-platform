@@ -113,3 +113,85 @@ def test_marker_payload_is_parseable(personal_root):
     marker = [line for line in result.splitlines() if line.startswith("NANZI_SKILL_CREATED:")][0]
     payload = json.loads(marker.split(":", 1)[1])
     assert payload == {"skill_id": "demo-skill", "scope": "personal", "name": "演示技能"}
+
+
+# --- 平台全局技能（element:skills:admin） ------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clean_platform_admin_cache():
+    """同步权限缓存是进程级的：不清会让一个用例的授权串到下一个用例。"""
+    from app.services.ai.skills import platform_admin
+
+    platform_admin.clear_platform_skill_admin_cache()
+    yield
+    platform_admin.clear_platform_skill_admin_cache()
+
+
+def _platform_root(tmp_path, monkeypatch):
+    from app.core.config import settings
+
+    root = tmp_path / "global_skills"
+    root.mkdir()
+    monkeypatch.setattr(type(settings), "SKILLS_DIR", property(lambda self: str(root)))
+    return root
+
+
+def _call_global(**kwargs) -> str:
+    return exec_tools.create_skills.func(
+        skill_id="demo-global",
+        name="演示技能",
+        description="用于回归测试",
+        skill_md_content=SKILL_MD,
+        scope="global",
+        **kwargs,
+    )
+
+
+def test_global_scope_denies_regular_user(personal_root, tmp_path, monkeypatch):
+    """普通用户写不了平台库：口径是 element:skills:admin，而不是「role 里含 admin」。"""
+    platform_root = _platform_root(tmp_path, monkeypatch)
+
+    result = _call_global()
+
+    assert result.startswith("错误："), result
+    assert "权限不足" in result
+    assert not (platform_root / "demo-global").exists()
+
+
+def test_global_scope_denies_missing_identity(personal_root, tmp_path, monkeypatch):
+    """旧实现里 ``if user_info and not is_admin`` 会让无身份的调用直接落盘，这里必须拒。"""
+    platform_root = _platform_root(tmp_path, monkeypatch)
+    monkeypatch.setattr("app.utils.context.current_user_info", _ContextStub(None))
+
+    result = _call_global()
+
+    assert result.startswith("错误："), result
+    assert not (platform_root / "demo-global").exists()
+
+
+def test_global_scope_allows_admin_role(personal_root, tmp_path, monkeypatch):
+    platform_root = _platform_root(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "app.utils.context.current_user_info",
+        _ContextStub({"id": 9, "name": "root", "role": "admin"}),
+    )
+
+    result = _call_global()
+
+    assert "NANZI_SKILL_CREATED:" in result
+    assert "平台全局" in result
+    assert (platform_root / "demo-global" / "SKILL.md").read_text(encoding="utf-8") == SKILL_MD
+
+
+def test_global_scope_accepts_cached_permission_grant(personal_root, tmp_path, monkeypatch):
+    """被单独授予 element:skills:admin 的非 admin 角色，靠会话预热的缓存放行。"""
+    from app.services.ai.skills import platform_admin
+
+    platform_root = _platform_root(tmp_path, monkeypatch)
+    platform_admin.remember_platform_skill_admin(1, True)
+
+    result = _call_global()
+
+    assert "NANZI_SKILL_CREATED:" in result
+    assert (platform_root / "demo-global" / "SKILL.md").exists()

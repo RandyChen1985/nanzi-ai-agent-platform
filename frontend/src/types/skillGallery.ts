@@ -25,8 +25,13 @@ export interface SkillGalleryCard {
   install_command: string
   /** 给智能体用的整段提示词：安装到个人技能库 */
   install_prompt: string
-  /** 给智能体用的整段提示词：安装到平台全局技能库（仅管理员有入口） */
-  install_prompt_global: string
+  /**
+   * 给智能体用的整段提示词：安装到平台全局技能库。
+   *
+   * 仅持有 `element:skills:admin` 的用户才会拿到；其余用户后端直接不返回该字段
+   * （提示词里写着「我确认有管理员权限」，不能交给无权限的人），因此这里是可选的。
+   */
+  install_prompt_global?: string
   updated_at: string
   intro_doc: string
   /**

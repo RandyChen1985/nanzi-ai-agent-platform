@@ -28,10 +28,10 @@
       "license": "Proprietary (Anthropic) — 仅作索引介绍，未复制正文",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pdf -y",
-      "install_prompt": "请帮我在沙箱里安装技能「PDF 全能处理」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pdf -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/pdf，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「PDF 全能处理」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pdf -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/pdf，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/pdf.md",
       "updated_at": "2026-10-28",
-      "install_prompt_global": "请帮我在沙箱里安装技能「PDF 全能处理」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pdf -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/pdf，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
+      "install_prompt_global": "请帮我在沙箱里安装技能「PDF 全能处理」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pdf -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/pdf，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
     },
     {
       "id": "docx",
@@ -59,10 +59,10 @@
       "license": "Proprietary (Anthropic) — 仅作索引介绍，未复制正文",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill docx -y",
-      "install_prompt": "请帮我在沙箱里安装技能「Word 文档编辑」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill docx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/docx，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「Word 文档编辑」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill docx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/docx，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/docx.md",
       "updated_at": "2026-10-28",
-      "install_prompt_global": "请帮我在沙箱里安装技能「Word 文档编辑」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill docx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/docx，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
+      "install_prompt_global": "请帮我在沙箱里安装技能「Word 文档编辑」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill docx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/docx，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
     },
     {
       "id": "pptx",
@@ -89,10 +89,10 @@
       "license": "Proprietary (Anthropic) — 仅作索引介绍，未复制正文",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pptx -y",
-      "install_prompt": "请帮我在沙箱里安装技能「PPT 生成与编辑」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pptx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/pptx，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「PPT 生成与编辑」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pptx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/pptx，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/pptx.md",
       "updated_at": "2026-10-28",
-      "install_prompt_global": "请帮我在沙箱里安装技能「PPT 生成与编辑」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pptx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/pptx，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
+      "install_prompt_global": "请帮我在沙箱里安装技能「PPT 生成与编辑」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill pptx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/pptx，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
     },
     {
       "id": "xlsx",
@@ -120,10 +120,10 @@
       "license": "Proprietary (Anthropic) — 仅作索引介绍，未复制正文",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill xlsx -y",
-      "install_prompt": "请帮我在沙箱里安装技能「Excel 表格处理」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill xlsx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/xlsx，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「Excel 表格处理」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill xlsx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/xlsx，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/xlsx.md",
       "updated_at": "2026-10-28",
-      "install_prompt_global": "请帮我在沙箱里安装技能「Excel 表格处理」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill xlsx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/xlsx，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
+      "install_prompt_global": "请帮我在沙箱里安装技能「Excel 表格处理」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill xlsx -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/xlsx，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
     },
     {
       "id": "mcp-builder",
@@ -150,10 +150,10 @@
       "license": "Proprietary (Anthropic) — 仅作索引介绍，未复制正文",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill mcp-builder -y",
-      "install_prompt": "请帮我在沙箱里安装技能「MCP 服务开发」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill mcp-builder -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/mcp-builder，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「MCP 服务开发」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill mcp-builder -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/mcp-builder，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/mcp-builder.md",
       "updated_at": "2026-10-28",
-      "install_prompt_global": "请帮我在沙箱里安装技能「MCP 服务开发」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill mcp-builder -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/mcp-builder，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
+      "install_prompt_global": "请帮我在沙箱里安装技能「MCP 服务开发」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill mcp-builder -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/mcp-builder，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
     },
     {
       "id": "agent-browser",
@@ -181,8 +181,8 @@
       "license": "Apache-2.0",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/agent-browser --skill agent-browser -y",
-      "install_prompt": "请帮我在沙箱里安装技能「浏览器操作员」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/agent-browser --skill agent-browser -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/agent-browser，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「浏览器操作员」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/agent-browser --skill agent-browser -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/agent-browser，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「浏览器操作员」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/agent-browser --skill agent-browser -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/agent-browser，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「浏览器操作员」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/agent-browser --skill agent-browser -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/agent-browser，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/agent-browser.md",
       "updated_at": "2026-10-28"
     },
@@ -210,10 +210,10 @@
       "license": "Proprietary (Anthropic) — 仅作索引介绍，未复制正文",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill skill-creator -y",
-      "install_prompt": "请帮我在沙箱里安装技能「技能创作助手」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill skill-creator -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/skill-creator，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「技能创作助手」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill skill-creator -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/skill-creator，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/skill-creator.md",
       "updated_at": "2026-10-28",
-      "install_prompt_global": "请帮我在沙箱里安装技能「技能创作助手」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill skill-creator -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/skill-creator，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
+      "install_prompt_global": "请帮我在沙箱里安装技能「技能创作助手」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill skill-creator -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/skill-creator，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
     },
     {
       "id": "find-skills",
@@ -240,8 +240,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/skills --skill find-skills -y",
-      "install_prompt": "请帮我在沙箱里安装技能「技能发现器」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/skills --skill find-skills -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/find-skills，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「技能发现器」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/skills --skill find-skills -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/find-skills，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「技能发现器」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/skills --skill find-skills -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/find-skills，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「技能发现器」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/vercel-labs/skills --skill find-skills -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/find-skills，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/find-skills.md",
       "updated_at": "2026-10-28"
     },
@@ -270,10 +270,10 @@
       "license": "Proprietary (Anthropic) — 仅作索引介绍，未复制正文",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill webapp-testing -y",
-      "install_prompt": "请帮我在沙箱里安装技能「Web 应用测试」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill webapp-testing -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/webapp-testing，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「Web 应用测试」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill webapp-testing -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/webapp-testing，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/webapp-testing.md",
       "updated_at": "2026-10-28",
-      "install_prompt_global": "请帮我在沙箱里安装技能「Web 应用测试」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill webapp-testing -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/webapp-testing，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
+      "install_prompt_global": "请帮我在沙箱里安装技能「Web 应用测试」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill webapp-testing -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/webapp-testing，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
     },
     {
       "id": "tdd",
@@ -300,8 +300,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill tdd -y",
-      "install_prompt": "请帮我在沙箱里安装技能「测试驱动开发」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill tdd -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/tdd，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「测试驱动开发」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill tdd -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/tdd，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「测试驱动开发」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill tdd -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/tdd，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「测试驱动开发」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill tdd -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/tdd，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/tdd.md",
       "updated_at": "2026-10-28"
     },
@@ -330,10 +330,10 @@
       "license": "Proprietary (Anthropic) — 仅作索引介绍，未复制正文",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill frontend-design -y",
-      "install_prompt": "请帮我在沙箱里安装技能「前端视觉设计」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill frontend-design -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/frontend-design，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「前端视觉设计」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill frontend-design -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/frontend-design，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/frontend-design.md",
       "updated_at": "2026-10-28",
-      "install_prompt_global": "请帮我在沙箱里安装技能「前端视觉设计」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill frontend-design -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/frontend-design，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
+      "install_prompt_global": "请帮我在沙箱里安装技能「前端视觉设计」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/anthropics/skills --skill frontend-design -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/frontend-design，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。"
     },
     {
       "id": "code-review",
@@ -360,8 +360,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill code-review -y",
-      "install_prompt": "请帮我在沙箱里安装技能「双轴代码评审」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill code-review -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/code-review，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「双轴代码评审」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill code-review -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/code-review，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「双轴代码评审」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill code-review -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/code-review，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「双轴代码评审」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill code-review -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/code-review，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/code-review.md",
       "updated_at": "2026-10-28"
     },
@@ -390,8 +390,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill improve-codebase-architecture -y",
-      "install_prompt": "请帮我在沙箱里安装技能「架构深化扫描」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill improve-codebase-architecture -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/improve-codebase-architecture，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「架构深化扫描」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill improve-codebase-architecture -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/improve-codebase-architecture，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「架构深化扫描」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill improve-codebase-architecture -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/improve-codebase-architecture，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「架构深化扫描」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill improve-codebase-architecture -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/improve-codebase-architecture，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/improve-codebase-architecture.md",
       "updated_at": "2026-10-28"
     },
@@ -420,8 +420,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill diagnosing-bugs -y",
-      "install_prompt": "请帮我在沙箱里安装技能「疑难缺陷诊断」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill diagnosing-bugs -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/diagnosing-bugs，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「疑难缺陷诊断」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill diagnosing-bugs -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/diagnosing-bugs，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「疑难缺陷诊断」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill diagnosing-bugs -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/diagnosing-bugs，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「疑难缺陷诊断」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill diagnosing-bugs -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/diagnosing-bugs，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/diagnosing-bugs.md",
       "updated_at": "2026-10-28"
     },
@@ -450,8 +450,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill codebase-design -y",
-      "install_prompt": "请帮我在沙箱里安装技能「深模块设计」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill codebase-design -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/codebase-design，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「深模块设计」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill codebase-design -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/codebase-design，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「深模块设计」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill codebase-design -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/codebase-design，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「深模块设计」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill codebase-design -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/codebase-design，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/codebase-design.md",
       "updated_at": "2026-10-28"
     },
@@ -480,8 +480,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill domain-modeling -y",
-      "install_prompt": "请帮我在沙箱里安装技能「领域建模」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill domain-modeling -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/domain-modeling，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「领域建模」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill domain-modeling -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/domain-modeling，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「领域建模」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill domain-modeling -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/domain-modeling，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「领域建模」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill domain-modeling -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/domain-modeling，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/domain-modeling.md",
       "updated_at": "2026-10-28"
     },
@@ -510,8 +510,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill grill-me -y",
-      "install_prompt": "请帮我在沙箱里安装技能「方案拷问」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill grill-me -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/grill-me，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「方案拷问」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill grill-me -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/grill-me，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「方案拷问」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill grill-me -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/grill-me，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「方案拷问」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill grill-me -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/grill-me，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/grill-me.md",
       "updated_at": "2026-10-28"
     },
@@ -540,8 +540,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill research -y",
-      "install_prompt": "请帮我在沙箱里安装技能「一手资料调研」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill research -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/research，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「一手资料调研」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill research -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/research，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「一手资料调研」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill research -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/research，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「一手资料调研」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill research -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/research，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/research.md",
       "updated_at": "2026-10-28"
     },
@@ -571,8 +571,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill triage -y",
-      "install_prompt": "请帮我在沙箱里安装技能「需求分诊」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill triage -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/triage，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「需求分诊」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill triage -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/triage，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「需求分诊」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill triage -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/triage，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「需求分诊」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill triage -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/triage，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/triage.md",
       "updated_at": "2026-10-28"
     },
@@ -601,8 +601,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill handoff -y",
-      "install_prompt": "请帮我在沙箱里安装技能「上下文交接」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill handoff -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/handoff，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「上下文交接」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill handoff -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/handoff，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「上下文交接」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill handoff -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/handoff，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「上下文交接」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/mattpocock/skills --skill handoff -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/handoff，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/handoff.md",
       "updated_at": "2026-10-28"
     },
@@ -631,8 +631,8 @@
       "license": "MIT",
       "version": "1.0.0",
       "install_command": "mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/obra/superpowers --skill brainstorming -y",
-      "install_prompt": "请帮我在沙箱里安装技能「需求脑暴」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/obra/superpowers --skill brainstorming -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/brainstorming，收进我的个人技能库。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
-      "install_prompt_global": "请帮我在沙箱里安装技能「需求脑暴」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/obra/superpowers --skill brainstorming -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/brainstorming，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt": "请帮我在沙箱里安装技能「需求脑暴」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/obra/superpowers --skill brainstorming -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/brainstorming，收进我的个人技能库。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
+      "install_prompt_global": "请帮我在沙箱里安装技能「需求脑暴」，全程不允许出现交互式等待：\n1) 执行：mkdir -p /workspace/.skill-tmp && cd /workspace/.skill-tmp && DISABLE_TELEMETRY=1 npx -y skills add https://github.com/obra/superpowers --skill brainstorming -y\n   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n2) 装好后调用 import_skill_from_sandbox，source_path 传 /workspace/.skill-tmp/.agents/skills/brainstorming，scope 传 global，收进平台全局技能库（我确认有管理员权限）。\n3) 如果命令超过 3 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。",
       "intro_doc": "docs/brainstorming.md",
       "updated_at": "2026-10-28"
     }

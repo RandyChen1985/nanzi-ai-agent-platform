@@ -128,7 +128,13 @@ function copyPersonal() {
 
 function copyPlatform() {
   if (!detail.value) return
-  const text = detail.value.install_prompt_global || detail.value.install_prompt
+  // 平台版提示词按 element:skills:admin 下发；拿不到时**不能**回退成个人版——
+  // 那会复制一段只装进个人库的提示词，却提示「已复制安装到平台提示词」。
+  const text = detail.value.install_prompt_global
+  if (!text) {
+    showToast('未获取到平台安装提示词，请确认当前账号有平台技能管理权限', 'warning')
+    return
+  }
   copy(text, '已复制「安装到平台技能库」提示词')
 }
 
@@ -295,6 +301,7 @@ watch(
           >
             <b>必须非交互执行</b>：命令里两个 <code class="rounded bg-amber-100 px-1 dark:bg-amber-900/40">-y</code>
             缺一不可（跳过 npx 装包确认 + 跳过 skills 安装确认），否则沙箱里会停在等待输入、把会话拖成僵尸进程。
+            命令超过 <b>3 分钟</b>没有任何输出，就让智能体立即中止并回报卡在哪一步。
             统一装到 <code class="rounded bg-amber-100 px-1 dark:bg-amber-900/40">/workspace/.skill-tmp</code>，
             路径可预测，导入完成后该目录可直接删除。
           </p>

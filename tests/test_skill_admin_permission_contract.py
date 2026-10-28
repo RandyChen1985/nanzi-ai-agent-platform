@@ -59,3 +59,30 @@ def test_skill_publication_service_parses_with_python311():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_session_start_primes_platform_skill_admin_cache():
+    """会话启动必须预热同步缓存，否则工具侧（同步函数）永远判定为无权限。
+
+    ``create_skills`` / ``import_skill_from_sandbox`` 是同步工具，只能读进程内缓存。
+    预热点放在 ``stream_chat`` 里与「禁用公共技能」缓存并列——这两个缓存都依赖同一个
+    请求上下文里的真实用户身份。
+    """
+    source = (ROOT / "app/services/ai/agent_service.py").read_text(encoding="utf-8")
+
+    assert "prime_platform_skill_admin" in source
+    # 预热必须在身份确定之后，不能拿匿名上下文去查
+    prime_at = source.index("prime_platform_skill_admin")
+    required_user_id_at = source.index("required_user_id = require_user_id(user_info)")
+    assert required_user_id_at < prime_at
+
+
+def test_skill_tools_use_the_shared_platform_admin_gate():
+    """两个写技能的工具都走同一道闸门，不再各自判 role 字符串。"""
+    source = (ROOT / "app/services/ai/tools/system_executive_tools.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert source.count("can_manage_platform_skills(user_info)") == 2
+    # 旧口径（role 里含 admin）不该再出现在写平台技能的判定里
+    assert 'is_admin = (role == "admin"' not in source

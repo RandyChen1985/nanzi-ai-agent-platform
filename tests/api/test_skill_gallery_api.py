@@ -26,6 +26,28 @@ from app.services.ai.skill_gallery import catalog as gallery_catalog
 @pytest.fixture()
 def api_client():
     app.dependency_overrides[require_api_key] = lambda: {"user_id": 7, "role": "user", "username": "tester"}
+    # 平台提示词的裁剪会查 element:skills:admin；测试里不连真库，也不去读真实授权。
+    from app.core.orm import get_db_session
+
+    async def _fake_session():
+        yield None
+
+    app.dependency_overrides[get_db_session] = _fake_session
+    transport = ASGITransport(app=app)
+    yield AsyncClient(transport=transport, base_url="http://test")
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def admin_client():
+    """平台管理员视图：role=admin 走 require_permission 的 bypass 口径。"""
+    app.dependency_overrides[require_api_key] = lambda: {"user_id": 1, "role": "admin", "username": "root"}
+    from app.core.orm import get_db_session
+
+    async def _fake_session():
+        yield None
+
+    app.dependency_overrides[get_db_session] = _fake_session
     transport = ASGITransport(app=app)
     yield AsyncClient(transport=transport, base_url="http://test")
     app.dependency_overrides.clear()
@@ -102,7 +124,65 @@ async def test_detail_returns_intro_from_local_doc(api_client, empty_libraries):
     assert detail["intro"]
     # 介绍是我们自己写的导读：不该带上游 SKILL.md 的 frontmatter
     assert not detail["intro"].startswith("---")
+
+
+# --- 平台提示词按权限下发 -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_detail_hides_platform_prompt_from_regular_user(api_client, empty_libraries):
+    """普通用户拿不到「安装到平台」那段提示词。
+
+    前端按钮已经用 ``canInstallPlatform`` 隐藏，但那段文本本身写着「我确认有管理员
+    权限」——原样下发等于把一句可被模型当真的话交给任何登录用户。接口层必须一起裁掉。
+    """
+    async with api_client as client:
+        response = await client.get("/api/portal/skills/gallery/pdf")
+
+    detail = response.json()
+    assert "install_prompt_global" not in detail
+    # 个人版提示词不受影响
+    assert detail["install_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_detail_exposes_platform_prompt_to_admin(admin_client, empty_libraries):
+    async with admin_client as client:
+        response = await client.get("/api/portal/skills/gallery/pdf")
+
+    detail = response.json()
     assert detail["install_prompt_global"]
+    assert "scope 传 global" in detail["install_prompt_global"]
+
+
+@pytest.mark.asyncio
+async def test_list_hides_platform_prompt_from_regular_user(api_client, empty_libraries):
+    """列表接口也下发 install_prompt_global，裁剪口径必须与详情页一致。"""
+    async with api_client as client:
+        response = await client.get("/api/portal/skills/gallery")
+
+    for skill in response.json()["skills"]:
+        assert "install_prompt_global" not in skill
+        assert skill["install_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_platform_prompt_follows_element_permission_not_role(
+    api_client, empty_libraries, monkeypatch
+):
+    """判定口径是 ``element:skills:admin``：被单独授权的非 admin 角色同样能拿到。"""
+
+    async def _granted(user, db):
+        return True
+
+    monkeypatch.setattr(
+        "app.api.portal.endpoints.skill_gallery._can_manage_platform_skills", _granted
+    )
+
+    async with api_client as client:
+        response = await client.get("/api/portal/skills/gallery/pdf")
+
+    assert response.json()["install_prompt_global"]
 
 
 @pytest.mark.asyncio

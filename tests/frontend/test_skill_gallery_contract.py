@@ -64,6 +64,8 @@ def test_install_prompt_is_non_interactive():
     # 提示用户两个 -y 各管什么，否则容易被"顺手删掉一个"
     assert "跳过 npx 装包确认" in drawer
     assert "/workspace/.skill-tmp" in drawer
+    # 兜底时长要与 catalog 提示词同口径（3 分钟），用户看详情就知道卡住会被中止
+    assert "3 分钟" in drawer
     assert "import_skill_from_sandbox" in drawer or "install_prompt" in drawer
 
 
@@ -158,3 +160,21 @@ def test_more_skills_link_points_to_external_hub():
     link = template.split("EXTERNAL_SKILL_HUB_URL", 1)[1][:400]
     assert 'target="_blank"' in link
     assert 'rel="noreferrer noopener"' in link
+
+
+def test_platform_prompt_is_optional_in_types_and_never_falls_back_to_personal():
+    """平台提示词按权限下发，前端类型必须允许缺失，且不能静默拿个人版顶替。
+
+    后端对无 ``element:skills:admin`` 的用户不返回 ``install_prompt_global``。若前端用
+    ``install_prompt_global || install_prompt`` 兜底，管理员在权限查询失败（fail-closed）
+    时会复制到**个人版**提示词，却提示「已复制安装到平台提示词」——用户以为装到平台，
+    实际只装进自己库。宁可提示失败。
+    """
+    types = _read("frontend/src/types/skillGallery.ts")
+    drawer = _read("frontend/src/components/skill-gallery/SkillGalleryDrawer.vue")
+
+    assert "install_prompt_global?: string" in types
+
+    platform_fn = drawer.split("function copyPlatform", 1)[1]
+    assert "install_prompt_global ||" not in platform_fn
+    assert "未获取到平台安装提示词" in platform_fn
