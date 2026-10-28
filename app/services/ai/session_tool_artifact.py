@@ -71,6 +71,7 @@ _EXCLUDED_TOOL_NAMES = frozenset(
         "jira_get_projects",
         "create_skills",
         "write_skill_file",
+        "import_skill_from_sandbox",
         "update_user_preference",
         "delete_user_preference",
     }

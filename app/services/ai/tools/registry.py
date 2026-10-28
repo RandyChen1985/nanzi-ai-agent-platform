@@ -27,7 +27,8 @@ from app.services.ai.tools.notification_tools import (
 from app.services.ai.tools.jira_tools import JiraSearchTool, JiraCreateIssueTool, JiraGetProjectsTool
 from app.services.ai.tools.system_executive_tools import (
     read_file, read_image, write_file, search_text, exec_command, manage_process, list_process,
-    create_skills, write_skill_file, list_available_skills, read_skill_instruction
+    create_skills, write_skill_file, import_skill_from_sandbox,
+    list_available_skills, read_skill_instruction
 )
 from app.services.ai.tools.advanced_auxiliary_tools import (
     sqlite_scratchpad, directory_tree_navigator, web_renderer_and_snapshot, code_syntax_linter,
@@ -330,6 +331,7 @@ class ToolRegistry:
         "list_process": list_process,
         "create_skills": create_skills,
         "write_skill_file": write_skill_file,
+        "import_skill_from_sandbox": import_skill_from_sandbox,
         "list_available_skills": list_available_skills,
         "read_skill_instruction": read_skill_instruction,
         # Register Advanced Auxiliary Tools
@@ -933,6 +935,7 @@ class ToolRegistry:
             publish_generated_file,
             create_skills,
             write_skill_file,
+            import_skill_from_sandbox,
             list_available_skills,
             read_skill_instruction,
             cls._portal_notification_tool,

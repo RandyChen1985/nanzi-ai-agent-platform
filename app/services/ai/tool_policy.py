@@ -466,6 +466,17 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="no",
         nudge_mode="explicit",
     ),
+    "import_skill_from_sandbox": ToolMetadata(
+        capability="skill_management",
+        source="platform_control",
+        freshness="current_turn",
+        side_effect="write",
+        confirmation="ask",
+        # 与 create_skills/write_skill_file 同口径：overwrite=false 时第二次调用返回
+        # EXISTS 而不是成功，重试策略不能把它当幂等。
+        idempotent="no",
+        nudge_mode="explicit",
+    ),
     "list_available_skills": ToolMetadata(
         capability="skill_catalog",
         source="platform_catalog",

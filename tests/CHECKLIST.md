@@ -886,3 +886,18 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 **已踩过的坑**：上一次加 node 后的 tag `agentscope-workspace:1cc6179b8c4a` 是坏的（装了最新版 agentscope），可 `docker rmi` 清掉。
 **未做**：未执行 `./dev.sh`；未在本机真实构建并跑起 gateway（需用户在控制台重建镜像后验证）。
 
+## 2026-10-28 新增 `import_skill_from_sandbox`：把沙箱里 npx 装的技能收录进平台技能库
+
+|---|---|---|---|
+| 用户在对话里让智能体 `npx skills add <包>` 装技能，装完平台看不到、也不持久化 | `app/services/ai/tools/system_executive_tools.py` | `npx skills` 把技能装到 `<cwd>/.agents/skills/<id>/`。`/workspace` 是用户工作区的 **rw** 挂载，所以这份目录在宿主磁盘上真实存在（`agent_workspaces/<user_key>/sessions/<sid>/scratch/.agents/skills/...`），但平台技能库只认 `agent_workspaces/<user_key>/skills/`：`list_available_skills` 扫的是后者，于是「装了 ≠ 能用」，会话结束清理后还会丢。本工具把整份目录搬进个人技能库，脚本/图片等二进制资源也能一次带走（`create_skills` 只能逐字重写文本，`write_skill_file` 传二进制要 Base64 且需要模型知道内容） |
+| 为什么**不改** `personal-skills` 的只读挂载 | `workspace.py` / `k8s_workspace.py`（未改动） | 讨论过「个人 skills 改成可读可写」，评估后放弃：① ro 挡的是「沙箱内进程直接改技能库」，而 sandbox 里跑的是用户代码 + 第三方技能脚本，rw 等于把「篡改全部个人技能（含已发布源）」的权限交给任意第三方脚本；② 沙箱内裸写会绕过 `create_skills` 的 overwrite 闸门、`validate_skill_id` 保留字校验、以及 rename/delete 时的发布血缘同步（`skill_publications` / `ai_agent_versions.skills` / 会话挂载），`rm -rf` 一条命令就能让发布记录变孤儿；③ 同一用户多会话各一个容器，rw 挂同一目录无锁互覆盖。**而且这个场景根本不需要 rw**：源目录本来就可写，搬运由后端进程做 |
+| 源路径的边界 | 同上（`_resolve_sandbox_source_dir`） | 只接受 `/workspace/...` 与相对工作区路径；`realpath` 后必须仍在该用户工作区内（软链接跳出去会被 `commonpath` 拦下）；拒绝 `..`、拒绝 `/workspace` 根、拒绝技能库本体（`/workspace/skills`、`/workspace/personal-skills` 都是 personal root 本身或它的沙箱挂载点） |
+| 符号链接 | 同上（`_copy_skill_tree`） | **不跟随**。`npx skills` 会给每个目标工具建软链（实测 `scratch/.claude/skills/weather-query -> ../../.agents/skills/weather-query`），还有一份 `agent/skills/` 实体副本；跟随复制会把同一技能收两遍，链接指向工作区外时还会把宿主其他目录内容复制进技能库。跳过并计数，结果里回报 `skipped_links` |
+| 原子性 | 同上 | 先复制到 `<skills>/.import-<uuid>/`，校验通过再 `os.replace` 成正式目录；`overwrite=True` 时旧目录先 rename 成 `.trash-<uuid>`，替换失败回滚。`.import-*` 以 `.` 开头，`_scan_skill_dir` 天然跳过，绝不会出现「文件数不全的半残技能被列出来」 |
+| 批量与命名 | 同上 | 源既可以是单个技能目录，也可以是技能根目录（如 `scratch/.agents/skills`）→ 收录其下所有含 `SKILL.md` 的直接子目录；目录名非法（如 `Bad Name`）进 `failed` 不影响其他技能。`skill_id` 留空沿用目录名，批量时忽略并在 marker 里回显 `ignored_skill_id` |
+| frontmatter 缺失怎么办 | 同上（`_skill_md_meta_warnings`） | **只告警不拒绝**：第三方技能的 frontmatter 写法五花八门，硬拒会让用户装好的技能进不来；缺 `name`/`description` 时 `list_skill_metas` 会退化用目录名展示（可用但不好看），所以在结果里回 `missing_frontmatter` / `missing_name` / `missing_description` 让模型转述 |
+| 不做 `scope="global"` | 同上（无该参数） | 全局技能要走发布/审核流程（`skill_publications`），不该由一个「从沙箱搬目录」的工具开后门 |
+
+**回归**：新增 `tests/services/ai/test_import_skill_from_sandbox.py` **30 项**（含二进制资源、相对路径、显式 ID、软链跳过、`.git`/`node_modules`/`__pycache__`/`.seed` 忽略、8 种越界路径、默认不覆盖 / `overwrite` 整树替换、批量含非法目录名、frontmatter 三种告警、文件数与容量预算、失败后无暂存残留、未登录拒绝、注册与 policy 契约、**收录后 `list_skill_metas` 立即可见**）；`-k "skill or tool_policy or registry or nudge or artifact"` **1069 passed / 2 skipped / 3 xfailed**。
+**端到端**：拿宿主上真实的 `scratch/.agents/skills`（`weather-query` + `pdf` 共 13 个文件）跑了一遍，正确收录 `pdf`（12 文件 / 58692 字节，含 `scripts/*.py`、`reference.md`、`LICENSE.txt`）与 `weather-query`（1 文件），marker 可解析。
+**未做**：未改只读挂载；未做自动扫描同步（按用户选择走模型显式调用）；未执行 `./dev.sh`。
