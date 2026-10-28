@@ -1079,6 +1079,78 @@ async def upload_to_workspace(
     )
 
 
+class FileArchiveExtractRequest(BaseModel):
+    archive_path: str = Field(..., description="压缩包绝对路径（只需可读）")
+    target_dir: str = Field(..., description="解压目标目录绝对路径（必须可写）")
+    subdir: Optional[str] = Field(
+        None,
+        description="目标目录下的子文件夹名；缺省取压缩包名去后缀，空串表示直接解到目标目录",
+    )
+
+
+class FileArchiveExtractResponse(BaseModel):
+    path: str
+    file_count: int
+    total_bytes: int
+    skipped: List[Dict[str, str]] = Field(default_factory=list)
+
+
+@router.post(
+    "/extract",
+    response_model=StandardResponse[FileArchiveExtractResponse],
+    summary="解压工作空间内的压缩包",
+    description=(
+        "支持 zip / tar / tar.gz / tgz。源压缩包只需可读（公共只读目录也可），"
+        "目标目录必须可写；路径穿越、符号链接与压缩炸弹在服务端拦截，失败会回滚。"
+    ),
+)
+async def extract_fs_archive(
+    body: FileArchiveExtractRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from starlette.concurrency import run_in_threadpool
+
+    from app.services.workspace_archive import (
+        ArchiveExtractError,
+        extract_archive,
+        extract_limits_from_settings,
+    )
+
+    source = assert_path_allowed(body.archive_path, user_info)
+    if not os.path.isfile(source):
+        raise HTTPException(status_code=404, detail="压缩包不存在或不是文件。")
+
+    target_dir = _resolve_writable_entry_path(body.target_dir, user_info)
+    if not os.path.isdir(target_dir):
+        raise HTTPException(status_code=400, detail="目标路径不是目录。")
+    # 与 create-entry 一致：工作区内的符号链接不能把写入引到授权目录之外
+    if not is_fs_admin(user_info):
+        assert_path_writable(os.path.realpath(target_dir), user_info)
+
+    max_total_bytes, max_entries = extract_limits_from_settings()
+    try:
+        # 解压是同步 IO：丢线程池，避免大包把事件循环堵住
+        result = await run_in_threadpool(
+            extract_archive,
+            source,
+            os.path.realpath(target_dir),
+            body.subdir,
+            max_total_bytes=max_total_bytes,
+            max_entries=max_entries,
+        )
+    except ArchiveExtractError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    return StandardResponse(
+        data=FileArchiveExtractResponse(
+            path=result.path,
+            file_count=result.file_count,
+            total_bytes=result.total_bytes,
+            skipped=result.skipped,
+        )
+    )
+
+
 @router.get(
     "/search",
     response_model=StandardResponse[FileSearchResponse],

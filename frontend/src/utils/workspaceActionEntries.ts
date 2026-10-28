@@ -15,6 +15,7 @@ export type WorkspaceActionKey =
   | 'open-dir'
   | 'preview'
   | 'download'
+  | 'extract'
   | 'copy-path'
   | 'mount'
   | 'rename'
@@ -87,6 +88,34 @@ function previewEntry(target: WorkspaceActionTarget): WorkspaceActionEntry {
   })
 }
 
+/** 服务端能解的格式，必须与 app/services/workspace_archive.py 的白名单一致。 */
+const EXTRACTABLE_SUFFIXES = ['.tar.gz', '.tgz', '.tar', '.zip']
+/** 认识但解不了的格式：保留入口、置灰并说明，而不是凭空消失。 */
+const UNSUPPORTED_ARCHIVE_SUFFIXES = ['.rar', '.7z']
+
+export function isExtractableArchive(name: string): boolean {
+  const lower = String(name || '').toLowerCase()
+  return EXTRACTABLE_SUFFIXES.some((suffix) => lower.endsWith(suffix))
+}
+
+export function isUnsupportedArchive(name: string): boolean {
+  const lower = String(name || '').toLowerCase()
+  return UNSUPPORTED_ARCHIVE_SUFFIXES.some((suffix) => lower.endsWith(suffix))
+}
+
+function extractEntry(target: WorkspaceActionTarget): WorkspaceActionEntry | null {
+  if (isExtractableArchive(target.name)) {
+    return entry('extract', '解压到…', '🗜️')
+  }
+  if (isUnsupportedArchive(target.name)) {
+    return entry('extract', '解压到…', '🗜️', {
+      disabled: true,
+      disabledHint: '暂不支持 rar / 7z，请先转成 zip',
+    })
+  }
+  return null
+}
+
 export function buildWorkspaceActionEntries(ctx: WorkspaceMenuContext): WorkspaceActionEntry[] {
   const { scene, target } = ctx
 
@@ -133,6 +162,9 @@ export function buildWorkspaceActionEntries(ctx: WorkspaceMenuContext): Workspac
     } else {
       entries.push(previewEntry(target))
       entries.push(entry('download', '下载文件', '⬇️'))
+      // 公共目录只读的是「源」，解压目标另行选择，普通用户也能解到自己的目录
+      const extract = extractEntry(target)
+      if (extract) entries.push(extract)
     }
     entries.push(mountEntry(isDir))
     entries.push(entry('copy-path', '复制路径', '📋'))
@@ -162,11 +194,12 @@ export function buildWorkspaceActionEntries(ctx: WorkspaceMenuContext): Workspac
     ]
   }
 
-  return [
+  const fileEntries: WorkspaceActionEntry[] = [
     previewEntry(target),
     entry('download', '下载文件', '⬇️'),
-    entry('copy-path', '复制路径', '📋'),
-    mountEntry(isDir),
-    ...manageEntries,
   ]
+  const extract = extractEntry(target)
+  if (extract) fileEntries.push(extract)
+  fileEntries.push(entry('copy-path', '复制路径', '📋'), mountEntry(isDir), ...manageEntries)
+  return fileEntries
 }

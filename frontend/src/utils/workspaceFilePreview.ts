@@ -372,6 +372,23 @@ export async function renameWorkspaceEntry(path: string, newName: string) {
   return axios.post('/api/v1/chat/fs/rename-entry', { path, new_name: newName })
 }
 
+/** 解压工作区内的压缩包。同步接口，大包可能解很久，单独放宽超时。 */
+export async function extractWorkspaceArchive(options: {
+  archivePath: string
+  targetDir: string
+  subdir?: string
+}) {
+  return axios.post(
+    '/api/v1/chat/fs/extract',
+    {
+      archive_path: options.archivePath,
+      target_dir: options.targetDir,
+      subdir: options.subdir ?? '',
+    },
+    { timeout: 120000 },
+  )
+}
+
 export async function deleteWorkspaceEntry(path: string) {
   return axios.post('/api/v1/chat/fs/delete-entry', { path })
 }

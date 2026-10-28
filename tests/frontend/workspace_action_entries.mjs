@@ -16,7 +16,7 @@ assert.equal(file.find((e) => e.key === 'rename').separatorBefore, true)
 assert.equal(file.find((e) => e.key === 'delete').danger, true)
 assert.equal(file.find((e) => e.key === 'delete').separatorBefore, undefined)
 
-// --- 2. zip：预览禁用但下载可用（延续上一轮下载修复）---
+// --- 2. zip：预览禁用但下载可用，并提供「解压到…」---
 const zip = buildWorkspaceActionEntries({
   scene: 'regular-item',
   target: { name: 'a.zip', path: '/w/a.zip', isDir: false, isPreviewable: false },
@@ -24,6 +24,55 @@ const zip = buildWorkspaceActionEntries({
 assert.equal(zip.find((e) => e.key === 'preview').disabled, true)
 assert.equal(zip.find((e) => e.key === 'preview').disabledHint, '该格式不支持预览')
 assert.equal(zip.find((e) => e.key === 'download').disabled, undefined)
+assert.deepEqual(
+  zip.map((e) => e.key),
+  ['preview', 'download', 'extract', 'copy-path', 'mount', 'rename', 'delete'],
+)
+assert.equal(zip.find((e) => e.key === 'extract').label, '解压到…')
+assert.equal(zip.find((e) => e.key === 'extract').disabled, undefined)
+
+// --- 2b. rar/7z：保留入口但置灰，并给出可执行的原因 ---
+for (const name of ['a.rar', 'a.7z']) {
+  const entry = buildWorkspaceActionEntries({
+    scene: 'regular-item',
+    target: { name, path: `/w/${name}`, isDir: false, isPreviewable: false },
+  }).find((e) => e.key === 'extract')
+  assert.ok(entry, `${name} 应保留解压入口`)
+  assert.equal(entry.disabled, true)
+  assert.match(entry.disabledHint, /rar|7z/i)
+}
+
+// --- 2c. tar / tar.gz / tgz 都算可解压 ---
+for (const name of ['a.tar', 'a.tar.gz', 'a.tgz', 'A.ZIP']) {
+  const entry = buildWorkspaceActionEntries({
+    scene: 'regular-item',
+    target: { name, path: `/w/${name}`, isDir: false, isPreviewable: false },
+  }).find((e) => e.key === 'extract')
+  assert.ok(entry, `${name} 应可解压`)
+  assert.equal(entry.disabled, undefined)
+}
+
+// --- 2d. 目录即使叫 x.zip 也不出现解压 ---
+assert.ok(
+  !keys({ scene: 'regular-item', target: { name: 'x.zip', path: '/w/x.zip', isDir: true } }).includes(
+    'extract',
+  ),
+)
+
+// --- 2e. 公共只读目录里的压缩包也能解压（源只读，目标是自己的目录）---
+const pubZip = buildWorkspaceActionEntries({
+  scene: 'public-item',
+  target: { name: 'bundle.tar.gz', path: '/docs/bundle.tar.gz', isDir: false, isPreviewable: false },
+})
+assert.ok(pubZip.some((e) => e.key === 'extract' && !e.disabled))
+
+// --- 2f. 回收站里的压缩包不给解压 ---
+assert.ok(
+  !keys({
+    scene: 'trash-item',
+    target: { name: 'a.zip', path: '/t/a.zip', isDir: false, isPreviewable: false },
+  }).includes('extract'),
+)
 
 // --- 3. 普通目录：无预览/下载，有打开目录 ---
 assert.deepEqual(

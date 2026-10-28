@@ -14,8 +14,28 @@ const props = withDefaults(
     visible: boolean
     conversationId?: string | null
     defaultFilename: string
+    /** 标题文案：保存文件与解压共用同一个目录树，靠这几项区分语义。 */
+    title?: string
+    subtitle?: string
+    nameLabel?: string
+    submitLabel?: string
+    /** 打开时优先定位到的目录；不在本人工作区内时回退到工作区根。 */
+    defaultPath?: string | null
+    /** 请求进行中：禁用提交并改文案，避免重复点击。 */
+    submitting?: boolean
+    /** 解压场景允许留空 = 直接解到当前目录。 */
+    allowEmptyName?: boolean
   }>(),
-  { conversationId: null },
+  {
+    conversationId: null,
+    title: '保存到目录',
+    subtitle: '仅可保存到当前用户的 AI 工作区',
+    nameLabel: '文件名',
+    submitLabel: '保存',
+    defaultPath: null,
+    submitting: false,
+    allowEmptyName: false,
+  },
 )
 
 const emit = defineEmits<{
@@ -70,7 +90,13 @@ const loadRoot = async () => {
     const resolvedRoot = root || normalizePath(rootItem?.path || '')
     if (!resolvedRoot) throw new Error('当前用户没有可用的工作目录')
     filename.value = props.defaultFilename
-    await loadDirectory(resolvedRoot)
+    const preferred = normalizePath(props.defaultPath || '')
+    if (preferred && (preferred === resolvedRoot || preferred.startsWith(`${resolvedRoot}/`))) {
+      await loadDirectory(preferred)
+    } else {
+      // 公共只读目录、会话目录等不在本人工作区内：回退到根目录，由用户自己下钻
+      await loadDirectory(resolvedRoot)
+    }
   } catch (error: any) {
     errorMessage.value = error?.response?.data?.detail || error?.message || '读取用户工作目录失败'
     loading.value = false
@@ -88,15 +114,17 @@ const selectDirectory = (directory: DirectoryItem) => {
 }
 
 const submit = () => {
+  if (props.submitting) return
   const name = filename.value.trim()
-  if (!name || !currentPath.value) {
-    errorMessage.value = '请输入文件名'
+  if (!name && !props.allowEmptyName) {
+    errorMessage.value = `请输入${props.nameLabel}`
     return
   }
-  if (name === '.' || name === '..' || /[\\/]/.test(name)) {
-    errorMessage.value = '文件名不能包含路径分隔符'
+  if (name && (name === '.' || name === '..' || /[\\/]/.test(name))) {
+    errorMessage.value = `${props.nameLabel}不能包含路径分隔符`
     return
   }
+  if (!currentPath.value) return
   emit('save', { parentPath: currentPath.value, name })
 }
 
@@ -118,8 +146,8 @@ watch(
     <div class="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl dark:bg-gray-800">
       <div class="flex items-center justify-between">
         <div>
-          <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">保存到目录</h3>
-          <p class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">仅可保存到当前用户的 AI 工作区</p>
+          <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">{{ title }}</h3>
+          <p class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">{{ subtitle }}</p>
         </div>
         <button type="button" class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700" @click="emit('close')">✕</button>
       </div>
@@ -142,7 +170,7 @@ watch(
       <div class="mt-3 max-h-40 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700">
         <div v-if="loading" class="px-3 py-5 text-center text-xs text-gray-400">正在读取目录…</div>
         <div v-else-if="errorMessage" class="px-3 py-5 text-center text-xs text-rose-500">{{ errorMessage }}</div>
-        <div v-else-if="!directories.length" class="px-3 py-5 text-center text-xs text-gray-400">当前目录没有子目录，可直接保存到这里</div>
+        <div v-else-if="!directories.length" class="px-3 py-5 text-center text-xs text-gray-400">当前目录没有子目录，可直接选择这里</div>
         <button
           v-for="directory in directories"
           :key="directory.path"
@@ -155,18 +183,19 @@ watch(
       </div>
 
       <label class="mt-4 block text-xs font-semibold text-gray-700 dark:text-gray-200">
-        文件名
+        {{ nameLabel }}
         <input
           v-model="filename"
           type="text"
           class="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs outline-none focus:border-primary dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+          :placeholder="allowEmptyName ? '留空则直接解压到当前目录' : ''"
           @keyup.enter="submit"
         />
       </label>
 
       <div class="mt-5 flex justify-end gap-2">
         <button type="button" class="rounded-lg px-3 py-2 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700" @click="emit('close')">取消</button>
-        <button type="button" class="rounded-lg bg-primary px-4 py-2 text-xs font-bold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50" :disabled="loading || !currentPath" @click="submit">保存</button>
+        <button type="button" class="rounded-lg bg-primary px-4 py-2 text-xs font-bold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50" :disabled="loading || !currentPath || submitting" @click="submit">{{ submitting ? '处理中…' : submitLabel }}</button>
       </div>
     </div>
   </div>
