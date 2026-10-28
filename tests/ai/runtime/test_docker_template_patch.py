@@ -53,3 +53,86 @@ def test_docker_build_context_tag_reflects_patch():
     finally:
         import shutil
         shutil.rmtree(ctx_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# 沙箱内置 Node（写死常量，非配置项）
+# ---------------------------------------------------------------------------
+
+def test_sandbox_node_version_is_pinned():
+    """版本写死在代码里：改这里等于改「沙箱里有什么」这个产品决策。"""
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        SANDBOX_NODE_VERSION,
+    )
+
+    assert SANDBOX_NODE_VERSION, "沙箱 Node 版本不能为空，否则退化成没有 node"
+    # 20 已于 2026-04 EOL；写死一个已停止维护的版本会埋下安全债
+    assert int(SANDBOX_NODE_VERSION) >= 22
+
+
+def test_rendered_dockerfile_installs_node_and_npm():
+    """node_version 非空时，模板必须从官方 slim 镜像 COPY node/npm/npx 三个入口。"""
+    import agentscope.workspace._docker._make_dockerfile as mk
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        SANDBOX_NODE_VERSION,
+        apply_agentscope_docker_patches,
+    )
+
+    apply_agentscope_docker_patches()
+    rendered = mk.render_dockerfile(
+        base_image="python:3.11-slim",
+        node_version=SANDBOX_NODE_VERSION,
+    )
+
+    assert f"FROM node:{SANDBOX_NODE_VERSION}-slim AS node_stage" in rendered
+    assert "COPY --from=node_stage /usr/local/bin/node /usr/local/bin/node" in rendered
+    # npx 不是独立二进制，而是 npm 包内的 cli，必须由软链暴露出来
+    assert "/usr/local/bin/npm" in rendered
+    assert "/usr/local/bin/npx" in rendered
+
+
+def test_rendered_dockerfile_omits_node_when_version_is_none():
+    """空值必须完全不带 node 段——这是「关掉 node」的唯一开关。"""
+    import agentscope.workspace._docker._make_dockerfile as mk
+
+    rendered = mk.render_dockerfile(base_image="python:3.11-slim", node_version=None)
+
+    assert "node_stage" not in rendered
+    assert "/usr/local/bin/npx" not in rendered
+    # 没装 node 的镜像里出现 RUN node 会直接把构建搞挂
+    assert "RUN node --version" not in rendered
+
+
+def test_runtime_and_prebuild_share_the_same_node_version():
+    """运行时与预构建必须传同一个值：它参与镜像 tag 哈希，不一致则预构建永远命不中。"""
+    import inspect
+
+    from app.services.ai.runtime.agentscope import docker_prebuild, workspace
+
+    runtime_src = inspect.getsource(workspace)
+    prebuild_src = inspect.getsource(docker_prebuild)
+
+    assert '"node_version": SANDBOX_NODE_VERSION' in runtime_src
+    assert '"node_version": SANDBOX_NODE_VERSION' in prebuild_src
+    # 任何一侧退回硬编码 None / 字面量版本都会让 tag 漂移
+    assert '"node_version": None' not in runtime_src
+    assert '"node_version": None' not in prebuild_src
+
+
+def test_rendered_dockerfile_verifies_node_at_build_time():
+    """自定义基础镜像换成非 glibc 基座时，构建期就要失败，别等到用户跑技能脚本。"""
+    import agentscope.workspace._docker._make_dockerfile as mk
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        SANDBOX_NODE_VERSION,
+        apply_agentscope_docker_patches,
+    )
+
+    apply_agentscope_docker_patches()
+    rendered = mk.render_dockerfile(
+        base_image="python:3.11-slim",
+        node_version=SANDBOX_NODE_VERSION,
+    )
+
+    assert "RUN node --version && npm --version && npx --version" in rendered
+    # 自检必须在 COPY 之后，否则验的是基座里可能根本不存在的 node
+    assert rendered.index("COPY --from=node_stage") < rendered.index("RUN node --version")

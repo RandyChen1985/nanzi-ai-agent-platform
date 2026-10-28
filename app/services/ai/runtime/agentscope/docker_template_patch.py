@@ -25,6 +25,34 @@ EXTRA_SANDBOX_APT_PACKAGES: Final[tuple[str, ...]] = (
     "telnet",
 )
 
+#: 沙箱镜像内置的 Node 主版本（**写死，不开放配置**）。
+#:
+#: 为什么需要: 技能可以带 ``scripts/*.js``，MCP 生态里 ``npx`` 启动的服务也很常见，
+#: 但沙箱基座 ``python:3.11-slim`` 里没有 node/npm/npx——脚本一跑就是
+#: ``sh: 1: node: not found``。AgentScope 的 Dockerfile 模板本就有 ``node_version``
+#: 开关：非空时 ``FROM node:<ver>-slim`` 把 ``node``、``npm``、``npx`` 三个二进制
+#: COPY 进沙箱镜像（见 ``agentscope/workspace/_docker/Dockerfile.node_*.template``），
+#: 平台此前一直传 ``None``，等于主动关掉了。
+#:
+#: 为什么是 22: Node 20 已于 2026-04 EOL，22 是当前维护中的 LTS。刻意不用
+#: ``apt install nodejs``（Debian bookworm 只到 18，同样已 EOL，且要多扛一层 apt）。
+#:
+#: 为什么写死而不做成配置键: 这是个「沙箱里该有什么」的产品决策，不是一个需要
+#: 按部署漂移的运行参数；做成配置只会多一个「配了没生效」的坑（预构建镜像与
+#: 运行时镜像的 tag 一旦不一致，预构建就白做了）。真要换版本，改这一个常量即可。
+#:
+#: **注意**：该值参与沙箱镜像 tag 的 SHA256 计算，改动会让所有既有沙箱镜像
+#: 标签失效、触发一次重新构建（分钟级）。k8s 策略不受影响——``K8sWorkspace``
+#: 直接拉现成镜像、没有 node_version 这个概念，需要 node 只能换
+#: ``sandbox_k8s_image``。
+SANDBOX_NODE_VERSION: Final[str] = "22"
+
+#: Node 装好后的构建期自检。自定义基础镜像（后台 ``sandbox_docker_base_image`` 支持
+#: 「自定义镜像地址…」）如果换成 alpine / distroless 这类非 glibc 基座，COPY 进去的
+#: 官方 node 二进制根本跑不起来——不加这一句，错误会一路潜伏到用户跑技能脚本时才以
+#: ``sh: 1: node: not found`` / ``Exec format error`` 的形式炸出来。
+NODE_VERIFY_SNIPPET: Final[str] = "RUN node --version && npm --version && npx --version"
+
 _PATCH_APPLIED = False
 
 
@@ -51,6 +79,11 @@ def apply_agentscope_docker_patches() -> bool:
                     extra_str = " ".join(EXTRA_SANDBOX_APT_PACKAGES)
                     replacement = f"{target} {extra_str}"
                     content = content.replace(target, replacement, 1)
+            elif name == "Dockerfile.node_copy.template":
+                # 该模板只在 node_version 非空时被渲染（见上游 render_dockerfile），
+                # 所以追加自检不会影响「关掉 node」的场景。
+                if "node --version" not in content:
+                    content = content.rstrip("\n") + "\n" + NODE_VERIFY_SNIPPET + "\n"
             return content
 
         mk._read_template = patched_read_template

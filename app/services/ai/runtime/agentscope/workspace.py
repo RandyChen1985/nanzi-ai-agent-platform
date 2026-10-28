@@ -2232,6 +2232,9 @@ async def _policy_docker_workspace(
     from app.services.ai.runtime.agentscope.docker_workspace import (
         build_docker_workspace_with_extra_binds,
     )
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        SANDBOX_NODE_VERSION,
+    )
 
     DEFAULT_DOCKER_BASE_IMAGE = "python:3.11-slim"
     base_image = (
@@ -2291,6 +2294,11 @@ async def _policy_docker_workspace(
         "extra_pip": list(GATEWAY_EXTRA_PIP),
         "skill_paths": skill_paths,
         "base_image": base_image,
+        # 沙箱内置 node/npm/npx（写死在 docker_template_patch.SANDBOX_NODE_VERSION）：
+        # 技能的 scripts/*.js 与 npx 启动的 MCP 服务都依赖它，而基座
+        # python:3.11-slim 并不自带。此处取值必须与 docker_prebuild._prepare_context
+        # 完全一致——它参与镜像 tag 的 SHA256，不一致会让预构建的镜像永远命不中。
+        "node_version": SANDBOX_NODE_VERSION,
     }
     if workspace_id:
         kwargs["workspace_id"] = workspace_id

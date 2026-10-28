@@ -28,6 +28,7 @@ Docker 代码沙箱通过启动相互隔离、非特权的轻量级容器（挂�
 | **系统与进程** | `procps` (`ps`, `top`, `pkill`, `free`) | 容器内进程状态排查、死锁进程检测、资源占用监控 |
 | **代码与文件** | `git`, `tree`, `ripgrep` (`rg`) | 代码拉取与版本查看、工作区目录层级直观展示、正则文本高效检索 |
 | **运行与包管理** | `python:3.11`, `uv` | Python 3.11 核心环境、极速虚拟环境与 pip 依赖安装管理 |
+| **Node 运行时** | `node`, `npm`, `npx`（默认 22 LTS，来自官方 `node:22-slim`） | 技能里的 `scripts/*.js`、以及 `npx` 启动的 MCP 服务；版本写死在 `docker_template_patch.SANDBOX_NODE_VERSION`，与 k8s 预置镜像同源 |
 
 ---
 

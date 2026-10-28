@@ -16,10 +16,10 @@ B 方案（docker 策略提速）的核心：docker 沙箱的镜像 tag 是内�
 预构建必须与 ``agentscope.workspace.DockerWorkspace`` 的镜像 tag 计算严格
 一致（否则预构建的镜像对运行时毫无意义）。运行时的 ``_build_or_reuse_image``
 用 ``prepare_build_context(base_image=base_image, gateway_home=GATEWAY_HOME,
-container_workdir=CONTAINER_WORKDIR, node_version=self.node_version,
+container_workdir=CONTAINER_WORKDIR, node_version=SANDBOX_NODE_VERSION,
 extra_pip=self.extra_pip)`` 生成 ``(ctx_dir, tag, copy_files)``，其中平台
 docker 策略只配置了 ``base_image``，其余 4 项为 GATEWAY_HOME、
-CONTAINER_WORKDIR、node_version=None 与 extra_pip（取值见
+CONTAINER_WORKDIR、node_version=SANDBOX_NODE_VERSION 与 extra_pip（取值见
 ``workspace_container_mcp.GATEWAY_EXTRA_PIP``）。因此本模块也以同样参数调用
 ``prepare_build_context``，得到完全相同的 tag 与构建上下文。
 
@@ -39,6 +39,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.services.ai.runtime.agentscope.docker_template_patch import (
+    SANDBOX_NODE_VERSION,
     apply_agentscope_docker_patches,
 )
 
@@ -89,7 +90,10 @@ async def _prepare_context(base_image_override: str | None = None) -> tuple[str,
     ctx_args: dict[str, object] = {
         "gateway_home": GATEWAY_HOME,
         "container_workdir": CONTAINER_WORKDIR,
-        "node_version": None,
+        # 与运行时 DockerWorkspace 的 node_version 同源（写死常量，见
+        # docker_template_patch.SANDBOX_NODE_VERSION）：参与 tag 哈希计算，
+        # 两边一旦不一致，预构建出来的镜像运行时永远命不中。
+        "node_version": SANDBOX_NODE_VERSION,
         # 必须与运行时 DockerWorkspace 的 extra_pip 完全一致（见模块 docstring）。
         "extra_pip": list(GATEWAY_EXTRA_PIP),
     }
