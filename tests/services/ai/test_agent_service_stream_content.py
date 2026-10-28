@@ -5,7 +5,7 @@ import pytest
 from app.services.ai.agent_service import (
     _accumulate_reasoning_content,
     _accumulate_stream_content,
-    _finalize_todo_success,
+    _finalize_todo_terminal,
     _final_process_timeline,
     _should_persist_turn_history,
     _restore_todo_snapshot_from_pending,
@@ -187,7 +187,7 @@ def test_success_finalization_completes_remaining_todos_and_returns_update_event
         "counts": {"pending": 0, "in_progress": 1, "completed": 1},
     }]
 
-    event = _finalize_todo_success(state, execution_status="success")
+    event = _finalize_todo_terminal(state, execution_status="success")
 
     assert event == {
         "type": "todo_update",
@@ -196,35 +196,38 @@ def test_success_finalization_completes_remaining_todos_and_returns_update_event
             {"content": "遗漏步骤", "status": "completed"},
         ],
         "counts": {"pending": 0, "in_progress": 0, "completed": 2},
+        # 成功收尾同样盖终态戳：前端据此不再把该轮当「可能还在跑」。
+        "settled": True,
+        "settledStatus": "success",
     }
     assert _final_process_timeline(state)[0]["counts"] == {
         "pending": 0,
         "in_progress": 0,
         "completed": 2,
     }
+    assert _final_process_timeline(state)[0]["settled"] is True
 
 
-def test_success_finalization_does_not_duplicate_already_completed_todos():
+def test_success_finalization_of_completed_checklist_emits_terminal_event_only():
+    """清单本来就全完成：不改内容，但仍要发终态事件。
+
+    否则实时界面在 run_status 之后既不在 banner 展示、也不满足时间线归档条件，
+    清单会直接消失，只有刷新读库才重新出现。
+    """
     state = [{
         "kind": "todo",
         "todos": [{"content": "已完成步骤", "status": "completed"}],
     }]
 
-    assert _finalize_todo_success(state, execution_status="success") is None
+    event = _finalize_todo_terminal(state, execution_status="success")
 
-
-@pytest.mark.parametrize(
-    "execution_status",
-    ["error", "cancelled", "awaiting_permission", "awaiting_external_execution", "awaiting_user"],
-)
-def test_non_success_finalization_preserves_todo_status(execution_status):
-    state = [{
-        "kind": "todo",
-        "todos": [{"content": "未完成步骤", "status": "in_progress"}],
-    }]
-
-    assert _finalize_todo_success(state, execution_status=execution_status) is None
-    assert state[0]["todos"][0]["status"] == "in_progress"
+    assert event == {
+        "type": "todo_update",
+        "todos": [{"content": "已完成步骤", "status": "completed"}],
+        "counts": {"pending": 0, "in_progress": 0, "completed": 1},
+        "settled": True,
+        "settledStatus": "success",
+    }
 
 
 def test_todo_snapshot_is_restored_when_a_pending_execution_resumes():

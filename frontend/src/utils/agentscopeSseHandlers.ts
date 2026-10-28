@@ -786,6 +786,8 @@ export function syncProcessTimelineTodo<T extends AgentStreamMessage>(
   upsertTimelineTodo(msg, {
     todos: data.todos,
     title: data.title,
+    settled: data.settled,
+    settledStatus: data.settledStatus,
   });
 }
 

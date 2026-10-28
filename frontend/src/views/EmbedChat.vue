@@ -847,6 +847,7 @@
                 :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
+                :hide-todo="activeTodoTimeline === msg.processTimeline"
                 dark-mode
                 @stop="stopGeneration({ notifySuccess: true })"
               />
@@ -2801,7 +2802,7 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
-import { hydrateHistoryProcessTimeline, settlePendingTimelineSteps, timelineHasPending } from "@/utils/processTimeline";
+import { hydrateHistoryProcessTimeline, resolveBannerTodoTimeline, settlePendingTimelineSteps, timelineHasPending } from "@/utils/processTimeline";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
@@ -3006,11 +3007,6 @@ interface Message {
   userQuestion?: UserQuestionState;
   _hasSilentlyRefreshed?: boolean;
 }
-
-const isAgentTimelineMessage = (msg: Message): boolean => {
-  const role = (msg as unknown as { role?: string }).role;
-  return role === "agent" || role === "assistant";
-};
 
 const reusableResultCountByTrace = ref<Record<string, number>>({});
 const currentMessageReusableCount = (msg: Message): number => {
@@ -3858,19 +3854,14 @@ const setBashBannerVisible = (visible: boolean) => {
 const handleIgnoreBashBanner = () => {
   setBashBannerVisible(false);
 };
-const activeTodoTimeline = computed(() => {
-  for (let i = messages.value.length - 1; i >= 0; i--) {
-    const msg = messages.value[i];
-    if (!msg) continue;
-    if (isAgentTimelineMessage(msg)) {
-      const hasTodo = msg.processTimeline?.some((item) => item.kind === 'todo');
-      if (hasTodo) {
-        return msg.processTimeline;
-      }
-    }
-  }
-  return undefined;
-});
+// 只服务「本轮仍在跑」或「等待用户操作」的清单：已终结/历史轮次的卡片不再常驻
+// 输入框上方（刷新后尤其明显），历史消息内的时间线仍完整保留。
+const activeTodoTimeline = computed(() =>
+  resolveBannerTodoTimeline(messages.value, {
+    runActive: isProcessing.value || remoteRunActive.value || remoteRunBusy.value,
+    draft: activeStreamDraft?.msg ?? null,
+  }),
+);
 const datasetMenuLoading = ref(false);
 /**
  * 骨架屏：语义是「当前线程还没准备好」，而不是「鉴权中」。

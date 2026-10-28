@@ -36,7 +36,7 @@ class AgentScopeResumeHandler:
             _enrich_terminal_error_chunk,
             _filter_current_turn_download_urls,
             _final_process_timeline,
-            _finalize_todo_success,
+            _finalize_todo_terminal,
             _persist_assistant_message_and_summary,
             _public_agent_type,
             _restore_todo_snapshot_from_pending,
@@ -183,7 +183,7 @@ class AgentScopeResumeHandler:
                 "content": full_response_content,
             }
 
-        todo_completion = _finalize_todo_success(
+        todo_completion = _finalize_todo_terminal(
             process_timeline_state,
             execution_status=execution_status,
         )
@@ -289,7 +289,7 @@ class AgentScopeResumeHandler:
             _enrich_terminal_error_chunk,
             _filter_current_turn_download_urls,
             _final_process_timeline,
-            _finalize_todo_success,
+            _finalize_todo_terminal,
             _persist_assistant_message_and_summary,
             _public_agent_type,
             _restore_todo_snapshot_from_pending,
@@ -432,7 +432,7 @@ class AgentScopeResumeHandler:
                 "content": full_response_content,
             }
 
-        todo_completion = _finalize_todo_success(
+        todo_completion = _finalize_todo_terminal(
             process_timeline_state,
             execution_status=execution_status,
         )
