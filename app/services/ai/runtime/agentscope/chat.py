@@ -349,11 +349,25 @@ class AgentScopeChatClient:
             if inspect.isawaitable(result):
                 result = await result
             if _safe_getattr(result, "__aiter__"):
+                streamed_text = ""
                 async for chunk in result:
                     # 记录原始 chunk：is_last 终帧标记只在原始 chunk 上，
                     # 转成 AIMessage 后会丢失，导致文本与用量无法正确累积。
                     span.record_output(chunk)
-                    yield _chat_response_to_message(chunk)
+                    message = _chat_response_to_message(chunk)
+                    if _safe_getattr(chunk, "is_last", False):
+                        # 终帧 content 是整段完整正文（见 ChatResponse.is_last 契约与
+                        # 基类 _StreamAccumulator.build），而本方法的所有消费方都按
+                        # 增量拼接（answer_delta += / full_content +=）。原样转发终帧
+                        # 会让正文完整出现两遍，这里只补发比已发文本多出来的尾巴。
+                        terminal_text = message.content or ""
+                        delta = _terminal_text_delta(streamed_text, terminal_text)
+                        if delta != terminal_text:
+                            message = replace(message, content=delta)
+                        yield message
+                        return
+                    streamed_text += message.content or ""
+                    yield message
                 return
             span.record_output(result)
             yield _chat_response_to_message(result)
@@ -369,6 +383,26 @@ def chat_client_from_handle(llm_handle: Any) -> AgentScopeChatClient:
         ),
         source=getattr(llm_handle, "source", None),
     )
+
+
+def _terminal_text_delta(streamed_text: str, terminal_text: str) -> str:
+    """终帧文本相对「已经流出」的正文，真正还需要下发的部分。
+
+    AgentScope 流式模式下 ``is_last=True`` 终帧的 content 是**整段完整正文**
+    （``ChatResponse.is_last`` 契约；多数后端只吐增量帧，终帧由基类
+    ``_StreamAccumulator.build`` 累积产出）。下游一律按增量拼接，因此终帧不能
+    原样转发，否则同一段正文会被拼成两份。
+
+    少数实现会在终帧只给「增量尾部」而不是累积全文，此时按新增内容处理，
+    避免丢掉最后一段回答。
+    """
+    if not terminal_text or not streamed_text:
+        return terminal_text
+    if terminal_text == streamed_text:
+        return ""
+    if terminal_text.startswith(streamed_text):
+        return terminal_text[len(streamed_text) :]
+    return terminal_text
 
 
 def _chat_response_to_message(response: Any) -> AIMessage:
