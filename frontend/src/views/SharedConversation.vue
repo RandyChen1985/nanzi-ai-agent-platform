@@ -71,6 +71,10 @@
                 <span v-if="content?.agent_name">来自 {{ content.agent_name }}</span>
                 <span v-if="content?.agent_name">·</span>
                 <span>{{ messageTurns }} 轮问答</span>
+                <template v-if="conversationAt">
+                  <span>·</span>
+                  <span>对话时间 {{ formatShareDateTime(conversationAt) }}</span>
+                </template>
                 <span>·</span>
                 <span>{{ expiryLabel }}</span>
               </p>
@@ -81,25 +85,30 @@
 
       <main class="mx-auto max-w-[860px] px-4 py-5">
         <div class="space-y-4">
-          <div v-for="(message, index) in content?.messages || []" :key="index" class="flex gap-2.5" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
-            <div v-if="message.role === 'assistant'" class="mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary/10 text-[10px] font-black text-primary">
-              AI
-            </div>
-            <div
-              class="min-w-0"
-              :class="message.role === 'user'
-                ? 'max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2.5 text-[13px] leading-relaxed text-white whitespace-pre-wrap break-words'
-                : 'max-w-[calc(100%-2rem)] flex-1 rounded-2xl rounded-bl-md border border-gray-100 bg-white px-3.5 py-3 shadow-sm'"
-            >
-              <div v-if="message.role === 'assistant'" class="markdown-body text-[13px] leading-relaxed text-gray-800">
-                <MessageRenderer
-                  :content="message.content"
-                  theme="default"
-                  hide-quick-buttons
-                  :readonly="true"
-                />
+          <!-- 每轮上方打时间戳：同一轮的 user/assistant 共享同一个 created_at，
+               只在 user 侧显示一次，避免同一条时间出现两遍 -->
+          <div v-for="(message, index) in content?.messages || []" :key="index" class="flex flex-col gap-1" :class="message.role === 'user' ? 'items-end' : 'items-start'">
+            <span v-if="messageStamp(index)" class="px-1 text-[10px] leading-none text-gray-400">{{ messageStamp(index) }}</span>
+            <div class="flex w-full gap-2.5" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
+              <div v-if="message.role === 'assistant'" class="mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary/10 text-[10px] font-black text-primary">
+                AI
               </div>
-              <template v-else>{{ message.content }}</template>
+              <div
+                class="min-w-0"
+                :class="message.role === 'user'
+                  ? 'max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2.5 text-[13px] leading-relaxed text-white whitespace-pre-wrap break-words'
+                  : 'max-w-[calc(100%-2rem)] flex-1 rounded-2xl rounded-bl-md border border-gray-100 bg-white px-3.5 py-3 shadow-sm'"
+              >
+                <div v-if="message.role === 'assistant'" class="markdown-body text-[13px] leading-relaxed text-gray-800">
+                  <MessageRenderer
+                    :content="message.content"
+                    theme="default"
+                    hide-quick-buttons
+                    :readonly="true"
+                  />
+                </div>
+                <template v-else>{{ message.content }}</template>
+              </div>
             </div>
           </div>
         </div>
@@ -138,6 +147,7 @@ import {
   type ShareMeta,
 } from '@/api/chatShare'
 import { formatRemaining } from '@/utils/shareExpiry'
+import { formatShareDateTime, formatShareMessageStamp } from '@/utils/shareTime'
 
 // echarts / mermaid 体积大，渲染内核必须懒加载，不能压进分享页首屏包
 const MessageRenderer = defineAsyncComponent(() => import('@/components/MessageRenderer.vue'))
@@ -166,6 +176,26 @@ const expiryLabel = computed(() => {
   if (!meta.value?.expires_at) return '永久有效'
   return formatRemaining(meta.value.expires_at)
 })
+
+// 会话的发生时间：取第一条消息的时刻（快照 content.created_at 是「分享创建时间」，
+// 不是对话发生的时间，两者可能差好几天，混用会让人误判这段对话是什么时候的）。
+const conversationAt = computed(() => {
+  const messages = content.value?.messages || []
+  const first = messages.find((m) => m.created_at)
+  return first?.created_at || null
+})
+
+/** 消息时间标签：同一轮问答的 user/assistant 共享同一个 created_at，只在 user 侧显示。 */
+function messageStamp(index: number): string {
+  const messages = content.value?.messages || []
+  const current = messages[index]
+  if (!current || current.role !== 'user' || !current.created_at) return ''
+  const previous = messages
+    .slice(0, index)
+    .reverse()
+    .find((m) => m.created_at)
+  return formatShareMessageStamp(current.created_at, previous?.created_at)
+}
 
 function readToken(): string {
   try {
