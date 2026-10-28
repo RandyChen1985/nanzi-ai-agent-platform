@@ -85,12 +85,17 @@ def test_admin_only_platform_install_button():
 def test_installed_badge_does_not_claim_latest_version():
     panel = _read("frontend/src/components/skill-gallery/SkillGalleryPanel.vue")
     drawer = _read("frontend/src/components/skill-gallery/SkillGalleryDrawer.vue")
+    shared = _read("frontend/src/components/skill-gallery/installedLabel.ts")
     types = _read("frontend/src/types/skillGallery.ts")
 
-    assert "installLabel" in panel or "installedLabel" in panel
-    assert "已在你的技能库" in panel
-    assert "平台已收录" in panel
-    assert "已在你的个人技能库" in drawer
+    # 徽标文案收敛到一处：面板与抽屉之前各写一套，同一状态两种说法
+    assert "installedLabel" in panel
+    assert "installedLabel" in drawer
+    assert "已在你的个人技能库" in shared
+    assert "平台技能库已收录" in shared
+    # 旧的两套自定义文案不得回流
+    assert "已在你的技能库" not in panel
+    assert "平台已收录" not in panel
     # 只判定「有没有」，不在徽标文案里声称是最新版
     assert "已是最新版" not in panel
     assert "已是最新版" not in drawer
@@ -100,12 +105,22 @@ def test_installed_badge_does_not_claim_latest_version():
 
 
 def test_gallery_api_only_exposes_read_endpoints():
+    """广场没有安装/写入接口。
+
+    唯一的 POST 是行为事件上报（``/skills/gallery/events``），它只写结构化日志，
+    不落库、不改任何技能状态——不能因为埋点就把「只读」这条边界放开。
+    """
     api = _read("frontend/src/api/skillGallery.ts")
 
     assert "/skills/gallery" in api
     assert "axios.get" in api
-    for verb in ("axios.post", "axios.put", "axios.delete", "axios.patch"):
+    for verb in ("axios.put", "axios.delete", "axios.patch"):
         assert verb not in api, f"技能广场是只读的，不该出现 {verb}"
+    assert api.count("axios.post") == 1, "只允许事件上报这一处 POST"
+    post_block = api.split("axios.post", 1)[1][:200]
+    assert "/skills/gallery/events" in post_block
+    for forbidden in ("/install", "/upload", "/publish"):
+        assert forbidden not in api
 
 
 def test_intro_is_rendered_as_escaped_markdown_not_raw_html():
@@ -178,3 +193,65 @@ def test_platform_prompt_is_optional_in_types_and_never_falls_back_to_personal()
     platform_fn = drawer.split("function copyPlatform", 1)[1]
     assert "install_prompt_global ||" not in platform_fn
     assert "未获取到平台安装提示词" in platform_fn
+
+
+def test_gallery_panel_recovers_from_failures():
+    """错误态要给重试入口，空态要区分「目录空」与「筛没了」。"""
+    panel = _read("frontend/src/components/skill-gallery/SkillGalleryPanel.vue")
+
+    assert "重试" in panel
+    assert '@click="reloadAll"' in panel
+    # 之前目录为空时也提示「换个关键词试试」，把故障说成用户搜错
+    assert "emptyHint" in panel
+    assert "技能目录暂时是空的" in panel
+
+
+def test_gallery_cards_are_keyboard_reachable():
+    """卡片只挂 @click 时键盘用户打不开详情。"""
+    panel = _read("frontend/src/components/skill-gallery/SkillGalleryPanel.vue")
+
+    assert 'tabindex="0"' in panel
+    assert "@keydown.enter.self.prevent" in panel
+    assert "@keydown.space.self.prevent" in panel
+    assert "aria-label" in panel
+
+
+def test_installed_skill_points_to_skill_workbench():
+    """装完之后要有去处：技能工作台能看内容、启用状态与卸载。"""
+    panel = _read("frontend/src/components/skill-gallery/SkillGalleryPanel.vue")
+    drawer = _read("frontend/src/components/skill-gallery/SkillGalleryDrawer.vue")
+
+    assert "menu:skills_management" in panel
+    assert "/dashboard/skills" in panel
+    assert "/dashboard/skills" in drawer
+    # 没有菜单权限的账号不显示入口，免得点进去 403
+    assert "canOpenSkillAdmin" in panel
+    assert "canOpenSkillAdmin: boolean" in drawer
+    assert 'v-if="detail.installed && canOpenSkillAdmin"' in drawer
+
+
+def test_drawer_shows_catalog_and_installed_versions_separately():
+    """目录版本 vs 库内版本要分开：只判断「有没有」，不知道「是不是最新」。"""
+    drawer = _read("frontend/src/components/skill-gallery/SkillGalleryDrawer.vue")
+    types = _read("frontend/src/types/skillGallery.ts")
+
+    assert "目录版本" in drawer
+    assert "库内版本" in drawer
+    assert "detail.installed_version || '未知'" in drawer
+    assert "installed_version" in types
+
+
+def test_gallery_reports_three_behavior_events():
+    """行为事件只在复制成功 / 详情加载成功后上报，失败不上报。"""
+    panel = _read("frontend/src/components/skill-gallery/SkillGalleryPanel.vue")
+    drawer = _read("frontend/src/components/skill-gallery/SkillGalleryDrawer.vue")
+    api = _read("frontend/src/api/skillGallery.ts")
+
+    assert "reportSkillGalleryEvent" in panel
+    assert "reportSkillGalleryEvent" in drawer
+    assert "'prompt_copy'" in panel
+    assert "'platform_prompt_copy'" in drawer
+    assert "'detail_open'" in drawer
+    assert "/skills/gallery/events" in api
+    # 复制失败也上报会把「复制量」抬虚
+    assert "if (copied) void reportSkillGalleryEvent" in panel

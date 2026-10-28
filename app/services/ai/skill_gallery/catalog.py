@@ -83,11 +83,10 @@ def _normalize_entry(raw: Dict[str, Any]) -> Dict[str, Any]:
     entry["version"] = str(entry.get("version") or "").strip()
     entry["install_command"] = str(entry.get("install_command") or "").strip()
     entry["install_prompt"] = str(entry.get("install_prompt") or "").strip()
-    # 管理员那份提示词缺省时回退到个人版：宁可让管理员按个人口径装，
-    # 也不要给出一段空提示词。
-    entry["install_prompt_global"] = str(
-        entry.get("install_prompt_global") or entry.get("install_prompt") or ""
-    ).strip()
+    # **不回退**到个人版：那段文案写的是「收进我的个人技能库」，回退后管理员点
+    # 「安装到平台」拿到的却是一份只装个人库的提示词，按钮与内容对不上且没有任何报错。
+    # 缺省时留空，由接口按权限决定下发，前端会提示「未获取到平台安装提示词」。
+    entry["install_prompt_global"] = str(entry.get("install_prompt_global") or "").strip()
     entry["updated_at"] = str(entry.get("updated_at") or "").strip()
     entry["intro_doc"] = str(entry.get("intro_doc") or "").strip()
     entry.pop("_intro", None)
@@ -208,6 +207,14 @@ def source_note() -> str:
     return str(_load_catalog().get("source_note") or "")
 
 
+def catalog_version() -> int:
+    """目录版本号（``catalog.json`` 顶层的 ``version``）。供接口生成 ETag。"""
+    try:
+        return int(_load_catalog().get("version") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def get_skill(skill_id: str) -> Optional[Dict[str, Any]]:
     """按 ID 取详情（含介绍正文 ``intro``）。找不到返回 ``None``。"""
     target = str(skill_id or "").strip()
@@ -224,6 +231,7 @@ def get_skill(skill_id: str) -> Optional[Dict[str, Any]]:
 __all__ = [
     "CATALOG_PATH",
     "get_skill",
+    "catalog_version",
     "list_categories",
     "list_skills",
     "source_note",

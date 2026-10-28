@@ -9,9 +9,11 @@
  * `import_skill_from_sandbox` 收进技能库。
  */
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import SkillGalleryDrawer from './SkillGalleryDrawer.vue'
-import { fetchSkillGallery } from '@/api/skillGallery'
+import { installedLabel } from './installedLabel'
+import { fetchSkillGallery, reportSkillGalleryEvent } from '@/api/skillGallery'
 import { useToast } from '@/composables/useToast'
 import { useUser } from '@/composables/useUser'
 import { copyToClipboard } from '@/utils/clipboard'
@@ -19,8 +21,12 @@ import type { SkillGalleryCard } from '@/types/skillGallery'
 
 const { showToast } = useToast()
 const { hasPermission } = useUser()
+const router = useRouter()
 // 管理员才有的入口：安装到平台全局技能库。判定口径与技能管理工作台一致。
 const canInstallPlatform = computed(() => hasPermission('element:skills:admin'))
+// 「装完之后去哪儿」：技能工作台能看到已装技能、也能卸载。没有菜单权限的账号不显示，
+// 免得给一个点进去就 403 的入口。
+const canOpenSkillAdmin = computed(() => hasPermission('menu:skills_management'))
 
 /**
  * 外部技能社区。广场只放我们精选（并撰写过介绍）的那几个，全量列表交给 ModelScope——
@@ -43,12 +49,15 @@ const drawerOpen = ref(false)
 
 const categoryChips = computed(() => ['全部', ...categories.value])
 
-/** 已安装徽标文案。两份都有时后端已归一成 personal，这里只管显示。 */
-function installedLabel(scope: string | null): string {
-  if (scope === 'personal') return '已在你的技能库'
-  if (scope === 'global') return '平台已收录'
-  return ''
-}
+/**
+ * 空态分两种：目录本身为空（配置/发版问题）与「筛没了」（用户自己的操作）。
+ * 之前一律显示「换个关键词试试」，把故障说成了用户搜错。
+ */
+const emptyHint = computed(() =>
+  skills.value.length
+    ? '没有匹配的技能，换个关键词或分类试试'
+    : '技能目录暂时是空的：目录文件可能还没随版本发布，稍后再试',
+)
 
 const visibleSkills = computed(() => {
   const query = keyword.value.trim().toLowerCase()
@@ -96,6 +105,8 @@ async function copyPrompt(skill: SkillGalleryCard) {
     return
   }
   const copied = await copyToClipboard(text)
+  // 只在复制成功时上报：失败没有转化意义，还会把「复制量」抬虚。
+  if (copied) void reportSkillGalleryEvent('prompt_copy', skill.id, 'personal')
   showToast(
     copied ? '已复制安装提示词，粘贴到对话里即可' : '复制失败，请在详情里手动选中复制',
     copied ? 'success' : 'error',
@@ -104,6 +115,11 @@ async function copyPrompt(skill: SkillGalleryCard) {
 
 function closeDetail() {
   drawerOpen.value = false
+}
+
+/** 装完之后去哪儿：技能工作台能看到已装技能、卸载与内容。 */
+function openSkillAdmin() {
+  router.push('/dashboard/skills')
 }
 
 defineExpose({ reloadAll })
@@ -135,6 +151,15 @@ onMounted(reloadAll)
         <span class="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 dark:border-gray-700 dark:bg-gray-800">
           分类 <b class="text-primary">{{ categories.length }}</b>
         </span>
+        <!-- 装完之后去哪儿：已装技能的内容、卸载、启用状态都在技能工作台 -->
+        <button
+          v-if="canOpenSkillAdmin"
+          type="button"
+          class="rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-1.5 font-semibold text-primary hover:bg-primary/10"
+          @click="openSkillAdmin"
+        >
+          技能工作台 ↗
+        </button>
       </div>
     </div>
 
@@ -144,15 +169,15 @@ onMounted(reloadAll)
       <input
         v-model="keyword"
         type="search"
-        class="min-w-[200px] flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+        class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
         placeholder="搜索技能名 / 用途 / 标签，例如 PDF、表格、MCP"
       />
-      <div class="flex flex-wrap gap-1.5">
+      <div class="-mx-0.5 flex max-w-full flex-nowrap gap-1.5 overflow-x-auto px-0.5 pb-0.5">
         <button
           v-for="category in categoryChips"
           :key="category"
           type="button"
-          class="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+          class="flex-none whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition-colors"
           :class="
             activeCategory === category
               ? 'border-primary bg-primary text-white'
@@ -171,9 +196,21 @@ onMounted(reloadAll)
 
     <div
       v-if="error"
-      class="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300"
+      class="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300"
     >
-      {{ error }}
+      <span>{{ error }}</span>
+      <button
+        type="button"
+        class="flex-none rounded-lg border border-red-300 bg-white px-2.5 py-1 font-semibold text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+        @click="reloadAll"
+      >
+        重试
+      </button>
+    </div>
+
+    <!-- 有数据时重新加载：给一条细进度条，否则切回 tab 完全看不出在刷新 -->
+    <div v-if="loading && skills.length" class="h-0.5 w-full overflow-hidden rounded bg-primary/10">
+      <div class="h-full w-1/3 animate-pulse rounded bg-primary/60" />
     </div>
 
     <div v-if="loading && !skills.length" class="py-10 text-center text-sm text-gray-400">
@@ -181,15 +218,19 @@ onMounted(reloadAll)
     </div>
 
     <div v-else-if="!visibleSkills.length" class="py-10 text-center text-sm text-gray-400">
-      没有匹配的技能，换个关键词试试
+      {{ emptyHint }}
     </div>
 
     <div v-else class="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-3">
       <article
         v-for="skill in visibleSkills"
         :key="skill.id"
-        class="flex cursor-pointer flex-col rounded-2xl border border-gray-100 bg-white p-4 transition-all hover:-translate-y-px hover:border-primary/30 hover:shadow-md dark:border-gray-700 dark:bg-gray-800"
+        class="flex cursor-pointer flex-col rounded-2xl border border-gray-100 bg-white p-4 transition-all hover:-translate-y-px hover:border-primary/30 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:border-gray-700 dark:bg-gray-800"
+        tabindex="0"
+        :aria-label="`${skill.name} 详情（回车打开）`"
         @click="openDetail(skill)"
+        @keydown.enter.self.prevent="openDetail(skill)"
+        @keydown.space.self.prevent="openDetail(skill)"
       >
         <div class="flex items-start gap-3">
           <div
@@ -204,6 +245,9 @@ onMounted(reloadAll)
             </h3>
             <p class="mt-0.5 truncate text-[11.5px] text-gray-400">
               {{ skill.author }} · v{{ skill.version }}
+              <template v-if="skill.installed">
+                · 库内 {{ skill.installed_version || '未知' }}
+              </template>
             </p>
           </div>
         </div>
@@ -271,6 +315,7 @@ onMounted(reloadAll)
       :open="drawerOpen"
       :skill-id="activeSkillId"
       :can-install-platform="canInstallPlatform"
+      :can-open-skill-admin="canOpenSkillAdmin"
       @close="closeDetail"
     />
   </section>
