@@ -136,3 +136,62 @@ def test_rendered_dockerfile_verifies_node_at_build_time():
     assert "RUN node --version && npm --version && npx --version" in rendered
     # 自检必须在 COPY 之后，否则验的是基座里可能根本不存在的 node
     assert rendered.index("COPY --from=node_stage") < rendered.index("RUN node --version")
+
+
+# ---------------------------------------------------------------------------
+# 沙箱网关里的 agentscope 版本必须钉死（否则重建即漂移）
+# ---------------------------------------------------------------------------
+
+def _requirements_agentscope_pin() -> str:
+    """从平台 requirements.txt 解析 agentscope 的 pin 版本（如 agentscope[x,y]==2.0.9）。"""
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[3] / "requirements.txt").read_text(encoding="utf-8")
+    match = re.search(r"^agentscope(?:\[[^\]]*\])?==([0-9][^\s#]*)", text, re.MULTILINE)
+    assert match, "requirements.txt 里应存在 agentscope 的显式 pin"
+    return match.group(1)
+
+
+def test_gateway_agentscope_version_is_pinned_to_runtime_version():
+    """钉的版本必须等于后端实际运行的版本，不能是另写的一个字面量。"""
+    import importlib.metadata
+
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        gateway_agentscope_pin,
+    )
+
+    assert gateway_agentscope_pin() == importlib.metadata.version("agentscope")
+
+
+def test_runtime_version_matches_requirements_pin():
+    """运行时安装版本与仓库 pin 必须一致，否则「本机能跑、镜像里是另一个版本」。"""
+    import importlib.metadata
+
+    assert importlib.metadata.version("agentscope") == _requirements_agentscope_pin()
+
+
+def test_rendered_dockerfile_pins_agentscope():
+    """回归：上游装的是无版本 ``agentscope``，重建时会拉到最新版。
+
+    最新版跟随生态改用 httpx2，而网关 venv 只有 httpx，容器 gateway 直接起不来：
+        ModuleNotFoundError: No module named 'httpx2'
+    """
+    import agentscope.workspace._docker._make_dockerfile as mk
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        apply_agentscope_docker_patches,
+        gateway_agentscope_pin,
+    )
+
+    apply_agentscope_docker_patches()
+    ctx_dir, _tag, copy_files = mk.prepare_build_context(base_image="python:3.11-slim")
+    try:
+        dockerfile = (ctx_dir / "Dockerfile").read_text(encoding="utf-8")
+    finally:
+        import shutil
+        shutil.rmtree(ctx_dir, ignore_errors=True)
+
+    pinned = gateway_agentscope_pin()
+    assert f'"agentscope=={pinned}"' in dockerfile
+    # 不允许残留无版本安装指令（那等于每次都拉最新版）
+    assert '--no-deps "agentscope"' not in dockerfile

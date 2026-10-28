@@ -874,3 +874,15 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **影响面**：docker 策略的镜像 tag 因 node 段变化而全部失效，**既有部署首次使用需重新预构建**（后台「安全沙箱」里点预构建，或首次会话现场构建，分钟级）；容器用 `create_or_replace(name=as_ws_<id>)` 创建，镜像更新后会自动换新容器，不需要手工清理。k8s 策略需重新构建并导入 `nanzi-sandbox-k8s:<新 tag>`，**已运行的 Pod 需重建**才生效。
 **未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未真实构建镜像验证 `node --version` 输出（本机只做了 dry-run 与构建上下文渲染）。
+
+## 2026-10-28 修复：加内置 Node 触发镜像重建后，沙箱 gateway 起不来（`No module named 'httpx2'`）
+
+|---|---|---|---|
+| 沙箱容器启动失败，gateway 日志 `agentscope/mcp/_mcp_client.py: import httpx2` → `ModuleNotFoundError` | `app/services/ai/runtime/agentscope/docker_template_patch.py` | **不是 node 引入的新依赖问题，是长期潜伏的版本漂移被「重建」这件事暴露了。** 上游 `prepare_build_context` 生成的安装指令是 `uv pip install --no-deps "agentscope"`——**不带版本**，每次构建都拉 PyPI 最新版；而镜像 tag 是内容哈希，此前一直命中旧缓存，所以沙箱里躺着一个很久以前构建的 agentscope。这次加内置 node 让 Dockerfile 变化 → tag 变化 → 触发重建 → 装到最新版 agentscope，它跟随生态改用 `httpx2`，而网关 venv 的依赖清单只有 `httpx`（`_GATEWAY_BASE_REQUIREMENTS` = `mcp<2.0.0 / uvicorn / fastapi / httpx` + `GATEWAY_EXTRA_PIP`），于是 gateway 进程 import 即崩，30s 健康检查超时，接口返回 503 |
+| 修法：把沙箱里装的 agentscope 钉到**后端正在用的版本** | 同上（新增 `gateway_agentscope_pin()` + patch `render_dockerfile`） | 不写死字面量，用 `importlib.metadata.version("agentscope")` 取运行时版本——后端用什么版本，沙箱就用什么版本，天然同源，也不需要两处各维护一个版本号。`prepare_build_context` 内部按模块全局名调用 `render_dockerfile`，替换模块属性即可拦截；install block 会进 Dockerfile 文本并参与 tag 哈希，预构建与运行时仍然一致。取不到版本时退回上游行为并 warn |
+| k8s 预置镜像是否同样中招 | `k8s_deploy/build-k8s-sandbox-image.sh`（无需改动） | 核查后确认它**已经**会从平台 `.venv` 读 `agentscope.__version__` 作为默认值（`--agentscope-version` 可覆盖），读不到才降级为装最新版并 warn。所以只有 docker 策略这条上游路径需要修 |
+
+**回归**：`test_docker_template_patch.py` +4 项（钉的版本 == `importlib.metadata.version("agentscope")`、运行时版本 == requirements.txt 的 pin、渲染出的 Dockerfile 含 `agentscope==2.0.9`、不得残留无版本 `--no-deps "agentscope"`）；`-k "sandbox or docker or k8s or prebuild"` **350 passed / 1 skipped / 1 xfailed**；dry-run 确认新 tag `agentscope-workspace:b0fff6868016`。
+**已踩过的坑**：上一次加 node 后的 tag `agentscope-workspace:1cc6179b8c4a` 是坏的（装了最新版 agentscope），可 `docker rmi` 清掉。
+**未做**：未执行 `./dev.sh`；未在本机真实构建并跑起 gateway（需用户在控制台重建镜像后验证）。
+

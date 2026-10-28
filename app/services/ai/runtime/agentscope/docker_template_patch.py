@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Final
+from typing import Any, Final
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,35 @@ SANDBOX_NODE_VERSION: Final[str] = "22"
 #: ``sh: 1: node: not found`` / ``Exec format error`` 的形式炸出来。
 NODE_VERIFY_SNIPPET: Final[str] = "RUN node --version && npm --version && npx --version"
 
+
+def gateway_agentscope_pin() -> str:
+    """返回沙箱网关 venv 里应当安装的 agentscope 版本（即**后端自己正在用的版本**）。
+
+    上游 ``prepare_build_context`` 生成的安装指令是不带版本的
+    ``uv pip install --no-deps "agentscope"``：每次构建都拉 PyPI 上的**最新版**。
+    镜像 tag 一旦因任何原因变化（例如这次加内置 node）就会触发重建，于是沙箱里
+    装到的新版 agentscope 与后端 pin 的版本分叉——表现为容器 gateway 起不来：
+
+        File "/root/.agentscope/.venv/.../agentscope/mcp/_mcp_client.py", line 12
+          import httpx2
+        ModuleNotFoundError: No module named 'httpx2'
+
+    新版 agentscope 跟随生态改用 ``httpx2``，而网关 venv 的依赖清单
+    （``_GATEWAY_BASE_REQUIREMENTS`` + ``GATEWAY_EXTRA_PIP``）里只有 ``httpx``。
+
+    修复口径：把安装指令钉到**运行时实际加载的** agentscope 版本——后端用什么版本，
+    沙箱就用什么版本，二者永远同源，也不需要在两个文件里各维护一个版本号。
+    取不到版本时返回空串（退回上游行为），并留日志便于排查。
+    """
+    try:
+        from importlib.metadata import version
+
+        return str(version("agentscope")).strip()
+    except Exception as exc:  # pragma: no cover - 仅在包元数据异常时触发
+        logger.warning("[DockerSandbox] 读取 agentscope 版本失败，沙箱镜像将不钉版本: %s", exc)
+        return ""
+
+
 _PATCH_APPLIED = False
 
 
@@ -87,10 +116,31 @@ def apply_agentscope_docker_patches() -> bool:
             return content
 
         mk._read_template = patched_read_template
+
+        # 钉死 gateway venv 里的 agentscope 版本（见 gateway_agentscope_pin 的说明）。
+        # prepare_build_context 内部按模块全局名调用 render_dockerfile，因此替换模块
+        # 属性即可拦截；install_block 会进入 Dockerfile 文本并参与 tag 哈希，
+        # 预构建与运行时因此仍然一致。
+        orig_render = mk.render_dockerfile
+        pinned_version = gateway_agentscope_pin()
+
+        def patched_render_dockerfile(*args: Any, **kwargs: Any) -> str:
+            block = kwargs.get("install_agentscope_block")
+            if block and pinned_version:
+                kwargs["install_agentscope_block"] = block.replace(
+                    '"agentscope"',
+                    f'"agentscope=={pinned_version}"',
+                )
+            return orig_render(*args, **kwargs)
+
+        mk.render_dockerfile = patched_render_dockerfile
+
         _PATCH_APPLIED = True
         logger.info(
-            "[DockerSandbox] 已成功应用 Dockerfile 模板扩展补丁，注入工具链: %s",
+            "[DockerSandbox] 已成功应用 Dockerfile 模板扩展补丁，注入工具链: %s；"
+            "网关 agentscope 版本钉死为: %s",
             ", ".join(EXTRA_SANDBOX_APT_PACKAGES),
+            pinned_version or "(未钉版本)",
         )
         return True
     except Exception as exc:  # pragma: no cover
