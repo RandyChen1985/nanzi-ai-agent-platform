@@ -39,7 +39,17 @@ oracledb>=2.0.0
 aioodbc>=0.5.0
 pyodbc>=5.0.0
 APScheduler>=3.10.1
-mcp>=1.0.0
+# MCP Python SDK：服务端（FastMCP + streamable_http_app）与客户端（ClientSession、sse_client）
+# 都直接用 1.x API，这里精确锁定 1.29.1——与 agentscope / langfuse 的锁法一致，避免构建漂移。
+# 不能随手升级的原因（升级前请先过 tests/services/mcp 并实测外部 MCP 接入）：
+#   · 1.30.0：sse_client / streamable_http_client 只跟随**同源**重定向，跨域重定向直接抛
+#     httpx.HTTPStatusError（外部 MCP 服务若经短链/CDN 跳转会连不上）
+#   · 1.30.0：stateful streamable HTTP 会话空闲 30 分钟过期（FastMCP 默认开启），
+#     长连接客户端下一次请求会收到 404、需要重新 initialize
+#   · 1.30.0：AuthSettings 设了 resource_server_url 却没设 validate_token_resource 会出
+#     DeprecationWarning（我们把 warning 当错误的测试会红）
+#   · 2.x：FastMCP 拆成独立包、import 路径有破坏性变化，本平台的 from mcp.server.fastmcp 会断
+mcp==1.29.1
 pandas>=2.0.0
 openpyxl>=3.1.0
 python-docx>=1.1.0
