@@ -9,6 +9,10 @@ import { copyToClipboard } from '../utils/clipboard'
 import { generateQRCodeDataUrl } from '../utils/qrcode'
 import { checkPasswordPolicy } from '../utils/passwordPolicy'
 import { clearUserSession } from '../utils/userSession'
+import { userInitialOf } from '../utils/userInitial'
+import { readErrorDetail } from '../utils/httpErrorDetail'
+import { uploadMyAvatar, deleteMyAvatar } from '../api/portal'
+import AvatarCropperModal from '../components/common/AvatarCropperModal.vue'
 import PermissionSectionCard from '../components/personal/PermissionSectionCard.vue'
 import type { PermissionNode } from '../constants/permissions'
 import PersonalPermissionTree from '../components/personal/PersonalPermissionTree.vue'
@@ -215,6 +219,123 @@ const fetchUserInfo = async () => {
 }
 
 // ---------------------------------------------------------------------------
+// 我的头像（上传 / 裁剪 / 删除）
+//
+// 头像地址由 /auth/me 的 avatar_url 下发，可直接作为 img src；为空时回退姓名首字。
+// 裁剪复用 AvatarCropperModal（与智能体头像同一套交互）；上传/删除成功后派发
+// `user-info-updated`，让聊天页左下角等已挂载视图重新拉取 /auth/me。
+// ---------------------------------------------------------------------------
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+const AVATAR_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+// 与后端 detail 文案对齐：客户端先拦一次，省掉一次必然失败的往返。
+const AVATAR_TOO_LARGE_MESSAGE = '头像不能超过 2MB'
+const AVATAR_TYPE_MESSAGE = '只支持 PNG/JPEG/WebP/GIF 格式'
+
+const avatarUrl = computed(() => String(userInfo.value?.avatar_url || ''))
+const avatarFileInput = ref<HTMLInputElement | null>(null)
+const avatarUploading = ref(false)
+const removingAvatar = ref(false)
+// 删除头像的行内二次确认态：只有它为 true 时才允许真正发请求。
+const confirmingRemove = ref(false)
+const showAvatarCropper = ref(false)
+const avatarCropperSrc = ref('')
+// 裁剪源用 objectURL：大图不必先转 base64；关闭弹窗/上传完成后统一回收，避免内存泄漏。
+let avatarObjectUrl = ''
+
+const releaseAvatarObjectUrl = () => {
+    if (avatarObjectUrl) {
+        URL.revokeObjectURL(avatarObjectUrl)
+        avatarObjectUrl = ''
+    }
+}
+
+const pickAvatarFile = () => {
+    if (avatarUploading.value || removingAvatar.value) return
+    // 打开选择器时收起删除确认，避免两条流程的确认条同时停在页面上
+    confirmingRemove.value = false
+    avatarFileInput.value?.click()
+}
+
+const handleAvatarFileChange = (event: Event) => {
+    const target = event.target as HTMLInputElement
+    const file = target.files?.[0]
+    // 清空 value：下次选同一张图也能触发 change
+    target.value = ''
+    if (!file) return
+    if (!AVATAR_ALLOWED_TYPES.includes(file.type)) {
+        showToast(AVATAR_TYPE_MESSAGE, 'error')
+        return
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+        showToast(AVATAR_TOO_LARGE_MESSAGE, 'warning')
+        return
+    }
+    releaseAvatarObjectUrl()
+    avatarObjectUrl = URL.createObjectURL(file)
+    avatarCropperSrc.value = avatarObjectUrl
+    showAvatarCropper.value = true
+}
+
+const closeAvatarCropper = () => {
+    if (avatarUploading.value) return
+    showAvatarCropper.value = false
+    avatarCropperSrc.value = ''
+    releaseAvatarObjectUrl()
+}
+
+const handleAvatarCropped = async (blob: Blob) => {
+    if (avatarUploading.value) return
+    avatarUploading.value = true
+    try {
+        const nextAvatarUrl = await uploadMyAvatar(blob, 'user-avatar.png')
+        if (!nextAvatarUrl) {
+            showToast('头像上传失败：服务端未返回头像地址', 'error')
+            return
+        }
+        userInfo.value = { ...userInfo.value, avatar_url: nextAvatarUrl }
+        showAvatarCropper.value = false
+        avatarCropperSrc.value = ''
+        releaseAvatarObjectUrl()
+        showToast('头像已更新', 'success')
+        // 通知聊天页左下角等已挂载视图重新拉取 /auth/me
+        window.dispatchEvent(new CustomEvent('user-info-updated'))
+    } catch (e: any) {
+        const detail = await readErrorDetail(e?.response?.data)
+        showToast(detail || '头像上传失败，请稍后重试', 'error')
+    } finally {
+        avatarUploading.value = false
+    }
+}
+
+const requestRemoveAvatar = () => {
+    if (avatarUploading.value || removingAvatar.value) return
+    // 只切确认态，不发请求：误触「删除头像」时不会立即丢失自定义头像。
+    confirmingRemove.value = true
+}
+
+const cancelRemoveAvatar = () => {
+    if (removingAvatar.value) return
+    confirmingRemove.value = false
+}
+
+const confirmRemoveAvatar = async () => {
+    // 必须走完行内二次确认才允许删除
+    if (!confirmingRemove.value || removingAvatar.value) return
+    removingAvatar.value = true
+    try {
+        await deleteMyAvatar()
+        userInfo.value = { ...userInfo.value, avatar_url: null }
+        confirmingRemove.value = false
+        showToast('已还原默认头像', 'success')
+        window.dispatchEvent(new CustomEvent('user-info-updated'))
+    } catch (e: any) {
+        const detail = await readErrorDetail(e?.response?.data)
+        showToast(detail || '删除头像失败，请稍后重试', 'error')
+    } finally {
+        removingAvatar.value = false
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 邮箱可用性自测（POST /api/portal/auth/me/email-test）
 //
@@ -282,6 +403,8 @@ const sendTestEmail = async () => {
 onUnmounted(() => {
   if (testEmailTimer) clearInterval(testEmailTimer)
   if (emailCheckTimer) clearTimeout(emailCheckTimer)
+  // 离开个人中心时回收未使用的裁剪源 objectURL
+  releaseAvatarObjectUrl()
 })
 
 // 邮箱自助编辑（PATCH /api/portal/auth/me/profile）
@@ -1073,8 +1196,49 @@ onMounted(() => {
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 bg-gray-50/80 border border-gray-100 rounded-xl">
                         <!-- 左侧：头像与基本称谓 -->
                         <div class="flex items-center min-w-0">
-                            <div class="h-14 w-14 sm:h-16 sm:w-16 rounded-full bg-primary flex items-center justify-center text-xl sm:text-2xl font-bold text-white uppercase shadow-sm shrink-0">
-                                {{ (userInfo.real_name || userInfo.user_name || 'U').substring(0, 2) }}
+                            <!-- 头像：有自定义头像时渲染图片，否则回退姓名首字 -->
+                            <div class="relative flex shrink-0 flex-col items-center group/avatar">
+                                <img
+                                    v-if="avatarUrl"
+                                    :src="avatarUrl"
+                                    alt="我的头像"
+                                    class="h-14 w-14 sm:h-16 sm:w-16 rounded-full object-cover shadow-sm"
+                                />
+                                <div
+                                    v-else
+                                    class="h-14 w-14 sm:h-16 sm:w-16 rounded-full bg-primary flex items-center justify-center text-xl sm:text-2xl font-bold text-white uppercase leading-none shadow-sm"
+                                >
+                                    {{ userInitialOf(userInfo.real_name || userInfo.user_name) }}
+                                </div>
+                                <!-- 头像动作：移动端没有 hover，常显在头像下方；桌面端收进头像上的半透明浮层，hover / 聚焦时出现 -->
+                                <div
+                                    class="mt-1 flex items-center justify-center gap-2 sm:absolute sm:inset-0 sm:mt-0 sm:flex-col sm:gap-0.5 sm:rounded-full sm:bg-black/60 sm:opacity-0 sm:pointer-events-none sm:transition-opacity sm:group-hover/avatar:pointer-events-auto sm:group-hover/avatar:opacity-100 sm:group-focus-within/avatar:pointer-events-auto sm:group-focus-within/avatar:opacity-100"
+                                >
+                                    <button
+                                        type="button"
+                                        :disabled="avatarUploading || removingAvatar"
+                                        @click="pickAvatarFile"
+                                        class="text-[10px] font-medium text-gray-500 transition-colors hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-60 sm:text-[9px] sm:text-white sm:hover:text-blue-200"
+                                    >
+                                        {{ avatarUploading ? '上传中…' : '更换头像' }}
+                                    </button>
+                                    <button
+                                        v-if="avatarUrl"
+                                        type="button"
+                                        :disabled="avatarUploading || removingAvatar"
+                                        @click="requestRemoveAvatar"
+                                        class="text-[10px] font-medium text-gray-500 transition-colors hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60 sm:text-[9px] sm:text-white sm:hover:text-red-200"
+                                    >
+                                        删除头像
+                                    </button>
+                                </div>
+                                <input
+                                    ref="avatarFileInput"
+                                    type="file"
+                                    accept="image/png,image/jpeg,image/webp,image/gif"
+                                    class="hidden"
+                                    @change="handleAvatarFileChange"
+                                />
                             </div>
                             <div class="ml-4 min-w-0">
                                 <p class="text-md sm:text-lg font-bold text-gray-900 truncate">{{ userInfo.real_name || userInfo.user_name }}</p>
@@ -1123,6 +1287,32 @@ onMounted(() => {
                                     <span class="font-mono text-gray-700 text-xs sm:text-[13px] font-medium">{{ userInfo.last_login_at || '-' }}</span>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- 删除头像的行内二次确认：确认前不发请求，避免误触丢头像 -->
+                    <div
+                        v-if="confirmingRemove"
+                        class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                    >
+                        <span>删除后头像将还原为姓名首字，确定删除？</span>
+                        <div class="flex items-center gap-2">
+                            <button
+                                type="button"
+                                :disabled="removingAvatar"
+                                @click="confirmRemoveAvatar"
+                                class="rounded-lg bg-red-600 px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {{ removingAvatar ? '删除中…' : '确认删除' }}
+                            </button>
+                            <button
+                                type="button"
+                                :disabled="removingAvatar"
+                                @click="cancelRemoveAvatar"
+                                class="rounded-lg border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                取消
+                            </button>
                         </div>
                     </div>
 
@@ -2163,6 +2353,17 @@ onMounted(() => {
         </div>
       </div>
     </Teleport>
+
+    <!-- 头像裁剪：复用智能体头像同一套弹窗，输出 256×256 后上传 -->
+    <AvatarCropperModal
+      :visible="showAvatarCropper"
+      :image-src="avatarCropperSrc"
+      :loading="avatarUploading"
+      :output-size="256"
+      title="裁剪头像"
+      @close="closeAvatarCropper"
+      @confirm="handleAvatarCropped"
+    />
 
     <Toast 
       v-if="toast.show" 

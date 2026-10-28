@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, computed } from "vue";
+import SharedLinksPanel from "@/components/SharedLinksPanel.vue";
 import type {
   AgentOption,
   ChatHistoryFilters,
@@ -29,6 +30,10 @@ const props = withDefaults(
      * 按该智能体限定，允许改筛选只会让用户以为能看到别的智能体的会话。
      */
     pinnedAgentName?: string;
+    /** 是否显示条目上的「分享」按钮：只有主聊天页打开，调试页不显示。 */
+    enableShare?: boolean;
+    /** 注入给「我分享的」面板的鉴权头（侧栏自己不发请求）。 */
+    shareAuthHeaders?: () => Record<string, string> | undefined;
   }>(),
   {
     loadingMore: false,
@@ -40,6 +45,8 @@ const props = withDefaults(
     availableAgents: () => [],
     showAgentFilter: false,
     pinnedAgentName: "",
+    enableShare: false,
+    shareAuthHeaders: undefined,
     filters: () => ({
       scope: "all",
       agentId: "",
@@ -65,7 +72,30 @@ const emit = defineEmits<{
   (e: "new-chat"): void;
   (e: "export-chat", item: any): void;
   (e: "toggle-pin", item: any): void;
+  (e: "share-chat", item: any): void;
+  /** 面板内的复制 / 作废结果统一冒给宿主，由宿主复用全局 toast。 */
+  (e: "toast", message: string, type: string): void;
 }>();
+
+/** 侧栏两个视图：历史列表 / 我发出的分享。 */
+const activeTab = ref<"history" | "shares">("history");
+const sharesPanelRef = ref<InstanceType<typeof SharedLinksPanel> | null>(null);
+
+/** header 刷新按钮：按当前 tab 分发，分享 tab 下应重拉分享列表而不是会话历史。 */
+const refreshActiveTab = () => {
+  if (activeTab.value === "shares") {
+    sharesPanelRef.value?.reload?.();
+    return;
+  }
+  emit("fetch-history");
+};
+
+const switchTab = (tab: "history" | "shares") => {
+  if (activeTab.value === tab) return;
+  activeTab.value = tab;
+  // 切回分享 tab 时重新拉一次：期间可能在别处创建 / 作废过分享
+  if (tab === "shares") sharesPanelRef.value?.reload?.();
+};
 
 const windowWidth = ref(window.innerWidth);
 const isMobile = computed(() => windowWidth.value < 640);
@@ -299,6 +329,14 @@ const confirmDelete = (item: any) => {
   deletingItemId.value = null;
   emit("delete-history", item);
 };
+
+// 分享入口：侧栏只冒事件，创建弹窗与请求都由宿主页面负责（侧栏自己不发请求）
+const triggerShare = (item: any) => {
+  emit("share-chat", item);
+};
+
+// 宿主创建分享成功后可以要求面板刷新（面板未挂载时是空操作）
+defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
 </script>
 
 <template>
@@ -345,9 +383,10 @@ const confirmDelete = (item: any) => {
         </div>
 
         <button
-          @click="emit('fetch-history')"
+          @click="refreshActiveTab"
           class="p-1.5 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-          title="刷新会话历史"
+          :title="activeTab === 'shares' ? '刷新分享列表' : '刷新会话历史'"
+          :aria-label="activeTab === 'shares' ? '刷新分享列表' : '刷新会话历史'"
         >
           <svg
             class="w-3.5 h-3.5"
@@ -364,6 +403,26 @@ const confirmDelete = (item: any) => {
             />
           </svg>
         </button>
+      </div>
+
+      <!-- 会话历史 / 我分享的：搜索框、筛选按钮与筛选面板只属于历史 tab -->
+      <div class="flex gap-1 px-3.5 pt-2.5 flex-shrink-0">
+        <button
+          type="button"
+          class="rounded-lg px-2.5 py-1.5 text-[12.5px] font-semibold transition-colors"
+          :class="activeTab === 'history'
+            ? 'bg-primary/10 text-primary'
+            : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'"
+          @click="switchTab('history')"
+        >会话历史</button>
+        <button
+          type="button"
+          class="rounded-lg px-2.5 py-1.5 text-[12.5px] font-semibold transition-colors"
+          :class="activeTab === 'shares'
+            ? 'bg-primary/10 text-primary'
+            : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'"
+          @click="switchTab('shares')"
+        >我分享的</button>
       </div>
 
       <!-- 智能体锁定提示：URL / 宿主指定 agent 后，历史已被限定为该智能体，筛选里也不能改 -->
@@ -385,8 +444,11 @@ const confirmDelete = (item: any) => {
         </span>
       </div>
 
-      <!-- Search Bar with Debounce & Clear + Filter Entry -->
-      <div class="px-3 py-2.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0 relative">
+      <!-- Search Bar with Debounce & Clear + Filter Entry（仅历史 tab：分享面板自带筛选语义） -->
+      <div
+        v-if="activeTab === 'history'"
+        class="px-3 py-2.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0 relative"
+      >
         <div class="flex items-center gap-1.5">
           <div class="relative flex items-center flex-1 min-w-0">
             <svg
@@ -576,7 +638,11 @@ const confirmDelete = (item: any) => {
       </div>
 
       <!-- History List -->
-      <div class="flex-1 overflow-y-auto custom-scrollbar bg-gray-50/40 dark:bg-gray-900/40" @scroll="handleScroll">
+      <div
+        v-if="activeTab === 'history'"
+        class="flex-1 overflow-y-auto custom-scrollbar bg-gray-50/40 dark:bg-gray-900/40"
+        @scroll="handleScroll"
+      >
         <!-- Skeleton Loading (Shimmer) -->
         <div v-if="loading && !historyList.length" class="p-3 space-y-3">
           <div
@@ -744,6 +810,20 @@ const confirmDelete = (item: any) => {
                       </svg>
                     </button>
 
+                    <!-- Share Chat：仅主聊天页开启，复用 hover 显隐规则 -->
+                    <button
+                      v-if="enableShare && (item.conversation_id || item.trace_id)"
+                      @click.stop="triggerShare(item)"
+                      class="p-1 rounded-md text-gray-400 hover:text-primary hover:bg-primary/10 transition-all"
+                      :class="actionVisibilityClass"
+                      title="分享会话"
+                    >
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.1">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 13a4.5 4.5 0 006.4 0l2.2-2.2a4.5 4.5 0 00-6.4-6.4L10.9 5.7" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M14 11a4.5 4.5 0 00-6.4 0l-2.2 2.2a4.5 4.5 0 006.4 6.4l1.3-1.3" />
+                      </svg>
+                    </button>
+
                     <!-- Open Logs Trace -->
                     <button
                       v-if="item.trace_id"
@@ -872,6 +952,14 @@ const confirmDelete = (item: any) => {
           </div>
         </div>
       </div>
+
+      <!-- 我分享的：请求由面板用宿主注入的 headers 自行发起，侧栏只转发 toast -->
+      <SharedLinksPanel
+        v-else
+        ref="sharesPanelRef"
+        :auth-headers="shareAuthHeaders"
+        @toast="(message: string, type: any) => emit('toast', message, type)"
+      />
     </div>
   </transition>
 </template>

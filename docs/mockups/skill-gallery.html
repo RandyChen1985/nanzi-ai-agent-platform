@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>技能广场 · 静态原型</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-hover:#4096ff; --primary-weak:rgba(22,119,255,.08);
+    --gray-50:#f9fafb; --gray-100:#f3f4f6; --gray-200:#e5e7eb; --gray-300:#d1d5db;
+    --gray-400:#9ca3af; --gray-500:#6b7280; --gray-600:#4b5563; --gray-700:#374151;
+    --gray-800:#1f2937; --gray-900:#111827;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--gray-50); color:var(--gray-900);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px;}
+  .muted{color:var(--gray-500);}
+  .tiny{font-size:12px;}
+
+  /* 顶部标题 */
+  header.head h1{font-size:20px;font-weight:600;margin:0;}
+  header.head p{margin:4px 0 0;font-size:13px;color:var(--gray-500);}
+
+  /* 工作台 tab */
+  nav.tabs{display:flex;gap:26px;border-bottom:1px solid var(--gray-100);margin:16px 0 14px;}
+  nav.tabs button{
+    background:none;border:0;padding:0 0 11px;margin-bottom:-1px;cursor:pointer;
+    font-size:14px;font-weight:500;color:var(--gray-500);border-bottom:2px solid transparent;
+    font-family:inherit;
+  }
+  nav.tabs button.active{color:var(--primary);border-bottom-color:var(--primary);}
+  nav.tabs button:hover:not(.active){color:var(--gray-700);}
+
+  /* 面板标题行 */
+  .panel-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;}
+  .panel-head h2{font-size:16px;font-weight:600;margin:0;}
+  .panel-head p{margin:2px 0 0;font-size:12px;color:var(--gray-500);}
+  .counters{display:flex;gap:8px;font-size:11.5px;font-weight:600;}
+  .counter{border:1px solid var(--gray-200);background:#fff;border-radius:9px;padding:6px 10px;}
+  .counter b{color:var(--primary);}
+
+  /* 工具条 */
+  .toolbar{
+    display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+    background:#fff;border:1px solid var(--gray-100);border-radius:13px;padding:12px;margin-bottom:16px;
+  }
+  .search{
+    flex:1;min-width:220px;border:1px solid var(--gray-200);background:var(--gray-50);
+    border-radius:9px;padding:9px 12px;font-size:13.5px;outline:none;font-family:inherit;
+  }
+  .search:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-weak);}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{
+    border:1px solid var(--gray-200);background:#fff;color:var(--gray-600);
+    border-radius:999px;padding:5px 11px;font-size:12px;cursor:pointer;font-family:inherit;
+  }
+  .chip.on{background:var(--primary);border-color:var(--primary);color:#fff;}
+  .toggle{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--gray-600);cursor:pointer;user-select:none;}
+  .toggle input{accent-color:var(--primary);}
+
+  /* 卡片网格 */
+  .grid{display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:14px;}
+  @media(min-width:640px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+  @media(min-width:1024px){.grid{grid-template-columns:repeat(3,minmax(0,1fr));}}
+
+  .card{
+    display:flex;flex-direction:column;background:#fff;border:1px solid var(--gray-100);
+    border-radius:15px;padding:15px;transition:border-color .15s, box-shadow .15s, transform .15s;
+    cursor:pointer;
+  }
+  .card:hover{border-color:#c7dbff;box-shadow:0 6px 20px rgba(22,119,255,.08);transform:translateY(-1px);}
+  .card-top{display:flex;align-items:flex-start;gap:11px;}
+  .ico{
+    width:40px;height:40px;flex:0 0 40px;border-radius:11px;background:var(--gray-50);
+    display:flex;align-items:center;justify-content:center;font-size:20px;border:1px solid var(--gray-100);
+  }
+  .card h3{margin:0;font-size:14.5px;font-weight:600;line-height:1.35;}
+  .card .meta{margin-top:2px;font-size:11.5px;color:var(--gray-400);}
+  .badge{
+    font-size:10.5px;font-weight:600;border-radius:6px;padding:2px 6px;letter-spacing:.2px;
+  }
+  .badge-official{background:var(--primary-weak);color:var(--primary);}
+  .badge-cat{background:var(--gray-100);color:var(--gray-600);}
+  .card p.sum{margin:10px 0 0;font-size:12.5px;line-height:1.6;color:var(--gray-600);
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+  .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;}
+  .tag{font-size:10.5px;color:var(--gray-500);background:var(--gray-50);border:1px solid var(--gray-100);
+    border-radius:6px;padding:1.5px 6px;}
+  .card-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    margin-top:12px;padding-top:11px;border-top:1px dashed var(--gray-100);}
+  .link{font-size:12px;color:var(--primary);background:none;border:0;padding:0;cursor:pointer;font-family:inherit;font-weight:600;}
+  .link:hover{color:var(--primary-hover);}
+  .btn{
+    border:0;border-radius:9px;padding:7px 12px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;
+    background:var(--primary);color:#fff;
+  }
+  .btn:hover{background:var(--primary-hover);}
+  .btn-ghost{background:#fff;color:var(--gray-700);border:1px solid var(--gray-200);}
+  .btn-ghost:hover{background:var(--gray-50);}
+  .btn-soft{background:var(--primary-weak);color:var(--primary);}
+
+  /* 抽屉 */
+  .scrim{position:fixed;inset:0;background:rgba(17,24,39,.32);opacity:0;pointer-events:none;transition:opacity .2s;}
+  .scrim.on{opacity:1;pointer-events:auto;}
+  .drawer{
+    position:fixed;top:0;right:0;height:100%;width:min(560px,94vw);background:#fff;
+    box-shadow:-14px 0 40px rgba(17,24,39,.14);transform:translateX(102%);transition:transform .24s ease;
+    display:flex;flex-direction:column;z-index:20;
+  }
+  .drawer.on{transform:none;}
+  .drawer-head{padding:18px 20px 14px;border-bottom:1px solid var(--gray-100);}
+  .drawer-body{padding:18px 20px 24px;overflow:auto;flex:1;}
+  .drawer-foot{padding:13px 20px;border-top:1px solid var(--gray-100);background:var(--gray-50);
+    display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;}
+  .drawer h2{margin:0;font-size:18px;font-weight:600;}
+  .close{position:absolute;top:14px;right:16px;background:none;border:0;font-size:20px;color:var(--gray-400);
+    cursor:pointer;line-height:1;padding:4px;}
+  .close:hover{color:var(--gray-700);}
+
+  .sec-title{
+    font-size:11px;font-weight:700;letter-spacing:.09em;color:var(--gray-400);
+    text-transform:uppercase;margin:20px 0 8px;
+  }
+  .sec-title:first-child{margin-top:0;}
+  .hl{margin:0;padding-left:18px;font-size:13px;line-height:1.75;color:var(--gray-700);}
+  .hl li{margin:3px 0;}
+  .intro{font-size:13px;line-height:1.8;color:var(--gray-700);}
+  .intro h1{font-size:15px;margin:0 0 8px;}
+  .intro h2{font-size:13.5px;margin:14px 0 6px;}
+  .intro p{margin:7px 0;}
+  .intro code{background:var(--gray-100);border-radius:4px;padding:1px 5px;font-size:12px;}
+  .intro ul{padding-left:18px;margin:7px 0;}
+
+  /* 安装区 */
+  .install{border:1px solid var(--gray-200);border-radius:12px;overflow:hidden;background:#fff;}
+  .install-tabs{display:flex;align-items:center;gap:4px;background:var(--gray-50);
+    border-bottom:1px solid var(--gray-200);padding:6px 8px;}
+  .install-tabs .lab{font-size:10.5px;font-weight:700;letter-spacing:.09em;color:var(--gray-400);
+    text-transform:uppercase;margin-right:auto;padding-left:4px;}
+  .itab{background:none;border:0;border-radius:7px;padding:5px 10px;font-size:12px;font-weight:600;
+    color:var(--gray-500);cursor:pointer;font-family:inherit;}
+  .itab.on{background:#fff;color:var(--gray-900);box-shadow:0 1px 2px rgba(17,24,39,.08);}
+  .install-code{position:relative;padding:12px 44px 12px 13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:12px;line-height:1.65;color:var(--gray-800);white-space:pre-wrap;word-break:break-word;background:#fff;}
+  .copy{position:absolute;top:9px;right:9px;border:1px solid var(--gray-200);background:#fff;border-radius:7px;
+    width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--gray-500);}
+  .copy:hover{color:var(--primary);border-color:#c7dbff;background:var(--primary-weak);}
+  .copy.copied{color:#059669;border-color:#a7f3d0;background:#ecfdf5;}
+
+  /* 元数据表 */
+  .kv{display:grid;grid-template-columns:104px 1fr;gap:8px 12px;font-size:12.5px;}
+  .kv dt{color:var(--gray-400);}
+  .kv dd{margin:0;color:var(--gray-700);word-break:break-all;}
+  .kv a{color:var(--primary);text-decoration:none;}
+  .kv a:hover{text-decoration:underline;}
+
+  .notice{
+    margin-top:10px;border:1px solid #fde68a;background:#fffbeb;color:#92400e;
+    border-radius:10px;padding:9px 11px;font-size:11.5px;line-height:1.6;
+  }
+  .role-bar{
+    display:flex;align-items:center;gap:10px;background:#fff;border:1px dashed var(--gray-300);
+    border-radius:11px;padding:9px 12px;margin-bottom:16px;font-size:12px;color:var(--gray-600);
+  }
+  .role-bar b{color:var(--gray-900);}
+  .seg{display:flex;background:var(--gray-100);border-radius:9px;padding:2px;}
+  .seg button{border:0;background:none;border-radius:7px;padding:4px 10px;font-size:11.5px;font-weight:600;
+    color:var(--gray-500);cursor:pointer;font-family:inherit;}
+  .seg button.on{background:#fff;color:var(--primary);box-shadow:0 1px 2px rgba(17,24,39,.08);}
+  .toast{
+    position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);opacity:0;pointer-events:none;
+    background:var(--gray-900);color:#fff;border-radius:10px;padding:9px 15px;font-size:12.5px;
+    transition:opacity .18s, transform .18s;z-index:40;
+  }
+  .toast.on{opacity:1;transform:translate(-50%,0);}
+  .admin-only{display:none;}
+  body.is-admin .admin-only{display:inline-flex;}
+  .empty{padding:40px;text-align:center;color:var(--gray-400);font-size:13px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <h1>我的工作台</h1>
+    <p>先处理今天值得关注的事情，再继续最近的工作。</p>
+  </header>
+
+  <nav class="tabs" aria-label="工作台视图">
+    <button type="button">工作台</button>
+    <button type="button">资源广场</button>
+    <button type="button" class="active">技能广场</button>
+  </nav>
+
+  <div class="role-bar">
+    <span>预览身份</span>
+    <div class="seg">
+      <button type="button" id="roleUser" class="on">普通用户</button>
+      <button type="button" id="roleAdmin">管理员</button>
+    </div>
+    <span class="tiny muted">管理员可额外把提示词改成「安装到平台技能库」；普通用户只有个人。</span>
+  </div>
+
+  <div class="panel-head">
+    <div>
+      <p style="margin:0">精选可直接抄用的智能体技能，复制提示词到对话里即可安装。
+        <a href="https://modelscope.cn/skills" target="_blank" rel="noreferrer noopener"
+           style="margin-left:4px;font-weight:600;color:var(--primary);text-decoration:none">更多技能 ↗</a>
+      </p>
+    </div>
+    <div class="counters">
+      <span class="counter">精选 <b id="statTotal">8</b></span>
+      <span class="counter">分类 <b id="statCat">6</b></span>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <input class="search" id="search" type="search" placeholder="搜索技能名 / 用途 / 标签，例如 PDF、表格、MCP" />
+    <div class="chips" id="chips"></div>
+    <label class="toggle"><input type="checkbox" id="officialOnly" /> 仅看官方</label>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <button class="close" id="closeDrawer" aria-label="关闭">×</button>
+    <div class="drawer-head">
+      <div style="display:flex;gap:12px;align-items:flex-start;">
+        <div class="ico" id="dIcon">📄</div>
+        <div>
+          <h2 id="dName">—</h2>
+          <div class="tiny muted" style="margin-top:4px" id="dSub">—</div>
+          <div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap;" id="dBadges"></div>
+        </div>
+      </div>
+    </div>
+    <div class="drawer-body">
+      <div class="sec-title">Summary</div>
+      <p class="intro" id="dSummary" style="margin:0"></p>
+
+      <div class="sec-title">这个技能能做什么</div>
+      <ul class="hl" id="dHighlights"></ul>
+
+      <div class="sec-title">技能说明</div>
+      <div class="intro" id="dIntro"></div>
+
+      <div class="sec-title">安装</div>
+      <div class="install">
+        <div class="install-tabs">
+          <span class="lab">Installation</span>
+          <button class="itab on" data-itab="prompt" type="button">Prompt</button>
+          <button class="itab" data-itab="command" type="button">Command</button>
+        </div>
+        <div class="install-code" id="dInstallCode"></div>
+      </div>
+      <div class="notice">
+        <b>必须非交互执行</b>：命令里两个 <code>-y</code> 缺一不可（跳过 npx 装包确认 + 跳过 skills 安装确认），
+        否则沙箱里会停在等待输入，把会话拖成僵尸进程。<br>
+        统一装到 <code>/workspace/.skill-tmp</code>，路径可预测；导入完成后该目录可直接删除。
+        技能广场本身不打包分发第三方技能文件。
+      </div>
+
+      <div class="sec-title">来源</div>
+      <dl class="kv" id="dMeta"></dl>
+    </div>
+    <div class="drawer-foot">
+      <button class="btn btn-ghost admin-only" type="button" id="installPlatform">复制提示词 · 安装到平台</button>
+      <button class="btn" type="button" id="installPersonal">复制提示词 · 安装到个人</button>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+const SANDBOX_DIR = "/workspace/.skill-tmp";
+const REPO_URL = "https://github.com/anthropics/skills";
+
+// 两个 -y 缺一不可：npx 的（跳过装包确认）+ skills 的（跳过安装确认）。
+// 少了任何一个，沙箱里就会卡在等待输入，把会话拖成僵尸。
+const cmdFor = (slug) =>
+  "mkdir -p " + SANDBOX_DIR + " && cd " + SANDBOX_DIR +
+  " && DISABLE_TELEMETRY=1 npx -y skills add " + REPO_URL + " --skill " + slug + " -y";
+
+const SKILLS = [
+  {id:"pdf",name:"PDF 全能处理",icon:"📄",category:"文档处理",official:true,tags:["PDF","表格抽取","OCR","表单"],
+   summary:"一个技能覆盖 PDF 的读取、拆分合并、表单填写、加水印与扫描件 OCR。",
+   highlights:["抽取正文、表格与图片，按页拆分或把多份合并成一份","扫描件走 OCR 转成可检索文本","PDF 表单填写有独立的表单工作流文档，不是「猜坐标」式乱填"],
+   intro:"# PDF 全能处理\n\n处理 PDF 时最烦的不是「读不出来」，而是每种操作都要换一套工具。这个技能把常见操作收在一处，模型知道该用哪个库、该怎么写。\n\n## 适合用它的时候\n\n- 用户丢来一份 PDF，要 **抽取正文、表格或图片**\n- 要把多份 PDF **合并**，或按页**拆分**成单页文件\n- 扫描件需要 **OCR** 转成可检索文本\n- 需要**填写 PDF 表单**（这是它有独立工作流文档的部分，不是硬猜坐标）",
+   author:"Anthropic",repository:"anthropics/skills",license:"Proprietary (Anthropic)",version:"1.0.0",
+   command:cmdFor("pdf"),
+   source:"https://www.skills.sh/anthropics/skills/pdf"},
+  {id:"docx",name:"Word 文档编辑",icon:"📝",category:"文档处理",official:true,tags:["Word","docx","排版","批注"],
+   summary:"创建、读取、编辑 Word 文档与模板，能处理目录、页眉页脚、批注与修订。",
+   highlights:["在既有文档里定位并改写内容，而不是整篇重写","支持表格、图片插入替换、查找替换","能处理修订记录与批注这类「协作痕迹」"],
+   intro:"# Word 文档编辑\n\nWord 的坑几乎都集中在「改」而不是「写」：目录要跟着更新、页眉页脚不能串、批注和修订记录要保留。\n\n## 适合用它的时候\n\n- 生成带目录、页码、页眉的**正式文档**\n- 在**已有 docx** 里定位并改写段落，而不是整篇重写",
+   author:"Anthropic",repository:"anthropics/skills",license:"Proprietary (Anthropic)",version:"1.0.0",
+   command:cmdFor("docx"),
+   source:"https://www.skills.sh/anthropics/skills/docx"},
+  {id:"xlsx",name:"Excel 表格处理",icon:"📊",category:"数据表格",official:true,tags:["Excel","xlsx","公式","图表"],
+   summary:"把表格类任务都交给它：读写 xlsx、算公式、做图表、清洗脏数据。",
+   highlights:["按列增删改、写公式并校验计算结果","把杂乱的行列结构整理成规范表","产出物是真正的表格文件，不是 Markdown 里画的表格"],
+   intro:"# Excel 表格处理\n\n判断要不要用这个技能很简单：**本次任务的输入或产出是不是一个表格文件**。是，就用它。\n\n## 不适合的时候\n\n最终交付物是 Word 文档、HTML 报告、一段脚本或数据库管道——即使中间有表格数据，也不该用这个技能。",
+   author:"Anthropic",repository:"anthropics/skills",license:"Proprietary (Anthropic)",version:"1.0.0",
+   command:cmdFor("xlsx"),
+   source:"https://www.skills.sh/anthropics/skills/xlsx"},
+  {id:"pptx",name:"PPT 生成与编辑",icon:"📽",category:"文档处理",official:true,tags:["PPT","pptx","演示"],
+   summary:"生成与修改 PowerPoint 演示文稿，含版式、图表与母版级操作。",
+   highlights:["从大纲直接产出多页演示文稿","在原文件上改版式与内容，保持模板风格","支持把数据整理成图表页"],
+   intro:"# PPT 生成与编辑\n\n从大纲到成稿，或者在一份已有母版上继续加页——两种用法差别很大，这个技能都覆盖。",
+   author:"Anthropic",repository:"anthropics/skills",license:"Proprietary (Anthropic)",version:"1.0.0",
+   command:cmdFor("pptx"),
+   source:"https://www.skills.sh/anthropics/skills/pptx"},
+  {id:"mcp-builder",name:"MCP 服务开发",icon:"🔌",category:"集成开发",official:true,tags:["MCP","FastMCP","工具设计"],
+   summary:"按规范从零设计并实现 MCP 服务，把外部 API 包装成模型可用的工具。",
+   highlights:["给出工具命名、入参、错误处理的约定","Python（FastMCP）与 Node/TypeScript 两种路线都有指引","强调「为模型设计工具」而不是简单暴露接口"],
+   intro:"# MCP 服务开发\n\n把外部 API 变成模型能可靠调用的工具，难点不在「能跑通」，而在**工具该怎么设计**。",
+   author:"Anthropic",repository:"anthropics/skills",license:"Proprietary (Anthropic)",version:"1.0.0",
+   command:cmdFor("mcp-builder"),
+   source:"https://www.skills.sh/anthropics/skills/mcp-builder"},
+  {id:"skill-creator",name:"技能创作助手",icon:"🧩",category:"技能开发",official:true,tags:["SKILL.md","技能规范"],
+   summary:"教你把一套流程沉淀成技能：什么时候写 SKILL.md、怎么写触发条件、何时该拆分资源文件。",
+   highlights:["SKILL.md 的 frontmatter、正文结构与触发写法","判断哪些内容该放 scripts/、references/","避免写出「模型永远想不起来调用」的技能"],
+   intro:"# 技能创作助手\n\n写技能最容易犯的错是：写了一堆模型永远想不起来看的内容。",
+   author:"Anthropic",repository:"anthropics/skills",license:"Proprietary (Anthropic)",version:"1.0.0",
+   command:cmdFor("skill-creator"),
+   source:"https://www.skills.sh/anthropics/skills/skill-creator"},
+  {id:"webapp-testing",name:"Web 应用测试",icon:"🧪",category:"测试",official:true,tags:["Playwright","E2E","截图"],
+   summary:"用 Playwright 驱动浏览器验证本地 Web 应用：点流程、看控制台、截图存证。",
+   highlights:["跑通关键交互路径并断言页面状态","捕获浏览器 console 与网络错误","截图留证，便于排查前端问题"],
+   intro:"# Web 应用测试\n\n前端问题的特点是「说得清、看不见」。这个技能用 Playwright 把「看见」这一步补上。",
+   author:"Anthropic",repository:"anthropics/skills",license:"Proprietary (Anthropic)",version:"1.0.0",
+   command:cmdFor("webapp-testing"),
+   source:"https://www.skills.sh/anthropics/skills/webapp-testing"},
+  {id:"frontend-design",name:"前端视觉设计",icon:"🎨",category:"设计",official:true,tags:["UI","排版","配色"],
+   summary:"给界面定视觉方向：字体、间距、配色与细节，避免一眼「模板感」。",
+   highlights:["先定方向再写代码，减少反复改样式","排版与字重的取舍原则","识别并改掉默认模板的廉价感"],
+   intro:"# 前端视觉设计\n\n大多数「一眼 AI 味」的界面不是技术问题，是没做取舍：字体大小随便、间距均匀、颜色缺层次。",
+   author:"Anthropic",repository:"anthropics/skills",license:"Proprietary (Anthropic)",version:"1.0.0",
+   command:cmdFor("frontend-design"),
+   source:"https://www.skills.sh/anthropics/skills/frontend-design"}
+];
+
+const CATS = ["全部", ...new Set(SKILLS.map(s => s.category))];
+let activeCat = "全部";
+let activeSkill = SKILLS[0];
+let installTab = "prompt";
+let isAdmin = false;
+
+const $ = (id) => document.getElementById(id);
+
+function promptFor(skill, scope){
+  const src = SANDBOX_DIR + "/.agents/skills/" + skill.id;
+  const step2 = scope === "global"
+    ? "2) 装好后调用 import_skill_from_sandbox，source_path 传 " + src + "，scope 传 global，收进平台全局技能库（我确认有管理员权限）。"
+    : "2) 装好后调用 import_skill_from_sandbox，source_path 传 " + src + "，收进我的个人技能库。";
+  return "请帮我在沙箱里安装技能「" + skill.name + "」，全程不允许出现交互式等待：\n"
+    + "1) 执行：" + cmdFor(skill.id) + "\n"
+    + "   命令里两个 -y 都是必须的（跳过 npx 安装确认 + 跳过 skills 安装确认）；"
+    + "万一仍然弹出提问，直接取默认值，不要停下来等我输入。\n"
+    + step2 + "\n"
+    + "3) 如果命令超过 2 分钟没有输出、或卡在等待输入，立刻中止并告诉我卡在哪一步，不要让它一直挂着。";
+}
+
+function renderChips(){
+  $("chips").innerHTML = "";
+  CATS.forEach(cat => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (cat === activeCat ? " on" : "");
+    b.textContent = cat;
+    b.onclick = () => { activeCat = cat; renderChips(); renderGrid(); };
+    $("chips").appendChild(b);
+  });
+}
+
+function filtered(){
+  const q = $("search").value.trim().toLowerCase();
+  const officialOnly = $("officialOnly").checked;
+  return SKILLS.filter(s => {
+    if (activeCat !== "全部" && s.category !== activeCat) return false;
+    if (officialOnly && !s.official) return false;
+    if (!q) return true;
+    return (s.name + " " + s.summary + " " + s.tags.join(" ") + " " + s.id).toLowerCase().includes(q);
+  });
+}
+
+function renderGrid(){
+  const list = filtered();
+  $("statTotal").textContent = list.length;
+  $("grid").innerHTML = "";
+  if (!list.length){
+    $("grid").innerHTML = '<div class="empty">没有匹配的技能，换个关键词试试</div>';
+    return;
+  }
+  list.forEach(s => {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      '<div class="card-top">' +
+        '<div class="ico">' + s.icon + '</div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<h3>' + s.name + '</h3>' +
+          '<div class="meta">' + s.author + ' · v' + s.version + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">' +
+        (s.official ? '<span class="badge badge-official">官方</span>' : '') +
+        '<span class="badge badge-cat">' + s.category + '</span>' +
+      '</div>' +
+      '<p class="sum">' + s.summary + '</p>' +
+      '<div class="tags">' + s.tags.map(t => '<span class="tag">' + t + '</span>').join('') + '</div>' +
+      '<div class="card-foot">' +
+        '<button class="link" type="button">查看详情 →</button>' +
+        '<button class="btn btn-soft" type="button">复制安装提示词</button>' +
+      '</div>';
+    card.querySelector(".link").onclick = (e) => { e.stopPropagation(); openDrawer(s); };
+    card.querySelector(".btn-soft").onclick = (e) => {
+      e.stopPropagation();
+      copy(promptFor(s, "personal"), "已复制安装提示词，粘贴到对话里即可");
+    };
+    card.onclick = () => openDrawer(s);
+    $("grid").appendChild(card);
+  });
+}
+
+function renderInstall(){
+  const code = installTab === "prompt"
+    ? promptFor(activeSkill, "personal")
+    : cmdFor(activeSkill.id);
+  $("dInstallCode").textContent = code;
+  $("dInstallCode").innerHTML += '<button class="copy" title="复制" aria-label="复制">⧉</button>';
+  $("dInstallCode").querySelector(".copy").onclick = (e) => {
+    e.stopPropagation();
+    copy(code, "已复制");
+    const btn = e.currentTarget; btn.classList.add("copied"); btn.textContent = "✓";
+    setTimeout(() => { btn.classList.remove("copied"); btn.textContent = "⧉"; }, 1400);
+  };
+}
+
+function md2html(md){
+  const esc = (t) => t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  return esc(md)
+    .replace(/^### (.*)$/gm, '<h2>$1</h2>')
+    .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .split(/\n{2,}/).map(block => {
+      if (/^<h[12]>/.test(block)) return block;
+      if (/^[-*] /m.test(block)){
+        const items = block.split(/\n/).filter(l => /^[-*] /.test(l))
+          .map(l => '<li>' + l.replace(/^[-*] /, '') + '</li>').join('');
+        return '<ul>' + items + '</ul>';
+      }
+      return '<p>' + block.replace(/\n/g, '<br>') + '</p>';
+    }).join('');
+}
+
+function openDrawer(s){
+  activeSkill = s;
+  $("dIcon").textContent = s.icon;
+  $("dName").textContent = s.name;
+  $("dSub").textContent = s.id + ' · v' + s.version + ' · ' + s.author;
+  $("dBadges").innerHTML =
+    (s.official ? '<span class="badge badge-official">官方</span>' : '') +
+    '<span class="badge badge-cat">' + s.category + '</span>' +
+    s.tags.map(t => '<span class="badge badge-cat">' + t + '</span>').join('');
+  $("dSummary").textContent = s.summary;
+  $("dHighlights").innerHTML = s.highlights.map(h => '<li>' + h + '</li>').join('');
+  $("dIntro").innerHTML = md2html(s.intro);
+  $("dMeta").innerHTML =
+    '<dt>作者</dt><dd>' + s.author + '</dd>' +
+    '<dt>仓库</dt><dd><a href="' + s.source + '" target="_blank" rel="noreferrer">' + s.repository + '</a></dd>' +
+    '<dt>许可</dt><dd>' + s.license + '<br><span class="tiny muted">仅作索引介绍，未复制正文</span></dd>' +
+    '<dt>版本</dt><dd>' + s.version + '</dd>';
+  installTab = "prompt";
+  document.querySelectorAll(".itab").forEach(b => b.classList.toggle("on", b.dataset.itab === "prompt"));
+  renderInstall();
+  $("drawer").classList.add("on");
+  $("drawer").setAttribute("aria-hidden", "false");
+  $("scrim").classList.add("on");
+}
+
+function closeDrawer(){
+  $("drawer").classList.remove("on");
+  $("drawer").setAttribute("aria-hidden", "true");
+  $("scrim").classList.remove("on");
+}
+
+function copy(text, msg){
+  navigator.clipboard.writeText(text).then(() => toast(msg)).catch(() => toast("复制失败，请手动选中"));
+}
+
+let toastTimer;
+function toast(msg){
+  const el = $("toast");
+  el.textContent = msg; el.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("on"), 1900);
+}
+
+document.querySelectorAll(".itab").forEach(btn => {
+  btn.onclick = () => {
+    installTab = btn.dataset.itab;
+    document.querySelectorAll(".itab").forEach(b => b.classList.toggle("on", b === btn));
+    renderInstall();
+  };
+});
+
+$("closeDrawer").onclick = closeDrawer;
+$("scrim").onclick = closeDrawer;
+$("search").oninput = renderGrid;
+$("officialOnly").onchange = renderGrid;
+$("installPersonal").onclick = () => copy(promptFor(activeSkill, "personal"), "已复制「安装到个人」提示词");
+$("installPlatform").onclick = () => copy(promptFor(activeSkill, "global"), "已复制「安装到平台」提示词");
+
+$("roleUser").onclick = () => {
+  isAdmin = false;
+  document.body.classList.remove("is-admin");
+  $("roleUser").classList.add("on"); $("roleAdmin").classList.remove("on");
+};
+$("roleAdmin").onclick = () => {
+  isAdmin = true;
+  document.body.classList.add("is-admin");
+  $("roleAdmin").classList.add("on"); $("roleUser").classList.remove("on");
+};
+
+renderChips();
+renderGrid();
+setTimeout(() => openDrawer(SKILLS[0]), 250);
+</script>
+</body>
+</html>

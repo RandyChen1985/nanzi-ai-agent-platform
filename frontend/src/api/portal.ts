@@ -167,6 +167,27 @@ export interface ScenarioTemplateInstallPayload {
 }
 
 export const portalApi = {
+  // 我的头像（当前登录用户）
+  //
+  // 上传走 multipart，字段名固定为 `file`；**不手写请求头**，交给浏览器自动生成
+  // 带 boundary 的请求头，否则后端解析不出文件。成功返回可直接用作 img src 的
+  // 头像短路径（形如 /static/uploads/avatars/<user_id>/avatar_<ts>.png）。
+  uploadMyAvatar: async (file: Blob, fileName = 'avatar.png'): Promise<string | null> => {
+    const formData = new FormData()
+    formData.append('file', new File([file], fileName, { type: file.type || 'image/png' }))
+    const response = await axios.post('/api/portal/auth/me/avatar', formData)
+    // 兼容两种包裹：门户接口可能是 { status, data: { avatar_url } }，
+    // 也可能按契约直接返回 { avatar_url }。取不到就返回 null，由调用方兜底提示。
+    const payload = response.data?.data ?? response.data
+    const avatarUrl = payload?.avatar_url
+    return typeof avatarUrl === 'string' && avatarUrl.trim() ? avatarUrl : null
+  },
+
+  // 删除我的自定义头像（后端幂等，重复删除同样成功）
+  deleteMyAvatar: async (): Promise<void> => {
+    await axios.delete('/api/portal/auth/me/avatar')
+  },
+
   // Roles
   getRoles: (params?: { search?: string, page?: number, size?: number }) => 
     axios.get<StandardResponse<ListResponse<Role>>>('/api/portal/roles', { params }),
@@ -201,3 +222,9 @@ export const portalApi = {
   installScenarioTemplate: (templateId: string, payload: ScenarioTemplateInstallPayload) =>
     axios.post<StandardResponse<ScenarioTemplateInstallResult>>(`/api/portal/scenario-templates/${templateId}/install`, payload)
 }
+
+// 头像两个方法额外做**具名导出**：`portalApi.xxx` 这种对象属性无法被
+// `import { uploadMyAvatar } from '@/api/portal'` 取到（rollup 会直接报
+// "is not exported by"），个人中心/聊天页用具名导入更直观，两条路都留着。
+export const uploadMyAvatar = portalApi.uploadMyAvatar
+export const deleteMyAvatar = portalApi.deleteMyAvatar

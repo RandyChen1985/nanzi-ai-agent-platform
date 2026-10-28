@@ -20,27 +20,45 @@ SESSION_DIR_NAME_RE = re.compile(
 UPLOAD_NAME_ALLOCATION_ATTEMPTS = 100
 
 
-def build_upload_storage_name(filename: str | None, suffix: str | None = None) -> str:
-    """保留可读原名，仅清理路径/控制字符，并追加短唯一后缀。"""
+def sanitize_upload_storage_name(filename: str | None) -> str:
+    """清理路径分隔符与控制字符，保留可读原名；清洗后为空则回落 upload。"""
     raw_name = str(filename or "").replace("/", "_").replace("\\", "_")
     clean_name = re.sub(r"[\x00-\x1f\x7f]", "_", raw_name).strip()
-    if not clean_name:
-        clean_name = "upload"
+    return clean_name or "upload"
 
-    stem, extension = os.path.splitext(clean_name)
+
+def build_upload_storage_name(filename: str | None, suffix: str | None = None) -> str:
+    """保留可读原名，仅清理路径/控制字符，并追加短唯一后缀（重名时才用）。"""
+    stem, extension = os.path.splitext(sanitize_upload_storage_name(filename))
     short_suffix = (suffix or uuid.uuid4().hex[:4]).strip()
     return f"{stem}_{short_suffix}{extension}"
 
 
+def _create_upload_file(directory: str, storage_name: str) -> tuple[str, BinaryIO] | None:
+    """排他创建（``xb``）；名字已被占用时返回 None，绝不覆盖已有文件。"""
+    path = os.path.normpath(os.path.join(directory, storage_name))
+    try:
+        return path, open(path, "xb")
+    except (FileExistsError, IsADirectoryError):
+        # 同名目录占位也算重名：此时应改名写入，而不是把 OSError 抛给调用方变成 500。
+        return None
+
+
 def open_upload_storage_file(directory: str, filename: str | None) -> tuple[str, BinaryIO]:
-    """原子地分配上传文件名，避免短后缀碰撞覆盖已有文件。"""
+    """原子地分配上传文件名：默认保留原文件名，仅在重名时追加短后缀。
+
+    绝大多数上传不会重名，直接用原名对两端都更友好：用户在文件浏览器里看到的就是
+    自己上传的名字，AI 侧拿到的路径也是可读真名；只有确实冲突时才回退到
+    ``原名_xxxx.ext``，并由 ``"xb"`` 的排他创建保证已有文件永不被覆盖。
+    """
+    created = _create_upload_file(directory, sanitize_upload_storage_name(filename))
+    if created is not None:
+        return created
+
     for _ in range(UPLOAD_NAME_ALLOCATION_ATTEMPTS):
-        storage_name = build_upload_storage_name(filename)
-        path = os.path.normpath(os.path.join(directory, storage_name))
-        try:
-            return path, open(path, "xb")
-        except FileExistsError:
-            continue
+        created = _create_upload_file(directory, build_upload_storage_name(filename))
+        if created is not None:
+            return created
     raise FileExistsError("无法为上传文件分配唯一存储名")
 
 

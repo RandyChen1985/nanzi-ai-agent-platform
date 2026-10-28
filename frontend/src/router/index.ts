@@ -25,6 +25,14 @@ const router = createRouter({
       meta: { public: true, title: '重置密码' }
     },
     {
+      // 公开分享页：访客无需登录，凭链接里的 shareId 走裸 axios 访客接口。
+      // 设密分享由页面自己渲染密码卡片，不涉及门户登录态。
+      path: '/share/:shareId',
+      name: 'shared-conversation',
+      component: () => import('../views/SharedConversation.vue'),
+      meta: { public: true, title: '会话分享' }
+    },
+    {
       path: '/no-permission',
       name: 'NoPermission',
       component: NoPermission,
@@ -282,13 +290,15 @@ const router = createRouter({
 })
 
 router.beforeEach((to: any, _from: any, next: any) => {
-  const userInfoStr = localStorage.getItem('user_info')
-  const isAuthenticated = !!userInfoStr
-  
+  // 公开页面（分享页 / 重置密码 / 嵌入页）与登录态无关，必须在读取登录快照前直接放行：
+  // 一旦先落到下面的未登录判断，访客会被重定向到登录页，公开链接就永远打不开。
   if (to.meta.public) {
     next()
     return
   }
+
+  const userInfoStr = localStorage.getItem('user_info')
+  const isAuthenticated = !!userInfoStr
 
   if (to.name !== 'Login' && !isAuthenticated) {
     next({ name: 'Login' })

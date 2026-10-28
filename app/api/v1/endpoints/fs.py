@@ -828,7 +828,7 @@ class FileUploadResponse(BaseModel):
     path: str
     # 用户选择的原始文件名
     name: str
-    # 实际落盘名（防重名会追加短后缀）：UI 据此解释「为什么名字变了」
+    # 实际落盘名（默认等于 name，仅在重名时追加短后缀）：UI 据此解释「为什么名字变了」
     stored_name: Optional[str] = None
     size: int
     mtime: float

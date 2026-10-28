@@ -68,6 +68,11 @@ const props = withDefaults(defineProps<{
   hideQuickButtons?: boolean;
   /** 为 true 时为 HTTP(S) 链接追加在右侧浏览器打开的操作按钮 */
   enableBrowserOpen?: boolean;
+  /**
+   * 只读快照模式（公开分享页）：不做依赖登录态或宿主画布的增强——
+   * fs/preview 重映射、产物下载按钮、citation 角标、canvas 卡片按钮。
+   */
+  readonly?: boolean;
   /** 当前消息若有已验证的 ChatBI 结果，quick 链接会携带仅供路由使用的隐藏上下文 */
   quickContext?: {
     source: 'chatbi_result';
@@ -78,6 +83,7 @@ const props = withDefaults(defineProps<{
   theme: 'default',
   hideQuickButtons: false,
   enableBrowserOpen: false,
+  readonly: false,
 });
 
 const emit = defineEmits<{
@@ -142,6 +148,8 @@ interface ContentSegment {
   /** 将 [ID:n] 转为可点击徽章（Markdown 渲染前保护，避免被解析器吞掉） */
   const protectCitationsInMarkdown = (text: string) => {
     if (!text) return '';
+    // 只读快照不生成角标：点击要回调宿主打开引用面板，分享页没有那个面板。
+    if (props.readonly) return text;
     return text.replace(/(?:[\[【]ID:(\w+)[\]】])|(?:Fig\.\s*(\d+))/gi, (match, id, figNum) => {
       const finalId = id || figNum;
       return `<span class="citation-badge" data-cite-id="${finalId}">${match}</span>`;
@@ -202,6 +210,12 @@ interface ContentSegment {
         /&lt;a\s+[\s\S]*?href=(?:&quot;|")quick:([\s\S]*?)(?:&quot;|")[\s\S]*?&gt;([\s\S]*?)&lt;\/a&gt;/gi,
         '',
       );
+    }
+
+    // 只读快照到此为止：后面的路径重映射（fs 预览要登录态）、产物下载按钮、
+    // citation 角标兜底、路径「打开」链接，一律不能出现在公开页。
+    if (props.readonly) {
+      return res;
     }
 
     // 智能将服务器物理绝对路径重映射为可加载的网络相对路径（uploads 转静态托管，其他绝对路径转 fs 预览 API）
@@ -686,42 +700,54 @@ const segments = computed<ContentSegment[]>(() => {
         />
       </div>
 
-      <!-- Canvas HTML 激活卡片 -->
-      <div v-else-if="segment.type === 'canvas_html'" class="my-3 p-4 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/10 flex items-center justify-between shadow-sm">
-        <div class="flex items-center space-x-3">
-          <div class="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+      <!-- Canvas HTML：只读快照不提供「运行应用」，直接给出源码 -->
+      <div v-else-if="segment.type === 'canvas_html'" class="my-3">
+        <pre
+          v-if="readonly"
+          class="max-h-[420px] overflow-auto rounded-xl border border-gray-200 bg-gray-50 p-3 text-[11.5px] leading-relaxed text-gray-700 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-300"
+        ><code>{{ segment.content }}</code></pre>
+        <div v-else class="p-4 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/10 flex items-center justify-between shadow-sm">
+          <div class="flex items-center space-x-3">
+            <div class="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-gray-800 dark:text-gray-200">{{ segment.title }}</h4>
+              <p class="text-[10px] text-gray-400 dark:text-gray-500">已为您生成可交互原型页面</p>
+            </div>
           </div>
-          <div>
-            <h4 class="text-xs font-bold text-gray-800 dark:text-gray-200">{{ segment.title }}</h4>
-            <p class="text-[10px] text-gray-400 dark:text-gray-500">已为您生成可交互原型页面</p>
-          </div>
+          <button
+            @click="emit('open-canvas', { type: 'html', title: segment.title || '', content: segment.content })"
+            class="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 rounded-lg shadow-sm transition-all"
+          >
+            运行应用
+          </button>
         </div>
-        <button
-          @click="emit('open-canvas', { type: 'html', title: segment.title || '', content: segment.content })"
-          class="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 rounded-lg shadow-sm transition-all"
-        >
-          运行应用
-        </button>
       </div>
 
-      <!-- Canvas Code 激活卡片 -->
-      <div v-else-if="segment.type === 'canvas_code'" class="my-3 p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/30 flex items-center justify-between shadow-sm">
-        <div class="flex items-center space-x-3">
-          <div class="p-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-600 dark:text-gray-400">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+      <!-- Canvas Code：只读快照不提供「运行 / 查看代码」抽屉，直接给出源码 -->
+      <div v-else-if="segment.type === 'canvas_code'" class="my-3">
+        <pre
+          v-if="readonly"
+          class="max-h-[420px] overflow-auto rounded-xl border border-gray-200 bg-gray-50 p-3 text-[11.5px] leading-relaxed text-gray-700 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-300"
+        ><code>{{ segment.content }}</code></pre>
+        <div v-else class="p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/30 flex items-center justify-between shadow-sm">
+          <div class="flex items-center space-x-3">
+            <div class="p-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-gray-600 dark:text-gray-400">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-gray-800 dark:text-gray-200">{{ segment.title }}</h4>
+              <p class="text-[10px] text-gray-400 dark:text-gray-500">包含大段 {{ segment.langName }} 源代码</p>
+            </div>
           </div>
-          <div>
-            <h4 class="text-xs font-bold text-gray-800 dark:text-gray-200">{{ segment.title }}</h4>
-            <p class="text-[10px] text-gray-400 dark:text-gray-500">包含大段 {{ segment.langName }} 源代码</p>
-          </div>
+          <button
+            @click="emit('open-canvas', { type: 'code', title: segment.title || '', content: segment.content, langName: segment.langName, runnable: segment.runnable })"
+            class="px-3 py-1.5 text-xs font-bold text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 active:scale-95 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm transition-all"
+          >
+            {{ segment.runnable ? '运行' : '查看代码' }}
+          </button>
         </div>
-        <button
-          @click="emit('open-canvas', { type: 'code', title: segment.title || '', content: segment.content, langName: segment.langName, runnable: segment.runnable })"
-          class="px-3 py-1.5 text-xs font-bold text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 active:scale-95 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm transition-all"
-        >
-          {{ segment.runnable ? '运行' : '查看代码' }}
-        </button>
       </div>
 
       <div v-else-if="segment.type === 'sql_plan' && segment.sqlPlan" class="w-full">

@@ -889,6 +889,15 @@ def create_skills(
         overwrite: 是否允许覆盖同名已存在的技能。默认 false。为 false 且技能已存在时，
                    本工具不会修改磁盘上的任何内容，而是返回 NANZI_SKILL_EXISTS 提示；
                    必须先向用户确认「确实要整份替换现有技能」，再带 overwrite=true 重试。
+
+    本工具只写 SKILL.md。若技能还需要脚本、模板、参考资料、图片等资源文件，
+    建好技能后用 write_skill_file 逐个写入（否则 SKILL.md 里引用的 scripts/xxx.py
+    在磁盘上并不存在，技能是半残的）。
+
+    如果技能**已经存在于沙箱磁盘上**（例如用户让你用 `npx skills add <包>` 装了第三方技能，
+    产物在 `scratch/.agents/skills/<id>/`），不要用本工具逐字重抄——那种场景请改用
+    import_skill_from_sandbox：它会把整个目录（含脚本、图片等二进制资源）一次性收录进
+    平台个人技能库。
     """
     try:
         # ID 校验与端点/重命名/上传共用同一份实现：格式、128 长度上限、平台保留字。
@@ -992,6 +1001,606 @@ def create_skills(
         )
     except Exception as e:
         return f"错误：创建技能失败，原因: {str(e)}"
+
+
+def _skill_dir_usage(skill_dir: str) -> tuple[int, int]:
+    """统计技能目录当前的文件数与总字节数（用于写入预算，避免工具被循环调用灌爆目录）。"""
+    files = 0
+    total = 0
+    for root, _dirs, names in os.walk(skill_dir):
+        for name in names:
+            files += 1
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                continue
+    return files, total
+
+
+def _resolve_skill_dir_for_asset(skill_id: str, scope: str, user_info) -> tuple[str, str]:
+    """定位**已存在**的技能目录，返回 ``(skill_dir, resolved_scope)``。
+
+    与 create_skills 的区别：这里不允许「顺手新建技能」——目录不存在就直接报错，
+    免得模型把脚本写到一个不存在的技能里，产出「有文件没说明书」的孤儿目录。
+    """
+    resolved_scope = (scope or "personal").strip().lower()
+    if resolved_scope not in ("personal", "global"):
+        raise ValueError("scope 仅支持 personal 或 global")
+
+    if resolved_scope == "global":
+        if user_info:
+            role = str(user_info.get("role", "") or "")
+            if not (role == "admin" or "admin" in role.lower()):
+                raise ValueError("权限不足：仅系统管理员可以写入平台全局技能（global）")
+        from app.core.config import settings
+
+        skills_dir = settings.SKILLS_DIR
+        if not skills_dir:
+            raise ValueError("未配置全局 SKILLS_DIR 目录")
+        skill_dir = os.path.join(skills_dir, skill_id)
+    else:
+        if not user_info:
+            raise ValueError("未在当前会话中检测到有效的用户身份，无法写入个人技能")
+        from app.services.ai.skill_resolver import (
+            get_user_personal_skills_dir,
+            resolve_personal_skill_dir,
+        )
+
+        skills_dir = get_user_personal_skills_dir(user_info)
+        if not skills_dir:
+            raise ValueError("无法解析个人技能目录，请确认账号工作区已正确初始化")
+        # 平铺优先、.seed 回退：否则更新 .seed 里的存量技能会在平铺处造出第二份副本
+        skill_dir = resolve_personal_skill_dir(skills_dir, skill_id)
+        if not skill_dir:
+            raise ValueError(
+                f"技能 {skill_id} 不存在。请先用 create_skills 创建该技能，再用本工具追加资源文件"
+            )
+
+    if not os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
+        raise ValueError(
+            f"技能 {skill_id} 目录缺少 SKILL.md，不是有效技能。请先用 create_skills 创建"
+        )
+    return os.path.abspath(skill_dir), resolved_scope
+
+
+def _normalize_skill_asset_path(path: str) -> str:
+    """校验并规范化技能内的相对路径，返回 ``a/b/c.py`` 形式；非法则抛 ValueError。"""
+    raw = str(path or "").strip().replace("\\", "/")
+    if not raw:
+        raise ValueError("path 不能为空")
+    if raw.startswith("/") or os.path.isabs(raw):
+        raise ValueError("path 必须是相对技能目录的路径（如 scripts/build.py），不能是绝对路径")
+    parts = [part for part in raw.split("/") if part not in ("", ".")]
+    if not parts:
+        raise ValueError("path 不能为空")
+    if any(part == ".." for part in parts):
+        raise ValueError("path 不允许包含 ..（越权路径）")
+    if any(part.startswith(".") for part in parts):
+        raise ValueError("path 不允许包含以 . 开头的隐藏文件或目录")
+    normalized = "/".join(parts)
+    if normalized.lower() == "skill.md":
+        raise ValueError(
+            "SKILL.md 请用 create_skills 写入（覆盖需显式 overwrite=true），本工具只用于追加资源文件"
+        )
+    return normalized
+
+
+@tool
+def write_skill_file(
+    skill_id: str,
+    path: str,
+    content: str,
+    encoding: str = "utf8",
+    scope: str = "personal",
+    overwrite: bool = False,
+) -> str:
+    """
+    给**已存在**的技能追加或更新一个资源文件：脚本（scripts/*.py）、模板、参考资料（references/*.md）、
+    图片等资产。SKILL.md 本身不归本工具管，请用 create_skills 写入。
+
+    什么时候该用：用户要把某套流程沉淀成技能，而这个技能除了说明书还需要**可被引用的文件**
+    （例如「按这个脚本跑」「用这个模板」「参考这份规范」）。只有说明书、却在里面写了
+    `python scripts/build.py` 的技能是半残的——那个脚本并不存在。此时先用 create_skills
+    建技能、再用本工具逐个写入资源文件。
+
+    Args:
+        skill_id: 目标技能 ID（必须已存在），仅支持英文、数字、中划线及下划线。
+        path: 技能目录内的相对路径，如 scripts/build.py、references/rules.md、assets/logo.png。
+              不允许绝对路径、不允许 ..、不允许以 . 开头的隐藏文件/目录。
+        content: 文件内容。文本按 encoding="utf8" 直接写入；二进制（png/jpg/xlsx 等）
+                 需先把字节做 Base64 编码，再用 encoding="base64" 传入。
+        encoding: "utf8"（默认）或 "base64"。base64 时必须能正确解码，否则拒绝写入。
+        scope: "personal"（个人技能，默认）或 "global"（平台全局，仅管理员）。
+        overwrite: 是否允许覆盖已存在的同名文件。默认 false：目标已存在时**不写任何内容**，
+                   返回 NANZI_SKILL_FILE_EXISTS，需先向用户确认再带 overwrite=true 重试。
+
+    单个文件上限 10MB，技能目录总量上限 500MB / 20000 个文件（与解压上传共用同一份预算）。
+    """
+    try:
+        try:
+            skill_id = validate_skill_id(skill_id)
+        except SkillRenameError as exc:
+            return f"错误：{exc}"
+
+        try:
+            relative_path = _normalize_skill_asset_path(path)
+        except ValueError as exc:
+            return f"错误：{exc}"
+
+        encoding_key = str(encoding or "utf8").strip().lower()
+        if encoding_key in ("utf8", "utf-8", "text"):
+            payload = str(content or "").encode("utf-8")
+        elif encoding_key in ("base64", "b64"):
+            import base64 as _base64
+
+            compact = re.sub(r"\s+", "", str(content or ""))
+            if not compact:
+                return "错误：encoding=base64 时 content 不能为空"
+            try:
+                payload = _base64.b64decode(compact, validate=True)
+            except Exception:
+                return "错误：content 不是合法的 Base64 文本，无法解码为二进制"
+        else:
+            return "错误：encoding 仅支持 utf8 或 base64"
+
+        from app.core.upload_limits import SKILL_ASSET_MAX_FILE_BYTES
+        from app.core.upload_limits import SKILL_DIR_MAX_BYTES, SKILL_DIR_MAX_FILES
+
+        if len(payload) > SKILL_ASSET_MAX_FILE_BYTES:
+            return (
+                f"错误：单个文件 {len(payload)} 字节，超过上限 "
+                f"{SKILL_ASSET_MAX_FILE_BYTES // (1024 * 1024)}MB，请拆分或改用工作空间目录"
+            )
+
+        from app.utils.context import current_user_info
+
+        user_info = current_user_info.get()
+        try:
+            skill_dir, resolved_scope = _resolve_skill_dir_for_asset(skill_id, scope, user_info)
+        except ValueError as exc:
+            return f"错误：{exc}"
+
+        target_path = os.path.abspath(
+            os.path.join(skill_dir, *relative_path.split("/"))
+        )
+        try:
+            if os.path.commonpath([skill_dir, target_path]) != skill_dir:
+                return "错误：目标路径越出技能目录，已拦截"
+        except ValueError:
+            return "错误：目标路径越出技能目录，已拦截"
+
+        validate_safe_path(target_path)
+
+        already_exists = os.path.exists(target_path)
+        if already_exists and os.path.isdir(target_path):
+            return f"错误：{relative_path} 已存在且是目录，无法作为文件写入"
+        if already_exists and not overwrite:
+            return (
+                f"文件 {relative_path} 已存在于技能 {skill_id}，本次**未做任何修改**。\n"
+                "如果需要整份替换该文件，请在获得用户明确确认后，带 overwrite=true 重新调用。\n"
+                "NANZI_SKILL_FILE_EXISTS:"
+                + json.dumps(
+                    {"skill_id": skill_id, "scope": resolved_scope, "path": relative_path},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+
+        existing_files, existing_bytes = _skill_dir_usage(skill_dir)
+        incoming_files = 0 if already_exists else 1
+        if existing_files + incoming_files > SKILL_DIR_MAX_FILES:
+            return (
+                f"错误：技能 {skill_id} 文件数已达上限（{SKILL_DIR_MAX_FILES} 个），"
+                "请清理不再需要的资源后再写入"
+            )
+        if existing_bytes + len(payload) > SKILL_DIR_MAX_BYTES:
+            return (
+                f"错误：技能 {skill_id} 总占用将超过 "
+                f"{SKILL_DIR_MAX_BYTES // (1024 * 1024)}MB 上限，请清理或拆分技能"
+            )
+
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with open(target_path, "wb") as f:
+            f.write(payload)
+
+        action_desc = "已覆盖更新" if already_exists else "写入成功"
+        marker = (
+            "NANZI_SKILL_FILE_WRITTEN:"
+            + json.dumps(
+                {
+                    "skill_id": skill_id,
+                    "scope": resolved_scope,
+                    "path": relative_path,
+                    "bytes": len(payload),
+                    "encoding": "base64" if encoding_key in ("base64", "b64") else "utf8",
+                    "overwritten": already_exists,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        scope_desc = "平台全局" if resolved_scope == "global" else "个人专属"
+        return (
+            f"成功：{scope_desc}技能 {skill_id} 的资源文件 {relative_path} {action_desc}"
+            f"（{len(payload)} 字节）。完整路径 {target_path}。\n{marker}"
+        )
+    except Exception as e:
+        return f"错误：写入技能文件失败，原因: {str(e)}"
+
+
+#: 沙箱内用户工作区的挂载点（与 workspace.py 的 ``DOCKER_WORKSPACE_LOGICAL_ROOT``
+#: 以及 k8s 的 ``POD_WORKDIR`` 保持一致）。后端与沙箱看到的是**同一份磁盘文件**，
+#: 所以「把沙箱里装好的技能收进平台技能库」不需要跟沙箱通信，直接复制即可。
+_SANDBOX_WORKSPACE_ROOT = "/workspace"
+
+#: 个人技能库本体在沙箱里的只读挂载点。它指向的正是导入的**目标**目录，
+#: 既能防止「把技能库自己导进技能库」，也能在报错里给出用户熟悉的路径。
+_SANDBOX_PERSONAL_SKILLS_ROOT = "/workspace/personal-skills"
+
+#: 导入时忽略的目录名：``.seed`` 是 AgentScope 打包副本，``.git`` 等隐藏目录是
+#: 工具链产物（``npx skills`` 会在工作区留 ``.agents``/``.claude``/``agent``）。
+_SKILL_IMPORT_IGNORED_DIRS = frozenset({".seed", ".git", "__pycache__", "node_modules"})
+
+
+def _resolve_sandbox_source_dir(source_path: str, user_info) -> str:
+    """把沙箱内路径解析成宿主上的真实目录，返回绝对路径与 realpath。
+
+    只接受两种写法：``/workspace/...`` 与相对工作区根的路径。解析后必须仍落在
+    **当前用户工作区**内，且不能是技能库本体——否则模型可以借导入工具读取（或变相
+    复制）别的目录内容。符号链接会先用 ``realpath`` 解析再判前缀，避免链接跳出去。
+    """
+    from app.services.ai.skill_resolver import get_user_personal_skills_dir
+
+    personal_root = get_user_personal_skills_dir(user_info)
+    if not personal_root:
+        raise ValueError("无法解析个人技能目录，请确认账号工作区已正确初始化")
+    personal_root = os.path.abspath(personal_root)
+    workdir = os.path.dirname(personal_root)
+
+    raw = str(source_path or "").strip().replace("\\", "/")
+    if not raw:
+        raise ValueError("source_path 不能为空")
+    if raw.startswith("/"):
+        if raw == _SANDBOX_WORKSPACE_ROOT:
+            raise ValueError("source_path 不能指向工作区根目录，请指向具体技能目录")
+        if not raw.startswith(_SANDBOX_WORKSPACE_ROOT + "/"):
+            raise ValueError(
+                "source_path 只支持 /workspace/... 或相对工作区的路径"
+                f"（例如 {_SANDBOX_PERSONAL_SKILLS_ROOT} 的兄弟目录）"
+            )
+        raw = raw[len(_SANDBOX_WORKSPACE_ROOT):]
+
+    parts = [part for part in raw.split("/") if part not in ("", ".")]
+    if not parts:
+        raise ValueError("source_path 不能指向工作区根目录，请指向具体技能目录")
+    if any(part == ".." for part in parts):
+        raise ValueError("source_path 不允许包含 ..（越权路径）")
+
+    # 技能库本体（平铺 skills/ 与它的沙箱挂载点 personal-skills/）不能当导入源：
+    # 那是导入的落点，从里面再导一次只会把 .seed 之类的中间产物搬来搬去。
+    if parts[0] in ("skills", "personal-skills"):
+        raise ValueError(
+            "source_path 不能是平台技能库本体（/workspace/skills、"
+            "/workspace/personal-skills），请指向沙箱里的技能安装目录"
+        )
+
+    candidate = os.path.join(workdir, *parts)
+    real_candidate = os.path.realpath(candidate)
+    real_workdir = os.path.realpath(workdir)
+    try:
+        if os.path.commonpath([real_workdir, real_candidate]) != real_workdir:
+            raise ValueError("source_path 越出当前用户工作区，已拦截")
+    except ValueError:
+        raise ValueError("source_path 越出当前用户工作区，已拦截")
+    real_personal = os.path.realpath(personal_root)
+    if real_candidate == real_personal or real_candidate.startswith(real_personal + os.sep):
+        raise ValueError("source_path 不能是平台技能库本体，请指向沙箱里的技能安装目录")
+
+    if not os.path.isdir(real_candidate):
+        raise ValueError(f"沙箱路径不存在或不是目录：{source_path}")
+
+    # 与 create_skills / write_skill_file 共用同一道物理路径校验
+    validate_safe_path(candidate)
+    return real_candidate
+
+
+def _copy_skill_tree(
+    src_dir: str,
+    dst_dir: str,
+    *,
+    max_files: int,
+    max_bytes: int,
+) -> dict:
+    """把技能目录整份复制到 ``dst_dir``，返回 ``{files, bytes, skipped_links}``。
+
+    **不跟随符号链接**：``npx skills`` 会为每个目标工具建 ``.claude/skills/x ->
+    ../../.agents/skills/x`` 这类软链，跟随复制会把同一份技能收两遍，更危险的是链接
+    可能指向工作区外。遇到软链一律跳过并计数。
+
+    预算按「目标技能已有用量 + 本次导入」算，超限直接抛 ``ValueError``，
+    由调用方清理暂存目录，绝不留半成品。
+    """
+    import shutil
+
+    files = 0
+    total = 0
+    skipped_links = 0
+    os.makedirs(dst_dir, exist_ok=True)
+
+    for root, dirs, names in os.walk(src_dir, followlinks=False):
+        rel = os.path.relpath(root, src_dir)
+        target_root = dst_dir if rel == "." else os.path.join(dst_dir, rel)
+        kept_dirs = []
+        for name in dirs:
+            full = os.path.join(root, name)
+            if os.path.islink(full):
+                skipped_links += 1
+                continue
+            if name in _SKILL_IMPORT_IGNORED_DIRS:
+                continue
+            kept_dirs.append(name)
+        dirs[:] = sorted(kept_dirs)
+        os.makedirs(target_root, exist_ok=True)
+
+        for name in sorted(names):
+            full = os.path.join(root, name)
+            if os.path.islink(full):
+                skipped_links += 1
+                continue
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                continue
+            files += 1
+            total += size
+            if files > max_files:
+                raise ValueError(f"导入后将超过单技能文件数上限（{max_files} 个）")
+            if total > max_bytes:
+                raise ValueError(
+                    f"导入后将超过单技能容量上限（{max_bytes // (1024 * 1024)}MB）"
+                )
+            shutil.copy2(full, os.path.join(target_root, name))
+
+    return {"files": files, "bytes": total, "skipped_links": skipped_links}
+
+
+def _skill_md_meta_warnings(skill_md_path: str) -> list:
+    """检查 SKILL.md 的 frontmatter 是否带 name/description，缺失只告警不拒绝。
+
+    第三方技能（``npx skills`` 从 GitHub 拉的）frontmatter 写法五花八门，硬性拒绝会
+    让用户装好的技能进不来；缺字段时 ``list_available_skills`` 会退化用目录名展示，
+    属于可用但不够好看，所以只在结果里回一条 warning 让模型转述。
+    """
+    warnings = []
+    try:
+        with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read(8192).lstrip("\ufeff")
+    except OSError:
+        return ["skill_md_unreadable"]
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
+    if not match:
+        return ["missing_frontmatter"]
+    keys = set()
+    for line in match.group(1).splitlines():
+        if ":" in line:
+            keys.add(line.split(":", 1)[0].strip().lower())
+    if "name" not in keys:
+        warnings.append("missing_name")
+    if "description" not in keys:
+        warnings.append("missing_description")
+    return warnings
+
+
+@tool
+def import_skill_from_sandbox(
+    source_path: str,
+    skill_id: str = "",
+    overwrite: bool = False,
+) -> str:
+    """
+    把沙箱里已经安装好的技能目录**整份收录**进平台个人技能库，让它在技能中心可见、
+    可用、且随平台数据持久化（不随会话结束消失）。
+
+    典型场景：用户在沙箱里用 `npx skills add <包>` 装了技能（例如
+    `npx skills add vikiboss/60s-skills@weather-query`），产物落在
+    `/workspace/scratch/.agents/skills/weather-query/`。那份目录在宿主磁盘上真实存在，
+    但平台技能库不认它——`list_available_skills` 看不到、`read_skill_instruction`
+    读不到。用本工具把它收进个人技能库即可（含 scripts/、references/、图片等全部资源）。
+
+    与 create_skills 的区别：create_skills 是由模型**逐字写出** SKILL.md 正文；
+    本工具是把**已存在的目录**整份搬进技能库，适合第三方现成技能包，也能带走二进制资源。
+
+    Args:
+        source_path: 沙箱内路径。支持 `/workspace/scratch/.agents/skills/weather-query`
+                     与相对工作区的 `scratch/.agents/skills/weather-query` 两种写法。
+                     也可以指向**技能根目录**（如 `scratch/.agents/skills`），此时把其下
+                     所有含 SKILL.md 的子目录一次性全部收录。
+                     不接受 /workspace 之外的绝对路径、`..`、平台技能库本体
+                     （/workspace/skills、/workspace/personal-skills）。
+        skill_id: 收录后的技能 ID，留空则沿用源目录名（推荐留空）。批量收录时忽略。
+        overwrite: 目标技能已存在时是否整份替换。默认 false：已存在的技能**一个字节都不会动**，
+                   只返回 NANZI_SKILL_IMPORT_EXISTS；需要覆盖时先向用户确认，再带
+                   overwrite=true 重试。
+
+    注意：符号链接不会被跟随（`npx skills` 会为各工具建软链，跟随会收重、也可能越界）；
+    `.seed`、`.git`、`node_modules`、`__pycache__` 会被跳过。单技能上限与技能上传共用
+    同一份预算（20000 个文件 / 500MB）。
+    """
+    try:
+        import shutil
+        import uuid
+
+        from app.core.upload_limits import SKILL_DIR_MAX_BYTES, SKILL_DIR_MAX_FILES
+        from app.services.ai.skill_resolver import (
+            get_user_personal_skills_dir,
+            resolve_personal_skill_dir,
+        )
+        from app.utils.context import current_user_info
+
+        user_info = current_user_info.get()
+        if not user_info:
+            return "错误：未在当前会话中检测到有效的用户身份，无法收录个人技能"
+
+        try:
+            source_dir = _resolve_sandbox_source_dir(source_path, user_info)
+        except ValueError as exc:
+            return f"错误：{exc}"
+
+        personal_root = get_user_personal_skills_dir(user_info)
+        if not personal_root:
+            return "错误：无法解析个人技能目录，请确认账号工作区已正确初始化"
+        personal_root = os.path.abspath(personal_root)
+        os.makedirs(personal_root, exist_ok=True)
+
+        # 判定「单个技能目录」还是「技能根目录批量」：看源目录自己有没有 SKILL.md
+        requested_id = str(skill_id or "").strip()
+        is_single = os.path.isfile(os.path.join(source_dir, "SKILL.md"))
+        candidates: list = []
+        if is_single:
+            candidates.append((requested_id or os.path.basename(source_dir), source_dir))
+        else:
+            try:
+                names = sorted(os.listdir(source_dir))
+            except OSError as exc:
+                return f"错误：无法读取沙箱目录 {source_path}：{exc}"
+            for name in names:
+                if name.startswith(".") or name in _SKILL_IMPORT_IGNORED_DIRS:
+                    continue
+                child = os.path.join(source_dir, name)
+                if os.path.islink(child) or not os.path.isdir(child):
+                    continue
+                if os.path.isfile(os.path.join(child, "SKILL.md")):
+                    candidates.append((name, child))
+            if not candidates:
+                return (
+                    f"错误：{source_path} 下没有找到技能（既不是技能目录，子目录里也没有 SKILL.md）。"
+                    "请确认 npx skills 的安装路径，通常形如 <cwd>/.agents/skills/<skill-id>/SKILL.md"
+                )
+            if requested_id:
+                # 批量收录时一个 skill_id 无从对应，忽略并回显，避免模型以为它生效了
+                pass
+
+        staged_root = os.path.join(personal_root, f".import-{uuid.uuid4().hex}")
+        imported: list = []
+        skipped: list = []
+        failed: list = []
+        try:
+            for candidate_id, candidate_dir in candidates:
+                try:
+                    safe_id = validate_skill_id(candidate_id)
+                except SkillRenameError as exc:
+                    failed.append({"skill_id": candidate_id, "reason": str(exc)})
+                    continue
+
+                existing_dir = resolve_personal_skill_dir(personal_root, safe_id)
+                if existing_dir and not overwrite:
+                    skipped.append(
+                        {
+                            "skill_id": safe_id,
+                            "reason": "exists",
+                            "path": existing_dir,
+                        }
+                    )
+                    continue
+
+                current_files, current_bytes = (
+                    _skill_dir_usage(existing_dir) if existing_dir else (0, 0)
+                )
+                staged_dir = os.path.join(staged_root, safe_id)
+                try:
+                    usage = _copy_skill_tree(
+                        candidate_dir,
+                        staged_dir,
+                        max_files=SKILL_DIR_MAX_FILES - current_files,
+                        max_bytes=SKILL_DIR_MAX_BYTES - current_bytes,
+                    )
+                except ValueError as exc:
+                    failed.append({"skill_id": safe_id, "reason": str(exc)})
+                    continue
+                except OSError as exc:
+                    failed.append({"skill_id": safe_id, "reason": f"复制失败：{exc}"})
+                    continue
+
+                target_dir = existing_dir or os.path.join(personal_root, safe_id)
+                trash_dir = None
+                try:
+                    if existing_dir:
+                        trash_dir = os.path.join(
+                            personal_root, f".trash-{uuid.uuid4().hex}"
+                        )
+                        os.rename(target_dir, trash_dir)
+                    os.replace(staged_dir, target_dir)
+                except OSError as exc:
+                    if trash_dir and not os.path.exists(target_dir):
+                        try:
+                            os.rename(trash_dir, target_dir)
+                        except OSError:
+                            logger.warning(
+                                "[Skills] 回滚覆盖失败，原目录残留在 %s", trash_dir
+                            )
+                    failed.append({"skill_id": safe_id, "reason": f"落盘失败：{exc}"})
+                    continue
+                if trash_dir:
+                    shutil.rmtree(trash_dir, ignore_errors=True)
+
+                warnings = _skill_md_meta_warnings(
+                    os.path.join(target_dir, "SKILL.md")
+                )
+                imported.append(
+                    {
+                        "skill_id": safe_id,
+                        "files": usage["files"],
+                        "bytes": usage["bytes"],
+                        "skipped_links": usage["skipped_links"],
+                        "overwritten": bool(existing_dir),
+                        "warnings": warnings,
+                    }
+                )
+        finally:
+            shutil.rmtree(staged_root, ignore_errors=True)
+
+        marker = (
+            "NANZI_SKILL_IMPORTED:"
+            + json.dumps(
+                {
+                    "source": source_path,
+                    "imported": imported,
+                    "skipped": skipped,
+                    "failed": failed,
+                    "ignored_skill_id": requested_id if not is_single else "",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+
+        lines = []
+        if imported:
+            ids = "、".join(item["skill_id"] for item in imported)
+            lines.append(
+                f"成功：已收录 {len(imported)} 个技能到个人技能库（{ids}），"
+                "现在 list_available_skills 里就能看到，也会随平台数据持久化。"
+            )
+            for item in imported:
+                detail = f"  - {item['skill_id']}：{item['files']} 个文件 / {item['bytes']} 字节"
+                if item["overwritten"]:
+                    detail += "（已整份替换原技能）"
+                if item["skipped_links"]:
+                    detail += f"，跳过 {item['skipped_links']} 个符号链接"
+                if item["warnings"]:
+                    detail += f"，frontmatter 告警：{', '.join(item['warnings'])}"
+                lines.append(detail)
+        if skipped:
+            names = "、".join(item["skill_id"] for item in skipped)
+            lines.append(
+                f"未改动：{names} 已存在。需要整份替换时先向用户确认，再带 overwrite=true 重试。"
+            )
+        if failed:
+            for item in failed:
+                lines.append(f"失败：{item['skill_id']} —— {item['reason']}")
+        return "\n".join(lines) + "\n" + marker
+    except Exception as e:
+        return f"错误：收录沙箱技能失败，原因: {str(e)}"
 
 
 # Grounding 证据声明（双重保障）

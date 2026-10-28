@@ -59,6 +59,12 @@ BASE_REQS=("mcp<2.0.0" "uvicorn" "fastapi" "httpx" "docstring_parser" "jinja2" "
 # 镜像内 pip 源：默认清华镜像（与 dev.sh 的 PYPI_INDEX_URL 约定保持一致）
 DEFAULT_PIP_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
 
+# 沙箱内置 Node 主版本（写死）。必须与 docker 策略的
+# app/services/ai/runtime/agentscope/docker_template_patch.py:SANDBOX_NODE_VERSION 一致：
+# 同一平台两种沙箱策略，技能脚本 ./scripts/xxx.js 不该「docker 能跑、k8s 跑不了」。
+# Node 20 已于 2026-04 EOL，22 为当前维护 LTS。
+SANDBOX_NODE_VERSION="22"
+
 # ---- 参数 ----
 BASE_IMAGE="python:3.11-slim"
 IMAGE_NAME="nanzi-sandbox-k8s"
@@ -456,6 +462,7 @@ fi
 export AP
 
 cat > "$BUILD_DIR/Dockerfile" <<EOF
+FROM node:${SANDBOX_NODE_VERSION}-slim AS node_stage
 FROM $BASE_IMAGE
 
 # 系统依赖与常见排障/开发工具（包含 tree, telnet, net-tools, ping, dig, ps 等）
@@ -465,6 +472,18 @@ RUN apt-get update -qq \\
       tree telnet net-tools iputils-ping dnsutils iproute2 procps \\
       git jq unzip wget less \\
  && rm -rf /var/lib/apt/lists/*
+
+# Node / npm / npx：技能里的 scripts/*.js 以及 npx 启动的 MCP 服务都依赖它，
+# 而 python:*-slim 基座并不自带（Debian bookworm 源里的 nodejs 只到 18、已 EOL，
+# 所以走官方 slim 镜像 COPY 二进制，而不是 apt）。
+# 构建期立即 node/npm --version 自检：若有人把 BASE_IMAGE 换成 alpine 之类的
+# 非 glibc 基座，这里会当场失败，而不是等到运行时才报 "node: not found"。
+COPY --from=node_stage /usr/local/bin/node /usr/local/bin/node
+COPY --from=node_stage /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \\
+ && ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \\
+ && node --version \\
+ && npm --version
 
 # uv（放入 PATH）
 RUN $UV_INSTALL

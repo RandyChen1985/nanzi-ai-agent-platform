@@ -969,6 +969,9 @@ class ProcessTimelineItem(BaseModel):
     # todo kind 专属字段（content/status 二元的待办列表）+ 计数
     todos: Optional[List[Dict[str, Any]]] = None
     counts: Optional[Dict[str, Any]] = None
+    # 终态标记：本轮清单已终结（成功/失败/取消），前端据此不再渲染「进行中」
+    settled: Optional[bool] = None
+    settledStatus: Optional[str] = None
 
 
 def _agent_identity_fields(agent_id: Any, agent_map: Dict[str, tuple]) -> Dict[str, Any]:
@@ -3206,18 +3209,26 @@ async def upload_chat_file(
     if ext in forbidden_exts:
         raise HTTPException(status_code=403, detail=f"禁止上传该类型文件: {ext}")
         
-    # 3. 文件名清洗与混淆命名防冲突
+    # 3. 文件名清洗：默认保留原名落盘，仅在重名时追加短后缀防冲突
     upload_dir = get_user_uploads_dir(user_info)
     if not upload_dir:
         raise HTTPException(status_code=403, detail="无法解析用户工作目录，上传失败。")
     os.makedirs(upload_dir, exist_ok=True)
     
+    # 落盘默认用原文件名，所以写失败必须自己清掉半成品：否则会留下一个和用户
+    # 真实附件同名的 0 字节文件，后续同名上传被迫改名，AI 还可能把它当真实资料读。
+    file_path: Optional[str] = None
     try:
         file_path, handle = open_upload_storage_file(upload_dir, file.filename)
         with handle as f:
             f.write(contents)
     except Exception as e:
         logger.error(f"Failed to save uploaded file: {e}")
+        if file_path:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
         raise HTTPException(status_code=500, detail="保存文件失败，请稍后重试。")
         
     return StandardResponse(data=UploadResponse(

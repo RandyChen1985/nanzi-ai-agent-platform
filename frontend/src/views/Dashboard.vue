@@ -6,6 +6,7 @@ import Toast from "../components/Toast.vue";
 import { useBranding } from "../composables/useBranding";
 import { useAppTheme } from "../composables/useAppTheme";
 import { persistUserInfo, clearUserSession } from "../utils/userSession";
+import { userInitialOf } from "../utils/userInitial";
 import { resolvePasswordExpiryNotice, passwordExpiryToastType, type PasswordInfo } from "../utils/passwordExpiry";
 import PortalNotificationBell from "../components/PortalNotificationBell.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
@@ -113,10 +114,27 @@ const closeToast = () => {
 const userInfo = ref({
   id: 0,
   user_name: "",
+  real_name: "",
   role: "",
   permissions: {},
   created_at: "",
   remark: "",
+  // 自定义头像短路径（/auth/me 下发）；为空表示未上传，回退姓名首字。
+  avatar_url: "" as string | null,
+});
+
+/** 左下角头像简称：中文取后两字、英文取前两字母（规则见 utils/userInitial） */
+const sidebarInitial = computed(() =>
+  userInitialOf(userInfo.value?.real_name || userInfo.value?.user_name, "US")
+);
+/**
+ * 两个字比单字宽：桌面端 28px 方块里 12px 汉字会贴边，收一档到 11px；
+ * 单字保持原字号，视觉重量与旧版一致。
+ */
+const sidebarInitialClass = computed(() => {
+  const twoChars = Array.from(sidebarInitial.value).length > 1;
+  if (isMobile.value) return twoChars ? "h-8 w-8 text-xs" : "h-8 w-8 text-sm";
+  return twoChars ? "h-7 w-7 text-[11px]" : "h-7 w-7 text-xs";
 });
 // 落地页已可在「菜单管理」里配置（is_landing），点 Logo 就该回那里；
 // 菜单数据还没到位时退回原有口径，避免首屏跳到一个空路由。
@@ -745,16 +763,25 @@ onMounted(() => {
           ]"
           title="查看个人信息"
         >
+          <!-- 已上传自定义头像时优先渲染图片（圆形、object-cover）；否则维持姓名首字 -->
+          <img
+            v-if="userInfo.avatar_url"
+            :src="userInfo.avatar_url"
+            alt="我的头像"
+            class="flex-shrink-0 rounded-full object-cover ring-1 ring-black/5"
+            :class="sidebarInitialClass"
+          />
           <div
-            class="rounded-lg flex flex-shrink-0 items-center justify-center font-bold uppercase transition-colors"
+            v-else
+            class="rounded-lg flex flex-shrink-0 items-center justify-center font-bold uppercase leading-none tracking-tight transition-colors"
             :class="[
-              isMobile ? 'h-8 w-8 text-sm' : 'h-7 w-7 text-xs',
+              sidebarInitialClass,
               theme === 'light'
                 ? 'bg-blue-50 !text-blue-600 border border-blue-200/80 shadow-xs'
                 : 'bg-slate-800 !text-slate-200 border border-white/10 shadow-sm'
             ]"
           >
-            {{ (userInfo.real_name || userInfo.user_name || "US").substring(0, 2) }}
+            {{ sidebarInitial }}
           </div>
           <transition name="fade">
             <div v-if="!isCollapsed" class="flex-1 min-w-0" :class="isMobile ? 'ml-3' : 'ml-2.5'">
@@ -1198,8 +1225,8 @@ onMounted(() => {
               </div>
               <div v-else class="space-y-3">
                 <div v-for="user in onlineUsers" :key="user.user_id || user.user_name" class="flex items-center p-3 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 transition-all hover:border-green-200">
-                  <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-black uppercase text-sm flex-shrink-0">
-                    {{ (user.real_name || user.user_name).substring(0, 2) }}
+                  <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-black uppercase text-sm flex-shrink-0 leading-none">
+                    {{ userInitialOf(user.real_name || user.user_name) }}
                   </div>
                   <div class="ml-3 flex-1 min-w-0">
                     <div class="flex items-center gap-2">

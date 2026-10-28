@@ -46,6 +46,14 @@
             {{ statusSummary }}
           </span>
 
+          <!-- 终态徽标：已结束的清单不再显示「进行中」；全部完成时摘要已表达，不重复 -->
+          <span
+            v-if="isSettled && !isAllCompleted"
+            class="shrink-0 rounded bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+          >
+            {{ settledLabel }}
+          </span>
+
           <!-- 折叠/展开箭头 -->
           <svg
             class="h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform duration-200 group-hover:text-slate-600 dark:group-hover:text-slate-300"
@@ -59,8 +67,9 @@
           </svg>
         </button>
 
-        <!-- 手动关闭按钮 -->
+        <!-- 手动关闭按钮（归档到历史后不再提供，避免被误认为「删除历史」） -->
         <button
+          v-if="!isArchived"
           type="button"
           class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-200/60 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           aria-label="关闭任务清单"
@@ -90,8 +99,12 @@
             <svg v-if="item.status === 'completed'" class="h-3.5 w-3.5 text-emerald-500 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
             </svg>
+            <!-- 已终结或归档未完成：灰色暂停，不能看起来还在跑 -->
+            <svg v-else-if="isSettled || isArchived" class="h-3.5 w-3.5 text-slate-300 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 6v12M15 6v12" />
+            </svg>
             <!-- 进行中：蓝色旋转图标 -->
-            <svg v-else-if="item.status === 'in_progress'" class="h-3.5 w-3.5 animate-spin text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg v-else-if="item.status === 'in_progress' && showLiveProgress" class="h-3.5 w-3.5 animate-spin text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
             <!-- 待开始：柔和浅灰圆圈 -->
@@ -103,7 +116,7 @@
             {{ item.content }}
           </span>
           <span
-            v-if="item.status === 'in_progress'"
+            v-if="item.status === 'in_progress' && showLiveProgress"
             class="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/60 dark:text-blue-400"
           >
             进行中
@@ -120,6 +133,11 @@ import type { ProcessTimelineItem, ProcessTimelineTodoItem } from "@/utils/proce
 
 const props = defineProps<{
   timeline?: ProcessTimelineItem[];
+  /**
+   * 归档视图（历史消息的执行过程里）：不提供关闭按钮，也不沿用 banner 的
+   * 「关掉后永久隐藏」记忆，否则关一次 banner 会连历史里一起消失。
+   */
+  archived?: boolean;
 }>();
 
 const DISMISSED_STORAGE_KEY = "nanzi_dismissed_todo_fingerprints";
@@ -136,11 +154,26 @@ const isAllCompleted = computed(() => {
   return todo.value.counts?.completed === todo.value.todos.length;
 });
 
-// 全部完成时自动折叠为单行
+/** 本轮已终结：卡片只做回顾，不再宣称「进行中」。 */
+const isSettled = computed(() => todo.value?.settled === true);
+const isArchived = computed(() => props.archived === true);
+/** 只有「当前仍在跑」的清单才显示旋转图标与进行中徽标。 */
+const showLiveProgress = computed(() => !isSettled.value && !isArchived.value);
+
+const settledLabel = computed(() => {
+  const status = String(todo.value?.settledStatus || "");
+  if (status === "success") return "已完成";
+  if (status === "cancelled" || status === "interrupted") return "已中断";
+  if (status === "error" || status === "failed") return "已失败";
+  if (status === "rejected") return "已拒绝";
+  return "已结束";
+});
+
+// 全部完成、本轮已终结或归档视图一律折叠为单行
 watch(
-  isAllCompleted,
-  (allDone) => {
-    if (allDone) {
+  [isAllCompleted, isSettled, isArchived],
+  ([allDone, settled, archived]) => {
+    if (allDone || settled || archived) {
       expanded.value = false;
     }
   },
@@ -176,7 +209,7 @@ function saveDismissedFingerprint(fingerprint: string): void {
 
 const isDismissed = computed(() => {
   void dismissedTrigger.value;
-  if (!currentFingerprint.value) return false;
+  if (isArchived.value || !currentFingerprint.value) return false;
   const set = getDismissedFingerprints();
   return set.has(currentFingerprint.value);
 });
@@ -188,6 +221,16 @@ const statusSummary = computed(() => {
 
   if (completed === total) {
     return `${completed} 已完成`;
+  }
+
+  // 已终结但没有全部完成：说清「还剩几项没做」，别再谎称进行中。
+  if (isSettled.value) {
+    return `还有 ${total - completed} 项未完成`;
+  }
+
+  // 归档的旧快照没有终态标记：同样不能声称「进行中」。
+  if (isArchived.value) {
+    return `${total - completed} 项未完成`;
   }
 
   const parts: string[] = [];

@@ -139,7 +139,7 @@ K8s 沙箱（`sandbox_policy = k8s`）的网关环境放在 Pod 内的 `/root/.a
 
 ![build_sand_box](./images/build_sand_box.png)
 
-可以通过**手动构建一次“网关预置镜像”**，把网关 venv、gateway 脚本以及常用排障与开发工具（`tree`、`telnet`、`netstat`/`net-tools`、`ping`、`dig`、`ps`、`git`、`jq` 等）直接打进镜像；
+可以通过**手动构建一次“网关预置镜像”**，把网关 venv、gateway 脚本、常用排障与开发工具（`tree`、`telnet`、`netstat`/`net-tools`、`ping`、`dig`、`ps`、`git`、`jq` 等）以及 **Node 22 / npm / npx**（技能里的 `scripts/*.js` 与 `npx` MCP 依赖它，基座 `python:*-slim` 不自带）直接打进镜像；
 配置 `sandbox_k8s_image` 指向它之后，新 Pod 起来**直接跳过整个 bootstrap**，冷启动从数十秒
 降到秒级，且在沙箱内可直接执行丰富的网络连通性与目录诊断命令。
 

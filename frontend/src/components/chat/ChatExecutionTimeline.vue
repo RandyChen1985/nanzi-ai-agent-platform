@@ -68,7 +68,10 @@
           :key="item.id"
           class="relative"
         >
-          <div v-if="item.kind === 'text' && (hasVisibleTimelineText(item.content) || item.children?.length)" class="rounded-md px-1 py-0.5 text-[12px] leading-5"
+          <div v-if="item.kind === 'todo'" class="py-0.5">
+            <ChatTodoCard :timeline="[item]" archived />
+          </div>
+          <div v-else-if="item.kind === 'text' && (hasVisibleTimelineText(item.content) || item.children?.length)" class="rounded-md px-1 py-0.5 text-[12px] leading-5"
             :class="item.pending ? 'text-gray-600 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'"
           >
             <div class="flex gap-2">
@@ -591,6 +594,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
+import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import TimelineToolArgsBlock from "@/components/chat/TimelineToolArgsBlock.vue";
 import TimelinePendingHint from "@/components/chat/TimelinePendingHint.vue";
 import {
@@ -636,6 +640,7 @@ import {
   resolveLiveTimerDurationMs,
   resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
+  selectTimelineRenderableItems,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
   isWorkspacePrewarmPending,
@@ -676,6 +681,8 @@ const props = withDefaults(defineProps<{
   darkMode?: boolean;
   /** 权限卡已承载确认详情时，隐藏其上方重复的权限时间线行。 */
   suppressPermissionLogs?: boolean;
+  /** 当前轮的清单正由输入框上方的 banner 卡片展示时，时间线内不再重复渲染。 */
+  hideTodo?: boolean;
 }>(), {
   timeline: () => [],
   logs: () => [],
@@ -737,7 +744,9 @@ const timelineItems = computed(() => {
     ? mergeTimelineLogs(props.timeline, props.logs)
     : buildLegacyProcessTimeline(props);
   const visibleItems = props.suppressPermissionLogs ? suppressPermissionLogs(merged) : merged;
-  return visibleItems.filter((item) => item.kind !== "todo");
+  // 当前轮由 banner 负责时隐藏清单，其余情况（含没有 settled 标记的旧快照）
+  // 都归档到执行过程里，保证历史消息仍然查得到。
+  return selectTimelineRenderableItems(visibleItems, { hideTodo: props.hideTodo });
 });
 const items = computed(() => groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value));
 

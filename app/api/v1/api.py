@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_api_key, verify_v1_api_access
-from app.api.v1.endpoints import browser, chat, schema, users, tasks, chatbi, fs, code_execution, embed, sandbox
+from app.api.v1.endpoints import browser, chat, schema, users, tasks, chatbi, fs, code_execution, embed, sandbox, share
 
 # API Key + `verify_v1_api_access`（`chatbi.public_router` / `embed.public_router` 单独挂在下方，不经此依赖）
 v1_secured = APIRouter(dependencies=[Depends(require_api_key), Depends(verify_v1_api_access)])
@@ -22,3 +22,5 @@ v1_router.include_router(browser.viewer_router, prefix="/chat/browser", tags=["V
 v1_router.include_router(embed.public_router, prefix="/embed", tags=["V1 嵌入式组件"])
 v1_router.include_router(chat.public_router, prefix="/chat", tags=["V1 智能体对话"])
 v1_router.include_router(chatbi.public_router, prefix="/chatbi", tags=["V1 ChatBI"])
+# 访客分享页免鉴权：`share.public_router` 自带「可选鉴权」，不能挂到 v1_secured
+v1_router.include_router(share.public_router, prefix="/share", tags=["V1 会话分享"])

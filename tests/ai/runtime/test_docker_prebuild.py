@@ -320,11 +320,15 @@ async def test_prepare_context_installs_gateway_tool_dependencies(monkeypatch):
         prepare_build_context,
     )
 
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        SANDBOX_NODE_VERSION,
+    )
+
     other_ctx, expected_tag, _ = prepare_build_context(
         base_image="python:3.11-slim",
         gateway_home=GATEWAY_HOME,
         container_workdir=CONTAINER_WORKDIR,
-        node_version=None,
+        node_version=SANDBOX_NODE_VERSION,
         extra_pip=list(GATEWAY_EXTRA_PIP),
     )
     shutil.rmtree(other_ctx, ignore_errors=True)

@@ -222,6 +222,11 @@ def _apply_todo_update(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         "todos": normalized["todos"],
         "counts": normalized["counts"],
     }
+    # 终态标记随同一次更新到达：写进快照，刷新后前端才能区分「早就结束了」与
+    # 「真的还在跑」。执行中的普通更新不带该字段，重建对象时天然清除旧标记。
+    if chunk.get("settled") is True:
+        todo_item["settled"] = True
+        todo_item["settledStatus"] = str(chunk.get("settledStatus") or "")
     if todo_indexes:
         state[todo_indexes[0]] = todo_item
         for index in reversed(todo_indexes[1:]):
@@ -253,6 +258,46 @@ def complete_todo_items(state: Optional[List[Dict[str, Any]]]) -> Optional[Dict[
         item["counts"] = counts
         return {"type": "todo_update", "todos": todos, "counts": counts}
     return None
+
+
+def mark_todo_settled(
+    state: Optional[List[Dict[str, Any]]],
+    execution_status: str,
+) -> Optional[Dict[str, Any]]:
+    """就地把当前轮清单标记为已终结，返回快照；不改变任何 todo 的 status。"""
+    for item in reversed(state or []):
+        if item.get("kind") != "todo":
+            continue
+        normalized = _normalize_todo_update(item)
+        if normalized is None or not normalized["todos"]:
+            return None
+        item["settled"] = True
+        item["settledStatus"] = str(execution_status or "")
+        return normalized
+    return None
+
+
+def settle_todo_items(
+    state: Optional[List[Dict[str, Any]]],
+    *,
+    execution_status: str,
+) -> Optional[Dict[str, Any]]:
+    """终结态收尾：保留原有完成度，仅补「已结束」标记并返回实时更新事件。
+
+    与 ``complete_todo_items`` 的区别是它**不**把未完成项改成 completed —— 失败、
+    取消、异常中断的任务并没有被执行，伪造完成会误导用户。前端据此把卡片从
+    「进行中」降级为「已结束 · N 项未完成」。
+    """
+    snapshot = mark_todo_settled(state, execution_status)
+    if snapshot is None:
+        return None
+    return {
+        "type": "todo_update",
+        "todos": snapshot["todos"],
+        "counts": snapshot["counts"],
+        "settled": True,
+        "settledStatus": str(execution_status or ""),
+    }
 
 
 def _user_question_log_payload(chunk: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -621,13 +666,20 @@ def finalize_process_timeline(state: Optional[List[Dict[str, Any]]]) -> Optional
             normalized = _normalize_todo_update(item)
             if normalized is None or not normalized["todos"]:
                 continue
-            items.append({
+            persisted_todo = {
                 "kind": "todo",
                 "id": item.get("id") or "todo_current",
                 "title": str(item.get("title") or "任务清单"),
                 "todos": normalized["todos"],
                 "counts": normalized["counts"],
-            })
+            }
+            # 终态标记必须落库：刷新后前端靠它区分「已结束」与「进行中」。
+            # `settledStatus` 刻意用 camelCase：前端 `hydrateHistoryProcessTimeline` 按同名 key
+            # 读取，改成 snake_case 会静默丢掉标记（log 项的 snake_case 字段与本字段无关）。
+            if item.get("settled") is True:
+                persisted_todo["settled"] = True
+                persisted_todo["settledStatus"] = str(item.get("settledStatus") or "")
+            items.append(persisted_todo)
             continue
         if item.get("kind") != "text":
             continue

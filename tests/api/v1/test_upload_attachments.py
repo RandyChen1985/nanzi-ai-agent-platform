@@ -1,4 +1,5 @@
 import pytest
+import os
 import uuid
 import json
 from httpx import AsyncClient, ASGITransport
@@ -41,8 +42,10 @@ async def test_upload_success(db_session, valid_api_key):
     """
     Test successful upload of a standard allowable file.
     """
+    # 文件名带随机段：附件目录是真实磁盘目录，避免历史残留让「不重名」路径失真
+    original_name = f"chart_{uuid.uuid4().hex[:8]}.png"
     file_content = b"fake image content" * 10
-    files = {"file": ("chart.png", file_content, "image/png")}
+    files = {"file": (original_name, file_content, "image/png")}
     
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
@@ -55,14 +58,102 @@ async def test_upload_success(db_session, valid_api_key):
         assert data["code"] == 200
         assert data["message"] == "success"
         assert "url" in data["data"]
-        assert data["data"]["filename"] == "chart.png"
+        assert data["data"]["filename"] == original_name
         assert data["data"]["size"] == len(file_content)
         assert data["data"]["ext"] == "png"
         assert "agent_workspaces" in data["data"]["url"]
+        # 默认不改名：落盘名就是原始文件名
         stored_name = data["data"]["url"].rsplit("/", 1)[-1]
-        assert stored_name.startswith("chart_")
-        assert stored_name.endswith(".png")
-        assert len(stored_name.removeprefix("chart_").removesuffix(".png")) == 4
+        assert stored_name == original_name
+
+
+@pytest.mark.asyncio
+async def test_upload_same_name_twice_only_renames_the_second(db_session, valid_api_key):
+    """同名重复上传才追加短后缀，且不覆盖第一份文件。"""
+    original_name = f"report_{uuid.uuid4().hex[:8]}.csv"
+    stem = original_name[: -len(".csv")]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/api/v1/chat/upload",
+            files={"file": (original_name, b"first", "text/csv")},
+            headers={"X-API-Key": valid_api_key},
+        )
+        second = await client.post(
+            "/api/v1/chat/upload",
+            files={"file": (original_name, b"second", "text/csv")},
+            headers={"X-API-Key": valid_api_key},
+        )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+
+    first_url = first.json()["data"]["url"]
+    second_url = second.json()["data"]["url"]
+    first_name = first_url.rsplit("/", 1)[-1]
+    second_name = second_url.rsplit("/", 1)[-1]
+
+    assert first_name == original_name
+    assert second.json()["data"]["filename"] == original_name
+    assert second_name != original_name
+    assert second_name.startswith(stem + "_")
+    assert second_name.endswith(".csv")
+    assert len(second_name) == len(stem) + 1 + 4 + len(".csv")
+
+    with open(first_url, "rb") as fh:
+        assert fh.read() == b"first"
+    with open(second_url, "rb") as fh:
+        assert fh.read() == b"second"
+
+@pytest.mark.asyncio
+async def test_upload_write_failure_leaves_no_partial_file(db_session, valid_api_key, monkeypatch):
+    """写盘失败必须删掉刚创建的文件。
+
+    默认按原名落盘后，残留的 0 字节文件会与用户的真实附件同名：用户下次重传被迫改名，
+    AI 也可能把它当成真实资料读取，所以失败路径必须清干净。
+    """
+    from app.api.v1.endpoints import chat as chat_module
+
+    probe_name = f"probe_{uuid.uuid4().hex[:8]}.txt"
+    failing_name = f"boom_{uuid.uuid4().hex[:8]}.txt"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        probe = await client.post(
+            "/api/v1/chat/upload",
+            files={"file": (probe_name, b"probe", "text/plain")},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert probe.status_code == 200, probe.text
+        uploads_dir = os.path.dirname(probe.json()["data"]["url"])
+
+        real_open = chat_module.open_upload_storage_file
+
+        class _FailingWriteHandle:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def write(self, data):
+                raise OSError("No space left on device")
+
+        def fake_open(directory, filename):
+            path, handle = real_open(directory, filename)
+            handle.close()
+            return path, _FailingWriteHandle()
+
+        monkeypatch.setattr(chat_module, "open_upload_storage_file", fake_open)
+        failed = await client.post(
+            "/api/v1/chat/upload",
+            files={"file": (failing_name, b"data", "text/plain")},
+            headers={"X-API-Key": valid_api_key},
+        )
+
+    assert failed.status_code == 500
+    assert not os.path.exists(os.path.join(uploads_dir, failing_name))
+    assert failing_name not in os.listdir(uploads_dir)
+
 
 @pytest.mark.asyncio
 async def test_upload_forbidden_extensions(db_session, valid_api_key):

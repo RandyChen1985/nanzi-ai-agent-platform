@@ -286,22 +286,68 @@ def _should_persist_turn_history(
     )
 
 
-def _finalize_todo_success(
+# 暂停态不是终结：本轮还能被恢复轮接着跑，清单必须保持「进行中」。
+# 注意：与 `pipeline/steps/finalize_step.AWAITING_RESUME_STATUSES` 同源，改一处必须同步另一处，
+# 否则会出现「审计延后但清单被结算成已结束」的语义打架。
+TODO_RESUMABLE_STATUSES = frozenset({
+    "interrupted",
+    "awaiting_permission",
+    "awaiting_external_execution",
+    "awaiting_user",
+})
+
+
+def _finalize_todo_terminal(
     state: Optional[List[Dict[str, Any]]],
     *,
     execution_status: str,
 ) -> Optional[Dict[str, Any]]:
-    """仅对成功结束的当前轮 Todo 做后端收尾。"""
-    if execution_status != "success":
+    """本轮终结时给 Todo 清单定性：成功补完成，其余终态只盖「已结束」戳。
+
+    以前只有 ``success`` 会收尾，失败/取消的清单会永远停在「进行中」，刷新后仍然
+    如此。这里保留未完成项的真实状态（不伪造完成），只补 ``settled`` 让前端把卡片
+    降级为「已结束」；暂停态直接跳过，等恢复轮继续。
+    """
+    if not execution_status or execution_status in TODO_RESUMABLE_STATUSES:
         return None
-    from app.services.ai.runtime.agentscope.process_timeline_snapshot import complete_todo_items
+
+    from app.services.ai.runtime.agentscope.process_timeline_snapshot import (
+        complete_todo_items,
+        mark_todo_settled,
+        settle_todo_items,
+    )
+
+    if execution_status != "success":
+        event = settle_todo_items(state, execution_status=execution_status)
+        if event:
+            logger.info(
+                "[Todo] Backend settled checklist after %s: remaining=%d",
+                execution_status,
+                int(len(event.get("todos") or [])) - int((event.get("counts") or {}).get("completed", 0)),
+            )
+        return event
 
     event = complete_todo_items(state)
-    if event:
-        logger.info(
-            "[Todo] Backend finalized checklist after successful execution: completed=%d",
-            int((event.get("counts") or {}).get("completed", 0)),
-        )
+    snapshot = mark_todo_settled(state, execution_status)
+    if snapshot is None:
+        return None
+    if event is None:
+        # 清单本来就全部完成：内容不变，但仍要发一次终态事件。少了它，实时界面在
+        # run_status 之后既不满足 banner 条件、也不满足时间线归档条件，清单会直接
+        # 消失，只有刷新读库才回来（AgentDebug 没有历史回灌，会一直看不到）。
+        return {
+            "type": "todo_update",
+            "todos": snapshot["todos"],
+            "counts": snapshot["counts"],
+            "settled": True,
+            "settledStatus": "success",
+        }
+    event["settled"] = True
+    event["settledStatus"] = "success"
+    logger.info(
+        "[Todo] Backend finalized checklist after successful execution: completed=%d",
+        int((event.get("counts") or {}).get("completed", 0)),
+    )
     return event
 
 

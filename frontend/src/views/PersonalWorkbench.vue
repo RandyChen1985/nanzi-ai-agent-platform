@@ -1,5 +1,5 @@
 <template>
-  <div class="relative space-y-4 sm:space-y-5">
+  <div class="relative space-y-3 sm:space-y-4">
     <!-- 进度条始终占位，用透明度切换，避免出现/消失时视觉跳动 -->
     <div
       class="pointer-events-none absolute inset-x-0 top-0 h-0.5 overflow-hidden rounded-full transition-opacity duration-150"
@@ -18,9 +18,17 @@
         <button
           type="button"
           class="workbench-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-blue-400"
-          :disabled="loading || squareRefreshing"
+          :disabled="busy"
           :aria-busy="busy"
-          :aria-label="busy ? '刷新中' : activeTab === 'square' ? '刷新资源广场' : '刷新工作台'"
+          :aria-label="
+            busy
+              ? '刷新中'
+              : activeTab === 'square'
+                ? '刷新资源广场'
+                : activeTab === 'gallery'
+                  ? '刷新技能广场'
+                  : '刷新工作台'
+          "
           @click="refreshCurrent"
         >
           <svg
@@ -62,6 +70,14 @@
         @click="switchTab('square')"
       >
         资源广场
+      </button>
+      <button
+        type="button"
+        class="-mb-px border-b-2 pb-2.5 text-sm font-medium transition-colors"
+        :class="activeTab === 'gallery' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400'"
+        @click="switchTab('gallery')"
+      >
+        技能广场
       </button>
     </nav>
 
@@ -238,6 +254,7 @@
     </div>
 
     <ResourceSquarePanel v-if="activeTab === 'square'" ref="squarePanel" />
+    <SkillGalleryPanel v-if="activeTab === 'gallery'" ref="galleryPanel" />
   </div>
 </template>
 
@@ -254,6 +271,7 @@ import WorkbenchNextScheduled from "@/components/workbench/WorkbenchNextSchedule
 import WorkbenchRunning from "@/components/workbench/WorkbenchRunning.vue"
 import WorkbenchPersonalResources from "@/components/workbench/WorkbenchPersonalResources.vue"
 import ResourceSquarePanel from "@/components/resource-square/ResourceSquarePanel.vue"
+import SkillGalleryPanel from "@/components/skill-gallery/SkillGalleryPanel.vue"
 
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome"
 import { useBranding } from "@/composables/useBranding"
@@ -272,23 +290,36 @@ import type {
 const router = useRouter()
 const route = useRoute()
 
-// tab 状态与 URL 同步：从「我的知识库」卡片跳过来时直接落在资源广场，
-// 刷新页面也不该跳回工作台
-const activeTab = ref<"workbench" | "square">(
-  route.query.tab === "square" ? "square" : "workbench",
-)
+type WorkbenchTab = "workbench" | "square" | "gallery"
 
-function switchTab(next: "workbench" | "square") {
+const TAB_QUERY_VALUES: readonly WorkbenchTab[] = ["square", "gallery"]
+
+function tabFromQuery(value: unknown): WorkbenchTab {
+  const raw = Array.isArray(value) ? value[0] : value
+  return TAB_QUERY_VALUES.includes(raw as WorkbenchTab) ? (raw as WorkbenchTab) : "workbench"
+}
+
+// tab 状态与 URL 同步：从「我的知识库」卡片跳过来时直接落在资源广场，
+// 刷新页面也不该跳回工作台；技能广场同理（?tab=gallery）
+const activeTab = ref<WorkbenchTab>(tabFromQuery(route.query.tab))
+
+function switchTab(next: WorkbenchTab) {
   activeTab.value = next
   const query = { ...route.query }
-  if (next === "square") {
-    query.tab = "square"
-  } else {
+  if (next === "workbench") {
     delete query.tab
     delete query.section
     // status 是资源广场的状态筛选，工作台没有这个概念。留着下次进广场
     // 还是「已授权」，用户会以为筛选按钮点了没反应。
     delete query.status
+  } else {
+    query.tab = next
+    // section 只在资源广场里有意义（锚到知识库/数据集），进技能广场要清掉，
+    // 否则从广场切过去时地址栏还挂着上一个小节。
+    if (next === "gallery") {
+      delete query.section
+      delete query.status
+    }
   }
   router.replace({ query })
 }
@@ -298,7 +329,7 @@ function switchTab(next: "workbench" | "square") {
 watch(
   () => route.query.tab,
   (tab) => {
-    activeTab.value = tab === "square" ? "square" : "workbench"
+    activeTab.value = tabFromQuery(tab)
   },
 )
 
@@ -313,16 +344,33 @@ const { payload, loading, refreshing, error, load, refresh } = useWorkbenchHome(
  */
 const squarePanel = ref<InstanceType<typeof ResourceSquarePanel> | null>(null)
 const squareRefreshing = ref(false)
-const busy = computed(() => refreshing.value || loading.value || squareRefreshing.value)
+
+// 技能广场同样自己拉数据（目录接口），顶栏刷新要一起带上它，
+// 否则站在技能广场点刷新又是一次「按钮转一圈、列表纹丝不动」。
+const galleryPanel = ref<InstanceType<typeof SkillGalleryPanel> | null>(null)
+const galleryRefreshing = ref(false)
+
+const busy = computed(
+  () => refreshing.value || loading.value || squareRefreshing.value || galleryRefreshing.value,
+)
 
 async function refreshCurrent() {
+  if (activeTab.value === 'gallery') {
+    galleryRefreshing.value = true
+    try {
+      // 工作台那份也顺手刷新：切回去时不该是旧数据
+      await Promise.all([refresh(), galleryPanel.value?.reloadAll() ?? Promise.resolve()])
+    } finally {
+      galleryRefreshing.value = false
+    }
+    return
+  }
   if (activeTab.value !== 'square') {
     await refresh()
     return
   }
   squareRefreshing.value = true
   try {
-    // 工作台那份也顺手刷新：切回去时不该是旧数据
     await Promise.all([refresh(), squarePanel.value?.reloadAll() ?? Promise.resolve()])
   } finally {
     squareRefreshing.value = false

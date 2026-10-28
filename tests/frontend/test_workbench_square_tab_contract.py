@@ -24,7 +24,9 @@ def test_workbench_has_square_tab_bound_to_query():
     assert "ResourceSquarePanel" in page
     assert "activeTab" in page
     assert "资源广场" in page
-    assert 'route.query.tab === "square"' in page
+    # tab 与 URL 的解析收敛到 tabFromQuery（工作台/资源广场/技能广场共用一份口径）
+    assert "tabFromQuery(route.query.tab)" in page
+    assert '"square", "gallery"' in page or "'square', 'gallery'" in page
 
 
 def test_workbench_keeps_original_body_under_workbench_tab():
@@ -95,6 +97,9 @@ def test_refresh_button_reports_square_busy_state_and_label():
     """广场刷新期间按钮要转、要禁用、文案要说在刷什么。"""
     page = _read(WORKBENCH)
     assert "squareRefreshing" in page
-    assert "const busy = computed(() =>" in page
-    assert ":disabled=\"loading || squareRefreshing\"" in page
+    # busy 汇总三个 tab 的刷新态（工作台 / 资源广场 / 技能广场），按钮禁用直接绑 busy
+    assert "const busy = computed(" in page
+    assert "squareRefreshing.value" in page
+    assert "galleryRefreshing.value" in page
+    assert ':disabled="busy"' in page
     assert "刷新资源广场" in page

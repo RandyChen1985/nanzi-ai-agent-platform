@@ -106,6 +106,10 @@ export type ProcessTimelineTodoItem = {
   title: string;
   todos: ProcessTimelineTodo[];
   counts: Record<ProcessTimelineTodoStatus, number>;
+  /** 本轮清单已终结（成功/失败/取消），不会再更新：不再渲染「进行中」。 */
+  settled?: boolean;
+  /** 终结原因，用于文案区分「已完成 / 已中断 / 已失败」。 */
+  settledStatus?: string;
 };
 
 export type ProcessTimelineItem = ProcessTimelineTextItem | ProcessTimelineLogItem | ProcessTimelineTodoItem;
@@ -287,6 +291,8 @@ export function timelineHasPending(items: ProcessTimelineItem[] | undefined): bo
       return (item.children || []).some((child) => child.status === "pending");
     }
     if (item.kind === "todo") {
+      // 已终结的清单不代表「还在跑」：否则思考卡会一直转、历史展开逻辑被卡住。
+      if (item.settled) return false;
       return item.todos.some((todo) => todo.status === "pending" || todo.status === "in_progress");
     }
     if (item.pending) return true;
@@ -315,6 +321,8 @@ export function resolveTimelineCurrentStep(
       if (item.status === "pending") return `${formatTimelineTitle(item.title)} · 进行中`;
     }
     if (item.kind === "todo") {
+      // 已终结的清单不再代表「当前在做什么」。
+      if (item.settled) continue;
       const current = item.todos.find((todo) => todo.status === "in_progress")
         || item.todos.find((todo) => todo.status === "pending");
       if (current) return `${current.content} · 进行中`;
@@ -373,7 +381,7 @@ function todoCounts(todos: ProcessTimelineTodo[]): Record<ProcessTimelineTodoSta
 /** Replace the current main-agent checklist while keeping it as a timeline sibling. */
 export function upsertTimelineTodo(
   target: ProcessTimelineTarget,
-  data: { todos: unknown; title?: unknown },
+  data: { todos: unknown; title?: unknown; settled?: unknown; settledStatus?: unknown },
 ): void {
   const todos = normalizeTodoItems(data.todos);
   if (!todos) return;
@@ -394,6 +402,11 @@ export function upsertTimelineTodo(
     todos,
     counts: todoCounts(todos),
   };
+  // 终态标记只在后端明确下发时写入；重建对象天然清掉执行中残留的旧标记。
+  if (data.settled === true) {
+    todo.settled = true;
+    todo.settledStatus = String(data.settledStatus || "");
+  }
   if (indexes.length) {
     const firstIndex = indexes[0];
     if (firstIndex === undefined) return;
@@ -403,6 +416,97 @@ export function upsertTimelineTodo(
     items.push(todo);
   }
   target.processTimeline = [...items];
+}
+
+/** 输入框上方任务清单横幅的候选消息（视图层裁剪后的最小结构）。 */
+export type TodoBannerSource = {
+  role?: string;
+  processTimeline?: ProcessTimelineItem[];
+  pendingPermission?: { status?: string } | null;
+  pendingExternalExecution?: { status?: string } | null;
+  businessConfirmation?: { status?: string } | null;
+  userQuestion?: { status?: string } | null;
+};
+
+const AGENT_TIMELINE_ROLES = new Set(["agent", "assistant"]);
+
+function lastAgentTimelineSource(
+  messages: TodoBannerSource[] | undefined,
+): TodoBannerSource | undefined {
+  const list = messages || [];
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const candidate = list[index];
+    if (!candidate) continue;
+    if (AGENT_TIMELINE_ROLES.has(String(candidate.role || ""))) return candidate;
+  }
+  return undefined;
+}
+
+function latestTodoItem(
+  timeline: ProcessTimelineItem[] | undefined,
+): ProcessTimelineTodoItem | undefined {
+  return [...(timeline || [])]
+    .reverse()
+    .find((item): item is ProcessTimelineTodoItem => item.kind === "todo");
+}
+
+/** 还在等用户操作的卡片。缺 status 的旧数据按 pending 处理，避免老会话的提示丢失。 */
+function isPendingAwaitingCard(card?: { status?: string } | null): boolean {
+  if (!card) return false;
+  return !card.status || card.status === "pending";
+}
+
+/** 等待用户操作（确认/外部执行/业务确认/提问）的卡片：机器没在跑，但清单要留着。 */
+function hasAwaitingUserCard(source: TodoBannerSource): boolean {
+  return (
+    isPendingAwaitingCard(source.pendingPermission)
+    || isPendingAwaitingCard(source.pendingExternalExecution)
+    || isPendingAwaitingCard(source.businessConfirmation)
+    || isPendingAwaitingCard(source.userQuestion)
+  );
+}
+
+/**
+ * 决定是否在输入框上方展示任务清单卡片。
+ *
+ * 只认「最后一条助手消息」（或本轮在途草稿），且必须仍在活跃或等待用户操作：
+ * 已终结（settled）或本轮早已结束的清单不再常驻，避免刷新后把几天前的任务
+ * 当成「进行中」；历史消息内的时间线仍完整保留。
+ */
+export function resolveBannerTodoTimeline(
+  messages: TodoBannerSource[] | undefined,
+  options: { runActive?: boolean; draft?: TodoBannerSource | null } = {},
+): ProcessTimelineItem[] | undefined {
+  const source = options.draft ?? lastAgentTimelineSource(messages);
+  if (!source) return undefined;
+  const todo = latestTodoItem(source.processTimeline);
+  if (!todo) return undefined;
+  if (todo.settled) return undefined;
+  if (options.runActive) return source.processTimeline;
+  if (hasAwaitingUserCard(source)) return source.processTimeline;
+  return undefined;
+}
+
+/**
+ * 执行过程时间线要渲染的项。
+ *
+ * - 当前轮由 banner 卡片负责时传 `hideTodo: true`，避免同一份清单渲染两遍；
+ * - 归档视图保留清单（含没有 `settled` 的旧快照与提问轮）——否则这些轮次的
+ *   清单既不在 banner 也不在时间线，等于永久丢失；
+ * - 旧快照可能残留多条 todo 项（同一 id），只保留最后一份，避免重复卡片和
+ *   Vue `:key` 冲突。
+ */
+export function selectTimelineRenderableItems(
+  items: ProcessTimelineItem[],
+  options: { hideTodo?: boolean } = {},
+): ProcessTimelineItem[] {
+  const list = items || [];
+  if (options.hideTodo) return list.filter((item) => item.kind !== "todo");
+  let lastTodoIndex = -1;
+  list.forEach((item, index) => {
+    if (item.kind === "todo") lastTodoIndex = index;
+  });
+  return list.filter((item, index) => item.kind !== "todo" || index === lastTodoIndex);
 }
 
 let textSequence = 0;
@@ -1140,6 +1244,8 @@ export function groupRouteTimelineItems(
 /** 统计时间线中的逻辑步骤，路由父级下的子步骤仍计入总数。 */
 export function countTimelineSteps(items: ProcessTimelineItem[]): number {
   return items.reduce((count, item) => {
+    // 任务清单是任务级概览，不是一次执行步骤：不计入「执行过程 · N 步骤」。
+    if (item.kind === "todo") return count;
     if (item.kind === "log" && item.id === ROUTE_TIMELINE_ROOT_ID) {
       return count + 1 + (item.children?.length || 0);
     }
@@ -1369,13 +1475,19 @@ export function hydrateHistoryProcessTimeline(
     if (item.kind === "todo") {
       const todos = normalizeTodoItems(item.todos);
       if (!todos?.length) return null;
-      return {
+      const hydratedTodo: ProcessTimelineTodoItem = {
         kind: "todo",
         id: item.id || "todo_current",
         title: item.title || "任务清单",
         todos,
         counts: todoCounts(todos),
-      } satisfies ProcessTimelineTodoItem;
+      };
+      // 终态标记必须随历史一起回放，否则刷新后又把已结束的清单当进行中。
+      if ((item as { settled?: unknown }).settled === true) {
+        hydratedTodo.settled = true;
+        hydratedTodo.settledStatus = String((item as { settledStatus?: unknown }).settledStatus || "");
+      }
+      return hydratedTodo;
     }
     return mapLog(item);
   }).filter((item): item is ProcessTimelineItem => item !== null);
