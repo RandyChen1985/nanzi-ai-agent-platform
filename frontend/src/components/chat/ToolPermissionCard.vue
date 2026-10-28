@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   getToolPermissionDisplay,
   type ToolPermissionDisplay,
@@ -13,7 +13,10 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (event: "submit", confirmed: boolean): void;
+  (event: "submit", confirmed: boolean, scope?: "once" | "session"): void;
+  (event: "revoke"): void;
+  (event: "discard"): void;
+  (event: "expire"): void;
 }>();
 
 const expanded = ref(props.payload.status === "pending");
@@ -45,8 +48,48 @@ const detailsId = computed(() => {
 });
 
 const isPending = computed(() => props.payload.status === "pending");
+
+/**
+ * 挂起确认的有效期是后端 `PENDING_CONFIRMATION_TTL_SECONDS`（10 分钟），过期后快照被删，
+ * 再点任何一个按钮都必然失败。卡片必须自己走到「已过期」并把按钮置灰，否则用户会以为
+ * 是按钮坏了。
+ */
+const nowSeconds = ref(Math.floor(Date.now() / 1000));
+let expiryTimer: any = null;
+const expiresAt = computed(() => {
+  const explicit = Number(props.payload.expires_at || 0);
+  return explicit > 0 ? explicit : 0;
+});
+const isExpired = computed(
+  () => isPending.value && expiresAt.value > 0 && nowSeconds.value >= expiresAt.value,
+);
+const expiresInSeconds = computed(() =>
+  expiresAt.value > 0 ? Math.max(0, expiresAt.value - nowSeconds.value) : 0,
+);
+const expiryHint = computed(() => {
+  if (!isPending.value) return "";
+  if (isExpired.value) return "这次确认已超时失效（超过 10 分钟未处理），请重新发起该任务。";
+  if (expiresInSeconds.value > 0 && expiresInSeconds.value <= 120) {
+    return `还剩 ${expiresInSeconds.value} 秒，超时后需要重新发起该任务。`;
+  }
+  return "";
+});
+
+onMounted(() => {
+  expiryTimer = window.setInterval(() => {
+    nowSeconds.value = Math.floor(Date.now() / 1000);
+  }, 1000);
+});
+
+onUnmounted(() => {
+  if (expiryTimer) window.clearInterval(expiryTimer);
+  expiryTimer = null;
+});
 const isSubmitting = computed(() => Boolean(props.payload.isSubmitting));
-const locked = computed(() => Boolean(props.disabled) || !isPending.value || isSubmitting.value);
+const locked = computed(
+  () => Boolean(props.disabled) || !isPending.value || isSubmitting.value || isExpired.value,
+);
+const canDiscard = computed(() => isPending.value && !isSubmitting.value);
 
 const cardContainerClass = computed(() => {
   if (!isPending.value) {
@@ -60,7 +103,7 @@ const cardContainerClass = computed(() => {
 
 const iconContainerClass = computed(() => {
   if (!isPending.value) {
-    if (props.payload.status === "approved") {
+    if (props.payload.status === "approved" || props.payload.status === "approved_session") {
       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
     }
     if (props.payload.status === "rejected") {
@@ -75,9 +118,12 @@ const iconContainerClass = computed(() => {
 
 const statusLabel = computed(() => {
   if (isSubmitting.value) return "提交中";
+  if (isExpired.value) return "已过期";
+  if (props.payload.discarded) return "已放弃";
   const labels: Record<PendingToolPermission["status"], string> = {
     pending: "待确认",
     approved: "已允许",
+    approved_session: "已允许（本会话）",
     rejected: "已拒绝",
     expired: "已过期",
     error: "执行异常",
@@ -87,11 +133,40 @@ const statusLabel = computed(() => {
 
 const statusMessage = computed(() => {
   if (isSubmitting.value) return "正在提交确认，请稍候…";
+  if (props.payload.discarded) {
+    return "已放弃本轮，这条命令没有执行；需要时可以重新发起。";
+  }
+  if (isExpired.value) {
+    return "这次确认已超时失效（超过 10 分钟未处理），请重新发起该任务。";
+  }
+  if (props.payload.sessionGrantRevoked) {
+    return "已撤销本会话授权，下次调用该工具会重新确认。";
+  }
   if (props.payload.status === "approved") return "已允许本次执行，任务正在继续。";
+  if (props.payload.status === "approved_session") {
+    return "本会话内该工具不再逐条确认，危险命令与黑名单仍会被拦截。";
+  }
   if (props.payload.status === "rejected") return "已拒绝本次执行，任务已暂停。";
   if (props.payload.status === "expired") return "这次确认已过期，请重新发起任务。";
   if (props.payload.status === "error") return "确认或执行过程中出现异常，请稍后重试。";
   return "任务当前暂停，等待你的确认。";
+});
+
+const canRevoke = computed(
+  () =>
+    props.payload.status === "approved_session"
+    && !props.payload.sessionGrantRevoked
+    && !isSubmitting.value,
+);
+
+// 卡片同时提供「本会话总是允许」时，不能还写着「仅本次执行」——两者自相矛盾。
+const scopeSuffix = computed(() => {
+  if (props.payload.status === "approved_session" || props.payload.sessionGrantRevoked) {
+    return "本会话";
+  }
+  return props.payload.supports_session_grant && isPending.value
+    ? "本次或本会话"
+    : "仅本次执行";
 });
 
 const hasDetails = computed(() => Boolean(display.value.commandText || display.value.parameterText));
@@ -127,10 +202,28 @@ async function copyDetails() {
   }, 1800);
 }
 
-function submit(confirmed: boolean) {
+function submit(confirmed: boolean, scope: "once" | "session" = "once") {
   if (locked.value) return;
-  emit("submit", confirmed);
+  emit("submit", confirmed, scope);
 }
+
+function revoke() {
+  if (!canRevoke.value) return;
+  emit("revoke");
+}
+
+function discard() {
+  if (!canDiscard.value) return;
+  emit("discard");
+}
+
+// 过期必须“落”到状态上：卡片自己只是 computed，父组件的待确认锁看的是 status，
+// 不通知就会锁死输入框。父组件据此把 status 置为 expired，锁随之解除。
+watch(isExpired, (expired) => {
+  if (expired && props.payload.status === "pending" && !props.payload.discarded) {
+    emit("expire");
+  }
+});
 
 watch(
   () => props.payload.permission_request_id,
@@ -178,7 +271,7 @@ watch(
           </svg>
         </template>
         <template v-else>
-          <svg v-if="props.payload.status === 'approved'" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg v-if="props.payload.status === 'approved' || props.payload.status === 'approved_session'" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 13 4 4L19 7" />
           </svg>
           <svg v-else-if="props.payload.status === 'rejected'" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -233,7 +326,7 @@ watch(
               :class="{
                 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300': display.riskTone === 'low' && isPending,
                 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300': display.riskTone === 'standard' && isPending,
-                'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': props.payload.status === 'approved',
+                'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': props.payload.status === 'approved' || props.payload.status === 'approved_session',
                 'bg-gray-200/80 text-gray-600 dark:bg-gray-800 dark:text-gray-300': props.payload.status === 'rejected',
                 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': props.payload.status === 'error' || props.payload.status === 'expired',
               }"
@@ -261,7 +354,7 @@ watch(
               <span class="font-semibold">{{ display.riskLabel }}</span>
               <span class="opacity-30" aria-hidden="true">·</span>
               <span class="opacity-60">影响范围</span>
-              <span class="font-semibold">{{ display.scopeLabel }} · 仅本次执行</span>
+              <span class="font-semibold">{{ display.scopeLabel }} · {{ scopeSuffix }}</span>
             </div>
 
             <div v-if="hasDetails" class="flex min-w-0 items-center gap-2 rounded-lg border border-current/15 bg-white/70 px-2.5 py-1.5 dark:bg-gray-950/40">
@@ -288,7 +381,7 @@ watch(
               <span class="opacity-30" aria-hidden="true">·</span>
               <div class="flex items-center gap-1">
                 <span class="opacity-60">影响范围</span>
-                <span class="font-semibold">{{ display.scopeLabel }} · 仅本次执行</span>
+                <span class="font-semibold">{{ display.scopeLabel }} · {{ scopeSuffix }}</span>
               </div>
             </div>
 
@@ -325,9 +418,9 @@ watch(
           </template>
 
           <!-- 状态提示文字（展开且非 pending 时） -->
-          <div v-if="!isPending" class="mt-2 flex items-center gap-2 text-[11px] opacity-75" aria-live="polite">
+          <div v-if="!isPending" class="mt-2 flex flex-wrap items-center gap-2 text-[11px] opacity-75" aria-live="polite">
             <span class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-              <svg v-if="props.payload.status === 'approved'" class="h-3.5 w-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg v-if="props.payload.status === 'approved' || props.payload.status === 'approved_session'" class="h-3.5 w-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 13 4 4L19 7" />
               </svg>
               <svg v-else-if="props.payload.status === 'rejected'" class="h-3.5 w-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -335,7 +428,25 @@ watch(
               </svg>
             </span>
             <p class="leading-normal">{{ statusMessage }}</p>
+            <button
+              v-if="canRevoke"
+              type="button"
+              class="underline decoration-dotted underline-offset-2 transition hover:opacity-100 opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
+              aria-label="撤销本会话对该工具的授权"
+              @click="revoke"
+            >
+              撤销本会话授权
+            </button>
           </div>
+
+          <p
+            v-if="expiryHint"
+            class="mt-2 text-[11px] leading-normal"
+            :class="isExpired ? 'font-semibold text-red-600 dark:text-red-400' : 'opacity-70'"
+            aria-live="polite"
+          >
+            {{ expiryHint }}
+          </p>
 
           <!-- 待确认时的底部操作栏 -->
           <div v-if="isPending" class="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -349,6 +460,17 @@ watch(
               <span>正在提交确认…</span>
             </div>
             <button
+              v-if="canDiscard"
+              type="button"
+              class="min-h-[2.75rem] w-full rounded-lg px-2 py-1.5 text-xs font-medium opacity-70 underline decoration-dotted underline-offset-2 transition hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-45 sm:mr-auto sm:min-h-[2rem] sm:w-auto"
+              :disabled="isSubmitting"
+              aria-label="放弃本轮，不执行这条命令"
+              title="放弃后这一轮结束，命令不会执行"
+              @click="discard"
+            >
+              放弃本轮
+            </button>
+            <button
               type="button"
               class="inline-flex min-h-[2.75rem] w-full items-center justify-center rounded-lg border border-current/20 bg-white/75 px-3 py-1.5 text-xs font-semibold opacity-80 shadow-2xs transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[2rem] sm:w-auto dark:bg-gray-800/80 dark:hover:bg-gray-800"
               :disabled="locked"
@@ -356,6 +478,17 @@ watch(
               @click="submit(false)"
             >
               拒绝执行
+            </button>
+            <button
+              v-if="props.payload.supports_session_grant"
+              type="button"
+              class="inline-flex min-h-[2.75rem] w-full items-center justify-center rounded-lg border border-current/25 bg-white/60 px-3 py-1.5 text-xs font-semibold opacity-85 shadow-2xs transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[2rem] sm:w-auto dark:bg-gray-800/60 dark:hover:bg-gray-800"
+              :disabled="locked"
+              aria-label="本会话内总是允许该工具调用"
+              title="本会话内该工具不再逐条确认，危险命令与黑名单仍会被拦截"
+              @click="submit(true, 'session')"
+            >
+              本会话总是允许
             </button>
             <button
               type="button"

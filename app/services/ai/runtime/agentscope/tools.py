@@ -689,6 +689,7 @@ class AgentScopeRuntimeTool:
         approval_mode: RuntimeApprovalMode | str | None = None,
         loop_detector: ToolLoopDetector | None = None,
         user_id: int | str | None = None,
+        conversation_id: str | None = None,
     ) -> None:
         self.spec = spec
         self.name = spec.name
@@ -699,6 +700,7 @@ class AgentScopeRuntimeTool:
         self.approval_mode = _normalize_runtime_approval_mode(approval_mode)
         self.loop_detector = loop_detector
         self.user_id = user_id
+        self.conversation_id = conversation_id
 
     def _check_tool_loop(self, tool_input: dict[str, Any]) -> None:
         if not self.loop_detector:
@@ -781,6 +783,13 @@ class AgentScopeRuntimeTool:
                 decision_reason=f"runtime approval mode: {self.approval_mode}",
                 bypass_immune=True,
             )
+        grant_decision = await _session_grant_decision(
+            tool_name=self.name,
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+        )
+        if grant_decision is not None:
+            return grant_decision
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             message=f"Tool '{self.name}' requires user confirmation before execution.",
@@ -853,6 +862,7 @@ class AgentScopeNativeApprovalTool:
         permission_scope: RuntimePermissionScope | None = None,
         loop_detector: ToolLoopDetector | None = None,
         user_id: int | str | None = None,
+        conversation_id: str | None = None,
         evidence_types: frozenset[EvidenceType] = frozenset(),
         evidence_policy: str = "non_empty",
         timeout_seconds: float | None = None,
@@ -868,6 +878,7 @@ class AgentScopeNativeApprovalTool:
         self.permission_scope = permission_scope or _infer_native_permission_scope(native_tool)
         self.loop_detector = loop_detector
         self.user_id = user_id
+        self.conversation_id = conversation_id
         self.evidence_types = evidence_types
         self.evidence_policy = evidence_policy
         self.timeout_seconds = timeout_seconds or DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT
@@ -970,7 +981,23 @@ class AgentScopeNativeApprovalTool:
             if inspect.isawaitable(result):
                 result = await result
             if result is not None:
+                grant_decision = await _session_grant_override(
+                    result,
+                    context=context,
+                    tool_name=self.name,
+                    user_id=self.user_id,
+                    conversation_id=self.conversation_id,
+                )
+                if grant_decision is not None:
+                    return grant_decision
                 return result
+        grant_decision = await _session_grant_decision(
+            tool_name=self.name,
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+        )
+        if grant_decision is not None:
+            return grant_decision
         return PermissionDecision(
             behavior=(
                 PermissionBehavior.ALLOW
@@ -1416,6 +1443,7 @@ def runtime_tool_from_spec(
     approval_mode: RuntimeApprovalMode | str | None = None,
     loop_detector: ToolLoopDetector | None = None,
     user_id: int | str | None = None,
+    conversation_id: str | None = None,
 ) -> Any:
     if spec.native_tool is not None:
         return AgentScopeNativeApprovalTool(
@@ -1424,6 +1452,7 @@ def runtime_tool_from_spec(
             permission_scope=spec.permission_scope,
             loop_detector=loop_detector,
             user_id=user_id,
+            conversation_id=conversation_id,
             evidence_types=spec.evidence_types,
             evidence_policy=spec.evidence_policy,
             timeout_seconds=spec.timeout_seconds,
@@ -1435,6 +1464,7 @@ def runtime_tool_from_spec(
         approval_mode=approval_mode,
         loop_detector=loop_detector,
         user_id=user_id,
+        conversation_id=conversation_id,
     )
 
 
@@ -1443,6 +1473,7 @@ def runtime_tool_from_native(
     *,
     approval_mode: RuntimeApprovalMode | str | None = None,
     user_id: int | str | None = None,
+    conversation_id: str | None = None,
     timeout_seconds: float | None = None,
 ) -> Any:
     native_name = str(getattr(native_tool, "name", "") or "")
@@ -1454,6 +1485,7 @@ def runtime_tool_from_native(
         native_tool,
         approval_mode=approval_mode,
         user_id=user_id,
+        conversation_id=conversation_id,
         evidence_types=evidence_types,
         evidence_policy=NATIVE_TOOL_EVIDENCE_POLICIES.get(native_name, "non_empty"),
         timeout_seconds=timeout_seconds,
@@ -1466,11 +1498,18 @@ def build_toolkit(
     approval_mode: RuntimeApprovalMode | str | None = None,
     loop_detector: ToolLoopDetector | None = None,
     user_id: int | str | None = None,
+    conversation_id: str | None = None,
 ):
     toolkit_cls = _load_agentscope_toolkit()
     tool_specs = filter_valid_runtime_tool_specs(tool_specs)
     tools = [
-        runtime_tool_from_spec(spec, approval_mode=approval_mode, loop_detector=loop_detector, user_id=user_id)
+        runtime_tool_from_spec(
+            spec,
+            approval_mode=approval_mode,
+            loop_detector=loop_detector,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
         for spec in tool_specs
     ]
     return toolkit_cls(tools=tools)
@@ -1653,6 +1692,152 @@ def _shell_deletion_permission_decision(
             bypass_immune=True,
         )
     return None
+
+
+def resolve_tool_conversation_id(explicit: Any = None) -> str | None:
+    """会话级授权使用的会话标识：显式传入优先，其次取当前 Agent 上下文。"""
+
+    value = str(explicit or "").strip()
+    if value:
+        return value
+    try:
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+    except Exception:
+        return None
+    return str(getattr(context, "conversation_id", "") or "").strip() or None
+
+
+def _mark_session_grant_auto_approved(tool_name: str) -> None:
+    """判定点记账：这一次调用确实是被会话授权放行的。
+
+    工具结果事件靠这条队列决定「要不要打 auto_approved 标记」。刻意不在结果侧反查
+    Redis：反查只能看出「本会话授权过这个工具名」，会把只读快通道自动放行的
+    ``ls``、``approval_mode=allow`` 的工具、以及刚被 DENY 的调用一起误标成「自动执行」。
+    """
+
+    try:
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+    except Exception:
+        return
+    if context is None:
+        return
+    try:
+        context.session_grant_auto_approved.append(str(tool_name))
+    except Exception:
+        return
+
+
+def consume_session_grant_auto_approved(tool_name: str) -> bool:
+    """结果侧出队：一次授权只对应一次调用（并行批次按工具名一一出队）。"""
+
+    try:
+        from app.core.context import get_current_agent_context
+
+        context = get_current_agent_context()
+    except Exception:
+        return False
+    pending = getattr(context, "session_grant_auto_approved", None) if context else None
+    if not isinstance(pending, list):
+        return False
+    try:
+        pending.remove(str(tool_name))
+    except ValueError:
+        return False
+    return True
+
+
+async def _session_grant_decision(
+    *,
+    tool_name: str,
+    user_id: Any,
+    conversation_id: Any,
+) -> Any:
+    """「本会话总是允许」把 ASK 降级为 ALLOW。
+
+    只在工具自身 ``check_permissions`` 的 ASK 出口调用：禁用工具、命令黑名单、
+    ``dangerous`` 作用域与删除类 ``bypass_immune`` 决策都在此之前返回，本函数
+    因此无法覆盖任何 DENY。
+    """
+
+    resolved_conversation = resolve_tool_conversation_id(conversation_id)
+    if not resolved_conversation:
+        return None
+
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+
+    from app.services.ai.runtime.agentscope.session_permission_grants import (
+        session_permission_grants,
+    )
+
+    if not await session_permission_grants.is_granted(
+        user_id,
+        resolved_conversation,
+        tool_name,
+    ):
+        return None
+    _mark_session_grant_auto_approved(tool_name)
+    return PermissionDecision(
+        behavior=PermissionBehavior.ALLOW,
+        message=f"Tool '{tool_name}' is allowed for this session by user grant.",
+        decision_reason=f"session_grant:{tool_name}",
+    )
+
+
+async def _session_grant_override(
+    native_decision: Any,
+    *,
+    context: Any,
+    tool_name: str,
+    user_id: Any,
+    conversation_id: Any,
+) -> Any:
+    """原生工具的决策是否可以被会话授权降级为 ALLOW。
+
+    原生工具在「非只读、非危险」的普通调用上返回的是 ``PASSTHROUGH``（例如 ``Bash``
+    执行 ``mkdir``、``Write`` 写工作区文件），而不是 ``ASK``：引擎 Step 4 只采纳
+    ``ALLOW``/``DENY``，两种非终态都会继续落到 Step 6 的兜底 ``ASK``。所以这里必须
+    同时覆盖 ``ASK`` 与 ``PASSTHROUGH``，否则授权在主路径（Bash）上完全不生效。
+
+    两类例外不放行：
+    - ``bypass_immune`` 的 safety ASK（如 ``rm -rf /``）：AgentScope 语义里连 allow
+      规则都覆盖不了它；
+    - ``DONT_ASK`` 模式（无人值守的定时任务/后台运行）：它把普通 ASK 与 PASSTHROUGH
+      兜底成 DENY，降级成 ALLOW 等于放宽无人值守场景的安全边界。
+    """
+
+    try:
+        from agentscope.permission import PermissionBehavior, PermissionMode
+    except Exception:
+        return None
+
+    if getattr(native_decision, "behavior", None) not in (
+        PermissionBehavior.ASK,
+        PermissionBehavior.PASSTHROUGH,
+    ):
+        return None
+    if getattr(native_decision, "bypass_immune", False):
+        return None
+    if getattr(context, "mode", None) == PermissionMode.DONT_ASK:
+        return None
+    return await _session_grant_decision(
+        tool_name=tool_name,
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
+
+
+def supports_session_grant(tool: Any) -> bool:
+    """该工具是否适合提供「本会话总是允许」选项（只读与危险工具不提供）。"""
+
+    scope = getattr(tool, "permission_scope", None)
+    if scope is None:
+        spec = getattr(tool, "spec", None)
+        scope = getattr(spec, "permission_scope", None)
+    return str(scope or "ask") not in {"read", "dangerous"}
 
 
 async def enforce_tool_forbidden(

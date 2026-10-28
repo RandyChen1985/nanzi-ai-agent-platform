@@ -707,7 +707,8 @@ async def exec_command(command: str) -> str:
     """
     执行 shell 命令以获取真实系统状态或完成明确的系统操作。
     用户询问系统负载、CPU、内存、磁盘、进程、端口、网络连通性、服务状态、日志 tail、当前目录文件或要求执行命令时，应优先触发本工具后再回答。
-    亦可用于执行通用的命令行程序（如 `git` 进行版本控制及拉取代码、`curl` 访问网络、`pip/npm` 安装依赖或构建、`python/node` 运行脚本等）。
+    亦可用于执行通用的命令行程序（如 `git` 进行版本控制及拉取代码、`curl` 访问网络、`python/node` 运行脚本等）。
+    安装 Python 依赖：沙箱内不要用裸 `pip`，请用 `uv pip install --target /workspace/.pylibs <包名>` 并设 `PYTHONPATH=/workspace/.pylibs`（容器可写层是临时的，只有 `/workspace` 会保留；裸 `pip` 装到系统 Python，默认 `python` import 不到）；local 策略下可直接 `pip install <包名>`，包装进后端宿主机环境、**对所有用户全局生效**，装完要告知用户这是平台级变更（避免随手 `--upgrade` 升级平台已有依赖）。
     查看负载建议使用非交互命令，例如 uptime、top -b -n 1、ps aux --sort=-%cpu | head、df -h、free -h、ss -tulnp。
     本工具强制施加默认 30 秒超时限制与标准输出长度截断。
     

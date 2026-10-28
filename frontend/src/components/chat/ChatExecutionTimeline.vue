@@ -352,6 +352,11 @@
                 >子代理 · </span>
                 <span>{{ displayTimelineTitle(item) }}</span>
               </span>
+              <span
+                v-if="item.auto_approved"
+                class="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
+                title="本会话已授权该工具，这条调用没有再弹出确认"
+              >本会话已授权</span>
               <!-- 挂起步骤安抚文案与动效条：机器正在推进时按耗时递进，等待用户操作的类别不显示 -->
               <TimelinePendingHint
                 :item="item"

@@ -390,6 +390,27 @@ def test_tool_args_survive_process_timeline_persistence():
     assert entry["details"] == "build ok"
 
 
+def test_auto_approved_survives_process_timeline_persistence():
+    """「本会话已授权」是审计留痕，定稿白名单不能把它洗掉，否则刷新/回放就看不见。"""
+
+    items = _run(
+        [
+            {
+                "type": "log",
+                "id": "bash_grant",
+                "title": "工具完成: Bash (900ms)",
+                "details": "ok",
+                "status": "success",
+                "category": "tool",
+                "auto_approved": True,
+            },
+        ]
+    )
+
+    assert items is not None and len(items) == 1
+    assert items[0]["auto_approved"] is True
+
+
 def test_tool_args_are_truncated_on_persistence():
     items = _run(
         [

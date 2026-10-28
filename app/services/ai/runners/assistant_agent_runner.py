@@ -2459,6 +2459,7 @@ class AssistantAgentRunner(BaseExecutor):
             approval_mode=self.permission_options.get("approval_mode"),
             loop_detector=loop_detector,
             user_id=self._runtime_user_id(),
+            conversation_id=self.conversation_id,
         )
         middlewares = build_runtime_middlewares(
             user_id=self._runtime_user_id(),
@@ -2612,7 +2613,10 @@ class AssistantAgentRunner(BaseExecutor):
                 logical_root=display_logical_root,
             )
             if result.get("log"):
-                yield result["log"]
+                log_chunk = result["log"]
+                if await self._is_session_grant_auto_allowed(tool_name, tool_id):
+                    log_chunk["auto_approved"] = True
+                yield log_chunk
             if result.get("business_confirmation"):
                 yield result["business_confirmation"]
             if result.get("user_question"):
@@ -3544,6 +3548,30 @@ class AssistantAgentRunner(BaseExecutor):
                 "content": "当前会话正在处理中，请稍后再试。",
             }
 
+    async def _is_session_grant_auto_allowed(
+        self,
+        tool_name: str,
+        tool_call_id: str,
+    ) -> bool:
+        """该调用是否因「本会话总是允许」而免于弹框（用于时间线轻标记）。
+
+        判定发生在工具的 ``check_permissions``（命中时会往上下文队列里记一笔），这里
+        只负责出队一次。不在这里反查 Redis：反查会把只读快通道、``approval_mode=allow``
+        与被 DENY 的调用一并误标成「自动执行」。
+        """
+
+        if not tool_name:
+            return False
+        if tool_call_id and tool_call_id in getattr(
+            self, "_session_grant_explicit_call_ids", set()
+        ):
+            return False
+        from app.services.ai.runtime.agentscope.tools import (
+            consume_session_grant_auto_approved,
+        )
+
+        return consume_session_grant_auto_approved(tool_name)
+
     async def resume_agentscope_native_confirmation(
         self,
         pending: Any,
@@ -3551,6 +3579,12 @@ class AssistantAgentRunner(BaseExecutor):
         confirmed: bool,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         from agentscope.event import ConfirmResult, UserConfirmResultEvent
+
+        # 这次调用是用户「明确点过」的，即使随后写入了会话级授权，也不能在
+        # 时间线上被标成「自动执行」。
+        confirmed_tool_call_id = str(getattr(pending.tool_call, "id", "") or "")
+        if confirmed_tool_call_id:
+            self._session_grant_explicit_call_ids = {confirmed_tool_call_id}
 
         event = UserConfirmResultEvent(
             reply_id=pending.reply_id,

@@ -235,7 +235,11 @@ async def test_stream_messages_records_original_chunks_without_duplication(recor
 
     chunks = [m.content async for m in client.stream_messages([_user_message()])]
 
-    assert chunks == ["你", "你好"]  # 对外 chunk 序列不变
+    # 终帧 content 是整段完整正文，stream_messages 只补发「比已发文本多出来的
+    # 尾巴」，否则下游（answer_delta / full_content 都是增量拼接）会把正文拼成
+    # 两份。见 test_agentscope_chat_client.py 的 stream_messages 回归用例。
+    assert chunks == ["你", "好"]
+    assert "".join(chunks) == "你好"
     span = recording_spans.spans[0]
     assert span.ended == 1
     out = span.attributes[span_attributes.GEN_AI_OUTPUT_MESSAGES]

@@ -52,7 +52,7 @@ const copiedIndex = ref<number | null>(null);
 const QUICK_COMMANDS = [
   { label: "查看目录 (ls -la)", cmd: "ls -la" },
   { label: "当前路径 (pwd)", cmd: "pwd" },
-  { label: "Python 环境", cmd: "python3 --version || python --version" },
+  { label: "Python 环境", cmd: "python -V; which python pip uv" },
   { label: "系统信息", cmd: "cat /etc/os-release" },
   { label: "磁盘占用 (df -h)", cmd: "df -h /workspace" },
   { label: "内存概览 (/proc/meminfo)", cmd: "cat /proc/meminfo" },
@@ -366,6 +366,13 @@ onUnmounted(() => {
                 <div class="pl-4 text-slate-400">平台公共文档，只能读取</div>
                 <div class="mt-1"><span class="text-rose-300">× 临时内容</span><span class="text-slate-400">　/tmp、运行中的进程、非挂载路径文件</span></div>
                 <div class="pl-4 text-slate-400">容器停止、回收或重建后不保证保留</div>
+                <div class="mt-1"><span class="text-amber-300">● 依赖</span><span class="text-slate-400">　pip 装的包在容器内，回收即失效</span></div>
+                <div class="pl-4 text-slate-400">
+                  要长期可用：
+                  <span class="font-mono text-slate-200">uv pip install --target /workspace/.pylibs 包名</span>，
+                  运行时 <span class="font-mono text-slate-200">PYTHONPATH=/workspace/.pylibs python ...</span>
+                  （裸 <span class="font-mono">pip</span> 装到系统 Python，默认 <span class="font-mono">python</span> 看不到）
+                </div>
               </div>
               <div class="mt-3 border-t border-slate-700/70 pt-2 text-amber-200">
                 <div class="font-semibold">生命周期</div>

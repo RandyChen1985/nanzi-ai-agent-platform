@@ -34,10 +34,55 @@ def test_workspace_prompt_mentions_common_container_commands():
     assert "容器常见基础命令" in prompt
     assert "`netstat`" in prompt
     assert "`ping`" in prompt
-    assert "`dig`" in prompt
+    assert "`uv`" in prompt
     assert "`npm`" in prompt
+    # 旧文案把 wget/jq/unzip/dig/nc 说成“通常预装”，实测镜像里都没有；现在只允许
+    # 把它们列进“未必存在”，不能再作为既成事实。
+    assert "未必存在" in prompt
     assert "`command -v <cmd>`" in prompt
     assert "不要凭记忆断言未安装" in prompt
+
+
+def test_workspace_prompt_sandbox_teaches_uv_install_to_workspace():
+    """沙箱块必须写清 pip 装不上、uv --target /workspace 才持久。"""
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.session_workspace_sandbox_block(
+        session_workdir="/app/data/agent_workspaces/u1/sessions/conv-1",
+        docs_dir="/app/data/agent_workspaces/u1/docs",
+        file_tool_names=["Bash", "Read"],
+        logical_workspace_root="/workspace",
+        logical_session_workdir="/workspace/sessions/conv-1",
+        logical_docs_dir="/workspace/docs",
+    )
+
+    assert "Python 依赖安装（沙箱）" in prompt
+    assert "uv pip install --target /workspace/.pylibs" in prompt
+    assert "PYTHONPATH=/workspace/.pylibs" in prompt
+    assert "import 不到" in prompt
+    assert "容器可写层是临时的" in prompt
+    assert "只有 `/workspace`（本人工作区）会保留" in prompt
+    # 沙箱块不能出现 local 专属的“禁止安装”口径，否则模型会拒绝用户的合理安装请求
+    assert "Python 依赖安装（local 策略）" not in prompt
+
+
+def test_workspace_prompt_local_allows_global_install():
+    """local 策略：Bash 跑在后端，必须禁止装依赖，且不能教它往 /workspace 装。"""
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.session_workspace_sandbox_block(
+        session_workdir="/app/data/agent_workspaces/u1/sessions/conv-1",
+        docs_dir="/app/data/agent_workspaces/u1/docs",
+        file_tool_names=["Bash", "Read"],
+    )
+
+    assert "Python 依赖安装（local 策略）" in prompt
+    # 产品决定：local 不限制安装，直接装进后端环境、全局生效（只提醒平台级影响）
+    assert "对宿主机全局生效" in prompt
+    assert "pip install <包名>" in prompt
+    assert "不要随手用 `--upgrade`" in prompt
+    # 但 local 不能给出沙箱专属的 --target 口径
+    assert "uv pip install --target" not in prompt
 
 
 def test_workspace_prompt_distinguishes_tool_paths_from_user_delivery_paths():
@@ -402,3 +447,22 @@ async def test_append_ssh_workspace_prompt_uses_configured_remote_workdir(monkey
     assert "/workspace/skills" not in result
     assert "/workspace/personal-skills" not in result
     assert "/app/data/skills" not in result
+
+
+def test_workspace_prompt_dependency_paths_follow_logical_workspace_root():
+    """e2b 的工作区根是 /home/user/workspace，依赖路径不能写死 /workspace。"""
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.session_workspace_sandbox_block(
+        session_workdir="/data/u/sessions/conv-1",
+        docs_dir="/data/u/docs",
+        file_tool_names=["Bash"],
+        logical_workspace_root="/home/user/workspace",
+        logical_session_workdir="/home/user/workspace/sessions/conv-1",
+        logical_docs_dir="/home/user/workspace/docs",
+    )
+
+    assert "uv pip install --target /home/user/workspace/.pylibs" in prompt
+    assert "PYTHONPATH=/home/user/workspace/.pylibs" in prompt
+    assert "只有 `/home/user/workspace`（本人工作区）会保留" in prompt
+    assert "--target /workspace/.pylibs" not in prompt

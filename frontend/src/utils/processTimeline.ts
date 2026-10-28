@@ -75,6 +75,8 @@ export type ProcessTimelineLogItem = {
    */
   user_question?: PersistedUserQuestion | null;
   resolution_status?: ToolResolutionStatus;
+  /** 本条工具调用因「本会话总是允许」而免于弹框，时间线上做轻标记。 */
+  auto_approved?: boolean;
   execution_time_ms?: number | null;
   started_at?: number | null;
   subagent?: SubagentTraceMeta;

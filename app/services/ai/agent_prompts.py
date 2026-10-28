@@ -1207,6 +1207,39 @@ class AgentServicePrompts:
             if is_sandbox
             else "- **Bash 文件操作边界**：只有在触发运行环境操作（如执行脚本生成的输出文件、`/tmp` 临时文件、命令管道流转或系统诊断）时，才允许在 Bash 中读写这些运行时产物。\n"
         )
+        # Python 依赖安装口径：沙箱里 `python` 是网关 venv、裸 `pip` 是系统 Python，
+        # 直接 `pip install` 装的包默认解释器根本 import 不到（实测同一容器内即失败）。
+        # 这段必须与沙箱块一起注入，否则模型会按「先 pip install 再跑」的常识行事。
+        # 路径必须跟着 logical_workspace_root 走：docker/k8s 是 /workspace，而 e2b 是
+        # /home/user/workspace、ssh 取 sandbox_ssh_remote_workdir，写死会指错目录。
+        _sbx_root = (logical_workspace_root or "/workspace").rstrip("/") or "/workspace"
+        python_env_text = (
+            "- **Python 依赖安装（沙箱）**：容器里默认的 `python` 通常来自 AgentScope 网关虚拟环境"
+            "（docker/k8s 为 `/root/.agentscope/.venv/bin/python`），而裸 `pip`/`pip3` 指向系统 Python"
+            "（装进 `/usr/local`）——用 `pip install` 装出来的包，默认 `python` **import 不到**。"
+            f"需要第三方包时一律：`uv pip install --target {_sbx_root}/.pylibs <包名>`，"
+            f"执行时用 `PYTHONPATH={_sbx_root}/.pylibs python ...`"
+            "（装到 venv 里的包则随容器回收消失，不要这样做）。"
+            f"需要带命令行入口的工具时改用 `uv pip install --prefix {_sbx_root}/.local <包>`，"
+            f"并把 `{_sbx_root}/.local/bin` 加入 `PATH`。"
+            "不确定解释器/工具在不在时，先 `command -v python pip uv` 确认。"
+            "禁止 `pip install`、`sudo apt-get install` 这类写进容器可写层的系统级安装，"
+            "除非用户明确要求且接受「回收后失效」。\n"
+            "- **容器可写层是临时的**：空闲回收（默认 15 分钟）、重启容器或平台重启后，"
+            "pip/apt/npm 装的包、`~`、`/tmp`、后台进程、export 出来的环境变量全部消失；"
+            f"**只有 `{_sbx_root}`（本人工作区）会保留**。任何需要「下次还能用」的文件与依赖，"
+            f"一律落到 `{_sbx_root}` 下（依赖建议放 `{_sbx_root}/.pylibs`）。\n"
+            if is_sandbox
+            else (
+                "- **Python 依赖安装（local 策略）**：Bash 直接运行在平台后端服务环境，"
+                "`pip install <包名>`（或 `python -m pip install`）装进的包**对宿主机全局生效**——"
+                "所有用户、所有会话共用，重建镜像或重装依赖后才会变。用户需要第三方包时直接安装即可，"
+                "不必绕道；装完要在回复里说明「已装到平台环境，全部会话可用」。"
+                "注意这是**平台级全局变更**：不要随手用 `--upgrade`/`-U` 升级或替换平台已有依赖"
+                "（会波及平台主服务与所有用户，确需升级先跟用户确认影响）；"
+                "`apt-get install` 等系统级安装同理，能装，但先说明影响范围。\n"
+            )
+        )
         return (
             "[Session Workspace & Path Sandbox]\n"
             + logical_root_text
@@ -1228,8 +1261,9 @@ class AgentServicePrompts:
             + bash_file_boundary
             + "- 不清楚文件在当前环境中的实际路径结构、公共文档（如 data/docs/ 手册）与个人空间映射，或遇到找不到文件/写入被拒时，**直接调用 list_accessible_directories**（平台内置、始终可用）获取全量目录清单与读写权限。\n"
             "- 有 Grep/Glob 时优先于 Bash 做文本/文件搜索；Bash 用于 Grep/Glob 无法完成的管道、系统诊断或通用命令行操作。\n"
-            "- **容器常见基础命令与工具心智**：运行环境通常预装 `bash`, `curl`, `wget`, `gnupg`, `node`, `npm`, `telnet`, `netstat`, `ping`, `dig`, `nslookup`, `ps`, `git`, `jq`, `unzip`, `nc` 等命令。智能体没有针对 `git`、`curl` 等独立绑定的专用工具；当用户要求进行版本控制（如 `git pull`、`git status`）或拉取网络数据等通用 CLI 操作时，应当直接调用 `Bash`（即 `exec_command`）工具去执行对应的 shell 命令，绝不能因为没有名为 `git` 的独立工具而拒绝任务。\n"
-            "- 若回答依赖某命令是否存在，先用 `command -v <cmd>` 或 `which <cmd>` 快速确认，不要凭记忆断言未安装。\n"
+            "- **容器常见基础命令与工具心智**：沙箱容器通常预装 `bash`, `curl`, `git`, `node`, `npm`, `npx`, `telnet`, `netstat`, `ping`, `ps`, `uv` 与 `python`（网关 venv）；`wget`、`jq`、`unzip`、`dig`、`nslookup`、`nc` 等**未必存在**。智能体没有针对 `git`、`curl` 等独立绑定的专用工具；当用户要求进行版本控制（如 `git pull`、`git status`）或拉取网络数据等通用 CLI 操作时，应当直接调用 `Bash`（即 `exec_command`）工具去执行对应的 shell 命令，绝不能因为没有名为 `git` 的独立工具而拒绝任务。\n"
+            + python_env_text
+            + "- 若回答依赖某命令是否存在，先用 `command -v <cmd>` 或 `which <cmd>` 快速确认，不要凭记忆断言未安装。\n"
             "- 写文件、执行命令等高风险操作可能触发平台确认；挂起时不得声称已完成。"
         )
 

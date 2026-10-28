@@ -476,3 +476,43 @@ async def test_runtime_capabilities_is_read_only_system_tool():
     assert spec.permission_scope == "read"
     assert spec.is_read_only is True
     assert spec.evidence_types == frozenset({EvidenceType.RUNTIME_STATE})
+
+
+def test_sandbox_runtime_summary_teaches_uv_install_and_persistence():
+    """沙箱策略下必须回报“默认 python 是 venv、依赖装 /workspace 才持久”。"""
+    module = importlib.import_module("app.services.ai.tools.session_status")
+
+    for policy in ("docker", "k8s"):
+        summary = module._sandbox_runtime_summary(policy)
+        assert summary["policy"] == policy
+        assert summary["python"]["interpreter"] == "/root/.agentscope/.venv/bin/python"
+        assert "默认 python 看不到" in summary["python"]["note"]
+        assert summary["uv"] == "/usr/local/bin/uv"
+        assert summary["persistent_packages_dir"] == "/workspace/.pylibs"
+        assert "uv pip install --target /workspace/.pylibs" in summary["install_hint"]
+        assert "/workspace 保留" in summary["ephemeral"]
+
+
+def test_sandbox_runtime_summary_local_reports_global_install():
+    """local 允许直接装、全局生效：要如实回报落点与影响，而不是禁止。"""
+    module = importlib.import_module("app.services.ai.tools.session_status")
+
+    summary = module._sandbox_runtime_summary("local")
+
+    assert summary["policy"] == "local"
+    assert summary["persistent_packages_dir"].endswith("site-packages")
+    assert "全局生效" in summary["install_hint"]
+    assert "平台级变更" in summary["install_hint"]
+    assert "重启服务不丢" in summary["ephemeral"]
+
+
+def test_sandbox_runtime_summary_remote_sandboxes_do_not_assume_platform_image():
+    """e2b/ssh 不用平台镜像：不能把 docker/k8s 的 venv 路径当事实。"""
+    module = importlib.import_module("app.services.ai.tools.session_status")
+
+    for policy in ("e2b", "ssh"):
+        summary = module._sandbox_runtime_summary(policy)
+        assert summary["policy"] == policy
+        assert summary["python"] is None
+        assert summary["persistent_packages_dir"] is None
+        assert "command -v uv python pip" in summary["install_hint"]

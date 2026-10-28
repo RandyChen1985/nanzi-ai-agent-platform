@@ -96,12 +96,56 @@ GATEWAY_EXTRA_PIP: tuple[str, ...] = (
 _INLINE_SERVER = '''\
 import json
 import os
+import re
 import subprocess
 
 from mcp.server.fastmcp import FastMCP
 
 _ROOT = os.environ.get("SANDBOX_WORKDIR", "/workspace")
 mcp = FastMCP("sandbox")
+
+#: 沙箱内 Python 环境的四个事实，模型踩坑后必须立刻被告知（否则它只会换包名重试）：
+#:   1. ``pip`` 是系统 Python 的（/usr/local），默认 ``python`` 是网关 venv，看不见；
+#:   2. 正确姿势是 ``uv pip install --target /workspace/.pylibs`` + ``PYTHONPATH``；
+#:   3. 容器可写层是临时的，只有 /workspace 会保留；
+#:   4. 装进 venv 本次可用、回收即丢——值得提醒一句，但不阻断。
+_PIP_HINT = (
+    "检测到直接使用 `pip install`：容器里的 pip 指向系统 Python，默认 python"
+    "（网关 venv /root/.agentscope/.venv）看不到装上的包，import 会失败。"
+    "请改用 `uv pip install --target /workspace/.pylibs <包名>`，执行时加 "
+    "`PYTHONPATH=/workspace/.pylibs`。"
+)
+_VENV_INSTALL_HINT = (
+    "本次安装落在容器 venv：当前会话可用，但沙箱回收/重启后会消失。"
+    "需要跨会话保留请加 `--target /workspace/.pylibs`，运行时设 `PYTHONPATH=/workspace/.pylibs`。"
+)
+_MISSING_MODULE_HINT = (
+    "缺少 Python 模块：请用 `uv pip install --target /workspace/.pylibs <包名>` 安装（不要用 pip），"
+    "执行时设 `PYTHONPATH=/workspace/.pylibs`。注意容器可写层是临时的，装的包在沙箱回收/重启后失效；"
+    "只有 /workspace 下的内容会保留。"
+)
+_COMMAND_MISSING_HINT = (
+    "命令不存在：先用 `command -v <cmd>` 确认再使用。沙箱只预装基础命令；"
+    "系统级安装（apt-get / npm -g）会写进容器可写层，沙箱回收后失效，且可能影响同容器其他任务。"
+)
+
+
+def _dependency_hints(command, stdout, stderr, exit_code):
+    """Return actionable hints for the common sandbox environment traps."""
+    hints = []
+    command = command or ""
+    combined = (stdout or "") + (stderr or "")
+    if re.search(r"(?:^|[^A-Za-z0-9_-])pip3?\\s+install\\b", command) and "uv pip" not in command:
+        hints.append(_PIP_HINT)
+    if re.search(r"uv\\s+pip\\s+install\\b", command) and not re.search(
+        r"--(?:target|prefix)\\b", command
+    ):
+        hints.append(_VENV_INSTALL_HINT)
+    if "No module named" in combined:
+        hints.append(_MISSING_MODULE_HINT)
+    if exit_code == 127 or "command not found" in (stderr or ""):
+        hints.append(_COMMAND_MISSING_HINT)
+    return hints
 
 
 def _abspath(path: str) -> str:
@@ -130,12 +174,16 @@ def bash(command: str, cwd: str = ".") -> str:
         )
     except subprocess.TimeoutExpired:
         return json.dumps({"ok": False, "error": "command timed out"})
-    return json.dumps({
+    payload = {
         "ok": res.returncode == 0,
         "exit_code": res.returncode,
         "stdout": res.stdout[-100000:],
         "stderr": res.stderr[-100000:],
-    })
+    }
+    hints = _dependency_hints(command, res.stdout, res.stderr, res.returncode)
+    if hints:
+        payload["hints"] = hints
+    return json.dumps(payload)
 
 
 @mcp.tool()

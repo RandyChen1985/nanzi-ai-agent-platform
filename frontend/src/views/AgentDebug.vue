@@ -1779,6 +1779,17 @@ const manualCompactDebugContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5, m
 // useSandboxWorkspace 内部 watch(..., { immediate: true }) 会立即读取 isProcessing，
 // 因此 isProcessing 必须在沙箱组合式函数调用之前完成声明，否则触发 TDZ 运行时崩溃。
 const isProcessing = ref(false);
+/**
+ * 有待处理确认卡时保持锁定：挂起确认后后端这一轮已停下（SSE 流结束、run_status 回报
+ * 不在跑），只看 isProcessing 会把输入框误判为空闲。由卡片上的「放弃本轮」显式解除。
+ */
+const pendingPermissionLocking = computed(() =>
+  messages.value.some(
+    (item: any) =>
+      item.pendingPermission?.status === "pending"
+      || item.pendingExternalExecution?.status === "pending",
+  ),
+);
 
 const {
   sandboxWorkspaceStatus,
@@ -2636,7 +2647,7 @@ const enterFullScreenFromTip = () => {
 const userInput = ref("");
 const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
 const focusChatInputWhenReady = () => {
-  if (isMobile.value || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;
+  if (isMobile.value || isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value || sendLocked.value) return;
   nextTick(() => chatInputRef.value?.focus());
 };
 
@@ -2821,7 +2832,7 @@ const handleChatBIResultAction = async (
 
 const handleQuickQuestion = async (question: string, action: "send" | "fill" = "send", sourceContent?: string) => {
   if (!question) return;
-  if (action === "send" && (isProcessing.value || remoteRunBusy.value || sendLocked.value)) return;
+  if (action === "send" && (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value || sendLocked.value)) return;
   const selectedSource = sourceContent?.trim();
   const nextContent = selectedSource
     ? `${question}${USER_MESSAGE_CONTEXT_DIVIDER}【被点击的 AI 回复】\n${selectedSource}`
@@ -2842,7 +2853,7 @@ const handleGroundingAction = async (
   payload: GroundingBlockedPayload | undefined,
   action: GroundingBlockedAction,
 ) => {
-  if (!payload || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;
+  if (!payload || isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value || sendLocked.value) return;
   if (action.kind === "grounding_retry") {
     const groundingAction = {
       ...(action.payload || {}),
@@ -3502,14 +3513,14 @@ const captureSendSnapshot = (overrides: ChatSendOverrides = {}): ChatSendSnapsho
 const sendPreparedMessage = async (
   prepare: () => Promise<ChatSendSnapshot | null>,
 ) => runSendExclusive(async () => {
-  if (isProcessing.value || remoteRunBusy.value) return;
+  if (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value) return;
   const snapshot = await prepare();
   if (!snapshot) return;
   return sendMessageInternal(snapshot);
 });
 
 const sendMessage = async (overrides: ChatSendOverrides = {}) => runSendExclusive(async () => {
-  if (isProcessing.value || remoteRunBusy.value) return;
+  if (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value) return;
   return sendMessageInternal(captureSendSnapshot(overrides));
 });
 
@@ -3517,7 +3528,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const { content, files } = snapshot;
   const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
   if (!content && files.length === 0) return;
-  if (isProcessing.value || remoteRunBusy.value) return;
+  if (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value) return;
 
   // 尽早消费「强制查数智能体」标记，避免中途 return 后泄漏到下一轮普通提问
   const forcedDataAgentIdForTurn = forceDataQueryAgentOnce.value ? resolvePreferredDataQueryAgentId() : "";
@@ -4050,7 +4061,10 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
           ? "rejected"
           : data.status === "error" || data.status === "failed"
             ? "error"
-            : "approved";
+            // 「本会话总是允许」的标记要留住：终态把它抹成 approved 会让撤销入口消失。
+            : msg.pendingPermission.status === "approved_session"
+              ? "approved_session"
+              : "approved";
       if (data.status === "awaiting_permission") msg.pendingPermission.expanded = true;
     }
     if (msg.pendingExternalExecution) {
@@ -4271,7 +4285,11 @@ const submitUserQuestion = async (
   await sendMessage();
 };
 
-const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
+const confirmPendingPermission = async (
+  msg: Message,
+  confirmed: boolean,
+  scope: "once" | "session" = "once",
+) => {
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
   pending.isSubmitting = true;
@@ -4289,7 +4307,7 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ confirmed }),
+      body: JSON.stringify({ confirmed, scope }),
     });
     if (!response.ok) throw new Error(response.statusText);
     const reader = response.body?.getReader();
@@ -4329,6 +4347,55 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
       });
     }
   }
+};
+
+/** 撤销「本会话总是允许」：撤销后该工具在会话内重新逐次确认。 */
+const revokeSessionPermission = async (msg: Message) => {
+  const pending = msg.pendingPermission;
+  const conversation = String(conversationId.value || "").trim();
+  const toolName = String(pending?.tool_call?.name || "").trim();
+  if (!pending || !toolName) return;
+  if (!conversation) {
+    msg.content += "\n[撤销会话授权失败: 当前会话尚未建立，无法定位授权记录]";
+    return;
+  }
+  try {
+    const response = await fetch(
+      `/api/v1/chat/permissions/grants/${encodeURIComponent(conversation)}/${encodeURIComponent(toolName)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) throw new Error(response.statusText);
+    const payload = await response.json().catch(() => null);
+    // 服务端没删到记录（已过期 / 键不匹配）时不能假装成功：卡片若翻成「已允许」，
+    // 撤销入口又会消失，用户会以为撤销成功而授权其实还在。
+    if (!payload?.data?.revoked) {
+      throw new Error("服务端没有这条授权记录，可能已过期，请刷新后重试");
+    }
+    pending.status = "approved";
+    pending.sessionGrantRevoked = true;
+  } catch (error: any) {
+    msg.content += `\n[撤销会话授权失败: ${error.message || "Unknown error"}]`;
+  }
+};
+
+/**
+ * 「放弃本轮」：不执行这条命令，也不写任何会话授权；挂起快照留给服务端 TTL 自然过期。
+ */
+const expirePendingPermission = (msg: Message) => {
+  const pending = msg.pendingPermission;
+  if (!pending || pending.status !== "pending") return;
+  // 只用本地状态收尾：服务端快照本来就已过期，不再发请求。
+  pending.status = "expired";
+  pending.isSubmitting = false;
+};
+
+const discardPendingPermission = (msg: Message) => {
+  const pending = msg.pendingPermission;
+  if (!pending || pending.status !== "pending") return;
+  pending.discarded = true;
+  pending.status = "rejected";
+  pending.isSubmitting = false;
+  pending.expanded = false;
 };
 
 onUnmounted(() => {
@@ -4792,7 +4859,7 @@ onUnmounted(() => {
                 <button
                   @click="startEdit(msg)"
                   class="text-xs text-gray-400 hover:text-gray-600 flex items-center space-x-1 transition-colors"
-                  :disabled="isProcessing"
+                  :disabled="isProcessing || pendingPermissionLocking"
                 >
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -4967,7 +5034,10 @@ onUnmounted(() => {
               <ToolPermissionCard
                 v-if="msg.pendingPermission"
                 :payload="msg.pendingPermission"
-                @submit="(confirmed) => confirmPendingPermission(msg, confirmed)"
+                @submit="(confirmed, scope) => confirmPendingPermission(msg, confirmed, scope)"
+                @revoke="revokeSessionPermission(msg)"
+                @discard="discardPendingPermission(msg)"
+                @expire="expirePendingPermission(msg)"
               />
               <!-- External Tool Execution -->
               <div
@@ -5059,7 +5129,7 @@ onUnmounted(() => {
                 v-if="msg.groundingBlocked"
                 class="mt-2"
                 :payload="msg.groundingBlocked"
-                :disabled="isProcessing"
+                :disabled="isProcessing || pendingPermissionLocking"
                 @action="(action) => handleGroundingAction(msg.groundingBlocked, action)"
               />
 
@@ -5148,14 +5218,14 @@ onUnmounted(() => {
                 <BusinessConfirmationCard
                   v-if="msg.businessConfirmation"
                   :payload="msg.businessConfirmation"
-                  :disabled="isProcessing"
+                  :disabled="isProcessing || pendingPermissionLocking"
                   @submit="(payload) => submitBusinessConfirmation(msg, payload)"
                 />
 
                 <UserQuestionCard
                   v-if="msg.userQuestion"
                   :payload="msg.userQuestion"
-                  :disabled="isProcessing"
+                  :disabled="isProcessing || pendingPermissionLocking"
                   @submit="(payload) => submitUserQuestion(msg, payload)"
                   @option-action="handleUserQuestionOptionAction"
                 />
@@ -5285,7 +5355,7 @@ onUnmounted(() => {
         <ChatInput
           ref="chatInputRef"
           v-model="userInput"
-          :is-processing="isProcessing || remoteRunBusy"
+          :is-processing="isProcessing || remoteRunBusy || pendingPermissionLocking"
           :is-submitting="sendLocked"
           :show-shortcuts="debugConfig.showShortcuts"
           :slash-commands="slashCommands"

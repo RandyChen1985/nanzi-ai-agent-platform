@@ -6,8 +6,9 @@ import {
   resolveFileTypeVisual,
   type FileTypeCategory,
 } from '@/utils/fileTypeVisual'
-import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash } from '@/utils/workspaceFilePreview'
+import { canPreviewWorkspaceFile, downloadWorkspaceFile, createWorkspaceEntry, renameWorkspaceEntry, deleteWorkspaceEntry, copyTextToClipboard, restoreWorkspaceEntry, purgeWorkspaceEntry, emptyWorkspaceTrash, extractWorkspaceArchive } from '@/utils/workspaceFilePreview'
 import WorkspaceActionMenu from '@/components/embed/WorkspaceActionMenu.vue'
+import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectorySaveDialog.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { planBatchDelete, selectAllState, toggleSelectAllPaths } from '@/utils/workspaceBatchSelection'
 import { buildWorkspaceActionEntries } from '@/utils/workspaceActionEntries'
@@ -78,6 +79,8 @@ const userWorkspaceRoot = ref<string>('')
 const createDialog = ref<{ kind: 'file' | 'dir'; parentPath: string; name: string } | null>(null)
 const createSubmitting = ref(false)
 const renameDialog = ref<{ path: string; name: string; isDir: boolean } | null>(null)
+const extractDialog = ref<{ item: WorkspaceItemLike; parentPath: string; defaultName: string } | null>(null)
+const extractSubmitting = ref(false)
 const deleteTarget = ref<{ path: string; name: string; isDir: boolean; isPublic?: boolean } | null>(null)
 const purgeTarget = ref<{ path: string; name: string; isDir: boolean } | null>(null)
 const emptyTrashConfirm = ref(false)
@@ -966,6 +969,9 @@ const runWorkspaceAction = (key: WorkspaceActionKey) => {
     case 'download':
       if (item) void downloadItem(item)
       break
+    case 'extract':
+      if (item) openExtractDialog(item)
+      break
     case 'copy-path':
       if (item) void copyItemPath(item.path)
       break
@@ -1012,6 +1018,50 @@ const startCreateEntry = (kind: 'file' | 'dir', parentPath: string) => {
     name: kind === 'file' ? '未命名.md' : '新建文件夹',
   }
   closeActionMenu()
+}
+
+/** 压缩包名去后缀：与后端 archive_stem 保持同一套后缀，避免默认文件夹名不一致。 */
+const ARCHIVE_SUFFIXES = ['.tar.gz', '.tgz', '.tar', '.zip']
+const archiveStem = (name: string) => {
+  const lower = name.toLowerCase()
+  const suffix = ARCHIVE_SUFFIXES.find((item) => lower.endsWith(item))
+  return suffix ? name.slice(0, name.length - suffix.length) : name.replace(/\.[^.]+$/, '')
+}
+
+const openExtractDialog = (item: WorkspaceItemLike) => {
+  extractDialog.value = {
+    item,
+    parentPath: currentPath.value,
+    defaultName: archiveStem(resolveItemDisplayName(item)),
+  }
+  closeActionMenu()
+}
+
+const closeExtractDialog = () => {
+  if (extractSubmitting.value) return
+  extractDialog.value = null
+}
+
+const submitExtract = async (payload: { parentPath: string; name: string }) => {
+  const state = extractDialog.value
+  if (!state || extractSubmitting.value) return
+  extractSubmitting.value = true
+  try {
+    const res = await extractWorkspaceArchive({
+      archivePath: state.item.path,
+      targetDir: payload.parentPath,
+      subdir: payload.name,
+    })
+    const data = res.data?.data
+    const count = Number(data?.file_count ?? 0)
+    showToast(`已解压 ${count} 个文件到 ${data?.path || payload.parentPath}`, 'success')
+    extractDialog.value = null
+    await fetchDirectory(currentPath.value, { preserveSearch: true })
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || '解压失败，请稍后重试', 'error')
+  } finally {
+    extractSubmitting.value = false
+  }
 }
 
 const cancelCreateEntry = () => {
@@ -2881,6 +2931,22 @@ onUnmounted(() => {
       </div>
     </div>
   </Teleport>
+
+  <!-- 解压目标选择：与「保存到目录」共用同一个目录树，语义靠这几项文案区分 -->
+  <WorkspaceDirectorySaveDialog
+    :visible="!!extractDialog"
+    :conversation-id="conversationId"
+    :default-filename="extractDialog?.defaultName || ''"
+    :default-path="extractDialog?.parentPath || null"
+    title="解压到目录"
+    subtitle="压缩包只读；解压目标必须是你可以写入的目录"
+    name-label="子文件夹名"
+    submit-label="开始解压"
+    :submitting="extractSubmitting"
+    allow-empty-name
+    @close="closeExtractDialog"
+    @save="submitExtract"
+  />
 
   <!-- 批量删除二次确认：复用仓库通用 ConfirmModal，列出待删项与跳过项，
        避免「一次点击删掉一批」且用户记不清自己勾了什么 -->

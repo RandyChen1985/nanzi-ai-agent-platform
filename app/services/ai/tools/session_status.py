@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import sys
+import sysconfig
 from typing import Any
 
 from app.core.context import get_current_agent_context, get_execution_option
@@ -158,6 +159,94 @@ def _runtime_env_summary() -> dict[str, Any]:
             "release": platform.release(),
             "machine": platform.machine(),
         },
+    }
+
+
+#: 沙箱容器内默认解释器（AgentScope 网关 venv）。这是镜像约定而非探测结果，
+#: 与 ``_runtime_env_summary`` 描述的后端进程解释器是两回事。
+_SANDBOX_GATEWAY_PYTHON = "/root/.agentscope/.venv/bin/python"
+
+
+def _backend_site_packages() -> str | None:
+    """local 策略下第三方包装进的位置（后端 venv 的 purelib）。"""
+    try:
+        return sysconfig.get_paths().get("purelib")
+    except Exception:  # pragma: no cover - sysconfig 极少数平台会缺键
+        return None
+
+
+def _sandbox_runtime_summary(sandbox_policy: Any) -> dict[str, Any]:
+    """沙箱容器内的 Python 环境事实，供模型自查“包装到哪、丢不丢”。
+
+    刻意**不进入容器探测**（一次状态查询不该顺手拉起沙箱），只回报平台配置 +
+    镜像约定。存在的意义是纠正一个高频误判：模型看到后端 ``python`` 版本就以为
+    沙箱里是同一个解释器，于是 ``pip install`` 装在系统 Python 上，默认 ``python``
+    却 import 不到。
+    """
+    policy = str(sandbox_policy or "").strip().lower()
+    if policy in {"docker", "k8s"}:
+        return {
+            "policy": policy,
+            "python": {
+                "interpreter": _SANDBOX_GATEWAY_PYTHON,
+                "note": (
+                    "容器内默认 python 是 AgentScope 网关 venv；裸 pip 指向系统 Python"
+                    "（装进 /usr/local），默认 python 看不到装上的包"
+                ),
+            },
+            "uv": "/usr/local/bin/uv",
+            "persistent_packages_dir": "/workspace/.pylibs",
+            "install_hint": (
+                "uv pip install --target /workspace/.pylibs <包名>；"
+                "执行时 PYTHONPATH=/workspace/.pylibs python ..."
+            ),
+            "ephemeral": (
+                "容器可写层（pip/apt/npm 装的包、/tmp、后台进程、export 的环境变量）"
+                "在空闲回收或重启后消失；仅 /workspace 保留"
+            ),
+        }
+    if policy == "local":
+        return {
+            "policy": "local",
+            "python": {
+                "interpreter": sys.executable,
+                "note": "Bash 与后端同环境，没有独立沙箱解释器",
+            },
+            "uv": None,
+            "persistent_packages_dir": _backend_site_packages(),
+            "install_hint": (
+                "local：`pip install <包名>` 直接装进后端环境，对宿主机全局生效"
+                "（所有用户、所有会话共用）；装完要告知用户这是平台级变更，"
+                "不要用 --upgrade/-U 升级平台已有依赖"
+            ),
+            "ephemeral": (
+                "包装在后端 venv 里，重启服务不丢；重建镜像或重装依赖后失效，"
+                "且升级已有依赖会影响平台主服务与所有用户"
+            ),
+        }
+    if policy in {"e2b", "ssh"}:
+        # 这两种远端沙箱不用平台镜像：解释器与工作区根由远端决定（e2b 是
+        # /home/user/workspace，ssh 取 sandbox_ssh_remote_workdir），不能照抄
+        # docker/k8s 的 venv 路径。
+        return {
+            "policy": policy,
+            "python": None,
+            "uv": None,
+            "persistent_packages_dir": None,
+            "install_hint": (
+                "远端沙箱不使用平台镜像：先用 `command -v uv python pip` 确认实际解释器与工具，"
+                "装依赖请落到工作区（如 `uv pip install --target ./pylibs`）并显式设置 PYTHONPATH；"
+                "不要假设 /root/.agentscope/.venv 存在"
+            ),
+            "ephemeral": "远端沙箱实例回收后，非挂载路径下的改动会丢失；以工作区目录为准",
+        }
+    return {
+        "policy": policy or None,
+        "python": None,
+        "uv": None,
+        "persistent_packages_dir": None,
+        "install_hint": "未知沙箱策略，无法给出依赖安装口径；不要凭猜测安装",
+        "ephemeral": None,
     }
 
 
@@ -413,6 +502,8 @@ async def session_status() -> str:
     当不确定会话、设备、模型上下文窗口、工作区、文档目录、用户身份、最近
     Token 统计或运行环境（容器 / 宿主机、Python 与系统版本）时调用；这些信息
     不可用时返回 null 或限制说明，不要猜测。不接受参数，不修改任何会话状态。
+    ``runtime_env`` 是**后端进程**的环境；沙箱容器内的解释器、依赖安装口径与
+    持久目录看 ``sandbox_runtime``（装依赖前先读它，别按后端 Python 猜）。
     context_usage 包含 physical_window、history_budget、completion_reserve_tokens
     和 request_input_budget 等上下文预算字段（JSON keys: "physical_window",
     "history_budget", "completion_reserve_tokens", "request_input_budget"）。
@@ -422,6 +513,7 @@ async def session_status() -> str:
     usage = await _last_model_call_stats(context)
     estimate = await _context_usage_estimate(context)
     runtime_env = _runtime_env_summary()
+    sandbox_runtime = _sandbox_runtime_summary(workspace.get("sandbox_policy"))
 
     limitations = [
         "device_type 和 display_hint 来自客户端请求，仅作为客户端上报信息",
@@ -430,6 +522,8 @@ async def session_status() -> str:
         "当前上下文 Token 和剩余容量没有可靠实时估算时返回 null",
         "MCP 工具列表仅代表本次运行时实际解析并挂载的工具",
         "runtime_env 描述的是后端进程所在机器/容器，可能与用户客户端环境不同",
+        "sandbox_runtime 来自沙箱策略与镜像约定（未进入容器探测），"
+        "与 runtime_env 的后端解释器不是同一个环境",
         *workspace_limitations,
     ]
     if context is None:
@@ -450,6 +544,7 @@ async def session_status() -> str:
         "user": _user_summary(context),
         "workspace": workspace,
         "runtime_env": runtime_env,
+        "sandbox_runtime": sandbox_runtime,
         "resources": _resource_summary(context),
         "attachments": _attachments_summary(context),
         "limitations": limitations,

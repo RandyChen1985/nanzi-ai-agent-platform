@@ -665,6 +665,10 @@ class ChatCancelResponse(BaseModel):
 
 class ToolPermissionConfirmRequest(BaseModel):
     confirmed: bool = Field(..., description="是否允许执行该工具调用")
+    scope: Literal["once", "session"] = Field(
+        default="once",
+        description="授权范围：once 仅本次；session 本会话内该工具不再确认",
+    )
 
 
 class ExternalExecutionResultItem(BaseModel):
@@ -2435,6 +2439,7 @@ async def confirm_tool_permission(
         async for chunk in agent_service.resume_agentscope_permission_stream(
             permission_request_id=permission_request_id,
             confirmed=confirm_request.confirmed,
+            grant_scope=confirm_request.scope,
             user_info=user_info,
         ):
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
@@ -2444,6 +2449,59 @@ async def confirm_tool_permission(
         sse_generator(),
         media_type="text/event-stream",
         headers=SSE_RESPONSE_HEADERS,
+    )
+
+
+@router.get(
+    "/permissions/grants/{conversation_id}",
+    summary="列出本会话已放行的工具",
+    description=(
+        "返回当前用户在该会话内已授权「本会话总是允许」的工具名。"
+        "注意：历史回放只重建时间线、不重建确认卡片，撤销入口目前只在本轮页面内可见。"
+    ),
+)
+async def list_tool_permission_grants(
+    conversation_id: str,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.ai.runtime.agentscope.session_permission_grants import (
+        session_permission_grants,
+    )
+
+    tool_names = await session_permission_grants.list_grants(
+        user_info.get("user_id") or user_info.get("id"),
+        conversation_id,
+    )
+    return StandardResponse(
+        data={"conversation_id": conversation_id, "tool_names": tool_names}
+    )
+
+
+@router.delete(
+    "/permissions/grants/{conversation_id}/{tool_name}",
+    summary="撤销本会话的工具授权",
+    description="撤销后该工具在本会话内重新回到逐次确认。",
+)
+async def revoke_tool_permission_grant(
+    conversation_id: str,
+    tool_name: str,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.ai.runtime.agentscope.session_permission_grants import (
+        session_permission_grants,
+    )
+
+    revoked = await session_permission_grants.revoke(
+        user_info.get("user_id") or user_info.get("id"),
+        conversation_id,
+        tool_name,
+    )
+    return StandardResponse(
+        data={
+            "conversation_id": conversation_id,
+            "tool_name": tool_name,
+            "revoked": revoked,
+        }
     )
 
 

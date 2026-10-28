@@ -2445,6 +2445,7 @@ class AgentService:
         *,
         permission_request_id: str,
         confirmed: bool,
+        grant_scope: str = "once",
         user_info: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """恢复 AgentScope 工具权限确认流；委托至 AgentScopeResumeHandler。"""
@@ -2454,6 +2455,7 @@ class AgentService:
             self,
             permission_request_id=permission_request_id,
             confirmed=confirmed,
+            grant_scope=grant_scope,
             user_info=user_info,
         ):
             yield chunk

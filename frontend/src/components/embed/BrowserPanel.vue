@@ -1048,7 +1048,7 @@
                   </div>
                   <div>
                     <h3 class="text-xs font-bold text-gray-900 dark:text-gray-100">服务端浏览器环境未就绪</h3>
-                    <p class="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">开启远程浏览器与网页自动化需在服务器安装相关组件</p>
+                    <p class="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">开启远程浏览器与网页自动化需在服务器安装相关组件（平台服务端依赖，请勿在用户沙箱内执行）</p>
                   </div>
                 </div>
 

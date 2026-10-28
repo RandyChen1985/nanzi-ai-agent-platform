@@ -250,6 +250,138 @@ async def test_generate_message_does_not_double_count_complete_terminal_frame():
 
 
 @pytest.mark.asyncio
+async def test_stream_messages_does_not_repeat_complete_terminal_frame():
+    # 回归（P1，直出/synthesis 路径）：stream_messages 逐个 chunk 转发，但终帧
+    # content 是整段完整正文（AgentScope ChatResponse.is_last 契约）。消费方都是
+    # 增量拼接（answer_delta += / full_content +=），原样转发终帧会让正文完整出现
+    # 两遍——这正是「同一段回答在页面渲染两遍」的成因。
+    from agentscope.message import TextBlock
+    from agentscope.model import ChatResponse
+
+    from app.services.ai.runtime.agentscope.chat import AgentScopeChatClient
+    from app.services.ai.runtime.agentscope.messages import (
+        RuntimeContentBlock,
+        RuntimeMessage,
+    )
+
+    async def fake_stream() -> AsyncIterator[ChatResponse]:
+        yield ChatResponse(content=[TextBlock(text="任务信息\n")], is_last=False)
+        yield ChatResponse(content=[TextBlock(text="设备总数 1930")], is_last=False)
+        # 终帧 = 增量拼合后的完整正文
+        yield ChatResponse(
+            content=[TextBlock(text="任务信息\n设备总数 1930")],
+            is_last=True,
+        )
+
+    class FakeNativeModel:
+        async def __call__(self, messages, tools=None, **kwargs):
+            return fake_stream()
+
+    client = AgentScopeChatClient(FakeNativeModel())
+
+    parts = []
+    async for chunk in client.stream_messages(
+        [
+            RuntimeMessage(
+                role="user",
+                content=[RuntimeContentBlock(type="text", text="巡检结果")],
+            )
+        ]
+    ):
+        parts.append(chunk.content or "")
+
+    # 消费方的拼接结果必须只有一份正文
+    assert "".join(parts) == "任务信息\n设备总数 1930"
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_keeps_terminal_text_when_it_is_not_cumulative():
+    # 防御：个别后端/自定义模型会自己产 is_last=True 且 content 只是增量尾部。
+    # 此时不能因为「已经发过正文」就整帧丢弃，否则会丢掉最后一段回答。
+    from agentscope.message import TextBlock
+    from agentscope.model import ChatResponse
+
+    from app.services.ai.runtime.agentscope.chat import AgentScopeChatClient
+    from app.services.ai.runtime.agentscope.messages import (
+        RuntimeContentBlock,
+        RuntimeMessage,
+    )
+
+    async def fake_stream() -> AsyncIterator[ChatResponse]:
+        yield ChatResponse(content=[TextBlock(text="前半段，")], is_last=False)
+        yield ChatResponse(content=[TextBlock(text="后半段")], is_last=True)
+
+    class FakeNativeModel:
+        async def __call__(self, messages, tools=None, **kwargs):
+            return fake_stream()
+
+    client = AgentScopeChatClient(FakeNativeModel())
+
+    parts = []
+    async for chunk in client.stream_messages(
+        [
+            RuntimeMessage(
+                role="user",
+                content=[RuntimeContentBlock(type="text", text="x")],
+            )
+        ]
+    ):
+        parts.append(chunk.content or "")
+
+    assert "".join(parts) == "前半段，后半段"
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_keeps_usage_and_tool_calls_from_terminal_frame():
+    # 抑制终帧正文时，必须保留终帧携带的 usage 与 tool_calls：
+    # usage 是唯一的计费/统计来源，tool_calls 只在终帧完整给出。
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatResponse, ChatUsage
+
+    from app.services.ai.runtime.agentscope.chat import AgentScopeChatClient
+    from app.services.ai.runtime.agentscope.messages import (
+        RuntimeContentBlock,
+        RuntimeMessage,
+    )
+
+    async def fake_stream() -> AsyncIterator[ChatResponse]:
+        yield ChatResponse(content=[TextBlock(text="我先查一下")], is_last=False)
+        yield ChatResponse(
+            content=[
+                TextBlock(text="我先查一下"),
+                ToolCallBlock(id="call_1", name="run_patrol", input='{"vqd": 1}'),
+            ],
+            is_last=True,
+            usage=ChatUsage(input_tokens=11, output_tokens=7, time=0.5),
+        )
+
+    class FakeNativeModel:
+        async def __call__(self, messages, tools=None, **kwargs):
+            return fake_stream()
+
+    client = AgentScopeChatClient(FakeNativeModel())
+
+    chunks = []
+    async for chunk in client.stream_messages(
+        [
+            RuntimeMessage(
+                role="user",
+                content=[RuntimeContentBlock(type="text", text="x")],
+            )
+        ]
+    ):
+        chunks.append(chunk)
+
+    assert "".join(chunk.content or "" for chunk in chunks) == "我先查一下"
+    assert chunks[-1].tool_calls[0]["name"] == "run_patrol"
+    assert chunks[-1].usage_metadata == {
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "total_tokens": 18,
+    }
+
+
+@pytest.mark.asyncio
 async def test_chat_client_generate_structured_dict_fail_open_and_success():
     from pydantic import BaseModel, Field
 

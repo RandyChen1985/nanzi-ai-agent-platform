@@ -130,6 +130,9 @@ def _update_log(existing: Dict[str, Any], chunk: Dict[str, Any]) -> None:
         existing["temperature"] = chunk["temperature"]
     if chunk.get("tool_result_state"):
         existing["tool_result_state"] = str(chunk["tool_result_state"])
+    # 「本会话已授权」是一次性事实，只在携带时写入，历史回放仍能看到这条免确认凭证。
+    if chunk.get("auto_approved"):
+        existing["auto_approved"] = True
     if chunk.get("status") is not None:
         existing["status"] = str(chunk.get("status") or existing.get("status") or "success")
     if chunk.get("category") is not None:
@@ -489,7 +492,15 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         apply_stream_chunk(state, {
             "type": "log",
             "id": f"permission_{chunk.get('permission_request_id') or _next_id(state, 'permission')}",
-            "title": "已拒绝工具调用" if chunk.get("status") == "rejected" else "已允许工具调用",
+            "title": (
+                "已拒绝工具调用"
+                if chunk.get("status") == "rejected"
+                else (
+                    "已允许工具调用（本会话）"
+                    if (chunk.get("session_grant") or {}).get("granted")
+                    else "已允许工具调用"
+                )
+            ),
             "details": f"确认请求: {chunk.get('permission_request_id') or ''}",
             "status": "success",
             "category": "permission",
@@ -555,6 +566,8 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         log["temperature"] = chunk["temperature"]
     if chunk.get("tool_result_state"):
         log["tool_result_state"] = str(chunk["tool_result_state"])
+    if chunk.get("auto_approved"):
+        log["auto_approved"] = True
 
     parent_id = chunk.get("parent_id")
     if parent_id is not None and parent_id != log_id:
@@ -628,6 +641,9 @@ def _finalize_log(item: Dict[str, Any]) -> Dict[str, Any]:
         copied["temperature"] = item.get("temperature")
     if item.get("tool_result_state") is not None:
         copied["tool_result_state"] = item.get("tool_result_state")
+    # 「本会话已授权」是审计留痕：定稿丢掉的话，刷新/回放就看不到这条免确认凭证。
+    if item.get("auto_approved") is True:
+        copied["auto_approved"] = True
     if item.get("children"):
         copied["children"] = [_finalize_log(child) for child in item["children"]]
     return copied
