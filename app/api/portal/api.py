@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square
+from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, skill_gallery, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square
 
 portal_router = APIRouter()
 
@@ -81,6 +81,10 @@ portal_router.include_router(changelog.router, prefix="/changelog", tags=["变�
 
 # 17. 个人技能管理 (Personal Skills) — 必须先于 /skills/{skill_id} 注册，避免 GET /skills/personal 被平台路由误匹配
 portal_router.include_router(personal_skills.router, prefix="/skills/personal", tags=["个人技能"], dependencies=[Depends(require_api_key)])
+
+# 17.05 技能广场 (Skill Gallery) — 必须排在 /skills/{skill_id} 之前，
+#       否则 GET /skills/gallery 会被平台技能详情路由当成 skill_id="gallery" 吞掉
+portal_router.include_router(skill_gallery.router, prefix="/skills/gallery", tags=["技能广场"], dependencies=[Depends(require_api_key)])
 
 # 17.1 智能体技能管理 (Skills Management)
 portal_router.include_router(skills.router, prefix="/skills", tags=["技能管理"], dependencies=[Depends(require_api_key)])

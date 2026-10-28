@@ -249,14 +249,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="space-y-4">
-    <div class="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">资源广场</h2>
-        <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-          公共级与部门级知识库、平台数据集，找到需要的资源直接申请。
-        </p>
-      </div>
+  <section class="space-y-3">
+    <!-- 标题由工作台的 tab 承担：这里再来一个「资源广场」就是同一句话写两遍 -->
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="text-xs text-gray-500 dark:text-gray-400">
+        公共级与部门级知识库、平台数据集，找到需要的资源直接申请。
+      </p>
       <div class="flex flex-wrap gap-2 text-[11.5px] font-semibold">
         <span class="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 dark:border-gray-700 dark:bg-gray-800">
           可申请 <b class="text-primary">{{ summary.apply }}</b>
