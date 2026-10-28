@@ -119,6 +119,8 @@ const userInfo = ref({
   permissions: {},
   created_at: "",
   remark: "",
+  // 自定义头像短路径（/auth/me 下发）；为空表示未上传，回退姓名首字。
+  avatar_url: "" as string | null,
 });
 
 /** 左下角头像简称：中文取后两字、英文取前两字母（规则见 utils/userInitial） */
@@ -761,7 +763,16 @@ onMounted(() => {
           ]"
           title="查看个人信息"
         >
+          <!-- 已上传自定义头像时优先渲染图片（圆形、object-cover）；否则维持姓名首字 -->
+          <img
+            v-if="userInfo.avatar_url"
+            :src="userInfo.avatar_url"
+            alt="我的头像"
+            class="flex-shrink-0 rounded-full object-cover ring-1 ring-black/5"
+            :class="sidebarInitialClass"
+          />
           <div
+            v-else
             class="rounded-lg flex flex-shrink-0 items-center justify-center font-bold uppercase leading-none tracking-tight transition-colors"
             :class="[
               sidebarInitialClass,

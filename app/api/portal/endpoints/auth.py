@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request, BackgroundTasks, File, UploadFile
 import logging
 import re
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core import avatar_assets
 from app.core.config import settings
 from app.core.dependencies import require_api_key, is_secure_request as _is_secure_request
 from app.core.orm import get_db_session
@@ -817,6 +818,11 @@ async def get_current_user_info(
     # 同理顶层与 data 内各放一份：本特性的验收用例断言顶层 key，而前端读 data.email。
     current_email = (user_obj.email if user_obj else None) or user.get("email", "") or ""
 
+    # 头像与邮箱同因：require_api_key 的 user dict 缓存 3600s，刚换/删过头像的老会话
+    # 会拿到旧 URL（甚至会继续显示一张已经删掉的文件）。因此以实时查库结果为唯一真源；
+    # None = 未设置自定义头像，由前端用姓名首字兜底，后端不生成任何默认图 URL。
+    current_avatar_url = (user_obj.avatar_url if user_obj else None) or None
+
     # 个人中心「测试发信」按钮的显示条件之一。放在这个需登录的接口里而不是
     # /config/public：平台邮件是否配置属于内部状态，不该暴露给未登录访问者。
     from app.services.email_delivery_service import EmailDeliveryService
@@ -843,6 +849,7 @@ async def get_current_user_info(
             "user_name": user.get("user_name"),
             "real_name": user.get("real_name") or user.get("user_name"),
             "email": current_email,
+            "avatar_url": current_avatar_url,
             "mail_service_available": mail_service_available,
             "role": user.get("role"),
             "dept_code": user.get("dept_code"),
@@ -1078,6 +1085,98 @@ async def update_my_profile(
         user.get("user_name"), old_email, email,
     )
     return {"status": "success", "email": email or ""}
+
+
+@router.post("/me/avatar", summary="上传我的自定义头像")
+async def upload_my_avatar(
+    file: UploadFile = File(...),
+    user: Dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """上传当前登录用户的自定义头像：落盘 → 写库 → 返回 URL。
+
+    与智能体头像刻意不同：个人中心没有「表单保存」这一步，用户点上传就是最终意图，
+    所以这里上传成功即写 `ai_agent_users.avatar_url` 并 commit；智能体那边仍要求
+    「上传只落盘、PUT 才写库」，是为了保住表单的撤销语义。两处不要互相统一。
+
+    头像落在该用户自己的 `data/uploads/avatars/{user_id}/` 下（见 `avatar_assets`），
+    清理范围仅限自己目录，绝不波及其它用户或 `data/branding` 的两处头像目录。
+
+    显式 `Depends(require_api_key)`：`auth.router` 是唯一没有整组挂鉴权的 router，
+    漏挂就是匿名可上传（还能覆盖任意用户的头像目录）。理由同 `PATCH /me/profile`。
+    """
+    from app.models.user import User
+
+    user_id = int(user.get("id") or user.get("user_id"))
+
+    # 类型先判（无需读文件），再判大小：与智能体头像上传同一顺序。
+    raw_ext = avatar_assets.resolve_avatar_extension(file.content_type, file.filename)
+    ext = avatar_assets.resolve_user_avatar_extension(file.content_type, file.filename)
+    if not ext:
+        # svg 在全局白名单里是合法类型，这里被拒是用户头像链路**刻意**的安全取舍
+        # （会渲染在别人页面上，svg 可带脚本），文案必须说清原因，别让人以为格式写错。
+        if raw_ext in avatar_assets.USER_AVATAR_FORBIDDEN_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=avatar_assets.USER_AVATAR_SVG_REJECTED_MESSAGE,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=avatar_assets.USER_AVATAR_UNSUPPORTED_TYPE_MESSAGE,
+        )
+
+    content = await file.read()
+    if len(content) > avatar_assets.MAX_AVATAR_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="头像不能超过 2MB",
+        )
+
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+
+    avatar_url = avatar_assets.save_user_avatar(user_id, content, ext)
+    target.avatar_url = avatar_url
+    await db.commit()
+
+    logger.info(
+        "用户上传自定义头像: user_name=%s bytes=%s url=%s",
+        user.get("user_name"), len(content), avatar_url,
+    )
+    return {"avatar_url": avatar_url}
+
+
+@router.delete("/me/avatar", summary="删除我的自定义头像（回落姓名首字）")
+async def delete_my_avatar(
+    user: Dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """删除自定义头像：删文件 + `avatar_url = None`，并且**幂等**。
+
+    重复删除必须是 200：按钮可能被连点、文件可能已被运维清理、库里可能本来就是 NULL，
+    这些都不算错误。文件与库分别处理、互不依赖，任一侧为空都继续走完另一侧。
+
+    只删自己 user_id 目录下的 `avatar_*`（`delete_user_avatar` 内部保证），
+    这样即便 `avatar_url` 指向过别的用户目录（历史脏数据），也删不到别人的文件。
+    """
+    from app.models.user import User
+
+    user_id = int(user.get("id") or user.get("user_id"))
+
+    removed = avatar_assets.delete_user_avatar(user_id)
+
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+    target.avatar_url = None
+    await db.commit()
+
+    logger.info(
+        "用户删除自定义头像: user_name=%s removed_files=%s", user.get("user_name"), removed
+    )
+    return {"avatar_url": None}
+
 
 class EnableTwoFactorRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6, description="Google 身份验证器 6 位动态验证码")

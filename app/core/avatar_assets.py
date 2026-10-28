@@ -1,13 +1,15 @@
-"""头像图片的校验与落盘口径（全局 AI 头像 / 智能体头像共享）。
+"""头像图片的校验与落盘口径（全局 AI 头像 / 智能体头像 / 用户头像共享）。
 
-两类头像都写入 `data/branding` 下的静态目录（由 `app/main.py` 挂载到 `/branding`），
+前两类头像写入 `data/branding` 下的静态目录（由 `app/main.py` 挂载到 `/branding`），
+用户头像写入 `data/uploads/avatars`（挂载到 `/static/uploads`），
 类型白名单、大小上限与「时间戳唯一文件名」约定必须完全一致，因此集中在这里，
-避免两处拷贝各自漂移。
+避免三处拷贝各自漂移。
 
-目录约定（**不可混用**）：
+目录约定（**不可混用，三足鼎立，互不清理**）：
 
-- `data/branding/avatars/`       全局 AI 头像；上传成功时会清空该目录下的 `agent_avatar*`
-- `data/branding/agent-avatars/` 智能体头像；清理时**只允许**删自己 `{key}_*` 前缀的文件
+- `data/branding/avatars/`           全局 AI 头像；上传成功时会清空该目录下的 `agent_avatar*`
+- `data/branding/agent-avatars/`     智能体头像；清理时**只允许**删自己 `{key}_*` 前缀的文件
+- `data/uploads/avatars/{user_id}/`  用户头像；清理时**只允许**删自己 user_id 目录下的 `avatar_*`
 
 智能体头像文件分两类前缀，同样不可混用：
 
@@ -17,6 +19,11 @@
 历史坑：全局头像上传用 `agent_avatar*` 通配清理旧文件。若智能体头像落在同一目录
 或使用同前缀，上传任意一个智能体头像都会连带删除全局头像和其它智能体头像，
 因此这里用独立子目录 + 独立前缀强制隔离。
+
+用户头像沿用同一教训，并按用户再分一层子目录：每个用户的旧头像只在自己的
+`{user_id}/` 里删 `avatar_*`，绝不跨用户、绝不跨到 `data/branding` 下的任何目录。
+「按用户分目录」比「按 `{user_id}_*` 前缀混放一个目录」更硬：即便将来有人写错通配，
+`glob` 也只会在单个用户目录内展开，删不到别人的文件。
 """
 import glob
 import os
@@ -43,6 +50,20 @@ BRANDING_AVATARS_URL = "/branding/avatars"
 # 智能体头像目录：必须与全局头像目录分离，见模块头部的历史坑说明。
 AGENT_AVATAR_DIR = os.path.join(BRANDING_ROOT_DIR, "agent-avatars")
 AGENT_AVATAR_URL = "/branding/agent-avatars"
+
+# 用户头像目录：个人中心上传的自定义头像，按 user_id 再分一层子目录，
+# 物理路径 `data/uploads/avatars/<user_id>/`，`app/main.py` 把 `data/uploads` 挂到 `/static/uploads`。
+# 刻意不放进 `data/branding`：品牌目录里有「上传全局头像时清空 agent_avatar*」的历史行为，
+# 用户头像一旦落进去，换个全局头像就可能连带删掉所有用户的自定义头像。
+USER_AVATAR_ROOT = os.path.join("data", "uploads", "avatars")
+USER_AVATAR_URL = "/static/uploads/avatars"
+# 用户头像文件名前缀：覆盖与删除都只认 `avatar_*`，同目录里的其它文件一概不碰。
+USER_AVATAR_FILE_PREFIX = "avatar"
+# 用户头像**不接受 svg**：它会被渲染在其他用户的浏览器页面上，而 svg 可内嵌 <script>。
+# `ALLOWED_AVATAR_TYPES` 含 svg 是给品牌图/智能体图标用的，用户头像链路单独剔除。
+USER_AVATAR_FORBIDDEN_EXTENSIONS = frozenset({".svg"})
+USER_AVATAR_UNSUPPORTED_TYPE_MESSAGE = "只支持 PNG/JPEG/WebP/GIF 格式"
+USER_AVATAR_SVG_REJECTED_MESSAGE = "用户头像不支持 SVG 格式（SVG 可携带脚本），请改用 PNG/JPEG/WebP/GIF"
 
 # 「待绑定」头像前缀：新建智能体流程中还没有 agent_id，先以该前缀落盘，
 # 保存成功后 URL 直接写进 avatar_url，无需再搬动文件。
@@ -170,3 +191,82 @@ def adopt_pending_avatar(
     except OSError:
         return avatar_url
     return f"{AGENT_AVATAR_URL}/{target_name}"
+
+
+# ---------------------------------------------------------------------------
+# 用户头像（个人中心）：每个用户一个子目录，清理范围严格限定在自己目录内
+# ---------------------------------------------------------------------------
+def resolve_user_avatar_extension(
+    content_type: Optional[str], filename: Optional[str]
+) -> Optional[str]:
+    """解析用户头像后缀：复用全局口径，再单独剔除 svg。
+
+    返回值与 `resolve_avatar_extension` 语义一致（None = 不接受）。svg 在这里被拒，
+    不是因为品牌/智能体头像的规则变了，而是用户头像多了一条「会渲染在别人页面上」
+    的攻击面，见 `USER_AVATAR_FORBIDDEN_EXTENSIONS` 的说明。
+    """
+    ext = resolve_avatar_extension(content_type, filename)
+    if ext in USER_AVATAR_FORBIDDEN_EXTENSIONS:
+        return None
+    return ext
+
+
+def _user_avatar_dir_path(user_id: object) -> str:
+    """只拼路径、**不建目录**：删除路径不该因为「删一个尚未上传过的用户」而先造目录。"""
+    return os.path.join(USER_AVATAR_ROOT, str(int(user_id)))
+
+
+def user_avatar_dir(user_id: object) -> str:
+    """返回该用户的头像目录并确保存在（`.../avatars/{int(user_id)}`）。
+
+    入参必须是可 `int()` 的 user_id：目录名只接受整数，杜绝把任意字符串当目录片段
+    拼进路径（`../` 之类的穿越在 `int()` 这一步就抛 ValueError 了）。
+    """
+    directory = _user_avatar_dir_path(user_id)
+    os.makedirs(directory, exist_ok=True)
+    return directory
+
+
+def save_user_avatar(user_id: object, content: bytes, ext: str) -> str:
+    """落盘用户头像并返回可直接写库的 URL。
+
+    - 先删本用户目录下的旧 `avatar_*`，再以 `avatar_<毫秒时间戳>{ext}` 落盘：
+      时间戳保证 URL 唯一，绕过浏览器静态强缓存；毫秒是因为秒级在「连续更换头像」
+      时可能撞名，撞名会把刚写的文件当成旧文件删掉。
+    - 清理范围**只有** `user_avatar_dir(user_id)`，绝不跨用户、绝不跨目录：
+      全局头像上传会清空 `data/branding/avatars/`，智能体头像只删自己的
+      `{key}_*`，本函数只删 `avatars/{user_id}/avatar_*`——三者互不清理。
+    - svg 在资产层再兜一道：即便调用方绕过了端点校验，也不会落出可执行脚本的图片。
+    """
+    if not ext or "/" in ext or "\\" in ext or ext in USER_AVATAR_FORBIDDEN_EXTENSIONS:
+        raise ValueError(f"非法的用户头像后缀: {ext!r}")
+
+    directory = user_avatar_dir(user_id)
+    delete_user_avatar(user_id)
+
+    filename = f"{USER_AVATAR_FILE_PREFIX}_{int(time.time() * 1000)}{ext}"
+    with open(os.path.join(directory, filename), "wb") as handle:
+        handle.write(content)
+
+    return f"{USER_AVATAR_URL}/{int(user_id)}/{filename}"
+
+
+def delete_user_avatar(user_id: object) -> int:
+    """删除该用户目录下的 `avatar_*`，返回删除个数；幂等（不存在即返回 0）。
+
+    只匹配**自己 user_id 目录**下的 `avatar_*`：这是模块头部历史坑的直接教训——
+    任何跨目录/跨用户通配都会把别人的头像删掉，所以这里连 `USER_AVATAR_ROOT` 都
+    只在拼路径时出现一次，glob 的展开范围天然被限制在单个用户目录里。
+    """
+    directory = _user_avatar_dir_path(user_id)
+    removed = 0
+    for path in glob.glob(os.path.join(directory, f"{USER_AVATAR_FILE_PREFIX}_*")):
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+                removed += 1
+        except OSError:
+            # 删除失败（权限/并发删除）不阻塞：旧文件残留最多多占一点磁盘，
+            # 而抛错会让「上传新头像」整体失败，体验更差。
+            pass
+    return removed

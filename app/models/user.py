@@ -19,6 +19,7 @@ class User(Base):
     user_name = Column(String(50), unique=True, nullable=False, index=True)
     real_name = Column(String(50), nullable=True)
     email = Column(String(254), nullable=True, index=True, comment='邮箱（小写归一化存储，全局唯一；NULL=未填写）')
+    avatar_url = Column(String(500), nullable=True, comment='自定义头像地址（/static/uploads/avatars/<user_id>/...；NULL=用姓名首字兜底）')
     role = Column(String(20), default="user") # admin, user
     # 部门两列都是**主部门派生快照**，唯一真源是 ai_agent_user_departments / ai_agent_departments。
     # 只能由 DepartmentService 维护；旧注释里的 "yovole/sh/dc1" 是早期外部组织树的遗留说明，
