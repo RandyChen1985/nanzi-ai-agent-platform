@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   getToolPermissionDisplay,
   type ToolPermissionDisplay,
@@ -15,6 +15,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: "submit", confirmed: boolean, scope?: "once" | "session"): void;
   (event: "revoke"): void;
+  (event: "discard"): void;
+  (event: "expire"): void;
 }>();
 
 const expanded = ref(props.payload.status === "pending");
@@ -46,8 +48,48 @@ const detailsId = computed(() => {
 });
 
 const isPending = computed(() => props.payload.status === "pending");
+
+/**
+ * 挂起确认的有效期是后端 `PENDING_CONFIRMATION_TTL_SECONDS`（10 分钟），过期后快照被删，
+ * 再点任何一个按钮都必然失败。卡片必须自己走到「已过期」并把按钮置灰，否则用户会以为
+ * 是按钮坏了。
+ */
+const nowSeconds = ref(Math.floor(Date.now() / 1000));
+let expiryTimer: any = null;
+const expiresAt = computed(() => {
+  const explicit = Number(props.payload.expires_at || 0);
+  return explicit > 0 ? explicit : 0;
+});
+const isExpired = computed(
+  () => isPending.value && expiresAt.value > 0 && nowSeconds.value >= expiresAt.value,
+);
+const expiresInSeconds = computed(() =>
+  expiresAt.value > 0 ? Math.max(0, expiresAt.value - nowSeconds.value) : 0,
+);
+const expiryHint = computed(() => {
+  if (!isPending.value) return "";
+  if (isExpired.value) return "这次确认已超时失效（超过 10 分钟未处理），请重新发起该任务。";
+  if (expiresInSeconds.value > 0 && expiresInSeconds.value <= 120) {
+    return `还剩 ${expiresInSeconds.value} 秒，超时后需要重新发起该任务。`;
+  }
+  return "";
+});
+
+onMounted(() => {
+  expiryTimer = window.setInterval(() => {
+    nowSeconds.value = Math.floor(Date.now() / 1000);
+  }, 1000);
+});
+
+onUnmounted(() => {
+  if (expiryTimer) window.clearInterval(expiryTimer);
+  expiryTimer = null;
+});
 const isSubmitting = computed(() => Boolean(props.payload.isSubmitting));
-const locked = computed(() => Boolean(props.disabled) || !isPending.value || isSubmitting.value);
+const locked = computed(
+  () => Boolean(props.disabled) || !isPending.value || isSubmitting.value || isExpired.value,
+);
+const canDiscard = computed(() => isPending.value && !isSubmitting.value);
 
 const cardContainerClass = computed(() => {
   if (!isPending.value) {
@@ -76,6 +118,8 @@ const iconContainerClass = computed(() => {
 
 const statusLabel = computed(() => {
   if (isSubmitting.value) return "提交中";
+  if (isExpired.value) return "已过期";
+  if (props.payload.discarded) return "已放弃";
   const labels: Record<PendingToolPermission["status"], string> = {
     pending: "待确认",
     approved: "已允许",
@@ -89,6 +133,12 @@ const statusLabel = computed(() => {
 
 const statusMessage = computed(() => {
   if (isSubmitting.value) return "正在提交确认，请稍候…";
+  if (props.payload.discarded) {
+    return "已放弃本轮，这条命令没有执行；需要时可以重新发起。";
+  }
+  if (isExpired.value) {
+    return "这次确认已超时失效（超过 10 分钟未处理），请重新发起该任务。";
+  }
   if (props.payload.sessionGrantRevoked) {
     return "已撤销本会话授权，下次调用该工具会重新确认。";
   }
@@ -161,6 +211,19 @@ function revoke() {
   if (!canRevoke.value) return;
   emit("revoke");
 }
+
+function discard() {
+  if (!canDiscard.value) return;
+  emit("discard");
+}
+
+// 过期必须“落”到状态上：卡片自己只是 computed，父组件的待确认锁看的是 status，
+// 不通知就会锁死输入框。父组件据此把 status 置为 expired，锁随之解除。
+watch(isExpired, (expired) => {
+  if (expired && props.payload.status === "pending" && !props.payload.discarded) {
+    emit("expire");
+  }
+});
 
 watch(
   () => props.payload.permission_request_id,
@@ -376,6 +439,15 @@ watch(
             </button>
           </div>
 
+          <p
+            v-if="expiryHint"
+            class="mt-2 text-[11px] leading-normal"
+            :class="isExpired ? 'font-semibold text-red-600 dark:text-red-400' : 'opacity-70'"
+            aria-live="polite"
+          >
+            {{ expiryHint }}
+          </p>
+
           <!-- 待确认时的底部操作栏 -->
           <div v-if="isPending" class="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <div v-if="isSubmitting" class="flex items-center gap-2 self-center text-xs opacity-75 sm:mr-auto" aria-live="polite">
@@ -387,6 +459,17 @@ watch(
               </span>
               <span>正在提交确认…</span>
             </div>
+            <button
+              v-if="canDiscard"
+              type="button"
+              class="min-h-[2.75rem] w-full rounded-lg px-2 py-1.5 text-xs font-medium opacity-70 underline decoration-dotted underline-offset-2 transition hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-45 sm:mr-auto sm:min-h-[2rem] sm:w-auto"
+              :disabled="isSubmitting"
+              aria-label="放弃本轮，不执行这条命令"
+              title="放弃后这一轮结束，命令不会执行"
+              @click="discard"
+            >
+              放弃本轮
+            </button>
             <button
               type="button"
               class="inline-flex min-h-[2.75rem] w-full items-center justify-center rounded-lg border border-current/20 bg-white/75 px-3 py-1.5 text-xs font-semibold opacity-80 shadow-2xs transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-[2rem] sm:w-auto dark:bg-gray-800/80 dark:hover:bg-gray-800"

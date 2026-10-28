@@ -874,6 +874,8 @@
                 :payload="msg.pendingPermission"
                 @submit="(confirmed, scope) => confirmPendingPermission(msg, confirmed, scope)"
                 @revoke="revokeSessionPermission(msg)"
+                @discard="discardPendingPermission(msg)"
+                @expire="expirePendingPermission(msg)"
               />
               <!-- External Tool Execution -->
               <div
@@ -1394,7 +1396,7 @@
       <ChatInput
         ref="chatInputRef"
         v-model="userInput"
-        :is-processing="isProcessing || remoteRunBusy || recoveryLocking"
+        :is-processing="isProcessing || remoteRunBusy || recoveryLocking || pendingPermissionLocking"
         :is-submitting="sendLocked"
         :show-shortcuts="!isMobile && config.showShortcuts"
         :slash-commands="effectiveSlashCommands"
@@ -3694,6 +3696,21 @@ const openEmbedTrace = (traceId: string) => {
 };
 // @conversation-scoped: isProcessing
 const isProcessing = ref(false);
+/**
+ * 有待处理确认卡时保持锁定。
+ *
+ * 挂起确认意味着后端这一轮已经停在「等你点按钮」上：interrupt 之后 SSE 流结束、
+ * run_status 会回报「不在跑」，`isProcessing` 随即收敛成 false。若只看 isProcessing，
+ * 输入框会被误判为空闲，用户以为这一轮结束了。这里把「有待确认」单列一项并入锁态，
+ * 由卡片上的「放弃本轮」显式解除。
+ */
+const pendingPermissionLocking = computed(() =>
+  messages.value.some(
+    (item: Message) =>
+      item.pendingPermission?.status === "pending"
+      || item.pendingExternalExecution?.status === "pending",
+  ),
+);
 // 流式读取是否在途：用于区分「流仍在读」与「流已死但界面还挂着 busy」。
 // @conversation-scoped: streamInFlight
 let streamInFlight = false;
@@ -6417,7 +6434,7 @@ const clearRunStatusNudge = () => {
 };
 
 const focusChatInputWhenReady = () => {
-  if (isMobile.value || isProcessing.value || remoteRunBusy.value || recoveryLocking.value || sendLocked.value) return;
+  if (isMobile.value || isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value || sendLocked.value) return;
   nextTick(() => chatInputRef.value?.focus());
 };
 
@@ -10801,7 +10818,7 @@ let pendingQuickSend: {
   /** 点击时已就绪的「本轮强制走查数智能体」意图，随补发一起生效。 */
   forceDataQueryAgent: boolean;
 } | null = null;
-const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || recoveryLocking.value || sendLocked.value;
+const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value || sendLocked.value;
 /** 输入框里是否已有用户自己的内容（文字或附件）。 */
 const hasUserComposerDraft = () =>
   Boolean(userInput.value.trim()) || Boolean(chatInputRef.value?.uploadedFiles?.length);
@@ -10925,7 +10942,7 @@ const handleGroundingAction = async (
   payload: GroundingBlockedPayload | undefined,
   action: GroundingBlockedAction,
 ) => {
-  if (!payload || isProcessing.value || remoteRunBusy.value || recoveryLocking.value || sendLocked.value) return;
+  if (!payload || isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value || sendLocked.value) return;
   if (action.kind === "grounding_retry") {
     const groundingAction = {
       ...(action.payload || {}),
@@ -11860,6 +11877,29 @@ const revokeSessionPermission = async (msg: Message) => {
   }
 };
 
+/**
+ * 「放弃本轮」：不执行这条命令，也不写任何会话授权。
+ *
+ * 纯粹的前端收尾——挂起快照留在服务端等 TTL 自然过期（不发请求就不会执行），
+ * 卡片翻成终态、锁态随之解除，用户可以接着发别的指令。
+ */
+const expirePendingPermission = (msg: Message) => {
+  const pending = msg.pendingPermission;
+  if (!pending || pending.status !== "pending") return;
+  // 只用本地状态收尾：服务端快照本来就已过期，不再发请求。
+  pending.status = "expired";
+  pending.isSubmitting = false;
+};
+
+const discardPendingPermission = (msg: Message) => {
+  const pending = msg.pendingPermission;
+  if (!pending || pending.status !== "pending") return;
+  pending.discarded = true;
+  pending.status = "rejected";
+  pending.isSubmitting = false;
+  pending.expanded = false;
+};
+
 const tryLocalChartOptionPatch = (userText: string): boolean => {
   const q = userText.toLowerCase().trim();
   let newType: 'line' | 'bar' | 'pie' | null = null;
@@ -11962,20 +12002,20 @@ const captureSendSnapshot = (overrides: ChatSendOverrides = {}): ChatSendSnapsho
 const sendPreparedMessage = async (
   prepare: () => Promise<ChatSendSnapshot | null>,
 ) => runSendExclusive(async () => {
-  if (isProcessing.value || remoteRunBusy.value || recoveryLocking.value) return;
+  if (isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value) return;
   const snapshot = await prepare();
   if (!snapshot) return;
   return sendMessageInternal(snapshot);
 });
 
 const sendMessage = async (overrides: ChatSendOverrides = {}) => runSendExclusive(async () => {
-  if (isProcessing.value || remoteRunBusy.value || recoveryLocking.value) return;
+  if (isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value) return;
   return sendMessageInternal(captureSendSnapshot(overrides));
 });
 
 const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const { content, files } = snapshot;
-  if ((!content && files.length === 0) || isProcessing.value || remoteRunBusy.value || recoveryLocking.value) return;
+  if ((!content && files.length === 0) || isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value) return;
 
   // 一旦有真正的发送落地，排队的快捷提问即视为已被用户后续操作取代，避免重复发送。
   // 若这次落地并非那次排队补发本身（补发会先自行取走队列），则连同它 arm 的

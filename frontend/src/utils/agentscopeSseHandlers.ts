@@ -52,6 +52,11 @@ export interface PendingToolPermission {
   supports_session_grant?: boolean;
   /** 用户已点过「撤销本会话授权」：卡片据此给一句明确回执。 */
   sessionGrantRevoked?: boolean;
+  /** 挂起确认的绝对过期时间（unix 秒）：刷新/恢复后仍能判断卡片是否已失效。 */
+  expires_at?: number;
+  expires_in_seconds?: number;
+  /** 用户主动「放弃本轮」：命令没有执行，卡片显示放弃回执而不是「已拒绝」。 */
+  discarded?: boolean;
 }
 
 export interface PendingExternalExecution {

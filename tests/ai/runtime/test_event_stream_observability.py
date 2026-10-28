@@ -220,6 +220,67 @@ async def test_external_execution_registers_pending(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_permission_interrupt_carries_absolute_expiry():
+    """挂起确认必须带绝对过期时间：卡片刷新/恢复后只靠相对秒数判断不出是否已失效。"""
+
+    from app.services.ai.runtime.agentscope.confirmations import (
+        pending_agentscope_confirmations,
+    )
+    from app.services.ai.runtime.agentscope.pending_store import (
+        PENDING_CONFIRMATION_TTL_SECONDS,
+    )
+
+    pending_agentscope_confirmations.clear()
+
+    class FakeRunner:
+        trace_id = "trace-perm"
+        conversation_id = "c-perm"
+
+        def _runtime_user_id(self):
+            return "u1"
+
+        def _runtime_agent_name(self):
+            return "GeneralAgent"
+
+        def _runner_context(self, *, system_content: str, max_steps: int):
+            return {"runner_type": "general", "system_content": system_content, "max_steps": max_steps}
+
+    class FakeAgent:
+        class State:
+            def model_dump(self, mode="json"):
+                return {"context": []}
+
+        state = State()
+
+    event = SimpleNamespace(
+        reply_id="reply-perm",
+        tool_calls=[
+            SimpleNamespace(id="call_perm", name="Bash", input='{"command": "mkdir x"}'),
+        ],
+    )
+    chunks = []
+    async for chunk in stream_pending_tool_interrupt(
+        event=event,
+        agent=FakeAgent(),
+        runner=FakeRunner(),
+        tools=[],
+        native_model=object(),
+        state={"system_content": "sys", "max_steps": 5},
+        kind="permission",
+        sse_type="permission_required",
+    ):
+        chunks.append(chunk)
+
+    payload = chunks[0]
+    assert payload["type"] == "permission_required"
+    assert payload["expires_in_seconds"] == PENDING_CONFIRMATION_TTL_SECONDS
+    pending = pending_agentscope_confirmations.peek(payload["permission_request_id"])
+    assert pending is not None
+    expected = int(pending.snapshot.created_at + PENDING_CONFIRMATION_TTL_SECONDS)
+    assert payload["expires_at"] == expected
+
+
+@pytest.mark.asyncio
 async def test_map_standard_agentscope_event_interrupts_on_external_execution():
     state = new_native_stream_state()
 
