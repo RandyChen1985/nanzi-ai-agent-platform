@@ -1597,6 +1597,12 @@ class ModelCallStatDetail(BaseModel):
     tool_names: List[str] = Field(..., description="调用的工具名称列表")
     elapsed_ms: float = Field(..., description="调用耗时(ms)")
     trace_id: Optional[str] = Field(None, description="本次运行的 Trace ID")
+    subagent: Optional[Dict[str, Any]] = Field(
+        None,
+        description="委派子代理标记（含 agent_name / run_id / child_trace_id）；空表示主代理调用",
+    )
+    child_session_id: Optional[str] = Field(None, description="子代理运行所在的临时会话 ID")
+    parent_trace_id: Optional[str] = Field(None, description="子代理调用归属的父 Trace ID")
     response_text: Optional[str] = Field("", description="模型输出文本")
     reasoning_content: Optional[str] = Field("", description="模型深度思考内容")
     tool_calls: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="工具调用详情")

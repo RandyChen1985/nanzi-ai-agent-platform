@@ -118,6 +118,33 @@ def build_runtime_middlewares(
         ),
         BashSandboxParentLinkMiddleware(),
     ]
+    # 委派子代理的模型调用明细归入父会话的记录键：消息底部「用量」取自共享
+    # trace_buffer（含子代理），明细若留在 child_session_* 键下会与总量对不上，
+    # 且前端弹窗按主会话 + 主 trace 过滤，永远查不到。
+    stats_conversation_id: str | None = None
+    stats_trace_id: str | None = None
+    subagent_meta: dict[str, Any] | None = None
+    if runtime_context is not None:
+        try:
+            delegation_depth = int(getattr(runtime_context, "delegation_depth", 0) or 0)
+        except (TypeError, ValueError):
+            delegation_depth = 0
+        parent_conversation_id = str(
+            getattr(runtime_context, "parent_conversation_id", None) or ""
+        ).strip()
+        if delegation_depth > 0 and parent_conversation_id:
+            stats_conversation_id = parent_conversation_id
+            stats_trace_id = (
+                str(getattr(runtime_context, "parent_trace_id", None) or "").strip()
+                or trace_id
+            )
+            subagent_meta = {
+                "agent_name": agent_name or getattr(runtime_context, "agent_name", None),
+                "run_id": getattr(runtime_context, "delegation_run_id", None),
+                "child_trace_id": trace_id,
+                "parent_trace_id": stats_trace_id,
+                "child_session_id": conversation_id,
+            }
     if conversation_id:
         middlewares.append(
             ModelCallStatsMiddleware(
@@ -125,6 +152,9 @@ def build_runtime_middlewares(
                 conversation_id=conversation_id,
                 agent_name=agent_name,
                 trace_id=trace_id,
+                stats_conversation_id=stats_conversation_id,
+                record_trace_id=stats_trace_id,
+                subagent_meta=subagent_meta,
                 physical_window=runtime_info.get("physical_window"),
                 history_budget=runtime_info.get("history_budget"),
                 overhead_reservation=runtime_info.get("overhead_reservation_tokens"),

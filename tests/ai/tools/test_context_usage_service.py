@@ -70,7 +70,9 @@ async def test_context_usage_aggregates_session_breakdown_without_repeating_runt
     class FakeRedis:
         async def lrange(self, key, start, end):
             assert key.endswith(":user-1:conversation-1:model_call_stats")
-            assert (start, end) == (-1, -1)
+            # 读取方要跳过委派子代理记录，因此从末尾回看一个小窗口再挑最近一条。
+            assert end == -1
+            assert start < 0
             return [
                 json.dumps(
                     {

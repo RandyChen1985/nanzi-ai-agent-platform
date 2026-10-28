@@ -327,13 +327,11 @@ async def _last_model_call_stats(context: Any) -> dict[str, Any]:
         redis = await _maybe_await(get_redis())
         if not redis:
             return result
-        rows = await _maybe_await(redis.lrange(key, -1, -1))
-        if not rows:
-            return result
-        raw = rows[-1]
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        record = json.loads(raw) if isinstance(raw, str) else raw
+        from app.services.ai.runtime.agentscope.middleware import read_latest_stats_record
+
+        # 委派子代理的记录会写进同一个 stats 键（供明细口径对齐），但「最近一次
+        # 主代理调用」不能被它们顶替。
+        record = await read_latest_stats_record(redis, key, skip_subagent=True)
         if not isinstance(record, dict):
             return result
         result.update(

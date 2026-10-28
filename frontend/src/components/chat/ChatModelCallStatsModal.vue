@@ -246,6 +246,13 @@ const statsSummary = computed(() => {
                   <span class="text-xs font-bold text-gray-700 dark:text-gray-300 max-w-[150px] truncate" :title="stat.agent_name">
                     {{ stat.agent_name }}
                   </span>
+                  <span
+                    v-if="stat.subagent"
+                    class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-medium bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300 border border-violet-200/60 dark:border-violet-800/40"
+                    :title="'委派子代理消耗（临时会话 ' + (stat.child_session_id || '') + '）'"
+                  >
+                    子代理
+                  </span>
                 </div>
                 <span v-if="stat.timestamp" class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 font-mono">
                   调用时间: {{ formatModelCallTime(stat.timestamp) }}
