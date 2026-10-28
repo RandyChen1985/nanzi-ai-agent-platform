@@ -53,7 +53,8 @@ class BrowserEnvironmentError(RuntimeError):
         self,
         message: str = (
             "服务端浏览器运行环境未就绪。\n"
-            "请在服务器终端依次执行以下命令完成安装：\n"
+            "请在服务器终端依次执行以下命令完成安装（这是平台服务端依赖，"
+            "请勿在用户沙箱内执行）：\n"
             "1. pip install playwright\n"
             "2. playwright install chromium\n"
             "（若 Linux 环境缺少系统依赖，可补充执行：playwright install-deps chromium）"
@@ -70,7 +71,7 @@ def _is_browser_env_missing(exc: BaseException) -> tuple[bool, str]:
     if isinstance(exc, ModuleNotFoundError) and "playwright" in str(exc).lower():
         return True, (
             "服务端未安装 Playwright 依赖库。\n"
-            "请在服务器终端执行：\n"
+            "请在服务器终端执行（平台服务端依赖，勿在用户沙箱内安装）：\n"
             "pip install playwright\n"
             "playwright install chromium"
         )

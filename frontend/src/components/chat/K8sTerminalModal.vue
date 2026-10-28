@@ -351,6 +351,17 @@ onUnmounted(() => {
                 <div><span class="text-sky-300">命名空间</span><span class="text-slate-400">：</span><span class="text-sky-200">{{ props.namespace || 'nanzi-ai-agent' }}</span></div>
                 <div><span class="text-sky-300">工作目录</span><span class="text-slate-400">：</span><span class="text-sky-200">{{ rec.workdir || '/workspace' }}</span></div>
               </div>
+              <div class="mt-3 border-t border-slate-700/70 pt-2">
+                <div class="mb-1 font-semibold text-slate-200">文件与依赖</div>
+                <div><span class="text-emerald-300">✓ 会保留</span><span class="text-slate-400">　/workspace</span><span class="text-slate-400">（已挂载到用户工作区）</span></div>
+                <div class="mt-1"><span class="text-amber-300">● 依赖</span><span class="text-slate-400">　pip/apt/npm 装的包在容器可写层，Pod 停止或重建后失效</span></div>
+                <div class="pl-4 text-slate-400">
+                  要长期可用：
+                  <span class="font-mono text-slate-200">uv pip install --target /workspace/.pylibs 包名</span>，
+                  运行时 <span class="font-mono text-slate-200">PYTHONPATH=/workspace/.pylibs python ...</span>
+                  （裸 <span class="font-mono">pip</span> 装到系统 Python，默认 <span class="font-mono">python</span> 看不到）
+                </div>
+              </div>
               <div class="mt-3 rounded-md border border-rose-500/30 bg-rose-950/20 p-2 text-rose-200">
                 <div class="font-semibold">⚠ 安全提示</div>
                 <div class="text-rose-200/80">命令在当前沙箱 Pod 内执行；删除文件、安装依赖、联网或启动后台进程前，请先确认路径与影响范围。Pod 停止/重建后容器内非挂载路径改动不保留。</div>

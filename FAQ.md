@@ -511,11 +511,11 @@ graph TD
    - 点击可展开时间线弹窗，查看各轮次提炼的高浓度摘要与节省比例；
 3. **沙箱运行环境卡片与全生命周期运维控制台**：
    - 展开浮标可直观查看当前生效策略（Local / Docker / E2B / SSH）；
-   - 在 `docker` 策略下，卡片实时呈现容器运行状态（🟢已运行 / 🟡启动中 / 🔴失败 / ⚪未启动）、分配的私有 Container ID、秒级递增运行时长（如 `运行中 12m 34s`）、以及「空闲 30m 自动回收」资源说明；
+   - 在 `docker` 策略下，卡片实时呈现容器运行状态（🟢已运行 / 🟡启动中 / 🔴失败 / ⚪未启动）、分配的私有 Container ID、秒级递增运行时长（如 `运行中 12m 34s`）、以及「空闲自动回收（默认 15 分钟，可配）」资源说明；
    - **「操作 ▾」全生命周期下拉管理菜单**：
-     - 🖥️ **进入终端 (Interactive Shell Terminal)**：点击呼出 macOS 交通灯风格的沉浸式深色 CLI 交互式终端模态框。用户可以直接在当前私有沙箱容器内交互式执行 Shell 命令（如 `ls -la`, `pip list`, `python --version`, `cat /workspace/app.py` 等），支持实时命令执行流回传、常用快捷指令预设栏（一键填入常用命令）、上下键快速切换历史命令记录、一键清屏与一键复制全部终端输出；
+     - 🖥️ **进入终端 (Interactive Shell Terminal)**：点击呼出 macOS 交通灯风格的沉浸式深色 CLI 交互式终端模态框。用户可以直接在当前私有沙箱容器内交互式执行 Shell 命令（如 `ls -la`, `python --version`, `uv pip list`, `cat /workspace/app.py` 等；装包请用 `uv pip install --target /workspace/.pylibs`，裸 `pip` 装完默认 `python` import 不到），支持实时命令执行流回传、常用快捷指令预设栏（一键填入常用命令）、上下键快速切换历史命令记录、一键清屏与一键复制全部终端输出；
      - 🔄 **重启容器 (Restart Workspace)**：当沙箱内发生代码死锁、后台进程卡住或需要清理临时缓存时，一键自动强制销毁旧容器并重新拉起全新的纯净沙箱环境，物理工作区挂载文件完全保留；
-     - ⏹️ **停止关机 (Stop Workspace)**：手动主动关停当前沙箱容器并释放宿主机 CPU 与内存资源，无需等待 30 分钟空闲自动回收。
+     - ⏹️ **停止关机 (Stop Workspace)**：手动主动关停当前沙箱容器并释放宿主机 CPU 与内存资源，无需等待默认 15 分钟的空闲自动回收。
 
 ---
 
@@ -1198,6 +1198,8 @@ window.addEventListener('message', async (event) => {
    - **Step 1 检查数据格式**：必须校验金额字段是否为两位小数；
    - **Step 2 执行比对规则**：以订单号为唯一主键进行 Left Join 比对；
    - **Step 3 输出规范**：强制以 Markdown 表格形式列出对账差异项，并标注差异原因分类。
+
+> ⚠️ **技能依赖第三方 Python 包时的写法约定**：沙箱容器里默认 `python` 是网关虚拟环境、裸 `pip` 装到系统 Python（默认 `python` import 不到），且容器可写层在回收/重启后清空。技能正文与脚本里请统一写 `uv pip install --target /workspace/.pylibs <包名>`，运行时加 `PYTHONPATH=/workspace/.pylibs`（或在脚本开头 `sys.path.insert(0, "/workspace/.pylibs")`），**不要写 `pip install`**。原理与排障见 7.3.5 的 Q6。
 
 #### 3.3.2 私有技能 vs 平台公共技能及审核流转
 
@@ -2587,6 +2589,7 @@ graph TD
 > 1. **单机 Docker 容器化部署**：安全沙箱**强烈建议配置走 `docker` 策略**（并在启动平台容器时挂载宿主机 Docker 套接字 `-v /var/run/docker.sock:/var/run/docker.sock` 并配置 `HOST_DATA_DIR`）。
 >    - **为什么不能在平台容器内使用 `local` 策略？**
 >    - 若使用 `local` 策略，所有用户通过智能体执行的 Shell 命令（如 `apt-get`、`pip install`、甚至死循环/删文件）都会在**平台后端主服务的容器内直接执行**，极易污染平台主运行环境、耗尽主容器资源或误杀主服务进程！配置为 `docker` 沙箱策略后，平台会通知宿主机 Docker 引擎为每个用户独立启动专用的纯净子容器，从根本上隔离运行风险。
+>    - **如果确实要用 `local`**：平台不限制安装，`pip install` 会直接装进后端宿主机环境、**对所有用户全局生效**（重启服务不丢，重建镜像或重装依赖才失效），属于平台级变更；建议只把它用于开发/单机体验，并避免 `--upgrade` 升级平台已有依赖。
 > 2. **Kubernetes 集群部署**：安全沙箱**首选且强烈推荐配置走 `k8s` 策略**（详见 [7.3.6 Kubernetes 原生 Pod 安全沙箱](#736-kubernetes-原生-pod-安全沙箱k8s-策略详解)）。
 >    - 生产集群禁止将宿主机 Docker Socket 挂载进业务 Pod，使用 `k8s` 策略由平台直接调用 Kubernetes API 动态拉起受限的轻量沙箱 Pod，彻底杜绝容器逃逸与宿主机特权提权隐患，配合平台开箱即用的 RBAC 模板与 PVC 动态挂载，实现多租户严格安全隔离。
 
@@ -2708,7 +2711,7 @@ sequenceDiagram
     Gateway->>Container: 在隔离容器内执行 Shell / 代码
     Gateway-->>Backend: 返回截断保护的标准输出/错误日志
     Backend-->>Front: SSE 流式响应渲染结果给用户
-    Note over Container: 30 分钟无交互自动触发空闲回收
+    Note over Container: 默认 15 分钟无交互自动触发空闲回收（sandbox_idle_time 可配）
 ```
 
 ##### 流程关键节点解析：
@@ -2720,9 +2723,10 @@ sequenceDiagram
    - **防路径穿越**：容器内工具严禁 `..` 越界访问工作区之外的文件；
    - **硬超时保护**：命令执行单次上限 600 秒，防止死循环耗尽资源；
    - **日志截断保护**：输出限制最大 100,000 字符，防范 OOM 溢出。
-5. **空闲自动回收**：连续 30 分钟无交互的容器自动停止并回收，释放内存与 CPU。
+5. **空闲自动回收**：连续 **15 分钟**（默认值，`sandbox_idle_time` 可配置）无交互的容器会被停止并**删除**，释放内存与 CPU。容器可写层里的东西（pip/apt/npm 安装的包、`~`、`/tmp`、后台进程）随之消失，只有挂载的 `/workspace` 会保留。
 6. **用户端全生命周期管控与交互式 Shell 终端**：
-   - **交互式 Shell 终端调试**：用户可在输入框浮标卡片中点击【进入终端】，唤起全功能 CLI 命令行模态框，在隔离沙箱内直接运行 `pip`, `python`, `ls`, `curl` 等指令排查环境依赖与执行结果；
+   - **交互式 Shell 终端调试**：用户可在输入框浮标卡片中点击【进入终端】，唤起全功能 CLI 命令行模态框，在隔离沙箱内直接运行 `ls`、`python`、`curl`、`uv pip install --target /workspace/.pylibs <包>` 等指令排查环境依赖与执行结果；
+   - **依赖安装口径（重要）**：沙箱里默认的 `python` 是网关虚拟环境（`/root/.agentscope/.venv/bin/python`），而裸 `pip` 指向系统 Python（装进 `/usr/local`）——**用 `pip install` 装出来的包，默认 `python` 根本 import 不到**。需要第三方包时请统一用 `uv pip install --target /workspace/.pylibs <包名>`，执行时加 `PYTHONPATH=/workspace/.pylibs`；装到 `/workspace` 才能在容器回收后保留。
    - **一键重启自愈**：当沙箱因死循环进程卡住时，用户可点击【重启容器】（`POST /sandbox/docker/workspace/restart`）强制销毁旧容器并拉起新容器，同时完整保留工作区数据；
    - **手动主动关停**：点击【停止关机】（`POST /sandbox/docker/workspace/stop`）即可随时提前释放沙箱资源。
 
@@ -2762,9 +2766,19 @@ sequenceDiagram
 ##### Q5: 沙箱运行中进程卡死、死循环占用或需要排查容器内环境依赖如何处理？
 
 - **解决方案**：
-  1. **进入容器 Shell 调试**：在聊天输入框右上角浮标展开沙箱卡片，点击「操作 ▾」->【进入终端】，可呼出深色交互式 CLI Shell 弹窗，输入 `ps aux` 查看占用进程或 `pip list` 检查包版本；
+  1. **进入容器 Shell 调试**：在聊天输入框右上角浮标展开沙箱卡片，点击「操作 ▾」->【进入终端】，可呼出深色交互式 CLI Shell 弹窗，输入 `ps aux` 查看占用进程，或用 `uv pip list`（不要用 `pip list`，那是系统 Python 的清单）检查包版本；
   2. **一键强制重启容器**：点击「操作 ▾」->【重启容器】，系统会自动销毁死锁容器并重新拉起干净的沙箱实例，挂载的 `/workspace` 工作区历史代码与文件不受任何影响；
   3. **主动停止关机**：任务完成后若想立刻释放服务器资源，可点击「操作 ▾」->【停止关机】。
+
+##### Q6: 沙箱里 `pip install` 的包为什么重启 / 回收后就没了？怎么保留？
+
+- **原因**：沙箱容器是一次性执行环境。空闲回收（默认 15 分钟，`sandbox_idle_time` 可配）、点【重启容器】、技能集合变化、平台后端重启后的孤儿对账，都会**删除**容器；容器可写层里的 pip/apt/npm 安装、`~`、`/tmp`、后台进程随之消失。只有挂载进容器的 `/workspace`（宿主机 `agent_workspaces/{user_key}`）会保留。另外沙箱里默认 `python` 是网关 venv，裸 `pip` 装到系统 Python，默认 `python` 根本 import 不到——所以「装了却没生效」往往连重启都不用等。
+- **解决方案（个人级持久化，无需重建镜像）**：
+  1. 安装到工作区：`uv pip install --target /workspace/.pylibs <包名>`（依赖落在 `/workspace/.pylibs`，随用户工作区持久化）；
+  2. 运行时把该目录加入模块搜索路径：`PYTHONPATH=/workspace/.pylibs python your_script.py`，或在脚本开头 `import sys; sys.path.insert(0, "/workspace/.pylibs")`；
+  3. 系统级二进制依赖（如 `ffmpeg`）无法这样持久化，需要预装进沙箱镜像（见 7.3.3 自定义基础镜像 + 预构建）或每次现装。
+- **说明**：容器内已预装 `uv`，运行时可联网安装；若部署环境访问 PyPI 较慢，可在命令后追加 `--index-url https://pypi.tuna.tsinghua.edu.cn/simple`。
+- **`local` 策略不是这个模型**：`pip install` 直接装进后端 venv、**全局生效且重启服务不丢**（重建镜像或重装依赖才失效，所有用户共享）；所以 `local` 下不需要 `--target` 那一套，但别用 `--upgrade` 动平台已有依赖。
 
 ---
 
@@ -2800,9 +2814,9 @@ kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml
 
 ##### 4. 输入框 Pod 状态浮标与生命周期控制
 - 聊天输入框左侧自动外显 **`K8s 沙箱` 状态浮标**；
-- 实时展示 Pod 状态指示点（🟢 运行中、🟡 预热拉取镜像中、⚪ 空闲未启动）、当前 Pod 名称与秒级动态滚动运行时长，并提示“空闲 30 分钟自动回收”；
+- 实时展示 Pod 状态指示点（🟢 运行中、🟡 预热拉取镜像中、⚪ 空闲未启动）、当前 Pod 名称与秒级动态滚动运行时长，并提示“空闲自动回收（默认 15 分钟，可配）”；
 - 点击「操作 ▾」菜单支持手动 **【重启 Pod】** 或 **【停止关机】**（带二次确认弹窗），与 Docker 容器沙箱浮标操作体验 100% 对齐；
-- **并发多会话引用计数管理**：同一用户的多个并发会话自动复用同一个运行中的 Pod，单个会话关闭不会误杀其他会话，全会话空闲达 30 分钟后由系统后台自动回收。
+- **并发多会话引用计数管理**：同一用户的多个并发会话自动复用同一个运行中的 Pod，单个会话关闭不会误杀其他会话，全会话空闲达 15 分钟（默认值 `sandbox_idle_time` 可配）后由系统后台自动回收。
 
 ##### 5. 系统配置一键集群与 RBAC 权限自检
 - 在【系统设置 -> 参数设置】中，将 `sandbox_policy` 切换为 `k8s` 时，表单下方会自动展开专属引导卡片与 RBAC 授权命令一键复制通道；
