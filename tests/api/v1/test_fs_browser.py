@@ -938,28 +938,46 @@ async def _user_workspace_dir(client: AsyncClient, api_key: str) -> str:
 
 @pytest.mark.asyncio
 async def test_upload_writes_file_and_returns_original_and_stored_name(db_session, valid_api_key):
-    """上传应落盘成功，且响应同时给出原始文件名与加后缀后的落盘名。"""
+    """上传默认保留原文件名；同名再传才追加短后缀，且不覆盖已有文件。"""
     payload = b"%PDF-1.4 fake content"
+    # 文件名带随机段：工作区是真实磁盘目录，避免历史残留让「首次上传」就被判成重名
+    original_name = f"季度报告_{uuid.uuid4().hex[:8]}.pdf"
+    stem = os.path.splitext(original_name)[0]
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         target = await _user_workspace_dir(client, valid_api_key)
 
-        resp = await client.post(
+        first = await client.post(
             "/api/v1/chat/fs/upload",
             params={"parent_path": target},
-            files={"file": ("季度报告.pdf", payload, "application/pdf")},
+            files={"file": (original_name, payload, "application/pdf")},
+            headers={"X-API-Key": valid_api_key},
+        )
+        second = await client.post(
+            "/api/v1/chat/fs/upload",
+            params={"parent_path": target},
+            files={"file": (original_name, b"%PDF-1.4 second", "application/pdf")},
             headers={"X-API-Key": valid_api_key},
         )
 
-    assert resp.status_code == 200, resp.text
-    data = resp.json()["data"]
-    # name 必须是原始文件名：历史实现错误地返回了加过后缀的落盘名，用户会以为传错了文件
-    assert data["name"] == "季度报告.pdf"
-    # stored_name 是防重名后的真实落盘名，且确实存在于磁盘
-    assert data["stored_name"] != "季度报告.pdf"
-    assert data["stored_name"].startswith("季度报告")
-    assert data["stored_name"].endswith(".pdf")
-    assert os.path.isfile(os.path.join(target, data["stored_name"]))
-    assert data["size"] == len(payload)
+    assert first.status_code == 200, first.text
+    first_data = first.json()["data"]
+    # 首次上传不重名：原样落盘，name 与 stored_name 一致
+    assert first_data["name"] == original_name
+    assert first_data["stored_name"] == original_name
+    assert os.path.isfile(os.path.join(target, original_name))
+    assert first_data["size"] == len(payload)
+
+    assert second.status_code == 200, second.text
+    second_data = second.json()["data"]
+    # 重名才改名：stored_name 追加短后缀，name 仍是原始文件名
+    assert second_data["name"] == original_name
+    assert second_data["stored_name"] != original_name
+    assert second_data["stored_name"].startswith(stem)
+    assert second_data["stored_name"].endswith(".pdf")
+    assert os.path.isfile(os.path.join(target, second_data["stored_name"]))
+    # 关键：原名文件内容没被覆盖
+    with open(os.path.join(target, original_name), "rb") as fh:
+        assert fh.read() == payload
 
 
 @pytest.mark.asyncio

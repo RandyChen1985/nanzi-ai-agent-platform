@@ -23,7 +23,7 @@ export interface WorkspaceUploadTask {
   id: string
   /** 用户选择的原始文件名。 */
   name: string
-  /** 服务端实际落盘名（防重名会追加短后缀），仅成功后可知。 */
+  /** 服务端实际落盘名（默认等于原名，仅在重名时追加短后缀），仅成功后可知。 */
   storedName: string | null
   size: number
   loadedBytes: number

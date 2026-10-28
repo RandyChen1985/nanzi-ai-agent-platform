@@ -2619,13 +2619,13 @@ onUnmounted(() => {
                           <span class="truncate text-gray-400">{{ uploadTaskHint(task) }}</span>
                         </div>
 
-                        <!-- 落盘名会追加短后缀防重名，必须显式说明，否则用户会以为传错了文件 -->
+                        <!-- 默认保留原名，只有重名才会改名：变了就必须显式说明，否则用户会以为传错了文件 -->
                         <div
                           v-if="task.status === 'done' && task.storedName && task.storedName !== task.name"
                           class="truncate text-[10px] text-gray-400"
                           :title="task.storedName"
                         >
-                          已存为 {{ task.storedName }}（加后缀避免重名）
+                          已存为 {{ task.storedName }}（同名已存在，自动加后缀）
                         </div>
                       </div>
                     </div>
