@@ -889,6 +889,10 @@ def create_skills(
         overwrite: 是否允许覆盖同名已存在的技能。默认 false。为 false 且技能已存在时，
                    本工具不会修改磁盘上的任何内容，而是返回 NANZI_SKILL_EXISTS 提示；
                    必须先向用户确认「确实要整份替换现有技能」，再带 overwrite=true 重试。
+
+    本工具只写 SKILL.md。若技能还需要脚本、模板、参考资料、图片等资源文件，
+    建好技能后用 write_skill_file 逐个写入（否则 SKILL.md 里引用的 scripts/xxx.py
+    在磁盘上并不存在，技能是半残的）。
     """
     try:
         # ID 校验与端点/重命名/上传共用同一份实现：格式、128 长度上限、平台保留字。
@@ -992,6 +996,231 @@ def create_skills(
         )
     except Exception as e:
         return f"错误：创建技能失败，原因: {str(e)}"
+
+
+def _skill_dir_usage(skill_dir: str) -> tuple[int, int]:
+    """统计技能目录当前的文件数与总字节数（用于写入预算，避免工具被循环调用灌爆目录）。"""
+    files = 0
+    total = 0
+    for root, _dirs, names in os.walk(skill_dir):
+        for name in names:
+            files += 1
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                continue
+    return files, total
+
+
+def _resolve_skill_dir_for_asset(skill_id: str, scope: str, user_info) -> tuple[str, str]:
+    """定位**已存在**的技能目录，返回 ``(skill_dir, resolved_scope)``。
+
+    与 create_skills 的区别：这里不允许「顺手新建技能」——目录不存在就直接报错，
+    免得模型把脚本写到一个不存在的技能里，产出「有文件没说明书」的孤儿目录。
+    """
+    resolved_scope = (scope or "personal").strip().lower()
+    if resolved_scope not in ("personal", "global"):
+        raise ValueError("scope 仅支持 personal 或 global")
+
+    if resolved_scope == "global":
+        if user_info:
+            role = str(user_info.get("role", "") or "")
+            if not (role == "admin" or "admin" in role.lower()):
+                raise ValueError("权限不足：仅系统管理员可以写入平台全局技能（global）")
+        from app.core.config import settings
+
+        skills_dir = settings.SKILLS_DIR
+        if not skills_dir:
+            raise ValueError("未配置全局 SKILLS_DIR 目录")
+        skill_dir = os.path.join(skills_dir, skill_id)
+    else:
+        if not user_info:
+            raise ValueError("未在当前会话中检测到有效的用户身份，无法写入个人技能")
+        from app.services.ai.skill_resolver import (
+            get_user_personal_skills_dir,
+            resolve_personal_skill_dir,
+        )
+
+        skills_dir = get_user_personal_skills_dir(user_info)
+        if not skills_dir:
+            raise ValueError("无法解析个人技能目录，请确认账号工作区已正确初始化")
+        # 平铺优先、.seed 回退：否则更新 .seed 里的存量技能会在平铺处造出第二份副本
+        skill_dir = resolve_personal_skill_dir(skills_dir, skill_id)
+        if not skill_dir:
+            raise ValueError(
+                f"技能 {skill_id} 不存在。请先用 create_skills 创建该技能，再用本工具追加资源文件"
+            )
+
+    if not os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
+        raise ValueError(
+            f"技能 {skill_id} 目录缺少 SKILL.md，不是有效技能。请先用 create_skills 创建"
+        )
+    return os.path.abspath(skill_dir), resolved_scope
+
+
+def _normalize_skill_asset_path(path: str) -> str:
+    """校验并规范化技能内的相对路径，返回 ``a/b/c.py`` 形式；非法则抛 ValueError。"""
+    raw = str(path or "").strip().replace("\\", "/")
+    if not raw:
+        raise ValueError("path 不能为空")
+    if raw.startswith("/") or os.path.isabs(raw):
+        raise ValueError("path 必须是相对技能目录的路径（如 scripts/build.py），不能是绝对路径")
+    parts = [part for part in raw.split("/") if part not in ("", ".")]
+    if not parts:
+        raise ValueError("path 不能为空")
+    if any(part == ".." for part in parts):
+        raise ValueError("path 不允许包含 ..（越权路径）")
+    if any(part.startswith(".") for part in parts):
+        raise ValueError("path 不允许包含以 . 开头的隐藏文件或目录")
+    normalized = "/".join(parts)
+    if normalized.lower() == "skill.md":
+        raise ValueError(
+            "SKILL.md 请用 create_skills 写入（覆盖需显式 overwrite=true），本工具只用于追加资源文件"
+        )
+    return normalized
+
+
+@tool
+def write_skill_file(
+    skill_id: str,
+    path: str,
+    content: str,
+    encoding: str = "utf8",
+    scope: str = "personal",
+    overwrite: bool = False,
+) -> str:
+    """
+    给**已存在**的技能追加或更新一个资源文件：脚本（scripts/*.py）、模板、参考资料（references/*.md）、
+    图片等资产。SKILL.md 本身不归本工具管，请用 create_skills 写入。
+
+    什么时候该用：用户要把某套流程沉淀成技能，而这个技能除了说明书还需要**可被引用的文件**
+    （例如「按这个脚本跑」「用这个模板」「参考这份规范」）。只有说明书、却在里面写了
+    `python scripts/build.py` 的技能是半残的——那个脚本并不存在。此时先用 create_skills
+    建技能、再用本工具逐个写入资源文件。
+
+    Args:
+        skill_id: 目标技能 ID（必须已存在），仅支持英文、数字、中划线及下划线。
+        path: 技能目录内的相对路径，如 scripts/build.py、references/rules.md、assets/logo.png。
+              不允许绝对路径、不允许 ..、不允许以 . 开头的隐藏文件/目录。
+        content: 文件内容。文本按 encoding="utf8" 直接写入；二进制（png/jpg/xlsx 等）
+                 需先把字节做 Base64 编码，再用 encoding="base64" 传入。
+        encoding: "utf8"（默认）或 "base64"。base64 时必须能正确解码，否则拒绝写入。
+        scope: "personal"（个人技能，默认）或 "global"（平台全局，仅管理员）。
+        overwrite: 是否允许覆盖已存在的同名文件。默认 false：目标已存在时**不写任何内容**，
+                   返回 NANZI_SKILL_FILE_EXISTS，需先向用户确认再带 overwrite=true 重试。
+
+    单个文件上限 10MB，技能目录总量上限 500MB / 20000 个文件（与解压上传共用同一份预算）。
+    """
+    try:
+        try:
+            skill_id = validate_skill_id(skill_id)
+        except SkillRenameError as exc:
+            return f"错误：{exc}"
+
+        try:
+            relative_path = _normalize_skill_asset_path(path)
+        except ValueError as exc:
+            return f"错误：{exc}"
+
+        encoding_key = str(encoding or "utf8").strip().lower()
+        if encoding_key in ("utf8", "utf-8", "text"):
+            payload = str(content or "").encode("utf-8")
+        elif encoding_key in ("base64", "b64"):
+            import base64 as _base64
+
+            compact = re.sub(r"\s+", "", str(content or ""))
+            if not compact:
+                return "错误：encoding=base64 时 content 不能为空"
+            try:
+                payload = _base64.b64decode(compact, validate=True)
+            except Exception:
+                return "错误：content 不是合法的 Base64 文本，无法解码为二进制"
+        else:
+            return "错误：encoding 仅支持 utf8 或 base64"
+
+        from app.core.upload_limits import SKILL_ASSET_MAX_FILE_BYTES
+        from app.core.upload_limits import SKILL_DIR_MAX_BYTES, SKILL_DIR_MAX_FILES
+
+        if len(payload) > SKILL_ASSET_MAX_FILE_BYTES:
+            return (
+                f"错误：单个文件 {len(payload)} 字节，超过上限 "
+                f"{SKILL_ASSET_MAX_FILE_BYTES // (1024 * 1024)}MB，请拆分或改用工作空间目录"
+            )
+
+        from app.utils.context import current_user_info
+
+        user_info = current_user_info.get()
+        try:
+            skill_dir, resolved_scope = _resolve_skill_dir_for_asset(skill_id, scope, user_info)
+        except ValueError as exc:
+            return f"错误：{exc}"
+
+        target_path = os.path.abspath(
+            os.path.join(skill_dir, *relative_path.split("/"))
+        )
+        try:
+            if os.path.commonpath([skill_dir, target_path]) != skill_dir:
+                return "错误：目标路径越出技能目录，已拦截"
+        except ValueError:
+            return "错误：目标路径越出技能目录，已拦截"
+
+        validate_safe_path(target_path)
+
+        already_exists = os.path.exists(target_path)
+        if already_exists and os.path.isdir(target_path):
+            return f"错误：{relative_path} 已存在且是目录，无法作为文件写入"
+        if already_exists and not overwrite:
+            return (
+                f"文件 {relative_path} 已存在于技能 {skill_id}，本次**未做任何修改**。\n"
+                "如果需要整份替换该文件，请在获得用户明确确认后，带 overwrite=true 重新调用。\n"
+                "NANZI_SKILL_FILE_EXISTS:"
+                + json.dumps(
+                    {"skill_id": skill_id, "scope": resolved_scope, "path": relative_path},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+
+        existing_files, existing_bytes = _skill_dir_usage(skill_dir)
+        incoming_files = 0 if already_exists else 1
+        if existing_files + incoming_files > SKILL_DIR_MAX_FILES:
+            return (
+                f"错误：技能 {skill_id} 文件数已达上限（{SKILL_DIR_MAX_FILES} 个），"
+                "请清理不再需要的资源后再写入"
+            )
+        if existing_bytes + len(payload) > SKILL_DIR_MAX_BYTES:
+            return (
+                f"错误：技能 {skill_id} 总占用将超过 "
+                f"{SKILL_DIR_MAX_BYTES // (1024 * 1024)}MB 上限，请清理或拆分技能"
+            )
+
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with open(target_path, "wb") as f:
+            f.write(payload)
+
+        action_desc = "已覆盖更新" if already_exists else "写入成功"
+        marker = (
+            "NANZI_SKILL_FILE_WRITTEN:"
+            + json.dumps(
+                {
+                    "skill_id": skill_id,
+                    "scope": resolved_scope,
+                    "path": relative_path,
+                    "bytes": len(payload),
+                    "encoding": "base64" if encoding_key in ("base64", "b64") else "utf8",
+                    "overwritten": already_exists,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        scope_desc = "平台全局" if resolved_scope == "global" else "个人专属"
+        return (
+            f"成功：{scope_desc}技能 {skill_id} 的资源文件 {relative_path} {action_desc}"
+            f"（{len(payload)} 字节）。完整路径 {target_path}。\n{marker}"
+        )
+    except Exception as e:
+        return f"错误：写入技能文件失败，原因: {str(e)}"
 
 
 # Grounding 证据声明（双重保障）

@@ -14,3 +14,22 @@ SKILL_PACKAGE_MAX_MB = 100
 
 #: 同上，字节形式，供 `len(content) > ...` 直接比较。
 SKILL_PACKAGE_MAX_BYTES = SKILL_PACKAGE_MAX_MB * 1024 * 1024
+
+# ---------------------------------------------------------------------------
+# 单个技能目录的写入预算
+# ---------------------------------------------------------------------------
+
+#: 单个技能目录内允许的文件总数与总字节数。
+#:
+#: 这两个数字原先写死在 ``app/api/portal/endpoints/skills.py``，只管「解压压缩包」这一个
+#: 入口。但技能资产还有第二个写入口——模型侧的 ``write_skill_file`` 工具：它一次写一个
+#: 文件，单次看永远不超标，循环几百次就能把目录灌满（inode 与磁盘都会遭殃）。
+#: 因此把预算上移到核心层，解压与工具写入共用同一份口径。
+SKILL_DIR_MAX_FILES = 20000
+
+#: 500MB ≈ 上传上限（100MB）的 5 倍余量：正常技能包压缩率本来就高，卡太紧会误伤。
+SKILL_DIR_MAX_BYTES = 500 * 1024 * 1024
+
+#: 单个技能资产文件的大小上限，对齐 ``POST /personal-skills/{id}/upload`` 的 10MB。
+SKILL_ASSET_MAX_FILE_MB = 10
+SKILL_ASSET_MAX_FILE_BYTES = SKILL_ASSET_MAX_FILE_MB * 1024 * 1024

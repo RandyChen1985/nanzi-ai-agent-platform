@@ -847,3 +847,15 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **回归**：新增契约 `test_mobile_viewport_height_contract.py` **8 项**（visualViewport 取值与兜底、rAF 合并与解绑、文档滚动归零、只在 App.vue 注册一次、Dashboard 与 EmbedLayout 都走变量、EmbedLayout 不得用 `bottom:0`、meta 必须带 `interactive-widget`）；`-k "embed or dashboard or theme or layout or viewport or chat"` **827 passed / 1 skipped**；SFC 模板编译 **277 files / 0 problems**；`vue-tsc --noEmit` **0 错误**。
 **未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未做真机键盘/地址栏手工验收。
+
+## 2026-10-28 新增 `write_skill_file` 工具：技能可以带脚本/模板/图片了
+
+|---|---|---|---|
+| `create_skills` 只能写一个 SKILL.md，带资源的技能做不出来 | `app/services/ai/tools/system_executive_tools.py`、`app/services/ai/tools/registry.py`、`app/services/ai/tool_policy.py`、`app/services/ai/tool_nudge_policy.py`、`app/services/ai/session_tool_artifact.py` | 技能运行时注入的是**整个目录**（`discover_platform_skill_paths` 把 `skill_dir` 塞进 AgentScope 的 `skill_paths`），所以多文件技能本来就能用；缺的只是写入口。模型此前只能靠 `write_file` 自己拼出 `agent_workspaces/{user_key}/skills/...`，拼错无提示、二进制写不了、也不知道文件属于哪个技能。新增 `write_skill_file(skill_id, path, content, encoding, scope, overwrite)`：技能必须已存在（否则提示先 `create_skills`），路径必须相对且落在技能目录内，二进制走 Base64，成功返回 `NANZI_SKILL_FILE_WRITTEN` 标记 |
+| 若不管住路径，等于给模型一个任意写盘的洞 | 同上 `_normalize_skill_asset_path` | 拒绝绝对路径、`..`、任何以 `.` 开头的隐藏文件/目录；拼接后再用 `commonpath` 复核落点必须在技能目录内，最后过一遍 `validate_safe_path` 白名单。`SKILL.md` 单独拒绝并提示改用 `create_skills`——否则能绕过它的 `overwrite` 闸门，把已有技能的正文整个替换掉 |
+| 覆盖语义与 `create_skills` 对齐 | 同上 | 默认 `overwrite=false`：目标已存在时**不碰磁盘**，返回 `NANZI_SKILL_FILE_EXISTS`，要求先向用户确认再带 `overwrite=true` 重试。与「静默 upsert」的老毛病同一类，必须显式 |
+| 技能目录预算原本只有「解压」一个入口在管 | `app/core/upload_limits.py`、`app/api/portal/endpoints/skills.py` | `MAX_EXTRACTED_FILES/BYTES`（20000 / 500MB）原先写死在端点里，管的是上传解压。模型侧写入是逐个文件、单次看永远不超标，循环几百次就能灌满目录。数字上移到 `app.core.upload_limits`（`SKILL_DIR_MAX_FILES/BYTES`），端点保留别名，解压与工具写入共用一份口径；另加单文件 10MB 上限，对齐 `/personal-skills/{id}/upload` |
+| 模型不知道有这能力 | `system_executive_tools.py` 的 `create_skills` docstring | 在 `create_skills` 说明里点明「本工具只写 SKILL.md，需要脚本/模板/图片请用 `write_skill_file`」；否则模型只会造出「说明书里写着 `python scripts/build.py`、磁盘上没有这个脚本」的半残技能 |
+
+**回归**：新增 `tests/services/ai/test_write_skill_file.py` **23 项**（文本子目录写入、Base64 二进制、换行容错、默认不覆盖、显式覆盖、`..`/绝对路径/隐藏目录/SKILL.md 拒绝、技能不存在拒绝、非法 ID、非法 Base64、未知 encoding、单文件超限、目录文件数预算、global 非管理员拒绝 / 管理员可写、递归统计目录占用、标记可 JSON 解析、三处注册契约、预算常量与端点同源）；`-k "skill or tool_policy or nudge or tool_artifact or registry or tool_capability"` **1006 passed / 2 skipped / 3 xfailed**。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未在真实会话里让模型跑一遍「建技能 + 写脚本 + 挂载」的端到端验收。

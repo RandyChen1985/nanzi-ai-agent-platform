@@ -15,7 +15,12 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.upload_limits import SKILL_PACKAGE_MAX_BYTES, SKILL_PACKAGE_MAX_MB
+from app.core.upload_limits import (
+    SKILL_DIR_MAX_BYTES,
+    SKILL_DIR_MAX_FILES,
+    SKILL_PACKAGE_MAX_BYTES,
+    SKILL_PACKAGE_MAX_MB,
+)
 from app.core.dependencies import require_api_key, require_permission
 from app.core.orm import get_db_session
 from app.services.ai.agent_manager import AgentManagerService
@@ -816,14 +821,17 @@ async def delete_entire_skill(
 #: 压缩包解压后的总量与文件数上限。上传本身已限 100MB，但高压缩比归档（zip bomb）
 #: 可以把它膨胀成数 GB——个人技能上传是普通用户可用的入口，因此必须卡住解压侧。
 #: 按上传上限的 5 倍留余量：正常技能包里压缩率本来就高，卡太紧会误伤。
-MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
+#:
+#: 数字本身已上移到 ``app.core.upload_limits``：技能目录还有第二个写入口
+#: （模型侧的 write_skill_file 工具），两处必须共用同一份预算，否则口径会漂。
+MAX_EXTRACTED_BYTES = SKILL_DIR_MAX_BYTES
 
 #: 文件数上限是**独立维度**，不是体积上限的补充：0 字节文件的 ``file_size`` 为 0，
 #: 实测 45KB 的 zip 就能解出 500 个空文件（每条约 90 字节归档开销）——按体积上限
 #: 100MB 放行时，条目数可以到百万级。失控的文件数会耗尽 inode（ENOSPC 会连累所有
 #: 上传/DB/日志写入），并让解压耗时按条目数线性增长。
 #: 20000 对正常技能包（几十到几百个文件）有约两个数量级余量，同时仍能拦住几十万级的洪水。
-MAX_EXTRACTED_FILES = 20000
+MAX_EXTRACTED_FILES = SKILL_DIR_MAX_FILES
 
 
 def _guard_extract_budget(written_bytes: int, written_files: int) -> None:

@@ -39,6 +39,7 @@ _NUDGE_EXCLUDED_TOOLS = frozenset({
     "fetch_user_long_term_memory",
     "memory_search",
     "create_skills",
+    "write_skill_file",
     "update_dashboard_context",
 })
 
