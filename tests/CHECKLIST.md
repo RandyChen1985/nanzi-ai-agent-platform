@@ -859,3 +859,18 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 **回归**：新增 `tests/services/ai/test_write_skill_file.py` **23 项**（文本子目录写入、Base64 二进制、换行容错、默认不覆盖、显式覆盖、`..`/绝对路径/隐藏目录/SKILL.md 拒绝、技能不存在拒绝、非法 ID、非法 Base64、未知 encoding、单文件超限、目录文件数预算、global 非管理员拒绝 / 管理员可写、递归统计目录占用、标记可 JSON 解析、三处注册契约、预算常量与端点同源）；`-k "skill or tool_policy or nudge or tool_artifact or registry or tool_capability"` **1006 passed / 2 skipped / 3 xfailed**。
 **未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未在真实会话里让模型跑一遍「建技能 + 写脚本 + 挂载」的端到端验收。
+
+## 2026-10-28 沙箱内置 Node 22 / npm / npx（写死，不做配置项）
+
+|---|---|---|---|
+| 技能里的 `scripts/*.js`、`npx` 启动的 MCP 服务在沙箱里跑不了 | `app/services/ai/runtime/agentscope/docker_template_patch.py`、`workspace.py`、`docker_prebuild.py` | docker 沙箱基座是 `python:3.11-slim`（+ 补丁注入的 git/tree/ping/net-tools/procps/telnet），**没有 node/npm/npx**。AgentScope 的 Dockerfile 模板本就有 `node_version` 开关（非空时 `FROM node:<ver>-slim` 把 node/npm/npx 三个二进制 COPY 进来），平台此前一直传 `None`，等于主动关掉了。现写死 `SANDBOX_NODE_VERSION = "22"`，运行时 `DockerWorkspace` 的 kwargs 与 `docker_prebuild._prepare_context` 同步传同一个常量——两处必须一致，它参与镜像 tag 的 SHA256，不一致会让预构建的镜像永远命不中 |
+| 为什么写死、不做配置键 | 同上 | 这是「沙箱里该有什么」的产品决策，不是按部署漂移的运行参数；做成配置只会多一个「配了没生效」的坑。要换版本改一个常量即可（会触发一次镜像重建） |
+| 为什么是 22 而不是 apt 装 | 同上 | Node 20 已于 2026-04 EOL；Debian bookworm 源里的 `nodejs` 只到 18，同样已 EOL，且要多扛一层 apt。走官方 `node:22-slim` COPY 二进制，层更小、版本可控 |
+| k8s 沙箱没有 `node_version` 这个开关 | `k8s_deploy/build-k8s-sandbox-image.sh` | `K8sWorkspace` 直接拉现成镜像，不构建，也就没有 node_version。改在「网关预置镜像」的 Dockerfile heredoc 里写死：多阶段 `FROM node:22-slim AS node_stage` + COPY node/npm/npx，并加 `node --version && npm --version` 构建期自检（基座被换成 alpine 之类非 glibc 镜像时当场失败，而不是运行时才 `node: not found`）。脚本里的版本与 Python 常量同名同值，靠契约测试锁住 |
+| 用户不知道沙箱里现在有 node 了 | `sandbox/docker/README.md`、`k8s_deploy/README.md` | 工具链清单补一行「Node 运行时 node/npm/npx（22 LTS）」，并说明版本写死在哪、与 k8s 预置镜像同源 |
+
+**回归**：新增 `tests/ai/runtime/test_docker_template_patch.py` +4 项（版本钉死且 ≥22、渲染出 `FROM node:22-slim` 与 npm/npx 软链、`node_version=None` 时完全无 node 段、运行时与预构建必须同源传参）；新增 `tests/test_k8s_sandbox_image_node.py` **4 项**（两侧版本一致、dry-run 输出含 node 阶段与 npm/npx 软链、构建期自检、COPY 顺序在 `FROM base` 之后）；实跑 `docker_prebuild._prepare_context()` 确认 Dockerfile 含 node 段、tag 变为 `agentscope-workspace:1cc6179b8c4a`；`-k "sandbox or docker or k8s or prebuild"` **347 passed / 1 skipped / 1 xfailed**。
+**构建期自检**：`docker_template_patch` 还在 `Dockerfile.node_copy.template` 后面追加了 `RUN node --version && npm --version && npx --version`（`NODE_VERIFY_SNIPPET`）。后台基础镜像支持「自定义镜像地址…」，一旦有人填 alpine / distroless 这类非 glibc 基座，COPY 进去的官方 node 二进制跑不起来——没有这句就会潜伏到用户跑技能脚本时才炸。无 node 场景不会渲染该模板，因此不会出现「没装 node 却 RUN node」。k8s 预置镜像里是同一句自检。
+
+**影响面**：docker 策略的镜像 tag 因 node 段变化而全部失效，**既有部署首次使用需重新预构建**（后台「安全沙箱」里点预构建，或首次会话现场构建，分钟级）；容器用 `create_or_replace(name=as_ws_<id>)` 创建，镜像更新后会自动换新容器，不需要手工清理。k8s 策略需重新构建并导入 `nanzi-sandbox-k8s:<新 tag>`，**已运行的 Pod 需重建**才生效。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未真实构建镜像验证 `node --version` 输出（本机只做了 dry-run 与构建上下文渲染）。
