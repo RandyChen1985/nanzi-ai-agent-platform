@@ -904,3 +904,20 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 **回归**：新增 `tests/services/ai/test_import_skill_from_sandbox.py` **30 项**（含二进制资源、相对路径、显式 ID、软链跳过、`.git`/`node_modules`/`__pycache__`/`.seed` 忽略、8 种越界路径、默认不覆盖 / `overwrite` 整树替换、批量含非法目录名、frontmatter 三种告警、文件数与容量预算、失败后无暂存残留、未登录拒绝、注册与 policy 契约、**收录后 `list_skill_metas` 立即可见**）；`-k "skill or tool_policy or registry or nudge or artifact"` **1069 passed / 2 skipped / 3 xfailed**。
 **端到端**：拿宿主上真实的 `scratch/.agents/skills`（`weather-query` + `pdf` 共 13 个文件）跑了一遍，正确收录 `pdf`（12 文件 / 58692 字节，含 `scripts/*.py`、`reference.md`、`LICENSE.txt`）与 `weather-query`（1 文件），marker 可解析。
 **未做**：未改只读挂载；未做自动扫描同步（按用户选择走模型显式调用）；未执行 `./dev.sh`。
+
+## 2026-10-28 会话历史在线分享：只读快照 + 公开/密钥访问 + 有效期 + 打开次数
+
+|---|---|---|---|
+| 会话历史只能导出下载，没法把一段对话发给同事看 | `app/models/conversation_share.py`（新增）、`app/services/conversation_share_service.py`（新增）、`app/api/portal/endpoints/chat_shares.py`（新增）、`app/api/v1/endpoints/share.py`（新增）、`db-prod/V197-create-conversation-shares.sql`（新增）、`db-prod-pg/V97-create-conversation-shares.sql`（新增）、`app/api/portal/api.py`、`app/api/v1/api.py`、`frontend/src/utils/shareExpiry.ts`（新增）、`frontend/src/api/chatShare.ts`（新增）、`frontend/src/components/ShareConversationDialog.vue`（新增）、`frontend/src/components/SharedLinksPanel.vue`（新增）、`frontend/src/views/SharedConversation.vue`（新增）、`frontend/src/components/ChatHistorySidebar.vue`、`frontend/src/components/MessageRenderer.vue`、`frontend/src/views/EmbedChat.vue`、`frontend/src/router/index.ts` | 需求：侧栏条目加分享入口，可设**公开**或**密钥**访问、可设**有效期**（1 小时 / 24 小时 / 7 天 / 30 天 / 永久 / 自定义小时或天），侧栏新增「我分享的」tab 看打开次数、复制链接与密码、作废。**分享即快照**：创建那一刻把 `query`/`summary` 清洗后冻结进 `content_json`，之后源会话继续对话、被删除、Redis 30 天 TTL 到期都不影响分享页——读分享不查原会话，也就不存在「链接还在内容没了」 | 
+| 密码存哈希不是更安全？ | 同上 `secret_cipher` | 需求要求列表里能反复「复制密码」重新发给别人，哈希不可逆就做不到。折中：`Fernet` 加密存密文，密钥由平台 `ENCRYPTION_KEY` 再派生一层（不与 API Key 共用同一把 key）；自定义密码允许 6–32 位任意字符（含中文），因此 `verify_secret` 比较的是 UTF-8 字节而非 str——`hmac.compare_digest` 对非 ASCII str 会抛 `TypeError`，直接 500 |
+| 密码为什么不让分享人直接拼进链接 | 同上、`frontend/src/views/SharedConversation.vue` | 地址与密码**分离**：密码进 URL 就会进浏览器历史、Referer、网关访问日志和聊天截图。分享页先取元信息（不含内容、不计数），密钥模式显示密码卡片；解锁换到的短期令牌存 `sessionStorage`，请求走 `X-Share-Token` 请求头，不进 query |
+| 令牌有效期该多长 | `conversation_share_service.issue_access_token` | 取 `min(12h, 分享剩余有效期)`：分享本身 1 小时后过期，令牌不能比它还长寿；同时令牌里绑 `share_id`，跨分享复用一律失败（否则拿到一个令牌就能读所有分享） |
+| 打开次数什么时候 +1 | `read_share_content` | **只有成功拿到正文才 +1**：元信息、密码错误、限流都不计。否则每刷新一次数字就涨，分享人无法判断对方是否真的看过。计数用原子 `UPDATE view_count = view_count + 1`，避免并发打开时读-改-写丢数 |
+| 失效提示为什么不区分原因 | `share.py` | 不存在 / 已作废 / 已过期对访客统一 404「链接不存在或已失效」。分开提示等于给攻击者一个探测「这个 share_id 是否真实存在」的接口 |
+| 分享页要复刻 Markdown / ECharts / Mermaid，还是另写一套 | `MessageRenderer.vue`、`SharedConversation.vue` | **复用同一个渲染内核**，新增 `readonly` 开关。用两处提前 return 实现（渲染前不生成 citation 角标、渲染后不做路径重映射与产物增强），而不是给每个 replace 打补丁——`postProcessHtml` 后半段（fs/preview 重映射 → 占位符还原 → 下载按钮 → 角标兜底 → 「打开」链接）整条流水线是给聊天页设计的，分享页一个都不需要。canvas 卡片降级为源码展示（分享页没有宿主画布可开） |
+| 正文清洗会不会改坏原始会话 | `sanitize_assistant_content` | 只作用于**快照副本**，`ai_agent_execution_history` 一行不动，导出功能完全不受影响。清洗内容：快捷按钮（整行删 / 行内只摘链接）、`<thought>`、`:::analysis`、`<sql_plan>`、带 token 的产物下载链接（降级为「📎 文件名（文件未随分享提供）」）；**保留** `<chart>` / ` ```echarts ` / ` ```mermaid ` 与表格原样。未闭合的 `<thought>` / `:::analysis` 直接截断到结尾，防止内部推理泄漏 |
+| 迁移版本号为什么是 V197 / V97 | `db-prod/V197-*`、`db-prod-pg/V97-*` | `db-prod/` 实际最高已是 `V194`（且已有两个 `V100-*`），而 `V195/V196` 与 PG `V95/V96` 已被 `2026-10-26-knowledge-base-hardening` 计划的 `knowledge_health_snapshots` / `knowledge_access_requests` 占用，故本特性顺延到 `V197` / `V97` |
+
+**测试**：后端新增 6 个文件 **57 passed**（迁移双库结构一致性 5、模型契约 4、纯函数 30、仓储与计数 6、所有者接口 6、访客接口 6）；前端新增 7 个文件（`share_expiry.mjs` 行为测试 + 6 个契约），`tests/frontend` 全量 **3489 passed / 1 skipped**；`vue-tsc --noEmit` exit 0。
+**关键契约**：字符集去掉 `0O1lI`、令牌跨分享复用必失败、令牌不超过分享剩余有效期、清洗不吃正文表格/`echarts`/`mermaid`、计数只在读正文时 +1、别人的会话创建分享一律 404、两库迁移列集合与索引定义逐项对齐。
+**未做**：未执行 `./dev.sh`（服务启停由用户在控制台执行）；未提交 git；不做批量作废、不改已创建分享的有效期、不重置密码、无访问明细表（只记次数与最近一次时间）。

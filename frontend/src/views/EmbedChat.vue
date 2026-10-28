@@ -29,7 +29,25 @@
       @new-chat="handleNewChatFromSidebar"
       @export-chat="handleExportChatFromSidebar"
       @toggle-pin="handleTogglePin"
+      ref="historySidebarRef"
+      :enable-share="true"
+      :share-auth-headers="embedAuthHeaders"
+      @share-chat="openShareDialog"
+      @toast="handleSidebarToast"
       class="border-r border-gray-200 dark:border-gray-800"
+    />
+
+    <!-- 会话分享弹窗：取数与提交都在弹窗里完成，聊天页只提供目标会话与鉴权头 -->
+    <ShareConversationDialog
+      :visible="showShareDialog"
+      :conversation-id="shareTarget.conversationId"
+      :conversation-title="shareTarget.title"
+      :turn-count="shareTarget.turnCount"
+      :running="shareTarget.running"
+      :auth-headers="embedAuthHeaders"
+      @close="showShareDialog = false"
+      @created="handleShareCreated"
+      @toast="showToast"
     />
 
     <!-- Persistent Global Watermark (Fixed position, now in background) -->
@@ -2571,7 +2589,7 @@ import {
   stripClientStreamErrorSuffix,
   type EmbedStreamSnapshot,
 } from "@/utils/embedStreamSnapshot";
-import { useToast } from "../composables/useToast";
+import { useToast, type ToastType } from "../composables/useToast";
 import { useTokenQuota } from "../composables/useTokenQuota";
 import { useContextUsage } from "@/composables/useContextUsage";
 import { useContextCompactions } from "@/composables/useContextCompactions";
@@ -2642,6 +2660,45 @@ const {
 } = useTokenQuota();
 const showToast = toast.showToast;
 const removeToast = toast.removeToast;
+
+/** 会话在线分享：侧栏只 emit 意图，取数与提交都在弹窗里完成。 */
+const historySidebarRef = ref<InstanceType<typeof ChatHistorySidebar> | null>(null);
+const showShareDialog = ref(false);
+const shareTarget = ref({
+  conversationId: "",
+  title: "",
+  turnCount: 0,
+  running: false,
+});
+
+/** 侧栏「我分享的」面板的复制 / 作废结果复用到全局 toast（emit 的 type 是宽松 string）。 */
+const handleSidebarToast = (message: string, type: string) => {
+  showToast(message, (type || "info") as ToastType);
+};
+
+const openShareDialog = (item: any) => {
+  const targetConvId = String(item?.conversation_id || "");
+  if (!targetConvId) {
+    // 按单轮 trace 聚合的条目没有 conversation_id：没有稳定会话可冻结。
+    showToast("该记录没有会话 ID，暂不支持分享", "warning");
+    return;
+  }
+  shareTarget.value = {
+    conversationId: targetConvId,
+    title: String(item?.title || item?.query || "未命名会话").slice(0, 120),
+    turnCount: Number(item?.turn_count || item?.count || 0),
+    // 历史条目本身不带 running：用列表上的「进行中」集合判断，否则弹窗永远不会
+    // 提示「当前仍在生成，后续轮次不会带出」。
+    running: Boolean(item?.running) || runningConversationIds.value.includes(targetConvId),
+  };
+  showShareDialog.value = true;
+};
+
+const handleShareCreated = (_created: any) => {
+  showToast("分享链接已创建", "success");
+  // 侧栏若正停在「我分享的」，立刻重拉列表，避免新链接要手动刷新才出现
+  historySidebarRef.value?.reloadShares?.();
+};
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import ToolPermissionCard from "@/components/chat/ToolPermissionCard.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
@@ -2684,6 +2741,7 @@ import {
 } from "@/utils/streamErrorPresentation";
 import RagPreviewDrawer from "@/components/RagPreviewDrawer.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
+import ShareConversationDialog from "@/components/ShareConversationDialog.vue";
 import {
   DEFAULT_HISTORY_FILTERS,
   buildHistoryFilterParams,

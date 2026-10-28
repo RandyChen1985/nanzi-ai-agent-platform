@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, skill_gallery, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square
+from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, skill_gallery, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square, chat_shares
 
 portal_router = APIRouter()
 
@@ -17,6 +17,10 @@ portal_router.include_router(scenario_templates.router, prefix="/scenario-templa
 # 4. 智能体对话 (Chat)
 portal_router.include_router(chat.router, prefix="/chat", tags=["智能体对话"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(chat_feedback.router, prefix="/chat", tags=["反馈收集"], dependencies=[Depends(require_api_key)])
+
+# 4.2 会话在线分享（所有者视角：创建 / 我分享的 / 作废）
+# 访客读取走免鉴权的 /api/v1/share/*，不在这里。
+portal_router.include_router(chat_shares.router, prefix="/chat-shares", tags=["会话分享"], dependencies=[Depends(require_api_key)])
 
 # 4.1 问答经验库 (Examples)
 portal_router.include_router(examples.router, prefix="/examples", tags=["问答经验库"], dependencies=[Depends(require_api_key)])

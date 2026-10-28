@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>会话在线分享 · Mockup</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-hover:#4096ff; --primary-soft:rgba(22,119,255,.10);
+    --border:#e5e7eb; --border-soft:#f1f3f5;
+    --ink:#111827; --ink-2:#374151; --ink-3:#6b7280; --ink-4:#9ca3af;
+    --bg:#f5f6f8;
+    --ok:#10b981; --warn:#f59e0b; --danger:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#e9ecf1}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;
+    color:var(--ink); -webkit-font-smoothing:antialiased;
+    padding:24px 0;
+  }
+  .board{display:none; width:1280px; margin:0 auto}
+  .board.on{display:block}
+  .board-head{
+    font-size:13px; font-weight:600; color:#475569; letter-spacing:.04em;
+    margin:0 0 12px 4px; display:flex; align-items:center; gap:8px;
+  }
+  .board-head .dot{width:6px;height:6px;border-radius:50%;background:var(--primary)}
+
+  .mock-nav{position:fixed; right:18px; top:14px; z-index:99; display:flex; gap:6px;
+    background:rgba(255,255,255,.92); border:1px solid #dfe4eb; border-radius:10px; padding:5px;
+    box-shadow:0 6px 18px rgba(15,23,42,.10); backdrop-filter:blur(6px)}
+  .mock-nav button{height:26px; padding:0 10px; border:0; border-radius:7px; background:transparent;
+    font-family:inherit; font-size:11.5px; font-weight:700; color:#64748b; cursor:pointer}
+  .mock-nav button.on{background:var(--primary); color:#fff}
+
+  /* ---------- 通用控件 ---------- */
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:6px;
+    height:34px; padding:0 14px; border-radius:9px; border:1px solid var(--border);
+    background:#fff; color:var(--ink-2); font-size:13px; font-weight:600; cursor:pointer;
+    font-family:inherit;
+  }
+  .btn-primary{background:var(--primary); border-color:var(--primary); color:#fff;
+    box-shadow:0 1px 2px rgba(22,119,255,.35)}
+  .btn-ghost{border-color:transparent; background:transparent; color:var(--ink-3)}
+  .btn-sm{height:28px; padding:0 10px; font-size:12px; border-radius:8px}
+  .chip{
+    display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 8px;
+    border-radius:6px; font-size:11px; font-weight:700; letter-spacing:.02em;
+  }
+  .chip-soft{background:#f3f4f6; color:var(--ink-3); font-weight:600}
+  .chip-ok{background:rgba(16,185,129,.10); color:#047857}
+  .chip-warn{background:rgba(245,158,11,.12); color:#b45309}
+  .chip-dead{background:#f3f4f6; color:#9ca3af}
+
+  /* ---------- 侧栏 ---------- */
+  .app{
+    position:relative; width:1280px; height:900px; background:#fff; border-radius:14px;
+    overflow:hidden; display:flex; box-shadow:0 10px 40px rgba(15,23,42,.10);
+    border:1px solid #e2e6ec;
+  }
+  .sidebar{
+    width:368px; flex:0 0 368px; border-right:1px solid var(--border);
+    display:flex; flex-direction:column; background:#fff; height:100%;
+  }
+  .sb-top{
+    height:52px; display:flex; align-items:center; gap:10px; padding:0 14px;
+    border-bottom:1px solid var(--border-soft); flex:0 0 52px;
+  }
+  .sb-close{
+    width:26px;height:26px;border-radius:7px;display:grid;place-items:center;
+    color:var(--ink-3); background:#fff; border:1px solid var(--border-soft);
+  }
+  .sb-badge{
+    width:20px;height:20px;border-radius:50%;border:2px solid var(--primary);
+    display:grid;place-items:center;color:var(--primary); font-size:11px; font-weight:700;
+  }
+  .sb-title{font-size:14px; font-weight:700; letter-spacing:.01em}
+  .sb-refresh{margin-left:auto; color:var(--ink-4)}
+
+  /* tabs */
+  .tabs{display:flex; gap:4px; padding:10px 14px 0; flex:0 0 auto}
+  .tab{
+    position:relative; height:32px; padding:0 12px; border-radius:8px 8px 0 0;
+    font-size:13px; font-weight:600; color:var(--ink-3); display:flex; align-items:center; gap:6px;
+  }
+  .tab .count{font-size:10px; font-weight:700; background:#eef2f7; color:var(--ink-3);
+    border-radius:20px; padding:1px 6px}
+  .tab.active{color:var(--primary); background:var(--primary-soft)}
+  .tab.active .count{background:#fff; color:var(--primary)}
+  .tab-underline{height:1px; background:var(--border); margin:0 14px}
+
+  .sb-search{padding:12px 14px 10px; display:flex; gap:8px; flex:0 0 auto}
+  .search-box{
+    flex:1; height:36px; border:1px solid var(--border); border-radius:9px; background:#fff;
+    display:flex; align-items:center; gap:8px; padding:0 11px; color:var(--ink-4); font-size:13px;
+  }
+  .icon-btn{
+    width:36px;height:36px;border:1px solid var(--border);border-radius:9px;
+    display:grid;place-items:center;color:var(--ink-3); background:#fff;
+  }
+  .sb-list{flex:1; overflow:hidden; padding:4px 12px 12px}
+  .group-head{
+    display:flex; align-items:center; gap:6px; padding:8px 4px; color:var(--ink-3);
+    font-size:11px; font-weight:700; letter-spacing:.08em;
+  }
+  .group-head .n{font-size:10px;background:#f3f4f6;border-radius:20px;padding:1px 6px;color:var(--ink-4); letter-spacing:0}
+
+  .card{
+    position:relative; border:1px solid var(--border); border-radius:12px; background:#fff;
+    padding:11px 12px; margin-bottom:8px; overflow:hidden;
+  }
+  .card.active{border-color:rgba(22,119,255,.35); background:rgba(22,119,255,.055);
+    box-shadow:0 1px 2px rgba(22,119,255,.12), 0 0 0 1px rgba(22,119,255,.18)}
+  .card.active .bar{position:absolute; left:0; top:8px; bottom:8px; width:3px;
+    border-radius:0 3px 3px 0; background:var(--primary)}
+  .card-top{display:flex; align-items:center; justify-content:space-between; gap:8px}
+  .card-time{font-size:10px; color:var(--ink-4); font-weight:600}
+  .actions{display:flex; align-items:center; gap:1px; opacity:1}
+  .icon-act{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;color:var(--ink-4)}
+  .icon-act.hot{color:var(--primary); background:rgba(22,119,255,.10)}
+  .icon-act.pin{color:var(--primary)}
+  .card-title{font-size:12.5px; font-weight:700; line-height:1.45; margin:5px 0 3px;
+    display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden}
+  .card.active .card-title{color:var(--primary)}
+  .card-sub{font-size:11px; color:var(--ink-3); line-height:1.55;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+  .card-foot{display:flex; align-items:center; justify-content:space-between; margin-top:8px}
+  .card-meta{display:flex; align-items:center; gap:5px; font-size:10px; color:var(--ink-4)}
+  .dot-ok{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+  .tag-current{font-size:9px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--primary); background:rgba(22,119,255,.12); border-radius:6px; padding:2px 6px}
+
+  /* 分享条目（我分享的 tab） */
+  .share-item{border:1px solid var(--border); border-radius:12px; padding:11px 12px; margin-bottom:8px; background:#fff}
+  .share-item.revoked{background:#fafafa; border-style:dashed}
+  .share-head{display:flex; align-items:flex-start; gap:6px; justify-content:space-between}
+  .share-name{font-size:12.5px; font-weight:700; line-height:1.45; flex:1;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+  .share-item.revoked .share-name{color:var(--ink-4); text-decoration:line-through}
+  .share-tags{display:flex; gap:5px; margin:7px 0 6px; flex-wrap:wrap}
+  .share-stats{font-size:10.5px; color:var(--ink-3); display:flex; align-items:center; gap:6px}
+  .share-stats b{color:var(--ink-2); font-weight:700}
+  .share-exp{font-size:10.5px; color:var(--ink-4); margin-top:3px}
+  .share-actions{display:flex; gap:6px; margin-top:9px}
+  .mini-btn{
+    height:26px; padding:0 9px; border-radius:7px; border:1px solid var(--border); background:#fff;
+    font-size:11px; font-weight:600; color:var(--ink-2); display:inline-flex; align-items:center; gap:4px;
+    font-family:inherit;
+  }
+  .mini-btn.danger{color:#b91c1c; border-color:#fecaca; background:#fff5f5}
+  .mini-btn.disabled{color:#c2c8d0; border-color:#eef0f3; background:#fafbfc}
+  .confirm-strip{
+    margin-top:9px; border-radius:9px; background:#fef2f2; border:1px solid #fecaca;
+    padding:8px 10px; display:flex; align-items:center; justify-content:space-between; gap:8px;
+  }
+  .confirm-strip span{font-size:11.5px; font-weight:700; color:#b91c1c}
+
+  /* ---------- 右侧对话背景（虚化示意） ---------- */
+  .chat-bg{flex:1; background:#fff; padding:26px 44px; position:relative; overflow:hidden}
+  .chat-bg .who{display:flex; align-items:center; gap:10px; margin-bottom:22px}
+  .avatar{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#dbeafe,#c7d2fe);
+    display:grid;place-items:center;color:#4f46e5;font-size:14px;font-weight:800}
+  .chat-bg .who b{font-size:14px}
+  .chat-bg .who i{font-size:11.5px;color:var(--ink-4);font-style:normal;margin-left:4px}
+  .bubble-user{margin-left:auto; max-width:520px; background:rgba(22,119,255,.08); border:1px solid rgba(22,119,255,.14);
+    border-radius:14px 14px 4px 14px; padding:11px 14px; font-size:13px; line-height:1.6; color:var(--ink-2)}
+  .ans{max-width:600px; margin-top:16px; font-size:13px; line-height:1.75; color:var(--ink-2)}
+  .ans h4{font-size:13px; margin:14px 0 6px}
+  .ans ul{margin:0 0 0 18px}
+  .ans li{margin:3px 0}
+  .ans table{border-collapse:collapse; margin:10px 0; font-size:12px}
+  .ans th,.ans td{border:1px solid #e8ebf0; padding:5px 10px; text-align:left}
+  .ans th{background:#f7f9fc; font-weight:700; color:var(--ink-2)}
+  .fade-bottom{position:absolute; left:0; right:0; bottom:0; height:120px;
+    background:linear-gradient(to bottom, rgba(255,255,255,0), #fff 70%)}
+  .composer{position:absolute; left:44px; right:44px; bottom:26px; height:52px; border:1px solid var(--border);
+    border-radius:14px; background:#fff; box-shadow:0 6px 20px rgba(15,23,42,.07); display:flex;
+    align-items:center; padding:0 14px; gap:10px; color:#b6bfcc; font-size:12.5px; z-index:2}
+  .composer .send{margin-left:auto; width:30px;height:30px;border-radius:9px;background:var(--primary);
+    display:grid;place-items:center;color:#fff}
+
+  /* ---------- 弹窗 ---------- */
+  .overlay{position:absolute; inset:0; background:rgba(15,23,42,.38); display:flex; z-index:9;
+    align-items:center; justify-content:center; backdrop-filter:blur(1.5px)}
+  .dialog{
+    width:474px; background:#fff; border-radius:16px; box-shadow:0 24px 60px rgba(15,23,42,.28);
+    overflow:hidden; border:1px solid rgba(255,255,255,.6);
+  }
+  .dlg-head{padding:16px 18px 12px; display:flex; align-items:flex-start; gap:10px}
+  .dlg-head h3{font-size:15px; font-weight:800; letter-spacing:.01em}
+  .dlg-head p{font-size:11.5px; color:var(--ink-4); margin-top:4px; line-height:1.5;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+  .dlg-x{margin-left:auto; color:var(--ink-4)}
+  .dlg-body{padding:2px 18px 4px}
+  .field-label{font-size:11.5px; font-weight:700; color:var(--ink-2); margin:12px 0 7px;
+    display:flex; align-items:center; gap:6px}
+  .field-label .hint{font-weight:500; color:var(--ink-4); font-size:10.5px}
+  .modes{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .mode{
+    border:1px solid var(--border); border-radius:11px; padding:10px 11px; background:#fff;
+    position:relative;
+  }
+  .mode.sel{border-color:var(--primary); background:rgba(22,119,255,.045); box-shadow:0 0 0 1px rgba(22,119,255,.25)}
+  .mode .m-top{display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:700}
+  .mode .m-desc{font-size:10.5px; color:var(--ink-4); margin-top:4px; line-height:1.45}
+  .radio{width:14px;height:14px;border-radius:50%;border:1.5px solid #cbd5e1; display:grid; place-items:center}
+  .mode.sel .radio{border-color:var(--primary)}
+  .mode.sel .radio::after{content:""; width:7px;height:7px;border-radius:50%;background:var(--primary)}
+  .pwd-row{display:flex; gap:8px}
+  .input{
+    flex:1; height:36px; border:1px solid var(--border); border-radius:9px; padding:0 11px;
+    font-size:13px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.14em;
+    color:var(--ink); background:#fff; display:flex; align-items:center;
+  }
+  .input.plain{font-family:inherit; letter-spacing:0; color:var(--ink-3)}
+  .ttl-row{display:flex; flex-wrap:wrap; gap:6px}
+  .pill{
+    height:30px; padding:0 11px; border-radius:8px; border:1px solid var(--border); background:#fff;
+    font-size:12px; font-weight:600; color:var(--ink-2); display:inline-flex; align-items:center;
+    font-family:inherit;
+  }
+  .pill.sel{background:var(--primary); border-color:var(--primary); color:#fff}
+  .custom-row{display:flex; gap:6px; align-items:center; margin-top:8px}
+  .custom-row .input{width:74px; flex:0 0 74px; height:32px; font-family:inherit; letter-spacing:0;
+    color:var(--ink-4); justify-content:flex-start; padding:0 9px; font-size:12.5px}
+  .select{height:32px; border:1px solid var(--border); border-radius:8px; padding:0 26px 0 10px;
+    font-size:12.5px; color:var(--ink-2); background:#fff; display:inline-flex; align-items:center; gap:22px;
+    font-family:inherit}
+  .notice{
+    margin-top:12px; display:flex; gap:7px; align-items:flex-start; border-radius:9px;
+    background:#fffbeb; border:1px solid #fde68a; padding:8px 10px; font-size:11px; color:#92400e; line-height:1.5;
+  }
+  .dlg-foot{display:flex; align-items:center; gap:8px; padding:14px 18px 16px; margin-top:12px;
+    border-top:1px solid var(--border-soft); background:#fcfdff}
+  .dlg-foot .left{font-size:10.5px; color:var(--ink-4); line-height:1.5}
+  .dlg-foot .right{margin-left:auto; display:flex; gap:8px}
+
+  /* 结果态 */
+  .result{padding:22px 18px 8px; text-align:center}
+  .ok-badge{width:44px;height:44px;border-radius:50%;background:rgba(16,185,129,.12);
+    display:grid;place-items:center;margin:0 auto 10px; color:#059669}
+  .result h3{font-size:15px;font-weight:800}
+  .result .sub{font-size:11.5px;color:var(--ink-4);margin-top:5px}
+  .copy-box{
+    display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:10px;
+    padding:9px 10px; margin-top:10px; background:#fbfcfe; text-align:left;
+  }
+  .copy-box .lab{font-size:10px; font-weight:800; color:var(--ink-4); letter-spacing:.08em; width:46px; flex:0 0 46px}
+  .copy-box .val{flex:1; font-size:11.5px; color:var(--ink-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .copy-box .val.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.16em; font-weight:700}
+  .copy-btn{height:26px; padding:0 9px; border-radius:7px; border:1px solid rgba(22,119,255,.3);
+    background:#fff; color:var(--primary); font-size:11px; font-weight:700; display:inline-flex;
+    align-items:center; gap:4px; font-family:inherit}
+  .copy-btn.done{background:rgba(16,185,129,.1); border-color:rgba(16,185,129,.35); color:#047857}
+  .result-meta{display:flex; gap:8px; justify-content:center; margin-top:12px}
+  .result-meta .chip{height:24px}
+
+  /* ---------- 分享页 ---------- */
+  .share-page{
+    width:1280px; background:#f7f8fa; border-radius:14px; border:1px solid #e2e6ec;
+    overflow:hidden; box-shadow:0 10px 40px rgba(15,23,42,.08);
+  }
+  .sp-top{
+    height:58px; background:#fff; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:10px; padding:0 24px;
+  }
+  .sp-logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#3b82f6,#6366f1);
+    display:grid;place-items:center;color:#fff;font-size:12px;font-weight:800}
+  .sp-top b{font-size:13.5px; letter-spacing:.02em}
+  .sp-top .sep{color:#d5dae2}
+  .badge-ro{font-size:10.5px; font-weight:800; letter-spacing:.08em; color:#475569;
+    background:#eef2f7; border:1px solid #e2e8f0; border-radius:6px; padding:3px 7px}
+  .sp-top .right{margin-left:auto; font-size:11.5px; color:var(--ink-4); display:flex; align-items:center; gap:6px}
+  .sp-main{max-width:860px; margin:0 auto; padding:30px 24px 90px}
+  .sp-title{font-size:20px; font-weight:800; line-height:1.4; letter-spacing:.01em}
+  .sp-meta{display:flex; align-items:center; gap:7px; margin-top:9px; font-size:11.5px; color:var(--ink-4); flex-wrap:wrap}
+  .sp-meta .div{width:3px;height:3px;border-radius:50%;background:#cbd5e1}
+  .sp-card{background:#fff; border:1px solid var(--border); border-radius:14px; padding:20px 22px;
+    margin-top:18px; box-shadow:0 1px 2px rgba(15,23,42,.04)}
+
+  /* 分享页内：MessageRenderer 的图表 / 代码块 / mermaid（只读态） */
+  .chart-card{border:1px solid #eef1f5; border-radius:11px; background:#fcfdff; padding:9px 11px 4px; margin:11px 0}
+  .chart-head{display:flex; align-items:center; gap:8px; font-size:10.5px; color:#6b7280; font-weight:700}
+  .chart-head .modes{margin-left:auto; display:flex; gap:4px}
+  .chart-head .m{font-size:9.5px; padding:1px 6px; border-radius:5px; background:#f1f4f8; color:#94a3b8; font-weight:600}
+  .chart-head .m.on{background:rgba(22,119,255,.12); color:var(--primary); font-weight:800}
+  .code-card{border-radius:10px; overflow:hidden; margin:11px 0; background:#0f172a}
+  .code-card .c-head{display:flex; align-items:center; gap:6px; padding:5px 10px; background:#1b2434;
+    color:#94a3b8; font-size:9.5px; font-weight:700; letter-spacing:.06em}
+  .code-card .c-head .copy{margin-left:auto; color:#7dd3fc; font-weight:600; letter-spacing:0}
+  .code-card pre{margin:0; padding:9px 12px 11px; color:#e2e8f0;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; line-height:1.75; overflow:hidden}
+  .code-card .kw{color:#c084fc} .code-card .str{color:#86efac}
+  .code-card .num{color:#fdba74} .code-card .cm{color:#64748b} .code-card .fn{color:#7dd3fc}
+  .mermaid-card{border:1px dashed #dbe3ee; border-radius:10px; padding:9px; margin:11px 0;
+    background:#fcfdff; text-align:center}
+  .mermaid-tag{font-size:9px; font-weight:800; letter-spacing:.08em; color:#a8b3c4; text-align:left; margin-bottom:4px}
+  .msg{display:flex; gap:11px; padding:14px 0; border-top:1px dashed #eef1f5}
+  .msg:first-child{border-top:0; padding-top:2px}
+  .msg.user{justify-content:flex-end}
+  .msg.user .bubble{background:rgba(22,119,255,.075); border:1px solid rgba(22,119,255,.16);
+    border-radius:13px 13px 3px 13px; padding:10px 14px; font-size:13px; line-height:1.65; max-width:78%}
+  .msg.ai .body{font-size:13px; line-height:1.8; color:var(--ink-2); max-width:calc(100% - 46px)}
+  .msg.ai .body h4{font-size:13px; margin:12px 0 5px}
+  .msg.ai .body p{margin:5px 0}
+  .msg.ai .body table{border-collapse:collapse; margin:10px 0; font-size:12.5px; width:100%}
+  .msg.ai .body th,.msg.ai .body td{border:1px solid #e8ebf0; padding:6px 10px; text-align:left}
+  .msg.ai .body th{background:#f7f9fc; font-weight:700}
+  .msg.ai .body ul{margin:6px 0 6px 18px}
+  .msg.ai .body li{margin:4px 0}
+  .ava-ai{width:34px;height:34px;flex:0 0 34px;border-radius:9px;background:linear-gradient(135deg,#dbeafe,#c7d2fe);
+    display:grid;place-items:center;color:#4f46e5;font-size:13px;font-weight:800}
+  .sp-foot{
+    position:absolute; left:0; right:0; bottom:0; height:52px; background:rgba(255,255,255,.92);
+    border-top:1px solid var(--border); display:flex; align-items:center; justify-content:center;
+    font-size:11.5px; color:var(--ink-4); gap:6px; backdrop-filter:blur(6px);
+  }
+  .sp-wrap{position:relative}
+
+  /* 密码卡片 / 失效页 */
+  .gate-wrap{display:flex; align-items:center; justify-content:center; min-height:760px;
+    background:#f7f8fa; padding:40px 20px}
+  .gate{width:392px; background:#fff; border:1px solid var(--border); border-radius:16px;
+    padding:26px 24px; text-align:center; box-shadow:0 10px 30px rgba(15,23,42,.07)}
+  .gate .lock{width:46px;height:46px;border-radius:12px;background:rgba(22,119,255,.08);
+    color:var(--primary); display:grid;place-items:center; margin:0 auto 12px}
+  .gate h3{font-size:15px;font-weight:800}
+  .gate p{font-size:11.5px;color:var(--ink-4);margin-top:6px;line-height:1.6}
+  .gate .input{margin-top:14px; justify-content:center; letter-spacing:.3em; font-size:15px}
+  .gate .btn{width:100%; margin-top:10px; height:38px}
+  .gate .err{font-size:11px;color:#dc2626;margin-top:8px; display:flex; gap:5px; justify-content:center; align-items:center}
+  .gate .tiny{font-size:10.5px;color:#c2c8d0;margin-top:14px}
+  .dead-card{width:392px; text-align:center; padding:34px 24px}
+  .dead-icon{width:46px;height:46px;border-radius:50%;background:#f3f4f6;color:#9ca3af;
+    display:grid;place-items:center;margin:0 auto 12px}
+
+  /* 手机 */
+  .phone{
+    width:330px; height:660px; border-radius:26px; background:#fff; border:8px solid #1f2937;
+    overflow:hidden; position:relative; box-shadow:0 18px 40px rgba(15,23,42,.22);
+  }
+  .phone .p-top{height:46px; display:flex; align-items:center; gap:7px; padding:0 12px;
+    border-bottom:1px solid var(--border-soft); background:#fff}
+  .phone .p-body{padding:14px 12px 60px; overflow:hidden}
+  .phone .sp-title{font-size:15px}
+  .phone .msg.ai .body{font-size:12px}
+  .phone .tab{height:30px; padding:0 9px; font-size:12px}
+
+  .row{display:flex; gap:18px; align-items:flex-start}
+  .col{display:flex; flex-direction:column; gap:14px}
+  .cap{font-size:11.5px; color:#64748b; font-weight:600; margin-bottom:8px; display:flex; gap:6px; align-items:center}
+  .cap i{width:5px;height:5px;border-radius:50%;background:#94a3b8; font-style:normal}
+  .frame{background:#fff; border:1px solid #dfe4eb; border-radius:12px; padding:14px;
+    box-shadow:0 2px 10px rgba(15,23,42,.04)}
+</style>
+</head>
+<body>
+
+<div class="mock-nav">
+  <button data-go="p1" class="on">1 · 侧栏与弹窗</button>
+  <button data-go="p2">2 · 我分享的</button>
+  <button data-go="p3">3 · 分享页</button>
+</div>
+
+<!-- ============ P1：侧栏 + 创建分享弹窗 ============ -->
+<div class="board on" id="p1">
+  <div class="board-head"><span class="dot"></span>场景 1 · 会话历史的条目加「分享」，点开创建弹窗（密钥访问 + 7 天有效期）</div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sb-top">
+        <div class="sb-close">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </div>
+        <div class="sb-badge">i</div>
+        <div class="sb-title">会话历史</div>
+        <div class="sb-refresh">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h5M20 20v-5h-5"/><path d="M4.6 15a8 8 0 0 0 14.8 2M19.4 9A8 8 0 0 0 4.6 7"/></svg>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab active">会话历史 <span class="count">2</span></div>
+        <div class="tab">我分享的 <span class="count">3</span></div>
+      </div>
+      <div class="tab-underline"></div>
+
+      <div class="sb-search">
+        <div class="search-box">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          搜索历史记录…
+        </div>
+        <div class="icon-btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+        </div>
+      </div>
+
+      <div class="sb-list">
+        <div class="group-head">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+          今天 <span class="n">2</span>
+        </div>
+
+        <div class="card active">
+          <div class="bar"></div>
+          <div class="card-top">
+            <span class="card-time">刚刚</span>
+            <div class="actions">
+              <div class="icon-act pin">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.6"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6z"/><path d="M12 14v6" fill="none"/></svg>
+              </div>
+              <div class="icon-act">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+              </div>
+              <div class="icon-act hot">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M10 13a4.5 4.5 0 006.4 0l2.2-2.2a4.5 4.5 0 00-6.4-6.4L10.9 5.7"/><path d="M14 11a4.5 4.5 0 00-6.4 0l-2.2 2.2a4.5 4.5 0 006.4 6.4l1.3-1.3"/></svg>
+              </div>
+              <div class="icon-act">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12h6m-6 4h6M8 3h6l5 5v11a2 2 0 01-2 2H8a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
+              </div>
+              <div class="icon-act">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 7l-.9 12A2 2 0 0116 21H8a2 2 0 01-2-2L5 7m5 4v6m4-6v6M9 7V4h6v3M4 7h16"/></svg>
+              </div>
+            </div>
+          </div>
+          <div class="card-title">用刚装好的 xlsx 技能帮我读取并分析一个表格</div>
+          <div class="card-sub">## 分析完成：`accessible_datasets_20260923.xlsx` 你这份表格共 1,842 行…</div>
+          <div class="card-foot">
+            <div class="card-meta"><span class="dot-ok"></span>3 轮交互</div>
+            <span class="tag-current">当前会话</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-top">
+            <span class="card-time">2 小时前</span>
+            <div class="actions">
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zM12 14v6"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M10 13a4.5 4.5 0 006.4 0l2.2-2.2a4.5 4.5 0 00-6.4-6.4L10.9 5.7"/><path d="M14 11a4.5 4.5 0 00-6.4 0l-2.2 2.2a4.5 4.5 0 006.4 6.4l1.3-1.3"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12h6m-6 4h6M8 3h6l5 5v11a2 2 0 01-2 2H8a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 7l-.9 12A2 2 0 0116 21H8a2 2 0 01-2-2L5 7m5 4v6m4-6v6M9 7V4h6v3M4 7h16"/></svg></div>
+            </div>
+          </div>
+          <div class="card-title">水印改成「NanZi 智能体平台」</div>
+          <div class="card-sub">[本回复由智能体「主助手(Main)」生成] 水印已改为「NanZi 智能体平台」，PDF 重新生成并通…</div>
+          <div class="card-foot">
+            <div class="card-meta"><span class="dot-ok"></span>2 轮交互</div>
+          </div>
+        </div>
+
+        <div class="group-head" style="margin-top:6px">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+          昨天 <span class="n">2</span>
+        </div>
+        <div class="card">
+          <div class="card-top">
+            <span class="card-time">昨天 17:42</span>
+            <div class="actions">
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zM12 14v6"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M10 13a4.5 4.5 0 006.4 0l2.2-2.2a4.5 4.5 0 00-6.4-6.4L10.9 5.7"/><path d="M14 11a4.5 4.5 0 00-6.4 0l-2.2 2.2a4.5 4.5 0 006.4 6.4l1.3-1.3"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 7l-.9 12A2 2 0 0116 21H8a2 2 0 01-2-2L5 7m5 4v6m4-6v6M9 7V4h6v3M4 7h16"/></svg></div>
+            </div>
+          </div>
+          <div class="card-title">把这个月的销售明细按大区分组做个对比</div>
+          <div class="card-sub">已按华东 / 华南 / 华北 / 西南四个大区完成汇总，华东 GMV 领先 38%…</div>
+          <div class="card-foot">
+            <div class="card-meta"><span class="dot-ok"></span>5 轮交互</div>
+            <span class="chip chip-soft" style="font-size:9px">🌐 已分享</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-top">
+            <span class="card-time">昨天 09:12</span>
+            <div class="actions">
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4h6l-1 6 4 4H6l4-4-1-6zM12 14v6"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><path d="M10 13a4.5 4.5 0 006.4 0l2.2-2.2a4.5 4.5 0 00-6.4-6.4L10.9 5.7"/><path d="M14 11a4.5 4.5 0 00-6.4 0l-2.2 2.2a4.5 4.5 0 006.4 6.4l1.3-1.3"/></svg></div>
+              <div class="icon-act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 7l-.9 12A2 2 0 0116 21H8a2 2 0 01-2-2L5 7m5 4v6m4-6v6M9 7V4h6v3M4 7h16"/></svg></div>
+            </div>
+          </div>
+          <div class="card-title">按门店维度看看退货率异常的那几家</div>
+          <div class="card-sub">退货率高于 5% 的门店共 7 家，集中在华南与西南，其中 3 家有共同供应商…</div>
+          <div class="card-foot">
+            <div class="card-meta"><span class="dot-ok"></span>4 轮交互</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="chat-bg">
+      <div class="who"><div class="avatar">AI</div><b>NanZi · AI</b><i>准备就绪</i></div>
+      <div class="bubble-user">用刚装好的 xlsx 技能帮我读取并分析一个表格，重点看下单量和 GMV 的月度趋势</div>
+      <div class="ans">
+        <h4>## 分析完成</h4>
+        <p>已读取 <code>accessible_datasets_20260923.xlsx</code>，共 1,842 行、9 列，覆盖 2025-01 至 2026-09。</p>
+        <table>
+          <tr><th>月份</th><th>下单量</th><th>GMV（万元）</th><th>环比</th></tr>
+          <tr><td>2026-07</td><td>12,480</td><td>386.2</td><td>+8.4%</td></tr>
+          <tr><td>2026-08</td><td>13,905</td><td>421.7</td><td>+11.4%</td></tr>
+          <tr><td>2026-09</td><td>15,332</td><td>463.9</td><td>+10.3%</td></tr>
+        </table>
+        <ul>
+          <li>GMV 连续 3 个月两位数增长，9 月创近 12 个月新高</li>
+          <li>下单量与 GMV 同步上行，客单价稳定在 302 元附近</li>
+        </ul>
+        <div class="bubble-user" style="margin-top:18px">那华东的增量主要来自哪些门店？</div>
+        <p style="margin-top:14px">华东 9 月增量 32.4 万元，Top 3 门店合计贡献 68%：杭州西湖店 +9.2 万、上海静安店 +7.4 万、南京新街口店 +5.3 万。这三家均在 9 月上线了会员日活动。</p>
+      </div>
+      <div class="fade-bottom"></div>
+      <div class="composer">
+        <span>继续追问，或试试 / 命令…</span>
+        <span class="send">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+        </span>
+      </div>
+    </main>
+
+    <div class="overlay">
+      <div class="dialog">
+        <div class="dlg-head">
+          <div>
+            <h3>分享会话</h3>
+            <p>用刚装好的 xlsx 技能帮我读取并分析一个表格，重点看下单量和 GMV 的月度趋势</p>
+          </div>
+          <div class="dlg-x"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+        </div>
+
+        <div class="dlg-body">
+          <div class="field-label">访问方式</div>
+          <div class="modes">
+            <div class="mode">
+              <div class="m-top"><span class="radio"></span>公开链接</div>
+              <div class="m-desc">拿到链接的人都能直接查看</div>
+            </div>
+            <div class="mode sel">
+              <div class="m-top"><span class="radio"></span>密钥访问</div>
+              <div class="m-desc">需要输入访问密码才能查看</div>
+            </div>
+          </div>
+
+          <div class="field-label">访问密码 <span class="hint">可自动生成，也可以自己改</span></div>
+          <div class="pwd-row">
+            <div class="input">a7k2m9x4</div>
+            <button class="btn btn-sm" style="height:36px">换一个</button>
+          </div>
+
+          <div class="field-label">有效期</div>
+          <div class="ttl-row">
+            <span class="pill">1 小时</span>
+            <span class="pill">24 小时</span>
+            <span class="pill sel">7 天</span>
+            <span class="pill">30 天</span>
+            <span class="pill">永久</span>
+          </div>
+          <div class="custom-row">
+            <div class="input">自定义</div>
+            <span style="font-size:11.5px;color:#9ca3af">天</span>
+            <div class="select">小时
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div class="notice">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:0 0 13px;margin-top:1px"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg>
+            <span>只包含已完成的 <b>3 轮</b>问答；思考过程、工具调用与生成的文件不会随分享带出。</span>
+          </div>
+        </div>
+
+        <div class="dlg-foot">
+          <div class="left">2026-11-04 13:20 自动失效</div>
+          <div class="right">
+            <button class="btn btn-ghost">取消</button>
+            <button class="btn btn-primary">创建分享</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ P2：我分享的 tab + 结果态 ============ -->
+<div class="board" id="p2">
+  <div class="board-head"><span class="dot"></span>场景 2 · 「我分享的」tab（状态 / 打开次数 / 复制 / 作废）与创建成功后的结果态</div>
+  <div class="row">
+    <div class="col">
+      <div class="cap"><i></i>侧栏 → 我分享的</div>
+      <div class="frame" style="padding:0; width:400px; height:820px; overflow:hidden">
+        <aside class="sidebar" style="width:400px; flex:0 0 400px; height:820px; border-right:0">
+          <div class="sb-top">
+            <div class="sb-close"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+            <div class="sb-badge">i</div>
+            <div class="sb-title">会话历史</div>
+            <div class="sb-refresh"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h5M20 20v-5h-5"/><path d="M4.6 15a8 8 0 0 0 14.8 2M19.4 9A8 8 0 0 0 4.6 7"/></svg></div>
+          </div>
+          <div class="tabs">
+            <div class="tab">会话历史 <span class="count">12</span></div>
+            <div class="tab active">我分享的 <span class="count">3</span></div>
+          </div>
+          <div class="tab-underline"></div>
+          <div class="sb-list" style="padding-top:12px">
+            <div class="share-item">
+              <div class="share-head">
+                <div class="share-name">用刚装好的 xlsx 技能帮我读取并分析一个表格，重点看下单量和 GMV 的月度趋势</div>
+              </div>
+              <div class="share-tags">
+                <span class="chip chip-soft">🔑 密钥</span>
+                <span class="chip chip-ok">生效中</span>
+              </div>
+              <div class="share-stats">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                已打开 <b>7</b> 次 · 最近 10 分钟前
+              </div>
+              <div class="share-exp">7 天后过期 · 10-28 13:20 创建</div>
+              <div class="share-actions">
+                <button class="mini-btn">复制链接</button>
+                <button class="mini-btn">复制密码</button>
+                <button class="mini-btn danger">作废</button>
+              </div>
+            </div>
+
+            <div class="share-item">
+              <div class="share-head">
+                <div class="share-name">水印改成「NanZi 智能体平台」，PDF 重新生成</div>
+              </div>
+              <div class="share-tags">
+                <span class="chip chip-soft">🌐 公开</span>
+                <span class="chip chip-ok">生效中</span>
+              </div>
+              <div class="share-stats">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                已打开 <b>23</b> 次 · 最近 2 小时前
+              </div>
+              <div class="share-exp">永久有效 · 10-27 18:04 创建</div>
+              <div class="share-actions">
+                <button class="mini-btn">复制链接</button>
+                <button class="mini-btn danger">作废</button>
+              </div>
+            </div>
+
+            <div class="share-item">
+              <div class="share-head">
+                <div class="share-name">把这个月的销售明细按大区分组做个对比</div>
+              </div>
+              <div class="share-tags">
+                <span class="chip chip-soft">🔑 密钥</span>
+                <span class="chip chip-dead">已作废</span>
+              </div>
+              <div class="share-stats">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                已打开 <b>4</b> 次 · 3 天前
+              </div>
+              <div class="share-exp">10-26 09:12 作废 · 10-25 创建</div>
+              <div class="share-actions">
+                <button class="mini-btn disabled">复制链接</button>
+                <button class="mini-btn disabled">复制密码</button>
+              </div>
+            </div>
+
+            <div class="share-item revoked">
+              <div class="share-head">
+                <div class="share-name">按门店维度看看退货率异常的那几家</div>
+              </div>
+              <div class="share-tags">
+                <span class="chip chip-soft">🌐 公开</span>
+                <span class="chip chip-warn">已过期</span>
+              </div>
+              <div class="share-stats">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                已打开 <b>11</b> 次 · 昨天
+              </div>
+              <div class="share-exp">已于 10-28 08:00 过期 · 10-21 创建</div>
+              <div class="share-actions">
+                <button class="mini-btn disabled">复制链接</button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="cap"><i></i>创建成功 → 结果态（链接与密码分开复制）</div>
+      <div class="frame" style="width:478px; padding:0; border:0; background:transparent; box-shadow:none">
+        <div class="dialog" style="width:478px">
+          <div class="result">
+            <div class="ok-badge">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M4.5 12.5l5 5 10-11"/></svg>
+            </div>
+            <h3>分享已创建</h3>
+            <div class="sub">把链接和密码一起发给对方，对方打开链接后输入密码即可查看</div>
+
+            <div class="copy-box">
+              <div class="lab">链接</div>
+              <div class="val">https://ai.nanzi.com/share/8Kq2vR7mXpLd4TbW</div>
+              <button class="copy-btn">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg>
+                复制
+              </button>
+            </div>
+            <div class="copy-box">
+              <div class="lab">密码</div>
+              <div class="val mono">a7k2m9x4</div>
+              <button class="copy-btn done">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M4.5 12.5l5 5 10-11"/></svg>
+                已复制
+              </button>
+            </div>
+
+            <div class="result-meta">
+              <span class="chip chip-soft">🔑 密钥访问</span>
+              <span class="chip chip-soft">7 天后过期</span>
+              <span class="chip chip-soft">3 轮问答</span>
+            </div>
+          </div>
+          <div class="dlg-foot" style="justify-content:flex-end">
+            <button class="btn btn-ghost">打开预览</button>
+            <button class="btn btn-primary">完成</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="cap" style="margin-top:10px"><i></i>作废：行内二次确认，不弹新窗</div>
+      <div class="frame" style="width:478px">
+        <div class="share-item" style="margin:0; width:100%">
+          <div class="share-head">
+            <div class="share-name">水印改成「NanZi 智能体平台」，PDF 重新生成</div>
+          </div>
+          <div class="share-tags">
+            <span class="chip chip-soft">🌐 公开</span>
+            <span class="chip chip-ok">生效中</span>
+          </div>
+          <div class="share-stats">已打开 <b>23</b> 次 · 最近 2 小时前</div>
+          <div class="share-exp">永久有效 · 10-27 18:04 创建</div>
+          <div class="confirm-strip">
+            <span>作废后链接立即失效</span>
+            <span style="display:flex;gap:6px">
+              <button class="mini-btn">取消</button>
+              <button class="mini-btn danger">确认作废</button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ P3：分享页 ============ -->
+<div class="board" id="p3">
+  <div class="board-head"><span class="dot"></span>场景 3 · 访客打开分享链接：桌面只读页 / 密码卡片 / 失效页 / 移动端</div>
+  <div class="row">
+    <div class="col" style="flex:1">
+      <div class="cap"><i></i>桌面 · 只读分享页（公开或已解锁）</div>
+      <div class="share-page">
+        <div class="sp-wrap">
+          <div class="sp-top">
+            <div class="sp-logo">N</div>
+            <b>NanZi 智能体平台</b>
+            <span class="sep">/</span>
+            <span class="badge-ro">只读分享</span>
+            <div class="right">由 <b style="font-size:11.5px;color:#6b7280">陈晓龙</b> 分享</div>
+          </div>
+          <div class="sp-main">
+            <div class="sp-title">用刚装好的 xlsx 技能帮我读取并分析一个表格，重点看下单量和 GMV 的月度趋势</div>
+            <div class="sp-meta">
+              <span>智能体 NanZi · AI</span><span class="div"></span>
+              <span>3 轮问答</span><span class="div"></span>
+              <span>2026-10-28 13:20 创建</span><span class="div"></span>
+              <span>7 天后失效</span>
+            </div>
+
+            <div class="sp-card">
+              <div class="msg user">
+                <div class="bubble">用刚装好的 xlsx 技能帮我读取并分析一个表格，重点看下单量和 GMV 的月度趋势</div>
+              </div>
+              <div class="msg ai">
+                <div class="ava-ai">AI</div>
+                <div class="body">
+                  <h4>## 分析完成</h4>
+                  <p>已读取 <code>accessible_datasets_20260923.xlsx</code>，共 1,842 行、9 列，覆盖 2025-01 至 2026-09，字段完整无缺失值。</p>
+                  <table>
+                    <tr><th>月份</th><th>下单量</th><th>GMV（万元）</th><th>环比</th></tr>
+                    <tr><td>2026-07</td><td>12,480</td><td>386.2</td><td>+8.4%</td></tr>
+                    <tr><td>2026-08</td><td>13,905</td><td>421.7</td><td>+11.4%</td></tr>
+                    <tr><td>2026-09</td><td>15,332</td><td>463.9</td><td>+10.3%</td></tr>
+                  </table>
+                  <ul>
+                    <li>GMV 连续 3 个月两位数增长，9 月创近 12 个月新高</li>
+                    <li>下单量与 GMV 同步上行，客单价稳定在 302 元附近</li>
+                    <li>华东大区贡献 41% 增量，是主要驱动</li>
+                  </ul>
+
+                  <div class="chart-card">
+                    <div class="chart-head">月度 GMV 趋势（万元）
+                      <span class="modes">
+                        <span class="m">折线</span><span class="m on">柱状</span><span class="m">表格</span>
+                      </span>
+                    </div>
+                    <svg viewBox="0 0 620 168" width="100%" height="148" role="img" aria-label="月度 GMV 柱状图">
+                      <g stroke="#e9edf3" stroke-dasharray="3 4" stroke-width="1">
+                        <line x1="40" y1="140" x2="600" y2="140"/>
+                        <line x1="40" y1="107" x2="600" y2="107"/>
+                        <line x1="40" y1="74" x2="600" y2="74"/>
+                        <line x1="40" y1="41" x2="600" y2="41"/>
+                      </g>
+                      <g font-size="9" fill="#a8b3c4">
+                        <text x="12" y="143">0</text><text x="6" y="110">200</text><text x="6" y="77">400</text>
+                      </g>
+                      <g>
+                        <rect x="52" y="96" width="34" height="44" rx="3" fill="#cfe0ff"/>
+                        <rect x="124" y="88" width="34" height="52" rx="3" fill="#cfe0ff"/>
+                        <rect x="196" y="83" width="34" height="57" rx="3" fill="#cfe0ff"/>
+                        <rect x="268" y="77" width="34" height="63" rx="3" fill="#a9c8ff"/>
+                        <rect x="340" y="59" width="34" height="81" rx="3" fill="#7aa9fb"/>
+                        <rect x="412" y="51" width="34" height="89" rx="3" fill="#4d8bf5"/>
+                        <rect x="484" y="43" width="34" height="97" rx="3" fill="#1677ff"/>
+                      </g>
+                      <g font-size="9.5" fill="#64748b" text-anchor="middle" font-weight="600">
+                        <text x="69" y="156">03</text><text x="141" y="156">04</text><text x="213" y="156">05</text>
+                        <text x="285" y="156">06</text><text x="357" y="156">07</text><text x="429" y="156">08</text>
+                        <text x="501" y="156">09</text>
+                      </g>
+                      <g font-size="9" fill="#94a3b8" text-anchor="middle">
+                        <text x="501" y="34" fill="#1677ff" font-weight="700">463.9</text>
+                      </g>
+                    </svg>
+                  </div>
+
+                  <div class="mermaid-card">
+                    <div class="mermaid-tag">MERMAID</div>
+                    <svg viewBox="0 0 620 78" width="100%" height="62" role="img" aria-label="分析流程">
+                      <defs>
+                        <marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                          <path d="M0 0 L6 3 L0 6 z" fill="#b6c2d2"/>
+                        </marker>
+                      </defs>
+                      <g font-size="10.5" fill="#475569" text-anchor="middle">
+                        <rect x="16" y="18" width="122" height="32" rx="8" fill="#eef4ff" stroke="#c7dbff"/>
+                        <text x="77" y="38">读取工作表</text>
+                        <rect x="178" y="18" width="122" height="32" rx="8" fill="#eef4ff" stroke="#c7dbff"/>
+                        <text x="239" y="38">字段与缺失校验</text>
+                        <rect x="340" y="18" width="122" height="32" rx="8" fill="#eef4ff" stroke="#c7dbff"/>
+                        <text x="401" y="38">按月聚合</text>
+                        <rect x="502" y="18" width="102" height="32" rx="8" fill="#e7f8f0" stroke="#bce8d6"/>
+                        <text x="553" y="38">输出趋势</text>
+                      </g>
+                      <g stroke="#b6c2d2" stroke-width="1.4" marker-end="url(#ar)">
+                        <line x1="138" y1="34" x2="172" y2="34"/>
+                        <line x1="300" y1="34" x2="334" y2="34"/>
+                        <line x1="462" y1="34" x2="496" y2="34"/>
+                      </g>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              <div class="msg user">
+                <div class="bubble">那华东的增量主要来自哪些门店？</div>
+              </div>
+              <div class="msg ai">
+                <div class="ava-ai">AI</div>
+                <div class="body">
+                  <p>华东 9 月增量 32.4 万元，其中 Top 3 门店合计贡献 68%：</p>
+                  <table>
+                    <tr><th>门店</th><th>9 月 GMV</th><th>增量</th></tr>
+                    <tr><td>杭州西湖店</td><td>38.6 万</td><td>+9.2 万</td></tr>
+                    <tr><td>上海静安店</td><td>31.2 万</td><td>+7.4 万</td></tr>
+                    <tr><td>南京新街口店</td><td>24.8 万</td><td>+5.3 万</td></tr>
+                  </table>
+                  <p>这三家均在 9 月上线了会员日活动，建议 10 月扩大到苏州与宁波。</p>
+
+                  <div class="code-card">
+                    <div class="c-head">PYTHON <span class="copy">复制</span></div>
+                    <pre><span class="kw">import</span> pandas <span class="kw">as</span> pd
+
+df = pd.<span class="fn">read_excel</span>(<span class="str">"accessible_datasets_20260923.xlsx"</span>)
+east = df[df.region == <span class="str">"华东"</span>]
+rank = east.<span class="fn">groupby</span>(<span class="str">"store"</span>)[<span class="str">"gmv"</span>].<span class="fn">sum</span>().<span class="fn">nlargest</span>(<span class="num">3</span>)
+<span class="fn">print</span>(rank)  <span class="cm"># 杭州西湖 38.6 / 上海静安 31.2 / 南京新街口 24.8</span></pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="sp-foot">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>
+            本页面是分享时刻的只读快照 · 由 NanZi 智能体平台生成
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col" style="width:400px">
+      <div class="cap"><i></i>密钥模式 · 密码卡片</div>
+      <div class="frame" style="padding:0; width:400px">
+        <div class="gate-wrap" style="min-height:300px; padding:22px 14px">
+          <div class="gate" style="width:340px; box-shadow:none; border:0; padding:8px 4px">
+            <div class="lock">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>
+            </div>
+            <h3>这是一个受保护的分享</h3>
+            <p>请输入分享者提供的访问密码<br/>用刚装好的 xlsx 技能帮我读取并分析一个表格…</p>
+            <div class="input" style="justify-content:center">a7k2m9x4</div>
+            <button class="btn btn-primary">解锁查看</button>
+            <div class="err">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg>
+              访问密码不正确，还可尝试 4 次
+            </div>
+            <div class="tiny">分享已开启访问限流：10 分钟内最多 5 次尝试</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cap"><i></i>失效 / 作废 / 过期（统一文案）</div>
+      <div class="frame" style="padding:0; width:400px">
+        <div class="gate-wrap" style="min-height:230px; padding:22px 14px">
+          <div class="dead-card">
+            <div class="dead-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a4.5 4.5 0 006.4 0l2.2-2.2a4.5 4.5 0 00-6.4-6.4"/><path d="M4 4l16 16"/></svg>
+            </div>
+            <h3 style="font-size:15px;font-weight:800">链接不存在或已失效</h3>
+            <p style="font-size:11.5px;color:#9ca3af;margin-top:7px;line-height:1.6">可能已被分享者作废、已到期，或链接不完整。<br/>请联系分享者重新获取。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:18px">
+    <div class="col">
+      <div class="cap"><i></i>移动端 · 只读页</div>
+      <div class="phone">
+        <div class="p-top">
+          <div class="sp-logo" style="width:20px;height:20px;font-size:10px">N</div>
+          <b style="font-size:11.5px">NanZi</b>
+          <span class="badge-ro" style="font-size:9px;padding:2px 5px">只读</span>
+          <span style="margin-left:auto;font-size:9.5px;color:#9ca3af">由 陈晓龙 分享</span>
+        </div>
+        <div class="p-body">
+          <div class="sp-title">用刚装好的 xlsx 技能帮我读取并分析一个表格</div>
+          <div class="sp-meta" style="font-size:10px;margin-top:6px">
+            <span>3 轮问答</span><span class="div"></span><span>10-28 创建</span>
+          </div>
+          <div class="sp-card" style="padding:12px; margin-top:10px">
+            <div class="msg user" style="padding-top:0;border-top:0">
+              <div class="bubble" style="font-size:11.5px;padding:8px 10px">帮我看看下单量和 GMV 的月度趋势</div>
+            </div>
+            <div class="msg ai" style="padding-bottom:0">
+              <div class="ava-ai" style="width:26px;height:26px;flex:0 0 26px;font-size:11px">AI</div>
+              <div class="body" style="font-size:11.5px">
+                <p>已读取表格，共 1,842 行。近三个月 GMV 连续两位数增长，9 月 463.9 万创新高。</p>
+                <table style="font-size:10.5px">
+                  <tr><th>月份</th><th>GMV</th></tr>
+                  <tr><td>07</td><td>386.2</td></tr>
+                  <tr><td>08</td><td>421.7</td></tr>
+                  <tr><td>09</td><td>463.9</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="sp-foot" style="height:42px;font-size:9.5px">本页面是只读快照 · 由 NanZi 生成</div>
+      </div>
+    </div>
+
+    <div class="col" style="flex:1; padding-top:22px">
+      <div class="cap"><i></i>移动端侧栏 · 我分享的（抽屉内）</div>
+      <div class="frame" style="width:360px; padding:0; overflow:hidden">
+        <aside class="sidebar" style="width:360px;flex:0 0 360px;border-right:0;height:600px">
+          <div class="sb-top" style="height:46px;flex:0 0 46px">
+            <div class="sb-close"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+            <div class="sb-title" style="font-size:13px">会话历史</div>
+          </div>
+          <div class="tabs" style="padding:8px 12px 0">
+            <div class="tab" style="font-size:12px">会话历史</div>
+            <div class="tab active" style="font-size:12px">我分享的 <span class="count">4</span></div>
+          </div>
+          <div class="tab-underline" style="margin:0 12px"></div>
+          <div class="sb-list" style="padding-top:10px">
+            <div class="share-item" style="padding:10px">
+              <div class="share-name" style="font-size:12px">用刚装好的 xlsx 技能帮我读取并分析一个表格</div>
+              <div class="share-tags" style="margin:6px 0 5px">
+                <span class="chip chip-soft" style="font-size:10px">🔑 密钥</span>
+                <span class="chip chip-ok" style="font-size:10px">生效中</span>
+              </div>
+              <div class="share-stats" style="font-size:10px">已打开 <b>7</b> 次 · 最近 10 分钟前</div>
+              <div class="share-exp" style="font-size:10px">7 天后过期</div>
+              <div class="share-actions">
+                <button class="mini-btn" style="height:26px">复制链接</button>
+                <button class="mini-btn" style="height:26px">复制密码</button>
+                <button class="mini-btn danger" style="height:26px">作废</button>
+              </div>
+            </div>
+            <div class="share-item" style="padding:10px">
+              <div class="share-name" style="font-size:12px">水印改成「NanZi 智能体平台」</div>
+              <div class="share-tags" style="margin:6px 0 5px">
+                <span class="chip chip-soft" style="font-size:10px">🌐 公开</span>
+                <span class="chip chip-ok" style="font-size:10px">生效中</span>
+              </div>
+              <div class="share-stats" style="font-size:10px">已打开 <b>23</b> 次 · 最近 2 小时前</div>
+              <div class="share-exp" style="font-size:10px">永久有效</div>
+              <div class="share-actions">
+                <button class="mini-btn" style="height:26px">复制链接</button>
+                <button class="mini-btn danger" style="height:26px">作废</button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:10px;line-height:1.7;max-width:520px">
+        移动端侧栏以抽屉形式出现，tab 与操作按钮同布局；按钮不做 hover 隐藏（触屏没有 hover）。
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var boards = [].slice.call(document.querySelectorAll('.board'));
+  function show(id){
+    var hit = false;
+    boards.forEach(function(b){
+      var on = b.id === id;
+      b.className = 'board' + (on ? ' on' : '');
+      if (on) hit = true;
+    });
+    if (!hit) { boards[0].className = 'board on'; id = 'p1'; }
+    [].slice.call(document.querySelectorAll('.mock-nav button')).forEach(function(b){
+      b.className = b.getAttribute('data-go') === id ? 'on' : '';
+    });
+  }
+  show((location.hash || '').replace('#','') || 'p1');
+  window.addEventListener('hashchange', function(){
+    show((location.hash || '').replace('#','') || 'p1');
+  });
+  [].slice.call(document.querySelectorAll('.mock-nav button')).forEach(function(btn){
+    btn.addEventListener('click', function(){ location.hash = btn.getAttribute('data-go'); });
+  });
+</script>
+</body>
+</html>
