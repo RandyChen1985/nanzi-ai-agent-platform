@@ -7,6 +7,7 @@ import psutil
 import json
 import re
 import fnmatch
+import time
 from typing import Optional
 from app.services.ai.tools.tool_compat import tool
 from app.services.ai.code_execution_service import run_shell_command_capture
@@ -702,6 +703,56 @@ def search_text(
         return f"搜索文本失败: {str(e)}"
 
 
+#: exec_command 的配置读取缓存（秒）：一轮对话里命令可能被调几十次，不必每次都读配置。
+_EXEC_COMMAND_TIMEOUT_CACHE_TTL_SECONDS = 60.0
+#: 配置读取失败时的回退值：保守沿用旧的 30 秒，不因配置抖动而放宽。
+_EXEC_COMMAND_TIMEOUT_FALLBACK_SECONDS = 30.0
+#: 比外层包装的 deadline 提前的余量（秒），让更具体的「命令执行超时」先返回。
+_EXEC_COMMAND_TIMEOUT_MARGIN_SECONDS = 0.5
+
+_exec_command_timeout_cache: "tuple[float, float] | None" = None
+
+
+async def _resolve_exec_command_timeout() -> float:
+    """命令执行的超时（秒），跟随平台「工具调用超时」配置。
+
+    外层 ``RuntimeToolSpec.invoke`` 用同一个配置做 ``asyncio.wait_for`` 的 deadline，
+    两层几乎同时开始计时；数值相同时外层会先到，模型只能看到泛化的「工具调用超时」。
+    因此内层预留 :data:`_EXEC_COMMAND_TIMEOUT_MARGIN_SECONDS`，让
+    「命令执行超时（上限 N 秒）」这条更具体的错误先返回，进程也就由内层 killpg 收掉。
+
+    读配置失败时回退 30 秒：老行为是硬编码 30 秒，这里不因为一次读不到配置就放宽上限。
+    """
+    global _exec_command_timeout_cache
+
+    now = time.monotonic()
+    cached = _exec_command_timeout_cache
+    if cached is not None and cached[0] > now:
+        return cached[1]
+
+    try:
+        from app.services.ai.runtime.agentscope.tool_timeout import (
+            load_agent_max_toolcall_timeout,
+        )
+
+        configured = float(await load_agent_max_toolcall_timeout())
+    except Exception as exc:  # noqa: BLE001 - 读不到配置不能把命令执行整体禁用
+        logger.warning(
+            "[exec_command] 读取工具超时配置失败，回退 %.0f 秒：%s",
+            _EXEC_COMMAND_TIMEOUT_FALLBACK_SECONDS,
+            exc,
+        )
+        timeout = _EXEC_COMMAND_TIMEOUT_FALLBACK_SECONDS
+    else:
+        timeout = max(1.0, configured - _EXEC_COMMAND_TIMEOUT_MARGIN_SECONDS)
+
+    _exec_command_timeout_cache = (
+        now + _EXEC_COMMAND_TIMEOUT_CACHE_TTL_SECONDS,
+        timeout,
+    )
+    return timeout
+
+
 @tool
 async def exec_command(command: str) -> str:
     """
@@ -710,8 +761,8 @@ async def exec_command(command: str) -> str:
     亦可用于执行通用的命令行程序（如 `git` 进行版本控制及拉取代码、`curl` 访问网络、`python/node` 运行脚本等）。
     安装 Python 依赖：沙箱内不要用裸 `pip`，请用 `uv pip install --target /workspace/.pylibs <包名>` 并设 `PYTHONPATH=/workspace/.pylibs`（容器可写层是临时的，只有 `/workspace` 会保留；裸 `pip` 装到系统 Python，默认 `python` import 不到）；local 策略下可直接 `pip install <包名>`，包装进后端宿主机环境、**对所有用户全局生效**，装完要告知用户这是平台级变更（避免随手 `--upgrade` 升级平台已有依赖）。
     查看负载建议使用非交互命令，例如 uptime、top -b -n 1、ps aux --sort=-%cpu | head、df -h、free -h、ss -tulnp。
-    本工具强制施加默认 30 秒超时限制与标准输出长度截断。
-    
+    超时上限跟随平台「工具调用超时」配置（默认 180 秒、可在 1–3600 之间调整），到达上限会强制终止进程；标准输出有长度截断。
+
     Args:
         command: 要执行的 Shell 命令。
     """
@@ -726,9 +777,14 @@ async def exec_command(command: str) -> str:
         if forbidden_reason:
             return f"安全拦截：{forbidden_reason}。该命令被禁止执行。"
 
-        capture = await run_shell_command_capture(command, cwd=os.getcwd(), timeout_seconds=30.0)
+        timeout_seconds = await _resolve_exec_command_timeout()
+        capture = await run_shell_command_capture(
+            command, cwd=os.getcwd(), timeout_seconds=timeout_seconds
+        )
         if capture.timed_out:
-            return f"错误：命令执行超时（最大限制 30 秒）。已强制终止命令进程。"
+            return (
+                f"错误：命令执行超时（上限 {timeout_seconds:g} 秒）。已强制终止命令进程。"
+            )
 
         stdout_str = capture.stdout
         stderr_str = capture.stderr
@@ -913,17 +969,19 @@ def create_skills(
         from app.utils.context import current_user_info
         user_info = current_user_info.get()
 
-        is_admin = False
-        if user_info:
-            role = user_info.get("role", "")
-            is_admin = (role == "admin" or "admin" in str(role).lower())
-
         # 决定写入目录
-        resolved_scope = scope.lower()
+        resolved_scope = str(scope or "personal").strip().lower()
+        if resolved_scope not in ("personal", "global"):
+            return "错误：scope 仅支持 personal 或 global"
         existing_personal_dir: str | None = None
         if resolved_scope == "global":
-            if user_info and not is_admin:
-                return "错误：权限不足，仅系统管理员有权创建或修改平台全局技能（global）。已自动拦截。"
+            # 与技能广场入口同一口径：element:skills:admin（admin 角色恒放行）。
+            # 此前只看 role 字符串：被单独授予该权限的角色在页面看得见按钮、在这里被拒；
+            # 而 `if user_info and not is_admin` 又让**无身份**调用直接落盘。
+            from app.services.ai.skills.platform_admin import can_manage_platform_skills
+
+            if not can_manage_platform_skills(user_info):
+                return "错误：权限不足，仅持有平台技能管理权限（element:skills:admin）的用户可以创建或修改平台全局技能（global）。已自动拦截。"
             from app.core.config import settings
             skills_dir = settings.SKILLS_DIR
             if not skills_dir:
@@ -1397,16 +1455,17 @@ def import_skill_from_sandbox(
     source_path: str,
     skill_id: str = "",
     overwrite: bool = False,
+    scope: str = "personal",
 ) -> str:
     """
-    把沙箱里已经安装好的技能目录**整份收录**进平台个人技能库，让它在技能中心可见、
+    把沙箱里已经安装好的技能目录**整份收录**进平台技能库，让它在技能中心可见、
     可用、且随平台数据持久化（不随会话结束消失）。
 
     典型场景：用户在沙箱里用 `npx skills add <包>` 装了技能（例如
     `npx skills add vikiboss/60s-skills@weather-query`），产物落在
     `/workspace/scratch/.agents/skills/weather-query/`。那份目录在宿主磁盘上真实存在，
     但平台技能库不认它——`list_available_skills` 看不到、`read_skill_instruction`
-    读不到。用本工具把它收进个人技能库即可（含 scripts/、references/、图片等全部资源）。
+    读不到。用本工具把它收进技能库即可（含 scripts/、references/、图片等全部资源）。
 
     与 create_skills 的区别：create_skills 是由模型**逐字写出** SKILL.md 正文；
     本工具是把**已存在的目录**整份搬进技能库，适合第三方现成技能包，也能带走二进制资源。
@@ -1422,6 +1481,9 @@ def import_skill_from_sandbox(
         overwrite: 目标技能已存在时是否整份替换。默认 false：已存在的技能**一个字节都不会动**，
                    只返回 NANZI_SKILL_IMPORT_EXISTS；需要覆盖时先向用户确认，再带
                    overwrite=true 重试。
+        scope: 收录目标：'personal'（个人技能库，默认）或 'global'（平台全局技能库）。
+               'global' 需要 `element:skills:admin`（管理员角色同样放行），否则直接拒绝——
+               技能广场「安装到平台」那段提示词就带这个参数，权限闸门不能只放在前端按钮上。
 
     注意：符号链接不会被跟随（`npx skills` 会为各工具建软链，跟随会收重、也可能越界）；
     `.seed`、`.git`、`node_modules`、`__pycache__` 会被跳过。单技能上限与技能上传共用
@@ -1432,26 +1494,55 @@ def import_skill_from_sandbox(
         import uuid
 
         from app.core.upload_limits import SKILL_DIR_MAX_BYTES, SKILL_DIR_MAX_FILES
-        from app.services.ai.skill_resolver import (
-            get_user_personal_skills_dir,
-            resolve_personal_skill_dir,
-        )
+        from app.services.ai.skills.platform_admin import can_manage_platform_skills
         from app.utils.context import current_user_info
 
         user_info = current_user_info.get()
+
+        resolved_scope = str(scope or "personal").strip().lower()
+        if resolved_scope not in ("personal", "global"):
+            return "错误：scope 仅支持 personal 或 global"
+
         if not user_info:
-            return "错误：未在当前会话中检测到有效的用户身份，无法收录个人技能"
+            return "错误：未在当前会话中检测到有效的用户身份，无法收录技能"
 
         try:
             source_dir = _resolve_sandbox_source_dir(source_path, user_info)
         except ValueError as exc:
             return f"错误：{exc}"
 
-        personal_root = get_user_personal_skills_dir(user_info)
-        if not personal_root:
-            return "错误：无法解析个人技能目录，请确认账号工作区已正确初始化"
-        personal_root = os.path.abspath(personal_root)
-        os.makedirs(personal_root, exist_ok=True)
+        # 目标根目录按 scope 分流：global 写平台公共技能目录（与 create_skills 一致），
+        # 其余写个人技能库。存量个人技能可能位于历史遗留的 .seed 布局下，因此个人
+        # 分支要带 resolve_personal_skill_dir；平台库是平铺布局，直接拼 ID。
+        existing_dir_resolver = None
+        if resolved_scope == "global":
+            # 与 create_skills(scope="global") 共用同一道闸门：判定口径是
+            # element:skills:admin，不再只看 role 字符串，否则「按权限授予的角色」
+            # 在页面能点、在对话里被拒。
+            if not can_manage_platform_skills(user_info):
+                return (
+                    "错误：权限不足，仅持有平台技能管理权限（element:skills:admin）的用户"
+                    "可以收录到平台全局技能库。请改为收录到个人技能库（scope 留空或传 personal）。"
+                )
+            from app.core.config import settings
+
+            target_root = str(getattr(settings, "SKILLS_DIR", "") or "")
+            if not target_root:
+                return "错误：未配置全局 SKILLS_DIR 目录"
+        else:
+            from app.services.ai.skill_resolver import (
+                get_user_personal_skills_dir,
+                resolve_personal_skill_dir,
+            )
+
+            target_root = get_user_personal_skills_dir(user_info)
+            if not target_root:
+                return "错误：无法解析个人技能目录，请确认账号工作区已正确初始化"
+            existing_dir_resolver = resolve_personal_skill_dir
+
+        target_root = os.path.abspath(target_root)
+        os.makedirs(target_root, exist_ok=True)
+        scope_desc = "平台全局技能库" if resolved_scope == "global" else "个人技能库"
 
         # 判定「单个技能目录」还是「技能根目录批量」：看源目录自己有没有 SKILL.md
         requested_id = str(skill_id or "").strip()
@@ -1481,7 +1572,7 @@ def import_skill_from_sandbox(
                 # 批量收录时一个 skill_id 无从对应，忽略并回显，避免模型以为它生效了
                 pass
 
-        staged_root = os.path.join(personal_root, f".import-{uuid.uuid4().hex}")
+        staged_root = os.path.join(target_root, f".import-{uuid.uuid4().hex}")
         imported: list = []
         skipped: list = []
         failed: list = []
@@ -1493,7 +1584,13 @@ def import_skill_from_sandbox(
                     failed.append({"skill_id": candidate_id, "reason": str(exc)})
                     continue
 
-                existing_dir = resolve_personal_skill_dir(personal_root, safe_id)
+                if existing_dir_resolver is not None:
+                    existing_dir = existing_dir_resolver(target_root, safe_id)
+                else:
+                    candidate_target = os.path.join(target_root, safe_id)
+                    existing_dir = (
+                        candidate_target if os.path.isdir(candidate_target) else None
+                    )
                 if existing_dir and not overwrite:
                     skipped.append(
                         {
@@ -1522,12 +1619,12 @@ def import_skill_from_sandbox(
                     failed.append({"skill_id": safe_id, "reason": f"复制失败：{exc}"})
                     continue
 
-                target_dir = existing_dir or os.path.join(personal_root, safe_id)
+                target_dir = existing_dir or os.path.join(target_root, safe_id)
                 trash_dir = None
                 try:
                     if existing_dir:
                         trash_dir = os.path.join(
-                            personal_root, f".trash-{uuid.uuid4().hex}"
+                            target_root, f".trash-{uuid.uuid4().hex}"
                         )
                         os.rename(target_dir, trash_dir)
                     os.replace(staged_dir, target_dir)
@@ -1565,6 +1662,7 @@ def import_skill_from_sandbox(
             + json.dumps(
                 {
                     "source": source_path,
+                    "scope": resolved_scope,
                     "imported": imported,
                     "skipped": skipped,
                     "failed": failed,
@@ -1579,7 +1677,7 @@ def import_skill_from_sandbox(
         if imported:
             ids = "、".join(item["skill_id"] for item in imported)
             lines.append(
-                f"成功：已收录 {len(imported)} 个技能到个人技能库（{ids}），"
+                f"成功：已收录 {len(imported)} 个技能到{scope_desc}（{ids}），"
                 "现在 list_available_skills 里就能看到，也会随平台数据持久化。"
             )
             for item in imported:

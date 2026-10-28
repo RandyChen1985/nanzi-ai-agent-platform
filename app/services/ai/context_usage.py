@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Mapping, Sequence
 
@@ -91,20 +90,21 @@ async def _latest_runtime_context_sample(
         return None
 
     try:
-        from app.services.ai.runtime.agentscope.middleware import STATS_KEY_SUFFIX
+        from app.services.ai.runtime.agentscope.middleware import (
+            STATS_KEY_SUFFIX,
+            read_latest_stats_record,
+        )
 
         uid = str(user_id)
         key = f"{memory_service.KEY_PREFIX}:{uid}:{conversation_id}:{STATS_KEY_SUFFIX}"
         redis = await get_redis()
         if not redis:
             return None
-        rows = await redis.lrange(key, -1, -1)
-        if not rows:
+        # 委派子代理的调用记录与主代理共用同一个键，但它的上下文构成属于子会话，
+        # 不能当作主会话的校准样本。
+        record = await read_latest_stats_record(redis, key, skip_subagent=True)
+        if not isinstance(record, Mapping):
             return None
-        raw = rows[-1]
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        record = json.loads(raw) if isinstance(raw, str) else raw
         breakdown = record.get("context_breakdown") if isinstance(record, Mapping) else None
         if not isinstance(breakdown, Mapping):
             return None

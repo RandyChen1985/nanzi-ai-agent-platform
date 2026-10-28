@@ -95,6 +95,16 @@ def workspace(tmp_path, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _clean_platform_admin_cache():
+    """平台管理权限是进程内缓存：不清会让一个用例的授权串到下一个用例。"""
+    from app.services.ai.skills import platform_admin
+
+    platform_admin.clear_platform_skill_admin_cache()
+    yield
+    platform_admin.clear_platform_skill_admin_cache()
+
+
 def _import(source_path: str, **kwargs) -> str:
     return exec_tools.import_skill_from_sandbox.func(source_path=source_path, **kwargs)
 
@@ -329,6 +339,83 @@ def test_requires_user_identity(workspace, monkeypatch):
     out = _import("scratch/.agents/skills/weather-query")
     assert out.startswith("错误：")
     assert "用户身份" in out
+
+
+# --- 平台全局收录（管理员） ---------------------------------------------------
+
+
+def _platform_skills_dir(tmp_path, monkeypatch):
+    """把平台公共技能目录指到临时目录（与技能广场 API 测试同一手法）。"""
+    from app.core.config import settings
+
+    root = tmp_path / "global_skills"
+    root.mkdir()
+    monkeypatch.setattr(type(settings), "SKILLS_DIR", property(lambda self: str(root)))
+    return root
+
+
+def test_global_scope_is_rejected_without_platform_admin(workspace, monkeypatch):
+    """普通用户即使拿到「安装到平台」那段提示词，也不能把技能写进平台库。
+
+    前端不给入口只是第一层；提示词是纯文本，谁都能手抄一份塞进对话，真正的闸门必须在这里。
+    """
+    platform_root = _platform_skills_dir(workspace.workdir, monkeypatch)
+
+    out = _import("scratch/.agents/skills/weather-query", scope="global")
+
+    assert out.startswith("错误："), out
+    assert "权限不足" in out
+    assert not (platform_root / "weather-query").exists()
+    assert not (workspace.personal_root / "weather-query").exists()
+
+
+def test_admin_role_can_import_into_platform_library(workspace, monkeypatch):
+    platform_root = _platform_skills_dir(workspace.workdir, monkeypatch)
+    monkeypatch.setattr(
+        "app.utils.context.current_user_info",
+        _ContextStub({"id": 9, "name": "root", "role": "admin"}),
+    )
+
+    out = _import("scratch/.agents/skills/weather-query", scope="global")
+
+    marker = _marker(out)
+    assert marker["scope"] == "global"
+    assert marker["imported"][0]["skill_id"] == "weather-query"
+    assert (
+        platform_root / "weather-query" / "SKILL.md"
+    ).read_text(encoding="utf-8") == SKILL_MD
+    # 落到平台库就不能同时在个人库留一份
+    assert not (workspace.personal_root / "weather-query").exists()
+    assert "平台全局技能库" in out
+
+
+def test_global_scope_accepts_cached_permission_grant(workspace, monkeypatch):
+    """被单独授予 ``element:skills:admin`` 的角色靠预热缓存放行，不看 role 字段。"""
+    from app.services.ai.skills import platform_admin
+
+    platform_root = _platform_skills_dir(workspace.workdir, monkeypatch)
+    platform_admin.remember_platform_skill_admin(1, True)
+
+    out = _import("scratch/.agents/skills/weather-query", scope="global")
+
+    assert _marker(out)["scope"] == "global"
+    assert (platform_root / "weather-query" / "SKILL.md").exists()
+
+
+def test_default_scope_stays_personal(workspace):
+    """不传 scope 时行为不变：老提示词（没写 scope）仍然装进个人库。"""
+    out = _import("scratch/.agents/skills/weather-query")
+
+    assert _marker(out)["scope"] == "personal"
+    assert (workspace.personal_root / "weather-query" / "SKILL.md").exists()
+
+
+def test_unknown_scope_is_rejected(workspace):
+    out = _import("scratch/.agents/skills/weather-query", scope="team")
+
+    assert out.startswith("错误："), out
+    assert "scope" in out
+    assert not (workspace.personal_root / "weather-query").exists()
 
 
 # --- 注册契约 ---------------------------------------------------------------

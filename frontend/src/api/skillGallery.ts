@@ -46,3 +46,27 @@ export async function fetchSkillGalleryDetail(skillId: string): Promise<SkillGal
     throw new Error(messageOf(error, '读取技能详情失败'))
   }
 }
+
+/**
+ * 上报技能广场行为事件（打开详情 / 复制提示词 / 复制平台版）。
+ *
+ * 只落后端结构化日志，不建表；失败必须静默——埋点不能影响用户复制安装提示词。
+ * 事件名走后端白名单，写错会 422，所以这里用联合类型在编译期挡一道。
+ */
+export type SkillGalleryEventName = 'detail_open' | 'prompt_copy' | 'platform_prompt_copy'
+
+export async function reportSkillGalleryEvent(
+  event: SkillGalleryEventName,
+  skillId: string,
+  scope: '' | 'personal' | 'global' = '',
+): Promise<void> {
+  try {
+    await axios.post(`${BASE}/skills/gallery/events`, {
+      event,
+      skill_id: skillId,
+      scope,
+    })
+  } catch {
+    // 埋点失败不上浮：用户读到的是「已复制」，不是「上报失败」。
+  }
+}

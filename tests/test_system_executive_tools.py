@@ -43,15 +43,30 @@ def test_read_write_file():
         os.remove(test_file)
 
 @pytest.mark.asyncio
-async def test_exec_command():
+async def test_exec_command(monkeypatch):
     # 测试常规命令
     res = await exec_command.ainvoke({"command": "echo 'NanZi'"})
     assert "NanZi" in res
     assert "ExitCode=0" in res
 
-    # 测试超时拦截
-    res_timeout = await exec_command.ainvoke({"command": "sleep 40"})
-    assert "已强制终止命令进程" in res_timeout
+    # 测试超时拦截：上限跟随 agent_max_toolcall_timeout，这里压到 1 秒即可触发，
+    # 不必真等 30 秒（改前是写死 30 秒，所以要用 sleep 40 才测得到）
+    async def _one_second() -> float:
+        return 1.0
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.tool_timeout.load_agent_max_toolcall_timeout",
+        _one_second,
+    )
+    # 上面 echo 已经填过超时缓存（60s TTL），不清掉就命不中新配置
+    from app.services.ai.tools import system_executive_tools as _exec_tools
+
+    _exec_tools._exec_command_timeout_cache = None
+    try:
+        res_timeout = await exec_command.ainvoke({"command": "sleep 5"})
+        assert "已强制终止命令进程" in res_timeout
+    finally:
+        _exec_tools._exec_command_timeout_cache = None
 
     # 测试高危命令拦截
     res_forbidden = await exec_command.ainvoke({"command": "rm -rf /"})

@@ -88,15 +88,29 @@ def test_install_command_has_two_yes_flags():
 
 
 def test_install_prompt_warns_about_interactive_hang():
+    """提示词必须给模型一个明确的兜底时长。
+
+    ``npx skills add`` 在沙箱里偶发卡在等待输入（网络慢时更常见）。只写「超时就中止」
+    模型无从判断多久算超时，实测会一直挂着把会话拖死；这里钉死具体分钟数，
+    避免有人只改了一半（个人版改了、平台版没改）。
+    """
     for skill in gallery_catalog.list_skills():
-        prompt = skill["install_prompt"]
-        assert "交互" in prompt, skill["id"]
-        assert "2 分钟" in prompt or "中止" in prompt, skill["id"]
-        assert "import_skill_from_sandbox" in prompt, skill["id"]
+        for field in ("install_prompt", "install_prompt_global"):
+            prompt = skill[field]
+            assert "交互" in prompt, f"{skill['id']}.{field}"
+            assert "3 分钟" in prompt, f"{skill['id']}.{field}"
+            assert "2 分钟" not in prompt, f"{skill['id']}.{field}"
+            assert "中止" in prompt, f"{skill['id']}.{field}"
+            assert "import_skill_from_sandbox" in prompt, f"{skill['id']}.{field}"
 
 
-def test_install_prompt_global_falls_back_to_personal(monkeypatch):
-    """缺 install_prompt_global 时回退到个人版，不给管理员一段空提示词。"""
+def test_install_prompt_global_does_not_fall_back_to_personal(monkeypatch):
+    """缺 install_prompt_global 时留空，不回退个人版。
+
+    回退会把「收进我的个人技能库」那段文案交给管理员：按钮写着「安装到平台」，
+    实际只装个人库，而且没有任何报错。宁可留空让前端提示「未获取到平台安装提示词」，
+    也不要给出一段语义错误的提示词。
+    """
     raw = json.loads((CATALOG_DIR / "catalog.json").read_text(encoding="utf-8"))
     for item in raw["skills"]:
         item.pop("install_prompt_global", None)
@@ -106,7 +120,7 @@ def test_install_prompt_global_falls_back_to_personal(monkeypatch):
     skills = gallery_catalog.list_skills()
     assert skills
     for skill in skills:
-        assert skill["install_prompt_global"] == skill["install_prompt"]
+        assert skill["install_prompt_global"] == ""
 
 
 def test_get_skill_unknown_returns_none():

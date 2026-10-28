@@ -182,6 +182,21 @@ class BaseExecutor(ABC):
         return ctx
 
     def _increment_step(self) -> int:
+        """分配下一个 trace 步骤号。
+
+        委派的子代理与主代理共用同一个 trace_buffer，但各自是独立的执行器实例。
+        若只按实例自增，子代理会从 1 重新编号，与主代理步骤撞号：同一 trace_id
+        下出现重复 step_number，审计页按 step_number 排序就会乱序。这里用共享
+        buffer 的当前长度作为下限，保证同一 trace 内编号单调。
+
+        测试替身可能只构造了部分属性，因此一律用 getattr 探测，缺省按原逻辑自增。
+        """
+        trace_buffer = getattr(self, "trace_buffer", None)
+        if trace_buffer is not None:
+            try:
+                self.step_counter = max(self.step_counter, len(trace_buffer))
+            except TypeError:
+                pass
         self.step_counter += 1
         return self.step_counter
 

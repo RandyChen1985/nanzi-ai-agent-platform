@@ -1144,6 +1144,19 @@ class AgentService:
         except Exception:
             logger.debug("[AgentService] priming forbidden skill cache failed", exc_info=True)
 
+        # 预热「平台技能管理权限」（element:skills:admin）：create_skills(scope="global") 与
+        # import_skill_from_sandbox(scope="global") 都是同步工具，只能读这份进程内缓存。
+        # 未预热时按无权限处理（fail-closed），所以这里失败只会让管理员这一次装不了平台技能，
+        # 不会把写平台库的闸门放开。
+        try:
+            from app.services.ai.skills.platform_admin import prime_platform_skill_admin
+
+            await prime_platform_skill_admin(user_info)
+        except Exception:
+            logger.debug(
+                "[AgentService] priming platform skill admin permission failed", exc_info=True
+            )
+
         trace_id = str(uuid.uuid4())
         trace_buffer: List[AgentExecutionStep] = []
         if shared_state is None:

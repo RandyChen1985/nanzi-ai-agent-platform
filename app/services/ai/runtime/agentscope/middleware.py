@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import inspect
 import json
 import logging
 import time
@@ -22,6 +23,15 @@ logger = logging.getLogger(__name__)
 STATS_KEY_SUFFIX = "model_call_stats"
 STATS_TTL_SECONDS = 2592000  # 30 天
 
+# 委派子代理的调用记录会归入父会话的同一个 stats 键（见 ModelCallStatsMiddleware）。
+# 读取「最近一次调用」的消费方（上下文估算、会话状态工具）必须跳过带该标记的记录，
+# 否则会拿子代理的上下文构成去校准主会话。
+SUBAGENT_RECORD_FIELD = "subagent"
+
+# 「最近一次调用」回看窗口：正常情况下最后一条即最近一次；仅在末尾若干条都是子代理
+# 记录时才需要继续往前找，20 条足以覆盖一次批量委派。
+_LATEST_STATS_LOOKBACK = 20
+
 
 def _build_redis_key(user_id: str | int | None, conversation_id: str) -> str:
     from app.services.ai.memory_service import memory_service
@@ -29,6 +39,42 @@ def _build_redis_key(user_id: str | int | None, conversation_id: str) -> str:
 
     uid = require_user_id(user_id)
     return f"{memory_service.KEY_PREFIX}:{uid}:{conversation_id}:{STATS_KEY_SUFFIX}"
+
+
+async def read_latest_stats_record(
+    redis: Any,
+    key: str,
+    *,
+    skip_subagent: bool = False,
+) -> dict[str, Any] | None:
+    """读取 stats 列表中最近一条记录。
+
+    ``skip_subagent=True`` 时跳过委派子代理写入的记录（它们与主代理共用同一个键，
+    但上下文构成属于子会话，不能作为主会话的「最近一次调用」样本）。
+
+    兼容同步 fake redis（测试替身）与异步客户端。
+    """
+    try:
+        rows = redis.lrange(key, -_LATEST_STATS_LOOKBACK, -1)
+        if inspect.isawaitable(rows):
+            rows = await rows
+    except Exception:
+        return None
+    if not rows:
+        return None
+    for raw in reversed(list(rows)):
+        try:
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            record = json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            continue
+        if not isinstance(record, dict):
+            continue
+        if skip_subagent and record.get(SUBAGENT_RECORD_FIELD):
+            continue
+        return record
+    return None
 
 
 async def _append_stat_to_redis(key: str, record: dict[str, Any]) -> None:
@@ -317,7 +363,7 @@ def _extract_usage_details(usage_obj: Any) -> tuple[int, int, int, str]:
 async def _stream_with_stats(
     gen: AsyncGenerator,
     *,
-    redis_key: str,
+    redis_keys: list[str],
     record_base: dict[str, Any],
     start_ts: float,
 ) -> AsyncGenerator:
@@ -416,7 +462,8 @@ async def _stream_with_stats(
         all_tool_names or False,
         elapsed_ms,
     )
-    asyncio.ensure_future(_append_stat_to_redis(redis_key, record))
+    for redis_key in redis_keys:
+        asyncio.ensure_future(_append_stat_to_redis(redis_key, record))
 
 
 class ModelCallStatsMiddleware(MiddlewareBase):
@@ -424,6 +471,13 @@ class ModelCallStatsMiddleware(MiddlewareBase):
 
     Redis Key: nanzi:{uid}:{conv_id}:model_call_stats
     存储结构: Redis List，每个元素为一条 JSON 调用记录。
+
+    委派子代理（``subagent_meta`` 非空）的记录会**额外**写入父会话的同一个键，
+    并打上 ``subagent`` 标记：消息底部「用量」来自共享 trace_buffer，已包含子代理
+    消耗；明细若只留在 ``child_session_*`` 键下，就会出现「总量含子代理、明细不含」
+    的口径差。子代理自己的键仍然照写（子代理内部 ``session_status`` 读的是它），
+    因此是双写。父会话那份记录把 ``trace_id`` 记为父 trace（供按 trace 过滤命中），
+    真实子会话保留在 ``child_session_id`` 字段里。
     """
 
     def __init__(
@@ -439,11 +493,25 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         request_input_budget: int | None = None,
         prompt_overhead_reservation: int | None = None,
         prompt_layout_mode: str | None = None,
+        stats_conversation_id: str | None = None,
+        record_trace_id: str | None = None,
+        subagent_meta: dict[str, Any] | None = None,
     ) -> None:
         self._user_id = user_id
         self._conversation_id = conversation_id
+        # 写哪些会话的 stats 键：委派子代理双写——自己的键供子代理内部的
+        # session_status 读取，父会话键供前端明细弹窗按主会话查询；主代理只有一条。
+        self._stats_conversation_id = stats_conversation_id or conversation_id
+        self._stats_conversation_ids = tuple(
+            dict.fromkeys(
+                cid for cid in (conversation_id, self._stats_conversation_id) if cid
+            )
+        )
         self._agent_name = agent_name
         self._trace_id = trace_id
+        # 记录里的 trace_id：委派子代理记父 trace，保证前端按主 trace 过滤可见。
+        self._record_trace_id = record_trace_id or trace_id
+        self._subagent_meta = dict(subagent_meta) if subagent_meta else None
         self._physical_window = physical_window
         self._history_budget = history_budget
         self._overhead_reservation = overhead_reservation
@@ -565,18 +633,20 @@ class ModelCallStatsMiddleware(MiddlewareBase):
             except (TypeError, ValueError):
                 model_completion_reserve = 0
 
-        redis_key = _build_redis_key(self._user_id, self._conversation_id)
+        redis_keys = [
+            _build_redis_key(self._user_id, cid) for cid in self._stats_conversation_ids
+        ]
         record_base = {
             "call_index": call_index,
             "timestamp": datetime.datetime.fromtimestamp(
                 start_ts, tz=datetime.timezone.utc
             ).isoformat(),
-            "conversation_id": self._conversation_id,
+            "conversation_id": self._stats_conversation_id,
             "agent_name": self._agent_name,
             "model_name": model_name,
             "input_message_count": input_message_count,
             "has_tools_bound": has_tools_bound,
-            "trace_id": self._trace_id,
+            "trace_id": self._record_trace_id,
             "context_size": context_size,
             "context_budget": context_budget,
             "physical_window": physical_window,
@@ -595,12 +665,17 @@ class ModelCallStatsMiddleware(MiddlewareBase):
             "context_breakdown": context_breakdown,
             "prompt_layout_mode": self._prompt_layout_mode,
         }
+        if self._subagent_meta:
+            # 委派记录：父会话明细里可识别「这笔消耗来自哪个子代理」。
+            record_base["subagent"] = dict(self._subagent_meta)
+            record_base["child_session_id"] = self._conversation_id
+            record_base["parent_trace_id"] = self._record_trace_id
 
         # ── 流式响应：return 包装后的 async generator ──────────────────────
         if _is_async_iterable(result):
             return _stream_with_stats(
                 result,
-                redis_key=redis_key,
+                redis_keys=redis_keys,
                 record_base=record_base,
                 start_ts=start_ts,
             )
@@ -663,7 +738,8 @@ class ModelCallStatsMiddleware(MiddlewareBase):
             tool_names or False,
             elapsed_ms,
         )
-        asyncio.ensure_future(_append_stat_to_redis(redis_key, record))
+        for redis_key in redis_keys:
+            asyncio.ensure_future(_append_stat_to_redis(redis_key, record))
         return result
 
 
