@@ -1674,7 +1674,7 @@ const visibleResources = computed(() => {
 
 /** 可见范围徽标：与知识库页三档口径保持一致 */
 const KNOWLEDGE_SCOPE_BADGE: Record<string, { label: string; cls: string }> = {
-    public: { label: '公共级', cls: 'bg-blue-50 text-blue-600' },
+    public: { label: '授权可见', cls: 'bg-blue-50 text-blue-600' },
     team: { label: '部门级', cls: 'bg-violet-50 text-violet-600' },
     private: { label: '个人私有', cls: 'bg-amber-50 text-amber-700' },
 }
@@ -1685,7 +1685,7 @@ const knowledgeScopeOf = (res: any): 'public' | 'team' | 'private' => {
 }
 
 /** 兜底项：字段异常时也不让徽标消失 */
-const FALLBACK_SCOPE_BADGE = { label: '公共级', cls: 'bg-blue-50 text-blue-600' }
+const FALLBACK_SCOPE_BADGE = { label: '授权可见', cls: 'bg-blue-50 text-blue-600' }
 
 const knowledgeScopeBadge = (res: any) =>
     KNOWLEDGE_SCOPE_BADGE[knowledgeScopeOf(res)] ?? FALLBACK_SCOPE_BADGE

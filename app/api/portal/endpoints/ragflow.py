@@ -283,7 +283,7 @@ async def require_dataset_shareable(db: AsyncSession, dataset_id: str) -> None:
     if visibility is not None and str(visibility).strip().lower() == "private":
         raise HTTPException(
             status_code=400,
-            detail="个人私有知识库不支持分配授权，请先把「可见范围」改为公共级或部门级",
+            detail="个人私有知识库不支持分配授权，请先把「可见范围」改为授权可见或部门级",
         )
 
 

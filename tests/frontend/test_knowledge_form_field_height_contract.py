@@ -46,7 +46,7 @@ def test_hint_text_covers_every_scope_state(page):
     assert "const deptHintText = computed(" in page
     assert "仅「部门级」需要归属部门" in page
     assert "已选值会保留" in page
-    assert "未选部门会退化为公共级" in page
+    assert "未选部门会退化为授权可见" in page
     assert "含下级部门，成员自动只读" in page
     # 未选部门时用告警色，避免"看起来已经生效"
     assert "const deptHintClass = computed(" in page

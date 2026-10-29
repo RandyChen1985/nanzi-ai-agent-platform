@@ -23,7 +23,7 @@ const error = ref('')
 const forbidden = ref(false)
 
 const visibilityLabel = computed(() =>
-  data.value?.visibility === 'public' ? '公共级' : data.value?.visibility === 'team' ? '部门级' : '个人私有',
+  data.value?.visibility === 'public' ? '授权可见' : data.value?.visibility === 'team' ? '部门级' : '个人私有',
 )
 
 function backToSquare() {

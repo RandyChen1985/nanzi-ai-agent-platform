@@ -33,7 +33,7 @@ type KnowledgeBase = {
   owner_dept_id?: number | null
   /**
    * 可见范围（真实权限语义，见后端 PermissionService）：
-   * public = 公共级（需授权）；team = 部门级（归属部门含下级自动只读）；private = 个人私有（仅创建人）
+   * public = 授权可见（需授权）；team = 部门级（归属部门含下级自动只读）；private = 个人私有（仅创建人）
    */
   visibility?: string
   tags?: string[]
@@ -112,7 +112,7 @@ type DeptDatasetGroup = {
   totalCount: number
   hasChildren: boolean
   isUnassigned: boolean
-  /** 平铺模式（公共级 / 个人私有 tab）：不渲染分组头，只列出库 */
+  /** 平铺模式（授权可见 / 个人私有 tab）：不渲染分组头，只列出库 */
   isFlat?: boolean
 }
 
@@ -120,7 +120,7 @@ type DeptDatasetGroup = {
 type VisibilityScope = 'public' | 'team' | 'private'
 
 const VISIBILITY_TABS: { key: VisibilityScope; label: string; hint: string }[] = [
-  { key: 'public', label: '公共级', hint: '需要授权才能访问，创建人自动可用' },
+  { key: 'public', label: '授权可见', hint: '默认只有创建人可用，其他人需显式授权' },
   { key: 'team', label: '部门级', hint: '归属部门（含下级部门）成员自动只读' },
   { key: 'private', label: '个人私有', hint: '仅自己可见，不支持分配授权' },
 ]
@@ -164,8 +164,8 @@ const VISIBILITY_SCOPE_OPTIONS: {
   },
   {
     key: 'public',
-    label: '公共级',
-    hint: '需要授权才能访问，创建人自动可用',
+    label: '授权可见',
+    hint: '默认只有创建人可用，其他人需显式授权',
     scene: '跨部门共享、需要精确控制名单',
     // 地球：代表跨部门/可对外共享
     iconPath:
@@ -190,7 +190,7 @@ const visibilityOf = (dataset: KnowledgeBase): VisibilityScope => {
 /** 可见范围的中文标签（详情页/提示文案用） */
 const visibilityLabel = (dataset: KnowledgeBase): string => {
   const labels: Record<VisibilityScope, string> = {
-    public: '公共级',
+    public: '授权可见',
     team: '部门级',
     private: '个人私有',
   }
@@ -242,7 +242,7 @@ const departmentOptions = ref<DeptOptionNode[]>([])
 const departmentOptionsError = ref('')
 // 部门分组折叠状态，key 为分组 key（dept:<id> 或 unassigned）
 const collapsedDeptGroups = ref<Record<string, boolean>>({})
-// 左栏可见范围 tab：公共级 / 部门级 / 个人私有（对应 visibility 三档）
+// 左栏可见范围 tab：授权可见 / 部门级 / 个人私有（对应 visibility 三档）
 const activeVisibility = ref<VisibilityScope>('public')
 
 // 自定义下拉的展开状态：可见范围（两个弹窗共用）+ 解析算法（创建弹窗）。
@@ -936,7 +936,7 @@ const fetchDatasets = async (force = false) => {
     engineStatus.value = 'connected'
     
     // 如果没有选中的节点，默认选中第一个 —— 但要优先落在当前 Tab 的范围内，
-    // 否则会出现「左侧公共级 0 个、右侧却显示着一个部门级知识库」的错位。
+    // 否则会出现「左侧授权可见 0 个、右侧却显示着一个部门级知识库」的错位。
     if (!selectedId.value && datasets.value.length > 0) {
       const firstDataset = visibilityScopeDatasets.value[0] ?? datasets.value[0]
       if (firstDataset) {
@@ -1357,7 +1357,7 @@ const deptHintText = computed(() => {
   }
   if (!form.value.ownerDeptId) {
     if (form.value.ownerText) return `历史归属：${form.value.ownerText}`
-    return '未选部门会退化为公共级'
+    return '未选部门会退化为授权可见'
   }
   return '含下级部门，成员自动只读'
 })
@@ -1495,7 +1495,7 @@ watch(searchQuery, (value) => {
  * - **部门级 tab**：按业务归属部门分组。只渲染「子树内有知识库」的部门，但父部门
  *   即使自身没有库也会出现以保留层级；`totalCount` 是含下级部门的库数，用于徽标；
  *   `owner_dept_id` 为空（含历史自由文本）统一归入「未关联部门」。
- * - **公共级 / 个人私有 tab**：平铺（`isFlat`），不渲染分组头——这两档里部门归属
+ * - **授权可见 / 个人私有 tab**：平铺（`isFlat`），不渲染分组头——这两档里部门归属
  *   只是附带信息，多套一层分组反而增加点击成本。
  */
 const deptDatasetGroups = computed<DeptDatasetGroup[]>(() => {
@@ -3211,7 +3211,7 @@ const applyDeepLinkFromQuery = () => {
     (item) => (item.ragflow_dataset_id || item.id) === targetDatasetId
   )
   if (!dataset) return
-  // 目标库可能是部门级/私有：左侧 Tab 若停在公共级就根本看不到这个节点，
+  // 目标库可能是部门级/私有：左侧 Tab 若停在授权可见就根本看不到这个节点，
   // 表现为「右侧凭空选中了一个左侧不存在的库」。
   activeVisibility.value = visibilityOf(dataset)
   selectDatasetNode(dataset)
@@ -3481,7 +3481,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             >批量</button>
           </div>
 
-          <!-- 可见范围 tab：三档对应真实权限语义（公共级需授权 / 部门级自动只读 / 个人私有仅自己） -->
+          <!-- 可见范围 tab：三档对应真实权限语义（授权可见需授权 / 部门级自动只读 / 个人私有仅自己） -->
           <div class="mt-2 flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
             <button
               v-for="tab in VISIBILITY_TABS"
@@ -3565,7 +3565,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <div v-else-if="isSearchEmpty" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
             <span>没有匹配「{{ searchQuery }}」的知识库</span>
             <!--
-              搜索只在当前分类（公共级/部门级/个人私有）内进行：按 ID 搜索时，
+              搜索只在当前分类（授权可见/部门级/个人私有）内进行：按 ID 搜索时，
               库若在别的分类里就会「查无此库」，不说清楚容易被误判成 ID 错了。
             -->
             <span class="text-[11px] text-gray-400 not-italic">
@@ -3596,7 +3596,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
           <div v-else class="space-y-1">
             <div v-for="group in deptDatasetGroups" :key="group.key" class="space-y-1">
-              <!-- 部门分组头：仅部门级 tab 渲染，公共级/个人私有 tab 是平铺列表 -->
+              <!-- 部门分组头：仅部门级 tab 渲染，授权可见/个人私有 tab 是平铺列表 -->
               <div
                 v-if="!group.isFlat && !isDeptGroupHidden(group)"
                 class="group/dept flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg cursor-pointer select-none hover:bg-gray-50 transition-all"
@@ -4637,10 +4637,10 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <p class="mt-2 rounded-lg bg-gray-50 px-2.5 py-2 text-[11px] leading-relaxed text-gray-500 select-none">
                 可见范围为
                 <span class="font-bold text-gray-800 uppercase px-1.5 py-0.5 rounded bg-white border border-gray-200 text-[10px]">{{ visibilityLabel(selectedDataset) }}</span>。
-                <span v-if="visibilityOf(selectedDataset) === 'public'">公共级：创建人自动可用，其他人<b>必须</b>在下方被显式授权才能访问（不会被自动放行）。</span>
+                <span v-if="visibilityOf(selectedDataset) === 'public'">授权可见：创建人自动可用，其他人<b>必须</b>在下方被显式授权才能访问（不会被自动放行）。</span>
                 <span v-else-if="visibilityOf(selectedDataset) === 'team'">部门级：{{ datasetOwnerLabel(selectedDataset) || '未设置归属部门' }} 的成员（<b>含下级部门</b>）自动获得只读权限<template v-if="selectedDatasetWritable">；也可在下方额外授权给其他用户/角色</template>。</span>
                 <span v-else>
-                  个人私有：仅你自己可见，<b>不支持</b>分配授权。如需共享，请先把可见范围改为公共级或部门级。
+                  个人私有：仅你自己可见，<b>不支持</b>分配授权。如需共享，请先把可见范围改为授权可见或部门级。
                   <template v-if="datasetPermissions.users.length || datasetPermissions.roles.length">
                     下面的历史授权在当前范围内<b>不生效</b>，可逐条清除。
                   </template>
@@ -5031,9 +5031,9 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             <svg class="w-3.5 h-3.5 shrink-0 mt-px" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
             </svg>
-            <span>当前为<b>个人私有</b>：建好后只有你能看到，其他人无法访问、也不能被授权。要共享请先改成部门级或公共级。</span>
+            <span>当前为<b>个人私有</b>：建好后只有你能看到，其他人无法访问、也不能被授权。要共享请先改成部门级或授权可见。</span>
           </p>
-          <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员（含下级部门）会自动获得只读权限；未选归属部门时会退化为公共级。</p>
+          <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员（含下级部门）会自动获得只读权限；未选归属部门时会退化为授权可见。</p>
           <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人需要你在详情页「引用与授权」里点「分配授权成员」后才能访问。</p>
         </div>
         <div class="grid grid-cols-2 gap-3">
@@ -5269,7 +5269,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               </div>
             </div>
             <p v-if="form.visibility === 'private'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">仅你自己可用；个人私有库不支持分配授权。</p>
-            <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员会自动获得只读权限，也可额外分配授权；未选归属部门时退化为公共级，更换归属部门会立即改变可访问人群。</p>
+            <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员会自动获得只读权限，也可额外分配授权；未选归属部门时退化为授权可见，更换归属部门会立即改变可访问人群。</p>
             <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人必须在这里「分配授权成员」后才能访问。</p>
             <!-- 改成个人私有会让已有授权失效，必须显式提示，避免静默撤权 -->
             <p
@@ -5616,7 +5616,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <button type="button" class="px-3 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90" @click="fetchDiscover(1)">搜索</button>
         </div>
         <p class="text-[11px] text-gray-400 leading-relaxed">
-          这里只列公共级与部门级知识库，且只列你还没有权限的库（申请中的也算没有）。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
+          这里只列授权可见与部门级知识库，且只列你还没有权限的库（申请中的也算没有）。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
         </p>
         <p class="text-[11px] text-gray-400 leading-relaxed">
           没有知识库管理菜单？可以在「我的工作台 › 资源广场」看到完整目录（含已授权的库）并提交申请。
@@ -5635,7 +5635,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <span
                     class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
                     :class="item.visibility === 'public' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'"
-                  >{{ item.visibility === 'public' ? '公共级' : '部门级' }}</span>
+                  >{{ item.visibility === 'public' ? '授权可见' : '部门级' }}</span>
                 </div>
                 <p class="mt-1 text-xs text-gray-500 line-clamp-2 leading-relaxed">{{ item.description || '暂无描述' }}</p>
 
@@ -5960,7 +5960,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             这是<b>个人私有</b>库：原归属人会立刻失去访问，之后只有新归属人能看到。
           </template>
           <template v-else>
-            公共级 / 部门级的授权名单与部门可见范围不变，只是管理权换人。
+            授权可见 / 部门级的授权名单与部门可见范围不变，只是管理权换人。
           </template>
         </div>
 
