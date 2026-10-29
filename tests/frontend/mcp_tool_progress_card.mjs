@@ -68,7 +68,16 @@ check('进度条外层有 v-if 守卫', Boolean(barContainer && directive(barCon
 if (barContainer) {
   const guard = directive(barContainer, 'if');
   check("进度条仅在 pending 时渲染", guard.includes("pending"), guard);
-  check('进度条绑定 item.progress', guard.includes('progress'), guard);
+  check(
+    '进度条只挂在工具类条目上（不给模型调用等信息加噪音）',
+    guard.includes('isToolTimelineItem'),
+    guard,
+  );
+  check(
+    '兜底条不依赖远端进度字段：没上报进度的工具也要有动静',
+    !guard.includes('item.progress'),
+    guard,
+  );
 }
 
 // --------------------------------------------------------------------------- //
@@ -88,13 +97,46 @@ check('toolProgressPercent 对 total<=0 返回 null', fnPercent.includes('total 
 check('toolProgressPercent 结果夹在 0..100', fnPercent.includes('Math.min') && fnPercent.includes('Math.max'), fnPercent.slice(0, 400));
 
 const fnWidth = script.split('function toolProgressWidth')[1]?.split('\nfunction ')[0] || '';
-check('不确定态给一个固定宽度用于呼吸动画', fnWidth.includes('14%'), fnWidth.slice(0, 300));
+check(
+  '不确定态把宽度交给 CSS（返回空串，否则内联 width 会把扫光钉成一条静止横条）',
+  fnWidth.includes('percent === null ? "" :'),
+  fnWidth.slice(0, 300),
+);
 
 // --------------------------------------------------------------------------- //
 // 3. 呼吸动画必须真的在样式里（否则不确定态就是一条静止的 14% 横条）
 // --------------------------------------------------------------------------- //
 const style = descriptor.styles.map((block) => block.content).join('\n');
 check('样式里定义了不确定态动画', style.includes('timeline-progress-indeterminate'), 'styles');
+// 只截关键帧自身，避免把后面无关的 CSS 一起算进来
+const sweepKeyframes = (style.split('@keyframes timeline-progress-sweep')[1] || '').slice(0, 160);
+check(
+  '不确定态是单向扫光（只动 transform，不来回横跳、不做亮度闪烁）',
+  sweepKeyframes.includes('translateX') &&
+    !sweepKeyframes.includes('margin-left') &&
+    !sweepKeyframes.includes('opacity'),
+  sweepKeyframes,
+);
+check(
+  '扫光两端透明，循环接缝处看不见跳变',
+  style.includes('rgba(129, 140, 248, 0)'),
+  'styles',
+);
+check(
+  '兜底扫光比确定态更浅（确定态才是主角，兜底只表达「在动」）',
+  style.includes('#a5b4fc'),
+  'styles',
+);
+check(
+  '兜底条延后出现，避免几十毫秒的工具闪一下',
+  style.includes('.timeline-progress-shell') && style.includes('timeline-progress-reveal'),
+  'styles',
+);
+check(
+  '减少动效偏好下兜底条直接可见',
+  style.includes('prefers-reduced-motion'),
+  'styles',
+);
 check('动画用 keyframes 而不是 transition', style.includes('@keyframes timeline-progress'), 'styles');
 
 // --------------------------------------------------------------------------- //

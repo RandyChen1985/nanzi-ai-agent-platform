@@ -37,11 +37,19 @@ def test_progress_only_updates_existing_card():
 
 
 def test_progress_hides_after_completion():
-    """工具结束后进度条必须让位给耗时/结果，否则历史回放会看到一堆 100% 残影。"""
+    """工具结束后进度条必须让位给耗时/结果，否则历史回放会看到一堆 100% 残影。
+
+    兜底条把「何时显示」从「有远端进度」放宽成「工具还在跑」，所以这里按容器的
+    标记类反查它的 v-if，而不是依赖某个字段名。
+    """
     source = _read(TIMELINE_VUE)
-    guard = source.split("item.progress !== undefined", 1)[1].split(">", 1)[0]
+    marker = 'class="timeline-progress-shell'
+    assert marker in source, "找不到兜底进度条容器"
+    head = source.split(marker, 1)[0]
+    guard = head.rsplit('v-if="', 1)[1].split('"', 1)[0]
 
     assert "item.status === 'pending'" in guard, guard
+    assert "isToolTimelineItem(item)" in guard, guard
 
 
 def test_backend_frame_field_names_match_frontend():

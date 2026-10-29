@@ -411,10 +411,11 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
               </svg>
             </button>
-            <!-- 远端 MCP 工具上报的进度：只在执行中显示，结束后让位给耗时/结果 -->
+            <!-- 工具执行中的进度：远端上报了就是确定态百分比，没上报则是不确定态兜底，
+                 结束后让位给耗时/结果。只有工具类条目才有这条，避免给「模型调用」等加噪音。 -->
             <div
-              v-if="item.progress !== undefined && item.progress !== null && item.status === 'pending'"
-              class="ml-5 mt-1 flex items-center gap-2"
+              v-if="isToolTimelineItem(item) && item.status === 'pending'"
+              class="timeline-progress-shell ml-5 mt-1 flex items-center gap-2"
             >
               <div
                 class="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-200/80 dark:bg-gray-700/70"
@@ -427,7 +428,7 @@
               >
                 <div
                   class="h-full rounded-full bg-indigo-500 transition-[width] duration-300 ease-out dark:bg-indigo-400"
-                  :style="{ width: toolProgressWidth(item) }"
+                  :style="toolProgressWidth(item) ? { width: toolProgressWidth(item) } : undefined"
                 />
               </div>
               <span class="shrink-0 font-mono text-[10px] tabular-nums text-gray-400">{{ toolProgressText(item) }}</span>
@@ -1212,10 +1213,10 @@ function toolProgressPercent(item: ProcessTimelineLogItem): number | null {
   return Math.min(100, Math.max(0, Math.round((progress / total) * 100)));
 }
 
-/** 不确定态的宽度由 CSS 动画驱动，这里只给一个起点。 */
+/** 不确定态返回空串：宽度和位移都交给 CSS 扫光动画，内联 width 会把它钉死。 */
 function toolProgressWidth(item: ProcessTimelineLogItem): string {
   const percent = toolProgressPercent(item);
-  return percent === null ? "14%" : `${percent}%`;
+  return percent === null ? "" : `${percent}%`;
 }
 
 function formatProgressNumber(value?: number | null): string {
@@ -1312,23 +1313,47 @@ async function handleCopy(key: string, text?: string | null) {
 </script>
 
 <style scoped>
-/* 远端没给 total 时的「不确定态」：一条来回呼吸的短条，比静止的 14% 更像在工作 */
+/* 远端没给 total 时的「不确定态」：一条两端淡出的光带单向滑过整条轨道。
+   两端都是透明的，循环接缝处看不出跳变；旧写法用 margin-left 在 0↔86% 来回跑，
+   在窄轨道里就是一条横跳的实心色块，观感像闪烁。 */
 .timeline-progress-indeterminate > div {
-  animation: timeline-progress-breathe 1.6s ease-in-out infinite;
+  width: 38%;
+  background-color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    rgba(129, 140, 248, 0) 0%,
+    rgba(129, 140, 248, 0.55) 45%,
+    #a5b4fc 55%,
+    rgba(129, 140, 248, 0) 100%
+  );
+  animation: timeline-progress-sweep 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
-@keyframes timeline-progress-breathe {
-  0% {
-    margin-left: 0;
-    width: 14%;
+/* 兜底进度条：几十毫秒就结束的工具不该闪一下，延后出现；确定态进度同样受益于此。 */
+.timeline-progress-shell {
+  opacity: 0;
+  animation: timeline-progress-reveal 120ms ease-out 320ms forwards;
+}
+
+@keyframes timeline-progress-reveal {
+  to {
+    opacity: 1;
   }
-  50% {
-    margin-left: 86%;
-    width: 14%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-progress-shell {
+    opacity: 1;
+    animation: none;
   }
-  100% {
-    margin-left: 0;
-    width: 14%;
+}
+
+@keyframes timeline-progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(264%);
   }
 }
 
