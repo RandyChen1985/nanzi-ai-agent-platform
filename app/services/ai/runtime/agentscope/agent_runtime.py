@@ -67,9 +67,14 @@ def build_runtime_middlewares(
     agent_name: str | None = None,
     trace_id: str | None = None,
 ) -> list[Any]:
-    """Assemble Agent middlewares: forbidden-tool DENY + audit + model-call stats."""
+    """Assemble Agent middlewares: forbidden-tool DENY + audit + model-call stats.
+
+    ``GracefulFinishMiddleware`` 无条件挂载，开关在其内部懒加载——保持本函数同步，
+    避免波及全部调用方与既有装配契约测试。
+    """
     from app.services.ai.runtime.agentscope.middleware import (
         BashSandboxParentLinkMiddleware,
+        GracefulFinishMiddleware,
         ModelCallStatsMiddleware,
         ToolPermissionMiddleware,
     )
@@ -166,6 +171,9 @@ def build_runtime_middlewares(
                 prompt_layout_mode=runtime_info.get("prompt_layout_mode"),
             )
         )
+    # 渐进式收尾：步数将尽时让模型基于已有信息作答，替代框架的硬中断。
+    # 开关由中间件在首次推理时懒加载（见 GracefulFinishMiddleware）。
+    middlewares.append(GracefulFinishMiddleware())
     # Langfuse 追踪放在最内层：AgentScope 官方 TracingMiddleware 负责产出
     # invoke_agent / chat / execute_tool 层级，LangfuseContextMiddleware 紧接着在
     # 它建立的 reply span 上补平台身份（user.id / session.id / trace metadata）。

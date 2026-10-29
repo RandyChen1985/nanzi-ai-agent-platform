@@ -2629,6 +2629,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'agent_prompt_layout_mode',
       'agent_prompt_cache_rollout_percent',
       'agent_max_iterations',
+      'agent_graceful_finish_enabled',
       'agent_tool_loop_global_limit',
       'agent_max_toolcall_timeout',
       'agent_chat_producer_hard_timeout_seconds',
@@ -4517,6 +4518,35 @@ onUnmounted(() => {
                                  <option value="observe">observe (仅观测：保持传统布局发送，仅统计供应商命中指标)</option>
                                  <option value="enabled">enabled (启用优化：按灰度比例启用稳定层前置缓存布局)</option>
                               </select>
+                          </div>
+                          <div v-else-if="item.key === 'agent_graceful_finish_enabled'">
+                            <div class="flex items-center gap-3">
+                              <button
+                                type="button"
+                                role="switch"
+                                :disabled="isConfigItemDisabled(String(category), item)"
+                                :aria-checked="item.value === 'true'"
+                                @click="item.value = item.value === 'true' ? 'false' : 'true'"
+                                class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-inner"
+                                :class="item.value === 'true' ? 'bg-primary' : 'bg-gray-200'"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                                  :class="item.value === 'true' ? 'translate-x-5' : 'translate-x-0'"
+                                ></span>
+                              </button>
+                              <span
+                                class="text-xs font-medium"
+                                :class="item.value === 'true' ? 'text-primary font-semibold' : 'text-gray-500'"
+                              >
+                                {{ item.value === 'true' ? '开启（步数将尽时让模型基于已有信息收尾）' : '关闭（达到步数上限直接中断）' }}
+                              </span>
+                            </div>
+                            <p
+                              v-if="item.description"
+                              class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
+                            >{{ item.description }}</p>
                           </div>
                           <div v-else-if="item.key === 'agent_prompt_cache_rollout_percent'">
                               <!-- 与 0.0-1.0 那组共用同一套对齐：数值框与滑块行等高居中 -->
