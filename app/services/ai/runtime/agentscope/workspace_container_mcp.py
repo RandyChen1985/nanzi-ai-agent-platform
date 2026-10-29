@@ -36,6 +36,7 @@ gateway-venv interpreter; Docker/E2B sandboxes keep the default
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from agentscope.mcp import MCPClient  # type: ignore[attr-defined]
@@ -302,3 +303,26 @@ def build_container_tool_mcp(
 def container_tool_mcp_spec(workdir: str = CONTAINER_WORKDIR) -> dict[str, Any]:
     """Return the gateway-consumed JSON for the sandbox tool server."""
     return build_container_tool_mcp(workdir=workdir).model_dump(mode="json")
+
+
+def sandbox_mcp_fingerprint() -> str:
+    """内置 sandbox MCP 的「世代指纹」：内联脚本 + 两侧 agentscope/mcp 版本。
+
+    用途只有一个：把「这条 MCP 属于哪一代」写成可比较的短串，供重建日志与后续
+    排查对齐。**不参与**是否重建的判定——判定看的是「能不能拿到 bash」这个结果，
+    因为 ``.mcp`` 的格式由上游控制（v1 裸列表 / v2 嵌套字典），解析它只会把平台
+    绑死在上游私有格式上。
+
+    为什么把版本一起算进去：脚本本身兼容 mcp 1.x/2.x，但真正决定子进程能否起来的是
+    沙箱 venv 里的 ``mcp`` 与网关 ``agentscope`` 的版本组合。只哈希脚本文本的话，
+    「脚本没变、镜像换了」这种失配在日志里看不出区别。
+    """
+    from importlib.metadata import version
+
+    parts = [_INLINE_SERVER]
+    for package in ("agentscope", "mcp"):
+        try:
+            parts.append(f"{package}=={version(package)}")
+        except Exception:  # pragma: no cover - 仅在包元数据异常时触发
+            parts.append(f"{package}==?")
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
