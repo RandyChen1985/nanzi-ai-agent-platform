@@ -22,6 +22,7 @@ from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession, McpSyncGuardError
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from app.services.ai.tools.tool_compat import resolve_tool_invocation_result
+from app.services.mcp.curl_snippet import build_mcp_curl_snippet
 from app.services.mcp.mcp_auth_policy import (
     _parse_auth_headers,
     build_mcp_user_assertion_headers,
@@ -1487,6 +1488,52 @@ async def execute_mcp_tool(
             status_code=502,
             detail=f"MCP 工具执行失败: {str(e)[:500]}",
         ) from e
+
+@router.get("/tools/{tool_id}/curl")
+async def get_mcp_tool_curl(
+    tool_id: str,
+    arguments: Optional[str] = Query(
+        None,
+        description="已填好的参数（JSON 文本），用于生成更贴近实际调用的请求体",
+    ),
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+) -> Dict:
+    """生成可直接复制执行的 curl 片段。
+
+    只读：不发起任何远端调用，也不回显真实令牌与私钥——用户断言按调用实时签发，
+    静态值抄出去必然过期，所以片段里只给占位符与说明。
+    """
+    stmt = select(McpToolCache).where(McpToolCache.id == tool_id)
+    tool = (await db.execute(stmt)).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == tool.server_id))
+    ).scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    _ensure_server_control_access(server, user)
+
+    parsed_arguments: Dict[str, Any] = {}
+    if arguments:
+        try:
+            candidate = json.loads(arguments)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"arguments 不是合法 JSON: {exc.msg}",
+            ) from exc
+        if isinstance(candidate, dict):
+            parsed_arguments = candidate
+
+    return build_mcp_curl_snippet(
+        server,
+        str(tool.tool_name).split(":", 1)[-1],
+        parsed_arguments,
+    )
+
 
 @router.put("/tools/{tool_id}/publish", dependencies=[Depends(require_permission("element", "element:mcp_management:publish"))])
 async def toggle_tool_publish(
