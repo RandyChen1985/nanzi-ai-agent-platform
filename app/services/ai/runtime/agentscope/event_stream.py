@@ -614,6 +614,18 @@ async def map_standard_agentscope_event(
     if event_type == "CUSTOM":
         progress_frame = _mcp_progress_frame(event)
         if progress_frame:
+            # 每个工具调用只打一行：排查「远端到底有没有上报进度」时，
+            # 这行日志能直接区分「服务端没发」和「前端没渲染」。
+            logged = state.setdefault("mcp_progress_logged", set())
+            progress_id = progress_frame["id"]
+            if progress_id not in logged:
+                logged.add(progress_id)
+                logger.info(
+                    "[MCP] tool progress streaming: tool_call_id=%s progress=%s total=%s",
+                    progress_id,
+                    progress_frame.get("progress"),
+                    progress_frame.get("total"),
+                )
             # 瞬态帧：只更新已有工具卡，不新建卡片、不进快照。
             yield progress_frame
         return

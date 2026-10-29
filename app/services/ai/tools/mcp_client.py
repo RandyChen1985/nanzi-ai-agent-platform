@@ -8,6 +8,7 @@ import httpx
 import httpx2
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client
 from app.core.orm import AsyncSessionLocal
 from app.models.mcp import McpServer, McpToolCache
 from app.services.mcp.mcp_auth_policy import build_mcp_headers, resolve_mcp_auth_headers
@@ -176,8 +177,6 @@ class McpSseSession:
         与 SSE 的差别只在传输层：``ClientSession`` 之上完全一致，因此
         ``progress_callback`` / ``notifications`` 都能工作。
         """
-        from mcp.client.streamable_http import streamable_http_client
-
         http_client = await self._exit_stack.enter_async_context(
             _create_no_redirect_mcp_http_client(headers=self.auth_headers)
         )
@@ -220,8 +219,9 @@ class McpSseSession:
                     logger.info(f"[MCP] Streamable HTTP initialized for {self.server_id}")
                     return
                 except Exception as stream_err:
-                    self.session = None
-                    self.mcp_session_id = None
+                    # 不在这里重置 self.session：连接发布前它本来就是 None，
+                    # 多余的一次赋值会惊动「握手完成前不得发布会话」的状态观察者
+                    # （见 tests/ai/tools/test_mcp_sse_state_guards.py）。
                     logger.info(
                         "[MCP] Streamable HTTP unavailable for %s (%s); trying SSE",
                         self.server_id,
