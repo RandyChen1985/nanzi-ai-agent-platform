@@ -456,7 +456,9 @@ async def get_ragflow_config_summary():
 
     base_url = await ConfigService.get("knowledge_ragflow_api_url")
     api_key = await ConfigService.get("knowledge_ragflow_api_key")
-    metadata_provider = await ConfigService.get("metadata_provider", default="ragflow")
+    # 默认值必须与全库其余 8 处（schema/examples/metadata_service/…）一致为 local：
+    # 这里漏改时，没显式配置的项目会被前端判成 RAGFlow 模式，进而误报连通性故障。
+    metadata_provider = await ConfigService.get("metadata_provider", default="local")
     knowledge_enabled = await is_knowledge_base_enabled()
     api_url = base_url.rstrip("/") + "/" if base_url else ""
     return {

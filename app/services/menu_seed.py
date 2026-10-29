@@ -886,6 +886,34 @@ BUILTIN_GROUP_CODES = [
 ]
 
 
+def resolve_ancestor_menu_permissions(ids) -> set:
+    """给定一批授权 id（多为 ``element:*``），返回它们**必需的祖先菜单权限码**。
+
+    为什么需要：授权表存的是折平的 id 集合，父子关系只在菜单定义里。前端如果没有
+    级联，或调用方直接打 API 只提交功能点，就会留下「死权限」——功能点在授权表里，
+    但页面入口（``menu:*``）没授，侧栏不显示、页面进不去，那个功能点永远点不到。
+    界面上表现为「我的权限」里该菜单标成「仅分组」，像是权限没生效。
+
+    只收集 ``NODE_PAGE`` 层级（分组 ``group:*`` 没有授权语义，后端保存时也会丢弃）。
+    未知 id（租户自定义、或菜单表里有而种子没有的）直接跳过，不臆造父级。
+    """
+    required: set = set()
+    for raw in ids or ():
+        node = BUILTIN_BY_CODE.get(str(raw or "").strip())
+        seen: set = set()
+        while node is not None and node.parent_code:
+            parent = BUILTIN_BY_CODE.get(node.parent_code)
+            if parent is None or parent.code in seen:
+                break
+            seen.add(parent.code)
+            if parent.node_type == NODE_PAGE:
+                code = parent.permission_code or parent.code
+                if code and code.startswith("menu:"):
+                    required.add(code)
+            node = parent
+    return required
+
+
 def builtin_menu_permission_codes() -> List[str]:
     """内置菜单类权限码（`menu:*`），不含 element。"""
     return [

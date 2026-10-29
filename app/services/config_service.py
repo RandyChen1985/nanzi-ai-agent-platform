@@ -289,7 +289,10 @@ class ConfigService:
         redis = await get_redis()
         if redis:
             cached_val = await redis.get(f"{CACHE_PREFIX}{key}")
-            if cached_val is not None:
+            # 空串不能当缓存命中直接返回：写入侧会把库里的空值也缓存成 ""，
+            # 之后每次读都拿到 ""，与「首次读空值回落到 default」不一致——
+            # 同一个配置项一会儿有默认值、一会儿是空，取决于读过几次。
+            if cached_val is not None and cached_val != "":
                 return cached_val
         
         # 2. Check DB

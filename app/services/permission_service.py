@@ -67,6 +67,26 @@ def is_menu_group_id(resource_id: object) -> bool:
     return str(resource_id or "").strip().startswith(MENU_GROUP_ID_PREFIX)
 
 
+def _with_ancestor_menus(menus, elements):
+    """把 ``elements`` 里那些缺父菜单的功能点补上祖先 ``menu:*``。
+
+    授权表存的是折平的 id 集合，父子关系只在菜单定义里。调用方若只提交功能点
+    （旧前端不级联、脚本直打 API、或历史数据本来就只有 element 行），就会留下
+    「死权限」：功能点在表里，但页面入口没授 —— 侧栏不显示、页面进不去，那个
+    功能点永远点不到，「我的权限」里该菜单还会标成「仅分组」，像是权限没生效。
+
+    前端现在勾功能点会自动补父菜单，这里是**服务端兜底**：任何入口写入都不该
+    产生孤儿功能点。分组码不在这里补（分组没有授权语义，写进去也会被上面丢弃）。
+    """
+    from app.services.menu_seed import resolve_ancestor_menu_permissions
+
+    ordered = list(menus or [])
+    present = set(ordered)
+    for menu_id in sorted(resolve_ancestor_menu_permissions(elements) - present):
+        ordered.append(menu_id)
+    return ordered
+
+
 def normalize_permission_resource_type(resource_id: object, default_type: str) -> str:
     """按 id 前缀纠正 resource_type；前缀不认识时沿用字段默认类型。"""
     rid = str(resource_id or "").strip()
@@ -1378,7 +1398,7 @@ class PermissionService:
             # 同一个 id 可能同时出现在 menus 与 elements（旧前端整份提交时会把并集都放进去），
             # 归一后类型相同，必须去重，否则一次保存会写出两条一样的授权行。
             seen_menu_element_ids: set[str] = set()
-            for menu_id in updates.menus:
+            for menu_id in _with_ancestor_menus(updates.menus, updates.elements):
                 if is_menu_group_id(menu_id):
                     # 旧前端/脚本会把分组码一起提交上来，这里丢弃而不是落库
                     continue
@@ -1516,7 +1536,7 @@ class PermissionService:
             for meta_id in updates.metadata:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="metadata", resource_id=str(meta_id)))
             seen_menu_element_ids: set[str] = set()
-            for menu_id in updates.menus:
+            for menu_id in _with_ancestor_menus(updates.menus, updates.elements):
                 if is_menu_group_id(menu_id):
                     # 旧前端/脚本会把分组码一起提交上来，这里丢弃而不是落库
                     continue
