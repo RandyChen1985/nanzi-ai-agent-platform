@@ -27,6 +27,28 @@ async def _fake_db_session():
     yield SimpleNamespace()
 
 
+def _route_paths(app: FastAPI) -> set[str]:
+    """收集完整路由路径。
+
+    starlette 1.6 起 ``app.include_router()`` 不再把子路由摊平进 ``app.routes``，
+    而是包成 ``_IncludedRouter``（没有 ``path`` 属性），完整路径要递归拼
+    ``include_context.prefix``。旧写法 ``route.path`` 会直接 AttributeError。
+    """
+
+    def walk(routes, prefix=""):
+        for route in routes:
+            path = getattr(route, "path", None)
+            if path is not None:
+                yield prefix + path
+                continue
+            inner = getattr(route, "original_router", None)
+            if inner is not None:
+                ctx = getattr(route, "include_context", None)
+                yield from walk(inner.routes, prefix + getattr(ctx, "prefix", ""))
+
+    return set(walk(app.routes))
+
+
 def _build_app() -> FastAPI:
     portal = APIRouter()
     portal.include_router(personal_skills.router, prefix="/skills/personal")
@@ -46,13 +68,13 @@ def _build_admin_app() -> FastAPI:
 
 
 def test_personal_publication_submit_route_exists():
-    routes = {route.path for route in _build_app().routes}
+    routes = _route_paths(_build_app())
     assert "/api/portal/skills/personal/{skill_id}/publication-requests" in routes
     assert "/api/portal/skills/personal/{skill_id}/publication-requests/withdraw" in routes
 
 
 def test_admin_publication_review_routes_exist():
-    routes = {route.path for route in _build_app().routes}
+    routes = _route_paths(_build_app())
     assert "/api/portal/skills/publication-requests" in routes
     assert "/api/portal/skills/publication-requests/{version_id}/approve" in routes
     assert "/api/portal/skills/publication-requests/{version_id}/reject" in routes

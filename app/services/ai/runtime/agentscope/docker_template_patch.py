@@ -132,40 +132,57 @@ def _rewrite_build_sources(content: str) -> str:
             content = content.replace(old_head, new_head, 1)
 
     if pip_index:
-        # 上游原文（含缩进）：
-        # ` && curl -LsSf https://astral.sh/uv/install.sh \`
-        # `        | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh`
-        uv_old = (
+        uv_new = f" && pip install --no-cache-dir --index-url {pip_index} uv"
+        # 两代模板的 uv 安装段（都必须能命中，否则源加速会静默失效）：
+        #   · ≤2.0.9：`curl .../uv/install.sh | env ... sh`
+        #   · 2.0.10+：先把安装脚本下载到 /tmp，再从 astral.sh/uv/{uv_version}/
+        #     取版本化脚本——此时模板里还是未渲染的 `{uv_version}` 占位符
+        #     （本补丁挂在 _read_template 上，早于 render_dockerfile 的 .format）。
+        versioned_anchor = (
+            " && curl -LsSf -o /tmp/uv-installer.sh \\\n"
+            "        https://astral.sh/uv/{uv_version}/install.sh \\\n"
+            " && env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 \\\n"
+            "        sh /tmp/uv-installer.sh \\\n"
+            " && rm /tmp/uv-installer.sh"
+        )
+        legacy_anchor = (
             " && curl -LsSf https://astral.sh/uv/install.sh \\\n"
             "        | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh"
         )
-        uv_new = f" && pip install --no-cache-dir --index-url {pip_index} uv"
-        if uv_old in content:
-            content = content.replace(uv_old, uv_new, 1)
-            # 上游那段注释描述的是 shell installer 的做法（UV_INSTALL_DIR /
-            # INSTALLER_NO_MODIFY_PATH），安装方式一换就全是误导，整段替换掉。
-            stale_comment = (
-                "# Install uv via Astral's official shell installer.\n"
-                "# We use this rather than ``COPY --from=ghcr.io/astral-sh/uv`` to avoid\n"
-                "# depending on GitHub Container Registry at build time (the GHCR blob CDN\n"
-                "# has been observed to time out from some networks). ``curl`` and\n"
-                "# ``ca-certificates`` are not present in ``python:*-slim`` so we apt them\n"
-                "# in first, then drop the apt cache to keep the layer small.\n"
-                "# ``UV_INSTALL_DIR`` redirects the installer's default ``~/.local/bin``\n"
-                "# target to ``/usr/local/bin`` so ``uv`` lands directly on PATH;\n"
-                "# ``INSTALLER_NO_MODIFY_PATH=1`` suppresses the installer's attempt to\n"
-                "# patch shell rc files (we don't need it — PATH already covers it).\n"
+        for anchor in (versioned_anchor, legacy_anchor):
+            if anchor in content:
+                content = content.replace(anchor, uv_new, 1)
+                break
+        else:
+            # 上游再次改模板时这里会亮：不阻断构建，但源加速已经悄悄失效。
+            logger.warning(
+                "[DockerSandbox] 未匹配到 uv 安装段（上游模板可能已变更），"
+                "本次构建不会改写源加速的 uv 安装方式",
             )
-            fresh_comment = (
-                "# 安装方式与镜像源被平台补丁改写过（docker_template_patch._rewrite_build_sources）：\n"
-                "# 上游用官方 shell installer，构建时还要再去 GitHub release 拉一次\n"
-                "# uv 二进制——国内网络下这是 apt 之外的第二个慢点。改成 pip 安装后，uv 与\n"
-                "# requirements.txt 复用同一个 index，少一次外网往返。\n"
-                f"# pip/uv 源：{pip_index}\n"
-                f"# 关掉加速改用官方源：SANDBOX_BUILD_PIP_INDEX=off、SANDBOX_BUILD_APT_MIRROR=off\n"
-            )
-            if stale_comment in content:
-                content = content.replace(stale_comment, fresh_comment, 1)
+        # 上游那段注释描述的是 shell installer 的做法（UV_INSTALL_DIR /
+        # INSTALLER_NO_MODIFY_PATH），安装方式一换就全是误导，整段替换掉。
+        stale_comment = (
+            "# Install uv via Astral's official shell installer.\n"
+            "# We use this rather than ``COPY --from=ghcr.io/astral-sh/uv`` to avoid\n"
+            "# depending on GitHub Container Registry at build time (the GHCR blob CDN\n"
+            "# has been observed to time out from some networks). ``curl`` and\n"
+            "# ``ca-certificates`` are not present in ``python:*-slim`` so we apt them\n"
+            "# in first, then drop the apt cache to keep the layer small.\n"
+            "# ``UV_INSTALL_DIR`` redirects the installer's default ``~/.local/bin``\n"
+            "# target to ``/usr/local/bin`` so ``uv`` lands directly on PATH;\n"
+            "# ``INSTALLER_NO_MODIFY_PATH=1`` suppresses the installer's attempt to\n"
+            "# patch shell rc files (we don't need it — PATH already covers it).\n"
+        )
+        fresh_comment = (
+            "# 安装方式与镜像源被平台补丁改写过（docker_template_patch._rewrite_build_sources）：\n"
+            "# 上游用官方 shell installer，构建时还要再去 GitHub release 拉一次\n"
+            "# uv 二进制——国内网络下这是 apt 之外的第二个慢点。改成 pip 安装后，uv 与\n"
+            "# requirements.txt 复用同一个 index，少一次外网往返。\n"
+            f"# pip/uv 源：{pip_index}\n"
+            f"# 关掉加速改用官方源：SANDBOX_BUILD_PIP_INDEX=off、SANDBOX_BUILD_APT_MIRROR=off\n"
+        )
+        if stale_comment in content:
+            content = content.replace(stale_comment, fresh_comment, 1)
 
         # ENV 段补 index（{gateway_home} 此时仍是占位符，渲染时才替换）。
         env_anchor = "ENV UV_PROJECT_ENVIRONMENT="

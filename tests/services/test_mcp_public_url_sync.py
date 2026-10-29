@@ -60,3 +60,29 @@ def test_invalid_public_url_falls_back_instead_of_crashing():
     sync_transport_security(target, "not-a-url")
 
     assert "localhost:*" in target.allowed_hosts
+
+
+def test_apply_public_url_updates_both_mcp_instances():
+    """mcp 2.x 起 MCPServer.settings 不再持有该对象，刷新必须落到模块级实例上。
+
+    回归点：``apply_public_url_to_mcp`` 过去通过 ``instance.settings.transport_security``
+    取对象，2.x 下该属性不存在，会静默变成空操作（公网地址永远不生效）。
+    """
+    from app.services.mcp.echo_server import get_echo_transport_security
+    from app.services.mcp.platform_mcp import get_platform_transport_security
+    from app.services.mcp.public_url import apply_public_url_to_mcp
+
+    echo_target = get_echo_transport_security()
+    platform_target = get_platform_transport_security()
+    echo_before = id(echo_target)
+    platform_before = id(platform_target)
+
+    apply_public_url_to_mcp("https://nanzi.example.com:8443")
+
+    for target in (echo_target, platform_target):
+        assert id(target) in (echo_before, platform_before), "实例身份必须保持不变"
+        assert any("nanzi.example.com" in host for host in target.allowed_hosts)
+        assert any("nanzi.example.com" in origin for origin in target.allowed_origins)
+
+    # 复原，避免影响同进程内其它用例（模块级对象是共享的）
+    apply_public_url_to_mcp("")

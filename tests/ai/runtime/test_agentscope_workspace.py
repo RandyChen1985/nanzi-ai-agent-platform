@@ -2246,12 +2246,17 @@ async def test_ssh_seed_skills_batches_all_skills_into_one_write(monkeypatch, tm
 
 
 def _load_ssh_inline_server(monkeypatch, **env):
-    """Exec 内联 MCP 服务源码（打桩 FastMCP），返回其全局命名空间。"""
-    import mcp.server.fastmcp as fastmcp_module
+    """Exec 内联 MCP 服务源码（打桩服务端类），返回其全局命名空间。
+
+    mcp 2.x 把 FastMCP 改名为 ``mcp.server.mcpserver.MCPServer``，且
+    ``mcp.server.fastmcp`` 在 2.x 里是一 import 就抛 ModuleNotFoundError 的桩，
+    所以这里只打桩 2.x 的名字；内联脚本本身对 1.x 走 except 分支。
+    """
+    import mcp.server.mcpserver as mcpserver_module
 
     from app.services.ai.runtime.agentscope import workspace_ssh as ssh_module
 
-    class _FakeFastMCP:
+    class _FakeMCPServer:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -2261,7 +2266,7 @@ def _load_ssh_inline_server(monkeypatch, **env):
         def run(self, transport=None):
             pass
 
-    monkeypatch.setattr(fastmcp_module, "FastMCP", _FakeFastMCP)
+    monkeypatch.setattr(mcpserver_module, "MCPServer", _FakeMCPServer)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     namespace: dict = {}

@@ -327,9 +327,14 @@ def test_embed_chat_stream_replay_does_not_finish_the_turn():
 def test_embed_chat_keeps_lock_truth_driving_recovery_while_composer_uses_busy():
     """恢复器必须以锁真相为驱动，输入解锁只认 busy：两者不得再耦合成同一个标志。"""
     source = _embed_source()
-    assert ':is-processing="isProcessing || remoteRunBusy || recoveryLocking"' in source
+    # 输入框的 busy 语义此后又并入 pendingPermissionLocking：确认卡挂起时这一轮已经停下，
+    # 只看 isProcessing / remoteRunBusy 会把输入框误判为空闲，用户可以绕过确认卡发新消息。
     assert (
-        "const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || recoveryLocking.value || sendLocked.value;"
+        ':is-processing="isProcessing || remoteRunBusy || recoveryLocking || pendingPermissionLocking"'
+        in source
+    )
+    assert (
+        "const quickSendBlocked = () => isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value || sendLocked.value;"
         in source
     )
     assert "watch(remoteRunActive, (active) =>" in source

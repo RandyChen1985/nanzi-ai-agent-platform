@@ -51,19 +51,25 @@ CONTAINER_WORKDIR = "/workspace"
 
 # Absolute interpreter of the AgentScope gateway virtualenv inside the
 # sandbox container. The gateway always installs ``mcp`` (plus fastapi /
-# uvicorn) there, while the stock ``python:3.11-slim`` system Python does
-# not. Kubernetes sandbox pods must spawn the inline ``sandbox`` MCP server
-# with this interpreter so ``from mcp.server.fastmcp import FastMCP``
-# resolves; a bare ``python`` command can silently resolve to the system
-# interpreter and make the whole MCP registration fail (HTTP 500 in the
-# gateway, and no usable Bash tool downstream).
+# uvicorn / httpx2) there, while the stock ``python:3.11-slim`` system
+# Python does not. Kubernetes sandbox pods must spawn the inline ``sandbox``
+# MCP server with this interpreter so the ``mcp`` import in ``_INLINE_SERVER``
+# resolves (``mcp.server.mcpserver.MCPServer`` on mcp 2.x, with a
+# ``mcp.server.fastmcp.FastMCP`` fallback for mcp 1.x); a bare ``python``
+# command can silently resolve to the system interpreter and make the whole
+# MCP registration fail (HTTP 500 in the gateway, and no usable Bash tool
+# downstream).
 K8S_GATEWAY_VENV_PYTHON = "/root/.agentscope/.venv/bin/python"
 
 # AgentScope 网关运行时还需这些工具链核心依赖（官方 _GATEWAY_BASE_REQUIREMENTS
-# 只含 mcp/uvicorn/fastapi/httpx，而 gateway 加载/调用 MCP 与 Bash 工具时会全量
-# import agentscope.tool：tool/_types→_utils 需 docstring_parser；_toolkit 需
-# jinja2；_builtin 需 aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter）。
+# 只含 certifi/mcp/uvicorn/fastapi/httpx/httpx2，而 gateway 加载/调用 MCP 与
+# Bash 工具时会全量 import agentscope.tool：tool/_types→_utils 需 docstring_parser；
+# _toolkit 需 jinja2；_builtin 需 aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter）。
 # 缺失表现为沙箱 Bash 报 "HTTP 500: No module named 'xxx'"。
+# 注意：mcp/httpx2/certifi 属于**上游 base requirements**（2.0.11 起 mcp 放开到
+# >=2.0.0 并新增 httpx2），不在本清单里；K8s 预置镜像脚本自己那份 BASE_REQS 必须
+# 同时覆盖两者，见 k8s_deploy/build-k8s-sandbox-image.sh 的 BASE_REQS 注释，一致性由
+# tests/test_k8s_sandbox_image_gateway_deps.py 与上游常量比对。
 # 清单用于三处，且三处的 extra_pip 必须完全一致——它会写进 requirements.txt 并
 # 参与镜像 tag 的 SHA256 计算，任何一处不一致都会让预构建镜像无法命中：
 # ① K8sWorkspace 的 ``extra_pip``：K8s 冷启动 bootstrap 的
@@ -90,7 +96,7 @@ GATEWAY_EXTRA_PIP: tuple[str, ...] = (
     "python-frontmatter",
 )
 
-# The inline FastMCP stdio server. It must be syntactically valid
+# The inline stdio MCP server. It must be syntactically valid
 # Python and use only the stdlib + ``mcp`` (already present in the
 # gateway venv). ``run(transport="stdio")`` blocks serving requests.
 _INLINE_SERVER = '''\
@@ -99,10 +105,16 @@ import os
 import re
 import subprocess
 
-from mcp.server.fastmcp import FastMCP
+# mcp 2.x 把 FastMCP 改名为 MCPServer，且 mcp.server.fastmcp 在 2.x 里是一 import
+# 就抛 ModuleNotFoundError 的提示桩。沙箱网关装的是哪个大版本由镜像决定（新镜像随
+# agentscope 2.0.11+ 装 2.x，旧镜像仍是 1.x），这里两者都要能跑。
+try:
+    from mcp.server.mcpserver import MCPServer as _SandboxMCPServer
+except ImportError:  # mcp < 2.0
+    from mcp.server.fastmcp import FastMCP as _SandboxMCPServer
 
 _ROOT = os.environ.get("SANDBOX_WORKDIR", "/workspace")
-mcp = FastMCP("sandbox")
+mcp = _SandboxMCPServer("sandbox")
 
 #: 沙箱内 Python 环境的四个事实，模型踩坑后必须立刻被告知（否则它只会换包名重试）：
 #:   1. ``pip`` 是系统 Python 的（/usr/local），默认 ``python`` 是网关 venv，看不见；

@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import jwt
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import select
 
@@ -258,16 +258,45 @@ async def _load_echo_server(server_id: str | None = None) -> McpServer:
     return server
 
 
-echo_mcp = FastMCP(
+#: 传输安全白名单的持有者（mcp 2.x 起 MCPServer.settings 不再保存该对象，
+#: 必须由调用方持有并在 streamable_http_app() 时传入；运行期靠原地切片赋值刷新，
+#: 见 app/services/mcp/public_url.py）。
+_ECHO_TRANSPORT_SECURITY = mutable_transport_security(settings.APP_PUBLIC_URL)
+
+
+def get_echo_transport_security() -> TransportSecuritySettings:
+    """返回 Echo MCP 的传输安全设置，供 public_url 运行期原地刷新白名单。"""
+    return _ECHO_TRANSPORT_SECURITY
+
+
+echo_mcp = MCPServer(
     ECHO_SERVER_NAME,
     instructions="用于验证 NanZi MCP 协议和用户身份透传，不执行任何业务操作。",
-    streamable_http_path="/mcp",
-    json_response=True,
-    stateless_http=True,
-    # 占位对象：启动后由 refresh_mcp_public_url() 按「系统配置 → 环境变量」
-    # 原地刷新白名单（FastMCP 中间件按对象引用读取，不能替换实例）。
-    transport_security=mutable_transport_security(settings.APP_PUBLIC_URL),
 )
+
+
+_ECHO_HTTP_APP: Any = None
+
+
+def echo_mcp_http_app():  # type: ignore[no-untyped-def]
+    """构造（并缓存）Echo MCP 的 Streamable HTTP 应用（端点参数在 mcp 2.x 移到此处）。
+
+    与 ``platform_mcp_http_app`` 同理：``streamable_http_app()`` 每次调用都会
+    新建 ``StreamableHTTPSessionManager`` 并覆盖 ``server._session_manager``，
+    而只有经 ``echo_mcp_lifespan`` 跑过 ``run()`` 的实例才能处理请求，
+    因此这里必须缓存，避免二次调用把宿主挂载的实例顶掉。
+    """
+    global _ECHO_HTTP_APP
+    if _ECHO_HTTP_APP is None:
+        _ECHO_HTTP_APP = echo_mcp.streamable_http_app(
+            streamable_http_path="/mcp",
+            json_response=True,
+            stateless_http=True,
+            transport_security=_ECHO_TRANSPORT_SECURITY,
+            max_request_body_size=32 * 1024 * 1024,
+            session_idle_timeout=3600.0,
+        )
+    return _ECHO_HTTP_APP
 
 
 @asynccontextmanager

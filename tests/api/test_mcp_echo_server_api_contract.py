@@ -43,7 +43,8 @@ def test_echo_creation_contract_is_global_idempotent_and_write_only():
 def test_main_mounts_echo_streamable_http_mcp():
     source = Path("app/main.py").read_text(encoding="utf-8")
 
-    assert "echo_mcp.streamable_http_app()" in source
+    # mcp 2.x：端点参数挪到 streamable_http_app()，统一走封装工厂
+    assert "echo_mcp_http_app()" in source
     assert 'app.mount("/mcp/echo"' in source
     assert "echo_mcp_lifespan" in source
     assert "async with echo_mcp_lifespan()" in source
@@ -52,8 +53,10 @@ def test_main_mounts_echo_streamable_http_mcp():
 def test_echo_transport_security_reads_app_public_url():
     source = Path("app/services/mcp/echo_server.py").read_text(encoding="utf-8")
 
-    # 构造期给可变占位对象，启动/保存配置后由 refresh_mcp_public_url() 原地刷新
-    assert "transport_security=mutable_transport_security(settings.APP_PUBLIC_URL)" in source
+    # mcp 2.x 起由模块级常量持有该对象，streamable_http_app() 时传入；
+    # 启动/保存配置后由 refresh_mcp_public_url() 原地刷新。
+    assert "_ECHO_TRANSPORT_SECURITY = mutable_transport_security(settings.APP_PUBLIC_URL)" in source
+    assert "transport_security=_ECHO_TRANSPORT_SECURITY" in source
 
     main_source = Path("app/main.py").read_text(encoding="utf-8")
     assert "refresh_mcp_public_url()" in main_source

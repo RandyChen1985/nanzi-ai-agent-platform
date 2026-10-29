@@ -5,6 +5,7 @@ import time
 import uuid
 from typing import Dict, Any, List, Optional, Tuple
 import httpx
+import httpx2
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from app.core.orm import AsyncSessionLocal
@@ -24,18 +25,48 @@ MAX_REMOTE_TOOLS = 5000
 _AUDIT_TASKS: set[asyncio.Task] = set()
 
 
+def _tool_input_schema(tool: Any) -> Any:
+    """取 MCP 工具的入参 schema。
+
+    mcp 2.x 把 JSON-RPC 的 ``inputSchema`` 字段改名为 ``input_schema``（与
+    ``read_only_hint`` 等注解一起）；但外部服务返回的原始 dict、以及历史缓存里
+    仍可能是旧名。这里按「新名 → 旧名 → 平台缓存字段」依次回退，两个大版本都能取到。
+    """
+    for attr in ("input_schema", "inputSchema"):
+        value = getattr(tool, attr, None)
+        if value is not None:
+            return value
+    if isinstance(tool, dict):
+        for key in ("input_schema", "inputSchema", "parameter_schema"):
+            value = tool.get(key)
+            if value is not None:
+                return value
+    return None
+
+
 class McpSyncGuardError(RuntimeError):
     """同步结果看起来不可信（例如远端突然返回 0 个工具），需要显式强制。"""
 
 
 def _create_no_redirect_mcp_http_client(headers=None, timeout=None, auth=None):
-    """MCP SDK 默认跟随重定向；自定义 Header 可能带凭据，跟随到新 host 等于外泄。
+    """``sse_client`` 的传输客户端工厂：禁跟随重定向，且必须是 **httpx2** 客户端。
 
-    内网地址已按产品要求放行，但至少要保证重定向不能把请求带到未校验的地址。
+    为什么是 httpx2：mcp 2.x 把客户端传输整体切到了 ``httpx2``（见
+    ``mcp/shared/_httpx_utils.py`` 的 ``McpHttpClientFactory``），``sse_client()``
+    会把 ``httpx2.Timeout`` 传进本工厂，再用返回的客户端发请求。若这里仍返回
+    ``httpx.AsyncClient``，httpx 在 TCP 连接阶段就会把 ``httpx2.Timeout`` 当数字运算，
+    抛 ``TypeError: unsupported operand type(s) for +: 'float' and 'Timeout'``；
+    而该异常在 ``McpSseSession.connect()`` 里会被吞成一条 warning 并静默降级
+    Direct HTTP——对只支持 SSE 的外部 MCP 服务等于工具同步/调用全部失败。
+    回归用例见 ``tests/services/mcp/test_mcp_client_sse_transport.py``。
+
+    为什么还要禁重定向：自定义 Header 可能带凭据，跟随到新 host 等于外泄；内网地址
+    已按产品要求放行，但至少要保证重定向不能把请求带到未校验的地址。（httpx2 默认
+    即不跟随，mcp 2.x 传输层自己也只跟随同源重定向；这里显式写死是为了不依赖默认值。）
     """
-    return httpx.AsyncClient(
+    return httpx2.AsyncClient(
         headers=headers,
-        timeout=timeout or httpx.Timeout(30.0),
+        timeout=timeout or httpx2.Timeout(30.0),
         auth=auth,
         follow_redirects=False,
     )
@@ -918,7 +949,7 @@ class McpClientService:
                 if not t_name:
                     continue
                 t_desc = t.description if hasattr(t, "description") else t.get("description")
-                t_schema = t.inputSchema if hasattr(t, "inputSchema") else t.get("inputSchema", t.get("parameter_schema"))
+                t_schema = _tool_input_schema(t)
                 if hasattr(t_schema, "model_dump"):
                     t_schema = t_schema.model_dump(mode="json")
                 schema_payload = dict(t_schema or {}) if isinstance(t_schema, dict) else {}

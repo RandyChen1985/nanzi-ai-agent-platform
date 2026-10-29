@@ -916,6 +916,10 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
           msg.pendingPermission.status = "approved";
         }
         msg.pendingPermission.expanded = false;
+        // 回执一到就解除卡片的提交态：后续还要跑完整个 Agent 轮次，流可能持续
+        // 几十秒，若等到 finally 才复位，卡片会一直显示「正在提交确认…」。
+        // 这里只影响卡片的视觉态，输入框仍由 isProcessing / pendingPermissionLocking 锁定。
+        msg.pendingPermission.isSubmitting = false;
       }
       addLog(msg, {
         id: `permission_${data.permission_request_id}`,

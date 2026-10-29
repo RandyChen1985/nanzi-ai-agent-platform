@@ -8,12 +8,24 @@ from app.services.mcp import echo_server
 from app.services.mcp.echo_server import (
     build_echo_diagnostics,
     echo_mcp,
+    echo_mcp_http_app,
     echo_mcp_lifespan,
 )
 from app.services.mcp.user_context_assertion import issue_user_assertion
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+def test_echo_mcp_http_app_is_cached_singleton():
+    """同 platform：工厂缓存实例，避免运行期二次调用顶掉已 run 的 manager。"""
+    first_app = echo_mcp_http_app()
+    first_manager = echo_mcp.session_manager
+
+    second_app = echo_mcp_http_app()
+
+    assert second_app is first_app
+    assert echo_mcp.session_manager is first_manager
 
 
 def test_echo_transport_security_uses_public_url_host_and_origin():

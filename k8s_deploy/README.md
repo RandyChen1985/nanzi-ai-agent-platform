@@ -146,7 +146,7 @@ K8s 沙箱（`sandbox_policy = k8s`）的网关环境放在 Pod 内的 `/root/.a
 ### 一、前置条件
 
 - 一台**能访问 Docker daemon** 的构建机（节点宿主机或开发机均可，**不要在 NanZi 平台 Pod 内执行**，脚本会自检拦截）；
-- 构建机可访问 PyPI（拉取 `mcp/uvicorn/fastapi/httpx` 网关基础依赖与 agentscope 工具链依赖 `docstring_parser/jinja2/aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter`，清单见 `build-k8s-sandbox-image.sh` 的 `BASE_REQS`）。镜像内依赖安装默认使用清华镜像 `https://pypi.tuna.tsinghua.edu.cn/simple`，需要官方源时传 `--pip-index https://pypi.org/simple`；网络受限请加 `--proxy`；
+- 构建机可访问 PyPI（拉取 `certifi/mcp>=2.0.0/uvicorn/fastapi/httpx/httpx2` 网关基础依赖与 agentscope 工具链依赖 `docstring_parser/jinja2/aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter`，清单见 `build-k8s-sandbox-image.sh` 的 `BASE_REQS`，必须与 `agentscope` 的 `_GATEWAY_BASE_REQUIREMENTS` + `GATEWAY_EXTRA_PIP` 逐项一致，一致性由 `tests/test_k8s_sandbox_image_gateway_deps.py` 守护）。镜像内依赖安装默认使用清华镜像 `https://pypi.tuna.tsinghua.edu.cn/simple`，需要官方源时传 `--pip-index https://pypi.org/simple`；网络受限请加 `--proxy`；
 - 需要访问本仓库 `k8s_deploy/`（内含 `build-k8s-sandbox-image.sh` 与 `sandbox-image/_mcp_gateway_app.py` 模板）。
 
 ### 二、构建并导入
@@ -180,7 +180,7 @@ cd k8s_deploy
 >  => CACHED [1/5] FROM docker.io/library/python:3.11-slim                                         0.0s
 >  => [2/5] RUN apt-get update -qq && apt-get install -y curl ca-certificates ripgrep tree telnet net-tools ... 54.7s
 >  => [3/5] RUN curl -LsSf https://astral.sh/uv/install.sh | ... uv ...                            8.3s
->  => [4/5] RUN uv venv /root/.agentscope/.venv && uv pip install ... "mcp<2.0.0" ...             20.7s
+>  => [4/5] RUN uv venv /root/.agentscope/.venv && uv pip install ... "mcp>=2.0.0" ...             20.7s
 >  => naming to docker.io/library/nanzi-sandbox-k8s:1.0.0                                          0.2s
 > ✔  镜像构建完成：nanzi-sandbox-k8s:1.0.0
 > ℹ  导出镜像为 tar（文件式，非管道）...
