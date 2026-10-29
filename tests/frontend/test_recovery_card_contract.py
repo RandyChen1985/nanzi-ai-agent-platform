@@ -113,6 +113,18 @@ def test_done_wins_over_a_still_held_run_lock():
     assert _plan(runActive=True, terminalApplied=True, engaged=True)["phase"] == "done"
 
 
+def test_hidden_when_the_user_stopped_this_turn():
+    """用户主动停止不是「恢复」场景，两个阶段都不得提示。
+
+    `stopGeneration()` 只 abort 本地 SSE：流不在途、草稿还在、后端锁尚未释放——
+    这三条判据与「切走页面后 SSE 静默断开」完全同构。缺了「本端用户主动停止」这个
+    输入，界面就会先弹「会话仍在后台处理中」，待取消轮落库后再补一句「执行已完成，
+    内容已补齐」，与用户刚按下的停止语义正面冲突。
+    """
+    assert _plan(runActive=True, hasDraft=True, turnStoppedByUser=True)["phase"] == "hidden"
+    assert _plan(terminalApplied=True, engaged=True, turnStoppedByUser=True)["phase"] == "hidden"
+
+
 def test_collapses_when_the_run_ends_without_a_terminal_write():
     assert _plan(runActive=False, hasDraft=True)["phase"] == "hidden"
 
@@ -166,6 +178,25 @@ def test_embed_chat_resets_the_card_on_a_new_turn():
     assert "recoveryCardDoneTimer" in source
     # 新一轮提问必须复位「本轮已关闭」标记，否则提示会被永久静默掉。
     assert "recoveryCardDismissedForTurn.value = false" in source
+
+
+def test_embed_chat_marks_a_user_stopped_turn_so_recovery_stays_silent():
+    """停止按钮必须把「本端用户主动停止」送进决策，而不是靠状态巧合。
+
+    abort 只会让 `streamInFlight` 归零：草稿仍在（`activeStreamDraft` 只在 [DONE]
+    分支清）、后端锁也还没被 cancel 释放——这正好凑齐「后台在跑、前端断了」的判据。
+    所以停止动作自身要置位，并在同一处重算一次卡片（`finally` 里的那次刷新紧随其后）。
+    """
+    source = _embed_source()
+    assert "turnStoppedByUser: recoveryCardStoppedByUser.value" in source
+    stop_start = source.index("const stopGeneration = (options?: StopGenerationOptions) => {")
+    stop_block = source[stop_start : source.index("\n};", stop_start)]
+    assert "recoveryCardStoppedByUser.value = true;" in stop_block
+    assert "refreshRecoveryCard();" in stop_block
+    # 复位必须挂在 resetRecoveryCard 上：新提问与切会话/换身份都经它。
+    reset_start = source.index("const resetRecoveryCard = () => {")
+    reset_block = source[reset_start : source.index("\n};", reset_start)]
+    assert "recoveryCardStoppedByUser.value = false;" in reset_block
 
 
 def test_detail_reports_what_was_actually_replayed_not_the_cursor():
