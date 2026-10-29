@@ -30,6 +30,8 @@ REGISTRY = Path("frontend/src/components/system/ToolRegistry.vue")
 PARAM_EDITOR = Path("frontend/src/components/system/ToolParamEditor.vue")
 SCHEMA_UTIL = Path("frontend/src/utils/toolSchema.ts")
 GENERIC_API = Path("app/services/ai/tools/generic_api.py")
+# schema 解析已抽成公共模块（API 工具与脚本工具共用同一套口径）
+PARAMETER_SCHEMA = Path("app/services/ai/tools/parameter_schema.py")
 
 
 def _source(path: Path) -> str:
@@ -181,8 +183,9 @@ def test_both_tabs_share_one_param_editor():
 # 后端：锁住可视化编辑器依赖的运行时行为
 # --------------------------------------------------------------------------- #
 def test_runtime_reads_standard_properties_block():
-    source = _source(GENERIC_API)
-    assert '"properties" in schema_def' in source
+    """解析逻辑在 parameter_schema.py；generic_api 必须复用而不是另抄一份。"""
+    assert '"properties" in schema_def' in _source(PARAMETER_SCHEMA)
+    assert "_parse_parameter_schema(" in _source(GENERIC_API)
 
 
 def test_runtime_defaults_params_to_required():
@@ -197,11 +200,10 @@ def test_runtime_keeps_platform_extension_keys():
 
 
 def test_runtime_accepts_flat_map_and_plain_string_forms():
-    source = _source(GENERIC_API)
-    # 扁平 map：顶层直接当参数表
-    assert "properties = schema_def" in source
-    # 极简写法：值即描述
-    assert "p_desc = str(param_def)" in source
+    # 扁平 map：顶层直接当参数表（解析在公共模块）
+    assert "properties = schema_def" in _source(PARAMETER_SCHEMA)
+    # 极简写法：值即描述（构造工具 schema 仍在本文件）
+    assert "p_desc = str(param_def)" in _source(GENERIC_API)
 
 
 # --------------------------------------------------------------------------- #

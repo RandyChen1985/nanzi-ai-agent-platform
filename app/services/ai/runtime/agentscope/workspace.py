@@ -5970,6 +5970,24 @@ async def _sandbox_bash_tool_from_mcps(mcps: Any) -> Any | None:
     return None
 
 
+async def resolve_sandbox_bash_tool(sandbox_ws: Any) -> Any | None:
+    """取沙箱里的 ``bash`` 工具，供脚本工具等「非 AgentScope 内置工具」复用。
+
+    与 Bash 工具走同一条通道的意义：脚本工具因此自动继承沙箱策略
+    （docker/k8s/e2b/ssh）、超时、取消与命令策略，不需要第二套执行原语。
+
+    惰性代理会在这里真正拉起容器/Pod；调用方负责判断 ``sandbox_ws`` 是否为空
+    （为空表示 local 策略，应退回用户工作区内的本机子进程）。
+    """
+    if sandbox_ws is None:
+        return None
+    real_ws = sandbox_ws
+    if isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
+        real_ws = await sandbox_ws.ensure_ready()
+    list_mcps = getattr(real_ws, "list_mcps", None)
+    return await _sandbox_bash_tool_from_mcps(list_mcps() if callable(list_mcps) else None)
+
+
 def _normalize_docker_mount_mappings(
     host_root: str,
     mount_mappings: list[DockerMountMapping]
@@ -6998,11 +7016,63 @@ class LazySandboxBashNativeTool:
         return result
 
 
+def _bind_script_tool_spec(
+    spec: Any,
+    *,
+    sandbox_ws: Any,
+    local_ws: Any,
+    user_info: dict[str, Any] | None,
+    sandbox_degraded: bool = False,
+) -> Any:
+    """把脚本工具接到当前会话工作区（沙箱可用则进沙箱）。
+
+    与 Bash 同源：`sandbox_ws` 为空表示 local 策略，退回用户工作区内的本机子进程；
+    沙箱不可用时**报错而不是降级到宿主机**，避免"以为在沙箱里跑、其实在宿主上跑"。
+    """
+    metadata = getattr(spec, "metadata", None) or {}
+    config = metadata.get("script_tool_config")
+    if config is None:
+        return spec
+
+    if sandbox_degraded and sandbox_ws is None:
+        # 明确区分「local 部署」（本来就没有沙箱）和「容器部署本轮降级」：
+        # 后者绝不能在平台后端进程里跑用户脚本。
+        raise PermissionError(
+            "脚本工具未执行：当前部署要求脚本在沙箱内运行，但沙箱本轮不可用。"
+            "不会退回平台后端进程执行，请稍后重试。"
+        )
+
+    workdir = getattr(local_ws, "workdir", None)
+    if not workdir:
+        raise PermissionError("脚本工具未执行：无法解析当前会话工作区")
+
+    from app.services.ai.tools.script_tool_runtime import (
+        ScriptToolRunner,
+        render_result_for_model,
+    )
+
+    runner = ScriptToolRunner(
+        config,
+        workdir=workdir,
+        sandbox_ws=sandbox_ws,
+        sandbox_root=getattr(local_ws, "workspace_user_root", None),
+        user_info=user_info,
+        conversation_id=getattr(local_ws, "conversation_id", None),
+    )
+
+    async def _invoke_script_tool(**kwargs: Any) -> Any:
+        result = await runner.run(kwargs)
+        return await render_result_for_model(result, workdir=runner.workdir)
+
+    return replace(spec, callable=_invoke_script_tool)
+
+
 async def bind_configured_tools_to_workspace(
     workspace: Any,
     tool_specs: list[Any] | None,
     *,
     user_info: dict[str, Any] | None = None,
+    sandbox_degraded: bool = False,
 ) -> list[Any]:
     """Bind configured Bash/Read/Write/Edit/Glob/Grep to the session workspace.
 
@@ -7122,6 +7192,17 @@ async def bind_configured_tools_to_workspace(
 
     bound: list[Any] = []
     for spec in specs:
+        if str(getattr(spec, "source_type", "")) == "script_tool":
+            bound.append(
+                _bind_script_tool_spec(
+                    spec,
+                    sandbox_ws=sandbox_ws,
+                    local_ws=local_ws,
+                    user_info=user_info,
+                    sandbox_degraded=sandbox_degraded,
+                )
+            )
+            continue
         native_name = _workspace_native_name_for_spec(spec)
         if native_name == "Bash":
             # Sandbox policies: Bash is served only by the sandbox. Local policy:

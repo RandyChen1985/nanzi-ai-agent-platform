@@ -11,7 +11,7 @@ import type {
   StaleToolRef,
 } from "../api/agent";
 import { modelApi, type AIModel } from "../api/model";
-import { toolApi, type SysApiTool } from "../api/tool";
+import { toolApi, scriptToolApi, type SysApiTool } from "../api/tool";
 import Modal from "../components/Modal.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import Toast from "../components/Toast.vue";
@@ -1466,6 +1466,13 @@ const availableTools: Array<{ name: string; description: string; isSystem: boole
 
 const dynamicTools = ref<SysApiTool[]>([]);
 const mcpTools = ref<any[]>([]);
+// 脚本工具：与 API 工具并列的可选工具，未加载会让它们从「工具能力」里整体消失
+const scriptTools = ref<any[]>([]);
+// e2b / ssh 没有会话工作区映射：脚本工具仍展示（便于移除历史选择），但不能新选
+const scriptToolSupported = ref(true);
+const scriptToolNames = computed(() => new Set(scriptTools.value.map((tool) => String(tool.name || ''))));
+const isUnsupportedScriptTool = (name: string) =>
+  !scriptToolSupported.value && scriptToolNames.value.has(String(name || ''));
 const availableSkills = ref<any[]>([]);
 const toolTab = ref<'static' | 'mcp' | 'skills'>('static');
 
@@ -1781,8 +1788,14 @@ const getStaticGroupTools = (label: string) => {
   return groupedTools.value.find((group) => group.label === label)?.tools || [];
 };
 
+const getSelectableStaticGroupTools = (label: string) => {
+  return getStaticGroupTools(label).filter((tool) => !isUnsupportedScriptTool(tool.name));
+};
+
 const isAllStaticGroupSelected = (label: string) => {
-  const tools = getStaticGroupTools(label);
+  // 不支持的脚本工具不能新选，也不能成为「全选」状态的一部分，否则这一组
+  // 永远无法通过再次点击取消全选。
+  const tools = getSelectableStaticGroupTools(label);
   return tools.length > 0 && tools.every((tool) => isToolSelected(tool.name));
 };
 
@@ -1801,7 +1814,11 @@ const toggleSelectAllStatic = (label: string) => {
     return;
   }
 
-  tools.forEach((tool) => {
+  const selectable = getSelectableStaticGroupTools(label);
+  if (selectable.length < tools.length) {
+    showToast('当前沙箱策略不支持脚本工具，已跳过相关工具', 'warning');
+  }
+  selectable.forEach((tool) => {
     const isSelected = currentTools.some((item) => {
       const name = typeof item === 'string' ? item : (item as any).name;
       return name === tool.name;
@@ -1962,6 +1979,23 @@ const fetchTools = async () => {
     }
 
     try {
+      const scriptRes = await scriptToolApi.list();
+      scriptTools.value = Array.isArray(scriptRes.data) ? scriptRes.data : (scriptRes.data as any)?.data || [];
+    } catch (e) {
+      console.warn("Script tools not loaded");
+      scriptTools.value = [];
+    }
+
+    try {
+      const capRes = await scriptToolApi.capabilities();
+      scriptToolSupported.value = capRes.data?.script_tool_supported !== false;
+    } catch (e) {
+      // 能力接口失败时放行，避免把「查不到」误判成「不支持」而藏掉整个工具组
+      console.warn("Script tool capabilities not loaded");
+      scriptToolSupported.value = true;
+    }
+
+    try {
       const skillsRes = await axios.get('/api/portal/skills');
       availableSkills.value = Array.isArray(skillsRes.data) ? skillsRes.data : (skillsRes.data.data || []);
     } catch (e) {
@@ -1983,9 +2017,20 @@ const allAvailableTools = computed(() => {
     group_name: t.group_name ?? null,
   }));
 
+  // 脚本工具与 API 工具同构映射：group_name 必须透传，否则分组会静默失效
+  const scriptMapped = scriptTools.value
+    .filter((t) => t.is_active !== false)
+    .map((t) => ({
+      name: t.name,
+      description: t.description || `脚本工具（Python）：${t.name}`
+        + (scriptToolSupported.value ? '' : '（当前沙箱策略不支持，不能新选）'),
+      isSystem: false,
+      group_name: t.group_name ?? null,
+    }));
+
   // Merge, ensuring no duplicates (though names should be unique system-wide ideally)
   const combined = [...availableTools];
-  dynamicMapped.forEach((dt) => {
+  [...dynamicMapped, ...scriptMapped].forEach((dt) => {
     if (!combined.find((ct) => ct.name === dt.name)) {
       combined.push(dt);
     }
@@ -3181,6 +3226,10 @@ const toggleTool = (toolName: string) => {
     }
     tools.splice(index, 1);
   } else {
+    if (isUnsupportedScriptTool(toolName)) {
+      showToast('当前沙箱策略不支持脚本工具，不能新选', 'warning');
+      return;
+    }
     tools.push(toolName);
   }
   versionForm.value.tools = tools;

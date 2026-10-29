@@ -9,7 +9,7 @@ import re
 import shlex
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 from app.services.ai.grounding.models import EvidenceType
@@ -43,7 +43,7 @@ from app.services.ai.runtime.command_policy import (  # noqa: E402
 )
 
 
-ToolSourceType = Literal["static", "generic_api", "mcp", "class", "system"]
+ToolSourceType = Literal["static", "generic_api", "mcp", "class", "system", "script_tool"]
 RuntimePermissionScope = Literal["read", "write", "ask", "dangerous"]
 RuntimeApprovalMode = Literal["ask", "allow", "deny"]
 
@@ -514,6 +514,9 @@ class RuntimeToolSpec:
     audit_callback: Callable[[RuntimeToolAuditEvent], Any] | None = None
     native_tool: Any | None = None
     is_concurrency_safe: bool | None = None
+    # 平台内部透传字段（不进入模型可见 schema）。脚本工具用它把配置带到
+    # bind_configured_tools_to_workspace，由后者包上沙箱执行器。
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_read_only(self) -> bool:
@@ -1765,6 +1768,7 @@ def runtime_tool_spec_from_legacy_tool(
             getattr(tool, "evidence_inference_disabled", False) is True
         ),
         is_concurrency_safe=getattr(tool, "is_concurrency_safe", None),
+        metadata=dict(getattr(tool, "runtime_metadata", None) or {}),
     )
 
 

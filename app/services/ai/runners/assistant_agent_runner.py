@@ -2383,6 +2383,7 @@ class AssistantAgentRunner(BaseExecutor):
         # 沙箱失败策略：一律降级为宿主本地工作区（文件工具可用、Bash 工具移除），保证聊天
         # 不被沙箱拉不起阻断（“你好”等纯对话可继续；需要执行的轮次模型会看到 Bash 不可用
         # 而说明，而不是整轮报错）。沙箱恢复后下一轮自动回到完整模式（清除降级标记）。
+        sandbox_degraded = False
         try:
             workspace = await asyncio.wait_for(
                 get_local_workspace(
@@ -2436,8 +2437,9 @@ class AssistantAgentRunner(BaseExecutor):
             await set_sandbox_degraded(
                 self._runtime_user_id(),
                 str(self.conversation_id or ""),
-                "沙箱当前不可用，本轮已降级为本地执行（Bash 工具不可用）；沙箱恢复后将自动恢复。",
+                "沙箱当前不可用，本轮已降级为本地执行（Bash 与脚本工具不可用）；沙箱恢复后将自动恢复。",
             )
+            sandbox_degraded = True
             workspace = (
                 None,
                 await build_host_only_workspace(
@@ -2450,9 +2452,12 @@ class AssistantAgentRunner(BaseExecutor):
                 ),
             )
             # 移除沙箱 Bash 工具，剩余文件工具由宿主工作区承载。
+            # 脚本工具同样依赖沙箱通道：留着它会在**平台后端进程**里跑用户脚本，
+            # 与「不静默降级到宿主机」的承诺冲突，所以一并摘掉。
             tools = [
                 spec for spec in tools
                 if _workspace_native_name_for_spec(spec) != "Bash"
+                and str(getattr(spec, "source_type", "")) != "script_tool"
             ]
         else:
             # 沙箱构建成功：清除历史降级提示，恢复后由前端自动隐藏。
@@ -2462,6 +2467,7 @@ class AssistantAgentRunner(BaseExecutor):
             workspace,
             tools,
             user_info=self.user_info,
+            sandbox_degraded=sandbox_degraded,
         )
         self._execution_backend = get_workspace_execution_backend(workspace)
         toolkit = AgentScopeToolConsumer(builder=build_toolkit).consume_specs(

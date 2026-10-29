@@ -35,11 +35,17 @@ const props = withDefaults(defineProps<{
     locations?: Record<string, ParamLocation>
     method?: string
     urlTemplate?: string
+    /**
+     * 参数落位口径。``script`` 表示参数走 stdin，没有路径/查询/请求体之分，
+     * 也没有「系统级参数」——脚本运行时不注入它们，配了也不会生效。
+     */
+    scope?: 'api' | 'script'
 }>(), {
     mode: 'full',
     locations: () => ({}),
     method: 'GET',
     urlTemplate: '',
+    scope: 'api',
 })
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
@@ -189,6 +195,7 @@ const locationOf = (name: string): ParamLocation | undefined => {
 }
 
 const locationLabel = (name: string): string => {
+    if (props.scope === 'script') return name ? 'stdin' : ''
     const location = locationOf(name)
     if (location === 'path') return '路径参数'
     if (location === 'query') return '查询参数'
@@ -267,6 +274,7 @@ const locationLabel = (name: string): string => {
     <div v-else class="mt-1 space-y-2 rounded-md border border-gray-200 bg-gray-50/60 p-2">
       <!-- 系统级参数优先级高于普通参数：它们由平台强制注入、模型不可见，放在最前面让配置者先看到。 -->
       <ToolSystemParamEditor
+        v-if="scope !== 'script'"
         v-model="systemParams"
         :builtin-variables="BUILTIN_USER_VARIABLES"
         :extra-data-variables="extraDataVariables"

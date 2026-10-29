@@ -43,6 +43,8 @@ API_UNGROUPED_LABEL = "未分组"
 MCP_GROUP_PREFIX = "MCP"
 MCP_UNKNOWN_GROUP_KEY = "mcp:__unknown__"
 MCP_UNKNOWN_LABEL = "未知服务"
+SCRIPT_GROUP_PREFIX = "脚本工具"
+SCRIPT_UNGROUPED_GROUP_KEY = "script:__ungrouped__"
 
 
 def builtin_group(category: Any) -> tuple[str, str]:
@@ -63,6 +65,14 @@ def api_tool_group(group_name: Any) -> tuple[str, str]:
             f"{API_GROUP_PREFIX} · {API_UNGROUPED_LABEL}",
         )
     return f"api:{normalized}", f"{API_GROUP_PREFIX} · {normalized}"
+
+
+def script_tool_group(group_name: Any) -> tuple[str, str]:
+    """脚本工具的 (group_key, group)：与 API 工具同口径，空分组归入「未分组」。"""
+    normalized = str(group_name or "").strip()
+    if not normalized:
+        return SCRIPT_UNGROUPED_GROUP_KEY, f"{SCRIPT_GROUP_PREFIX} · {API_UNGROUPED_LABEL}"
+    return f"script:{normalized}", f"{SCRIPT_GROUP_PREFIX} · {normalized}"
 
 
 def mcp_tool_group(server_name: Any) -> tuple[str, str]:

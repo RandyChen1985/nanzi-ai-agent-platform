@@ -84,6 +84,9 @@ from app.services.ai.tools.excel_document_tool import excel_document_read, excel
 from app.services.ai.tools.word_document_tool import word_document_read, word_document_write
 from app.services.ai.tools.generated_file_tool import publish_generated_file
 from app.models.tool import SysApiTool
+from app.models.script_tool import SysScriptTool
+from app.services.ai.tools.script_tool_factory import ScriptToolFactory
+from app.services.ai.tools.script_tool_builtins import get_builtin_script_tool
 from app.models.mcp import McpServer, McpToolCache
 from app.core.orm import AsyncSessionLocal
 from sqlalchemy import and_, or_, select
@@ -464,6 +467,37 @@ class ToolRegistry:
         return loaded[0] if loaded else None
 
     @classmethod
+    async def _load_script_tool(cls, session: Any, name: str) -> Optional[Any]:
+        """解析脚本工具：库里停用的行优先（管理员意图），否则用内置定义兜底。
+
+        内置定义兜底的意义：迁移漏跑时工具仍然可用，不会出现「代码上线了但
+        页面和智能体都看不到内置工具」的空窗。
+        """
+        stmt = select(SysScriptTool).where(SysScriptTool.name == name)
+        try:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+        except Exception as exc:  # noqa: BLE001 - 迁移漏跑时不能让内置脚本一起消失
+            logger.warning("[registry] 查询 sys_script_tools 失败，回退内置定义：%s", exc)
+            try:
+                await session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            row = None
+        builtin = get_builtin_script_tool(name)
+
+        if row is not None:
+            if not row.is_active:
+                return None
+            try:
+                return ScriptToolFactory.create_tool_from_row(row)
+            except Exception as exc:  # 源码缺失等情况不应拖垮整轮工具加载
+                logger.warning("[registry] 脚本工具 %s 无法加载：%s", name, exc)
+                return None
+        if builtin is not None:
+            return ScriptToolFactory.create_tool_from_builtin(builtin)
+        return None
+
+    @classmethod
     async def _load_db_tool_with_source(cls, name: str) -> Optional[tuple[Any, str]]:
         now = time.time()
         cache_key = cls._db_tool_cache_key(name)
@@ -504,6 +538,14 @@ class ToolRegistry:
                     cls._db_tool_source_cache[cache_key] = "generic_api"
                     cls._db_tool_ids_fetched_at[cache_key] = time.time()
                     return tool_instance, "generic_api"
+
+                # C. Check Script Tools（内置 + 自定义）
+                script_instance = await cls._load_script_tool(session, name)
+                if script_instance is not None:
+                    cls._db_tool_cache[cache_key] = script_instance
+                    cls._db_tool_source_cache[cache_key] = "script_tool"
+                    cls._db_tool_ids_fetched_at[cache_key] = time.time()
+                    return script_instance, "script_tool"
         except Exception as e:
             logger.error(f"Error loading tool {name} from DB: {e}")
             pass
@@ -547,6 +589,11 @@ class ToolRegistry:
         if db_tool:
             tool, source_type = db_tool
             spec = runtime_tool_spec_from_legacy_tool(tool, source_type=source_type)
+            script_config = getattr(tool, "config", None)
+            if source_type == "script_tool" and script_config is not None:
+                timeout = getattr(script_config, "timeout_seconds", None)
+                if timeout:
+                    spec = replace(spec, timeout_seconds=float(timeout))
             return cls._attach_evidence_metadata(name, spec)
 
         tool = await cls.get_tool(name)
