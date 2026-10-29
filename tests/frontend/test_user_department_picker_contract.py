@@ -67,3 +67,19 @@ def test_picker_blocks_disabled_departments():
     assert "node.status === 0" in src
     # 主部门必须始终是已选部门之一
     assert "update:primaryId" in src
+
+
+def test_picker_supports_keyword_search():
+    """部门数可能上百，靠缩进逐层找不现实，搜索框不能被删。
+
+    注意展示路径不能用 `node.path`——那是物化路径（`/1/7/23/`，存部门 id），
+    给人看的是按名称拼出来的层级。
+    """
+    src = PICKER.read_text(encoding="utf-8")
+    assert "data-department-search" in src
+    assert "keyword" in src
+    assert "filtered" in src
+    # 名称与编码都要能搜到
+    assert "row.node.name" in src and "row.node.code" in src
+    # 搜索态下缩进归零，改由父级名称补层级信息
+    assert "isSearching" in src

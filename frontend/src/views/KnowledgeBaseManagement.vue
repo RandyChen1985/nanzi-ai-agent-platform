@@ -1277,6 +1277,19 @@ const datasetOwnerLabel = (dataset: KnowledgeBase): string => {
   return deptName(dataset.owner_dept_id) || dataset.owner || ''
 }
 
+/** 部门名称链（根 → 自身）。物化 path 存的是部门 id，转成名字才能给人看 */
+const deptNamePath = (id: number): string[] => {
+  const path = deptById.value.get(id)?.path || ''
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((seg) => deptById.value.get(Number(seg))?.name || '')
+    .filter(Boolean)
+}
+
+/** 选项 label 用全角空格表示层级缩进，回填到按钮上时要剥掉，否则文字会整体右移 */
+const stripDeptIndent = (label: string) => label.replace(/^[　\s]+/, '').trim()
+
 /** 原生 select 无法渲染树，用全角空格表达层级 */
 const deptSelectOptions = computed(() => {
   const rows = [...deptById.value.values()]
@@ -1284,6 +1297,7 @@ const deptSelectOptions = computed(() => {
     .map((node) => ({
       id: node.id,
       label: `${'　'.repeat(deptDepth(node.id))}${node.name}${node.status === 0 ? '（已停用）' : ''}`,
+      path: deptNamePath(node.id),
     }))
   return rows
 })
@@ -1291,14 +1305,36 @@ const deptSelectOptions = computed(() => {
 /** 部门下拉的展开态；与可见范围/解析算法共用「点空白处收起」的处理 */
 const deptMenuOpen = ref(false)
 
-/** 下拉选项：0 号是「未关联部门」，其后是带层级缩进的部门树 */
-const deptMenuOptions = computed(() => [
-  { id: 0, label: '未关联部门' },
-  ...deptSelectOptions.value,
-])
+/** 部门下拉的关键词；与开合态一起在弹窗打开、点空白处时重置 */
+const deptSearchKeyword = ref('')
 
-/** 选项 label 用全角空格表示层级缩进，回填到按钮上时要剥掉，否则文字会整体右移 */
-const stripDeptIndent = (label: string) => label.replace(/^[　\s]+/, '').trim()
+const deptSearching = computed(() => deptSearchKeyword.value.trim().length > 0)
+
+/**
+ * 下拉选项：0 号是「未关联部门」，其后是带层级缩进的部门树。
+ * 部门多时靠缩进逐层找太慢，支持按名称搜索——匹配时忽略缩进，
+ * 命中项在名称后补父级路径，层级信息不丢。
+ */
+const deptMenuOptions = computed(() => {
+  const all = [{ id: 0, label: '未关联部门', path: ['未关联部门'] }, ...deptSelectOptions.value]
+  const kw = deptSearchKeyword.value.trim().toLowerCase()
+  if (!kw) return all
+  return all.filter((option) => stripDeptIndent(option.label).toLowerCase().includes(kw))
+})
+
+const onDeptSearchInput = (event: Event) => {
+  // 过滤后条目变少，原来的滚动位置可能落在空白处，看起来像「搜不到」
+  const panel = (event.target as HTMLElement | null)
+    ?.closest('[data-dept-select]')
+    ?.querySelector('[data-dept-menu]')
+  panel?.scrollTo({ top: 0 })
+}
+
+/** 每次打开都重置关键词：否则上次搜过的词还在，列表看起来像「部门没了」 */
+const toggleDeptMenu = () => {
+  deptMenuOpen.value = !deptMenuOpen.value
+  if (deptMenuOpen.value) deptSearchKeyword.value = ''
+}
 
 /** 当前选中的部门名；0 / 已删除部门都回落到「未关联部门」 */
 const selectedDeptLabel = computed(() => {
@@ -5008,7 +5044,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 type="button"
                 :disabled="form.visibility !== 'team'"
                 class="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-left bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:bg-gray-50 disabled:cursor-not-allowed disabled:hover:border-gray-200"
-                @click="deptMenuOpen = !deptMenuOpen"
+                @click="toggleDeptMenu"
               >
                 <span class="min-w-0 flex-1">
                   <span class="block text-sm font-semibold truncate" :class="form.visibility === 'team' ? 'text-gray-800' : 'text-gray-400'">{{ selectedDeptLabel }}</span>
@@ -5018,7 +5054,20 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
-              <div v-if="deptMenuOpen && form.visibility === 'team'" class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+              <div v-if="deptMenuOpen && form.visibility === 'team'" data-dept-menu class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+                <div class="sticky top-0 z-10 -mx-1 -mt-1 rounded-t-xl bg-white px-1 pb-1.5 pt-1">
+                  <input
+                    v-model="deptSearchKeyword"
+                    type="search"
+                    placeholder="搜索部门"
+                    class="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    @input="onDeptSearchInput"
+                    @keydown.esc.stop="deptSearchKeyword = ''"
+                  />
+                </div>
+                <div v-if="!deptMenuOptions.length" class="px-3 py-3 text-center text-xs text-gray-400">
+                  没有匹配「{{ deptSearchKeyword.trim() }}」的部门
+                </div>
                 <button
                   v-for="option in deptMenuOptions"
                   :key="option.id"
@@ -5026,7 +5075,12 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   class="w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors"
                   :class="form.ownerDeptId === option.id ? 'bg-primary/5 text-primary font-semibold' : 'text-gray-700 hover:bg-gray-50'"
                   @click="form.ownerDeptId = option.id; deptMenuOpen = false"
-                >{{ option.label }}</button>
+                >
+                  <span>{{ deptSearching ? stripDeptIndent(option.label) : option.label }}</span>
+                  <span v-if="deptSearching && option.path.length > 1" class="ml-1.5 text-[11px] text-gray-400">
+                    {{ option.path.slice(0, -1).join(' / ') }}
+                  </span>
+                </button>
               </div>
             </div>
             <p v-if="departmentOptionsError" class="mt-1 text-[11px] text-amber-600">{{ departmentOptionsError }}</p>
@@ -5237,7 +5291,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 type="button"
                 :disabled="form.visibility !== 'team'"
                 class="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-left bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:bg-gray-50 disabled:cursor-not-allowed disabled:hover:border-gray-200"
-                @click="deptMenuOpen = !deptMenuOpen"
+                @click="toggleDeptMenu"
               >
                 <span class="min-w-0 flex-1">
                   <span class="block text-sm font-semibold truncate" :class="form.visibility === 'team' ? 'text-gray-800' : 'text-gray-400'">{{ selectedDeptLabel }}</span>
@@ -5247,7 +5301,20 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
-              <div v-if="deptMenuOpen && form.visibility === 'team'" class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+              <div v-if="deptMenuOpen && form.visibility === 'team'" data-dept-menu class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+                <div class="sticky top-0 z-10 -mx-1 -mt-1 rounded-t-xl bg-white px-1 pb-1.5 pt-1">
+                  <input
+                    v-model="deptSearchKeyword"
+                    type="search"
+                    placeholder="搜索部门"
+                    class="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    @input="onDeptSearchInput"
+                    @keydown.esc.stop="deptSearchKeyword = ''"
+                  />
+                </div>
+                <div v-if="!deptMenuOptions.length" class="px-3 py-3 text-center text-xs text-gray-400">
+                  没有匹配「{{ deptSearchKeyword.trim() }}」的部门
+                </div>
                 <button
                   v-for="option in deptMenuOptions"
                   :key="option.id"
@@ -5255,7 +5322,12 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   class="w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors"
                   :class="form.ownerDeptId === option.id ? 'bg-primary/5 text-primary font-semibold' : 'text-gray-700 hover:bg-gray-50'"
                   @click="form.ownerDeptId = option.id; deptMenuOpen = false"
-                >{{ option.label }}</button>
+                >
+                  <span>{{ deptSearching ? stripDeptIndent(option.label) : option.label }}</span>
+                  <span v-if="deptSearching && option.path.length > 1" class="ml-1.5 text-[11px] text-gray-400">
+                    {{ option.path.slice(0, -1).join(' / ') }}
+                  </span>
+                </button>
               </div>
             </div>
             <p v-if="departmentOptionsError" class="mt-1 text-[11px] text-amber-600">{{ departmentOptionsError }}</p>
