@@ -253,8 +253,13 @@ async def test_personal_echo_creation_uses_owner_scoped_id_and_name():
         7, "element", "element:mcp_management:create"
     )
     added = [call.args[0] for call in db.add.call_args_list]
-    tool = next(item for item in added if isinstance(item, McpToolCache))
-    assert tool.tool_name == "mcp-private-alice-echo:echo"
+    tool_names = {
+        item.tool_name for item in added if isinstance(item, McpToolCache)
+    }
+    assert tool_names == {
+        "mcp-private-alice-echo:echo",
+        "mcp-private-alice-echo:echo_slow",
+    }, "个人 Echo 也要带进度验收工具，用户不必先分清平台/个人两种 Echo"
 
 
 @pytest.mark.asyncio
@@ -294,6 +299,8 @@ async def test_personal_echo_migrates_legacy_shared_tool_name():
             SimpleNamespace(scalar_one_or_none=lambda: server),
             SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: legacy),
+            # 进度验收工具：尚未注册 → 走插入（允许，且只允许这一行）
+            SimpleNamespace(scalar_one_or_none=lambda: None),
         ]
     )
 
@@ -313,7 +320,10 @@ async def test_personal_echo_migrates_legacy_shared_tool_name():
 
     assert legacy.tool_name == "mcp-private-admin-echo:echo"
     assert response.id == server.id
-    db.add.assert_not_called()
+    added = [call.args[0] for call in db.add.call_args_list]
+    assert [item.tool_name for item in added if isinstance(item, McpToolCache)] == [
+        "mcp-private-admin-echo:echo_slow"
+    ], "命中旧 echo 行时不能再插一条同名工具，只允许补进度验收工具"
 
 
 @pytest.mark.asyncio

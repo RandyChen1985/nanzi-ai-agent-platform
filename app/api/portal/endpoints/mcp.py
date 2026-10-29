@@ -62,6 +62,7 @@ from app.services.mcp.echo_server import (
     ECHO_SLOW_TOOL_DESCRIPTION,
     ECHO_SLOW_TOOL_NAME,
     echo_slow_tool_schema,
+    personal_echo_slow_tool_name,
     echo_tool_schema,
     personal_echo_server_id,
     personal_echo_tool_name,
@@ -724,6 +725,12 @@ async def create_echo_test_mcp(
         if is_personal
         else str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo"))
     )
+    # 进度验收工具与 echo 同源派生：固定 id 保证重复创建不会插出重复行。
+    slow_tool_id = (
+        str(uuid.uuid5(uuid.NAMESPACE_URL, f"nanzi:mcp:echo:personal:{owner_id}:tool:echo_slow"))
+        if is_personal
+        else str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo_slow"))
+    )
     manager = get_api_key_manager()
     server = (
         await db.execute(select(McpServer).where(McpServer.id == server_id))
@@ -773,20 +780,23 @@ async def create_echo_test_mcp(
                 is_available=True,
             )
         )
-        if not is_personal:
-            # 平台 Echo 额外带一个「会逐步上报进度」的工具，用来验收 MCP 进度流；
-            # 个人 Echo 不挂它，避免每个用户多一个只为测试存在的工具。
-            db.add(
-                McpToolCache(
-                    id=str(uuid.uuid4()),
-                    server_id=server_id,
-                    tool_name=ECHO_SLOW_TOOL_NAME,
-                    tool_description=ECHO_SLOW_TOOL_DESCRIPTION,
-                    parameter_schema=echo_slow_tool_schema(),
-                    is_published=True,
-                    is_available=True,
-                )
+        # Echo 额外带一个「会逐步上报进度」的工具，用来零配置验收 MCP 进度流。
+        # 平台与个人实例都要有：用户点哪个入口进来的都应该能验证，不该先分清两种 Echo。
+        db.add(
+            McpToolCache(
+                id=slow_tool_id,
+                server_id=server_id,
+                tool_name=(
+                    personal_echo_slow_tool_name(server_name)
+                    if is_personal
+                    else ECHO_SLOW_TOOL_NAME
+                ),
+                tool_description=ECHO_SLOW_TOOL_DESCRIPTION,
+                parameter_schema=echo_slow_tool_schema(),
+                is_published=True,
+                is_available=True,
             )
+        )
     else:
         # 重新点击入口只恢复可用状态，不轮换既有的 Token / 私钥。
         if not is_personal:
@@ -890,38 +900,42 @@ async def create_echo_test_mcp(
             tool.is_published = True
             tool.is_available = True
 
-        if not is_personal:
-            # 幂等补齐：老环境重新点一次「创建 Echo 测试 MCP」就能拿到进度测试工具。
-            slow_tool = (
-                await db.execute(
-                    select(McpToolCache).where(
-                        McpToolCache.server_id == server_id,
-                        McpToolCache.tool_name == ECHO_SLOW_TOOL_NAME,
-                    )
+        # 幂等补齐：老环境重新点一次「创建 Echo 测试 MCP」就能拿到进度测试工具。
+        slow_tool_name = (
+            personal_echo_slow_tool_name(server.server_name)
+            if is_personal
+            else ECHO_SLOW_TOOL_NAME
+        )
+        slow_tool = (
+            await db.execute(
+                select(McpToolCache).where(
+                    McpToolCache.server_id == server_id,
+                    McpToolCache.tool_name == slow_tool_name,
                 )
-            ).scalar_one_or_none()
-            if slow_tool is None:
-                db.add(
-                    McpToolCache(
-                        id=str(uuid.uuid4()),
-                        server_id=server_id,
-                        tool_name=ECHO_SLOW_TOOL_NAME,
-                        tool_description=ECHO_SLOW_TOOL_DESCRIPTION,
-                        parameter_schema=echo_slow_tool_schema(),
-                        is_published=True,
-                        is_available=True,
-                    )
+            )
+        ).scalar_one_or_none()
+        if slow_tool is None:
+            db.add(
+                McpToolCache(
+                    id=slow_tool_id,
+                    server_id=server_id,
+                    tool_name=slow_tool_name,
+                    tool_description=ECHO_SLOW_TOOL_DESCRIPTION,
+                    parameter_schema=echo_slow_tool_schema(),
+                    is_published=True,
+                    is_available=True,
                 )
-            else:
-                slow_tool.tool_description = ECHO_SLOW_TOOL_DESCRIPTION
-                slow_tool.parameter_schema = echo_slow_tool_schema()
-                slow_tool.is_published = True
-                slow_tool.is_available = True
+            )
+        else:
+            slow_tool.tool_description = ECHO_SLOW_TOOL_DESCRIPTION
+            slow_tool.parameter_schema = echo_slow_tool_schema()
+            slow_tool.is_published = True
+            slow_tool.is_available = True
 
     await db.commit()
     _clear_runtime_tool_cache()
     response = McpServerResponse.model_validate(server)
-    echo_tool_total = 1 if is_personal else 2
+    echo_tool_total = 2  # echo + echo_slow（进度验收工具）
     response.tool_count = echo_tool_total
     response.published_tool_count = echo_tool_total
     response.stale_tool_count = 0

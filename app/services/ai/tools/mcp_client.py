@@ -170,6 +170,26 @@ class McpSseSession:
             )
             return True
 
+    async def _connect_streamable_http(self) -> None:
+        """建立 Streamable HTTP 会话（mcp 2.x 标准传输）。
+
+        与 SSE 的差别只在传输层：``ClientSession`` 之上完全一致，因此
+        ``progress_callback`` / ``notifications`` 都能工作。
+        """
+        from mcp.client.streamable_http import streamable_http_client
+
+        http_client = await self._exit_stack.enter_async_context(
+            _create_no_redirect_mcp_http_client(headers=self.auth_headers)
+        )
+        read_stream, write_stream = await self._exit_stack.enter_async_context(
+            streamable_http_client(self.sse_url, http_client=http_client)
+        )
+        session = await self._exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+        await session.initialize()
+        self.session = session
+
     async def connect(self):
         """Initialize a transport; publish SSE state only after its handshake succeeds."""
         async with self._lock:
@@ -183,9 +203,36 @@ class McpSseSession:
                 from contextlib import AsyncExitStack
                 self._exit_stack = AsyncExitStack()
 
+                # 1. Streamable HTTP 优先：mcp 2.x 服务端（含平台自建 Echo）的默认传输，
+                #    也是 HTTP 下**唯一**能收到 notifications/progress 的通道。
+                #    顺序不能反：该端点对裸 GET 会挂成长连接，先探测 SSE 会白等
+                #    探测超时 + 一次注定失败的 SSE 握手，最后降级成没有进度的
+                #    Direct HTTP（实测每次首次调用多花十几秒）。
+                try:
+                    # 用 asyncio.timeout（当前 task 内生效）而不是 create_task + wait_for：
+                    # AsyncExitStack 里 enter 的 anyio cancel scope 必须由**同一个 task**
+                    # 退出，跨 task 退出会抛
+                    # "Attempted to exit cancel scope in a different task than it was entered in"。
+                    async with asyncio.timeout(10.0):
+                        await self._connect_streamable_http()
+                    self.last_used_at = time.time()
+                    self.is_direct_http = False
+                    logger.info(f"[MCP] Streamable HTTP initialized for {self.server_id}")
+                    return
+                except Exception as stream_err:
+                    self.session = None
+                    self.mcp_session_id = None
+                    logger.info(
+                        "[MCP] Streamable HTTP unavailable for %s (%s); trying SSE",
+                        self.server_id,
+                        type(stream_err).__name__,
+                    )
+                    await self._exit_stack.aclose()
+                    self._exit_stack = AsyncExitStack()
+
                 try_sse = await self._looks_like_sse_endpoint()
-                
-                # 1. Try Standard SSE Connection (only when probe suggests SSE)
+
+                # 2. Try Standard SSE Connection (only when probe suggests SSE)
                 if try_sse:
                     try:
                         async def _connect_sse():

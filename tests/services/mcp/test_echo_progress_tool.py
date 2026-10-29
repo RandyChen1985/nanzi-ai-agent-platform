@@ -85,3 +85,13 @@ def test_echo_slow_is_registered_with_description_and_schema():
     schema = echo_server.echo_slow_tool_schema()
     assert '"steps"' in schema and '"interval_ms"' in schema
     del McpTool
+
+
+def test_personal_echo_slow_tool_name_is_namespaced():
+    """个人 Echo 的进度工具名必须带实例前缀，否则与平台 Echo 撞名。"""
+    from app.services.mcp.echo_server import personal_echo_slow_tool_name
+
+    assert personal_echo_slow_tool_name("mcp-private-alice-echo") == (
+        "mcp-private-alice-echo:echo_slow"
+    )
+    assert personal_echo_slow_tool_name("mcp-private-alice-echo") != "echo_slow"
