@@ -250,6 +250,76 @@ export function applyMenuEntryToggle(
   return { menus: [...nextMenus, menuId], elements: nextElements }
 }
 
+/**
+ * 找出某个权限节点到根节点的**祖先菜单链**（不含自身、不含 `group:*` 分组）。
+ *
+ * 授权表里只存折平的 id 集合，父子关系只能从权限树反查。深度优先、找到即返回，
+ * 让调用方能把「功能点 → 所属页面菜单」这条链一次补齐。
+ */
+export function getAncestorMenuIds(
+  tree: readonly PermissionNode[] | null | undefined,
+  targetId: string,
+): string[] {
+  const want = String(targetId || '').trim()
+  if (!want) return []
+
+  const walk = (
+    nodes: readonly PermissionNode[],
+    trail: readonly string[],
+  ): string[] | null => {
+    for (const node of nodes || []) {
+      if (!node) continue
+      const id = String(node.id || '').trim()
+      if (id === want) return [...trail]
+      const found = walk(node.children || [], id ? [...trail, id] : trail)
+      if (found) return found
+    }
+    return null
+  }
+
+  const trail = walk(tree || [], [])
+  if (!trail) return []
+  // 分组（`group:*`）没有可授权语义，后端会丢弃，这里也不往上传
+  return trail.filter((id) => id.startsWith('menu:') && !isMenuGroupId(id))
+}
+
+/**
+ * 勾选 / 取消单个功能点，并在授予时**补齐它的祖先菜单链**。
+ *
+ * 只授功能点、不授父菜单是「死权限」：侧栏没有入口，那个功能点永远点不到
+ * （用户页/角色页的树里会显示成「仅分组」，看起来像权限没生效）。
+ * 取消功能点时不回退父菜单——同一页面下可能还有别的功能点要留，父菜单该不该取消
+ * 交给用户自己点，静默回收会造成另一种意外。
+ */
+export function applyElementToggle(
+  menus: readonly string[] | null | undefined,
+  elements: readonly string[] | null | undefined,
+  elementId: string,
+  tree: readonly PermissionNode[] | null | undefined,
+  inheritedMenus: readonly string[] | null | undefined = [],
+): MenuToggleResult {
+  const nextMenus = [...(menus || [])]
+  const nextElements = [...(elements || [])]
+  const want = String(elementId || '').trim()
+  if (!want) return { menus: nextMenus, elements: nextElements }
+
+  const index = nextElements.indexOf(want)
+  if (index >= 0) {
+    nextElements.splice(index, 1)
+    return { menus: nextMenus, elements: nextElements }
+  }
+
+  nextElements.push(want)
+  const inherited = new Set(normalizeIds(inheritedMenus))
+  for (const menuId of getAncestorMenuIds(tree, want)) {
+    // 角色已经给了这个菜单就别写成直配：否则角色侧取消后该用户仍保留，
+    // 管理员还会以为是自己的配置（同 applyMenuCascadeToggle 的 inherited 口径）。
+    if (inherited.has(menuId)) continue
+    if (!nextMenus.includes(menuId)) nextMenus.push(menuId)
+  }
+  return { menus: nextMenus, elements: nextElements }
+}
+
 /** 「全选 / 清空」按钮的模式。 */
 export type MenuCascadeMode = 'select' | 'clear'
 
