@@ -242,6 +242,66 @@ async def _stream_metadata_recommendation(
         headers=METADATA_SSE_HEADERS,
     )
 
+# --- RAGFlow 连通性（元数据侧） ---
+
+@router.get("/ragflow/health")
+async def metadata_ragflow_health(
+    user: dict = Depends(require_permission("menu", "menu:metadata")),
+):
+    """元数据用 RAGFlow 模式时的连通性探针。
+
+    **必须读 ``ragflow_api_url`` / ``ragflow_api_key``**，不是知识库那套
+    ``knowledge_ragflow_*``：系统配置页里「元数据 & RAG」分组维护的就是前者，
+    元数据同步（``MetadataRagService`` → ``RagFlowClient()`` 默认前缀 ``ragflow``）
+    也用它。此前元数据页复用了 ``/api/portal/ragflow/datasets``（知识库接口，
+    前缀 ``knowledge_ragflow``）做探活，于是只填了元数据配置的用户会在元数据页
+    看到「knowledge_ragflow_api_url, knowledge_ragflow_api_key is missing」——
+    报的是根本不该由它关心的那组配置。
+
+    始终返回 200 + 结构化结果：探活失败是预期状态，不该让前端靠异常分支判断。
+    """
+    from app.services.ai.ragflow_client import RagFlowClient
+    from app.services.config_service import ConfigService
+
+    url = str(await ConfigService.get("ragflow_api_url") or "").strip()
+    key = str(await ConfigService.get("ragflow_api_key") or "").strip()
+    if not url or not key:
+        return {
+            "code": 0,
+            "data": {
+                "configured": False,
+                "reachable": False,
+                "api_url": url,
+                "error": "元数据的 RAGFlow 配置未填写（ragflow_api_url / ragflow_api_key）",
+            },
+        }
+
+    try:
+        client = RagFlowClient(config_prefix="ragflow")
+        await client.list_datasets(page=1, page_size=1)
+    except Exception as exc:  # noqa: BLE001 - 探活要覆盖一切失败
+        logger.warning("[Metadata] RAGFlow 探活失败 url=%s: %s", url, exc)
+        return {
+            "code": 0,
+            "data": {
+                "configured": True,
+                "reachable": False,
+                "api_url": url,
+                "error": str(exc) or "连接失败",
+            },
+        }
+
+    return {
+        "code": 0,
+        "data": {
+            "configured": True,
+            "reachable": True,
+            "api_url": url,
+            "error": "",
+        },
+    }
+
+
 # --- Dataset APIs ---
 
 @router.get("/datasets", response_model=List[DatasetResponse])

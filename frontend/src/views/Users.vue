@@ -2666,6 +2666,7 @@ import {
 } from "../utils/forbiddenCatalogCache";
 import {
   applyMenuCascadeToggle,
+  applyElementToggle,
   applyMenuEntryToggle,
   buildUserPermissionPayload,
   emptyPermissionLists,
@@ -3694,9 +3695,17 @@ const toggleTreeItem = (itemId: string) => {
     return;
   }
 
-  const idx = permissionData.value.elements.indexOf(itemId);
-  if (idx > -1) permissionData.value.elements.splice(idx, 1);
-  else permissionData.value.elements.push(itemId);
+  // 勾功能点时补齐它的祖先菜单链：只授功能点不授父菜单是「死权限」——侧栏没入口，
+  // 那个功能点永远点不到；取消时不动父菜单（同页可能还有别的功能点要留）。
+  const result = applyElementToggle(
+    permissionData.value.menus,
+    permissionData.value.elements,
+    itemId,
+    permissionTree.value,
+    inheritedMenus.value,
+  );
+  permissionData.value.menus = result.menus;
+  permissionData.value.elements = result.elements;
 };
 
 /** 菜单行的「全选 / 清空」：显式级联它的全部后代，不改变入口以外的其他菜单。 */

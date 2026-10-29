@@ -1230,6 +1230,7 @@ import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { getMenuDescendantIds, type PermissionNode } from '../constants/permissions'
 import {
+    applyElementToggle,
     applyMenuCascadeToggle,
     applyMenuEntryToggle,
     type MenuCascadeMode,
@@ -1751,6 +1752,19 @@ const resCheckboxClass = () => {
  * 才级联后代。角色没有「继承」概念，两个继承集合传空。
  */
 const toggleTreeItem = (itemId: string) => {
+    // 功能点：勾上时补齐祖先菜单链。只授功能点不授父菜单是「死权限」——
+    // 侧栏没有入口，那个功能点永远点不到，权限树里还会显示成「仅分组」。
+    if (!itemId.startsWith('menu:')) {
+        const elementResult = applyElementToggle(
+            permissionData.value.menus,
+            permissionData.value.elements,
+            itemId,
+            permissionTree.value,
+        );
+        permissionData.value.menus = elementResult.menus;
+        permissionData.value.elements = elementResult.elements;
+        return;
+    }
     const result = applyMenuEntryToggle(
         permissionData.value.menus,
         permissionData.value.elements,
