@@ -33,15 +33,17 @@ AgentScope 2.0.11 共 **26 个模块、约 12.3 万行**，我们接入了 **14 
 | 框架模块总数 | **26 个** |
 | 框架代码总量 | **123,381 行** |
 | 我们接入的模块 | **14 个** |
-| 完整使用的模块 | 7 个（`agent`/`workspace`/`tool`/`message`/`event`/`mcp`/`exception`） |
+| 完整使用的模块 | 8 个（`agent`/`workspace`/`tool`/`message`/`event`/`mcp`/`exception`/`middleware`※） |
 | 部分使用的模块 | 3 个（`model`/`state`/`skill`） |
-| 仅借用类型的模块 | 3 个（`credential`/`permission`/`middleware`） |
+| 仅借用类型的模块 | 2 个（`credential`/`permission`） |
 | 隐式使用的模块 | 1 个（`formatter`） |
 | 完全未接入的模块 | **12 个** |
 | **必须引入的模块** | **0 个** |
 | 唯一的新增能力 | IM 双向对话（`channel`，等客户需求） |
 | 建议动手的改动 | 0 项（步数耗尽时的「优雅收尾」已于 `139242da` 落地，未引入框架代码） |
 | 自研代码总量（对比项） | 约 47,440 行 |
+
+> ※ `middleware` 是**机制层面**的完整使用：只 import 2 个符号（`MiddlewareBase` / `TracingMiddleware`），但自研了 5 个中间件、覆盖 7 个钩子中的 4 个，见 4.11。未用的 7 个是框架现成实现，各有更强的自研替代（见 5.1）。
 
 ### 1.3 三条判断原则
 
@@ -110,7 +112,7 @@ for node in ast.walk(tree):
 | 1 | `app` | 52,799 | 2 | ❌ | 自建 FastAPI 服务层 | ❌ 不接 |
 | 2 | `workspace` | 10,562 | 17 | ✅ 6+4 符号 | `runtime/agentscope/workspace*.py` | ✅ 完整使用 |
 | 3 | `tool` | 9,478 | 32 | ✅ 12 符号 | `ai/tools/` 37 模块 | ✅ 完整使用 |
-| 4 | `middleware` | 7,111 | 10 | △ 2 符号 | 观测 + 自研中间件 | △ 仅借基类 |
+| 4 | `middleware` | 7,111 | 10 | △ 2 符号（自研 5 个） | 观测 + 自研中间件 | ✅ 机制深度使用 |
 | 5 | `model` | 7,052 | 17 | ◐ 1 符号 | OpenAI 兼容统一封装 | ◐ 部分使用 |
 | 6 | `agent` | 6,775 | 9 | ✅ 5 符号 | `runtime/agentscope/`（22,063 行） | ✅ 完整使用 |
 | 7 | `formatter` | 5,355 | 23 | ⚙️ 内部自动 | 无需自研 | ⚙️ 隐式使用 |
@@ -128,7 +130,7 @@ for node in ast.walk(tree):
 | 19 | `event` | 676 | 34 | ✅ 3 符号 | 无需自研（类型定义） | ✅ 完整使用 |
 | 20 | `mcp` | 670 | 3 | ✅ 2 符号 | `services/mcp/`（4,298 行） | ✅ 完整使用 |
 | 21 | `console` | 648 | 2 | ❌ | Vue 3 前端 | ❌ 无关 |
-| 22 | `state` | 480 | 6 | ◐ 1 符号 | 自研会话状态 | ◐ 部分使用 |
+| 22 | `state` | 480 | 6 | ◐ 1 符号（另 2 个隐式） | 自研会话状态 | ◐ 部分使用 |
 | 23 | `asr` | 429 | 4 | ❌ | 无（可直连 `/audio/transcriptions`） | ❌ 不接 |
 | 24 | `skill` | 215 | 3 | ◐ 1 符号 | `skill_share_service` + 技能广场 | ◐ 部分使用 |
 | 25 | `types` | 124 | 8 | ❌ | 无需求 | ❌ 无关 |
@@ -143,12 +145,12 @@ workspace 79 ██████████████████████�
 tool      22 ███████████
 permission 15 ████████
 message   14 ███████
-middleware 8 ████
 exception  6 ███
 agent      6 ███
 event      5 ██
 mcp        5 ██
 state      4 ██
+middleware 3 █▏
 app        2 █
 model      2 █
 credential 1 ▏
@@ -158,9 +160,10 @@ asr/classifier/console/embedding/formatter/pipeline
 rag/realtime/sop/tts/tui/types          0
 ```
 
-> 两处需要解释：
+> 三处需要解释：
 > - `app` 的 2 次是**路径字符串**（非符号导入），所以 3.1 表里判为 ❌
 > - `formatter` 显示 0 是因为**没有显式 import**，但 `Agent` 内部会自动选用对应 formatter，属隐式使用
+> - `middleware` 直接 grep 会命中 8 处，其中 5 处是 `app.services.ai.runtime.agentscope.middleware`——**我们自己的同名模块**，不是框架的 `agentscope.middleware`。剔除后框架侧只有 3 处（`middleware.py:17`、`context_middleware.py:14`、`agent_runtime.py:200`）
 
 ---
 
@@ -313,11 +316,31 @@ EXCEED_MAX_ITERS / CUSTOM
 
 ---
 
-### 4.8 `state` — ◐ 部分使用（1/6 符号）
+### 4.8 `state` — ◐ 部分使用（1/6 符号直接引用，另 2 个隐式在用）
 
-只用了 `AgentState`。`Task` / `TaskContext` / `ReplyContext` / `ToolContext` / `A2AAgentState` 未用——我们的会话状态在 `PipelineContext`（74 行 dataclass）+ Redis。
+直接 import 的只有 `AgentState`；我们的会话状态在 `PipelineContext`（74 行 dataclass）+ Redis。但 `ReplyContext` / `ToolContext` **不是"没用"，是隐式在用**——它们挂在 `AgentState` 上，调框架能力时被动读写了。
 
-其中 `Task` / `TaskContext` 值得单独说明：框架的是带 `id` / `blocks` / `blocked_by` / `owner` 的**任务图**，存在 `AgentState` 里供 agent 自己排程；我们的 `todo_write` 是**扁平清单 + 前端实时卡片**（见 4.3）。两者不是一套东西，也不冲突。
+**`ReplyContext`**：`AgentState.cur_iter` 是它的属性代理——`state/_state.py:255` 的 `return self.reply_context.cur_iter`。收尾中间件（见 4.11）用 `agent.state.cur_iter` 判断"步数将尽"，实际读的就是 `ReplyContext`。真正未用的只有 `reply_id` 与 `structured_schema` / `structured_output`。
+
+`structured_output` 是这块唯一有实际价值的部分：框架支持 `agent.reply(structured_model=XxxModel)`，用 JSON Schema 在解码层约束输出。我们现在是纯后处理——`prompt_service.py:85`、`federated_sql_repair.py:585`、`chatbi_citation_utils.py:12`、`dimension_enrichment_service.py:655`、`empty_result_filter_diagnostic.py:960` 五个文件各写了一个 JSON 提取器，都在从自由文本里抠 JSON。但它的适用面很窄：`structured_model` 只作用于**最后一次输出**，多轮 ReAct 中途的结构化需求它管不了，而我们主链路恰恰是多轮。真正迁得动的只有单轮无工具的抽取类任务（意图分类、字段抽取）。
+
+**`ToolContext`**：`Read` / `Write` / `Edit` 三个内置工具直接调 `_agent_state.tool_context.get_cache()` / `cache_file()`（`_read.py:516/534`、`_write.py:263/306`、`_edit.py:324/414`），我们用了这三个工具，文件读缓存一直在工作。`activated_groups`（工具组动态激活）确实未用——我们没有工具组概念。
+
+**`ToolContext.read_file_cache` 有个要盯的成本**：`ReadCacheEntry.lines` 按行存文件全文，而它挂在 `AgentState` 上，我们的保存是整份序列化进 Redis（`assistant_agent_runner.py:2344` 的 `state=agent.state`，TTL 30 天）。载入时的 `prune_agent_state_context`（`state_store.py:167`）**只裁剪 `context` 里的 tool_result，不碰 `tool_context`**，于是同一份文件正文在 Redis 里存了两份，且每次 save 都要 JSON 序列化它。上限是 100 个文件 / 25000KB。
+
+量级别按最坏情况估：多数会话读几个文件只有几十~几百 KB，几毫秒序列化开销可忽略；反复读大文件的会话（代码分析、长文档）才会到 MB 级。判断依据直接量线上 key 大小，不必猜：
+
+```bash
+redis-cli --scan --pattern '*agent_state*' | head -20 | while read k; do
+  echo -n "$k "; redis-cli memory usage "$k"
+done
+```
+
+若确认偏大，最小改法是在 `state_store.save()` 序列化后把 `read_file_cache` 置空——代价是跨轮再读同一文件要重新读盘。
+
+**`Task` / `TaskContext`** 值得单独说明：框架的是带 `id` / `blocks` / `blocked_by` / `owner` 的**任务图**，存在 `AgentState` 里供 agent 自己排程；我们的 `todo_write` 是**扁平清单 + 前端实时卡片**（见 4.3）。两者不是一套东西，也不冲突。
+
+**`A2AAgentState`** 未用——我们没做 agent-to-agent 协议。
 
 ---
 
@@ -333,11 +356,36 @@ EXCEED_MAX_ITERS / CUSTOM
 
 ---
 
-### 4.11 `middleware` — △ 仅借基类（2/10 符号）
+### 4.11 `middleware` — ✅ 机制深度使用（2/10 符号，自研 5 个）
 
-**用了什么**：`MiddlewareBase`（自定义中间件的基类）+ `TracingMiddleware`。
+**符号层面**只 import 了 `MiddlewareBase`（基类，303 行）和 `TracingMiddleware`（含 `_extractor.py` / `_trace.py` 约 1,009 行）。但**机制层面是重度使用**——自研 5 个中间件（`middleware.py` 995 行 + `context_middleware.py` 73 行），覆盖 7 个钩子中的 4 个。
 
-**没用什么**：7 个内置中间件，共约 5,610 行。详见第 5.1 节——这是本报告最重要的对比之一。
+**运行期链路**（`agent_runtime.py:120-189`，顺序固定）：
+
+| # | 中间件 | 来源 | 钩子 | 作用 |
+|---|---|---|---|---|
+| 1 | `ToolPermissionMiddleware` | 自研 | `on_check_permission` | 权限审计切面，**透传决策不改行为** |
+| 2 | `BashSandboxParentLinkMiddleware` | 自研 | `on_check_permission` | 把本次 Bash 触发绑定到卡片节点 id（ContextVar 同协程链传参） |
+| 3 | `ModelCallStatsMiddleware` | 自研 | `on_model_call` | Token 消耗 + 工具调用明细写 Redis（仅 `conversation_id` 存在时挂） |
+| 4 | `GracefulFinishMiddleware` | 自研 | `on_reasoning` | 步数将尽时注入 `HintBlock` + 置 `tool_choice=none` |
+| 5 | `TracingMiddleware` | 框架 | 多个 | 产出 `invoke_agent` / `chat` / `execute_tool` 层级 span |
+| 6 | `LangfuseContextMiddleware` | 自研 | `on_reply` | 在 TracingMiddleware 的 reply span 上补平台身份 |
+
+**钩子覆盖 4/7**：`on_check_permission`（2 个）、`on_model_call`、`on_reasoning`、`on_reply`。未用的三个都有自有替代——上下文压缩自己做（`context_breakdown.py`）、system prompt 在 runner 里拼、`on_acting` 无需求。
+
+**未用的 7 个实现**（约 5,610 行）——是**框架给的现成实现**没用，不是机制不好用。逐个对比见 5.1，这里只列用途与替代：
+
+| 中间件 | 行数 | 框架用途 | 我们的替代 |
+|---|---|---|---|
+| `AgenticMemoryMiddleware` | 965 | 长期记忆，LLM 决定存/取，Markdown 文件 | 自研记忆服务 2,715 行（Redis Hash + 向量索引，见 5.1.1） |
+| `Mem0Middleware` | 1,532 | 长期记忆，接 mem0 | 同上 |
+| `ReMeMiddleware` | 1,230 | 长期记忆，进程内嵌 ReMe | 同上 |
+| `RAGMiddleware` | 1,021 | 知识库检索（只对接框架自己的 `KnowledgeBase`） | RAGFlow + `search_knowledge_base`（见 5.1.3） |
+| `ReplyBudgetControlMiddleware` | 233 | 加权 token 预算，超限注入提示 + 禁工具 | **已借鉴**：`GracefulFinishMiddleware` 用同一钩子自研（见 5.1.4） |
+| `TTSMiddleware` | 179 | 文本块合成语音 | 无需求 |
+| `ModelRouterMiddleware` | 158 | classifier 分类后选模型 | 配置驱动模型解析链（见 5.1.2） |
+
+**一个反例说明这套机制够不够用**：`ReplyBudgetControlMiddleware` 只覆盖预算超限，不管步数耗尽。我们没有引入它，而是用同一个 `on_reasoning` 钩子写了不到 110 行的 `GracefulFinishMiddleware`，把框架本来不管的缺口补上了。**110 行就能补上框架缺口，说明这个扩展点是够用的。**
 
 ---
 
@@ -443,6 +491,8 @@ memory_ltm_tools.py        3 个显式工具
 > ⚠️ 范围限定：这张表说的是**配额/预算**场景（`quota_exceeded`），**这一处至今仍是硬中断**。已落地的是**步数耗尽**（`max_iters`）场景，见下方状态说明——两者触发条件不同，不要混为一谈。
 
 **但不需要引入中间件**——我们**没有**引入框架的 `ReplyBudgetControlMiddleware`，而是自研了一个 `GracefulFinishMiddleware`，用同一个 `MiddlewareBase` 钩子实现：步数将尽时注入 `HintBlock` + 置 `tool_choice=none`。约 110 行，带产出检测（模型已在作答时不打断）和配置开关。
+
+> 中间件的剩余步数判断读 `agent.state.cur_iter`，而它是 `ReplyContext.cur_iter` 的属性代理（见 4.8）——这一处让我们被动用上了 `ReplyContext`。
 
 > ✅ **状态：已落地**（commit `139242da`）。设计文档见 `docs/superpowers/specs/2026-10-29-agent-middleware-graceful-finish-design.md`。与本节原建议的差异：原建议"在 `execution_step` 加一段逻辑"，实际改为**新增中间件**——不侵入现有链路、可整体开关、复用框架 `on_reasoning` 钩子。
 
@@ -879,11 +929,11 @@ def _is_image_attachment(file_obj) -> bool:
 | `message` | 17 | Msg, UserMsg, TextBlock, DataBlock, ToolCallBlock, ToolResultBlock, ToolResultState, Base64Source, URLSource, HintBlock | ThinkingBlock, SystemMsg, AssistantMsg, Usage |
 | `event` | 34 | ConfirmResult, UserConfirmResultEvent, ExternalExecutionResultEvent（其余运行期消费） | — |
 | `mcp` | 3 | MCPClient, StdioMCPConfig | HttpMCPConfig |
-| `middleware` | 10 | MiddlewareBase, TracingMiddleware | AgenticMemory, Mem0, ReMe, RAG, Budget, TTS, ModelRouter |
+| `middleware` | 10 | MiddlewareBase, TracingMiddleware（自研 5 个实现） | AgenticMemory, Mem0, ReMe, RAG, Budget, TTS, ModelRouter |
 | `permission` | 7 | PermissionBehavior, PermissionDecision, PermissionMode | PermissionEngine, PermissionRule, PermissionContext |
 | `model` | 17 | OpenAIChatModel | 10 个厂商实现 + 7 个类型 |
 | `credential` | 13 | OpenAICredential（仅构造） | 其余 12 个 + CredentialFactory |
-| `state` | 6 | AgentState | Task, TaskContext, ReplyContext, ToolContext, A2AAgentState |
+| `state` | 6 | AgentState；ReplyContext / ToolContext 隐式在用 | Task, TaskContext, A2AAgentState |
 | `skill` | 3 | Skill | SkillLoaderBase, LocalSkillLoader |
 | `exception` | 7 | DeveloperOrientedException, StructuredOutputError | 5 个工具异常（内部抛出） |
 | `formatter` | 23 | 隐式（OpenAI 系） | 其余厂商 formatter |
@@ -954,9 +1004,10 @@ for k in sorted(used): print(k, sorted(used[k]))
 AgentScope 2.0.11 共 26 模块 / 123,381 行
         │
         ├─ 我们接入了 14 个 ───────────────────────────
-        │    地基（完整使用 7 个）：agent · workspace · tool · message · event · mcp · exception
+        │    地基（完整使用 8 个）：agent · workspace · tool · message · event · mcp
+        │                            · exception · middleware（机制层面，自研 5 个）
         │    部分使用 3 个：model · state · skill
-        │    借用类型 3 个：permission · credential · middleware
+        │    借用类型 2 个：permission · credential
         │    隐式使用 1 个：formatter
         │
         ├─ 我们没接的 12 个 ───────────────────────────
