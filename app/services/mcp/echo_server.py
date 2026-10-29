@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import uuid
@@ -314,6 +315,86 @@ async def echo(ctx: Context) -> dict[str, Any]:
     server = await _load_echo_server(echo_server_id_from_headers(headers))
     private_key = load_mcp_private_key(server)
     return build_echo_diagnostics(headers, server, private_key)
+
+
+ECHO_SLOW_TOOL_NAME = "echo_slow"
+ECHO_SLOW_TOOL_DESCRIPTION = (
+    "逐步上报进度的测试工具：用于验证 MCP 工具进度流（工具卡进度条 / 最近进度文案）。"
+    "它会按 steps 逐步调用 report_progress，并返回汇总结果。"
+)
+#: 每步默认间隔（毫秒）。测试里传 0 可以直接跑完，不真正等待。
+ECHO_SLOW_DEFAULT_INTERVAL_MS = 800
+
+
+@echo_mcp.tool(name=ECHO_SLOW_TOOL_NAME, description=ECHO_SLOW_TOOL_DESCRIPTION)
+async def echo_slow(
+    ctx: Context,
+    steps: int = 5,
+    total: int | None = None,
+    interval_ms: int = ECHO_SLOW_DEFAULT_INTERVAL_MS,
+) -> dict[str, Any]:
+    """按 ``steps`` 逐步上报进度。
+
+    参数含义（进度流验收用）：
+
+    * ``total=None``：正常进度，前端显示 ``3/5 第 3/5 步``；
+    * ``total=0``：显式不提供总数，前端显示不确定态的呼吸条 + 文案；
+    * ``interval_ms``：每步间隔，测试时传 0 立即跑完。
+    """
+    step_count = max(1, min(int(steps or 1), 50))
+    # 三态：未传 total → 用 steps 当总数；total>0 → 按它算；total==0 → 显式不带总数，
+    # 前端应渲染不确定态的呼吸条。
+    if total is None:
+        reported_total: int | None = step_count
+    elif int(total) > 0:
+        reported_total = int(total)
+    else:
+        reported_total = None
+    interval_seconds = max(0, int(interval_ms or 0)) / 1000.0
+
+    for index in range(1, step_count + 1):
+        await ctx.report_progress(
+            index,
+            reported_total,
+            f"第 {index}/{step_count} 步",
+        )
+        if interval_seconds and index < step_count:
+            await asyncio.sleep(interval_seconds)
+
+    return {
+        "ok": True,
+        "steps": step_count,
+        "total_declared": reported_total,
+        "message": f"已完成 {step_count} 步",
+    }
+
+
+def echo_slow_tool_schema() -> str:
+    """返回 ``echo_slow`` 的稳定 JSON Schema，供 MCP 管理页缓存。"""
+    return json.dumps(
+        {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "integer",
+                    "description": "要上报的步数（1-50，默认 5）",
+                    "default": 5,
+                },
+                "total": {
+                    "type": "integer",
+                    "description": "声明的总数；传 0 表示不提供总数（前端显示不确定态进度）",
+                },
+                "interval_ms": {
+                    "type": "integer",
+                    "description": "每步间隔毫秒数（默认 800，测试可传 0）",
+                    "default": ECHO_SLOW_DEFAULT_INTERVAL_MS,
+                },
+            },
+            "additionalProperties": False,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def echo_tool_schema() -> str:

@@ -370,6 +370,26 @@ async def _resolve_knowledge_scope(
         ]
 
 
+async def _report_progress(
+    ctx: Context | None,
+    progress: float,
+    total: float | None = None,
+    message: str | None = None,
+) -> None:
+    """向调用方上报一次进度。
+
+    - 调用方没带 ``progressToken``（绝大多数 MCP 客户端默认如此）时，
+      ``Context.report_progress`` 本身就是 no-op，加这一层不会改变现有行为；
+    - 上报属于可观测性支线：连接已断/传输异常都不能让工具本身失败。
+    """
+    if ctx is None:
+        return
+    try:
+        await ctx.report_progress(progress, total, message)
+    except Exception:  # pragma: no cover - 传输层异常，仅记录
+        logger.debug("[PlatformMCP] report_progress failed", exc_info=True)
+
+
 async def _write_audit(
     principal: McpPrincipal,
     *,
@@ -785,6 +805,7 @@ async def _agent_call_common(
     message: str,
     conversation_id: str | None,
     client_request_id: str | None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     request_id = _request_id(principal)
@@ -811,6 +832,8 @@ async def _agent_call_common(
                     raise PermissionError("会话不属于指定智能体")
             else:
                 normalized_conversation_id = f"mcp_{uuid.uuid4().hex}"
+            await _report_progress(ctx, 1, 3, "已校验身份与智能体授权")
+            await _report_progress(ctx, 2, 3, "正在执行智能体")
             result = await _invoke_agent(
                 db,
                 agent=agent,
@@ -818,6 +841,7 @@ async def _agent_call_common(
                 conversation_id=normalized_conversation_id,
                 user_info=user_info,
             )
+            await _report_progress(ctx, 3, 3, "智能体执行完成")
         await _write_audit(
             principal,
             method_name=method_name,
@@ -877,7 +901,6 @@ async def agent_invoke(
     client_request_id: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    del ctx
     started = time.monotonic()
     principal = _principal_from_context()
     request_id = _request_id(principal)
@@ -918,6 +941,7 @@ async def agent_invoke(
         message=message,
         conversation_id=conversation_id,
         client_request_id=client_request_id,
+        ctx=ctx,
     )
 
 
@@ -932,7 +956,6 @@ async def conversation_continue(
     client_request_id: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    del ctx
     started = time.monotonic()
     principal = _principal_from_context()
     request_id = _request_id(principal)
@@ -958,6 +981,8 @@ async def conversation_continue(
                 str(existing.agent_id),
                 client,
             )
+            await _report_progress(ctx, 1, 3, "已校验会话归属与智能体授权")
+            await _report_progress(ctx, 2, 3, "正在执行智能体")
             result = await _invoke_agent(
                 db,
                 agent=agent,
@@ -965,6 +990,7 @@ async def conversation_continue(
                 conversation_id=str(conversation_id).strip(),
                 user_info=user_info,
             )
+            await _report_progress(ctx, 3, 3, "智能体执行完成")
         await _write_audit(
             principal,
             method_name="conversation_continue",
@@ -1470,7 +1496,6 @@ async def knowledge_search(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """执行用户授权范围内的知识库检索。"""
-    del ctx
     started = time.monotonic()
     principal = _principal_from_context()
     request_id = str(principal.claims.get("request_id") or uuid.uuid4())
@@ -1491,6 +1516,7 @@ async def knowledge_search(
             principal,
             knowledge_base_ids,
         )
+        await _report_progress(ctx, 1, 3, "已解析知识库范围")
         threshold = await ConfigService.get("knowledge_ragflow_similarity_threshold")
         weight = await ConfigService.get("knowledge_ragflow_vector_weight")
         configured_top_k = await ConfigService.get("knowledge_ragflow_metadata_top_k")
@@ -1500,6 +1526,7 @@ async def knowledge_search(
             system_top_k=configured_top_k,
         )
         effective_top_k = min(top_k, configured_limit)
+        await _report_progress(ctx, 2, 3, "正在检索知识库")
         chunks = await RagFlowClient(config_prefix="knowledge_ragflow").retrieve(
             query.strip(),
             target_ids,
@@ -1507,6 +1534,7 @@ async def knowledge_search(
             similarity_threshold=resolved_threshold,
             vector_similarity_weight=vector_weight,
         )
+        await _report_progress(ctx, 3, 3, "检索完成")
         elapsed = int((time.monotonic() - started) * 1000)
         await _write_audit(
             principal,

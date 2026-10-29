@@ -56,7 +56,15 @@ async def test_platform_echo_reuses_renamed_tool_row_instead_of_inserting_same_p
     )
     db = MagicMock()
     # server 查询 → 按常量名查工具（查不到）→ 按 tool_id 兜底（命中旧行）
-    db.execute = AsyncMock(side_effect=[_one(server), _one(None), _one(renamed_tool)])
+    db.execute = AsyncMock(
+        side_effect=[
+            _one(server),
+            _one(None),
+            _one(renamed_tool),
+            # 平台 Echo 的进度测试工具（echo_slow）：尚未注册 → 走插入。
+            _one(None),
+        ]
+    )
     db.commit = AsyncMock()
 
     with patch.object(mcp, "_clear_runtime_tool_cache"), patch.object(
@@ -72,5 +80,6 @@ async def test_platform_echo_reuses_renamed_tool_row_instead_of_inserting_same_p
     assert server.server_name == mcp.ECHO_SERVER_NAME
     assert renamed_tool.tool_name == mcp.ECHO_TOOL_NAME
     assert not any(
-        isinstance(call.args[0], McpToolCache) for call in db.add.call_args_list
+        isinstance(call.args[0], McpToolCache) and call.args[0].id == renamed_tool.id
+        for call in db.add.call_args_list
     ), "命中旧工具行时不能再插入同一个 tool_id"

@@ -326,13 +326,19 @@ async def test_mcp_tool_factory_uses_model_safe_name_and_preserves_remote_tool_n
     assert re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", tool.name)
     assert ":" not in tool.name
     assert tool.name.startswith("mcp_data-analytics-mcp_list_events_")
-    assert await tool.ainvoke({"glibId": "pt3_v3"}) == "event list"
-    remote_call.assert_awaited_once_with(
-        server_id="server-1",
-        tool_name="list_events",
-        arguments={"glibId": "pt3_v3"},
-        require_user_context=True,
-    )
+    # MCP 工具现在返回异步生成器：中间是进度片，最后一片才是结果。
+    produced = await tool.ainvoke({"glibId": "pt3_v3"})
+    assert [item async for item in produced] == ["event list"]
+
+    call_kwargs = remote_call.await_args.kwargs
+    assert call_kwargs["server_id"] == "server-1"
+    assert call_kwargs["tool_name"] == "list_events"
+    assert call_kwargs["arguments"] == {"glibId": "pt3_v3"}
+    assert call_kwargs["require_user_context"] is True
+    # 进度回调必须一路传到 MCP 客户端，否则远端 notifications/progress 无处可去。
+    assert callable(call_kwargs["progress_callback"])
+    timeout = call_kwargs["timeout_seconds"]
+    assert timeout is None or timeout > 0
 
 
 def test_mcp_schema_can_declare_precise_internal_evidence_type():

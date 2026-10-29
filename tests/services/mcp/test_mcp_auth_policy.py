@@ -265,20 +265,21 @@ async def test_mcp_tool_forwards_runtime_identity_to_remote_call(monkeypatch):
                 parameter_schema='{"type":"object","properties":{"customer_id":{"type":"string"}}}',
             )
         )
-        await tool.ainvoke({"customer_id": "C-1"})
+        produced = await tool.ainvoke({"customer_id": "C-1"})
+        # MCP 工具返回异步生成器，必须消费完才会真正发起远端调用
+        [item async for item in produced]
     finally:
         set_agent_context(None)
 
-    mocked_call.assert_awaited_once_with(
-        server_id="server-1",
-        tool_name="query_customer",
-        arguments={"customer_id": "C-1"},
-        user_info={"user_name": "zhangsan", "user_id": "123"},
-        agent_info={
-            "agent_id": "agent-runtime",
-            "agent_name": "运行时助手",
-            "agent_version_id": "v3",
-        },
-        request_id="trace-1",
-        require_user_context=True,
-    )
+    call_kwargs = mocked_call.await_args.kwargs
+    assert call_kwargs["server_id"] == "server-1"
+    assert call_kwargs["tool_name"] == "query_customer"
+    assert call_kwargs["arguments"] == {"customer_id": "C-1"}
+    assert call_kwargs["user_info"] == {"user_name": "zhangsan", "user_id": "123"}
+    assert call_kwargs["agent_info"] == {
+        "agent_id": "agent-runtime",
+        "agent_name": "运行时助手",
+        "agent_version_id": "v3",
+    }
+    assert call_kwargs["request_id"] == "trace-1"
+    assert call_kwargs["require_user_context"] is True

@@ -583,6 +583,14 @@ async def _consume_sub_agent_stream(
         chunk_type = str(chunk.get("type") or "")
         if structured_result is not None and isinstance(chunk.get("structured"), dict):
             structured_result["value"] = chunk["structured"]
+        if chunk_type == "tool_progress":
+            # 进度是瞬态装饰：按 tool_call_id 定位主聊天里**已存在**的工具卡。
+            # 必须在这里拦下且放在正文提取之前 —— 进度帧带 ``message``（进度文案），
+            # 而 ``_extract_delegation_text`` 恰好会读 ``message``，漏过去就会把
+            # 「检索数据集 3/10」拼成子代理的最终回答。
+            if main_ctx.event_queue:
+                await main_ctx.event_queue.put(chunk)
+            continue
         if chunk_type in INTERRUPT_SSE_TYPES:
             interrupt_type = chunk_type
             if chunk_type == "error":

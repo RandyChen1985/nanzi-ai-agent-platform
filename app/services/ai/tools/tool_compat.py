@@ -54,6 +54,21 @@ class BaseTool:
         return asyncio.run(result)
 
 
+async def resolve_tool_invocation_result(value: Any) -> Any:
+    """把工具调用结果归一成业务值。
+
+    MCP 工具走 agent 链路时返回**异步生成器**（中间是进度片，最后一片是结果）；
+    管理台「测试工具」这类直接调用方只需要最终业务值——把生成器对象直接回给前端
+    会得到 `<async_generator object ...>`，而且远端调用根本没被执行。
+    """
+    if inspect.isasyncgen(value):
+        final: Any = None
+        async for item in value:
+            final = item
+        return final
+    return value
+
+
 class FunctionTool(BaseTool):
     def __init__(
         self,

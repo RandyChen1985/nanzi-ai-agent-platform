@@ -21,6 +21,7 @@ from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession, McpSyncGuardError
 from app.services.ai.tools.mcp_factory import McpToolFactory
+from app.services.ai.tools.tool_compat import resolve_tool_invocation_result
 from app.services.mcp.mcp_auth_policy import (
     _parse_auth_headers,
     build_mcp_user_assertion_headers,
@@ -58,6 +59,9 @@ from app.services.mcp.echo_server import (
     ECHO_TOOL_NAME,
     ECHO_TOOL_DESCRIPTION,
     build_echo_server_url,
+    ECHO_SLOW_TOOL_DESCRIPTION,
+    ECHO_SLOW_TOOL_NAME,
+    echo_slow_tool_schema,
     echo_tool_schema,
     personal_echo_server_id,
     personal_echo_tool_name,
@@ -769,6 +773,20 @@ async def create_echo_test_mcp(
                 is_available=True,
             )
         )
+        if not is_personal:
+            # 平台 Echo 额外带一个「会逐步上报进度」的工具，用来验收 MCP 进度流；
+            # 个人 Echo 不挂它，避免每个用户多一个只为测试存在的工具。
+            db.add(
+                McpToolCache(
+                    id=str(uuid.uuid4()),
+                    server_id=server_id,
+                    tool_name=ECHO_SLOW_TOOL_NAME,
+                    tool_description=ECHO_SLOW_TOOL_DESCRIPTION,
+                    parameter_schema=echo_slow_tool_schema(),
+                    is_published=True,
+                    is_available=True,
+                )
+            )
     else:
         # 重新点击入口只恢复可用状态，不轮换既有的 Token / 私钥。
         if not is_personal:
@@ -872,11 +890,40 @@ async def create_echo_test_mcp(
             tool.is_published = True
             tool.is_available = True
 
+        if not is_personal:
+            # 幂等补齐：老环境重新点一次「创建 Echo 测试 MCP」就能拿到进度测试工具。
+            slow_tool = (
+                await db.execute(
+                    select(McpToolCache).where(
+                        McpToolCache.server_id == server_id,
+                        McpToolCache.tool_name == ECHO_SLOW_TOOL_NAME,
+                    )
+                )
+            ).scalar_one_or_none()
+            if slow_tool is None:
+                db.add(
+                    McpToolCache(
+                        id=str(uuid.uuid4()),
+                        server_id=server_id,
+                        tool_name=ECHO_SLOW_TOOL_NAME,
+                        tool_description=ECHO_SLOW_TOOL_DESCRIPTION,
+                        parameter_schema=echo_slow_tool_schema(),
+                        is_published=True,
+                        is_available=True,
+                    )
+                )
+            else:
+                slow_tool.tool_description = ECHO_SLOW_TOOL_DESCRIPTION
+                slow_tool.parameter_schema = echo_slow_tool_schema()
+                slow_tool.is_published = True
+                slow_tool.is_available = True
+
     await db.commit()
     _clear_runtime_tool_cache()
     response = McpServerResponse.model_validate(server)
-    response.tool_count = 1
-    response.published_tool_count = 1
+    echo_tool_total = 1 if is_personal else 2
+    response.tool_count = echo_tool_total
+    response.published_tool_count = echo_tool_total
     response.stale_tool_count = 0
     response.auth_headers_configured = mcp_auth_headers_configured(server)
     response.authorization_configured, response.masked_auth_headers = mcp_auth_headers_summary(server)
@@ -1408,7 +1455,9 @@ async def execute_mcp_tool(
             }
         else:
             lc_tool = McpToolFactory.create_tool(tool)
-            result = await lc_tool.ainvoke(req.arguments)
+            result = await resolve_tool_invocation_result(
+                await lc_tool.ainvoke(req.arguments)
+            )
         return {"status": "success", "result": result, "mcp_auth": mcp_auth}
     except Exception as e:
         # 远程执行失败必须是错误状态，不能 HTTP 200 返回 status=error：否则监控/调用方

@@ -10,6 +10,7 @@ import {
   type UserQuestionState,
 } from "./userQuestion";
 import {
+  applyTimelineLogProgress,
   appendTimelineNarrationDelta,
   appendProcessNarrationText,
   appendTimelineReasoningDelta,
@@ -117,6 +118,10 @@ export interface AgentStreamLog {
   execution_time_ms?: number | null;
   elapsed_time_ms?: number | null;
   started_at?: number | null;
+  /** 远端 MCP 工具上报的进度快照（瞬态，不进入历史记录）。 */
+  progress?: number | null;
+  total?: number | null;
+  progressMessage?: string | null;
   isRouter?: boolean;
   subagent?: SubagentTraceMeta;
 }
@@ -790,6 +795,41 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
   });
 }
 
+/**
+ * 更新工具卡上的进度快照。
+ *
+ * 进度是瞬态装饰：只更新已经存在的卡片，事件乱序（进度先于 tool start 抵达）
+ * 时直接丢弃——凭空建卡会留下没有标题、没有结果的幽灵步骤。
+ */
+export function syncProcessTimelineToolProgress<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, unknown>,
+): void {
+  const id = data.id as string | number | undefined;
+  if (id === undefined || id === null) return;
+
+  const progress = typeof data.progress === "number" ? data.progress : null;
+  const total = typeof data.total === "number" ? data.total : null;
+  const progressMessage =
+    data.message === undefined || data.message === null ? null : String(data.message);
+
+  const hitTimeline = applyTimelineLogProgress(
+    msg,
+    id,
+    progress,
+    total,
+    progressMessage,
+  );
+  if (hitTimeline) return;
+
+  // 旧会话/降级路径可能只有 msg.logs 没有 processTimeline，兜底同步一份。
+  const log = (msg.logs || []).find((entry) => String(entry.id) === String(id));
+  if (!log) return;
+  log.progress = progress;
+  log.total = total;
+  log.progressMessage = progressMessage;
+}
+
 export function syncProcessTimelineTodo<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
@@ -935,6 +975,9 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
       });
       return true;
     }
+    case "tool_progress":
+      syncProcessTimelineToolProgress(msg, data);
+      return true;
     case "tool_result_data":
       handleToolResultData(msg, data);
       return true;

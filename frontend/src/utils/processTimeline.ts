@@ -80,6 +80,14 @@ export type ProcessTimelineLogItem = {
   execution_time_ms?: number | null;
   started_at?: number | null;
   subagent?: SubagentTraceMeta;
+  /**
+   * 远端 MCP 工具上报的进度快照（瞬态，不落库）。
+   * `total` 缺失时前端按「不确定态」渲染呼吸条，不能假装是 0%。
+   */
+  progress?: number | null;
+  total?: number | null;
+  /** 远端给的进度文案，例如「检索数据集 3/10」。 */
+  progressMessage?: string | null;
   isExpanded?: boolean;
   children?: ProcessTimelineLogItem[];
   childrenExpanded?: boolean;
@@ -912,6 +920,28 @@ export function resolveLiveTimerDurationMs(
   return Math.max(1, now - startedAt);
 }
 
+/**
+ * 写入一条工具进度快照（只更新、绝不新建）。
+ *
+ * 进度帧是瞬态装饰：工具卡还没出现（例如事件乱序）时应丢弃，否则会凭空多出
+ * 一张没有标题、没有结果的卡片。返回是否命中已有条目，方便调用方决定是否
+ * 回退到 `msg.logs`。
+ */
+export function applyTimelineLogProgress(
+  target: ProcessTimelineTarget,
+  id: string | number,
+  progress: number | null,
+  total: number | null,
+  message: string | null,
+): boolean {
+  const item = findTimelineLog(target.processTimeline || [], id);
+  if (!item) return false;
+  item.progress = progress;
+  item.total = total;
+  item.progressMessage = message;
+  return true;
+}
+
 export function upsertTimelineLog(
   target: ProcessTimelineTarget,
   data: {
@@ -933,6 +963,9 @@ export function upsertTimelineLog(
     execution_time_ms?: number | null;
     started_at?: number | null;
     subagent?: SubagentTraceMeta;
+    progress?: number | null;
+    total?: number | null;
+    progressMessage?: string | null;
   },
 ): void {
   // 过滤内部纯技术心跳（例如开始生成回复），避免占用步骤与视觉干扰
@@ -960,6 +993,16 @@ export function upsertTimelineLog(
     if (data.execution_time_ms !== undefined) existing.execution_time_ms = data.execution_time_ms;
     if (data.started_at !== undefined) existing.started_at = data.started_at;
     if (data.subagent !== undefined) existing.subagent = data.subagent;
+    // 进度是执行期装饰：条目一结束就必须清掉，否则会被 process_timeline 快照
+    // 一起落库，历史记录里留一堆过期的 progress 字段。
+    if (data.status !== undefined && data.status !== "pending") {
+      existing.progress = undefined;
+      existing.total = undefined;
+      existing.progressMessage = undefined;
+    }
+    if (data.progress !== undefined) existing.progress = data.progress;
+    if (data.total !== undefined) existing.total = data.total;
+    if (data.progressMessage !== undefined) existing.progressMessage = data.progressMessage;
     return;
   }
 

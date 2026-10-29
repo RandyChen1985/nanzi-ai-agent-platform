@@ -88,7 +88,7 @@ async def test_echo_creation_is_admin_only_and_returns_no_credentials():
     assert response.scope == "global"
     assert response.credential_mode == "fixed_token_signed_user"
     assert response.user_assertion_enabled is True
-    assert response.tool_count == 1
+    assert response.tool_count == 2  # echo + echo_slow（进度验收工具）
     assert "fixed_token_encrypted" not in response.model_dump()
     assert "user_assertion_private_key_encrypted" not in response.model_dump()
     added = [call.args[0] for call in db.add.call_args_list]
@@ -171,6 +171,8 @@ async def test_echo_creation_reuses_existing_credentials_and_tool():
         side_effect=[
             SimpleNamespace(scalar_one_or_none=lambda: server),
             SimpleNamespace(scalar_one_or_none=lambda: tool),
+            # 第三次查询是平台 Echo 的进度测试工具（echo_slow）：尚未注册 → 走插入。
+            SimpleNamespace(scalar_one_or_none=lambda: None),
         ]
     )
     manager = MagicMock()

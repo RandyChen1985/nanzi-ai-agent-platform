@@ -3,7 +3,7 @@ import logging
 import asyncio
 import time
 import uuid
-from typing import Dict, Any, List, Optional, Tuple
+from typing import AsyncIterator, Awaitable, Callable, Dict, Any, List, Optional, Tuple
 import httpx
 import httpx2
 from mcp import ClientSession, types
@@ -69,6 +69,48 @@ def _create_no_redirect_mcp_http_client(headers=None, timeout=None, auth=None):
         timeout=timeout or httpx2.Timeout(30.0),
         auth=auth,
         follow_redirects=False,
+    )
+
+
+#: 未显式传入超时时的兜底秒数。正常链路里由 ``agent_max_toolcall_timeout`` 的
+#: 请求期快照（``AgentContext.agent_max_toolcall_timeout_seconds``）覆盖；这里取
+#: 与平台默认值一致的 180s，而不是曾经写死的 120s —— 后者会让长工具在进度走到
+#: 一半时被静默掐断，也与平台的超时配置各说各话。
+DEFAULT_MCP_TOOL_CALL_TIMEOUT = 180.0
+
+#: ``notifications/progress`` 回调签名：``(progress, total, message)``，异步。
+McpProgressCallback = Callable[[float, Optional[float], Optional[str]], Awaitable[None]]
+
+
+async def _call_tool_with_progress(
+    session: ClientSession,
+    tool_name: str,
+    arguments: Optional[Dict[str, Any]] = None,
+    *,
+    progress_callback: Optional[McpProgressCallback] = None,
+    timeout_seconds: Optional[float] = None,
+):
+    """统一的单次 ``tools/call`` 入口：透传进度回调 + 平台配置的超时。
+
+    传了 ``progress_callback`` 时，mcp 2.x 会把一个令牌放进请求的
+    ``params._meta.progressToken``，随后把远端 ``notifications/progress`` 路由给回调；
+    不传则请求与升级前逐字节一致（远端不会被告知要发进度）。
+
+    超时仍用 ``asyncio.wait_for`` 包住，保持 ``TimeoutError`` 语义不变 ——
+    ``call_remote_tool`` 的重连判定依赖这个异常类型。
+    """
+    kwargs: Dict[str, Any] = {}
+    if progress_callback is not None:
+        kwargs["progress_callback"] = progress_callback
+
+    timeout = (
+        timeout_seconds
+        if timeout_seconds and timeout_seconds > 0
+        else DEFAULT_MCP_TOOL_CALL_TIMEOUT
+    )
+    return await asyncio.wait_for(
+        session.call_tool(tool_name, arguments, **kwargs),
+        timeout=timeout,
     )
 
 
@@ -506,6 +548,8 @@ class McpClientService:
         request_id: Optional[str] = None,
         private_key: Any = None,
         require_user_context: bool = False,
+        progress_callback: Optional[McpProgressCallback] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> Any:
         session_kwargs: Dict[str, Any] = {}
         ephemeral_session = False
@@ -553,9 +597,12 @@ class McpClientService:
                         # 建连；否则会一直拿到同一个空会话。
                         await session_mgr.close()
                         raise RuntimeError("MCP SSE session is unavailable")
-                    response = await asyncio.wait_for(
-                        session.call_tool(tool_name, arguments),
-                        timeout=120.0,
+                    response = await _call_tool_with_progress(
+                        session,
+                        tool_name,
+                        arguments,
+                        progress_callback=progress_callback,
+                        timeout_seconds=timeout_seconds,
                     )
                     text = "".join(
                         getattr(item, "text", "")
@@ -598,15 +645,19 @@ class McpClientService:
                                     session_mgr,
                                     tool_name,
                                     arguments,
+                                    timeout_seconds=timeout_seconds,
                                 )
                                 return call_result
                             session = session_mgr.session
                             if session is None:
                                 await session_mgr.close()
                                 raise RuntimeError("MCP SSE session is unavailable after reconnect")
-                            response = await asyncio.wait_for(
-                                session.call_tool(tool_name, arguments),
-                                timeout=120.0,
+                            response = await _call_tool_with_progress(
+                                session,
+                                tool_name,
+                                arguments,
+                                progress_callback=progress_callback,
+                                timeout_seconds=timeout_seconds,
                             )
                             text = "".join(
                                 getattr(item, "text", "")
@@ -647,6 +698,7 @@ class McpClientService:
                     session_mgr,
                     tool_name,
                     arguments,
+                    timeout_seconds=timeout_seconds,
                 )
                 return call_result
         except Exception as call_exc:
@@ -739,7 +791,7 @@ class McpClientService:
         ))
 
     @classmethod
-    async def _direct_http_rpc(cls, session_mgr: McpSseSession, method: str, params: Optional[Dict], is_notification: bool = False, retry_count: int = 0) -> Any:
+    async def _direct_http_rpc(cls, session_mgr: McpSseSession, method: str, params: Optional[Dict], is_notification: bool = False, retry_count: int = 0, timeout: Optional[float] = None) -> Any:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -759,7 +811,13 @@ class McpClientService:
         session_mgr._active_requests = getattr(session_mgr, "_active_requests", 0) + 1
         session_mgr._active_requests_changed.clear()
         try:
-            resp = await client.post(session_mgr.sse_url, json=payload, headers=headers)
+            # per-request timeout：共享 client 的默认值不能成为工具超时的第二套口径。
+            resp = await client.post(
+                session_mgr.sse_url,
+                json=payload,
+                headers=headers,
+                timeout=timeout if timeout and timeout > 0 else None,
+            )
             logger.info(f"[MCP-Direct] Response from {method}: HTTP {resp.status_code}")
         except Exception as http_err:
             logger.error(f"[MCP-Direct] HTTP Request failed for {method}: {http_err}")
@@ -866,17 +924,26 @@ class McpClientService:
         session_mgr: McpSseSession,
         tool_name: str,
         arguments: Dict[str, Any],
+        *,
+        timeout_seconds: Optional[float] = None,
     ) -> Any:
         """Invoke one tool over the Direct HTTP gateway and normalize its result.
 
         Shared by the native Direct HTTP path and the SSE-to-HTTP fallback, so both
-        produce identical payloads and identical error semantics.
+        produce identical payloads and identical error semantics. ``timeout_seconds``
+        is the platform per-tool timeout (``agent_max_toolcall_timeout`` snapshot),
+        applied per request so it never leaks into the shared client's defaults.
         """
         await cls._ensure_direct_http_initialized(session_mgr)
+        rpc_kwargs: Dict[str, Any] = (
+            {"timeout": timeout_seconds}
+            if timeout_seconds and timeout_seconds > 0
+            else {}
+        )
         res = await cls._direct_http_rpc(session_mgr, "tools/call", {
             "name": tool_name,
             "arguments": arguments
-        })
+        }, **rpc_kwargs)
         if isinstance(res, dict) and bool(res.get("isError") or res.get("is_error")):
             error_text = "".join(
                 c.get("text", "")

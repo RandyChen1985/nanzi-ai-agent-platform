@@ -387,6 +387,42 @@ def maybe_emit_context_compression(
     }
 
 
+def _mcp_progress_frame(event: Any) -> Dict[str, Any] | None:
+    """把 agent 层转换出的 ``mcp_progress`` CustomEvent 映射成前端帧。
+
+    AgentScope 的 tool-calling loop 把 ``ToolChunk(metadata={"mcp_progress": ...})``
+    转成 ``CustomEvent(name="mcp_progress", value={**progress, reply_id, tool_call_id})``
+    （见 ``agentscope/agent/_agent.py``）。这里只做白名单映射：其它 CUSTOM 事件
+    一律静默丢弃，避免把运行时内部事件泄漏给前端。
+    """
+    if str(getattr(event, "name", "")) != "mcp_progress":
+        return None
+    value = getattr(event, "value", None)
+    if not isinstance(value, dict):
+        return None
+    tool_call_id = value.get("tool_call_id")
+    if not tool_call_id:
+        return None
+    progress = value.get("progress")
+    total = value.get("total")
+    message = value.get("message")
+    try:
+        progress_value = float(progress) if progress is not None else None
+    except (TypeError, ValueError):
+        progress_value = None
+    try:
+        total_value = float(total) if total is not None else None
+    except (TypeError, ValueError):
+        total_value = None
+    return {
+        "type": "tool_progress",
+        "id": str(tool_call_id),
+        "progress": progress_value,
+        "total": total_value,
+        "message": str(message) if message else None,
+    }
+
+
 async def stream_observability_agentscope_events(
     event: Any,
     *,
@@ -575,6 +611,13 @@ async def map_standard_agentscope_event(
             yield chunk
 
     event_type = str(getattr(event, "type", ""))
+    if event_type == "CUSTOM":
+        progress_frame = _mcp_progress_frame(event)
+        if progress_frame:
+            # 瞬态帧：只更新已有工具卡，不新建卡片、不进快照。
+            yield progress_frame
+        return
+
     if event_type == "THINKING_BLOCK_DELTA":
         yield {"type": "thinking", "status": "continuing"}
         delta = str(getattr(event, "delta", "") or "")
