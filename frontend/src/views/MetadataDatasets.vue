@@ -1079,7 +1079,9 @@ const engineStatusText = computed(() => {
   return '未连接'
 })
 
-const ragflowApiUrl = computed(() => ragflowConfig.value?.api_url || '未配置')
+/** 元数据侧的 RAGFlow 地址：来自 `ragflow_api_url`，不是知识库那套 `knowledge_ragflow_api_url` */
+const metadataRagflowApiUrl = ref('')
+const ragflowApiUrl = computed(() => metadataRagflowApiUrl.value || '未配置')
 
 const friendlyRagFlowError = computed(() => {
   if (!errorMessage.value) return ''
@@ -1104,12 +1106,28 @@ const fetchRagFlowConfig = async () => {
   }
 }
 
+/**
+ * 元数据模式的连通性探活。
+ *
+ * 读的是 `ragflow_api_url` / `ragflow_api_key`（系统配置「元数据 & RAG」分组），
+ * 不是知识库的 `knowledge_ragflow_*`。此前这里直接打 `/api/portal/ragflow/datasets`
+ * ——那是知识库接口（前缀 `knowledge_ragflow`），于是只配了元数据那组地址的用户会
+ * 在元数据页看到「knowledge_ragflow_api_url ... is missing」，报的还是别人的配置。
+ */
 const checkRagFlowConnectivity = async () => {
   engineStatus.value = 'checking'
   errorMessage.value = ''
   try {
-    await axios.get('/api/portal/ragflow/datasets', { params: { page_size: 1 } })
-    engineStatus.value = 'connected'
+    const response = await axios.get('/api/portal/metadata/ragflow/health')
+    const data = response.data?.data
+    metadataRagflowApiUrl.value = String(data?.api_url || '')
+    if (data?.reachable) {
+      engineStatus.value = 'connected'
+    } else {
+      errorMessage.value = data?.error || '连接失败'
+      engineStatus.value = 'disconnected'
+      showErrorBanner.value = true
+    }
   } catch (err: any) {
     errorMessage.value = err.response?.data?.detail || err.message || '连接失败'
     engineStatus.value = 'disconnected'
