@@ -222,10 +222,13 @@ class McpSseSession:
                     # 不在这里重置 self.session：连接发布前它本来就是 None，
                     # 多余的一次赋值会惊动「握手完成前不得发布会话」的状态观察者
                     # （见 tests/ai/tools/test_mcp_sse_state_guards.py）。
-                    logger.info(
-                        "[MCP] Streamable HTTP unavailable for %s (%s); trying SSE",
+                    # 带上异常文本：只打类型名（RuntimeError）对排查毫无用处，
+                    # 而这一步的失败原因直接决定「有没有进度通道」。
+                    logger.warning(
+                        "[MCP] Streamable HTTP unavailable for %s (%s: %s); trying SSE",
                         self.server_id,
                         type(stream_err).__name__,
+                        stream_err,
                     )
                     await self._exit_stack.aclose()
                     self._exit_stack = AsyncExitStack()
@@ -262,9 +265,11 @@ class McpSseSession:
                         self.session = None
                         self.mcp_session_id = None
                         logger.warning(
-                            "[MCP] Standard SSE unavailable for %s (%s); falling back to Direct HTTP",
+                            "[MCP] Standard SSE unavailable for %s (%s: %s); "
+                            "falling back to Direct HTTP (no progress channel)",
                             self.server_id,
                             type(sse_err).__name__,
+                            sse_err,
                         )
                         await self._exit_stack.aclose()
                         self._exit_stack = AsyncExitStack()

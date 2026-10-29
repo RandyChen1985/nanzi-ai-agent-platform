@@ -147,3 +147,77 @@ async def test_connect_records_no_fallback_for_streamable():
             assert session_mgr.is_direct_http is False
         finally:
             await session_mgr.close()
+
+
+async def test_factory_generator_yields_progress_from_real_server(monkeypatch):
+    """端到端：真实 streamable 服务端的 progress 必须变成工厂生成器的进度片。
+
+    覆盖 ``stream_remote_tool_with_progress`` 的队列 / 节流 / 收尾循环；
+    与上一个用例（``call_remote_tool`` 内部）合起来就是完整后端链路。
+    """
+    from agentscope.message import ToolResultState
+    from agentscope.tool import ToolChunk
+    from mcp import ClientSession as _ClientSession
+    from mcp.client.streamable_http import streamable_http_client as _shc
+
+    from app.services.ai.tools.mcp_client import (
+        McpClientService,
+        _call_tool_with_progress,
+    )
+    from app.services.ai.tools.mcp_factory import stream_remote_tool_with_progress
+
+    captured: dict[str, Any] = {}
+
+    with _running_streamable_server() as url:
+
+        async def _fake_call_remote_tool(cls_or_self=None, **kwargs: Any) -> Any:
+            captured["tool_name"] = kwargs["tool_name"]
+            async with _shc(url) as (read, write):
+                async with _ClientSession(read, write) as session:
+                    await session.initialize()
+                    response = await _call_tool_with_progress(
+                        session,
+                        kwargs["tool_name"],
+                        kwargs["arguments"],
+                        progress_callback=kwargs.get("progress_callback"),
+                        timeout_seconds=30.0,
+                    )
+                    return "".join(
+                        getattr(block, "text", "") for block in (response.content or [])
+                    )
+
+        monkeypatch.setattr(
+            McpClientService,
+            "call_remote_tool",
+            classmethod(lambda cls, **kwargs: _fake_call_remote_tool(**kwargs)),
+        )
+
+        items = [
+            item
+            async for item in stream_remote_tool_with_progress(
+                server_id="probe",
+                tool_name=STREAMABLE_TOOL,
+                arguments={"steps": 4},
+                timeout_seconds=30.0,
+            )
+        ]
+
+    progress_chunks = [
+        item
+        for item in items
+        if isinstance(item, ToolChunk)
+        and (item.metadata or {}).get("mcp_progress")
+        and not item.is_last
+    ]
+    assert len(progress_chunks) == 4, (
+        f"真实服务端的 4 条进度没有全部变成进度片：{len(progress_chunks)}"
+    )
+    assert [c.metadata["mcp_progress"]["progress"] for c in progress_chunks] == [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+    ]
+    assert all(c.state == ToolResultState.RUNNING for c in progress_chunks)
+    assert items[-1] == "done", "最后一片必须是业务结果本身"
+    assert captured["tool_name"] == STREAMABLE_TOOL
