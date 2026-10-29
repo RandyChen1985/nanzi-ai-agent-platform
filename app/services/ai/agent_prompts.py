@@ -1279,6 +1279,63 @@ class AgentServicePrompts:
         )
 
 
+TOOL_INVENTORY_HEADER = "## 本轮可用工具（名称大小写敏感，须完全一致）"
+
+
+def prune_unregistered_tool_inventory(
+    system_content: str,
+    known_tool_names: Iterable[str],
+) -> str:
+    """从「本轮可用工具」段里删掉未真实注册的工具行。
+
+    提示词里的工具清单在 preflight 阶段就算好了，而运行时的裁剪（可复用结果快照
+    ``filter_tools_for_reusable_result``、``filter_redundant_time_tools`` 等）只改
+    ``tools``、不动这段文本。两边的判定条件只要有一点不同步，模型就会照着清单去调
+    一个已经不在本轮工具集里的工具，撞上 ghost tool 白名单后被迫多跑一轮。
+
+    这里以最终 ``tools`` 为准做最后一道对齐：清单里列了就必须真的能调。
+    段内一行都不剩时整段删除（只留一个空标题比不写更误导）。
+    """
+    if not system_content or TOOL_INVENTORY_HEADER not in system_content:
+        return system_content
+
+    known = {str(name) for name in known_tool_names or () if str(name).strip()}
+    lines = system_content.split("\n")
+    try:
+        header_index = next(
+            index for index, line in enumerate(lines) if line.strip() == TOOL_INVENTORY_HEADER
+        )
+    except StopIteration:
+        return system_content
+
+    kept: List[str] = []
+    index = header_index + 1
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if not stripped:
+            break
+        if not stripped.startswith("- "):
+            break
+        entry = stripped[2:].strip()
+        name = entry.split(":", 1)[0].strip().strip("`")
+        if name in known:
+            kept.append(line)
+        index += 1
+
+    # index 现在指向段尾（空行或下一个 section 的起点）
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+
+    head = lines[:header_index]
+    tail = lines[index:]
+    if not kept:
+        result_lines = head + tail
+    else:
+        result_lines = head + [TOOL_INVENTORY_HEADER, *kept, ""] + tail
+    return "\n".join(result_lines)
+
+
 class ContextManagerPrompts:
     """AgentContextManager 使用的系统级提示词。"""
 

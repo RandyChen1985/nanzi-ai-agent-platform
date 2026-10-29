@@ -1673,6 +1673,16 @@ class AssistantAgentRunner(BaseExecutor):
         )
         tools = filter_redundant_time_tools(tools, system_content)
 
+        # 最后一道对齐：提示词里的「本轮可用工具」是 preflight 阶段算的，上面的
+        # 可复用结果裁剪 / 时间工具去重只改 tools。清单里留着调不到的工具会让模型
+        # 照着调用、撞 ghost tool 白名单白跑一轮，所以这里按最终 tools 重写该段。
+        from app.services.ai.agent_prompts import prune_unregistered_tool_inventory
+
+        system_content = prune_unregistered_tool_inventory(
+            system_content,
+            {str(getattr(tool, "name", "") or "") for tool in tools},
+        )
+
         # 3. Execution Mode Selection
         if not tools:
             # --- Simple Mode (No Tools) ---
@@ -3096,6 +3106,16 @@ class AssistantAgentRunner(BaseExecutor):
         restored_state = AgentState.model_validate(pending.snapshot.agent_state)
         system_content = str(ctx.get("system_content", ""))
         tools = filter_redundant_time_tools(tools, system_content)
+
+        # 恢复挂起执行时 tools 重新按配置解析（不再经过可复用结果裁剪），而
+        # system_content 来自快照，两边可能再次错位；同样以最终 tools 为准对齐。
+        from app.services.ai.agent_prompts import prune_unregistered_tool_inventory
+
+        system_content = prune_unregistered_tool_inventory(
+            system_content,
+            {str(getattr(tool, "name", "") or "") for tool in tools},
+        )
+
         agent = await self._build_native_agent(
             native_model=native_model,
             tools=tools,

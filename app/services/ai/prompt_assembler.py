@@ -4,7 +4,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from collections.abc import Mapping
-from typing import Any, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.prompt_sections import PromptSection, render_prompt_sections
@@ -180,12 +180,31 @@ async def resolve_effective_prompt_tool_names_for_turn(
     *,
     current_user_query: str,
     turn_decision: TurnDecision,
+    session_artifact: Optional[Dict[str, Any]] = None,
 ) -> set[str]:
-    """Resolve prompt names for the turn directly from configured and implicit tools."""
-    names = resolve_effective_prompt_tool_names(agent_config)
-    if str(getattr(turn_decision, "reusable_result_mode", "none") or "none").strip().lower() == "reuse":
-        from app.services.ai.session_tool_artifact import REUSABLE_RESULT_ACQUISITION_TOOLS
+    """Resolve prompt names for the turn directly from configured and implicit tools.
 
+    裁剪条件必须与运行时的 :func:`filter_tools_for_reusable_result` **同源**：
+    那个函数用 :func:`should_inject_session_artifact` 判定（覆盖「继续」「再查」
+    点击旧回复等 6 种情况），而这里过去只看 ``reusable_result_mode == "reuse"``。
+    两者一旦不同步，就会出现「提示词列着 sub_agent_call / memory_search，运行时
+    却被裁掉」的假拦截 —— 模型照着清单调用，白名单判定为未注册。
+    """
+    names = resolve_effective_prompt_tool_names(agent_config)
+    from app.services.ai.session_tool_artifact import (
+        REUSABLE_RESULT_ACQUISITION_TOOLS,
+        should_inject_session_artifact,
+    )
+
+    force_reuse = (
+        str(getattr(turn_decision, "reusable_result_mode", "none") or "none").strip().lower()
+        == "reuse"
+    )
+    if force_reuse or should_inject_session_artifact(
+        str(current_user_query or ""),
+        session_artifact,
+        force_reuse=force_reuse,
+    ):
         names.difference_update(REUSABLE_RESULT_ACQUISITION_TOOLS)
     return names
 
