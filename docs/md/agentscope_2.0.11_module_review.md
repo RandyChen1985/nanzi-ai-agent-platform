@@ -40,7 +40,7 @@ AgentScope 2.0.11 共 **26 个模块、约 12.3 万行**，我们接入了 **14 
 | 完全未接入的模块 | **12 个** |
 | **必须引入的模块** | **0 个** |
 | 唯一的新增能力 | IM 双向对话（`channel`，等客户需求） |
-| 建议动手的改动 | 1 项：预算"优雅收尾"（2~3 天，不引入框架代码） |
+| 建议动手的改动 | 0 项（步数耗尽时的「优雅收尾」已于 `139242da` 落地，未引入框架代码） |
 | 自研代码总量（对比项） | 约 47,440 行 |
 
 ### 1.3 三条判断原则
@@ -120,7 +120,7 @@ for node in ast.walk(tree):
 | 11 | `embedding` | 2,384 | 10 | ❌ | `embed_model_name` + OpenAI 兼容 | ❌ 不接 |
 | 12 | `tts` | 2,328 | 9 | ❌ | 无语音输出需求 | ❌ 不接 |
 | 13 | `permission` | 1,118 | 7 | △ 3 符号 | `permission_service.py`（1,801 行） | △ 仅借枚举 |
-| 14 | `message` | 1,002 | 17 | ✅ 9 符号 | 无需自研（消息模型标准） | ✅ 完整使用 |
+| 14 | `message` | 1,002 | 17 | ✅ 10 符号 | 无需自研（消息模型标准） | ✅ 完整使用 |
 | 15 | `credential` | 863 | 13 | △ 1 符号 | 平台加密凭证表 | △ 仅借类型 |
 | 16 | `pipeline` | 828 | 4 | ❌ | `ai/pipeline/`（2,220 行） | ❌ 不接 |
 | 17 | `sop` | 794 | 9 | ❌ | ChatBI 引擎（11,950 行） | ❌ 不接 |
@@ -235,9 +235,9 @@ rag/realtime/sop/tts/tui/types          0
 |---|---|
 | `AskUser` / `AskUserAnswer` / `AskUserMetadata` / `AskUserParams` | HITL 询问，我们有 `require_user_confirm` 事件链 + 前端确认 UI |
 | `MCPTool` | 我们自己实现了 MCP 客户端桥接（`mcp_client.py`），需要用户身份透传、审计、健康检查，框架版本无这些能力 |
-| `FunctionTool` / `Function` / `ParamsBase` | 我们用自定义 `params_model`，更贴合 Pydantic 校验 |
+| `TaskCreate` / `TaskGet` / `TaskList` / `TaskUpdate` | **不是同一层东西**：框架是带 `id` / `blocks` / `blocked_by` / `owner` 的**任务图**，面向 agent 自己排程；我们的 `todo_write` 是**扁平清单 + 前端实时卡片**（`ChatTodoCard`），面向用户看进度。**我们缺的是依赖关系与归属，不缺清单本身** |
+| `FunctionTool` / `Function` / `ParamsBase` | 框架版未用。⚠️ 注意项目内有个**同名** `FunctionTool`（`app/services/ai/tools/tool_compat.py:72`），那是自建类，与框架的无关 |
 | `PowerShell` | 服务器全是 Linux |
-| `TaskCreate` / `TaskGet` / `TaskList` / `TaskUpdate` | 任务清单工具，我们没做任务列表模式 |
 | `ToolMiddlewareBase` | 工具级中间件，我们的横切逻辑在 runtime 层 |
 | `ResetTools` / `RegisteredTool` / `DirEntry` / `BackendBase` | 内部类型或未用后端抽象 |
 
@@ -266,11 +266,11 @@ rag/realtime/sop/tts/tui/types          0
 
 ---
 
-### 4.5 `message` — ✅ 完整使用（9/17 符号）
+### 4.5 `message` — ✅ 完整使用（10/17 符号）
 
-用了 `Msg` / `UserMsg` / `TextBlock` / `DataBlock` / `ToolCallBlock` / `ToolResultBlock` / `ToolResultState` / `Base64Source` / `URLSource`。
+用了 `Msg` / `UserMsg` / `TextBlock` / `DataBlock` / `ToolCallBlock` / `ToolResultBlock` / `ToolResultState` / `Base64Source` / `URLSource` / `HintBlock`。
 
-**这是必须用的**——`Msg` 是框架与模型之间的通用消息格式，自研没有意义（等于重写序列化）。未用的 8 个（`ThinkingBlock` / `HintBlock` / `SystemMsg` / `AssistantMsg` / `Usage` 等）多由框架内部自动构造。
+**这是必须用的**——`Msg` 是框架与模型之间的通用消息格式，自研没有意义（等于重写序列化）。`HintBlock` 是渐进式收尾中间件注入提示用的（`GracefulFinishMiddleware`，字段名是 `hint` 不是 `text`）。未用的 7 个（`ThinkingBlock` / `SystemMsg` / `AssistantMsg` / `Usage` 等）多由框架内部自动构造。
 
 ---
 
@@ -315,7 +315,9 @@ EXCEED_MAX_ITERS / CUSTOM
 
 ### 4.8 `state` — ◐ 部分使用（1/6 符号）
 
-只用了 `AgentState`。`Task` / `TaskContext` / `ReplyContext` / `ToolContext` / `A2AAgentState` 未用——我们的会话状态在 `PipelineContext`（74 行 dataclass）+ Redis，与框架的 `Task` 体系不是一套。
+只用了 `AgentState`。`Task` / `TaskContext` / `ReplyContext` / `ToolContext` / `A2AAgentState` 未用——我们的会话状态在 `PipelineContext`（74 行 dataclass）+ Redis。
+
+其中 `Task` / `TaskContext` 值得单独说明：框架的是带 `id` / `blocks` / `blocked_by` / `owner` 的**任务图**，存在 `AgentState` 里供 agent 自己排程；我们的 `todo_write` 是**扁平清单 + 前端实时卡片**（见 4.3）。两者不是一套东西，也不冲突。
 
 ---
 
@@ -432,13 +434,17 @@ memory_ltm_tools.py        3 个显式工具
 
 **对比结论：框架的收尾策略更好，值得借鉴。** 理由：
 
-| 场景 | 我们（硬中断） | 框架（优雅收尾） |
+| 场景 | 我们（配额超限，现状仍是硬中断） | 框架（优雅收尾） |
 |---|---|---|
 | 用户超配额 | 收到错误，什么也没有 | 收到已完成部分的总结 |
 | 长任务中途超限 | 前功尽弃 | 保留中间成果 |
 | 体验 | 差 | 好 |
 
-**但不需要引入中间件**——我们的执行链在 `execution_step`，加一段"超阈值 → 注入收尾指令 + `tool_choice=none`"即可，约 2~3 天。**这是我们唯一建议从 middleware 借鉴的设计。**
+> ⚠️ 范围限定：这张表说的是**配额/预算**场景（`quota_exceeded`），**这一处至今仍是硬中断**。已落地的是**步数耗尽**（`max_iters`）场景，见下方状态说明——两者触发条件不同，不要混为一谈。
+
+**但不需要引入中间件**——我们**没有**引入框架的 `ReplyBudgetControlMiddleware`，而是自研了一个 `GracefulFinishMiddleware`，用同一个 `MiddlewareBase` 钩子实现：步数将尽时注入 `HintBlock` + 置 `tool_choice=none`。约 110 行，带产出检测（模型已在作答时不打断）和配置开关。
+
+> ✅ **状态：已落地**（commit `139242da`）。设计文档见 `docs/superpowers/specs/2026-10-29-agent-middleware-graceful-finish-design.md`。与本节原建议的差异：原建议"在 `execution_step` 加一段逻辑"，实际改为**新增中间件**——不侵入现有链路、可整体开关、复用框架 `on_reasoning` 钩子。
 
 #### 5.1.5 `TTSMiddleware`
 
@@ -773,15 +779,19 @@ def _is_image_attachment(file_obj) -> bool:
 
 **建议：等客户明确提出需求再做**（3~4 周）。
 
-### 7.5 一个不涉及框架模块的改进
+### 7.5 已落地的改进：步数耗尽时的优雅收尾
 
 `middleware/_budget` 中间件本身不需要引入，但它的**收尾策略**值得借鉴：
 
 > 达到预算后不硬中断，而是注入提示 + 强制 `tool_choice="none"`，让 Agent 把已有结果总结完。
 
-我们现在是 `quota_exceeded` 直接中断（`preflight_step.py:59`），用户拿到错误、什么也没有。改成"优雅收尾"约 2~3 天，不需要引入中间件，只在 `execution_step` 加一段逻辑。
+**配额**场景现在仍是 `quota_exceeded` 直接中断（`preflight_step.py:59`），用户拿到错误、什么也没有。**步数耗尽**（`max_iters`）场景已按下述方式改造——两者触发条件不同，配额那条尚未动。
 
-**这是本报告唯一建议动手的改动，且它不引入任何框架代码。**
+**已按此思路实现**（commit `139242da`）：新增 `GracefulFinishMiddleware`，监听 `on_reasoning`，在 `remaining <= reserve`（配 5/8 留 1 步，配 9+ 留 2 步）且模型尚未产出文本时，注入 `HintBlock` 并置 `tool_choice=none`。通过 `agent_graceful_finish_enabled` 一键开关。
+
+**与原始设想的差异**：原计划在 `execution_step` 加逻辑，实际改为**新增中间件**——不侵入现有链路、可整体开关、复用框架钩子。约 110 行，**未引入任何框架代码**。
+
+> 待验证：HITL（`require_user_confirm`）场景下强制 `tool_choice=none` 的交互，需人工确认。
 
 ---
 
@@ -865,8 +875,8 @@ def _is_image_attachment(file_obj) -> bool:
 |---|---|---|---|
 | `agent` | 9 | Agent, ContextConfig, InjectionConfig, ModelConfig, ReActConfig | A2AAgent, RealtimeAgent, TurnAggregator, TurnMetrics |
 | `workspace` | 17 | 6 个导出：WorkspaceBase, LocalWorkspace, DockerWorkspace, DockerBackend, E2BWorkspace, K8sWorkspace<br>4 个子模块符号：CONTAINER_WORKDIR, POD_WORKDIR, GATEWAY_HOME, prepare_build_context | Bubblewrap*, Daytona*, OpenSandbox*, AppleContainer*, Offloader |
-| `tool` | 32 | ToolBase, Toolkit, ToolChoice, ToolChunk, Bash, Edit, Read, Write, Glob, Grep, LocalBackend, ExecResult | AskUser*, MCPTool, FunctionTool, PowerShell, Task*, ToolMiddlewareBase |
-| `message` | 17 | Msg, UserMsg, TextBlock, DataBlock, ToolCallBlock, ToolResultBlock, ToolResultState, Base64Source, URLSource | ThinkingBlock, HintBlock, SystemMsg, AssistantMsg, Usage |
+| `tool` | 32 | ToolBase, Toolkit, ToolChoice, ToolChunk, Bash, Edit, Read, Write, Glob, Grep, LocalBackend, ExecResult | AskUser*, MCPTool, FunctionTool（框架版，项目另有同名自建类）, PowerShell, Task*（任务图，我们以扁平 `todo_write` 覆盖）, ToolMiddlewareBase |
+| `message` | 17 | Msg, UserMsg, TextBlock, DataBlock, ToolCallBlock, ToolResultBlock, ToolResultState, Base64Source, URLSource, HintBlock | ThinkingBlock, SystemMsg, AssistantMsg, Usage |
 | `event` | 34 | ConfirmResult, UserConfirmResultEvent, ExternalExecutionResultEvent（其余运行期消费） | — |
 | `mcp` | 3 | MCPClient, StdioMCPConfig | HttpMCPConfig |
 | `middleware` | 10 | MiddlewareBase, TracingMiddleware | AgenticMemory, Mem0, ReMe, RAG, Budget, TTS, ModelRouter |
@@ -929,6 +939,7 @@ for k in sorted(used): print(k, sorted(used[k]))
 
 | 项 | 影响 | 如何确认 |
 |---|---|---|
+| `GracefulFinishMiddleware` 与 HITL 的交互 | 强制 `tool_choice=none` 时若有未决的用户确认请求，可能卡住 | 把 `agent_max_iterations` 调到 2，触发一个需确认的工具，观察确认卡片行为 |
 | `middleware/_tracing` 未用的高级功能 | 唯一尚未细读的已用模块，可能有增量 | 细读 1,451 行 |
 | `channel` 的 IM 双向对话工作量 | 决定是否启动 | 读 `app/channel/` 的飞书/钉钉实现 |
 | 魔搭 MCP 广场是否有开放 API | **仅在**将来想把外链升级为"内嵌一键安装"时才需要 | 浏览器开 `modelscope.cn/mcp` 看 Network 面板 |
@@ -961,7 +972,7 @@ AgentScope 2.0.11 共 26 模块 / 123,381 行
         └─ 结论 ─────────────────────────────────────
               必须引入的模块：0 个
               真正缺的两处：IM 双向对话（新入口）· 实时语音（成本高）
-              唯一建议动手：预算"优雅收尾"（2~3 天，不引框架代码）
+              建议动手：0 项（「优雅收尾」已落地，未引框架代码）
 ```
 
 **一句话**：框架是我们的地基，不是待补的能力库——地基已经用足，上层该自研的都已自研，市场与解析交给外部服务。
