@@ -70,12 +70,24 @@ def test_deeplink_switches_visibility_tab(page):
     assert "activeVisibility.value = visibilityOf(dataset)" in block
 
 
-# ---------- 4. 首屏默认选中要落在当前 Tab 内 ----------
+# ---------- 4. 首屏落在概览，不再默认选中任何库 ----------
 
-def test_initial_selection_prefers_current_tab(page):
-    # 函数体内第一行就是 `const response = ...`，按 "const " 切会截断
+def test_entry_lands_on_overview_instead_of_auto_selecting(page):
+    """这条曾经锁的是「首屏默认选中要落在当前 Tab 内」。
+
+    原先 `fetchDatasets` 会在没有选中时自动选中第一个库，并顺手把 activeVisibility
+    改成那个库的分类——否则左侧「授权可见 0 个」而右侧显示着一个 TEAM 级库。补偿
+    逻辑和默认选中是一体的。
+
+    现在进页面落在概览（`selectedType === null`），选中完全交给用户点击，那条对齐
+    Tab 的补偿也就没有再存在的理由。所以这里反转断言：默认选中必须消失。
+    """
     block = page.split("const fetchDatasets", 1)[1].split("只读部门目录", 1)[0]
-    assert "visibilityScopeDatasets.value[0] ?? datasets.value[0]" in block
+    assert "visibilityScopeDatasets.value[0] ?? datasets.value[0]" not in block
+    assert "selectDatasetNode(firstDataset)" not in block
+    # 概览态靠 selectedType === null 表达
+    assert "const showOverview = () => {" in page
+    assert "selectedType.value = null" in page
 
 
 # ---------- 5. 用户页全选不能带上私有库 ----------

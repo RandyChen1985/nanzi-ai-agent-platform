@@ -30,7 +30,10 @@ def _actions_block(source: str) -> str:
 def test_narrow_actions_are_icon_only_in_a_single_row():
     actions = _actions_block(_source())
 
-    assert '<div class="flex shrink-0 items-center gap-2 lg:gap-3">' in actions
+    # 单行 flex 操作区；前面多出来的 relative z-10 是为了压在顶部卡片的书架剪影之上，
+    # 所以这里只校验与布局意图相关的类，不再钉死整串 class
+    assert "shrink-0 items-center gap-2 lg:gap-3" in actions
+    assert "relative z-10 flex shrink-0 items-center gap-2 lg:gap-3" in actions
     # 不回退到两行网格：那正是上一次改动被否掉的原因（占竖向空间）
     assert "grid-cols-2" not in actions
     assert "col-span-2" not in actions

@@ -9,6 +9,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import KnowledgeFlowGuideBanner from '../components/knowledge/KnowledgeFlowGuideBanner.vue'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
+import { formatDate } from '../utils/date'
 import { copyToClipboard as copyText } from '../utils/clipboard'
 import DocumentViewer from '@/components/embed/DocumentViewer.vue'
 import {
@@ -126,6 +127,35 @@ const VISIBILITY_TABS: { key: VisibilityScope; label: string; hint: string }[] =
 ]
 
 /**
+ * 顶部卡片底部的书架剪影：一排高低错落的书脊。
+ *
+ * 用固定种子的伪随机**生成**而不是手写几十个 <rect>：手写一改布局就得重排，
+ * 生成则只要调整几个区间；种子写死，所以每次刷新长得一模一样，不会"跳动"。
+ * 高度刻意收敛在 [28,34] —— 差异放开就成了城市天际线，读不出是书。
+ */
+const HERO_SHELF_SPINES = (() => {
+  let seed = 20261030
+  const rand = () => {
+    // Math.imul 才是 32 位整数乘法：直接 `seed * 1103515245` 早超了 2^53，
+    // 精度一丢，取模出来的序列就是乱的
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
+    return seed / 2147483648
+  }
+  const spines: { x: number; y: number; w: number; h: number; tilt: number }[] = []
+  let x = 2
+  while (x < 1400) {
+    const w = 8 + Math.round(rand() * 10)
+    const roll = rand()
+    const top = roll > 0.88 ? 58 + Math.round(rand() * 10) : roll > 0.78 ? 40 + Math.round(rand() * 8) : 28 + Math.round(rand() * 6)
+    // 偶尔一本斜靠上去，破掉整排等距的机械感
+    const tilt = rand() < 0.06 ? (rand() < 0.5 ? -11 : 12) : 0
+    spines.push({ x, y: top, w, h: 74 - top, tilt })
+    x += w + 1 + Math.round(rand() * 2)
+  }
+  return spines
+})()
+
+/**
  * 可见范围下拉的选项：下拉里双行展示「名称 + 适用场景」。
  * 顺序按「默认项在前」排，`private` 是新建库的默认值，所以加了「默认」徽标，
  * 避免用户没注意就建出一个只有自己能看到的库。
@@ -224,7 +254,7 @@ const visibilityOptionOf = (scope: string): VisibilityScopeOption =>
   VISIBILITY_SCOPE_OPTIONS.find(option => option.key === scope) ?? FALLBACK_VISIBILITY_OPTION
 
 const { showToast } = useToast()
-const { hasPermission, isAdmin } = useUser()
+const { hasPermission, isAdmin, userInfo } = useUser()
 
 const loading = ref(false)
 const syncing = ref(false)
@@ -935,19 +965,18 @@ const fetchDatasets = async (force = false) => {
     datasetsStale.value = response.data?.stale === true
     engineStatus.value = 'connected'
     
-    // 如果没有选中的节点，默认选中第一个 —— 但要优先落在当前 Tab 的范围内，
-    // 否则会出现「左侧授权可见 0 个、右侧却显示着一个 TEAM 级知识库」的错位。
-    if (!selectedId.value && datasets.value.length > 0) {
-      const firstDataset = visibilityScopeDatasets.value[0] ?? datasets.value[0]
-      if (firstDataset) {
-        const scope = visibilityOf(firstDataset)
-        if (scope !== activeVisibility.value) activeVisibility.value = scope
-        selectDatasetNode(firstDataset)
-      }
-    } else if (selectedType.value === 'dataset' && selectedId.value) {
-      // 保持之前的选中，更新数据引用
+    // 进页面落在「概览」，不再默认选中第一个库。原先的默认选中必须顺手改
+    // activeVisibility 去对齐 tab，否则左侧「授权可见 0 个」右侧却显示一个
+    // TEAM 级库——为了兜这个错位才有的补偿逻辑，去掉默认选中后一起消失。
+    if (selectedType.value === 'dataset' && selectedId.value) {
+      // 刷新后保持之前的选中，只更新数据引用
       const found = datasets.value.find(d => (d.ragflow_dataset_id || d.id) === selectedId.value)
-      if (found) selectedDataset.value = found
+      if (found) {
+        selectedDataset.value = found
+      } else {
+        // 库被删除或已失去可见性：回落概览，别让右侧停在一个左侧不存在的节点上
+        showOverview()
+      }
     }
   } catch (err) {
     errorMessage.value = extractError(err)
@@ -1202,6 +1231,19 @@ const confirmRemovePermission = async () => {
   }
 }
 
+/**
+ * 回到概览态：右侧换成资产汇总，左侧「概览」入口高亮。
+ *
+ * 概览用 `selectedType === null` 表达，不另加一个 boolean：选中态本来就只有一个，
+ * 多一个 showOverview 标志就会出现「概览开着、某个库也选着」的矛盾状态。
+ */
+const showOverview = () => {
+  selectedType.value = null
+  selectedId.value = ''
+  selectedDataset.value = null
+  selectedDocument.value = null
+}
+
 // 选中知识库节点
 const selectDatasetNode = (dataset: KnowledgeBase) => {
   selectedType.value = 'dataset'
@@ -1400,6 +1442,98 @@ const visibilityScopeDatasets = computed(() =>
 /** 每个 tab 的库数量（用全量而非搜索结果，避免搜索时角标乱跳） */
 const visibilityTabCount = (scope: VisibilityScope): number =>
   datasets.value.filter(dataset => visibilityOf(dataset) === scope).length
+
+/** 文档数口径：RAGFlow 直出 doc_count，本地元数据兜底 document_count */
+const docCountOf = (dataset: KnowledgeBase) =>
+  Number(dataset.doc_count ?? dataset.document_count ?? 0) || 0
+const agentRefCountOf = (dataset: KnowledgeBase) => Number(dataset.agent_ref_count) || 0
+
+/**
+ * 概览态的数据。
+ *
+ * 刻意按**全部可见范围**聚合，不跟 activeVisibility 走：切 tab 只是换左栏列表，
+ * 右侧数字若跟着跳，用户会以为总量变了；三档构成交给「可见范围分布」解释。
+ *
+ * 有意留白的地方：
+ * - 不做「解析中 / 失败文档数」——那要逐库拉文档列表（N 次请求），概览不该为一个
+ *   数字打出去一趟；
+ * - 不显示「上次同步时间」——后端没有这个字段，宁可不写也不编。
+ */
+const overviewStats = computed(() => {
+  const all = datasets.value
+  const totalDocs = all.reduce((sum, d) => sum + docCountOf(d), 0)
+  const totalChunks = all.reduce((sum, d) => sum + (Number(d.chunk_count) || 0), 0)
+  const totalRefs = all.reduce((sum, d) => sum + agentRefCountOf(d), 0)
+
+  const counts: Record<VisibilityScope, number> = { public: 0, team: 0, private: 0 }
+  all.forEach((d) => { counts[visibilityOf(d)] += 1 })
+
+  const updateAt = (d: KnowledgeBase) => new Date(d.update_time || d.updated_at || 0).getTime()
+  const recent = all.slice().sort((a, b) => updateAt(b) - updateAt(a)).slice(0, 5)
+  // 单独取一次：noUncheckedIndexedAccess 下 recent[0] 是可能 undefined 的
+  const latestDataset = recent[0]
+
+  const myName = String(userInfo.value?.user_name || '')
+
+  return {
+    total: all.length,
+    totalDocs,
+    totalChunks,
+    totalRefs,
+    counts,
+    referencedCount: all.filter((d) => agentRefCountOf(d) > 0).length,
+    mineCount: myName ? all.filter((d) => String(d.owner_user_name || '') === myName).length : 0,
+    hasMine: Boolean(myName),
+    missing: all.filter((d) => d.is_missing_in_ragflow),
+    empty: all.filter((d) => docCountOf(d) === 0),
+    unreferenced: all.filter((d) => agentRefCountOf(d) === 0),
+    recent,
+    avgDocs: all.length ? Math.round(totalDocs / all.length) : 0,
+    avgChunks: totalDocs ? Math.round((totalChunks / totalDocs) * 10) / 10 : 0,
+    latestText: latestDataset
+      ? formatDate(latestDataset.update_time || latestDataset.updated_at || '')
+      : '暂无',
+  }
+})
+
+/** 概览里各类角标百分比（分母为 0 时返回 0，避免 NaN 宽度） */
+const overviewPercent = (n: number) =>
+  overviewStats.value.total ? Math.round((n / overviewStats.value.total) * 100) : 0
+
+/** 「可见范围分布」三条：直接复用 tab 的定义，免得中文标签/图标出现第二份 */
+const overviewVisibilityRows = computed(() =>
+  VISIBILITY_TABS.map((tab) => ({
+    key: tab.key,
+    label: tab.label,
+    hint: tab.hint,
+    count: overviewStats.value.counts[tab.key],
+    percent: overviewPercent(overviewStats.value.counts[tab.key]),
+    iconPath: visibilityOptionOf(tab.key).iconPath,
+    iconClass: visibilityOptionOf(tab.key).iconClass,
+    barClass:
+      tab.key === 'public' ? 'bg-primary' : tab.key === 'team' ? 'bg-violet-500' : 'bg-amber-500',
+  }))
+)
+
+/** 「需要关注」总条数：三类互不排斥，同一个库可能既空又没被引用 */
+const overviewTodoCount = computed(
+  () =>
+    overviewStats.value.missing.length +
+    overviewStats.value.empty.length +
+    overviewStats.value.unreferenced.length
+)
+
+/** 从概览跳到详情：概览是全局聚合，目标库不一定在当前 tab 内，先对齐 tab 再选中 */
+const openDatasetFromOverview = (dataset: KnowledgeBase) => {
+  activeVisibility.value = visibilityOf(dataset)
+  selectDatasetNode(dataset)
+}
+
+/** 点「需要关注」的某一条：跳到该类里排在最前的库（空列表就什么也不做） */
+const openFirstOf = (list: KnowledgeBase[]) => {
+  const first = list[0]
+  if (first) openDatasetFromOverview(first)
+}
 
 /** 空态文案随 tab 变化：三档的「为什么这里是空的」并不相同 */
 const emptyVisibilityText = computed(() => {
@@ -3270,8 +3404,35 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
     </div>
 
     <!-- Header Section -->
-    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm">
-      <div class="flex min-w-0 flex-col gap-1">
+    <div class="kb-hero relative overflow-hidden flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm">
+      <!--
+        书架剪影：贴着卡片下沿的一排书脊，只在视觉上交代「这里放的是知识库」。
+        pointer-events-none + aria-hidden —— 纯装饰，不接事件也不进无障碍树。
+      -->
+      <svg
+        class="kb-hero-art pointer-events-none"
+        viewBox="0 0 1400 80"
+        preserveAspectRatio="xMidYMax slice"
+        fill="none"
+        aria-hidden="true"
+      >
+        <g fill="currentColor">
+          <rect
+            v-for="(spine, i) in HERO_SHELF_SPINES"
+            :key="i"
+            :x="spine.x"
+            :y="spine.y"
+            :width="spine.w"
+            :height="spine.h"
+            rx="2"
+            :transform="spine.tilt ? `rotate(${spine.tilt} ${spine.x + spine.w / 2} 74)` : undefined"
+          />
+          <!-- 搁板：让这排书脊有落地感 -->
+          <rect x="0" y="74" width="1400" height="6" rx="3" />
+        </g>
+      </svg>
+
+      <div class="relative z-10 flex min-w-0 flex-col gap-1">
         <div class="flex items-center gap-3">
           <h1 class="text-2xl font-bold text-gray-900 tracking-tight">知识库管理</h1>
           <button
@@ -3301,7 +3462,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         四个文字按钮并排会把中文挤成两三行，两行又占竖向空间，所以窄屏只留图标；
         顺序仍是 引擎状态 → 同步 → 刷新 → 新建，图标按钮用 aria-label 保留语义。
       -->
-      <div class="flex shrink-0 items-center gap-2 lg:gap-3">
+      <div class="relative z-10 flex shrink-0 items-center gap-2 lg:gap-3">
         <!-- 引擎连接指示器 -->
         <div
           class="flex h-10 min-w-0 items-center gap-2 rounded-xl border px-2.5 text-xs transition-colors group relative cursor-pointer lg:h-auto lg:px-3 lg:py-1.5"
@@ -3513,6 +3674,37 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
         <!-- Scrollable tree region -->
         <div class="flex-1 overflow-y-auto p-4 space-y-1 select-none">
+          <!--
+            概览入口：默认选中的是它，而不是某个知识库。
+            批量模式下隐藏——那时注意力在勾选上，概览项只会挤掉列表空间。
+          -->
+          <button
+            v-if="!bulkSelectMode"
+            type="button"
+            class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-all"
+            :class="selectedType === null ? 'bg-primary/10 ring-1 ring-primary/20' : 'hover:bg-gray-50'"
+            @click="showOverview"
+          >
+            <svg
+              class="w-4 h-4 shrink-0"
+              :class="selectedType === null ? 'text-primary' : 'text-gray-400'"
+              fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true"
+            >
+              <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
+              <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
+              <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
+              <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
+            </svg>
+            <span class="min-w-0 flex-1">
+              <span
+                class="block text-[13px] font-semibold truncate"
+                :class="selectedType === null ? 'text-primary' : 'text-gray-800'"
+              >概览</span>
+              <span class="block text-[11px] text-gray-400 mt-0.5 truncate">资产、分布与待办</span>
+            </span>
+          </button>
+          <div v-if="!bulkSelectMode" class="h-px bg-gray-100 my-2" />
+
           <!-- 批量操作条：默认隐藏，点「批量管理」才出现，避免破坏现有紧凑布局 -->
           <div
             v-if="bulkSelectMode"
@@ -4938,18 +5130,298 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
         </div>
 
-        <!-- Case 3: Empty State (Default) -->
-        <div v-else class="flex-1 flex flex-col items-center justify-center text-center p-8 space-y-4">
-          <div class="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
-            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 114 0v2m-4 0h4m-2 0h-2" />
-            </svg>
+        <!--
+          Case 3: 概览（默认态）
+          进来先看「我有什么、哪里不对」，点左侧某个库才进详情。
+          这里所有数字都来自列表接口已返回的字段，不额外请求。
+        -->
+        <div v-else class="flex-1 flex flex-col min-h-0">
+          <div class="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-gray-100">
+            <div class="min-w-0">
+              <h2 class="text-lg font-bold text-gray-900">知识库概览</h2>
+              <div class="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-gray-500">
+                <span>当前可见范围 <strong class="text-gray-700">{{ overviewStats.total }}</strong> 个知识库</span>
+                <span class="text-gray-300">·</span>
+                <span>{{ overviewStats.totalDocs.toLocaleString() }} 篇文档</span>
+                <span class="text-gray-300">·</span>
+                <span>最近更新 {{ overviewStats.latestText }}</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button
+                v-if="canCreate"
+                type="button"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all"
+                @click="openCreate"
+              >新建知识库</button>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:border-primary hover:text-primary transition-all disabled:opacity-50"
+                :disabled="syncing"
+                @click="syncFromRagFlow"
+              >从 RAGFlow 同步</button>
+            </div>
           </div>
-          <div>
-            <h3 class="text-base font-bold text-gray-900">请选择节点</h3>
-            <p class="text-sm text-gray-500 mt-1 max-w-xs">在左侧树形导航中选中知识库或者具体文档，可在右侧显示详情并进行业务操作。</p>
+
+          <!-- 引擎断开时概览读的是缓存，必须说清楚，否则会让人以为数据是新的 -->
+          <div
+            v-if="engineStatus !== 'connected'"
+            class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800"
+          >
+            知识库引擎当前未连接，{{ engineStatus === 'checking' ? '正在检查连接状态' : '下列数字来自上一次成功拉取的缓存' }}。
+          </div>
+
+          <!-- 一个库都没有：先引导建库，别摆一排 0 -->
+          <div v-if="overviewStats.total === 0" class="flex-1 flex flex-col items-center justify-center text-center gap-3 py-16">
+            <div class="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+              <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 114 0v2m-4 0h4" />
+              </svg>
+            </div>
+            <p class="text-sm font-semibold text-gray-900">还没有可见的知识库</p>
+            <p class="text-xs text-gray-500 max-w-xs">新建一个知识库并上传文档，智能体就能检索到里面的内容。</p>
+            <button
+              v-if="canCreate"
+              type="button"
+              class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all"
+              @click="openCreate"
+            >新建知识库</button>
+          </div>
+
+          <div v-else class="flex-1 overflow-y-auto mt-4 pr-1">
+            <!-- KPI 四卡 -->
+            <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
+              <div class="rounded-xl border border-gray-200 bg-gradient-to-b from-gray-50/70 to-white p-3.5">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+                      <ellipse cx="12" cy="6" rx="8" ry="3.2" />
+                      <path d="M4 6v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2V6M4 12v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2v-6" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="text-2xl font-bold text-gray-900 tabular-nums leading-none">{{ overviewStats.total }}</div>
+                <div class="text-xs text-gray-500 mt-1">可见知识库</div>
+                <div class="text-[11px] text-gray-400 mt-2 pt-2 border-t border-dashed border-gray-100">
+                  <template v-if="overviewStats.hasMine">其中 <strong class="text-gray-600">{{ overviewStats.mineCount }}</strong> 个由我创建</template>
+                  <template v-else>跨 3 档可见范围</template>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-gray-200 bg-gradient-to-b from-gray-50/70 to-white p-3.5">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+                      <path d="M6 3.5h7l5 5v12a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 015 20.5v-16A1 1 0 016 3.5z" stroke-linejoin="round" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="text-2xl font-bold text-gray-900 tabular-nums leading-none">{{ overviewStats.totalDocs.toLocaleString() }}</div>
+                <div class="text-xs text-gray-500 mt-1">文档总数</div>
+                <div class="text-[11px] text-gray-400 mt-2 pt-2 border-t border-dashed border-gray-100">
+                  平均每库 <strong class="text-gray-600">{{ overviewStats.avgDocs }}</strong> 篇
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-gray-200 bg-gradient-to-b from-gray-50/70 to-white p-3.5">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="w-7 h-7 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+                      <path d="M4 7h16M4 12h10M4 17h13" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="text-2xl font-bold text-gray-900 tabular-nums leading-none">{{ overviewStats.totalChunks.toLocaleString() }}</div>
+                <div class="text-xs text-gray-500 mt-1">切片总数</div>
+                <div class="text-[11px] text-gray-400 mt-2 pt-2 border-t border-dashed border-gray-100">
+                  平均每篇 <strong class="text-gray-600">{{ overviewStats.avgChunks }}</strong> 片
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-gray-200 bg-gradient-to-b from-gray-50/70 to-white p-3.5">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+                      <rect x="4" y="8" width="16" height="12" rx="3" />
+                      <path d="M12 4v4M9 14h.01M15 14h.01" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="text-2xl font-bold text-gray-900 tabular-nums leading-none">{{ overviewStats.referencedCount }}</div>
+                <div class="text-xs text-gray-500 mt-1">被智能体引用</div>
+                <div class="text-[11px] text-gray-400 mt-2 pt-2 border-t border-dashed border-gray-100">
+                  共 <strong class="text-gray-600">{{ overviewStats.totalRefs }}</strong> 处引用关系
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+              <!-- 左：最近更新 + 分布 -->
+              <div class="xl:col-span-2 space-y-4">
+                <div class="rounded-xl border border-gray-200 p-3.5">
+                  <div class="flex items-center justify-between">
+                    <h3 class="text-[13px] font-bold text-gray-900">最近更新</h3>
+                    <span class="text-[11px] text-gray-400">按更新时间排序</span>
+                  </div>
+                  <div class="mt-1.5 -mx-1">
+                    <button
+                      v-for="ds in overviewStats.recent"
+                      :key="ds.ragflow_dataset_id || ds.id"
+                      type="button"
+                      class="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-gray-50 text-left transition-colors"
+                      @click="openDatasetFromOverview(ds)"
+                    >
+                      <span class="min-w-0 flex-1">
+                        <span class="flex items-center gap-1.5 min-w-0">
+                          <span class="text-[13px] font-medium text-gray-900 truncate">{{ ds.platform_name || ds.name || '未命名知识库' }}</span>
+                          <span
+                            class="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border font-semibold"
+                            :class="visibilityBadgeClass(ds)"
+                          >{{ visibilityLabel(ds) }}</span>
+                        </span>
+                        <span class="block text-[11px] text-gray-400 mt-0.5 truncate">
+                          {{ docCountOf(ds) }} 篇文档 · 归属 {{ ds.owner_user_name || ds.created_by || '未知' }}
+                        </span>
+                      </span>
+                      <span class="text-[11px] text-gray-500 shrink-0">{{ formatDate(ds.update_time || ds.updated_at || '') }}</span>
+                      <svg class="w-3 h-3 text-gray-300 shrink-0" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
+                        <path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="rounded-xl border border-gray-200 p-3.5">
+                  <div class="flex items-center justify-between">
+                    <h3 class="text-[13px] font-bold text-gray-900">可见范围分布</h3>
+                  </div>
+                  <p class="text-[11px] text-gray-400 mt-0.5">决定谁能在检索与智能体里用到这些知识</p>
+                  <div class="mt-3 space-y-2.5">
+                    <div v-for="row in overviewVisibilityRows" :key="row.key" class="flex items-center gap-2.5">
+                      <span class="w-20 shrink-0 flex items-center gap-1 text-[11px] text-gray-600" :title="row.hint">
+                        <svg class="w-3 h-3 shrink-0" :class="row.iconClass" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                          <path :d="row.iconPath" />
+                        </svg>
+                        {{ row.label }}
+                      </span>
+                      <span class="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                        <span class="block h-full rounded-full" :class="row.barClass" :style="{ width: `${row.percent}%` }"></span>
+                      </span>
+                      <span class="w-20 shrink-0 text-right text-[11px] text-gray-500 tabular-nums">
+                        <strong class="text-gray-700">{{ row.count }}</strong> · {{ row.percent }}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 右：需要关注 + 引擎与配额 -->
+              <div class="space-y-4">
+                <div class="rounded-xl border border-gray-200 p-3.5">
+                  <div class="flex items-center justify-between">
+                    <h3 class="text-[13px] font-bold text-gray-900">需要关注</h3>
+                    <span class="text-[11px] text-gray-400">共 {{ overviewTodoCount }} 项</span>
+                  </div>
+                  <div class="mt-2.5 space-y-2">
+                    <button
+                      v-if="overviewStats.missing.length"
+                      type="button"
+                      class="w-full flex items-start gap-2 p-2 rounded-lg bg-red-50 border border-red-100 hover:bg-red-100/70 text-left transition-colors"
+                      @click="openFirstOf(overviewStats.missing)"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 mt-0.5 text-red-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path d="M12 4.5l8.5 15H3.5l8.5-15z" stroke-linejoin="round" />
+                        <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
+                      </svg>
+                      <span class="min-w-0">
+                        <span class="block text-[12px] font-semibold text-red-700">{{ overviewStats.missing.length }} 个知识库在 RAGFlow 侧已失效</span>
+                        <span class="block text-[11px] text-red-600/80 mt-0.5 leading-snug">本地配置残留，检索会静默落空，建议清理或重建</span>
+                      </span>
+                    </button>
+
+                    <button
+                      v-if="overviewStats.empty.length"
+                      type="button"
+                      class="w-full flex items-start gap-2 p-2 rounded-lg bg-amber-50 border border-amber-100 hover:bg-amber-100/70 text-left transition-colors"
+                      @click="openFirstOf(overviewStats.empty)"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 8v5M12 16h.01" stroke-linecap="round" />
+                      </svg>
+                      <span class="min-w-0">
+                        <span class="block text-[12px] font-semibold text-amber-800">{{ overviewStats.empty.length }} 个知识库还没有文档</span>
+                        <span class="block text-[11px] text-amber-700/80 mt-0.5 leading-snug">
+                          {{ overviewStats.empty.slice(0, 2).map(d => d.platform_name || d.name || '未命名').join('、') }}{{ overviewStats.empty.length > 2 ? ' 等' : '' }} — 引用它们的智能体检索不到内容
+                        </span>
+                      </span>
+                    </button>
+
+                    <button
+                      v-if="overviewStats.unreferenced.length"
+                      type="button"
+                      class="w-full flex items-start gap-2 p-2 rounded-lg bg-amber-50 border border-amber-100 hover:bg-amber-100/70 text-left transition-colors"
+                      @click="openFirstOf(overviewStats.unreferenced)"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 8v5M12 16h.01" stroke-linecap="round" />
+                      </svg>
+                      <span class="min-w-0">
+                        <span class="block text-[12px] font-semibold text-amber-800">{{ overviewStats.unreferenced.length }} 个知识库未被任何智能体引用</span>
+                        <span class="block text-[11px] text-amber-700/80 mt-0.5 leading-snug">要么还没接入，要么是废弃库，可按需清理</span>
+                      </span>
+                    </button>
+
+                    <p v-if="overviewTodoCount === 0" class="text-[11px] text-gray-400 py-1">
+                      没有需要处理的项。
+                    </p>
+                  </div>
+                </div>
+
+                <div class="rounded-xl border border-gray-200 p-3.5">
+                  <h3 class="text-[13px] font-bold text-gray-900">引擎与配额</h3>
+                  <div class="mt-3 space-y-2.5 text-[12px]">
+                    <div class="flex items-center justify-between">
+                      <span class="flex items-center gap-1.5 text-gray-500">
+                        <span
+                          class="w-1.5 h-1.5 rounded-full"
+                          :class="engineStatus === 'connected' ? 'bg-emerald-500' : engineStatus === 'checking' ? 'bg-gray-300' : 'bg-amber-500'"
+                        ></span>
+                        RAGFlow 引擎
+                      </span>
+                      <span
+                        class="font-semibold"
+                        :class="engineStatus === 'connected' ? 'text-emerald-600' : engineStatus === 'checking' ? 'text-gray-400' : 'text-amber-600'"
+                      >{{ engineStatus === 'connected' ? '已连接' : engineStatus === 'checking' ? '检查中' : '未连接' }}</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-500">我创建的知识库</span>
+                      <span class="font-semibold text-gray-800 tabular-nums">
+                        {{ overviewStats.hasMine ? `${overviewStats.mineCount} 个` : '—' }}
+                      </span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-500">单库文档上限</span>
+                      <span class="font-semibold text-gray-800 tabular-nums">2,000 篇</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-500">已建切片</span>
+                      <span class="font-semibold text-gray-800 tabular-nums">{{ overviewStats.totalChunks.toLocaleString() }}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="mt-3 w-full px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-[11px] font-semibold text-gray-600 hover:border-primary hover:text-primary transition-all disabled:opacity-50"
+                    :disabled="loading"
+                    @click="fetchDatasets(true)"
+                  >刷新状态</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+
 
       </section>
     </div>
@@ -6388,6 +6860,34 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 </template>
 
 <style scoped>
+/* ---------- 顶部标题卡的书架剪影 ---------- */
+/* 底色仍是 bg-white，这里只叠一层极淡光晕，卡片右上角略偏蓝 */
+.kb-hero {
+  background-image:
+    radial-gradient(120% 160% at 88% -30%, rgba(22, 119, 255, 0.07) 0%, rgba(22, 119, 255, 0) 58%),
+    linear-gradient(105deg, #ffffff 0%, #fdfeff 46%, #f7faff 100%);
+}
+
+.kb-hero-art {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 100%;
+  height: 46px;
+  color: #1677ff;
+  opacity: 0.11;
+  /* 两端渐隐，避免书脊在卡片直角处被切断 */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
+}
+
+/* 窄屏卡片变高、内容变窄，剪影压到 34px 免得压住副标题 */
+@media (max-width: 640px) {
+  .kb-hero-art { height: 34px; opacity: 0.09; }
+}
+
 /* slide-down vertical transitions */
 .slide-down-enter-active,
 .slide-down-leave-active {

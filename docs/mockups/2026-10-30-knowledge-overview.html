@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>知识库管理 · 概览态原型（2026-10-30）</title>
+<!--
+  静态原型：验证「进入知识库管理默认落在概览，点左侧才进详情」。
+  数据全部取自现有字段（datasets 数组里的 doc_count / chunk_count /
+  visibility / owner_user_name / update_time / agent_ref_count /
+  is_missing_in_ragflow），不依赖后端新接口。
+-->
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --primary: #1677ff;
+    --primary-hover: #4096ff;
+    --ink: #0f172a;
+    --ink-2: #334155;
+    --muted: #64748b;
+    --muted-2: #94a3b8;
+    --line: #e8ecf3;
+    --line-2: #f1f5f9;
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --ok: #059669;
+    --warn: #d97706;
+    --danger: #dc2626;
+    --violet: #7c3aed;
+  }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+      "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 1720px;
+    margin: 0 auto;
+    padding: 20px 24px 40px;
+  }
+
+  /* ============ 顶部标题卡 ============ */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(120% 160% at 88% -30%, rgba(22,119,255,.07) 0%, rgba(22,119,255,0) 58%),
+      linear-gradient(105deg, #ffffff 0%, #fdfeff 46%, #f7faff 100%);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 16px;
+  }
+  /* 文字与按钮压到装饰层之上，剪影只在背后 */
+  .hero > div { position: relative; z-index: 2; }
+
+  /* 「知识」剪影：书架地平线 / 角落书堆 / 知识图谱，三选一 */
+  .hero-art {
+    position: absolute;
+    z-index: 1;
+    color: #1677ff;
+    pointer-events: none;
+    display: none;
+  }
+  /* A：沿卡片底边铺开的一排书脊 —— 用横向空间，不跟标题和按钮抢位置 */
+  .hero-art[data-variant="a"] {
+    left: 0; right: 0; bottom: 0;
+    width: 100%; height: 46px;
+    opacity: .11;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
+  }
+  /* C：右半部的知识图谱 */
+  .hero-art[data-variant="c"] {
+    right: 268px; top: 50%; transform: translateY(-50%);
+    width: 380px; height: 84px;
+    opacity: .16;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 16%, #000 80%, transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0%, #000 16%, #000 80%, transparent 100%);
+  }
+  /* D：标题与按钮之间的一小簇书（横放书堆 + 立书 + 斜靠的一本） */
+  .hero-art[data-variant="d"] {
+    right: 520px; bottom: 2px;
+    width: 246px; height: 92px;
+    opacity: .14;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 100%);
+            mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 100%);
+  }
+  body[data-hero="a"] .hero-art[data-variant="a"],
+  body[data-hero="c"] .hero-art[data-variant="c"],
+  body[data-hero="d"] .hero-art[data-variant="d"] { display: block; }
+
+  /* 原型用：右下角切换剪影样式，正式实现不会带这个控件 */
+  .variant-switch {
+    position: fixed; right: 16px; bottom: 16px; z-index: 99;
+    display: flex; align-items: center; gap: 4px;
+    background: rgba(255,255,255,.95); border: 1px solid var(--line);
+    border-radius: 12px; padding: 6px 8px; font-size: 11.5px; color: var(--muted);
+    box-shadow: 0 6px 20px rgba(16,24,40,.1);
+  }
+  .variant-switch span { padding: 0 4px; }
+  .variant-switch button {
+    font-family: inherit; font-size: 11.5px; cursor: pointer;
+    border: 1px solid transparent; background: transparent; color: var(--ink-2);
+    padding: 3px 8px; border-radius: 7px;
+  }
+  .variant-switch button:hover { background: var(--line-2); }
+  .variant-switch button.on { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; font-weight: 600; }
+  .hero h1 {
+    margin: 0 0 6px;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .hero p { margin: 0; color: var(--muted); font-size: 13px; }
+  .hero-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 36px; padding: 0 14px;
+    border-radius: 10px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink-2);
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    transition: all .15s ease; white-space: nowrap;
+    font-family: inherit;
+  }
+  .btn:hover { border-color: #d5dbea; background: #fafbfd; }
+  .btn-primary {
+    background: var(--primary); border-color: var(--primary); color: #fff;
+    box-shadow: 0 1px 2px rgba(22,119,255,.28);
+  }
+  .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+  .btn-ghost { border-color: transparent; background: transparent; color: var(--muted); }
+  .btn-ghost:hover { background: var(--line-2); }
+  .btn-sm { height: 30px; padding: 0 10px; font-size: 12px; border-radius: 8px; }
+
+  .engine-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 36px; padding: 0 14px; border-radius: 999px;
+    background: #ecfdf5; border: 1px solid #a7f3d0;
+    color: #047857; font-size: 13px; font-weight: 600;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+
+  /* ============ 主体两栏 ============ */
+  .main { display: grid; grid-template-columns: 372px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(16,24,40,.04);
+  }
+
+  /* ============ 左栏 ============ */
+  .aside { padding: 16px 14px 12px; }
+  .search-row { display: flex; gap: 8px; margin-bottom: 14px; }
+  .search {
+    flex: 1; min-width: 0; position: relative;
+  }
+  .search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted-2); }
+  .search input {
+    width: 100%; height: 34px; padding: 0 10px 0 32px;
+    border: 1px solid var(--line); border-radius: 9px;
+    font-size: 12.5px; color: var(--ink); background: #fff; font-family: inherit;
+  }
+  .search input::placeholder { color: var(--muted-2); }
+  .search input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(22,119,255,.1); }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tab {
+    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    height: 32px; border-radius: 9px; border: 1px solid transparent;
+    background: transparent; color: var(--muted); font-size: 12px; font-weight: 500;
+    cursor: pointer; white-space: nowrap; font-family: inherit;
+  }
+  .tab:hover { background: var(--line-2); }
+  .tab.active { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; font-weight: 600; }
+  .tab .count { font-variant-numeric: tabular-nums; opacity: .8; }
+
+  .list { display: flex; flex-direction: column; gap: 2px; }
+
+  /* 概览入口 */
+  .list-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 9px 10px; border-radius: 10px; cursor: pointer;
+    color: var(--ink-2); transition: background .12s ease;
+  }
+  .list-item:hover { background: var(--line-2); }
+  .list-item.active { background: #eff6ff; box-shadow: inset 0 0 0 1px #dbeafe; }
+  .list-item.active .name { color: #1d4ed8; font-weight: 600; }
+  .list-item .name {
+    font-size: 13px; font-weight: 500; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .list-item .sub { font-size: 11px; color: var(--muted-2); margin-top: 1px; }
+  .list-item .grow { flex: 1; min-width: 0; }
+  .badge-count {
+    font-size: 11px; color: var(--muted); background: var(--line-2);
+    border-radius: 999px; padding: 1px 7px; font-variant-numeric: tabular-nums;
+    border: 1px solid #eef2f8;
+  }
+  .chev { color: var(--muted-2); transition: transform .15s ease; }
+  .chev.open { transform: rotate(90deg); }
+  .folder-icon { color: var(--primary); flex-shrink: 0; }
+
+  .kids { margin: 2px 0 6px 20px; padding-left: 12px; border-left: 1px solid var(--line); }
+  .kid {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 8px; cursor: pointer;
+    font-size: 12.5px; color: var(--ink-2);
+  }
+  .kid:hover { background: var(--line-2); }
+  .kid .doc-ic { color: var(--muted-2); flex-shrink: 0; }
+  .kid .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kid .ok-dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
+
+  .list-sep { height: 1px; background: var(--line-2); margin: 8px 6px; }
+
+  /* ============ 右栏 ============ */
+  .workbench { padding: 22px 24px 24px; min-height: 700px; }
+
+  .ov-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line-2);
+  }
+  .ov-head h2 { margin: 0 0 6px; font-size: 20px; font-weight: 700; letter-spacing: -0.2px; }
+  .ov-head .meta { color: var(--muted); font-size: 12.5px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ov-head .meta .sep { color: #cbd5e1; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+  .kpi {
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px 14px 12px;
+    background: linear-gradient(180deg, #fcfdff 0%, #fff 100%);
+  }
+  .kpi-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .kpi-ic {
+    width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    background: #eff6ff; color: var(--primary);
+  }
+  .kpi-ic.v { background: #f5f3ff; color: var(--violet); }
+  .kpi-ic.w { background: #fffbeb; color: var(--warn); }
+  .kpi-ic.g { background: #ecfdf5; color: var(--ok); }
+  .kpi-num { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .kpi-label { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .kpi-hint { font-size: 11px; color: var(--muted-2); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+  .kpi-hint b { color: var(--ink-2); font-weight: 600; }
+
+  .ov-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+  .panel { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px 12px; }
+  .panel + .panel { margin-top: 14px; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .panel-head h3 { margin: 0; font-size: 13.5px; font-weight: 700; color: var(--ink); }
+  .panel-head .more { font-size: 12px; color: var(--primary); cursor: pointer; }
+  .panel-sub { font-size: 11.5px; color: var(--muted-2); margin: 2px 0 8px; }
+
+  .recent { display: flex; flex-direction: column; }
+  .recent-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 8px; border-radius: 9px; cursor: pointer; margin: 0 -8px;
+  }
+  .recent-row:hover { background: #f8fafc; }
+  .recent-row .nm { font-size: 13px; font-weight: 500; color: var(--ink); display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .recent-row .nm span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recent-row .grow { flex: 1; min-width: 0; }
+  .recent-row .desc { font-size: 11px; color: var(--muted-2); margin-top: 2px; }
+  .recent-row .when { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+
+  .vbadge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10.5px; font-weight: 600; padding: 1.5px 7px; border-radius: 999px;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .v-public { background: #eff6ff; color: #1d4ed8; border: 1px solid #dbeafe; }
+  .v-team { background: #f5f3ff; color: #6d28d9; border: 1px solid #ede9fe; }
+  .v-private { background: #fffbeb; color: #b45309; border: 1px solid #fef3c7; }
+
+  .bars { display: flex; flex-direction: column; gap: 11px; margin-top: 10px; }
+  .bar-row { display: flex; align-items: center; gap: 10px; }
+  .bar-lbl { width: 74px; font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .bar-track { flex: 1; height: 8px; border-radius: 999px; background: var(--line-2); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; }
+  .bar-num { width: 74px; text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .bar-num b { color: var(--ink-2); font-weight: 600; }
+
+  .todo { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .todo-item {
+    display: flex; gap: 9px; padding: 9px 10px; border-radius: 9px;
+    background: #fffdf7; border: 1px solid #fef3c7; cursor: pointer;
+  }
+  .todo-item:hover { background: #fffaeb; }
+  .todo-item.danger { background: #fef6f6; border-color: #fee2e2; }
+  .todo-item.danger:hover { background: #fdeeee; }
+  .todo-item .ti { flex-shrink: 0; margin-top: 1px; }
+  .todo-item .tt { font-size: 12.5px; color: var(--ink-2); font-weight: 500; line-height: 1.45; }
+  .todo-item .td { font-size: 11px; color: var(--muted-2); margin-top: 2px; line-height: 1.45; }
+
+  .kv { display: flex; flex-direction: column; gap: 11px; margin-top: 12px; }
+  .kv-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+  .kv-row .k { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .kv-row .v { color: var(--ink-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .quota { margin-top: 4px; }
+  .quota-track { height: 6px; border-radius: 999px; background: var(--line-2); overflow: hidden; margin-top: 6px; }
+  .quota-fill { height: 100%; background: linear-gradient(90deg, #1677ff, #4096ff); border-radius: 999px; }
+
+  /* ============ 详情态（切换后） ============ */
+  .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--line-2); }
+  .detail-head h2 { margin: 0; font-size: 21px; font-weight: 700; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .detail-desc { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; }
+  .detail-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 12px; color: var(--muted); padding: 12px 0; border-bottom: 1px solid var(--line-2); }
+  .detail-meta b { color: var(--ink-2); font-weight: 600; }
+  .detail-tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--line-2); margin-top: 4px; }
+  .dt { padding: 11px 0; font-size: 13px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .dt.active { color: var(--primary); font-weight: 600; border-bottom-color: var(--primary); }
+  .quota-bar {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px;
+    font-size: 12px; color: var(--muted); margin-top: 14px;
+  }
+  .quota-bar .q-track { flex: 1; height: 6px; border-radius: 999px; background: var(--line-2); overflow: hidden; }
+  .quota-bar .q-fill { height: 100%; width: 8%; background: linear-gradient(90deg,#1677ff,#4096ff); }
+  .doc-list { margin-top: 16px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .doc-row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; font-size: 13px; border-bottom: 1px solid var(--line-2); }
+  .doc-row:last-child { border-bottom: none; }
+  .doc-row .grow { flex: 1; min-width: 0; }
+  .doc-row .t { color: var(--ink); }
+  .doc-row .m { font-size: 11px; color: var(--muted-2); margin-top: 2px; }
+  .upload-zone {
+    margin-top: 14px; border: 1.5px dashed #dbe3f0; border-radius: 12px;
+    padding: 18px; text-align: center; color: var(--muted); font-size: 12.5px; background: #fbfcfe;
+  }
+
+  .hidden { display: none !important; }
+
+  /* 原型标注（不影响视觉判断，可删） */
+  .hint-bar {
+    margin-top: 14px; display: flex; align-items: center; gap: 10px;
+    font-size: 11.5px; color: var(--muted-2);
+  }
+  .hint-bar kbd {
+    background: #fff; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 5px; font-size: 11px; color: var(--ink-2);
+    font-family: inherit;
+  }
+</style>
+</head>
+<body data-hero="a">
+
+<div class="page">
+
+  <!-- 顶部标题卡 -->
+  <div class="hero">
+  <!-- ===== 「知识」剪影（原型：右下角切换 A/B/C） ===== -->
+  <!-- A：书架地平线 —— 一排高低错落的书脊贴着卡片下沿，用横向空间，不与标题和按钮抢位 -->
+  <svg class="hero-art" data-variant="a" viewBox="0 0 1400 80" preserveAspectRatio="xMidYMax slice" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <g fill="currentColor">
+      <rect x="2" y="34" width="8" height="40" rx="2" />
+      <rect x="11" y="28" width="16" height="46" rx="2" transform="rotate(-11 19.0 74)" />
+      <rect x="30" y="28" width="18" height="46" rx="2" />
+      <rect x="51" y="34" width="8" height="40" rx="2" />
+      <rect x="62" y="28" width="12" height="46" rx="2" />
+      <rect x="75" y="34" width="8" height="40" rx="2" />
+      <rect x="85" y="34" width="9" height="40" rx="2" />
+      <rect x="96" y="58" width="14" height="16" rx="2" />
+      <rect x="113" y="28" width="9" height="46" rx="2" />
+      <rect x="123" y="30" width="18" height="44" rx="2" />
+      <rect x="142" y="44" width="9" height="30" rx="2" />
+      <rect x="152" y="34" width="8" height="40" rx="2" />
+      <rect x="163" y="34" width="18" height="40" rx="2" />
+      <rect x="184" y="30" width="11" height="44" rx="2" />
+      <rect x="197" y="32" width="8" height="42" rx="2" />
+      <rect x="207" y="32" width="14" height="42" rx="2" />
+      <rect x="222" y="64" width="16" height="10" rx="2" />
+      <rect x="239" y="32" width="14" height="42" rx="2" />
+      <rect x="254" y="32" width="9" height="42" rx="2" />
+      <rect x="266" y="32" width="8" height="42" rx="2" />
+      <rect x="276" y="40" width="16" height="34" rx="2" />
+      <rect x="293" y="32" width="12" height="42" rx="2" />
+      <rect x="307" y="48" width="12" height="26" rx="2" />
+      <rect x="322" y="28" width="8" height="46" rx="2" />
+      <rect x="331" y="30" width="9" height="44" rx="2" />
+      <rect x="342" y="32" width="8" height="42" rx="2" />
+      <rect x="352" y="28" width="14" height="46" rx="2" />
+      <rect x="367" y="34" width="12" height="40" rx="2" />
+      <rect x="380" y="34" width="11" height="40" rx="2" />
+      <rect x="393" y="34" width="9" height="40" rx="2" transform="rotate(12 397.5 74)" />
+      <rect x="404" y="58" width="9" height="16" rx="2" />
+      <rect x="414" y="40" width="14" height="34" rx="2" />
+      <rect x="431" y="44" width="9" height="30" rx="2" />
+      <rect x="443" y="34" width="9" height="40" rx="2" />
+      <rect x="453" y="34" width="14" height="40" rx="2" />
+      <rect x="469" y="44" width="16" height="30" rx="2" />
+      <rect x="486" y="32" width="11" height="42" rx="2" />
+      <rect x="500" y="68" width="9" height="6" rx="2" />
+      <rect x="511" y="28" width="14" height="46" rx="2" />
+      <rect x="528" y="30" width="8" height="44" rx="2" />
+      <rect x="537" y="32" width="9" height="42" rx="2" />
+      <rect x="547" y="64" width="12" height="10" rx="2" />
+      <rect x="562" y="32" width="14" height="42" rx="2" />
+      <rect x="579" y="34" width="18" height="40" rx="2" transform="rotate(12 588.0 74)" />
+      <rect x="599" y="32" width="14" height="42" rx="2" />
+      <rect x="614" y="34" width="12" height="40" rx="2" transform="rotate(12 620.0 74)" />
+      <rect x="629" y="32" width="9" height="42" rx="2" />
+      <rect x="640" y="32" width="11" height="42" rx="2" />
+      <rect x="652" y="30" width="18" height="44" rx="2" />
+      <rect x="673" y="34" width="16" height="40" rx="2" />
+      <rect x="691" y="30" width="16" height="44" rx="2" />
+      <rect x="709" y="30" width="8" height="44" rx="2" />
+      <rect x="719" y="28" width="18" height="46" rx="2" />
+      <rect x="738" y="32" width="11" height="42" rx="2" />
+      <rect x="751" y="34" width="9" height="40" rx="2" />
+      <rect x="761" y="32" width="9" height="42" rx="2" />
+      <rect x="771" y="30" width="16" height="44" rx="2" />
+      <rect x="788" y="64" width="11" height="10" rx="2" />
+      <rect x="801" y="32" width="16" height="42" rx="2" />
+      <rect x="819" y="30" width="18" height="44" rx="2" />
+      <rect x="840" y="28" width="9" height="46" rx="2" />
+      <rect x="852" y="58" width="9" height="16" rx="2" />
+      <rect x="862" y="68" width="18" height="6" rx="2" />
+      <rect x="882" y="68" width="11" height="6" rx="2" />
+      <rect x="894" y="34" width="11" height="40" rx="2" />
+      <rect x="907" y="32" width="9" height="42" rx="2" />
+      <rect x="918" y="34" width="18" height="40" rx="2" transform="rotate(-11 927.0 74)" />
+      <rect x="939" y="30" width="18" height="44" rx="2" />
+      <rect x="958" y="34" width="8" height="40" rx="2" />
+      <rect x="968" y="34" width="11" height="40" rx="2" />
+      <rect x="982" y="32" width="16" height="42" rx="2" transform="rotate(-11 990.0 74)" />
+      <rect x="999" y="32" width="8" height="42" rx="2" />
+      <rect x="1008" y="32" width="14" height="42" rx="2" />
+      <rect x="1025" y="30" width="12" height="44" rx="2" />
+      <rect x="1038" y="44" width="16" height="30" rx="2" />
+      <rect x="1055" y="34" width="16" height="40" rx="2" />
+      <rect x="1072" y="68" width="18" height="6" rx="2" />
+      <rect x="1093" y="32" width="11" height="42" rx="2" />
+      <rect x="1105" y="32" width="12" height="42" rx="2" transform="rotate(-11 1111.0 74)" />
+      <rect x="1118" y="30" width="16" height="44" rx="2" />
+      <rect x="1136" y="34" width="11" height="40" rx="2" />
+      <rect x="1149" y="34" width="18" height="40" rx="2" />
+      <rect x="1170" y="30" width="12" height="44" rx="2" />
+      <rect x="1185" y="58" width="9" height="16" rx="2" />
+      <rect x="1195" y="48" width="18" height="26" rx="2" />
+      <rect x="1215" y="34" width="11" height="40" rx="2" />
+      <rect x="1228" y="28" width="9" height="46" rx="2" />
+      <rect x="1239" y="64" width="18" height="10" rx="2" />
+      <rect x="1259" y="34" width="11" height="40" rx="2" />
+      <rect x="1272" y="32" width="9" height="42" rx="2" />
+      <rect x="1283" y="48" width="18" height="26" rx="2" />
+      <rect x="1302" y="30" width="18" height="44" rx="2" />
+      <rect x="1323" y="30" width="14" height="44" rx="2" />
+      <rect x="1339" y="34" width="9" height="40" rx="2" />
+      <rect x="1351" y="32" width="12" height="42" rx="2" />
+      <rect x="1366" y="30" width="8" height="44" rx="2" />
+      <rect x="1375" y="64" width="16" height="10" rx="2" />
+      <rect x="1394" y="48" width="16" height="26" rx="2" />
+      <rect x="0" y="74" width="1400" height="6" rx="3" />
+    </g>
+  </svg>
+
+  <!-- C：知识图谱 —— 节点与关联线，铺在卡片右半部 -->
+  <svg class="hero-art" data-variant="c" viewBox="0 0 520 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <g stroke="currentColor" stroke-width="2" opacity=".7">
+      <path d="M24 92 L128 30 L246 74 L362 22 L470 82" />
+      <path d="M128 30 L246 12 L362 22" />
+      <path d="M24 92 L246 74 L470 82" />
+      <path d="M246 74 L246 12" />
+      <path d="M128 30 L362 22" opacity=".5" />
+    </g>
+    <g fill="currentColor">
+      <circle cx="24" cy="92" r="7" />
+      <circle cx="128" cy="30" r="5.5" />
+      <circle cx="246" cy="74" r="9" />
+      <circle cx="362" cy="22" r="6" />
+      <circle cx="470" cy="82" r="7" />
+      <circle cx="246" cy="12" r="4" />
+    </g>
+  </svg>
+
+  <!-- D：一小簇书 —— 横放的书堆 + 立书 + 斜靠的一本，落在标题与按钮之间 -->
+  <svg class="hero-art" data-variant="d" viewBox="0 0 300 112" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <g fill="currentColor">
+      <!-- 一摞横放的书：每层左右错开一点，才读得出是叠起来的 -->
+      <rect x="44" y="50" width="150" height="17" rx="4" transform="rotate(-3 44 50)" />
+      <rect x="30" y="69" width="168" height="18" rx="4" transform="rotate(2 30 69)" />
+      <rect x="52" y="89" width="146" height="17" rx="4" transform="rotate(-1.5 52 89)" />
+      <!-- 斜靠在书堆上的两本 -->
+      <rect x="198" y="34" width="15" height="70" rx="3" transform="rotate(14 198 34)" />
+      <rect x="216" y="24" width="17" height="80" rx="4" transform="rotate(6 216 24)" />
+      <!-- 立着的两本 -->
+      <rect x="240" y="28" width="19" height="76" rx="4" />
+      <rect x="264" y="42" width="16" height="62" rx="3" />
+    </g>
+    <g stroke="currentColor" stroke-width="1.6" opacity=".5">
+      <path d="M40 58h150M34 78h168M48 97h146" />
+    </g>
+  </svg>
+
+    <div>
+      <h1>知识库管理
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+        <span style="font-size:12.5px;font-weight:400;color:#64748b">显示指引</span>
+      </h1>
+      <p>管理 RAGFlow 知识库、平台扩展元数据及一体化文档解析。</p>
+    </div>
+    <div class="hero-actions">
+      <span class="engine-pill"><i class="dot"></i>引擎 已连接</span>
+      <button class="btn">从 RAGFlow 同步</button>
+      <button class="btn">刷新</button>
+      <button class="btn" style="width:36px;padding:0;justify-content:center" title="授权与可见性说明">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="btn btn-primary">新建知识库</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- ============ 左栏 ============ -->
+    <aside class="card aside">
+      <div class="search-row">
+        <div class="search">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2" stroke-linecap="round"/></svg>
+          <input placeholder="搜索知识库名称、ID、文档或业务…" />
+        </div>
+        <button class="btn btn-sm">批量</button>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.4 2.5 15.6 0 18M12 3c-2.5 2.4-2.5 15.6 0 18"/></svg>
+          授权可见 <span class="count">39</span>
+        </button>
+        <button class="tab">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20a6.5 6.5 0 0113 0"/><circle cx="17" cy="9.5" r="2.6"/><path d="M15 20a5.5 5.5 0 016.5-4.6" stroke-linecap="round"/></svg>
+          TEAM 级 <span class="count">19</span>
+        </button>
+        <button class="tab">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2.2"/><path d="M8 10.5V8a4 4 0 018 0v2.5"/></svg>
+          个人私有 <span class="count">36</span>
+        </button>
+      </div>
+
+      <div class="list">
+        <!-- 概览入口 -->
+        <div class="list-item active" id="nav-overview" onclick="showOverview()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" style="color:#1677ff"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></svg>
+          <div class="grow">
+            <div class="name">概览</div>
+            <div class="sub">资产、分布与待办</div>
+          </div>
+        </div>
+
+        <div class="list-sep"></div>
+
+        <!-- 知识库：展开态 -->
+        <div class="list-item" id="nav-kb-tiantian" onclick="showDetail('kb-tiantian')">
+          <svg class="chev open" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="folder-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 7.5A2.5 2.5 0 015.5 5h3.6c.5 0 1 .2 1.4.6l1 1c.4.4.9.6 1.4.6h5.6A2.5 2.5 0 0121 9.7v7.8A2.5 2.5 0 0118.5 20h-13A2.5 2.5 0 013 17.5v-10z"/></svg>
+          <div class="grow">
+            <div class="name">天天天天</div>
+            <div class="sub">创建人：admin</div>
+          </div>
+          <span class="badge-count">1</span>
+        </div>
+        <div class="kids">
+          <div class="kid">
+            <svg class="doc-ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3.5h7l5 5v12a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 015 20.5v-16A1 1 0 016 3.5z" stroke-linejoin="round"/></svg>
+            <span class="grow">机器盘点.xlsx</span>
+            <i class="ok-dot"></i>
+          </div>
+        </div>
+
+        <div class="list-item" id="nav-kb-car" onclick="showDetail('kb-car')">
+          <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="folder-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 7.5A2.5 2.5 0 015.5 5h3.6c.5 0 1 .2 1.4.6l1 1c.4.4.9.6 1.4.6h5.6A2.5 2.5 0 0121 9.7v7.8A2.5 2.5 0 0118.5 20h-13A2.5 2.5 0 013 17.5v-10z"/></svg>
+          <div class="grow">
+            <div class="name">汽车</div>
+            <div class="sub">创建人：admin</div>
+          </div>
+          <span class="badge-count">1</span>
+        </div>
+
+        <div class="list-item" id="nav-kb-llm" onclick="showDetail('kb-llm')">
+          <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="folder-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 7.5A2.5 2.5 0 015.5 5h3.6c.5 0 1 .2 1.4.6l1 1c.4.4.9.6 1.4.6h5.6A2.5 2.5 0 0121 9.7v7.8A2.5 2.5 0 0118.5 20h-13A2.5 2.5 0 013 17.5v-10z"/></svg>
+          <div class="grow">
+            <div class="name">大模型 <span style="font-size:10px;color:#64748b;background:#f1f5f9;border-radius:999px;padding:1px 6px;font-weight:500">👑 1</span></div>
+            <div class="sub">创建人：admin</div>
+          </div>
+          <span class="badge-count">1</span>
+        </div>
+
+        <div class="list-item" id="nav-kb-test2" onclick="showDetail('kb-test2')">
+          <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="folder-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 7.5A2.5 2.5 0 015.5 5h3.6c.5 0 1 .2 1.4.6l1 1c.4.4.9.6 1.4.6h5.6A2.5 2.5 0 0121 9.7v7.8A2.5 2.5 0 0118.5 20h-13A2.5 2.5 0 013 17.5v-10z"/></svg>
+          <div class="grow">
+            <div class="name">test0002</div>
+            <div class="sub">创建人：admin</div>
+          </div>
+          <span class="badge-count">1</span>
+        </div>
+
+        <div class="list-item" id="nav-kb-xlc" onclick="showDetail('kb-xlc')">
+          <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="folder-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 7.5A2.5 2.5 0 015.5 5h3.6c.5 0 1 .2 1.4.6l1 1c.4.4.9.6 1.4.6h5.6A2.5 2.5 0 0121 9.7v7.8A2.5 2.5 0 0118.5 20h-13A2.5 2.5 0 013 17.5v-10z"/></svg>
+          <div class="grow">
+            <div class="name">xlc舲entest <span style="font-size:10px;color:#64748b;background:#f1f5f9;border-radius:999px;padding:1px 6px;font-weight:500">👑 1</span></div>
+            <div class="sub">创建人：admin</div>
+          </div>
+          <span class="badge-count">1</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ 右栏 ============ -->
+    <section class="card workbench">
+
+      <!-- ---------- 概览态（默认） ---------- -->
+      <div id="pane-overview">
+        <div class="ov-head">
+          <div>
+            <h2>知识库概览</h2>
+            <div class="meta">
+              <span>当前可见范围内共 <b style="color:#334155">94</b> 个知识库</span>
+              <span class="sep">·</span>
+              <span>3,284 篇文档</span>
+              <span class="sep">·</span>
+              <span>最近更新 10-27 11:27</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-primary">新建知识库</button>
+            <button class="btn">从 RAGFlow 同步</button>
+          </div>
+        </div>
+
+        <!-- KPI -->
+        <div class="kpis">
+          <div class="kpi">
+            <div class="kpi-top">
+              <div class="kpi-ic">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="6" rx="8" ry="3.2"/><path d="M4 6v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2V6M4 12v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2v-6"/></svg>
+              </div>
+            </div>
+            <div class="kpi-num">94</div>
+            <div class="kpi-label">可见知识库</div>
+            <div class="kpi-hint">其中 <b>10</b> 个由我创建</div>
+          </div>
+
+          <div class="kpi">
+            <div class="kpi-top">
+              <div class="kpi-ic g">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3.5h7l5 5v12a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 015 20.5v-16A1 1 0 016 3.5z" stroke-linejoin="round"/></svg>
+              </div>
+            </div>
+            <div class="kpi-num">3,284</div>
+            <div class="kpi-label">文档总数</div>
+            <div class="kpi-hint">平均每库 <b>35</b> 篇</div>
+          </div>
+
+          <div class="kpi">
+            <div class="kpi-top">
+              <div class="kpi-ic v">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13" stroke-linecap="round"/></svg>
+              </div>
+            </div>
+            <div class="kpi-num">41,902</div>
+            <div class="kpi-label">切片总数</div>
+            <div class="kpi-hint">平均每篇 <b>12.8</b> 片</div>
+          </div>
+
+          <div class="kpi">
+            <div class="kpi-top">
+              <div class="kpi-ic w">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 14h.01M15 14h.01" stroke-linecap="round"/></svg>
+              </div>
+            </div>
+            <div class="kpi-num">12</div>
+            <div class="kpi-label">被智能体引用</div>
+            <div class="kpi-hint">共 <b>21</b> 处引用关系</div>
+          </div>
+        </div>
+
+        <div class="ov-grid">
+          <!-- 左列 -->
+          <div>
+            <div class="panel">
+              <div class="panel-head">
+                <h3>最近更新</h3>
+                <span class="more">按更新时间排序</span>
+              </div>
+              <div class="recent">
+                <div class="recent-row" onclick="showDetail('kb-tiantian')">
+                  <div class="grow">
+                    <div class="nm"><span class="t">天天天天</span><span class="vbadge v-public">授权可见</span></div>
+                    <div class="desc">1 篇文档 · 归属 admin</div>
+                  </div>
+                  <span class="when">2 小时前</span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2.2"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div class="recent-row" onclick="showDetail('kb-llm')">
+                  <div class="grow">
+                    <div class="nm"><span class="t">大模型</span><span class="vbadge v-team">TEAM 级</span></div>
+                    <div class="desc">128 篇文档 · 归属 admin</div>
+                  </div>
+                  <span class="when">昨天 16:40</span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2.2"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div class="recent-row" onclick="showDetail('kb-car')">
+                  <div class="grow">
+                    <div class="nm"><span class="t">汽车</span><span class="vbadge v-team">TEAM 级</span></div>
+                    <div class="desc">42 篇文档 · 归属 admin</div>
+                  </div>
+                  <span class="when">10-27 09:12</span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2.2"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div class="recent-row" onclick="showDetail('kb-test2')">
+                  <div class="grow">
+                    <div class="nm"><span class="t">test0002</span><span class="vbadge v-private">个人私有</span></div>
+                    <div class="desc">6 篇文档 · 归属 admin</div>
+                  </div>
+                  <span class="when">10-24 18:03</span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2.2"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div class="recent-row" onclick="showDetail('kb-xlc')">
+                  <div class="grow">
+                    <div class="nm"><span class="t">xlc舲entest</span><span class="vbadge v-private">个人私有</span></div>
+                    <div class="desc">暂无文档 · 归属 admin</div>
+                  </div>
+                  <span class="when">10-16 11:20</span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2.2"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <h3>可见范围分布</h3>
+              </div>
+              <div class="panel-sub">决定谁能在检索与智能体里用到这些知识</div>
+              <div class="bars">
+                <div class="bar-row">
+                  <div class="bar-lbl">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.4 2.5 15.6 0 18M12 3c-2.5 2.4-2.5 15.6 0 18"/></svg>
+                    授权可见
+                  </div>
+                  <div class="bar-track"><div class="bar-fill" style="width:41%;background:linear-gradient(90deg,#1677ff,#4096ff)"></div></div>
+                  <div class="bar-num"><b>39</b> · 41%</div>
+                </div>
+                <div class="bar-row">
+                  <div class="bar-lbl">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6d28d9" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20a6.5 6.5 0 0113 0"/><circle cx="17" cy="9.5" r="2.6"/></svg>
+                    TEAM 级
+                  </div>
+                  <div class="bar-track"><div class="bar-fill" style="width:20%;background:linear-gradient(90deg,#7c3aed,#a78bfa)"></div></div>
+                  <div class="bar-num"><b>19</b> · 20%</div>
+                </div>
+                <div class="bar-row">
+                  <div class="bar-lbl">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#b45309" stroke-width="2"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2.2"/><path d="M8 10.5V8a4 4 0 018 0v2.5"/></svg>
+                    个人私有
+                  </div>
+                  <div class="bar-track"><div class="bar-fill" style="width:38%;background:linear-gradient(90deg,#d97706,#fbbf24)"></div></div>
+                  <div class="bar-num"><b>36</b> · 38%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右列 -->
+          <div>
+            <div class="panel">
+              <div class="panel-head">
+                <h3>需要关注</h3>
+                <span class="more">共 6 项</span>
+              </div>
+              <div class="todo">
+                <div class="todo-item danger">
+                  <svg class="ti" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2"><path d="M12 4.5l8.5 15H3.5l8.5-15z" stroke-linejoin="round"/><path d="M12 10v4M12 17h.01" stroke-linecap="round"/></svg>
+                  <div>
+                    <div class="tt">1 个知识库在 RAGFlow 侧已失效</div>
+                    <div class="td">本地配置残留，检索会静默落空，建议清理或重建</div>
+                  </div>
+                </div>
+                <div class="todo-item">
+                  <svg class="ti" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01" stroke-linecap="round"/></svg>
+                  <div>
+                    <div class="tt">2 个知识库还没有文档</div>
+                    <div class="td">xlc舲entest 等 2 个库建了但没上传，引用它们的智能体检索不到内容</div>
+                  </div>
+                </div>
+                <div class="todo-item">
+                  <svg class="ti" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01" stroke-linecap="round"/></svg>
+                  <div>
+                    <div class="tt">3 个知识库未被任何智能体引用</div>
+                    <div class="td">要么还没接入，要么是废弃库，可按需清理</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <h3>引擎与配额</h3>
+              </div>
+              <div class="kv">
+                <div class="kv-row">
+                  <span class="k"><i class="dot"></i>RAGFlow 引擎</span>
+                  <span class="v" style="color:#047857">已连接</span>
+                </div>
+                <div class="kv-row">
+                  <span class="k">我创建的知识库</span>
+                  <span class="v">10 个</span>
+                </div>
+                <div class="kv-row">
+                  <span class="k">单库文档上限</span>
+                  <span class="v">2,000 篇</span>
+                </div>
+                <div class="kv-row">
+                  <span class="k">已建切片</span>
+                  <span class="v">41,902</span>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:14px">
+                <button class="btn btn-sm" style="width:100%;justify-content:center">刷新状态</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hint-bar">
+          <kbd>点击左侧任意知识库</kbd> 右侧切换到该库详情 · <kbd>点击「概览」</kbd> 回到本页
+        </div>
+      </div>
+
+      <!-- ---------- 详情态（点击左侧后） ---------- -->
+      <div id="pane-detail" class="hidden">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <button class="btn btn-ghost btn-sm" onclick="showOverview()" style="padding-left:4px">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            概览
+          </button>
+          <span style="color:#cbd5e1">/</span>
+          <span id="crumb-name" style="font-size:12.5px;color:#64748b">天天天天</span>
+        </div>
+
+        <div class="detail-head">
+          <div style="min-width:0">
+            <h2>
+              <span id="detail-name">天天天天</span>
+              <span class="vbadge v-public" id="detail-vis" style="font-size:11px">授权可见</span>
+            </h2>
+            <p class="detail-desc" id="detail-desc">暂无对该知识库的描述说明</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;flex-shrink:0">
+            <div style="text-align:right">
+              <div style="font-size:11px;color:#94a3b8">更新时间</div>
+              <div style="font-size:12.5px;color:#334155;font-variant-numeric:tabular-nums">2026/10/27 11:27:37</div>
+            </div>
+            <button class="btn" style="width:36px;padding:0;justify-content:center" title="刷新">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 10-2.3 5.7" stroke-linecap="round"/><path d="M20 5v6h-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 00-3-3L5 17v3z" stroke-linejoin="round"/></svg>
+              编辑
+            </button>
+          </div>
+        </div>
+
+        <div class="detail-meta">
+          <span>归属人 <b>admin</b> <span style="color:#1677ff">转移</span></span>
+          <span>切片 <b id="detail-chunk-method">naive</b> · <b id="detail-chunks">1</b> 段</span>
+          <span id="detail-refs">未被智能体引用</span>
+          <span>业务归属部门/负责人 <b>未指派</b></span>
+          <span>ID <b style="font-family:ui-monospace,monospace;font-weight:500">54af42d5d1b611f1b34a0242ac130006</b></span>
+        </div>
+
+        <div class="detail-tabs">
+          <span class="dt active">文档与设置</span>
+          <span class="dt">操作日志</span>
+          <span class="dt">引用与授权</span>
+        </div>
+
+        <div class="quota-bar">
+          <span>文档配额 <b style="color:#334155" id="detail-doc-count">1</b> / 2000</span>
+          <div class="q-track"><div class="q-fill"></div></div>
+          <span>你已拥有 10 / 50 个知识库</span>
+        </div>
+
+        <!-- 分类标签 / 平台备注：只存平台侧扩展元数据，不影响 RAGFlow 检索 -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:18px">
+          <div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:#334155;margin-bottom:8px">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.9"><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M8 12l2.5 2.5L16 9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              分类标签
+            </div>
+            <div style="font-size:12.5px;color:#94a3b8">暂无分类标签</div>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:#334155;margin-bottom:8px">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.9"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 00-3-3L5 17v3z" stroke-linejoin="round"/></svg>
+              平台备注说明
+            </div>
+            <div style="border:1px solid #f1f5f9;background:#fffdf5;border-radius:10px;padding:10px 12px;font-size:12.5px;color:#94a3b8">暂无备注说明。</div>
+          </div>
+        </div>
+
+        <div style="font-size:13px;font-weight:700;color:#0f172a;margin:20px 0 8px">上传新文档到此知识库</div>
+        <div class="upload-zone">
+          拖拽文件到此处，或 <span style="color:#1677ff;font-weight:600">点击上传</span> · 支持 pdf / docx / xlsx / md / txt
+        </div>
+
+        <div class="doc-list" id="detail-docs">
+          <div class="doc-row">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.8"><path d="M6 3.5h7l5 5v12a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 015 20.5v-16A1 1 0 016 3.5z" stroke-linejoin="round"/></svg>
+            <div class="grow">
+              <div class="t">机器盘点.xlsx</div>
+              <div class="m">已解析 · 1 段 · 12.4 KB</div>
+            </div>
+            <i class="ok-dot"></i>
+          </div>
+        </div>
+      </div>
+
+    </section>
+  </div>
+</div>
+
+<script>
+  // 左栏各知识库的展示数据（真实字段：name / visibility / doc_count / chunk_count / agent_ref_count）
+  const KBS = {
+    'kb-tiantian': { name: '天天天天', vis: 'public', visLabel: '授权可见', desc: '暂无对该知识库的描述说明', docs: 1, chunks: 1, refs: '未被智能体引用', docName: '机器盘点.xlsx' },
+    'kb-car': { name: '汽车', vis: 'team', visLabel: 'TEAM 级', desc: '汽车行业资料与竞品分析', docs: 42, chunks: 1108, refs: '被 2 个智能体引用', docName: '车型参数汇总.xlsx' },
+    'kb-llm': { name: '大模型', vis: 'team', visLabel: 'TEAM 级', desc: '模型选型、评测与部署笔记', docs: 128, chunks: 3861, refs: '被 5 个智能体引用', docName: '评测报告-2026Q3.pdf' },
+    'kb-test2': { name: 'test0002', vis: 'private', visLabel: '个人私有', desc: '暂无对该知识库的描述说明', docs: 6, chunks: 54, refs: '未被智能体引用', docName: 'test.pdf' },
+    'kb-xlc': { name: 'xlc舲entest', vis: 'private', visLabel: '个人私有', desc: '暂无对该知识库的描述说明', docs: 0, chunks: 0, refs: '未被智能体引用', docName: '' }
+  };
+
+  // 左栏徽标显示文档数（真实字段 doc_count）
+  Object.entries(KBS).forEach(([id, kb]) => {
+    const nav = document.getElementById('nav-' + id);
+    const badge = nav && nav.querySelector('.badge-count');
+    if (badge) badge.textContent = kb.docs;
+  });
+
+  function clearNav() {
+    document.querySelectorAll('.list-item').forEach((el) => el.classList.remove('active'));
+  }
+
+  function showOverview() {
+    clearNav();
+    document.getElementById('nav-overview').classList.add('active');
+    document.getElementById('pane-overview').classList.remove('hidden');
+    document.getElementById('pane-detail').classList.add('hidden');
+  }
+
+  function showDetail(id) {
+    const kb = KBS[id];
+    if (!kb) return;
+    clearNav();
+    const nav = document.getElementById('nav-' + id);
+    if (nav) nav.classList.add('active');
+
+    document.getElementById('crumb-name').textContent = kb.name;
+    document.getElementById('detail-name').textContent = kb.name;
+    document.getElementById('detail-desc').textContent = kb.desc;
+
+    const vis = document.getElementById('detail-vis');
+    vis.textContent = kb.visLabel;
+    vis.className = 'vbadge v-' + kb.vis;
+    vis.style.fontSize = '11px';
+
+    document.getElementById('detail-doc-count').textContent = kb.docs;
+    document.getElementById('detail-chunks').textContent = kb.chunks.toLocaleString();
+    document.getElementById('detail-refs').textContent = kb.refs;
+
+    const docs = document.getElementById('detail-docs');
+    if (kb.docs === 0) {
+      docs.innerHTML = '<div class="doc-row" style="color:#94a3b8;font-size:12.5px">还没有文档，上传后即可用于检索</div>';
+    } else {
+      docs.innerHTML =
+        '<div class="doc-row">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.8"><path d="M6 3.5h7l5 5v12a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 015 20.5v-16A1 1 0 016 3.5z" stroke-linejoin="round"/></svg>' +
+        '<div class="grow"><div class="t">' + kb.docName + '</div>' +
+        '<div class="m">已解析 · ' + kb.chunks + ' 段</div></div><i class="ok-dot"></i></div>';
+    }
+
+    document.getElementById('pane-overview').classList.add('hidden');
+    document.getElementById('pane-detail').classList.remove('hidden');
+  }
+</script>
+
+<div class="variant-switch">
+  <span>顶部剪影</span>
+  <button type="button" data-v="a" class="on">书籍剪影</button>
+  <button type="button" data-v="d">书堆</button>
+  <button type="button" data-v="c">知识图谱</button>
+  <button type="button" data-v="off">关</button>
+</div>
+<script>
+  document.querySelectorAll('.variant-switch button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.body.dataset.hero = btn.dataset.v;
+      document.querySelectorAll('.variant-switch button').forEach((b) => b.classList.toggle('on', b === btn));
+    });
+  });
+</script>
+</body>
+</html>
