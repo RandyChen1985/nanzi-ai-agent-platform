@@ -582,7 +582,8 @@
           class="flex flex-col group/msg relative"
         >
           <!-- Editing Mode -->
-          <div v-if="editingMsgId === msg.id" class="flex flex-col items-end space-y-2 max-w-[90%] self-end">
+          <div v-if="editingMsgId === msg.id" class="flex flex-col items-end space-y-2 self-end"
+               :class="config.hideChatAvatar ? 'max-w-[94%]' : 'max-w-[90%]'">
              <textarea
                 v-model="editContent"
                 class="w-full p-3 border border-primary/30 rounded-lg shadow-sm focus:ring-2 focus:ring-primary focus:border-primary text-sm min-h-[80px] bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
@@ -601,9 +602,10 @@
           </div>
           <!-- Normal Mode -->
           <div v-else>
-            <div class="flex justify-end items-start space-x-2">
+            <div class="flex justify-end items-start" :class="{ 'space-x-2': !config.hideChatAvatar }">
               <div
-                class="max-w-[85%] text-white px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm text-sm leading-relaxed transition-colors duration-300 relative"
+                class="text-white px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm text-sm leading-relaxed transition-colors duration-300 relative"
+                :class="config.hideChatAvatar ? 'max-w-[94%]' : 'max-w-[85%]'"
                 :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
               >
                 <template v-for="parts in [splitUserMessageContent(msg.content)]" :key="'user-parts'">
@@ -677,6 +679,7 @@
               </div>
               <!-- User Avatar -->
               <div
+                v-if="!config.hideChatAvatar"
                 class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white shadow-sm overflow-hidden border border-white dark:border-gray-800"
                 :style="{
                   background: config.userAvatar
@@ -702,7 +705,8 @@
             </div>
             <!-- User Message Actions Row -->
             <div
-              class="flex justify-end items-center space-x-2 mt-1 pr-10"
+              class="flex justify-end items-center space-x-2 mt-1"
+              :class="config.hideChatAvatar ? 'pr-0' : 'pr-10'"
             >
               <!-- Actions -->
               <div class="flex flex-nowrap items-center space-x-2">
@@ -765,9 +769,10 @@
           </div>
         </div>
         <!-- Agent Message -->
-        <div v-if="!msg.isTimeLabel && checkRole(msg, 'agent')" class="flex justify-start items-start space-x-2 group/msg">
+        <div v-if="!msg.isTimeLabel && checkRole(msg, 'agent')" class="flex justify-start items-start group/msg"
+             :class="{ 'space-x-2': !config.hideChatAvatar }">
           <!-- Agent Avatar (Clickable for Settings) -->
-          <div class="relative group">
+          <div v-if="!config.hideChatAvatar" class="relative group">
             <!-- Pulse/Glow Effect -->
             <div
               class="absolute inset-0 rounded-full animate-pulse-slow transition-opacity"
@@ -798,9 +803,9 @@
               ></div>
             </div>
           </div>
-          <div class="w-full max-w-[90%] min-w-0">
+          <div class="w-full min-w-0" :class="config.hideChatAvatar ? 'max-w-full' : 'max-w-[90%]'">
             <!-- Agent Name (Smart Status Capsule) -->
-            <div class="mb-1 ml-1 flex items-center">
+            <div class="mb-1 flex items-center" :class="config.hideChatAvatar ? 'ml-0' : 'ml-1'">
               <div
                 class="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-all duration-300 ease-out border"
                 :class="msg.agentName || msg.agentDisplayName
@@ -4051,6 +4056,8 @@ const config = reactive({
   expandThoughts: true, // 思考过程默认展示开关
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
   hideMessageBorder: true,
+  /** 隐藏聊天头像开关：关掉后气泡吃掉头像占的左右各 40px，用于显示更多内容 */
+  hideChatAvatar: false,
   /** Bash 运行环境横幅提示开关（可在设置面板中切换，localStorage 持久化） */
   showBashBanner: localStorage.getItem("bash_env_banner_ignored") !== "1",
   /** 生成中跑道动画开关（可在设置面板中切换，localStorage 持久化） */
@@ -4489,6 +4496,7 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_grounding_block_mode", config.groundingBlockMode || "strict_buffer");
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
+    localStorage.setItem("yovole_hide_chat_avatar", config.hideChatAvatar ? "1" : "0");
     localStorage.setItem("yovole_show_generating_animation", config.showGeneratingAnimation ? "1" : "0");
 };
 const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
@@ -12681,6 +12689,10 @@ onMounted(() => {
   const savedHideMessageBorder = localStorage.getItem("yovole_hide_message_border");
   if (savedHideMessageBorder !== null) {
     config.hideMessageBorder = savedHideMessageBorder === "1";
+  }
+  const savedHideChatAvatar = localStorage.getItem("yovole_hide_chat_avatar");
+  if (savedHideChatAvatar !== null) {
+    config.hideChatAvatar = savedHideChatAvatar === "1";
   }
   const savedShowGeneratingAnimation = localStorage.getItem("yovole_show_generating_animation");
   if (savedShowGeneratingAnimation !== null) {

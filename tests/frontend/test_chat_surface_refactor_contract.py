@@ -223,7 +223,10 @@ def test_both_chat_surfaces_use_shared_thinking_header_component():
     assert "skillBadges" in timeline
     assert "skillNoticeLabel" in timeline
     assert "headerSkillSummary" in timeline
-    assert "w-full max-w-[90%] min-w-0" in embed
+    # AI 消息列必须带宽度上限、不能满宽铺开。上限现在跟「隐藏聊天头像」开关联动
+    # （藏头像时放开到满宽），所以断言这对绑定，而不是钉死某一串 class。
+    assert 'class="w-full min-w-0"' in embed
+    assert "config.hideChatAvatar ? 'max-w-full' : 'max-w-[90%]'" in embed
 
 
 def test_both_chat_surfaces_share_stream_trace_and_citation_normalization():

@@ -58,6 +58,20 @@ services:
       - JIRA_URL=${JIRA_URL}
       - JIRA_USERNAME=${JIRA_USERNAME}
       - JIRA_PASSWORD=${JIRA_PASSWORD}
+
+      # SSO 统一认证（portal-web 的 check/login）
+      # 不填则使用后端代码默认值；一旦填写，SSO_API_URL 必须是绝对地址——
+      # 用户列表接口由它派生（同域不同 path），写成相对路径会在启动后抛 ValueError。
+      - SSO_API_URL=${SSO_API_URL:-https://yovole.net/api/v1/user/check/login}
+      - SSO_ACCESS_TOKEN=${SSO_ACCESS_TOKEN:-laplace}
+      - SSO_REQUEST_SYSTEM=${SSO_REQUEST_SYSTEM:-NANZI_AI_AGENT_PLATFORM}
+      - SSO_REQUEST_BUSINESS=${SSO_REQUEST_BUSINESS:-USER-LOGIN}
+      - SSO_TIMEOUT=${SSO_TIMEOUT:-30}
+      # 默认登录方式（local / ad）；两种方式的开关（on / off）：
+      # off 的那一项在登录页置灰不可选，后端也会拒绝该方式的请求，两个都 off 则整体禁用。
+      - SSO_LOGIN_DEFAULT_TYPE=${SSO_LOGIN_DEFAULT_TYPE:-ad}
+      - SSO_LOGIN_AD=${SSO_LOGIN_AD:-on}
+      - SSO_LOGIN_LOCAL=${SSO_LOGIN_LOCAL:-on}
     depends_on:
       - redis
 
