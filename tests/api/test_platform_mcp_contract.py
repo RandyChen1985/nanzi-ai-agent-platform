@@ -40,7 +40,8 @@ def test_platform_mcp_authorization_redirect_preserves_login_return_url():
 def test_main_mounts_platform_mcp_before_spa_catch_all_and_hosts_oauth_routes():
     source = Path("app/main.py").read_text(encoding="utf-8")
 
-    assert 'app.mount("/mcp", platform_mcp.streamable_http_app())' in source
+    # mcp 2.x：端点路径/传输安全改为 streamable_http_app() 入参，必须走封装工厂
+    assert 'app.mount("/mcp", platform_mcp_http_app())' in source
     assert "app.include_router(mcp_platform_router)" in source
     assert "platform_mcp_lifespan" in source
 
@@ -48,7 +49,9 @@ def test_main_mounts_platform_mcp_before_spa_catch_all_and_hosts_oauth_routes():
 def test_platform_mcp_uses_public_url_for_transport_security():
     source = Path("app/services/mcp/platform_mcp.py").read_text(encoding="utf-8")
 
-    assert "transport_security=mutable_transport_security(settings.APP_PUBLIC_URL)" in source
+    # mcp 2.x 起 MCPServer.settings 不再持有 TransportSecuritySettings，改由模块级常量持有
+    assert "_PLATFORM_TRANSPORT_SECURITY = mutable_transport_security(settings.APP_PUBLIC_URL)" in source
+    assert "transport_security=_PLATFORM_TRANSPORT_SECURITY" in source
     # 运行期以「系统配置 app_public_url」为准，缓存未初始化时回退环境变量
     assert "get_cached_public_url" in source
 

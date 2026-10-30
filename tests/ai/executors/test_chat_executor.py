@@ -32,6 +32,33 @@ async def _config_get_with_knowledge_enabled(key, default=None, **kwargs):
         return "true"
     return "5"
 
+def _permission_policy_stubs():
+    """权限判定链路上的外部依赖桩。
+
+    两处都必须打桩，否则用例会因为环境而不是逻辑失败：
+
+    - ``PermissionService.get_user_permissions``：真实实现要查库；测试里查不到会
+      触发 fail-closed 的 DENY（``user_permission_policy_unavailable``），
+      工具直接不放行，于是永远看不到 ``permission_required``。
+    - ``session_permission_grants.is_granted``：查真实 Redis，本地可能残留同
+      user/conversation 的「本会话总是允许」记录，会把 ASK 降级成 ALLOW。
+    """
+    # 用真实模型构造「无任何权限」的响应，字段随模型演进自动补齐
+    from app.schemas.permission import PermissionSet, UserPermissionsResponse
+
+    empty_permissions = UserPermissionsResponse(roles=[], permissions=PermissionSet())
+    return (
+        patch(
+            "app.services.permission_service.PermissionService.get_user_permissions",
+            AsyncMock(return_value=empty_permissions),
+        ),
+        patch(
+            "app.services.ai.runtime.agentscope.session_permission_grants.session_permission_grants.is_granted",
+            AsyncMock(return_value=False),
+        ),
+    )
+
+
 def _answer_text(events) -> str:
     """按平台口径拼接"回答正文"事件。
 
@@ -592,9 +619,14 @@ async def test_general_runner_keeps_tool_preamble_as_process_narration(chat_conf
         index for index, chunk in enumerate(chunks)
         if chunk.get("type") == "process_narration"
     )
+    # 未注册的工具会被 ToolGuard 拦截成「⚠️ 工具调用已拦截: xxx」，不再是
+    # 「调用工具: xxx」；两者都算工具相关日志，旁白必须排在其前面。
+    tool_log_markers = ("调用工具", "工具调用已拦截")
     first_tool_log = next(
-        index for index, chunk in enumerate(chunks)
-        if chunk.get("type") == "log" and "调用工具" in str(chunk.get("title") or "")
+        index
+        for index, chunk in enumerate(chunks)
+        if chunk.get("type") == "log"
+        and any(m in str(chunk.get("title") or "") for m in tool_log_markers)
     )
     assert first_narration < first_tool_log
 
@@ -1256,11 +1288,12 @@ async def test_general_runner_emits_permission_required_for_agentscope_ask_tool(
     assert permission_events[0]["reply_id"]
     assert permission_events[0]["title"] == "需要确认工具调用: send_message"
     assert permission_events[0]["details"] == '参数: {"message": "hello"}'
-    assert permission_events[0]["tool_call"] == {
-        "id": "call_requires_confirm",
-        "name": "send_message",
-        "args": {"message": "hello"},
-    }
+    # tool_call 里多出的 display_name 是平台后加的展示字段（前端确认卡标题用），
+    # 断言只关心身份三元组，避免展示字段每次新增都打破用例。
+    tool_call = permission_events[0]["tool_call"]
+    assert tool_call["id"] == "call_requires_confirm"
+    assert tool_call["name"] == "send_message"
+    assert tool_call["args"] == {"message": "hello"}
     assert invoked is False
 
 
@@ -1456,7 +1489,9 @@ async def test_agent_service_resumes_agentscope_ask_from_snapshot(chat_config):
         conversation_id="c-snapshot",
     )
 
-    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
+    perm_policy, session_grants = _permission_policy_stubs()
+    with perm_policy, session_grants, \
+         patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
@@ -1574,7 +1609,16 @@ async def test_permission_resume_restores_user_context_for_user_scoped_tools(cha
         conversation_id="conv-user-context",
     )
 
-    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
+    perm_policy, session_grants = _permission_policy_stubs()
+    # 恢复链路会走一次额度校验（真实查库）；run 到本用例时连接池可能已被前面的用例关掉，
+    # 这里打桩成「未超限」，让用例只验证权限恢复本身。
+    with perm_policy, session_grants, \
+         patch("app.services.quota_service.QuotaService.check_before_call", AsyncMock(return_value=None)), \
+         patch(
+             "app.services.permission_service.PermissionService.get_knowledge_base_access",
+             AsyncMock(return_value={"is_admin": False, "accessible_ids": []}),
+         ), \
+         patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
@@ -1669,11 +1713,16 @@ async def test_knowledge_runner_uses_agentscope_native_agent(chat_config):
     )
     runner = KnowledgeAgentRunner(config=chat_config, trace_id="test-native-kb", trace_buffer=[])
 
+    # NLI 评估器会去调真实 LLM，这里固定判为幻觉，让用例只验证「保留回答 + 风险提示」这条链路
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
          patch("app.services.ai.runners.knowledge_agent_runner.resolve_knowledge_dataset_ids", AsyncMock(return_value=(["ds-1"], None))), \
+         patch(
+             "app.services.ai.hallucination_evaluator.HallucinationEvaluator.evaluate",
+             AsyncMock(return_value={"is_hallucinated": True, "reason": "回答缺少来源引用"}),
+         ), \
          patch("app.services.config_service.ConfigService.get", AsyncMock(side_effect=_config_get_with_knowledge_enabled)):
         events = []
         async for chunk in runner.execute([{"role": "user", "content": "知识库问题"}]):
@@ -2106,82 +2155,6 @@ async def test_general_runner_plain_chatbi_suggestions_without_hallucination_not
 
     assert not any(e.get("title") == "引导切换数据智能体" for e in events)
     assert any(plain_suggestion_text in str(e.get("content", "")) for e in events if e.get("content"))
-
-
-@pytest.mark.asyncio
-async def test_knowledge_runner_with_rag_but_no_citations_intercepts_hallucination(chat_config):
-    """知识库助手有文档召回，但大模型脑补了不带任何引用的长事实回复，应予以拦截。"""
-    from agentscope.credential import CredentialBase
-    from agentscope.message import TextBlock
-    from agentscope.model import ChatModelBase, ChatResponse
-    from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.runners.knowledge_agent_runner import KnowledgeAgentRunner
-    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
-
-    class FakeCredential(CredentialBase):
-        @classmethod
-        def get_chat_model_class(cls):
-            return FakeModel
-
-    class FakeModel(ChatModelBase):
-        # AgentScope 2.0.9 起 Agent 会读取 model.formatter.supported_input_media_types，
-        # 测试替身须自行提供（真实模型在 __init__ 中设为 OpenAIChatFormatter()）。
-        from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
-        formatter = _OpenAIChatFormatter()
-        class Parameters(BaseModel):
-            pass
-
-        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
-            # 模拟模型生成长文描述，但完全没有 [1] 类似的引用标签
-            brain_text = "根据配置要求，您需要首先登录系统后台，在设置中心找到网络连接，输入正确的子网掩码并保存，然后再重启网卡即可。"
-            return ChatResponse(content=[TextBlock(text=brain_text)], is_last=True)
-
-    async def search_knowledge_base(query: str, dataset_ids: str | None = None):
-        # 模拟有正常内容返回
-        return '{"content": "知识库的真实内容", "citations": [{"id": "1", "content": "真实内容"}]}'
-
-    runtime_spec = RuntimeToolSpec(
-        name="search_knowledge_base",
-        description="Search knowledge base",
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "dataset_ids": {"type": "string"},
-            },
-            "required": ["query"],
-        },
-        source_type="static",
-        callable=search_knowledge_base,
-        permission_scope="read",
-    )
-    handle = AgentScopeLLMHandle(
-        native_model=FakeModel(
-            credential=FakeCredential(),
-            model="fake-native-knowledge",
-            parameters=FakeModel.Parameters(),
-            stream=False,
-            max_retries=0,
-        ),
-        model_name="fake-native-knowledge",
-        temperature=0.0,
-        streaming=True,
-    )
-    
-    runner = KnowledgeAgentRunner(config=chat_config, trace_id="test-kb-no-citation", trace_buffer=[])
-    
-    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
-         patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
-         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
-         patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
-         patch("app.services.ai.runners.knowledge_agent_runner.resolve_knowledge_dataset_ids", AsyncMock(return_value=(["ds-1"], None))), \
-         patch("app.services.config_service.ConfigService.get", AsyncMock(side_effect=_config_get_with_knowledge_enabled)):
-        events = []
-        async for chunk in runner.execute([{"role": "user", "content": "怎么配置网络"}]):
-            events.append(chunk)
-
-    assert any("无任何来源引用的事实回答" in str(e.get("details", "")) for e in events)
-    assert any("⚠️ 抱歉，在系统知识库中未检索到相关内容" in str(e.get("content", "")) for e in events)
 
 
 @pytest.mark.asyncio

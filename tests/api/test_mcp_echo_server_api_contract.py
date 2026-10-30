@@ -43,7 +43,8 @@ def test_echo_creation_contract_is_global_idempotent_and_write_only():
 def test_main_mounts_echo_streamable_http_mcp():
     source = Path("app/main.py").read_text(encoding="utf-8")
 
-    assert "echo_mcp.streamable_http_app()" in source
+    # mcp 2.x：端点参数挪到 streamable_http_app()，统一走封装工厂
+    assert "echo_mcp_http_app()" in source
     assert 'app.mount("/mcp/echo"' in source
     assert "echo_mcp_lifespan" in source
     assert "async with echo_mcp_lifespan()" in source
@@ -52,8 +53,10 @@ def test_main_mounts_echo_streamable_http_mcp():
 def test_echo_transport_security_reads_app_public_url():
     source = Path("app/services/mcp/echo_server.py").read_text(encoding="utf-8")
 
-    # 构造期给可变占位对象，启动/保存配置后由 refresh_mcp_public_url() 原地刷新
-    assert "transport_security=mutable_transport_security(settings.APP_PUBLIC_URL)" in source
+    # mcp 2.x 起由模块级常量持有该对象，streamable_http_app() 时传入；
+    # 启动/保存配置后由 refresh_mcp_public_url() 原地刷新。
+    assert "_ECHO_TRANSPORT_SECURITY = mutable_transport_security(settings.APP_PUBLIC_URL)" in source
+    assert "transport_security=_ECHO_TRANSPORT_SECURITY" in source
 
     main_source = Path("app/main.py").read_text(encoding="utf-8")
     assert "refresh_mcp_public_url()" in main_source
@@ -85,7 +88,7 @@ async def test_echo_creation_is_admin_only_and_returns_no_credentials():
     assert response.scope == "global"
     assert response.credential_mode == "fixed_token_signed_user"
     assert response.user_assertion_enabled is True
-    assert response.tool_count == 1
+    assert response.tool_count == 2  # echo + echo_slow（进度验收工具）
     assert "fixed_token_encrypted" not in response.model_dump()
     assert "user_assertion_private_key_encrypted" not in response.model_dump()
     added = [call.args[0] for call in db.add.call_args_list]
@@ -168,6 +171,8 @@ async def test_echo_creation_reuses_existing_credentials_and_tool():
         side_effect=[
             SimpleNamespace(scalar_one_or_none=lambda: server),
             SimpleNamespace(scalar_one_or_none=lambda: tool),
+            # 第三次查询是平台 Echo 的进度测试工具（echo_slow）：尚未注册 → 走插入。
+            SimpleNamespace(scalar_one_or_none=lambda: None),
         ]
     )
     manager = MagicMock()
@@ -248,8 +253,13 @@ async def test_personal_echo_creation_uses_owner_scoped_id_and_name():
         7, "element", "element:mcp_management:create"
     )
     added = [call.args[0] for call in db.add.call_args_list]
-    tool = next(item for item in added if isinstance(item, McpToolCache))
-    assert tool.tool_name == "mcp-private-alice-echo:echo"
+    tool_names = {
+        item.tool_name for item in added if isinstance(item, McpToolCache)
+    }
+    assert tool_names == {
+        "mcp-private-alice-echo:echo",
+        "mcp-private-alice-echo:echo_slow",
+    }, "个人 Echo 也要带进度验收工具，用户不必先分清平台/个人两种 Echo"
 
 
 @pytest.mark.asyncio
@@ -289,6 +299,8 @@ async def test_personal_echo_migrates_legacy_shared_tool_name():
             SimpleNamespace(scalar_one_or_none=lambda: server),
             SimpleNamespace(scalar_one_or_none=lambda: None),
             SimpleNamespace(scalar_one_or_none=lambda: legacy),
+            # 进度验收工具：尚未注册 → 走插入（允许，且只允许这一行）
+            SimpleNamespace(scalar_one_or_none=lambda: None),
         ]
     )
 
@@ -308,7 +320,10 @@ async def test_personal_echo_migrates_legacy_shared_tool_name():
 
     assert legacy.tool_name == "mcp-private-admin-echo:echo"
     assert response.id == server.id
-    db.add.assert_not_called()
+    added = [call.args[0] for call in db.add.call_args_list]
+    assert [item.tool_name for item in added if isinstance(item, McpToolCache)] == [
+        "mcp-private-admin-echo:echo_slow"
+    ], "命中旧 echo 行时不能再插一条同名工具，只允许补进度验收工具"
 
 
 @pytest.mark.asyncio

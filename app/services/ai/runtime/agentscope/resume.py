@@ -95,14 +95,6 @@ class AgentScopeResumeHandler:
                 user_id=current_user_id or pending.user_id,
             )
 
-        runner = cls.build_agentscope_runner_from_pending(pending, user_info=user_info)
-        await cls.restore_runner_execution_context(
-            agent_service,
-            runner,
-            pending,
-            user_info=user_info,
-        )
-
         process_timeline_state: List[Dict[str, Any]] = []
         _restore_todo_snapshot_from_pending(process_timeline_state, pending)
         permission_chunk = {
@@ -114,7 +106,19 @@ class AgentScopeResumeHandler:
         if session_grant is not None:
             permission_chunk["session_grant"] = session_grant
         _track_process_timeline(process_timeline_state, permission_chunk)
+        # 确认回执必须先于「重建 runner」下发：重建要装配工具集/技能/MCP，再叠加
+        # restore_runner_execution_context 的若干次 DB 读取，在重配置环境里可以吃掉
+        # 数秒。这段时间流里一个字节都没有，前端会一直停在「正在提交确认…」，
+        # 用户以为卡死。回执本身不依赖 runner，先发不会改变任何执行语义。
         yield permission_chunk
+
+        runner = cls.build_agentscope_runner_from_pending(pending, user_info=user_info)
+        await cls.restore_runner_execution_context(
+            agent_service,
+            runner,
+            pending,
+            user_info=user_info,
+        )
 
         full_response_content = ""
         full_reasoning_content = ""

@@ -244,7 +244,7 @@ class SkillInjector:
             if full_instruction:
                 details_msg = (
                     f"新会话首轮门禁已强制启用；已预载「{skill_name}」(ID: {skill_id}) "
-                    "完整 SKILL.md 指令，本轮可直接按该流程执行。"
+                    "完整 SKILL.md 指令，本轮可直接按该技能执行。"
                 )
             else:
                 details_msg = (
@@ -277,16 +277,23 @@ class SkillInjector:
 
     @staticmethod
     def build_skill_log_chunk(skill_id: str, skill_name: str, details_msg: str) -> Dict[str, Any]:
+        # 用户可见文案统一称「技能」（旧版叫「流程」，已落库的历史快照仍可能带旧措辞，
+        # 前端 skillFlowBadges 两套前缀都认）。
         details = details_msg or (
-            f"已识别候选流程「{skill_name}」(ID: {skill_id})。"
-            "当前仅加载流程摘要；若本轮确需执行，系统会读取完整流程说明后再处理。"
+            f"已识别候选技能「{skill_name}」(ID: {skill_id})。"
+            "当前仅加载技能摘要；若本轮确需执行，系统会读取完整技能说明后再处理。"
         )
-        is_full_enabled = "已预载完整" in details or "可直接按该流程执行" in details
+        is_full_enabled = (
+            "已预载完整" in details
+            or "可直接按该技能执行" in details
+            # 旧措辞：历史调用方/测试替身仍可能传「流程」，完成态判定不能跟着文案漂移。
+            or "可直接按该流程执行" in details
+        )
         if is_full_enabled:
             return {
                 "type": "log",
                 "id": f"skill_enabled_{skill_id}",
-                "title": f"已启用流程: {skill_name}",
+                "title": f"已启用技能: {skill_name}",
                 "details": details,
                 "status": "success",
             }
@@ -294,13 +301,13 @@ class SkillInjector:
         user_facing_details = details
         if "read_skill_instruction" in user_facing_details:
             user_facing_details = (
-                f"已识别候选流程「{skill_name}」(ID: {skill_id})。"
-                "当前仅加载流程摘要；若本轮确需执行，系统会读取完整流程说明后再处理。"
+                f"已识别候选技能「{skill_name}」(ID: {skill_id})。"
+                "当前仅加载技能摘要；若本轮确需执行，系统会读取完整技能说明后再处理。"
             )
         return {
             "type": "log",
             "id": f"skill_candidate_{skill_id}",
-            "title": f"已识别候选流程: {skill_name}",
+            "title": f"已识别候选技能: {skill_name}",
             "details": user_facing_details,
             "status": "success",
         }
@@ -619,7 +626,7 @@ class SkillInjector:
                         if full_instruction:
                             details_msg = (
                                 f"已从本轮问题匹配「{skill_name}」(ID: {skill_id})。"
-                                "已预载完整 SKILL.md 指令，本轮可直接按该流程执行。"
+                                "已预载完整 SKILL.md 指令，本轮可直接按该技能执行。"
                             )
                         skills_log_callback(skill_id, skill_name, details_msg)
             except Exception as resolve_err:
@@ -746,7 +753,7 @@ class SkillInjector:
                                     )
                                     details_msg = (
                                         f"已根据本轮问题扫描技能库并匹配「{skill_name}」(ID: {skill_id}){score_hint}。"
-                                        f"{force_hint}已预载完整 SKILL.md 指令，本轮可直接按该流程执行。"
+                                        f"{force_hint}已预载完整 SKILL.md 指令，本轮可直接按该技能执行。"
                                     )
                                 else:
                                     details_msg = (

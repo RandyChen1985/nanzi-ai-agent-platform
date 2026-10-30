@@ -24,14 +24,21 @@
   "requestSystem": "NANZI_API_DATA_PLATFORM",
   "requestBusiness": "USER-LOGIN",
   "operationType": "LOGIN",
+  "loginType": "ad",
   "userName": "your_username",
   "password": "your_password"
 }
 ```
 
+`loginType` **必传**，只接受 `local`（门户本地密码）/ `ad`（域账号），没有默认值。
+不传或传其他值，接口会返回 `HTTP 200 + code=500 + data=false`（参数错误），
+`msg` 才是可读的失败原因；认证失败则是 `code=200 + data=false`、`msg` 恒为 `success`，
+所以**判定只看 `data`**，别拿 `code == 200` 当登录成功。
+
 ### 2.4 响应体 (Response)
-- **认证通过**: `{"data": true}`
-- **认证失败**: `{"data": false}` 或其他错误信息
+- **认证通过**: `{"code": 200, "msg": "success", "data": true}`
+- **认证失败**: `{"code": 200, "msg": "success", "data": false}`（口令错 / 账号不存在 / 已锁定，均不可区分）
+- **参数错误**: `{"code": 500, "msg": "loginType 必传，仅支持 local / ad！", "data": false}`
 
 ## 3. 后端集成 (Python 示例)
 
@@ -43,9 +50,48 @@ SSO_ACCESS_TOKEN=laplace
 SSO_REQUEST_SYSTEM=NANZI_API_DATA_PLATFORM
 SSO_REQUEST_BUSINESS=USER-LOGIN
 SSO_TIMEOUT=30
+# check/login 必传：local（门户本地密码）/ ad（域账号）；默认选中项，用户可在登录页切换
+SSO_LOGIN_DEFAULT_TYPE=ad
+# 登录方式开关：off 的那一项在登录页显示「禁用」且不可选，后端也会拒绝
+SSO_LOGIN_AD=on
+SSO_LOGIN_LOCAL=on
 ```
 
-### 3.2 核心服务代码 (`auth_service.py`)
+### 3.2 `loginType` 的取值来源
+
+平台这侧对调用方 `loginType` 的处理是**请求优先、配置兜底**：
+
+| 优先级 | 来源 | 说明 |
+| --- | --- | --- |
+| 1 | 前端 `POST /api/portal/auth/sso/login` 的 `login_type`（也接受 `loginType`） | 用户在登录页「域账号 / 本地密码」里选的那个 |
+| 2 | `SSO_LOGIN_DEFAULT_TYPE` 配置 | 请求没带时使用，默认 `ad` |
+
+非法值（既不是 `local` 也不是 `ad`）**不会发出去**：service 层直接拒绝并记
+`logger.error`。放它出去只会拿回一个与口令无关的失败，现场会被误判成密码错误。
+
+### 3.2.1 登录方式开关
+
+`SSO_LOGIN_AD` / `SSO_LOGIN_LOCAL` 各取 `on` / `off`（也认 `1` / `true` / `yes`）：
+
+| 配置 | 登录页表现 |
+| --- | --- |
+| 某项 `off` | 该按钮置灰 \+ 标「禁用」，点了无效 |
+| 两项都 `off` | 用户名/密码输入框与登录按钮全部禁用，并提示「SSO 登录已关闭」 |
+
+开关是**后端策略**而不只是前端置灰：`authenticate_sso_user` 会拒绝被关闭的方式，
+`POST /api/portal/auth/sso/login` 在两项都关时直接 `403`。绕过登录页直接打接口也不行。
+
+「默认选中项」一定落在可用集合里：配 `SSO_LOGIN_DEFAULT_TYPE=ad` 且 `SSO_LOGIN_AD=off` 时，
+登录页会自动落到 `local`，不会默认高亮一个已禁用的按钮。
+
+登录页需要的两个字段都来自 `GET /api/portal/auth/config/public`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `sso_login_type` | 默认选中项，全关时为 `null` |
+| `sso_login_enabled_types` | 允许的方式，如 `["local"]`；全关时为 `[]` |
+
+### 3.3 核心服务代码 (`auth_service.py`)
 ```python
 import httpx
 import json
@@ -56,6 +102,7 @@ async def authenticate_sso_user(username, password):
         'requestSystem': settings.SSO_REQUEST_SYSTEM,
         'requestBusiness': settings.SSO_REQUEST_BUSINESS,
         'operationType': 'LOGIN',
+        'loginType': (settings.SSO_LOGIN_DEFAULT_TYPE or '').strip().lower(),
         'userName': username,
         'password': password
     }
@@ -87,7 +134,7 @@ async def authenticate_sso_user(username, password):
             return {"user_id": user[0], "user_name": user[1], "role": user[2]}
 ```
 
-### 3.3 API 端点实现 (`auth.py`)
+### 3.4 API 端点实现 (`auth.py`)
 ```python
 @router.post("/sso/login")
 async def sso_login(request: SSOLoginRequest):
@@ -107,7 +154,9 @@ const handleSSOLogin = async () => {
   try {
     const response = await axios.post('/api/portal/auth/sso/login', {
       username: username.value,
-      password: password.value
+      password: password.value,
+      // local（门户本地密码）/ ad（域账号）；不传则用服务端 SSO_LOGIN_DEFAULT_TYPE
+      login_type: ssoLoginType.value
     });
     // 存储用户信息和 API Key
     localStorage.setItem('user_info', JSON.stringify(response.data.data));

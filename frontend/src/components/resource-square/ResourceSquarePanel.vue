@@ -194,7 +194,7 @@ function applyKb(item: SquareKnowledgeItem) {
     resourceType: 'dataset',
     resourceId: item.dataset_id,
     resourceName: item.name,
-    resourceMeta: `知识库 · ${item.visibility === 'public' ? '公共级' : '部门级'} · ${
+    resourceMeta: `知识库 · ${item.visibility === 'public' ? '授权可见' : 'TEAM 级'} · ${
       item.doc_count === null ? '规模未知' : `${item.doc_count} 个文档`
     }`,
   }
@@ -253,7 +253,7 @@ onMounted(async () => {
     <!-- 标题由工作台的 tab 承担：这里再来一个「资源广场」就是同一句话写两遍 -->
     <div class="flex flex-wrap items-center justify-between gap-3">
       <p class="text-xs text-gray-500 dark:text-gray-400">
-        公共级与部门级知识库、平台数据集，找到需要的资源直接申请。
+        授权可见与 TEAM 级知识库、平台数据集，找到需要的资源直接申请。
       </p>
       <div class="flex flex-wrap gap-2 text-[11.5px] font-semibold">
         <span class="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 dark:border-gray-700 dark:bg-gray-800">
@@ -306,8 +306,8 @@ onMounted(async () => {
         class="rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
       >
         <option value="all">全部范围</option>
-        <option value="public">公共级</option>
-        <option value="team">部门级</option>
+        <option value="public">授权可见</option>
+        <option value="team">TEAM 级</option>
       </select>
       <div class="flex rounded-lg bg-gray-100 p-0.5 dark:bg-gray-700/60">
         <button
@@ -336,7 +336,7 @@ onMounted(async () => {
           {{ kbTotal }}
         </span>
         <span class="ml-auto hidden text-[11px] text-gray-400 sm:block">
-          公共级与部门级；个人私有库不出现，也不接受申请
+          授权可见与 TEAM 级；个人私有库不出现，也不接受申请
         </span>
       </div>
 

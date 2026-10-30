@@ -2330,10 +2330,35 @@ class AgentService:
                 from app.services.ai.prompt_assembler import (
                     resolve_effective_prompt_tool_names_for_turn,
                 )
+                from app.services.ai.session_tool_artifact import (
+                    load_session_tool_artifact,
+                )
+
+                # 提示词清单的「可复用结果」裁剪要与运行时同源，必须拿到同一份快照：
+                # 只看 turn_decision.reusable_result_mode 会漏掉「继续」「再查」这类
+                # 由 should_inject_session_artifact 判定的场景，导致提示词列出的工具
+                # 在实际 tools 里已被剔除。
+                session_artifact = None
+                artifact_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
+                if artifact_user_id and conversation_id:
+                    try:
+                        session_artifact = await load_session_tool_artifact(
+                            artifact_user_id,
+                            conversation_id,
+                            preferred_result_id=(
+                                str(getattr(turn_decision, "reusable_result_id", None) or "").strip()
+                                or None
+                            ),
+                        )
+                    except Exception as artifact_err:
+                        logger.warning(
+                            f"Error loading session artifact for prompt tool names: {artifact_err}"
+                        )
                 return await resolve_effective_prompt_tool_names_for_turn(
                     agent_config,
                     current_user_query=user_query,
                     turn_decision=turn_decision,
+                    session_artifact=session_artifact,
                 )
             except Exception as err:
                 logger.warning(f"Error in concurrent resolve_effective_prompt_tool_names_for_turn: {err}")

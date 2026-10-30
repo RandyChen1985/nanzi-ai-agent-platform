@@ -9,6 +9,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import KnowledgeFlowGuideBanner from '../components/knowledge/KnowledgeFlowGuideBanner.vue'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
+import { formatDate } from '../utils/date'
 import { copyToClipboard as copyText } from '../utils/clipboard'
 import DocumentViewer from '@/components/embed/DocumentViewer.vue'
 import {
@@ -33,7 +34,7 @@ type KnowledgeBase = {
   owner_dept_id?: number | null
   /**
    * 可见范围（真实权限语义，见后端 PermissionService）：
-   * public = 公共级（需授权）；team = 部门级（归属部门含下级自动只读）；private = 个人私有（仅创建人）
+   * public = 授权可见（需授权）；team = TEAM 级（归属部门含下级自动只读）；private = 个人私有（仅创建人）
    */
   visibility?: string
   tags?: string[]
@@ -112,7 +113,7 @@ type DeptDatasetGroup = {
   totalCount: number
   hasChildren: boolean
   isUnassigned: boolean
-  /** 平铺模式（公共级 / 个人私有 tab）：不渲染分组头，只列出库 */
+  /** 平铺模式（授权可见 / 个人私有 tab）：不渲染分组头，只列出库 */
   isFlat?: boolean
 }
 
@@ -120,10 +121,39 @@ type DeptDatasetGroup = {
 type VisibilityScope = 'public' | 'team' | 'private'
 
 const VISIBILITY_TABS: { key: VisibilityScope; label: string; hint: string }[] = [
-  { key: 'public', label: '公共级', hint: '需要授权才能访问，创建人自动可用' },
-  { key: 'team', label: '部门级', hint: '归属部门（含下级部门）成员自动只读' },
+  { key: 'public', label: '授权可见', hint: '默认只有创建人可用，其他人需显式授权' },
+  { key: 'team', label: 'TEAM 级', hint: '归属部门（含下级部门）成员自动只读' },
   { key: 'private', label: '个人私有', hint: '仅自己可见，不支持分配授权' },
 ]
+
+/**
+ * 顶部卡片底部的书架剪影：一排高低错落的书脊。
+ *
+ * 用固定种子的伪随机**生成**而不是手写几十个 <rect>：手写一改布局就得重排，
+ * 生成则只要调整几个区间；种子写死，所以每次刷新长得一模一样，不会"跳动"。
+ * 高度刻意收敛在 [28,34] —— 差异放开就成了城市天际线，读不出是书。
+ */
+const HERO_SHELF_SPINES = (() => {
+  let seed = 20261030
+  const rand = () => {
+    // Math.imul 才是 32 位整数乘法：直接 `seed * 1103515245` 早超了 2^53，
+    // 精度一丢，取模出来的序列就是乱的
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
+    return seed / 2147483648
+  }
+  const spines: { x: number; y: number; w: number; h: number; tilt: number }[] = []
+  let x = 2
+  while (x < 1400) {
+    const w = 8 + Math.round(rand() * 10)
+    const roll = rand()
+    const top = roll > 0.88 ? 58 + Math.round(rand() * 10) : roll > 0.78 ? 40 + Math.round(rand() * 8) : 28 + Math.round(rand() * 6)
+    // 偶尔一本斜靠上去，破掉整排等距的机械感
+    const tilt = rand() < 0.06 ? (rand() < 0.5 ? -11 : 12) : 0
+    spines.push({ x, y: top, w, h: 74 - top, tilt })
+    x += w + 1 + Math.round(rand() * 2)
+  }
+  return spines
+})()
 
 /**
  * 可见范围下拉的选项：下拉里双行展示「名称 + 适用场景」。
@@ -154,7 +184,7 @@ const VISIBILITY_SCOPE_OPTIONS: {
   },
   {
     key: 'team',
-    label: '部门级',
+    label: 'TEAM 级',
     hint: '归属部门（含下级部门）成员自动只读',
     scene: '部门内部资料、团队对齐',
     // 楼宇：代表部门/组织
@@ -164,8 +194,8 @@ const VISIBILITY_SCOPE_OPTIONS: {
   },
   {
     key: 'public',
-    label: '公共级',
-    hint: '需要授权才能访问，创建人自动可用',
+    label: '授权可见',
+    hint: '默认只有创建人可用，其他人需显式授权',
     scene: '跨部门共享、需要精确控制名单',
     // 地球：代表跨部门/可对外共享
     iconPath:
@@ -190,8 +220,8 @@ const visibilityOf = (dataset: KnowledgeBase): VisibilityScope => {
 /** 可见范围的中文标签（详情页/提示文案用） */
 const visibilityLabel = (dataset: KnowledgeBase): string => {
   const labels: Record<VisibilityScope, string> = {
-    public: '公共级',
-    team: '部门级',
+    public: '授权可见',
+    team: 'TEAM 级',
     private: '个人私有',
   }
   return labels[visibilityOf(dataset)]
@@ -224,7 +254,7 @@ const visibilityOptionOf = (scope: string): VisibilityScopeOption =>
   VISIBILITY_SCOPE_OPTIONS.find(option => option.key === scope) ?? FALLBACK_VISIBILITY_OPTION
 
 const { showToast } = useToast()
-const { hasPermission, isAdmin } = useUser()
+const { hasPermission, isAdmin, userInfo } = useUser()
 
 const loading = ref(false)
 const syncing = ref(false)
@@ -242,7 +272,7 @@ const departmentOptions = ref<DeptOptionNode[]>([])
 const departmentOptionsError = ref('')
 // 部门分组折叠状态，key 为分组 key（dept:<id> 或 unassigned）
 const collapsedDeptGroups = ref<Record<string, boolean>>({})
-// 左栏可见范围 tab：公共级 / 部门级 / 个人私有（对应 visibility 三档）
+// 左栏可见范围 tab：授权可见 / TEAM 级 / 个人私有（对应 visibility 三档）
 const activeVisibility = ref<VisibilityScope>('public')
 
 // 自定义下拉的展开状态：可见范围（两个弹窗共用）+ 解析算法（创建弹窗）。
@@ -659,7 +689,6 @@ const canManagePermissions = computed(() => {
   // 后端的 GET/POST /permissions 都要求**管理级**写权限（部门成员也不行）。
   return canManageDataset(selectedDataset.value)
 })
-const canSync = computed(() => canEdit.value)
 const isKnowledgeEnabled = computed(() => ragflowConfig.value?.knowledge_base_enabled !== false)
 const isEngineReady = computed(() => isKnowledgeEnabled.value && engineStatus.value === 'connected' && !loading.value)
 const engineStatusText = computed(() => {
@@ -935,19 +964,18 @@ const fetchDatasets = async (force = false) => {
     datasetsStale.value = response.data?.stale === true
     engineStatus.value = 'connected'
     
-    // 如果没有选中的节点，默认选中第一个 —— 但要优先落在当前 Tab 的范围内，
-    // 否则会出现「左侧公共级 0 个、右侧却显示着一个部门级知识库」的错位。
-    if (!selectedId.value && datasets.value.length > 0) {
-      const firstDataset = visibilityScopeDatasets.value[0] ?? datasets.value[0]
-      if (firstDataset) {
-        const scope = visibilityOf(firstDataset)
-        if (scope !== activeVisibility.value) activeVisibility.value = scope
-        selectDatasetNode(firstDataset)
-      }
-    } else if (selectedType.value === 'dataset' && selectedId.value) {
-      // 保持之前的选中，更新数据引用
+    // 进页面落在「概览」，不再默认选中第一个库。原先的默认选中必须顺手改
+    // activeVisibility 去对齐 tab，否则左侧「授权可见 0 个」右侧却显示一个
+    // TEAM 级库——为了兜这个错位才有的补偿逻辑，去掉默认选中后一起消失。
+    if (selectedType.value === 'dataset' && selectedId.value) {
+      // 刷新后保持之前的选中，只更新数据引用
       const found = datasets.value.find(d => (d.ragflow_dataset_id || d.id) === selectedId.value)
-      if (found) selectedDataset.value = found
+      if (found) {
+        selectedDataset.value = found
+      } else {
+        // 库被删除或已失去可见性：回落概览，别让右侧停在一个左侧不存在的节点上
+        showOverview()
+      }
     }
   } catch (err) {
     errorMessage.value = extractError(err)
@@ -1202,6 +1230,19 @@ const confirmRemovePermission = async () => {
   }
 }
 
+/**
+ * 回到概览态：右侧换成资产汇总，左侧「概览」入口高亮。
+ *
+ * 概览用 `selectedType === null` 表达，不另加一个 boolean：选中态本来就只有一个，
+ * 多一个 showOverview 标志就会出现「概览开着、某个库也选着」的矛盾状态。
+ */
+const showOverview = () => {
+  selectedType.value = null
+  selectedId.value = ''
+  selectedDataset.value = null
+  selectedDocument.value = null
+}
+
 // 选中知识库节点
 const selectDatasetNode = (dataset: KnowledgeBase) => {
   selectedType.value = 'dataset'
@@ -1277,6 +1318,19 @@ const datasetOwnerLabel = (dataset: KnowledgeBase): string => {
   return deptName(dataset.owner_dept_id) || dataset.owner || ''
 }
 
+/** 部门名称链（根 → 自身）。物化 path 存的是部门 id，转成名字才能给人看 */
+const deptNamePath = (id: number): string[] => {
+  const path = deptById.value.get(id)?.path || ''
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((seg) => deptById.value.get(Number(seg))?.name || '')
+    .filter(Boolean)
+}
+
+/** 选项 label 用全角空格表示层级缩进，回填到按钮上时要剥掉，否则文字会整体右移 */
+const stripDeptIndent = (label: string) => label.replace(/^[　\s]+/, '').trim()
+
 /** 原生 select 无法渲染树，用全角空格表达层级 */
 const deptSelectOptions = computed(() => {
   const rows = [...deptById.value.values()]
@@ -1284,6 +1338,7 @@ const deptSelectOptions = computed(() => {
     .map((node) => ({
       id: node.id,
       label: `${'　'.repeat(deptDepth(node.id))}${node.name}${node.status === 0 ? '（已停用）' : ''}`,
+      path: deptNamePath(node.id),
     }))
   return rows
 })
@@ -1291,14 +1346,36 @@ const deptSelectOptions = computed(() => {
 /** 部门下拉的展开态；与可见范围/解析算法共用「点空白处收起」的处理 */
 const deptMenuOpen = ref(false)
 
-/** 下拉选项：0 号是「未关联部门」，其后是带层级缩进的部门树 */
-const deptMenuOptions = computed(() => [
-  { id: 0, label: '未关联部门' },
-  ...deptSelectOptions.value,
-])
+/** 部门下拉的关键词；与开合态一起在弹窗打开、点空白处时重置 */
+const deptSearchKeyword = ref('')
 
-/** 选项 label 用全角空格表示层级缩进，回填到按钮上时要剥掉，否则文字会整体右移 */
-const stripDeptIndent = (label: string) => label.replace(/^[　\s]+/, '').trim()
+const deptSearching = computed(() => deptSearchKeyword.value.trim().length > 0)
+
+/**
+ * 下拉选项：0 号是「未关联部门」，其后是带层级缩进的部门树。
+ * 部门多时靠缩进逐层找太慢，支持按名称搜索——匹配时忽略缩进，
+ * 命中项在名称后补父级路径，层级信息不丢。
+ */
+const deptMenuOptions = computed(() => {
+  const all = [{ id: 0, label: '未关联部门', path: ['未关联部门'] }, ...deptSelectOptions.value]
+  const kw = deptSearchKeyword.value.trim().toLowerCase()
+  if (!kw) return all
+  return all.filter((option) => stripDeptIndent(option.label).toLowerCase().includes(kw))
+})
+
+const onDeptSearchInput = (event: Event) => {
+  // 过滤后条目变少，原来的滚动位置可能落在空白处，看起来像「搜不到」
+  const panel = (event.target as HTMLElement | null)
+    ?.closest('[data-dept-select]')
+    ?.querySelector('[data-dept-menu]')
+  panel?.scrollTo({ top: 0 })
+}
+
+/** 每次打开都重置关键词：否则上次搜过的词还在，列表看起来像「部门没了」 */
+const toggleDeptMenu = () => {
+  deptMenuOpen.value = !deptMenuOpen.value
+  if (deptMenuOpen.value) deptSearchKeyword.value = ''
+}
 
 /** 当前选中的部门名；0 / 已删除部门都回落到「未关联部门」 */
 const selectedDeptLabel = computed(() => {
@@ -1314,19 +1391,19 @@ const selectedDeptLabel = computed(() => {
  */
 const deptHintText = computed(() => {
   if (form.value.visibility !== 'team') {
-    // 已选的部门不会被清空，切回部门级即生效——这一点必须说明，否则用户以为白选了
+    // 已选的部门不会被清空，切回 TEAM 级即生效——这一点必须说明，否则用户以为白选了
     return form.value.ownerDeptId
-      ? '仅「部门级」需要归属部门；已选值会保留'
-      : '仅「部门级」需要归属部门'
+      ? '仅「TEAM 级」需要归属部门；已选值会保留'
+      : '仅「TEAM 级」需要归属部门'
   }
   if (!form.value.ownerDeptId) {
     if (form.value.ownerText) return `历史归属：${form.value.ownerText}`
-    return '未选部门会退化为公共级'
+    return '未选部门会退化为授权可见'
   }
   return '含下级部门，成员自动只读'
 })
 
-/** 未选部门的告警色：切回部门级却忘了选，是要提醒的 */
+/** 未选部门的告警色：切回 TEAM 级却忘了选，是要提醒的 */
 const deptHintClass = computed(() =>
   form.value.visibility === 'team' && !form.value.ownerDeptId && !form.value.ownerText
     ? 'text-amber-600'
@@ -1364,6 +1441,98 @@ const visibilityScopeDatasets = computed(() =>
 /** 每个 tab 的库数量（用全量而非搜索结果，避免搜索时角标乱跳） */
 const visibilityTabCount = (scope: VisibilityScope): number =>
   datasets.value.filter(dataset => visibilityOf(dataset) === scope).length
+
+/** 文档数口径：RAGFlow 直出 doc_count，本地元数据兜底 document_count */
+const docCountOf = (dataset: KnowledgeBase) =>
+  Number(dataset.doc_count ?? dataset.document_count ?? 0) || 0
+const agentRefCountOf = (dataset: KnowledgeBase) => Number(dataset.agent_ref_count) || 0
+
+/**
+ * 概览态的数据。
+ *
+ * 刻意按**全部可见范围**聚合，不跟 activeVisibility 走：切 tab 只是换左栏列表，
+ * 右侧数字若跟着跳，用户会以为总量变了；三档构成交给「可见范围分布」解释。
+ *
+ * 有意留白的地方：
+ * - 不做「解析中 / 失败文档数」——那要逐库拉文档列表（N 次请求），概览不该为一个
+ *   数字打出去一趟；
+ * - 不显示「上次同步时间」——后端没有这个字段，宁可不写也不编。
+ */
+const overviewStats = computed(() => {
+  const all = datasets.value
+  const totalDocs = all.reduce((sum, d) => sum + docCountOf(d), 0)
+  const totalChunks = all.reduce((sum, d) => sum + (Number(d.chunk_count) || 0), 0)
+  const totalRefs = all.reduce((sum, d) => sum + agentRefCountOf(d), 0)
+
+  const counts: Record<VisibilityScope, number> = { public: 0, team: 0, private: 0 }
+  all.forEach((d) => { counts[visibilityOf(d)] += 1 })
+
+  const updateAt = (d: KnowledgeBase) => new Date(d.update_time || d.updated_at || 0).getTime()
+  const recent = all.slice().sort((a, b) => updateAt(b) - updateAt(a)).slice(0, 5)
+  // 单独取一次：noUncheckedIndexedAccess 下 recent[0] 是可能 undefined 的
+  const latestDataset = recent[0]
+
+  const myName = String(userInfo.value?.user_name || '')
+
+  return {
+    total: all.length,
+    totalDocs,
+    totalChunks,
+    totalRefs,
+    counts,
+    referencedCount: all.filter((d) => agentRefCountOf(d) > 0).length,
+    mineCount: myName ? all.filter((d) => String(d.owner_user_name || '') === myName).length : 0,
+    hasMine: Boolean(myName),
+    missing: all.filter((d) => d.is_missing_in_ragflow),
+    empty: all.filter((d) => docCountOf(d) === 0),
+    unreferenced: all.filter((d) => agentRefCountOf(d) === 0),
+    recent,
+    avgDocs: all.length ? Math.round(totalDocs / all.length) : 0,
+    avgChunks: totalDocs ? Math.round((totalChunks / totalDocs) * 10) / 10 : 0,
+    latestText: latestDataset
+      ? formatDate(latestDataset.update_time || latestDataset.updated_at || '')
+      : '暂无',
+  }
+})
+
+/** 概览里各类角标百分比（分母为 0 时返回 0，避免 NaN 宽度） */
+const overviewPercent = (n: number) =>
+  overviewStats.value.total ? Math.round((n / overviewStats.value.total) * 100) : 0
+
+/** 「可见范围分布」三条：直接复用 tab 的定义，免得中文标签/图标出现第二份 */
+const overviewVisibilityRows = computed(() =>
+  VISIBILITY_TABS.map((tab) => ({
+    key: tab.key,
+    label: tab.label,
+    hint: tab.hint,
+    count: overviewStats.value.counts[tab.key],
+    percent: overviewPercent(overviewStats.value.counts[tab.key]),
+    iconPath: visibilityOptionOf(tab.key).iconPath,
+    iconClass: visibilityOptionOf(tab.key).iconClass,
+    barClass:
+      tab.key === 'public' ? 'bg-primary' : tab.key === 'team' ? 'bg-violet-500' : 'bg-amber-500',
+  }))
+)
+
+/** 「需要关注」总条数：三类互不排斥，同一个库可能既空又没被引用 */
+const overviewTodoCount = computed(
+  () =>
+    overviewStats.value.missing.length +
+    overviewStats.value.empty.length +
+    overviewStats.value.unreferenced.length
+)
+
+/** 从概览跳到详情：概览是全局聚合，目标库不一定在当前 tab 内，先对齐 tab 再选中 */
+const openDatasetFromOverview = (dataset: KnowledgeBase) => {
+  activeVisibility.value = visibilityOf(dataset)
+  selectDatasetNode(dataset)
+}
+
+/** 点「需要关注」的某一条：跳到该类里排在最前的库（空列表就什么也不做） */
+const openFirstOf = (list: KnowledgeBase[]) => {
+  const first = list[0]
+  if (first) openDatasetFromOverview(first)
+}
 
 /** 空态文案随 tab 变化：三档的「为什么这里是空的」并不相同 */
 const emptyVisibilityText = computed(() => {
@@ -1456,10 +1625,10 @@ watch(searchQuery, (value) => {
  * 左侧树的一级节点。
  *
  * 两个模式：
- * - **部门级 tab**：按业务归属部门分组。只渲染「子树内有知识库」的部门，但父部门
+ * - **TEAM 级 tab**：按业务归属部门分组。只渲染「子树内有知识库」的部门，但父部门
  *   即使自身没有库也会出现以保留层级；`totalCount` 是含下级部门的库数，用于徽标；
  *   `owner_dept_id` 为空（含历史自由文本）统一归入「未关联部门」。
- * - **公共级 / 个人私有 tab**：平铺（`isFlat`），不渲染分组头——这两档里部门归属
+ * - **授权可见 / 个人私有 tab**：平铺（`isFlat`），不渲染分组头——这两档里部门归属
  *   只是附带信息，多套一层分组反而增加点击成本。
  */
 const deptDatasetGroups = computed<DeptDatasetGroup[]>(() => {
@@ -3175,7 +3344,7 @@ const applyDeepLinkFromQuery = () => {
     (item) => (item.ragflow_dataset_id || item.id) === targetDatasetId
   )
   if (!dataset) return
-  // 目标库可能是部门级/私有：左侧 Tab 若停在公共级就根本看不到这个节点，
+  // 目标库可能是 TEAM 级/私有：左侧 Tab 若停在授权可见就根本看不到这个节点，
   // 表现为「右侧凭空选中了一个左侧不存在的库」。
   activeVisibility.value = visibilityOf(dataset)
   selectDatasetNode(dataset)
@@ -3234,8 +3403,35 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
     </div>
 
     <!-- Header Section -->
-    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm">
-      <div class="flex min-w-0 flex-col gap-1">
+    <div class="kb-hero relative overflow-hidden flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm">
+      <!--
+        书架剪影：贴着卡片下沿的一排书脊，只在视觉上交代「这里放的是知识库」。
+        pointer-events-none + aria-hidden —— 纯装饰，不接事件也不进无障碍树。
+      -->
+      <svg
+        class="kb-hero-art pointer-events-none"
+        viewBox="0 0 1400 80"
+        preserveAspectRatio="xMidYMax slice"
+        fill="none"
+        aria-hidden="true"
+      >
+        <g fill="currentColor">
+          <rect
+            v-for="(spine, i) in HERO_SHELF_SPINES"
+            :key="i"
+            :x="spine.x"
+            :y="spine.y"
+            :width="spine.w"
+            :height="spine.h"
+            rx="2"
+            :transform="spine.tilt ? `rotate(${spine.tilt} ${spine.x + spine.w / 2} 74)` : undefined"
+          />
+          <!-- 搁板：让这排书脊有落地感 -->
+          <rect x="0" y="74" width="1400" height="6" rx="3" />
+        </g>
+      </svg>
+
+      <div class="relative z-10 flex min-w-0 flex-col gap-1">
         <div class="flex items-center gap-3">
           <h1 class="text-2xl font-bold text-gray-900 tracking-tight">知识库管理</h1>
           <button
@@ -3262,10 +3458,11 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       </div>
       <!--
         操作区：窄屏一行图标，lg 起恢复文字按钮。
-        四个文字按钮并排会把中文挤成两三行，两行又占竖向空间，所以窄屏只留图标；
-        顺序仍是 引擎状态 → 同步 → 刷新 → 新建，图标按钮用 aria-label 保留语义。
+        三个文字按钮并排会把中文挤成两三行，两行又占竖向空间，所以窄屏只留图标；
+        顺序是 引擎状态 → 刷新 → 新建，图标按钮用 aria-label 保留语义。
+        同步按钮不在这里：概览面板右上角已有同一个入口，两处并排纯属重复。
       -->
-      <div class="flex shrink-0 items-center gap-2 lg:gap-3">
+      <div class="relative z-10 flex shrink-0 items-center gap-2 lg:gap-3">
         <!-- 引擎连接指示器 -->
         <div
           class="flex h-10 min-w-0 items-center gap-2 rounded-xl border px-2.5 text-xs transition-colors group relative cursor-pointer lg:h-auto lg:px-3 lg:py-1.5"
@@ -3297,19 +3494,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </div>
           </span>
         </div>
-        <button
-          v-if="canSync"
-          type="button"
-          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 transition-all hover:bg-emerald-100 disabled:opacity-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"
-          :aria-label="syncing ? '正在从 RAGFlow 同步' : '从 RAGFlow 同步'"
-          :disabled="syncing || !isEngineReady"
-          @click="syncFromRagFlow"
-        >
-          <svg class="h-5 w-5 lg:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 9.75v6.75m0 0l-3-3m3 3l3-3m-8.25 6a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
-          </svg>
-          <span class="hidden whitespace-nowrap text-sm font-medium lg:inline">{{ syncing ? '同步中...' : '从 RAGFlow 同步' }}</span>
-        </button>
         <button
           type="button"
           class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"
@@ -3445,7 +3629,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             >批量</button>
           </div>
 
-          <!-- 可见范围 tab：三档对应真实权限语义（公共级需授权 / 部门级自动只读 / 个人私有仅自己） -->
+          <!-- 可见范围 tab：三档对应真实权限语义（授权可见需授权 / TEAM 级自动只读 / 个人私有仅自己） -->
           <div class="mt-2 flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
             <button
               v-for="tab in VISIBILITY_TABS"
@@ -3477,6 +3661,37 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
         <!-- Scrollable tree region -->
         <div class="flex-1 overflow-y-auto p-4 space-y-1 select-none">
+          <!--
+            概览入口：默认选中的是它，而不是某个知识库。
+            批量模式下隐藏——那时注意力在勾选上，概览项只会挤掉列表空间。
+          -->
+          <button
+            v-if="!bulkSelectMode"
+            type="button"
+            class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-all"
+            :class="selectedType === null ? 'bg-primary/10 ring-1 ring-primary/20' : 'hover:bg-gray-50'"
+            @click="showOverview"
+          >
+            <svg
+              class="w-4 h-4 shrink-0"
+              :class="selectedType === null ? 'text-primary' : 'text-gray-400'"
+              fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true"
+            >
+              <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
+              <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
+              <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
+              <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
+            </svg>
+            <span class="min-w-0 flex-1">
+              <span
+                class="block text-[13px] font-semibold truncate"
+                :class="selectedType === null ? 'text-primary' : 'text-gray-800'"
+              >概览</span>
+              <span class="block text-[11px] text-gray-400 mt-0.5 truncate">资产、分布与待办</span>
+            </span>
+          </button>
+          <div v-if="!bulkSelectMode" class="h-px bg-gray-100 my-2" />
+
           <!-- 批量操作条：默认隐藏，点「批量管理」才出现，避免破坏现有紧凑布局 -->
           <div
             v-if="bulkSelectMode"
@@ -3529,7 +3744,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <div v-else-if="isSearchEmpty" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
             <span>没有匹配「{{ searchQuery }}」的知识库</span>
             <!--
-              搜索只在当前分类（公共级/部门级/个人私有）内进行：按 ID 搜索时，
+              搜索只在当前分类（授权可见/TEAM 级/个人私有）内进行：按 ID 搜索时，
               库若在别的分类里就会「查无此库」，不说清楚容易被误判成 ID 错了。
             -->
             <span class="text-[11px] text-gray-400 not-italic">
@@ -3560,7 +3775,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
           <div v-else class="space-y-1">
             <div v-for="group in deptDatasetGroups" :key="group.key" class="space-y-1">
-              <!-- 部门分组头：仅部门级 tab 渲染，公共级/个人私有 tab 是平铺列表 -->
+              <!-- 部门分组头：仅 TEAM 级 tab 渲染，授权可见/个人私有 tab 是平铺列表 -->
               <div
                 v-if="!group.isFlat && !isDeptGroupHidden(group)"
                 class="group/dept flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg cursor-pointer select-none hover:bg-gray-50 transition-all"
@@ -4601,10 +4816,10 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <p class="mt-2 rounded-lg bg-gray-50 px-2.5 py-2 text-[11px] leading-relaxed text-gray-500 select-none">
                 可见范围为
                 <span class="font-bold text-gray-800 uppercase px-1.5 py-0.5 rounded bg-white border border-gray-200 text-[10px]">{{ visibilityLabel(selectedDataset) }}</span>。
-                <span v-if="visibilityOf(selectedDataset) === 'public'">公共级：创建人自动可用，其他人<b>必须</b>在下方被显式授权才能访问（不会被自动放行）。</span>
-                <span v-else-if="visibilityOf(selectedDataset) === 'team'">部门级：{{ datasetOwnerLabel(selectedDataset) || '未设置归属部门' }} 的成员（<b>含下级部门</b>）自动获得只读权限<template v-if="selectedDatasetWritable">；也可在下方额外授权给其他用户/角色</template>。</span>
+                <span v-if="visibilityOf(selectedDataset) === 'public'">授权可见：创建人自动可用，其他人<b>必须</b>在下方被显式授权才能访问（不会被自动放行）。</span>
+                <span v-else-if="visibilityOf(selectedDataset) === 'team'">TEAM 级：{{ datasetOwnerLabel(selectedDataset) || '未设置归属部门' }} 的成员（<b>含下级部门</b>）自动获得只读权限<template v-if="selectedDatasetWritable">；也可在下方额外授权给其他用户/角色</template>。</span>
                 <span v-else>
-                  个人私有：仅你自己可见，<b>不支持</b>分配授权。如需共享，请先把可见范围改为公共级或部门级。
+                  个人私有：仅你自己可见，<b>不支持</b>分配授权。如需共享，请先把可见范围改为授权可见或 TEAM 级。
                   <template v-if="datasetPermissions.users.length || datasetPermissions.roles.length">
                     下面的历史授权在当前范围内<b>不生效</b>，可逐条清除。
                   </template>
@@ -4902,18 +5117,298 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
         </div>
 
-        <!-- Case 3: Empty State (Default) -->
-        <div v-else class="flex-1 flex flex-col items-center justify-center text-center p-8 space-y-4">
-          <div class="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
-            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 114 0v2m-4 0h4m-2 0h-2" />
-            </svg>
+        <!--
+          Case 3: 概览（默认态）
+          进来先看「我有什么、哪里不对」，点左侧某个库才进详情。
+          这里所有数字都来自列表接口已返回的字段，不额外请求。
+        -->
+        <div v-else class="flex-1 flex flex-col min-h-0">
+          <div class="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-gray-100">
+            <div class="min-w-0">
+              <h2 class="text-lg font-bold text-gray-900">知识库概览</h2>
+              <div class="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-gray-500">
+                <span>当前可见范围 <strong class="text-gray-700">{{ overviewStats.total }}</strong> 个知识库</span>
+                <span class="text-gray-300">·</span>
+                <span>{{ overviewStats.totalDocs.toLocaleString() }} 篇文档</span>
+                <span class="text-gray-300">·</span>
+                <span>最近更新 {{ overviewStats.latestText }}</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button
+                v-if="canCreate"
+                type="button"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all"
+                @click="openCreate"
+              >新建知识库</button>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:border-primary hover:text-primary transition-all disabled:opacity-50"
+                :disabled="syncing"
+                @click="syncFromRagFlow"
+              >从 RAGFlow 同步</button>
+            </div>
           </div>
-          <div>
-            <h3 class="text-base font-bold text-gray-900">请选择节点</h3>
-            <p class="text-sm text-gray-500 mt-1 max-w-xs">在左侧树形导航中选中知识库或者具体文档，可在右侧显示详情并进行业务操作。</p>
+
+          <!-- 引擎断开时概览读的是缓存，必须说清楚，否则会让人以为数据是新的 -->
+          <div
+            v-if="engineStatus !== 'connected'"
+            class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800"
+          >
+            知识库引擎当前未连接，{{ engineStatus === 'checking' ? '正在检查连接状态' : '下列数字来自上一次成功拉取的缓存' }}。
+          </div>
+
+          <!-- 一个库都没有：先引导建库，别摆一排 0 -->
+          <div v-if="overviewStats.total === 0" class="flex-1 flex flex-col items-center justify-center text-center gap-3 py-16">
+            <div class="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+              <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 114 0v2m-4 0h4" />
+              </svg>
+            </div>
+            <p class="text-sm font-semibold text-gray-900">还没有可见的知识库</p>
+            <p class="text-xs text-gray-500 max-w-xs">新建一个知识库并上传文档，智能体就能检索到里面的内容。</p>
+            <button
+              v-if="canCreate"
+              type="button"
+              class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all"
+              @click="openCreate"
+            >新建知识库</button>
+          </div>
+
+          <div v-else class="flex-1 overflow-y-auto mt-4 pr-1">
+            <!-- KPI 四卡 -->
+            <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
+              <div class="rounded-xl border border-gray-200 bg-gradient-to-b from-gray-50/70 to-white p-3.5">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+                      <ellipse cx="12" cy="6" rx="8" ry="3.2" />
+                      <path d="M4 6v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2V6M4 12v6c0 1.8 3.6 3.2 8 3.2s8-1.4 8-3.2v-6" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="text-2xl font-bold text-gray-900 tabular-nums leading-none">{{ overviewStats.total }}</div>
+                <div class="text-xs text-gray-500 mt-1">可见知识库</div>
+                <div class="text-[11px] text-gray-400 mt-2 pt-2 border-t border-dashed border-gray-100">
+                  <template v-if="overviewStats.hasMine">其中 <strong class="text-gray-600">{{ overviewStats.mineCount }}</strong> 个由我创建</template>
+                  <template v-else>跨 3 档可见范围</template>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-gray-200 bg-gradient-to-b from-gray-50/70 to-white p-3.5">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+                      <path d="M6 3.5h7l5 5v12a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 015 20.5v-16A1 1 0 016 3.5z" stroke-linejoin="round" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="text-2xl font-bold text-gray-900 tabular-nums leading-none">{{ overviewStats.totalDocs.toLocaleString() }}</div>
+                <div class="text-xs text-gray-500 mt-1">文档总数</div>
+                <div class="text-[11px] text-gray-400 mt-2 pt-2 border-t border-dashed border-gray-100">
+                  平均每库 <strong class="text-gray-600">{{ overviewStats.avgDocs }}</strong> 篇
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-gray-200 bg-gradient-to-b from-gray-50/70 to-white p-3.5">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="w-7 h-7 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+                      <path d="M4 7h16M4 12h10M4 17h13" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="text-2xl font-bold text-gray-900 tabular-nums leading-none">{{ overviewStats.totalChunks.toLocaleString() }}</div>
+                <div class="text-xs text-gray-500 mt-1">切片总数</div>
+                <div class="text-[11px] text-gray-400 mt-2 pt-2 border-t border-dashed border-gray-100">
+                  平均每篇 <strong class="text-gray-600">{{ overviewStats.avgChunks }}</strong> 片
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-gray-200 bg-gradient-to-b from-gray-50/70 to-white p-3.5">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+                      <rect x="4" y="8" width="16" height="12" rx="3" />
+                      <path d="M12 4v4M9 14h.01M15 14h.01" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                </div>
+                <div class="text-2xl font-bold text-gray-900 tabular-nums leading-none">{{ overviewStats.referencedCount }}</div>
+                <div class="text-xs text-gray-500 mt-1">被智能体引用</div>
+                <div class="text-[11px] text-gray-400 mt-2 pt-2 border-t border-dashed border-gray-100">
+                  共 <strong class="text-gray-600">{{ overviewStats.totalRefs }}</strong> 处引用关系
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+              <!-- 左：最近更新 + 分布 -->
+              <div class="xl:col-span-2 space-y-4">
+                <div class="rounded-xl border border-gray-200 p-3.5">
+                  <div class="flex items-center justify-between">
+                    <h3 class="text-[13px] font-bold text-gray-900">最近更新</h3>
+                    <span class="text-[11px] text-gray-400">按更新时间排序</span>
+                  </div>
+                  <div class="mt-1.5 -mx-1">
+                    <button
+                      v-for="ds in overviewStats.recent"
+                      :key="ds.ragflow_dataset_id || ds.id"
+                      type="button"
+                      class="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-gray-50 text-left transition-colors"
+                      @click="openDatasetFromOverview(ds)"
+                    >
+                      <span class="min-w-0 flex-1">
+                        <span class="flex items-center gap-1.5 min-w-0">
+                          <span class="text-[13px] font-medium text-gray-900 truncate">{{ ds.platform_name || ds.name || '未命名知识库' }}</span>
+                          <span
+                            class="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border font-semibold"
+                            :class="visibilityBadgeClass(ds)"
+                          >{{ visibilityLabel(ds) }}</span>
+                        </span>
+                        <span class="block text-[11px] text-gray-400 mt-0.5 truncate">
+                          {{ docCountOf(ds) }} 篇文档 · 归属 {{ ds.owner_user_name || ds.created_by || '未知' }}
+                        </span>
+                      </span>
+                      <span class="text-[11px] text-gray-500 shrink-0">{{ formatDate(ds.update_time || ds.updated_at || '') }}</span>
+                      <svg class="w-3 h-3 text-gray-300 shrink-0" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
+                        <path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="rounded-xl border border-gray-200 p-3.5">
+                  <div class="flex items-center justify-between">
+                    <h3 class="text-[13px] font-bold text-gray-900">可见范围分布</h3>
+                  </div>
+                  <p class="text-[11px] text-gray-400 mt-0.5">决定谁能在检索与智能体里用到这些知识</p>
+                  <div class="mt-3 space-y-2.5">
+                    <div v-for="row in overviewVisibilityRows" :key="row.key" class="flex items-center gap-2.5">
+                      <span class="w-20 shrink-0 flex items-center gap-1 text-[11px] text-gray-600" :title="row.hint">
+                        <svg class="w-3 h-3 shrink-0" :class="row.iconClass" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                          <path :d="row.iconPath" />
+                        </svg>
+                        {{ row.label }}
+                      </span>
+                      <span class="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                        <span class="block h-full rounded-full" :class="row.barClass" :style="{ width: `${row.percent}%` }"></span>
+                      </span>
+                      <span class="w-20 shrink-0 text-right text-[11px] text-gray-500 tabular-nums">
+                        <strong class="text-gray-700">{{ row.count }}</strong> · {{ row.percent }}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 右：需要关注 + 引擎与配额 -->
+              <div class="space-y-4">
+                <div class="rounded-xl border border-gray-200 p-3.5">
+                  <div class="flex items-center justify-between">
+                    <h3 class="text-[13px] font-bold text-gray-900">需要关注</h3>
+                    <span class="text-[11px] text-gray-400">共 {{ overviewTodoCount }} 项</span>
+                  </div>
+                  <div class="mt-2.5 space-y-2">
+                    <button
+                      v-if="overviewStats.missing.length"
+                      type="button"
+                      class="w-full flex items-start gap-2 p-2 rounded-lg bg-red-50 border border-red-100 hover:bg-red-100/70 text-left transition-colors"
+                      @click="openFirstOf(overviewStats.missing)"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 mt-0.5 text-red-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path d="M12 4.5l8.5 15H3.5l8.5-15z" stroke-linejoin="round" />
+                        <path d="M12 10v4M12 17h.01" stroke-linecap="round" />
+                      </svg>
+                      <span class="min-w-0">
+                        <span class="block text-[12px] font-semibold text-red-700">{{ overviewStats.missing.length }} 个知识库在 RAGFlow 侧已失效</span>
+                        <span class="block text-[11px] text-red-600/80 mt-0.5 leading-snug">本地配置残留，检索会静默落空，建议清理或重建</span>
+                      </span>
+                    </button>
+
+                    <button
+                      v-if="overviewStats.empty.length"
+                      type="button"
+                      class="w-full flex items-start gap-2 p-2 rounded-lg bg-amber-50 border border-amber-100 hover:bg-amber-100/70 text-left transition-colors"
+                      @click="openFirstOf(overviewStats.empty)"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 8v5M12 16h.01" stroke-linecap="round" />
+                      </svg>
+                      <span class="min-w-0">
+                        <span class="block text-[12px] font-semibold text-amber-800">{{ overviewStats.empty.length }} 个知识库还没有文档</span>
+                        <span class="block text-[11px] text-amber-700/80 mt-0.5 leading-snug">
+                          {{ overviewStats.empty.slice(0, 2).map(d => d.platform_name || d.name || '未命名').join('、') }}{{ overviewStats.empty.length > 2 ? ' 等' : '' }} — 引用它们的智能体检索不到内容
+                        </span>
+                      </span>
+                    </button>
+
+                    <button
+                      v-if="overviewStats.unreferenced.length"
+                      type="button"
+                      class="w-full flex items-start gap-2 p-2 rounded-lg bg-amber-50 border border-amber-100 hover:bg-amber-100/70 text-left transition-colors"
+                      @click="openFirstOf(overviewStats.unreferenced)"
+                    >
+                      <svg class="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 8v5M12 16h.01" stroke-linecap="round" />
+                      </svg>
+                      <span class="min-w-0">
+                        <span class="block text-[12px] font-semibold text-amber-800">{{ overviewStats.unreferenced.length }} 个知识库未被任何智能体引用</span>
+                        <span class="block text-[11px] text-amber-700/80 mt-0.5 leading-snug">要么还没接入，要么是废弃库，可按需清理</span>
+                      </span>
+                    </button>
+
+                    <p v-if="overviewTodoCount === 0" class="text-[11px] text-gray-400 py-1">
+                      没有需要处理的项。
+                    </p>
+                  </div>
+                </div>
+
+                <div class="rounded-xl border border-gray-200 p-3.5">
+                  <h3 class="text-[13px] font-bold text-gray-900">引擎与配额</h3>
+                  <div class="mt-3 space-y-2.5 text-[12px]">
+                    <div class="flex items-center justify-between">
+                      <span class="flex items-center gap-1.5 text-gray-500">
+                        <span
+                          class="w-1.5 h-1.5 rounded-full"
+                          :class="engineStatus === 'connected' ? 'bg-emerald-500' : engineStatus === 'checking' ? 'bg-gray-300' : 'bg-amber-500'"
+                        ></span>
+                        RAGFlow 引擎
+                      </span>
+                      <span
+                        class="font-semibold"
+                        :class="engineStatus === 'connected' ? 'text-emerald-600' : engineStatus === 'checking' ? 'text-gray-400' : 'text-amber-600'"
+                      >{{ engineStatus === 'connected' ? '已连接' : engineStatus === 'checking' ? '检查中' : '未连接' }}</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-500">我创建的知识库</span>
+                      <span class="font-semibold text-gray-800 tabular-nums">
+                        {{ overviewStats.hasMine ? `${overviewStats.mineCount} 个` : '—' }}
+                      </span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-500">单库文档上限</span>
+                      <span class="font-semibold text-gray-800 tabular-nums">2,000 篇</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-500">已建切片</span>
+                      <span class="font-semibold text-gray-800 tabular-nums">{{ overviewStats.totalChunks.toLocaleString() }}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="mt-3 w-full px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-[11px] font-semibold text-gray-600 hover:border-primary hover:text-primary transition-all disabled:opacity-50"
+                    :disabled="loading"
+                    @click="fetchDatasets(true)"
+                  >刷新状态</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+
 
       </section>
     </div>
@@ -4995,9 +5490,9 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             <svg class="w-3.5 h-3.5 shrink-0 mt-px" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
             </svg>
-            <span>当前为<b>个人私有</b>：建好后只有你能看到，其他人无法访问、也不能被授权。要共享请先改成部门级或公共级。</span>
+            <span>当前为<b>个人私有</b>：建好后只有你能看到，其他人无法访问、也不能被授权。要共享请先改成 TEAM 级或授权可见。</span>
           </p>
-          <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员（含下级部门）会自动获得只读权限；未选归属部门时会退化为公共级。</p>
+          <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员（含下级部门）会自动获得只读权限；未选归属部门时会退化为授权可见。</p>
           <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人需要你在详情页「引用与授权」里点「分配授权成员」后才能访问。</p>
         </div>
         <div class="grid grid-cols-2 gap-3">
@@ -5008,7 +5503,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 type="button"
                 :disabled="form.visibility !== 'team'"
                 class="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-left bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:bg-gray-50 disabled:cursor-not-allowed disabled:hover:border-gray-200"
-                @click="deptMenuOpen = !deptMenuOpen"
+                @click="toggleDeptMenu"
               >
                 <span class="min-w-0 flex-1">
                   <span class="block text-sm font-semibold truncate" :class="form.visibility === 'team' ? 'text-gray-800' : 'text-gray-400'">{{ selectedDeptLabel }}</span>
@@ -5018,7 +5513,20 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
-              <div v-if="deptMenuOpen && form.visibility === 'team'" class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+              <div v-if="deptMenuOpen && form.visibility === 'team'" data-dept-menu class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+                <div class="sticky top-0 z-10 -mx-1 -mt-1 rounded-t-xl bg-white px-1 pb-1.5 pt-1">
+                  <input
+                    v-model="deptSearchKeyword"
+                    type="search"
+                    placeholder="搜索部门"
+                    class="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    @input="onDeptSearchInput"
+                    @keydown.esc.stop="deptSearchKeyword = ''"
+                  />
+                </div>
+                <div v-if="!deptMenuOptions.length" class="px-3 py-3 text-center text-xs text-gray-400">
+                  没有匹配「{{ deptSearchKeyword.trim() }}」的部门
+                </div>
                 <button
                   v-for="option in deptMenuOptions"
                   :key="option.id"
@@ -5026,7 +5534,12 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   class="w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors"
                   :class="form.ownerDeptId === option.id ? 'bg-primary/5 text-primary font-semibold' : 'text-gray-700 hover:bg-gray-50'"
                   @click="form.ownerDeptId = option.id; deptMenuOpen = false"
-                >{{ option.label }}</button>
+                >
+                  <span>{{ deptSearching ? stripDeptIndent(option.label) : option.label }}</span>
+                  <span v-if="deptSearching && option.path.length > 1" class="ml-1.5 text-[11px] text-gray-400">
+                    {{ option.path.slice(0, -1).join(' / ') }}
+                  </span>
+                </button>
               </div>
             </div>
             <p v-if="departmentOptionsError" class="mt-1 text-[11px] text-amber-600">{{ departmentOptionsError }}</p>
@@ -5215,7 +5728,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               </div>
             </div>
             <p v-if="form.visibility === 'private'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">仅你自己可用；个人私有库不支持分配授权。</p>
-            <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员会自动获得只读权限，也可额外分配授权；未选归属部门时退化为公共级，更换归属部门会立即改变可访问人群。</p>
+            <p v-else-if="form.visibility === 'team'" class="mt-1.5 text-[11px] text-gray-500 leading-snug">归属部门的成员会自动获得只读权限，也可额外分配授权；未选归属部门时退化为授权可见，更换归属部门会立即改变可访问人群。</p>
             <p v-else class="mt-1.5 text-[11px] text-gray-500 leading-snug">创建人之外的人必须在这里「分配授权成员」后才能访问。</p>
             <!-- 改成个人私有会让已有授权失效，必须显式提示，避免静默撤权 -->
             <p
@@ -5237,7 +5750,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 type="button"
                 :disabled="form.visibility !== 'team'"
                 class="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-left bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:bg-gray-50 disabled:cursor-not-allowed disabled:hover:border-gray-200"
-                @click="deptMenuOpen = !deptMenuOpen"
+                @click="toggleDeptMenu"
               >
                 <span class="min-w-0 flex-1">
                   <span class="block text-sm font-semibold truncate" :class="form.visibility === 'team' ? 'text-gray-800' : 'text-gray-400'">{{ selectedDeptLabel }}</span>
@@ -5247,7 +5760,20 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
-              <div v-if="deptMenuOpen && form.visibility === 'team'" class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+              <div v-if="deptMenuOpen && form.visibility === 'team'" data-dept-menu class="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg p-1 space-y-0.5">
+                <div class="sticky top-0 z-10 -mx-1 -mt-1 rounded-t-xl bg-white px-1 pb-1.5 pt-1">
+                  <input
+                    v-model="deptSearchKeyword"
+                    type="search"
+                    placeholder="搜索部门"
+                    class="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    @input="onDeptSearchInput"
+                    @keydown.esc.stop="deptSearchKeyword = ''"
+                  />
+                </div>
+                <div v-if="!deptMenuOptions.length" class="px-3 py-3 text-center text-xs text-gray-400">
+                  没有匹配「{{ deptSearchKeyword.trim() }}」的部门
+                </div>
                 <button
                   v-for="option in deptMenuOptions"
                   :key="option.id"
@@ -5255,7 +5781,12 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   class="w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors"
                   :class="form.ownerDeptId === option.id ? 'bg-primary/5 text-primary font-semibold' : 'text-gray-700 hover:bg-gray-50'"
                   @click="form.ownerDeptId = option.id; deptMenuOpen = false"
-                >{{ option.label }}</button>
+                >
+                  <span>{{ deptSearching ? stripDeptIndent(option.label) : option.label }}</span>
+                  <span v-if="deptSearching && option.path.length > 1" class="ml-1.5 text-[11px] text-gray-400">
+                    {{ option.path.slice(0, -1).join(' / ') }}
+                  </span>
+                </button>
               </div>
             </div>
             <p v-if="departmentOptionsError" class="mt-1 text-[11px] text-amber-600">{{ departmentOptionsError }}</p>
@@ -5544,7 +6075,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <button type="button" class="px-3 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90" @click="fetchDiscover(1)">搜索</button>
         </div>
         <p class="text-[11px] text-gray-400 leading-relaxed">
-          这里只列公共级与部门级知识库，且只列你还没有权限的库（申请中的也算没有）。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
+          这里只列授权可见与 TEAM 级知识库，且只列你还没有权限的库（申请中的也算没有）。个人私有库既不会出现在这里，也无法申请——它的可见范围由归属人自己决定。
         </p>
         <p class="text-[11px] text-gray-400 leading-relaxed">
           没有知识库管理菜单？可以在「我的工作台 › 资源广场」看到完整目录（含已授权的库）并提交申请。
@@ -5563,7 +6094,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <span
                     class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
                     :class="item.visibility === 'public' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'"
-                  >{{ item.visibility === 'public' ? '公共级' : '部门级' }}</span>
+                  >{{ item.visibility === 'public' ? '授权可见' : 'TEAM 级' }}</span>
                 </div>
                 <p class="mt-1 text-xs text-gray-500 line-clamp-2 leading-relaxed">{{ item.description || '暂无描述' }}</p>
 
@@ -5888,7 +6419,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             这是<b>个人私有</b>库：原归属人会立刻失去访问，之后只有新归属人能看到。
           </template>
           <template v-else>
-            公共级 / 部门级的授权名单与部门可见范围不变，只是管理权换人。
+            授权可见 / TEAM 级的授权名单与部门可见范围不变，只是管理权换人。
           </template>
         </div>
 
@@ -6316,6 +6847,34 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 </template>
 
 <style scoped>
+/* ---------- 顶部标题卡的书架剪影 ---------- */
+/* 底色仍是 bg-white，这里只叠一层极淡光晕，卡片右上角略偏蓝 */
+.kb-hero {
+  background-image:
+    radial-gradient(120% 160% at 88% -30%, rgba(22, 119, 255, 0.07) 0%, rgba(22, 119, 255, 0) 58%),
+    linear-gradient(105deg, #ffffff 0%, #fdfeff 46%, #f7faff 100%);
+}
+
+.kb-hero-art {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 100%;
+  height: 46px;
+  color: #1677ff;
+  opacity: 0.11;
+  /* 两端渐隐，避免书脊在卡片直角处被切断 */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
+}
+
+/* 窄屏卡片变高、内容变窄，剪影压到 34px 免得压住副标题 */
+@media (max-width: 640px) {
+  .kb-hero-art { height: 34px; opacity: 0.09; }
+}
+
 /* slide-down vertical transitions */
 .slide-down-enter-active,
 .slide-down-leave-active {

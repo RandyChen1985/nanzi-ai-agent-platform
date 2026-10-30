@@ -64,10 +64,16 @@ def test_registry_lists_group_column_and_cell():
 
 
 def test_registry_form_collects_group_name_with_reusable_options():
+    """表单要能复用已有分组名，避免同一个域被写成好几个组。
+
+    实现从 `<input list=datalist>` 换成了共用的 GroupSelect（见
+    test_group_input_uses_shared_group_select）：意图不变——候选仍然来自
+    已有分组，只是现在看得见、还能直接新建。
+    """
     source = _source(REGISTRY)
     assert "toolForm.group_name" in source
-    assert "datalist" in source
-    assert "existingGroupNames" in source, "表单需要复用已有分组名，避免同域被写成多个组"
+    assert "<GroupSelect" in source
+    assert ":options=\"groupFilterOptions.groups.map" in source, "候选必须来自已有分组"
 
 
 def test_registry_filters_by_group_including_ungrouped():
@@ -163,9 +169,10 @@ def test_registry_group_filter_shows_counts():
     source = _source(REGISTRY)
     assert "groupFilterOptions" in source
     # 三个选项都要带计数，否则「每组多少 / 还剩多少没归类」又看不见了
-    assert ">分组：全部 ({{" in source
-    assert ">未分组 ({{" in source
-    assert "{{ name }} ({{ count }})" in source
+    # （筛选已收进面板，这里的断言跟着面板里的文案走）
+    assert "全部分组（{{ groupFilterOptions.all }}）" in source
+    assert "未分组（{{ groupFilterOptions.ungrouped }}）" in source
+    assert "{{ name }}（{{ count }}）" in source
 
 
 def test_registry_group_badge_filters_on_click():
@@ -208,12 +215,14 @@ def test_group_view_can_select_a_whole_group():
 
 
 def test_registry_toolbar_keeps_title_on_one_line():
-    """控件增多时曾把「API 工具注册表」挤成两行、把「+ 添加工具」挤到下一行。
+    """控件增多时曾把标题挤成两行、把「+ 添加工具」挤到下一行。
 
     标题必须禁止折行，筛选控件必须独占一行且搜索框自适应吃满剩余宽度。
+    页面已从「API 工具注册表」扩展为「工具注册表」（新增脚本工具 tab），
+    但这条布局约束不变。
     """
     source = _source(REGISTRY)
-    assert 'text-lg font-medium text-gray-900 whitespace-nowrap">API 工具注册表' in source
+    assert 'text-lg font-medium text-gray-900 whitespace-nowrap">工具注册表' in source
     assert "min-w-[12rem] flex-1" in source
 
 

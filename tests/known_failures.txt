@@ -27,19 +27,9 @@
 # --- A-断言过时 ---
 tests/ai/runners/test_auto_upgrade_federated.py::test_federated_graceful_degradation  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_auto_upgrade_federated.py::test_federated_turn_type_enters_federated_executor_without_cross_wording  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_context_action_can_answer_without_sql  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_does_not_issue_derived_evidence_for_history_only_reuse  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_execute_repairs_sql_error_before_final_answer  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_execute_streams_agentscope_native_text  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_marks_no_authorized_schema_and_blocks_sql_before_schema  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_reports_missing_reusable_result  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_synthesizes_after_repeated_sql_gate  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_tool_loop_fuse_triggers_on_global_limit  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_empty_diagnostic_sql_does_not_mark_business_sql_complete  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_schema_keyword_planner_derives_keywords_from_intent_when_llm_keywords_invalid  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_unqualified_columns_for_single_table_to_avoid_dialect_false_positives  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_blocks_unknown_alias_column_before_execution  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/test_federated_subquery_gates.py::test_validate_federated_subquery_blocks_static_risk_sql  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/test_p1_optimizations.py::test_knowledge_turn_forces_search_before_answer  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/test_request_semantics.py::test_chatbi_state_hint_exposes_semantics_and_evidence_metadata  # A-断言过时: 断言与当前实现漂移，待逐项复核
@@ -59,7 +49,6 @@ tests/services/ai/test_router_service.py::test_route_query_retry_placeholder_gen
 tests/services/ai/test_router_service.py::test_should_inherit_data_agent_session_generalized  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/services/mcp/test_platform_config.py::test_platform_mcp_config_has_singleton_fields_and_safe_defaults  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/services/test_quota_service.py::test_resolve_effective_limit_batches_role_policies  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/test_dev_sh_daemon_controls.py::test_dev_sh_daemon_start_persists_pid_file  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_dev_sh_python_bootstrap.py::test_dev_sh_bootstraps_uv_python_and_requirements_on_first_run  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_federated_executor.py::test_cross_dataset_schema_enrichment_filters_unauthorized_targets  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_federated_executor.py::test_federated_executor_applies_empty_filter_auto_repair_on_zero_row_subquery  # A-断言过时: 断言与当前实现漂移，待逐项复核
@@ -74,23 +63,13 @@ tests/test_federated_executor.py::test_federated_executor_repairs_subquery_time_
 tests/test_federated_executor.py::test_federated_executor_security_error_does_not_degrade_secondary_query  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_memory_ebbinghaus_consolidation.py::test_consolidate_user_memories_clustering_and_merging  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/test_memory_session_summary.py::test_memory_search_uses_context_user_id  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/test_personal_skills_routes.py::test_platform_skill_list_is_readable_without_management_permission  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/utils/test_sql_rewriter.py::test_unqualified_all_filter_skips_multi_table_subquery_scope  # A-断言过时: 断言与当前实现漂移，待逐项复核
 
 # --- B-依赖升级适配 ---
-tests/ai/executors/test_chat_executor.py::test_agent_service_resumes_agentscope_ask_from_snapshot  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
-tests/ai/executors/test_chat_executor.py::test_general_runner_emits_permission_required_for_agentscope_ask_tool  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
-tests/ai/executors/test_chat_executor.py::test_general_runner_keeps_tool_preamble_as_process_narration  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
-tests/ai/executors/test_chat_executor.py::test_knowledge_runner_with_rag_but_no_citations_intercepts_hallucination  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
-tests/ai/executors/test_chat_executor.py::test_permission_resume_restores_user_context_for_user_scoped_tools  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
-tests/ai/runtime/test_agentscope_v2_0_6_features.py::test_build_runtime_middlewares_includes_permission_and_stats  # B-依赖升级适配: AgentScope 运行时特性断言与 2.0.9 不一致
-tests/ai/runtime/test_agentscope_v2_0_6_features.py::test_load_injection_config_respects_system_flag  # B-依赖升级适配: AgentScope 运行时特性断言与 2.0.9 不一致
 
 # --- C-环境与配置 ---
 
 # --- D-测试状态污染 ---
 tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_table_in_user_permission_set  # D-测试状态污染: 单独运行通过、全量合跑必失败（受其他用例状态污染），非断言漂移
 tests/ai/tools/test_data_api.py::test_call_external_sql_api_error  # D-测试状态污染: 单独运行通过、全量合跑必失败（受其他用例状态污染），非断言漂移
-tests/api/portal/test_skill_publication_routes.py::test_admin_publication_review_routes_exist  # D-测试状态污染: 技能发布状态残留
-tests/api/portal/test_skill_publication_routes.py::test_personal_publication_submit_route_exists  # D-测试状态污染: 技能发布状态残留
 

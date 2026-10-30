@@ -13,6 +13,8 @@ import httpx
 from app.core.dependencies import require_admin, require_permission, require_api_key
 from app.core.orm import get_db_session
 from app.models.tool import SysApiTool
+from app.models.script_tool import SysScriptTool
+from app.services.ai.tools.script_tool_factory import merge_effective_script_tools
 from app.models.mcp import McpServer, McpToolCache
 from app.schemas.tool import (
     SysApiToolBatchGroupRequest,
@@ -27,6 +29,7 @@ from app.services.ai.tools.forbidden_catalog import (
     BUILTIN_FORBIDDEN_TOOL_CANDIDATES,
     api_tool_group,
     mcp_tool_group,
+    script_tool_group,
     ForbiddenToolCandidate,
     merge_forbidden_tool_candidates,
 )
@@ -307,6 +310,33 @@ async def list_forbidden_tool_catalog(
                 description=str(tool.description or "自定义 API 工具"),
                 category="api",
                 aliases=(name,),
+                group_key=group_key,
+                group=group,
+            )
+        )
+    try:
+        script_rows = (
+            await db.execute(select(SysScriptTool).order_by(SysScriptTool.created_at.desc()))
+        ).scalars().all()
+    except Exception:  # noqa: BLE001 - 迁移漏跑时不能让整个禁用目录 500
+        # 与 list_script_tools 同口径：表不存在时仍返回内置脚本候选。
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        script_rows = []
+    for script in merge_effective_script_tools(list(script_rows)):
+        if not script.is_active:
+            # 停用的工具本来就不会被智能体拿到，列进「可禁用」只会让管理员困惑
+            continue
+        group_key, group = script_tool_group(script.group_name)
+        dynamic_candidates.append(
+            ForbiddenToolCandidate(
+                id=script.name,
+                label=script.name,
+                description=str(script.description or "脚本工具"),
+                category="script",
+                aliases=(script.name,),
                 group_key=group_key,
                 group=group,
             )

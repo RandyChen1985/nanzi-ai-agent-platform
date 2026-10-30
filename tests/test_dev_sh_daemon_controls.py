@@ -99,7 +99,10 @@ PYTHON
 esac
 """,
     )
-    _write_executable(fake_bin / "npm", "#!/bin/sh\nexit 0\n")
+    # dev.sh 启动前会校验 Node.js / npm 版本（Vite 7 要求 >=22.12.0）。
+    # 这里给满足阈值的假命令，避免测试依赖宿主机是否装了 Node.js。
+    _write_executable(fake_bin / "node", "#!/bin/sh\nprintf '%s\\n' 'v22.12.0'\n")
+    _write_executable(fake_bin / "npm", "#!/bin/sh\nprintf '%s\\n' '10.9.0'\n")
     _write_executable(fake_bin / "npx", "#!/bin/sh\nexit 0\n")
     _write_executable(fake_bin / "lsof", "#!/bin/sh\nexit 1\n")
     _write_executable(

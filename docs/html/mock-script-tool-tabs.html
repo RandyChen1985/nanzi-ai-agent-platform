@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>工具注册表 · 脚本工具类型切换方案对比</title>
+<style>
+  :root {
+    --primary: #1677ff;
+    --primary-hover: #4096ff;
+    --primary-active: #0958d9;
+    --gray-50: #f9fafb;
+    --gray-100: #f3f4f6;
+    --gray-200: #e5e7eb;
+    --gray-300: #d1d5db;
+    --gray-400: #9ca3af;
+    --gray-500: #6b7280;
+    --gray-600: #4b5563;
+    --gray-700: #374151;
+    --gray-900: #111827;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #f3f4f6;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    color: var(--gray-900);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1360px; margin: 0 auto; padding: 20px 24px 48px; }
+
+  /* ---------- 顶部标签栏（模拟系统设置一级菜单） ---------- */
+  .topnav {
+    display: flex; align-items: center; gap: 4px;
+    background: #fff; border-radius: 10px; padding: 6px 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.05); margin-bottom: 16px;
+    font-size: 13px; color: var(--gray-600);
+  }
+  .topnav-item { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 8px; white-space: nowrap; }
+  .topnav-item.active { background: #eff6ff; color: var(--primary); font-weight: 600; }
+  .topnav-item .ico { opacity: .65; font-size: 12px; }
+
+  /* ---------- 卡片 ---------- */
+  .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); overflow: hidden; }
+  .card-head { padding: 16px 16px 14px; border-bottom: 1px solid var(--gray-100); }
+  .card-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .card-title { font-size: 17px; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 8px; }
+  .card-sub { font-size: 12px; color: var(--gray-400); margin-top: 5px; }
+  .head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 13px; padding: 7px 12px; border-radius: 8px;
+    border: 1px solid var(--gray-300); background: #fff; color: var(--gray-700);
+    box-shadow: 0 1px 2px rgba(0,0,0,.04); cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { background: var(--gray-50); }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.primary:hover { background: var(--primary-hover); }
+  .btn.ghost { border-color: transparent; box-shadow: none; background: transparent; color: var(--gray-500); }
+  .btn.sm { padding: 5px 9px; font-size: 12px; }
+
+  /* ---------- 方案 A：下划线 tab ---------- */
+  .tabs-underline { display: flex; align-items: center; gap: 26px; padding: 0 16px; border-bottom: 1px solid var(--gray-200); background: #fff; }
+  .tabs-underline .tab {
+    position: relative; padding: 12px 2px 11px; font-size: 14px; color: var(--gray-500);
+    cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 6px;
+  }
+  .tabs-underline .tab:hover { color: var(--primary); }
+  .tabs-underline .tab.active { color: var(--primary); font-weight: 600; }
+  .tabs-underline .tab.active::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: var(--primary); border-radius: 2px;
+  }
+  .count-pill { font-size: 11px; line-height: 1; padding: 3px 6px; border-radius: 999px; background: var(--gray-100); color: var(--gray-500); font-weight: 500; }
+  .tab.active .count-pill { background: #e6f2ff; color: var(--primary); }
+
+  /* ---------- 方案 C：标题右侧 pill 分段控件 ---------- */
+  .seg { display: inline-flex; background: var(--gray-100); padding: 2px; border-radius: 8px; font-size: 12px; }
+  .seg button { border: 0; background: transparent; padding: 6px 11px; border-radius: 6px; color: var(--gray-400); font-weight: 500; cursor: pointer; font-family: inherit; }
+  .seg button.active { background: #fff; color: var(--primary); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+
+  /* ---------- 筛选行 ---------- */
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; }
+  .search {
+    flex: 1; min-width: 200px; padding: 8px 12px; font-size: 13px;
+    border: 1px solid var(--gray-300); border-radius: 8px; outline: none; box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    font-family: inherit; color: var(--gray-700);
+  }
+  .search::placeholder { color: var(--gray-400); }
+  select.f {
+    padding: 8px 10px; font-size: 13px; border: 1px solid var(--gray-300); border-radius: 8px;
+    background: #fff; color: var(--gray-700); box-shadow: 0 1px 2px rgba(0,0,0,.04); font-family: inherit;
+  }
+  .help-btn {
+    width: 30px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--gray-300); border-radius: 8px; background: #fff; color: var(--gray-500);
+    font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .help-btn:hover { color: var(--primary); border-color: var(--primary); background: #f0f7ff; }
+
+  /* ---------- 提示条 ---------- */
+  .notice {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 9px 16px; font-size: 12px; color: #92400e;
+    background: rgba(255,251,235,.7); border-top: 1px solid #fef3c7; border-bottom: 1px solid #fef3c7;
+  }
+  .notice .chip { border: 1px solid #fde68a; background: #fff; padding: 2px 8px; border-radius: 6px; font-weight: 500; cursor: pointer; }
+
+  /* ---------- 表格 ---------- */
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--gray-400); padding: 11px 12px; background: var(--gray-50); border-bottom: 1px solid var(--gray-200);
+  }
+  thead th.c { text-align: center; }
+  tbody td { padding: 14px 12px; border-bottom: 1px solid var(--gray-100); vertical-align: middle; font-size: 13px; }
+  tbody tr:hover { background: #fcfdff; }
+  .name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 600; color: var(--gray-900); }
+  .desc { font-size: 12px; color: var(--gray-500); margin-top: 3px; line-height: 1.5; max-width: 640px; }
+  .url { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--gray-400); margin-top: 3px; }
+  .badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; letter-spacing: .04em; }
+  .badge.post { background: #eff6ff; color: #1d4ed8; }
+  .badge.py { background: #ecfdf5; color: #047857; }
+  .badge.builtin { background: #f5f3ff; color: #6d28d9; }
+  .badge.custom { background: #fff7ed; color: #c2410c; }
+  .badge.type-api { background: #eff6ff; color: #1d4ed8; }
+  .badge.type-script { background: #ecfdf5; color: #047857; }
+  .muted { color: var(--gray-400); }
+
+  .toggle { width: 38px; height: 20px; border-radius: 999px; background: var(--primary); position: relative; display: inline-block; vertical-align: middle; }
+  .toggle::after { content: ""; position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .toggle.off { background: var(--gray-300); }
+  .toggle.off::after { right: auto; left: 2px; }
+  .state { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .state-label { font-size: 11px; color: #15803d; background: #f0fdf4; border-radius: 4px; padding: 2px 6px; }
+  .state-label.off { color: var(--gray-400); background: var(--gray-100); }
+
+  .ops { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--gray-400); }
+  .ops svg { cursor: pointer; }
+  .ops svg:hover { color: var(--primary); }
+  .ops .del:hover { color: #ef4444; }
+
+  /* ---------- 方案切换 ---------- */
+  .switcher { display: flex; gap: 8px; margin-bottom: 16px; }
+  .switcher button {
+    font-family: inherit; font-size: 13px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--gray-300); background: #fff; color: var(--gray-600);
+  }
+  .switcher button.active { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+  .anno { font-size: 12px; color: var(--gray-500); margin: 10px 2px 0; line-height: 1.6; }
+  .anno b { color: var(--gray-700); }
+  .proto { display: none; }
+  .proto.show { display: block; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="switcher">
+    <button class="active" data-proto="a">方案 A · 卡片内一级 tab</button>
+    <button data-proto="b">方案 B · 类型下拉筛选</button>
+    <button data-proto="c">方案 C · 标题右侧分段控件</button>
+  </div>
+
+  <!-- ============ 方案 A ============ -->
+  <section id="proto-a" class="proto show">
+    <div class="topnav">
+      <span class="topnav-item"><span class="ico">◈</span>模型管理</span>
+      <span class="topnav-item active"><span class="ico">⚙</span>工具管理</span>
+      <span class="topnav-item"><span class="ico">≡</span>参数配置</span>
+      <span class="topnav-item"><span class="ico">✎</span>品牌个性化</span>
+      <span class="topnav-item"><span class="ico">◎</span>系统诊断</span>
+      <span class="topnav-item"><span class="ico">▤</span>日志管理</span>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title-row">
+          <div>
+            <h2 class="card-title">工具注册表</h2>
+            <div class="card-sub">API 工具走 HTTP 调用；脚本工具在会话沙箱内执行 Python，适合文件转换、哈希、脱敏等通用处理。</div>
+          </div>
+          <div class="head-actions">
+            <button class="btn">分组管理</button>
+            <button class="btn primary" id="a-add-btn">+ 添加 API 工具</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabs-underline">
+        <div class="tab active" data-tab="a-api">API 工具 <span class="count-pill">11</span></div>
+        <div class="tab" data-tab="a-script">脚本工具 <span class="count-pill">8</span></div>
+      </div>
+
+      <!-- A / API 列表 -->
+      <div id="a-api-panel">
+        <div class="filters">
+          <input class="search" placeholder="搜索名称、描述或 URL..." />
+          <select class="f"><option>Method：全部</option></select>
+          <select class="f"><option>状态：全部</option></select>
+          <select class="f"><option>分组：全部 (11)</option></select>
+          <button class="btn sm">选中当前筛选结果</button>
+          <button class="help-btn" title="查看脚本工具编写指南">?</button>
+          <div class="seg"><button class="active">列表视图</button><button>分组视图</button></div>
+        </div>
+        <div class="notice">
+          <span>还有 <strong>11</strong> 个工具未分组——未分组的工具在智能体配置里会落进「其他扩展工具」</span>
+          <span class="chip">筛出并批量归类</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:36px"><input type="checkbox" /></th>
+              <th>名称</th>
+              <th style="width:90px">METHOD</th>
+              <th style="width:120px">业务分组</th>
+              <th style="width:120px" class="c">状态</th>
+              <th style="width:130px" class="c">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="name">send_feishu_message</div>
+                <div class="desc">发送飞书群机器人 Markdown 卡片消息。自动读取当前用户在个人中心的消息通知里的飞书 Webhook/加签配置。</div>
+                <div class="url">https://open.feishu.cn/open-apis/bot/v2/hook</div>
+              </td>
+              <td><span class="badge post">POST</span></td>
+              <td class="muted">—</td>
+              <td>
+                <div class="state"><span class="state-label">启用</span><span class="toggle"></span></div>
+              </td>
+              <td>
+                <div class="ops">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                  <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="name">query_employee_info</div>
+                <div class="desc">按工号或姓名查询员工基础信息（部门、岗位、上级）。</div>
+                <div class="url">https://hr.internal.example.com/api/v1/employee</div>
+              </td>
+              <td><span class="badge post">GET</span></td>
+              <td>人事</td>
+              <td><div class="state"><span class="state-label">启用</span><span class="toggle"></span></div></td>
+              <td>
+                <div class="ops">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                  <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- A / 脚本列表 -->
+      <div id="a-script-panel" style="display:none">
+        <div class="filters">
+          <input class="search" placeholder="搜索名称、描述或用途..." />
+          <select class="f"><option>语言：全部</option><option>Python</option></select>
+          <select class="f"><option>来源：全部</option><option>内置</option><option>自定义</option></select>
+          <select class="f"><option>状态：全部</option></select>
+          <select class="f"><option>分组：全部 (8)</option></select>
+          <button class="help-btn" title="查看脚本工具编写指南">?</button>
+          <div class="seg"><button class="active">列表视图</button><button>分组视图</button></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:36px"><input type="checkbox" /></th>
+              <th>名称</th>
+              <th style="width:90px">语言</th>
+              <th style="width:120px">来源</th>
+              <th style="width:120px">业务分组</th>
+              <th style="width:120px" class="c">状态</th>
+              <th style="width:130px" class="c">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="name">file_to_base64</div>
+                <div class="desc">把工作区内的文件读取为 base64 文本，可选输出 data-uri 前缀，适合把图片/PDF 交给只接受 base64 的下游接口。</div>
+                <div class="url">参数：path（必填）、with_data_uri、max_bytes</div>
+              </td>
+              <td><span class="badge py">PYTHON</span></td>
+              <td><span class="badge builtin">内置</span></td>
+              <td>通用文件</td>
+              <td><div class="state"><span class="state-label">启用</span><span class="toggle"></span></div></td>
+              <td>
+                <div class="ops">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                  <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="name">file_digest</div>
+                <div class="desc">计算文件或文本的 md5 / sha1 / sha256 摘要，用于校验传输完整性与对账。</div>
+                <div class="url">参数：target（必填）、algorithm、is_text</div>
+              </td>
+              <td><span class="badge py">PYTHON</span></td>
+              <td><span class="badge builtin">内置</span></td>
+              <td>通用文件</td>
+              <td><div class="state"><span class="state-label">启用</span><span class="toggle"></span></div></td>
+              <td>
+                <div class="ops">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                  <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="name">pdf_split_by_page</div>
+                <div class="desc">按页码区间拆分 PDF，产物落在工作区并登记为可下载文件。</div>
+                <div class="url">依赖：pypdf&gt;=4.0 ｜ 参数：path、pages</div>
+              </td>
+              <td><span class="badge py">PYTHON</span></td>
+              <td><span class="badge custom">自定义</span></td>
+              <td class="muted">—</td>
+              <td><div class="state"><span class="state-label">启用</span><span class="toggle"></span></div></td>
+              <td>
+                <div class="ops">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                  <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="name">text_redact</div>
+                <div class="desc">对手机号、身份证、邮箱、银行卡做脱敏，输出可对外的文本。</div>
+                <div class="url">参数：text（必填）、targets</div>
+              </td>
+              <td><span class="badge py">PYTHON</span></td>
+              <td><span class="badge builtin">内置</span></td>
+              <td>通用文本</td>
+              <td><div class="state"><span class="state-label off">停用</span><span class="toggle off"></span></div></td>
+              <td>
+                <div class="ops">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                  <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <p class="anno">
+      <b>方案 A（推荐）：</b>卡片内一级 tab，切换 tab 时下方筛选、按钮、表格列一起变——
+      API 工具关心 Method 与 URL，脚本工具关心语言、来源、依赖。<b>工具类型是"两个不同的东西"</b>，
+      用 tab 表达最诚实；数量以计数气泡呈现，一眼能看出平台里各有多少工具。
+    </p>
+  </section>
+
+  <!-- ============ 方案 B ============ -->
+  <section id="proto-b" class="proto">
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title-row">
+          <div>
+            <h2 class="card-title">API 工具注册表</h2>
+            <div class="card-sub">统一列表，按类型筛选</div>
+          </div>
+          <div class="head-actions">
+            <button class="btn">分组管理</button>
+            <button class="btn primary">+ 添加工具</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="filters">
+        <input class="search" placeholder="搜索名称、描述或 URL..." />
+        <select class="f"><option>类型：全部 (19)</option><option>API 工具 (11)</option><option>脚本工具 (8)</option></select>
+        <select class="f"><option>Method：全部</option></select>
+        <select class="f"><option>状态：全部</option></select>
+        <select class="f"><option>分组：全部 (19)</option></select>
+        <button class="help-btn" title="查看脚本工具编写指南">?</button>
+        <div class="seg"><button class="active">列表视图</button><button>分组视图</button></div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px"><input type="checkbox" /></th>
+            <th>名称</th>
+            <th style="width:80px">类型</th>
+            <th style="width:90px">METHOD</th>
+            <th style="width:110px">业务分组</th>
+            <th style="width:120px" class="c">状态</th>
+            <th style="width:130px" class="c">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><input type="checkbox" /></td>
+            <td>
+              <div class="name">send_feishu_message</div>
+              <div class="desc">发送飞书群机器人 Markdown 卡片消息。</div>
+            </td>
+            <td><span class="badge type-api">API</span></td>
+            <td><span class="badge post">POST</span></td>
+            <td class="muted">—</td>
+            <td><div class="state"><span class="state-label">启用</span><span class="toggle"></span></div></td>
+            <td><div class="ops">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            </div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" /></td>
+            <td>
+              <div class="name">file_to_base64</div>
+              <div class="desc">把工作区内的文件读取为 base64 文本，可选 data-uri 前缀。</div>
+            </td>
+            <td><span class="badge type-script">脚本</span></td>
+            <td class="muted">—</td>
+            <td>通用文件</td>
+            <td><div class="state"><span class="state-label">启用</span><span class="toggle"></span></div></td>
+            <td><div class="ops">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            </div></td>
+          </tr>
+          <tr>
+            <td><input type="checkbox" /></td>
+            <td>
+              <div class="name">query_employee_info</div>
+              <div class="desc">按工号或姓名查询员工基础信息。</div>
+            </td>
+            <td><span class="badge type-api">API</span></td>
+            <td><span class="badge post">GET</span></td>
+            <td>人事</td>
+            <td><div class="state"><span class="state-label">启用</span><span class="toggle"></span></div></td>
+            <td><div class="ops">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            </div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="anno">
+      <b>方案 B：</b>不新增 tab，只在筛选行加一个「类型」下拉，表格多一列类型标签。
+      改动最小，但所有行共用一套列——API 行显示 Method、脚本行显示语言，会让某一列常年是"—"，
+      且「添加工具」按钮要猜用户想加哪种。
+    </p>
+  </section>
+
+  <!-- ============ 方案 C ============ -->
+  <section id="proto-c" class="proto">
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title-row">
+          <div>
+            <h2 class="card-title">工具注册表</h2>
+            <div class="card-sub">API 工具走 HTTP 调用；脚本工具在会话沙箱内执行 Python。</div>
+          </div>
+          <div class="head-actions">
+            <div class="seg" style="padding:3px">
+              <button class="active">API 工具 11</button>
+              <button>脚本工具 8</button>
+            </div>
+            <button class="btn">分组管理</button>
+            <button class="btn primary">+ 添加</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="filters">
+        <input class="search" placeholder="搜索名称、描述或 URL..." />
+        <select class="f"><option>Method：全部</option></select>
+        <select class="f"><option>状态：全部</option></select>
+        <select class="f"><option>分组：全部 (11)</option></select>
+        <button class="help-btn" title="查看脚本工具编写指南">?</button>
+        <div class="seg"><button class="active">列表视图</button><button>分组视图</button></div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px"><input type="checkbox" /></th>
+            <th>名称</th>
+            <th style="width:90px">METHOD</th>
+            <th style="width:120px">业务分组</th>
+            <th style="width:120px" class="c">状态</th>
+            <th style="width:130px" class="c">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><input type="checkbox" /></td>
+            <td>
+              <div class="name">send_feishu_message</div>
+              <div class="desc">发送飞书群机器人 Markdown 卡片消息。</div>
+            </td>
+            <td><span class="badge post">POST</span></td>
+            <td class="muted">—</td>
+            <td><div class="state"><span class="state-label">启用</span><span class="toggle"></span></div></td>
+            <td><div class="ops">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              <svg class="del" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            </div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="anno">
+      <b>方案 C：</b>不占独立一行，把类型切换压缩成标题右侧的分段控件，和现有「列表视图/分组视图」同款。
+      最省纵向空间，但两个 tab 挤在按钮行里、和「+ 添加」的关系不直观，工具数量多时也不够醒目。
+    </p>
+  </section>
+
+</div>
+
+<script>
+  document.querySelectorAll('.switcher button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.switcher button').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      document.querySelectorAll('.proto').forEach(function (p) { p.classList.remove('show'); });
+      document.getElementById('proto-' + btn.dataset.proto).classList.add('show');
+    });
+  });
+
+  document.querySelectorAll('#proto-a .tabs-underline .tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('#proto-a .tabs-underline .tab').forEach(function (t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      var isApi = tab.dataset.tab === 'a-api';
+      document.getElementById('a-api-panel').style.display = isApi ? '' : 'none';
+      document.getElementById('a-script-panel').style.display = isApi ? 'none' : '';
+      var addBtn = document.getElementById('a-add-btn');
+      addBtn.textContent = isApi ? '+ 添加 API 工具' : '+ 添加脚本工具';
+    });
+  });
+</script>
+</body>
+</html>

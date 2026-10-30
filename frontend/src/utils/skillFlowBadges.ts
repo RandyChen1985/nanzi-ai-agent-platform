@@ -23,8 +23,15 @@ export interface SkillFlowSourceLog {
   details?: string;
 }
 
-const ENABLED_FLOW_PREFIXES = ["已启用流程:", "已启用流程："];
-const CANDIDATE_FLOW_PREFIXES = ["已识别候选流程:", "已识别候选流程："];
+// 界面与日志统一称「技能」。旧快照（process_timeline 随消息持久化，不会重写）里仍是
+// 「已启用流程」/「已识别候选流程」，两套前缀都要认——否则历史消息的技能徽标会突然消失。
+const ENABLED_FLOW_PREFIXES = ["已启用技能:", "已启用技能：", "已启用流程:", "已启用流程："];
+const CANDIDATE_FLOW_PREFIXES = [
+  "已识别候选技能:",
+  "已识别候选技能：",
+  "已识别候选流程:",
+  "已识别候选流程：",
+];
 const LEGACY_CANDIDATE_PREFIXES = ["已扫描匹配技能:", "已扫描匹配技能：", "已匹配技能:", "已匹配技能："];
 
 const normalizeSkillLabel = (value: string): string => {
@@ -41,7 +48,9 @@ const stripKnownPrefix = (title: string, prefixes: string[]): string | null => {
 };
 
 const extractFlowNameFromDetails = (details?: string): string | null => {
-  const match = String(details || "").match(/已识别候选流程「([^」]+)」|已启用流程「([^」]+)」/);
+  const match = String(details || "").match(
+    /已识别候选(?:技能|流程)「([^」]+)」|已启用(?:技能|流程)「([^」]+)」/,
+  );
   return normalizeSkillLabel(match?.[1] || match?.[2] || "");
 };
 
@@ -118,15 +127,15 @@ export function summarizeSkillFlowBadges(badges: SkillFlowBadge[]): string {
   if (count <= 0) return "";
   const kinds = new Set(badges.map((badge) => badge.kind));
   if (kinds.size === 1 && kinds.has("manual")) return `${count}个技能已加载`;
-  if (kinds.size === 1 && kinds.has("enabled")) return `${count}个流程已启用`;
-  if (kinds.size === 1 && kinds.has("candidate")) return `${count}个候选流程`;
-  return `${count}个流程/技能`;
+  if (kinds.size === 1 && kinds.has("enabled")) return `${count}个技能已启用`;
+  if (kinds.size === 1 && kinds.has("candidate")) return `${count}个候选技能`;
+  return `${count}个技能`;
 }
 
 export function skillFlowNoticeLabel(badges: SkillFlowBadge[]): string {
   const kinds = new Set(badges.map((badge) => badge.kind));
   if (kinds.size === 1 && kinds.has("manual")) return "本轮已加载生态技能：";
-  if (kinds.size === 1 && kinds.has("enabled")) return "本轮已启用流程：";
-  if (kinds.size === 1 && kinds.has("candidate")) return "本轮识别到候选流程：";
-  return "本轮关联流程/技能：";
+  if (kinds.size === 1 && kinds.has("enabled")) return "本轮已启用技能：";
+  if (kinds.size === 1 && kinds.has("candidate")) return "本轮识别到候选技能：";
+  return "本轮关联技能：";
 }

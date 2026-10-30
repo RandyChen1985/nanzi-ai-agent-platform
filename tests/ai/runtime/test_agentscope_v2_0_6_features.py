@@ -27,12 +27,13 @@ async def test_load_injection_config_binds_platform_timezone(monkeypatch):
         lambda: "Asia/Shanghai",
     )
 
-    async def _fake_get(key: str):
-        return None
+    async def _fake_get_many(keys):
+        # load_injection_config 走批量读取（get_many），只桩 get 会被真实实现绕过
+        return {key: None for key in keys}
 
     monkeypatch.setattr(
-        "app.services.config_service.ConfigService.get",
-        staticmethod(_fake_get),
+        "app.services.config_service.ConfigService.get_many",
+        staticmethod(_fake_get_many),
     )
 
     config = await ar.load_injection_config()
@@ -54,16 +55,17 @@ async def test_load_injection_config_respects_system_flag(monkeypatch):
         lambda: "UTC",
     )
 
-    async def _fake_get(key: str):
-        if key == "agentscope_inject_runtime_state":
-            return "false"
-        if key == "agentscope_inject_time_interval_hours":
-            return "2"
-        return None
+    async def _fake_get_many(keys):
+        # load_injection_config 走批量读取（get_many），只桩 get 会被真实实现绕过
+        mapping = {
+            "agentscope_inject_runtime_state": "false",
+            "agentscope_inject_time_interval_hours": "2",
+        }
+        return {key: mapping.get(key) for key in keys}
 
     monkeypatch.setattr(
-        "app.services.config_service.ConfigService.get",
-        staticmethod(_fake_get),
+        "app.services.config_service.ConfigService.get_many",
+        staticmethod(_fake_get_many),
     )
 
     config = await ar.load_injection_config()
@@ -201,8 +203,16 @@ def test_extract_msg_structured_output_reads_dict_and_model():
 
 
 def test_build_runtime_middlewares_includes_permission_and_stats():
+    """中间件装配契约（与 AgentScope 具体版本无关）。
+
+    只断言**不变量**：权限中间件永远在最外层（deny 覆盖必须先于其它中间件生效）、
+    统计中间件只在能归属会话时挂载。不按下标断言具体项——2.0.9 起
+    ``BashSandboxParentLinkMiddleware``、Langfuse 中间件等也会进入装配列表，
+    下标会随着装配项增减不断漂移，这样的断言测的是顺序巧合而不是契约。
+    """
     from app.services.ai.runtime.agentscope.agent_runtime import build_runtime_middlewares
     from app.services.ai.runtime.agentscope.middleware import (
+        BashSandboxParentLinkMiddleware,
         ModelCallStatsMiddleware,
         ToolPermissionMiddleware,
     )
@@ -213,12 +223,15 @@ def test_build_runtime_middlewares_includes_permission_and_stats():
         agent_name="Friday",
         trace_id="t1",
     )
-    assert isinstance(mws[0], ToolPermissionMiddleware)
-    assert isinstance(mws[1], ModelCallStatsMiddleware)
+    assert mws, "中间件装配结果不应为空"
+    assert isinstance(mws[0], ToolPermissionMiddleware), "权限中间件必须位于最外层"
+    assert any(isinstance(m, BashSandboxParentLinkMiddleware) for m in mws)
+    assert any(isinstance(m, ModelCallStatsMiddleware) for m in mws)
 
+    # 无 conversation 时用量无法归属，统计中间件不应挂载
     mws_no_conv = build_runtime_middlewares(user_id=7, conversation_id=None)
-    assert len(mws_no_conv) == 1
     assert isinstance(mws_no_conv[0], ToolPermissionMiddleware)
+    assert not any(isinstance(m, ModelCallStatsMiddleware) for m in mws_no_conv)
 
 
 @pytest.mark.asyncio

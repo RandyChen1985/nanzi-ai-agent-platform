@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, nextTick, watch } from 'vue'
-import { toolApi, type SysApiTool } from '../../api/tool'
+import { toolApi, scriptToolApi, type SysApiTool } from '../../api/tool'
 import { SUPPORTED_HTTP_METHODS } from '../../utils/toolMethods'
 import { parseToolSchema, validateSystemParams } from '../../utils/toolSchema'
 import { isValidSigningKeyId, isValidSigningSecret } from '../../utils/requestSigning'
@@ -10,8 +10,10 @@ import ConfirmModal from '../ConfirmModal.vue'
 import ApiToolTester from './ApiToolTester.vue'
 import ToolHeadersEditor from './ToolHeadersEditor.vue'
 import ToolParamEditor from './ToolParamEditor.vue'
+import GroupSelect from './GroupSelect.vue'
 import ToolWizard from './ToolWizard.vue'
 import ToolSigningEditor from './ToolSigningEditor.vue'
+import ScriptToolList from './ScriptToolList.vue'
 import { 
   PencilSquareIcon,
   TrashIcon,
@@ -22,6 +24,9 @@ import {
 const { showToast } = useToast()
 const { hasPermission } = useUser()
 const canSave = hasPermission('element:system:config_save')
+// 工具类型 tab：API 工具 / 脚本工具（两者数据源、表单、执行位置都不同）
+const activeToolType = ref<'api' | 'script'>('api')
+const scriptToolCount = ref(0)
 
 const tools = ref<SysApiTool[]>([])
 const loading = ref(false)
@@ -43,6 +48,8 @@ const groupFilter = ref('all')
 const selectedToolIds = ref<Set<string>>(new Set())
 const showBatchGroupModal = ref(false)
 const batchGroupName = ref('')
+/** 筛选面板开合（Method/状态/分组收进面板，参考用户管理页） */
+const showToolFilterPanel = ref(false)
 const showGroupManager = ref(false)
 const groupManagerSource = ref('')
 const groupManagerTarget = ref('')
@@ -202,7 +209,6 @@ const groupFilterOptions = computed(() => {
 const ungroupedToolsCount = computed(() => groupFilterOptions.value.ungrouped)
 
 // 已有业务分组名：表单用 datalist 复用，避免同一业务域被写成「履约罚款」「履约罚金」两个组
-const existingGroupNames = computed(() => groupFilterOptions.value.groups.map(([name]) => name))
 
 const filterByGroup = (name: string) => {
     groupFilter.value = name
@@ -319,6 +325,14 @@ const toolMethodOptions = computed(() => Array.from(new Set<string>([
     ...SUPPORTED_HTTP_METHODS,
     ...tools.value.map((tool) => String(tool.method || '').toUpperCase()).filter(Boolean),
 ])))
+
+const activeToolFilterCount = computed(() => {
+    let count = 0
+    if (toolMethodFilter.value !== 'all') count += 1
+    if (toolStatusFilter.value !== 'all') count += 1
+    if (groupFilter.value !== 'all') count += 1
+    return count
+})
 
 const hasToolFilters = computed(() => Boolean(
     toolSearchQuery.value.trim()
@@ -654,10 +668,28 @@ const confirmDeleteTool = async () => {
     }
 }
 
+/**
+ * 脚本 tab 的计数必须自己先拉一次。
+ *
+ * 脚本列表是懒挂载的（切到该 tab 才创建），它上报的 count 在首次进入页面前
+ * 根本不存在——于是 tab 上会显示 0，切过去才变成真实数量。这种「看着像没数据」
+ * 的错觉比多一次请求更糟。
+ */
+const loadScriptToolCount = async () => {
+  try {
+    const res = await scriptToolApi.list()
+    const rows = Array.isArray(res.data) ? res.data : ((res.data as any)?.data || [])
+    scriptToolCount.value = rows.length
+  } catch {
+    // 拉取失败不影响 API 工具区；切到脚本 tab 时列表组件会重新加载并上报
+  }
+}
+
 defineExpose({ refresh: fetchTools })
 
 onMounted(() => {
   fetchTools()
+  loadScriptToolCount()
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
@@ -669,10 +701,38 @@ onBeforeUnmount(() => {
 <template>
   <div class="h-full min-h-0 overflow-y-auto pb-6 p-1 registry-scroll">
       <div class="bg-white shadow rounded-lg overflow-hidden">
+         <!-- 工具类型：两类工具的形态差别大，用卡片内 tab 分流，而不是塞进一张表 -->
+         <div class="flex items-center gap-1 border-b border-gray-100 px-4 pt-3" role="tablist" aria-label="工具类型">
+            <button
+                type="button"
+                role="tab"
+                :aria-selected="activeToolType === 'api'"
+                class="relative px-3 pb-2.5 text-sm font-medium transition-colors"
+                :class="activeToolType === 'api' ? 'text-primary' : 'text-gray-500 hover:text-gray-700'"
+                @click="activeToolType = 'api'"
+            >
+                API 工具
+                <span class="ml-1.5 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">{{ tools.length }}</span>
+                <span v-if="activeToolType === 'api'" class="absolute inset-x-2 -bottom-px h-0.5 rounded-t bg-primary"></span>
+            </button>
+            <button
+                type="button"
+                role="tab"
+                :aria-selected="activeToolType === 'script'"
+                class="relative px-3 pb-2.5 text-sm font-medium transition-colors"
+                :class="activeToolType === 'script' ? 'text-primary' : 'text-gray-500 hover:text-gray-700'"
+                @click="activeToolType = 'script'"
+            >
+                脚本工具
+                <span class="ml-1.5 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">{{ scriptToolCount }}</span>
+                <span v-if="activeToolType === 'script'" class="absolute inset-x-2 -bottom-px h-0.5 rounded-t bg-primary"></span>
+            </button>
+         </div>
+         <div v-if="activeToolType === 'api'">
          <div class="p-4 border-b border-gray-100 space-y-3">
             <!-- 第一行：标题与主操作分开，标题永不折行 -->
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <h3 class="text-lg font-medium text-gray-900 whitespace-nowrap">API 工具注册表</h3>
+                <h3 class="text-lg font-medium text-gray-900 whitespace-nowrap">工具注册表</h3>
                 <div class="flex items-center gap-2">
                     <button
                         v-if="canSave"
@@ -689,7 +749,8 @@ onBeforeUnmount(() => {
                     </button>
                 </div>
             </div>
-            <!-- 第二行：筛选与视图控件独占一行（搜索框自适应吃掉剩余宽度），不再挤标题 -->
+            <!-- 第二行：搜索 + 一个「筛选」入口。三个下拉常驻会把搜索框挤窄、占掉列表首屏，
+                 收进面板后与「用户管理」页面保持同一套交互 -->
             <div class="flex flex-wrap items-center gap-2">
                 <input
                     v-model="toolSearchQuery"
@@ -697,20 +758,97 @@ onBeforeUnmount(() => {
                     placeholder="搜索名称、描述或 URL..."
                     class="min-w-[12rem] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 />
-                <select v-model="toolMethodFilter" class="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" title="按 HTTP 方法筛选">
-                    <option value="all">Method：全部</option>
-                    <option v-for="method in toolMethodOptions" :key="method" :value="method">{{ method }}</option>
-                </select>
-                <select v-model="toolStatusFilter" class="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" title="按状态筛选">
-                    <option value="all">状态：全部</option>
-                    <option value="active">启用</option>
-                    <option value="inactive">停用</option>
-                </select>
-                <select v-model="groupFilter" class="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" title="按业务分组筛选">
-                    <option value="all">分组：全部 ({{ groupFilterOptions.all }})</option>
-                    <option :value="UNGROUPED_FILTER">未分组 ({{ groupFilterOptions.ungrouped }})</option>
-                    <option v-for="[name, count] in groupFilterOptions.groups" :key="name" :value="name">{{ name }} ({{ count }})</option>
-                </select>
+                <div class="relative shrink-0" @keydown.esc="showToolFilterPanel = false">
+                    <button
+                        type="button"
+                        class="inline-flex items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-sm font-medium shadow-sm transition-colors"
+                        :class="activeToolFilterCount ? 'border-primary/40 text-gray-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'"
+                        :aria-expanded="showToolFilterPanel"
+                        aria-haspopup="true"
+                        @click="showToolFilterPanel = !showToolFilterPanel"
+                    >
+                        <svg class="h-4 w-4" :class="activeToolFilterCount ? 'text-primary' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h18l-7 8v6l-4-2v-4z" />
+                        </svg>
+                        筛选
+                        <span
+                            v-if="activeToolFilterCount"
+                            class="inline-flex min-w-[1.125rem] items-center justify-center rounded-full bg-primary/10 px-1 text-[10px] font-bold text-primary"
+                        >{{ activeToolFilterCount }}</span>
+                        <svg class="h-4 w-4 text-gray-400 transition-transform" :class="{ 'rotate-180': showToolFilterPanel }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9l6 6 6-6" />
+                        </svg>
+                    </button>
+
+                    <div
+                        v-if="showToolFilterPanel"
+                        class="absolute right-0 z-30 mt-1.5 w-[min(21rem,calc(100vw-2rem))] rounded-xl border border-gray-200 bg-white p-3 shadow-lg"
+                        role="group"
+                        aria-label="筛选条件"
+                    >
+                        <div>
+                            <p class="mb-1.5 text-xs font-semibold text-gray-500">HTTP 方法</p>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button
+                                    v-for="opt in ['all', ...toolMethodOptions]"
+                                    :key="`m-${opt}`"
+                                    type="button"
+                                    class="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+                                    :class="toolMethodFilter === opt
+                                        ? 'border-primary bg-primary/10 text-primary'
+                                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'"
+                                    :aria-pressed="toolMethodFilter === opt"
+                                    @click="toolMethodFilter = opt"
+                                >{{ opt === 'all' ? '全部' : opt }}</button>
+                            </div>
+                        </div>
+
+                        <div class="my-3 border-t border-gray-100"></div>
+
+                        <div>
+                            <p class="mb-1.5 text-xs font-semibold text-gray-500">状态</p>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button
+                                    v-for="opt in [{ value: 'all', label: '全部' }, { value: 'active', label: '启用' }, { value: 'inactive', label: '停用' }]"
+                                    :key="`s-${opt.value}`"
+                                    type="button"
+                                    class="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+                                    :class="toolStatusFilter === opt.value
+                                        ? 'border-primary bg-primary/10 text-primary'
+                                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'"
+                                    :aria-pressed="toolStatusFilter === opt.value"
+                                    @click="toolStatusFilter = opt.value as any"
+                                >{{ opt.label }}</button>
+                            </div>
+                        </div>
+
+                        <div class="my-3 border-t border-gray-100"></div>
+
+                        <div>
+                            <p class="mb-1.5 text-xs font-semibold text-gray-500">业务分组</p>
+                            <select
+                                v-model="groupFilter"
+                                class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                            >
+                                <option value="all">全部分组（{{ groupFilterOptions.all }}）</option>
+                                <option :value="UNGROUPED_FILTER">未分组（{{ groupFilterOptions.ungrouped }}）</option>
+                                <option v-for="[name, count] in groupFilterOptions.groups" :key="name" :value="name">{{ name }}（{{ count }}）</option>
+                            </select>
+                        </div>
+
+                        <div class="mt-3 flex items-center justify-between border-t border-gray-100 pt-2.5">
+                            <span class="text-[11px] text-gray-400">
+                                {{ activeToolFilterCount ? `已选 ${activeToolFilterCount} 项` : '未设置筛选' }}
+                            </span>
+                            <button
+                                type="button"
+                                class="text-xs font-medium text-primary transition-colors hover:text-primary-dark disabled:cursor-not-allowed disabled:text-gray-300"
+                                :disabled="!activeToolFilterCount"
+                                @click="toolMethodFilter = 'all'; toolStatusFilter = 'all'; groupFilter = 'all'"
+                            >清除全部</button>
+                        </div>
+                    </div>
+                </div>
                 <button
                     v-if="canSave"
                     type="button"
@@ -921,11 +1059,21 @@ onBeforeUnmount(() => {
          </table>
          </div>
          </div>
-      </div>
+         </div>
 
-      <datalist id="tool-group-options">
-          <option v-for="name in existingGroupNames" :key="name" :value="name"></option>
-      </datalist>
+      <div v-else-if="activeToolType === 'script'">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
+          <div>
+            <h3 class="text-lg font-medium text-gray-900 whitespace-nowrap">工具注册表</h3>
+            <p class="mt-0.5 text-xs text-gray-500">脚本工具：在会话沙箱内执行，stdin 收 JSON、stdout 出结果</p>
+          </div>
+        </div>
+        <ScriptToolList
+            :can-save="canSave"
+            @count="scriptToolCount = $event"
+        />
+      </div>
+      </div>
 
       <!-- Modal -->
       <Teleport to="body">
@@ -1016,7 +1164,13 @@ onBeforeUnmount(() => {
 
                     <div>
                        <label for="tool-group" class="block text-sm font-medium text-gray-700">业务分组</label>
-                       <input id="tool-group" v-model="toolForm.group_name" list="tool-group-options" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. 履约罚款（留空表示未分组）" />
+                       <GroupSelect
+                         id="tool-group"
+                         v-model="toolForm.group_name"
+                         class="mt-1"
+                         :options="groupFilterOptions.groups.map(([name, count]) => ({ name, count }))"
+                         placeholder="选择已有分组，或直接输入新分组（留空 = 未分组）"
+                       />
                        <p class="text-xs text-gray-500 mt-1">智能体配置的「工具能力」步骤会按它归组；留空则该工具落在「其他扩展工具」</p>
                     </div>
 
@@ -1099,7 +1253,12 @@ onBeforeUnmount(() => {
                 <p class="text-sm text-gray-500">将对已选中的 {{ selectedToolIds.size }} 个工具设置业务分组；留空表示清除分组。</p>
                 <div>
                     <label class="block text-sm font-medium text-gray-700">业务分组</label>
-                    <input v-model="batchGroupName" list="tool-group-options" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="e.g. 履约罚款（留空表示清除分组）" />
+                    <GroupSelect
+                      v-model="batchGroupName"
+                      class="mt-1"
+                      :options="groupFilterOptions.groups.map(([name, count]) => ({ name, count }))"
+                      placeholder="选择已有分组，或直接输入新分组（留空 = 清除分组）"
+                    />
                 </div>
                 <div class="flex justify-end space-x-3 pt-2">
                     <button @click="showBatchGroupModal = false" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">取消</button>
@@ -1134,7 +1293,13 @@ onBeforeUnmount(() => {
 
               <div v-if="groupManagerTools.length">
                 <label for="group-manager-target" class="block text-sm font-medium text-gray-700">新名称</label>
-                <input id="group-manager-target" v-model="groupManagerTarget" list="tool-group-options" :disabled="groupManagerSaving" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary" placeholder="输入新名称，或选择已有分组进行合并" />
+                <GroupSelect
+                  id="group-manager-target"
+                  v-model="groupManagerTarget"
+                  class="mt-1"
+                  :options="groupFilterOptions.groups.map(([name, count]) => ({ name, count }))"
+                  placeholder="输入新名称，或选择已有分组进行合并"
+                />
                 <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <button type="button" :disabled="groupManagerSaving || groupManagerSource === UNGROUPED_FILTER" class="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50" @click="clearSelectedGroup">清空分组</button>
                   <button type="button" :disabled="groupManagerSaving" class="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50" @click="renameOrMergeGroup">

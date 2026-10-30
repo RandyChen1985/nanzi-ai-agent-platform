@@ -171,7 +171,9 @@ def test_k8s_build_sandbox_image_script_and_docs_contract():
     assert "build-k8s-sandbox-image.sh" in script_source
     assert "_mcp_gateway_app.py" in script_source
     assert 'GATEWAY_HOME="/root/.agentscope"' in script_source
-    assert "mcp<2.0.0" in script_source
+    # 依赖清单跟随 agentscope 2.0.11 的 _GATEWAY_BASE_REQUIREMENTS（mcp 2.x 区间）；
+    # 明细是否与上游常量一致由 tests/test_k8s_sandbox_image_gateway_deps.py 兜住。
+    assert "mcp>=2.0.0" in script_source
     assert "sandbox_k8s_image" in script_source
     template = K8S_DIR / "sandbox-image" / "_mcp_gateway_app.py"
     assert template.is_file()

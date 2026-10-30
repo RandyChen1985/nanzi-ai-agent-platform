@@ -6145,6 +6145,14 @@ const refreshCurrentRunStatus = () => (
 // 没有草稿时同样提示）。决策收敛在 planRecoveryCard 纯函数里，这里只做状态转发。
 const RECOVERY_CARD_DONE_VISIBLE_MS = 3000;
 const recoveryCardDismissedForTurn = ref(false);
+/**
+ * 本轮是否由本端用户主动「停止生成」。
+ *
+ * 停止只 abort 本地 SSE：草稿仍在（只有 [DONE] 分支才清）、后端锁也还没被 cancel
+ * 释放——正好凑齐「后台在跑、前端断了」的恢复判据。没有这一位，界面会在停止后先弹
+ * 「会话仍在后台处理中」，取消轮落库后再补「执行已完成，内容已补齐」。
+ */
+const recoveryCardStoppedByUser = ref(false);
 const recoveryCardTerminalApplied = ref(false);
 // 本轮是否真的展示过恢复提示：没展示过就不该在收尾时补一句「内容已补齐」。
 const recoveryCardEngagedForTurn = ref(false);
@@ -6202,6 +6210,7 @@ const refreshRecoveryCard = () => {
     draftStepCount: Array.isArray(draftTimeline) ? draftTimeline.length : 0,
     syncedEventCount: recoverySyncedEventCount,
     turnDismissed: recoveryCardDismissedForTurn.value,
+    turnStoppedByUser: recoveryCardStoppedByUser.value,
     terminalApplied: recoveryCardTerminalApplied.value,
     streaming: streamInFlight,
     engaged: recoveryCardEngagedForTurn.value,
@@ -6232,6 +6241,7 @@ const dismissRecoveryCard = () => {
 const resetRecoveryCard = () => {
   clearRecoveryCardDoneTimer();
   recoveryCardDismissedForTurn.value = false;
+  recoveryCardStoppedByUser.value = false;
   recoveryCardTerminalApplied.value = false;
   recoveryCardEngagedForTurn.value = false;
   recoveryGraceExpired.value = false;
@@ -10593,6 +10603,12 @@ const stopGeneration = (options?: StopGenerationOptions) => {
     abortController = null;
   }
   isProcessing.value = false;
+  // 用户主动停止不是「后台还在跑」：置位本轮标记，否则 abort 收尾时 streamInFlight
+  // 归零、草稿仍在、后端锁尚未释放，恢复卡片会把它判成恢复场景——先弹「会话仍在后台
+  // 处理中」，取消轮落库后再补「内容已补齐」。真正的重算在 abort 的 finally 里，这里
+  // 先落位，保证任何中断路径都不会漏。
+  recoveryCardStoppedByUser.value = true;
+  refreshRecoveryCard();
   if (thoughtTimer) {
     clearInterval(thoughtTimer);
     thoughtTimer = null;

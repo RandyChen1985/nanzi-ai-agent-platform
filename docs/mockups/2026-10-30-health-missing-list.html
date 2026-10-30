@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>治理巡检 · 失联库列表 改前 / 改后</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 32px 40px;
+    background: #f3f4f6;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page-title { font-size: 15px; font-weight: 700; color: #111827; margin: 0 0 4px; }
+  .page-sub { font-size: 12px; color: #6b7280; margin: 0 0 20px; }
+  .row { display: flex; gap: 28px; align-items: flex-start; }
+  .col { width: 560px; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; margin-bottom: 8px; }
+  .tag.old { color: #b91c1c; }
+  .tag.new { color: #047857; }
+  .tag .pill { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
+  .tag.old .pill { background: #fee2e2; color: #b91c1c; }
+  .tag.new .pill { background: #d1fae5; color: #047857; }
+
+  .card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 16px;
+    padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,.05);
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .card-title { font-size: 16px; font-weight: 700; color: #111827; }
+  .date { font-size: 11px; color: #9ca3af; font-weight: 400; margin-left: 6px; }
+  .btn { border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: #4b5563; background: #fff; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .kpi { border-radius: 12px; padding: 8px; text-align: center; }
+  .kpi .lbl { font-size: 11px; margin: 0; }
+  .kpi .val { font-size: 18px; font-weight: 700; margin: 2px 0 0; }
+  .kpi.gray { background: #f9fafb; }
+  .kpi.gray .lbl { color: #9ca3af; } .kpi.gray .val { color: #111827; }
+  .kpi.red { background: #fef2f2; }
+  .kpi.red .lbl { color: #ef4444; } .kpi.red .val { color: #dc2626; }
+  .kpi.amber { background: #fffbeb; }
+  .kpi.amber .lbl { color: #d97706; } .kpi.amber .val { color: #4b5563; }
+
+  .divider { border-top: 1px solid #e5e7eb; margin-top: 12px; padding-top: 8px; }
+
+  /* ---------- 改前 ---------- */
+  .old-label { font-size: 11px; font-weight: 600; color: #ef4444; margin: 0 0 4px; }
+  .old-list { margin: 0; padding: 0; list-style: none; }
+  .old-list li {
+    font-size: 12px; line-height: 16px; color: #4b5563;
+    margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ---------- 改后 ---------- */
+  .new-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .new-label { font-size: 11px; font-weight: 600; color: #ef4444; margin: 0; }
+  .new-count { font-size: 11px; color: #9ca3af; flex-shrink: 0; }
+  .new-list {
+    margin: 0; padding: 0 4px 0 0; list-style: none;
+    max-height: 176px; overflow-y: auto;
+  }
+  .new-list li {
+    display: flex; align-items: center; gap: 8px;
+    background: #f9fafb; border-radius: 6px;
+    padding: 4px 8px; margin-bottom: 4px;
+    font-size: 12px; line-height: 16px; color: #4b5563;
+  }
+  .new-list li .dot { width: 4px; height: 4px; border-radius: 999px; background: #fca5a5; flex-shrink: 0; }
+  .new-list li .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 卡片下方：被顶下去的内容 */
+  .below {
+    margin-top: 16px; border: 1px dashed #d1d5db; border-radius: 12px;
+    background: #fff; padding: 14px; font-size: 12px; color: #9ca3af; text-align: center;
+  }
+  .note { margin-top: 10px; font-size: 11px; line-height: 1.7; color: #6b7280; }
+  .note b { color: #374151; }
+  .note.bad b { color: #b91c1c; }
+  .note.good b { color: #047857; }
+  .kbd { font-family: ui-monospace, Menlo, monospace; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; padding: 0 4px; font-size: 10px; color: #4b5563; }
+</style>
+</head>
+<body>
+  <p class="page-title">知识库运营分析 · 治理巡检 ——「引擎侧已不存在」列表</p>
+  <p class="page-sub">同一份巡检数据（失联 87 / 后端最多回 20 条明细），左为改前，右为改后</p>
+
+  <div class="row">
+    <!-- 改前 -->
+    <div class="col">
+      <div class="tag old"><span class="pill">改前</span> 裸文本 + 无高度上限</div>
+      <div class="card">
+        <div class="card-head">
+          <div><span class="card-title">治理巡检</span><span class="date">2026-10-30</span></div>
+          <button class="btn">立即巡检</button>
+        </div>
+        <div class="kpis">
+          <div class="kpi gray"><p class="lbl">总库数</p><p class="val">96</p></div>
+          <div class="kpi red"><p class="lbl">失联</p><p class="val">87</p></div>
+          <div class="kpi amber"><p class="lbl">解析失败</p><p class="val">0</p></div>
+          <div class="kpi gray"><p class="lbl">空库 / 90 天未更新</p><p class="val">0 / 0</p></div>
+        </div>
+        <div class="divider">
+          <p class="old-label">引擎侧已不存在（本地还有配置）：</p>
+          <ul class="old-list" id="old-list"></ul>
+        </div>
+      </div>
+      <div class="below">↓ 引用排行榜 / 趋势图被顶到这里</div>
+      <div class="note bad">
+        <b>问题：</b>20 行纯文本把卡片撑到 470px 高；没有圆点也没有缩进，看着像一段散文本；
+        顶部写「失联 87」而下面只有 20 行，<b>没有任何地方说明只列了 20 条</b>。
+      </div>
+    </div>
+
+    <!-- 改后 -->
+    <div class="col">
+      <div class="tag new"><span class="pill">改后</span> 高度封顶 + 内部滚动 + 条目化</div>
+      <div class="card">
+        <div class="card-head">
+          <div><span class="card-title">治理巡检</span><span class="date">2026-10-30</span></div>
+          <button class="btn">立即巡检</button>
+        </div>
+        <div class="kpis">
+          <div class="kpi gray"><p class="lbl">总库数</p><p class="val">96</p></div>
+          <div class="kpi red"><p class="lbl">失联</p><p class="val">87</p></div>
+          <div class="kpi amber"><p class="lbl">解析失败</p><p class="val">0</p></div>
+          <div class="kpi gray"><p class="lbl">空库 / 90 天未更新</p><p class="val">0 / 0</p></div>
+        </div>
+        <div class="divider">
+          <div class="new-head">
+            <p class="new-label">引擎侧已不存在（本地还有配置）</p>
+            <span class="new-count">共 87 个，列出前 20</span>
+          </div>
+          <ul class="new-list" id="new-list"></ul>
+        </div>
+      </div>
+      <div class="below">↓ 引用排行榜 / 趋势图仍在同一屏内</div>
+      <div class="note good">
+        <b>改后：</b>滚动区限高 <span class="kbd">max-h-44</span>（176px，约 6 条半，露出半截暗示可滚）；
+        每行浅灰底色 + 小红点形成条目；标题右侧写明 <b>共 87 个，列出前 20</b>，与上方「失联 87」对齐。
+      </div>
+    </div>
+  </div>
+
+<script>
+  const names = ["scope-private", "scope-public", "scope-team"];
+  const oldList = document.getElementById("old-list");
+  const newList = document.getElementById("new-list");
+  for (let i = 0; i < 20; i++) {
+    const n = names[i % names.length];
+    const a = document.createElement("li");
+    a.textContent = n;
+    oldList.appendChild(a);
+
+    const b = document.createElement("li");
+    const dot = document.createElement("span"); dot.className = "dot";
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = n;
+    b.appendChild(dot); b.appendChild(nm);
+    newList.appendChild(b);
+  }
+</script>
+</body>
+</html>

@@ -21,6 +21,36 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+#: SSO 支持的登录方式，顺序即登录页展示顺序
+SSO_LOGIN_TYPES = ("ad", "local")
+
+
+def _switch_on(raw: str | None) -> bool:
+    """解析 on/off 开关。除 on 之外也认 1/true/yes —— env 里手写这几种很常见。"""
+    return (raw or "").strip().lower() in ("on", "1", "true", "yes")
+
+
+def sso_login_capabilities() -> dict:
+    """当前部署允许的 SSO 登录方式，以及默认选中哪一个。
+
+    「默认」必须落在可用集合里：把 SSO_LOGIN_DEFAULT_TYPE 配成 ad、同时把
+    SSO_LOGIN_AD 关掉时，不能让登录页默认选中一个已经被禁用的方式。
+    两种都关时 ``default_type`` 为 None、``enabled_types`` 为空，前端据此整体禁用。
+    """
+    enabled = [
+        t for t in SSO_LOGIN_TYPES
+        if _switch_on(getattr(settings, f"SSO_LOGIN_{t.upper()}", "on"))
+    ]
+    configured = (settings.SSO_LOGIN_DEFAULT_TYPE or "").strip().lower()
+    if configured and configured not in SSO_LOGIN_TYPES:
+        # 写错不能把登录整条堵死，但要留下痕迹——否则「配了 ldap 却没生效」只能靠猜。
+        logger.warning(
+            "SSO_LOGIN_DEFAULT_TYPE 配置非法（%r），仅支持 %s，已回退到可用方式",
+            configured, " / ".join(SSO_LOGIN_TYPES),
+        )
+    default = configured if configured in enabled else (enabled[0] if enabled else None)
+    return {"enabled_types": enabled, "default_type": default}
+
 # --- Bcrypt Monkeypatch for Passlib Compatibility ---
 import bcrypt
 if not hasattr(bcrypt, "__about__"):
@@ -1203,6 +1233,47 @@ class AuthService:
         return True, "密码符合等保复杂度要求"
 
     @staticmethod
+    def generate_compliant_password(length: int = 16, username: Optional[str] = None) -> str:
+        """生成一次就能过等保校验的随机密码（可用于直接邮件下发）。
+
+        与 ``validate_password_complexity`` 是同一条规则的**两端**：这边生成、那边
+        校验，且生成结果必定通过——因为管理员看不到明文，生成错了就没法现场改。
+
+        细节：
+        - 四类字符各先取一个，剩余位从合集里取，最后整体打乱（否则前四位固定
+          是大写/小写/数字/符号，肉眼一看就知道规律）；
+        - 剔除易混字符 I/l/1/O/0：用户是从邮件里手抄这串密码去登录的；
+        - ``secrets`` 而非 ``random``——这是凭据，不是抽样；
+        - 生成后仍用校验函数兜一遍（含「不能包含用户名」），最多重试 8 次。
+        """
+        import secrets
+
+        if length < 8 or length > 32:
+            raise ValueError("length must be between 8 and 32")
+
+        pools = [
+            "ABCDEFGHJKLMNPQRSTUVWXYZ",
+            "abcdefghijkmnopqrstuvwxyz",
+            "23456789",
+            "!@#$%^&*-_=+?",
+        ]
+        alphabet = "".join(pools)
+        rng = secrets.SystemRandom()
+
+        for _ in range(8):
+            chars = [secrets.choice(pool) for pool in pools]
+            chars.extend(secrets.choice(alphabet) for _ in range(length - len(chars)))
+            rng.shuffle(chars)
+            candidate = "".join(chars)
+            ok, _ = AuthService.validate_password_complexity(candidate, username=username)
+            if ok:
+                return candidate
+
+        # 16 位四类齐全还撞上用户名，概率低到不可达；宁可报错让调用方记失败，
+        # 也不能悄悄发一个不合规的密码出去。
+        raise RuntimeError("failed to generate a compliant password")
+
+    @staticmethod
     async def set_user_password(user_id: int, password: str, db: Optional[AsyncSession] = None) -> bool:
         """设置用户密码"""
         session, is_local = await AuthService._get_session(db)
@@ -1223,51 +1294,153 @@ class AuthService:
                 await session.close()
 
     @staticmethod
-    async def authenticate_sso_user(username: str, password: str, db: Optional[AsyncSession] = None) -> dict:
-        """
-        SSO 认证逻辑
+    async def authenticate_sso_user(
+        username: str,
+        password: str,
+        login_type: Optional[str] = None,
+        db: Optional[AsyncSession] = None,
+    ) -> dict:
+        """SSO 认证逻辑。
+
         1. 调用远程 SSO 接口
         2. 认证通过后，查询本地数据库映射权限
+
+        ``login_type`` 是前端选的登录方式（local / ad）；不传时回落到 ``SSO_LOGIN_DEFAULT_TYPE``，
+        这样前端还没升级到带选择器时行为不变。
         """
         # 1. 调用 SSO 接口
+        # loginType 是 portal-web 后加的必传项（local / ad）。取值优先级：
+        # 请求显式传入 > SSO_LOGIN_DEFAULT_TYPE 配置。传错/配错都在这里当场拦下——否则请求
+        # 能发出去，拿回来是一个与口令无关的失败，排查时会被误判成密码错。
+        capabilities = sso_login_capabilities()
+        enabled_types = capabilities['enabled_types']
+        requested_login_type = (login_type or '').strip().lower()
+        configured_login_type = capabilities['default_type'] or ''
+        effective_login_type = requested_login_type or configured_login_type
+        login_type_source = 'request' if requested_login_type else 'default'
+
+        # 开关是策略而不是装饰：被关掉的方式必须在这里就拒掉，否则绕过登录页直接打接口
+        # 仍然能用。三种情况分开记日志，现场排障时才分得清是「没开」还是「配错了」。
+        if not enabled_types:
+            logger.error(
+                "SSO 登录已全部关闭（SSO_LOGIN_AD / SSO_LOGIN_LOCAL 均为 off），拒绝发起认证: userName=%s",
+                username,
+            )
+            return {"status": "fail", "message": "SSO 登录已关闭，请联系管理员"}
+        if effective_login_type not in SSO_LOGIN_TYPES:
+            logger.error(
+                "SSO 登录方式非法，未发起认证: effective=%r source=%s requested=%r env=%r",
+                effective_login_type, login_type_source, login_type, settings.SSO_LOGIN_DEFAULT_TYPE,
+            )
+            return {"status": "fail", "message": "登录方式暂不可用，请联系管理员"}
+        if effective_login_type not in enabled_types:
+            logger.warning(
+                "SSO 登录方式已被关闭，未发起认证: userName=%s loginType=%s source=%s 当前可用=%s",
+                username, effective_login_type, login_type_source, enabled_types,
+            )
+            return {"status": "fail", "message": "该登录方式已被管理员关闭，请换一种方式登录"}
+
         api_request = {
             'requestSystem': settings.SSO_REQUEST_SYSTEM,
             'requestBusiness': settings.SSO_REQUEST_BUSINESS,
             'operationType': 'LOGIN',
+            'loginType': effective_login_type,
             'userName': username,
             'password': password
         }
-        
+
         headers = {
             'YOVOLE-LAPLACE-API-ACCESS-TOKEN': settings.SSO_ACCESS_TOKEN,
             'Content-Type': 'application/json;charset=UTF-8'
         }
 
+        # 排障要能回答「这次登录到底发了什么、SSO 回了什么、花了多久」。
+        # 唯一不记录的是口令本身；其余字段都是定位协议/配置问题所必需的。
+        logger.info(
+            "SSO 认证开始: userName=%s loginType=%s(来源=%s) url=%s requestSystem=%s requestBusiness=%s timeout=%ss",
+            username, effective_login_type, login_type_source, settings.SSO_API_URL,
+            settings.SSO_REQUEST_SYSTEM, settings.SSO_REQUEST_BUSINESS, settings.SSO_TIMEOUT,
+        )
+        started_at = time.perf_counter()
+
         try:
             async with httpx.AsyncClient(timeout=settings.SSO_TIMEOUT, verify=False) as client:
                 response = await client.post(settings.SSO_API_URL, headers=headers, json=api_request)
+                elapsed_ms = (time.perf_counter() - started_at) * 1000
                 if response.status_code != 200:
+                    logger.error(
+                        "SSO 服务响应异常: userName=%s http=%s elapsed=%.0fms body=%s",
+                        username, response.status_code, elapsed_ms, (response.text or '')[:500],
+                    )
                     return {"status": "fail", "message": f"SSO 服务响应异常: {response.status_code}"}
-                
+
                 resp_data = response.json()
+                biz_code = resp_data.get('code')
+                logger.info(
+                    "SSO 认证响应: userName=%s loginType=%s http=%s code=%s data=%s msg=%s elapsed=%.0fms",
+                    username, effective_login_type, response.status_code, biz_code,
+                    resp_data.get('data'), resp_data.get('msg'), elapsed_ms,
+                )
+                # 参数错误（缺 loginType、userName 为空…）也是 HTTP 200，只是业务 code=500
+                # 且 msg 可读。不先识别它，就会落进下面的「用户名或密码错误」，把配置问题
+                # 伪装成口令问题——这正是之前不传 loginType 时现场看到的现象。
+                if biz_code is not None and biz_code != 200:
+                    # 对外只给中性文案（别把 loginType 这类协议细节甩到登录页），
+                    # 真实原因进日志给运维。
+                    logger.error(
+                        "SSO 参数校验未通过（协议/配置问题，非口令错）: userName=%s loginType=%s code=%s msg=%s",
+                        username, effective_login_type, biz_code, resp_data.get('msg'),
+                    )
+                    return {
+                        "status": "fail",
+                        "message": "登录服务暂时不可用（SSO 请求参数未通过校验），请联系管理员",
+                    }
                 if not resp_data.get('data'):
+                    # 服务端刻意不区分「口令错 / 账号不存在 / 本地无密码 / 已锁定」，
+                    # 日志里把可能原因列全，避免运维照着单一假设排查。
+                    logger.warning(
+                        "SSO 认证被拒绝: userName=%s loginType=%s（口令错/账号不存在/该方式下无凭据/已锁定，"
+                        "服务端不返回具体原因）",
+                        username, effective_login_type,
+                    )
                     return {"status": "fail", "message": "SSO 认证失败: 用户名或密码错误"}
         except httpx.RequestError as e:
+            logger.error(
+                "连接 SSO 服务失败: userName=%s url=%s error=%r", username, settings.SSO_API_URL, e
+            )
             return {"status": "fail", "message": f"连接 SSO 服务失败: {str(e)}"}
-        except Exception as e:
-            return {"status": "fail", "message": f"SSO 认证过程发生错误: {str(e)}"}
+        except Exception:
+            # 内部异常细节只进日志（带堆栈），不回给登录页。
+            logger.exception(
+                "SSO 认证过程异常: userName=%s url=%s", username, settings.SSO_API_URL
+            )
+            return {"status": "fail", "message": "SSO 认证过程发生错误，请联系管理员"}
 
         # 2. 认证通过后，查询本地数据库映射权限
         session, is_local = await AuthService._get_session(db)
         try:
             result = await session.execute(select(User).where(User.user_name == username))
             user = result.scalar_one_or_none()
-            
+
             if not user:
+                # 「SSO 说对、平台说没有」是最常见的现场问题，日志里单独标出来，
+                # 免得和口令错误混在一个登录失败里。
+                logger.warning(
+                    "SSO 认证通过但平台未开通该账号: userName=%s（需管理员创建用户）", username
+                )
                 return {"status": "error_not_found", "message": "请联系管理员开通系统权限"}
-            
+
             if user.status != 1:
-                 return {"status": "error_disabled", "message": "账户已被禁用"}
+                logger.warning(
+                    "SSO 认证通过但本地账号不可用: userName=%s user_id=%s status=%s",
+                    username, user.id, user.status,
+                )
+                return {"status": "error_disabled", "message": "账户已被禁用"}
+
+            logger.info(
+                "SSO 登录成功: userName=%s user_id=%s role=%s loginType=%s",
+                username, user.id, user.role, effective_login_type,
+            )
 
             return {
                 "status": "success",

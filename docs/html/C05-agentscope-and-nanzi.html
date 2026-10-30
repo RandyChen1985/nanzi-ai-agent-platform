@@ -1,0 +1,876 @@
+<!--
+  微信公众号排版 HTML — NanZi 技术复盘 · C05
+  主题：NanZi 与 AgentScope 2.0.11 的功能对照（差异、原因、核实方法）
+  风格：技术文档向。灰阶为主，仅链接使用蓝色；无 emoji、无渐变、无彩色卡片。
+  使用说明：
+  1. 复制最外层 <section>…</section> 粘贴到公众号 HTML 模式（或 135 / 秀米）
+  2. 全部内联 style，无外部 CSS / JS，无 pre 代码块
+  3. 三列表格均包 overflow-x:auto，colgroup 控宽，386px 下可完整显示
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;text-align:left;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;max-width:760px;margin:0 auto;padding:0 2px;word-break:break-word;overflow-wrap:break-word;">
+
+  <!-- ========== 刊头 ========== -->
+  <section style="margin:0 0 22px 0;border-top:3px solid #111827;padding-top:14px;">
+    <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:2px;">NANZI · 技术复盘 / C05</p>
+    <p style="margin:0 0 10px 0;font-size:21px;font-weight:bold;color:#111827;line-height:1.45;letter-spacing:0.3px;">NanZi 与 AgentScope 的功能对照</p>
+    <p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;line-height:1.7;">11 个功能点：两侧各自怎么实现、为什么不同、如何自行核实</p>
+    <p style="margin:0;padding:10px 0 0 0;border-top:1px solid #e5e7eb;font-size:12px;color:#9ca3af;line-height:1.7;">AgentScope 2.0.11 · dev-agentscope · 2026-10-29 核对</p>
+  </section>
+
+  <!-- ========== 读法 ========== -->
+  <section style="margin:0 0 18px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      本文只做一件事：把同一个功能点在框架与平台两侧的实现并排放，指出差异，说明差异来自什么设计前提，并给出可以自己跑的核实命令。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      口径：框架侧以 .venv 里安装的 agentscope 为准，26 个模块、123,381 行；平台侧以 app/ 为准，543 个 Python 文件、218,268 行，其中 Agent 运行时 44 个文件、22,181 行。行数含空行与注释，框架侧不含私有工具包与顶层的下划线文件。
+    </p>
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      下文命令在仓库根目录执行，Python 用 .venv/bin/python。输出与文中数字不符时，以代码为准。
+    </p>
+  </section>
+
+  <section style="margin:26px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 01 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">01 /</span> 执行循环：步数用完那一刻</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      框架按迭代次数硬停；平台在步数将尽时改成「用已有结果作答」。这是本文唯一一处平台借鉴了框架思路的地方。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 1　一步之差的收尾行为</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:21%;"/>
+        <col style="width:40%;"/>
+        <col style="width:39%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">项</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">AgentScope 2.0.11</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">迭代上限</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;"><code style="font-family:ui-monospace,Menlo,monospace;font-size:11px;">ReActConfig.max_iters</code>，默认 50</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">按 Agent 配置下发，另有平台级上限</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">超限时</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">以 <code style="font-family:ui-monospace,Menlo,monospace;font-size:11px;">EXCEED_MAX_ITERS</code> 结束本轮</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">注入提示并把 <code style="font-family:ui-monospace,Menlo,monospace;font-size:11px;">tool_choice</code> 置 none，让模型作答</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">触发依据</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">预算中间件按 token 加权成本触发，不按步数</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">剩余步数 ≤ 预留值：上限 ≤8 留 1 步，&gt;8 留 2 步</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">产出保护</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">—</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">最近一条 assistant 已有正文则不干预</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">开关</td>
+          <td style="padding:9px 8px;color:#4b5563;">中间件按需挂载</td>
+          <td style="padding:9px 8px;color:#4b5563;">全局开关，异常时整体关闭</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      为什么不同：框架的软着陆盯的是 token 预算，累计加权成本到线才触发；那管的是「钱」。步数管的是「延迟与失控」，代理循环里没有对应的中间件。平台两条都要防，但目前只做了步数这一侧——配额耗尽仍是硬中断，这是缺口不是设计。
+    </p>
+    <p style="margin:0;padding:10px 12px;background:#f5f5f5;border-radius:3px;font-size:11px;word-break:normal;overflow-wrap:break-word;color:#374151;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
+      <span style="color:#9ca3af;">核实 $</span> python -c "from agentscope.agent import ReActConfig;print(ReActConfig().max_iters)"<br/>
+      <span style="color:#9ca3af;">输出 </span>50<br/>
+      <span style="color:#9ca3af;">核实 $</span> grep -n "_reserve_steps" app/services/ai/runtime/agentscope/middleware.py
+    </p>
+  </section>
+
+  <!-- ========== 02 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">02 /</span> 工具、MCP 与多智能体委派</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      框架提供工具抽象与 MCP 客户端，平台在其上补了工具的生命周期治理：谁能用、用完谁记账、模型叫错名字怎么办。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 2　工具的供给与治理</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:21%;"/>
+        <col style="width:40%;"/>
+        <col style="width:39%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">项</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">AgentScope 2.0.11</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">内置工具</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;"><code style="font-family:ui-monospace,Menlo,monospace;font-size:11px;">tool/_builtin</code> 下 9 个：bash、read、write、edit、glob、grep、ask_user、skill、powershell</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">注册 6 个：Bash、Read、Write、Edit、Glob、Grep；另有 37 个业务工具模块</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">工具抽象</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">Toolkit + FunctionTool / MCPTool</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">同一套，外加白名单与未注册工具拦截</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">MCP</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">MCPClient 客户端 + MCPTool 适配</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">服务级注册（含别名）、按租户授权、市场只做外链</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">并行调用</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">框架调度</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">控制并发与结果合并，避免同文件并发写</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">多智能体</td>
+          <td style="padding:9px 8px;color:#4b5563;">GoalPipeline / TeamPipeline，进程内编排</td>
+          <td style="padding:9px 8px;color:#4b5563;">专家 Agent 作为工具被调用，带各自知识与权限</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      为什么不同：模型看到的工具名和平台内部的工具标识不是一套——MCP 注册给模型的是别名，内部记的是「服务名:工具名」。框架不做这层映射的校验，模型照抄内部标识就会踩空，所以平台在调用前拦一层并给出正确叫法。多智能体走委派而不是进程内 pipeline，是因为委派天然带权限与计费边界：子 Agent 用的是它自己的授权。
+    </p>
+    <p style="margin:0;padding:10px 12px;background:#f5f5f5;border-radius:3px;font-size:11px;word-break:normal;overflow-wrap:break-word;color:#374151;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
+      <span style="color:#9ca3af;">核实 $</span> ls .venv/lib/python3.11/site-packages/agentscope/tool/_builtin/<br/>
+      <span style="color:#9ca3af;">核实 $</span> ls app/services/ai/tools/ | wc -l<br/>
+      <span style="color:#9ca3af;">输出 </span>37
+    </p>
+  </section>
+
+  <!-- ========== 03 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">03 /</span> 沙箱：八个后端里没有 SSH</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      框架的沙箱覆盖很全，但没有 SSH 后端；平台的第五种策略是自己写的。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 3　沙箱后端的差异</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:21%;"/>
+        <col style="width:40%;"/>
+        <col style="width:39%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">项</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">AgentScope 2.0.11</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">后端</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">8 个：local、docker、k8s、e2b、daytona、bubblewrap、applecontainer、opensandbox</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">5 种策略：local、docker、k8s、e2b、ssh</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">SSH</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">无</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">自研 1,455 行，实现 WorkspaceBase，上层工具无感知</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">容器挂载</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">一个工作目录挂载点</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">追加两个只读子挂载：技能包、公共文档</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">K8s</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">单个 Pod</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">六项改造：subPath 同路径、预建目录、身份护栏、无权限降级、资源上限、按用户独立卷</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">路径一致性</td>
+          <td style="padding:9px 8px;color:#4b5563;">不做约束</td>
+          <td style="padding:9px 8px;color:#4b5563;">沙箱内路径与文件树一致，避免「点了打不开」</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      为什么不同：框架假设你能控制容器编排；平台面对的是客户现场——不少 GPU 机器只有 SSH，装不了容器运行时。同路径挂载也不是洁癖：左侧文件树点开的路径和 Agent 在沙箱里看到的路径必须是同一个字符串，否则用户点开文件会 404。
+    </p>
+    <p style="margin:0;padding:10px 12px;background:#f5f5f5;border-radius:3px;font-size:11px;word-break:normal;overflow-wrap:break-word;color:#374151;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
+      <span style="color:#9ca3af;">核实 $</span> ls -d .venv/lib/python3.11/site-packages/agentscope/workspace/_*/<br/>
+      <span style="color:#9ca3af;">核实 $</span> grep -n "SANDBOX_POLICY_" app/services/ai/runtime/agentscope/workspace.py | head -5
+    </p>
+  </section>
+
+  <!-- ========== 04 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">04 /</span> 会话状态：谁负责持久化与互斥</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      框架定义状态长什么样，不定义它存在哪、谁能写。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 4　状态的载体、存储与并发</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:21%;"/>
+        <col style="width:40%;"/>
+        <col style="width:39%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">项</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">AgentScope 2.0.11</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">载体</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;"><code style="font-family:ui-monospace,Menlo,monospace;font-size:11px;">AgentState</code>（pydantic）+ ReplyContext / ToolContext / TaskContext</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">同左，另加 PipelineContext 承载流程态</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">持久化</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">不负责，交由使用方序列化</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">Redis 存整份 state，TTL 30 天</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">并发写</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">不涉及，假设一次回复在一个进程内跑完</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">SET NX EX 加锁并续租，保证单写入方</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">中断恢复</td>
+          <td style="padding:9px 8px;color:#4b5563;">支持 HITL 中断与继续</td>
+          <td style="padding:9px 8px;color:#4b5563;">699 行恢复逻辑 + 确认单落库</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      为什么不同：多实例部署叠上流式输出，两条流可能同时写同一会话，前端表现为回复重复或内容回退。框架的假设是「一个进程跑完一次回复」，没有跨实例的写者互斥，这件事只能由持有会话的一方来做。
+    </p>
+    <p style="margin:0;padding:10px 12px;background:#f5f5f5;border-radius:3px;font-size:11px;word-break:normal;overflow-wrap:break-word;color:#374151;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
+      <span style="color:#9ca3af;">核实 $</span> grep -n "set(key, token, ex=" app/services/ai/runtime/agentscope/session_lock.py<br/>
+      <span style="color:#9ca3af;">核实 $</span> grep -n "state=agent.state" app/services/ai/runtime/agentscope/state_store.py
+    </p>
+  </section>
+
+  <!-- ========== 05 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">05 /</span> 长期记忆：文件快照与多实例检索</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      框架的长期记忆是 workspace 里的一组 Markdown 文件；平台是 Redis 加向量索引。两者都做到了「每轮自动注入」，载体完全不同。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 5　记忆的存储、注入与检索</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:21%;"/>
+        <col style="width:40%;"/>
+        <col style="width:39%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">项</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">AgentScope 2.0.11</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">存储</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">workspace 内 Markdown 文件 + MEMORY.md 索引</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">Redis Hash + 向量索引</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">注入</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">MEMORY.md 索引进 system prompt，上限 4000 token</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">装配阶段预加载，执行阶段注入</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">检索</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">模型读 frontmatter 选文件，最多 200 个、单文件 2000 token，异步以提示块注入</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">向量召回，叠加召回策略规则</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">隔离</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">随 workspace，一个目录一份记忆</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">按租户与用户分区，跨实例共享</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">重建</td>
+          <td style="padding:9px 8px;color:#4b5563;">重写文件即可</td>
+          <td style="padding:9px 8px;color:#4b5563;">索引可单独重建，不影响会话</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      为什么不同：文件方案假设「一个工作目录属于一个人」。平台的会话可能落到任意实例，一个租户下几百个用户各有各的记忆，还要能并发写、按用户删除、索引重建。这几条文件方案都不满足，所以只能换载体——但要承认，框架的「Markdown 可读可编辑」在排障时确实直观。
+    </p>
+    <p style="margin:0;padding:10px 12px;background:#f5f5f5;border-radius:3px;font-size:11px;word-break:normal;overflow-wrap:break-word;color:#374151;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
+      <span style="color:#9ca3af;">核实 $</span> grep -rn --include=*.py "default=4_000" .venv/lib/python3.11/site-packages/agentscope/middleware/<br/>
+      <span style="color:#9ca3af;">输出 </span>_middleware.py:376: default=4_000<br/>
+      <span style="color:#9ca3af;">核实 $</span> wc -l app/services/ai/memory_*.py
+    </p>
+  </section>
+
+  <!-- ========== 06 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">06 /</span> 知识与检索：解析交给 RAGFlow</p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 6　从文档到引用</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:21%;"/>
+        <col style="width:40%;"/>
+        <col style="width:39%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">环节</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">AgentScope 2.0.11</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">解析</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">自带 parser 与 chunker，基础文本抽取</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">RAGFlow：版面分析、表格还原、OCR、分块模板</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">向量库</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">内置抽象，可接多种</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">Redis Stack（RediSearch）</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">检索</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">RAG 中间件一次检索后注入</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">检索 + 引用编号 + 库级权限</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">对话内直读</td>
+          <td style="padding:9px 8px;color:#4b5563;">支持，工具 + 解析器直接读文件</td>
+          <td style="padding:9px 8px;color:#4b5563;">附件只识别图片，文档走知识库</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      为什么不同：解析质量决定答案质量，这块 RAGFlow 做得更深，自研不划算。反过来，「对话内直接传 PDF 给 Agent 读全文」平台不支持——这是缺口，不是取舍，写在这里是为了让人知道边界在哪。
+    </p>
+    <p style="margin:0;padding:10px 12px;background:#f5f5f5;border-radius:3px;font-size:11px;word-break:normal;overflow-wrap:break-word;color:#374151;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
+      <span style="color:#9ca3af;">核实 $</span> ls .venv/lib/python3.11/site-packages/agentscope/rag/<br/>
+      <span style="color:#9ca3af;">核实 $</span> find app -path "*chatbi*" -name "*.py" | wc -l<br/>
+      <span style="color:#9ca3af;">输出 </span>56
+    </p>
+  </section>
+
+  <!-- ========== 07 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">07 /</span> 权限：工具护栏与租户边界</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      这一节的差异最大：两者都叫权限，管的东西不是一个层面。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 7　两种权限模型</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:21%;"/>
+        <col style="width:40%;"/>
+        <col style="width:39%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">项</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">AgentScope 2.0.11</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">模型</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">PermissionRule：工具名 + 内容模式 + 行为 + 来源</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">RBAC：租户、角色、权限点、资源授权</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">粒度</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">Bash 按命令子串，Read/Write 按路径 glob</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">菜单级与元素级权限点，另加资源级</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">行为</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">allow / deny / ask，ask 触发确认</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">确认单、授权记录、越权审计</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">引擎模式</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">5 种：default、explore、accept_edits、bypass、dont_ask</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">按 Agent 配置下发审批模式</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">多租户</td>
+          <td style="padding:9px 8px;color:#4b5563;">无此概念</td>
+          <td style="padding:9px 8px;color:#4b5563;">前提</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      为什么不同：框架的规则是「给一个开发者配一副护栏」——他信任自己的机器，只需要挡住危险的删除和写入；平台是「给互不信任的部门划边界」——同一个模型服务要按租户隔离数据、按角色收窄功能、按次留痕。前者不需要租户，后者没有租户就无法成立。平台只复用了 3 个权限枚举来对齐工具层语义，服务本身 1,805 行自研。
+    </p>
+    <p style="margin:0;padding:10px 12px;background:#f5f5f5;border-radius:3px;font-size:11px;word-break:normal;overflow-wrap:break-word;color:#374151;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
+      <span style="color:#9ca3af;">核实 $</span> sed -n "8,40p" .venv/lib/python3.11/site-packages/agentscope/permission/_rule.py<br/>
+      <span style="color:#9ca3af;">核实 $</span> wc -l app/services/permission_service.py
+    </p>
+  </section>
+
+  <!-- ========== 08 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">08 /</span> 一次调用前的六段流水线</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      框架的入口是「调用 Agent，得到回复」；平台的入口是一个 HTTP 请求，中间隔着计费、配额、人工确认与模型降级。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 8　调用路径的分解</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:24%;"/>
+        <col style="width:32%;"/>
+        <col style="width:44%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">阶段</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">AgentScope 2.0.11</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">预检</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">无对应位置</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">额度、权限、人工确认、可用模型</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">上下文与路由</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">中间件按需插入</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">拼装历史与记忆，选模型、选专家</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">装配与执行</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">Agent.reply()</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">装配提示词后执行，逐轮计 token 与成本</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">收尾</td>
+          <td style="padding:9px 8px;color:#4b5563;">回复结束即结束</td>
+          <td style="padding:9px 8px;color:#4b5563;">落库、记账、触发通知</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      为什么不同：框架没有「请求」这个概念，也就没有可拦截的位置。平台要在模型被调用之前完成四个判断——能不能用（停）、要不要人确认（拦）、记谁账上（记）、主模型挂了换谁（换），这四件事必须有一个统一入口，于是拆成六段，合计 1,965 行。它与框架的 pipeline 模块不是替代关系，两者不在同一抽象层。
+    </p>
+    <p style="margin:0;padding:10px 12px;background:#f5f5f5;border-radius:3px;font-size:11px;word-break:normal;overflow-wrap:break-word;color:#374151;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
+      <span style="color:#9ca3af;">核实 $</span> ls app/services/ai/pipeline/steps/<br/>
+      <span style="color:#9ca3af;">核实 $</span> wc -l app/services/ai/pipeline/steps/*.py | tail -1
+    </p>
+  </section>
+
+  <!-- ========== 09 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">09 /</span> 运行时容错：两个框架不管的故障</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      这两个问题都来自线上，框架侧的行为是正确的——只是不足以让调用方知道「这次调用已经没救了」。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 9　两类故障的处置</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:24%;"/>
+        <col style="width:32%;"/>
+        <col style="width:44%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">现象</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">框架侧</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">平台的处理</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">流静默挂起</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">HTTP 读超时按「相邻两次数据到达的间隔」计，中间层有心跳就永不触发</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">按 chunk 间隔单独计时，180 秒无数据即抛可重试异常</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">工具名不匹配</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">调用不存在的工具直接报错，提示语用模型看到的别名</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">白名单外拦截，并把「别名」与「服务名:工具名」的差异写进提示</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">超时分级</td>
+          <td style="padding:9px 8px;color:#4b5563;">单一超时设置</td>
+          <td style="padding:9px 8px;color:#4b5563;">请求级、工具级、流级三档，各自独立</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      第一次遇到是模型调用静默了 9 分钟：事件日志停在同一序号，既无异常也无重试，请求最后由兜底超时终结。查下来读超时语义本身没错——只要上游在发心跳，静默条件就不成立。所以要另一层判据：按数据块的到达间隔算，而不是按整条连接的存活算。
+    </p>
+    <p style="margin:0;padding:10px 12px;background:#f5f5f5;border-radius:3px;font-size:11px;word-break:normal;overflow-wrap:break-word;color:#374151;line-height:1.8;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;">
+      <span style="color:#9ca3af;">核实 $</span> grep -rn "IDLE_TIMEOUT_SECONDS =" app/services/ai/runtime/agentscope/<br/>
+      <span style="color:#9ca3af;">输出 </span>DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 180.0
+    </p>
+  </section>
+
+  <!-- ========== 10 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">10 /</span> 可观测：追踪之外要回答的两个问题</p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 10　追踪、成本与上下文</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:21%;"/>
+        <col style="width:40%;"/>
+        <col style="width:39%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">项</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">AgentScope 2.0.11</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">NanZi</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">追踪</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">TracingMiddleware，OpenTelemetry 语义属性</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">已接入，另送 Langfuse</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">成本</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">不做记账</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">按轮记 input / output，落到额度</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">上下文占用</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">不做拆解</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">四类拆解：系统词、工具 Schema、记忆与历史、当前轮</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">超限处置</td>
+          <td style="padding:9px 8px;color:#4b5563;">报错或截断</td>
+          <td style="padding:9px 8px;color:#4b5563;">水位告警 + 两阶段结构化压缩</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      为什么不同：框架只需要让人看见「发生了什么」，平台还要回答「这轮为什么贵」和「上下文被谁占了」。前者排障用，后者定价与优化用。
+    </p>
+  </section>
+
+  <!-- ========== 11 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">11 /</span> 26 个模块的实际去向</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      判定以符号为单位，不是按目录猜：对 app 全目录做 AST 解析，提取所有 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;background:#f5f5f5;padding:1px 5px;border-radius:3px;color:#111827;">from agentscope.X import Y</code>，区分「模块被引用」与「符号被使用」。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 11　26 个模块的接入分布</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:22%;"/>
+        <col style="width:11%;"/>
+        <col style="width:67%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;white-space:nowrap;">判定</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;text-align:center;white-space:nowrap;">数量</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">模块</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">完整使用</td>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;text-align:center;">7</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">agent、workspace、tool、message、event、mcp、exception</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">部分使用</td>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;text-align:center;">3</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">model、state、skill</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">仅借类型</td>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;text-align:center;">3</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">permission、credential、middleware</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">隐式使用</td>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;text-align:center;">1</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">formatter，框架按模型自动选用</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-weight:bold;">未接入</td>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;text-align:center;">12</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">见表 12</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-weight:bold;">必须引入</td>
+          <td style="padding:9px 8px;color:#111827;text-align:center;">0</td>
+          <td style="padding:9px 8px;color:#4b5563;">无「平台缺失且必须由框架补齐」的能力</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 12　未接入的 12 个模块及原因</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:26%;"/>
+        <col style="width:11%;"/>
+        <col style="width:63%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;white-space:nowrap;">模块</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;text-align:right;white-space:nowrap;">行数</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">app</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">52,799</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">与平台存储、鉴权、计费、前端契约冲突，接入等价于按框架形状重写平台</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">rag</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">5,386</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">主体由 RAGFlow 承担，见第 6 节；解析器保留为对话内直读的备选</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">realtime</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">2,998</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">无实时语音需求；引入需 WebRTC 采集、UDP 放通、按分钟计费</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">tui</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">2,512</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">终端界面，平台为 Web 形态</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">embedding</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">2,384</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">四厂商统一走 OpenAI 兼容端点，仅剩配置差异</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">tts</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">2,328</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">无语音输出需求，建议直连厂商接口</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">pipeline</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">828</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">不同层：多 Agent 编排原语，平台用专家委派，见第 2 节</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">sop</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">794</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">执行者—校验者模式，平台在 ChatBI 上实例化更深</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">classifier</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">714</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">依赖境外服务，且其 OpenAI 实现要求高于当前锁定的 SDK 版本</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">console</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">648</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">终端界面，同上</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:11px;">asr</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;text-align:right;">429</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;">对转写接口的薄封装，直连更省</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#111827;font-family:ui-monospace,Menlo,monospace;font-size:11px;">types</td>
+          <td style="padding:9px 8px;color:#4b5563;text-align:right;">124</td>
+          <td style="padding:9px 8px;color:#4b5563;">框架内部类型别名，业务代码不直接依赖</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.75;">
+      两点补充。框架 app 目录虽被 grep 命中 2 次，但都是路径字符串而非符号导入，故不计入；middleware 模块已接入（基类与追踪中间件），但其内置的 7 个中间件未使用，理由分散在第 1、5、6、10 节。
+    </p>
+  </section>
+
+  <!-- ========== 12 ========== -->
+  <section style="margin:0 0 14px 0;padding:0 0 10px 0;border-bottom:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;line-height:1.5;"><span style="color:#9ca3af;font-weight:normal;">12 /</span> 复现方式</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#3f3f3f;line-height:1.85;">
+      下面四条命令合起来能复现本文的主要数字：框架规模、平台规模、模块接入判定、以及两个关键默认值。
+    </p>
+  </section>
+
+  <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;line-height:1.6;letter-spacing:0.5px;">表 13　复现命令与预期输出</p>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.65;border:1px solid #e5e7eb;word-break:normal;overflow-wrap:break-word;text-align:left;margin:0 0 12px 0;">
+      <colgroup>
+        <col style="width:58%;"/>
+        <col style="width:42%;"/>
+      </colgroup>
+      <thead>
+        <tr style="background:#f3f4f6;">
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">命令</th>
+          <th style="padding:8px 8px;color:#111827;border-bottom:1px solid #cbd0d6;">预期</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;color:#374151;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:10px;">ls -d $AS/*/ | grep -vE "_utils|__pycache__" | wc -l</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;font-size:11px;">26（模块目录数）</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#374151;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:10px;">find app -name "*.py" | wc -l</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;font-size:11px;">543</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#374151;border-bottom:1px solid #e8eaed;font-family:ui-monospace,Menlo,monospace;font-size:10px;">grep -rho "from agentscope\.[a-z_]*" app | sort | uniq -c | sort -rn</td>
+          <td style="padding:9px 8px;color:#4b5563;border-bottom:1px solid #e8eaed;font-size:11px;">tool 19、message 15、permission 14…</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;color:#374151;font-family:ui-monospace,Menlo,monospace;font-size:10px;">python -c "from agentscope.agent import ReActConfig;print(ReActConfig().max_iters)"</td>
+          <td style="padding:9px 8px;color:#4b5563;font-size:11px;">50</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.75;">
+      其中 <code style="font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#f5f5f5;padding:1px 4px;border-radius:3px;color:#111827;">$AS</code> 指向 <code style="font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#f5f5f5;padding:1px 4px;border-radius:3px;color:#111827;">.venv/lib/python3.11/site-packages/agentscope</code>。第三条只统计显式 import，符号级判定需要 AST 解析，脚本见上文提到的核对文档。
+    </p>
+  </section>
+
+  <section style="margin:26px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 附 ========== -->
+  <section style="margin:0 0 18px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:4px;">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:bold;color:#111827;line-height:1.6;">关于本项目</p>
+    <p style="margin:0 0 8px 0;font-size:13px;color:#4b5563;line-height:1.85;">
+      个人开源项目，遵循 MIT 协议，可自由学习、二次开发与分发。NanZi 取自网名「南孜」，取「孜孜不倦」之意。
+    </p>
+    <p style="margin:0;font-size:13px;color:#4b5563;line-height:1.85;">
+      仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#1d4ed8;text-decoration:none;word-break:normal;overflow-wrap:break-word;">RandyChen1985/nanzi-ai-agent-platform</a><br/>
+      核对文档：<span style="font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#374151;">docs/md/agentscope_2.0.11_module_review.md</span>
+    </p>
+  </section>
+
+  <section style="margin:0 0 4px 0;">
+    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.8;">
+      文中数字均由上表命令得到；若与代码不符，以代码为准，欢迎提 issue 指出。
+    </p>
+  </section>
+
+  <section style="margin:18px 0 0 0;padding:12px 0 0 0;border-top:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.8;">NanZi 技术复盘 · C05 · 2026-10-29</p>
+  </section>
+
+</section>

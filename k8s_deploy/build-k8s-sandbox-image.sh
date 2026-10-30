@@ -47,14 +47,38 @@ log_error()  { printf "%b✖%b  %b\n" "${C_RED}" "${C_RESET}" "$*"; }
 GATEWAY_HOME="/root/.agentscope"
 GATEWAY_VENV="$GATEWAY_HOME/.venv"
 GATEWAY_SCRIPT_NAME="_mcp_gateway_app.py"
-# agentscope.workspace._utils._GATEWAY_BASE_REQUIREMENTS + agentscope(--no-deps)
-# 额外补充 agentscope 核心依赖（官方 _GATEWAY_BASE_REQUIREMENTS 清单遗漏）：
-#   gateway 加载/调用 MCP 与 Bash 工具时会全量 import agentscope.tool
-#   （tool/_types → _utils 需 docstring_parser；_toolkit 需 jinja2；_builtin 需
-#   aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter）。缺失会报
-#   "HTTP 500: No module named 'xxx'"。以上为实测补全集（干净 venv 迭代验证到
-#   import agentscope.mcp + agentscope.tool 全部通过）。
-BASE_REQS=("mcp<2.0.0" "uvicorn" "fastapi" "httpx" "docstring_parser" "jinja2" "aiofiles" "tree_sitter" "tree_sitter_bash" "python-frontmatter")
+# 网关 venv 的依赖清单 = agentscope 的 _GATEWAY_BASE_REQUIREMENTS（上游）
+#                 + 平台补充的 agentscope 工具链核心依赖（extra_pip）
+#
+# 前半段必须逐项跟随 agentscope 升级后的
+# ``agentscope.workspace._utils._GATEWAY_BASE_REQUIREMENTS``：agentscope 用
+# ``--no-deps`` 安装，网关 venv 的 mcp/httpx2/certifi 只能由这里提供。
+#   2.0.11 起上游把 mcp 从 ``<2.0.0`` 放开成 ``>=2.0.0``，并新增 httpx2（客户端
+#   传输改用 httpx2）与 certifi 下限——漏了 httpx2 时，构建期的
+#   ``import agentscope.mcp`` 自检就会 ModuleNotFoundError；只把 mcp 留在 1.x 时，
+#   agentscope 2.0.11 的 ``from mcp import Client`` 直接 ImportError。
+#   ``tests/test_k8s_sandbox_image_gateway_deps.py`` 会跟上游常量比对，防止再次漂移。
+#
+# 后半段是平台补充（官方清单遗漏）：gateway 加载/调用 MCP 与 Bash 工具时会全量
+# import agentscope.tool（tool/_types → _utils 需 docstring_parser；_toolkit 需
+# jinja2；_builtin 需 aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter）。
+# 缺失会报 "HTTP 500: No module named 'xxx'"。必须与
+# ``workspace_container_mcp.GATEWAY_EXTRA_PIP`` 完全一致（同一份清单用于 K8s 冷启动、
+# 本脚本与 Docker 策略，不一致会让预构建镜像的 tag 命不中）。
+BASE_REQS=(
+  "certifi>=2026.10.19"
+  "mcp>=2.0.0"
+  "uvicorn"
+  "fastapi"
+  "httpx"
+  "httpx2>=2.5.0"
+  "docstring_parser"
+  "jinja2"
+  "aiofiles"
+  "tree_sitter"
+  "tree_sitter_bash"
+  "python-frontmatter"
+)
 
 # 镜像内 pip 源：默认清华镜像（与 dev.sh 的 PYPI_INDEX_URL 约定保持一致）
 DEFAULT_PIP_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
@@ -492,10 +516,12 @@ RUN $UV_INSTALL
 ENV UV_VENV_CLEAR=1
 
 # 预置网关 venv（agentscope _GATEWAY_BASE_REQUIREMENTS + 工具链所需核心依赖，见 BASE_REQS 注释）
+# 依赖清单只从 BASE_REQS 展开——过去这里另抄了一份字面量，升级 agentscope 时两份漂移，
+# 构建期的 import 自检才发现漏了 httpx2（见 tests/test_k8s_sandbox_image_gateway_deps.py）。
 RUN uv venv $GATEWAY_VENV \\
  && uv pip install --python $GATEWAY_VENV/bin/python \\
       --default-index $PIP_INDEX $PIP_INSECURE_ARG \\
-      "mcp<2.0.0" uvicorn fastapi httpx docstring_parser jinja2 aiofiles tree_sitter tree_sitter_bash python-frontmatter \\
+      ${BASE_REQS[*]} \\
  && uv pip install --python $GATEWAY_VENV/bin/python --no-deps \\
       --default-index $PIP_INDEX $PIP_INSECURE_ARG "$AP" \\
  && $GATEWAY_VENV/bin/python -c "import docstring_parser; import agentscope.mcp; import agentscope.tool"

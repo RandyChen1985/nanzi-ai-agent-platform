@@ -487,6 +487,7 @@ docs/html/
 | C02 | WorkBuddy 对比 NanZi（盘外） | `C02-vs-workbuddy.html` | 盘外加餐定稿 | |
 | C03 | Prompt / Context / Loop Engineering（盘外） | `C03-prompt-context-loop.html` | 盘外加餐定稿 | |
 | C04 | 提示词结构化装配与 KV Cache 缓存实战（盘外） | `C04-prompt-cache-and-assembly.html` | 盘外加餐定稿 | |
+| C05 | NanZi 与 AgentScope 的功能对照（盘外） | `C05-agentscope-and-nanzi.html` | 盘外加餐定稿 | |
 
 ---
 
@@ -498,6 +499,7 @@ docs/html/
 | C02 | WorkBuddy 刷屏！对比 NanZi：个人 Copilot 与企业编排中枢，你该怎么选？ | `C02-vs-workbuddy.html` | 选型对比文；硬核对比桌面 Copilot (WorkBuddy) 与企业级私有化中枢 (NanZi) 的 5 大核心差异 |
 | C03 | 智能体不是写好一句 Prompt：从 Prompt 到 Loop，NanZi 这一圈怎么转 | `C03-prompt-context-loop.html` | 原理文；Prompt / Context / Harness / Loop 四层对照通用助手、知识库、ChatBI、熔断与停止；克制配色版 `C03-prompt-context-loop-plain.html` |
 | C04 | 千万级 Token 怎么省？提示词结构化装配与 KV Cache 缓存实战 | `C04-prompt-cache-and-assembly.html` | 实战原理文；PromptPlan 拓扑拆解、稳定前缀前置、会话哈希分桶灰度与真实 Usage 归一化提取；克制配色版 `C04-prompt-cache-and-assembly-plain.html` |
+| C05 | NanZi 与 AgentScope 的功能对照：11 个功能点，两侧怎么做、为什么不同、如何核实 | `C05-agentscope-and-nanzi.html` | 逐项对照文；执行循环、工具与 MCP、沙箱、会话状态、长期记忆、检索、权限、流水线、容错、可观测、多智能体共 11 组两侧实现并排；每组给出设计前提差异与可执行核实命令；26 模块接入清单与复现命令表；依据 `docs/md/agentscope_2.0.11_module_review.md` |
 
 
 ---

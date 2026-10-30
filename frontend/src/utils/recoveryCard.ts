@@ -26,6 +26,15 @@ export interface RecoveryCardInput {
   syncedEventCount: number;
   /** 本轮卡片是否已被用户手动关闭。 */
   turnDismissed: boolean;
+  /**
+   * 本端用户主动点了「停止生成」。
+   *
+   * 停止只 abort 本地流：流已不在途、在途草稿还在、后端锁尚未释放，三条判据与
+   * 「切走页面后 SSE 静默断开」完全同构。没有这一位，界面会先弹「会话仍在后台处理中」，
+   * 待取消轮落库（FinalizeStep 仍会把已生成的部分写成 cancelled）后再补一句
+   * 「执行已完成，内容已补齐」——用户刚按了停止，这两句都是反向信号。
+   */
+  turnStoppedByUser?: boolean;
   /** 落库终态是否已写入界面。 */
   terminalApplied: boolean;
   /**
@@ -75,6 +84,9 @@ export function planRecoveryCard(input: RecoveryCardInput): RecoveryCardState {
   // 用户本轮已明确关闭：不再打扰。范围仅限本轮，下一轮提问会复位该标记。
   // 关闭优先于完成态——用户已经表示不想看这张卡片了。
   if (input?.turnDismissed) return { phase: "hidden", message: "" };
+  // 用户主动停止 = 本轮不是恢复场景：既不提示「后台仍在处理」，也不在收尾时补一句
+  // 「内容已补齐」。收敛（把界面内容对齐到落库结果）照旧静默进行。
+  if (input?.turnStoppedByUser) return { phase: "hidden", message: "" };
   // 本端仍在收流 = 这是一次正常对话，不是恢复场景：此时提示「已恢复实时同步」是误报。
   if (input?.streaming) return { phase: "hidden", message: "" };
   // 内容已补齐就是完成态：不必等后端释放锁（锁在落库完成后才释放，存在时间窗）。

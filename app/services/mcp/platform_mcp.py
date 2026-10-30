@@ -19,7 +19,8 @@ from sqlalchemy.orm import selectinload
 
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 from app.core.config import settings
 from app.core import redis
@@ -213,7 +214,29 @@ async def is_platform_mcp_capability_enabled(capability_group: str) -> bool:
     return await PlatformMcpConfigService.get_flag(f"{capability_group}_enabled")
 
 
-class PlatformFastMCP(FastMCP):
+#: Streamable HTTP 请求体上限：mcp 2.x 默认 4 MiB，对平台类工具（SQL、文档片段、
+#: 批量参数）偏小，这里放宽到 32 MiB。超限的请求会被传输层直接拒绝（413）。
+MCP_MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024
+
+#: 有状态会话的空闲回收时间（秒）。当前端点是 stateless_http，该值只是兜底，
+#: 避免将来切回有状态模式时落到 2.x 的 30 分钟默认值上。
+MCP_SESSION_IDLE_TIMEOUT_SECONDS = 3600.0
+
+#: 传输安全白名单的持有者。
+#:
+#: mcp 2.x 起 ``MCPServer.settings`` 不再保存 ``TransportSecuritySettings``（只剩
+#: debug/log_level/auth 等字段），该对象改为 ``streamable_http_app()`` 的入参，必须由
+#: 调用方自己持有引用。运行期刷新走 ``public_url.sync_transport_security()`` 的原地
+#: 切片赋值，因此这里必须是**同一个实例**，不能在构造应用时临时新建。
+_PLATFORM_TRANSPORT_SECURITY = mutable_transport_security(settings.APP_PUBLIC_URL)
+
+
+def get_platform_transport_security() -> TransportSecuritySettings:
+    """返回 Platform MCP 的传输安全设置，供 public_url 运行期原地刷新白名单。"""
+    return _PLATFORM_TRANSPORT_SECURITY
+
+
+class PlatformMCPServer(MCPServer):
     """把能力组开关应用到 tools/list，调用时仍会再次校验。"""
 
     async def list_tools(self):  # type: ignore[no-untyped-def]
@@ -228,14 +251,9 @@ class PlatformFastMCP(FastMCP):
         return visible
 
 
-platform_mcp = PlatformFastMCP(
+platform_mcp = PlatformMCPServer(
     name=PLATFORM_MCP_NAME,
     instructions="NanZi 平台级能力入口；所有调用必须使用 NanZi OAuth2 Bearer Access Token。",
-    streamable_http_path="/platform",
-    json_response=True,
-    stateless_http=True,
-    # 占位对象：启动后由 refresh_mcp_public_url() 原地刷新白名单
-    transport_security=mutable_transport_security(settings.APP_PUBLIC_URL),
     token_verifier=PlatformMcpTokenVerifier(),
     auth=AuthSettings(
         issuer_url=_platform_base_url(),
@@ -244,8 +262,40 @@ platform_mcp = PlatformFastMCP(
         # 不能把所有方法 Scope 配成全局 required_scopes，否则任何 token 都会被
         # 当成必须同时拥有全部能力而拒绝。
         required_scopes=[],
+        # 显式声明：2.2 起不配会出 DeprecationWarning（测试把 warning 当错误），
+        # 3.0 起该字段默认值即将翻转。
+        validate_token_resource=True,
     ),
 )
+
+
+_PLATFORM_HTTP_APP: Any = None
+
+
+def platform_mcp_http_app():  # type: ignore[no-untyped-def]
+    """构造（并缓存）Platform MCP 的 Streamable HTTP 应用。
+
+    mcp 2.x 把端点路径、JSON 响应、无状态会话、传输安全与容量限制从构造函数
+    挪到了 ``streamable_http_app()``，所以这些参数必须在这里传。
+
+    必须缓存：``streamable_http_app()`` 每次调用都会新建一个
+    ``StreamableHTTPSessionManager`` 并覆盖 ``server._session_manager``，
+    而新实例没有经过 ``run()``（由 ``platform_mcp_lifespan`` 负责），
+    直接处理请求会抛 ``RuntimeError: Task group is not initialized``。
+    管理端「在线调试」（``mcp_service.test_playground_method``）会在运行期
+    调用本工厂，若不复用宿主挂载的那个实例，调试必然失败。
+    """
+    global _PLATFORM_HTTP_APP
+    if _PLATFORM_HTTP_APP is None:
+        _PLATFORM_HTTP_APP = platform_mcp.streamable_http_app(
+            streamable_http_path="/platform",
+            json_response=True,
+            stateless_http=True,
+            transport_security=_PLATFORM_TRANSPORT_SECURITY,
+            max_request_body_size=MCP_MAX_REQUEST_BODY_BYTES,
+            session_idle_timeout=MCP_SESSION_IDLE_TIMEOUT_SECONDS,
+        )
+    return _PLATFORM_HTTP_APP
 
 
 @asynccontextmanager
@@ -318,6 +368,26 @@ async def _resolve_knowledge_scope(
             f"client_id={principal.client_id}",
             f"effective_knowledge_base_count={len(effective)}",
         ]
+
+
+async def _report_progress(
+    ctx: Context | None,
+    progress: float,
+    total: float | None = None,
+    message: str | None = None,
+) -> None:
+    """向调用方上报一次进度。
+
+    - 调用方没带 ``progressToken``（绝大多数 MCP 客户端默认如此）时，
+      ``Context.report_progress`` 本身就是 no-op，加这一层不会改变现有行为；
+    - 上报属于可观测性支线：连接已断/传输异常都不能让工具本身失败。
+    """
+    if ctx is None:
+        return
+    try:
+        await ctx.report_progress(progress, total, message)
+    except Exception:  # pragma: no cover - 传输层异常，仅记录
+        logger.debug("[PlatformMCP] report_progress failed", exc_info=True)
 
 
 async def _write_audit(
@@ -735,6 +805,7 @@ async def _agent_call_common(
     message: str,
     conversation_id: str | None,
     client_request_id: str | None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     request_id = _request_id(principal)
@@ -761,6 +832,8 @@ async def _agent_call_common(
                     raise PermissionError("会话不属于指定智能体")
             else:
                 normalized_conversation_id = f"mcp_{uuid.uuid4().hex}"
+            await _report_progress(ctx, 1, 3, "已校验身份与智能体授权")
+            await _report_progress(ctx, 2, 3, "正在执行智能体")
             result = await _invoke_agent(
                 db,
                 agent=agent,
@@ -768,6 +841,7 @@ async def _agent_call_common(
                 conversation_id=normalized_conversation_id,
                 user_info=user_info,
             )
+            await _report_progress(ctx, 3, 3, "智能体执行完成")
         await _write_audit(
             principal,
             method_name=method_name,
@@ -827,7 +901,6 @@ async def agent_invoke(
     client_request_id: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    del ctx
     started = time.monotonic()
     principal = _principal_from_context()
     request_id = _request_id(principal)
@@ -868,6 +941,7 @@ async def agent_invoke(
         message=message,
         conversation_id=conversation_id,
         client_request_id=client_request_id,
+        ctx=ctx,
     )
 
 
@@ -882,7 +956,6 @@ async def conversation_continue(
     client_request_id: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    del ctx
     started = time.monotonic()
     principal = _principal_from_context()
     request_id = _request_id(principal)
@@ -908,6 +981,8 @@ async def conversation_continue(
                 str(existing.agent_id),
                 client,
             )
+            await _report_progress(ctx, 1, 3, "已校验会话归属与智能体授权")
+            await _report_progress(ctx, 2, 3, "正在执行智能体")
             result = await _invoke_agent(
                 db,
                 agent=agent,
@@ -915,6 +990,7 @@ async def conversation_continue(
                 conversation_id=str(conversation_id).strip(),
                 user_info=user_info,
             )
+            await _report_progress(ctx, 3, 3, "智能体执行完成")
         await _write_audit(
             principal,
             method_name="conversation_continue",
@@ -1420,7 +1496,6 @@ async def knowledge_search(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """执行用户授权范围内的知识库检索。"""
-    del ctx
     started = time.monotonic()
     principal = _principal_from_context()
     request_id = str(principal.claims.get("request_id") or uuid.uuid4())
@@ -1441,6 +1516,7 @@ async def knowledge_search(
             principal,
             knowledge_base_ids,
         )
+        await _report_progress(ctx, 1, 3, "已解析知识库范围")
         threshold = await ConfigService.get("knowledge_ragflow_similarity_threshold")
         weight = await ConfigService.get("knowledge_ragflow_vector_weight")
         configured_top_k = await ConfigService.get("knowledge_ragflow_metadata_top_k")
@@ -1450,6 +1526,7 @@ async def knowledge_search(
             system_top_k=configured_top_k,
         )
         effective_top_k = min(top_k, configured_limit)
+        await _report_progress(ctx, 2, 3, "正在检索知识库")
         chunks = await RagFlowClient(config_prefix="knowledge_ragflow").retrieve(
             query.strip(),
             target_ids,
@@ -1457,6 +1534,7 @@ async def knowledge_search(
             similarity_threshold=resolved_threshold,
             vector_similarity_weight=vector_weight,
         )
+        await _report_progress(ctx, 3, 3, "检索完成")
         elapsed = int((time.monotonic() - started) * 1000)
         await _write_audit(
             principal,

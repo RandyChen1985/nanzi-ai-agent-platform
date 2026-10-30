@@ -5970,6 +5970,201 @@ async def _sandbox_bash_tool_from_mcps(mcps: Any) -> Any | None:
     return None
 
 
+#: 内置沙箱工具 MCP 的名字（与 ``workspace_container_mcp.CONTAINER_MCP_NAME`` 一致）。
+_SANDBOX_TOOL_MCP_NAME = "sandbox"
+
+#: 「已尝试重建内置 sandbox MCP」标记，挂在 workspace 对象上：失败后不每次 Bash 重试。
+_SANDBOX_MCP_REBUILD_FLAG = "_platform_sandbox_mcp_rebuild_attempted"
+#: 重建用的 per-workspace 锁，避免并发 Bash 同时 remove/add 同一条 MCP。
+_SANDBOX_MCP_REBUILD_LOCK = "_platform_sandbox_mcp_rebuild_lock"
+
+
+def _is_k8s_sandbox(real_ws: Any) -> bool:
+    return getattr(real_ws, "_platform_sandbox_policy", None) == SANDBOX_POLICY_K8S
+
+
+def _build_builtin_sandbox_mcp(real_ws: Any) -> Any:
+    """按沙箱策略构造内置 sandbox MCP 客户端（K8s 必须用网关 venv 解释器）。"""
+    from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        K8S_GATEWAY_VENV_PYTHON,
+        build_container_tool_mcp,
+    )
+
+    if _is_k8s_sandbox(real_ws):
+        return build_container_tool_mcp(interpreter=K8S_GATEWAY_VENV_PYTHON)
+    return build_container_tool_mcp()
+
+
+def _sandbox_mcp_rebuild_lock(real_ws: Any) -> asyncio.Lock:
+    lock = getattr(real_ws, _SANDBOX_MCP_REBUILD_LOCK, None)
+    if isinstance(lock, asyncio.Lock):
+        return lock
+    lock = asyncio.Lock()
+    try:
+        setattr(real_ws, _SANDBOX_MCP_REBUILD_LOCK, lock)
+    except Exception:  # noqa: BLE001 - 只读替身：退化为每次新建锁
+        pass
+    return lock
+
+
+def _snapshot_mcp_declarations(real_ws: Any) -> dict[Any, list[Any]] | None:
+    """浅拷贝 ``_mcp_specs``（元素是 MCPClient 对象引用，够用于回滚键与顺序）。"""
+    specs = getattr(real_ws, "_mcp_specs", None)
+    if not isinstance(specs, dict):
+        return None
+    return {key: list(value) for key, value in specs.items()}
+
+
+def _restore_mcp_declarations(real_ws: Any, snapshot: dict[Any, list[Any]] | None) -> None:
+    if snapshot is None:
+        return
+    specs = getattr(real_ws, "_mcp_specs", None)
+    if not isinstance(specs, dict):
+        return
+    specs.clear()
+    specs.update(snapshot)
+    # 重建失败的 half-state 客户端不能留在 live 表里，下次 list_mcps 会按声明重建。
+    instances = getattr(real_ws, "_mcp_instances", None)
+    if isinstance(instances, dict):
+        instances.pop(("", ""), None)
+
+
+async def _restore_mcp_file(
+    backend: Any,
+    mcp_path: str | None,
+    backup: bytes | None,
+) -> None:
+    """把 ``.mcp`` 恢复到重建前的内容（无可写后端时静默跳过）。"""
+    if backend is None or not mcp_path:
+        return
+    try:
+        if backup is None:
+            if await backend.file_exists(mcp_path):
+                await backend.delete_path(mcp_path)
+        else:
+            await backend.write_file(mcp_path, backup)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[workspace] 恢复 MCP 声明文件失败（path=%s）: %s", mcp_path, exc)
+
+
+async def _rebuild_builtin_sandbox_mcp(real_ws: Any) -> str | None:
+    """内置 sandbox MCP 世代失配时重建一次。
+
+    返回 ``None`` 表示"已重建/无需重建"，返回字符串是失败原因（供上抛与日志）。
+
+    为什么会失配：MCP 声明被 AgentScope 持久化在 ``<workdir>/.mcp``（含内联脚本
+    全文），且 ``.mcp`` 的优先级高于构造参数 ``default_mcps``。旧版本写下的脚本会
+    一直生效——镜像里的 ``mcp`` 升到 2.x 之后 ``from mcp.server.fastmcp import
+    FastMCP`` 直接抛 ``ModuleNotFoundError``，gateway 注册返回 500，平台拿不到
+    ``bash``，用户侧只剩一句「Bash 工具不可用」。
+
+    事务性：先备份 ``.mcp`` 与内存声明，``add_mcp`` 失败时原样回滚。用户自建的
+    MCP 声明一条都不能丢；「空列表」还会被上游当成「该会话明确没有 MCP」而永久
+    拦住默认值回落，属于必须避免的次生故障。
+
+    调用方必须持有 ``_sandbox_mcp_rebuild_lock``：重建期间的中间态（sandbox 已被
+    remove、新的尚未 add）不能被并发的 ``list_mcps`` 当成「这台沙箱没有 MCP」。
+    """
+    snapshot = _snapshot_mcp_declarations(real_ws)
+    backend = None
+    mcp_path = None
+    backup: bytes | None = None
+    try:
+        backend = real_ws.get_backend()
+        mcp_path = getattr(real_ws, "_mcp_file", None)
+        if backend is not None and mcp_path and await backend.file_exists(mcp_path):
+            backup = await backend.read_file(mcp_path)
+    except Exception as exc:  # noqa: BLE001
+        # 备份失败不阻断重建：只是失败时无从恢复文件内容。
+        logger.debug("[workspace] 备份 MCP 声明文件失败: %s", exc)
+        backend = None
+        mcp_path = None
+        backup = None
+
+    try:
+        await real_ws.remove_mcp(_SANDBOX_TOOL_MCP_NAME)
+        await real_ws.add_mcp(_build_builtin_sandbox_mcp(real_ws))
+    except Exception as exc:  # noqa: BLE001
+        failed_reason = f"{type(exc).__name__}: {exc}"
+        logger.warning("[workspace] 重建内置 sandbox MCP 失败: %s", failed_reason)
+        await _restore_mcp_file(backend, mcp_path, backup)
+        _restore_mcp_declarations(real_ws, snapshot)
+        return failed_reason
+
+    from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        sandbox_mcp_fingerprint,
+    )
+
+    logger.info(
+        "[workspace] 已重建内置 sandbox MCP（旧声明固化了旧脚本或两侧版本失配），"
+        "fingerprint=%s",
+        sandbox_mcp_fingerprint(),
+    )
+    return None
+
+
+def _mark_sandbox_mcp_rebuild_attempted(real_ws: Any) -> None:
+    try:
+        setattr(real_ws, _SANDBOX_MCP_REBUILD_FLAG, True)
+    except Exception:  # noqa: BLE001 - 只读替身：不标记，下次仍会尝试
+        pass
+
+
+async def _resolve_sandbox_bash_tool(real_ws: Any) -> tuple[Any | None, str]:
+    """取沙箱 ``bash``；取不到时重建一次内置 sandbox MCP 再取。
+
+    返回 ``(tool, 失败原因)``：取到时原因为空串。失败原因会带进异常的 message 与
+    user_message，让「gateway 500 / ModuleNotFoundError」这类真因不再只剩一句
+    「Bash MCP 不可用」。
+
+    并发语义：整段「判定 + 重建 + 重取」在 per-workspace 锁内完成，等锁的协程
+    醒来后先重取一次（可能已被别人修好），避免把重建中间态误判成"仍然没有"。
+    """
+    list_mcps = getattr(real_ws, "list_mcps", None)
+
+    def _list() -> Any:
+        return list_mcps() if callable(list_mcps) else None
+
+    tool = await _sandbox_bash_tool_from_mcps(_list())
+    if tool is not None:
+        return tool, ""
+
+    async with _sandbox_mcp_rebuild_lock(real_ws):
+        # 等锁期间可能已被并发的 Bash 修好：先重取，避免重复 remove/add。
+        tool = await _sandbox_bash_tool_from_mcps(_list())
+        if tool is not None:
+            return tool, ""
+
+        if getattr(real_ws, _SANDBOX_MCP_REBUILD_FLAG, False):
+            return None, "内置 sandbox MCP 上次重建失败，本次未重试（需重启沙箱或清理 .mcp）"
+
+        failure = await _rebuild_builtin_sandbox_mcp(real_ws)
+        _mark_sandbox_mcp_rebuild_attempted(real_ws)
+
+        tool = await _sandbox_bash_tool_from_mcps(_list())
+        if tool is not None:
+            return tool, ""
+        return None, failure or "重建内置 sandbox MCP 后仍未取到 bash 工具"
+
+
+async def resolve_sandbox_bash_tool(sandbox_ws: Any) -> Any | None:
+    """取沙箱里的 ``bash`` 工具，供脚本工具等「非 AgentScope 内置工具」复用。
+
+    与 Bash 工具走同一条通道的意义：脚本工具因此自动继承沙箱策略
+    （docker/k8s/e2b/ssh）、超时、取消与命令策略，不需要第二套执行原语。
+
+    惰性代理会在这里真正拉起容器/Pod；调用方负责判断 ``sandbox_ws`` 是否为空
+    （为空表示 local 策略，应退回用户工作区内的本机子进程）。
+    """
+    if sandbox_ws is None:
+        return None
+    real_ws = sandbox_ws
+    if isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
+        real_ws = await sandbox_ws.ensure_ready()
+    list_mcps = getattr(real_ws, "list_mcps", None)
+    return await _sandbox_bash_tool_from_mcps(list_mcps() if callable(list_mcps) else None)
+
+
 def _normalize_docker_mount_mappings(
     host_root: str,
     mount_mappings: list[DockerMountMapping]
@@ -6856,33 +7051,30 @@ class LazySandboxBashNativeTool:
                 parent_id=bash_node_id or None,
                 log_id=(f"workspace:sandbox:{bash_node_id}" if bash_node_id else None),
             )
-            list_mcps = getattr(real_ws, "list_mcps", None)
-            sandbox_bash = await _sandbox_bash_tool_from_mcps(
-                list_mcps() if callable(list_mcps) else None
-            )
+            sandbox_bash, bash_failure = await _resolve_sandbox_bash_tool(real_ws)
             if sandbox_bash is None:
-                if (
-                    getattr(real_ws, "_platform_sandbox_policy", None)
-                    == SANDBOX_POLICY_K8S
-                ):
+                detail = f"（{bash_failure}）" if bash_failure else ""
+                if _is_k8s_sandbox(real_ws):
                     from app.services.ai.runtime.agentscope.k8s_workspace import (
                         K8sSandboxUnavailableError,
                     )
 
                     raise K8sSandboxUnavailableError(
-                        "Kubernetes sandbox Bash MCP is unavailable",
+                        f"Kubernetes sandbox Bash MCP is unavailable{detail}",
                         reason_code="k8s_sandbox_mcp_unavailable",
                         user_message=(
                             "Kubernetes 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                            "平台已尝试自动重建内置 MCP，仍未恢复；"
                             "请检查沙箱网关与 Bash MCP 注册状态（K8s 沙箱的 Bash MCP "
                             "子进程需使用网关虚拟环境解释器）。"
                         ),
                     )
                 raise DockerSandboxUnavailableError(
-                    "Docker sandbox Bash MCP is unavailable",
-                    reason_code="docker_workspace_start_failed",
+                    f"Docker sandbox Bash MCP is unavailable{detail}",
+                    reason_code="docker_sandbox_mcp_unavailable",
                     user_message=(
                         "Docker 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                        "平台已尝试自动重建内置 MCP，仍未恢复；"
                         "请检查容器网关和 MCP 配置。"
                     ),
                 )
@@ -6998,11 +7190,63 @@ class LazySandboxBashNativeTool:
         return result
 
 
+def _bind_script_tool_spec(
+    spec: Any,
+    *,
+    sandbox_ws: Any,
+    local_ws: Any,
+    user_info: dict[str, Any] | None,
+    sandbox_degraded: bool = False,
+) -> Any:
+    """把脚本工具接到当前会话工作区（沙箱可用则进沙箱）。
+
+    与 Bash 同源：`sandbox_ws` 为空表示 local 策略，退回用户工作区内的本机子进程；
+    沙箱不可用时**报错而不是降级到宿主机**，避免"以为在沙箱里跑、其实在宿主上跑"。
+    """
+    metadata = getattr(spec, "metadata", None) or {}
+    config = metadata.get("script_tool_config")
+    if config is None:
+        return spec
+
+    if sandbox_degraded and sandbox_ws is None:
+        # 明确区分「local 部署」（本来就没有沙箱）和「容器部署本轮降级」：
+        # 后者绝不能在平台后端进程里跑用户脚本。
+        raise PermissionError(
+            "脚本工具未执行：当前部署要求脚本在沙箱内运行，但沙箱本轮不可用。"
+            "不会退回平台后端进程执行，请稍后重试。"
+        )
+
+    workdir = getattr(local_ws, "workdir", None)
+    if not workdir:
+        raise PermissionError("脚本工具未执行：无法解析当前会话工作区")
+
+    from app.services.ai.tools.script_tool_runtime import (
+        ScriptToolRunner,
+        render_result_for_model,
+    )
+
+    runner = ScriptToolRunner(
+        config,
+        workdir=workdir,
+        sandbox_ws=sandbox_ws,
+        sandbox_root=getattr(local_ws, "workspace_user_root", None),
+        user_info=user_info,
+        conversation_id=getattr(local_ws, "conversation_id", None),
+    )
+
+    async def _invoke_script_tool(**kwargs: Any) -> Any:
+        result = await runner.run(kwargs)
+        return await render_result_for_model(result, workdir=runner.workdir)
+
+    return replace(spec, callable=_invoke_script_tool)
+
+
 async def bind_configured_tools_to_workspace(
     workspace: Any,
     tool_specs: list[Any] | None,
     *,
     user_info: dict[str, Any] | None = None,
+    sandbox_degraded: bool = False,
 ) -> list[Any]:
     """Bind configured Bash/Read/Write/Edit/Glob/Grep to the session workspace.
 
@@ -7082,36 +7326,33 @@ async def bind_configured_tools_to_workspace(
                     input_schema=getattr(bash_spec, "parameters_schema", None),
                 )
         else:
-            list_mcps = getattr(sandbox_ws, "list_mcps", None)
-            sandbox_bash = await _sandbox_bash_tool_from_mcps(
-                list_mcps() if callable(list_mcps) else None
-            )
+            sandbox_bash, bash_failure = await _resolve_sandbox_bash_tool(sandbox_ws)
 
             if sandbox_bash is None and any(
                 _workspace_native_name_for_spec(spec) == "Bash" for spec in specs
             ):
-                if (
-                    getattr(sandbox_ws, "_platform_sandbox_policy", None)
-                    == SANDBOX_POLICY_K8S
-                ):
+                detail = f"（{bash_failure}）" if bash_failure else ""
+                if _is_k8s_sandbox(sandbox_ws):
                     from app.services.ai.runtime.agentscope.k8s_workspace import (
                         K8sSandboxUnavailableError,
                     )
 
                     raise K8sSandboxUnavailableError(
-                        "Kubernetes sandbox Bash MCP is unavailable",
+                        f"Kubernetes sandbox Bash MCP is unavailable{detail}",
                         reason_code="k8s_sandbox_mcp_unavailable",
                         user_message=(
                             "Kubernetes 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                            "平台已尝试自动重建内置 MCP，仍未恢复；"
                             "请检查沙箱网关与 Bash MCP 注册状态（K8s 沙箱的 Bash MCP "
                             "子进程需使用网关虚拟环境解释器）。"
                         ),
                     )
                 raise DockerSandboxUnavailableError(
-                    "Docker sandbox Bash MCP is unavailable",
-                    reason_code="docker_workspace_start_failed",
+                    f"Docker sandbox Bash MCP is unavailable{detail}",
+                    reason_code="docker_sandbox_mcp_unavailable",
                     user_message=(
                         "Docker 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                        "平台已尝试自动重建内置 MCP，仍未恢复；"
                         "请检查容器网关和 MCP 配置。"
                     ),
                 )
@@ -7122,6 +7363,17 @@ async def bind_configured_tools_to_workspace(
 
     bound: list[Any] = []
     for spec in specs:
+        if str(getattr(spec, "source_type", "")) == "script_tool":
+            bound.append(
+                _bind_script_tool_spec(
+                    spec,
+                    sandbox_ws=sandbox_ws,
+                    local_ws=local_ws,
+                    user_info=user_info,
+                    sandbox_degraded=sandbox_degraded,
+                )
+            )
+            continue
         native_name = _workspace_native_name_for_spec(spec)
         if native_name == "Bash":
             # Sandbox policies: Bash is served only by the sandbox. Local policy:

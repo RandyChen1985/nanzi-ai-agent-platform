@@ -389,3 +389,30 @@ async def query_customer(ctx, customer_id: str):
 ## 9. 密钥轮换
 
 密钥轮换按 MCP 单独执行：先让该 MCP 的 JWKS 同时发布旧、新公钥，再切换该 MCP 的 Key ID；等待旧断言过期后删除旧公钥。一个 MCP 的密钥轮换不会影响其他 MCP。
+
+## 10. 工具进度上报（可选）
+
+长跑工具（多轮检索、批量写库、调用下游智能体）在 NanZi 时间线上默认只有一个转圈点，用户看不出是在推进还是卡死。MCP 协议本身有进度通道：服务端调用 `Context.report_progress` 即可，NanZi 会把它渲染成工具卡内的进度条 + 文案。
+
+```python
+from mcp.server.fastmcp import Context
+
+@mcp.tool(name="query_customer")
+async def query_customer(ctx: Context, customer_id: str, dataset_ids: list[str]):
+    await ctx.report_progress(1, len(dataset_ids) + 2, f"准备检索 {len(dataset_ids)} 个数据集")
+    rows = []
+    for index, dataset_id in enumerate(dataset_ids, start=2):
+        rows.extend(await crm_service.search(dataset_id))
+        await ctx.report_progress(index, len(dataset_ids) + 2, f"检索 {dataset_id}")
+    await ctx.report_progress(len(dataset_ids) + 2, len(dataset_ids) + 2, "汇总结果")
+    return rows
+```
+
+约定与边界：
+
+- **`total` 可选**。给了就是 `4/10 检索数据集` 这样的确定进度；不给则渲染成不确定态的呼吸条，只显示 `message`。
+- **进度是快照，不是日志**。NanZi 会节流（同一进度 250ms 内合并、`progress` 前进 ≥1 或文案变化才推送），队列满时丢最旧的一帧；消费者不能假设每一帧都收到，也不要用它做业务计数。
+- **没有进度 token 时是 no-op**。调用方（包括 NanZi 自己的某些客户端路径）没在请求里带 `_meta.progressToken` 时，`report_progress` 不产生任何东西，也不会报错——加进度不会影响已有调用方。
+- **进度不落库**。它只用于执行中的实时展示；刷新页面后历史记录里不会再出现进度条，最终结果是唯一被持久化的内容。
+- **Direct HTTP 网关没有进度通道**。走 `POST /`（非 SSE）的 MCP 只能拿到最终结果；同一套超时（`agent_max_toolcall_timeout`）仍然生效。
+- **超时**。NanZi 侧单次 `tools/call` 受系统配置 `agent_max_toolcall_timeout`（默认 180s，可按智能体版本覆盖）约束；进度文案里如果带自己的剩余时间，请与之对齐，避免界面显示「还在跑」而平台已经判超时。

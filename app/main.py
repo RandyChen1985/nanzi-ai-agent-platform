@@ -38,10 +38,10 @@ from fastapi.responses import FileResponse
 from app.core.orm import get_db_session
 from app.services.mcp.echo_server import (
     EchoServerIdMiddleware,
-    echo_mcp,
+    echo_mcp_http_app,
     echo_mcp_lifespan,
 )
-from app.services.mcp.platform_mcp import platform_mcp, platform_mcp_lifespan
+from app.services.mcp.platform_mcp import platform_mcp_http_app, platform_mcp_lifespan
 from app.api.mcp_platform import router as mcp_platform_router
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -437,8 +437,8 @@ app.add_middleware(
 app.add_middleware(SecurityHeadersMiddleware)
 
 # 内置 Echo MCP：平台实例供所有智能体挂载；个人实例把 server_id 编进路径复用同一端点。
-app.mount("/mcp/echo", EchoServerIdMiddleware(echo_mcp.streamable_http_app()))
-app.mount("/mcp", platform_mcp.streamable_http_app())
+app.mount("/mcp/echo", EchoServerIdMiddleware(echo_mcp_http_app()))
+app.mount("/mcp", platform_mcp_http_app())
 
 # Platform MCP 的 OAuth2/OIDC discovery 与授权端点必须位于 SPA catch-all 之前，
 # 且不复用现有 /api/portal 的 API Key 鉴权链路。

@@ -3,7 +3,7 @@
 背景：知识库「可见范围」落地三档后，个人私有库在判定侧会被直接跳过——
 授权给它永远不会生效。但用户/角色的权限配置页仍把私有库列成可勾选项，
 管理员勾了半天、对方依然看不到。这里锁住三件事：
-1. 每项知识库都显示「公共级 / 部门级 / 个人私有」标签；
+1. 每项知识库都显示「授权可见 / TEAM 级 / 个人私有」标签；
 2. 私有项禁用勾选并说明原因；
 3. 回显与保存都剔除私有库 id，不留下永不生效的授权记录。
 """
@@ -31,8 +31,8 @@ def test_knowledge_scope_badge_covers_three_scopes(path):
     page = _read(path)
     # 三档标签与知识库页口径一致，避免同一档位在两处叫不同名字
     assert "KNOWLEDGE_SCOPE_BADGE" in page
-    assert "公共级" in page
-    assert "部门级" in page
+    assert "授权可见" in page
+    assert "TEAM 级" in page
     assert "个人私有" in page
     # 徽标只作用于知识库页签，不能污染智能体/模型列表
     assert "activeResTab === 'datasets'" in page or 'activeResTab === "datasets"' in page

@@ -1082,18 +1082,27 @@ class SshWorkspace(WorkspaceBase):
         return path
 
     async def _offload_data_block(self, block: DataBlock) -> DataBlock:
-        """Extract a base64 DataBlock into ``data/`` and return a file:// URL."""
+        """把 base64 DataBlock 落盘到 ``data/``，返回 ``workspace://`` 引用。
+
+        用工作区相对的 ``workspace:///<rel>`` 而不是 ``file://<绝对路径>``：后者指向
+        SSH 远端主机的路径，在平台/前端侧无法解析，且 agentscope 2.0.11 起基类
+        也统一改用可移植的 ``workspace://`` 形式（见上游 workspace/_base.py 的
+        ``offload_data_block``），两边保持一致。
+        """
         if not isinstance(block.source, Base64Source):
             return block
         digest = hashlib.sha256(block.source.data.encode("utf-8")).hexdigest()
         ext = mimetypes.guess_extension(block.source.media_type) or ".bin"
-        rel = posixpath.join(self.remote_workdir, _REMOTE_DATA_DIR, f"{digest}{ext}")
+        rel = posixpath.join(_REMOTE_DATA_DIR, f"{digest}{ext}")
         raw = base64.b64decode(block.source.data)
-        await self._write(rel, raw)
+        await self._write(posixpath.join(self.remote_workdir, rel), raw)
         return DataBlock(
             id=block.id,
             name=block.name,
-            source=URLSource(url=AnyUrl(f"file://{rel}")),
+            source=URLSource(
+                url=AnyUrl(f"workspace:///{rel}"),
+                media_type=block.source.media_type,
+            ),
         )
 
 
@@ -1131,7 +1140,12 @@ import shlex as _sh
 import subprocess
 import sys
 
-from mcp.server.fastmcp import FastMCP
+# mcp 2.x 把 FastMCP 改名为 MCPServer，且 mcp.server.fastmcp 在 2.x 里是一 import
+# 就抛 ModuleNotFoundError 的提示桩。沙箱网关的 mcp 大版本由镜像决定，两者都要能跑。
+try:
+    from mcp.server.mcpserver import MCPServer as _SandboxMCPServer
+except ImportError:  # mcp < 2.0
+    from mcp.server.fastmcp import FastMCP as _SandboxMCPServer
 
 _HOST = os.environ.get("SSH_HOST", "")
 _PORT = os.environ.get("SSH_PORT", "22")
@@ -1141,7 +1155,7 @@ _PASSWORD_FILE = os.environ.get("SSH_PASSWORD_FILE", "")
 _KEY_PATH = os.environ.get("SSH_KEY_PATH", "")
 _ROOT = os.environ.get("SSH_REMOTE_WORKDIR", "/workspace")
 
-mcp = FastMCP("sandbox")
+mcp = _SandboxMCPServer("sandbox")
 
 
 def _ssh_args():

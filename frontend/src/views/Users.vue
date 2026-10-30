@@ -301,6 +301,27 @@
         </button>
         <button
           type="button"
+          class="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-700 shadow-sm transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="batchSubmitting || batchSettingPassword"
+          @click="openBatchPasswordDialog"
+        >
+          批量修改密码
+        </button>
+        <button
+          type="button"
+          class="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-amber-700 shadow-sm transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="!mailServiceAvailable || batchSubmitting || batchSettingPassword || batchResetting"
+          :title="
+            mailServiceAvailable
+              ? '为选中用户生成随机密码并发送到其邮箱'
+              : mailServiceReason || '平台邮件服务未启用'
+          "
+          @click="openBatchResetDialog"
+        >
+          批量重置密码
+        </button>
+        <button
+          type="button"
           class="rounded-lg px-3 py-1.5 text-sm text-gray-500 transition-colors hover:bg-white hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="batchSubmitting"
           @click="clearSelection"
@@ -1832,7 +1853,7 @@
                       v-if="item.visibility"
                       class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold"
                       :class="item.visibility === 'public' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'"
-                    >{{ item.visibility === 'public' ? '公共级' : item.visibility === 'team' ? '部门级' : '私有' }}</span>
+                    >{{ item.visibility === 'public' ? '授权可见' : item.visibility === 'team' ? 'TEAM 级' : '私有' }}</span>
                     <span
                       v-if="item.resource_exists === false"
                       class="shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600"
@@ -2235,6 +2256,175 @@
       @cancel="closeSetPasswordDialog"
       @submit="executeSetPassword"
     />
+
+    <!-- 批量修改密码：同一组件、同一套等保校验，多用户名一起判「不能包含用户名」 -->
+    <PasswordResetDialog
+      v-if="showBatchPasswordDialog"
+      title="批量修改密码"
+      :display-name="`${selectedUserIds.length} 个用户`"
+      :login-names="selectedLoginNames"
+      hint="保存后这些用户的全部登录会话会立即失效；当前登录账号会被自动跳过"
+      :submitting="batchSettingPassword"
+      @cancel="closeBatchPasswordDialog"
+      @submit="executeBatchSetPassword"
+    />
+
+    <!-- 批量改密结果：成功数 + 被跳过的自己 + 逐个失败原因 -->
+    <Teleport to="body">
+      <div
+        v-if="showBatchPasswordResultDialog && batchPasswordResult"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="showBatchPasswordResultDialog = false"
+      >
+        <div class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl">
+          <h2 class="text-xl font-bold mb-2 text-gray-900">批量修改密码结果</h2>
+          <p class="text-sm text-gray-600 mb-3">
+            已为
+            <strong class="text-emerald-600">{{ batchPasswordResult.updated }}</strong>
+            个用户设置新密码<span v-if="batchPasswordResult.skippedSelf">；已跳过当前登录账号</span
+            ><span v-if="batchPasswordResult.notFound"
+              >；{{ batchPasswordResult.notFound }} 个用户不存在</span
+            >。
+          </p>
+          <div
+            v-if="batchPasswordResult.failed.length"
+            class="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3"
+          >
+            <p class="text-xs font-semibold text-amber-800 mb-1.5">
+              以下 {{ batchPasswordResult.failed.length }} 个用户未修改，密码不符合其个人等保校验：
+            </p>
+            <ul class="space-y-1 text-xs text-amber-700">
+              <li v-for="item in batchPasswordResult.failed" :key="item.user_name">
+                <strong>{{ item.user_name }}</strong>：{{ item.reason }}
+              </li>
+            </ul>
+            <p class="mt-2 text-[11px] text-amber-600">
+              最常见原因是密码里包含了该用户的用户名；换一个密码后勾选这些人重试即可。
+            </p>
+          </div>
+          <div class="flex justify-end">
+            <button
+              type="button"
+              class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              @click="showBatchPasswordResultDialog = false"
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 批量重置密码确认：随机密码直发邮箱，明文不在这里出现 -->
+    <Teleport to="body">
+      <div
+        v-if="showBatchResetDialog"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="closeBatchResetDialog"
+      >
+        <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center">
+          <div class="p-3 rounded-full inline-block mb-4 bg-amber-100 text-amber-600">
+            <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+              />
+            </svg>
+          </div>
+          <h2 class="text-xl font-bold mb-2 text-gray-900">确认批量重置密码</h2>
+          <p class="text-gray-500 mb-2">
+            将为
+            <strong class="text-gray-900">{{ selectedUserIds.length }}</strong>
+            个用户生成<strong>随机密码</strong>并发送到各自邮箱。
+          </p>
+          <p class="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 mb-3 text-left">
+            密码不会显示在这个页面上——只有用户本人在邮箱里能看到。未填写邮箱的用户会被直接跳过。
+          </p>
+          <p class="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-6 text-left">
+            重置后这些用户的<strong>原密码立即失效</strong>，已登录会话会被踢出，需用邮件里的新密码重新登录。
+          </p>
+          <div class="flex justify-center gap-3">
+            <button
+              :disabled="batchResetting"
+              class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+              @click="closeBatchResetDialog"
+            >
+              取消
+            </button>
+            <button
+              :disabled="batchResetting"
+              class="px-6 py-2 text-white rounded-lg font-medium bg-amber-600 hover:bg-amber-700 disabled:opacity-50"
+              @click="executeBatchReset"
+            >
+              {{ batchResetting ? "发送中..." : "确认重置" }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 批量重置结果：成功数 + 无邮箱被跳过的人 + 逐个失败原因 -->
+    <Teleport to="body">
+      <div
+        v-if="showBatchResetResultDialog && batchResetResult"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+        @click.self="showBatchResetResultDialog = false"
+      >
+        <div class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl">
+          <h2 class="text-xl font-bold mb-2 text-gray-900">批量重置密码结果</h2>
+          <p class="text-sm text-gray-600 mb-3">
+            已重置
+            <strong class="text-emerald-600">{{ batchResetResult.reset }}</strong>
+            个用户，新密码已发送到各自邮箱<span v-if="batchResetResult.skippedSelf"
+              >；已跳过当前登录账号</span
+            ><span v-if="batchResetResult.notFound"
+              >；{{ batchResetResult.notFound }} 个用户不存在</span
+            >。
+          </p>
+          <div
+            v-if="batchResetResult.skippedNoEmail.length"
+            class="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
+          >
+            <p class="text-xs font-semibold text-gray-700 mb-1.5">
+              以下 {{ batchResetResult.skippedNoEmail.length }} 个用户未填邮箱，已跳过：
+            </p>
+            <p class="text-xs text-gray-600 break-all">
+              {{ batchResetResult.skippedNoEmail.map((item) => item.user_name).join("、") }}
+            </p>
+            <p class="mt-1.5 text-[11px] text-gray-500">
+              补上邮箱后可再次勾选他们重置，或改用「批量修改密码」统一设置。
+            </p>
+          </div>
+          <div
+            v-if="batchResetResult.failed.length"
+            class="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3"
+          >
+            <p class="text-xs font-semibold text-amber-800 mb-1.5">
+              以下 {{ batchResetResult.failed.length }} 个用户未完成重置：
+            </p>
+            <ul class="space-y-1 text-xs text-amber-700">
+              <li v-for="item in batchResetResult.failed" :key="item.user_name">
+                <strong>{{ item.user_name }}</strong>：{{ item.reason }}
+              </li>
+            </ul>
+            <p class="mt-2 text-[11px] text-amber-600">
+              发信失败的用户密码保持原样，修正邮件服务后可重试；其余失败请按原因处理。
+            </p>
+          </div>
+          <div class="flex justify-end">
+            <button
+              type="button"
+              class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              @click="showBatchResetResultDialog = false"
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Regenerate Key Dialog -->
     <Teleport to="body">
@@ -3205,6 +3395,39 @@ const batchStatusTarget = ref<0 | 1>(0);
 const batchSubmitting = ref(false);
 const BATCH_STATUS_MAX_USERS = 200;
 
+// 批量修改密码：复用等保弹窗（PasswordResetDialog），密码由管理员统一输入。
+// 「不能包含用户名」要对着**每个**被选中用户判定，所以把用户名一起传下去。
+const showBatchPasswordDialog = ref(false);
+const batchSettingPassword = ref(false);
+const showBatchPasswordResultDialog = ref(false);
+const batchPasswordResult = ref<{
+  updated: number;
+  skippedSelf: number;
+  notFound: number;
+  failed: { user_id?: number; user_name: string; reason: string }[];
+} | null>(null);
+const selectedLoginNames = computed(() =>
+  users.value
+    .filter((u) => selectedUserIds.value.includes(u.id))
+    .map((u) => String(u.user_name || ""))
+    .filter(Boolean),
+);
+
+// 批量重置密码（系统随机生成 + 邮件下发）：按钮可用性只看平台邮件服务是否配置完整。
+// 状态由后端 /users/mail-service-status 提供——前端不猜配置项，也不在本地拼 SMTP 判断。
+const mailServiceAvailable = ref(false);
+const mailServiceReason = ref("");
+const showBatchResetDialog = ref(false);
+const batchResetting = ref(false);
+const showBatchResetResultDialog = ref(false);
+const batchResetResult = ref<{
+  reset: number;
+  skippedSelf: number;
+  notFound: number;
+  skippedNoEmail: { user_name: string }[];
+  failed: { user_name: string; reason: string }[];
+} | null>(null);
+
 const isAllPageSelected = computed(
   () =>
     users.value.length > 0 &&
@@ -3883,8 +4106,8 @@ const visibleResources = computed(() => {
 
 /** 可见范围徽标：与知识库页三档口径保持一致 */
 const KNOWLEDGE_SCOPE_BADGE: Record<string, { label: string; cls: string }> = {
-  public: { label: "公共级", cls: "bg-blue-50 text-blue-600" },
-  team: { label: "部门级", cls: "bg-violet-50 text-violet-600" },
+  public: { label: "授权可见", cls: "bg-blue-50 text-blue-600" },
+  team: { label: "TEAM 级", cls: "bg-violet-50 text-violet-600" },
   private: { label: "个人私有", cls: "bg-amber-50 text-amber-700" },
 };
 
@@ -3894,7 +4117,7 @@ const knowledgeScopeOf = (res: any): "public" | "team" | "private" => {
 };
 
 /** 兜底项：字段异常时也不让徽标消失 */
-const FALLBACK_SCOPE_BADGE = { label: "公共级", cls: "bg-blue-50 text-blue-600" };
+const FALLBACK_SCOPE_BADGE = { label: "授权可见", cls: "bg-blue-50 text-blue-600" };
 
 const knowledgeScopeBadge = (res: any) =>
   KNOWLEDGE_SCOPE_BADGE[knowledgeScopeOf(res)] ?? FALLBACK_SCOPE_BADGE;
@@ -4484,6 +4707,106 @@ const submitBatchStatus = async () => {
   }
 };
 
+// 批量修改密码：密码由管理员统一输入，逐用户做等保校验，失败的单独点名
+const openBatchPasswordDialog = () => {
+  if (selectedUserIds.value.length === 0) return;
+  showBatchPasswordDialog.value = true;
+};
+
+const closeBatchPasswordDialog = () => {
+  if (batchSettingPassword.value) return;
+  showBatchPasswordDialog.value = false;
+};
+
+const executeBatchSetPassword = async (password: string) => {
+  const ids = [...selectedUserIds.value];
+  if (ids.length === 0) {
+    showBatchPasswordDialog.value = false;
+    return;
+  }
+  batchSettingPassword.value = true;
+  try {
+    const res = await axios.post(
+      "/api/portal/management/users/batch-set-password",
+      { user_ids: ids, password },
+    );
+    const data = res.data || {};
+    batchPasswordResult.value = {
+      updated: Number(data.updated ?? 0),
+      skippedSelf: Number(data.skipped_self ?? 0),
+      notFound: Number(data.not_found ?? 0),
+      failed: Array.isArray(data.failed) ? data.failed : [],
+    };
+    showBatchPasswordDialog.value = false;
+    showBatchPasswordResultDialog.value = true;
+    clearSelection();
+    await fetchUsers();
+  } catch (e: any) {
+    // 密码本身不合规（400）走这里：弹窗不关，管理员可直接改密码重试
+    showToast(e.response?.data?.detail || "批量修改密码失败", "error");
+  } finally {
+    batchSettingPassword.value = false;
+  }
+};
+
+// 批量重置密码：随机密码由后端生成、直发邮箱，前端不回显明文
+const loadMailServiceStatus = async () => {
+  try {
+    const res = await axios.get("/api/portal/management/users/mail-service-status");
+    mailServiceAvailable.value = Boolean(res.data?.available);
+    mailServiceReason.value = String(res.data?.reason || "");
+  } catch (e) {
+    // 查不到就当不可用：宁可不给点，也不能让人点完才发现发不出去
+    mailServiceAvailable.value = false;
+    mailServiceReason.value = "无法确认平台邮件服务状态";
+  }
+};
+
+const openBatchResetDialog = () => {
+  if (!mailServiceAvailable.value) {
+    showToast(mailServiceReason.value || "平台邮件服务未启用", "warning");
+    return;
+  }
+  if (selectedUserIds.value.length === 0) return;
+  showBatchResetDialog.value = true;
+};
+
+const closeBatchResetDialog = () => {
+  if (batchResetting.value) return;
+  showBatchResetDialog.value = false;
+};
+
+const executeBatchReset = async () => {
+  const ids = [...selectedUserIds.value];
+  if (ids.length === 0) {
+    showBatchResetDialog.value = false;
+    return;
+  }
+  batchResetting.value = true;
+  try {
+    const res = await axios.post(
+      "/api/portal/management/users/batch-reset-password",
+      { user_ids: ids },
+    );
+    const data = res.data || {};
+    batchResetResult.value = {
+      reset: Number(data.reset ?? 0),
+      skippedSelf: Number(data.skipped_self ?? 0),
+      notFound: Number(data.not_found ?? 0),
+      skippedNoEmail: Array.isArray(data.skipped_no_email) ? data.skipped_no_email : [],
+      failed: Array.isArray(data.failed) ? data.failed : [],
+    };
+    showBatchResetDialog.value = false;
+    showBatchResetResultDialog.value = true;
+    clearSelection();
+    await fetchUsers();
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || "批量重置密码失败", "error");
+  } finally {
+    batchResetting.value = false;
+  }
+};
+
 const deleteUser = async () => {
   if (!userToDelete.value) return;
   try {
@@ -4763,6 +5086,8 @@ onMounted(async () => {
   fetchBusinessRoles();
   fetchPublicConfig();
   fetchPendingCount();
+  // 「批量重置密码」是否可点取决于平台邮件服务配置：取一次，失败就按不可用处理
+  void loadMailServiceStatus();
   // 资源访问审核整条链路都是管理员专属（pending / reviews / approve 后端全是 require_admin），
   // 非管理员不必白打一个 403；入口本身也只在管理员时渲染。
   if (isAdmin.value) {

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, skill_gallery, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square, chat_shares
+from app.api.portal.endpoints import auth, audit, management, user_import, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, script_tools, ragflow, roles, menus, departments, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, skill_gallery, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench, langfuse, web_preview, access_requests, resource_square, chat_shares
 
 portal_router = APIRouter()
 
@@ -72,6 +72,7 @@ portal_router.include_router(models.router, prefix="/models", tags=["模型管�
 
 # 13. 工具管理 (Tool Management)
 portal_router.include_router(tools.router, prefix="/tools", tags=["工具管理"], dependencies=[Depends(require_api_key)])
+portal_router.include_router(script_tools.router, prefix="/tools", tags=["脚本工具"], dependencies=[Depends(require_api_key)])
 
 # 14. RAGFlow 代理 (RAGFlow Proxy)
 portal_router.include_router(ragflow.router, prefix="/ragflow", tags=["RAGFlow代理"], dependencies=[Depends(require_api_key)])

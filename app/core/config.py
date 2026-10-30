@@ -155,6 +155,15 @@ class Settings(BaseSettings):
     SSO_REQUEST_SYSTEM: str = "NANZI_AI_AGENT_PLATFORM"
     SSO_REQUEST_BUSINESS: str = "USER-LOGIN"
     SSO_TIMEOUT: int = 30
+    # portal-web 的 check/login 要求 loginType 必传（local / ad），不传会被它的参数
+    # 校验拒成 code=500。默认 ad 是历史等价：该接口早先只做 AD 认证，平台从未传过这个
+    # 字段。现场若用平台自己的本地密码登录，把它配成 local。
+    SSO_LOGIN_DEFAULT_TYPE: str = "ad"
+    # 两种登录方式的开关（on / off）。关掉的方式在登录页显示为「禁用」且不可选；
+    # 后端也会直接拒绝该方式的请求——开关是策略，不能只靠前端置灰。
+    # 两个都关等于「本部署不提供 SSO 登录」：登录页输入框和按钮都会禁用并给出提示。
+    SSO_LOGIN_AD: str = "on"
+    SSO_LOGIN_LOCAL: str = "on"
 
     @property
     def SKILLS_DIR(self) -> str:

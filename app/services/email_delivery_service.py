@@ -805,6 +805,45 @@ def build_account_created_mail(
     return subject, "\n".join(lines) + "\n"
 
 
+def build_password_reset_mail(
+    user_name: str,
+    password: str,
+    sender_name: str,
+    platform_url: str = "",
+) -> Tuple[str, str]:
+    """管理员批量重置密码后，把系统生成的临时密码送达用户邮箱。
+
+    与 `build_review_mail` 刻意相反（那封从入参上就杜绝了凭据），与
+    `build_account_created_mail` 同侧：这封信的目的就是把密码交到用户手里，
+    所以入参必须含明文密码。约束在调用侧——明文只出现在邮件正文里，不写日志、
+    不落库、也不回给管理员（管理员界面只看得到「已发送」）。
+
+    "如非本人预期操作请立即联系管理员"不是客套：随机密码重置会把用户踢下线，
+    收件人需要知道这是管理员操作、不是自己被入侵。
+    """
+    subject = f"【{sender_name}】您的登录密码已重置"
+
+    cleaned_url = normalize_public_url(platform_url)
+    lines = [
+        f"您好，{user_name}：",
+        "",
+        "管理员已为您重置登录密码，临时密码如下：",
+        "",
+    ]
+    if cleaned_url:
+        lines.append(f"平台地址：{cleaned_url}")
+    lines += [
+        f"账号：{user_name}",
+        f"临时密码：{password}",
+        "",
+        "为了账号安全，请在首次登录后立即修改密码。",
+        "如果这不是您预期的操作，请立即联系平台管理员核实。",
+        "",
+        "（本邮件包含临时密码，请勿转发；本邮件由系统自动发送，请勿直接回复）",
+    ]
+    return subject, "\n".join(lines) + "\n"
+
+
 def build_admin_review_notice(
     *,
     user_name: str,

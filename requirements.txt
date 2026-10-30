@@ -26,8 +26,10 @@ bcrypt==4.0.1
 # AgentScope 锁定精确版本：原先的 ">=2.0.6" 无上限，每次镜像重建（docker/Dockerfile
 # 里 pip install -r requirements.txt）都会静默拉到 PyPI 当时的最新正式版，导致本地
 # .venv 与生产镜像版本漂移、故障无法复现。升级前请先阅读
-# docs/md/agentscope_2.0.9_upgrade_guide.md 的验证清单，改版本号时同步更新该文档。
-agentscope[service,storage,workspace]==2.0.9
+# docs/md/agentscope_2.0.9_upgrade_guide.md 的验证清单，改版本号时同步更新该文档；
+# 2.0.11 的评估与实施记录见 docs/md/agentscope_2.0.11_upgrade_assessment.md。
+# 2.0.11 起 agentscope 要求 mcp>=2.0.0（见下方 mcp 锁定说明），二者必须同版本区间升级。
+agentscope[service,storage,workspace]==2.0.11
 # Langfuse 同样锁定精确版本：本平台把 Langfuse Python SDK 当作 OpenTelemetry 的后端
 # （靠它注册全局 TracerProvider，并依赖 should_export_span / mask_otel_spans 两个钩子）。
 # 升级前请先阅读 docs/superpowers/specs/2026-09-30-langfuse-llm-tracing-design.md，
@@ -39,17 +41,26 @@ oracledb>=2.0.0
 aioodbc>=0.5.0
 pyodbc>=5.0.0
 APScheduler>=3.10.1
-# MCP Python SDK：服务端（FastMCP + streamable_http_app）与客户端（ClientSession、sse_client）
-# 都直接用 1.x API，这里精确锁定 1.29.1——与 agentscope / langfuse 的锁法一致，避免构建漂移。
-# 不能随手升级的原因（升级前请先过 tests/services/mcp 并实测外部 MCP 接入）：
-#   · 1.30.0：sse_client / streamable_http_client 只跟随**同源**重定向，跨域重定向直接抛
-#     httpx.HTTPStatusError（外部 MCP 服务若经短链/CDN 跳转会连不上）
-#   · 1.30.0：stateful streamable HTTP 会话空闲 30 分钟过期（FastMCP 默认开启），
-#     长连接客户端下一次请求会收到 404、需要重新 initialize
-#   · 1.30.0：AuthSettings 设了 resource_server_url 却没设 validate_token_resource 会出
-#     DeprecationWarning（我们把 warning 当错误的测试会红）
-#   · 2.x：FastMCP 拆成独立包、import 路径有破坏性变化，本平台的 from mcp.server.fastmcp 会断
-mcp==1.29.1
+# MCP Python SDK：服务端（MCPServer + streamable_http_app）与客户端（ClientSession、sse_client）
+# 都直接用它。版本跟随 agentscope 2.0.11 的约束（后者把 mcp 从 <2.0.0 放开成 >=2.0.0）。
+# 2.x 相对 1.x 的差异（本仓库已适配，改动点与验证记录见
+# docs/md/agentscope_2.0.11_upgrade_assessment.md §9.4）：
+#   · FastMCP 改名为 MCPServer（mcp.server.mcpserver），mcp.server.fastmcp 变成一 import
+#     就抛 ModuleNotFoundError 的提示桩；streamable_http_path / json_response / stateless_http /
+#     transport_security 从构造参数移到 streamable_http_app() 参数
+#   · ClientSession / sse_client / mcp.types / AuthSettings / AccessToken / get_access_token
+#     仍在原路径可用，无需改写
+#   · streamable HTTP 默认 4 MiB 请求体上限、空闲会话 30 分钟过期、会话数有上限（超出 503），
+#     平台在 streamable_http_app() 里显式覆盖，见 app/main.py
+#   · 新增 httpx2、mcp-types 依赖；重定向只跟随同源（从 1.30 继承）
+#   · AuthSettings 设了 resource_server_url 就必须显式 validate_token_resource（我们设为 True）
+mcp==2.3.0
+# httpx2：mcp 2.x 的**传输客户端**（sse_client / streamable_http_client 的
+# httpx_client_factory 必须是 httpx2.AsyncClient，传 httpx 客户端会 TypeError 并被
+# McpSseSession 静默降级成 Direct HTTP）。平台代码直接 import 它
+# （app/services/ai/tools/mcp_client.py），因此显式声明并锁定，避免依赖 mcp 的传递解析。
+# 升级时与 mcp 同步升，并跑 tests/services/mcp/test_mcp_client_sse_transport.py。
+httpx2==2.12.0
 pandas>=2.0.0
 openpyxl>=3.1.0
 python-docx>=1.1.0

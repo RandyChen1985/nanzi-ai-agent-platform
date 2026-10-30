@@ -51,6 +51,11 @@ def _parse_event_seq(raw: Any) -> int | None:
     return seq if seq > 0 else None
 
 
+#: 瞬态事件：只用于「执行中」的实时装饰，写进日志只会挤占条数上限并在续显时重放。
+#: 工具进度（tool_progress）每 250ms 就可能有新帧，进日志会让长工具把正文事件挤出窗口。
+TRANSIENT_EVENT_TYPES = frozenset({"tool_progress"})
+
+
 class ConversationStreamJournal:
     """按 (user, conversation) 保存流式事件的有界日志。"""
 
@@ -116,7 +121,12 @@ class ConversationStreamJournal:
                 return
             list_key = self._list_key(user_id, conversation_id)
             seq_key = self._seq_key(user_id, conversation_id)
-            valid_events = [event for event in events if isinstance(event, dict)]
+            valid_events = [
+                event
+                for event in events
+                if isinstance(event, dict)
+                and str(event.get("type") or "") not in TRANSIENT_EVENT_TYPES
+            ]
             if not valid_events:
                 return
             # 单次 INCRBY 预留整段序号：合并窗口最多能攒十几条高频增量，

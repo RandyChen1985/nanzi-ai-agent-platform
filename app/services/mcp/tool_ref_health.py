@@ -10,7 +10,9 @@
 - 静态工具 / AgentScope 内置别名：永远可用（它们不依赖 MCP 配置）；
 - ``sys_api_tools`` 中仍启用的业务 API 工具：可用；
 - MCP 工具：缓存行 ``is_published`` 且 ``is_available``，服务 ``enabled_status == 1``，
-  且 scope 对当前用户可见（公共或本人的个人服务）。
+  且 scope 对当前用户可见（公共或本人的个人服务）；
+- 脚本工具（``sys_script_tools``）：行存在且 ``is_active``，或库里缺行时按内置定义兜底
+  ——**漏了这一条会把有效配置判成失效，用户点「移除失效引用」就把工具删掉了**。
 
 运行时不区分管理员：管理员也只能用公共 MCP 与自己的个人 MCP，这里保持一致。
 """
@@ -21,6 +23,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.mcp import McpServer, McpToolCache
+from app.models.script_tool import SysScriptTool
 from app.models.tool import SysApiTool
 from app.services.ai.tools.registry import ToolRegistry
 
@@ -172,10 +175,53 @@ async def _active_api_tool_names(db: AsyncSession, names: Set[str]) -> Set[str]:
     return {row[0] for row in rows if row[0]}
 
 
+async def _active_script_tool_names(db: AsyncSession, names: Set[str]) -> Set[str]:
+    """可用的脚本工具名。
+
+    两条来源：``sys_script_tools`` 里启用的行，以及「库里没有行」时的内置定义兜底
+    （迁移漏跑时内置脚本仍然可用，与 ``merge_effective_script_tools`` 同口径）。
+    表不存在不能抛：这个函数在权限/限制页面上也被调用，抛了会连累无关功能。
+    """
+    if not names:
+        return set()
+
+    from app.services.ai.tools.script_tool_builtins import BUILTIN_SCRIPT_TOOLS
+
+    resolved = {
+        name for name in names if any(item.name == name for item in BUILTIN_SCRIPT_TOOLS)
+    }
+    try:
+        rows = (
+            await db.execute(
+                select(SysScriptTool.name, SysScriptTool.is_active).where(
+                    SysScriptTool.name.in_(names)
+                )
+            )
+        ).all()
+    except Exception:  # noqa: BLE001 - 表不存在（迁移未执行）时只保留内置兜底
+        # PostgreSQL 下查询失败会让事务进入 aborted 状态，不回滚的话同一请求里
+        # 后续的 attach_system_status 等查询会全部报 InFailedSqlTransaction。
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001 - 回滚本身失败时保持原有兜底，不掩盖主异常
+            pass
+        return resolved
+
+    for name, is_active in rows:
+        if not name:
+            continue
+        if is_active:
+            resolved.add(name)
+        else:
+            # 显式停用优先于内置兜底：用户关掉了它，引用确实不可用
+            resolved.discard(name)
+    return resolved
+
+
 async def resolve_unresolved_tool_names(
     db: AsyncSession, names: Set[str], *, user_id: Optional[int]
 ) -> Set[str]:
-    """返回运行时无法解析出实现的工具名（静态/API/MCP 三条路径都落空）。"""
+    """返回运行时无法解析出实现的工具名（静态/API/MCP/脚本四条路径都落空）。"""
     if not names:
         return set()
 
@@ -188,6 +234,10 @@ async def resolve_unresolved_tool_names(
         return set()
 
     unresolved -= await _visible_mcp_tool_names(db, unresolved, user_id)
+    if not unresolved:
+        return set()
+
+    unresolved -= await _active_script_tool_names(db, unresolved)
     return unresolved
 
 

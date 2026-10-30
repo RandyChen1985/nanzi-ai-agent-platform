@@ -815,7 +815,7 @@
                       <div class="flex items-center justify-between gap-2 mb-1.5 px-1">
                           <div class="flex items-center gap-1.5 min-w-0">
                               <span class="text-[11px] font-black text-gray-400 uppercase tracking-widest whitespace-nowrap">可选用户 ·候选</span>
-                              <span class="px-2 py-0.5 bg-gray-200 text-gray-600 text-[9px] font-bold rounded-full shrink-0" aria-live="polite" :title="`候选池共 ${availableTotal} 人，其中 ${pendingAddedCount} 人已在本弹窗中选中待保存`">{{ availableRemaining }}</span>
+                              <span class="px-2 py-0.5 bg-gray-200 text-gray-600 text-[9px] font-bold rounded-full shrink-0" aria-live="polite" :title="candidatePoolHint">{{ availableRemaining }}</span>
                           </div>
                           <span class="shrink-0 text-[10px] text-gray-400 whitespace-nowrap">仅显示未加入</span>
                       </div>
@@ -860,12 +860,60 @@
                           </svg>
                       </div>
 
+                      <!-- 部门筛选：与「用户管理」页同款原生下拉（按层级缩进），选中后才出现「含子部门」。
+                           只筛左栏候选池——右栏是已加入的成员，按部门筛会让人误以为成员丢了。 -->
+                      <div v-if="deptOptions.length" class="flex flex-wrap items-center gap-2 mb-2 px-1">
+                          <svg class="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h5v5H3V7zm13 0h5v5h-5V7zM8 17h8M10.5 7v10M13.5 7v10" />
+                          </svg>
+                          <select
+                              v-model="deptFilter"
+                              aria-label="按部门筛选候选用户"
+                              title="只筛选左侧候选池，不影响右侧已选成员"
+                              class="flex-1 min-w-0 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                              @change="onCandidateFilterChange"
+                          >
+                              <option value="">全部部门</option>
+                              <option v-for="dept in deptOptions" :key="'dept-' + dept.id" :value="String(dept.id)">
+                                  {{ "\u3000".repeat(dept.depth) }}{{ dept.name }}
+                              </option>
+                          </select>
+                          <label
+                              v-if="deptFilter"
+                              class="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-600 whitespace-nowrap"
+                              title="勾选后把子部门的成员也列出来"
+                          >
+                              <input
+                                  v-model="deptIncludeSub"
+                                  type="checkbox"
+                                  class="h-3.5 w-3.5 rounded border-gray-300"
+                                  @change="onCandidateFilterChange"
+                              />
+                              含子部门
+                          </label>
+                          <button
+                              v-if="deptFilter"
+                              type="button"
+                              @click="clearDeptFilter"
+                              class="shrink-0 text-[11px] font-bold text-gray-400 hover:text-gray-600 whitespace-nowrap"
+                          >清除</button>
+                      </div>
+                      <p v-else-if="deptOptionsError" class="mb-2 px-1 text-[10px] text-amber-600">{{ deptOptionsError }}</p>
+
                       <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-1" role="list">
                           <div v-if="loadingUsers" class="text-center py-16 text-gray-400 text-xs animate-pulse">正在获取候选库...</div>
                           <div v-else-if="filteredAvailableUsers.length === 0" class="text-center py-16 text-gray-400 text-xs italic">
                               <template v-if="userSearchQuery.trim()">没有匹配「{{ userSearchQuery.trim() }}」的用户</template>
+                              <template v-else-if="deptFilterActive">该部门下没有可分配的用户</template>
                               <template v-else-if="assignedUserIds.length > 0">全部用户都已加入该角色</template>
                               <template v-else>暂无可分配用户</template>
+                              <div v-if="deptFilterActive" class="mt-2 not-italic">
+                                  <button
+                                      type="button"
+                                      @click="clearDeptFilter"
+                                      class="text-[11px] font-bold text-blue-600 hover:underline"
+                                  >清除部门筛选</button>
+                              </div>
                           </div>
                           <button
                               v-for="user in filteredAvailableUsers"
@@ -1379,6 +1427,14 @@ const availablePageInput = ref('')
 const loadingUsers = ref(false)
 const selectingAllFiltered = ref(false)
 const userSearchQuery = ref('')
+// 部门筛选（只作用于左栏候选池）：与「用户管理」页同款交互——原生下拉 + 「含子部门」。
+// 目录走 /departments/options（仅要求登录）：能分配角色用户的管理员未必有部门管理菜单权限，
+// 复用 /departments/tree 会 403，筛选器根本加载不出来。
+const deptFilter = ref('')
+const deptIncludeSub = ref(false)
+const deptOptions = ref<{ id: number; name: string; depth: number; path: string }[]>([])
+const deptOptionsLoaded = ref(false)
+const deptOptionsError = ref('')
 
 const assignedUserIds = ref<number[]>([])
 const assignedUserMap = ref<Record<number, any>>({})
@@ -1674,8 +1730,8 @@ const visibleResources = computed(() => {
 
 /** 可见范围徽标：与知识库页三档口径保持一致 */
 const KNOWLEDGE_SCOPE_BADGE: Record<string, { label: string; cls: string }> = {
-    public: { label: '公共级', cls: 'bg-blue-50 text-blue-600' },
-    team: { label: '部门级', cls: 'bg-violet-50 text-violet-600' },
+    public: { label: '授权可见', cls: 'bg-blue-50 text-blue-600' },
+    team: { label: 'TEAM 级', cls: 'bg-violet-50 text-violet-600' },
     private: { label: '个人私有', cls: 'bg-amber-50 text-amber-700' },
 }
 
@@ -1685,7 +1741,7 @@ const knowledgeScopeOf = (res: any): 'public' | 'team' | 'private' => {
 }
 
 /** 兜底项：字段异常时也不让徽标消失 */
-const FALLBACK_SCOPE_BADGE = { label: '公共级', cls: 'bg-blue-50 text-blue-600' }
+const FALLBACK_SCOPE_BADGE = { label: '授权可见', cls: 'bg-blue-50 text-blue-600' }
 
 const knowledgeScopeBadge = (res: any) =>
     KNOWLEDGE_SCOPE_BADGE[knowledgeScopeOf(res)] ?? FALLBACK_SCOPE_BADGE
@@ -1799,12 +1855,50 @@ const availableTotalPages = computed(
 
 const isUserDisabled = (user: any) => Number(user?.status) === 0
 
+// 部门筛选命中的部门 id 集合；null 表示不限部门。
+// path 是物化路径（/1/7/），子树就是前缀关系——与后端 subtree_like_prefix 同口径，
+// 前端据此判断「本次移出的成员是否落在当前部门范围」。
+const selectedDeptScopeIds = computed<Set<number> | null>(() => {
+    if (!deptFilter.value) return null
+    const node = deptOptions.value.find(d => d.id === Number(deptFilter.value))
+    if (!node) return null
+    if (!deptIncludeSub.value || !node.path) return new Set([node.id])
+    return new Set(
+        deptOptions.value
+            .filter(d => d.path === node.path || (d.path || '').startsWith(node.path))
+            .map(d => d.id),
+    )
+})
+
+const deptFilterActive = computed(() => Boolean(deptFilter.value))
+
+const selectedDeptLabel = computed(() => {
+    const node = deptOptions.value.find(d => d.id === Number(deptFilter.value))
+    if (!node) return ''
+    return deptIncludeSub.value ? `${node.name}（含子部门）` : node.name
+})
+
+/** 用户详情里的部门 id（候选池接口会给 dept_ids；角色成员接口不给，返回空数组） */
+const userDeptIds = (user: any): number[] =>
+    Array.isArray(user?.dept_ids) ? user.dept_ids.map(Number) : []
+
+/**
+ * 该用户是否落在当前部门筛选范围内。
+ * scope 为 null 表示不限部门。缺部门信息时判 false：宁可少显示，也不让
+ * 「筛了 A 部门却混进 B 部门的人」——清空部门筛选即可看到全部。
+ */
+const inDeptScope = (userId: number, scope: Set<number> | null) => {
+    if (!scope) return true
+    return userDeptIds(assignedUserMap.value[userId]).some(id => scope.has(id))
+}
+
 // 候选列表 = 还没被选中的用户：服务端已排除该角色的既有成员，
 // 这里再排掉本次会话中刚勾选（还没保存）的人，保证左右两栏不会出现同一个人
 // 本次被移出的“原有成员”：服务端此刻仍认为他是成员，候选池里没有他，
 // 必须本地补回左栏，否则用户移出后想加回来会找不到人
 const pendingRemovedUsers = computed(() => {
     const keyword = userSearchQuery.value.trim().toLowerCase()
+    const scope = selectedDeptScopeIds.value
     return assignedSnapshot.value
         .filter(id => !assignedUserIds.value.includes(id))
         .map(id => assignedUserMap.value[id] || {
@@ -1813,9 +1907,14 @@ const pendingRemovedUsers = computed(() => {
             real_name: `用户 #${id}`,
             detail_missing: true,
         })
-        .filter((u: any) => !keyword
-            || (u.user_name || '').toLowerCase().includes(keyword)
-            || (u.real_name || '').toLowerCase().includes(keyword))
+        .filter((u: any) => {
+            const scoped = !scope
+                || userDeptIds(u).some(id => scope.has(id))
+            if (!scoped) return false
+            return !keyword
+                || (u.user_name || '').toLowerCase().includes(keyword)
+                || (u.real_name || '').toLowerCase().includes(keyword)
+        })
 })
 
 const isPendingRemoved = (userId: number) =>
@@ -1830,16 +1929,34 @@ const filteredAvailableUsers = computed(() => {
 })
 
 // 本地刚勾选（还没保存）的人数：他们仍在服务端候选池里，展示计数要扣掉；
-// 本次移出的原成员保存后会回到候选池，先加回来
-const pendingAddedCount = computed(
-    () => assignedUserIds.value.filter(id => !assignedSnapshot.value.includes(id)).length
-)
-const pendingRemovedCount = computed(
-    () => assignedSnapshot.value.filter(id => !assignedUserIds.value.includes(id)).length
-)
+// 本次移出的原成员保存后会回到候选池，先加回来。
+// 部门筛选下两个数都只算「落在当前部门范围内」的人：范围外的既不占 availableTotal，
+// 也不在列表里，算进去会让徽标与列表行数对不上（availableTotal 是服务端按部门过滤后的值）。
+const pendingAddedCount = computed(() => {
+    const scope = selectedDeptScopeIds.value
+    return assignedUserIds.value
+        .filter(id => !assignedSnapshot.value.includes(id))
+        .filter(id => inDeptScope(id, scope))
+        .length
+})
+const pendingRemovedCount = computed(() => {
+    const scope = selectedDeptScopeIds.value
+    return assignedSnapshot.value
+        .filter(id => !assignedUserIds.value.includes(id))
+        .filter(id => inDeptScope(id, scope))
+        .length
+})
 const availableRemaining = computed(
     () => Math.max(0, availableTotal.value - pendingAddedCount.value + pendingRemovedCount.value)
 )
+
+// 候选徽标的悬浮说明：带上当前部门口径，否则管理员看到数字对不上时无从判断是筛选还是数据问题
+const candidatePoolHint = computed(() => {
+    if (deptFilterActive.value) {
+        return `部门筛选：${selectedDeptLabel.value}，可分配 ${availableRemaining.value} 人（候选池 ${availableTotal.value} 人）`
+    }
+    return `候选池共 ${availableTotal.value} 人，其中 ${pendingAddedCount.value} 人已在本弹窗中选中待保存`
+})
 
 const cacheAssignedUsers = (items: any[]) => {
     if (!items?.length) return
@@ -2039,7 +2156,8 @@ const collectFilteredUsers = async (excludeRoleMembers: boolean) => {
     let page = 1
     let total = availableTotal.value
     while (page <= MAX_SELECT_ALL_PAGES) {
-        const params: any = { page, size: USERS_PAGE_SIZE }
+        // 部门条件必须与候选池分页同源，否则「全选筛选结果」会跨部门勾人
+        const params: any = applyDeptFilterParams({ page, size: USERS_PAGE_SIZE })
         const keyword = userSearchQuery.value.trim()
         if (keyword) params.search = keyword
         if (excludeRoleMembers && currentRole.value?.id) {
@@ -2090,11 +2208,64 @@ const deselectAllFiltered = () => {
     }
 }
 
+// 部门筛选条件：候选池分页与「全选筛选结果」共用同一份，
+// 避免以后新增分页请求时漏条件导致跨部门勾人
+const applyDeptFilterParams = (params: any) => {
+    if (deptFilter.value) {
+        params.dept_id = Number(deptFilter.value)
+        if (deptIncludeSub.value) params.include_sub = true
+    }
+    return params
+}
+
+// 部门目录：只在首次打开弹窗时拉一次。失败就静默降级为「不显示筛选器」，
+// 分配用户本身不该因为拿不到部门树而不可用。
+const loadDeptOptions = async () => {
+    if (deptOptionsLoaded.value) return
+    try {
+        const response = await axios.get('/api/portal/departments/options', {
+            params: { include_disabled: false },
+        })
+        const flat: { id: number; name: string; depth: number; path: string }[] = []
+        const walk = (nodes: any[], depth: number) => {
+            for (const node of nodes || []) {
+                flat.push({
+                    id: Number(node.id),
+                    name: node.name,
+                    depth,
+                    path: String(node.path || ''),
+                })
+                if (node.children?.length) walk(node.children, depth + 1)
+            }
+        }
+        walk(response.data?.items || [], 0)
+        deptOptions.value = flat
+        deptOptionsLoaded.value = true
+        deptOptionsError.value = ''
+    } catch (e) {
+        console.error('Fetch Department Options Failed', e)
+        deptOptions.value = []
+        deptOptionsError.value = '部门目录加载失败，暂不支持按部门筛选'
+    }
+}
+
+// 清除部门筛选：回到「全部部门」，并按筛选口径变化统一重置
+const clearDeptFilter = () => {
+    if (!deptFilter.value) return
+    deptFilter.value = ''
+    deptIncludeSub.value = false
+    onCandidateFilterChange()
+}
+
 const openUserAssignmentDialog = async (role: any) => {
     currentRole.value = role
     showUserAssignmentDialog.value = true
     userSearchQuery.value = ''
     assignedSearchQuery.value = ''
+    // 部门筛选是「上一次筛选」的残留，换角色必须回到全部部门，
+    // 否则新角色一打开就少一批人，看起来像候选池缺数据
+    deptFilter.value = ''
+    deptIncludeSub.value = false
     assignedUserIds.value = []
     assignedUserMap.value = {}
     assignedSnapshot.value = []
@@ -2109,6 +2280,8 @@ const openUserAssignmentDialog = async (role: any) => {
     availablePageInput.value = ''
 
     await Promise.all([
+        // 部门目录与候选池并行；目录只影响筛选器的可用性，失败也不阻塞分配
+        loadDeptOptions(),
         fetchAvailableUsers(),
         fetchRoleUsers(role.id)
     ])
@@ -2127,6 +2300,8 @@ const fetchAvailableUsers = async () => {
         if (currentRole.value?.id) {
             params.exclude_role_id = currentRole.value.id
         }
+        // 部门维度与 exclusion 并列：后端按 dept_id / include_sub 做物化路径前缀过滤
+        applyDeptFilterParams(params)
 
         const response = await axios.get('/api/portal/management/users', { params })
         availableUsers.value = response.data.items || []
@@ -2142,15 +2317,21 @@ const fetchAvailableUsers = async () => {
 }
 
 let userSearchTimeout: any = null
+
+// 候选池筛选口径变化（搜索词 / 部门）统一走这里：页码回 1、清空左栏勾选、作废批量撤销范围。
+// 必须清勾选：勾选的人已不在当前视图里，再点 » 会把看不见的人加进角色。
+const onCandidateFilterChange = () => {
+    availablePage.value = 1
+    availablePageInput.value = ''
+    clearCandidateSelection()
+    // 筛选口径变化后，上一次批量的撤销范围不再对应
+    clearBulkUndo()
+    fetchAvailableUsers()
+}
+
 const debouncedUserSearch = () => {
     clearTimeout(userSearchTimeout)
-    userSearchTimeout = setTimeout(() => {
-        availablePage.value = 1
-        availablePageInput.value = ''
-        // 筛选口径变化后，上一次批量的撤销范围不再对应
-        clearBulkUndo()
-        fetchAvailableUsers()
-    }, 300)
+    userSearchTimeout = setTimeout(onCandidateFilterChange, 300)
 }
 
 const goAvailablePage = (delta: number) => {

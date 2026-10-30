@@ -79,11 +79,16 @@ def test_both_chat_surfaces_refresh_remote_status_on_visibility_and_bind_busy_st
         # 锁真相要在输出完成后继续驱动恢复收敛，不能被输入解锁一并抹掉。
         if relative_path.endswith("EmbedChat.vue"):
             # EmbedChat 额外用 recoveryLocking 兜住「运行态未知但仍有未收敛草稿」的窗口。
-            assert ':is-processing="isProcessing || remoteRunBusy || recoveryLocking"' in source
-            assert "if (isProcessing.value || remoteRunBusy.value || recoveryLocking.value) return;" in source
+            # 实现又把 pendingPermissionLocking 并进 busy：确认卡挂起时这一轮已停下，
+            # 只看 isProcessing / remoteRunBusy 会把输入区误判成空闲。
+            assert (
+                ':is-processing="isProcessing || remoteRunBusy || recoveryLocking || pendingPermissionLocking"'
+                in source
+            )
+            assert "if (isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value) return;" in source
         else:
-            assert ':is-processing="isProcessing || remoteRunBusy"' in source
-            assert "if (isProcessing.value || remoteRunBusy.value) return;" in source
+            assert ':is-processing="isProcessing || remoteRunBusy || pendingPermissionLocking"' in source
+            assert "if (isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value) return;" in source
         assert ':is-submitting="sendLocked"' in source
 
 
@@ -214,7 +219,7 @@ def test_embed_chat_focuses_desktop_input_only_after_all_busy_states_clear():
     source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
 
     assert "const focusChatInputWhenReady = () =>" in source
-    assert "if (isMobile.value || isProcessing.value || remoteRunBusy.value || recoveryLocking.value || sendLocked.value) return;" in source
+    assert "if (isMobile.value || isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value || sendLocked.value) return;" in source
     assert "watch([isProcessing, remoteRunBusy, sendLocked], focusChatInputWhenReady);" in source
     assert "nextTick(() => chatInputRef.value?.focus());" in source
 
@@ -229,7 +234,7 @@ def test_agent_debug_focuses_desktop_input_only_after_all_busy_states_clear():
     assert source.index("const isProcessing = ref(false);") < watch_index
     assert source.index("const { locked: sendLocked", source.index("const isProcessing = ref(false);")) < watch_index
     assert "const focusChatInputWhenReady = () =>" in source
-    assert "if (isMobile.value || isProcessing.value || remoteRunBusy.value || sendLocked.value) return;" in source
+    assert "if (isMobile.value || isProcessing.value || remoteRunBusy.value || pendingPermissionLocking.value || sendLocked.value) return;" in source
     assert "watch([isProcessing, remoteRunBusy, sendLocked], focusChatInputWhenReady);" in source
     assert "nextTick(() => chatInputRef.value?.focus());" in source
 

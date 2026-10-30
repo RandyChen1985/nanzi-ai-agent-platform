@@ -39,7 +39,11 @@ def _body(signature: str) -> str:
 def test_switching_conversation_restores_the_snapshot_after_history_loads():
     body = _body("const handleHistoryClick = async (item: any) => {")
     # 顺序与初始化路径一致：历史会整体替换消息列表，先恢复快照会被冲掉。
-    assert "void fetchConversationHistory(false).then(() => restoreEmbedStreamSnapshot());" in body
+    # 断言只锁「先历史、后快照」这个真实约束：实现后来在链尾补了 catch/finally
+    # 做骨架收敛，旧的一行紧凑写法已经不成立。
+    assert "void fetchConversationHistory(false)" in body
+    assert "restoreEmbedStreamSnapshot()" in body
+    assert body.index("fetchConversationHistory(false)") < body.index("restoreEmbedStreamSnapshot()")
 
 
 # ---- F2：切走不得触发目标会话的终态收敛 ----

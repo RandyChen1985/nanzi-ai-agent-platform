@@ -36,6 +36,13 @@ class _FakeAsyncContextManager:
 
 def _patch_fake_sse(stack, initialize):
     """在给定 ExitStack 上伪造 SSE 建链的两个外部依赖，只保留 connect() 自身逻辑。"""
+    # connect() 现在会先试 Streamable HTTP；本模块只关心 SSE 状态机，直接让它失败。
+    stack.enter_context(
+        patch(
+            "app.services.ai.tools.mcp_client.streamable_http_client",
+            MagicMock(side_effect=RuntimeError("no streamable here")),
+        )
+    )
     stack.enter_context(
         patch(
             "app.services.ai.tools.mcp_client.sse_client",

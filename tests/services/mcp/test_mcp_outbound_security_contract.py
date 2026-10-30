@@ -14,6 +14,9 @@ def test_sse_and_probe_do_not_follow_redirects():
     assert "follow_redirects=False" in CLIENT
     assert "_create_no_redirect_mcp_http_client" in CLIENT
     assert "httpx_client_factory=_create_no_redirect_mcp_http_client" in CLIENT
+    # mcp 2.x 的 sse_client 只接受 httpx2 客户端；返回 httpx.AsyncClient 会 TypeError
+    # 并被静默降级成 Direct HTTP。行为级回归见 test_mcp_client_sse_transport.py。
+    assert "httpx2.AsyncClient" in CLIENT
 
 
 def test_verify_error_does_not_echo_raw_exception():
