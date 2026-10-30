@@ -610,6 +610,21 @@
           </div>
         </div>
 
+        <!-- 模型调用折叠汇总：逐条不再占主时间线，只留次数 / 合计耗时 / 明细入口 -->
+        <div
+          v-if="modelCallSummary.count"
+          class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-dashed border-gray-200/80 px-2 py-1 text-[11px] leading-4 text-gray-400 dark:border-gray-700/70 dark:text-gray-500"
+        >
+          <SparklesIcon class="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>{{ modelCallSummaryLabel }}</span>
+          <button
+            type="button"
+            class="ml-auto shrink-0 font-medium text-gray-500 transition-colors hover:text-gray-800 hover:underline dark:text-gray-400 dark:hover:text-gray-200"
+            title="查看本次执行的大模型调用明细"
+            @click="emit('open-model-stats')"
+          >查看明细</button>
+        </div>
+
         <div v-if="isThinking && !items.length" class="px-2 py-1 text-xs text-gray-400 animate-pulse">
           {{ thinkingText || '正在处理…' }}
         </div>
@@ -668,6 +683,8 @@ import {
   resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
   selectTimelineRenderableItems,
+  stripModelCallLogs,
+  summarizeModelCalls,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
   isWorkspacePrewarmPending,
@@ -710,6 +727,11 @@ const props = withDefaults(defineProps<{
   suppressPermissionLogs?: boolean;
   /** 当前轮的清单正由输入框上方的 banner 卡片展示时，时间线内不再重复渲染。 */
   hideTodo?: boolean;
+  /**
+   * 模型调用（category=model）默认折叠为底部一行汇总，避免「工具全在上、模型调用全在下」
+   * 的时间倒挂；需要逐条展示观测信息的场景传 false 恢复旧行为。
+   */
+  hideModelCalls?: boolean;
 }>(), {
   timeline: () => [],
   logs: () => [],
@@ -725,12 +747,16 @@ const props = withDefaults(defineProps<{
   bordered: false,
   darkMode: false,
   suppressPermissionLogs: false,
+  hideModelCalls: true,
 });
 
 const expanded = defineModel<boolean>("expanded", { default: false });
 const routeGroupExpanded = ref(true);
 
-const emit = defineEmits<{ (e: "stop"): void }>();
+const emit = defineEmits<{
+  (e: "stop"): void;
+  (e: "open-model-stats"): void;
+}>();
 
 // 会话运行锁的排队等待条目（id 由后端 preflight 下发）：这里提供直接终止入口，
 // 否则用户只能干等上一轮任务结束或等待窗口超时。
@@ -775,7 +801,28 @@ const timelineItems = computed(() => {
   // 都归档到执行过程里，保证历史消息仍然查得到。
   return selectTimelineRenderableItems(visibleItems, { hideTodo: props.hideTodo });
 });
-const items = computed(() => groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value));
+
+// 模型调用（category=model）不占主时间线：它们每次请求一条、又固定堆在数组末尾，
+// 留在列表里会造成「工具在上、模型调用在下」的时间倒挂。默认折叠为底部一行汇总，
+// 逐条明细由「查看明细」承载；进行中的那条仍保留，避免模型思考期间列表完全静止。
+const hideModelCalls = computed(() => props.hideModelCalls !== false);
+const items = computed(() => {
+  const grouped = groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value);
+  return hideModelCalls.value ? stripModelCallLogs(grouped) : grouped;
+});
+
+const modelCallSummary = computed(() =>
+  hideModelCalls.value
+    ? summarizeModelCalls(timelineItems.value)
+    : { count: 0, totalMs: 0, pending: false }
+);
+const modelCallSummaryLabel = computed(() => {
+  const { count, totalMs, pending } = modelCallSummary.value;
+  const parts = [`${count} 次模型调用`];
+  if (totalMs > 0) parts.push(`合计 ${formatDuration(totalMs)}`);
+  if (pending) parts.push("进行中");
+  return parts.join(" · ");
+});
 
 const hasPending = computed(() => timelineHasPending(items.value));
 const headerTitle = computed(() => props.hasAnswer ? "执行完成" : "执行过程");
@@ -784,7 +831,12 @@ const currentStep = computed(() => resolveTimelineCurrentStep(
   Boolean(!props.hasAnswer && (props.isThinking || hasPending.value)),
 ) || (!props.hasAnswer && props.isThinking ? visibleTimelineText(props.thinkingText) : ""));
 
-const visible = computed(() => Boolean(props.isThinking || items.value.length || props.skillBadges.length));
+const visible = computed(() => Boolean(
+  props.isThinking
+  || items.value.length
+  || modelCallSummary.value.count
+  || props.skillBadges.length,
+));
 const skillNoticeLabel = computed(() => skillFlowNoticeLabel(props.skillBadges));
 const headerSkillSummary = computed(() =>
   props.skillSummary || summarizeSkillFlowBadges(props.skillBadges)
