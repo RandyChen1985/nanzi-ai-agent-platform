@@ -871,6 +871,7 @@
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
                 :hide-todo="activeTodoTimeline === msg.processTimeline"
+                :tool-timeout-seconds="msg.agentMaxToolcallTimeoutSeconds"
                 dark-mode
                 @stop="stopGeneration({ notifySuccess: true })"
                 @open-model-stats="openModelCallStats(msg)"

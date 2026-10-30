@@ -193,7 +193,7 @@
                       {{ subagentStatusLabel(child.status) }}
                     </span>
                     <span v-if="child.status === 'error' && !child.subagent" class="shrink-0 text-[10px]">失败</span>
-                    <span v-if="formatTimelineDuration(child)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(child)">{{ formatTimelineDuration(child) }}</span>
+                    <span v-if="timelineDurationText(child)" class="shrink-0 font-mono text-[10px]" :class="timelineDurationClass(child)" :title="timelineDurationTitle(child)">{{ timelineDurationText(child) }}</span>
                     <svg v-if="hasVisibleTimelineText(child.details) || hasTimelineArgs(child) || child.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': isChildDetailsOpen(child) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                     </svg>
@@ -253,7 +253,7 @@
                           :is-live-timer="String(subStep.id) === liveTimerLogId"
                         />
                         <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
-                        <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
+                        <span v-if="timelineDurationText(subStep)" class="shrink-0 font-mono text-[10px]" :class="timelineDurationClass(subStep)" :title="timelineDurationTitle(subStep)">{{ timelineDurationText(subStep) }}</span>
                         <svg v-if="hasVisibleTimelineText(subStep.details) || hasTimelineArgs(subStep)" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                         </svg>
@@ -397,8 +397,8 @@
                 {{ subagentStatusLabel(item.status) }}
               </span>
               <span v-if="item.status === 'error' && !item.subagent" class="shrink-0 text-[10px]">失败</span>
-              <span v-if="formatTimelineDuration(item)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(item)">
-                {{ formatTimelineDuration(item) }}
+              <span v-if="timelineDurationText(item)" class="shrink-0 font-mono text-[10px]" :class="timelineDurationClass(item)" :title="timelineDurationTitle(item)">
+                {{ timelineDurationText(item) }}
               </span>
               <svg
                 v-if="hasVisibleTimelineText(item.details) || hasTimelineArgs(item) || item.children?.length"
@@ -488,7 +488,7 @@
                     :is-live-timer="String(subStep.id) === liveTimerLogId"
                   />
                   <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
-                  <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
+                  <span v-if="timelineDurationText(subStep)" class="shrink-0 font-mono text-[10px]" :class="timelineDurationClass(subStep)" :title="timelineDurationTitle(subStep)">{{ timelineDurationText(subStep) }}</span>
                   <svg v-if="hasVisibleTimelineText(subStep.details) || hasTimelineArgs(subStep) || subStep.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': isSubStepDetailsOpen(subStep) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                   </svg>
@@ -539,7 +539,7 @@
                         :is-live-timer="String(nestedStep.id) === liveTimerLogId"
                       />
                       <span v-if="nestedStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
-                      <span v-if="formatTimelineDuration(nestedStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(nestedStep)">{{ formatTimelineDuration(nestedStep) }}</span>
+                      <span v-if="timelineDurationText(nestedStep)" class="shrink-0 font-mono text-[10px]" :class="timelineDurationClass(nestedStep)" :title="timelineDurationTitle(nestedStep)">{{ timelineDurationText(nestedStep) }}</span>
                       <svg v-if="hasVisibleTimelineText(nestedStep.details) || hasTimelineArgs(nestedStep)" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': nestedStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                       </svg>
@@ -673,11 +673,13 @@ import {
 } from "@/utils/skillFlowBadges";
 import {
   appendToolSummary,
+  appendToolTimeoutSuffix,
   buildLegacyProcessTimeline,
   countTimelineSteps,
   formatTimelineTitle,
   groupRouteTimelineItems,
   isReasoningContentExpanded,
+  isToolTimeoutNearLimit,
   mergeTimelineLogs,
   resolveLiveTimerDurationMs,
   resolveLiveTimerLogId,
@@ -732,6 +734,11 @@ const props = withDefaults(defineProps<{
    * 的时间倒挂；需要逐条展示观测信息的场景传 false 恢复旧行为。
    */
   hideModelCalls?: boolean;
+  /**
+   * 本轮工具调用的实际超时上限（秒，版本级优先、否则全局）。
+   * 挂起中的工具行显示「已耗时 / 上限」，让用户知道还要等多久才算超时。
+   */
+  toolTimeoutSeconds?: number;
 }>(), {
   timeline: () => [],
   logs: () => [],
@@ -748,6 +755,7 @@ const props = withDefaults(defineProps<{
   darkMode: false,
   suppressPermissionLogs: false,
   hideModelCalls: true,
+  toolTimeoutSeconds: 0,
 });
 
 const expanded = defineModel<boolean>("expanded", { default: false });
@@ -1292,6 +1300,30 @@ function formatTimelineDuration(item: ProcessTimelineLogItem): string {
   if (live) return live;
   const duration = formatDuration(item.execution_time_ms);
   return isRouteGroup(item) && duration ? `总计 ${duration}` : duration;
+}
+
+/** 只有挂起中的工具行需要分母：完成/失败态已有实际耗时，再挂上限反而干扰阅读。 */
+function pendingToolTimeoutSeconds(item: ProcessTimelineLogItem): number | null {
+  if (item.status !== "pending") return null;
+  if (String(item.category || "") !== "tool") return null;
+  const seconds = Number(props.toolTimeoutSeconds);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+/** 挂起工具显示「已耗时 / 上限」，其余情况沿用原有耗时文本。 */
+function timelineDurationText(item: ProcessTimelineLogItem): string {
+  return appendToolTimeoutSuffix(
+    formatTimelineDuration(item),
+    pendingToolTimeoutSeconds(item) ?? undefined,
+  );
+}
+
+/** 接近上限（≥90%）时把数字染成琥珀色，超时后由既有逻辑标成 error 变红。 */
+function timelineDurationClass(item: ProcessTimelineLogItem): string {
+  const timeout = pendingToolTimeoutSeconds(item);
+  if (timeout === null) return "text-gray-400";
+  const liveMs = resolveLiveTimerDurationMs(item, liveTimerLogId.value, Date.now());
+  return isToolTimeoutNearLimit(liveMs, timeout) ? "text-amber-500" : "text-gray-400";
 }
 
 function timelineDurationTitle(item: ProcessTimelineLogItem): string | undefined {

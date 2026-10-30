@@ -294,6 +294,29 @@ export function appendToolSummary(baseTitle: string, summary?: string): string {
   return `${baseTitle} · ${text}`;
 }
 
+/**
+ * 挂起工具行的耗时补上分母：`33.0s` → `33.0s / 180s`。
+ *
+ * 分母是「本轮工具调用的实际超时」（版本级优先、否则全局），由 `run_config`
+ * 下发；缺失或非法时不补分母，宁可只显示已耗时，也不编一个上限出来。
+ */
+export function appendToolTimeoutSuffix(base: string, timeoutSeconds?: number): string {
+  if (!base) return base;
+  const seconds = Number(timeoutSeconds);
+  return Number.isFinite(seconds) && seconds > 0 ? `${base} / ${Math.round(seconds)}s` : base;
+}
+
+/** 已耗时是否已逼近上限（≥90%）：用来决定数字是否染成警示色。 */
+export function isToolTimeoutNearLimit(
+  elapsedMs: number | null | undefined,
+  timeoutSeconds?: number,
+): boolean {
+  const elapsed = Number(elapsedMs);
+  const timeout = Number(timeoutSeconds);
+  if (!Number.isFinite(elapsed) || !Number.isFinite(timeout) || timeout <= 0) return false;
+  return elapsed >= timeout * 1000 * 0.9;
+}
+
 export function timelineHasPending(items: ProcessTimelineItem[] | undefined): boolean {
   return (items || []).some((item) => {
     if (item.kind === "log") {

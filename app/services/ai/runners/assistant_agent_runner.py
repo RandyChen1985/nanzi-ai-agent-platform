@@ -9,7 +9,7 @@ import contextlib
 import os
 import posixpath
 from dataclasses import replace
-from typing import List, Dict, Any, AsyncGenerator, Optional, Set
+from typing import List, Dict, Any, AsyncGenerator, Optional, Sequence, Set
 from datetime import datetime
 
 from app.services.ai.runtime.agentscope.compat import (
@@ -435,6 +435,23 @@ class _ForcedFirstToolChoiceModel:
         if inspect.isawaitable(result):
             return await result
         return result
+
+
+def _first_tool_timeout_seconds(tools: Sequence[Any]) -> float | None:
+    """取本轮工具实际生效的超时秒数。
+
+    超时在 ``apply_configured_agent_tool_timeout`` 里按「版本级优先、否则全局」
+    解析后写进每个 spec 的 ``timeout_seconds``，所以这里读第一个非空值即可，
+    不再重复读一次配置。
+    """
+
+    for tool in tools or ():
+        value = getattr(tool, "timeout_seconds", None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if value > 0:
+            return float(value)
+    return None
 
 
 class AssistantAgentRunner(BaseExecutor):
@@ -1589,6 +1606,14 @@ class AssistantAgentRunner(BaseExecutor):
         # 1. Prepare LLM
         tools = await self._resolve_runtime_tools_from_config()
         tools = self._apply_knowledge_fallback_budget(tools)
+        # 入口处的 run_config 只能下发全局超时；版本级覆盖要等工具解析完才知道。
+        # 这里补发解析后的实际值，前端「已耗时 / 上限」才与真实失败时刻一致。
+        resolved_tool_timeout = _first_tool_timeout_seconds(tools)
+        if resolved_tool_timeout is not None:
+            yield {
+                "type": "run_config",
+                "agent_max_toolcall_timeout": int(resolved_tool_timeout),
+            }
         for event in self._tool_resolution_log_events():
             yield event
 
