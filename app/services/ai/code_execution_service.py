@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import asyncio
 import contextlib
+import logging
 import signal
 import sys
 import tempfile
@@ -12,6 +13,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
+from app.services.ai.code_execution_sandbox import (
+    MAPPED_SANDBOX_POLICIES,
+    SandboxScriptResult,
+    SandboxScriptUnavailable,
+    UNMAPPED_SANDBOX_POLICIES,
+    build_sandbox_command,
+    run_sandbox_script,
+    sandbox_session_workdir,
+    unmapped_policy_message,
+)
 from app.services.ai.runtime.workspace_access_policy import (
     WorkspaceAccessDenied,
     ensure_private_workspace_dirs,
@@ -19,6 +30,30 @@ from app.services.ai.runtime.workspace_access_policy import (
     validate_execution_workspace,
 )
 
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "CodeExecutionHandle",
+    "CodeExecutionResult",
+    "CodeExecutionValidationError",
+    "DEFAULT_TIMEOUT_SECONDS",
+    "MAX_OUTPUT_BYTES",
+    "SandboxScriptResult",
+    "SandboxScriptUnavailable",
+    "build_sandbox_command",
+    "execute_code_stream",
+    "get_execution",
+    "materialize_script",
+    "normalize_language",
+    "register_execution",
+    "run_shell_command_capture",
+    "resolve_execution_policy",
+    "sandbox_session_workdir",
+    "start_code_execution",
+    "stop_executions_for_conversation",
+    "unregister_execution",
+]
 
 NormalizedLanguage = Literal["python", "sh", "bash"]
 
@@ -43,6 +78,25 @@ def normalize_language(value: str) -> NormalizedLanguage:
     if normalized == "sh":
         return "sh"
     return "bash"
+
+
+async def resolve_execution_policy() -> str:
+    """画布运行应使用的执行后端：``local`` / ``docker`` / ``k8s`` / ``e2b`` / ``ssh``。
+
+    与对话内 Bash 工具同源读取 ``sandbox_policy``。读取失败按 ``local`` 处理：
+    配置服务抖动不该让画布运行直接不可用，而 ``local`` 是历史行为。
+    """
+    try:
+        from app.services.config_service import (
+            ConfigService,
+            resolve_effective_sandbox_policy,
+        )
+
+        raw = await ConfigService.get("sandbox_policy", "local")
+        return resolve_effective_sandbox_policy(raw, "local").strip().lower()
+    except Exception as exc:  # noqa: BLE001 - 配置不可用时退回历史行为
+        logger.warning("[code-execution] 读取 sandbox_policy 失败，按 local 执行: %s", exc)
+        return "local"
 
 
 def build_script_command(language: str, script_path: Path) -> list[str]:
@@ -311,6 +365,123 @@ class CodeExecutionHandle:
                     process.kill()
             await process.wait()
 
+    async def _run_in_sandbox(self, policy: str, *, started_at: float) -> CodeExecutionResult:
+        """在 docker/k8s 沙箱里执行画布脚本（宿主会话目录已挂载进沙箱）。"""
+        from app.services.ai.runtime.agentscope.workspace import (
+            default_workspace_root,
+            resolve_sandbox_logical_root,
+        )
+
+        def elapsed_ms() -> int:
+            return int((time.perf_counter() - started_at) * 1000)
+
+        root = self.workspace_root or Path(default_workspace_root()).resolve()
+        try:
+            user_root = user_workspace_root(root, self.user_info)
+            sandbox_root = await resolve_sandbox_logical_root(policy)
+            if not sandbox_root:
+                raise CodeExecutionValidationError(
+                    f"当前沙箱策略（{policy}）无法解析工作区逻辑根，脚本未执行。"
+                )
+            sandbox_workdir = sandbox_session_workdir(
+                workspace=self.workspace,
+                user_root=user_root,
+                sandbox_root=str(sandbox_root),
+            )
+        except (WorkspaceAccessDenied, ValueError, CodeExecutionValidationError) as exc:
+            self.started.set()
+            message = str(exc)
+            await self._emit("error", {"code": "sandbox_path_unmapped", "message": message})
+            return CodeExecutionResult(
+                status="blocked",
+                elapsed_ms=elapsed_ms(),
+                error=message,
+            )
+
+        # 脚本写在宿主会话目录：docker/k8s 挂载的是同一个用户工作区，容器内
+        # ``<逻辑根>/sessions/<cid>`` 就是这份文件，不需要额外上传。
+        self._script_path = materialize_script(self.workspace, self.language, self.code)
+        sandbox_script_path = f"{sandbox_workdir.rstrip('/')}/{self._script_path.name}"
+        self.started.set()
+        await self._emit(
+            "started",
+            {
+                "execution_id": self.execution_id,
+                "language": self.language,
+                "started_at": time.time(),
+                "execution_backend": policy,
+                "workdir": sandbox_workdir,
+            },
+        )
+
+        try:
+            outcome = await run_sandbox_script(
+                policy=policy,
+                language=self.language,
+                sandbox_script_path=sandbox_script_path,
+                sandbox_workdir=sandbox_workdir,
+                user_info=self.user_info,
+                conversation_id=self.conversation_id or "",
+                timeout_seconds=self.timeout_seconds,
+                on_output=self._emit_output,
+                is_stopped=lambda: self._stop_requested,
+            )
+        except SandboxScriptUnavailable as exc:
+            message = str(exc)
+            await self._emit("error", {"code": "sandbox_unavailable", "message": message})
+            return CodeExecutionResult(
+                status="failed",
+                outputs=list(self._outputs),
+                elapsed_ms=elapsed_ms(),
+                truncated=self._truncated,
+                error=message,
+            )
+
+        if outcome.stopped:
+            await self._emit(
+                "stopped", {"status": "stopped", "exit_code": outcome.exit_code}
+            )
+            return CodeExecutionResult(
+                status="stopped",
+                outputs=list(self._outputs),
+                exit_code=outcome.exit_code,
+                elapsed_ms=elapsed_ms(),
+                truncated=self._truncated,
+            )
+        if outcome.timed_out:
+            message = f"执行超时（{self.timeout_seconds:g} 秒）"
+            await self._emit("timeout", {"message": message})
+            return CodeExecutionResult(
+                status="timed_out",
+                outputs=list(self._outputs),
+                exit_code=outcome.exit_code,
+                elapsed_ms=elapsed_ms(),
+                truncated=self._truncated,
+                error=message,
+            )
+
+        # 退出码未知（k8s error channel 未给出）按成功处理：与终端「退出码未知」一致，
+        # 避免把明确跑完的脚本误报成失败。
+        status: ExecutionStatus = (
+            "failed" if outcome.exit_code not in (0, None) else "succeeded"
+        )
+        await self._emit(
+            "finished",
+            {
+                "status": status,
+                "exit_code": outcome.exit_code,
+                "elapsed_ms": elapsed_ms(),
+                "truncated": self._truncated,
+            },
+        )
+        return CodeExecutionResult(
+            status=status,
+            outputs=list(self._outputs),
+            exit_code=outcome.exit_code,
+            elapsed_ms=elapsed_ms(),
+            truncated=self._truncated,
+        )
+
     async def _run(self) -> None:
         started_at = time.perf_counter()
         result: CodeExecutionResult | None = None
@@ -354,6 +525,27 @@ class CodeExecutionHandle:
                     elapsed_ms=int((time.perf_counter() - started_at) * 1000),
                 )
                 await self._emit("stopped", {"status": "stopped", "exit_code": None})
+                return
+
+            # 画布运行必须跟当前部署的沙箱策略同源：docker/k8s 下脚本要进容器/Pod，
+            # 路径取沙箱逻辑根；e2b/ssh 没有宿主工作区映射，明确拒绝而不是在本机兜底。
+            # 没有认证身份时无法访问沙箱（容器/Pod 按用户键隔离），保持历史 local 行为。
+            policy = "local" if self.user_id is None else await resolve_execution_policy()
+            if policy in UNMAPPED_SANDBOX_POLICIES:
+                self.started.set()
+                message = unmapped_policy_message(policy)
+                await self._emit(
+                    "error",
+                    {"code": "sandbox_policy_unsupported", "message": message},
+                )
+                result = CodeExecutionResult(
+                    status="blocked",
+                    elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+                    error=message,
+                )
+                return
+            if policy in MAPPED_SANDBOX_POLICIES:
+                result = await self._run_in_sandbox(policy, started_at=started_at)
                 return
 
             self._script_path = materialize_script(self.workspace, self.language, self.code)

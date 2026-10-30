@@ -37,6 +37,11 @@ def test_chat_canvas_has_confirmed_inline_execution_with_live_output_and_stop():
     assert "/api/v1/chat/code-executions/stream" in composable
     assert "/api/v1/chat/code-executions/" in composable
     assert "conversation_id" in composable
+    # 执行后端（local/docker/k8s）要能透出到画布：否则用户看到宿主路径无法判断
+    # 脚本到底跑在哪里（这次「沙箱模式下仍取宿主路径」的现场就是这样被误读的）。
+    assert "execution_backend" in composable
+    assert "executionBackend" in composable
+    assert "Docker 沙箱" in source
 
 
 def test_code_execution_composable_parses_sse_and_exposes_running_state():
