@@ -57,3 +57,14 @@ def merge_request_metadata_dataset_ids(
                     ids.append(value)
         break
     return ids or None
+
+def normalize_bound_dataset_ids(raw: Any) -> list[str]:
+    """规整 ``get_dataset_schema.metadata_dataset_ids`` 绑定值，只保留有效数据集 ID。
+
+    这是**唯一实现**：``get_dataset_schema`` 入口用它过滤后再去查权限，列表接口用它
+    统计「已绑定 N 个数据集」。两边口径必须一致，否则会出现「横幅说绑了 3 个、实际
+    只有 1 个生效」——绑定值写成数据集名称时，运行时会被静默丢弃，所以这里也不计入。
+
+    返回纯数字 ID（去重、保序）；全部无效时返回空列表（等价于未绑定）。
+    """
+    return [value for value in _normalize_id_list(raw) if value.isdigit()]

@@ -116,7 +116,8 @@ def test_allowed_and_embed_access_endpoints_attach_the_flag():
     assert "attach_published_model_switch_flags" in route_source
     # /allowed 与 embed-access 两个只读接口都要补齐，避免前端逐条回查
     assert route_source.count("attach_published_model_switch_flags") >= 2
-    assert "return await AgentManagerService.attach_published_model_switch_flags(session, agents)" in route_source
+    # /allowed 现在链式附加两个字段（模型切换开关 + 绑定数据集数量），不再是单条 return
+    assert "attach_published_model_switch_flags(session, agents)" in route_source
     # 内部调用者（自动路由候选、MCP 绑定等）不需要该字段，附加逻辑不放进列表查询本身
     assert "attach_published_model_switch_flags(session, agents)" not in manager_source
 

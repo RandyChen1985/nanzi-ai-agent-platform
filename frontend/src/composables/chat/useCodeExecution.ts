@@ -46,6 +46,9 @@ export function useCodeExecution() {
   const outputChunks = ref<CodeExecutionOutput[]>([]);
   const status = ref<'idle' | 'running' | 'finished' | 'stopped' | 'timeout' | 'error'>('idle');
   const errorMessage = ref('');
+  // 后端实际执行位置（local/docker/k8s）。沙箱部署下同一段代码的路径语义完全不同，
+  // 画布必须能显示「跑在哪里」，避免用户拿宿主路径去对照沙箱输出。
+  const executionBackend = ref('');
   let abortController: AbortController | null = null;
   let activeConversationId: string | null = null;
 
@@ -57,11 +60,13 @@ export function useCodeExecution() {
     outputChunks.value = [];
     status.value = 'idle';
     errorMessage.value = '';
+    executionBackend.value = '';
   };
 
   const handleEvent = (event: CodeExecutionEvent) => {
     if (event.event === 'started') {
       executionId.value = event.data.execution_id || null;
+      executionBackend.value = String(event.data.execution_backend || '');
       status.value = 'running';
       return;
     }
@@ -171,6 +176,7 @@ export function useCodeExecution() {
     stderr,
     status,
     errorMessage,
+    executionBackend,
     runExecution,
     stopExecution,
     resetExecution,

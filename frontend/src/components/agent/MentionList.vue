@@ -10,6 +10,8 @@ interface AgentOption {
   avatar_url?: string;
   description?: string;
   is_system?: boolean;
+  /** 已发布版本里 get_dataset_schema 绑定的数据集数量，0/空表示不限定 */
+  metadata_dataset_count?: number | null;
 }
 
 type MentionRow =
@@ -347,6 +349,11 @@ defineExpose({ handleKeydown });
                   v-if="row.agent.is_system"
                   class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 uppercase"
                 >SYS</span>
+                <span
+                  v-if="row.agent.metadata_dataset_count"
+                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                  :title="`已绑定 ${row.agent.metadata_dataset_count} 个数据集，查询范围不会超出这些数据集`"
+                >{{ row.agent.metadata_dataset_count }} 数据集</span>
               </div>
               <div class="flex items-center gap-1.5 shrink-0">
                 <span

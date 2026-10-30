@@ -133,11 +133,11 @@ return api.timelineHasPending([
     assert result is True
 
 
-def test_banner_hides_settled_checklist_after_refresh():
-    """刷新后 isProcessing=false、run 已结束：旧清单不得以「进行中」常驻。"""
+def test_banner_keeps_settled_checklist_with_terminal_state():
+    """刷新后 run 已结束：清单仍常驻，但只作为终态回顾（卡片显示「已中断」等徽标）。"""
     result = _run(
         """
-return api.resolveBannerTodoTimeline([
+const timeline = api.resolveBannerTodoTimeline([
   { role: 'user', processTimeline: [] },
   {
     role: 'assistant',
@@ -152,10 +152,12 @@ return api.resolveBannerTodoTimeline([
     }]
   }
 ], { runActive: false });
+return timeline && timeline.map(item => item.kind);
 """
     )
 
-    assert result is None
+    # 不再「一终结就消失」：消失会让清单只剩执行明细里夹在步骤中间的那份
+    assert result == ["todo"]
 
 
 def test_banner_hides_unsettled_legacy_checklist_when_run_is_over():
@@ -310,6 +312,20 @@ def test_running_checklist_is_not_duplicated_inside_execution_timeline():
         """
 const items = api.selectTimelineRenderableItems([
   { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '执行步骤', status: 'in_progress' }], counts: { pending: 0, in_progress: 1, completed: 0 } }
+], { hideTodo: true });
+return items.map(item => item.kind);
+"""
+    )
+
+    assert result == []
+
+
+def test_settled_checklist_yields_to_banner_inside_execution_timeline():
+    """终态清单已在横幅常驻时，执行明细不再重复渲染同一张卡。"""
+    result = _run(
+        """
+const items = api.selectTimelineRenderableItems([
+  { kind: 'todo', id: 'todo_current', title: '任务清单', todos: [{ content: '执行步骤', status: 'completed' }], counts: { pending: 0, in_progress: 0, completed: 1 }, settled: true, settledStatus: 'success' }
 ], { hideTodo: true });
 return items.map(item => item.kind);
 """

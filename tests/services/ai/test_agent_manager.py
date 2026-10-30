@@ -572,3 +572,87 @@ async def test_version_cannot_be_edited_across_agents(db_session):
         await db_session.execute(delete(AIAgentVersion).where(AIAgentVersion.agent_id.in_([mine.id, victim.id])))
         await db_session.execute(delete(AIAgent).where(AIAgent.id.in_([mine.id, victim.id])))
         await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_attach_bound_metadata_dataset_counts(monkeypatch):
+    """allowed 列表要带上绑定数据集数量，前端据此提示范围。"""
+    from types import SimpleNamespace
+
+    agents = [SimpleNamespace(id="a1"), SimpleNamespace(id="a2")]
+    versions = {
+        "a1": SimpleNamespace(
+            tools=[{"name": "get_dataset_schema", "metadata_dataset_ids": ["1", "2", "3"]}]
+        )
+    }
+
+    async def fake_versions(_session, _ids):
+        return versions
+
+    monkeypatch.setattr(
+        AgentManagerService,
+        "_latest_published_versions_by_agent",
+        staticmethod(fake_versions),
+    )
+
+    out = await AgentManagerService.attach_bound_metadata_dataset_counts(MagicMock(), agents)
+
+    assert out[0].metadata_dataset_count == 3
+    assert out[1].metadata_dataset_count is None  # 无已发布版本 → 不限定
+
+
+@pytest.mark.asyncio
+async def test_attach_bound_metadata_dataset_counts_tolerates_json_string(monkeypatch):
+    """tools 是 JSON 字符串（历史数据）时也要能解析。"""
+    from types import SimpleNamespace
+
+    agents = [SimpleNamespace(id="a1")]
+
+    async def fake_versions(_session, _ids):
+        return {
+            "a1": SimpleNamespace(
+                tools='[{"name": "get_dataset_schema", "metadata_dataset_ids": ["7", "8"]}]'
+            )
+        }
+
+    monkeypatch.setattr(
+        AgentManagerService,
+        "_latest_published_versions_by_agent",
+        staticmethod(fake_versions),
+    )
+
+    out = await AgentManagerService.attach_bound_metadata_dataset_counts(MagicMock(), agents)
+
+    assert out[0].metadata_dataset_count == 2
+
+
+@pytest.mark.asyncio
+async def test_bound_count_ignores_non_numeric_ids(monkeypatch):
+    """绑定值里写成数据集名称的项运行时会被丢弃，横幅数量不能把它算进去。"""
+    from types import SimpleNamespace
+
+    agents = [SimpleNamespace(id="a1"), SimpleNamespace(id="a2"), SimpleNamespace(id="a3")]
+
+    async def fake_versions(_session, _ids):
+        return {
+            "a1": SimpleNamespace(
+                tools=[{"name": "get_dataset_schema", "metadata_dataset_ids": ["11", "销售数据集", "22"]}]
+            ),
+            # 全部不是数字：运行时等价于「未绑定」，横幅也不该出现
+            "a2": SimpleNamespace(
+                tools=[{"name": "get_dataset_schema", "metadata_dataset_ids": ["销售数据集"]}]
+            ),
+            "a3": SimpleNamespace(tools=["get_dataset_schema"]),
+        }
+
+    monkeypatch.setattr(
+        AgentManagerService,
+        "_latest_published_versions_by_agent",
+        staticmethod(fake_versions),
+    )
+
+    out = await AgentManagerService.attach_bound_metadata_dataset_counts(MagicMock(), agents)
+
+    assert out[0].metadata_dataset_count == 2   # 只数 11、22
+    assert out[1].metadata_dataset_count is None
+    assert out[2].metadata_dataset_count is None

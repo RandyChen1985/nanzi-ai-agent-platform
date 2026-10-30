@@ -49,6 +49,7 @@ const {
   stderr: codeStderr,
   status: codeExecutionStatus,
   errorMessage: codeExecutionError,
+  executionBackend: codeExecutionBackend,
   runExecution,
   stopExecution,
   resetExecution,
@@ -493,6 +494,13 @@ const codeExecutionStatusLabel = computed(() => {
   if (codeExecutionStatus.value === 'timeout') return '已超时';
   if (codeExecutionStatus.value === 'error') return '执行失败';
   return '';
+});
+
+const codeExecutionBackendLabel = computed(() => {
+  if (!codeExecutionBackend.value) return '';
+  if (codeExecutionBackend.value === 'docker') return 'Docker 沙箱';
+  if (codeExecutionBackend.value === 'k8s') return 'K8s 沙箱';
+  return '本机';
 });
 
 const codeOutputText = computed(() => {
@@ -1434,7 +1442,7 @@ const overlayBackdropClass = computed(() =>
               </button>
             </div>
             <div class="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-gray-400">
-              <span>运行输出</span>
+              <span>运行输出<span v-if="codeExecutionBackendLabel"> · {{ codeExecutionBackendLabel }}</span></span>
               <span>{{ codeExecutionStatusLabel }}</span>
             </div>
             <pre v-if="codeStdout.length" class="whitespace-pre-wrap break-words text-emerald-300"><template v-for="(item, index) in codeStdout" :key="`stdout-${index}`">{{ item.chunk }}</template></pre>

@@ -1,7 +1,11 @@
 import pytest
 from types import SimpleNamespace
 
+import app.services.ai.runners.chatbi.system_prompt as system_prompt_module
+from app.services.ai.config import AgentConfigProvider
+from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.runners.chatbi.system_prompt import (
+    _load_dataset_menu,
     build_context_action_result_message,
     build_system_content,
 )
@@ -96,3 +100,109 @@ def test_chatbi_system_evidence_hint_does_not_embed_external_metadata():
     assert "exfiltrate this value" not in prompt
     assert "override the current user" not in prompt
     assert "source_ref: available" in prompt
+
+
+MENU = (
+    "【当前用户有权访问的数据集】共 1 个，已按当前账号的数据权限过滤，是本轮可查询的完整范围。\n"
+    "- Dataset: sales\n  Description: 销售明细"
+)
+
+
+def _menu_runner(system_prompt: str = "ChatBI system"):
+    return SimpleNamespace(
+        config=SimpleNamespace(system_prompt=system_prompt),
+        user_info={"user_id": 7, "role": "user"},
+        _is_sql_plan_enabled=lambda: False,
+        _requires_fresh_data=True,
+        _requires_sql_query=True,
+        turn_decision=None,
+        _evidence_metadata={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_dataset_menu_is_silently_prepended_without_placeholder(monkeypatch):
+    """没有占位符时，平台把目录贴在智能体提示词最前，系统级段落不动。"""
+
+    async def fake_load(_runner, *, has_placeholder):
+        return MENU
+
+    monkeypatch.setattr(system_prompt_module, "_load_dataset_menu", fake_load)
+
+    prompt = await build_system_content(_menu_runner())
+
+    assert prompt.startswith(DataQueryPrompts.GLOBAL_GUARDRAILS.strip()[:20])
+    assert prompt.count("【当前用户有权访问的数据集】") == 1
+    assert prompt.index("【当前用户有权访问的数据集】") < prompt.index("ChatBI system")
+    # 目录与用户内容之间只隔一个空行，属于同一段落
+    assert f"{MENU}\n\nChatBI system" in prompt
+
+
+@pytest.mark.asyncio
+async def test_placeholder_replaces_in_place_without_duplication(monkeypatch):
+    """历史模板里的占位符仍然原位替换，且不会额外再拼一份目录。"""
+
+    async def fake_load(_runner, *, has_placeholder):
+        return MENU
+
+    monkeypatch.setattr(system_prompt_module, "_load_dataset_menu", fake_load)
+
+    prompt = await build_system_content(_menu_runner("{dataset_menu}\n\nChatBI system"))
+
+    assert "{dataset_menu}" not in prompt
+    assert prompt.count("【当前用户有权访问的数据集】") == 1
+    assert f"{MENU}\n\nChatBI system" in prompt
+
+
+@pytest.mark.asyncio
+async def test_missing_menu_keeps_prompt_unchanged(monkeypatch):
+    """取不到目录（异常/空）时不得污染提示词。"""
+
+    async def fake_load(_runner, *, has_placeholder):
+        return ""
+
+    monkeypatch.setattr(system_prompt_module, "_load_dataset_menu", fake_load)
+
+    prompt = await build_system_content(_menu_runner())
+
+    assert "【当前用户有权访问的数据集】" not in prompt
+    assert prompt.strip().endswith("ChatBI system")
+
+
+def _patch_bound_dataset(monkeypatch, called):
+    import app.core.context as context_module
+
+    async def fake_get_menu(**_kwargs):
+        called["menu"] += 1
+        return MENU
+
+    monkeypatch.setattr(
+        context_module,
+        "get_current_agent_context",
+        lambda: SimpleNamespace(metadata_dataset_ids=["3"]),
+    )
+    monkeypatch.setattr(AgentConfigProvider, "get_dataset_menu", staticmethod(fake_get_menu))
+
+
+@pytest.mark.asyncio
+async def test_bound_datasets_skip_silent_injection(monkeypatch):
+    """静默注入时，本轮已挂载数据集不查目录：全量目录会诱导模型跨范围查询。"""
+    called = {"menu": 0}
+    _patch_bound_dataset(monkeypatch, called)
+
+    result = await _load_dataset_menu(_menu_runner(), has_placeholder=False)
+
+    assert result == ""
+    assert called["menu"] == 0
+
+
+@pytest.mark.asyncio
+async def test_bound_datasets_keep_placeholder_behaviour(monkeypatch):
+    """显式写了占位符的存量提示词保持原行为，不受绑定判断影响。"""
+    called = {"menu": 0}
+    _patch_bound_dataset(monkeypatch, called)
+
+    result = await _load_dataset_menu(_menu_runner(), has_placeholder=True)
+
+    assert result == MENU
+    assert called["menu"] == 1

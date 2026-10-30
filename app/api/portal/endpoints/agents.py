@@ -284,7 +284,9 @@ async def list_allowed_agents(
         )
     )
     # 输入框据此决定是否展示模型切换入口：该字段属于 ai_agent_versions，这里一次性补齐，避免前端逐条回查
-    return await AgentManagerService.attach_published_model_switch_flags(session, agents)
+    agents = await AgentManagerService.attach_published_model_switch_flags(session, agents)
+    # 卡片与输入框上方要提示「绑定了数据集范围」，同样来自已发布版本，一并补齐
+    return await AgentManagerService.attach_bound_metadata_dataset_counts(session, agents)
 
 
 @router.get("/{agent_id}/embed-access", response_model=AIAgentResponse)
@@ -330,6 +332,8 @@ async def get_embed_agent_access(
         )
     # 深链锁定的智能体同样需要已发布版本的「是否允许手动切换模型」，用于决定输入框是否展示模型切换入口
     await AgentManagerService.attach_published_model_switch_flags(session, [agent])
+    # 深链进入时 allowed 列表可能还没加载，横幅要靠这个字段判断是否提示数据集绑定
+    await AgentManagerService.attach_bound_metadata_dataset_counts(session, [agent])
     return agent
 
 @router.get("/", response_model=List[AIAgentResponse], include_in_schema=False)

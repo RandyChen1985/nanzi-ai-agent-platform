@@ -731,6 +731,19 @@ class ToolRegistry:
 
         async def invoke_schema_with_config(**kwargs: Any) -> Any:
             if metadata_dataset_ids:
+                # 智能体绑定会覆盖本轮挂载：自动路由到「绑定了数据集」的专家时，用户在手选
+                # 数据集后看不到任何提示，属于静默失效。这里只留痕不改行为——真正要提示
+                # 用户时再基于这条日志判断触发频次。
+                incoming = kwargs.get("metadata_dataset_ids")
+                if incoming and {str(item) for item in incoming} != {
+                    str(item) for item in metadata_dataset_ids
+                }:
+                    logger.warning(
+                        "[get_dataset_schema] 本轮挂载的数据集被智能体绑定覆盖，"
+                        "用户所选不会生效: mounted=%s bound=%s",
+                        incoming,
+                        metadata_dataset_ids,
+                    )
                 kwargs["metadata_dataset_ids"] = metadata_dataset_ids
             result = original_callable(**kwargs)
             import inspect

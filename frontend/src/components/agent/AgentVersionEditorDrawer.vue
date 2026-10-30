@@ -8,6 +8,7 @@ import Modal from '../Modal.vue';
 import MessageRenderer from '../MessageRenderer.vue';
 import ModelSelect from '../common/ModelSelect.vue';
 import AgentAvatarField from './AgentAvatarField.vue';
+import PromptInjectionGuide from './PromptInjectionGuide.vue';
 import AgentNameField from './AgentNameField.vue';
 import { normalizeMarkdownTheme, type MarkdownTheme } from '@/types/markdownTheme';
 import { mcpToolDisplayName } from '../../utils/mcpToolDisplayName';
@@ -1470,6 +1471,13 @@ const externalCreationMissingFields = computed(() => {
                 复制
               </button>
             </div>
+            <PromptInjectionGuide
+              class="mb-3 flex-shrink-0"
+              :agent-type="activeAgentType"
+              :capabilities="agentForm.capabilities || []"
+              :engine-type="agentForm.engine_type"
+              :storage-key="selectedAgent?.id || agentForm.name || 'new-version'"
+            />
             <div class="flex flex-col flex-1 min-h-0">
               <MarkdownEditor
                 :model-value="versionForm.system_prompt"

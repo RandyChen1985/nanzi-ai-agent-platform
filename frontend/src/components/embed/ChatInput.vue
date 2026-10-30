@@ -104,6 +104,11 @@ const props = withDefaults(defineProps<{
   showShortcuts: boolean;
   slashCommands: any[];
   allowedAgents: any[];
+  /**
+   * 当前选定智能体已绑定的数据集数量。>0 时「数据&知识库」里的数据集页签要置灰：
+   * 查询范围已由智能体决定，手动挂载的数据集不会生效。
+   */
+  boundDatasetCount?: number;
   currentUser: any;
   windowWidth: number;
   approvalMode?: ApprovalMode;
@@ -177,6 +182,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   showGeneratingAnimation: true,
   allowModelSwitch: true,
+  boundDatasetCount: 0,
   allowedDatasetIds: null,
   allowedKnowledgeBaseIds: null,
   sandboxWarmHintTitle: "沙箱已预热就绪",
@@ -2999,6 +3005,7 @@ defineExpose({
                                     :allowed-dataset-ids="allowedDatasetIds"
                                     :allowed-knowledge-base-ids="allowedKnowledgeBaseIds"
                                     :dataset-disabled="!canMountDatasets"
+                                    :dataset-locked="boundDatasetCount > 0"
                                     :knowledge-disabled="!canMountKnowledgeBases"
                                     @toggle-dataset="toggleDatasetMountFromCascade"
                                     @toggle-knowledge-base="toggleKnowledgeBaseMountFromCascade"
@@ -3191,6 +3198,7 @@ defineExpose({
                                 :allowed-dataset-ids="allowedDatasetIds"
                                 :allowed-knowledge-base-ids="allowedKnowledgeBaseIds"
                                 :dataset-disabled="!canMountDatasets"
+                                :dataset-locked="boundDatasetCount > 0"
                                 :knowledge-disabled="!canMountKnowledgeBases"
                                 @toggle-dataset="toggleDatasetMountFromCascade"
                                 @toggle-knowledge-base="toggleKnowledgeBaseMountFromCascade"

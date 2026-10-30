@@ -4478,13 +4478,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <span class="tabular-nums font-medium">{{ formatSkillCountLabel(agent) }}</span>
               </span>
             </template>
+            <!-- 数据集绑定是范围上限（且会与用户自身权限取交集），和知识库的默认挂载不同，用蓝色标出 -->
             <span
               v-if="agent.metadata_dataset_count != null && agent.metadata_dataset_count > 0"
-              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600"
-              :title="`已绑定 ${agent.metadata_dataset_count} 个元数据集`"
+              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200"
+              :title="`仅限查询这 ${agent.metadata_dataset_count} 个数据集（用户仍需具备对应数据权限）`"
             >
-              <span class="font-normal text-gray-400">数据集</span>
-              <span class="tabular-nums font-medium">{{ agent.metadata_dataset_count }}</span>
+              <span class="font-normal text-blue-500">仅限数据集</span>
+              <span class="tabular-nums font-semibold">{{ agent.metadata_dataset_count }}</span>
             </span>
             <span
               v-if="agent.knowledge_base_count != null && agent.knowledge_base_count > 0"
@@ -4842,10 +4843,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     </template>
                     <span
                       v-if="agent.metadata_dataset_count != null && agent.metadata_dataset_count > 0"
-                      class="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600 tabular-nums"
-                      title="元数据集"
+                      class="px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-700 tabular-nums ring-1 ring-inset ring-blue-200"
+                      :title="`仅限查询这 ${agent.metadata_dataset_count} 个数据集（用户仍需具备对应数据权限）`"
                     >
-                      数据集 {{ agent.metadata_dataset_count }}
+                      仅限数据集 {{ agent.metadata_dataset_count }}
                     </span>
                     <span
                       v-if="agent.knowledge_base_count != null && agent.knowledge_base_count > 0"

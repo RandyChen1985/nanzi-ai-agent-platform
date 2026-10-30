@@ -3,11 +3,51 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, Optional
 
 from app.services.ai.config import AgentConfigProvider
 from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.time_anchor import build_data_query_time_anchor_block
+
+logger = logging.getLogger(__name__)
+
+
+async def _load_dataset_menu(runner: Any, *, has_placeholder: bool) -> str:
+    """取当前用户有权访问的数据集目录。
+
+    数据查询轮次由平台主动补齐目录，智能体提示词不需要再写 ``{dataset_menu}``；
+    历史模板里的占位符仍然保留「原位替换」能力，两种方式不会叠加出两份目录。
+
+    以下两种情况跳过注入：
+    - 没有占位符、但本轮已经挂载了数据集（``ctx.metadata_dataset_ids``，来自请求参数
+      或消息附件）：用户已经圈定范围，再塞全量目录会诱导模型跨范围查询。注意这条只
+      作用于静默注入——显式写了占位符的存量提示词保持原行为，避免改动悄悄改变既有
+      输出。
+      这**不包含**智能体工具配置里的 ``get_dataset_schema.metadata_dataset_ids``：
+      那层只收窄 schema 工具，拿不到这里，所以绑定了工具的智能体目录仍会是全量；
+    - 取目录失败（Redis / DB 异常）：目录只是增强信息，不能因此阻断本轮执行。
+    """
+    try:
+        from app.core.context import get_current_agent_context
+
+        ctx = get_current_agent_context()
+        bound_ids = [
+            str(dataset_id).strip()
+            for dataset_id in (getattr(ctx, "metadata_dataset_ids", None) or [])
+            if str(dataset_id).strip()
+        ]
+        if bound_ids and not has_placeholder:
+            return ""
+        user_info = getattr(runner, "user_info", None) or {}
+        return await AgentConfigProvider.get_dataset_menu(
+            user_id=user_info.get("user_id"),
+            is_admin=user_info.get("role") == "admin",
+        )
+    except Exception as exc:  # noqa: BLE001 - 增强信息失败一律降级，不影响主流程
+        # 目录取不到不该阻断本轮，但也不能完全静默：用固定前缀方便告警规则匹配
+        logger.warning("[dataset_menu] 加载失败，本轮按无目录处理：%s", exc)
+        return ""
 
 
 async def _runner_uses_cache_layout(runner: Any) -> bool:
@@ -107,14 +147,9 @@ async def build_system_content(
     system_prompt = runner.config.system_prompt or ""
     use_cache_layout = await _runner_uses_cache_layout(runner)
     has_menu_placeholder = "{dataset_menu}" in system_prompt
-    dataset_menu = ""
-    if has_menu_placeholder:
-        user_id = runner.user_info.get("user_id") if runner.user_info else None
-        is_admin = runner.user_info.get("role") == "admin" if runner.user_info else False
-        dataset_menu = await AgentConfigProvider.get_dataset_menu(
-            user_id=user_id,
-            is_admin=is_admin,
-        )
+    # 有没有占位符都取目录：没占位符时由平台静默拼在用户内容最前，用户无需知道这套机制。
+    raw_dataset_menu = await _load_dataset_menu(runner, has_placeholder=has_menu_placeholder)
+    dataset_menu = raw_dataset_menu.strip()
     context_action_prompt = DataQueryPrompts.context_action_guide() if include_context_action else ""
     time_anchor = build_data_query_time_anchor_block().strip()
     sql_plan_block = (
@@ -128,7 +163,8 @@ async def build_system_content(
 
     if use_cache_layout:
         # enabled 灰度桶：稳定段（缓存可复用）在前，用户动态内容全部后置。
-        # dataset_menu 是按用户动态生成的内容，不能放进稳定前缀。
+        # dataset_menu 是按用户动态生成的内容，不能放进稳定前缀——这也意味着该布局下
+        # 目录无法紧贴用户内容，位置由缓存策略决定（legacy 布局才是「目录 + 用户内容」）。
         stable_prompt = (
             system_prompt.replace("{dataset_menu}", "") if has_menu_placeholder else system_prompt
         )
@@ -153,9 +189,15 @@ async def build_system_content(
         return "\n\n".join(b for b in (*stable_blocks, *dynamic_blocks) if b)
 
     # legacy/observe：还原传统顺序（不改动默认路径行为）。
-    tail_prompt = (
-        system_prompt.replace("{dataset_menu}", dataset_menu) if has_menu_placeholder else system_prompt
-    ).strip()
+    if has_menu_placeholder:
+        # 用未 strip 的原始目录做原位替换，保证与历史输出逐字节一致
+        tail_prompt = system_prompt.replace("{dataset_menu}", raw_dataset_menu).strip()
+    elif dataset_menu:
+        # 静默注入：目录贴在智能体提示词最前（等价于作者把 {dataset_menu} 写在第一行）。
+        base_prompt = system_prompt.strip()
+        tail_prompt = f"{dataset_menu}\n\n{base_prompt}" if base_prompt else dataset_menu
+    else:
+        tail_prompt = system_prompt.strip()
     if context_action_prompt.strip():
         tail_prompt = f"{tail_prompt}\n\n{context_action_prompt.strip()}" if tail_prompt else context_action_prompt.strip()
     parts = [

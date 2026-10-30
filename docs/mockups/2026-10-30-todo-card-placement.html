@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务清单卡的位置 · 五种方案对比</title>
+<style>
+  :root {
+    --slate-50: #f8fafc;
+    --slate-100: #f1f5f9;
+    --slate-200: #e2e8f0;
+    --slate-300: #cbd5e1;
+    --slate-400: #94a3b8;
+    --slate-500: #64748b;
+    --slate-600: #475569;
+    --slate-700: #334155;
+    --slate-800: #1e293b;
+    --violet-50: #f5f3ff;
+    --violet-100: #ede9fe;
+    --violet-600: #7c3aed;
+    --amber-500: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 24px 48px;
+    background: #fff;
+    color: var(--slate-700);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; }
+  header h1 { margin: 0 0 6px; font-size: 19px; color: var(--slate-800); }
+  header p { margin: 0 0 26px; font-size: 12.5px; line-height: 1.7; color: var(--slate-500); }
+
+  .scheme { margin-bottom: 34px; }
+  .scheme-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .tag {
+    flex-shrink: 0;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    background: var(--slate-100);
+    color: var(--slate-500);
+  }
+  .tag.current { background: #fef2f2; color: #b91c1c; }
+  .tag.rec { background: var(--violet-100); color: var(--violet-600); }
+  .scheme-head h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--slate-800); }
+  .scheme-note { margin: 0 0 10px; font-size: 11.5px; line-height: 1.65; color: var(--slate-500); }
+
+  .panel {
+    border: 1px solid var(--slate-200);
+    border-radius: 12px;
+    background: #fff;
+    padding: 10px 12px 14px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 2px 8px;
+    font-size: 11.5px;
+    color: var(--slate-500);
+  }
+  .panel-head .right { display: inline-flex; align-items: center; gap: 4px; }
+  .skills {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 8px 2px;
+    padding: 4px 8px;
+    border: 1px solid #ede9fe;
+    border-radius: 6px;
+    background: #faf5ff;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6d28d9;
+  }
+  .skills b { padding: 1px 7px; border-radius: 999px; background: var(--violet-100); font-size: 10.5px; }
+
+  .body { border-left: 1px solid transparent; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3.5px 2px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .row .ico { flex-shrink: 0; width: 14px; height: 14px; color: var(--slate-400); }
+  .row .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .meta {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    color: var(--slate-400);
+  }
+  .row .caret { flex-shrink: 0; width: 11px; height: 11px; color: var(--slate-300); }
+  .row.muted { color: var(--slate-500); }
+  .pill {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--slate-100);
+    font-family: inherit;
+    font-size: 10px;
+    color: var(--slate-500);
+  }
+  .filler { padding: 2px 2px 2px 21px; font-size: 11px; color: var(--slate-300); letter-spacing: 1px; }
+
+  /* 任务清单卡：与线上组件同款（rounded-2xl + 边框 + 浅底） */
+  .todo-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 3px 0;
+    padding: 7px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    background: rgba(248, 250, 252, 0.9);
+    font-size: 12px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  }
+  .todo-card .ico { width: 13px; height: 13px; color: var(--slate-500); flex-shrink: 0; }
+  .todo-card .title { font-size: 13px; font-weight: 600; color: var(--slate-800); }
+  .todo-card .summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--slate-400); }
+  .todo-card .caret { width: 13px; height: 13px; color: var(--slate-400); flex-shrink: 0; }
+  .todo-card.spaced { margin: 10px 0; }
+
+  .divider { margin: 8px 0; border-top: 1px dashed var(--slate-200); }
+
+  .answer { margin: 12px 0 0; font-size: 13.5px; line-height: 1.85; color: var(--slate-800); }
+  .answer p { margin: 0 0 8px; }
+  svg { display: block; }
+  /* 底部常驻区（方案 D）：输入框 + 其上方的清单横幅 */
+  .composer-area { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--slate-200); }
+  .composer-area .banner { margin-bottom: 7px; }
+  .badge {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--slate-200);
+    color: var(--slate-500);
+    font-size: 10px;
+    font-weight: 500;
+  }
+  .todo-card .close { width: 12px; height: 12px; color: var(--slate-400); flex-shrink: 0; }
+  .composer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border: 1px solid var(--slate-200);
+    border-radius: 14px;
+    background: #fff;
+  }
+  .composer .holder { flex: 1; min-width: 0; font-size: 12px; color: var(--slate-400); }
+  .composer .send {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--slate-300);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .bottom-caption { margin: 7px 0 0; font-size: 10.5px; color: var(--slate-400); text-align: center; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>任务清单卡：放在哪里更合适</h1>
+    <p>
+      同一份执行记录（8 项任务全部完成、7 次模型调用）在五种放置方式下的样子。
+      差异只在清单卡的位置，其余行完全一致；深色文字为正常步骤，浅灰省略号代表中间删掉的行。
+    </p>
+  </header>
+
+  <!-- ============ 现状 ============ -->
+  <section class="scheme">
+    <div class="scheme-head">
+      <span class="tag current">现状</span>
+      <h2>钉在第一次出现的时刻</h2>
+    </div>
+    <p class="scheme-note">
+      清单第一次更新发生在首个 <code>todo_write</code> 之后，于是永久停在「深度思考」正下方，后面所有步骤排在它后面。
+      结束后输入框上方的横幅消失，这张卡成了唯一入口，看起来就像思考的附属块。
+    </p>
+    <div class="panel">
+      <div class="panel-head"><span>执行明细链路</span><span class="right">全部展开明细</span></div>
+      <div class="skills">本轮已启用技能：<b>pdf</b></div>
+      <div class="body">
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="label">鉴权及上下文与能力准备</span><span class="meta">已完成 6 项准备 · 312ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8"/></svg><span class="label">已启用技能: pdf</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具可用性检查</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg><span class="label">主专家开始处理</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/></svg><span class="label">深度思考</span><span class="meta"><span class="pill">1048 字</span>1.4s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · todo_write</span><span class="meta">124ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+
+        <!-- 清单卡：现状位置 -->
+        <div class="todo-card">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="8" cy="7" r="2.5"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="16" cy="17" r="2.5"/></svg>
+          <span class="title">任务清单</span>
+          <span class="summary">8 已完成</span>
+          <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · Bash · 检查 PDF 依赖环境是否…</span><span class="meta">2.0s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="filler">⋯</div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="label">汇总已有信息</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row muted"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/></svg><span class="label">7 次模型调用 · 合计 13.0s</span><span class="meta">查看明细</span></div>
+      </div>
+      <div class="answer"><p>环境完好，全部依赖仍在。开始生成样例 PDF。</p></div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 A ============ -->
+  <section class="scheme">
+    <div class="scheme-head">
+      <span class="tag rec">方案 A · 推荐</span>
+      <h2>清单卡置顶</h2>
+    </div>
+    <p class="scheme-note">
+      清单是任务级概览、不是一次执行步骤，放到最前面紧跟「本轮已启用技能」。运行中它的位置在输入框上方横幅，结束后落到明细顶部，
+      两者是同一处的上下切换，视觉上连贯。
+    </p>
+    <div class="panel">
+      <div class="panel-head"><span>执行明细链路</span><span class="right">全部展开明细</span></div>
+      <div class="skills">本轮已启用技能：<b>pdf</b></div>
+      <div class="body">
+        <!-- 清单卡：置顶 -->
+        <div class="todo-card">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="8" cy="7" r="2.5"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="16" cy="17" r="2.5"/></svg>
+          <span class="title">任务清单</span>
+          <span class="summary">8 已完成</span>
+          <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="label">鉴权及上下文与能力准备</span><span class="meta">已完成 6 项准备 · 312ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8"/></svg><span class="label">已启用技能: pdf</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具可用性检查</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg><span class="label">主专家开始处理</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/></svg><span class="label">深度思考</span><span class="meta"><span class="pill">1048 字</span>1.4s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · todo_write</span><span class="meta">124ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · Bash · 检查 PDF 依赖环境是否…</span><span class="meta">2.0s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="filler">⋯</div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="label">汇总已有信息</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row muted"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/></svg><span class="label">7 次模型调用 · 合计 13.0s</span><span class="meta">查看明细</span></div>
+      </div>
+      <div class="answer"><p>环境完好，全部依赖仍在。开始生成样例 PDF。</p></div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 B ============ -->
+  <section class="scheme">
+    <div class="scheme-head">
+      <span class="tag">方案 B</span>
+      <h2>清单卡置底</h2>
+    </div>
+    <p class="scheme-note">
+      放到执行步骤和模型调用汇总之后、回答之前，当作「这轮干完了什么」的收尾概览。
+      结束态读起来顺，但运行中列表很长时需要往下滚才看得到。
+    </p>
+    <div class="panel">
+      <div class="panel-head"><span>执行明细链路</span><span class="right">全部展开明细</span></div>
+      <div class="skills">本轮已启用技能：<b>pdf</b></div>
+      <div class="body">
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="label">鉴权及上下文与能力准备</span><span class="meta">已完成 6 项准备 · 312ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8"/></svg><span class="label">已启用技能: pdf</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具可用性检查</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg><span class="label">主专家开始处理</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/></svg><span class="label">深度思考</span><span class="meta"><span class="pill">1048 字</span>1.4s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · todo_write</span><span class="meta">124ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · Bash · 检查 PDF 依赖环境是否…</span><span class="meta">2.0s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="filler">⋯</div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="label">汇总已有信息</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row muted"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/></svg><span class="label">7 次模型调用 · 合计 13.0s</span><span class="meta">查看明细</span></div>
+
+        <!-- 清单卡：置底 -->
+        <div class="todo-card spaced">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="8" cy="7" r="2.5"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="16" cy="17" r="2.5"/></svg>
+          <span class="title">任务清单</span>
+          <span class="summary">8 已完成</span>
+          <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+      </div>
+      <div class="answer"><p>环境完好，全部依赖仍在。开始生成样例 PDF。</p></div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 C ============ -->
+  <section class="scheme">
+    <div class="scheme-head">
+      <span class="tag">方案 C</span>
+      <h2>保持原位，只加视觉分隔</h2>
+    </div>
+    <p class="scheme-note">
+      位置不动，上下各留一档空白并用虚线分隔，让它看起来是一块独立的概览而不是「深度思考」的延续。
+      改动最小，但卡片仍然夹在步骤中间，读起来还是断一次。
+    </p>
+    <div class="panel">
+      <div class="panel-head"><span>执行明细链路</span><span class="right">全部展开明细</span></div>
+      <div class="skills">本轮已启用技能：<b>pdf</b></div>
+      <div class="body">
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="label">鉴权及上下文与能力准备</span><span class="meta">已完成 6 项准备 · 312ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8"/></svg><span class="label">已启用技能: pdf</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具可用性检查</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg><span class="label">主专家开始处理</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/></svg><span class="label">深度思考</span><span class="meta"><span class="pill">1048 字</span>1.4s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · todo_write</span><span class="meta">124ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+
+        <div class="divider"></div>
+        <!-- 清单卡：原位 + 分隔 -->
+        <div class="todo-card spaced">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="8" cy="7" r="2.5"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="16" cy="17" r="2.5"/></svg>
+          <span class="title">任务清单</span>
+          <span class="summary">8 已完成</span>
+          <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="divider"></div>
+
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · Bash · 检查 PDF 依赖环境是否…</span><span class="meta">2.0s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="filler">⋯</div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="label">汇总已有信息</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row muted"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/></svg><span class="label">7 次模型调用 · 合计 13.0s</span><span class="meta">查看明细</span></div>
+      </div>
+      <div class="answer"><p>环境完好，全部依赖仍在。开始生成样例 PDF。</p></div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 D ============ -->
+  <section class="scheme">
+    <div class="scheme-head">
+      <span class="tag rec">方案 D</span>
+      <h2>恢复底部常驻，但标出终态</h2>
+    </div>
+    <p class="scheme-note">
+      回到 8 月那种「输入框上方一直能看到清单」的形态，但终结的轮次会打上「已结束」并默认折叠，
+      刷新后照样显示、一眼看得出早就跑完了。执行明细里不再重复渲染这张卡。
+    </p>
+    <div class="panel">
+      <div class="panel-head"><span>执行明细链路</span><span class="right">全部展开明细</span></div>
+      <div class="skills">本轮已启用技能：<b>pdf</b></div>
+      <div class="body">
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="label">鉴权及上下文与能力准备</span><span class="meta">已完成 6 项准备 · 312ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg><span class="label">主专家开始处理</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16"/></svg><span class="label">深度思考</span><span class="meta"><span class="pill">1048 字</span>1.4s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · todo_write</span><span class="meta">124ms<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 1 5.4-5.4z"/></svg><span class="label">工具完成 · Bash · 检查 PDF 依赖环境是否…</span><span class="meta">2.0s<svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="filler">⋯</div>
+        <div class="row"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="label">汇总已有信息</span><span class="meta"><svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        <div class="row muted"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/></svg><span class="label">7 次模型调用 · 合计 13.0s</span><span class="meta">查看明细</span></div>
+      </div>
+      <div class="answer"><p>环境完好，全部依赖仍在。开始生成样例 PDF。</p></div>
+
+      <!-- 底部常驻区：清单横幅 + 输入框 -->
+      <div class="composer-area">
+        <div class="banner">
+          <div class="todo-card">
+            <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="8" cy="7" r="2.5"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="16" cy="17" r="2.5"/></svg>
+            <span class="title">任务清单</span>
+            <span class="summary">8 已完成</span>
+            <span class="badge">已结束</span>
+            <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            <svg class="close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18 18 6M6 6l12 12"/></svg>
+          </div>
+        </div>
+        <div class="composer">
+          <span class="holder">输入消息，/ 唤起快捷指令</span>
+          <span class="send">↑</span>
+        </div>
+        <p class="bottom-caption">刷新页面后仍是这个位置与状态，直到用户点 × 收掉</p>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

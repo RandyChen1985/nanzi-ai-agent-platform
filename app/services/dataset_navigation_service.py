@@ -43,7 +43,8 @@ def menu_has_authorized_datasets(dataset_menu: str) -> bool:
     text = str(dataset_menu or "")
     if not text.strip():
         return False
-    if "No authorized datasets" in text:
+    # 旧格式缓存（英文）与新中文引导语并存一个 TTL 周期，两种空标记都要认
+    if "No authorized datasets" in text or "没有可用的数据集" in text:
         return False
     return count_datasets_in_menu(text) > 0
 

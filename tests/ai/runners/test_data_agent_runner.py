@@ -92,6 +92,17 @@ def isolate_data_agent_runtime(monkeypatch):
         AsyncMock(return_value=None),
     )
 
+    # 数据集目录由平台静默注入，依赖元数据库；单测必须隔离这个数据源，否则环境里
+    # 的数据集规模会直接改变 system prompt 长度，把无关的行为测试带偏。
+    # 需要断言目录内容的测试可在用例内再次 patch 本方法覆盖掉这里的空实现。
+    async def _no_dataset_menu(*_args, **_kwargs):
+        return ""
+
+    monkeypatch.setattr(
+        "app.services.ai.config.AgentConfigProvider.get_dataset_menu",
+        _no_dataset_menu,
+    )
+
     async def fake_config_get(key, default=None):
         if key == "agent_max_iterations":
             return "5"
