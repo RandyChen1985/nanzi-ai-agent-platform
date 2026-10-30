@@ -3937,8 +3937,8 @@ const setBashBannerVisible = (visible: boolean) => {
 const handleIgnoreBashBanner = () => {
   setBashBannerVisible(false);
 };
-// 只服务「本轮仍在跑」或「等待用户操作」的清单：已终结/历史轮次的卡片不再常驻
-// 输入框上方（刷新后尤其明显），历史消息内的时间线仍完整保留。
+// 本轮在跑、等待用户操作，或清单已终结时都展示：终结后卡片转为终态回顾
+// （终态徽标 + 默认折叠 + 可关闭），否则清单只剩执行明细里夹在步骤中间的那份。
 const activeTodoTimeline = computed(() =>
   resolveBannerTodoTimeline(messages.value, {
     runActive: isProcessing.value || remoteRunActive.value || remoteRunBusy.value,

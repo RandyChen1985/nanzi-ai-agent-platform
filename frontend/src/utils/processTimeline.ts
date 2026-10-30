@@ -502,9 +502,16 @@ function hasAwaitingUserCard(source: TodoBannerSource): boolean {
 /**
  * 决定是否在输入框上方展示任务清单卡片。
  *
- * 只认「最后一条助手消息」（或本轮在途草稿），且必须仍在活跃或等待用户操作：
- * 已终结（settled）或本轮早已结束的清单不再常驻，避免刷新后把几天前的任务
- * 当成「进行中」；历史消息内的时间线仍完整保留。
+ * 只认「最后一条助手消息」（或本轮在途草稿）。三种情况展示：
+ * 1. 本轮仍在跑；
+ * 2. 正在等用户操作（确认/外部执行/业务确认/提问）；
+ * 3. **清单已终结**——留在原位由卡片显示「已完成 / 已中断」等终态徽标，
+ *    并默认折叠成单行；用户点关闭才收掉（关闭按清单指纹持久化，下一轮新清单
+ *    会重新出现）。
+ *
+ * 第 3 条是刻意的：终结后直接消失，清单就只剩执行明细里那份夹在一堆步骤
+ * 中间；没有 settled 标记的老快照仍按「本轮是否在跑」判断，避免把几天前的
+ * 旧清单当成进行中顶在输入框上方。
  */
 export function resolveBannerTodoTimeline(
   messages: TodoBannerSource[] | undefined,
@@ -514,7 +521,8 @@ export function resolveBannerTodoTimeline(
   if (!source) return undefined;
   const todo = latestTodoItem(source.processTimeline);
   if (!todo) return undefined;
-  if (todo.settled) return undefined;
+  // 已终结的清单常驻，但不再宣称进行中：终态徽标 + 默认折叠由卡片负责。
+  if (todo.settled) return source.processTimeline;
   if (options.runActive) return source.processTimeline;
   if (hasAwaitingUserCard(source)) return source.processTimeline;
   return undefined;
