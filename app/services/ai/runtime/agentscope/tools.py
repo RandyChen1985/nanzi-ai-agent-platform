@@ -9,6 +9,7 @@ import re
 import shlex
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
@@ -1716,6 +1717,20 @@ def _normalize_evidence_types(values: Any, *, tool_name: str) -> frozenset[Evide
     return frozenset(normalized)
 
 
+def _tool_runtime_metadata(tool: Any) -> dict[str, Any]:
+    """取工具的运行时元数据；非 Mapping 一律当空。
+
+    ``runtime_metadata`` 是可选 duck-typed 属性：平台自己的工具有序地给
+    dict，但测试替身（AsyncMock）或第三方包装类可能给别的对象。此前直接
+    ``dict(value or {})`` 会在这种对象上抛 ``TypeError``，把整轮 Agent
+    执行带崩——一个可选元数据字段不该拥有这种否决权。
+    """
+    raw = getattr(tool, "runtime_metadata", None)
+    if not isinstance(raw, Mapping):
+        return {}
+    return dict(raw)
+
+
 def runtime_tool_spec_from_legacy_tool(
     tool: Any,
     source_type: ToolSourceType,
@@ -1768,7 +1783,7 @@ def runtime_tool_spec_from_legacy_tool(
             getattr(tool, "evidence_inference_disabled", False) is True
         ),
         is_concurrency_safe=getattr(tool, "is_concurrency_safe", None),
-        metadata=dict(getattr(tool, "runtime_metadata", None) or {}),
+        metadata=_tool_runtime_metadata(tool),
     )
 
 

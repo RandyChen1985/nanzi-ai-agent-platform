@@ -173,9 +173,10 @@ export interface PendingHintStage {
 }
 
 export interface PendingHint {
+  /** 要显示的文字；空串表示只显示指示器、不显示任何文案（非沙箱项前 30 秒即如此）。 */
   label: string;
   elapsedSeconds: number;
-  /** 该行是否应显示「已等待 Ns ·」前缀；正在走右侧实时秒表的行不重复显示。 */
+  /** 该行是否应显示「已等待 Ns ·」前缀；正在走右侧实时秒表的行不重复显示，没有文案时也不显示。 */
   showElapsed: boolean;
   /**
    * 该行用哪种指示器。
@@ -186,41 +187,35 @@ export interface PendingHint {
   indicator: "bar" | "spinner";
 }
 
-/** 各类别挂起项的安抚文案档位（通用类别 3s / 10s / 20s）；沙箱档直接引用既有常量，避免文案出现第二份副本。 */
-const PENDING_HINT_STAGE_LABELS: Record<string, PendingHintStage[]> = {
-  sandbox: PREWARM_STAGE_LABELS,
-  // 第一档用「思考」而非「理解」：3 秒时模型早就在生成 token，说「理解」等于把阶段说晚了。
-  // 第三档只陈述事实（耗时较长、未收到返回），不替用户猜原因——慢未必因为「内容长/资料多」，
-  // 猜错了用户会以为「快好了」，反而更焦躁。
-  // 知识库行出现时检索已经完成（标题即「检索完成，正在组织回答」），故也不说「正在查阅」。
-  model: [
-    { afterMs: 3000, label: "正在思考…" },
-    { afterMs: 10000, label: "正在生成回答…" },
-    { afterMs: 20000, label: "生成耗时较长，仍在继续…" },
-  ],
-  knowledge: [
-    { afterMs: 3000, label: "正在整理检索结果…" },
-    { afterMs: 10000, label: "正在组织回答…" },
-    { afterMs: 20000, label: "整理耗时较长，仍在继续…" },
-  ],
-  tool: [
-    { afterMs: 3000, label: "正在执行该步骤…" },
-    { afterMs: 10000, label: "执行耗时偏长，仍在处理…" },
-    { afterMs: 20000, label: "仍未收到该步骤的返回，请继续稍候…" },
-  ],
-  default: [
-    { afterMs: 3000, label: "正在处理…" },
-    { afterMs: 10000, label: "仍在处理中，请稍候…" },
-    { afterMs: 20000, label: "处理耗时较长，请继续稍候…" },
-  ],
-};
+/**
+ * 非沙箱挂起项开始「补一句话」的阈值（毫秒）。
+ *
+ * 早期版本按类别给了 3s / 10s / 20s 三档递进文案，但短档说的都是「正在做什么」，
+ * 而挂起行的标题已经写了这件事（「调用工具 · Bash」「模型调用 · DeepSeek」），
+ * 再补一句同义话只是噪音。因此非沙箱项在阈值内**只转圈、不写字**。
+ */
+export const PENDING_HINT_LABEL_AFTER_MS = 30000;
 
 /**
- * 返回某条挂起项此刻应显示的安抚文案；返回 null 表示这行不该显示任何文案。
+ * 非沙箱挂起项唯一的一档文案。
+ *
+ * 只陈述「还没结束」这个事实，不替用户猜原因（内容长？网络慢？）——猜错了
+ * 用户会以为「快好了」，反而更焦躁。
+ */
+const PENDING_HINT_LATE_LABEL = "仍在处理中…";
+
+/** 沙箱之外的挂起项共用同一档，不再按 category 分表。 */
+const PENDING_HINT_LATE_STAGES: PendingHintStage[] = [
+  { afterMs: PENDING_HINT_LABEL_AFTER_MS, label: PENDING_HINT_LATE_LABEL },
+];
+
+/**
+ * 返回某条挂起项此刻应显示的安抚提示；返回 null 表示这行连转圈都不该有。
  *
  * 调用方每 500ms 随既有心跳重算，因此这里必须是纯函数、不持有状态。
- * 沙箱保持 0 秒立即显示（其文案本就是「首次创建」那一刻的叙述），
- * 其余类别的第一档即为通用阈值（3 秒）。
+ * 返回值里的 `label` 可能是空串——那表示「只有指示器、没有文字」，
+ * 这是非沙箱项在前 30 秒的正常形态，不是异常。
+ * 沙箱保持 0 秒立即显示（其文案本就是「首次创建」那一刻的叙述）。
  */
 export function resolvePendingHint(
   item: ProcessTimelineLogItem | undefined,
@@ -237,21 +232,18 @@ export function resolvePendingHint(
   // 详见 PENDING_HINT_SILENT_CATEGORIES 的说明
   if (!isSandbox && PENDING_HINT_SILENT_CATEGORIES.has(category)) return null;
 
-  const stages =
-    (isSandbox ? PENDING_HINT_STAGE_LABELS.sandbox : PENDING_HINT_STAGE_LABELS[category])
-    || PENDING_HINT_STAGE_LABELS.default;
+  const stages = isSandbox ? PREWARM_STAGE_LABELS : PENDING_HINT_LATE_STAGES;
   const elapsedMs = Math.max(0, now - startedAt);
-  const first = stages?.[0];
-  if (!first || elapsedMs < first.afterMs) return null;
-
-  let label = first.label;
+  let label = "";
   for (const stage of stages) {
     if (elapsedMs >= stage.afterMs) label = stage.label;
   }
+
   return {
     label,
     elapsedSeconds: Math.max(0, Math.floor(elapsedMs / 1000)),
-    showElapsed: !isLiveTimer,
+    // 没有文案时「已等待 Ns ·」无处置，前缀只与文案同生同灭
+    showElapsed: Boolean(label) && !isLiveTimer,
     indicator: isSandbox ? "bar" : "spinner",
   };
 }

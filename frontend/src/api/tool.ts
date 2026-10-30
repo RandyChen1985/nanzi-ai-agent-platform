@@ -233,3 +233,119 @@ export const scriptToolApi = {
   preview: (data: ScriptToolPreviewPayload) =>
     axios.post<ScriptToolPreviewResult>('/api/portal/tools/script/preview', data),
 }
+
+// --------------------------------------------------------------------------- //
+// 工具包（导出 / 导入 JSON）
+// 契约见 docs/superpowers/specs/2026-10-30-tool-bundle-json-sharing-design.md
+// --------------------------------------------------------------------------- //
+
+export type ToolBundleKind = 'api' | 'script'
+
+/** 导出文件里的 API 工具：不含 id / 签名密钥 / 时间戳 */
+export interface ToolBundleApiTool {
+  kind: 'api'
+  name: string
+  description?: string | null
+  method: string
+  url_template: string
+  headers?: Record<string, string>
+  parameter_schema?: Record<string, any>
+  signing_enabled?: boolean
+  signing_algorithm?: string
+  group_name?: string | null
+  is_active?: boolean
+  /** 只用于界面提示；导入端以 headers 里的 ${CREDENTIAL:...} 占位符为准 */
+  requires_credentials?: string[]
+}
+
+/** 导出文件里的脚本工具：内置脚本一律写 source=custom */
+export interface ToolBundleScriptTool {
+  kind: 'script'
+  name: string
+  display_name?: string | null
+  description?: string | null
+  source?: 'custom'
+  language?: string
+  code: string
+  parameter_schema?: Record<string, any>
+  requirements?: string[]
+  timeout_seconds?: number | null
+  group_name?: string | null
+  is_active?: boolean
+}
+
+export type ToolBundleTool = ToolBundleApiTool | ToolBundleScriptTool
+
+export interface ToolBundle {
+  schema: 'nanzi.tool.bundle'
+  schema_version: number
+  exported_at?: string | null
+  exported_by?: string | null
+  tools: ToolBundleTool[]
+}
+
+export interface ToolBundlePrecheckItem {
+  index: number
+  kind: ToolBundleKind | ''
+  name: string
+  status: 'new' | 'conflict' | 'invalid'
+  reason: string
+  /** 同名目标可覆盖（同类型、且不是内置脚本） */
+  can_overwrite: boolean
+  suggested_name?: string | null
+  requires_credentials: string[]
+}
+
+export interface ToolBundlePrecheckResult {
+  ok: boolean
+  exported_at?: string | null
+  exported_by?: string | null
+  total: number
+  summary: { new: number; conflict: number; invalid: number }
+  items: ToolBundlePrecheckItem[]
+}
+
+export type ToolBundleImportAction = 'create' | 'skip' | 'overwrite' | 'rename'
+
+export interface ToolBundleImportDecision {
+  index: number
+  action: ToolBundleImportAction
+  rename_to?: string
+}
+
+export interface ToolBundleImportResult {
+  ok: boolean
+  created: number
+  updated: number
+  skipped: number
+  created_items: Array<{ index: number; kind: ToolBundleKind; name: string }>
+  updated_items: Array<{ index: number; kind: ToolBundleKind; name: string }>
+  /** 导入后仍需手工补的凭据：工具名 → header 名 */
+  pending_credentials: Record<string, string[]>
+}
+
+export interface ToolBundleExportQuery {
+  kind: ToolBundleKind | 'all'
+  /** 留空表示导出该类型全部；有值时按 ID 精确导出 */
+  ids?: string[]
+}
+
+export const toolBundleApi = {
+  /** 导出：服务端直接返回 attachment，前端按 blob 落盘 */
+  exportBundle: (query: ToolBundleExportQuery) =>
+    axios.get<Blob>('/api/portal/tools/export', {
+      params: {
+        kind: query.kind,
+        ids: query.ids && query.ids.length ? query.ids.join(',') : undefined,
+      },
+      responseType: 'blob',
+    }),
+
+  /** 预检：只解析与查重，不落库 */
+  precheck: (bundle: ToolBundle) =>
+    axios.post<ToolBundlePrecheckResult>('/api/portal/tools/import/precheck', { bundle }),
+
+  /** 导入：单事务落库，任一条非法则整体回滚 */
+  importBundle: (bundle: ToolBundle, decisions: ToolBundleImportDecision[]) =>
+    axios.post<ToolBundleImportResult>('/api/portal/tools/import', { bundle, decisions }),
+}

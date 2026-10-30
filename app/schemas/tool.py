@@ -172,6 +172,7 @@ class SysApiToolPreviewResponse(BaseModel):
             "invalid_url / unsupported_method / missing_param / "
             "invalid_parameter_schema（系统级参数配置不合法）/ "
             "missing_user_variable（{user.xxx} 取不到值）/ "
+            "missing_credential（导入的工具还带着 ${CREDENTIAL:...} 占位符）/ "
             "invalid_signing_config（签名配置不合法或密钥无法解密）"
         ),
     )

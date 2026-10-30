@@ -24,9 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_api_key, require_permission
 from app.core.orm import get_db_session
-from app.models.mcp import McpToolCache
 from app.models.script_tool import SysScriptTool
-from app.models.tool import SysApiTool
 from app.schemas.script_tool import (
     ScriptToolCapabilities,
     SysScriptToolBatchGroupRequest,
@@ -48,6 +46,7 @@ from app.services.ai.tools.script_tool_factory import (
     runtime_metadata_from_row,
 )
 from app.services.config_service import ConfigService, resolve_effective_sandbox_policy
+from app.services.tool_bundle_service import name_conflict_reason
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -87,23 +86,14 @@ def _serialize(row: SysScriptTool) -> SysScriptToolResponse:
 
 
 async def _assert_name_available(db: AsyncSession, name: str, *, exclude_id: Optional[str] = None) -> None:
-    """工具名全平台唯一：registry 按 name 解析，重名会出现「命中谁看运气」。"""
-    if name in ToolRegistry.known_static_tool_names():
-        raise HTTPException(status_code=400, detail=f"工具名 {name} 与平台内置工具重名")
-    if get_builtin_script_tool(name) is not None:
-        raise HTTPException(status_code=400, detail=f"工具名 {name} 与内置脚本工具重名")
+    """工具名全平台唯一：registry 按 name 解析，重名会出现「命中谁看运气」。
 
-    stmt = select(SysScriptTool.id).where(SysScriptTool.name == name)
-    if exclude_id:
-        stmt = stmt.where(SysScriptTool.id != exclude_id)
-    if (await db.execute(stmt)).first():
-        raise HTTPException(status_code=400, detail=f"工具名 {name} 已被其他脚本工具使用")
-
-    if (await db.execute(select(SysApiTool.id).where(SysApiTool.name == name))).first():
-        raise HTTPException(status_code=400, detail=f"工具名 {name} 已被 API 工具使用")
-
-    if (await db.execute(select(McpToolCache.id).where(McpToolCache.tool_name == name))).first():
-        raise HTTPException(status_code=400, detail=f"工具名 {name} 已被 MCP 工具使用")
+    规则集中在 ``tool_bundle_service.name_conflict_reason``：新建、改名与导入预检
+    必须同一口径，否则会出现「预检说能导、保存却报重名」。
+    """
+    reason = await name_conflict_reason(db, name, exclude_id=exclude_id)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
 
 
 def _schema_json(payload_schema: Any) -> Optional[str]:
