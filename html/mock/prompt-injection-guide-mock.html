@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>提示词注入说明 · 折叠面板 Mock</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --primary: #1677ff;
+    --primary-soft: #eff6ff;
+    --primary-line: #d6e6ff;
+    --ink: #111827;
+    --ink-2: #374151;
+    --ink-3: #6b7280;
+    --ink-4: #9ca3af;
+    --line: #e6e9ef;
+    --bg: #eef1f6;
+    --radius: 14px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    padding: 28px 20px 60px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ---------- drawer shell ---------- */
+  .drawer {
+    max-width: 1180px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 18px;
+    box-shadow: 0 24px 60px -20px rgba(15, 23, 42, .25), 0 1px 2px rgba(15,23,42,.06);
+    overflow: hidden;
+    border: 1px solid #e3e7ee;
+  }
+  .drawer-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    padding: 22px 28px 18px;
+  }
+  .drawer-title { display: flex; align-items: center; gap: 10px; font-size: 19px; font-weight: 700; letter-spacing: -.2px; }
+  .badge-new {
+    font-size: 11px; font-weight: 600; color: var(--primary);
+    background: var(--primary-soft); border: 1px solid var(--primary-line);
+    padding: 1px 8px; border-radius: 999px;
+  }
+  .drawer-sub { color: var(--ink-3); font-size: 12.5px; margin-top: 4px; }
+  .btn-close {
+    border: 0; background: transparent; color: var(--ink-4); cursor: pointer;
+    width: 30px; height: 30px; border-radius: 8px; font-size: 18px; line-height: 1;
+  }
+  .btn-close:hover { background: #f3f4f6; color: var(--ink-2); }
+
+  /* ---------- steps ---------- */
+  .steps {
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 28px 8px; border-bottom: 1px solid #eef0f4;
+  }
+  .step { display: flex; align-items: center; gap: 8px; color: var(--ink-3); font-size: 13px; }
+  .step-dot {
+    width: 24px; height: 24px; border-radius: 999px; display: grid; place-items: center;
+    border: 1px solid #d7dbe3; color: var(--ink-3); font-size: 11.5px; font-weight: 600; background: #fff;
+  }
+  .step.is-active { background: var(--primary); color: #fff; padding: 5px 16px 5px 6px; border-radius: 10px; font-weight: 600; }
+  .step.is-active .step-dot { background: rgba(255,255,255,.22); border-color: transparent; color: #fff; }
+  .step.done .step-dot { border-color: #c9d3e0; color: #64748b; }
+  .chev { color: #c7ccd6; font-size: 12px; }
+  .progress-hint { padding: 10px 28px 16px; color: var(--ink-4); font-size: 11.5px; border-bottom: 1px solid #f1f3f7; }
+
+  /* ---------- body ---------- */
+  .body { padding: 20px 28px 26px; }
+  .sec-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+  .sec-title { font-size: 14.5px; font-weight: 700; }
+  .sec-desc { color: var(--ink-3); font-size: 11.5px; margin-top: 3px; }
+  .btn-ghost {
+    display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent;
+    color: var(--ink-3); font-size: 12px; padding: 5px 9px; border-radius: 8px; cursor: pointer;
+  }
+  .btn-ghost:hover { background: #f4f5f7; color: var(--primary); }
+
+  /* ---------- the new collapsible guide ---------- */
+  .guide {
+    border: 1px solid var(--primary-line);
+    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 62%);
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(22, 119, 255, .05);
+  }
+  .guide-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 14px; cursor: pointer; user-select: none;
+    background: transparent; border: 0; width: 100%; text-align: left;
+    font: inherit; color: inherit;
+  }
+  .guide-head:hover { background: rgba(22, 119, 255, .045); }
+  .guide-ico {
+    width: 22px; height: 22px; border-radius: 7px; flex: 0 0 auto;
+    background: var(--primary); color: #fff; display: grid; place-items: center;
+  }
+  .guide-ico svg { width: 13px; height: 13px; }
+  .guide-title { font-size: 12.5px; font-weight: 650; color: #0f2d5c; }
+  .guide-title em { font-style: normal; color: var(--ink-3); font-weight: 400; margin-left: 6px; font-size: 11.5px; }
+  .guide-tag {
+    font-size: 10px; font-weight: 600; color: #64748b; background: #eef2f7;
+    border-radius: 5px; padding: 1px 6px;
+  }
+  .guide-chev { margin-left: auto; color: #94a3b8; transition: transform .18s ease; display: flex; }
+  .guide.is-open .guide-chev { transform: rotate(180deg); }
+  .guide-body {
+    display: none; border-top: 1px solid #e8f0fe; padding: 0 14px 18px;
+    max-height: 440px; overflow-y: auto; overscroll-behavior: contain;
+    box-shadow: inset 0 -16px 14px -14px rgba(15, 23, 42, .14);
+  }
+  .guide.is-open .guide-body { display: block; }
+  .guide-body::-webkit-scrollbar { width: 8px; }
+  .guide-body::-webkit-scrollbar-thumb { background: #dde5f0; border-radius: 8px; }
+  .guide-body::-webkit-scrollbar-thumb:hover { background: #c9d5e6; }
+
+  /* tabs */
+  .tabs {
+    display: flex; gap: 4px; margin: 0 0 12px; border-bottom: 1px solid #eef1f6;
+    position: sticky; top: 0; z-index: 3;
+    background: linear-gradient(180deg, #fbfdff 60%, rgba(251,253,255,.94));
+    padding-top: 10px; margin-top: -1px;
+  }
+  .tab {
+    border: 0; background: transparent; font: inherit; font-size: 12px; font-weight: 600;
+    color: var(--ink-3); padding: 7px 11px 9px; cursor: pointer; position: relative; border-radius: 7px 7px 0 0;
+  }
+  .tab:hover { color: var(--ink); background: #f7f9fc; }
+  .tab.is-on { color: var(--primary); }
+  .tab.is-on::after {
+    content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px;
+    background: var(--primary); border-radius: 2px;
+  }
+  .pane { display: none; }
+  .pane.is-on { display: block; }
+
+  /* group + rows */
+  .group { margin-bottom: 8px; }
+  .group:last-child { margin-bottom: 0; }
+  .group-title {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 10.5px; font-weight: 700; color: #8a94a3; letter-spacing: .3px;
+    margin: 2px 0 2px;
+  }
+  .group-title::after { content: ""; flex: 1; height: 1px; background: #eef1f6; }
+  .row {
+    display: grid; grid-template-columns: minmax(190px, 236px) 1fr; gap: 12px;
+    padding: 7px 8px; border-radius: 8px; align-items: start;
+  }
+  .row:hover { background: #f8fafd; }
+  .row-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    font-size: 11px; font-weight: 600; color: #1e3a8a; background: #eef4ff;
+    border: 1px solid #dbe7ff; border-radius: 5px; padding: 1px 6px; white-space: nowrap;
+  }
+  .chip.code { color: #0f766e; background: #ecfdf5; border-color: #ccfbf1; font-family: ui-monospace, Menlo, monospace; }
+  .chip.amber { color: #92400e; background: #fffbeb; border-color: #fde68a; font-family: ui-monospace, Menlo, monospace; }
+  .pill {
+    font-size: 9.5px; font-weight: 600; padding: 0 5px; border-radius: 4px;
+    color: #475569; background: #f1f5f9; border: 1px solid #e2e8f0; white-space: nowrap;
+  }
+  .pill.always { color: #0369a1; background: #f0f9ff; border-color: #dbeafe; }
+  .pill.cond { color: #a16207; background: #fefce8; border-color: #fef08a; }
+  .row-desc { color: var(--ink-3); font-size: 11.5px; line-height: 1.55; }
+  .row-desc b { color: var(--ink-2); font-weight: 600; }
+  .row-desc code {
+    font-family: ui-monospace, Menlo, monospace; font-size: 10.5px;
+    background: #f4f6f9; border-radius: 4px; padding: 0 4px; color: #475569;
+  }
+
+  /* group collapse */
+  .group-head {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 6px 8px; border: 0; background: transparent; font: inherit;
+    text-align: left; cursor: pointer; border-radius: 8px; color: inherit;
+  }
+  .group-head:hover { background: #f7f9fd; }
+  .group-name { font-size: 11px; font-weight: 700; color: #64748b; white-space: nowrap; }
+  .group-count { font-size: 9.5px; color: #94a3b8; background: #f1f5f9; border-radius: 4px; padding: 0 5px; }
+  .group-summary {
+    font-size: 10.5px; color: #a6aeba; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; flex: 1; min-width: 0;
+  }
+  .group-chev { color: #c9d1dd; display: flex; flex: 0 0 auto; transition: transform .16s; }
+  .group-body { display: none; padding: 3px 0 4px 12px; margin: 0 0 3px 10px; border-left: 2px solid #eef2f7; }
+  .group.is-open .group-body { display: block; }
+  .group.is-open .group-name { color: #1e3a8a; }
+  .group.is-open .group-chev { transform: rotate(90deg); }
+  .group-body .row { padding: 5px 6px; }
+
+  /* profile detail box */
+  .detail {
+    margin: 6px 0 0; padding: 9px 11px; border-radius: 9px;
+    background: #f7f9fc; border: 1px dashed #dfe6ef; font-size: 11px; color: var(--ink-3); line-height: 1.7;
+  }
+  .detail .k { color: #334155; font-weight: 600; }
+  .detail .fields { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+  .detail .f {
+    font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: #334155;
+    background: #fff; border: 1px solid #e4e9f2; border-radius: 4px; padding: 0 5px;
+  }
+
+  /* order diagram */
+  .stack { display: flex; flex-direction: column; gap: 5px; }
+  .stack-item {
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+    border-radius: 8px; border: 1px solid #e8edf5; background: #fbfcfe; font-size: 11.5px; color: var(--ink-2);
+  }
+  .stack-item .idx {
+    width: 16px; height: 16px; border-radius: 5px; background: #eef2f7; color: #64748b;
+    font-size: 9.5px; font-weight: 700; display: grid; place-items: center; flex: 0 0 auto;
+  }
+  .stack-item .muted { color: var(--ink-4); font-size: 10.5px; margin-left: auto; }
+  .stack-item.you { border-color: #b9d4ff; background: #f4f9ff; }
+  .stack-item.you .idx { background: var(--primary); color: #fff; }
+  .stack-item.you .name { font-weight: 700; color: #0f2d5c; }
+  .stack-item.dyn { border-style: dashed; }
+  .boundary {
+    display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 10px;
+    padding: 2px 0 2px 4px;
+  }
+  .boundary::before, .boundary::after { content: ""; flex: 1; height: 1px; background: repeating-linear-gradient(90deg,#dbe3ee 0 5px,transparent 5px 9px); }
+
+  /* ---------- editor ---------- */
+  .editor {
+    border: 1px solid #e3e7ee; border-radius: 12px; overflow: hidden; background: #fff;
+  }
+  .ed-toolbar {
+    display: flex; align-items: center; gap: 6px; padding: 7px 10px;
+    background: #fafbfc; border-bottom: 1px solid #eef0f4;
+  }
+  .seg { display: flex; gap: 2px; background: #eef1f5; border-radius: 8px; padding: 2px; }
+  .seg button {
+    border: 0; background: transparent; font: inherit; font-size: 11.5px; font-weight: 600;
+    color: #64748b; padding: 4px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 5px;
+  }
+  .seg button.is-on { background: #fff; color: var(--primary); box-shadow: 0 1px 2px rgba(15,23,42,.08); }
+  .ed-hint-right { margin-left: auto; color: #b0b7c3; font-size: 11px; }
+  .ed-area {
+    height: 300px; padding: 16px 18px; overflow: auto; font-size: 12.5px; line-height: 1.85; color: #1f2937;
+    outline: none; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .ed-area:focus { background: #fdfefe; }
+  .ed-area .h1 { font-weight: 700; font-size: 13.5px; color: #0f172a; }
+  .ed-area .h2 { font-weight: 700; color: #1e293b; }
+  .ed-area .ph-token {
+    font-weight: 700; color: #0f766e; background: #ecfdf5; border-radius: 4px; padding: 0 3px;
+  }
+  .ed-foot { display: flex; justify-content: space-between; padding: 7px 12px 0; color: #9ca3af; font-size: 10.5px; }
+
+  /* collapsed demo */
+  .demo-label {
+    display: flex; align-items: center; gap: 8px; margin: 26px 0 8px;
+    font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: .4px;
+  }
+  .demo-label::after { content: ""; flex: 1; height: 1px; background: #e7ebf1; }
+
+  /* toast */
+  .toast {
+    position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%) translateY(12px);
+    background: #0f172a; color: #fff; font-size: 12px; padding: 8px 16px; border-radius: 10px;
+    opacity: 0; pointer-events: none; transition: all .22s ease; box-shadow: 0 10px 24px rgba(15,23,42,.3);
+    z-index: 50;
+  }
+  .toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="drawer">
+  <!-- head -->
+  <div class="drawer-head">
+    <div>
+      <div class="drawer-title">版本配置 · VNew <span class="badge-new">新建</span></div>
+      <div class="drawer-sub">数据智能助手</div>
+    </div>
+    <button class="btn-close" title="关闭">✕</button>
+  </div>
+
+  <!-- steps -->
+  <div class="steps">
+    <div class="step done"><span class="step-dot">1</span>模型策略</div>
+    <span class="chev">›</span>
+    <div class="step done"><span class="step-dot">2</span>工具能力</div>
+    <span class="chev">›</span>
+    <div class="step is-active"><span class="step-dot">3</span>系统提示词</div>
+    <span class="chev">›</span>
+    <div class="step"><span class="step-dot">4</span>欢迎语设置</div>
+    <span class="chev">›</span>
+    <div class="step"><span class="step-dot">5</span>确认保存</div>
+  </div>
+  <div class="progress-hint">配置完成度 4 / 4（模型策略 · 工具能力 · 系统提示词 · 欢迎语设置）</div>
+
+  <!-- body -->
+  <div class="body">
+    <div class="sec-head">
+      <div>
+        <div class="sec-title">核心提示词 (System Prompt)</div>
+        <div class="sec-desc">定义智能体人格、输出风格与工具使用规范</div>
+      </div>
+      <button class="btn-ghost" onclick="copyPrompt()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+        复制
+      </button>
+    </div>
+
+    <div class="demo-label">① 展开态 · 点击标题行展开后的样子</div>
+
+    <!-- ========== 新增：可折叠说明（展开态） ========== -->
+    <div class="guide is-open" id="guide1">
+      <button class="guide-head" onclick="toggleGuide('guide1')" aria-expanded="true">
+        <span class="guide-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path stroke-linecap="round" d="M12 16v-5m0-3.5v.5"/><circle cx="12" cy="12" r="9"/></svg>
+        </span>
+        <span class="guide-title">这段提示词之外，平台还会注入什么？<em>只看不写：系统级内容自动拼在你的内容前后</em></span>
+        <span class="guide-tag">只读参考</span>
+        <span class="guide-chev">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>
+        </span>
+      </button>
+
+      <div class="guide-body">
+        <div class="tabs">
+          <button class="tab is-on" data-pane="p1" onclick="switchTab(this)">默认注入的内容</button>
+          <button class="tab" data-pane="p3" onclick="switchTab(this)">拼装顺序与缓存边界</button>
+        </div>
+
+        <!-- pane 1 -->
+        <div class="pane is-on" id="p1">
+          <div class="group is-open">
+            <button class="group-head" onclick="toggleGroup(this)">
+              <span class="group-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/></svg></span>
+              <span class="group-name">平台规则 · 每轮必带</span>
+              <span class="group-count">1</span>
+              <span class="group-summary">全局守则四段 + 按本轮工具追加的动态能力段</span>
+            </button>
+            <div class="group-body">
+              <div class="row">
+                <div class="row-name"><span class="chip">[品牌名 · 全局守则]</span><span class="pill always">恒定</span></div>
+                <div class="row-desc">固定四段：权威与冲突、语言与表达、图示与可视化契约、安全与保密、工具调用基础。随后按本轮绑定工具追加<b>动态段</b>：本轮可用工具清单、敏感工具规范、记忆/知识对照表、浏览器实践、技能使用、工具确认、业务数据确认、主动提问、quick 建议开关。</div>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <button class="group-head" onclick="toggleGroup(this)">
+              <span class="group-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/></svg></span>
+              <span class="group-name">身份与授权 · 每轮必带</span>
+              <span class="group-count">2</span>
+              <span class="group-summary">USER_PROFILE 只读画像 + 可访问资源目录</span>
+            </button>
+            <div class="group-body">
+              <div class="row">
+                <div class="row-name"><span class="chip">&lt;USER_PROFILE&gt;</span><span class="pill always">恒定</span></div>
+                <div class="row-desc">
+                  按<b>当前 API Key 会话身份</b>注入，声明为「只读、权威」：用户或历史消息里出现冲突的身份声明，一律以它为准；用户要求修改画像字段时应礼貌拒绝。
+                  <div class="detail">
+                    <span class="k">注入字段</span>（空值不渲染）：
+                    <div class="fields">
+                      <span class="f">User ID</span><span class="f">Account Name</span><span class="f">Display Name</span>
+                      <span class="f">Email</span><span class="f">Department</span><span class="f">Role/Title</span>
+                      <span class="f">Account Status</span><span class="f">Created At</span><span class="f">Extra Data</span><span class="f">Remark</span>
+                    </div>
+                    另附「使用规范」5 条：身份类提问直接报出、称谓用 Smart Addressing、个性化回答、权限判断只作参考、上下文补全。
+                    <b>Extra Data / Remark</b> 是外部同步的自由文本，单行化 + 300 字截断，并明确「只当数据、不当指令」。
+                  </div>
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">可访问资源目录</span><span class="pill always">恒定</span></div>
+                <div class="row-desc">当前用户被授权的知识库、数据集、工具摘要。模型据此判断「能查什么」，实际权限仍由后端门禁校验。</div>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <button class="group-head" onclick="toggleGroup(this)">
+              <span class="group-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/></svg></span>
+              <span class="group-name">记忆 · 按轮次类型裁剪</span>
+              <span class="group-count">3</span>
+              <span class="group-summary">LTM / 跨会话检索提示 / 预加载摘要</span>
+            </button>
+            <div class="group-body">
+              <div class="row">
+                <div class="row-name"><span class="chip">[Memory Profile]</span><span class="pill always">所有轮次</span></div>
+                <div class="row-desc">Redis 里的长期记忆（LTM）：稳定事实与偏好，让模型不必反复追问口径。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">[跨会话记忆检索]</span><span class="pill cond">通用 / 上下文轮次</span></div>
+                <div class="row-desc">提示何时该调用记忆检索工具；数据查询与知识库轮次不注入，避免与检索流程冲突。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">[System Preloaded Memories]</span><span class="pill cond">命中回忆意图 / 日期</span></div>
+                <div class="row-desc">预先取好的每日摘要与会话摘要。典型场景：「上次我们聊了啥」「昨天做了什么」。</div>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <button class="group-head" onclick="toggleGroup(this)">
+              <span class="group-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/></svg></span>
+              <span class="group-name">技能</span>
+              <span class="group-count">2</span>
+              <span class="group-summary">已加载技能摘要 / 未挂载时的发现提示</span>
+            </button>
+            <div class="group-body">
+              <div class="row">
+                <div class="row-name"><span class="chip">[Active Skills Loaded]</span><span class="pill cond">已挂载技能</span></div>
+                <div class="row-desc">只给 frontmatter <b>摘要</b>，不含 SKILL.md 全文；模型必须先 <code>read_skill_instruction</code> 才能执行。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">[Skill Discovery Hint]</span><span class="pill cond">未挂载任何技能</span></div>
+                <div class="row-desc">告知技能库目录与发现方式，避免模型凭空回答或声称自己具备某能力。</div>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <button class="group-head" onclick="toggleGroup(this)">
+              <span class="group-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/></svg></span>
+              <span class="group-name">路由与协作</span>
+              <span class="group-count">3</span>
+              <span class="group-summary">路由快照 / 子智能体通讯录 / 任务约束</span>
+            </button>
+            <div class="group-body">
+              <div class="row">
+                <div class="row-name"><span class="chip">本轮执行上下文</span><span class="pill cond">有路由快照</span></div>
+                <div class="row-desc">请求来源、建议能力、语义意图、与上一轮关系、可复用结果决策、知识库目录匹配范围；并声明「不是权限凭证」。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">子智能体通讯录</span><span class="pill cond">主助手 / 绑了 sub_agent_call</span></div>
+                <div class="row-desc">可委派智能体的标识、职责与能力，供 <code>sub_agent_call</code> 传 <code>agent_name</code> 使用。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">&lt;task_constraints&gt;</span><span class="pill cond">定时 / 订阅任务</span></div>
+                <div class="row-desc">任务创建者设定的约束，位于 system 末段；除安全规则与平台强制项外，冲突时以它为准。</div>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <button class="group-head" onclick="toggleGroup(this)">
+              <span class="group-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/></svg></span>
+              <span class="group-name">运行时</span>
+              <span class="group-count">4</span>
+              <span class="group-summary">历史边界 / 注入上下文 / 时间锚点 / 工作区路径</span>
+            </button>
+            <div class="group-body">
+              <div class="row">
+                <div class="row-name"><span class="chip">历史边界提示</span><span class="pill always">恒定</span></div>
+                <div class="row-desc">区分「历史只是背景」与「最后一条消息才是任务」，防止模型复跑旧任务。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip"># Session Runtime Context</span><span class="pill cond">Embed / 调试注入</span></div>
+                <div class="row-desc">独立 system 消息，携带 <code>injected_context</code> 与设备类型；移动端自动追加「禁止宽表格、多分段」等排版规则。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">【当前时间锚点】</span><span class="pill cond">含相对时间问题</span></div>
+                <div class="row-desc">今天 / 近 7 天 / 本月 / 上季度换算成确定日期，避免臆测年份月份；锚点已注入时取时工具不再暴露。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">工作区与沙箱路径</span><span class="pill cond">有文件 / Shell 工具</span></div>
+                <div class="row-desc">会话目录、文档目录、只读公共目录的真实路径，以及 Docker / K8s 沙箱的挂载边界与临时文件落点。</div>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <button class="group-head" onclick="toggleGroup(this)">
+              <span class="group-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"/></svg></span>
+              <span class="group-name">执行器专属</span>
+              <span class="group-count">3</span>
+              <span class="group-summary">数据集目录 / SQL 护栏与计划 / 知识库检索结果</span>
+            </button>
+            <div class="group-body">
+              <div class="row">
+                <div class="row-name"><span class="chip">数据集目录</span><span class="pill always">数据查询自动带上</span></div>
+                <div class="row-desc">按<b>当前用户权限</b>生成的数据集清单（名称、描述、表名与术语），平台会自动拼在这段提示词的最前面，<b>无需在提示词里做任何事</b>。绑定固定数据集的智能体不注入全量目录，避免模型去查未授权数据集。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">SQL 护栏与计划</span><span class="pill cond">ChatBI / 数据查询</span></div>
+                <div class="row-desc">全局护栏、分页语法、是否强制先出 SQL 计划；<code>[DATA_QUERY_STATE]</code> 声明本轮是否需要新数据、能否复用上一轮结果、下一步允许的动作。</div>
+              </div>
+              <div class="row">
+                <div class="row-name"><span class="chip">【知识库检索结果】</span><span class="pill cond">知识库轮次</span></div>
+                <div class="row-desc">预检索内容 + 强制 <code>[ID:n]</code> 引用规则；引用序号缺失或编造不存在的序号即视为违规。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- pane 3 -->
+        <div class="pane" id="p3">
+          <div class="stack">
+            <div class="stack-item"><span class="idx">1</span><span>[品牌名 · 全局守则] + 动态能力段</span><span class="muted">stable</span></div>
+            <div class="stack-item"><span class="idx">2</span><span>&lt;USER_PROFILE&gt; 用户画像</span><span class="muted">stable</span></div>
+            <div class="stack-item you"><span class="idx">3</span><span class="name">你在这里编辑的内容（数据集目录会静默拼在它最前）</span><span class="muted">stable</span></div>
+            <div class="boundary">缓存边界（cache reorder 开启时）</div>
+            <div class="stack-item dyn"><span class="idx">4</span><span>本轮执行上下文 · 可访问资源目录</span><span class="muted">dynamic</span></div>
+            <div class="stack-item dyn"><span class="idx">5</span><span>记忆三件套（LTM / 跨会话 / 预加载）</span><span class="muted">dynamic</span></div>
+            <div class="stack-item dyn"><span class="idx">6</span><span>技能摘要 / 发现提示</span><span class="muted">dynamic</span></div>
+            <div class="stack-item dyn"><span class="idx">7</span><span>&lt;task_constraints&gt; 任务约束（末段最高优先级）</span><span class="muted">dynamic</span></div>
+          </div>
+          <div class="detail" style="margin-top:10px">
+            <b>顺序即约束力</b>：越靠前越权威（平台规则 → 用户画像 → 你的内容）；记忆、技能、路由快照只算辅助事实。
+            你写的内容落在 stable 前缀末尾，<b>改动它会击穿前缀缓存</b>，请尽量保持首段稳定。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 收起态演示 ========== -->
+    <div class="demo-label">② 收起态 · 日常编辑时的默认形态（只占一行）</div>
+
+    <div class="guide" id="guide2">
+      <button class="guide-head" onclick="toggleGuide('guide2')" aria-expanded="false">
+        <span class="guide-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path stroke-linecap="round" d="M12 16v-5m0-3.5v.5"/><circle cx="12" cy="12" r="9"/></svg>
+        </span>
+        <span class="guide-title">这段提示词之外，平台还会注入什么？<em>点开看平台默认注入的 7 类内容与拼装顺序</em></span>
+        <span class="guide-tag">只读参考</span>
+        <span class="guide-chev">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>
+        </span>
+      </button>
+      <div class="guide-body"><div class="pane is-on" style="padding:12px 0 0;color:#94a3b8;font-size:11.5px">（收起态默认不占高度；点开后与上方一致）</div></div>
+    </div>
+
+    <!-- editor -->
+    <div class="editor">
+      <div class="ed-toolbar">
+        <div class="seg">
+          <button class="is-on">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            编辑
+          </button>
+          <button>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+            预览
+          </button>
+          <button style="color:#7c5cf0">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l3.7-1.4L12 3z"/></svg>
+            AI 润色
+          </button>
+        </div>
+        <span class="ed-hint-right">Markdown</span>
+      </div>
+      <div class="ed-area" id="edArea" contenteditable="true" spellcheck="false"><span class="h1"># Role：云枢（Yunshu）智能数据分析专家（ChatBI）</span>
+
+你是云枢智能体平台中的高级数据分析助手，擅长把用户的自然语言问题转化为可靠的数据查询、业务分析和中文专业报告。你的目标不是展示技术过程，而是让用户快速获得可信、清晰、可行动的数据洞察。
+
+<span class="h2">## 1. 职责边界</span>
+
+<span class="h2">### 1.1 你负责什么</span>
+
+- 理解用户的业务问题、指标口径、时间范围、维度和筛选条件。
+- 在授权数据集范围内完成查询，并对结果做口径解释与异常说明。</div>
+      <div class="ed-foot"><span>支持 Markdown</span><span id="charCount">812 字符</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">已复制提示词全文</div>
+
+<script>
+  function toggleGuide(id) {
+    const el = document.getElementById(id);
+    el.classList.toggle('is-open');
+    const head = el.querySelector('.guide-head');
+    head.setAttribute('aria-expanded', el.classList.contains('is-open') ? 'true' : 'false');
+    el.querySelector('.guide-body').scrollTop = 0;
+  }
+
+
+
+  function toggleGroup(head) {
+    const group = head.parentElement;
+    const willOpen = !group.classList.contains('is-open');
+    // 手风琴：同时只展开一组，避免说明区无限变长
+    group.closest('.pane').querySelectorAll('.group').forEach((g) => g.classList.remove('is-open'));
+    if (willOpen) group.classList.add('is-open');
+    else group.classList.remove('is-open');
+  }
+
+  function switchTab(btn) {
+    const wrap = btn.closest('.guide');
+    wrap.querySelectorAll('.tab').forEach(t => t.classList.remove('is-on'));
+    btn.classList.add('is-on');
+    wrap.querySelectorAll('.pane').forEach(p => p.classList.remove('is-on'));
+    wrap.querySelector('#' + btn.dataset.pane).classList.add('is-on');
+    wrap.querySelector('.guide-body').scrollTop = 0;
+  }
+
+  let toastTimer = null;
+  function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('on'), 1600);
+  }
+
+  function updateCount() {
+    const ed = document.getElementById('edArea');
+    document.getElementById('charCount').textContent = ed.innerText.replace(/\s+$/, '').length + ' 字符';
+  }
+
+  function copyPrompt() {
+    const ed = document.getElementById('edArea');
+    navigator.clipboard?.writeText(ed.innerText).catch(() => {});
+    toast('已复制提示词全文');
+  }
+
+  document.getElementById('edArea').addEventListener('input', updateCount);
+  updateCount();
+</script>
+</body>
+</html>
