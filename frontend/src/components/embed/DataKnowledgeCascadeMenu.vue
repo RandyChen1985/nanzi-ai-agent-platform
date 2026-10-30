@@ -30,6 +30,12 @@ const props = withDefaults(
     allowedKnowledgeBaseIds?: string[] | null
     /** 智能体不支持数据查询：数据集 tab 置灰 */
     datasetDisabled?: boolean
+    /**
+     * 智能体已绑定数据集：查询范围由智能体决定，手动挂载不会生效。
+     * 与 datasetDisabled 分开，是因为两者要给不同提示——一个是「做不到」，
+     * 一个是「不用做」，混成一句会让用户误以为智能体缺少数据能力。
+     */
+    datasetLocked?: boolean
     /** 智能体不支持知识库：知识库 tab 置灰 */
     knowledgeDisabled?: boolean
     /** 窄屏级联浮层宽度 */
@@ -45,6 +51,7 @@ const props = withDefaults(
     allowedDatasetIds: null,
     allowedKnowledgeBaseIds: null,
     datasetDisabled: false,
+    datasetLocked: false,
     knowledgeDisabled: false,
     compact: false,
     fullWidth: false,
@@ -67,13 +74,21 @@ const loadedDatasets = ref(false)
 const loadedKnowledge = ref(false)
 const searchQuery = ref('')
 
-const defaultTab = (): MountTab => (props.datasetDisabled && !props.knowledgeDisabled ? 'knowledge' : 'datasets')
+/**
+ * 页签本身是否不可用：只有「智能体不支持数据查询」才把数据集页签整个禁掉。
+ * 「已绑定数据集」不禁用页签——用户仍要能切过去看清提示与可选范围，只是列表项不能勾。
+ */
+const datasetTabDisabled = computed(() => props.datasetDisabled)
+/** 当前 tab 的列表项是否全部禁止勾选（含「已绑定数据集，挂了也不生效」） */
+const currentItemsDisabled = computed(() =>
+  metaDatasetTab.value ? props.datasetDisabled || props.datasetLocked : props.knowledgeDisabled,
+)
+const defaultTab = (): MountTab => (datasetTabDisabled.value && !props.knowledgeDisabled ? 'knowledge' : 'datasets')
 const activeTab = ref<MountTab>(defaultTab())
 /** tab 顺序固定：数据集在前（与两个面板的常见用法一致） */
 const MOUNT_TABS: MountTab[] = ['datasets', 'knowledge']
 
 const metaDatasetTab = computed(() => activeTab.value === 'datasets')
-const knowledgeTab = computed(() => activeTab.value === 'knowledge')
 
 const toIdSet = (ids?: string[] | null) =>
   Array.isArray(ids) ? new Set(ids.map((id) => String(id))) : null
@@ -253,12 +268,11 @@ const retry = () => {
 }
 
 const toggleCurrent = (item: MountableItem) => {
+  if (currentItemsDisabled.value) return
   if (metaDatasetTab.value) {
-    if (props.datasetDisabled) return
     emit('toggle-dataset', item.id, item.name)
     return
   }
-  if (props.knowledgeDisabled) return
   emit('toggle-knowledge-base', item.id)
 }
 
@@ -286,10 +300,10 @@ const resetSearch = () => {
 
 watch(activeTab, (tab) => ensureTabLoaded(tab))
 watch(
-  () => [props.datasetDisabled, props.knowledgeDisabled],
+  () => [datasetTabDisabled.value, props.knowledgeDisabled],
   () => {
-    if (props.datasetDisabled && props.knowledgeDisabled) return
-    if (activeTab.value === 'datasets' && props.datasetDisabled) activeTab.value = 'knowledge'
+    if (datasetTabDisabled.value && props.knowledgeDisabled) return
+    if (activeTab.value === 'datasets' && datasetTabDisabled.value) activeTab.value = 'knowledge'
     if (activeTab.value === 'knowledge' && props.knowledgeDisabled) activeTab.value = 'datasets'
   },
 )
@@ -360,10 +374,14 @@ const hint = computed(() =>
       </div>
 
       <p
-        v-if="(metaDatasetTab && datasetDisabled) || (knowledgeTab && knowledgeDisabled)"
+        v-if="currentItemsDisabled"
         class="text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed px-0.5"
       >
-        {{ metaDatasetTab ? '当前智能体不支持数据查询，无法挂载数据集。' : '当前智能体不支持知识库能力，无法挂载知识库。' }}
+        {{ metaDatasetTab
+          ? (datasetLocked
+            ? '当前智能体已绑定数据集，查询范围由智能体决定，手动挂载不会生效。'
+            : '当前智能体不支持数据查询，无法挂载数据集。')
+          : '当前智能体不支持知识库能力，无法挂载知识库。' }}
       </p>
     </div>
 
@@ -417,10 +435,13 @@ const hint = computed(() =>
           role="menuitemcheckbox"
           :aria-checked="isActive(item.id)"
           :data-testid="`data-knowledge-item-${item.id}`"
-          class="w-full flex items-start gap-2.5 px-2.5 py-2 mb-0.5 text-left rounded-lg transition-colors"
-          :class="isActive(item.id)
-            ? 'bg-emerald-50/80 dark:bg-emerald-950/30'
-            : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
+          :disabled="currentItemsDisabled"
+          class="w-full flex items-start gap-2.5 px-2.5 py-2 mb-0.5 text-left rounded-lg transition-colors disabled:cursor-not-allowed"
+          :class="currentItemsDisabled
+            ? 'opacity-55'
+            : (isActive(item.id)
+              ? 'bg-emerald-50/80 dark:bg-emerald-950/30'
+              : 'hover:bg-gray-50 dark:hover:bg-gray-700/50')"
           @click.stop="toggleCurrent(item)"
         >
           <span

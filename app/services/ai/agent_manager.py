@@ -405,16 +405,20 @@ class AgentManagerService:
 
     @classmethod
     def _count_bound_metadata_datasets(cls, tools: List[Any]) -> Optional[int]:
-        """从 get_dataset_schema 工具配置读取显式绑定的元数据集数；未绑定则 None（走全局）。"""
+        """从 get_dataset_schema 工具配置读取**实际生效**的元数据集数；未绑定则 None。
+
+        口径与 ``get_dataset_schema`` 入口一致（共用 ``normalize_bound_dataset_ids``）：
+        绑定值写成数据集名称时运行时会丢弃，这里也不能计入，否则横幅会显示一个
+        实际不存在的绑定数量。
+        """
+        from app.services.ai.metadata_dataset_scope import normalize_bound_dataset_ids
+
         for tool in tools:
             if not isinstance(tool, dict):
                 continue
             if cls._tool_entry_name(tool) != "get_dataset_schema":
                 continue
-            raw_ids = tool.get("metadata_dataset_ids") or []
-            if not isinstance(raw_ids, list):
-                return None
-            cleaned = [str(item).strip() for item in raw_ids if str(item).strip()]
+            cleaned = normalize_bound_dataset_ids(tool.get("metadata_dataset_ids") or [])
             return len(cleaned) if cleaned else None
         return None
 
@@ -1064,6 +1068,42 @@ class AgentManagerService:
         stmt = stmt.order_by(main_first, AIAgent.sort_order.desc(), AIAgent.is_system.desc(), AIAgent.display_name)
 
         return list((await session.execute(stmt)).scalars().all())
+
+    @classmethod
+    async def attach_bound_metadata_dataset_counts(
+        cls,
+        session: AsyncSession,
+        agents: List[Any],
+    ) -> List[Any]:
+        """给智能体对象附加「已发布版本里 get_dataset_schema 绑定的数据集数量」。
+
+        ``/agents/allowed`` 直接返回 ORM 对象（不像 ``list_agents`` 走
+        ``summarize_version_capabilities``），前端拿不到该字段就无法在卡片与输入框
+        上方提示「这个智能体绑定了数据集」。这里按已发布版本一次性补齐，避免前端
+        逐条回查；未绑定或无已发布版本一律为 None（表示不限定）。
+        """
+        agent_list = [agent for agent in (agents or []) if getattr(agent, "id", None)]
+        if not agent_list:
+            return list(agents or [])
+
+        versions = await cls._latest_published_versions_by_agent(
+            session, [str(agent.id) for agent in agent_list]
+        )
+        for agent in agent_list:
+            version = versions.get(agent.id)
+            count: Optional[int] = None
+            if version is not None:
+                tools_raw = getattr(version, "tools", None) or []
+                if isinstance(tools_raw, str):
+                    try:
+                        tools_raw = json.loads(tools_raw)
+                    except Exception:
+                        tools_raw = []
+                if not isinstance(tools_raw, list):
+                    tools_raw = []
+                count = cls._count_bound_metadata_datasets(tools_raw)
+            setattr(agent, "metadata_dataset_count", count)
+        return list(agents or [])
 
     @staticmethod
     async def attach_published_model_switch_flags(

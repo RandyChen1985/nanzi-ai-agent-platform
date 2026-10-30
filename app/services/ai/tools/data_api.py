@@ -632,17 +632,12 @@ async def call_ragflow_api(query: str, dataset_ids: list[str]) -> str:
         return f"[RAG Connection Error] {str(e)}"
 
 def _normalize_metadata_dataset_ids(raw: Any) -> Optional[list[int]]:
+    """绑定值 → 有效数据集 ID 列表；非法/名称项丢弃（与列表接口统计口径共用一份规则）。"""
     if raw is None:
         return None
-    values = raw if isinstance(raw, list) else str(raw).replace("'", "").replace('"', "").split(",")
-    normalized: list[int] = []
-    for item in values:
-        text = str(item).strip()
-        if not text or not text.isdigit():
-            continue
-        dataset_id = int(text)
-        if dataset_id not in normalized:
-            normalized.append(dataset_id)
+    from app.services.ai.metadata_dataset_scope import normalize_bound_dataset_ids
+
+    normalized = [int(value) for value in normalize_bound_dataset_ids(raw)]
     return normalized or None
 
 

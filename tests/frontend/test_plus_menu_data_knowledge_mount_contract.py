@@ -64,7 +64,9 @@ def test_cascade_menu_has_two_tabs_with_mounted_counts():
     assert "'datasets'" in content and "'knowledge'" in content
     assert "const tabLabel = (tab: MountTab) => (tab === 'datasets' ? '数据集' : '知识库')" in content
     assert "const tabCount = (tab: MountTab) =>" in content
+    # 页签本身只在「智能体不支持数据查询」时禁用；「已绑定数据集」仍可切过去看提示
     assert ":disabled=\"tab === 'datasets' ? datasetDisabled : knowledgeDisabled\"" in content
+    assert "const datasetTabDisabled = computed(() => props.datasetDisabled)" in content
     assert 'role="tablist"' in content
     assert "data-knowledge-tab-" in content
 

@@ -1408,6 +1408,7 @@
         :show-shortcuts="!isMobile && config.showShortcuts"
         :slash-commands="effectiveSlashCommands"
         :allowed-agents="allowedAgents"
+        :bound-dataset-count="datasetScopeBoundCount"
         :current-user="currentUser"
         :window-width="windowWidth"
         :approval-mode="config.approvalMode"
@@ -1557,6 +1558,13 @@
               :agent-name="scopeBoundAgentName"
               :bound-count="scopeBoundBoundCount"
               @dismiss="scopeBoundDismissedAgentId = scopeBoundAgentId"
+            />
+          </div>
+          <div v-if="showDatasetScopeBanner" class="mx-3 mt-2">
+            <DatasetScopeBanner
+              :agent-name="datasetScopeAgentName"
+              :bound-count="datasetScopeBoundCount"
+              @dismiss="datasetScopeDismissedAgentId = datasetScopeAgentId"
             />
           </div>
         </template>
@@ -2767,6 +2775,7 @@ import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import ChatRecoveryCard from "@/components/chat/ChatRecoveryCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
 import ScopeBoundBanner from "@/components/chat/ScopeBoundBanner.vue";
+import DatasetScopeBanner from "@/components/chat/DatasetScopeBanner.vue";
 import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
 import K8sTerminalModal from "@/components/chat/K8sTerminalModal.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
@@ -3275,6 +3284,27 @@ const showScopeBoundBanner = computed(() => {
   const agent: any = scopeBoundOnlyAgent.value;
   if (!agent) return false;
   return scopeBoundAgentId.value !== scopeBoundDismissedAgentId.value;
+});
+
+/**
+ * 当前智能体是否绑定了数据集（get_dataset_schema 的 metadata_dataset_ids）。
+ *
+ * 与上面知识库的 scope_gate 不同：这里没有「超出即拒绝」的开关，绑定只是可见范围的
+ * 上限，所以只做信息提示，关闭状态仍按智能体记。
+ */
+const datasetScopeBoundCount = computed(() => {
+  const count = (effectiveChatAgent.value as any)?.metadata_dataset_count;
+  return typeof count === "number" && count > 0 ? count : 0;
+});
+const datasetScopeAgentId = computed(() => String((effectiveChatAgent.value as any)?.id || ""));
+const datasetScopeAgentName = computed(() => {
+  const agent: any = effectiveChatAgent.value;
+  return String(agent?.display_name || agent?.name || "");
+});
+const datasetScopeDismissedAgentId = ref<string>("");
+const showDatasetScopeBanner = computed(() => {
+  if (datasetScopeBoundCount.value <= 0) return false;
+  return datasetScopeAgentId.value !== datasetScopeDismissedAgentId.value;
 });
 
 /**

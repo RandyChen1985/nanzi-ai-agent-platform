@@ -35,6 +35,6 @@
 
 ## 调优说明
 
-1. **ChatBI**：数据集目录由平台在数据查询轮次**静默注入**——智能体 `system_prompt` 不需要写 `{dataset_menu}`，平台会把目录拼在提示词最前面（绑定固定数据集的智能体不注入全量目录）。历史模板里的 `{dataset_menu}` 仍然原位替换、不会重复注入两份，保留即可。
+1. **ChatBI**：数据集目录由平台在数据查询轮次**静默注入**——智能体 `system_prompt` 不需要写 `{dataset_menu}`，平台会把目录拼在提示词最前面（本轮已挂载数据集的会话不注入全量目录；智能体工具上的数据集绑定不参与此判断，只收窄 `get_dataset_schema`）。历史模板里的 `{dataset_menu}` 仍然原位替换、不会重复注入两份，保留即可。
 2. **智能委派**：默认请求直接进入 Main，由 `sub_agent_call` / `sub_agent_batch_call` 按需委派；`RouterService` 仅兼容保留。产品说明见 `design/AGENT_ROUTING_DESIGN.md`。
 3. **全局安全/工具/记忆对照**：优先改代码中的 `PLATFORM_GLOBAL_SYSTEM_PROMPT`（含 memory_search、知识库、仅调用已绑定工具等），避免在每个智能体草稿里重复冗长安全段。

@@ -15,6 +15,28 @@ class ToolConfigItem(BaseModel):
     engine_config_override: Optional[Dict[str, Any]] = None
     metadata_dataset_ids: Optional[List[str]] = None  # get_dataset_schema 可见元数据集范围
 
+    @model_validator(mode="after")
+    def _validate_metadata_dataset_ids(self):
+        """绑定值必须是数据集 ID。
+
+        运行时 ``get_dataset_schema`` 入口只认纯数字 ID，写成数据集名称会被静默丢弃，
+        等于没绑定——配置页却仍然显示「已绑定 N 个」，管理员无从发现。这里在保存时
+        直接拒绝，把静默失效变成可见错误。
+        """
+        if self.name != "get_dataset_schema" or not self.metadata_dataset_ids:
+            return self
+        invalid = [
+            str(item).strip()
+            for item in self.metadata_dataset_ids
+            if not str(item).strip().isdigit()
+        ]
+        if invalid:
+            raise ValueError(
+                "metadata_dataset_ids 只接受数据集 ID（纯数字），"
+                f"以下取值无法识别：{'、'.join(invalid)}。请重新选择数据集。"
+            )
+        return self
+
 class AIAgentVersionBase(BaseModel):
     version_number: Optional[int] = None
     model_name: Optional[str] = None

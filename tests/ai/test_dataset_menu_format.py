@@ -111,3 +111,15 @@ async def test_oversized_menu_falls_back_to_compact(monkeypatch):
     assert "\n  Table Details:\n" not in menu
     assert "  Includes Tables:" in menu
     assert "- Dataset: ds0 [标签]" in menu
+
+
+def test_normalize_bound_dataset_ids_matches_runtime_filter():
+    """统计口径与 get_dataset_schema 入口共用同一份规则。"""
+    from app.services.ai.metadata_dataset_scope import normalize_bound_dataset_ids
+
+    assert normalize_bound_dataset_ids(["11", "22", " 33 "]) == ["11", "22", "33"]
+    # 名称项会被运行时丢弃，这里同样丢弃
+    assert normalize_bound_dataset_ids(["11", "销售数据集"]) == ["11"]
+    assert normalize_bound_dataset_ids(["销售数据集"]) == []
+    assert normalize_bound_dataset_ids(None) == []
+    assert normalize_bound_dataset_ids(["11", "11"]) == ["11"]

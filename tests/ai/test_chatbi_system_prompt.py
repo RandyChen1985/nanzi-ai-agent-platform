@@ -186,7 +186,7 @@ def _patch_bound_dataset(monkeypatch, called):
 
 @pytest.mark.asyncio
 async def test_bound_datasets_skip_silent_injection(monkeypatch):
-    """静默注入时，绑定固定数据集不查目录：全量目录会诱导模型越界查询。"""
+    """静默注入时，本轮已挂载数据集不查目录：全量目录会诱导模型跨范围查询。"""
     called = {"menu": 0}
     _patch_bound_dataset(monkeypatch, called)
 
