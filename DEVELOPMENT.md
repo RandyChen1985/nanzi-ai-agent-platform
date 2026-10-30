@@ -258,19 +258,18 @@ yovole-nanzi-ai-agent-platform/
 ### 分支管理
 
 ```bash
-main              # 主分支（生产环境）
-├── develop       # 开发分支（预发布环境）
-└── feature/*     # 功能分支
-    ├── feature/chatbi-self-healing
-    ├── feature/mcp-integration
-    └── feature/rag-optimization
+main                        # 主分支（生产环境），PR 的合并目标
+└── dev-agentscope-mcp2.x   # 开发分支，日常开发与提交都在这里
+
+dev-agentscope-legacy       # 历史存档（原 dev-agentscope），不再使用
 ```
 
-**分支命名规范**:
+**约定**:
 
-- 功能分支: `feature/<功能描述>`
-- 修复分支: `fix/<问题描述>`
-- 优化分支: `refactor/<优化内容>`
+- 日常开发与提交**只在** `dev-agentscope-mcp2.x` 上进行，不再另开 `develop`、`feature/*` 等分支。
+- Pull Request 固定从 `dev-agentscope-mcp2.x` 提到 `main`。
+- 需要并行试验时，从 `dev-agentscope-mcp2.x` 拉临时分支，合回后删除。
+- 分支名前缀（`feature/`、`fix/`、`refactor/`）不适用于本仓库的开发分支；提交信息仍按下面的 Conventional Commits。
 
 ### Git 提交规范
 
@@ -304,7 +303,8 @@ git commit -m "feat: 添加 MCP 工具实时测试功能
 2. 填写 PR 模板（功能描述、测试情况、影响范围）
 3. 至少一位开发者 Review
 4. 通过 CI 检查
-5. 合并到 develop 分支
+5. 合并到 `main` 分支
+6. 合并后按「代码已合本地同步与重启流程」把开发分支快进回来
 
 ### 数据库变更规范
 
@@ -326,24 +326,22 @@ git commit -m "feat: 添加 MCP 工具实时测试功能
 
 ### 代码已合本地同步与重启流程
 
-当代码合并至主分支后，在本地开发环境依次执行以下流程，以保证本地和远程的分支基准对齐并稳定运行：
+PR 合并到 `main` 后，在本地依次执行：
 
-1. **同步主分支**：切换到主分支并同步拉取最新更改：
+1. **切回开发分支并快进到底**：
    ```bash
-   git checkout main && git pull origin main
+   git fetch origin
+   git checkout dev-agentscope-mcp2.x
+   git merge --ff-only origin/main
    ```
-2. **变基开发分支**：切换回开发分支并进行变基：
-   ```bash
-   git checkout dev && git rebase main
-   ```
-3. **强推同步**：将干净的开发分支强推同步至远程：
-   ```bash
-   git push origin dev --force-with-lease
-   ```
-4. **编译与重启**：执行本地开发环境的前台编译与重启服务：
+2. **编译与重启**：执行本地开发环境的前台编译与重启服务：
    ```bash
    ./dev.sh
    ```
+
+> [!IMPORTANT]
+> **不要** `rebase` 开发分支，也**不要** `git push --force`。PR 合并会产生 merge commit，改写历史会让远程分支与 PR 记录对不上。
+> `--ff-only` 失败说明本地与远程已经分叉，先查明原因再处理，不要强行 merge 或 reset。
 
 ---
 
@@ -918,7 +916,7 @@ LOGGING = {
 2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
 3. 提交更改 (`git commit -m 'feat: 某个功能'`)
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建 Pull Request
+5. 创建 Pull Request（本仓库内部开发不走 Fork 流程：直接在 `dev-agentscope-mcp2.x` 上提交，PR 提到 `main`）
 
 ---
 

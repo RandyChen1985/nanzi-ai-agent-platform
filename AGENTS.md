@@ -20,17 +20,22 @@
 用户表示 PR/代码已合并后，**必须立即执行本地 git 同步**，不要只口头确认：
 
 1. `git fetch origin`
-2. `git checkout main && git pull origin main`
-3. `git checkout dev-agentscope && git merge main`（或 `git rebase main`，以 `DEVELOPMENT.md` 为准）
-4. `git push origin dev-agentscope`（若本地领先远程）
-5. 汇报：`main` / `dev-agentscope` 最新 commit、是否与远程一致
-6. 提醒用户自行在控制台执行 `./dev.sh`（Agent **不**代跑）
+2. **切回开发分支**：`git checkout dev-agentscope-mcp2.x`
+   —— 这是当前唯一的开发分支，日常开发都在它上面。`dev-agentscope` **已废弃**，不要再切过去。
+3. 把刚合并的结果快进回来：`git merge --ff-only origin/main`
+   —— PR 固定从 `dev-agentscope-mcp2.x` 提到 `main`，合并结果落在 `origin/main` 上。
+4. 汇报：主工作分支最新 commit、与远程是否一致
+5. 提醒用户自行在控制台执行 `./dev.sh`（Agent **不**代跑）
+
+**不要做的事**：不 `rebase`、不对共享分支 `push --force`（PR 合并已产生 merge commit，改写历史会让远程记录与 PR 对不上）。合并后一律用 `--ff-only` 快进；出现冲突先汇报再问，不要自行 resolve。
 
 **不要**在用户未要求时擅自创建 PR 或 force push。
 
 ## Git 协作：创建 / 更新 Pull Request
 
 用户要求创建或更新 PR 时，**必须**按仓库根目录 [`PULL_REQUEST_TEMPLATE.md`](./PULL_REQUEST_TEMPLATE.md) 填写标题与正文（概要、核心变更、表结构变更清单、Commit Log、测试覆盖、备注），不要使用默认的 Summary/Test plan 两段式。提交前同步更新 `tests/CHECKLIST.md`，并在 PR 中注明。
+
+**分支约定**：开发在 `dev-agentscope-mcp2.x`，PR 一律提向 `main`（`--base main --head dev-agentscope-mcp2.x`）。`dev-agentscope` 已废弃，不再作为 head 或 base。
 
 ## 开发环境服务启停
 
