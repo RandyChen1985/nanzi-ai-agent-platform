@@ -249,7 +249,7 @@ async def _resolve_owner_department(
     仅用于兼容旧数据与直接读库的场景。
 
     注意：该字段并非纯展示字段。public/private 下它只影响浏览分组与搜索，
-    但 team（部门级）下它是**自动只读权限的判定依据**：归属部门（含下级部门）
+    但 team（TEAM 级）下它是**自动只读权限的判定依据**：归属部门（含下级部门）
     的成员据此自动获得只读权。改归属部门等于改可见人群。
     """
     if not owner_dept_id:
@@ -283,7 +283,7 @@ async def require_dataset_shareable(db: AsyncSession, dataset_id: str) -> None:
     if visibility is not None and str(visibility).strip().lower() == "private":
         raise HTTPException(
             status_code=400,
-            detail="个人私有知识库不支持分配授权，请先把「可见范围」改为公共级或部门级",
+            detail="个人私有知识库不支持分配授权，请先把「可见范围」改为授权可见或 TEAM 级",
         )
 
 

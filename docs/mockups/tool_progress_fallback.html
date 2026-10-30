@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>工具进度：兜底不确定态 vs 远端确定态</title>
+<style>
+  :root {
+    --indigo: #6366f1;
+    --track: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px;
+    background: #f9fafb;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #111827;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .sub { font-size: 12px; color: #6b7280; margin: 0 0 24px; }
+  .card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+  }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .icon { width: 14px; height: 14px; flex: none; color: #6b7280; }
+  .title { font-size: 12.5px; color: #374151; }
+  .title b { font-weight: 600; }
+  .spacer { flex: 1; }
+  .status { font-size: 10px; color: #10b981; }
+  .status.done { color: #9ca3af; }
+  .duration { font-size: 10px; color: #9ca3af; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .chevron { width: 12px; height: 12px; color: #9ca3af; }
+
+  /* 进度条本体：与组件里同一套尺寸/颜色 */
+  .progress-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 0 20px; }
+  .track {
+    height: 4px;
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    border-radius: 9999px;
+    background: var(--track);
+    position: relative;
+  }
+  .fill {
+    height: 100%;
+    border-radius: 9999px;
+    background: var(--indigo);
+    transition: width 300ms ease-out;
+  }
+  .label {
+    flex: none;
+    font-size: 10px;
+    color: #9ca3af;
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* 不确定态：两端淡出的光带单向滑过整条轨道，接缝处不可见 */
+  .indeterminate > .fill {
+    width: 38%;
+    background-color: transparent;
+    background-image: linear-gradient(
+      90deg,
+      rgba(129, 140, 248, 0) 0%,
+      rgba(129, 140, 248, .55) 45%,
+      #a5b4fc 55%,
+      rgba(129, 140, 248, 0) 100%
+    );
+    animation: sweep 2.4s cubic-bezier(.45, 0, .55, 1) infinite;
+  }
+  @keyframes sweep {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(264%); }
+  }
+
+  /* 延后出现：几十毫秒的工具不该闪一下 */
+  .reveal { opacity: 0; animation: reveal 120ms ease-out 320ms forwards; }
+  @keyframes reveal { to { opacity: 1; } }
+
+  .note {
+    font-size: 11px;
+    color: #6b7280;
+    background: #eef2ff;
+    border-left: 3px solid var(--indigo);
+    padding: 8px 10px;
+    border-radius: 0 6px 6px 0;
+    line-height: 1.7;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #4338ca;
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+  .tag.fallback { background: #f3f4f6; color: #4b5563; }
+</style>
+</head>
+<body>
+  <h1>工具卡片进度：两种形态</h1>
+  <p class="sub">同一张卡片，远端报了进度就显示百分比；没报就显示不确定态兜底条。两者都在工具结束后消失，让位给耗时。</p>
+
+  <div class="card">
+    <div class="row">
+      <svg class="icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.65 2.65 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.9 5.85a2.548 2.548 0 1 1 3.586-3.586l1.836 1.836"/></svg>
+      <span class="title">调用工具 <b>· mcp_echo_slow_fbaf49cb</b></span>
+      <span class="tag">远端有进度</span>
+      <span class="spacer"></span>
+      <span class="status">执行中</span>
+      <span class="duration">3.2s</span>
+      <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19 9-7 7-7-7"/></svg>
+    </div>
+    <div class="progress-row reveal">
+      <div class="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="38">
+        <div class="fill" style="width: 38%"></div>
+      </div>
+      <span class="label">3/8 第 3/8 步</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <svg class="icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.65 2.65 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.9 5.85a2.548 2.548 0 1 1 3.586-3.586l1.836 1.836"/></svg>
+      <span class="title">调用工具 <b>· mcp_web_search</b></span>
+      <span class="tag fallback">远端没进度</span>
+      <span class="spacer"></span>
+      <span class="status">执行中</span>
+      <span class="duration">1.8s</span>
+      <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19 9-7 7-7-7"/></svg>
+    </div>
+    <div class="progress-row reveal">
+      <div class="track indeterminate" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+        <div class="fill"></div>
+      </div>
+      <span class="label">进行中</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <svg class="icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.65 2.65 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.9 5.85a2.548 2.548 0 1 1 3.586-3.586l1.836 1.836"/></svg>
+      <span class="title">调用工具 <b>· mcp_echo_slow_fbaf49cb</b></span>
+      <span class="spacer"></span>
+      <span class="status done">成功</span>
+      <span class="duration">7.4s</span>
+      <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19 9-7 7-7-7"/></svg>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>兜底条的三条规则：</b><br />
+    1. 只给<b>工具类</b>条目（鉴权、模型调用等不加，免得满屏在动）<br />
+    2. 延迟 <b>320ms</b> 才出现——几十毫秒就结束的工具不会闪一下<br />
+    3. 工具一结束就消失，历史回放里不会留下 100% 残影<br />
+    <br />
+    <b>不确定态的表现：</b>一条两端淡出的光带 <b>2.4 秒</b>单向滑过一次，滑出后从左侧重新进入。
+    两端全透明，所以循环接缝看不出跳变；不用来回横跳，也不做亮度闪烁。
+  </div>
+</body>
+</html>

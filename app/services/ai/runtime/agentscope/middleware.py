@@ -883,3 +883,113 @@ class BashSandboxParentLinkMiddleware(MiddlewareBase):
                 # 读取方仅限 Bash 路径且每次进入前都会重新 set，残留值不会污染其他路径。
                 current_bash_tool_parent_id.set(node_id)
         return await next_handler(**input_kwargs)
+
+
+class GracefulFinishMiddleware(MiddlewareBase):
+    """步数将尽时让模型收尾，替代框架的硬中断。
+
+    达到 ``react_config.max_iters`` 后框架发出 ``ExceedMaxItersEvent``，
+    平台当前只回一句「达到最大执行步骤」模板文案，此前所有工具结果全部丢弃。
+    本中间件在最后一两轮推理前注入收尾提示并禁用工具调用，让模型基于已有
+    信息作答。
+
+    触发条件带**产出检测**：最近一条 assistant 消息已有文本输出时不干预——
+    那通常意味着模型正在给答案，强行改成 ``tool_choice=none`` 反而是误伤。
+    """
+
+    def __init__(self) -> None:
+        # None 表示「尚未读取」：开关在首次推理时才查配置并缓存，
+        # 使 build_runtime_middlewares 保持同步签名。
+        self._enabled: bool | None = None
+
+    async def _is_enabled(self) -> bool:
+        """读取 ``agent_graceful_finish_enabled``；缺失或失败按开启处理。"""
+        if self._enabled is not None:
+            return self._enabled
+        enabled = True
+        try:
+            from app.services.config_service import ConfigService
+
+            value = await ConfigService.get("agent_graceful_finish_enabled")
+            if value is not None:
+                enabled = str(value).strip().lower() not in {
+                    "false", "0", "off", "no",
+                }
+        except Exception as exc:  # 配置服务不可用不应阻断对话
+            logger.warning("[GracefulFinish] 读取开关失败，按开启处理: %s", exc)
+        self._enabled = enabled
+        return enabled
+
+    @staticmethod
+    def _reserve_steps(max_iters: int) -> int:
+        """预留收尾步数：小额度留 1 步，大额度留 2 步（配 5 占 20%，配 20 占 10%）。"""
+        return 1 if max_iters <= 8 else 2
+
+    @staticmethod
+    def _last_assistant_has_text(agent: Any) -> bool:
+        """最近一条 assistant 消息是否已经产出可见文本。"""
+        context = getattr(getattr(agent, "state", None), "context", None) or []
+        for msg in reversed(context):
+            role = getattr(msg, "role", None)
+            if role != "assistant":
+                continue
+            content = getattr(msg, "content", None)
+            if isinstance(content, str):
+                return bool(content.strip())
+            for block in content or []:
+                if getattr(block, "type", None) != "text":
+                    continue
+                if str(getattr(block, "text", "") or "").strip():
+                    return True
+            return False
+        return False
+
+    async def on_reasoning(
+        self,
+        agent: Any,
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator],
+    ) -> AsyncGenerator:
+        if not await self._is_enabled():
+            async for item in next_handler(**input_kwargs):
+                yield item
+            return
+
+        try:
+            max_iters = int(agent.react_config.max_iters)
+            cur_iter = int(agent.state.cur_iter)
+        except Exception as exc:  # 属性缺失或类型异常时保持透传
+            logger.debug("[GracefulFinish] 跳过干预（读取迭代信息失败）: %s", exc)
+        else:
+            remaining = max_iters - cur_iter
+            if remaining <= self._reserve_steps(max_iters) and not (
+                self._last_assistant_has_text(agent)
+            ):
+                from agentscope.message import HintBlock
+                from agentscope.tool import ToolChoice
+
+                agent.state.append_context(
+                    agent.name,
+                    [
+                        HintBlock(
+                            hint=(
+                                f"你已用到 {cur_iter}/{max_iters} 步，"
+                                "接近本次任务的步数上限。"
+                                "请立即基于已获得的信息给出最终答复，"
+                                "不要调用任何工具。"
+                                "如果信息不完整，说明：已知什么、缺什么、"
+                                "建议用户下一步做什么。"
+                            ),
+                        ),
+                    ],
+                )
+                input_kwargs["tool_choice"] = ToolChoice(mode="none")
+                logger.info(
+                    "[GracefulFinish] 触发收尾 conv=%s iter=%d/%d",
+                    getattr(getattr(agent, "state", None), "session_id", None),
+                    cur_iter,
+                    max_iters,
+                )
+
+        async for item in next_handler(**input_kwargs):
+            yield item

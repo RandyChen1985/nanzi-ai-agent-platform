@@ -411,6 +411,28 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
               </svg>
             </button>
+            <!-- 工具执行中的进度：远端上报了就是确定态百分比，没上报则是不确定态兜底，
+                 结束后让位给耗时/结果。只有工具类条目才有这条，避免给「模型调用」等加噪音。 -->
+            <div
+              v-if="isToolTimelineItem(item) && item.status === 'pending'"
+              class="timeline-progress-shell ml-5 mt-1 flex items-center gap-2"
+            >
+              <div
+                class="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-200/80 dark:bg-gray-700/70"
+                :class="{ 'timeline-progress-indeterminate': toolProgressPercent(item) === null }"
+                role="progressbar"
+                :aria-label="item.title"
+                :aria-valuemin="0"
+                :aria-valuemax="100"
+                :aria-valuenow="toolProgressPercent(item) ?? undefined"
+              >
+                <div
+                  class="h-full rounded-full bg-indigo-500 transition-[width] duration-300 ease-out dark:bg-indigo-400"
+                  :style="toolProgressWidth(item) ? { width: toolProgressWidth(item) } : undefined"
+                />
+              </div>
+              <span class="shrink-0 font-mono text-[10px] tabular-nums text-gray-400">{{ toolProgressText(item) }}</span>
+            </div>
             <div v-if="item.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
               错误原因：{{ item.error_reason }}
             </div>
@@ -1183,6 +1205,36 @@ function liveTimerDuration(item: ProcessTimelineLogItem): string {
   return liveMs === null ? "" : formatDuration(liveMs);
 }
 
+/** 进度百分比；`total` 缺失或非法时返回 null，交给不确定态渲染。 */
+function toolProgressPercent(item: ProcessTimelineLogItem): number | null {
+  const progress = item.progress;
+  const total = item.total;
+  if (typeof progress !== "number" || typeof total !== "number" || total <= 0) return null;
+  return Math.min(100, Math.max(0, Math.round((progress / total) * 100)));
+}
+
+/** 不确定态返回空串：宽度和位移都交给 CSS 扫光动画，内联 width 会把它钉死。 */
+function toolProgressWidth(item: ProcessTimelineLogItem): string {
+  const percent = toolProgressPercent(item);
+  return percent === null ? "" : `${percent}%`;
+}
+
+function formatProgressNumber(value?: number | null): string {
+  if (typeof value !== "number" || Number.isNaN(value)) return "?";
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function toolProgressText(item: ProcessTimelineLogItem): string {
+  const detail = item.progressMessage || "";
+  const percent = toolProgressPercent(item);
+  if (percent === null) {
+    // 没有 total 时不能编造 a/b：只显示远端文案，没有文案就退回「进行中」。
+    return detail || "进行中";
+  }
+  const ratio = `${formatProgressNumber(item.progress)}/${formatProgressNumber(item.total)}`;
+  return detail ? `${ratio} ${detail}` : ratio;
+}
+
 function formatTimelineDuration(item: ProcessTimelineLogItem): string {
   const live = liveTimerDuration(item);
   if (live) return live;
@@ -1261,6 +1313,50 @@ async function handleCopy(key: string, text?: string | null) {
 </script>
 
 <style scoped>
+/* 远端没给 total 时的「不确定态」：一条两端淡出的光带单向滑过整条轨道。
+   两端都是透明的，循环接缝处看不出跳变；旧写法用 margin-left 在 0↔86% 来回跑，
+   在窄轨道里就是一条横跳的实心色块，观感像闪烁。 */
+.timeline-progress-indeterminate > div {
+  width: 38%;
+  background-color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    rgba(129, 140, 248, 0) 0%,
+    rgba(129, 140, 248, 0.55) 45%,
+    #a5b4fc 55%,
+    rgba(129, 140, 248, 0) 100%
+  );
+  animation: timeline-progress-sweep 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+/* 兜底进度条：几十毫秒就结束的工具不该闪一下，延后出现；确定态进度同样受益于此。 */
+.timeline-progress-shell {
+  opacity: 0;
+  animation: timeline-progress-reveal 120ms ease-out 320ms forwards;
+}
+
+@keyframes timeline-progress-reveal {
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-progress-shell {
+    opacity: 1;
+    animation: none;
+  }
+}
+
+@keyframes timeline-progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(264%);
+  }
+}
+
 .thought-status-dot {
   display: inline-block;
   width: 0.42rem;

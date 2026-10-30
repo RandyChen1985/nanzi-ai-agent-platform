@@ -35,6 +35,7 @@ import {
   ChevronLeftIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ArrowRightIcon,
   XMarkIcon,
   CheckCircleIcon,
   InformationCircleIcon,
@@ -43,6 +44,7 @@ import {
 } from '@heroicons/vue/24/outline'
 import McpServerLogModal from './McpServerLogModal.vue'
 import McpServerAgentsDrawer from './McpServerAgentsDrawer.vue'
+import { buildJavaMcpSample, buildPythonMcpSample } from './mcpCodeSamples'
 
 const props = withDefaults(defineProps<{
   scope?: 'global' | 'personal'
@@ -617,117 +619,14 @@ const copyJwksUrl = () => copyMcpValue(mcpJwksUrl.value, 'JWKS 地址')
 const showMcpCodeModal = ref(false)
 const mcpCodeLanguage = ref<'python' | 'java'>('python')
 const generatedMcpCode = computed(() => {
-  if (mcpCodeLanguage.value === 'java') {
-    return `// 依赖：com.nimbusds:nimbus-jose-jwt
-// 下面三个值来自 NanZi MCP 管理页面的只读配置，请复制到业务 MCP 的 Secret / 配置中心。
-private static final String NANZI_MCP_AUDIENCE = "${mcpAudienceValue.value}"; // 用于校验 aud
-private static final String NANZI_MCP_ISSUER = "${mcpIssuerValue.value}"; // 用于校验 iss
-private static final String NANZI_MCP_JWKS_URL = "${mcpJwksUrl.value}"; // 用于获取公钥
-
-public Map<String, Object> verifyNanZiUser(String fixedToken, String assertion, ReplayStore replayStore)
-        throws Exception {
-    // 1. 先按业务 MCP 原有方式校验 Authorization 固定 Token。
-    if (fixedToken == null || fixedToken.isBlank()) {
-        throw new SecurityException("invalid MCP client token");
-    }
-
-    // 2. 根据 JWT Header 的 kid，从当前 MCP 的 JWKS 选择公钥并验签。
-    JWKSet jwkSet = JWKSet.load(new URL(NANZI_MCP_JWKS_URL));
-    SignedJWT jwt = SignedJWT.parse(assertion);
-    JWK jwk = jwkSet.getKeyByKeyId(jwt.getHeader().getKeyID());
-    if (!(jwk instanceof OctetKeyPair keyPair)
-            || !jwt.verify(new Ed25519Verifier(keyPair))) {
-        throw new SecurityException("invalid NanZi User Assertion");
-    }
-
-    JWTClaimsSet claims = jwt.getJWTClaimsSet();
-    if (!NANZI_MCP_ISSUER.equals(claims.getIssuer())
-            || !NANZI_MCP_AUDIENCE.equals(claims.getAudience().get(0))
-            || claims.getExpirationTime().before(new Date())) {
-        throw new SecurityException("invalid NanZi User Assertion claims");
-    }
-
-    // 3. 验签成功后，用 user_context.user_id 关联业务系统用户。
-    Map<String, Object> userContext = (Map<String, Object>) claims.getClaim("user_context");
-    if (userContext == null || userContext.get("user_id") == null) {
-        throw new SecurityException("missing user context");
-    }
-    String userId = String.valueOf(userContext.get("user_id"));
-    if (!("nanzi:user:" + userId).equals(claims.getSubject())) {
-        throw new SecurityException("user subject mismatch");
-    }
-    if (claims.getClaim("agent_id") == null || claims.getClaim("request_id") == null
-            || claims.getJWTID() == null) {
-        throw new SecurityException("missing assertion identity");
-    }
-    long ttlSeconds = Math.max(1, (claims.getExpirationTime().getTime() - System.currentTimeMillis()) / 1000);
-    if (!replayStore.claim(claims.getJWTID(), ttlSeconds)) {
-        throw new SecurityException("replayed NanZi user assertion");
-    }
-    return Map.of(
-            "user_id", userContext.get("user_id"),
-            "user_name", userContext.get("user_name"),
-            "agent_id", claims.getClaim("agent_id"),
-            "request_id", claims.getClaim("request_id"));
-}
-
-@FunctionalInterface
-interface ReplayStore {
-    // 使用 Redis SETNX + EXPIRE 等原子操作；已存在的 jti 返回 false。
-    boolean claim(String jti, long ttlSeconds);
-}
-`
+  const config = {
+    audience: mcpAudienceValue.value,
+    issuer: mcpIssuerValue.value,
+    jwksUrl: mcpJwksUrl.value,
   }
-
-  return `# 依赖：PyJWT、cryptography、httpx、redis
-# 下面三个值来自 NanZi MCP 管理页面的只读配置，请复制到业务 MCP 的 Secret / 配置中心。
-NANZI_MCP_AUDIENCE = "${mcpAudienceValue.value}"  # 用于校验 aud
-NANZI_MCP_ISSUER = "${mcpIssuerValue.value}"  # 用于校验 iss
-NANZI_MCP_JWKS_URL = "${mcpJwksUrl.value}"  # 用于自动获取公钥
-
-import hmac
-import os
-import time
-import jwt
-from redis import Redis
-from jwt import PyJWKClient
-
-jwk_client = PyJWKClient(NANZI_MCP_JWKS_URL)
-redis_client = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
-
-def verify_nanzi_user(authorization: str, assertion: str, expected_token: str) -> dict:
-    # 1. 先按业务 MCP 原有方式校验 Authorization 固定 Token。
-    expected_authorization = f"Bearer {expected_token}"
-    if not hmac.compare_digest(authorization or "", expected_authorization):
-        raise PermissionError("invalid MCP client token")
-
-    # 2. 根据 JWT Header 的 kid 获取公钥并验签，同时校验 iss、aud、exp。
-    signing_key = jwk_client.get_signing_key_from_jwt(assertion).key
-    claims = jwt.decode(
-        assertion,
-        signing_key,
-        algorithms=["EdDSA"],
-        issuer=NANZI_MCP_ISSUER,
-        audience=NANZI_MCP_AUDIENCE,
-        options={"require": ["iss", "aud", "sub", "exp", "iat", "jti", "agent_id", "request_id"]},
-    )
-
-    # 3. 验签成功后，用 user_context.user_id 关联业务系统用户。
-    user_context = claims["user_context"]
-    if not isinstance(user_context, dict) or not user_context.get("user_id"):
-        raise PermissionError("missing user context")
-    if claims.get("sub") != f"nanzi:user:{user_context['user_id']}":
-        raise PermissionError("user subject mismatch")
-    ttl = max(1, int(claims["exp"] - time.time()))
-    if not redis_client.set(f"mcp:user-assertion:{claims['jti']}", "1", nx=True, ex=ttl):
-        raise PermissionError("replayed NanZi user assertion")
-    return {
-        "user_id": user_context["user_id"],
-        "user_name": user_context.get("user_name"),
-        "agent_id": claims.get("agent_id"),
-        "request_id": claims.get("request_id"),
-    }
-`
+  return mcpCodeLanguage.value === 'java'
+    ? buildJavaMcpSample(config)
+    : buildPythonMcpSample(config)
 })
 
 const openMcpCodeModal = () => {
@@ -2919,13 +2818,26 @@ onMounted(fetchServers)
       class="fixed inset-0 z-[80] flex items-center justify-center bg-gray-900/40 p-4 backdrop-blur-sm"
       @click.self="showMcpCodeModal = false"
     >
-      <div class="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+      <div class="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
         <div class="flex items-start justify-between gap-3 border-b border-gray-100 p-5">
           <div>
             <h4 class="text-base font-bold text-gray-900">业务方 MCP 调用模拟代码</h4>
-            <p class="mt-1 text-xs leading-relaxed text-gray-500">代码已自动带入当前 MCP 的 Audience、Issuer 和 JWKS 地址。复制后放入业务 MCP 的验签中间件，并替换固定 Token 读取方式。</p>
+            <p class="mt-1 text-xs leading-relaxed text-gray-500">
+              一份能直接跑起来的 Echo MCP，{{ mcpCodeLanguage === 'python' ? '保存成 .py 文件即可启动' : '按 ①②③ 合并进现有工程' }}；代码里标出了验签嵌在请求链路的哪一层。
+            </p>
           </div>
           <button type="button" class="text-xl leading-none text-gray-400 hover:text-gray-700" @click="showMcpCodeModal = false">×</button>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 border-b border-gray-100 bg-slate-50 px-5 py-2.5 text-[11px]">
+          <span class="font-semibold text-gray-700">嵌入位置</span>
+          <span class="rounded bg-white px-2 py-0.5 font-mono text-gray-600 ring-1 ring-gray-200">HTTP 请求</span>
+          <ArrowRightIcon class="h-3 w-3 shrink-0 text-gray-400" />
+          <span class="rounded bg-indigo-50 px-2 py-0.5 font-semibold text-indigo-700 ring-1 ring-indigo-200">① 认证中间件 / Filter（验签，失败直接 401）</span>
+          <ArrowRightIcon class="h-3 w-3 shrink-0 text-gray-400" />
+          <span class="rounded bg-white px-2 py-0.5 font-mono text-gray-600 ring-1 ring-gray-200">② MCP 端点 /mcp</span>
+          <ArrowRightIcon class="h-3 w-3 shrink-0 text-gray-400" />
+          <span class="rounded bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 ring-1 ring-emerald-200">③ 业务工具 echo（读已验签身份）</span>
         </div>
 
         <div class="flex items-center justify-between border-b border-gray-100 px-5 py-3">
@@ -2952,8 +2864,31 @@ onMounted(fetchServers)
 
         <pre class="m-0 flex-1 overflow-auto bg-gray-950 p-5 text-xs leading-6 text-gray-100"><code>{{ generatedMcpCode }}</code></pre>
 
-        <div class="border-t border-gray-100 bg-gray-50 px-5 py-3 text-[11px] leading-relaxed text-gray-600">
-          使用位置：Audience 填业务方的 <code class="rounded bg-gray-200 px-1">aud</code> 校验配置，Issuer 填 <code class="rounded bg-gray-200 px-1">iss</code> 校验配置，JWKS 地址填公钥发现配置。验签成功后从 <code class="rounded bg-gray-200 px-1">user_context.user_id</code> 关联业务用户。
+        <div class="border-t border-gray-100 bg-gray-50 px-5 py-3">
+          <div class="grid gap-2.5 text-[11px] leading-relaxed text-gray-600 sm:grid-cols-3">
+            <div>
+              <div class="font-semibold text-gray-800">代码放哪里</div>
+              <p class="mt-0.5">整段复制：Python 存成 business_echo_mcp.py；Java 按 ①②③ 合并进工程。别只截 verify 函数——中间件挂载和工具注册才决定它嵌在哪一层。</p>
+            </div>
+            <div>
+              <div class="font-semibold text-gray-800">三个值从哪来</div>
+              <p class="mt-0.5">Audience 校验 aud，Issuer 校验 iss，JWKS 地址按 kid 取公钥；都来自本页只读配置，代码已自动带入。</p>
+            </div>
+            <div>
+              <div class="font-semibold text-gray-800">怎么确认跑通</div>
+              <p class="mt-0.5">在 MCP 测试台调用 echo，返回 user_id 即通过。401 多半是固定 Token 或断言校验失败；工具层报 replay 说明同一条断言被用了两次。</p>
+            </div>
+          </div>
+          <p class="mt-2 border-t border-gray-200 pt-2 text-[11px] leading-relaxed text-gray-500">
+            <code class="rounded bg-gray-200 px-1">user_context.user_id</code> 用于关联业务用户，
+            <code class="rounded bg-gray-200 px-1">custom_attributes</code> 已过滤敏感 key。
+            <template v-if="mcpCodeLanguage === 'python'">
+              Python 按 MCP SDK 2.x 编写，1.x 换成 <code class="rounded bg-gray-200 px-1">FastMCP</code>；非 ASGI 框架把验签函数放进自己的中间件。
+            </template>
+            <template v-else>
+              Java 片段基于 Spring AI 的 MCP Server starter，需要合并进现有工程后再编译。
+            </template>
+          </p>
         </div>
       </div>
     </div>

@@ -1,8 +1,13 @@
 """MCP 传输安全白名单与公网地址的运行期刷新。
 
-``FastMCP`` 在构造时把 ``TransportSecuritySettings`` 实例交给中间件，之后每次请求
-都读 ``self.settings.allowed_hosts``。因此「系统配置里的对外地址」要热生效，只能
-原地改这个实例的字段，不能替换实例本身（否则已挂载的子应用继续用旧白名单）。
+``TransportSecuritySettings`` 实例由各 MCP 模块自己持有，并在
+``streamable_http_app()`` 时传给传输层中间件，之后每次请求都读它的
+``allowed_hosts`` / ``allowed_origins``。因此「系统配置里的对外地址」要热生效，
+只能原地改这个实例的字段，不能替换实例本身（否则已挂载的子应用继续用旧白名单）。
+
+注意：mcp 1.x 时代该对象挂在 ``FastMCP.settings.transport_security`` 上，2.x 起
+``MCPServer.settings`` 不再包含它，所以刷新入口改为各模块的访问器
+（``get_platform_transport_security`` / ``get_echo_transport_security``）。
 
 同时维护一份缓存，供平台 MCP 里那些同步函数（``platform_mcp_resource_url`` 等）
 在不改 async 签名的前提下读到最新值。
@@ -75,14 +80,11 @@ def apply_public_url_to_mcp(public_url: str | None) -> str:
     resolved = normalize_public_url(public_url)
     _cached_public_url = resolved
 
-    from app.services.mcp.echo_server import echo_mcp
-    from app.services.mcp.platform_mcp import platform_mcp
+    from app.services.mcp.echo_server import get_echo_transport_security
+    from app.services.mcp.platform_mcp import get_platform_transport_security
 
-    for instance in (echo_mcp, platform_mcp):
-        sync_transport_security(
-            getattr(getattr(instance, "settings", None), "transport_security", None),
-            resolved,
-        )
+    for target in (get_echo_transport_security(), get_platform_transport_security()):
+        sync_transport_security(target, resolved)
     return resolved
 
 

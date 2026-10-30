@@ -37,7 +37,7 @@ from app.services.mcp.platform_mcp import (
     PLATFORM_MCP_NAME,
     get_method_definition,
     is_platform_mcp_capability_enabled,
-    platform_mcp,
+    platform_mcp_http_app,
     platform_mcp_resource_url,
 )
 from app.services.mcp.platform_config import PlatformMcpConfigService
@@ -2069,7 +2069,9 @@ async def test_playground_method(
         }
 
     start = time.time()
-    mcp_app = platform_mcp.streamable_http_app()
+    # 用封装好的工厂，而不是直接调 streamable_http_app()：mcp 2.x 的端点路径
+    # （/platform）与传输安全都挪到了该方法的入参上，默认值会给成 /mcp。
+    mcp_app = platform_mcp_http_app()
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=mcp_app),

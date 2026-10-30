@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import uuid
@@ -10,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import jwt
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import select
 
@@ -54,6 +55,11 @@ def personal_echo_tool_name(server_name: str) -> str:
     注册失败，模型只能看到清单却调不到工具。
     """
     return f"{server_name}:{ECHO_TOOL_LOCAL_NAME}"
+
+
+def personal_echo_slow_tool_name(server_name: str) -> str:
+    """个人 Echo 的进度测试工具名，与 ``personal_echo_tool_name`` 同一命名空间。"""
+    return f"{server_name}:{ECHO_SLOW_TOOL_NAME}"
 
 
 def build_echo_server_url(base_url: str, server_id: str) -> str:
@@ -258,16 +264,45 @@ async def _load_echo_server(server_id: str | None = None) -> McpServer:
     return server
 
 
-echo_mcp = FastMCP(
+#: 传输安全白名单的持有者（mcp 2.x 起 MCPServer.settings 不再保存该对象，
+#: 必须由调用方持有并在 streamable_http_app() 时传入；运行期靠原地切片赋值刷新，
+#: 见 app/services/mcp/public_url.py）。
+_ECHO_TRANSPORT_SECURITY = mutable_transport_security(settings.APP_PUBLIC_URL)
+
+
+def get_echo_transport_security() -> TransportSecuritySettings:
+    """返回 Echo MCP 的传输安全设置，供 public_url 运行期原地刷新白名单。"""
+    return _ECHO_TRANSPORT_SECURITY
+
+
+echo_mcp = MCPServer(
     ECHO_SERVER_NAME,
     instructions="用于验证 NanZi MCP 协议和用户身份透传，不执行任何业务操作。",
-    streamable_http_path="/mcp",
-    json_response=True,
-    stateless_http=True,
-    # 占位对象：启动后由 refresh_mcp_public_url() 按「系统配置 → 环境变量」
-    # 原地刷新白名单（FastMCP 中间件按对象引用读取，不能替换实例）。
-    transport_security=mutable_transport_security(settings.APP_PUBLIC_URL),
 )
+
+
+_ECHO_HTTP_APP: Any = None
+
+
+def echo_mcp_http_app():  # type: ignore[no-untyped-def]
+    """构造（并缓存）Echo MCP 的 Streamable HTTP 应用（端点参数在 mcp 2.x 移到此处）。
+
+    与 ``platform_mcp_http_app`` 同理：``streamable_http_app()`` 每次调用都会
+    新建 ``StreamableHTTPSessionManager`` 并覆盖 ``server._session_manager``，
+    而只有经 ``echo_mcp_lifespan`` 跑过 ``run()`` 的实例才能处理请求，
+    因此这里必须缓存，避免二次调用把宿主挂载的实例顶掉。
+    """
+    global _ECHO_HTTP_APP
+    if _ECHO_HTTP_APP is None:
+        _ECHO_HTTP_APP = echo_mcp.streamable_http_app(
+            streamable_http_path="/mcp",
+            json_response=True,
+            stateless_http=True,
+            transport_security=_ECHO_TRANSPORT_SECURITY,
+            max_request_body_size=32 * 1024 * 1024,
+            session_idle_timeout=3600.0,
+        )
+    return _ECHO_HTTP_APP
 
 
 @asynccontextmanager
@@ -285,6 +320,86 @@ async def echo(ctx: Context) -> dict[str, Any]:
     server = await _load_echo_server(echo_server_id_from_headers(headers))
     private_key = load_mcp_private_key(server)
     return build_echo_diagnostics(headers, server, private_key)
+
+
+ECHO_SLOW_TOOL_NAME = "echo_slow"
+ECHO_SLOW_TOOL_DESCRIPTION = (
+    "逐步上报进度的测试工具：用于验证 MCP 工具进度流（工具卡进度条 / 最近进度文案）。"
+    "它会按 steps 逐步调用 report_progress，并返回汇总结果。"
+)
+#: 每步默认间隔（毫秒）。测试里传 0 可以直接跑完，不真正等待。
+ECHO_SLOW_DEFAULT_INTERVAL_MS = 800
+
+
+@echo_mcp.tool(name=ECHO_SLOW_TOOL_NAME, description=ECHO_SLOW_TOOL_DESCRIPTION)
+async def echo_slow(
+    ctx: Context,
+    steps: int = 5,
+    total: int | None = None,
+    interval_ms: int = ECHO_SLOW_DEFAULT_INTERVAL_MS,
+) -> dict[str, Any]:
+    """按 ``steps`` 逐步上报进度。
+
+    参数含义（进度流验收用）：
+
+    * ``total=None``：正常进度，前端显示 ``3/5 第 3/5 步``；
+    * ``total=0``：显式不提供总数，前端显示不确定态的呼吸条 + 文案；
+    * ``interval_ms``：每步间隔，测试时传 0 立即跑完。
+    """
+    step_count = max(1, min(int(steps or 1), 50))
+    # 三态：未传 total → 用 steps 当总数；total>0 → 按它算；total==0 → 显式不带总数，
+    # 前端应渲染不确定态的呼吸条。
+    if total is None:
+        reported_total: int | None = step_count
+    elif int(total) > 0:
+        reported_total = int(total)
+    else:
+        reported_total = None
+    interval_seconds = max(0, int(interval_ms or 0)) / 1000.0
+
+    for index in range(1, step_count + 1):
+        await ctx.report_progress(
+            index,
+            reported_total,
+            f"第 {index}/{step_count} 步",
+        )
+        if interval_seconds and index < step_count:
+            await asyncio.sleep(interval_seconds)
+
+    return {
+        "ok": True,
+        "steps": step_count,
+        "total_declared": reported_total,
+        "message": f"已完成 {step_count} 步",
+    }
+
+
+def echo_slow_tool_schema() -> str:
+    """返回 ``echo_slow`` 的稳定 JSON Schema，供 MCP 管理页缓存。"""
+    return json.dumps(
+        {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "integer",
+                    "description": "要上报的步数（1-50，默认 5）",
+                    "default": 5,
+                },
+                "total": {
+                    "type": "integer",
+                    "description": "声明的总数；传 0 表示不提供总数（前端显示不确定态进度）",
+                },
+                "interval_ms": {
+                    "type": "integer",
+                    "description": "每步间隔毫秒数（默认 800，测试可传 0）",
+                    "default": ECHO_SLOW_DEFAULT_INTERVAL_MS,
+                },
+            },
+            "additionalProperties": False,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def echo_tool_schema() -> str:

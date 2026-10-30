@@ -9,7 +9,7 @@ import re
 import shlex
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 from app.services.ai.grounding.models import EvidenceType
@@ -43,7 +43,7 @@ from app.services.ai.runtime.command_policy import (  # noqa: E402
 )
 
 
-ToolSourceType = Literal["static", "generic_api", "mcp", "class", "system"]
+ToolSourceType = Literal["static", "generic_api", "mcp", "class", "system", "script_tool"]
 RuntimePermissionScope = Literal["read", "write", "ask", "dangerous"]
 RuntimeApprovalMode = Literal["ask", "allow", "deny"]
 
@@ -447,12 +447,18 @@ def _prepare_timeout_arguments(
     return adjusted, effective
 
 
-async def _invoke_callable_with_timeout(
+async def _start_callable_with_timeout(
     callable_obj: Callable[..., Any],
     arguments: dict[str, Any],
     timeout_seconds: float,
 ) -> Any:
-    """在统一 deadline 内执行同步/异步 callable。"""
+    """在统一 deadline 内**启动**一次工具调用，返回未消费的结果。
+
+    与 ``_invoke_callable_with_timeout`` 的唯一区别：异步生成器不在这里拼成列表，
+    而是原样返回，交给调用方逐片消费——进度片必须在工具执行过程中抵达前端，
+    一旦在这里被消费掉就只剩最终结果了。迭代期间的 deadline 由消费方负责
+    （``_stream_runtime_result`` 用 ``asyncio.timeout`` 覆盖）。
+    """
 
     async def run() -> Any:
         if _callable_is_async_generator(callable_obj) or _callable_is_coroutine(callable_obj):
@@ -461,14 +467,23 @@ async def _invoke_callable_with_timeout(
             result = await asyncio.to_thread(callable_obj, **arguments)
         if inspect.isawaitable(result):
             result = await result
-        if inspect.isasyncgen(result):
-            try:
-                return [item async for item in result]
-            finally:
-                await _close_async_generator(result)
         return result
 
     return await asyncio.wait_for(run(), timeout=timeout_seconds)
+
+
+def _is_tool_progress_item(item: Any) -> bool:
+    """是否是「远端进度片」而不是工具结果。
+
+    约定与 AgentScope 一致：进度片带 ``metadata["mcp_progress"]``，且不是最后一片。
+    用 duck typing 判断，避免工具层强依赖 agent 的消息类型。
+    """
+    metadata = getattr(item, "metadata", None)
+    if not isinstance(metadata, dict):
+        return False
+    if getattr(item, "is_last", False):
+        return False
+    return metadata.get("mcp_progress") is not None
 
 
 async def _close_async_generator(generator: Any) -> None:
@@ -499,6 +514,9 @@ class RuntimeToolSpec:
     audit_callback: Callable[[RuntimeToolAuditEvent], Any] | None = None
     native_tool: Any | None = None
     is_concurrency_safe: bool | None = None
+    # 平台内部透传字段（不进入模型可见 schema）。脚本工具用它把配置带到
+    # bind_configured_tools_to_workspace，由后者包上沙箱执行器。
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_read_only(self) -> bool:
@@ -540,27 +558,17 @@ class RuntimeToolSpec:
             )
         )
         try:
-            result = await _invoke_callable_with_timeout(
+            result = await _start_callable_with_timeout(
                 self.callable,
                 call_arguments,
                 timeout_seconds,
             )
-            result_state = (
-                _stream_final_result_state(result)
-                if isinstance(result, (list, tuple))
-                else None
-            )
-            if result_state is None and not is_tool_execution_success(result):
-                result_state = "error"
-            envelope = _record_evidence_result(
-                tool_name=self.name,
-                evidence_types=self.evidence_types,
-                evidence_policy=self.evidence_policy,
-                result=result,
-                result_state=result_state,
-                call_id=call_id,
-            )
-            result_ok = is_tool_execution_success(result, result_state=result_state)
+            if inspect.isasyncgen(result):
+                # 流式工具（远端 MCP 会发 progress）：原样交给
+                # ``AgentScopeRuntimeTool`` 逐片消费，证据与审计在
+                # ``finish_streamed()`` 里按最终结果补记一次。
+                return result
+            result_ok, result_state = self._record_result_evidence(result, call_id)
             await self._emit_audit(
                 RuntimeToolAuditEvent(
                     tool_name=self.name,
@@ -606,6 +614,66 @@ class RuntimeToolSpec:
             )
             await self._emit_error_audit(audit_arguments, start, wrapped)
             raise wrapped from exc
+
+    def _record_result_evidence(
+        self,
+        result: Any,
+        call_id: str | None,
+    ) -> tuple[bool, str | None]:
+        """按最终业务结果记一次证据，返回 (是否成功, 结果状态)。"""
+        result_state = (
+            _stream_final_result_state(result)
+            if isinstance(result, (list, tuple))
+            else None
+        )
+        if result_state is None and not is_tool_execution_success(result):
+            result_state = "error"
+        _record_evidence_result(
+            tool_name=self.name,
+            evidence_types=self.evidence_types,
+            evidence_policy=self.evidence_policy,
+            result=result,
+            result_state=result_state,
+            call_id=call_id,
+        )
+        return is_tool_execution_success(result, result_state=result_state), result_state
+
+    async def finish_streamed(
+        self,
+        result: Any,
+        *,
+        call_id: str | None,
+        arguments: dict[str, Any] | None,
+        start: float,
+    ) -> bool:
+        """流式工具结束后补记证据与审计，与 ``invoke`` 的成功分支同口径。"""
+        result_ok, _ = self._record_result_evidence(result, call_id)
+        await self._emit_audit(
+            RuntimeToolAuditEvent(
+                tool_name=self.name,
+                status="success" if result_ok else "error",
+                source_type=self.source_type,
+                permission_scope=self.permission_scope,
+                arguments=arguments or {},
+                elapsed_ms=(time.perf_counter() - start) * 1000,
+                result_preview=_preview_result(result),
+                error=None if result_ok else "工具明确返回了失败结果",
+            )
+        )
+        return result_ok
+
+    async def emit_error_audit(
+        self,
+        arguments: dict[str, Any] | None,
+        start: float,
+        exc: Exception,
+    ) -> None:
+        """供流式路径复用：记录一次失败审计（参数在这里统一脱敏）。"""
+        await self._emit_error_audit(
+            _redact_runtime_tool_arguments(self.name, arguments or {}),
+            start,
+            exc,
+        )
 
     async def _emit_error_audit(
         self,
@@ -816,6 +884,13 @@ class AgentScopeRuntimeTool:
                 return await self.spec.invoke(kwargs, call_id=call_id)
 
             res = await execute_with_concurrency_guard(_invoke)
+            if inspect.isasyncgen(res):
+                # 远端 MCP 发了进度：把生成器交给 agent，由它逐片转成事件。
+                return self._stream_runtime_result(
+                    res,
+                    call_id=call_id,
+                    arguments=kwargs,
+                )
             return ToolChunk(
                 content=[TextBlock(text=_format_runtime_tool_result(res))],
                 state=(
@@ -850,6 +925,105 @@ class AgentScopeRuntimeTool:
                 metadata={"nanzi_call_id": call_id},
             )
 
+
+    async def _stream_runtime_result(
+        self,
+        generator: Any,
+        *,
+        call_id: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        """逐片透传进度片，最后一片是由业务结果包装出的 ``ToolChunk``。
+
+        并发护栏只覆盖「启动」，与 ``AgentScopeNativeApprovalTool`` 同构；
+        迭代期间用 ``asyncio.timeout`` 施加平台工具超时，避免长工具脱离约束。
+        """
+        from agentscope.message import TextBlock, ToolResultState
+        from agentscope.tool import ToolChunk
+
+        _, timeout_seconds = _prepare_timeout_arguments(
+            self.spec.name,
+            arguments,
+            self.input_schema,
+            self.spec.timeout_seconds,
+        )
+        start = time.perf_counter()
+        final_result: Any = None
+        has_result = False
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                async for item in generator:
+                    if _is_tool_progress_item(item):
+                        # 进度片原样上抛：agent 会把它转成 CustomEvent。
+                        yield item
+                        continue
+                    final_result = item
+                    has_result = True
+        except asyncio.CancelledError:
+            await _close_async_generator(generator)
+            raise
+        except Exception as exc:
+            await _close_async_generator(generator)
+            from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
+
+            try:
+                from agentscope.exception import DeveloperOrientedException
+
+                if isinstance(exc, DeveloperOrientedException):
+                    raise
+            except ImportError:
+                pass
+            if isinstance(exc, (ToolLoopFuseError, PermissionError)):
+                raise
+            msg = (
+                f"工具 [{self.spec.name}] 调用超时: {exc}"
+                if isinstance(exc, TimeoutError)
+                else f"工具 [{self.spec.name}] 调用发生异常: {exc}"
+            )
+            _record_evidence_result(
+                tool_name=self.spec.name,
+                evidence_types=self.spec.evidence_types,
+                evidence_policy=self.spec.evidence_policy,
+                result={"status": "error", "message": msg},
+                result_state="error",
+                call_id=call_id,
+            )
+            await self.spec.emit_error_audit(
+                arguments,
+                start,
+                exc,
+            )
+            logger.warning(
+                "[RuntimeTool] Streamed tool '%s' failed gracefully: %s",
+                self.spec.name,
+                exc,
+            )
+            yield ToolChunk(
+                content=[TextBlock(text=msg)],
+                state=ToolResultState.ERROR,
+                is_last=True,
+                metadata={"nanzi_call_id": call_id},
+            )
+            return
+
+        result = attach_tool_call_id_metadata(
+            final_result if has_result else None,
+            call_id,
+        )
+        result_ok = await self.spec.finish_streamed(
+            result,
+            call_id=call_id,
+            arguments=arguments,
+            start=start,
+        )
+        yield ToolChunk(
+            content=[
+                TextBlock(text=_format_runtime_tool_result(result) if has_result else "")
+            ],
+            state=ToolResultState.SUCCESS if result_ok else ToolResultState.ERROR,
+            is_last=True,
+            metadata={"nanzi_call_id": call_id},
+        )
 
 class AgentScopeNativeApprovalTool:
     """Apply runtime approval mode to AgentScope native tools such as Bash."""
@@ -1594,6 +1768,7 @@ def runtime_tool_spec_from_legacy_tool(
             getattr(tool, "evidence_inference_disabled", False) is True
         ),
         is_concurrency_safe=getattr(tool, "is_concurrency_safe", None),
+        metadata=dict(getattr(tool, "runtime_metadata", None) or {}),
     )
 
 

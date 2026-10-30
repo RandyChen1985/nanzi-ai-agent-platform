@@ -470,28 +470,42 @@ async def test_inject_skills_does_not_force_using_superpowers_after_first_turn(t
     assert "非首轮不应因为特殊门禁被强制预载" not in joined
 
 
-def test_skill_log_chunk_titles_distinguish_enabled_and_candidate_flow():
+def test_skill_log_chunk_titles_say_skills():
+    """界面与日志统一称「技能」：用户看到横幅写「流程」后要求改词。
+
+    这个标题会原样进 `process_timeline` 并持久化，前端 `skillFlowBadges` 按前缀解析，
+    所以措辞改动必须前后端同时落地；旧快照的兼容由前端契约
+    `tests/frontend/test_skill_flow_badges_behavior.py` 守住。
+    """
     enabled = AgentService._build_skill_log_chunk(
         "weekly-report",
-        "周报生成流程",
-        "已预载完整 SKILL.md 指令，本轮可直接按该流程执行。",
+        "周报生成技能",
+        "已预载完整 SKILL.md 指令，本轮可直接按该技能执行。",
     )
     assert enabled["id"] == "skill_enabled_weekly-report"
-    assert enabled["title"] == "已启用流程: 周报生成流程"
-    assert "技能" not in enabled["title"]
+    assert enabled["title"] == "已启用技能: 周报生成技能"
+    assert "流程" not in enabled["title"]
+
+    # 旧措辞的 details 仍要能判成「完整启用」：完成态判定不能跟着文案漂移。
+    legacy_details = AgentService._build_skill_log_chunk(
+        "weekly-report",
+        "周报生成技能",
+        "已预载完整 SKILL.md 指令，本轮可直接按该流程执行。",
+    )
+    assert legacy_details["id"] == "skill_enabled_weekly-report"
 
     candidate = AgentService._build_skill_log_chunk(
         "weekly-report",
-        "周报生成流程",
+        "周报生成技能",
         "已注入摘要；模型须调用 read_skill_instruction 读取 SKILL.md 全文后再执行。",
     )
     assert candidate["id"] == "skill_candidate_weekly-report"
-    assert candidate["title"] == "已识别候选流程: 周报生成流程"
+    assert candidate["title"] == "已识别候选技能: 周报生成技能"
 
-    fallback = AgentService._build_skill_log_chunk("weekly-report", "周报生成流程", "")
+    fallback = AgentService._build_skill_log_chunk("weekly-report", "周报生成技能", "")
     assert fallback["id"] == "skill_candidate_weekly-report"
-    assert fallback["title"] == "已识别候选流程: 周报生成流程"
-    assert "已识别候选流程" in fallback["details"]
+    assert fallback["title"] == "已识别候选技能: 周报生成技能"
+    assert "已识别候选技能" in fallback["details"]
 
 
 @pytest.mark.asyncio

@@ -1,12 +1,18 @@
+import asyncio
+import contextlib
 import json
 import logging
 import re
+import time
 from typing import Dict, Any, List, Optional
 from pydantic import create_model, Field
 from app.services.ai.tools.model_tool_name import build_model_tool_name
 from app.services.ai.tools.tool_compat import StructuredTool
 from app.models.mcp import McpToolCache
 from app.services.ai.tools.mcp_client import McpClientService
+from app.services.ai.runtime.agentscope.tool_timeout import (
+    load_agent_max_toolcall_timeout,
+)
 from app.services.ai.grounding.models import EvidenceType
 from app.core.context import get_current_agent_context
 
@@ -29,6 +35,151 @@ def current_mcp_agent_identity() -> tuple[Dict[str, Any], Dict[str, Any]]:
     if context.agent_version:
         agent_info["agent_version_id"] = context.agent_version
     return user_info, agent_info
+
+
+#: 进度快照队列长度：与上游 MCP 适配器同口径，满了丢最旧的一条；
+#: 进度洪峰绝不能影响最终结果的返回。
+MCP_PROGRESS_QUEUE_SIZE = 1024
+#: 同一进度片的最小推送间隔。远端按 token 发心跳时用它压住 SSE 帧数；
+#: ``progress`` 前进 ≥1 或 ``message`` 变化时不受此限。
+MCP_PROGRESS_MIN_INTERVAL_SECONDS = 0.25
+
+
+async def resolve_mcp_tool_timeout() -> Optional[float]:
+    """单次 MCP 工具调用的超时：优先请求期快照，其次系统配置。
+
+    平台已有 ``agent_max_toolcall_timeout``（全局默认 180s，支持版本级覆盖），
+    并把它快照进 ``AgentContext``。MCP 输出链路曾经写死 120s，长工具会在进度
+    走到一半时被静默掐断——这里统一回同一个旋钮。
+    """
+    context = get_current_agent_context()
+    snapshot = getattr(context, "agent_max_toolcall_timeout_seconds", None) if context else None
+    if snapshot:
+        try:
+            value = float(snapshot)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            return value
+    try:
+        return float(await load_agent_max_toolcall_timeout())
+    except Exception:  # pragma: no cover - 配置服务异常不该阻断工具调用
+        logger.warning("[MCP] 读取 agent_max_toolcall_timeout 失败，回退默认超时", exc_info=True)
+        return None
+
+
+async def stream_remote_tool_with_progress(
+    *,
+    server_id: str,
+    tool_name: str,
+    arguments: Dict[str, Any],
+    timeout_seconds: Optional[float] = None,
+    **identity_kwargs: Any,
+):
+    """调用远端工具，把 ``notifications/progress`` 变成 AgentScope 进度分片。
+
+    产出顺序：0..N 个进度分片 → 1 个业务结果（最后一个 ``yield``）。
+    进度是**快照语义**（队列满丢最旧、重复心跳被节流），消费者不能假设每帧都收到。
+    """
+    from agentscope.message import ToolResultState
+    from agentscope.tool import ToolChunk
+
+    queue: "asyncio.Queue[Any]" = asyncio.Queue(maxsize=MCP_PROGRESS_QUEUE_SIZE)
+    accepting = True
+    last_emit = 0.0
+    last_progress: Optional[float] = None
+    last_message: Optional[str] = None
+
+    async def _on_progress(
+        progress: float,
+        total: Optional[float],
+        message: Optional[str],
+    ) -> None:
+        nonlocal accepting, last_emit, last_progress, last_message
+        if not accepting:
+            return
+        if not isinstance(progress, (int, float)) or isinstance(progress, bool):
+            # mcp SDK 的路由层只放行 int|float，这里再兜一层：第三方服务端的
+            # 畸形通知宁可丢弃，也不能让工具因为一次进度上报而失败。
+            return
+        now = time.monotonic()
+        advanced = last_progress is None or (progress - last_progress) >= 1
+        throttled = (
+            not advanced
+            and message == last_message
+            and (now - last_emit) < MCP_PROGRESS_MIN_INTERVAL_SECONDS
+        )
+        if throttled:
+            return
+        last_emit, last_progress, last_message = now, progress, message
+        if queue.full():
+            # 快照语义：丢最旧的一条，保证新进度可见，也不阻塞远端调用。
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:  # pragma: no cover - full/empty 竞态
+                pass
+        queue.put_nowait(
+            ToolChunk(
+                content=[],
+                state=ToolResultState.RUNNING,
+                is_last=False,
+                metadata={
+                    "mcp_progress": {
+                        "progress": progress,
+                        "total": total,
+                        "message": message,
+                    },
+                },
+            )
+        )
+
+    call_task = asyncio.create_task(
+        McpClientService.call_remote_tool(
+            server_id=server_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            progress_callback=_on_progress,
+            timeout_seconds=timeout_seconds,
+            **identity_kwargs,
+        )
+    )
+    getter: Optional[asyncio.Future] = None
+    try:
+        while not call_task.done():
+            getter = asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait(
+                {call_task, getter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if getter in done:
+                yield getter.result()
+                getter = None
+            else:
+                getter.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await getter
+                getter = None
+
+        accepting = False
+        while not queue.empty():
+            yield queue.get_nowait()
+        yield await call_task
+    finally:
+        accepting = False
+        if getter is not None and not getter.done():
+            getter.cancel()
+        if not call_task.done():
+            # 上层取消（用户停止 / 平台超时）时别把远端请求晾在连接上。
+            # 与上游 ``MCPTool._stream_call`` 同构：mcp SDK 取消时会先发
+            # notifications/cancelled 再清理连接，用 shield 防止外层重复取消
+            # 打断清理（打断会留下半关闭的 SSE 连接）。代价是取消要等 SDK
+            # 清理完成——这是 SDK 的设计取舍，不是这里的等待写得不好。
+            call_task.cancel()
+            with contextlib.suppress(BaseException):
+                await asyncio.shield(call_task)
+        elif not call_task.cancelled():
+            # 取走异常，避免 "Task exception was never retrieved" 噪声日志。
+            call_task.exception()
 
 
 def _map_schema_type(param_def: dict[str, Any]) -> Any:
@@ -123,13 +274,17 @@ class McpToolFactory:
             if context and context.trace_id:
                 identity_kwargs["request_id"] = context.trace_id
 
-            return await McpClientService.call_remote_tool(
+            # 远端进度 → AgentScope 进度分片：中间 yield ``mcp_progress`` 分片，
+            # 最后 yield 业务结果本身（与协程版 return 的完全一致）。
+            async for item in stream_remote_tool_with_progress(
                 server_id=tool_record.server_id,
                 tool_name=raw_name,
                 arguments=kwargs,
+                timeout_seconds=await resolve_mcp_tool_timeout(),
                 require_user_context=True,
                 **identity_kwargs,
-            )
+            ):
+                yield item
         
         _execute.__doc__ = tool_record.tool_description or f"MCP tool: {tool_record.tool_name}"
         

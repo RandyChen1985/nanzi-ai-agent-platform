@@ -12,6 +12,7 @@ from app.services.mcp.platform_mcp import (
     PLATFORM_MCP_RESOURCE_URI_SUFFIX,
     get_method_definition,
     platform_mcp,
+    platform_mcp_http_app,
     platform_mcp_lifespan,
 )
 
@@ -84,7 +85,9 @@ async def test_platform_mcp_http_lifecycle_authenticates_and_calls_knowledge_too
     monkeypatch.setattr(platform_mcp_module, "RagFlowClient", lambda **_kwargs: FakeRagFlowClient())
     monkeypatch.setattr(platform_mcp_module, "_write_audit", _noop_audit)
 
-    mcp_app = platform_mcp.streamable_http_app()
+    # 必须用封装工厂：mcp 2.x 把端点路径（/platform）挪到了 streamable_http_app() 的入参，
+    # 直接调用会拿到默认的 /mcp，请求 /platform 就是 404。
+    mcp_app = platform_mcp_http_app()
     async with platform_mcp_lifespan():
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=mcp_app),
@@ -124,6 +127,23 @@ async def test_platform_mcp_http_lifecycle_authenticates_and_calls_knowledge_too
             )
             assert called.status_code == 200, called.text
             assert "已收到" in called.text
+
+
+def test_platform_mcp_http_app_is_cached_singleton():
+    """工厂必须返回同一个实例，否则会顶掉宿主已 run 的 session manager。
+
+    ``streamable_http_app()`` 每次调用都会新建 ``StreamableHTTPSessionManager``
+    并覆盖 ``server._session_manager``；未 run 的实例处理请求会抛
+    ``RuntimeError: Task group is not initialized``。管理端「在线调试」会在
+    运行期调用本工厂，因此这里锁定两个不变量。
+    """
+    first_app = platform_mcp_http_app()
+    first_manager = platform_mcp.session_manager
+
+    second_app = platform_mcp_http_app()
+
+    assert second_app is first_app
+    assert platform_mcp.session_manager is first_manager
 
 
 async def _true():

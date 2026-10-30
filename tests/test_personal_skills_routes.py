@@ -17,6 +17,32 @@ async def _fake_user():
     return {"user_id": 1, "user_name": "tester", "role": "user"}
 
 
+def _find_route(app: FastAPI, path: str, method: str):
+    """按完整路径定位路由对象。
+
+    starlette 1.6 起 ``include_router()`` 不再把子路由摊平进 ``app.routes``，
+    而是包成 ``_IncludedRouter``（没有 ``path``），完整路径要递归拼
+    ``include_context.prefix``。旧写法直接遍历 ``app.routes`` 会 StopIteration。
+    """
+
+    def walk(routes, prefix=""):
+        for route in routes:
+            route_path = getattr(route, "path", None)
+            if route_path is not None:
+                if prefix + route_path == path:
+                    yield route
+                continue
+            inner = getattr(route, "original_router", None)
+            if inner is not None:
+                ctx = getattr(route, "include_context", None)
+                yield from walk(inner.routes, prefix + getattr(ctx, "prefix", ""))
+
+    for route in walk(app.routes):
+        if method in (getattr(route, "methods", None) or set()):
+            return route
+    return None
+
+
 def _build_app(*, personal_first: bool, platform_admin: bool = True) -> FastAPI:
     portal_router = APIRouter()
     if personal_first:
@@ -48,12 +74,8 @@ def test_platform_skill_list_is_readable_without_management_permission():
 
         with patch("app.api.portal.endpoints.skills.settings", SimpleNamespace(SKILLS_DIR=str(global_dir))):
             app = _build_app(personal_first=True, platform_admin=False)
-            list_route = next(
-                route
-                for route in app.routes
-                if getattr(route, "path", None) == "/api/portal/skills"
-                and "GET" in getattr(route, "methods", set())
-            )
+            list_route = _find_route(app, "/api/portal/skills", "GET")
+            assert list_route is not None, "GET /api/portal/skills 路由不存在"
             dependency_calls = {dependency.call for dependency in list_route.dependant.dependencies}
             assert require_api_key in dependency_calls
             assert skills.skill_platform_admin not in dependency_calls

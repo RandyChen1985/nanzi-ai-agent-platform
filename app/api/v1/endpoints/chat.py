@@ -2133,6 +2133,14 @@ async def create_chat_completion(
             if not isinstance(chunk, dict):
                 return
             event_type = str(chunk.get("type") or "")
+            from app.services.ai.runtime.conversation_stream_journal import (
+                TRANSIENT_EVENT_TYPES,
+            )
+
+            if event_type in TRANSIENT_EVENT_TYPES:
+                # 瞬态帧（工具进度）不落日志；这里必须直接返回，否则每条进度都会
+                # 强制 flush 一次正文合并窗口，把事件日志写得又碎又慢。
+                return
             if event_type in STREAM_JOURNAL_COALESCED_TYPES:
                 stream_journal_pending.append(chunk)
                 stream_journal_chars += len(str(chunk.get("content") or ""))

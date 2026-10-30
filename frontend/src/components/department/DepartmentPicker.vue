@@ -16,6 +16,7 @@
 
     <div
       v-if="open"
+      ref="panelRef"
       class="absolute z-[12000] mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 shadow-xl dark:border-gray-700 dark:bg-gray-900"
     >
       <div v-if="loading" class="px-3 py-4 text-center text-xs text-gray-400">部门加载中…</div>
@@ -24,8 +25,22 @@
         还没有可选的部门
       </div>
       <template v-else>
+        <div class="sticky top-0 z-10 -mx-1 -mt-1 bg-white px-1 pb-1.5 pt-1 dark:bg-gray-900">
+          <input
+            v-model="keyword"
+            type="search"
+            placeholder="搜索部门名称或代码"
+            data-department-search
+            class="w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+            @input="onSearchInput"
+            @keydown.esc.stop="keyword = ''"
+          />
+        </div>
+        <div v-if="!filtered.length" class="px-3 py-3 text-center text-xs text-gray-400">
+          没有匹配「{{ keyword.trim() }}」的部门
+        </div>
         <div
-          v-for="row in flat"
+          v-for="row in filtered"
           :key="row.node.id"
           class="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
         >
@@ -40,9 +55,15 @@
           <label
             :for="`dept-pick-${row.node.id}`"
             class="min-w-0 flex-1 cursor-pointer truncate text-gray-700 dark:text-gray-200"
-            :style="{ paddingLeft: `${row.depth * 12}px` }"
-            :title="row.node.code"
-          >{{ row.node.name }}</label>
+            :style="{ paddingLeft: isSearching ? '0' : `${row.depth * 12}px` }"
+            :title="row.path.join(' / ')"
+          >
+            <span>{{ row.node.name }}</span>
+            <span
+              v-if="isSearching && row.path.length > 1"
+              class="ml-1.5 text-[11px] text-gray-400 dark:text-gray-500"
+            >{{ row.path.slice(0, -1).join(' / ') }}</span>
+          </label>
           <span v-if="row.node.status === 0" class="text-[11px] text-amber-500">停用</span>
           <button
             v-if="selected.includes(row.node.id)"
@@ -92,19 +113,39 @@ const open = ref(false)
 const loading = ref(false)
 const loadError = ref('')
 const tree = ref<DeptNode[]>([])
+const keyword = ref('')
+const panelRef = ref<HTMLElement | null>(null)
 
 const selected = computed(() => props.modelValue || [])
 
 const flat = computed(() => {
-  const rows: { node: DeptNode; depth: number }[] = []
-  const walk = (nodes: DeptNode[], depth: number) => {
+  const rows: { node: DeptNode; depth: number; path: string[] }[] = []
+  const walk = (nodes: DeptNode[], depth: number, parents: string[]) => {
     for (const node of nodes) {
-      rows.push({ node, depth })
-      if (node.children?.length) walk(node.children, depth + 1)
+      const path = [...parents, node.name]
+      rows.push({ node, depth, path })
+      if (node.children?.length) walk(node.children, depth + 1, path)
     }
   }
-  walk(tree.value, 0)
+  walk(tree.value, 0, [])
   return rows
+})
+
+const isSearching = computed(() => keyword.value.trim().length > 0)
+
+/**
+ * 部门数量可能上百，靠缩进一层层找太慢。
+ * 搜索时把缩进去掉、改成在名称后补灰色父级路径——层级信息不丢，
+ * 又不会被深度撑到右侧看不见。
+ */
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return flat.value
+  return flat.value.filter((row) => {
+    const name = (row.node.name || '').toLowerCase()
+    const code = (row.node.code || '').toLowerCase()
+    return name.includes(kw) || code.includes(kw)
+  })
 })
 
 const summary = computed(() => {
@@ -139,7 +180,16 @@ const loadTree = async () => {
 
 const toggle = () => {
   open.value = !open.value
-  if (open.value) loadTree()
+  if (open.value) {
+    // 每次打开都重置关键词：否则上次搜过的词还在，列表看起来像"部门没了"。
+    keyword.value = ''
+    loadTree()
+  }
+}
+
+const onSearchInput = () => {
+  // 过滤后条目变少，原来的滚动位置可能落在空白处，看起来像"搜不到"。
+  panelRef.value?.scrollTo({ top: 0 })
 }
 
 const toggleDept = (node: DeptNode) => {

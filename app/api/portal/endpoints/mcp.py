@@ -21,6 +21,8 @@ from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession, McpSyncGuardError
 from app.services.ai.tools.mcp_factory import McpToolFactory
+from app.services.ai.tools.tool_compat import resolve_tool_invocation_result
+from app.services.mcp.curl_snippet import build_mcp_curl_snippet
 from app.services.mcp.mcp_auth_policy import (
     _parse_auth_headers,
     build_mcp_user_assertion_headers,
@@ -58,6 +60,10 @@ from app.services.mcp.echo_server import (
     ECHO_TOOL_NAME,
     ECHO_TOOL_DESCRIPTION,
     build_echo_server_url,
+    ECHO_SLOW_TOOL_DESCRIPTION,
+    ECHO_SLOW_TOOL_NAME,
+    echo_slow_tool_schema,
+    personal_echo_slow_tool_name,
     echo_tool_schema,
     personal_echo_server_id,
     personal_echo_tool_name,
@@ -720,6 +726,12 @@ async def create_echo_test_mcp(
         if is_personal
         else str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo"))
     )
+    # 进度验收工具与 echo 同源派生：固定 id 保证重复创建不会插出重复行。
+    slow_tool_id = (
+        str(uuid.uuid5(uuid.NAMESPACE_URL, f"nanzi:mcp:echo:personal:{owner_id}:tool:echo_slow"))
+        if is_personal
+        else str(uuid.uuid5(uuid.NAMESPACE_URL, "nanzi:mcp:echo:tool:echo_slow"))
+    )
     manager = get_api_key_manager()
     server = (
         await db.execute(select(McpServer).where(McpServer.id == server_id))
@@ -765,6 +777,23 @@ async def create_echo_test_mcp(
                 tool_name=tool_name,
                 tool_description=ECHO_TOOL_DESCRIPTION,
                 parameter_schema=echo_tool_schema(),
+                is_published=True,
+                is_available=True,
+            )
+        )
+        # Echo 额外带一个「会逐步上报进度」的工具，用来零配置验收 MCP 进度流。
+        # 平台与个人实例都要有：用户点哪个入口进来的都应该能验证，不该先分清两种 Echo。
+        db.add(
+            McpToolCache(
+                id=slow_tool_id,
+                server_id=server_id,
+                tool_name=(
+                    personal_echo_slow_tool_name(server_name)
+                    if is_personal
+                    else ECHO_SLOW_TOOL_NAME
+                ),
+                tool_description=ECHO_SLOW_TOOL_DESCRIPTION,
+                parameter_schema=echo_slow_tool_schema(),
                 is_published=True,
                 is_available=True,
             )
@@ -872,11 +901,44 @@ async def create_echo_test_mcp(
             tool.is_published = True
             tool.is_available = True
 
+        # 幂等补齐：老环境重新点一次「创建 Echo 测试 MCP」就能拿到进度测试工具。
+        slow_tool_name = (
+            personal_echo_slow_tool_name(server.server_name)
+            if is_personal
+            else ECHO_SLOW_TOOL_NAME
+        )
+        slow_tool = (
+            await db.execute(
+                select(McpToolCache).where(
+                    McpToolCache.server_id == server_id,
+                    McpToolCache.tool_name == slow_tool_name,
+                )
+            )
+        ).scalar_one_or_none()
+        if slow_tool is None:
+            db.add(
+                McpToolCache(
+                    id=slow_tool_id,
+                    server_id=server_id,
+                    tool_name=slow_tool_name,
+                    tool_description=ECHO_SLOW_TOOL_DESCRIPTION,
+                    parameter_schema=echo_slow_tool_schema(),
+                    is_published=True,
+                    is_available=True,
+                )
+            )
+        else:
+            slow_tool.tool_description = ECHO_SLOW_TOOL_DESCRIPTION
+            slow_tool.parameter_schema = echo_slow_tool_schema()
+            slow_tool.is_published = True
+            slow_tool.is_available = True
+
     await db.commit()
     _clear_runtime_tool_cache()
     response = McpServerResponse.model_validate(server)
-    response.tool_count = 1
-    response.published_tool_count = 1
+    echo_tool_total = 2  # echo + echo_slow（进度验收工具）
+    response.tool_count = echo_tool_total
+    response.published_tool_count = echo_tool_total
     response.stale_tool_count = 0
     response.auth_headers_configured = mcp_auth_headers_configured(server)
     response.authorization_configured, response.masked_auth_headers = mcp_auth_headers_summary(server)
@@ -1408,7 +1470,9 @@ async def execute_mcp_tool(
             }
         else:
             lc_tool = McpToolFactory.create_tool(tool)
-            result = await lc_tool.ainvoke(req.arguments)
+            result = await resolve_tool_invocation_result(
+                await lc_tool.ainvoke(req.arguments)
+            )
         return {"status": "success", "result": result, "mcp_auth": mcp_auth}
     except Exception as e:
         # 远程执行失败必须是错误状态，不能 HTTP 200 返回 status=error：否则监控/调用方
@@ -1424,6 +1488,52 @@ async def execute_mcp_tool(
             status_code=502,
             detail=f"MCP 工具执行失败: {str(e)[:500]}",
         ) from e
+
+@router.get("/tools/{tool_id}/curl")
+async def get_mcp_tool_curl(
+    tool_id: str,
+    arguments: Optional[str] = Query(
+        None,
+        description="已填好的参数（JSON 文本），用于生成更贴近实际调用的请求体",
+    ),
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+) -> Dict:
+    """生成可直接复制执行的 curl 片段。
+
+    只读：不发起任何远端调用，也不回显真实令牌与私钥——用户断言按调用实时签发，
+    静态值抄出去必然过期，所以片段里只给占位符与说明。
+    """
+    stmt = select(McpToolCache).where(McpToolCache.id == tool_id)
+    tool = (await db.execute(stmt)).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+
+    server = (
+        await db.execute(select(McpServer).where(McpServer.id == tool.server_id))
+    ).scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    _ensure_server_control_access(server, user)
+
+    parsed_arguments: Dict[str, Any] = {}
+    if arguments:
+        try:
+            candidate = json.loads(arguments)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"arguments 不是合法 JSON: {exc.msg}",
+            ) from exc
+        if isinstance(candidate, dict):
+            parsed_arguments = candidate
+
+    return build_mcp_curl_snippet(
+        server,
+        str(tool.tool_name).split(":", 1)[-1],
+        parsed_arguments,
+    )
+
 
 @router.put("/tools/{tool_id}/publish", dependencies=[Depends(require_permission("element", "element:mcp_management:publish"))])
 async def toggle_tool_publish(

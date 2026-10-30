@@ -21,6 +21,23 @@ const password = ref('')
 const error = ref('')
 const loading = ref(false)
 
+// SSO 登录方式：适配 portal-web 的 check/login 必传 loginType。
+// 默认值由 /auth/config/public 的 sso_login_type 给出（即后台 SSO_LOGIN_DEFAULT_TYPE 配置），
+// 用户可以在登录页临时切到另一种；两种凭据不通用，所以要显式让用户选而不是猜。
+const SSO_LOGIN_TYPE_OPTIONS = [
+    { value: 'ad', label: '域账号' },
+    { value: 'local', label: '本地密码' },
+] as const
+type SsoLoginType = (typeof SSO_LOGIN_TYPE_OPTIONS)[number]['value']
+const ssoLoginType = ref<SsoLoginType>('ad')
+
+// 后台开关（SSO_LOGIN_AD / SSO_LOGIN_LOCAL）允许的方式。默认「都可用」：
+// 配置接口抖动时不能反过来把登录整条锁死——真正的把关在后端，它会拒绝被关闭的方式。
+const ssoEnabledTypes = ref<string[]>(SSO_LOGIN_TYPE_OPTIONS.map((o) => o.value))
+const isSsoTypeEnabled = (value: string) => ssoEnabledTypes.value.includes(value)
+// 两种方式都被关掉 = 这个部署不提供 SSO 登录：输入框和提交按钮整体禁用
+const ssoAvailable = computed(() => ssoEnabledTypes.value.length > 0)
+
 const DEFAULT_LOGIN_BRAND_NAME = 'NanZi · 智能体平台'
 const DEFAULT_LOGIN_SUBTITLE = 'Your Intelligent Agent Platform'
 
@@ -528,6 +545,23 @@ const fetchPublicConfig = async () => {
         if (response.data?.status === 'success') {
             configLoaded = true
             ssoEnabled.value = response.data.data?.yovole_sso_enabled === true
+            // 先定哪些方式可用，再定默认选中项——默认项必须落在可用集合里，
+            // 否则会出现「默认高亮一个已经禁用的按钮」。
+            const enabledSsoTypes = response.data.data?.sso_login_enabled_types
+            if (Array.isArray(enabledSsoTypes)) {
+                ssoEnabledTypes.value = enabledSsoTypes.filter(
+                    (t: string) => t === 'ad' || t === 'local'
+                )
+            }
+            const configuredSsoLoginType = response.data.data?.sso_login_type
+            if (
+                (configuredSsoLoginType === 'ad' || configuredSsoLoginType === 'local') &&
+                isSsoTypeEnabled(configuredSsoLoginType)
+            ) {
+                ssoLoginType.value = configuredSsoLoginType
+            } else if (ssoEnabledTypes.value.length > 0) {
+                ssoLoginType.value = ssoEnabledTypes.value[0] as SsoLoginType
+            }
             hideLoginApiKey.value = response.data.data?.hide_login_apikey === true
             registrationEnabled.value = response.data.data?.user_registration_enabled === true
             passwordResetAvailable.value = response.data.data?.password_reset_available === true
@@ -616,8 +650,19 @@ const handleLogin = async () => {
         if (!username.value || !password.value) { error.value = '请完善账号信息'; return }
         payload = { username: username.value, password: password.value }
     } else if (activeTab.value === 'sso') {
+        // 回车也能提交，所以这里必须再拦一次，不能只靠按钮 disabled
+        if (!ssoAvailable.value) { error.value = 'SSO 登录已关闭，请联系管理员'; return }
+        if (!isSsoTypeEnabled(ssoLoginType.value)) {
+            error.value = '该登录方式已被管理员关闭，请换一种方式'
+            return
+        }
         if (!username.value || !password.value) { error.value = '请完善 SSO 账号信息'; return }
-        payload = { username: username.value, password: password.value }
+        // login_type 必须带上：portal-web 侧不传会被参数校验拒成 code=500。
+        payload = {
+            username: username.value,
+            password: password.value,
+            login_type: ssoLoginType.value,
+        }
         endpoint = '/api/portal/auth/sso/login'
     } else return
 
@@ -806,6 +851,42 @@ const handleLogin = async () => {
             <form v-if="!isTwoFactorStep && !isRegisterStep" @submit.prevent="handleLogin" class="space-y-4 xl:space-y-6">
                 <div class="space-y-4">
                     <div v-if="activeTab === 'password' || activeTab === 'sso'" class="space-y-4 animate-fade-slide-up">
+                        <!-- 登录方式：两种凭据不通用（域账号 vs 门户本地密码），必须让用户选。
+                             只在 SSO 页出现；本地账号页走的是平台自己的密码校验，与 SSO 无关。
+                             后台用 SSO_LOGIN_AD / SSO_LOGIN_LOCAL 关掉的方式在这里置灰 + 打「禁用」，
+                             点了也不会生效（按钮本身 disabled，后端还会再拒一次）。 -->
+                        <div v-if="activeTab === 'sso'" class="space-y-1.5">
+                            <label class="text-[11px] font-bold text-slate-400 uppercase tracking-wider ml-1">登录方式</label>
+                            <div class="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
+                                <button
+                                    v-for="opt in SSO_LOGIN_TYPE_OPTIONS"
+                                    :key="opt.value"
+                                    type="button"
+                                    :disabled="!isSsoTypeEnabled(opt.value)"
+                                    @click="isSsoTypeEnabled(opt.value) && (ssoLoginType = opt.value)"
+                                    class="relative rounded-md px-3 py-1.5 text-xs font-bold transition-all"
+                                    :class="[
+                                        !isSsoTypeEnabled(opt.value)
+                                            ? 'cursor-not-allowed text-slate-400/70'
+                                            : (ssoLoginType === opt.value ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700')
+                                    ]"
+                                >
+                                    <span :class="{ 'line-through decoration-slate-400': !isSsoTypeEnabled(opt.value) }">{{ opt.label }}</span>
+                                    <span
+                                        v-if="!isSsoTypeEnabled(opt.value)"
+                                        class="ml-1 align-middle text-[9px] font-normal text-slate-400"
+                                    >禁用</span>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- 两种方式都被管理员关掉：SSO 这条路整体不可用，输入框和按钮一起禁用 -->
+                        <div
+                            v-if="activeTab === 'sso' && !ssoAvailable"
+                            class="p-3 bg-amber-50 text-amber-700 text-[11px] rounded-lg flex items-center gap-2"
+                        >
+                            <svg class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                            <span>SSO 登录已关闭（域账号与本地密码均不可用），请联系管理员，或改用其他登录方式。</span>
+                        </div>
                         <div class="space-y-1.5">
                             <label class="text-[11px] font-bold text-slate-400 uppercase tracking-wider ml-1">
                                 {{ activeTab === 'sso' ? 'SSO 用户名' : '本地账号用户名' }}
@@ -815,6 +896,7 @@ const handleLogin = async () => {
                                 type="text" 
                                 class="w-full bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all disabled:bg-gray-100"
                                 :placeholder="activeTab === 'sso' ? '请输入 YES 账号' : '请输入本地账号用户名'"
+                                :disabled="activeTab === 'sso' && !ssoAvailable"
                             />
                         </div>
                         <div class="space-y-1.5">
@@ -824,11 +906,14 @@ const handleLogin = async () => {
                                 type="password" 
                                 class="w-full bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all disabled:bg-gray-100"
                                 placeholder="••••••••"
+                                :disabled="activeTab === 'sso' && !ssoAvailable"
                             />
                         </div>
                         <div v-if="activeTab === 'sso'" class="flex items-center gap-1.5 ml-1 animate-fade-in">
                             <div class="w-1 h-1 rounded-full bg-blue-500"></div>
-                            <span class="text-[10px] text-slate-400 font-medium">提示：请使用 YES 账号密码登录</span>
+                            <span class="text-[10px] text-slate-400 font-medium">
+                                {{ ssoLoginType === 'ad' ? '提示：请使用域账号（YES 账号）密码登录' : '提示：请使用门户设置的本地密码登录' }}
+                            </span>
                         </div>
                     </div>
 
@@ -852,8 +937,8 @@ const handleLogin = async () => {
 
                 <button 
                     type="submit" 
-                    class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-lg py-3 text-sm font-bold shadow-lg shadow-blue-600/10 transition-all active:scale-[0.98] disabled:opacity-70 flex justify-center items-center"
-                    :disabled="loading"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-lg py-3 text-sm font-bold shadow-lg shadow-blue-600/10 transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed flex justify-center items-center"
+                    :disabled="loading || (activeTab === 'sso' && !ssoAvailable)"
                 >
                     <span v-if="loading" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-3"></span>
                     {{ loading ? '连接中...' : (activeTab === 'sso' ? '统一认证登录' : '进入平台 / LOGIN') }}

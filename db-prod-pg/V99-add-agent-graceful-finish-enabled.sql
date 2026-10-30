@@ -1,0 +1,19 @@
+-- V99: 增加 Agent 渐进式收尾开关（PostgreSQL）
+-- 开启后，步数将尽时中间件会注入收尾提示并禁用工具调用，
+-- 让模型基于已有信息作答，而不是直接输出「达到最大执行步骤」模板文案。
+INSERT INTO "system_configs"
+    ("key", "value", "description", "category", "is_secret")
+VALUES
+    (
+        'agent_graceful_finish_enabled',
+        'true',
+        '步数将尽时是否让模型基于已有信息收尾（替代直接中断）。true=开启，false=恢复输出「达到最大执行步骤」。',
+        'agent',
+        FALSE
+    )
+ON CONFLICT ("key") DO UPDATE
+SET
+    "description" = EXCLUDED."description",
+    "category" = EXCLUDED."category",
+    "is_secret" = EXCLUDED."is_secret",
+    "updated_at" = CURRENT_TIMESTAMP;

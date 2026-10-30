@@ -73,6 +73,26 @@ class SsoSyncRequest(BaseModel):
 class SetPasswordRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=32, description="新密码（须符合等保复杂度要求）")
 
+
+class BatchSetPasswordRequest(BaseModel):
+    """批量改密：同一个新密码作用到多个用户。
+
+    长度上下限先由 Pydantic 拦（过短/超长直接 422）；字符类别、空白、是否包含
+    用户名由端点内 ``AuthService.validate_password_complexity`` 逐用户判定——
+    用户名这条必须逐人算：同一个密码包含 A 的用户名、对 B 却是合规的。
+    """
+
+    user_ids: List[int] = Field(..., description="目标用户 ID 列表")
+    password: str = Field(
+        ..., min_length=8, max_length=32, description="统一新密码（须符合等保复杂度要求）"
+    )
+
+
+class BatchResetPasswordRequest(BaseModel):
+    """批量重置密码：密码由系统随机生成并逐封发到用户邮箱，管理员拿不到明文。"""
+
+    user_ids: List[int] = Field(..., description="目标用户 ID 列表")
+
 # ... existing code ...
 
 @router.get("/sso-users")
@@ -897,6 +917,38 @@ async def _send_review_result_mail(user: User, approved: bool):
     return ok, (None if ok else message)
 
 
+async def _send_password_reset_mail(
+    user: User, password: str, settings: Any
+) -> tuple[bool, str | None]:
+    """把系统生成的临时密码发到用户邮箱，返回 (sent, error)。
+
+    强制走**全局** SMTP（与审核结果邮件同因）：这封邮件决定用户还能不能登录，
+    走个人 SMTP 配置的话，配置错的人就永久收不到。``settings`` 由调用方查一次
+    传进来——批量 200 人时不必每人再查一遍平台配置。
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from app.services.app_public_url_service import get_app_public_url
+    from app.services.email_delivery_service import (
+        EmailDeliveryService, build_password_reset_mail,
+    )
+
+    if not (user.email or "").strip():
+        return False, "该用户未填写邮箱"
+
+    platform_url = await get_app_public_url()
+    subject, body = build_password_reset_mail(
+        user.user_name, password, settings.sender_name, platform_url or ""
+    )
+    ok, message = await run_in_threadpool(
+        EmailDeliveryService.send_mail, settings, [user.email], subject, body
+    )
+    if not ok:
+        # 只记用户名与原因，绝不把明文密码写进日志
+        logger.warning("重置密码邮件发送失败: user=%s reason=%s", user.user_name, message)
+    return ok, (None if ok else message)
+
+
 @router.put("/users/{user_id}/departments")
 async def set_user_departments(
     user_id: int,
@@ -1484,6 +1536,281 @@ async def set_user_password(
         logger.warning("代设密码后吊销会话失败 user_id=%s: %s", user_id, exc)
 
     return {"status": "success", "message": "密码设置成功", "user_id": user_id}
+
+@router.post("/users/batch-set-password")
+async def batch_set_user_password(
+    request: BatchSetPasswordRequest,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    批量修改多个用户的登录密码（统一新密码）。
+
+    约定与 ``batch-status`` 一致：
+    - 去重保序；空列表 / 超过上限直接 400；
+    - 自动跳过当前登录账号并计入 skipped_self——否则管理员会把自己踢下线；
+    - 不存在的 ID 计入 not_found；
+    - 「密码不能包含用户名」逐用户判定：撞上的用户计入 failed 并给出原因，其余
+      照常改密。不能因为某个用户名叫得像密码片段就让整批失败；
+    - 改密成功后吊销该用户全部会话，与单用户 set-password 同口径。
+    """
+    target_ids = list(dict.fromkeys(request.user_ids or []))
+    if not target_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_ids cannot be empty"
+        )
+    if len(target_ids) > BATCH_STATUS_MAX_USERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many users in one request (max {BATCH_STATUS_MAX_USERS})"
+        )
+
+    # 与用户名无关的通用校验先做一次：不合规就不必查库、也不必逐个报同一句话。
+    valid, msg = AuthService.validate_password_complexity(request.password)
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+
+    current_user_id = admin.get("user_id")
+    try:
+        current_user_id = int(current_user_id) if current_user_id else None
+    except (ValueError, TypeError):
+        logger.warning(f"Failed to convert current_user_id to int: {current_user_id}")
+        current_user_id = None
+
+    skipped_self = 0
+    if current_user_id is not None and current_user_id in target_ids:
+        target_ids = [uid for uid in target_ids if uid != current_user_id]
+        skipped_self = 1
+
+    if not target_ids:
+        return {
+            "updated": 0,
+            "updated_ids": [],
+            "failed": [],
+            "skipped_self": skipped_self,
+            "not_found": 0,
+        }
+
+    result = await db.execute(select(User).where(User.id.in_(target_ids)))
+    users = result.scalars().all()
+    found_ids = {u.id for u in users}
+    not_found = sum(1 for uid in target_ids if uid not in found_ids)
+    by_id = {u.id: u for u in users}
+
+    updated_ids: List[int] = []
+    failed: List[Dict[str, Any]] = []
+
+    # 按请求顺序处理，失败明细的顺序与管理员勾选顺序一致
+    for uid in target_ids:
+        user = by_id.get(uid)
+        if user is None:
+            continue
+        ok, reason = AuthService.validate_password_complexity(
+            request.password, username=user.user_name
+        )
+        if not ok:
+            failed.append({"user_id": uid, "user_name": user.user_name, "reason": reason})
+            continue
+        if not await AuthService.set_user_password(uid, request.password, db=db):
+            failed.append(
+                {"user_id": uid, "user_name": user.user_name, "reason": "密码写入失败"}
+            )
+            continue
+        updated_ids.append(uid)
+        try:
+            await AuthService.revoke_sessions_for_user(uid)
+        except Exception as exc:
+            logger.warning("批量改密后吊销会话失败 user_id=%s: %s", uid, exc)
+
+    if updated_ids:
+        try:
+            await PermissionService(db).invalidate_cached_permissions_for_users(updated_ids)
+        except Exception as exc:
+            logger.warning("批量改密后清理权限缓存失败: %s", exc)
+
+    logger.info(
+        "Batch password reset by %s: updated=%s, skipped_self=%s, not_found=%s, failed=%s",
+        admin.get("user_name"),
+        len(updated_ids),
+        skipped_self,
+        not_found,
+        [(f["user_name"], f["reason"]) for f in failed],
+    )
+
+    return {
+        "updated": len(updated_ids),
+        "updated_ids": updated_ids,
+        "failed": failed,
+        "skipped_self": skipped_self,
+        "not_found": not_found,
+    }
+
+
+@router.get("/users/mail-service-status")
+async def get_mail_service_status(
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+):
+    """「邮件重置密码」的可用性判定：平台全局 SMTP 是否配置完整。
+
+    单独放一个轻量端点而不是塞进用户列表：这个状态只跟平台配置有关，与分页、
+    筛选、关键字都无关，前端进页面取一次即可。
+    """
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    try:
+        settings = await EmailDeliveryService.load_global_smtp_settings()
+    except Exception as exc:
+        logger.warning("查询平台邮件服务状态失败: %s", exc)
+        return {"available": False, "reason": "平台邮件服务状态查询失败"}
+
+    if settings is None:
+        return {
+            "available": False,
+            "reason": "平台邮件服务未启用或配置不完整，无法通过邮件下发密码",
+        }
+    return {"available": True, "reason": ""}
+
+
+@router.post("/users/batch-reset-password")
+async def batch_reset_user_password(
+    request: BatchResetPasswordRequest,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    批量重置密码：系统生成随机密码，逐封发到用户邮箱。
+
+    三条硬约束：
+    - 平台邮件服务未启用直接 400（前端按钮本来就是灰的，这里兜住绕过前端的调用）；
+    - 没填邮箱的用户跳过并计入 skipped_no_email，不能因为一个人没邮箱让整批失败；
+    - **先发信、后落库**：发信失败的用户保持原密码不变。反过来做的话，SMTP 抖一下
+      就会留下「密码已改、邮件没收到」的账号——用户不知道新密码，管理员也不知道，
+      这个账号等于废了。
+    """
+    target_ids = list(dict.fromkeys(request.user_ids or []))
+    if not target_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_ids cannot be empty"
+        )
+    if len(target_ids) > BATCH_STATUS_MAX_USERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many users in one request (max {BATCH_STATUS_MAX_USERS})"
+        )
+
+    from app.services.email_delivery_service import EmailDeliveryService
+
+    smtp_settings = await EmailDeliveryService.load_global_smtp_settings()
+    if smtp_settings is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="平台邮件服务未启用或配置不完整，无法通过邮件重置密码"
+        )
+
+    current_user_id = admin.get("user_id")
+    try:
+        current_user_id = int(current_user_id) if current_user_id else None
+    except (ValueError, TypeError):
+        logger.warning(f"Failed to convert current_user_id to int: {current_user_id}")
+        current_user_id = None
+
+    skipped_self = 0
+    if current_user_id is not None and current_user_id in target_ids:
+        target_ids = [uid for uid in target_ids if uid != current_user_id]
+        skipped_self = 1
+
+    if not target_ids:
+        return {
+            "reset": 0,
+            "reset_ids": [],
+            "skipped_self": skipped_self,
+            "skipped_no_email": [],
+            "not_found": 0,
+            "failed": [],
+        }
+
+    result = await db.execute(select(User).where(User.id.in_(target_ids)))
+    users = result.scalars().all()
+    found_ids = {u.id for u in users}
+    not_found = sum(1 for uid in target_ids if uid not in found_ids)
+    by_id = {u.id: u for u in users}
+
+    reset_ids: List[int] = []
+    skipped_no_email: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+
+    for uid in target_ids:
+        user = by_id.get(uid)
+        if user is None:
+            continue
+
+        if not (user.email or "").strip():
+            skipped_no_email.append({"user_id": uid, "user_name": user.user_name})
+            continue
+
+        try:
+            new_password = AuthService.generate_compliant_password(
+                username=user.user_name
+            )
+        except Exception as exc:
+            failed.append({
+                "user_id": uid,
+                "user_name": user.user_name,
+                "reason": f"随机密码生成失败：{exc}",
+            })
+            continue
+
+        sent, error = await _send_password_reset_mail(user, new_password, smtp_settings)
+        if not sent:
+            failed.append({
+                "user_id": uid,
+                "user_name": user.user_name,
+                "reason": error or "邮件发送失败",
+            })
+            continue
+
+        if not await AuthService.set_user_password(uid, new_password, db=db):
+            failed.append({
+                "user_id": uid,
+                "user_name": user.user_name,
+                "reason": "密码写入失败（邮件已发出，请重试重置）",
+            })
+            continue
+
+        reset_ids.append(uid)
+        try:
+            await AuthService.revoke_sessions_for_user(uid)
+        except Exception as exc:
+            logger.warning("批量重置密码后吊销会话失败 user_id=%s: %s", uid, exc)
+
+    if reset_ids:
+        try:
+            await PermissionService(db).invalidate_cached_permissions_for_users(reset_ids)
+        except Exception as exc:
+            logger.warning("批量重置密码后清理权限缓存失败: %s", exc)
+
+    logger.info(
+        "Batch password reset by mail by %s: reset=%s, skipped_self=%s, "
+        "skipped_no_email=%s, not_found=%s, failed=%s",
+        admin.get("user_name"),
+        len(reset_ids),
+        skipped_self,
+        [item["user_name"] for item in skipped_no_email],
+        not_found,
+        [(f["user_name"], f["reason"]) for f in failed],
+    )
+
+    return {
+        "reset": len(reset_ids),
+        "reset_ids": reset_ids,
+        "skipped_self": skipped_self,
+        "skipped_no_email": skipped_no_email,
+        "not_found": not_found,
+        "failed": failed,
+    }
+
 
 @router.post("/users/{user_id}/disable-2fa")
 async def disable_user_two_factor(

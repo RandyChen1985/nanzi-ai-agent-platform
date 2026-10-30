@@ -363,3 +363,38 @@ async def test_read_after_falls_back_to_full_scan_when_cursor_precedes_window(fa
     assert len(batch["events"]) == batch_size
     assert batch["events"][0]["_seq"] == 1
     assert batch["next_seq"] == batch_size
+
+
+async def test_append_drops_transient_tool_progress(fake_redis):
+    """工具进度是瞬态装饰：进日志会挤占条数上限，并在刷新续显时被重放。"""
+    journal = _journal()
+
+    await journal.append(
+        "u1",
+        "c1",
+        [
+            {"type": "log", "title": "开始"},
+            {"type": "tool_progress", "id": "tc-1", "progress": 1, "total": 3},
+            {"type": "log", "title": "完成"},
+        ],
+    )
+
+    batch = await journal.read_after("u1", "c1", after_seq=0)
+    assert [event["title"] for event in batch["events"]] == ["开始", "完成"]
+    assert all(event["type"] != "tool_progress" for event in batch["events"])
+    # 序号只按真正落库的事件推进，避免前端游标出现空洞
+    assert [event["_seq"] for event in batch["events"]] == [1, 2]
+
+
+async def test_append_drops_batch_of_only_transient_events(fake_redis):
+    journal = _journal()
+
+    await journal.append(
+        "u1",
+        "c1",
+        [{"type": "tool_progress", "id": "tc-1", "progress": 1}],
+    )
+
+    batch = await journal.read_after("u1", "c1", after_seq=0)
+    assert batch["events"] == []
+    assert batch["next_seq"] == 0, "没有落库事件时不应消耗序号"

@@ -41,11 +41,15 @@ const result = ref<unknown>(null)
 const error = ref<string | null>(null)
 const args = ref<Record<string, any>>({})
 const rawJsonArgs = ref<Record<string, string>>({})
-const activeTab = ref<'input' | 'details'>('input')
+const activeTab = ref<'input' | 'details' | 'curl'>('input')
 const requestPayload = ref<{ arguments: Record<string, any> } | null>(null)
 const requestCopied = ref(false)
 const copied = ref(false)
 const mcpAuth = ref<McpAuthStatus | null>(null)
+const curlSnippet = ref<{ curl: string; notes: string[]; url: string } | null>(null)
+const curlLoading = ref(false)
+const curlError = ref<string | null>(null)
+const curlCopied = ref(false)
 
 const schema = computed(() => {
   try {
@@ -94,6 +98,9 @@ watch([() => props.tool, () => props.isOpen], () => {
   requestCopied.value = false
   copied.value = false
   mcpAuth.value = null
+  curlSnippet.value = null
+  curlError.value = null
+  curlCopied.value = false
 }, { immediate: true })
 
 const normalizeResultText = (value: unknown): string => {
@@ -201,6 +208,52 @@ const handleCopyResult = async () => {
   }, 1500)
 }
 
+/** 只带上已填的标量参数：复杂类型要用户自己拼 JSON，避免这里给出半成品请求体。 */
+const curlArguments = computed(() => {
+  const collected: Record<string, any> = {}
+  for (const [key, prop] of Object.entries(properties.value as Record<string, any>)) {
+    if (isComplexType(prop)) continue
+    const value = args.value[key]
+    if (value !== undefined && value !== '') collected[key] = value
+  }
+  return collected
+})
+
+const loadCurlSnippet = async () => {
+  curlLoading.value = true
+  curlError.value = null
+  try {
+    const res = await axios.get(`/api/portal/mcp/tools/${props.tool.id}/curl`, {
+      params: { arguments: JSON.stringify(curlArguments.value) }
+    })
+    curlSnippet.value = res.data
+  } catch (e: any) {
+    curlSnippet.value = null
+    curlError.value = e.response?.data?.detail || e.message
+  } finally {
+    curlLoading.value = false
+  }
+}
+
+const handleCopyCurl = async () => {
+  if (!curlSnippet.value?.curl) return
+  const ok = await copyToClipboard(curlSnippet.value.curl)
+  if (!ok) {
+    showToast('复制失败', 'error')
+    return
+  }
+  curlCopied.value = true
+  showToast('已复制到剪贴板', 'success')
+  window.setTimeout(() => {
+    curlCopied.value = false
+  }, 1500)
+}
+
+// 每次切到 curl 都重新拉：参数可能刚改过，缓存住反而给出过期命令。
+watch(activeTab, (tab) => {
+  if (tab === 'curl') void loadCurlSnippet()
+})
+
 const executeTool = async () => {
   loading.value = true
   result.value = null
@@ -300,10 +353,64 @@ const executeTool = async () => {
             :class="activeTab === 'details' ? 'text-primary border-primary' : 'text-gray-400 border-transparent hover:text-gray-600'"
             @click="activeTab = 'details'"
           >调用详情</button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'curl'"
+            class="pb-3 text-sm font-semibold border-b-2 transition-colors"
+            :class="activeTab === 'curl' ? 'text-primary border-primary' : 'text-gray-400 border-transparent hover:text-gray-600'"
+            @click="activeTab = 'curl'"
+          >curl 请求</button>
         </div>
       </div>
 
       <div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+        <!-- curl 片段 -->
+        <div v-if="activeTab === 'curl'" class="space-y-4">
+          <div class="flex items-center justify-between">
+            <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider">curl 请求</h4>
+            <button
+              type="button"
+              class="text-[11px] font-medium text-primary hover:underline disabled:opacity-50"
+              :disabled="curlLoading"
+              @click="loadCurlSnippet"
+            >{{ curlLoading ? '生成中…' : '按当前参数重新生成' }}</button>
+          </div>
+
+          <div v-if="curlError" class="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">
+            {{ curlError }}
+          </div>
+
+          <div v-else-if="curlLoading && !curlSnippet" class="text-xs text-gray-400 italic">
+            正在生成…
+          </div>
+
+          <div v-else-if="curlSnippet" class="group/curl relative rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
+            <button
+              type="button"
+              class="absolute top-2 right-2 z-10 inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-800/90 p-1.5 text-slate-300 shadow-sm opacity-0 transition-all group-hover/curl:opacity-100 focus:opacity-100 hover:bg-slate-700 hover:text-white"
+              title="复制 curl"
+              aria-label="复制 curl"
+              @click="handleCopyCurl"
+            >
+              <CheckIcon v-if="curlCopied" class="w-3.5 h-3.5 text-emerald-400" />
+              <DocumentDuplicateIcon v-else class="w-3.5 h-3.5" />
+            </button>
+            <pre class="p-3 pr-10 text-xs font-mono leading-relaxed whitespace-pre-wrap break-words max-h-[420px] overflow-y-auto custom-scrollbar m-0 text-slate-100">{{ curlSnippet.curl }}</pre>
+          </div>
+
+          <ul v-if="curlSnippet?.notes?.length" class="space-y-1.5">
+            <li
+              v-for="(note, index) in curlSnippet.notes"
+              :key="index"
+              class="flex gap-1.5 text-[11px] leading-5 text-gray-500"
+            >
+              <span class="text-gray-300">·</span>
+              <span>{{ note }}</span>
+            </li>
+          </ul>
+        </div>
+
         <!-- Input Form -->
         <div v-if="activeTab === 'input'" class="space-y-4">
           <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider">参数输入</h4>

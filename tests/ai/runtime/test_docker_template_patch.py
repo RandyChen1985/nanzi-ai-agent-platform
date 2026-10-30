@@ -235,8 +235,10 @@ def test_build_sources_default_to_domestic_mirrors(monkeypatch):
     assert f"{DEFAULT_APT_MIRROR}/debian-security" in rendered
     assert "/etc/apt/sources.list.d/debian.sources" in rendered
 
-    # uv 不再走 astral.sh 的 shell installer（省一次 GitHub 往返）
-    assert "https://astral.sh/uv/install.sh" not in rendered
+    # uv 不再走 astral.sh 的 shell installer（省一次 GitHub 往返）。
+    # 2.0.10+ 的模板用的是版本化地址 https://astral.sh/uv/{uv_version}/install.sh，
+    # 所以判据是「整个 astral.sh/uv 前缀都不出现」，而不是旧的固定 URL。
+    assert "astral.sh/uv" not in rendered
     assert f"pip install --no-cache-dir --index-url {DEFAULT_PIP_INDEX} uv" in rendered
 
     # index 由 ENV 统一下发，requirements 与 agentscope 两个安装步骤都跟着走
@@ -250,7 +252,7 @@ def test_build_sources_can_be_turned_off(monkeypatch):
     """显式设为 off 时退回官方源：老网络/海外环境仍可构建。"""
     rendered = _render_with_sources(monkeypatch, pip_index="off", apt_mirror="off")
 
-    assert "https://astral.sh/uv/install.sh" in rendered
+    assert "https://astral.sh/uv/" in rendered
     assert "mirrors.tuna.tsinghua.edu.cn" not in rendered
     assert "UV_DEFAULT_INDEX" not in rendered
     # 上游模板只写 `apt-get update`、不写源地址，所以「关掉」的判据是换源脚本不存在
@@ -299,7 +301,7 @@ def test_build_sources_read_from_settings_when_env_absent(monkeypatch):
     rendered = mk.render_dockerfile(base_image="python:3.11-slim")
 
     assert "UV_DEFAULT_INDEX" not in rendered
-    assert "https://astral.sh/uv/install.sh" in rendered
+    assert "https://astral.sh/uv/" in rendered
 
 
 def test_env_var_overrides_settings(monkeypatch):
