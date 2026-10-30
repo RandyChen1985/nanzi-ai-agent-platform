@@ -1,0 +1,128 @@
+name: Docker 镜像构建
+
+on:
+  # 手动触发：可指定版本号、平台，并可选上传 tar 产物
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '镜像版本号，如 1.2.0'
+        required: true
+        type: string
+      platforms:
+        description: '目标平台：x86 = linux/amd64，arm = linux/arm64'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - x86
+          - arm
+      upload_tar:
+        description: '上传 tar 产物到 Workflow Artifacts（每平台 1-2GB，注意存储配额）'
+        required: true
+        default: false
+        type: boolean
+
+  # 打 v* tag 自动触发，版本号取 tag 名去掉 v 前缀（v1.2.3 -> 1.2.3）
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+# 同一 ref 上的构建串行排队，不取消进行中的构建
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建 ${{ matrix.id }}（${{ matrix.docker_platform }}）
+    runs-on: ubuntu-latest
+    # QEMU 跨架构下 pip/npm 较慢，预留 2 小时
+    timeout-minutes: 120
+    # 手动触发时按所选平台过滤；tag 触发时全量构建
+    if: github.event_name == 'push' || inputs.platforms == 'both' || inputs.platforms == matrix.id
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: x86
+            script: build_linux_x86.sh
+            docker_platform: linux/amd64
+            qemu: false
+            node: false
+          - id: arm
+            script: build_linux_arm.sh
+            docker_platform: linux/arm64
+            qemu: true
+            node: true
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 仅 arm64 job 需要：x86 runner 上模拟 arm64 容器
+      - name: 安装 QEMU（跨架构模拟）
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      # arm job 跨架构构建时，脚本检测到 needs_cross_build 会自动在宿主机
+      # 执行 npm ci + vite build 预构建前端（避免 QEMU 模拟下 vite OOM）
+      - name: 安装 Node.js（arm 宿主机预构建前端用）
+        if: matrix.node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 解析版本号
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # tag 推送：v1.2.3 -> 1.2.3
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "错误: 版本号为空" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: 运行构建脚本 docker/${{ matrix.script }}
+        env:
+          # 仅在手动勾选「上传 tar」时导出镜像 tar，否则跳过导出（省磁盘与时间）
+          EXPORT_TAR: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_tar && '1' || '0' }}
+        run: |
+          chmod +x docker/_build_common.sh docker/${{ matrix.script }}
+          bash docker/${{ matrix.script }} "${{ steps.ver.outputs.version }}"
+
+      - name: 上传 tar 产物
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_tar
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanzi-ai-agent-${{ steps.ver.outputs.version }}-${{ matrix.id }}-linux-tar
+          path: docker/release/*.tar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0  # tar 本身无需再压缩，省 CPU
+
+      - name: 输出构建摘要
+        if: always()
+        run: |
+          {
+            echo "### 构建 ${{ matrix.id }}（${{ matrix.docker_platform }}）"
+            echo ""
+            echo "| 项目 | 值 |"
+            echo "| --- | --- |"
+            echo "| 结果 | ${{ job.status }} |"
+            echo "| 版本 | \`${{ steps.ver.outputs.version }}\` |"
+            echo "| 脚本 | \`docker/${{ matrix.script }}\` |"
+            echo "| tar 导出 | ${{ github.event_name == 'workflow_dispatch' && inputs.upload_tar && '已导出并上传 artifact（保留 7 天）' || '跳过（EXPORT_TAR=0）' }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
