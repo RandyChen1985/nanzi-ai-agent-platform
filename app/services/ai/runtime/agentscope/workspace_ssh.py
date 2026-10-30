@@ -1261,12 +1261,15 @@ def _abspath(path):
 
 
 @mcp.tool()
-def bash(command: str, cwd: str = ".") -> str:
+def bash(command: str, cwd: str = ".", description: str = "") -> str:
     \"\"\"Run a shell command inside the remote sandbox.
 
     Args:
         command: The shell command line to execute.
         cwd: Relative directory (under the remote workdir) to run in.
+        description: What this command is for, 10-25 中文字 / 8-20 English words
+            (e.g. "检查 5432 端口是否被占用"). Shown in the user's execution
+            timeline next to the command; do not restate the command itself.
     \"\"\"
     workdir = _ROOT if cwd in ("", ".") else _abspath(cwd)
     import shlex as _sh

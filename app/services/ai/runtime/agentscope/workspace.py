@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import copy
 import fnmatch
 import hashlib
 import inspect
@@ -6995,12 +6996,69 @@ class _CanonicalWorkspaceNativeTool:
         return self._native_tool(**kwargs)
 
 
+# 平台侧要求模型为每次 Bash 调用写 ``description``（时间线行标题的「这条命令在干什么」）。
+# AgentScope 内置 Bash 与沙箱 MCP 的 schema 都只把它当可选项，简单命令上模型经常省略，
+# 前端于是只剩一句「工具完成 · Bash」。这里在工具描述（模型可见的那层）把要求写死，
+# 不依赖模型自觉，也不动 schema 的 required，避免给每次调用增加失败风险。
+BASH_INTENT_SUMMARY_MARKER = "[platform:bash-intent-summary]"
+BASH_INTENT_SUMMARY_GUIDANCE = (
+    f"{BASH_INTENT_SUMMARY_MARKER}\n"
+    "REQUIRED: every Bash call MUST pass the `description` argument. The platform "
+    "shows it next to the command in the user's execution timeline, so it must "
+    "answer \"what is this command for\", not restate the command.\n"
+    "- 中文写 10-25 个字，例如「检查 5432 端口是否被占用」；不要写「执行 ls」「查看目录」这类空话。\n"
+    "- English: 8-20 words, e.g. \"Check whether port 5432 is already in use\".\n"
+    "- 管道、少见参数等复杂命令：写目标，而不是复述参数名。\n"
+    "- Never omit it; never copy the command text verbatim."
+)
+BASH_DESCRIPTION_PARAM_GUIDANCE = (
+    "REQUIRED on every call. 10-25 个中文字 / 8-20 English words describing what the "
+    "command is for, e.g. 「检查 5432 端口是否被占用」. Shown in the user's execution "
+    "timeline; do not restate the command."
+)
+
+
+def _augment_bash_tool_description(description: str) -> str:
+    """给 Bash 工具描述追加「必须写 description」的平台要求（幂等）。"""
+
+    base = str(description or "").strip()
+    if BASH_INTENT_SUMMARY_MARKER in base:
+        return base
+    if not base:
+        return BASH_INTENT_SUMMARY_GUIDANCE
+    return f"{base}\n\n{BASH_INTENT_SUMMARY_GUIDANCE}"
+
+
+def _augment_bash_parameter_schema(schema: Any) -> Any:
+    """把 ``description`` 参数的说明换成平台口径（只改文案，不动 required）。"""
+
+    if not isinstance(schema, dict):
+        return schema
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return schema
+    description_property = properties.get("description")
+    if not isinstance(description_property, dict):
+        return schema
+    if BASH_INTENT_SUMMARY_MARKER in str(description_property.get("description") or ""):
+        return schema
+    augmented = copy.deepcopy(schema)
+    augmented["properties"]["description"]["description"] = (
+        f"{BASH_DESCRIPTION_PARAM_GUIDANCE} {BASH_INTENT_SUMMARY_MARKER}"
+    )
+    return augmented
+
+
 DEFAULT_BASH_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "command": {
             "type": "string",
             "description": "The command to run in the terminal",
+        },
+        "description": {
+            "type": "string",
+            "description": BASH_DESCRIPTION_PARAM_GUIDANCE,
         },
     },
     "required": ["command"],
@@ -7443,10 +7501,20 @@ async def bind_configured_tools_to_workspace(
             source_type=getattr(spec, "source_type", "system"),
             permission_scope=getattr(spec, "permission_scope", None),
         )
+        # Bash 的 description 是时间线行标题的来源：沙箱 MCP / 内置 schema 都把它当可选，
+        # 这里统一在绑定出口补上平台要求，保证 lazy、沙箱、local 三条路径口径一致。
+        final_description = spec.description or rebound.description
+        final_parameters_schema = rebound.parameters_schema
+        if native_name == "Bash":
+            final_description = _augment_bash_tool_description(final_description)
+            final_parameters_schema = _augment_bash_parameter_schema(
+                final_parameters_schema
+            )
         bound.append(
             replace(
                 rebound,
-                description=spec.description or rebound.description,
+                description=final_description,
+                parameters_schema=final_parameters_schema,
                 evidence_types=getattr(spec, "evidence_types", rebound.evidence_types),
                 evidence_policy=getattr(spec, "evidence_policy", rebound.evidence_policy),
                 evidence_inference_disabled=bool(
