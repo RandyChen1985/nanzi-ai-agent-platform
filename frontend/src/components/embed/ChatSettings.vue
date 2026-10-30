@@ -409,6 +409,16 @@ const handleSetGeneratingAnimation = (visible: boolean) => {
     saveSettings();
 };
 
+const handleSetHideChatAvatar = (hidden: boolean) => {
+    props.config.hideChatAvatar = hidden;
+    localStorage.setItem("yovole_hide_chat_avatar", hidden ? "1" : "0");
+    showToast(
+        hidden ? "聊天头像已隐藏，气泡宽度已放开" : "聊天头像已恢复",
+        hidden ? "success" : "info",
+    );
+    saveSettings();
+};
+
 const handleSetMessageBorder = (hidden: boolean) => {
     props.config.hideMessageBorder = hidden;
     localStorage.setItem("user_has_custom_border_preference", "true");
@@ -809,6 +819,20 @@ const handleLogout = () => {
                   <span>禅意</span>
                 </button>
               </div>
+            </div>
+
+            <!-- Hide Chat Avatar：与「隐藏 AI 消息外框」同属“砍占位、把空间还给内容” -->
+            <div class="flex items-start justify-between py-1">
+              <div class="flex items-start space-x-2.5 pr-2">
+                <div class="mt-0.5 text-gray-400 dark:text-gray-500 shrink-0">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                </div>
+                <div>
+                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">隐藏聊天头像</h5>
+                  <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">隐藏双方头像，左右各腾出 40px，气泡显示更多内容</p>
+                </div>
+              </div>
+              <Switch :modelValue="!!config.hideChatAvatar" @update:modelValue="handleSetHideChatAvatar" class="scale-[0.8] origin-right" />
             </div>
 
             <!-- Message Border -->

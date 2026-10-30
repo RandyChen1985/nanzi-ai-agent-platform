@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EmbedChat · 隐藏聊天头像开关（2026-10-30 原型）</title>
+<!--
+  静态原型：验证「界面设置里加一个开关，隐藏对话双方头像，把左右各 40px 还给内容」。
+
+  尺寸依据（取自 EmbedChat.vue 现状，非估算）：
+    头像          w-8 = 32px，与气泡之间 space-x-2 = 8px，合计 40px/侧
+    消息容器      px-3 (12px) / sm:px-4 (16px)
+    用户气泡      max-w-[85%]，操作行 pr-10 (40px) 用来跟头像右边缘对齐
+    AI 气泡列     max-w-[90%]
+
+  下面两个面板都按 420px 宽（典型嵌入侧栏）渲染，直接可量。
+-->
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --primary: #1677ff;
+    --ink: #0f172a;
+    --ink-2: #334155;
+    --muted: #64748b;
+    --muted-2: #94a3b8;
+    --line: #e8ecf3;
+    --line-2: #f1f5f9;
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --ok: #059669;
+    --warn: #d97706;
+    --danger: #dc2626;
+  }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+      "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1180px; margin: 0 auto; padding: 34px 28px 60px; }
+
+  /* ---------- 页头 ---------- */
+  header { margin-bottom: 30px; }
+  h1 { margin: 0 0 10px; font-size: 25px; letter-spacing: -.4px; }
+  .sub { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.75; max-width: 820px; }
+  .meta {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin-top: 14px; padding: 5px 11px; border-radius: 999px;
+    background: #eef4ff; color: #1d4ed8;
+    font-size: 11.5px; font-weight: 600;
+  }
+  .meta::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #1d4ed8; }
+
+  /* ---------- 区块 ---------- */
+  .block { margin-top: 38px; }
+  h2 {
+    display: flex; align-items: center; gap: 9px;
+    margin: 0 0 6px; font-size: 15px; letter-spacing: -.2px;
+  }
+  .num {
+    display: inline-grid; place-items: center;
+    width: 20px; height: 20px; border-radius: 6px;
+    background: var(--ink); color: #fff; font-size: 11.5px; font-weight: 700;
+  }
+  .note { margin: 0 0 16px; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+  .note b { color: var(--ink-2); }
+
+  /* ---------- 设置面板片段 ---------- */
+  .settings {
+    width: 640px; padding: 20px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 12px 32px -18px rgba(15,23,42,.18);
+  }
+  .group {
+    background: rgba(249,250,251,.6); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px;
+  }
+  .group-title {
+    display: flex; align-items: center; gap: 6px;
+    padding-bottom: 9px; margin-bottom: 12px; border-bottom: 1px solid var(--line);
+    font-size: 10px; font-weight: 800; letter-spacing: .09em; color: var(--muted-2);
+    text-transform: uppercase;
+  }
+  .styles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+  .style-btn {
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    height: 34px; border-radius: 8px; font-size: 10.5px; font-weight: 600;
+    background: #fff; color: #64748b; border: 1px solid #f1f5f9;
+  }
+  .style-btn.on {
+    background: #eff6ff; color: #2563eb; border-color: #bfdbfe; font-weight: 800;
+  }
+
+  /* 开关行 */
+  .row { display: flex; align-items: flex-start; justify-content: space-between; padding: 5px 0; }
+  .row + .row { margin-top: 4px; }
+  .row-left { display: flex; align-items: flex-start; gap: 10px; padding-right: 8px; }
+  .row-icon { flex: 0 0 auto; margin-top: 2px; color: #94a3b8; }
+  .row-title { font-size: 12px; font-weight: 800; color: #374151; }
+  .row-desc { margin-top: 2px; font-size: 9.5px; line-height: 1.6; color: #9ca3af; }
+  .switch {
+    flex: 0 0 auto; width: 40px; height: 22px; border-radius: 999px;
+    background: #e5e7eb; position: relative; transform: scale(.8); transform-origin: right center;
+  }
+  .switch.on { background: var(--primary); }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 18px; height: 18px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.18); transition: left .16s;
+  }
+  .switch.on::after { left: 20px; }
+
+  /* 新增行高亮 */
+  .row.is-new {
+    position: relative;
+    margin: 0 -10px 6px; padding: 9px 10px;
+    border: 1.5px dashed #f59e0b; border-radius: 10px;
+    background: #fffbeb;
+  }
+  .row.is-new .row-title { color: #b45309; }
+  .row.is-new .switch.on { background: #f59e0b; }
+  .badge-new {
+    position: absolute; top: -9px; left: 10px;
+    padding: 1px 7px; border-radius: 999px;
+    background: #f59e0b; color: #fff; font-size: 9.5px; font-weight: 800; letter-spacing: .04em;
+  }
+  .arrow-hint { margin: 10px 0 0; font-size: 11.5px; color: #b45309; font-weight: 600; }
+
+  /* ---------- 对比 ---------- */
+  .compare { display: flex; gap: 26px; align-items: flex-start; flex-wrap: wrap; }
+  figure { margin: 0; }
+  figcaption {
+    display: flex; align-items: center; gap: 7px;
+    margin-bottom: 9px; font-size: 12px; font-weight: 700; color: var(--ink-2);
+  }
+  .tag {
+    padding: 2px 7px; border-radius: 5px; font-size: 10px; font-weight: 800; letter-spacing: .03em;
+  }
+  .tag.before { background: #f1f5f9; color: #64748b; }
+  .tag.after  { background: #ecfdf5; color: #047857; }
+
+  /* 聊天面板 */
+  .chat {
+    width: 420px; height: 430px; display: flex; flex-direction: column;
+    background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+    box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 18px 40px -26px rgba(15,23,42,.28);
+    position: relative;
+  }
+  .chat-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 12px; border-bottom: 1px solid var(--line-2);
+    font-size: 11.5px; font-weight: 700; color: var(--ink-2);
+  }
+  .chat-head .dots { display: flex; gap: 4px; }
+  .chat-head .dots i { width: 5px; height: 5px; border-radius: 50%; background: #cbd5e1; }
+  .msgs { flex: 1; overflow: hidden; padding: 12px 16px; background: #f8fafc; }
+
+  /* 消息行：before 保留头像位，after 去掉 */
+  .msg-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+  .msg-row.me { justify-content: flex-end; }
+  .chat.after .msg-row { gap: 0; }
+
+  .avatar {
+    flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%;
+    display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: 700;
+    border: 1px solid #fff; box-shadow: 0 1px 3px rgba(15,23,42,.12);
+  }
+  .avatar.user { background: linear-gradient(135deg, #60a5fa, #3b82f6); }
+  .avatar.ai { background: linear-gradient(135deg, #818cf8, #6366f1); }
+  .chat.after .avatar { display: none; }
+
+  .bubble {
+    padding: 9px 13px; font-size: 12.5px; line-height: 1.62;
+    border-radius: 16px; max-width: 330px;
+  }
+  .bubble.me {
+    background: var(--primary); color: #fff;
+    border-top-right-radius: 4px;
+  }
+  .bubble.ai {
+    background: #fff; color: #1f2937;
+    border: 1px solid #eef2f7; border-left: 4px solid rgba(22,119,255,.6);
+    border-top-left-radius: 4px;
+  }
+  /* 隐藏头像后气泡吃掉腾出来的 40px：330 → 370（仍留 18px 呼吸） */
+  .chat.after .bubble.me { max-width: 370px; }
+  .chat.after .bubble.ai { max-width: 370px; }
+
+  .ai-name {
+    display: inline-flex; align-items: center; gap: 5px;
+    margin: 0 0 4px 4px; padding: 2px 9px; border-radius: 999px;
+    background: rgba(249,250,251,.9); border: 1px solid #e5e7eb;
+    font-size: 10px; font-weight: 600; color: #4b5563;
+  }
+  .ai-name i { width: 5px; height: 5px; border-radius: 50%; background: rgba(22,119,255,.7); }
+  .chat.after .ai-name { margin-left: 0; }
+
+  .composer {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-top: 1px solid var(--line-2);
+  }
+  .composer .field {
+    flex: 1; height: 30px; border-radius: 9px; background: #f8fafc;
+    border: 1px solid #eef2f7; color: #cbd5e1; font-size: 11.5px;
+    display: flex; align-items: center; padding: 0 11px;
+  }
+  .composer .send {
+    width: 30px; height: 30px; border-radius: 9px; background: var(--primary);
+    display: grid; place-items: center; color: #fff; font-size: 12px;
+  }
+
+  /* 尺寸标注 */
+  .ruler {
+    position: absolute; top: 52px; height: 34px; width: 40px;
+    border: 1.5px dashed #ef4444; border-radius: 6px;
+    display: grid; place-items: center;
+    background: rgba(239,68,68,.06);
+  }
+  .ruler.right { right: 12px; }
+  .ruler.left  { left: 12px; border-color: #10b981; background: rgba(16,185,129,.07); }
+  .ruler span {
+    font-size: 9.5px; font-weight: 800; color: #ef4444;
+    background: #fff; padding: 1px 4px; border-radius: 4px;
+  }
+  .ruler.left span { color: #047857; }
+  .ruler.none {
+    border-color: transparent; background: transparent;
+  }
+  .ruler.none::after {
+    content: ""; position: absolute; inset: 0;
+    background: repeating-linear-gradient(45deg, rgba(16,185,129,.12) 0 5px, transparent 5px 10px);
+    border-radius: 6px;
+  }
+
+  /* 宽度标尺 */
+  .widthbar {
+    margin-top: 10px; display: flex; align-items: center; gap: 7px;
+    font-size: 11px; color: var(--muted);
+  }
+  .widthbar .track { position: relative; height: 5px; border-radius: 3px; background: #e2e8f0; width: 100%; }
+  .widthbar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: #94a3b8; }
+  .chat.after + .widthbar .fill, .widthbar.after .fill { background: var(--ok); }
+
+  /* ---------- 清单 ---------- */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; background: #fff; border-radius: 12px; overflow: hidden; }
+  th, td { padding: 10px 13px; text-align: left; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+  th { background: #f8fafc; font-size: 11px; font-weight: 800; color: var(--muted); letter-spacing: .04em; }
+  tr:last-child td { border-bottom: none; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 11.5px; background: #f1f5f9; padding: 1px 5px; border-radius: 4px; color: #be185d;
+  }
+  .ok { color: var(--ok); font-weight: 700; }
+  .warn { color: var(--warn); font-weight: 700; }
+  .danger { color: var(--danger); font-weight: 700; }
+
+  .callout {
+    margin-top: 16px; padding: 12px 15px; border-radius: 11px;
+    background: #fffbeb; border: 1px solid #fde68a; font-size: 12.5px; line-height: 1.75; color: #78350f;
+  }
+  .callout b { color: #92400e; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <h1>隐藏聊天头像</h1>
+    <p class="sub">
+      在「界面设置 → 个性视觉」里加一个开关，把对话双方的头像隐藏掉。头像本身 32px，加上与气泡之间的 8px 间距，
+      左右两侧各占 40px —— 关掉之后这 80px 全部还给消息内容。
+    </p>
+    <div class="meta">原型 · 2026-10-30 · 仅视觉稿，尚未改动代码</div>
+  </header>
+
+  <!-- ============ 1. 开关位置 ============ -->
+  <section class="block">
+    <h2><span class="num">1</span>开关放在哪</h2>
+    <p class="note">
+      按你的要求放在「隐藏 AI 消息外框」<b>上方</b>。两者是同一类开关：都是在砍掉装饰性占位、把空间还给内容，
+      放一起用户一眼能看出它们是一组。
+    </p>
+
+    <div class="settings">
+      <div class="group">
+        <div class="group-title">
+          <span>🎨</span> AI 消息排版样式 / Styles
+        </div>
+
+        <div class="styles">
+          <div class="style-btn on"><span>✨</span>现代</div>
+          <div class="style-btn"><span>🍃</span>极简</div>
+          <div class="style-btn"><span>📖</span>学术</div>
+          <div class="style-btn"><span>🍎</span>苹果</div>
+          <div class="style-btn"><span>👀</span>护眼</div>
+          <div class="style-btn"><span>⏱</span>紧凑</div>
+        </div>
+
+        <!-- 新增：隐藏聊天头像 -->
+        <div class="row is-new">
+          <span class="badge-new">新增</span>
+          <div class="row-left">
+            <div class="row-icon">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <circle cx="9" cy="8" r="3.2"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M3.5 19c0-2.6 2.5-4.4 5.5-4.4s5.5 1.8 5.5 4.4"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"
+                  d="M17.5 8.5h3M19 7v3"/>
+              </svg>
+            </div>
+            <div>
+              <div class="row-title">隐藏聊天头像</div>
+              <div class="row-desc">隐藏用户与 AI 的头像，左右各腾出 40px，气泡能显示更多内容</div>
+            </div>
+          </div>
+          <div class="switch on"></div>
+        </div>
+
+        <div class="row">
+          <div class="row-left">
+            <div class="row-icon">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V7z"/>
+              </svg>
+            </div>
+            <div>
+              <div class="row-title">隐藏 AI 消息外框</div>
+              <div class="row-desc">仅隐藏消息气泡外框，Markdown 表格边框保留</div>
+            </div>
+          </div>
+          <div class="switch on"></div>
+        </div>
+
+        <div class="row">
+          <div class="row-left">
+            <div class="row-icon">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
+              </svg>
+            </div>
+            <div>
+              <div class="row-title">生成中动画</div>
+              <div class="row-desc">生成回复时输入框里的小人走路动画，关闭后只保留三点提示</div>
+            </div>
+          </div>
+          <div class="switch on"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 2. 效果对比 ============ -->
+  <section class="block">
+    <h2><span class="num">2</span>消息区长什么样</h2>
+    <p class="note">
+      两个面板都是 <b>420px 宽</b>（典型嵌入侧栏），内容逐字相同 —— 差别只在头像开关。
+      气泡上限从 330px 提到 370px，同样的字号下每行能多塞 3～4 个汉字。
+    </p>
+
+    <div class="compare">
+
+      <!-- BEFORE -->
+      <figure>
+        <figcaption><span class="tag before">现在</span> 带头像 · 每侧 40px 被占用</figcaption>
+        <div class="chat before">
+          <div class="chat-head">
+            <span>新对话</span>
+            <span class="dots"><i></i><i></i><i></i></span>
+          </div>
+
+          <div class="msgs">
+            <div class="msg-row me">
+              <div class="bubble me">帮我统计上个月各渠道的订单转化率，按自然搜索和付费投放拆开</div>
+              <div class="avatar user">我</div>
+            </div>
+
+            <div class="msg-row">
+              <div class="avatar ai">AI</div>
+              <div>
+                <div class="ai-name"><i></i>数据分析助手 · 为您服务</div>
+                <div class="bubble ai">
+                  上个月整体转化率 3.82%，环比上升 0.4 个百分点。其中自然搜索 4.6%、信息流 2.9%、老客复购 6.1%。
+                  信息流是唯一拖后腿的渠道，建议把预算往老客复购倾斜。
+                </div>
+              </div>
+            </div>
+
+            <div class="msg-row me">
+              <div class="bubble me">信息流这个月投放的预算是多少，还够用吗</div>
+              <div class="avatar user">我</div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="field">输入消息…</div>
+            <div class="send">↑</div>
+          </div>
+
+        </div>
+        <div class="widthbar">
+          <span class="track"><span class="fill" style="width:78%"></span></span>
+          <span>气泡 330px</span>
+        </div>
+      </figure>
+
+      <!-- AFTER -->
+      <figure>
+        <figcaption><span class="tag after">隐藏头像</span> 每侧多出 40px</figcaption>
+        <div class="chat after">
+          <div class="chat-head">
+            <span>新对话</span>
+            <span class="dots"><i></i><i></i><i></i></span>
+          </div>
+
+          <div class="msgs">
+            <div class="msg-row me">
+              <div class="bubble me">帮我统计上个月各渠道的订单转化率，按自然搜索和付费投放拆开</div>
+              <div class="avatar user">我</div>
+            </div>
+
+            <div class="msg-row">
+              <div class="avatar ai">AI</div>
+              <div>
+                <div class="ai-name"><i></i>数据分析助手 · 为您服务</div>
+                <div class="bubble ai">
+                  上个月整体转化率 3.82%，环比上升 0.4 个百分点。其中自然搜索 4.6%、信息流 2.9%、老客复购 6.1%。
+                  信息流是唯一拖后腿的渠道，建议把预算往老客复购倾斜。
+                </div>
+              </div>
+            </div>
+
+            <div class="msg-row me">
+              <div class="bubble me">信息流这个月投放的预算是多少，还够用吗</div>
+              <div class="avatar user">我</div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="field">输入消息…</div>
+            <div class="send">↑</div>
+          </div>
+        </div>
+        <div class="widthbar after">
+          <span class="track"><span class="fill" style="width:88%"></span></span>
+          <span>气泡 370px <span class="ok">+12%</span></span>
+        </div>
+      </figure>
+
+    </div>
+
+    <div class="callout">
+      <b>为什么不是把气泡拉满：</b>两侧各留 18px。完全贴边会让长短消息的左边缘在视觉上打架，
+      而且时间戳、操作按钮需要一点落点。若你更想要极致宽度，把 <code>max-w</code> 提到 395px 也能做，只是会有点挤。
+    </div>
+  </section>
+
+  <!-- ============ 3. 实现清单 ============ -->
+  <section class="block">
+    <h2><span class="num">3</span>要动的代码</h2>
+    <p class="note">
+      现状核实结果。开关本身是 4 处小改，麻烦的是<b>跟头像对齐的三处间距</b>——只藏头像不改它们，界面会错位。
+    </p>
+
+    <table>
+      <thead>
+        <tr><th style="width:32%">位置</th><th style="width:16%">现状</th><th>改法</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ChatSettings.vue</code> L813 前<br><span style="color:#94a3b8;font-size:11px">markdown 主题之后</span></td>
+          <td>无</td>
+          <td>插入开关行 + <code>handleSetHideChatAvatar</code>，写 <code>localStorage: yovole_hide_chat_avatar</code></td>
+        </tr>
+        <tr>
+          <td><code>EmbedChat.vue</code> L4053<br><span style="color:#94a3b8;font-size:11px">config 默认值</span></td>
+          <td><code>hideMessageBorder</code> 等</td>
+          <td>加 <code>hideChatAvatar: false</code>；L4491 存盘、L12683 读盘各补一行</td>
+        </tr>
+        <tr>
+          <td><code>EmbedChat.vue</code> L677<br><span style="color:#94a3b8;font-size:11px">用户头像</span></td>
+          <td>固定渲染</td>
+          <td><code>v-if="!config.hideChatAvatar"</code></td>
+        </tr>
+        <tr>
+          <td><code>EmbedChat.vue</code> L768<br><span style="color:#94a3b8;font-size:11px">AI 头像</span></td>
+          <td>固定渲染</td>
+          <td><code>v-if="!config.hideChatAvatar"</code></td>
+        </tr>
+        <tr>
+          <td><code>EmbedChat.vue</code> L603 / L768<br><span style="color:#94a3b8;font-size:11px">两个消息行的 space-x-2</span></td>
+          <td><code>space-x-2</code></td>
+          <td class="warn">隐藏时去掉，否则气泡边会留 8px 空档</td>
+        </tr>
+        <tr>
+          <td><code>EmbedChat.vue</code> L705<br><span style="color:#94a3b8;font-size:11px">用户消息操作行</span></td>
+          <td><code>pr-10</code> (40px)</td>
+          <td class="warn">隐藏时去掉，那 40px 本来是给头像右边缘对齐留的</td>
+        </tr>
+        <tr>
+          <td><code>EmbedChat.vue</code> L606 / L801<br><span style="color:#94a3b8;font-size:11px">气泡宽度上限</span></td>
+          <td>85% / 90%</td>
+          <td>隐藏时放宽到 370px 等效（按容器算约 94%）</td>
+        </tr>
+        <tr>
+          <td><code>EmbedChat.vue</code> L822<br><span style="color:#94a3b8;font-size:11px">AI 名胶囊 ml-1</span></td>
+          <td>4px</td>
+          <td class="warn">隐藏时归零，原本是跟头像左边缘对齐用的</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout" style="background:#fef2f2;border-color:#fecaca;color:#7f1d1d">
+      <b>三个副作用，确认一下能接受：</b><br>
+      1. <b>AI 头像点开设置的入口没了</b>（<code>L782</code> 那个 <code>@click</code>）。右上角设置按钮仍在，但这是个少用的快捷入口。<br>
+      2. <b>思考态的光晕和绿点消失</b>（<code>L770-798</code>）。气泡里还有「智能体正在分配调度中」的占位文字，感知不会断。<br>
+      3. <b>多智能体对话时只能靠名字胶囊区分</b>。胶囊保留，所以信息不丢，只是从图形变成文字。
+    </div>
+  </section>
+
+</div>
+</body>
+</html>
