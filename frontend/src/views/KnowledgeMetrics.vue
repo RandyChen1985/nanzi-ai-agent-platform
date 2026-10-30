@@ -212,10 +212,23 @@
               <p class="text-lg font-bold text-gray-600">{{ healthSummary.empty }} / {{ healthSummary.stale }}</p>
             </div>
           </div>
-          <div v-if="healthSummary.missing_items?.length" class="mt-3 border-t pt-2">
-            <p class="mb-1 text-[11px] font-semibold text-red-500">引擎侧已不存在（本地还有配置）：</p>
-            <ul class="space-y-1">
-              <li v-for="item in healthSummary.missing_items" :key="item.dataset_id" class="truncate text-xs text-gray-600">{{ item.name || item.dataset_id }}</li>
+          <div v-if="healthSummary.missing_items?.length" class="mt-3 border-t border-gray-100 pt-2">
+            <!-- 失联库可能几十个，全量平铺会把右侧卡片拉到比左侧高一倍，
+                 所以高度封顶 + 内部滚动。注意后端只回最近 20 条明细，计数要用
+                 missing（总数）而不是列表长度，否则「87 个失联」会显示成「20 个」。 -->
+            <div class="mb-1.5 flex items-baseline justify-between gap-2">
+              <p class="text-[11px] font-semibold text-red-500">引擎侧已不存在（本地还有配置）</p>
+              <span class="shrink-0 text-[11px] text-gray-400">{{ missingItemsLabel }}</span>
+            </div>
+            <ul class="max-h-44 space-y-1 overflow-y-auto pr-1">
+              <li
+                v-for="item in healthSummary.missing_items"
+                :key="item.dataset_id"
+                class="flex items-center gap-2 rounded-md bg-gray-50 px-2 py-1 text-xs text-gray-600"
+              >
+                <span class="h-1 w-1 shrink-0 rounded-full bg-red-300" aria-hidden="true"></span>
+                <span class="truncate">{{ item.name || item.dataset_id }}</span>
+              </li>
             </ul>
           </div>
         </template>
@@ -723,6 +736,12 @@ const exportCsv = (scope: 'datasets' | 'documents') => {
 // 运营分析看的是"被用了多少"，这两块看的是"用起来效果如何、库里有没有烂摊子"。
 const retrievalStats = ref<any>(null)
 const healthSummary = ref<any>(null)
+// 后端最多回 20 条明细，但 missing 是总数：只写「20 个」会和上面的「失联 87」打架
+const missingItemsLabel = computed(() => {
+  const total = Number(healthSummary.value?.missing ?? 0)
+  const shown = healthSummary.value?.missing_items?.length ?? 0
+  return total > shown ? `共 ${total} 个，列出前 ${shown}` : `共 ${total} 个`
+})
 const healthLoading = ref(false)
 const healthScanning = ref(false)
 
