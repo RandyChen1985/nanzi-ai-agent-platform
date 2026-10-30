@@ -1616,7 +1616,7 @@ def test_execution_timeline_renders_workspace_prewarm_progress():
     process = (ROOT / "frontend/src/utils/processTimeline.ts").read_text(encoding="utf-8")
     assert "WORKSPACE_PREWARM_LOG_ID" in process
     assert "workspace:sandbox" in process
-    assert "sandbox: PREWARM_STAGE_LABELS" in process, "沙箱文案必须是引用而非复制"
+    assert "isSandbox ? PREWARM_STAGE_LABELS" in process, "沙箱文案必须是引用而非复制"
 
 
 def test_process_timeline_keeps_tool_args_when_tool_output_overwrites_details():
@@ -1867,7 +1867,12 @@ return {
     assert result["missing"] == "工具完成 · Bash"
 
 
-def test_pending_hint_resolves_stage_labels_by_category_and_threshold():
+def test_pending_hint_shows_indicator_only_until_thirty_seconds():
+    """非沙箱项前 30 秒只转圈、不写字，30 秒后才补唯一一句「仍在处理中…」。
+
+    行标题本身已经说明「正在做什么」（调用工具 · Bash / 模型调用 · X），
+    再叠一句「正在执行该步骤…」是噪音；只有真的等久了才需要一句解释。
+    """
     result = _run_typescript(
         "frontend/src/utils/processTimeline.ts",
         """
@@ -1875,23 +1880,25 @@ const t = 1000000;
 const at = (ms) => t + ms;
 const model = { id: 'model_call_1', category: 'model', status: 'pending', started_at: t };
 return {
-  belowThreshold: api.resolvePendingHint(model, at(2999), true),
-  firstStage: api.resolvePendingHint(model, at(3000), true),
-  secondStage: api.resolvePendingHint(model, at(10000), true),
-  thirdStage: api.resolvePendingHint(model, at(20000), true),
-  farLong: api.resolvePendingHint(model, at(300000), true),
+  threshold: api.PENDING_HINT_LABEL_AFTER_MS,
+  atZero: api.resolvePendingHint(model, at(0), true),
+  justBelow: api.resolvePendingHint(model, at(29999), true),
+  atThreshold: api.resolvePendingHint(model, at(30000), true),
+  farLong: api.resolvePendingHint(model, at(600000), true),
 };
 """,
     )
 
-    assert result["belowThreshold"] is None, "未满 3 秒不得显示文案（否则快步骤会闪）"
-    assert result["firstStage"]["label"] == "正在思考…", "3 秒时模型早就在生成，不能说「正在理解你的问题」"
-    assert result["secondStage"]["label"] == "正在生成回答…"
-    assert result["thirdStage"]["label"] == "生成耗时较长，仍在继续…", "不替用户猜原因：慢未必因为内容长"
-    assert result["farLong"]["label"] == result["thirdStage"]["label"], "超过最后一档后不再变化"
+    assert result["threshold"] == 30000
+    assert result["atZero"]["label"] == "", "未到阈值不写字，只留转圈"
+    assert result["atZero"]["indicator"] == "spinner"
+    assert result["atZero"]["showElapsed"] is False, "没有文案时「已等待 Ns ·」也无处可放"
+    assert result["justBelow"]["label"] == "", "29999ms 仍属静默期"
+    assert result["atThreshold"]["label"] == "仍在处理中…", "30 秒才开口，且只陈述事实"
+    assert result["farLong"]["label"] == result["atThreshold"]["label"], "只有一档，超过后不再变化"
 
 
-def test_pending_hint_covers_each_category_and_suppresses_waiting_states():
+def test_pending_hint_uses_one_shared_label_for_every_non_sandbox_category():
     result = _run_typescript(
         "frontend/src/utils/processTimeline.ts",
         """
@@ -1900,14 +1907,17 @@ const at = (ms) => t + ms;
 const mk = (category, extra) => Object.assign(
   { id: 'x', category, status: 'pending', started_at: t }, extra || {}
 );
+const late = (category) => api.resolvePendingHint(mk(category), at(30000), true).label;
+const early = (category) => api.resolvePendingHint(mk(category), at(29999), true).label;
 return {
-  knowledge: api.resolvePendingHint(mk('knowledge'), at(3000), true).label,
-  knowledgeThird: api.resolvePendingHint(mk('knowledge'), at(20000), true).label,
-  tool: api.resolvePendingHint(mk('tool'), at(3000), true).label,
-  toolSecond: api.resolvePendingHint(mk('tool'), at(10000), true).label,
-  toolThird: api.resolvePendingHint(mk('tool'), at(20000), true).label,
-  otherCategory: api.resolvePendingHint(mk('sql'), at(3000), true).label,
-  noCategory: api.resolvePendingHint(mk(undefined), at(3000), true).label,
+  model: late('model'),
+  knowledge: late('knowledge'),
+  tool: late('tool'),
+  sql: late('sql'),
+  noCategory: late(undefined),
+  earlyModel: early('model'),
+  earlyTool: early('tool'),
+  earlyNoCategory: early(undefined),
   permission: api.resolvePendingHint(mk('permission'), at(60000), true),
   external: api.resolvePendingHint(mk('external'), at(60000), true),
   agent: api.resolvePendingHint(mk('agent'), at(60000), true),
@@ -1918,13 +1928,11 @@ return {
 """,
     )
 
-    assert result["knowledge"] == "正在整理检索结果…", "该行出现时检索已完成，不能说「正在查阅知识库资料」"
-    assert "正在执行该步骤" in result["tool"]
-    assert result["knowledgeThird"] == "整理耗时较长，仍在继续…"
-    assert result["toolSecond"] == "执行耗时偏长，仍在处理…"
-    assert result["toolThird"] == "仍未收到该步骤的返回，请继续稍候…", "第三档要给出新信息：一直没收到返回"
-    assert "正在处理" in result["otherCategory"], "未知类别落兜底文案"
-    assert "正在处理" in result["noCategory"]
+    expected = "仍在处理中…"
+    for key in ("model", "knowledge", "tool", "sql", "noCategory"):
+        assert result[key] == expected, f"{key} 不再有专属短档文案，30 秒后统一一句"
+    for key in ("earlyModel", "earlyTool", "earlyNoCategory"):
+        assert result[key] == "", f"{key} 30 秒内不得出现任何文案"
     assert result["permission"] is None, "等待用户确认时机器没在跑，不得显示「正在…」"
     assert result["external"] is None, "等待外部执行时机器没在跑，不得显示「正在…」"
     assert result["agent"] is None, "主专家/智能体阶段行标题已自解释，不再叠加「正在处理…」"
@@ -1941,9 +1949,10 @@ const t = 1000000;
 const at = (ms) => t + ms;
 const sandbox = { id: 'workspace:sandbox', status: 'pending', started_at: t };
 const model = { id: 'm', category: 'model', status: 'pending', started_at: t };
-const timer = api.resolvePendingHint(model, at(8000), true);
-const legacy = api.resolvePendingHint(model, at(8000), false);
-// 时钟回拨用沙箱项观测：通用类别回拨后未满阈值会返回 null，拿不到 elapsedSeconds
+// 非沙箱项取 40s（已过 30s 阈值）才有文案，才能观测前缀与秒表的互斥
+const timer = api.resolvePendingHint(model, at(40000), true);
+const legacy = api.resolvePendingHint(model, at(40000), false);
+// 时钟回拨用沙箱项观测：非沙箱项回拨后未满阈值、只有转圈，看不出 elapsedSeconds
 const rewind = api.resolvePendingHint(sandbox, at(-5000), false);
 return {
   sandboxImmediate: api.resolvePendingHint(sandbox, at(0), true).label,
@@ -1968,7 +1977,7 @@ return {
     assert result["sandboxMid"] == result["exportedMid"], "沙箱文案必须与既有导出函数同源，不得复制第二份"
     assert result["sandboxLong"] == result["exportedLong"]
     assert result["timerShowElapsed"] is False, "正在走右侧秒表的行不再重复显示「已等待 Ns」"
-    assert result["timerSeconds"] == 8
+    assert result["timerSeconds"] == 40
     assert result["legacyShowElapsed"] is True, "无秒表的历史挂起行仍要显示已等待时长"
     assert result["rewindSeconds"] == 0, "时钟回拨不得出现负数"
     assert result["rewindShowElapsed"] is True
@@ -1988,6 +1997,7 @@ def test_timeline_pending_hint_component_owns_label_and_indicator_style():
     assert 'aria-busy="true"' in hint
     assert "showElapsed" in hint, "「已等待 Ns」前缀必须由 showElapsed 条件化"
     assert "已等待" in hint
+    assert 'v-if="hint.label"' in hint, "前 30 秒 label 为空串：只渲染转圈，不得渲染空文字节点"
     # 样式随组件走：缺了这两条，动效条会没有宽度与动画
     assert ".workspace-prewarm-bar {" in hint
     assert "@keyframes workspace-prewarm-slide" in hint

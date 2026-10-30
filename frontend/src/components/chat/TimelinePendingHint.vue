@@ -17,6 +17,8 @@ const prefix = computed(() =>
 </script>
 
 <template>
+  <!-- 容器只要 hint 非空就渲染：非沙箱项前 30 秒 label 为空串，
+       此时这一行只有转圈、没有任何文字（标题本身已说明在做什么）。 -->
   <div
     v-if="hint"
     class="shrink-0 flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400"
@@ -38,6 +40,7 @@ const prefix = computed(() =>
       aria-hidden="true"
     ></span>
     <span
+      v-if="hint.label"
       class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
       :title="prefix + hint.label"
     >{{ prefix }}{{ hint.label }}</span>

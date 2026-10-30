@@ -1,8 +1,8 @@
 """契约：一轮结束（含恢复收敛）后必须把时间线里仍挂起的步骤落定。
 
 背景（真实反馈）：会话恢复、终态收敛之后，恢复卡片消失了、输入框也解锁了，但思考卡片
-里那一步仍是 pending —— 秒表继续走、文案停在「生成耗时较长，仍在继续…」（阶梯文案见
-processTimeline 的 PENDING_HINT_STAGE_LABELS），用户以为 AI 还在干活。
+里那一步仍是 pending —— 秒表继续走、转圈与「仍在处理中…」一直挂在那儿（文案规则见
+processTimeline 的 `resolvePendingHint` / `PENDING_HINT_LABEL_AFTER_MS`），用户以为 AI 还在干活。
 
 秒表由 `resolveLiveTimerLogId` 驱动：它深度优先找**最后一条 pending 的 log 项**。
 所以只要没人把 pending 落定，秒表就永远不会停。
