@@ -689,7 +689,6 @@ const canManagePermissions = computed(() => {
   // 后端的 GET/POST /permissions 都要求**管理级**写权限（部门成员也不行）。
   return canManageDataset(selectedDataset.value)
 })
-const canSync = computed(() => canEdit.value)
 const isKnowledgeEnabled = computed(() => ragflowConfig.value?.knowledge_base_enabled !== false)
 const isEngineReady = computed(() => isKnowledgeEnabled.value && engineStatus.value === 'connected' && !loading.value)
 const engineStatusText = computed(() => {
@@ -3459,8 +3458,9 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       </div>
       <!--
         操作区：窄屏一行图标，lg 起恢复文字按钮。
-        四个文字按钮并排会把中文挤成两三行，两行又占竖向空间，所以窄屏只留图标；
-        顺序仍是 引擎状态 → 同步 → 刷新 → 新建，图标按钮用 aria-label 保留语义。
+        三个文字按钮并排会把中文挤成两三行，两行又占竖向空间，所以窄屏只留图标；
+        顺序是 引擎状态 → 刷新 → 新建，图标按钮用 aria-label 保留语义。
+        同步按钮不在这里：概览面板右上角已有同一个入口，两处并排纯属重复。
       -->
       <div class="relative z-10 flex shrink-0 items-center gap-2 lg:gap-3">
         <!-- 引擎连接指示器 -->
@@ -3494,19 +3494,6 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </div>
           </span>
         </div>
-        <button
-          v-if="canSync"
-          type="button"
-          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 transition-all hover:bg-emerald-100 disabled:opacity-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"
-          :aria-label="syncing ? '正在从 RAGFlow 同步' : '从 RAGFlow 同步'"
-          :disabled="syncing || !isEngineReady"
-          @click="syncFromRagFlow"
-        >
-          <svg class="h-5 w-5 lg:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 9.75v6.75m0 0l-3-3m3 3l3-3m-8.25 6a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
-          </svg>
-          <span class="hidden whitespace-nowrap text-sm font-medium lg:inline">{{ syncing ? '同步中...' : '从 RAGFlow 同步' }}</span>
-        </button>
         <button
           type="button"
           class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 transition-all hover:bg-gray-50 lg:h-auto lg:w-auto lg:px-4 lg:py-2"

@@ -1,10 +1,10 @@
 """知识库管理页顶部操作区的移动端布局契约。
 
-「引擎状态 / 从 RAGFlow 同步 / 刷新 / 新建知识库」在窄屏并排会把中文挤成两三行、
+「引擎状态 / 刷新 / 新建知识库」在窄屏并排会把中文挤成两三行、
 高度参差；排成两行又白占一行竖向空间。最终口径是：窄屏一行图标（引擎状态压成
 圆点 + 短文案），lg 起恢复文字按钮。
 
-断点用 lg 而不是 md/sm：768~1023 区间左侧导航已经占掉宽度，四个文字按钮放不下。
+断点用 lg 而不是 md/sm：768~1023 区间左侧导航已经占掉宽度，多个文字按钮放不下。
 """
 
 from __future__ import annotations
@@ -38,24 +38,26 @@ def test_narrow_actions_are_icon_only_in_a_single_row():
     assert "grid-cols-2" not in actions
     assert "col-span-2" not in actions
 
-    # 四个操作按钮（引擎状态 → 同步 → 刷新 → 新建）：窄屏 40x40 方形，
-    # lg 恢复文字按钮的自动宽度。加按钮时这里要跟着改。
-    assert actions.count("inline-flex h-10 w-10 shrink-0") == 4
-    assert actions.count("lg:h-auto lg:w-auto") == 3
+    # 三个操作按钮（刷新 → 审计 → 新建）：窄屏 40x40 方形，
+    # lg 恢复文字按钮的自动宽度（审计按钮在桌面仍是方形图标，所以这里只数 2）。
+    assert actions.count("inline-flex h-10 w-10 shrink-0") == 3
+    assert actions.count("lg:h-auto lg:w-auto") == 2
 
     # 图标按钮没有可见文字，必须有可读名称（带引号，避开注释里的提法）
-    assert actions.count('aria-label="') == 4
+    assert actions.count('aria-label="') == 3
     assert "刷新知识库列表" in actions
     assert "新建知识库" in actions
-    assert "从 RAGFlow 同步" in actions
+    # 「从 RAGFlow 同步」从这里移除了：概览面板右上角有同一个入口，并排纯属重复。
+    # 这是一条反向断言，防止有人顺手加回来。
+    assert "从 RAGFlow 同步" not in actions
 
 
 def test_icon_and_text_variants_toggle_at_lg():
     actions = _actions_block(_source())
 
     # 图标只在窄屏出现，文字只在 lg 起出现，避免同时渲染图标和文字
-    assert actions.count('class="h-5 w-5 lg:hidden"') == 3
-    assert actions.count("hidden whitespace-nowrap text-sm font-medium lg:inline") == 3
+    assert actions.count('class="h-5 w-5 lg:hidden"') == 2
+    assert actions.count("hidden whitespace-nowrap text-sm font-medium lg:inline") == 2
 
     # 引擎状态：窄屏短文案，桌面保留「引擎 + 完整状态」
     assert "{{ engineStatusShort }}" in actions
