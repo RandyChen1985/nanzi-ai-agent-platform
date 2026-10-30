@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>执行时间线 · 三种排布方案对照</title>
+<style>
+  :root{
+    --ink:#374151; --ink-2:#6b7280; --muted:#9ca3af; --faint:#b8bec8;
+    --line:#e7e9ee; --line-2:#f2f4f7;
+    --bg:#f2f3f6; --card:#ffffff;
+    --indigo:#6366f1; --emerald:#10b981; --rose:#e11d48; --amber:#f59e0b;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased;
+    font-size:13px;
+  }
+  .page{max-width:1620px;margin:0 auto;padding:26px 22px 44px}
+
+  /* ---------- 页头 ---------- */
+  .head{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-end;justify-content:space-between;margin-bottom:18px}
+  .head h1{font-size:19px;margin:0 0 6px;letter-spacing:.2px}
+  .head .sub{margin:0;color:var(--ink-2);line-height:1.75;max-width:760px}
+  .head .sub b{color:var(--ink);font-weight:600}
+  .truth{min-width:320px;flex:1 1 420px;max-width:640px}
+  .truth-label{display:block;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+  .chain{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .pill{
+    font-family:var(--mono);font-size:10px;line-height:1;padding:5px 6px;border-radius:5px;
+    border:1px solid transparent;white-space:nowrap;
+  }
+  .pill.model{background:#eef0ff;color:#4f46e5;border-color:#e0e3ff}
+  .pill.tool{background:#eefbf4;color:#059669;border-color:#d9f5e7}
+  .pill.tool.pending{background:#fff7e8;color:#b45309;border-color:#fbe6c4}
+  .pill.arrow{background:none;color:var(--faint);padding:0 1px;font-size:9px}
+
+  /* ---------- 卡片网格 ---------- */
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+  @media (min-width:1480px){ .grid{grid-template-columns:repeat(4,minmax(0,1fr))} }
+  @media (max-width:940px){ .grid{grid-template-columns:1fr} }
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:12px;
+    box-shadow:0 1px 2px rgba(16,24,40,.04);display:flex;flex-direction:column;overflow:hidden;
+  }
+  .card.recommended{border-color:#d9dbff;box-shadow:0 2px 10px rgba(99,102,241,.10)}
+  .card-head{padding:14px 16px 10px;border-bottom:1px solid var(--line-2)}
+  .card-head .top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .badge{font-size:10px;font-weight:700;letter-spacing:.06em;padding:3px 7px;border-radius:999px}
+  .badge-now{background:#f1f2f5;color:#6b7280}
+  .badge-a{background:#eaf2ff;color:#2563eb}
+  .badge-b{background:#efeaff;color:#6d28d9}
+  .badge-c{background:#e9f9f1;color:#047857}
+  .tag-rec{font-size:9px;font-weight:700;color:#6d28d9;background:#f4f0ff;border:1px solid #e6ddff;padding:2px 6px;border-radius:999px}
+  .tag-done{font-size:9px;font-weight:700;color:#047857;background:#e9f9f1;border:1px solid #d3f3e2;padding:2px 6px;border-radius:999px}
+  .tag-todo{font-size:9px;font-weight:700;color:#9ca3af;background:#f6f7f9;border:1px solid #e8eaee;padding:2px 6px;border-radius:999px}
+  .card-head h2{font-size:13.5px;margin:0;font-weight:600;flex:1}
+  .card-sub{margin:5px 0 0;font-size:11.5px;line-height:1.65;color:var(--ink-2)}
+
+  .card-body{padding:8px 10px 10px;min-height:120px;max-height:640px;overflow-y:auto;
+    scrollbar-width:thin;scrollbar-color:#d7dbe2 transparent}
+  .card-body::-webkit-scrollbar{width:6px}
+  .card-body::-webkit-scrollbar-thumb{background:#dfe3ea;border-radius:999px}
+  .card-body::-webkit-scrollbar-track{background:transparent}
+  .card-foot{border-top:1px solid var(--line-2);padding:10px 16px 12px;background:#fcfcfd}
+  .card-foot dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:3px 8px;font-size:11px;line-height:1.6}
+  .card-foot dt{color:var(--muted);white-space:nowrap}
+  .card-foot dd{margin:0;color:var(--ink-2)}
+  .card-foot .risk{color:#b45309}
+
+  /* ---------- 时间线行 ---------- */
+  .tl{display:flex;flex-direction:column;gap:1px}
+  .row{
+    display:flex;align-items:center;gap:7px;padding:3px 7px;border-radius:7px;
+    font-size:12px;line-height:19px;color:var(--muted);position:relative;
+  }
+  .row .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .dur{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint);flex:none}
+  .chev{width:12px;height:12px;flex:none;color:var(--faint);transition:transform .15s;display:block}
+  .chev.open{transform:rotate(180deg)}
+  .row:hover{background:#f8f9fb}
+  .ic{width:13px;height:13px;flex:none}
+
+  .row.reasoning{color:var(--ink-2);cursor:pointer}
+  .row.reasoning .t{font-weight:400}
+  .row.narration{color:var(--ink-2);cursor:default}
+  .row.narration .t{white-space:normal}
+
+  .pill-char{
+    font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:999px;
+    background:#f1f2f5;color:#8a90a0;flex:none;
+  }
+
+  /* 分组 */
+  .group{margin:2px 0 0 20px;border-left:1px solid var(--line);padding-left:6px}
+  .group-head{
+    display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);
+    cursor:pointer;user-select:none;padding:2px 0;width:100%;background:none;border:0;font-family:inherit;
+  }
+  .group-head:hover{color:var(--ink-2)}
+  .group-head .dur{margin-left:auto}
+  .group-body{margin-top:1px}
+  .group-body.collapsed{display:none}
+
+  .badge-live{
+    font-size:9px;font-weight:700;color:#047857;background:#e9f9f1;border:1px solid #d3f3e2;
+    padding:1px 6px;border-radius:999px;margin-left:auto;
+  }
+
+  /* 工具 / 模型行 */
+  .row.tool .t, .row.model .t{color:#8b919d}
+  .row.tool.pending{background:#f7fdfa}
+  .row.tool.pending .t{color:#1f2937;font-weight:500}
+  .row.model{cursor:pointer}
+
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--emerald);flex:none;animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+
+  .bar{height:3px;border-radius:999px;background:#edf0f4;overflow:hidden;position:relative;margin:2px 0 4px 20px;width:calc(100% - 20px)}
+  .bar i{position:absolute;top:0;bottom:0;width:38%;border-radius:999px;background:var(--indigo);animation:slide 1.7s ease-in-out infinite}
+  @keyframes slide{0%{left:-40%}100%{left:100%}}
+  .hint{font-size:10.5px;color:var(--muted);margin:0 0 3px 20px;display:flex;gap:6px;align-items:center}
+  .hint b{font-family:var(--mono);font-weight:500;color:#9aa1ad}
+
+  .callout{
+    font-size:9.5px;font-weight:700;color:#be123c;background:#fff1f4;border:1px solid #ffdae2;
+    padding:1px 6px;border-radius:999px;margin-left:auto;flex:none;
+  }
+
+  /* 明细入口 */
+  .detail-line{
+    margin:10px 4px 0;padding:8px 10px;border:1px dashed #dfe3ea;border-radius:8px;
+    font-size:11px;color:var(--ink-2);display:flex;align-items:center;gap:6px;
+  }
+  .detail-line b{font-family:var(--mono);font-weight:500;color:#5b6270}
+  .detail-line a{color:var(--indigo);text-decoration:none;margin-left:auto;font-weight:600;cursor:pointer}
+  .detail-line a:hover{text-decoration:underline}
+
+  /* 步骤（B 方案） */
+  .step{position:relative;padding:1px 0 4px 12px}
+  .step::before{
+    content:"";position:absolute;left:3px;top:9px;bottom:0;width:1px;background:#dde1e9;
+  }
+  .step:last-child::before{display:none}
+  .step-dot{
+    position:absolute;left:0;top:7px;width:7px;height:7px;border-radius:50%;
+    background:#fff;border:1.5px solid #cfd4dd;
+  }
+  .step:last-child .step-dot{border-color:var(--emerald);background:var(--emerald);box-shadow:0 0 0 3px #e9f9f1}
+  .step-head{display:flex;align-items:center;gap:7px;font-size:12px;line-height:19px;padding:0 4px;border-radius:6px}
+  .step-head .no{font-size:9.5px;color:var(--faint);flex:none;letter-spacing:.02em}
+  .step-head .t{color:var(--ink-2);min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .step-head .dur{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint)}
+  .step-tools{padding-left:2px}
+
+  /* 折叠行（C 方案） */
+  .fold-row{
+    display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-2);
+    cursor:pointer;user-select:none;padding:4px 7px;border-radius:7px;width:100%;
+    background:none;border:0;font-family:inherit;text-align:left;
+  }
+  .fold-row:hover{background:#f8f9fb}
+  .fold-row .count{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint)}
+  .fold-row .chev{width:12px;height:12px;color:var(--faint);transition:transform .15s}
+  .fold-row .chev.open{transform:rotate(180deg)}
+  .fold-body{margin-left:19px;border-left:1px solid var(--line);padding-left:5px}
+  .fold-body.collapsed{display:none}
+
+  .muted{color:var(--muted)}
+  .nowrap{white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="head">
+    <div>
+      <h1>执行时间线 · 三种排布方案对照</h1>
+      <p class="sub">
+        截图里那一轮的真实数据：<b>11 次模型调用</b> + <b>12 次 Bash 调用</b>（最后一次还在跑，118.1s）。
+        四块用的是<b>同一份数据</b>，区别只在「组装方式 / 渲染方式」。
+      </p>
+    </div>
+    <div class="truth">
+      <span class="truth-label">真实发生顺序（后端事件到达顺序）</span>
+      <div class="chain" id="chain"></div>
+    </div>
+  </header>
+
+  <main class="grid">
+
+    <!-- 现状 -->
+    <article class="card">
+      <div class="card-head">
+        <div class="top"><span class="badge badge-now">现状</span></div>
+        <h2>工具全在上，模型调用全在下</h2>
+        <p class="card-sub">工具被挂到同一条旁白下面，模型调用被 push 到数组尾部 —— 于是视觉上倒挂，正在跑的 Bash 被埋在工具组底部。</p>
+      </div>
+      <div class="card-body"><div class="tl" id="body-now"></div></div>
+      <div class="card-foot">
+        <dl>
+          <dt>问题</dt><dd>时间倒挂；最新进度看不到；「12 个工具」跨 step 混在一起</dd>
+          <dt>改动</dt><dd>无（对照基线）</dd>
+        </dl>
+      </div>
+    </article>
+
+    <!-- A -->
+    <article class="card">
+      <div class="card-head">
+        <div class="top"><span class="badge badge-a">方案 A</span><span class="tag-done">已实现</span></div>
+        <h2>模型调用退出主时间线</h2>
+        <p class="card-sub">主流程只保留「思考 → 旁白 → 工具」的执行叙事，模型调用收敛成底部一行入口，点击看明细。</p>
+      </div>
+      <div class="card-body"><div class="tl" id="body-a"></div></div>
+      <div class="card-foot">
+        <dl>
+          <dt>改动</dt><dd>渲染时过滤 <code>category=model</code>，耗时聚合成一行</dd>
+          <dt>优点</dt><dd>最干净，和主流产品一致；实现最小</dd>
+          <dt>代价</dt><dd class="risk">主流程看不到逐步模型耗时（只在明细里）</dd>
+        </dl>
+      </div>
+    </article>
+
+    <!-- B -->
+    <article class="card recommended">
+      <div class="card-head">
+        <div class="top"><span class="badge badge-b">方案 B</span><span class="tag-rec">推荐</span><span class="tag-todo">未做</span></div>
+        <h2>模型调用当 step 边界，工具归位</h2>
+        <p class="card-sub">一次模型调用 = 一个 step 的头，它之后、下一次模型调用之前的工具都挂在它下面，顺序完全还原真实时序。</p>
+      </div>
+      <div class="card-body"><div class="tl" id="body-b"></div></div>
+      <div class="card-foot">
+        <dl>
+          <dt>改动</dt><dd>后端 <code>model_call:start</code> 自增 <code>step_index</code>，工具继承；前端按 step 渲染</dd>
+          <dt>优点</dt><dd>顺序正确、能看出每步换模型/重试/跑了哪些工具</dd>
+          <dt>代价</dt><dd class="risk">要动事件结构与快照格式，历史会话需兼容回填</dd>
+        </dl>
+      </div>
+    </article>
+
+    <!-- C -->
+    <article class="card">
+      <div class="card-head">
+        <div class="top"><span class="badge badge-c">方案 C</span><span class="tag-todo">未做</span></div>
+        <h2>不重排数据，只救「看得见」</h2>
+        <p class="card-sub">数据顺序保持原样：把正在跑的 Bash 提到工具组最上面，模型调用压成一枚可展开的折叠行。</p>
+      </div>
+      <div class="card-body"><div class="tl" id="body-c"></div></div>
+      <div class="card-foot">
+        <dl>
+          <dt>改动</dt><dd>纯展示层：pending 置顶 + 模型调用折叠，不动数据结构</dd>
+          <dt>优点</dt><dd>改动最小、历史快照完全兼容，立刻可用</dd>
+          <dt>代价</dt><dd class="risk">模型调用与工具的对应关系仍然丢失</dd>
+        </dl>
+      </div>
+    </article>
+
+  </main>
+</div>
+
+<script>
+/* ========== 数据 ========== */
+const MODEL_NAME = "DeepSeek-V4-Flash";
+const NARRATION = "我先实际拉取该仓库的真实结构与元数据，再基于结果分析。";
+const REASONING = "用户需求详细分析 nanzi-ai-agent-platform 仓库的结构和亮点。我应该实际去获取仓库信息，而不是凭印象回答。";
+const REASONING_CHARS = 209;
+const REASONING_MS = "856ms";
+
+const STEPS = [
+  { model: "8.5s",  tools: ["3.7s"] },
+  { model: "1.4s",  tools: ["31.7s"] },
+  { model: "1.5s",  tools: ["44.2s"] },
+  { model: "1.9s",  tools: ["1.5s", "1.8s"] },
+  { model: "1.3s",  tools: ["1.3s"] },
+  { model: "1.3s",  tools: ["1.4s"] },
+  { model: "2.7s",  tools: ["2.6s"] },
+  { model: "1.7s",  tools: ["1.6s"] },
+  { model: "962ms", tools: ["30.9s"] },
+  { model: "2.3s",  tools: ["41.5s"] },
+  { model: "1.8s",  tools: ["118.1s"] },
+];
+const MODEL_TOTAL = "25.4s";
+const TOOL_COUNT = STEPS.reduce((n, s) => n + s.tools.length, 0);
+
+const ICON = {
+  chev: '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>',
+  wrench: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 6.5a3.5 3.5 0 0 0-4.7 4.2L4 16.5V19h2.5l5.8-5.8a3.5 3.5 0 0 0 4.2-4.7l-2.2 2.2-2.3-.6-.6-2.3z"/></svg>',
+  spark: '<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.6l1.9 5.6 5.6 1.9-5.6 1.9L12 17.6l-1.9-5.6L4.5 10l5.6-1.9z"/><path d="M18.6 15.4l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z" opacity=".55"/></svg>',
+  brain: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8.5 12h7"/></svg>',
+  gear: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></svg>',
+};
+
+/* ========== 基础行 ========== */
+const reasoningRow = () => `
+  <div class="row reasoning" title="${REASONING}">
+    ${ICON.brain}
+    <span class="t">深度思考</span>
+    <span class="t" style="flex:1;color:#b3b9c4">${REASONING}</span>
+    <span class="pill-char">${REASONING_CHARS} 字</span>
+    <span class="dur">${REASONING_MS}</span>
+    ${ICON.chev}
+  </div>`;
+
+const narrationRow = () => `
+  <div class="row narration">
+    ${ICON.spark}
+    <span class="t">${NARRATION}</span>
+  </div>`;
+
+function toolRow(dur, pending = false) {
+  const label = pending ? "调用工具 · Bash" : "工具完成 · Bash";
+  return `
+  <div class="row tool${pending ? " pending" : ""}">
+    ${pending ? '<span class="dot"></span>' : ""}
+    ${ICON.wrench}
+    <span class="t">${label}</span>
+    <span class="dur">${dur}</span>
+    ${pending ? '<span class="callout">最新进度</span>' : ""}
+    ${ICON.chev}
+  </div>`;
+}
+
+function modelRow(dur) {
+  return `
+  <div class="row model">
+    ${ICON.gear}
+    <span class="t">模型调用 · ${MODEL_NAME}</span>
+    <span class="dur">${dur}</span>
+    ${ICON.chev}
+  </div>`;
+}
+
+/* ========== 现状：全部工具一组 + 全部模型调用一串 ========== */
+function renderNow() {
+  const tools = STEPS.flatMap((s, i) =>
+    s.tools.map((d, j) => ({ dur: d, pending: i === STEPS.length - 1 && j === s.tools.length - 1 }))
+  );
+  return `
+    ${reasoningRow()}
+    ${narrationRow()}
+    <div class="group">
+      <button class="group-head" data-toggle="now-tools">
+        ${ICON.chev}
+        <span>${TOOL_COUNT} 个工具调用</span>
+      </button>
+      <div class="group-body" id="now-tools">
+        ${tools.map((t) => toolRow(t.dur, t.pending)).join("")}
+      </div>
+    </div>
+    ${STEPS.map((s) => modelRow(s.model)).join("")}
+  `;
+}
+
+/* ========== A：模型调用退出主时间线 ========== */
+function renderA() {
+  const tools = STEPS.flatMap((s, i) =>
+    s.tools.map((d, j) => ({ dur: d, pending: i === STEPS.length - 1 && j === s.tools.length - 1 }))
+  );
+  return `
+    ${reasoningRow()}
+    ${narrationRow()}
+    <div class="group">
+      <button class="group-head" data-toggle="a-tools">
+        ${ICON.chev}
+        <span>${TOOL_COUNT} 个工具调用</span>
+        <span class="badge-live">1 个进行中</span>
+      </button>
+      <div class="group-body" id="a-tools">
+        ${tools.map((t) => toolRow(t.dur, t.pending)).join("")}
+      </div>
+    </div>
+    <div class="detail-line">
+      ${ICON.gear}
+      <span>本次执行 <b>${STEPS.length}</b> 次模型调用 · 合计 <b>${MODEL_TOTAL}</b></span>
+      <a>查看明细</a>
+    </div>
+  `;
+}
+
+/* ========== B：模型调用作为 step 边界 ========== */
+function renderB() {
+  return `
+    ${reasoningRow()}
+    ${narrationRow()}
+    <div style="margin-top:4px">
+      ${STEPS.map((s, i) => {
+        const isLastStep = i === STEPS.length - 1;
+        const tools = s.tools.map((d, j) => {
+          const pending = isLastStep && j === s.tools.length - 1;
+          return toolRow(d, pending);
+        }).join("");
+        return `
+          <div class="step">
+            <span class="step-dot"></span>
+            <div class="step-head">
+              <span class="no">第 ${i + 1} 步</span>
+              ${ICON.gear}
+              <span class="t">模型调用 · ${MODEL_NAME}</span>
+              <span class="dur">${s.model}</span>
+            </div>
+            <div class="step-tools">${tools}</div>
+          </div>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+/* ========== C：pending 置顶 + 模型调用折叠 ========== */
+function renderC() {
+  const doneTools = [];
+  STEPS.forEach((s, i) => {
+    s.tools.forEach((d, j) => {
+      const pending = i === STEPS.length - 1 && j === s.tools.length - 1;
+      if (!pending) doneTools.push(d);
+    });
+  });
+  return `
+    ${reasoningRow()}
+    ${narrationRow()}
+    <div class="group" id="c-group">
+      <button class="group-head" data-toggle="c-tools">
+        ${ICON.chev}
+        <span>${TOOL_COUNT} 个工具调用</span>
+        <span class="badge-live">1 个进行中</span>
+      </button>
+      <div class="group-body" id="c-tools">
+        ${toolRow("118.1s", true)}
+        <div class="bar"><i></i></div>
+        <p class="hint">ℹ 仍未收到该步骤的返回，请继续稍候…</p>
+        <button class="fold-row" data-toggle="c-done">
+          ${ICON.chev}
+          <span>已完成 ${doneTools.length} 次</span>
+          <span class="count">合计 162.2s</span>
+        </button>
+        <div class="fold-body collapsed" id="c-done">
+          ${doneTools.map((d) => toolRow(d, false)).join("")}
+        </div>
+      </div>
+    </div>
+    <button class="fold-row" data-toggle="c-models" style="margin-top:6px">
+      ${ICON.chev}
+      ${ICON.gear}
+      <span>模型调用 · ${STEPS.length} 次</span>
+      <span class="count">${MODEL_NAME} · 合计 ${MODEL_TOTAL}</span>
+    </button>
+    <div class="fold-body collapsed" id="c-models">
+      ${STEPS.map((s) => modelRow(s.model)).join("")}
+    </div>
+  `;
+}
+
+/* ========== 挂载 ========== */
+document.getElementById("body-now").innerHTML = renderNow();
+document.getElementById("body-a").innerHTML = renderA();
+document.getElementById("body-b").innerHTML = renderB();
+document.getElementById("body-c").innerHTML = renderC();
+
+/* 顶部真实时序链 */
+(() => {
+  const chain = document.getElementById("chain");
+  const parts = [];
+  let t = 0;
+  STEPS.forEach((s, i) => {
+    parts.push(`<span class="pill model">M${i + 1}</span>`);
+    s.tools.forEach((_, j) => {
+      t += 1;
+      const pending = i === STEPS.length - 1 && j === s.tools.length - 1;
+      parts.push(`<span class="pill tool${pending ? " pending" : ""}">T${t}${pending ? " ●" : ""}</span>`);
+    });
+    if (i < STEPS.length - 1) parts.push('<span class="pill arrow">→</span>');
+  });
+  chain.innerHTML = parts.join("");
+})();
+
+/* 默认展开的组：箭头朝上（与真实组件一致） */
+document.querySelectorAll(".group-head .chev").forEach((c) => c.classList.add("open"));
+
+/* 折叠交互 */
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-toggle]");
+  if (!btn) return;
+  const target = document.getElementById(btn.dataset.toggle);
+  if (!target) return;
+  target.classList.toggle("collapsed");
+  btn.querySelectorAll(".chev").forEach((c) => c.classList.toggle("open"));
+});
+</script>
+</body>
+</html>
