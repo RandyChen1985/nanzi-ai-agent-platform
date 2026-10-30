@@ -9,6 +9,7 @@ import SmartImportWizard from '../components/metadata/SmartImportWizard.vue'
 import RowFilterOptionSelect from '../components/metadata/RowFilterOptionSelect.vue'
 import PermissionVariableMenu from '../components/metadata/PermissionVariableMenu.vue'
 import MetadataFlowGuideBanner from '../components/metadata/MetadataFlowGuideBanner.vue'
+import HeroSilhouette from '../components/common/HeroSilhouette.vue'
 import MetadataDriftAlertsDrawer from '../components/metadata/MetadataDriftAlertsDrawer.vue'
 import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
 import { useUser } from '../composables/useUser'
@@ -1154,9 +1155,10 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-5" @click="showCreateMenu = false">
-    <!-- Header：窄屏压缩工具栏；列表视图移动端可横滑查看 -->
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-      <div class="min-w-0">
+    <!-- Header：窄屏压缩工具栏；列表视图移动端可横滑查看。卡片底部是字段矩阵剪影 -->
+    <div class="hero-surface flex flex-col gap-3 rounded-2xl border border-gray-200/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between lg:p-5">
+      <HeroSilhouette variant="fields" :height="40" />
+      <div class="relative z-10 min-w-0">
         <div class="flex items-center gap-2">
           <h1 class="text-2xl font-bold tracking-normal text-gray-900">元数据管理</h1>
           <button
@@ -1182,7 +1184,7 @@ onMounted(async () => {
         <p class="mt-0.5 truncate text-sm text-gray-500">管理业务数据集及其表结构语义</p>
       </div>
 
-      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
+      <div class="relative z-10 flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
         <div class="relative w-full sm:w-72">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

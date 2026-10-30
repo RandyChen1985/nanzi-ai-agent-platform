@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>页头剪影方案对比 · 数据源 / 元数据 / 案例集</title>
+<style>
+  :root{
+    --primary:#1677ff;
+    --ink:#111827;
+    --ink-2:#6b7280;
+    --line:rgba(17,24,39,.09);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:#f2f4f8;
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Inter,Segoe UI,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:28px 24px 80px;
+  }
+  .wrap{max-width:1560px;margin:0 auto}
+  .doc-head{margin-bottom:26px}
+  .doc-head h1{font-size:17px;margin:0 0 6px;letter-spacing:.2px}
+  .doc-head p{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.7}
+  .doc-head code{background:#e7ecf5;border-radius:4px;padding:1px 5px;font-size:12px}
+
+  .group{margin-top:34px}
+  .group-label{
+    display:flex;align-items:baseline;gap:10px;margin:0 0 12px;
+  }
+  .group-label b{font-size:13px;letter-spacing:.3px}
+  .group-label span{font-size:12px;color:var(--ink-2)}
+  .group-label::after{content:"";flex:1;height:1px;background:var(--line)}
+
+  .variant{margin-bottom:16px}
+  .variant-tag{
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:11px;font-weight:700;color:#5b6472;
+    background:#e6ebf4;border-radius:999px;padding:3px 10px;margin-bottom:7px;
+    letter-spacing:.2px;
+  }
+  .variant-tag em{font-style:normal;color:#98a2b3;font-weight:600}
+
+  /* ---------- 与 KnowledgeBaseManagement.vue 完全一致的卡片配方 ---------- */
+  .hero{
+    position:relative;
+    overflow:hidden;
+    display:flex;
+    flex-direction:row;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    padding:20px;
+    border:1px solid rgba(17,24,39,.09);
+    border-radius:16px;
+    box-shadow:0 1px 2px rgba(16,24,40,.05);
+    background-image:
+      radial-gradient(120% 160% at 88% -30%, rgba(22,119,255,.07) 0%, rgba(22,119,255,0) 58%),
+      linear-gradient(105deg,#ffffff 0%,#fdfeff 46%,#f7faff 100%);
+  }
+  .hero-art{
+    position:absolute;left:0;right:0;bottom:0;z-index:1;
+    width:100%;height:46px;
+    color:var(--primary);
+    opacity:.11;
+    pointer-events:none;
+    -webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 6%,#000 94%,transparent 100%);
+    mask-image:linear-gradient(90deg,transparent 0%,#000 6%,#000 94%,transparent 100%);
+  }
+  .hero-art.is-strong{opacity:.15}
+  .hero-main{position:relative;z-index:10;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .hero-row{display:flex;align-items:center;gap:12px}
+  .hero-title{font-size:24px;line-height:1.3;font-weight:700;letter-spacing:-.2px;margin:0}
+  .hero-sub{font-size:14px;color:var(--ink-2);margin:2px 0 0}
+  .help{
+    width:20px;height:20px;flex:none;border:0;background:none;padding:0;cursor:pointer;
+    color:#9ca3af;display:inline-flex;align-items:center;justify-content:center;
+  }
+  .help svg{width:16px;height:16px}
+  .link{font-size:12px;color:#6b7280;text-decoration:none;border-bottom:1px solid transparent;white-space:nowrap}
+  .link:hover{color:var(--primary)}
+
+  .hero-actions{position:relative;z-index:10;display:flex;align-items:center;gap:10px;flex:none}
+  .btn{
+    height:38px;padding:0 16px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;
+    color:#4b5563;font-size:13.5px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+    white-space:nowrap;transition:background .15s,border-color .15s;
+  }
+  .btn:hover{background:#f9fafb}
+  .btn-primary{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600;box-shadow:0 1px 2px rgba(22,119,255,.25)}
+  .btn-primary:hover{background:#4096ff;border-color:#4096ff}
+  .engine{
+    height:38px;display:inline-flex;align-items:center;gap:7px;padding:0 12px;border-radius:10px;
+    border:1px solid #a7f3d0;background:rgba(236,253,245,.6);color:#047857;font-size:13px;font-weight:500;white-space:nowrap;
+  }
+  .dot{width:7px;height:7px;border-radius:999px;background:#10b981;display:inline-block}
+  .field{
+    height:38px;display:inline-flex;align-items:center;gap:8px;padding:0 12px;border-radius:10px;
+    border:1px solid #e5e7eb;background:#fff;color:#9ca3af;font-size:13px;min-width:220px;
+  }
+  .field svg{width:15px;height:15px;flex:none}
+  .select{
+    height:38px;display:inline-flex;align-items:center;padding:0 12px;border-radius:10px;
+    border:1px solid #e5e7eb;background:#fff;color:#4b5563;font-size:13px;white-space:nowrap;
+  }
+  .hint{font-size:11.5px;color:#98a2b3;margin:7px 0 0}
+  .hint b{color:#5b6472}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="doc-head">
+    <h1>页头背景剪影 · 方案对比</h1>
+    <p>
+      <b>已定稿：全部采用方案 B</b>（数据源=机柜塔 / 元数据=字段矩阵 / 案例集=案例卡）。本页保留作参数调试台，
+      调高度、透明度、图形密度时改文件末尾 <code>&lt;script&gt;</code> 里的区间即可；正式实现见
+      <code>frontend/src/components/common/HeroSilhouette.vue</code>。
+    </p>
+    <p>
+      配方完全照抄 <code>KnowledgeBaseManagement.vue</code>：白卡片 + 右上极淡蓝光晕 + 底部 46px 高的 <code>currentColor</code> 剪影（主色 #1677ff，不透明度 0.11，两端渐隐 mask）。
+      区别只在剪影图形本身 —— 每个页面按自己的语义画：<b>知识库 = 书脊</b>、<b>数据源 = 库/机柜</b>、<b>元数据 = 表结构</b>、<b>案例集 = 问答</b>。
+    </p>
+  </div>
+
+  <!-- 0. 基准 -->
+  <div class="group">
+    <div class="group-label"><b>基准 · 知识库管理</b><span>现有实现，仅作对照</span></div>
+    <div class="variant">
+      <div class="hero">
+        <svg class="hero-art" viewBox="0 0 1400 80" preserveAspectRatio="xMidYMax slice" fill="none" aria-hidden="true" id="art-books"></svg>
+        <div class="hero-main">
+          <div class="hero-row">
+            <h1 class="hero-title">知识库管理</h1>
+            <button class="help" aria-label="指引"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button>
+            <a class="link" href="#">显示指引</a>
+          </div>
+          <p class="hero-sub">管理 RAGFlow 知识库、平台扩展元数据及一体化文档解析。</p>
+        </div>
+        <div class="hero-actions">
+          <span class="engine"><i class="dot"></i>引擎 已连接</span>
+          <button class="btn">刷新</button>
+          <button class="btn btn-primary">新建知识库</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1. 数据源管理 -->
+  <div class="group">
+    <div class="group-label"><b>① 数据源管理</b><span>语义：多库连接 / 实例</span></div>
+
+    <div class="variant">
+      <div class="variant-tag">方案 A <em>·</em> 数据库圆柱阵列（柱身带两道缝隙，底部一条托板）</div>
+      <div class="hero">
+        <svg class="hero-art" viewBox="0 0 1400 80" preserveAspectRatio="xMidYMax slice" fill="none" aria-hidden="true" id="art-cylinders"></svg>
+        <div class="hero-main">
+          <div class="hero-row">
+            <h1 class="hero-title">数据源管理</h1>
+            <button class="help" aria-label="指引"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button>
+          </div>
+          <p class="hero-sub">统一维护 ChatBI 元数据导入使用的数据库连接与表结构画像摸排。</p>
+        </div>
+        <div class="hero-actions">
+          <button class="btn">刷新列表</button>
+          <button class="btn btn-primary">添加数据源</button>
+        </div>
+      </div>
+      <p class="hint"><b>读感</b>：圆弧顶一眼就是"库"，缝隙给出体积感，托板让它"落地"。</p>
+    </div>
+
+    <div class="variant">
+      <div class="variant-tag">方案 B <em>·</em> 服务器机柜塔（帽檐 + 散热缝，底部托板）</div>
+      <div class="hero">
+        <svg class="hero-art" viewBox="0 0 1400 80" preserveAspectRatio="xMidYMax slice" fill="none" aria-hidden="true" id="art-racks"></svg>
+        <div class="hero-main">
+          <div class="hero-row">
+            <h1 class="hero-title">数据源管理</h1>
+            <button class="help" aria-label="指引"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button>
+          </div>
+          <p class="hero-sub">统一维护 ChatBI 元数据导入使用的数据库连接与表结构画像摸排。</p>
+        </div>
+        <div class="hero-actions">
+          <button class="btn">刷新列表</button>
+          <button class="btn btn-primary">添加数据源</button>
+        </div>
+      </div>
+      <p class="hint"><b>读感</b>：更"机房"、更硬朗，比书脊更方正，跟数据源列表页的表格气质更搭。</p>
+    </div>
+  </div>
+
+  <!-- 2. 元数据管理 -->
+  <div class="group">
+    <div class="group-label"><b>② 元数据管理</b><span>语义：数据集 / 字段表</span></div>
+
+    <div class="variant">
+      <div class="variant-tag">方案 A <em>·</em> 表结构卡片排（表头条 + 字段行，宽窄高低错落）</div>
+      <div class="hero">
+        <svg class="hero-art" viewBox="0 0 1400 80" preserveAspectRatio="xMidYMax slice" fill="none" aria-hidden="true" id="art-tables"></svg>
+        <div class="hero-main">
+          <div class="hero-row">
+            <h1 class="hero-title">元数据管理</h1>
+            <button class="help" aria-label="指引"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button>
+            <a class="link" href="#">显示指引</a>
+          </div>
+          <p class="hero-sub">管理业务数据集及其表结构语义</p>
+        </div>
+        <div class="hero-actions">
+          <span class="field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="M21 21l-4.3-4.3"/></svg>搜索数据集名称、ID或描述…</span>
+          <span class="select">状态：全部</span>
+          <span class="engine"><i class="dot"></i>引擎 已连接</span>
+          <button class="btn btn-primary">新建数据集</button>
+        </div>
+      </div>
+      <p class="hint"><b>读感</b>：挖空的行条靠明暗差读成"表格"，是四页里辨识度最高的一个。</p>
+    </div>
+
+    <div class="variant">
+      <div class="variant-tag">方案 B <em>·</em> 字段矩阵（小方块按列堆叠，底部对齐）</div>
+      <div class="hero">
+        <svg class="hero-art" viewBox="0 0 1400 80" preserveAspectRatio="xMidYMax slice" fill="none" aria-hidden="true" id="art-grid"></svg>
+        <div class="hero-main">
+          <div class="hero-row">
+            <h1 class="hero-title">元数据管理</h1>
+            <button class="help" aria-label="指引"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button>
+            <a class="link" href="#">显示指引</a>
+          </div>
+          <p class="hero-sub">管理业务数据集及其表结构语义</p>
+        </div>
+        <div class="hero-actions">
+          <span class="field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="M21 21l-4.3-4.3"/></svg>搜索数据集名称、ID或描述…</span>
+          <span class="select">状态：全部</span>
+          <span class="engine"><i class="dot"></i>引擎 已连接</span>
+          <button class="btn btn-primary">新建数据集</button>
+        </div>
+      </div>
+      <p class="hint"><b>读感</b>：最克制、最不易出错，但也最抽象 —— 远看有点像柱状图。</p>
+    </div>
+  </div>
+
+  <!-- 3. 案例集管理 -->
+  <div class="group">
+    <div class="group-label"><b>③ 案例集管理</b><span>语义：问答样本 / 案例卡</span></div>
+
+    <div class="variant">
+      <div class="variant-tag">方案 A <em>·</em> 问答气泡（大小错落 + 偶尔带尾巴）</div>
+      <div class="hero">
+        <svg class="hero-art" viewBox="0 0 1400 80" preserveAspectRatio="xMidYMax slice" fill="none" aria-hidden="true" id="art-bubbles"></svg>
+        <div class="hero-main">
+          <div class="hero-row">
+            <h1 class="hero-title">案例集管理</h1>
+            <button class="help" aria-label="指引"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button>
+            <a class="link" href="#">显示指引</a>
+            <span class="engine"><i class="dot"></i>引擎 已连接</span>
+          </div>
+          <p class="hero-sub">管理问答经验样本及 RAG 语义对齐案例</p>
+        </div>
+        <div class="hero-actions">
+          <span class="field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="M21 21l-4.3-4.3"/></svg>搜索提问、ID、Agent…</span>
+          <span class="select">分类：全部</span>
+          <button class="btn btn-primary">新建案例</button>
+        </div>
+      </div>
+      <p class="hint"><b>读感</b>：最"活"，跟"案例/问答"贴合；但气泡轮廓偏软，和另外三页的直线条略微不齐。</p>
+    </div>
+
+    <div class="variant">
+      <div class="variant-tag">方案 B <em>·</em> 案例卡堆（右上折角 + 两行正文）</div>
+      <div class="hero">
+        <svg class="hero-art" viewBox="0 0 1400 80" preserveAspectRatio="xMidYMax slice" fill="none" aria-hidden="true" id="art-cards"></svg>
+        <div class="hero-main">
+          <div class="hero-row">
+            <h1 class="hero-title">案例集管理</h1>
+            <button class="help" aria-label="指引"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button>
+            <a class="link" href="#">显示指引</a>
+            <span class="engine"><i class="dot"></i>引擎 已连接</span>
+          </div>
+          <p class="hero-sub">管理问答经验样本及 RAG 语义对齐案例</p>
+        </div>
+        <div class="hero-actions">
+          <span class="field"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="M21 21l-4.3-4.3"/></svg>搜索提问、ID、Agent…</span>
+          <span class="select">分类：全部</span>
+          <button class="btn btn-primary">新建案例</button>
+        </div>
+      </div>
+      <p class="hint"><b>读感</b>：折角是"卡片/案例"的强符号，和元数据的表格卡能拉开差距又同属直线系。</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   剪影生成：全部固定种子，刷新不变形。
+   viewBox 固定 1400×80，地面线 y=74，托板 74→80，与知识库一致。
+   ============================================================ */
+const W = 1400, H = 80, BASE = 74;
+
+function lcg(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff;
+    return s / 2147483648;
+  };
+}
+/** 圆角矩形（或普通矩形）路径 */
+function rr(x, y, w, h, r = 0) {
+  r = Math.min(r, w / 2, h / 2);
+  if (r <= 0) return `M${x},${y} h${w} v${h} h${-w} z`;
+  return `M${x + r},${y} h${w - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${h - 2 * r} `
+       + `a${r},${r} 0 0 1 ${-r},${r} h${-(w - 2 * r)} a${r},${r} 0 0 1 ${-r},${-r} `
+       + `v${-(h - 2 * r)} a${r},${r} 0 0 1 ${r},${-r} z`;
+}
+/** 椭圆路径（用于挖空/圆柱顶面） */
+function ell(cx, cy, rx, ry) {
+  return `M${cx - rx},${cy} a${rx},${ry} 0 1 1 ${2 * rx},0 a${rx},${ry} 0 1 1 ${-2 * rx},0 z`;
+}
+/** evenodd 复合路径：外形 + 若干挖空块 */
+function cut(outline, holes) {
+  return `<path fill-rule="evenodd" d="${outline}${holes.length ? ' ' + holes.join(' ') : ''}"/>`;
+}
+function floorPlate() {
+  return `<rect x="0" y="${BASE}" width="${W}" height="6" rx="3"/>`;
+}
+function mount(id, markup) {
+  document.getElementById(id).innerHTML = `<g fill="currentColor">${markup}</g>`;
+}
+
+/* ---------- 基准：书脊（照抄 .vue 的生成逻辑） ---------- */
+(function books() {
+  const rand = lcg(20261030);
+  const out = [];
+  let x = 2;
+  while (x < W) {
+    const w = 8 + Math.round(rand() * 10);
+    const roll = rand();
+    const top = roll > 0.88 ? 58 + Math.round(rand() * 10)
+              : roll > 0.78 ? 40 + Math.round(rand() * 8)
+              : 28 + Math.round(rand() * 6);
+    const tilt = rand() < 0.06 ? (rand() < 0.5 ? -11 : 12) : 0;
+    const tx = tilt ? ` transform="rotate(${tilt} ${x + w / 2} 74)"` : '';
+    out.push(`<rect x="${x}" y="${top}" width="${w}" height="${74 - top}" rx="2"${tx}/>`);
+    x += w + 1 + Math.round(rand() * 2);
+  }
+  out.push(`<rect x="0" y="74" width="${W}" height="6" rx="3"/>`);
+  mount('art-books', out.join(''));
+})();
+
+/* ---------- ①A 数据库圆柱阵列 ---------- */
+(function cylinders() {
+  const r = lcg(88771);
+  const out = [];
+  let x = 6;
+  while (x < W - 40) {
+    const w = 22 + Math.round(r() * 16);
+    const h = 26 + Math.round(r() * 24);
+    const y = BASE - h;
+    const ry = Math.min(5, h / 4);
+    const body = `M${x},${y + ry} a${w / 2},${ry} 0 0 1 ${w},0 v${h - ry} a${w / 2},${ry} 0 0 1 ${-w},0 z`;
+    const slits = [0.42, 0.7].map((t) => {
+      const cy = y + ry + (h - ry) * t;
+      return ell(x + w / 2, cy, (w - 9) / 2, 1.7);
+    });
+    out.push(cut(body, slits));
+    x += w + 7 + Math.round(r() * 9);
+  }
+  out.push(floorPlate());
+  mount('art-cylinders', out.join(''));
+})();
+
+/* ---------- ①B 服务器机柜塔 ---------- */
+(function racks() {
+  const r = lcg(31415);
+  const out = [];
+  let x = 6;
+  while (x < W - 44) {
+    const w = 26 + Math.round(r() * 16);
+    const h = 30 + Math.round(r() * 26);
+    const y = BASE - h;
+    const rows = 2 + Math.round(r() * 2);
+    const slots = [];
+    for (let i = 0; i < rows; i++) {
+      const gy = y + 8 + i * ((h - 13) / rows);
+      slots.push(rr(x + 5, gy, w - 10, 2.6, 1.3));
+    }
+    out.push(cut(rr(x, y, w, h, 2), slots));
+    out.push(`<rect x="${x + w / 2 - 3.5}" y="${y - 5}" width="7" height="5" rx="1.5"/>`);
+    x += w + 8 + Math.round(r() * 10);
+  }
+  out.push(floorPlate());
+  mount('art-racks', out.join(''));
+})();
+
+/* ---------- ②A 表结构卡片排 ---------- */
+(function tables() {
+  const r = lcg(20261207);
+  const out = [];
+  let x = 6;
+  while (x < W - 60) {
+    const w = 46 + Math.round(r() * 36);
+    const h = 24 + Math.round(r() * 22);
+    const y = BASE - h;
+    const holes = [rr(x + 5, y + 5, w - 10, 5, 1.6)];   // 表头条
+    let ry = y + 14;
+    while (ry + 2.6 < y + h - 4) {                       // 字段行
+      const ww = (w - 10) * (0.42 + r() * 0.58);
+      holes.push(rr(x + 5, ry, ww, 2.6, 1.2));
+      ry += 4.6;
+    }
+    out.push(cut(rr(x, y, w, h, 2.5), holes));
+    x += w + 9 + Math.round(r() * 13);
+  }
+  mount('art-tables', out.join(''));
+})();
+
+/* ---------- ②B 字段矩阵 ---------- */
+(function grid() {
+  const r = lcg(90210);
+  const out = [];
+  const bw = 12, bh = 7, gx = 4, gy = 3.5, rows = 5;
+  let x = 6;
+  while (x < W - 20) {
+    const n = 1 + Math.round(r() * rows);
+    for (let i = 0; i < n; i++) {
+      const y = BASE - (i + 1) * bh - i * gy;
+      out.push(`<rect x="${x}" y="${y}" width="${bw}" height="${bh}" rx="1.5"/>`);
+    }
+    x += bw + gx;
+  }
+  mount('art-grid', out.join(''));
+})();
+
+/* ---------- ③A 问答气泡 ---------- */
+(function bubbles() {
+  const r = lcg(556677);
+  const out = [];
+  let x = 8;
+  while (x < W - 60) {
+    const w = 52 + Math.round(r() * 44);
+    const h = 22 + Math.round(r() * 10);
+    // 底边贴地面线：太靠上会顶到副标题那一行文字
+    const y = BASE - h - (r() < 0.34 ? Math.round(r() * 3) : 0);
+    const holes = [
+      rr(x + 8, y + h * 0.28, (w - 16) * (0.5 + r() * 0.4), 2.6, 1.2),
+      rr(x + 8, y + h * 0.58, (w - 16) * (0.28 + r() * 0.3), 2.6, 1.2),
+    ];
+    out.push(cut(rr(x, y, w, h, Math.min(9, h / 2)), holes));
+    if (r() < 0.42) {
+      out.push(`<path d="M${x + 12},${y + h - 1} l7,7 l3,-7 z"/>`);  // 尾巴单独画，避免 evenodd 互挖
+    }
+    x += w + 10 + Math.round(r() * 12);
+  }
+  mount('art-bubbles', out.join(''));
+})();
+
+/* ---------- ③B 案例卡（折角） ---------- */
+(function cards() {
+  const r = lcg(778899);
+  const out = [];
+  let x = 8;
+  while (x < W - 60) {
+    const w = 52 + Math.round(r() * 26);
+    const h = 28 + Math.round(r() * 16);
+    const f = 13;                                 // 折角边长：太小就糊回书脊了
+    const y = BASE - h - (r() < 0.3 ? Math.round(r() * 3) : 0);
+    // 外形：右上角切掉一个 f×f 的三角
+    const outline = `M${x},${y} h${w - f} l${f},${f} v${h - f} h${-w} z`;
+    // 左图右文：左边一块缩略图占位，右边三行正文
+    const holes = [rr(x + 7, y + 8, 15, h - 16, 2)];
+    holes.push(rr(x + 27, y + 10, w - 37, 3, 1.4));
+    if (h > 32) holes.push(rr(x + 27, y + 17.5, (w - 37) * 0.7, 3, 1.4));
+    if (h > 40) holes.push(rr(x + 27, y + 25, (w - 37) * 0.45, 3, 1.4));
+    out.push(cut(outline, holes));
+    x += w + 10 + Math.round(r() * 12);
+  }
+  mount('art-cards', out.join(''));
+})();
+</script>
+</body>
+</html>

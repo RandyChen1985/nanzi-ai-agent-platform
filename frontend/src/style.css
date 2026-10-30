@@ -94,3 +94,21 @@ input[type="search"]::-webkit-search-cancel-button {
 input[type="search"]::-webkit-search-cancel-button:hover {
   background-color: #dbeafe;
 }
+
+/* 页面标题卡（知识库 / 数据源 / 元数据 / 案例集共用）。
+   底色仍是 bg-white，这里只叠一层极淡光晕，卡片右上角略偏蓝。
+   position:relative 是给底部的 HeroSilhouette 做定位参照。
+
+   这里刻意**不加** overflow:hidden —— 卡片内的「引擎信息」悬浮 tooltip 是
+   absolute top-full 挂出来的，卡片只有 100px 高，一裁就把它的下半截切掉。
+   圆角处的溢出由 HeroSilhouette 自己的 clip-path 处理。 */
+@layer components {
+  .hero-surface {
+    position: relative;
+    /* 底色必须显式给：只写 background-image 的话，没挂 bg-white 的卡片会透出页面灰底 */
+    background-color: #ffffff;
+    background-image:
+      radial-gradient(120% 160% at 88% -30%, rgba(22, 119, 255, 0.07) 0%, rgba(22, 119, 255, 0) 58%),
+      linear-gradient(105deg, #ffffff 0%, #fdfeff 46%, #f7faff 100%);
+  }
+}

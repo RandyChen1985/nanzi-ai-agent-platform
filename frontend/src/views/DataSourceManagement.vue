@@ -5,6 +5,7 @@ import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import DbTypeIcon from '../components/common/DbTypeIcon.vue'
+import HeroSilhouette from '../components/common/HeroSilhouette.vue'
 import DbTableProfileExplorerModal from '../components/metadata/DbTableProfileExplorerModal.vue'
 
 const { showToast } = useToast()
@@ -683,8 +684,11 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-6">
-    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-      <div>
+    <!-- Header：包成标题卡，底部一层机柜剪影，交代「这里管的是数据源连接」 -->
+    <div class="hero-surface flex flex-col gap-4 rounded-2xl border border-gray-200/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between lg:p-5">
+      <!-- 剪影取 40px：这张卡只有一行副标题，比知识库那张矮，46px 会占掉近一半高度 -->
+      <HeroSilhouette variant="racks" :height="40" />
+      <div class="relative z-10">
         <div class="flex items-center gap-2.5">
           <h1 class="text-2xl font-bold text-gray-900">数据源管理</h1>
           <button
@@ -701,7 +705,7 @@ onUnmounted(() => {
         </div>
         <p class="text-sm text-gray-500 mt-1">统一维护 ChatBI 元数据导入使用的数据库连接与表结构画像摸排。</p>
       </div>
-      <div class="flex items-center gap-2 shrink-0">
+      <div class="relative z-10 flex items-center gap-2 shrink-0">
         <button
           v-if="canEditDataSource"
           @click="openCreateForm"
