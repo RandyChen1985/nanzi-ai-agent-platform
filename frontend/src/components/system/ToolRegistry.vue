@@ -14,6 +14,9 @@ import GroupSelect from './GroupSelect.vue'
 import ToolWizard from './ToolWizard.vue'
 import ToolSigningEditor from './ToolSigningEditor.vue'
 import ScriptToolList from './ScriptToolList.vue'
+import ToolBundleImportModal from './ToolBundleImportModal.vue'
+import { useToolBundleExport } from '../../composables/useToolBundleExport'
+import { pendingCredentialHeaders } from '../../utils/toolBundle'
 import { 
   PencilSquareIcon,
   TrashIcon,
@@ -360,6 +363,36 @@ const fetchTools = async () => {
     }
 }
 
+// 导出范围：有勾选就导勾选，没勾选就导当前筛选结果（与「批量设置分组」同一套选择语义）
+const exportApiIds = computed(() => (
+    selectedToolIds.value.size
+        ? Array.from(selectedToolIds.value)
+        : filteredTools.value.map((tool) => tool.id)
+))
+
+const { exporting: exportingBundle, exportBundle: runExportBundle } = useToolBundleExport()
+
+const exportApiTools = async () => {
+    await runExportBundle('api', exportApiIds.value)
+}
+
+const showBundleImport = ref(false)
+/** 「+ 添加工具」右侧的下拉（导入 / 导出 / 分组管理） */
+const showToolActionsMenu = ref(false)
+
+function closeToolActionsMenu() {
+  showToolActionsMenu.value = false
+}
+
+// 导入成功后两类工具都可能变化：API 列表由本组件持有，脚本计数在子组件里
+const handleBundleImported = async () => {
+    await fetchTools()
+    await loadScriptToolCount?.()
+}
+
+/** 行内「待补凭据」：headers 里还是 ${CREDENTIAL:...} 占位符 */
+const toolPendingCredentials = (tool: SysApiTool) => pendingCredentialHeaders(tool.headers)
+
 // 弹窗内的两种填写方式：表单模式是全字段平铺（原有交互），向导模式是 4 步引导。
 // 两者**共用同一份 toolForm**——向导只是填它的另一种交互，所以切 tab 不丢内容，
 // saveTool() 也仍然只有一条保存路径。
@@ -691,10 +724,13 @@ onMounted(() => {
   fetchTools()
   loadScriptToolCount()
   window.addEventListener('beforeunload', handleBeforeUnload)
+  // 点页面别处收起下拉；容器上有 @click.stop，点菜单内部不会误关
+  document.addEventListener('click', closeToolActionsMenu)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
+  document.removeEventListener('click', closeToolActionsMenu)
 })
 </script>
 
@@ -730,24 +766,12 @@ onBeforeUnmount(() => {
          </div>
          <div v-if="activeToolType === 'api'">
          <div class="p-4 border-b border-gray-100 space-y-3">
-            <!-- 第一行：标题与主操作分开，标题永不折行 -->
-            <div class="flex flex-wrap items-center justify-between gap-3">
+            <!-- 第一行只放标题与说明，操作全部下移到搜索行，与「脚本工具」页保持同一版式 -->
+            <div>
                 <h3 class="text-lg font-medium text-gray-900 whitespace-nowrap">工具注册表</h3>
-                <div class="flex items-center gap-2">
-                    <button
-                        v-if="canSave"
-                        type="button"
-                        class="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                        @click="openGroupManager"
-                    >分组管理</button>
-                    <button
-                        v-if="canSave"
-                        @click="openModal()"
-                        class="shrink-0 px-3 py-2 bg-primary text-white text-sm rounded-md hover:bg-primary-dark transition-colors"
-                    >
-                        + 添加工具
-                    </button>
-                </div>
+                <p class="mt-1 text-sm text-gray-500">
+                    API 工具：平台代你发 HTTP 请求；导出时凭据只留占位符，导入后需要补自己的值。
+                </p>
             </div>
             <!-- 第二行：搜索 + 一个「筛选」入口。三个下拉常驻会把搜索框挤窄、占掉列表首屏，
                  收进面板后与「用户管理」页面保持同一套交互 -->
@@ -885,6 +909,64 @@ onBeforeUnmount(() => {
                     :tabindex="hasToolFilters ? 0 : -1"
                     @click="clearToolFilters"
                 >清空</button>
+                <!-- 主操作收进一个下拉：导入/导出与新建同属「往注册表里加东西」，平铺会挤压搜索框 -->
+                <div v-if="canSave" class="relative shrink-0" @click.stop>
+                    <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
+                        <button
+                            type="button"
+                            class="flex items-center gap-1.5 bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark"
+                            @click="showToolActionsMenu = false; openModal()"
+                        >+ 添加工具</button>
+                        <button
+                            type="button"
+                            class="border-l border-white/25 bg-primary px-2 text-white transition-colors hover:bg-primary-dark"
+                            title="更多操作：导入 / 导出 / 分组管理"
+                            @click="showToolActionsMenu = !showToolActionsMenu"
+                        >
+                            <svg class="h-4 w-4 transition-transform" :class="{ 'rotate-180': showToolActionsMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                    </div>
+                    <div
+                        v-if="showToolActionsMenu"
+                        class="absolute right-0 top-full z-40 mt-1 w-56 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-xl"
+                    >
+                        <button
+                            type="button"
+                            class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+                            :disabled="exportingBundle || exportApiIds.length === 0"
+                            :title="exportApiIds.length === 0 ? '没有可导出的工具' : '导出勾选的工具；未勾选时导出当前筛选结果'"
+                            @click="showToolActionsMenu = false; exportApiTools()"
+                        >
+                            <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16" />
+                            </svg>
+                            {{ exportingBundle ? '导出中…' : `导出 JSON（${exportApiIds.length}）` }}
+                        </button>
+                        <button
+                            type="button"
+                            class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                            @click="showToolActionsMenu = false; showBundleImport = true"
+                        >
+                            <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 20V8m0 0l-4 4m4-4l4 4M4 4h16" />
+                            </svg>
+                            导入 JSON
+                        </button>
+                        <div class="my-1 border-t border-gray-100"></div>
+                        <button
+                            type="button"
+                            class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                            @click="showToolActionsMenu = false; openGroupManager()"
+                        >
+                            <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
+                            </svg>
+                            分组管理
+                        </button>
+                    </div>
+                </div>
             </div>
          </div>
          
@@ -959,7 +1041,14 @@ onBeforeUnmount(() => {
                         />
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        <div class="truncate">{{ t.name }}</div>
+                        <div class="flex items-center gap-1.5">
+                            <span class="truncate">{{ t.name }}</span>
+                            <span
+                                v-if="toolPendingCredentials(t).length"
+                                class="shrink-0 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                                :title="`这些 header 还是占位符，启用前请补真实值：${toolPendingCredentials(t).join('、')}`"
+                            >待补凭据</span>
+                        </div>
                         <p class="text-xs text-gray-500 font-normal whitespace-normal break-words">{{ t.description }}</p>
                         <p class="text-xs text-gray-400 font-mono font-normal break-all select-all" :title="t.url_template">{{ t.url_template }}</p>
                     </td>
@@ -1071,6 +1160,7 @@ onBeforeUnmount(() => {
         <ScriptToolList
             :can-save="canSave"
             @count="scriptToolCount = $event"
+            @imported="fetchTools"
         />
       </div>
       </div>
@@ -1364,6 +1454,11 @@ onBeforeUnmount(() => {
           confirm-text="确认删除"
           @confirm="confirmDeleteTool"
           @cancel="showDeleteConfirm = false; deletingTool = null"
+      />
+      <ToolBundleImportModal
+          :show="showBundleImport"
+          @close="showBundleImport = false"
+          @imported="handleBundleImported"
       />
   </div>
 </template>

@@ -24,6 +24,7 @@ from app.services.ai.tools.parameter_schema import (
     apply_user_placeholders as _apply_user_placeholders_impl,
     parse_parameter_schema as _parse_parameter_schema,
 )
+from app.services.ai.tools.tool_credentials import unresolved_credential_headers
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,24 @@ class UnsupportedMethodError(Exception):
     def __init__(self, method: str):
         self.method = method
         super().__init__(f"Unsupported method: {method}")
+
+
+class UnresolvedCredentialError(Exception):
+    """工具还带着导入时的 ``${CREDENTIAL:<name>}`` 占位符。
+
+    导入的工具默认没有凭据（导出侧永不带走密钥），若使用者启用前没补，这里必须
+    明确拦住。把占位符原样发给对方服务只会得到一个莫名其妙的 401，让人以为是
+    「接口变了」。
+    """
+
+    def __init__(self, tool_name: str, headers: list[str]):
+        self.tool_name = tool_name
+        self.headers = list(headers)
+        names = "、".join(self.headers)
+        super().__init__(
+            f"工具 {tool_name} 的请求凭据还没填：{names}。"
+            "请在「工具管理」里把 header 值改成真实凭据后再调用"
+        )
 
 
 class GenericApiToolFactory:
@@ -230,6 +249,10 @@ class GenericApiToolFactory:
                 headers.update(h_config)
         if headers:
             headers = replace_headers_user_placeholders(headers, variables)
+            pending = unresolved_credential_headers(headers)
+            if pending:
+                # 导入工具默认没有凭据；发出去只会换来对方的 401，不如在这里说清楚
+                raise UnresolvedCredentialError(config.name, pending)
 
         # 3. Request
         method = config.method.upper()

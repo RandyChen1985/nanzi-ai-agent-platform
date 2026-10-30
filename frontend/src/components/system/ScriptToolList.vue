@@ -6,7 +6,7 @@
  * 硬塞进同一张表会让一半的列常年显示「—」。这里自治（自己调接口、自己管弹窗），
  * 父组件 ToolRegistry 只负责 tab 切换。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { scriptToolApi, type ScriptTool, type ScriptToolCapabilities, type ScriptToolPayload, type ScriptToolPreviewResult } from '@/api/tool'
 import { parseToolSchema, type SchemaParam } from '@/utils/toolSchema'
 import {
@@ -21,6 +21,8 @@ import { useToast } from '@/composables/useToast'
 import GroupSelect from './GroupSelect.vue'
 import ScriptToolWizard from './ScriptToolWizard.vue'
 import ScriptToolHelpModal from './ScriptToolHelpModal.vue'
+import ToolBundleImportModal from './ToolBundleImportModal.vue'
+import { useToolBundleExport } from '@/composables/useToolBundleExport'
 import Modal from '../Modal.vue'
 import ConfirmModal from '../ConfirmModal.vue'
 
@@ -42,6 +44,8 @@ function reportError(title: string, error: any) {
 
 const emit = defineEmits<{
   (e: 'count', value: number): void
+  /** 导入可能同时带来 API 工具：父组件据此刷新自己的列表 */
+  (e: 'imported'): void
 }>()
 
 const tools = ref<ScriptTool[]>([])
@@ -70,6 +74,12 @@ const UNGROUPED = '__ungrouped__'
 const showFilterPanel = ref(false)
 const selectedIds = ref<Set<string>>(new Set())
 const showBatchGroup = ref(false)
+/** 「+ 添加脚本工具」右侧的下拉（导入 / 导出） */
+const showActionsMenu = ref(false)
+
+function closeActionsMenu() {
+  showActionsMenu.value = false
+}
 const batchGroupName = ref<string | null>(null)
 const batchSaving = ref(false)
 
@@ -203,6 +213,33 @@ function isFallback(tool: ScriptTool): boolean {
 const hasFallbackRows = computed(() => tools.value.some(isFallback))
 // 只有「一条库行都没有」才需要锁新建；部分内置 seed 缺失时，其他库行仍可编辑
 const hasFallback = computed(() => tools.value.length > 0 && tools.value.every(isFallback))
+
+// 导出范围：有勾选导勾选，无勾选导当前筛选结果。内置脚本按自定义工具导出
+// （对方平台不需要、也不该把它当成自带内置项），导入后可以正常编辑。
+const exportIds = computed(() => (
+  selectedIds.value.size ? Array.from(selectedIds.value) : filteredTools.value.map((tool) => tool.id)
+))
+
+const builtinExportCount = computed(() => (
+  tools.value.filter((tool) => exportIds.value.includes(tool.id) && tool.source === 'builtin').length
+))
+
+const { exporting: exportingBundle, exportBundle: runExportBundle } = useToolBundleExport()
+
+async function exportScriptTools() {
+  const builtins = builtinExportCount.value
+  const ok = await runExportBundle('script', exportIds.value)
+  if (ok && builtins > 0) {
+    showToast(`其中 ${builtins} 个内置脚本按「自定义工具」导出，导入方拿到的是独立副本`, 'warning')
+  }
+}
+
+const bundleImportVisible = ref(false)
+
+async function handleBundleImported() {
+  await load()
+  emit('imported')
+}
 
 async function load() {
   loading.value = true
@@ -404,7 +441,15 @@ async function runPreview() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  // 点页面别处收起下拉；容器上有 @click.stop，点菜单内部不会误关
+  document.addEventListener('click', closeActionsMenu)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeActionsMenu)
+})
 </script>
 
 <template>
@@ -545,14 +590,55 @@ onMounted(load)
         :class="{ invisible: !hasFilters }"
         @click="clearFilters"
       >清空</button>
-      <button
-        v-if="props.canSave"
-        type="button"
-        class="shrink-0 rounded-lg bg-primary px-3 py-2 text-sm text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
-        :disabled="hasFallback || !capabilities || !capabilities.script_tool_supported"
-        :title="hasFallback ? '迁移未执行，暂不可新建' : (!capabilities ? '运行环境信息不可用，暂不能新建' : (capabilities.script_tool_supported ? '新建脚本工具' : '当前沙箱策略暂不支持脚本工具'))"
-        @click="openCreate"
-      >+ 添加脚本工具</button>
+      <!-- 导入/导出与新建同属「往列表里加东西」，收进一个下拉，与「API 工具」页同一版式 -->
+      <div v-if="props.canSave" class="relative shrink-0" @click.stop>
+        <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
+          <button
+            type="button"
+            class="flex items-center gap-1.5 bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="hasFallback || !capabilities || !capabilities.script_tool_supported"
+            :title="hasFallback ? '迁移未执行，暂不可新建' : (!capabilities ? '运行环境信息不可用，暂不能新建' : (capabilities.script_tool_supported ? '新建脚本工具' : '当前沙箱策略暂不支持脚本工具'))"
+            @click="showActionsMenu = false; openCreate()"
+          >+ 添加脚本工具</button>
+          <button
+            type="button"
+            class="border-l border-white/25 bg-primary px-2 text-white transition-colors hover:bg-primary-dark"
+            title="更多操作：导入 / 导出"
+            @click="showActionsMenu = !showActionsMenu"
+          >
+            <svg class="h-4 w-4 transition-transform" :class="{ 'rotate-180': showActionsMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
+        <div
+          v-if="showActionsMenu"
+          class="absolute right-0 top-full z-40 mt-1 w-56 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-xl"
+        >
+          <button
+            type="button"
+            class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+            :disabled="exportingBundle || exportIds.length === 0"
+            :title="exportIds.length === 0 ? '没有可导出的脚本工具' : '导出勾选的脚本工具；未勾选时导出当前筛选结果'"
+            @click="showActionsMenu = false; exportScriptTools()"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16" />
+            </svg>
+            {{ exportingBundle ? '导出中…' : `导出 JSON（${exportIds.length}）` }}
+          </button>
+          <button
+            type="button"
+            class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+            @click="showActionsMenu = false; bundleImportVisible = true"
+          >
+            <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 20V8m0 0l-4 4m4-4l4 4M4 4h16" />
+            </svg>
+            导入 JSON
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- 选中后浮出的批量操作条：只在勾选时出现，避免常驻按钮误点 -->
@@ -937,6 +1023,12 @@ onMounted(load)
       confirm-text="确认删除"
       @confirm="confirmDelete"
       @cancel="pendingDelete = null"
+    />
+
+    <ToolBundleImportModal
+      :show="bundleImportVisible"
+      @close="bundleImportVisible = false"
+      @imported="handleBundleImported"
     />
   </div>
 </template>

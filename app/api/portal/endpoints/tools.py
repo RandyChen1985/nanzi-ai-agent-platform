@@ -33,7 +33,11 @@ from app.services.ai.tools.forbidden_catalog import (
     ForbiddenToolCandidate,
     merge_forbidden_tool_candidates,
 )
-from app.services.ai.tools.generic_api import GenericApiToolFactory, UnsupportedMethodError
+from app.services.ai.tools.generic_api import (
+    GenericApiToolFactory,
+    UnresolvedCredentialError,
+    UnsupportedMethodError,
+)
 from app.services.ai.tools.request_signing import (
     SIGNATURE_ALGORITHM,
     SigningConfigError,
@@ -638,6 +642,12 @@ async def preview_tool(
     except UserPlaceholderError as exc:
         return SysApiToolPreviewResponse(
             ok=False, error_kind="missing_user_variable", message=str(exc),
+            request=request_info(),
+        )
+    except UnresolvedCredentialError as exc:
+        # 导入的工具还带着 ${CREDENTIAL:...}：试跑就直说，别等运行时才发现
+        return SysApiToolPreviewResponse(
+            ok=False, error_kind="missing_credential", message=str(exc),
             request=request_info(),
         )
     except SystemParamConfigError as exc:
