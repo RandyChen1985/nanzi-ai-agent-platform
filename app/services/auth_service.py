@@ -1203,6 +1203,47 @@ class AuthService:
         return True, "密码符合等保复杂度要求"
 
     @staticmethod
+    def generate_compliant_password(length: int = 16, username: Optional[str] = None) -> str:
+        """生成一次就能过等保校验的随机密码（可用于直接邮件下发）。
+
+        与 ``validate_password_complexity`` 是同一条规则的**两端**：这边生成、那边
+        校验，且生成结果必定通过——因为管理员看不到明文，生成错了就没法现场改。
+
+        细节：
+        - 四类字符各先取一个，剩余位从合集里取，最后整体打乱（否则前四位固定
+          是大写/小写/数字/符号，肉眼一看就知道规律）；
+        - 剔除易混字符 I/l/1/O/0：用户是从邮件里手抄这串密码去登录的；
+        - ``secrets`` 而非 ``random``——这是凭据，不是抽样；
+        - 生成后仍用校验函数兜一遍（含「不能包含用户名」），最多重试 8 次。
+        """
+        import secrets
+
+        if length < 8 or length > 32:
+            raise ValueError("length must be between 8 and 32")
+
+        pools = [
+            "ABCDEFGHJKLMNPQRSTUVWXYZ",
+            "abcdefghijkmnopqrstuvwxyz",
+            "23456789",
+            "!@#$%^&*-_=+?",
+        ]
+        alphabet = "".join(pools)
+        rng = secrets.SystemRandom()
+
+        for _ in range(8):
+            chars = [secrets.choice(pool) for pool in pools]
+            chars.extend(secrets.choice(alphabet) for _ in range(length - len(chars)))
+            rng.shuffle(chars)
+            candidate = "".join(chars)
+            ok, _ = AuthService.validate_password_complexity(candidate, username=username)
+            if ok:
+                return candidate
+
+        # 16 位四类齐全还撞上用户名，概率低到不可达；宁可报错让调用方记失败，
+        # 也不能悄悄发一个不合规的密码出去。
+        raise RuntimeError("failed to generate a compliant password")
+
+    @staticmethod
     async def set_user_password(user_id: int, password: str, db: Optional[AsyncSession] = None) -> bool:
         """设置用户密码"""
         session, is_local = await AuthService._get_session(db)

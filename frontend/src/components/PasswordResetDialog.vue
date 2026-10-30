@@ -152,16 +152,18 @@ const props = withDefaults(
   defineProps<{
     /** 弹窗标题 */
     title?: string
-    /** 展示给管理员的账号名 */
+    /** 展示给管理员的账号名（批量时为「15 个用户」这类复数描述） */
     displayName: string
     /** 用于「不能包含用户名」校验，默认与 displayName 一致 */
     loginName?: string
+    /** 批量场景：密码不能包含其中任一用户名（长度 >= 3 才参与校验） */
+    loginNames?: string[]
     /** 提交中（由父级控制，避免重复提交） */
     submitting?: boolean
     /** 补充说明，如「保存后该用户的全部登录会话会立即失效」 */
     hint?: string
   }>(),
-  { title: '重置密码', loginName: '', submitting: false, hint: '' }
+  { title: '重置密码', loginName: '', loginNames: () => [], submitting: false, hint: '' }
 )
 
 const emit = defineEmits<{
@@ -173,9 +175,35 @@ const password = ref('')
 const confirm = ref('')
 const passwordInput = ref<HTMLInputElement | null>(null)
 
-const policy = computed(() =>
-  checkPasswordPolicy(password.value, props.loginName || props.displayName)
-)
+/**
+ * 先跑与用户名无关的规则，再查「密码是否包含用户名」。
+ *
+ * 批量改密必须查**每一个**目标用户的用户名：同一个密码包含 alice 不合规、
+ * 对 bob 却合规。这里把多个用户名合并成一次判定，单用户场景传入一个名字，
+ * 行为与原先完全一致（顺序也是先长度/空白/类别、最后才报用户名）。
+ */
+const policy = computed(() => {
+  const base = checkPasswordPolicy(password.value)
+  if (!base.valid || !password.value) return base
+
+  const names = (props.loginNames?.length
+    ? props.loginNames
+    : [props.loginName || props.displayName]
+  )
+    .map((name) => (name || '').trim())
+    .filter((name) => name.length >= 3)
+
+  const hit = names.find((name) =>
+    password.value.toLowerCase().includes(name.toLowerCase())
+  )
+  if (!hit) return base
+  return {
+    ...base,
+    valid: false,
+    message: '密码不能包含用户名',
+    shortMessage: `不能包含用户名（${hit}）`,
+  }
+})
 
 const indicators = computed(() => [
   { label: '8-32位', ok: policy.value.hasLength },
