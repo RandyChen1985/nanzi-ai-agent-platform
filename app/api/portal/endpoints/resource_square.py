@@ -170,7 +170,7 @@ async def list_square_knowledge(
         else:
             stmt = select(KnowledgeBaseMetadata).where(False)
     else:
-        # 「全部 / 可申请 / 审批中」只看授权可见与部门级：私有库的存在性不对外泄露
+        # 「全部 / 可申请 / 审批中」只看授权可见与 TEAM 级：私有库的存在性不对外泄露
         stmt = select(KnowledgeBaseMetadata).where(
             KnowledgeBaseMetadata.visibility.in_(["public", "team"])
         )

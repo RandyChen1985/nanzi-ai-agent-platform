@@ -50,7 +50,7 @@ const SCOPE_BADGE: Record<
   { label: string; cls: string }
 > = {
   public: { label: "授权可见", cls: "bg-blue-50 text-blue-600 border-blue-100" },
-  team: { label: "部门级", cls: "bg-violet-50 text-violet-600 border-violet-100" },
+  team: { label: "TEAM 级", cls: "bg-violet-50 text-violet-600 border-violet-100" },
   private: { label: "个人私有", cls: "bg-amber-50 text-amber-600 border-amber-100" },
 };
 
@@ -548,7 +548,7 @@ const formatDate = (ts?: number | string) => {
         上方已列出 {{ selectedPrivateNames.length }} 个已绑定的个人私有知识库（{{
           selectedPrivateNames.join("、")
         }}）：只有归属人能检索到，其他使用者仍会被权限校验剔除；但它会占用检索范围统计，
-        建议点击取消后改选授权可见或部门级。
+        建议点击取消后改选授权可见或 TEAM 级。
       </p>
 
       <!-- Footer (Multi-select only) -->

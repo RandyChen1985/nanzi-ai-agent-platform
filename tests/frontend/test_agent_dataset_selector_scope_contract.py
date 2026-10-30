@@ -26,10 +26,10 @@ def _read(path: Path) -> str:
 def test_selector_exposes_visibility_badges():
     page = _read(SELECTOR)
     # 三档徽标与标签文案，和知识库管理页、权限配置页保持一致
-    assert "授权可见" in page and "部门级" in page and "个人私有" in page
+    assert "授权可见" in page and "TEAM 级" in page and "个人私有" in page
     assert "scopeBadge(ds)" in page
     assert "bg-blue-50 text-blue-600" in page      # 授权可见
-    assert "bg-violet-50 text-violet-600" in page  # 部门级
+    assert "bg-violet-50 text-violet-600" in page  # TEAM 级
     assert "bg-amber-50 text-amber-600" in page    # 个人私有
 
 
@@ -49,7 +49,7 @@ def test_selected_private_dataset_is_not_silently_dropped():
     page = _read(SELECTOR)
     # 合法性校验用的是完整列表（datasets），不是 visibleDatasets
     assert "const validIds = new Set(datasets.value.map((d) => d.id))" in page
-    assert "改选授权可见或部门级" in page
+    assert "改选授权可见或 TEAM 级" in page
     # 提示之外还要给出可执行的出口：能让用户当场解绑
     assert 'v-for="ds in pinnedPrivateDatasets"' in page
     assert '@click="toggleSelection(ds.id)"' in page

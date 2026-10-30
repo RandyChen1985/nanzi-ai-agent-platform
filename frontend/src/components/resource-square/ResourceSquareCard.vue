@@ -38,7 +38,7 @@ const state = computed<CardState>(() => {
 })
 
 const visibilityLabel = computed(() =>
-  props.visibility === 'public' ? '授权可见' : props.visibility === 'team' ? '部门级' : '',
+  props.visibility === 'public' ? '授权可见' : props.visibility === 'team' ? 'TEAM 级' : '',
 )
 
 /**

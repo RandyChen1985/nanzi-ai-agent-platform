@@ -94,7 +94,7 @@ async def test_user_permissions_drop_private_dataset(db_session):
         PermissionUpdate(datasets=[public_id, team_id, private_id]),
     )
 
-    # 公共级与部门级照常写入，个人私有被剔除
+    # 公共级与 TEAM 级照常写入，个人私有被剔除
     assert await _dataset_ids_for(db_session, user_id=user.id) == sorted(
         [public_id, team_id]
     )

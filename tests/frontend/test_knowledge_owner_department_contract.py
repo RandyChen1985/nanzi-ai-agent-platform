@@ -56,7 +56,7 @@ def test_visibility_copy_matches_permission_semantics():
     assert "仅作展示标记" not in page
     # 旧文案里的错误承诺不得回归
     assert "业务归属部门（{{ selectedDataset.owner || '未指派' }}）的用户有权访问" not in page
-    # 部门级必须说明「含下级部门」且是只读
+    # TEAM 级必须说明「含下级部门」且是只读
     assert "含下级部门" in page
     # 个人私有必须说明「不支持分配授权」
     assert "不支持分配授权" in page
@@ -107,7 +107,7 @@ def test_backend_endpoint_persists_owner_dept_id_and_validates_department():
 def test_owner_text_stays_out_of_permission_model():
     """护栏：`owner`（自由文本快照）不得进入权限判定。
 
-    注意：「部门级」可见范围落地后，`owner_dept_id` **会**作为 team 档的输入
+    注意：「TEAM 级」可见范围落地后，`owner_dept_id` **会**作为 team 档的输入
     参与判定（必须与 visibility=team 绑定，见
     `tests/services/test_knowledge_access_visibility.py`）；而自由文本 `owner`
     仍然只是展示兜底，任何档位都不读它。

@@ -21,7 +21,7 @@ class KnowledgeBaseMetadata(Base):
     # 部门改名后以 owner_dept_id 关联出的最新部门名为准，这里只做兜底。
     owner = Column(String(100), nullable=True, comment="业务归属部门/负责人（文本快照）")
     # 业务归属部门。public/private 下只用于浏览分组与搜索；
-    # team（部门级）下它同时是权限判定依据：归属部门（含下级部门）成员据此
+    # team（TEAM 级）下它同时是权限判定依据：归属部门（含下级部门）成员据此
     # 自动获得只读权（见 PermissionService.resolve_knowledge_dataset_access）。
     owner_dept_id = Column(
         BigInteger,

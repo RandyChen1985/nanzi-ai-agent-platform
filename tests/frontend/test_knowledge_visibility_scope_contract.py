@@ -1,4 +1,4 @@
-"""知识库「可见范围」三档语义契约（授权可见 / 部门级 / 个人私有）。
+"""知识库「可见范围」三档语义契约（授权可见 / TEAM 级 / 个人私有）。
 
 背景：改造前 `visibility` 只是详情页上的展示标记，任何权限判定都不读它——
 界面写着「team → 部门用户有权访问」「public → 全平台公开」，实际谁都按授权名单走。
@@ -6,14 +6,14 @@
 现在三档真正参与判定（用户确认的口径）：
 
 - `public`  授权可见：**需要授权**才能访问，创建人自动可用，可继续分配；
-- `team`    部门级：业务归属部门（**含下级部门**）成员自动**只读**，也可继续分配；
+- `team`    TEAM 级：业务归属部门（**含下级部门**）成员自动**只读**，也可继续分配；
 - `private` 个人私有：仅创建人可见，**不允许**分配授权，历史授权记录一律不生效。
 
 本文件守住四类约束：
 
 1. 后端判定集中在 `resolve_knowledge_dataset_access`，且 private 分支忽略授权；
 2. 授权端点必须拒绝 private 库（否则会出现"加了人却看不到"的假操作）；
-3. 前端左栏按三档分 tab，部门级分组、授权可见/个人私有平铺；
+3. 前端左栏按三档分 tab，TEAM 级分组、授权可见/个人私有平铺；
 4. 存量库通过迁移统一订正为 public，避免切换语义时静默撤权或扩权。
 """
 
@@ -118,7 +118,7 @@ def test_left_tree_has_three_visibility_tabs():
     page = _page()
     assert "VISIBILITY_TABS" in page
     assert "label: '授权可见'" in page
-    assert "label: '部门级'" in page
+    assert "label: 'TEAM 级'" in page
     assert "label: '个人私有'" in page
     # tab 切换必须驱动列表过滤，而不是只做视觉高亮
     assert "activeVisibility" in page
@@ -155,7 +155,7 @@ def test_detail_page_states_three_scopes_truthfully():
     page = _page()
     # 授权可见：必须说明"需要授权"，不能暗示自动放行
     assert "其他人<b>必须</b>在下方被显式授权才能访问" in page
-    # 部门级：必须说明含下级部门 + 只读
+    # TEAM 级：必须说明含下级部门 + 只读
     assert "的成员（<b>含下级部门</b>）自动获得只读权限" in page
     # 个人私有：必须说明不可分配
     assert "仅你自己可见，<b>不支持</b>分配授权" in page
@@ -189,7 +189,7 @@ def test_new_dataset_defaults_to_private_with_explicit_warning():
     assert 'visibility: str = "private"' in _ragflow()
     # 但必须显著提示，避免用户没注意到范围就建出"只有自己能看"的库
     assert "当前为<b>个人私有</b>" in page
-    assert "要共享请先改成部门级或授权可见" in page
+    assert "要共享请先改成 TEAM 级或授权可见" in page
     # 默认项在下拉里要有徽标
     assert "isDefault: true" in page
 
@@ -211,16 +211,16 @@ def test_visibility_field_comes_before_owner_department():
 
 def test_owner_department_only_editable_for_team_scope():
     page = _page()
-    # 非部门级时归属部门禁用（两处弹窗都要有）
+    # 非 TEAM 级时归属部门禁用（两处弹窗都要有）
     assert page.count(':disabled="form.visibility !== \'team\'"') == 2
     assert "disabled:bg-gray-50" in page
     assert "disabled:cursor-not-allowed" in page
     # 禁用时文字随之变灰（双行结构里靠 :class 控制，不再用 disabled:text-*）
     assert "form.visibility === 'team' ? 'text-gray-800' : 'text-gray-400'" in page
     # 禁用时必须解释原因，并说明已选值会被保留
-    assert "仅「部门级」需要归属部门" in page
+    assert "仅「TEAM 级」需要归属部门" in page
     assert "已选值会保留" in page
-    # 部门级却没选部门时必须明确告知会退化，否则用户以为已生效
+    # TEAM 级却没选部门时必须明确告知会退化，否则用户以为已生效
     assert "未选部门会退化为授权可见" in page
 
 

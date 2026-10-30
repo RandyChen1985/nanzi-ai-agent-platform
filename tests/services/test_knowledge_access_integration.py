@@ -95,7 +95,7 @@ async def _build(db_session):
 
     team_kb = KnowledgeBaseMetadata(
         ragflow_dataset_id=f"ds-team-{mark}",
-        name="部门级库",
+        name="TEAM 级库",
         visibility="team",
         owner_dept_id=tech.id,
         created_by=creator.user_name,

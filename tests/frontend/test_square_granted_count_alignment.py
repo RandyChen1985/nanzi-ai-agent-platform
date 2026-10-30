@@ -11,7 +11,7 @@
 2. 跳转本身之前没带 `status`，落到广场就是「全部」。
 
 下面把两处都锁住：前端必须带 `status=has` 并在落地时读它，后端在
-`status=has` 时必须把「我有权限的库」全取出来，不能只取授权可见/部门级。
+`status=has` 时必须把「我有权限的库」全取出来，不能只取授权可见/TEAM 级。
 """
 
 from __future__ import annotations
