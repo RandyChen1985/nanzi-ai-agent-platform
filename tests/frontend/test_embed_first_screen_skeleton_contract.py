@@ -79,13 +79,17 @@ def test_skeleton_is_released_only_after_history_and_snapshot():
     """撤骨架必须排在历史与流式快照都落地之后。"""
     body = _init_chat_body()
 
-    fetch_at = body.index("void fetchConversationHistory(false, initGeneration)")
+    fetch_at = body.index("initialHistorySettled = fetchConversationHistory(false, initGeneration)")
     snapshot_at = body.index(".then(() => restoreEmbedStreamSnapshot(initGeneration))")
     release = body.index(".finally(() => finishThreadSkeleton(skeletonToken));")
 
     assert fetch_at < snapshot_at < release, "骨架必须在历史与快照都落地后才撤"
     # 还原快照失败（或被取消）也不能把骨架留在界面上
     assert '.catch(e => console.error("[Init] History load failed:", e))' in body
+    # 首屏历史链由「裸 void」改为登记信号（宿主下发的门户提问要等它落地），
+    # 但语义仍是链尾收尾：不得变回会拖住握手的写法。
+    assert "void fetchConversationHistory(false, initGeneration)" not in body
+    assert "initialHistorySettled = Promise.resolve();" in body
 
 
 def test_init_chat_does_not_await_history():
