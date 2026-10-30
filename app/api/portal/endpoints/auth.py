@@ -2,14 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, Header,
 import logging
 import re
 from typing import Any, Dict, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import avatar_assets
 from app.core.config import settings
 from app.core.dependencies import require_api_key, is_secure_request as _is_secure_request
 from app.core.orm import get_db_session
 from app.core.redis import get_redis
-from app.services.auth_service import AuthService
+from app.services.auth_service import AuthService, sso_login_capabilities
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,14 @@ class LoginRequest(BaseModel):
 class SSOLoginRequest(BaseModel):
     username: str = Field(..., description="SSO 用户名")
     password: str = Field(..., description="SSO 密码")
+    # 登录方式：local（门户本地密码）/ ad（域账号）。不传就用服务端 SSO_LOGIN_DEFAULT_TYPE，
+    # 这样前端还没升级时行为不变。别名保留 portal-web 协议里的 camelCase 写法，
+    # 两种 key 都能收；枚举校验放在 service 层（归一化逻辑和服务端默认值要在一起）。
+    login_type: Optional[str] = Field(
+        None, alias="loginType", description="登录方式：local / ad，缺省取服务端配置"
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 #: 账号名规则：3–32 位，字母开头，仅允许字母/数字/下划线/中划线/点。
@@ -351,7 +359,17 @@ async def sso_login(
             detail="SSO 统一认证登录已被禁用"
         )
 
-    result = await AuthService.authenticate_sso_user(request.username, request.password, db=db)
+    # 两种登录方式都被管理员关掉时，整个接口对外关闭：前端已经禁用输入框了，
+    # 这里再拦一道，避免直接 curl 接口还能拿到认证结果。
+    if not sso_login_capabilities()["enabled_types"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO 登录方式均已关闭，请联系管理员"
+        )
+
+    result = await AuthService.authenticate_sso_user(
+        request.username, request.password, login_type=request.login_type, db=db
+    )
     
     if result["status"] == "success":
         user = result["user"]
@@ -1503,10 +1521,16 @@ async def get_public_config(
     except Exception as exc:  # noqa: BLE001
         logger.warning("计算 password_reset_available 失败：%s", exc)
 
+    # 登录页据此渲染「登录方式」选择器：enabled_types 决定哪一项可选，
+    # sso_login_type 是默认选中项（一定落在 enabled_types 里；全关时为 null）。
+    sso_capabilities = sso_login_capabilities()
+
     return {
         "status": "success",
         "data": {
             "yovole_sso_enabled": sso_enabled,
+            "sso_login_type": sso_capabilities["default_type"],
+            "sso_login_enabled_types": sso_capabilities["enabled_types"],
             "hide_login_apikey": hide_login_apikey,
             "user_registration_enabled": user_registration_enabled,
             "password_reset_available": password_reset_available,
