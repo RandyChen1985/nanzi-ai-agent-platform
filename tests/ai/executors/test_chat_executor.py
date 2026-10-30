@@ -151,6 +151,13 @@ def mock_tool():
     tool.description = "Test tool"
     tool.args_schema = None
     tool.ainvoke.return_value = "Tool Result"
+    # 可选 duck-typed 属性显式给值：AsyncMock 对未设置的属性会即时生成子 mock，
+    # 让「工具契约」隐式依赖 mock 的默认行为；写清楚属性类型更容易看出回归。
+    tool.runtime_metadata = {}
+    tool.permission_scope = None
+    tool.evidence_types = None
+    tool.evidence_policy = "non_empty"
+    tool.is_read_only = False
     return tool
 
 # --- Tests ---
