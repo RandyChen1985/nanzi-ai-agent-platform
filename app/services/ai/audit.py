@@ -147,6 +147,8 @@ class AuditManager:
                 reasoning_content=reasoning_content,
                 process_timeline=process_timeline,
                 has_data_output=has_data_output,
+                agent_name=getattr(agent_config, "agent_name", None) or None,
+                agent_display_name=getattr(agent_config, "agent_display_name", None) or None,
             )
 
         logger.warning(
@@ -215,6 +217,8 @@ class AuditManager:
         reasoning_content: Optional[str] = None,
         process_timeline: Optional[List[Dict[str, Any]]] = None,
         has_data_output: Optional[bool] = None,
+        agent_name: Optional[str] = None,
+        agent_display_name: Optional[str] = None,
     ) -> bool:
         """
         Saves the high-level conversation entry.
@@ -288,6 +292,9 @@ class AuditManager:
                     completion_tokens=completion_tokens,
                     total_tokens=total_tokens,
                     has_data_output=(1 if has_data_output else 0),
+                    # 身份快照：写入时刻固化，避免智能体删除/权限变化后历史失去署名
+                    agent_name=agent_name,
+                    agent_display_name=agent_display_name,
                 )
                 session.add(history_entry)
                 await session.commit()

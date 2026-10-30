@@ -65,7 +65,12 @@ class AgentExecutionHistory(Base):
     model_id = Column(String(255))
     model_config_id = Column(String(36))
     feedback = Column(String(10), nullable=True, comment='用户反馈: up, down')
-    
+    # 回答该轮的智能体身份快照。历史表原本只落 agent_id，展示名靠实时查 ai_agents
+    # 回填——智能体被删除、或当前用户看不到它时，已发生的对话会回溯性失去署名。
+    # 这里在写入时刻固化一份；存量为 NULL 的行仍回落到 ai_agents 查询 + Redis 兜底。
+    agent_name = Column(String(255), nullable=True, comment='智能体 slug 标识名快照')
+    agent_display_name = Column(String(255), nullable=True, comment='智能体显示名快照')
+
     created_at = Column(DateTime, default=datetime.now, index=True)
 
 class AccessLog(Base):

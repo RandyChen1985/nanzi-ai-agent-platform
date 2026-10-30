@@ -993,13 +993,63 @@ def _agent_identity_fields(agent_id: Any, agent_map: Dict[str, tuple]) -> Dict[s
     }
 
 
-def _apply_agent_identity(item: Any, agent_map: Dict[str, tuple]) -> None:
-    """把 agent_map 中的身份信息回填到历史条目。
+def _resolve_agent_identity(
+    item: Any,
+    agent_map: Dict[str, tuple],
+    redis_identity_by_trace: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """按「行内快照 → Redis 快照 → ai_agents 直查」解析出身份字段。
 
-    历史表只落 `agent_id`，展示信息全靠这里补齐；头像缺失（智能体未单独设置）时保持
-    None，由前端继承全局 AI 形象。
+    抽成独立函数是因为另有一条纯 dict 的调用路径（Redis 为空时从 DB 恢复会话），
+    两边必须用同一套优先级，否则同一个会话在「正常打开」与「缓存失效后恢复」两种
+    情况下会显示出不同的名字。
     """
-    fields = _agent_identity_fields(getattr(item, "agent_id", None), agent_map)
+    snapshot_name = getattr(item, "agent_name", None)
+    snapshot_display = getattr(item, "agent_display_name", None)
+    lookup = _agent_identity_fields(getattr(item, "agent_id", None), agent_map)
+
+    # 1) 写入时刻固化的快照（V201/V101 之后的行）：名字直接用，头像仍要查
+    if snapshot_name or snapshot_display:
+        return {
+            "agent_name": snapshot_name,
+            "agent_display_name": snapshot_display,
+            "agent_avatar_url": lookup["agent_avatar_url"],
+        }
+
+    # 2) Redis 里同一轮的快照：比「智能体当前叫什么」更接近当时
+    trace_key = str(getattr(item, "trace_id", "") or "")
+    redis_identity = (redis_identity_by_trace or {}).get(trace_key)
+    if redis_identity:
+        lookup["agent_name"] = redis_identity.get("agent_name") or lookup["agent_name"]
+        lookup["agent_display_name"] = (
+            redis_identity.get("agent_display_name") or lookup["agent_display_name"]
+        )
+    return lookup
+
+
+def _apply_agent_identity(
+    item: Any,
+    agent_map: Dict[str, tuple],
+    redis_identity_by_trace: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> None:
+    """把智能体身份回填到历史条目。
+
+    回填顺序（越接近「当时」的越优先）：
+
+    1. **行内快照** —— V201/V101 之后写入的行自带 ``agent_name``/``agent_display_name``，
+       这是最权威的，直接用，不再查任何表；
+    2. **Redis 快照** —— 存量行没有快照，但同一轮在 Redis 历史里存了名字（写入时
+       `memory_service.add_message` 带了 `agent_name`/`agent_display_name`）；
+    3. **ai_agents 直查** —— 前两者都缺时，按 `agent_id` 查当前名字。
+
+    第 3 步用的是 ``load_agent_identity_map``（不套可见性过滤）。旧实现走
+    ``list_agents``，非管理员会被过滤成只剩自己创建的智能体，导致普通用户打开
+    「主助手」的历史会话时查不到名字、界面上「谁回答的」变成空白。
+
+    头像只在第 3 步能取到：Redis 历史没落头像字段。缺失时保持 None，前端继承全局
+    AI 形象。
+    """
+    fields = _resolve_agent_identity(item, agent_map, redis_identity_by_trace)
     item.agent_name = fields["agent_name"]
     item.agent_display_name = fields["agent_display_name"]
     item.agent_avatar_url = fields["agent_avatar_url"]
@@ -1303,23 +1353,33 @@ async def get_conversation_history(
         db_res = await db.execute(stmt)
         records = db_res.scalars().all()
         
-        # Dynamically fetch active agents map for rich display names
+        # 身份与类型都按本批 agent_id 精确查：走 list_agents 会被可见性过滤，
+        # 普通用户恢复自己的会话时同样会丢掉智能体名。
         agent_map = {}
         agent_type_by_id = {}
         try:
-            from app.services.ai.agent_manager import AgentManagerService, build_agent_identity_map
-            all_agents = await AgentManagerService.list_agents(db, user=user_info)
-            agent_map = build_agent_identity_map(all_agents)
-            for a in all_agents:
-                agent_type = getattr(a, "agent_type", None) or "GENERAL"
-                agent_type = getattr(agent_type, "value", agent_type)
-                agent_type_by_id[str(a.id)] = str(agent_type)
+            from app.services.ai.agent_manager import load_agent_identity_map
+            from app.models.agent import AIAgent
+
+            record_agent_ids = sorted({str(r.agent_id) for r in records if r.agent_id})
+            if record_agent_ids:
+                agent_map = await load_agent_identity_map(db, record_agent_ids)
+                type_rows = (
+                    await db.execute(
+                        select(AIAgent.id, AIAgent.agent_type).where(
+                            AIAgent.id.in_(record_agent_ids)
+                        )
+                    )
+                ).all()
+                for type_row in type_rows:
+                    raw_type = type_row[1] or "GENERAL"
+                    agent_type_by_id[str(type_row[0])] = str(getattr(raw_type, "value", raw_type))
         except Exception:
             pass
             
         fallback_history = []
         for r in records:
-            agent_identity = _agent_identity_fields(r.agent_id, agent_map)
+            agent_identity = _resolve_agent_identity(r, agent_map)
             agent_name = agent_identity["agent_name"]
             agent_display_name = agent_identity["agent_display_name"]
             agent_avatar_url = agent_identity["agent_avatar_url"]
@@ -2666,6 +2726,7 @@ async def _build_chat_history_response(
     from sqlalchemy import select
     from datetime import datetime
     from app.schemas.agent import AgentExecutionHistoryResponse
+    from app.services.ai.agent_manager import load_agent_identity_map
 
     # ... (date parsing logic) ...
     # Parse dates if provided
@@ -2718,16 +2779,9 @@ async def _build_chat_history_response(
 
     result = await db.execute(query)
     
-    # 动态获取智能体 ID 到 (Slug 标识名, 显示名, 头像) 的映射，用以丰富前端历史列表展现。
-    # 头像必须由后端下发：`/agents/allowed` 过滤了 is_enabled=True，已停用智能体的历史
-    # 消息前端索引不到，只能靠这里的映射补上。
-    try:
-        from app.services.ai.agent_manager import AgentManagerService, build_agent_identity_map
-        all_agents = await AgentManagerService.list_agents(db, user=user_info)
-        agent_map = build_agent_identity_map(all_agents)
-    except Exception as e:
-        logger.warning(f"[History API] Failed to fetch active agents mapping: {e}")
-        agent_map = {}
+    # 智能体身份不再整表拉取：改成拿到本页行之后按 agent_id 精确查
+    # （见下方 items 组装处的 load_agent_identity_map）。整表拉取既浪费一次全表扫描，
+    # 又会被 list_agents 的可见性过滤连累——那正是普通用户看不到智能体名的根因。
 
     # /history is DB-backed, while reusable-result metadata is also persisted in
     # Redis history. Merge it by assistant trace_id so a refreshed conversation
@@ -2735,6 +2789,7 @@ async def _build_chat_history_response(
     # 审计视图刻意跳过：Redis 历史按「用户 + 会话」存储，用管理员身份读他人会话只会
     # 读到空值（或管理员自己名下的同名会话），没有任何可用的跨用户语义。
     reusable_metadata_by_trace: Dict[str, Dict[str, Any]] = {}
+    redis_identity_by_trace: Dict[str, Dict[str, Any]] = {}
     if (
         params.conversation_id
         and not cross_user
@@ -2760,6 +2815,12 @@ async def _build_chat_history_response(
                 if message.get("reusable_result_status"):
                     metadata["reusable_result_status"] = str(message["reusable_result_status"])
                 reusable_metadata_by_trace[str(message["trace_id"])] = metadata
+                # 同一轮在 Redis 里存了智能体名字，顺带收下来给存量行兜底（不额外读一次）
+                if message.get("agent_name") or message.get("agent_display_name"):
+                    redis_identity_by_trace[str(message["trace_id"])] = {
+                        "agent_name": message.get("agent_name"),
+                        "agent_display_name": message.get("agent_display_name"),
+                    }
         except Exception as exc:
             logger.debug("[History API] Failed to enrich output metadata from Redis: %s", exc)
 
@@ -2772,11 +2833,14 @@ async def _build_chat_history_response(
             scoped_user_id=history_user_id,
             cross_user=cross_user,
         )
+        agent_map = await load_agent_identity_map(
+            db, [getattr(row_obj, "agent_id", None) for row_obj, _ in rows]
+        )
         for index, (row_obj, turn_count) in enumerate(rows):
             item = AgentExecutionHistoryResponse.from_orm(row_obj)
             item = item.model_copy(update=reusable_metadata_by_trace.get(str(item.trace_id), {}))
             item.turn_count = turn_count
-            _apply_agent_identity(item, agent_map)
+            _apply_agent_identity(item, agent_map, redis_identity_by_trace)
             if item.conversation_id:
                 scope = scopes[index] if index < len(scopes) else {}
                 item.project_name = scope.get("project_name") or None
@@ -2786,10 +2850,13 @@ async def _build_chat_history_response(
         scopes = await _load_history_resource_scopes(
             db, list(rows), scoped_user_id=history_user_id, cross_user=cross_user
         )
+        agent_map = await load_agent_identity_map(
+            db, [getattr(row, "agent_id", None) for row in rows]
+        )
         for index, row in enumerate(rows):
             item = AgentExecutionHistoryResponse.from_orm(row)
             item = item.model_copy(update=reusable_metadata_by_trace.get(str(item.trace_id), {}))
-            _apply_agent_identity(item, agent_map)
+            _apply_agent_identity(item, agent_map, redis_identity_by_trace)
             if item.conversation_id:
                 scope = scopes[index] if index < len(scopes) else {}
                 item.project_name = scope.get("project_name") or None

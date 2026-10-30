@@ -45,6 +45,35 @@ class AgentOnboardingResult:
     # 模板里因当前用户无权使用而被跳过的 MCP 工具引用（供前端提示）
     dropped_tool_refs: tuple = ()
 
+async def load_agent_identity_map(
+    session: Any, agent_ids: Any
+) -> Dict[str, tuple[str | None, str | None, str | None]]:
+    """按 ID 批量取智能体身份，**不套可见性过滤**。
+
+    为什么不复用 `list_agents`：那个方法服务于「我能用哪些智能体」，非管理员会被过滤
+    成只剩自己创建的那几个（`created_by != username` 一律跳过）。历史消息要的是
+    「当时是谁回答的」，这是既成事实——不能因为当前用户看不到那个智能体，就把已经
+    发生的对话署名抹掉。实测同一份数据：管理员能查到主助手，普通用户查不到，界面
+    上「谁回答的」直接变空白。
+
+    智能体被物理删除时这里也查不到，由调用方继续回落到 Redis 快照。
+    """
+    ids = {str(i).strip() for i in (agent_ids or []) if str(i or "").strip()}
+    if not ids or session is None:
+        return {}
+    from app.models.agent import AIAgent
+    from sqlalchemy import select
+
+    rows = (
+        await session.execute(
+            select(AIAgent.id, AIAgent.name, AIAgent.display_name, AIAgent.avatar_url).where(
+                AIAgent.id.in_(ids)
+            )
+        )
+    ).all()
+    return {str(row[0]): (row[1], row[2], row[3]) for row in rows}
+
+
 def build_agent_identity_map(agents: Any) -> Dict[str, tuple]:
     """构建「智能体 ID → (slug 标识名, 显示名, 头像)」映射。
 
