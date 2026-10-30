@@ -221,14 +221,16 @@ async def call_external_sql_api(
     """
     执行物理 SQL 查询的统一入口：支持本地 Adapter 直连与远程 API 调用的双层分流控制。
 
-    cache_scope: 结果缓存的隔离作用域（通常为执行用户 id）。必须传入，
-    否则不同用户在行级权限场景下可能复用到彼此的缓存结果，造成跨用户数据泄露。
+    cache_scope: 结果缓存的隔离作用域（通常为执行用户 id）。**缺失时不读也不写缓存**：
+        早期缺省会退化成共享的 "anon" 桶，不同用户在行级权限场景下会复用到彼此的
+        查询结果。需要复用的调用方必须显式传入作用域。
     include_total: 是否额外执行不带 LIMIT 的 COUNT 查询并返回精确总数。
         ChatBI 主链路开启；沙箱预检和其他只需要样例行的调用保持关闭。
     for_export: 是否为「完整明细导出」通道（AI 分析口径为 False）。
         开启后行数上限放宽到 MAX_EXPORT_SQL_ROWS（10 万行），并跳过 2MB 返回体
-        硬限制（导出大明细可能超过该值）；结果不写入 AI 分析缓存作用域，防止污染
-        AI 查数缓存。仅由直链导出端点（chatbi_export）调用，AI 工具链路保持 False。
+        硬限制（导出大明细可能超过该值）；缓存变体与本链路隔离（export_full），
+        仍遵循 cache_scope 的存在性约束。仅由直链导出端点（chatbi_export）调用，
+        AI 工具链路保持 False。
     """
     # Dynamic Config
     from app.services.config_service import ConfigService
@@ -275,7 +277,11 @@ async def call_external_sql_api(
 
     # 2. Check Cache (TTL 60s)
     # Cache Key 必须包含执行模式（避免 local/remote 切换复用）与用户作用域（避免跨用户复用行级结果）。
-    scope = str(cache_scope) if cache_scope is not None and str(cache_scope).strip() else "anon"
+    # 作用域缺失时**不读也不写缓存**：早期退化成共享的 "anon" 桶，会让身份缺失的调用互相
+    # 命中结果（行级权限不同的两个调用拿到同一份数据）。宁可多打一次库，也不写这个桶。
+    scope_raw = str(cache_scope).strip() if cache_scope is not None else ""
+    cache_enabled = bool(scope_raw)
+    scope = scope_raw or "anon"
     cache_variant = "with_total" if include_total else "rows_only"
     if for_export:
         cache_variant = "export_full"
@@ -285,7 +291,7 @@ async def call_external_sql_api(
     cache_key = f"sql_result:v2:{execution_mode}:{cache_variant}:{scope}:{cache_digest}"
     redis_client = await get_redis()
 
-    if redis_client:
+    if cache_enabled and redis_client:
         cached_res = await redis_client.get(cache_key)
         if cached_res:
             logger.info(f"[Agent Debug] Cache HIT for SQL: {cache_key}")
@@ -419,7 +425,7 @@ async def call_external_sql_api(
                 return f"[TOOL_ERROR] 本地执行结果超过最大返回体限制 ({MAX_LOCAL_RESULT_BYTES} bytes)，请缩小查询字段或过滤条件。\n\n[Executed SQL]:\n{sql}"
 
             # 设置缓存
-            if redis_client:
+            if cache_enabled and redis_client:
                 await redis_client.set(cache_key, result_json, ex=60)
 
             return result_json
@@ -543,7 +549,7 @@ async def call_external_sql_api(
                 f"\n\n[Executed SQL]:\n{sql}"
             )
 
-        if redis_client:
+        if cache_enabled and redis_client:
             await redis_client.set(cache_key, result_json, ex=60)
 
         return result_json

@@ -185,10 +185,15 @@ async def test_sql_routing_cache_key_includes_execution_mode():
          patch("app.services.config_service.ConfigService.get", side_effect=lambda key, **kw: "60.0" if key == "data_api_timeout_seconds" else "http://remote/api"), \
          patch("app.services.data_adapter.factory.get_adapter", return_value=local_adapter), \
          patch("app.core.http_client.GlobalHttpClient.get_client", return_value=remote_client):
+        # cache_scope 必传：作用域缺失的新契约是不读不写缓存，这里要验证的是 key 里的执行模式段。
         with patch.dict("os.environ", {"SQL_EXECUTION_MODE": "remote"}):
-            remote_res = json.loads(await call_external_sql_api(sql, data_source="mysql_test"))
+            remote_res = json.loads(
+                await call_external_sql_api(sql, data_source="mysql_test", cache_scope="1")
+            )
         with patch.dict("os.environ", {"SQL_EXECUTION_MODE": "local"}):
-            local_res = json.loads(await call_external_sql_api(sql, data_source="mysql_test"))
+            local_res = json.loads(
+                await call_external_sql_api(sql, data_source="mysql_test", cache_scope="1")
+            )
 
     assert remote_res["items"] == [["remote"]]
     assert local_res["items"] == [["local"]]

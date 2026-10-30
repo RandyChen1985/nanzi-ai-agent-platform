@@ -90,8 +90,16 @@ def test_init_config_handler_always_releases_the_inflight_flag():
 
     assert (
         "hostInitInFlight.value = true; try { await applyHostInitConfig(data); } "
-        "finally { hostInitInFlight.value = false; }"
+        "finally { hostInitInFlight.value = false;"
     ) in source
+    # 排队中的宿主门户提问必须在同一个 finally 里消费：异常路径若跳过它，
+    # 问题会被滞留到下一次握手才意外发出（甚至打进另一轮初始化的会话）。
+    finally_at = source.index("finally { hostInitInFlight.value = false;")
+    flush_at = source.index("void flushPendingHostPortalQuestion();")
+    assert finally_at < flush_at
+    # 中间只允许有注释，不能再插入第二个 try/catch 把 flush 挪出脱手范围
+    between = source[finally_at:flush_at]
+    assert between.count("try {") == 0 and between.count("catch") == 0
 
 
 def test_every_init_config_branch_settles_permission_before_releasing_inflight():

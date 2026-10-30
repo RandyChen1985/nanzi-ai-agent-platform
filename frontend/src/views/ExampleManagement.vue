@@ -3,6 +3,7 @@ import { ref, onMounted, computed, watch } from "vue";
 import { useRouter } from 'vue-router';
 import ExampleFlowGuideBanner from '../components/example/ExampleFlowGuideBanner.vue';
 import ExampleSearchTestModal from '../components/example/ExampleSearchTestModal.vue';
+import HeroSilhouette from '../components/common/HeroSilhouette.vue';
 import axios from "@/utils/axios";
 import { useToast } from "../composables/useToast";
 import { useUser } from "../composables/useUser";
@@ -547,9 +548,10 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-5">
-    <!-- Header：与任务/技能工作台一致 -->
-    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-      <div class="min-w-0">
+    <!-- Header：与任务/技能工作台一致，底部一层案例卡剪影 -->
+    <div class="hero-surface flex flex-col gap-4 rounded-2xl border border-gray-200/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between lg:p-5">
+      <HeroSilhouette variant="cards" :height="40" />
+      <div class="relative z-10 min-w-0">
         <div class="flex flex-wrap items-center gap-3">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">案例集管理</h1>
           <!-- ? 规范与指引大弹窗按钮 -->
@@ -616,7 +618,7 @@ onMounted(async () => {
         之前的 flex-col 让导出、检索测试各占一行，同步按钮的 w-full 又被拉成
         一条只有图标的空条；这里把四个操作收成 36px 方形图标，横向排在同一条线上。
       -->
-      <div class="flex w-full flex-col gap-2.5 lg:w-auto lg:flex-row lg:items-center lg:gap-2.5">
+      <div class="relative z-10 flex w-full flex-col gap-2.5 lg:w-auto lg:flex-row lg:items-center lg:gap-2.5">
         <!-- 统一搜索框（支持提问内容、ID、Agent、数据集、Trace） -->
         <div class="relative w-full lg:w-80">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">

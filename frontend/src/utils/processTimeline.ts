@@ -519,6 +519,76 @@ export function selectTimelineRenderableItems(
   return list.filter((item, index) => item.kind !== "todo" || index === lastTodoIndex);
 }
 
+/**
+ * 模型调用（`category=model`）是**观测信息**，不是执行叙事：每问一次模型就多一条，
+ * 而它又固定 push 到顶层数组末尾（工具都挂在旁白 children 下），于是主时间线表现为
+ * 「工具全在上、模型调用全在下」，最新进度还被压在这一串下面。
+ *
+ * 默认折叠成一行汇总（次数 + 合计耗时 + 明细入口）；只有进行中的那条保留，
+ * 否则模型思考期间主时间线完全静止，看起来像卡死。
+ */
+export function isModelCallLog(item: ProcessTimelineItem): item is ProcessTimelineLogItem {
+  return item.kind === "log" && item.category === "model";
+}
+
+/** fallback 换模提示同属 model 类别，但它是用户必须看见的事件，不参与折叠。 */
+export function isModelFallbackNotice(log: ProcessTimelineLogItem): boolean {
+  return log.status === "warning" || /fallback/i.test(String(log.title || ""));
+}
+
+/** 深度优先收集模型调用条目（含子代理嵌套在 children 里的那些）。 */
+export function collectModelCallLogs(items: ProcessTimelineItem[] | undefined): ProcessTimelineLogItem[] {
+  const found: ProcessTimelineLogItem[] = [];
+  const walk = (list: ProcessTimelineItem[] | undefined) => {
+    for (const item of list || []) {
+      if (item.kind === "log") {
+        if (isModelCallLog(item)) found.push(item);
+        if (item.children?.length) walk(item.children);
+      } else if (item.kind === "text") {
+        walk(item.children);
+      }
+    }
+  };
+  walk(items);
+  return found;
+}
+
+/** 移除模型调用条目，返回新数组（不改动入参）。`keepPending` 默认保留进行中的一条。 */
+export function stripModelCallLogs(
+  items: ProcessTimelineItem[],
+  options: { keepPending?: boolean } = {},
+): ProcessTimelineItem[] {
+  const keepPending = options.keepPending !== false;
+  return items.flatMap((item): ProcessTimelineItem[] => {
+    if (item.kind === "log") {
+      if (isModelCallLog(item) && !isModelFallbackNotice(item)) {
+        return keepPending && item.status === "pending" ? [item] : [];
+      }
+      return item.children?.length
+        ? [{ ...item, children: stripModelCallLogs(item.children, options) as ProcessTimelineLogItem[] }]
+        : [item];
+    }
+    if (item.kind === "text" && item.children?.length) {
+      return [{ ...item, children: stripModelCallLogs(item.children, options) as ProcessTimelineLogItem[] }];
+    }
+    return [item];
+  });
+}
+
+/** 汇总行数据：调用次数、已完成调用的合计耗时、是否仍在调用中。 */
+export function summarizeModelCalls(items: ProcessTimelineItem[] | undefined): {
+  count: number;
+  totalMs: number;
+  pending: boolean;
+} {
+  const logs = collectModelCallLogs(items);
+  return {
+    count: logs.length,
+    totalMs: logs.reduce((sum, log) => sum + (Number(log.execution_time_ms) || 0), 0),
+    pending: logs.some((log) => log.status === "pending"),
+  };
+}
+
 let textSequence = 0;
 
 function nextTextId(kind: ProcessTimelineTextItem["textKind"]): string {

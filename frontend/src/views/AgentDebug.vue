@@ -5029,6 +5029,7 @@ onUnmounted(() => {
                 :hide-todo="activeTodoTimeline === msg.processTimeline"
                 bordered
                 @stop="stopGeneration({ notifySuccess: true })"
+                @open-model-stats="openModelCallStats(msg)"
               />
 
               <ToolPermissionCard

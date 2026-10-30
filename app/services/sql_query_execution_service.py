@@ -447,6 +447,33 @@ async def execute_sql_query_core(
     if str(ud.get("role") or "").strip().lower() == "admin":
         is_admin_eff = True
 
+    # 真实执行前必须拿到可信身份，否则一律 fail-closed：
+    #   1) 表级权限在 refs 为空（SELECT 1 / CTE / 内置表）或 bypass_table_auth 时会整段跳过；
+    #   2) 行级权限拿不到用户/角色，只能落到 default_policy 兜底（配置为空时等于不过滤）；
+    #   3) 结果缓存会退化成跨调用共享的作用域。
+    # 与其静默放行，不如明确拒绝并把上下文写进日志，方便定位是哪条链路丢了身份。
+    # dry_run 与 auth_check_only 不产生真实数据访问，保持原有行为不受此门禁影响。
+    if (
+        user_id_eff is None
+        and not is_admin_eff
+        and not bypass_table_auth
+        and not auth_check_only
+        and not _effective_dry_run(dry_run)
+    ):
+        logger.warning(
+            "[SQL Auth] 拒绝执行：缺少可信用户身份 (dataset=%s, data_source=%s, "
+            "has_api_key=%s, has_agent_context=%s, conversation_id=%s)",
+            dataset_name or "-",
+            data_source or "-",
+            bool(key),
+            agent_context is not None,
+            getattr(agent_context, "conversation_id", None) or "-",
+        )
+        return (
+            "[Permission Denied] 无法执行 SQL：缺少可信用户身份。"
+            "请确认调用方已注入 user_id 或有效 api_key，并重新登录后重试。"
+        )
+
     ds = None
     if dataset_name:
         ds = await MetadataService.get_dataset_by_name(session, dataset_name)

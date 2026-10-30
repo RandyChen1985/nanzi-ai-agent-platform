@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.no_infrastructure
 
 VIEW_PATH = "frontend/src/views/KnowledgeBaseManagement.vue"
+HERO_SILHOUETTE_PATH = "frontend/src/components/common/HeroSilhouette.vue"
 
 
 def _source() -> str:
@@ -87,17 +88,27 @@ def test_deep_link_still_opens_detail_and_no_extra_requests():
 
 
 def test_hero_card_has_decorative_shelf():
-    """顶部卡片的书架剪影是纯装饰：不接事件、不进无障碍树、不压住按钮。"""
-    view = _source()
+    """顶部卡片的书架剪影是纯装饰：不接事件、不进无障碍树、不压住按钮。
 
-    assert "kb-hero relative overflow-hidden" in view
-    assert 'class="kb-hero-art pointer-events-none"' in view
-    assert 'aria-hidden="true"' in view
+    剪影已抽到 components/common/HeroSilhouette.vue 供四个页面共用，断言也分两处：
+    本页只负责"用哪个 variant、内容层要压在剪影之上"，
+    装饰性（aria-hidden / pointer-events-none）与固定种子由组件自己保证。
+    """
+    view = _source()
+    hero = (ROOT / HERO_SILHOUETTE_PATH).read_text(encoding="utf-8")
+
+    # 卡片用统一的 hero-surface 配方，剪影以组件形式声明 variant
+    assert "hero-surface" in view
+    assert '<HeroSilhouette variant="books" />' in view
 
     # 标题与按钮都要压在剪影之上，否则按钮点不到、文字也会被削
     assert 'class="relative z-10 flex min-w-0 flex-col gap-1"' in view
     assert 'class="relative z-10 flex shrink-0 items-center gap-2 lg:gap-3"' in view
 
+    # 纯装饰：不接事件、不进无障碍树
+    assert 'aria-hidden="true"' in hero
+    assert "pointer-events: none" in hero
+
     # 书脊由固定种子生成：刷新一次不会换个样子，也不用为调布局重排几十个坐标
-    assert "const HERO_SHELF_SPINES" in view
-    assert "let seed = 20261030" in view
+    assert "function artBooks" in hero
+    assert "lcg(20261030)" in hero

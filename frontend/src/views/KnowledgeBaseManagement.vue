@@ -7,6 +7,7 @@ import axios from '../utils/axios'
 import Modal from '../components/Modal.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import KnowledgeFlowGuideBanner from '../components/knowledge/KnowledgeFlowGuideBanner.vue'
+import HeroSilhouette from '../components/common/HeroSilhouette.vue'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { formatDate } from '../utils/date'
@@ -125,35 +126,6 @@ const VISIBILITY_TABS: { key: VisibilityScope; label: string; hint: string }[] =
   { key: 'team', label: 'TEAM 级', hint: '归属部门（含下级部门）成员自动只读' },
   { key: 'private', label: '个人私有', hint: '仅自己可见，不支持分配授权' },
 ]
-
-/**
- * 顶部卡片底部的书架剪影：一排高低错落的书脊。
- *
- * 用固定种子的伪随机**生成**而不是手写几十个 <rect>：手写一改布局就得重排，
- * 生成则只要调整几个区间；种子写死，所以每次刷新长得一模一样，不会"跳动"。
- * 高度刻意收敛在 [28,34] —— 差异放开就成了城市天际线，读不出是书。
- */
-const HERO_SHELF_SPINES = (() => {
-  let seed = 20261030
-  const rand = () => {
-    // Math.imul 才是 32 位整数乘法：直接 `seed * 1103515245` 早超了 2^53，
-    // 精度一丢，取模出来的序列就是乱的
-    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
-    return seed / 2147483648
-  }
-  const spines: { x: number; y: number; w: number; h: number; tilt: number }[] = []
-  let x = 2
-  while (x < 1400) {
-    const w = 8 + Math.round(rand() * 10)
-    const roll = rand()
-    const top = roll > 0.88 ? 58 + Math.round(rand() * 10) : roll > 0.78 ? 40 + Math.round(rand() * 8) : 28 + Math.round(rand() * 6)
-    // 偶尔一本斜靠上去，破掉整排等距的机械感
-    const tilt = rand() < 0.06 ? (rand() < 0.5 ? -11 : 12) : 0
-    spines.push({ x, y: top, w, h: 74 - top, tilt })
-    x += w + 1 + Math.round(rand() * 2)
-  }
-  return spines
-})()
 
 /**
  * 可见范围下拉的选项：下拉里双行展示「名称 + 适用场景」。
@@ -3403,34 +3375,9 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
     </div>
 
     <!-- Header Section -->
-    <div class="kb-hero relative overflow-hidden flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm">
-      <!--
-        书架剪影：贴着卡片下沿的一排书脊，只在视觉上交代「这里放的是知识库」。
-        pointer-events-none + aria-hidden —— 纯装饰，不接事件也不进无障碍树。
-      -->
-      <svg
-        class="kb-hero-art pointer-events-none"
-        viewBox="0 0 1400 80"
-        preserveAspectRatio="xMidYMax slice"
-        fill="none"
-        aria-hidden="true"
-      >
-        <g fill="currentColor">
-          <rect
-            v-for="(spine, i) in HERO_SHELF_SPINES"
-            :key="i"
-            :x="spine.x"
-            :y="spine.y"
-            :width="spine.w"
-            :height="spine.h"
-            rx="2"
-            :transform="spine.tilt ? `rotate(${spine.tilt} ${spine.x + spine.w / 2} 74)` : undefined"
-          />
-          <!-- 搁板：让这排书脊有落地感 -->
-          <rect x="0" y="74" width="1400" height="6" rx="3" />
-        </g>
-      </svg>
-
+    <div class="hero-surface flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm">
+      <!-- 书架剪影：贴着卡片下沿的一排书脊，只在视觉上交代「这里放的是知识库」 -->
+      <HeroSilhouette variant="books" />
       <div class="relative z-10 flex min-w-0 flex-col gap-1">
         <div class="flex items-center gap-3">
           <h1 class="text-2xl font-bold text-gray-900 tracking-tight">知识库管理</h1>
@@ -6847,33 +6794,9 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 </template>
 
 <style scoped>
-/* ---------- 顶部标题卡的书架剪影 ---------- */
-/* 底色仍是 bg-white，这里只叠一层极淡光晕，卡片右上角略偏蓝 */
-.kb-hero {
-  background-image:
-    radial-gradient(120% 160% at 88% -30%, rgba(22, 119, 255, 0.07) 0%, rgba(22, 119, 255, 0) 58%),
-    linear-gradient(105deg, #ffffff 0%, #fdfeff 46%, #f7faff 100%);
-}
-
-.kb-hero-art {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 1;
-  width: 100%;
-  height: 46px;
-  color: #1677ff;
-  opacity: 0.11;
-  /* 两端渐隐，避免书脊在卡片直角处被切断 */
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0%, #000 6%, #000 94%, transparent 100%);
-}
-
-/* 窄屏卡片变高、内容变窄，剪影压到 34px 免得压住副标题 */
-@media (max-width: 640px) {
-  .kb-hero-art { height: 34px; opacity: 0.09; }
-}
+/* ---------- 顶部标题卡 ----------
+   卡片底色/光晕在全局 .hero-surface（style.css），底部剪影在
+   components/common/HeroSilhouette.vue —— 四个页面共用同一套配方。 */
 
 /* slide-down vertical transitions */
 .slide-down-enter-active,

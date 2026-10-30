@@ -101,3 +101,6 @@ browser-screenshots/
 # @file-viewer/vite-plugin 生成的渲染器静态资源（约 13MB，构建期产物，不入库）
 frontend/public/vendor/
 frontend/public/flyfish-viewer-assets.json
+
+# 本地 Gitee 镜像同步脚本（个人运维用，仅本机保留，不入库）
+/sync-to-gitee.sh

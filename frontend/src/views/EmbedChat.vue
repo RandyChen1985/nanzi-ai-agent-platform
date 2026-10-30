@@ -873,6 +873,7 @@
                 :hide-todo="activeTodoTimeline === msg.processTimeline"
                 dark-mode
                 @stop="stopGeneration({ notifySuccess: true })"
+                @open-model-stats="openModelCallStats(msg)"
               />
               <ToolPermissionCard
                 v-if="msg.pendingPermission"
@@ -9090,6 +9091,86 @@ const openSavedReportFromHost = (target: any) => {
   };
   setTimeout(() => openPortalDrawer(), 0);
 };
+
+/**
+ * 宿主经 `INIT_CONFIG` 下发的门户快捷提问——**排队到主初始化完成后才发**。
+ *
+ * 旧实现用 `setTimeout(..., 0)` 把它排进宏任务，误以为这样能「等 initChat 先跑」：
+ * `setTimeout 0` 只让出一个宏任务，提问实际会插进 `initChat()` 的 `validateToken()`
+ * 网络往返里。随后 `initChat` 的首屏历史加载对空会话执行 `messages.value = []`
+ * （见 `fetchConversationHistory` 首屏分支），刚上屏的提问气泡就会被整体清掉——
+ * 只能靠流式快照恢复兜底，快照尚未写入时表现为「点了没反应」。
+ */
+let pendingHostPortalQuestion: {
+  query: string;
+  action: "send" | "fill";
+  requestId: string;
+} | null = null;
+/** 已消费的宿主门户提问请求号：宿主重推 `INIT_CONFIG`（agent 切换、重试握手）时不重复发送。 */
+const handledHostPortalRequestIds = new Set<string>();
+/**
+ * `initChat` 首屏历史落地信号，供门户提问排队项等待。
+ * 为 `null` 表示本轮初始化没有历史请求（无会话 / 提前返回），排队项可直接发。
+ */
+let initialHistorySettled: Promise<void> | null = null;
+/** 排队项等待首屏历史的上限：历史接口慢或挂住时不能让提问永远发不出去。 */
+const HOST_PORTAL_QUESTION_HISTORY_WAIT_MS = 5000;
+
+/** 把宿主下发的门户提问收进队列；重复请求号直接丢弃。 */
+const queueHostPortalQuestion = (payload: Record<string, any> | null | undefined) => {
+  const query = String(payload?.query || "").trim();
+  if (!query) return;
+  const requestId =
+    String(payload?.request_id || "").trim() ||
+    // 宿主未给请求号时退回「问题内容」做幂等键：同一次握手重推同一问题不应发两次
+    `host-portal-${query}`;
+  if (handledHostPortalRequestIds.has(requestId)) return;
+  pendingHostPortalQuestion = {
+    query,
+    action: payload?.action === "fill" ? "fill" : "send",
+    requestId,
+  };
+};
+
+/** 先到先得地等首屏历史落地，超时则放行（宁可早发，也不能吞掉用户的点击）。 */
+const waitInitialHistorySettled = async () => {
+  const settled = initialHistorySettled;
+  if (!settled) return;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      settled.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, HOST_PORTAL_QUESTION_HISTORY_WAIT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
+/** 主初始化结束后消费排队项。认证失败的握手一律丢弃，不把问题打进未登录会话。 */
+const flushPendingHostPortalQuestion = async () => {
+  const pending = pendingHostPortalQuestion;
+  pendingHostPortalQuestion = null;
+  if (!pending) return;
+  if (!hasPermission.value) return;
+  handledHostPortalRequestIds.add(pending.requestId);
+  // 幂等集合只服务于单次页面生命周期，正常只会有一两个元素；留一个上限防止异常膨胀。
+  if (handledHostPortalRequestIds.size > 50) handledHostPortalRequestIds.clear();
+  // 「填入」只写输入框：用户若已开始打字，不能把草稿顶掉。
+  if (pending.action === "fill" && hasUserComposerDraft()) {
+    showToast("输入框已有内容，门户问题未填入", "info");
+    return;
+  }
+  try {
+    await waitInitialHistorySettled();
+    await handlePortalQuickQuestion(pending.query, pending.action);
+  } catch (error) {
+    console.warn("[Init] Deferred host portal question failed", error);
+  }
+};
+
 const applyInitConfigPayload = (data: Record<string, any>) => {
   void loadWorkbenchHome();
   const incomingInstanceId = normalizeEmbedInstanceId(data.instance_id);
@@ -9144,14 +9225,8 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
   }
   openSavedReportFromHost(data.open_saved_report);
   if (data.portal_question?.query) {
-    setTimeout(
-      () =>
-        handlePortalQuickQuestion(
-          String(data.portal_question.query),
-          data.portal_question.action === "fill" ? "fill" : "send",
-        ),
-      0,
-    );
+    // 不在这里直接调用：收进队列，由 `handleInitConfig` 在主初始化结束后统一消费。
+    queueHostPortalQuestion(data.portal_question);
   }
 };
 
@@ -9260,6 +9335,9 @@ const handleInitConfig = async (data: Record<string, any>) => {
     await applyHostInitConfig(data);
   } finally {
     hostInitInFlight.value = false;
+    // 门户提问必须等这一轮主初始化（会话已确定 + 首屏历史已落地）之后才发；
+    // 失败路径上由 flush 内部的 hasPermission 判定丢弃，不会把问题打进未登录会话。
+    void flushPendingHostPortalQuestion();
   }
 };
 
@@ -10065,12 +10143,15 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
     //    `await initChat(...)`，让握手多等一次历史往返会把「正在获取登录信息」遮罩一起拖长，
     //    遮罩压在骨架之上，用户反而看不到这里刚立起来的骨架动效。
     if (conversationId.value) {
-      void fetchConversationHistory(false, initGeneration)
+      // 同时把这条链记成「首屏历史落地」信号：宿主下发的门户提问要等它完成后才发，
+      // 否则会与首屏历史的空结果清空（messages.value = []）竞争。这里仍然不 await。
+      initialHistorySettled = fetchConversationHistory(false, initGeneration)
         // 历史加载完成后再还原流式草稿：已有落库终态时草稿会被丢弃，不会被重复注入。
         .then(() => restoreEmbedStreamSnapshot(initGeneration))
         .catch(e => console.error("[Init] History load failed:", e))
         .finally(() => finishThreadSkeleton(skeletonToken));
     } else {
+      initialHistorySettled = Promise.resolve();
       finishThreadSkeleton(skeletonToken);
     }
 

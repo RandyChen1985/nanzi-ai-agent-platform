@@ -458,12 +458,20 @@ class SQLRewriter:
         return True
 
     @staticmethod
-    def resolve_strategy(user_id: int, roles: List[str], config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def resolve_strategy(user_id: Optional[int], roles: List[str], config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         实现分层策略解析：用户 > 角色 > 默认
+
+        身份缺失（user_id 为 None）时不走「用户/角色/默认」三层匹配：`str(None)` 永远
+        命中不了 user_overrides，roles 也取不到，最后只会落到 default_policy——而
+        default_policy 允许被配置成空列表（语义是「不过滤」），于是身份缺失反而变成
+        「无行级过滤」。这里显式返回拒绝条件，避免该配置组合下被越权读取。
         """
         if not config:
             return []
+
+        if user_id is None:
+            return [{"condition": "1=0"}]
 
         # 1. 用户例外策略（最高优先级）
         user_overrides = config.get("user_overrides", {})

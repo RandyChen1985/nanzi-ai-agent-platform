@@ -82,6 +82,27 @@ const embedView = ref<'chat' | 'personal'>('chat');
 let timeoutTimer: any = null;
 /** 挂件主动新开会话后清 URL 钉选时，跳过一次 query watch 触发的 INIT，避免重复初始化 */
 let skipNextQueryInit = false;
+/**
+ * 门户快捷问题的幂等键：一个页面生命周期内固定，重推 INIT_CONFIG 时挂件据此去重。
+ * 挂件侧按 request_id 记忆已消费的提问，避免「重试握手 / 切智能体重推」把同一问题发两次。
+ */
+const portalQuestionRequestId = `portal-q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+/**
+ * 一次性消费 URL 里的门户提问参数。
+ *
+ * `portal_question` 以前一直留在地址栏：用户随手刷新，`Chat.vue` 重新挂载后会在
+ * `NANZI_WIDGET_READY` 时把同一个问题再发一遍（`open_saved_report` 有 request_id 幂等，
+ * 这里没有）。投递给挂件后立刻从 query 移除，刷新不再重放，也不会污染分享/回退链接。
+ */
+const consumePortalQuestionFromUrl = () => {
+    if (!route.query.portal_question) return;
+    const nextQuery = { ...route.query };
+    delete nextQuery.portal_question;
+    delete nextQuery.portal_action;
+    delete nextQuery.source;
+    router.replace({ path: route.path, query: nextQuery });
+};
 
 const parseSavedReportDetailTab = (value: unknown): SavedReportOpenRequest["detail_tab"] | null => {
   const tab = String(value || "").trim();
@@ -129,9 +150,13 @@ const sendInitConfig = () => {
             } : null,
             portal_question: route.query.portal_question ? {
                 query: String(route.query.portal_question),
-                action: route.query.portal_action === 'fill' ? 'fill' : 'send'
+                action: route.query.portal_action === 'fill' ? 'fill' : 'send',
+                request_id: portalQuestionRequestId
             } : null
         }, '*');
+
+        // 参数已经交给挂件，立刻从地址栏摘掉：否则这一页刷新（或回退再进）会把同一问题再发一遍。
+        consumePortalQuestionFromUrl();
             
         // 发送成功后，稍微延迟关闭 loading，以确保子页面有时间渲染
         setTimeout(() => {
