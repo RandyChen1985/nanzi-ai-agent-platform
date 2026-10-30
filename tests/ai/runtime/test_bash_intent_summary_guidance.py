@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import ast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -122,11 +123,10 @@ async def test_bind_adds_bash_intent_summary_requirement(tmp_path, monkeypatch):
     bound_bash = next(spec for spec in bound if spec.name == "Bash")
     assert BASH_INTENT_SUMMARY_MARKER in bound_bash.description
     assert bound_bash.parameters_schema["required"] == ["command"]
-    description_property = bound_bash.parameters_schema["properties"].get("description")
-    if isinstance(description_property, dict):
-        assert BASH_INTENT_SUMMARY_MARKER in str(
-            description_property.get("description") or ""
-        )
+    description_property = bound_bash.parameters_schema["properties"]["description"]
+    assert BASH_INTENT_SUMMARY_MARKER in str(
+        description_property.get("description") or ""
+    )
 
     for spec in bound:
         if spec.name == "Bash":
@@ -134,3 +134,63 @@ async def test_bind_adds_bash_intent_summary_requirement(tmp_path, monkeypatch):
         assert BASH_INTENT_SUMMARY_MARKER not in (spec.description or "")
 
     clear_workspace_cache()
+
+
+def _inline_bash_function(source: str) -> "ast.FunctionDef":
+    """从内联 MCP 脚本里取出 ``bash`` 的函数定义节点。"""
+
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "bash":
+            return node
+    raise AssertionError("inline server does not define bash tool")
+
+
+@pytest.mark.parametrize("backend", ["container", "ssh"])
+def test_inline_bash_declares_optional_description(backend):
+    """沙箱 MCP 的 bash 要声明 description，且保持可选（默认空串）。
+
+    声明了才可能出现该字段——模型不会主动传一个 schema 里没有的参数；
+    必须带默认值，否则 FastMCP/pydantic 会对漏填直接报校验错，变成硬失败。
+    """
+
+    from app.services.ai.runtime.agentscope import workspace_container_mcp
+    from app.services.ai.runtime.agentscope import workspace_ssh
+
+    source = (
+        workspace_container_mcp._INLINE_SERVER
+        if backend == "container"
+        else workspace_ssh._SSH_INLINE_SERVER
+    )
+
+    node = _inline_bash_function(source)
+    argument_names = [argument.arg for argument in node.args.args]
+    assert argument_names[:2] == ["command", "cwd"]
+    assert argument_names[2:] == ["description"]
+    assert [ast.literal_eval(default) for default in node.args.defaults] == [".", ""]
+
+
+def test_augment_fills_mcp_parameter_description_without_docstring():
+    """MCP 只给出 properties.description 空壳时，平台侧要补上说明。
+
+    实测 FastMCP 生成 schema 时不会把 docstring 的 Args 文案带进参数说明，
+    因此仅靠内联脚本的 docstring 不够，模型最终看到的话术由平台绑定层补。
+    """
+
+    schema = {
+        "properties": {
+            "command": {"title": "Command", "type": "string"},
+            "cwd": {"default": ".", "title": "Cwd", "type": "string"},
+            "description": {"default": "", "title": "Description", "type": "string"},
+        },
+        "required": ["command"],
+        "type": "object",
+        "title": "bashArguments",
+    }
+
+    augmented = _augment_bash_parameter_schema(schema)
+
+    parameter_description = augmented["properties"]["description"]["description"]
+    assert "REQUIRED on every call" in parameter_description
+    assert BASH_INTENT_SUMMARY_MARKER in parameter_description
+    assert augmented["required"] == ["command"]
