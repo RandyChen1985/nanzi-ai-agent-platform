@@ -18,6 +18,10 @@ from app.core.context import get_execution_option
 
 logger = logging.getLogger(__name__)
 
+# 数据集目录的字符预算。超过后省略 Table Details 明细——它是目录里唯一随「表数量」
+# 线性膨胀的部分；表术语列表仍保留，细节交给 get_dataset_schema 按需拉取。
+_DATASET_MENU_DETAIL_BUDGET = 12000
+
 
 @dataclass(frozen=True)
 class RuntimeModelInfo:
@@ -323,16 +327,112 @@ class AgentConfigProvider:
             return None
 
     @staticmethod
+    @staticmethod
+    def _dataset_menu_header(count: int, *, include_table_details: bool = True) -> str:
+        """目录开头的引导语。
+
+        模型需要两件它自己推不出来的事：这是「按当前账号权限过滤后」的完整范围，
+        以及越界（列出未出现的数据集/表）是违规的。缺了这两句，模型容易把目录当成
+        「平台支持的全部数据」或凭空猜测未授权的表名。
+
+        降级时字段说明要跟着变，否则会告诉模型一个正文里并不存在的字段。
+        """
+        if count <= 0:
+            return "【当前用户有权访问的数据集】\n"
+        fields = (
+            "字段含义：Dataset=数据集标识，Display Name=中文名称，Description=用途说明，"
+            "Includes Tables=表术语"
+        )
+        if include_table_details:
+            fields += "，Table Details=表描述"
+        fields += "，Metrics=指标名。\n"
+        detail_hint = "" if include_table_details else "表结构细节请调用 get_dataset_schema 获取。\n"
+        return (
+            f"【当前用户有权访问的数据集】共 {count} 个，已按当前账号的数据权限过滤，是本轮可查询的完整范围。\n"
+            "只能使用这里列出的数据集与表：未列出的数据集一律视为无权访问，不要假设其存在，也不要编造表名或指标名。\n"
+            f"{fields}{detail_hint}"
+        )
+
+    @staticmethod
+    def _format_dataset_menu(datasets: list, *, include_table_details: bool = True) -> str:
+        """把授权数据集渲染成目录文本。
+
+        ``include_table_details=False`` 用于体积超预算时降级：省掉表描述明细，
+        但保留表术语列表，模型仍能选中数据集、把表名当检索线索。
+        """
+        menu = AgentConfigProvider._dataset_menu_header(
+            len(datasets), include_table_details=include_table_details
+        )
+        if not datasets:
+            # 中文引导语与英文旧标记并存：Redis 里 90 天 TTL 内可能还有旧格式缓存，
+            # menu_has_authorized_datasets 两种都要认。
+            return menu + "  (No authorized datasets available)\n"
+
+        for ds in datasets:
+            name = getattr(ds, "name", "unknown")
+            display_name = str(getattr(ds, "display_name", "") or "").strip()
+            desc = getattr(ds, "description", "No description")
+            tags = getattr(ds, "tags", [])
+
+            tag_str = f" [{', '.join(tags)}]" if isinstance(tags, list) and tags else ""
+            menu += f"- Dataset: {name}{tag_str}\n"
+            if display_name and display_name != name:
+                menu += f"  Display Name: {display_name}\n"
+            menu += f"  Description: {desc}\n"
+
+            active_tables = [
+                tbl for tbl in (getattr(ds, "tables", None) or [])
+                if getattr(tbl, "status", 1) != 0
+            ]
+            table_terms: list[str] = []
+            for tbl in active_tables:
+                term = str(getattr(tbl, "term", None) or getattr(tbl, "physical_name", "") or "").strip()
+                if term:
+                    table_terms.append(term)
+            if table_terms:
+                menu += f"  Includes Tables: {', '.join(table_terms)}\n"
+                if include_table_details:
+                    menu += "  Table Details:\n"
+                    for tbl in active_tables:
+                        term = str(
+                            getattr(tbl, "term", None) or getattr(tbl, "physical_name", "") or ""
+                        ).strip()
+                        if not term:
+                            continue
+                        table_desc = re.sub(
+                            r"\s+",
+                            " ",
+                            str(getattr(tbl, "description", "") or "").strip(),
+                        )
+                        if table_desc:
+                            menu += f"    - {term}: {table_desc}\n"
+                        else:
+                            menu += f"    - {term}\n"
+
+            metrics = [
+                m for m in (getattr(ds, "metrics", None) or [])
+                if getattr(m, "display_name", None) or getattr(m, "name", None)
+            ]
+            if metrics:
+                metric_labels = [
+                    str(getattr(m, "display_name", None) or getattr(m, "name", "")).strip()
+                    for m in metrics
+                ]
+                metric_labels = [label for label in metric_labels if label]
+                if metric_labels:
+                    menu += f"  Metrics: {', '.join(metric_labels)}\n"
+
+            menu += "\n"
+        return menu
+
+    @staticmethod
     async def _generate_dataset_menu_content(user_id: Optional[int] = None, is_admin: bool = False) -> str:
         """
         Internal method to generate the dataset menu string from DB, filtered by permissions and status.
         """
-        menu = "Available Datasets (Look for Table terms to find relevant data):\n"
         try:
             from app.core.orm import AsyncSessionLocal
-            from app.models.metadata import MetaDataset
             from app.services.metadata_service import MetadataService
-            from sqlalchemy.orm import selectinload
 
             async with AsyncSessionLocal() as session:
                 # 使用 MetadataService.search_datasets 进行权限和状态过滤 (status=1 为启用)
@@ -343,66 +443,29 @@ class AgentConfigProvider:
                     is_admin=is_admin,
                     status=1 # 仅限启用状态
                 )
-            
-            if not datasets:
-                return menu + "  (No authorized datasets available)"
-            else:
-                for ds in datasets:
-                    name = getattr(ds, "name", "unknown")
-                    display_name = str(getattr(ds, "display_name", "") or "").strip()
-                    desc = getattr(ds, "description", "No description")
-                    tags = getattr(ds, "tags", [])
 
-                    tag_str = f" [{', '.join(tags)}]" if isinstance(tags, list) and tags else ""
-                    menu += f"- Dataset: {name}{tag_str}\n"
-                    if display_name and display_name != name:
-                        menu += f"  Display Name: {display_name}\n"
-                    menu += f"  Description: {desc}\n"
+            full_menu = AgentConfigProvider._format_dataset_menu(list(datasets or []))
+            if len(full_menu) <= _DATASET_MENU_DETAIL_BUDGET:
+                return full_menu
 
-                    active_tables = [
-                        tbl for tbl in (getattr(ds, "tables", None) or [])
-                        if getattr(tbl, "status", 1) != 0
-                    ]
-                    table_terms: list[str] = []
-                    for tbl in active_tables:
-                        term = str(getattr(tbl, "term", None) or getattr(tbl, "physical_name", "") or "").strip()
-                        if term:
-                            table_terms.append(term)
-                    if table_terms:
-                        menu += f"  Includes Tables: {', '.join(table_terms)}\n"
-                        menu += "  Table Details:\n"
-                        for tbl in active_tables:
-                            term = str(getattr(tbl, "term", None) or getattr(tbl, "physical_name", "") or "").strip()
-                            if not term:
-                                continue
-                            table_desc = re.sub(
-                                r"\s+",
-                                " ",
-                                str(getattr(tbl, "description", "") or "").strip(),
-                            )
-                            if table_desc:
-                                menu += f"    - {term}: {table_desc}\n"
-                            else:
-                                menu += f"    - {term}\n"
-
-                    metrics = [
-                        m for m in (getattr(ds, "metrics", None) or [])
-                        if getattr(m, "display_name", None) or getattr(m, "name", None)
-                    ]
-                    if metrics:
-                        metric_labels = [
-                            str(getattr(m, "display_name", None) or getattr(m, "name", "")).strip()
-                            for m in metrics
-                        ]
-                        metric_labels = [label for label in metric_labels if label]
-                        if metric_labels:
-                            menu += f"  Metrics: {', '.join(metric_labels)}\n"
-
-                    menu += "\n"
-                return menu
+            compact_menu = AgentConfigProvider._format_dataset_menu(
+                list(datasets or []), include_table_details=False
+            )
+            logger.warning(
+                "[dataset_menu] 目录 %s 字符超过预算 %s，已省略 Table Details 明细"
+                "（压缩后 %s 字符，数据集 %s 个）",
+                len(full_menu),
+                _DATASET_MENU_DETAIL_BUDGET,
+                len(compact_menu),
+                len(datasets or []),
+            )
+            return compact_menu
         except Exception as e:
             logger.error(f"Failed to load dataset menu internally: {e}")
-            return menu + f"  (System Error: Failed to load dataset menu)"
+            return (
+                AgentConfigProvider._dataset_menu_header(0)
+                + "（目录加载失败：请勿假设任何数据集可用，必要时如实说明暂时无法确认可查范围。）"
+            )
 
     @staticmethod
     async def get_dataset_menu(user_id: Optional[int] = None, is_admin: bool = False, force_refresh: bool = False) -> str:

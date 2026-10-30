@@ -170,7 +170,7 @@ HumanMessage       ← 本轮用户（见 §4）
 
 - **Assistant**：`SystemMessage(system_prompt)` + 历史；默认 Main 的委派 hint（如有）弱注入；Runner 内 **工具预检** 便签 prepend。
 - **Knowledge**：`KnowledgeChatPrompts` + 自动检索结果上下文 + ReAct。
-- **DataQuery**：Few-Shot prepend、`{dataset_menu}` 占位替换为授权数据集目录、SQL 计划（`enable_sql_plan`）与 SQL 护栏（`executors/prompts.py`）。
+- **DataQuery**：Few-Shot prepend、授权数据集目录（默认**静默前置**到智能体提示词最前；历史模板写了 `{dataset_menu}` 则原位替换，二者不叠加）、SQL 计划（`enable_sql_plan`）与 SQL 护栏（`executors/prompts.py`）。
 - **RAG / OpenClaw**：不走 LOCAL 全局 prepend 栈，自有逻辑。
 
 **工具 `description`**：来自 `ToolRegistry`，作为模型的独立声明参数，不算在 chat 里的 system 文本中。
@@ -193,8 +193,8 @@ HumanMessage       ← 本轮用户（见 §4）
 
 | 放全局常量 | 放条件 prepend | 放智能体 DB | 放执行器 |
 |------------|----------------|-------------|----------|
-| 安全、保密、反幻觉 | LTM、跨会话、预加载记忆 | 领域角色、输出格式、ChatBI 口径 | SQL 计划（enable_sql_plan）、`{dataset_menu}` 目录、知识库模式 |
-| 优先级、默认中文 | 技能全文 / 发现 hint / **主助手 Skill 自动扫描** | `{dataset_menu}` 占位（运行时替换；门户指令 `/dataset_portal`） | Few-Shot 案例块 |
+| 安全、保密、反幻觉 | LTM、跨会话、预加载记忆 | 领域角色、输出格式、ChatBI 口径 | SQL 计划（enable_sql_plan）、数据集目录（自动注入，无需占位符）、知识库模式 |
+| 优先级、默认中文 | 技能全文 / 发现 hint / **主助手 Skill 自动扫描** | 业务口径与非数据类专规（数据集目录由平台注入，不必写占位符） | Few-Shot 案例块 |
 | 工具通则、记忆对照表、仅调用已绑定工具 | — | 运维「必须推荐问题」等 | Assistant **工具预检**（`tool_nudge_policy`） |
 | — | — | — | 移动/桌面 UI → `injected_context`（独立 SystemMessage） |
 
