@@ -37,27 +37,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 动态生成构建矩阵（job 级 if 不支持 matrix 上下文，故由 setup job 按需输出）
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - name: 生成构建矩阵
+        id: gen
+        env:
+          # push/tag 触发时无该输入，回退为 both 全量构建
+          SEL: ${{ inputs.platforms || 'both' }}
+        run: |
+          X86='{"id":"x86","script":"build_linux_x86.sh","docker_platform":"linux/amd64","qemu":false,"node":false}'
+          ARM='{"id":"arm","script":"build_linux_arm.sh","docker_platform":"linux/arm64","qemu":true,"node":true}'
+          case "$SEL" in
+            x86) INCLUDE="[$X86]" ;;
+            arm) INCLUDE="[$ARM]" ;;
+            *)   INCLUDE="[$X86,$ARM]" ;;
+          esac
+          echo "matrix={\"include\":$INCLUDE}" >> "$GITHUB_OUTPUT"
+          echo "构建矩阵: $INCLUDE"
+
   build:
+    needs: setup
     name: 构建 ${{ matrix.id }}（${{ matrix.docker_platform }}）
     runs-on: ubuntu-latest
     # QEMU 跨架构下 pip/npm 较慢，预留 2 小时
     timeout-minutes: 120
-    # 手动触发时按所选平台过滤；tag 触发时全量构建
-    if: github.event_name == 'push' || inputs.platforms == 'both' || inputs.platforms == matrix.id
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - id: x86
-            script: build_linux_x86.sh
-            docker_platform: linux/amd64
-            qemu: false
-            node: false
-          - id: arm
-            script: build_linux_arm.sh
-            docker_platform: linux/arm64
-            qemu: true
-            node: true
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
     steps:
       - name: 检出代码
