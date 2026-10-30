@@ -1,10 +1,13 @@
 from abc import ABC, abstractmethod
+import logging
 import time
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.services.ai.temperature import resolve_config_temperature
+
+logger = logging.getLogger(__name__)
 
 class BaseExecutor(ABC):
     """
@@ -123,13 +126,31 @@ class BaseExecutor(ABC):
     def _apply_user_identity_to_context(self, ctx: Any, identity: Dict[str, Any]) -> None:
         ctx.trace_id = self.trace_id
         u_id_val = identity.get("u_id_val")
+        # api_key 是「身份缺失时反查 user_id」的唯一通道，必须在提前返回之前写入，
+        # 否则一个没有 user_id 的上下文连兜底查询都做不了。
+        api_key_val = self.user_info.get("api_key") if self.user_info else None
+        if api_key_val:
+            ctx.api_key = api_key_val
         if u_id_val is None:
+            # 本次调用方给了 user_info，但里面没有可信 user_id：不能静默沿用 ctx 上
+            # 残留的旧身份（那会以别人的身份执行工具，缓存作用域与行级权限一起串），
+            # 显式清空并留痕，交由下游 fail-closed 拦截。
+            if self.user_info:
+                ctx.user_id = None
+                ctx.is_admin = False
+                ctx.user_dimensions = {}
+            logger.warning(
+                "[Agent] 本次执行未取得可信 user_id，已清空上下文残留身份 "
+                "(trace_id=%s, conversation_id=%s, has_user_info=%s, has_api_key=%s)",
+                self.trace_id,
+                self.conversation_id,
+                bool(self.user_info),
+                bool(api_key_val),
+            )
             return
         ctx.user_id = u_id_val
         ctx.is_admin = bool(identity.get("is_admin_val"))
         ctx.user_dimensions = dict(identity.get("user_dims") or {})
-        if self.user_info and self.user_info.get("api_key"):
-            ctx.api_key = self.user_info.get("api_key")
         if self.conversation_id:
             ctx.conversation_id = self.conversation_id
         browser_session_id = self.execution_options.get("browser_session_id")

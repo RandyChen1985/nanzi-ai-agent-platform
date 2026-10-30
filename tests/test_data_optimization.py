@@ -35,8 +35,8 @@ async def test_call_external_sql_api_optimization():
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        # Execute
-        result = await call_external_sql_api("SELECT * FROM test", "default_ch")
+        # Execute（缓存隔离依赖 cache_scope：作用域缺失时按新契约不读写缓存）
+        result = await call_external_sql_api("SELECT * FROM test", "default_ch", cache_scope="1")
         
         # Verifications A
         assert result == '[{"col": "val"}]'
@@ -57,7 +57,7 @@ async def test_call_external_sql_api_optimization():
         
         mock_redis.get.return_value = '{"cached": "true"}'
         
-        result_cached = await call_external_sql_api("SELECT * FROM test", "default_ch")
+        result_cached = await call_external_sql_api("SELECT * FROM test", "default_ch", cache_scope="1")
         
         # Verifications B
         assert result_cached == '{"cached": "true"}'
