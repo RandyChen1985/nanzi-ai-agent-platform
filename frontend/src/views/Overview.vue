@@ -110,7 +110,7 @@
           title="活跃用户"
           :value="stats?.active_users || 0"
           type="success"
-          subtext="近 7 天（固定口径，不随统计周期变化）"
+          subtext="近 7 天"
         >
           <template #icon>
             <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
