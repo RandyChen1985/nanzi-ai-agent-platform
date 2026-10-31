@@ -1,11 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Login from '../views/Login.vue'
-import Dashboard from '../views/Dashboard.vue'
-import Overview from '../views/Overview.vue'
-
-
-import NoPermission from '../views/NoPermission.vue'
 import { getSnapshotLandingPath } from '../composables/useNavigation'
+
+// 这四个页面此前是**静态** import，等于把整套管理后台（Dashboard 及其依赖）打进
+// 首屏主包——第三方站点嵌入的 `/embed/*` 挂件也得先下载它。改成路由级懒加载后，
+// 首屏只保留路由表本身；管理后台在进入时再按需加载。
+const Login = () => import('../views/Login.vue')
+const Dashboard = () => import('../views/Dashboard.vue')
+const Overview = () => import('../views/Overview.vue')
+const NoPermission = () => import('../views/NoPermission.vue')
 
 const router = createRouter({
   history: createWebHistory(),

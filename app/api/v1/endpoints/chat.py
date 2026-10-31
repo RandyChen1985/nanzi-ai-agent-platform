@@ -37,12 +37,17 @@ from app.services.ai.runtime.agentscope.tool_timeout import load_agent_max_toolc
 from app.services.ai.runtime.producer_watchdog import load_producer_hard_timeout
 from app.services.ai.error_response_service import sanitize_error_text
 from app.utils.env import get_env
+from app.core.rate_limit import hit_rate_limit
 import logging
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 对话请求频率上限（次/分钟/用户）。这是唯一会触发模型调用的用户面接口，
+# 对人工对话极宽松，但对脚本刷额度是硬闸门。
+CHAT_COMPLETION_RATE_LIMIT_PER_MINUTE = 120
 
 # 持有后台 task 的强引用，防止看门狗等在事件循环中只被弱引用而提前回收。
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
@@ -1951,6 +1956,12 @@ async def create_chat_completion(
     Supports both standard JSON response and SSE Streaming.
     """
     chat_user_id = _require_chat_user_id(user_info)
+
+    # 频率上限：completions 是「每发一条消息一次」的入口，也是唯一会触发模型调用的
+    # 用户面接口。120 次/分钟对人工对话是极宽松的阈值，但足以挡住脚本刷额度。
+    # Redis 不可用时 hit_rate_limit 自身 fail-open，不会把正常对话打挂。
+    if await hit_rate_limit(f"chat:completions:{chat_user_id}", CHAT_COMPLETION_RATE_LIMIT_PER_MINUTE):
+        raise HTTPException(status_code=429, detail="对话请求过于频繁，请稍后再试")
 
     # 归属守卫：拒绝把提问写进他人的会话。会话 ID 由客户端传入且换用户后可能残留，
     # 不挡住就会出现「新用户把自己的轮次写进别人会话」的越界写入。

@@ -570,8 +570,15 @@ function collectLogsByPredicate(
   match: (log: ProcessTimelineLogItem) => boolean,
 ): ProcessTimelineLogItem[] {
   const found: ProcessTimelineLogItem[] = [];
+  // ⚠️ 防环：这是深度优先递归，且每次 props 变化都会跑（模型 / 工具两套汇总各一次）。
+  // 委派场景的树是「旁白 → 子代理容器 → 步骤 → 子步骤」，容器会按 subagent 元数据
+  // 合并、按 parent_id 重挂；一旦某节点被挂到自己下面（或两节点互指），没有 visited
+  // 就是**主线程无限递归** → Chrome「页面无响应」，刷新后重新 hydrate 继续卡。
+  const visited = new WeakSet<object>();
   const walk = (list: ProcessTimelineItem[] | undefined) => {
     for (const item of list || []) {
+      if (!item || visited.has(item)) continue;
+      visited.add(item);
       if (item.kind === "log") {
         if (match(item)) found.push(item);
         if (item.children?.length) walk(item.children);
@@ -730,19 +737,23 @@ function isToolLog(data: { title?: string; category?: string; id?: string | numb
 function findTimelineLog(
   items: ProcessTimelineItem[],
   id: string | number,
+  visited: WeakSet<object> = new WeakSet(),
 ): ProcessTimelineLogItem | undefined {
   for (const item of items) {
+    // 防环：查找同样是递归，环会让它在两条事件之间无限打转。
+    if (!item || visited.has(item)) continue;
+    visited.add(item);
     if (item.kind === "log") {
       if (item.id === id) return item;
       if (item.children?.length) {
-        const found = findTimelineLogInLogs(item.children, id);
+        const found = findTimelineLogInLogs(item.children, id, visited);
         if (found) return found;
       }
     } else if (item.kind === "text") {
       for (const child of item.children || []) {
         if (child.id === id) return child;
         if (child.children?.length) {
-          const found = findTimelineLogInLogs(child.children, id);
+          const found = findTimelineLogInLogs(child.children, id, visited);
           if (found) return found;
         }
       }
@@ -754,11 +765,14 @@ function findTimelineLog(
 function findTimelineLogInLogs(
   logs: ProcessTimelineLogItem[],
   id: string | number,
+  visited: WeakSet<object> = new WeakSet(),
 ): ProcessTimelineLogItem | undefined {
   for (const log of logs) {
+    if (!log || visited.has(log)) continue;
+    visited.add(log);
     if (log.id === id) return log;
     if (log.children?.length) {
-      const found = findTimelineLogInLogs(log.children, id);
+      const found = findTimelineLogInLogs(log.children, id, visited);
       if (found) return found;
     }
   }

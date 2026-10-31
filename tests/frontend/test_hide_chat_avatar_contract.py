@@ -77,8 +77,9 @@ def test_config_has_an_explicit_default():
 def test_state_round_trips_through_local_storage():
     chat = _chat()
 
-    assert 'localStorage.setItem("yovole_hide_chat_avatar", config.hideChatAvatar ? "1" : "0")' in chat
-    assert 'localStorage.getItem("yovole_hide_chat_avatar")' in chat
+    # 读写走按实例分桶的 helper：`instance_id` 不同的挂件互不覆盖
+    assert 'writeConfigValue("yovole_hide_chat_avatar", config.hideChatAvatar ? "1" : "0")' in chat
+    assert 'readConfigValue("yovole_hide_chat_avatar")' in chat
     assert 'config.hideChatAvatar = savedHideChatAvatar === "1"' in chat
 
 

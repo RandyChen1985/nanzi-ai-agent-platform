@@ -65,7 +65,9 @@ def test_chat_page_handle_lives_where_the_iframe_lives():
     assert "lg:hidden" in tag
     # 点击直接进城，不经 window 事件
     assert '@click="openEmbeddedAccount"' in source
-    assert "postMessage({ type: 'OPEN_ACCOUNT' }, '*')" in source
+    # 目标 origin 必须是确定的同源地址：通配会让任何嵌了本页的站点都收到上行消息
+    assert "postMessage({ type: 'OPEN_ACCOUNT' }, window.location.origin)" in source
+    assert ", '*')" not in source, "同源 iframe 的 postMessage 不得使用通配 origin"
     assert "nanzi:embed-open-account" not in source
 
 

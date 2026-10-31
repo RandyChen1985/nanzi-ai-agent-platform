@@ -300,6 +300,7 @@
                     @click.stop="dismissShortcutsHint"
                     class="ml-1 rounded-md p-1 text-white/70 hover:text-white hover:bg-white/20 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
                     title="知道了"
+                    aria-label="关闭快捷键提示"
                   >
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -986,6 +987,7 @@
                   @click="copyMessage(visibleStreamBody(msg))"
                   class="absolute -top-1 -right-1 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md opacity-0 group-hover/content:opacity-100 transition-all z-10 shadow-sm border border-gray-100 dark:border-gray-600"
                   title="复制内容"
+                  aria-label="复制这条回复"
                 >
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
                 </button>
@@ -1747,6 +1749,7 @@
                           @click.stop="openDeleteModal(traceLogData?.trace_id)"
                           class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
                           title="删除此记录"
+                          aria-label="删除此条执行日志"
                       >
                           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                       </button>
@@ -1754,6 +1757,8 @@
                       <div class="w-px h-4 bg-gray-300 dark:bg-gray-600 mx-1"></div>
 
                       <button
+                           type="button"
+                           aria-label="关闭执行日志"
                            @click.stop="closeTraceModal"
                            class="rounded-full transition-colors flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-500"
                            :class="windowWidth < 640 ? 'w-8 h-8' : 'p-2 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white bg-transparent dark:bg-transparent'"
@@ -1764,6 +1769,8 @@
                       <!-- Back Button Helper for Mobile (Left side) -->
                       <button
                            v-if="windowWidth < 640"
+                           type="button"
+                           aria-label="返回"
                            @click.stop="closeTraceModal"
                            class="absolute left-[calc(-100vw+60px)] top-1/2 -translate-y-1/2 p-2"
                       >
@@ -2042,7 +2049,7 @@
               </div>
               <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">使用指南</h3>
             </div>
-            <button @click="showHelpModal = false" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
+            <button type="button" aria-label="关闭使用指南" @click="showHelpModal = false" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </div>
@@ -2315,7 +2322,7 @@
       <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in-up border border-gray-200 dark:border-gray-700">
         <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800/50">
           <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">新建快捷指令</h3>
-          <button @click="showAddModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+          <button type="button" aria-label="关闭新建快捷指令" @click="showAddModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -2345,7 +2352,7 @@
       <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in-up border border-gray-200 dark:border-gray-700">
         <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800/50">
           <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">新建快捷指令</h3>
-          <button @click="showAddModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+          <button type="button" aria-label="关闭新建快捷指令" @click="showAddModal = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -2643,6 +2650,10 @@ import {
 } from "@/utils/agentAvatar";
 import agentAvatarUrl from "@/assets/nanzi-agent-avatar.svg";
 import { isSkillEnabled } from '@/utils/skillEnabled'
+import {
+  evaluateHostMessageTrust,
+  resolveHostTargetOrigin,
+} from '@/utils/embedHostTrust'
 
 // 已加载失败的候选头像地址，避免「全局形象也坏了」时在两层兜底之间来回触发 error 死循环。
 const failedAvatarSrcs = new Set<string>();
@@ -4525,19 +4536,54 @@ const resolveUrlPinnedAgent = async (): Promise<boolean> => {
   }
 };
 
+/**
+ * 外观/行为偏好的存储键。
+ *
+ * 这些键此前是**全局**的（`yovole_embed_theme` 等），而平台明确支持「一页嵌入多个
+ * 挂件」（`instance_id` 正是为此而生）：同 tab 内的多个同源 iframe 共享 localStorage，
+ * 于是 A 实例改成深色，B 实例跟着变；换一个宿主站点也继承上一个宿主的偏好。
+ * 会话 ID 早就按实例分桶了，配置却漏了——这里补齐，读取时回退旧键（不丢存量偏好），
+ * 写入只写新键。
+ */
+const configStorageKey = (name: string): string => {
+  const instanceId = normalizeEmbedInstanceId(config.instanceId);
+  return instanceId ? `${name}:${encodeURIComponent(instanceId)}` : name;
+};
+
+/** 读配置项：实例键优先，未命中回退到无实例维度的历史键。 */
+const readConfigValue = (name: string): string | null => {
+  try {
+    const scoped = configStorageKey(name);
+    const value = localStorage.getItem(scoped);
+    if (value !== null) return value;
+    return scoped === name ? null : localStorage.getItem(name);
+  } catch {
+    return null;
+  }
+};
+
+/** 写配置项：只写实例键（读取侧已有旧键回退，不需要双写）。 */
+const writeConfigValue = (name: string, value: string): void => {
+  try {
+    localStorage.setItem(configStorageKey(name), value);
+  } catch {
+    // 隐私模式/存储被禁：偏好丢失不影响本次会话
+  }
+};
+
 const saveRoutingSettings = () => {
-    localStorage.setItem("yovole_enable_multi_agent", config.enableMultiAgent ? "1" : "0");
-    localStorage.setItem("yovole_show_shortcuts", config.showShortcuts ? "1" : "0");
-    localStorage.setItem("yovole_enable_sql_plan", config.enableSqlPlan ? "1" : "0");
-    localStorage.setItem("yovole_override_model", config.overrideModel || "");
-    localStorage.setItem("yovole_approval_mode", config.approvalMode || "ask");
-    localStorage.setItem("yovole_embed_theme", config.theme || "light");
-    localStorage.setItem("yovole_expand_thoughts", config.expandThoughts ? "1" : "0");
-    localStorage.setItem("yovole_grounding_block_mode", config.groundingBlockMode || "strict_buffer");
-    localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
-    localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
-    localStorage.setItem("yovole_hide_chat_avatar", config.hideChatAvatar ? "1" : "0");
-    localStorage.setItem("yovole_show_generating_animation", config.showGeneratingAnimation ? "1" : "0");
+    writeConfigValue("yovole_enable_multi_agent", config.enableMultiAgent ? "1" : "0");
+    writeConfigValue("yovole_show_shortcuts", config.showShortcuts ? "1" : "0");
+    writeConfigValue("yovole_enable_sql_plan", config.enableSqlPlan ? "1" : "0");
+    writeConfigValue("yovole_override_model", config.overrideModel || "");
+    writeConfigValue("yovole_approval_mode", config.approvalMode || "ask");
+    writeConfigValue("yovole_embed_theme", config.theme || "light");
+    writeConfigValue("yovole_expand_thoughts", config.expandThoughts ? "1" : "0");
+    writeConfigValue("yovole_grounding_block_mode", config.groundingBlockMode || "strict_buffer");
+    writeConfigValue("yovole_markdown_theme", config.markdownTheme || "default");
+    writeConfigValue("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
+    writeConfigValue("yovole_hide_chat_avatar", config.hideChatAvatar ? "1" : "0");
+    writeConfigValue("yovole_show_generating_animation", config.showGeneratingAnimation ? "1" : "0");
 };
 const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
     if (isRoutingSettingsLocked.value) return;
@@ -7420,10 +7466,26 @@ const historyAgentOptions = computed(() =>
   }))
 );
 
+/**
+ * 筛选变化 → 重新拉历史。
+ *
+ * 带 200ms 防抖：筛选面板里勾一个智能体、改一次排序都会各触发一次变更，不防抖时
+ * 一次操作连发数个请求，响应乱序还会让列表回跳（`fetchHistory` 内部虽有 in-flight
+ * 去重，但那是「加载更多」的守卫，刷新路径按顺序覆盖）。
+ */
+let historyFilterDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const clearHistoryFilterDebounce = () => {
+  if (historyFilterDebounceTimer) clearTimeout(historyFilterDebounceTimer);
+  historyFilterDebounceTimer = null;
+};
 watch(
   historyFilters,
   () => {
-    fetchHistory();
+    clearHistoryFilterDebounce();
+    historyFilterDebounceTimer = setTimeout(() => {
+      historyFilterDebounceTimer = null;
+      fetchHistory();
+    }, 200);
   },
   { deep: true }
 );
@@ -9154,6 +9216,68 @@ const addCommand = async () => {
   }
 };
 // --- PostMessage Protocol ---
+//
+// 安全模型（此前这里写着 "Security check logic here in production"，但实际**一条都没做**）：
+//
+//   `/embed/*` 以 `frame-ancestors *` 支持被任意站点 iframe 引用，而消息里可以携带
+//   `INIT_CONFIG`（token / ticket / business_context）、`CLEAR_SESSION`、`SEND_COMMAND`。
+//   若不做来源校验，任何把这些页面嵌进去的站点都能：把会话切到自己的账号、注入
+//   业务上下文（最终进模型提示词）、重置/清空别人的会话。
+//
+//   三条约束：① 只接受**直接父窗口**（或自身窗口）发来的消息——跨窗口广播是最容易
+//   被忽视的入口；② 票据下发了 `allowed_origins` 时，origin 必须命中，没有例外；
+//   ③ 票据未配置白名单时保持历史兼容（放行父窗口），但会告警一次并回传
+//   `ORIGIN_UNVERIFIED`，提示接入方补白名单。
+const hostAllowedOrigins = ref<string[]>([]);
+const hostOriginUnverifiedWarned = ref(false);
+
+/** 当前页面自身的 origin（同源 iframe 场景的信任依据）。 */
+const selfOrigin = (): string => {
+  try {
+    return window.location.origin;
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * 判断这条消息是否来自可信宿主。
+ *
+ * 判定逻辑在 `@/utils/embedHostTrust`（纯函数，有 Node 行为测试）：这里只负责把
+ * `event.source` 的比较结果与当前白名单喂进去，并在「未校验」时告警一次。
+ */
+const isTrustedHostMessage = (event: MessageEvent): boolean => {
+  const parent = window.parent;
+  // `event.source` 是 WindowProxy，跨域也可直接比较同一性。
+  //
+  // 除了 `parent`，也接受 `top`：宿主把自己的页面再套一层 iframe（门户 → CRM 页 →
+  // 挂件）时，有些实现会用顶层窗口直接给深层 iframe 发消息，此时 source 是 top。
+  // 这不降低安全性——origin 校验仍然照常进行，只是不把「谁发的」限制得过窄。
+  const fromParentWindow =
+    !parent ||
+    !event.source ||
+    event.source === parent ||
+    event.source === window ||
+    event.source === window.top;
+
+  const verdict = evaluateHostMessageTrust({
+    origin: event.origin || "",
+    fromParentWindow,
+    selfOrigin: selfOrigin(),
+    allowedOrigins: hostAllowedOrigins.value,
+  });
+  if (!verdict.trusted) return false;
+
+  if (verdict.unverified && !hostOriginUnverifiedWarned.value) {
+    hostOriginUnverifiedWarned.value = true;
+    console.warn(
+      "[Embed] 宿主未配置 allowed_origins，postMessage 来源未校验。请在签发 Ticket 时传入该参数。",
+    );
+    postMessageToHost({ type: "ORIGIN_UNVERIFIED", origin: event.origin });
+  }
+  return true;
+};
+
 const postMessageToHost = (payload: any) => {
   if (config.instanceId) {
     payload.instance_id = config.instanceId;
@@ -9163,7 +9287,10 @@ const postMessageToHost = (payload: any) => {
       source: "nanzi-agent-embed",
       ...payload,
     },
-    "*"
+    resolveHostTargetOrigin({
+      allowedOrigins: hostAllowedOrigins.value,
+      referrer: document.referrer,
+    }),
   );
 };
 const savedReportFocusRequest = ref<{
@@ -9357,6 +9484,10 @@ const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
       // 走统一入口：既设置内存中的 config.token 与 axios 默认头，也把会话令牌持久化到
       // 本 tab 的 sessionStorage——ticket 是一次性的，能撑住刷新的只有这个会话令牌。
       syncValidatedCredentials(sessionData.session_token);
+      // 票据限定的宿主来源（后端已归一化）：用于校验后续 postMessage 的来源。
+      if (Array.isArray(sessionData.allowed_origins)) {
+        hostAllowedOrigins.value = sessionData.allowed_origins.map((item: unknown) => String(item));
+      }
       if (sessionData.user_info) {
         currentUser.value = {
           ...currentUser.value,
@@ -9523,8 +9654,13 @@ const applyHostInitConfig = async (data: Record<string, any>) => {
   initChat();
 };
 const handlePostMessage = (event: MessageEvent) => {
-  // Security check logic here in production
+  // 来源校验必须早于任何字段读取：这条消息可能带着 token / ticket / business_context。
+  if (!isTrustedHostMessage(event)) {
+    console.warn("[Embed] 已忽略不可信来源的 postMessage:", event.origin);
+    return;
+  }
   const data = event.data;
+  if (!data || typeof data !== "object") return;
   const messageInstanceId = normalizeEmbedInstanceId(data.instance_id);
   if (
     messageInstanceId &&
@@ -12819,7 +12955,15 @@ const onUnmountHandlers = ref<{
 } | null>(null);
 // Lifecycle
 onMounted(() => {
-  console.log("[LifeCycle] EmbedChat mounted. App Version: 2026-01-20-v1");
+  // 构建标识来自 vite 的 define（APP_VERSION 或构建时间）。同时挂到 window 上：
+  // 生产构建会 drop 掉 console，运维仍需能在 iframe 控制台确认「跑的是哪次构建」。
+  (window as any).__NANZI_EMBED_VERSION__ = __APP_VERSION__;
+  console.log(`[LifeCycle] EmbedChat mounted. App Version: ${__APP_VERSION__}`);
+  // 先落 URL 上的 instance_id，再读偏好：否则首屏读到的是「无实例维度」的旧键，
+  // 多实例同页时会把 A 的主题套到 B 上（写回时会纠正，但首帧会闪一下）。
+  const bootQuery = new URLSearchParams(window.location.search);
+  const bootInstanceId = normalizeEmbedInstanceId(bootQuery.get("instance_id"));
+  if (bootInstanceId) config.instanceId = bootInstanceId;
   // 顶部「进行中的会话」角标：进页面就开始低频轮询（15s），面板打开时自动提速到 3s。
   startActiveRunsWatch();
   // 没有用户维度的会话/草稿键一律清掉：它们没有身份边界，留着只会被误读。
@@ -12845,30 +12989,30 @@ onMounted(() => {
   window.addEventListener("fullscreenchange", updateFullScreenStatus);
   window.addEventListener("keydown", handleGlobalKeydown);
   // Load Routing Settings
-  const savedMulti = localStorage.getItem("yovole_enable_multi_agent");
+  const savedMulti = readConfigValue("yovole_enable_multi_agent");
   if (savedMulti !== null) config.enableMultiAgent = savedMulti === "1";
-  const savedShortcuts = localStorage.getItem("yovole_show_shortcuts");
+  const savedShortcuts = readConfigValue("yovole_show_shortcuts");
   if (savedShortcuts !== null) config.showShortcuts = savedShortcuts === "1";
-  const savedSqlPlan = localStorage.getItem("yovole_enable_sql_plan");
+  const savedSqlPlan = readConfigValue("yovole_enable_sql_plan");
   if (savedSqlPlan !== null) config.enableSqlPlan = savedSqlPlan === "1";
-  const savedOverrideModel = localStorage.getItem("yovole_override_model");
+  const savedOverrideModel = readConfigValue("yovole_override_model");
   if (savedOverrideModel) config.overrideModel = savedOverrideModel;
-  const savedApprovalMode = localStorage.getItem("yovole_approval_mode");
+  const savedApprovalMode = readConfigValue("yovole_approval_mode");
   if (savedApprovalMode === "ask" || savedApprovalMode === "allow" || savedApprovalMode === "deny") {
     config.approvalMode = savedApprovalMode;
   }
-  const savedTheme = localStorage.getItem("yovole_embed_theme");
+  const savedTheme = readConfigValue("yovole_embed_theme");
   if (savedTheme) {
     config.theme = savedTheme;
     applyTheme(savedTheme);
   }
-  const savedExpandThoughts = localStorage.getItem("yovole_expand_thoughts");
+  const savedExpandThoughts = readConfigValue("yovole_expand_thoughts");
   if (savedExpandThoughts !== null) config.expandThoughts = savedExpandThoughts === "1";
-  const savedGroundingBlockMode = localStorage.getItem("yovole_grounding_block_mode");
+  const savedGroundingBlockMode = readConfigValue("yovole_grounding_block_mode");
   if (savedGroundingBlockMode === "strict_buffer" || savedGroundingBlockMode === "stream_with_retraction") {
     config.groundingBlockMode = savedGroundingBlockMode;
   }
-  const savedMarkdownTheme = localStorage.getItem("yovole_markdown_theme");
+  const savedMarkdownTheme = readConfigValue("yovole_markdown_theme");
   if (
     savedMarkdownTheme === "default" ||
     savedMarkdownTheme === "minimal" ||
@@ -12879,15 +13023,15 @@ onMounted(() => {
   ) {
     config.markdownTheme = savedMarkdownTheme;
   }
-  const savedHideMessageBorder = localStorage.getItem("yovole_hide_message_border");
+  const savedHideMessageBorder = readConfigValue("yovole_hide_message_border");
   if (savedHideMessageBorder !== null) {
     config.hideMessageBorder = savedHideMessageBorder === "1";
   }
-  const savedHideChatAvatar = localStorage.getItem("yovole_hide_chat_avatar");
+  const savedHideChatAvatar = readConfigValue("yovole_hide_chat_avatar");
   if (savedHideChatAvatar !== null) {
     config.hideChatAvatar = savedHideChatAvatar === "1";
   }
-  const savedShowGeneratingAnimation = localStorage.getItem("yovole_show_generating_animation");
+  const savedShowGeneratingAnimation = readConfigValue("yovole_show_generating_animation");
   if (savedShowGeneratingAnimation !== null) {
     config.showGeneratingAnimation = savedShowGeneratingAnimation === "1";
   }
@@ -13405,6 +13549,8 @@ onMounted(() => {
 });
 onUnmounted(() => {
   if (activeRunsRefreshTimer !== null) clearTimeout(activeRunsRefreshTimer);
+  // 筛选防抖定时器：卸载后回调只会往已销毁的实例里发一次历史请求。
+  clearHistoryFilterDebounce();
   // 骨架兜底定时器随组件一起清掉：卸载后它只会改一个没人看的 ref。
   clearThreadSkeletonTimer();
   stopActiveRunsWatch();
@@ -13442,64 +13588,6 @@ onUnmounted(() => {
   disposePortalTimers();
   stopPortalLoadingTips();
   if (thoughtTimer) clearInterval(thoughtTimer);
-});
-// --- Typewriter Effect ---
-const displayedWelcomeMessage = ref("");
-let typewriterInterval: any = null;
-let typewriterTimeout: any = null;
-const startTypewriter = (text: string) => {
-  // Clear any existing timers
-  clearInterval(typewriterInterval);
-  clearTimeout(typewriterTimeout);
-  displayedWelcomeMessage.value = "";
-  let i = 0;
-  let isDeleting = false;
-  const typeLoop = () => {
-    // Type out
-    if (!isDeleting && i <= text.length) {
-      displayedWelcomeMessage.value = text.substring(0, i);
-      i++;
-      if (i > text.length) {
-         // Finished typing, wait then delete
-         isDeleting = true;
-         // Wait 3 seconds before deleting
-         typewriterTimeout = setTimeout(typeLoop, 3000);
-         return;
-      }
-      typewriterTimeout = setTimeout(typeLoop, 100); // Typing speed
-    }
-    // Delete
-    else if (isDeleting && i >= 0) {
-      displayedWelcomeMessage.value = text.substring(0, i);
-      i--;
-      if (i < 0) {
-        // Finished deleting, restart
-        isDeleting = false;
-        i = 0;
-        // Wait 0.5s before typing again
-        typewriterTimeout = setTimeout(typeLoop, 500);
-        return;
-      }
-      typewriterTimeout = setTimeout(typeLoop, 50); // Deleting speed
-    }
-  };
-  typeLoop();
-};
-// ... existing code ...
-// Watch for welcome message changes (init or override)
-watch(
-  () => config.welcomeMessage,
-  (newVal: string) => {
-    if (newVal) {
-      startTypewriter(newVal);
-    }
-  },
-  { immediate: true }
-);
-// Cleanup
-onUnmounted(() => {
-  clearInterval(typewriterInterval);
-  clearTimeout(typewriterTimeout);
 });
 </script>
 <style>

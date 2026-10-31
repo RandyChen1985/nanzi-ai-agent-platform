@@ -122,17 +122,6 @@ async def require_api_key(
 
     return user_info
 
-async def check_rate_limit(user_id: str):
-    """Helper for rate limiting"""
-    r = await redis.get_redis()
-    if r:
-        key = f"rate_limit:{user_id}:{datetime.datetime.now().minute}"
-        current = await r.incr(key)
-        if current == 1:
-            await r.expire(key, 60)
-        if current > 1000:
-            raise HTTPException(status_code=429, detail="Too Many Requests")
-
 async def require_admin(user: Dict = Depends(require_api_key)) -> Dict:
     """
     Dependency to ensure the current user is an admin.

@@ -11,6 +11,7 @@ import { useToast } from '@/composables/useToast';
 import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, downloadWorkspaceFile, isDirectRenderableUrl, resolveHighlightLanguage, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent, shouldPreviewWithFileViewerInCanvas } from '@/utils/workspaceFilePreview';
 import { buildArtifactDownloadUrl } from '@/utils/generatedFilePreviewPlan';
 import { copyToClipboard } from '@/utils/clipboard';
+import { highlightCsvCell } from '@/utils/csvHighlight';
 import { useCodeExecution } from '@/composables/chat/useCodeExecution';
 import DocumentViewer from '@/components/embed/DocumentViewer.vue';
 import type { CanvasPanelData } from '@/types/canvas';
@@ -358,16 +359,11 @@ const filteredCsvRows = computed(() => {
   });
 });
 
-const highlightMatch = (text: string) => {
-  if (!csvSearchQuery.value) return text;
-  const q = csvSearchQuery.value.trim();
-  const regex = new RegExp(`(${escapeRegExp(q)})`, 'gi');
-  return text.replace(regex, '<mark class="bg-yellow-200 dark:bg-yellow-800/60 dark:text-white px-0.5 rounded">$1</mark>');
-};
-
-const escapeRegExp = (str: string) => {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-};
+/**
+ * 单元格渲染：转义 + 命中高亮都在 `highlightCsvCell` 里（纯函数，有 Node 行为测试）。
+ * 这里只做一层响应式包装，保持模板绑定不变。
+ */
+const highlightMatch = (text: string) => highlightCsvCell(text, csvSearchQuery.value);
 
 // ==========================================
 // CSV Pivot Table Integration
