@@ -581,6 +581,39 @@ export function collectToolCallLogs(items: ProcessTimelineItem[] | undefined): P
   return collectLogsByPredicate(items, isToolCallLog);
 }
 
+/** 模型调用条目（`category=model`）：观测信息，逐条不进主时间线。 */
+export function isModelCallLog(item: ProcessTimelineItem): item is ProcessTimelineLogItem {
+  return item.kind === "log" && item.category === "model";
+}
+
+/** fallback 换模提示同属 model 类别，但它是用户必须看见的事件。 */
+export function isModelFallbackNotice(log: ProcessTimelineLogItem): boolean {
+  return log.status === "warning" || /fallback/i.test(String(log.title || ""));
+}
+
+/** 深度优先收集模型调用条目（含子代理嵌套在 children 里的那些）。 */
+export function collectModelCallLogs(items: ProcessTimelineItem[] | undefined): ProcessTimelineLogItem[] {
+  return collectLogsByPredicate(items, isModelCallLog);
+}
+
+/**
+ * 模型调用汇总：次数、已完成调用的合计耗时、是否仍在调用中。
+ *
+ * 只喂给底部一行文字，不参与 v-for 列表，所以不会引起列表增删。
+ */
+export function summarizeModelCalls(items: ProcessTimelineItem[] | undefined): {
+  count: number;
+  totalMs: number;
+  pending: boolean;
+} {
+  const logs = collectModelCallLogs(items);
+  return {
+    count: logs.length,
+    totalMs: logs.reduce((sum, log) => sum + (Number(log.execution_time_ms) || 0), 0),
+    pending: logs.some((log) => log.status === "pending"),
+  };
+}
+
 
 /**
  * 工具执行汇总：次数与已完成工具的合计耗时。

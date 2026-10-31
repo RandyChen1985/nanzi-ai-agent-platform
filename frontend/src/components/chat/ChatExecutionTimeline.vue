@@ -619,6 +619,15 @@
           </div>
         </div>
 
+        <!-- 模型调用汇总：逐条不占时间线，只留一行次数与合计耗时 -->
+        <div
+          v-if="modelCallSummary.count"
+          class="mt-1 flex items-center gap-1.5 px-2 text-[11px] leading-4 text-gray-400 dark:text-gray-500"
+        >
+          <SparklesIcon class="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span :title="modelCallSummaryTitle">{{ modelCallSummaryLabel }}</span>
+        </div>
+
         <div v-if="isThinking && !items.length" class="px-2 py-1 text-xs text-gray-400 animate-pulse">
           {{ thinkingText || '正在处理…' }}
         </div>
@@ -679,6 +688,8 @@ import {
   resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
   selectTimelineRenderableItems,
+  summarizeModelCalls,
+  summarizeToolCalls,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
   isWorkspacePrewarmPending,
@@ -690,6 +701,7 @@ import {
 import {
   formatSubagentTraceSummary,
 } from "@/utils/subagentTrace";
+import { formatTokenFull, formatTokenUsageAmount } from "@/utils/tokenFormat";
 
 const props = withDefaults(defineProps<{
   timeline?: ProcessTimelineItem[];
@@ -828,6 +840,84 @@ const items = computed(() =>
     .filter((item) => !isHiddenModelCall(item))
 );
 
+/**
+ * 底部汇总：把「本轮总耗时」拆成 模型 / 工具 / 其他 三段，再补上 token 用量。
+ *
+ * 单看「模型 12 次 · 合计 8.4s」与顶部「耗时 36.2s」并排，用户会以为统计漏了
+ * 三十秒；把工具耗时也算出来，才能说明 36.2s = 模型 8.4s + 工具 25.1s + 收尾。
+ *
+ * 这些 computed 扫的都是原始数据、只输出一行文字，不碰 `items` 列表，
+ * 所以不会引起列表增删（那才是之前卡顿的来源）。
+ */
+const modelCallSummary = computed(() => summarizeModelCalls(timelineItems.value));
+const toolCallSummary = computed(() => summarizeToolCalls(timelineItems.value));
+// header 的 duration 是字符串（如 "36.2"），缺省 / 流式中为空，此时退回旧的「合计」口径。
+const totalDurationMs = computed(() => {
+  const value = Number(props.duration);
+  return Number.isFinite(value) && value > 0 ? value * 1000 : 0;
+});
+/**
+ * 模型 token 用量（紧凑格式，如「入 299.5K / 出 284 tok」）。
+ *
+ * 时间只能说明「算了多久」，token 才能说明「干了多少活」：同一条回复里 10 次
+ * 0.8s 往往只是 10 段几十 token 的短判断，只看时间会误以为是统计漏了。
+ * 输入 token 是各次调用累加（每次都会重发上下文），输出才是实际生成量。
+ */
+const modelTokenUsageLabel = computed(() => {
+  const input = Math.max(0, Math.round(Number(props.promptTokens) || 0));
+  const output = Math.max(0, Math.round(Number(props.completionTokens) || 0));
+  if (input <= 0 && output <= 0) return "";
+  // formatTokenUsageAmount 自带 "tok" 后缀，这里只取数量部分，末尾统一加一次。
+  const compact = (value: number) => formatTokenUsageAmount(value).replace(/\s*tok$/, "");
+  const parts: string[] = [];
+  if (input > 0) parts.push(`入 ${compact(input)}`);
+  if (output > 0) parts.push(`出 ${compact(output)}`);
+  return `${parts.join(" / ")} tok`;
+});
+const modelCallSummaryLabel = computed(() => {
+  const { count, totalMs, pending } = modelCallSummary.value;
+  if (!count) return "";
+  const total = totalDurationMs.value;
+  // 有本轮墙钟耗时时直接给时间构成：模型 / 工具 / 其他，三者相加约等于总耗时。
+  if (total > 0) {
+    const toolMs = toolCallSummary.value.totalMs;
+    const parts = [`模型 ${count} 次 ${formatDuration(totalMs) || "0s"}`];
+    if (modelTokenUsageLabel.value) parts.push(modelTokenUsageLabel.value);
+    if (toolMs > 0) parts.push(`工具 ${formatDuration(toolMs)}`);
+    const restMs = total - totalMs - toolMs;
+    // 差值低于 100ms 属于准备 / 收尾的正常抖动，不必单独列一项制造疑问。
+    if (restMs >= 100) parts.push(`其他 ${formatDuration(restMs)}`);
+    if (pending) parts.push("进行中");
+    return parts.join(" · ");
+  }
+  const parts = [`${count} 次模型调用`];
+  if (totalMs > 0) parts.push(`合计 ${formatDuration(totalMs)}`);
+  if (modelTokenUsageLabel.value) parts.push(modelTokenUsageLabel.value);
+  if (pending) parts.push("进行中");
+  return parts.join(" · ");
+});
+const modelCallSummaryTitle = computed(() => {
+  const { count, totalMs } = modelCallSummary.value;
+  const total = totalDurationMs.value;
+  const toolMs = toolCallSummary.value.totalMs;
+  const input = Math.max(0, Math.round(Number(props.promptTokens) || 0));
+  const output = Math.max(0, Math.round(Number(props.completionTokens) || 0));
+  const tokenDetail =
+    input > 0 || output > 0
+      ? `Token 输入 ${formatTokenFull(input)} / 输出 ${formatTokenFull(output)}（输入为各次调用累加，输出为实际生成量）。`
+      : "";
+  if (total <= 0) return `模型生成耗时合计，不含工具执行与等待。${tokenDetail}`;
+  const percent = (value: number) => `${Math.min(100, Math.round((value / total) * 100))}%`;
+  const parts = [
+    `本轮总耗时 ${formatDuration(total)}`,
+    `模型生成 ${count} 次 ${formatDuration(totalMs) || "0s"}（${percent(totalMs)}）`,
+  ];
+  if (toolMs > 0) parts.push(`工具执行 ${formatDuration(toolMs)}（${percent(toolMs)}）`);
+  const restMs = total - totalMs - toolMs;
+  if (restMs >= 100) parts.push(`准备与收尾 ${formatDuration(restMs)}`);
+  return `${parts.join("；")}。工具执行与等待不计入模型耗时；工具耗时为各次调用累加，并行执行时可能高于总耗时。${tokenDetail}`;
+});
+
 const hasPending = computed(() => timelineHasPending(items.value));
 const headerTitle = computed(() => props.hasAnswer ? "执行完成" : "执行过程");
 const currentStep = computed(() => resolveTimelineCurrentStep(
@@ -838,6 +928,7 @@ const currentStep = computed(() => resolveTimelineCurrentStep(
 const visible = computed(() => Boolean(
   props.isThinking
   || items.value.length
+  || modelCallSummary.value.count
   || props.skillBadges.length,
 ));
 const skillNoticeLabel = computed(() => skillFlowNoticeLabel(props.skillBadges));

@@ -270,6 +270,8 @@ def test_timeline_keeps_model_calls_out_of_render_list():
     assert "/fallback/i.test(String(item.title || \"\"))" in timeline
     # items 是过滤后的结果，v-for 不会再长出模型调用行
     assert ".filter((item) => !isHiddenModelCall(item))" in timeline
-    # 没有残留的折叠汇总行 / 明细入口
-    assert "modelCallSummary" not in timeline
+    # 底部只留一行文字汇总，且不恢复「查看明细」入口
+    assert "const modelCallSummary = computed(() => summarizeModelCalls(" in timeline
+    assert "{{ modelCallSummaryLabel }}" in timeline
+    assert 'v-if="modelCallSummary.count"' in timeline
     assert "open-model-stats" not in timeline
