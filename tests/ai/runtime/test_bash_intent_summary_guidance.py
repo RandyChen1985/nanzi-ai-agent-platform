@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.ai.runtime.agentscope.stream_reconcile import extract_tool_summary
 from app.services.ai.runtime.agentscope.workspace import (
     BASH_INTENT_SUMMARY_GUIDANCE,
     BASH_INTENT_SUMMARY_MARKER,
@@ -194,3 +195,47 @@ def test_augment_fills_mcp_parameter_description_without_docstring():
     assert "REQUIRED on every call" in parameter_description
     assert BASH_INTENT_SUMMARY_MARKER in parameter_description
     assert augmented["required"] == ["command"]
+
+
+def test_extract_tool_summary_matches_mcp_prefixed_tool_name():
+    """沙箱 MCP 的工具名是 ``sandbox::bash``，意图摘要必须命中。
+
+    回归：早期只按裸名 ``bash`` / ``Bash`` 精确匹配，沙箱场景恒为空，
+    时间线只剩「工具完成 · sandbox::bash」。
+    """
+
+    args = {"command": "ls -la", "description": "检查工作区文件"}
+
+    assert extract_tool_summary(args, tool_name="sandbox::bash") == "检查工作区文件"
+    assert extract_tool_summary(args, tool_name="sandbox::Bash") == "检查工作区文件"
+    assert extract_tool_summary(args, tool_name="bash") == "检查工作区文件"
+    assert extract_tool_summary(args, tool_name="Bash") == "检查工作区文件"
+
+
+def test_extract_tool_summary_ignores_unrelated_tool_names():
+    """非命令类工具不追加意图摘要，避免给所有工具都挂一行说明。"""
+
+    args = {"command": "ls", "description": "检查工作区文件"}
+
+    assert extract_tool_summary(args, tool_name="sandbox::read_file") == ""
+    assert extract_tool_summary(args, tool_name="") == ""
+
+
+def test_native_name_resolves_mcp_prefixed_bash():
+    """``sandbox::bash`` 必须解析成 ``Bash``，否则绑定层的摘要文案不会生效。"""
+
+    from app.services.ai.runtime.agentscope.workspace import (
+        _workspace_native_name_for_spec,
+    )
+
+    class _Spec:
+        name = "sandbox::bash"
+        native_tool = None
+
+    assert _workspace_native_name_for_spec(_Spec()) == "Bash"
+
+    class _SshSpec:
+        name = "sandbox::Bash"
+        native_tool = None
+
+    assert _workspace_native_name_for_spec(_SshSpec()) == "Bash"

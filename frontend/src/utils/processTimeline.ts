@@ -1273,6 +1273,8 @@ export function mergeTimelineLogs(
     category?: string;
     tool_name?: string;
     tool_args?: string;
+    /** 模型为本次调用写的意图摘要（沙箱 bash 的 description），用于行标题旁展示。 */
+    tool_summary?: string;
     model?: string;
     temperature?: number;
     tool_result_state?: string;
@@ -1315,6 +1317,7 @@ export function mergeTimelineLogs(
       targetLog.category = log.category ?? targetLog.category;
       targetLog.tool_name = log.tool_name ?? targetLog.tool_name;
       targetLog.tool_args = log.tool_args ?? targetLog.tool_args;
+      targetLog.tool_summary = log.tool_summary ?? targetLog.tool_summary;
       targetLog.model = log.model ?? targetLog.model;
       targetLog.temperature = log.temperature ?? targetLog.temperature;
       targetLog.tool_result_state = log.tool_result_state ?? targetLog.tool_result_state;
@@ -1424,6 +1427,8 @@ export function buildLegacyProcessTimeline(input: {
     category?: string;
     tool_name?: string;
     tool_args?: string;
+    /** 模型为本次调用写的意图摘要（沙箱 bash 的 description），用于行标题旁展示。 */
+    tool_summary?: string;
     model?: string;
     temperature?: number;
     tool_result_state?: string;

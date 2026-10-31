@@ -5913,6 +5913,11 @@ def _workspace_native_name_for_spec(spec: Any) -> str | None:
     if native_name in WORKSPACE_BUILTIN_TOOL_NAMES:
         return str(native_name)
     spec_name = str(getattr(spec, "name", "") or "")
+    # MCP 工具对模型暴露的是 `<server>::<tool>`（沙箱 bash 即 `sandbox::bash`）。
+    # 不先剥掉前缀的话，别名表永远命中不到，沙箱路径就拿不到 native 名字——
+    # 于是绑定层的 Bash 意图摘要文案、canonical 包装、沙箱会话 bash 包装全被跳过。
+    if "::" in spec_name:
+        spec_name = spec_name.rsplit("::", 1)[-1]
     aliased = AGENTSCOPE_BUILTIN_TOOL_ALIASES.get(spec_name, spec_name)
     if aliased in WORKSPACE_BUILTIN_TOOL_NAMES:
         return aliased
