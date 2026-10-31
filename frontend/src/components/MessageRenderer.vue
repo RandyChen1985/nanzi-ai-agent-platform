@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, getCurrentInstance, ref } from 'vue';
+import { computed, getCurrentInstance, ref, watch } from 'vue';
 import { linkifyGeneratedFileUrls, resolveGeneratedFileHref } from '@/utils/generatedFileUrl';
 import { buildArtifactDownloadUrl, resolveGeneratedPreviewPlan } from '@/utils/generatedFilePreviewPlan';
 import { resolveDocumentViewerMime } from '@/utils/documentPreviewFormats';
@@ -7,6 +7,8 @@ import { appendBrowserOpenActions, appendBrowserOpenActionsToCode, isBrowserOpen
 import { injectOpenLinksForPaths } from '@/utils/messageFilePathLinks';
 import { renderMarkdown } from '@/utils/markdown';
 import { enhanceMarkdownTablesForMobile } from '@/utils/markdownTableResponsive';
+import { splitStableMarkdownBlocks } from '@/utils/markdownStreaming';
+import { maskFenceInnerBackticks, unmaskFenceInnerBackticks } from '@/utils/markdownFenceMask';
 import { parseQuickButtons, postProcessQuickButtonHtml, stripQuickButtons } from '@/utils/quickButtons';
 import { applyChartDarkTheme, applyChartViewMode, buildChartTableRows, getAvailableChartViewModes, getChartViewModeLabel, mergeChartDefaults, parseChartOptions, resolveActiveChartViewMode, type ChartViewMode } from '@/utils/chartRenderer';
 import { useDarkThemeFlag } from '@/composables/useDarkThemeFlag';
@@ -310,9 +312,33 @@ interface ContentSegment {
     return res;
   };
 
-  const renderMarkdownSegment = (text: string) => {
-    return postProcessHtml(renderMarkdown(protectCitationsInMarkdown(text)));
+  // 逐块渲染 + 缓存：长回答流式时，已完成的块直接复用 HTML，每帧只重算尾块，
+  // 不再是「每追加几个字就把整篇重新解析 + 高亮 + DOMParser 清洗」。
+  // 缓存是组件实例级的：渲染结果还依赖 readonly / conversationId 等 props。
+  const markdownBlockHtmlCache = new Map<string, string>();
+  const MARKDOWN_BLOCK_CACHE_LIMIT = 400;
+
+  const renderMarkdownBlock = (block: string) => {
+    const cached = markdownBlockHtmlCache.get(block);
+    if (cached !== undefined) return cached;
+    const html = postProcessHtml(renderMarkdown(protectCitationsInMarkdown(block)));
+    if (markdownBlockHtmlCache.size >= MARKDOWN_BLOCK_CACHE_LIMIT) {
+      markdownBlockHtmlCache.clear();
+    }
+    markdownBlockHtmlCache.set(block, html);
+    return html;
   };
+
+  const renderMarkdownSegment = (text: string) => {
+    const blocks = splitStableMarkdownBlocks(text);
+    if (blocks.length <= 1) return renderMarkdownBlock(text);
+    return blocks.map(renderMarkdownBlock).join("");
+  };
+
+  watch(
+    () => [props.readonly, props.hideQuickButtons, props.conversationId, props.enableBrowserOpen],
+    () => markdownBlockHtmlCache.clear(),
+  );
 
 const handleContentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
@@ -516,18 +542,22 @@ const segments = computed<ContentSegment[]>(() => {
     ? stripQuickButtons(cleanContent)
     : parseQuickButtons(cleanContent);
 
+  // 代码内容里可能出现 ```（例如演示「如何包裹含反引号的代码」），非贪婪正则会把内容里的
+  // 三反引号当成闭合围栏，导致代码卡片被腰斩、后续段落错位。先**等长**屏蔽围栏内的反引号，
+  // 匹配到的捕获组再还原（等长保证 match.index 仍对应 cleanContent）。
+  const maskedContent = maskFenceInnerBackticks(cleanContent);
   const regex = /(?:<sql_plan>([\s\S]*?)<\/sql_plan>)|(?:<thought>([\s\S]*?)<\/thought>)|(?:<chart>([\s\S]*?)<\/chart>)|(?:```\s*(?:chart|echarts)\s*([\s\S]*?)```)|(?:```\s*mermaid\s*([\s\S]*?)```)|(?::::analysis\s*([^\n]*)\n([\s\S]*?)\n:::)|(?::::clarification\s*([^\n]*)\n([\s\S]*?)\n:::)|(?:```\s*([a-zA-Z0-9_\-]+)?\s*\n([\s\S]*?)```)/gi;
   const result: ContentSegment[] = [];
   let lastIndex = 0;
   let match;
   const seenSqlPlans = new Set<string>();
 
-  while ((match = regex.exec(cleanContent)) !== null) {
+  while ((match = regex.exec(maskedContent)) !== null) {
     if (match.index > lastIndex) {
       result.push({ type: 'text', content: renderMarkdownSegment(cleanContent.slice(lastIndex, match.index)) });
     }
     if (match[1]) {
-      const rawSqlPlan = match[1].trim();
+      const rawSqlPlan = unmaskFenceInnerBackticks(match[1]).trim();
       const dedupeKey = dedupeSqlPlanPayload(rawSqlPlan);
       if (!seenSqlPlans.has(dedupeKey)) {
         seenSqlPlans.add(dedupeKey);
@@ -541,13 +571,13 @@ const segments = computed<ContentSegment[]>(() => {
           });
         }
       }
-    } else if (match[2]) result.push({ type: 'thought', content: renderMarkdown(match[2].trim()) });
-    else if (match[5]) result.push({ type: 'mermaid', content: match[5].trim() });
+    } else if (match[2]) result.push({ type: 'thought', content: renderMarkdown(unmaskFenceInnerBackticks(match[2]).trim()) });
+    else if (match[5]) result.push({ type: 'mermaid', content: unmaskFenceInnerBackticks(match[5]).trim() });
     else if (match[6] || match[7]) {
       result.push({
         type: 'analysis',
         title: 'AI分析推理过程 ...',
-        content: renderMarkdown(match[7]?.trim() || '')
+        content: renderMarkdown(unmaskFenceInnerBackticks(match[7]?.trim() || ''))
       });
     }
     else if (match[8] || match[9]) {
@@ -556,13 +586,13 @@ const segments = computed<ContentSegment[]>(() => {
         title: (match[8] || '需要再确认一下').trim() || '需要再确认一下',
         content: renderMarkdownSegment(
           props.hideQuickButtons
-            ? stripQuickButtons(match[9]?.trim() || '')
-            : parseQuickButtons(match[9]?.trim() || ''),
+            ? stripQuickButtons(unmaskFenceInnerBackticks(match[9]?.trim() || ''))
+            : parseQuickButtons(unmaskFenceInnerBackticks(match[9]?.trim() || '')),
         ),
       });
     }
     else if (match[3] || match[4]) {
-      const rawJson = (match[3] || match[4]) as string;
+      const rawJson = unmaskFenceInnerBackticks((match[3] || match[4]) as string);
       const jsonStr = rawJson.trim().replace(/^(json|javascript|js|xml|chart)\s+/i, '');
       const parsed = parseChartOptions(jsonStr);
       if (parsed.ok) {
@@ -577,8 +607,8 @@ const segments = computed<ContentSegment[]>(() => {
       }
     }
     else if (match[11] !== undefined) {
-      const lang = (match[10] || '').trim().toLowerCase();
-      const codeContent = match[11];
+      const lang = unmaskFenceInnerBackticks(match[10] || '').trim().toLowerCase();
+      const codeContent = unmaskFenceInnerBackticks(match[11]);
       const isHtmlApp = lang === 'html' && (/<html/i.test(codeContent) || /<body/i.test(codeContent) || /<!doctype html/i.test(codeContent));
 
       if (isHtmlApp) {
@@ -598,7 +628,7 @@ const segments = computed<ContentSegment[]>(() => {
             runnable: RUNNABLE_CODE_LANGUAGES.has(lang),
           });
         } else {
-          const langPrefix = match[10] || '';
+          const langPrefix = unmaskFenceInnerBackticks(match[10] || '');
           const rawMarkdownCode = `\`\`\`${langPrefix}\n${codeContent}\`\`\``;
           result.push({
             type: 'text',
