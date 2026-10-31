@@ -481,7 +481,11 @@
       <div
         class="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-4 pt-3 sm:pt-4 pb-1 sm:pb-1.5 space-y-4 sm:space-y-6 w-full max-w-full min-w-0"
         ref="messagesContainer"
+        style="overflow-anchor: none"
         @scroll.passive="handleScroll"
+        @wheel.passive="markUserScrollIntent"
+        @touchmove.passive="markUserScrollIntent"
+        @pointerdown.passive="markUserScrollIntent"
       >
       <!-- Connection Status Overlay -->
       <div
@@ -4085,6 +4089,36 @@ const showNewMessageHint = ref(false);
 const autoScrollEnabled = ref(true);
 /** 程序滚底后的短时间内忽略 handleScroll 的「误判为手动上滚」，避免关掉 autoScroll（smooth 中间帧会触发） */
 const programmaticScrollUntil = ref(0);
+/** 程序滚底的保护窗口：要盖住 settleScrollToBottom 的 6 帧（约 100ms），留足余量 */
+const PROGRAMMATIC_SCROLL_GUARD_MS = 400;
+/**
+ * 用户「主动滚动」的意图窗口。
+ *
+ * `scroll` 事件分不清是用户滚的还是布局挤出来的：流式输出时内容不断变高，
+ * 浏览器默认开启滚动锚定（overflow-anchor: auto）会自行调整 scrollTop 并派发
+ * scroll 事件，此时 scrollHeight 刚变大、scrollTop 还没跟上，`atBottom` 算出来
+ * 是 false——用户手指没动，autoScrollEnabled 却被关掉，之后再也不自动跟底，
+ * 只剩一个「查看最新消息」。
+ *
+ * 因此只有真实输入（滚轮 / 触摸 / 翻页键）之后的一小段时间内，才允许关掉跟底。
+ */
+let userScrollIntentUntil = 0;
+const USER_SCROLL_INTENT_MS = 300;
+const markUserScrollIntent = () => {
+  userScrollIntentUntil = Date.now() + USER_SCROLL_INTENT_MS;
+};
+const SCROLL_INTENT_KEY_CODES = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+  " ",
+]);
+const handleScrollIntentKey = (e: KeyboardEvent) => {
+  if (SCROLL_INTENT_KEY_CODES.has(e.key)) markUserScrollIntent();
+};
 // Config
 const config = reactive({
   token: "",
@@ -12930,7 +12964,7 @@ const runScrollToBottom = (force: boolean) => {
   const maxScroll = Math.max(0, scrollHeight - clientHeight);
   const isNearBottom = maxScroll - scrollTop <= BOTTOM_THRESHOLD_PX;
   if (force || isNearBottom || autoScrollEnabled.value) {
-    programmaticScrollUntil.value = Date.now() + 120;
+    programmaticScrollUntil.value = Date.now() + PROGRAMMATIC_SCROLL_GUARD_MS;
     el.scrollTop = scrollHeight;
     showNewMessageHint.value = false;
     // 流式跟底只做这一次；下一帧有新内容时会再调进来，不需要链式补帧。
@@ -12976,7 +13010,10 @@ const handleScroll = (e: Event) => {
         showNewMessageHint.value = false;
         autoScrollEnabled.value = true;
     } else {
-        if (isProcessing.value) {
+        // 只有真实输入（滚轮 / 触摸 / 翻页键）之后才认这是「用户主动上滚」。
+        // 否则多半是流式内容长高 + 滚动锚定引发的 scroll 事件，关掉跟底会让页面
+        // 从此停在半路、只剩一个「查看最新消息」。
+        if (isProcessing.value && Date.now() < userScrollIntentUntil) {
             autoScrollEnabled.value = false;
         }
     }
@@ -13034,6 +13071,7 @@ onMounted(() => {
   window.addEventListener("offline", onOffline);
   window.addEventListener("fullscreenchange", updateFullScreenStatus);
   window.addEventListener("keydown", handleGlobalKeydown);
+  window.addEventListener("keydown", handleScrollIntentKey);
   // Load Routing Settings
   const savedMulti = readConfigValue("yovole_enable_multi_agent");
   if (savedMulti !== null) config.enableMultiAgent = savedMulti === "1";
@@ -13616,6 +13654,7 @@ onUnmounted(() => {
   window.removeEventListener("resize", updateWidth);
   window.removeEventListener("fullscreenchange", updateFullScreenStatus);
   window.removeEventListener("keydown", handleGlobalKeydown);
+  window.removeEventListener("keydown", handleScrollIntentKey);
   const handlers = (onUnmountHandlers as any).value;
   if (handlers?.onMessage) window.removeEventListener("message", handlers.onMessage);
   if (handlers?.onOnline) window.removeEventListener("online", handlers.onOnline);
