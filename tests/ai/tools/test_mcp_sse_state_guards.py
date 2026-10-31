@@ -35,7 +35,14 @@ class _FakeAsyncContextManager:
 
 
 def _patch_fake_sse(stack, initialize):
-    """在给定 ExitStack 上伪造 SSE 建链的两个外部依赖，只保留 connect() 自身逻辑。"""
+    """在给定 ExitStack 上伪造 SSE 建链的外部依赖，只保留 connect() 自身逻辑。"""
+    # connect() 现在会先做 TCP 可达性预检，不可达时直接降级、不再尝试 SSE；
+    # 本模块只关心 SSE 状态机，伪造端点可达让流程走到 SSE 分支。
+    stack.enter_context(
+        patch.object(
+            McpSseSession, "_tcp_endpoint_reachable", AsyncMock(return_value=True)
+        )
+    )
     # connect() 现在会先试 Streamable HTTP；本模块只关心 SSE 状态机，直接让它失败。
     stack.enter_context(
         patch(

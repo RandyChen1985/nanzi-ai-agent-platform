@@ -39,7 +39,10 @@ async def test_catalog_endpoint_returns_builtin_first_then_dynamic_candidates():
 
     ids = [candidate["id"] for candidate in response["candidates"]]
     assert ids[0] == "exec_command"
-    assert ids[-2:] == ["fetch_weather", "crm:query"]
+    # 内置候选恒在最前；动态候选（API → 脚本 → MCP）并入其后。这里不写死
+    # ids[-2:]：每新增一个内置脚本工具都会改变动态段长度，断言会假红。
+    assert "fetch_weather" in ids and "crm:query" in ids
+    assert ids.index("fetch_weather") < ids.index("crm:query")
     assert response["candidates"][0]["aliases"] == ["exec_command", "Bash", "bash"]
 
 

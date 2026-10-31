@@ -71,5 +71,4 @@ tests/utils/test_sql_rewriter.py::test_unqualified_all_filter_skips_multi_table_
 
 # --- D-测试状态污染 ---
 tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_table_in_user_permission_set  # D-测试状态污染: 单独运行通过、全量合跑必失败（受其他用例状态污染），非断言漂移
-tests/ai/tools/test_data_api.py::test_call_external_sql_api_error  # D-测试状态污染: 单独运行通过、全量合跑必失败（受其他用例状态污染），非断言漂移
 

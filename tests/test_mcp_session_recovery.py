@@ -356,3 +356,64 @@ async def test_connect_skips_sse_when_probe_reports_json():
 
     assert session.is_direct_http is True
     mock_sse.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_connect_treats_anyio_scope_cancellation_as_transport_failure():
+    """anyio 的 CancelScope 取消宿主 task 不是调用方取消，必须继续降级。
+
+    复现：streamable HTTP 握手在 TCP 连接阶段失败时，mcp 2.x 内部的
+    ``anyio.create_task_group`` 会 cancel 宿主 task，抛出
+    ``CancelledError("Cancelled via cancel scope ...")``。该异常是 BaseException，
+    修复前会绕过 ``except Exception``，导致既不探测 SSE 也不降级 Direct HTTP，
+    整条 MCP 连接直接失败。
+    """
+    session = McpSseSession(SERVER_ID, SSE_URL, AUTH_HEADERS)
+
+    async def _raise_scope_cancellation():
+        raise asyncio.CancelledError("Cancelled via cancel scope 0xdeadbeef")
+
+    with patch.object(
+        session, "_tcp_endpoint_reachable", AsyncMock(return_value=True)
+    ), patch.object(
+        session, "_connect_streamable_http", AsyncMock(side_effect=_raise_scope_cancellation)
+    ), patch.object(session, "_looks_like_sse_endpoint", AsyncMock(return_value=False)):
+        await session.connect()
+
+    assert session.is_direct_http is True
+    assert session.session is None
+
+
+@pytest.mark.asyncio
+async def test_connect_falls_back_when_streamable_host_is_unreachable():
+    """真实不可达端点（端口拒绝）也要降级，而不是抛 CancelledError。
+
+    与上一条的区别：这里不 mock 传输层，走真实的 httpx/anyio 路径，锁定
+    「TCP 连不上 → 仍能降级 Direct HTTP」这一生产场景。
+    """
+    session = McpSseSession(SERVER_ID, "http://127.0.0.1:1/mcp", AUTH_HEADERS)
+
+    with patch.object(session, "_looks_like_sse_endpoint", AsyncMock(return_value=False)):
+        await session.connect()
+
+    assert session.is_direct_http is True
+    assert session.session is None
+
+
+@pytest.mark.asyncio
+async def test_connect_propagates_caller_cancellation():
+    """调用方取消（无 anyio 文案）必须继续冒泡，不能被降级逻辑吞掉。"""
+    session = McpSseSession(SERVER_ID, SSE_URL, AUTH_HEADERS)
+
+    async def _hold_forever():
+        await asyncio.sleep(30)
+
+    with patch.object(
+        session, "_tcp_endpoint_reachable", AsyncMock(return_value=True)
+    ), patch.object(session, "_connect_streamable_http", AsyncMock(side_effect=_hold_forever)):
+        task = asyncio.create_task(session.connect())
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task

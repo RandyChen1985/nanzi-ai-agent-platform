@@ -3,7 +3,9 @@ import logging
 import asyncio
 import time
 import uuid
+from contextlib import AsyncExitStack
 from typing import AsyncIterator, Awaitable, Callable, Dict, Any, List, Optional, Tuple
+from urllib.parse import urlparse
 import httpx
 import httpx2
 from mcp import ClientSession, types
@@ -24,6 +26,30 @@ MAX_REMOTE_TOOLS = 5000
 # 同步时若远端返回空列表而本地已有可用工具，默认拒绝应用（见 sync_tools）。
 # 这是防止远端瞬时故障/权限抖动把整批工具误标为删除的最后一道闸门。
 _AUDIT_TASKS: set[asyncio.Task] = set()
+
+# anyio 取消宿主 task 时写进 CancelledError 文案的固定片段（见 mcp 2.x
+# ``streamable_http_client`` 内的 ``anyio.create_task_group``）。
+_ANYIO_SCOPE_CANCEL_MARKER = "cancel scope"
+
+
+def _is_anyio_scope_cancellation(err: BaseException) -> bool:
+    """区分 anyio 的 CancelScope 取消与调用方取消。
+
+    mcp 2.x 的 ``streamable_http_client`` 内部用 ``anyio.create_task_group``；
+    握手阶段连接失败（DNS 不通、端口拒绝）时 task group 会 cancel 宿主 task，
+    抛出 ``CancelledError("Cancelled via cancel scope 0x...")``。这是**传输层
+    失败**的一种表现形式，不是调用方要求取消——后续必须继续走 SSE / Direct
+    HTTP 降级，否则「MCP 服务暂时不可达」会变成整条接口 500。
+
+    不能用 ``task.cancelling()`` 判断来源：anyio 内部取消与 ``task.cancel()``
+    都会让计数变成 1。调用方取消若直接落在预检（``_tcp_endpoint_reachable``）
+    等非 anyio 路径上，异常不带该文案，会照常冒泡；一旦取消发生在 anyio
+    task group 内部，文案同样会被改写，这就是为什么「不可达」必须提前到预检
+    判断——那条路径上不会产生这种无法区分来源的取消。
+    """
+    if not isinstance(err, asyncio.CancelledError):
+        return False
+    return _ANYIO_SCOPE_CANCEL_MARKER in str(err).lower()
 
 
 def _tool_input_schema(tool: Any) -> Any:
@@ -189,6 +215,76 @@ class McpSseSession:
         await session.initialize()
         self.session = session
 
+    @staticmethod
+    def _clear_internal_cancellation() -> None:
+        """清掉 anyio 留下的取消计数，否则下一个 await 会立刻再次被取消。"""
+        task = asyncio.current_task()
+        if task is not None:
+            task.uncancel()
+
+    async def _tcp_endpoint_reachable(self, timeout: float = 3.0) -> bool:
+        """握手前先确认端点能建立 TCP 连接（只做三次握手，不发 HTTP 请求）。
+
+        为什么需要这一步：mcp 2.x 的 ``streamable_http_client`` 在「连不上」时
+        由内部 anyio task group 取消宿主 task，抛出的 CancelledError 带着
+        "Cancelled via cancel scope" 文案，与调用方取消无法可靠区分。与其在
+        捕获点猜测来源，不如把「网络不可达」判断提前到传输层之外——这里失败
+        就直接降级 Direct HTTP，既省掉注定失败的 SSE 探测与 10 秒握手超时，
+        也避免把「接口 500」当成「连接失败」。
+
+        只做 TCP 握手，不读不写：仓库里那条「先探测 SSE 会挂成长连接」的教训
+        不适用于它（GET 会挂，三次握手不会）。
+        """
+        parsed = urlparse(self.sse_url or "")
+        host = parsed.hostname
+        if not host or parsed.scheme not in ("http", "https"):
+            return True
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            _reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=timeout
+            )
+        except Exception as connect_err:
+            logger.info(
+                "[MCP] Endpoint %s (%s:%s) unreachable (%s); skipping streamable HTTP",
+                self.server_id,
+                host,
+                port,
+                type(connect_err).__name__,
+            )
+            return False
+        writer.close()
+        try:
+            await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+        except Exception:  # pragma: no cover - 对端先关时的清理噪音
+            pass
+        return True
+
+    async def _discard_transport(self, label: str) -> None:
+        """丢弃半成品传输；清理阶段的异常只告警，不能盖住真正的连接失败原因。
+
+        ``streamable_http_client`` 的 async generator 可能在另一个 task 里退出，
+        此时 ``aclose()`` 会抛 ``RuntimeError: Attempted to exit cancel scope in
+        a different task than it was entered in``——它与「为什么没连上」无关，
+        吞掉并重置栈即可；否则降级分支会被清理异常打断。
+        """
+        stack, self._exit_stack = self._exit_stack, AsyncExitStack()
+        if stack is None:
+            return
+        try:
+            await stack.aclose()
+        except BaseException as cleanup_err:  # noqa: BLE001 - 清理阶段不挑异常类型
+            if isinstance(cleanup_err, asyncio.CancelledError):
+                if not _is_anyio_scope_cancellation(cleanup_err):
+                    raise
+                self._clear_internal_cancellation()
+            logger.warning(
+                "[MCP] %s cleanup failed for %s (ignored): %s",
+                label,
+                self.server_id,
+                cleanup_err,
+            )
+
     async def connect(self):
         """Initialize a transport; publish SSE state only after its handshake succeeds."""
         async with self._lock:
@@ -199,7 +295,6 @@ class McpSseSession:
             header_keys = list(self.auth_headers.keys())
             logger.info(f"[MCP] Connecting to {self.server_id} at {self.sse_url}. Headers keys present: {header_keys}")
             try:
-                from contextlib import AsyncExitStack
                 self._exit_stack = AsyncExitStack()
 
                 # 1. Streamable HTTP 优先：mcp 2.x 服务端（含平台自建 Echo）的默认传输，
@@ -207,6 +302,22 @@ class McpSseSession:
                 #    顺序不能反：该端点对裸 GET 会挂成长连接，先探测 SSE 会白等
                 #    探测超时 + 一次注定失败的 SSE 握手，最后降级成没有进度的
                 #    Direct HTTP（实测每次首次调用多花十几秒）。
+                #
+                #    进入握手前先做 TCP 可达性预检：mcp 2.x 的 streamable 客户端
+                #    在「连不上」时会 cancel 宿主 task，抛出的 CancelledError 与
+                #    调用方取消无法可靠区分（anyio 会把自己文案写进异常）。把
+                #    不可达摘到这条路径之外，既保住降级也保住取消语义。
+                if not await self._tcp_endpoint_reachable():
+                    # TCP 都建不起来时，SSE 探测与握手必然同样失败，直接降级，
+                    # 不再白等 10 秒握手超时。
+                    self.is_direct_http = True
+                    self.last_used_at = time.time()
+                    logger.info(
+                        "[MCP] Switched to Direct HTTP mode for %s (endpoint unreachable)",
+                        self.server_id,
+                    )
+                    return
+
                 try:
                     # 用 asyncio.timeout（当前 task 内生效）而不是 create_task + wait_for：
                     # AsyncExitStack 里 enter 的 anyio cancel scope 必须由**同一个 task**
@@ -218,7 +329,18 @@ class McpSseSession:
                     self.is_direct_http = False
                     logger.info(f"[MCP] Streamable HTTP initialized for {self.server_id}")
                     return
-                except Exception as stream_err:
+                except BaseException as stream_err:  # noqa: BLE001 - 见下方分类处理
+                    if isinstance(stream_err, asyncio.CancelledError):
+                        # anyio task group 在握手失败时取消宿主 task：这是传输层
+                        # 失败（TLS 中断、对端重置等），不是调用方取消，清掉计数
+                        # 后继续降级。调用方取消若在预检阶段发生会直接冒泡，不会
+                        # 走到这里。
+                        if not _is_anyio_scope_cancellation(stream_err):
+                            raise
+                        self._clear_internal_cancellation()
+                    elif not isinstance(stream_err, Exception):
+                        # KeyboardInterrupt / SystemExit 等一律上抛，不参与降级。
+                        raise
                     # 不在这里重置 self.session：连接发布前它本来就是 None，
                     # 多余的一次赋值会惊动「握手完成前不得发布会话」的状态观察者
                     # （见 tests/ai/tools/test_mcp_sse_state_guards.py）。
@@ -230,8 +352,7 @@ class McpSseSession:
                         type(stream_err).__name__,
                         stream_err,
                     )
-                    await self._exit_stack.aclose()
-                    self._exit_stack = AsyncExitStack()
+                    await self._discard_transport("streamable HTTP")
 
                 try_sse = await self._looks_like_sse_endpoint()
 
@@ -271,8 +392,7 @@ class McpSseSession:
                             type(sse_err).__name__,
                             sse_err,
                         )
-                        await self._exit_stack.aclose()
-                        self._exit_stack = AsyncExitStack()
+                        await self._discard_transport("SSE")
 
                 # 2. Fallback: Direct HTTP Gateway
                 self.is_direct_http = True
