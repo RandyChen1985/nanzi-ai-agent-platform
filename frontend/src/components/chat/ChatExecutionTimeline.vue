@@ -619,21 +619,6 @@
           </div>
         </div>
 
-        <!-- 模型调用折叠汇总：逐条不再占主时间线，只留时间构成（模型 / 工具 / 其他）+ 明细入口 -->
-        <div
-          v-if="modelCallSummary.count"
-          class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-dashed border-gray-200/80 px-2 py-1 text-[11px] leading-4 text-gray-400 dark:border-gray-700/70 dark:text-gray-500"
-        >
-          <SparklesIcon class="h-3 w-3 shrink-0" aria-hidden="true" />
-          <span :title="modelCallSummaryTitle">{{ modelCallSummaryLabel }}</span>
-          <button
-            type="button"
-            class="ml-auto shrink-0 font-medium text-gray-500 transition-colors hover:text-gray-800 hover:underline dark:text-gray-400 dark:hover:text-gray-200"
-            title="查看本次执行的大模型调用明细"
-            @click="emit('open-model-stats')"
-          >查看明细</button>
-        </div>
-
         <div v-if="isThinking && !items.length" class="px-2 py-1 text-xs text-gray-400 animate-pulse">
           {{ thinkingText || '正在处理…' }}
         </div>
@@ -694,9 +679,6 @@ import {
   resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
   selectTimelineRenderableItems,
-  stripModelCallLogs,
-  summarizeModelCalls,
-  summarizeToolCalls,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
   isWorkspacePrewarmPending,
@@ -708,7 +690,6 @@ import {
 import {
   formatSubagentTraceSummary,
 } from "@/utils/subagentTrace";
-import { formatTokenFull, formatTokenUsageAmount } from "@/utils/tokenFormat";
 
 const props = withDefaults(defineProps<{
   timeline?: ProcessTimelineItem[];
@@ -741,11 +722,6 @@ const props = withDefaults(defineProps<{
   /** 当前轮的清单正由输入框上方的 banner 卡片展示时，时间线内不再重复渲染。 */
   hideTodo?: boolean;
   /**
-   * 模型调用（category=model）默认折叠为底部一行汇总，避免「工具全在上、模型调用全在下」
-   * 的时间倒挂；需要逐条展示观测信息的场景传 false 恢复旧行为。
-   */
-  hideModelCalls?: boolean;
-  /**
    * 本轮工具调用的实际超时上限（秒，版本级优先、否则全局）。
    * 挂起中的工具行显示「已耗时 / 上限」，让用户知道还要等多久才算超时。
    */
@@ -772,7 +748,6 @@ const props = withDefaults(defineProps<{
   bordered: false,
   darkMode: false,
   suppressPermissionLogs: false,
-  hideModelCalls: true,
   toolTimeoutSeconds: 0,
   promptTokens: 0,
   completionTokens: 0,
@@ -783,7 +758,6 @@ const routeGroupExpanded = ref(true);
 
 const emit = defineEmits<{
   (e: "stop"): void;
-  (e: "open-model-stats"): void;
 }>();
 
 // 会话运行锁的排队等待条目（id 由后端 preflight 下发）：这里提供直接终止入口，
@@ -806,15 +780,18 @@ const handleQueueWaitStop = (item: ProcessTimelineItem) => {
 function suppressPermissionLogs(items: ProcessTimelineLogItem[]): ProcessTimelineLogItem[];
 function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[];
 function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[] {
+  // 用原型投影替换 `{ ...item, children }`：展开运算符会把 progress 这类字段也登记成
+  // timelineItems 的依赖，导致每条工具进度都触发整棵时间线重算。
   return items.flatMap((item): ProcessTimelineItem[] => {
-    if (item.kind === "log") {
-      if (item.category === "permission") return [];
-      return item.children?.length
-        ? [{ ...item, children: suppressPermissionLogs(item.children) }]
-        : [item];
-    }
-    if (item.kind === "text" && item.children?.length) {
-      return [{ ...item, children: suppressPermissionLogs(item.children) }];
+    if (item.kind === "log" && item.category === "permission") return [];
+    const children = item.children;
+    if (children?.length) {
+      const suppressed = suppressPermissionLogs(children as ProcessTimelineItem[]);
+      if (suppressed !== children) {
+        const projection = Object.create(item) as ProcessTimelineItem;
+        projection.children = suppressed;
+        return [projection];
+      }
     }
     return [item];
   });
@@ -830,92 +807,26 @@ const timelineItems = computed(() => {
   return selectTimelineRenderableItems(visibleItems, { hideTodo: props.hideTodo });
 });
 
-// 模型调用（category=model）不占主时间线：它们每次请求一条、又固定堆在数组末尾，
-// 留在列表里会造成「工具在上、模型调用在下」的时间倒挂。默认折叠为底部一行汇总，
-// 逐条明细由「查看明细」承载；进行中的那条仍保留，避免模型思考期间列表完全静止。
-const hideModelCalls = computed(() => props.hideModelCalls !== false);
-const items = computed(() => {
-  const grouped = groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value);
-  return hideModelCalls.value ? stripModelCallLogs(grouped) : grouped;
-});
-
-const modelCallSummary = computed(() =>
-  hideModelCalls.value
-    ? summarizeModelCalls(timelineItems.value)
-    : { count: 0, totalMs: 0, pending: false }
-);
-// 工具耗时合计：用来把「模型 5.4s」放回总耗时里解释，而不是让它孤零零地与
-// 顶部「耗时 36.2s」并排——那会让人以为统计漏掉了三十秒。
-const toolCallSummary = computed(() =>
-  hideModelCalls.value
-    ? summarizeToolCalls(timelineItems.value)
-    : { count: 0, totalMs: 0, pending: false }
-);
-// header 的 duration 是字符串（如 "36.2"），缺省 / 流式中为空，此时退回旧的「合计」口径。
-const totalDurationMs = computed(() => {
-  const value = Number(props.duration);
-  return Number.isFinite(value) && value > 0 ? value * 1000 : 0;
-});
 /**
- * 模型 token 用量（紧凑格式，如「入 299.5K / 出 284 tok」）。
+ * 模型调用（`category=model`）是观测信息，不是执行步骤：每次 LLM 请求一条，
+ * 又固定堆在顶层数组末尾，留在列表里就是「工具全在上、几十条模型调用全在下」。
  *
- * 时间只能说明「算了多久」，token 才能说明「干了多少活」：同一条回复里 10 次
- * 0.8s 往往只是 10 段几十 token 的短判断，只看时间会误以为是统计漏了。
- * 输入 token 是各次调用累加（每次都会重发上下文），输出才是实际生成量。
+ * 这里直接把它挡在渲染列表之外——注意不是「先显示、完成后再移除」，
+ * 而是从来就不进 `items`，所以 v-for 的列表长度只随工具/旁白变化，
+ * 不会出现「入队 → 出队」的增删抖动（那才是之前拖死页面的原因）。
+ *
+ * fallback 换模提示同属 model 类别，但它是用户必须看见的事件，保留。
  */
-const modelTokenUsageLabel = computed(() => {
-  const input = Math.max(0, Math.round(Number(props.promptTokens) || 0));
-  const output = Math.max(0, Math.round(Number(props.completionTokens) || 0));
-  if (input <= 0 && output <= 0) return "";
-  // formatTokenUsageAmount 自带 "tok" 后缀，这里只取数量部分，末尾统一加一次。
-  const compact = (value: number) => formatTokenUsageAmount(value).replace(/\s*tok$/, "");
-  const parts: string[] = [];
-  if (input > 0) parts.push(`入 ${compact(input)}`);
-  if (output > 0) parts.push(`出 ${compact(output)}`);
-  return `${parts.join(" / ")} tok`;
-});
-const modelCallSummaryLabel = computed(() => {
-  const { count, totalMs, pending } = modelCallSummary.value;
-  const total = totalDurationMs.value;
-  // 有本轮墙钟耗时时直接给时间构成：模型 / 工具 / 其他，三者相加约等于总耗时。
-  if (total > 0) {
-    const toolMs = toolCallSummary.value.totalMs;
-    const parts = [`模型 ${count} 次 ${formatDuration(totalMs) || "0s"}`];
-    if (modelTokenUsageLabel.value) parts.push(modelTokenUsageLabel.value);
-    if (toolMs > 0) parts.push(`工具 ${formatDuration(toolMs)}`);
-    const restMs = total - totalMs - toolMs;
-    // 差值低于 100ms 属于准备 / 收尾的正常抖动，不必单独列一项制造疑问。
-    if (restMs >= 100) parts.push(`其他 ${formatDuration(restMs)}`);
-    if (pending) parts.push("进行中");
-    return parts.join(" · ");
-  }
-  const parts = [`${count} 次模型调用`];
-  if (totalMs > 0) parts.push(`合计 ${formatDuration(totalMs)}`);
-  if (modelTokenUsageLabel.value) parts.push(modelTokenUsageLabel.value);
-  if (pending) parts.push("进行中");
-  return parts.join(" · ");
-});
-const modelCallSummaryTitle = computed(() => {
-  const { count, totalMs } = modelCallSummary.value;
-  const total = totalDurationMs.value;
-  const toolMs = toolCallSummary.value.totalMs;
-  const input = Math.max(0, Math.round(Number(props.promptTokens) || 0));
-  const output = Math.max(0, Math.round(Number(props.completionTokens) || 0));
-  const tokenDetail =
-    input > 0 || output > 0
-      ? `Token 输入 ${formatTokenFull(input)} / 输出 ${formatTokenFull(output)}（输入为各次调用累加，输出为实际生成量）。`
-      : "";
-  if (total <= 0) return `模型生成耗时合计，不含工具执行与等待。${tokenDetail}`;
-  const percent = (value: number) => `${Math.min(100, Math.round((value / total) * 100))}%`;
-  const parts = [
-    `本轮总耗时 ${formatDuration(total)}`,
-    `模型生成 ${count} 次 ${formatDuration(totalMs) || "0s"}（${percent(totalMs)}）`,
-  ];
-  if (toolMs > 0) parts.push(`工具执行 ${formatDuration(toolMs)}（${percent(toolMs)}）`);
-  const restMs = total - totalMs - toolMs;
-  if (restMs >= 100) parts.push(`准备与收尾 ${formatDuration(restMs)}`);
-  return `${parts.join("；")}。工具执行与等待不计入模型耗时；工具耗时为各次调用累加，并行执行时可能高于总耗时。${tokenDetail}`;
-});
+const isHiddenModelCall = (item: ProcessTimelineItem): boolean =>
+  item.kind === "log"
+  && item.category === "model"
+  && item.status !== "warning"
+  && !/fallback/i.test(String(item.title || ""));
+
+const items = computed(() =>
+  groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value)
+    .filter((item) => !isHiddenModelCall(item))
+);
 
 const hasPending = computed(() => timelineHasPending(items.value));
 const headerTitle = computed(() => props.hasAnswer ? "执行完成" : "执行过程");
@@ -927,7 +838,6 @@ const currentStep = computed(() => resolveTimelineCurrentStep(
 const visible = computed(() => Boolean(
   props.isThinking
   || items.value.length
-  || modelCallSummary.value.count
   || props.skillBadges.length,
 ));
 const skillNoticeLabel = computed(() => skillFlowNoticeLabel(props.skillBadges));

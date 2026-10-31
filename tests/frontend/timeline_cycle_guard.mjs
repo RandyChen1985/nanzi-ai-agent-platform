@@ -3,7 +3,7 @@
 // 背景：委派场景的时间线是「旁白 → 子代理容器 → 步骤 → 子步骤」的嵌套结构，
 // 而 `upsertTimelineLog` 会按 parent_id 重挂、按 subagent 元数据合并容器。一旦某个
 // 节点被挂到自己下面（或两个节点互指），所有**深度优先递归**都会变成死循环：
-//   1. `collectLogsByPredicate`（模型/工具两套汇总，每次 props 变化都跑）
+//   1. `collectLogsByPredicate`（工具汇总，每次 props 变化都跑）
 //   2. `findTimelineLog` / `findTimelineLogInLogs`（每条日志事件都要查父节点）
 // 表现就是 Chrome 的「页面无响应」，且刷新后重新 hydrate 同一批数据继续卡。
 //
@@ -12,7 +12,6 @@
 import assert from 'node:assert/strict'
 
 import {
-  summarizeModelCalls,
   summarizeToolCalls,
 } from '../../frontend/src/utils/processTimeline.ts'
 
@@ -47,12 +46,6 @@ const c = log('c')
 b.children = [a, c]
 summary = summarizeToolCalls([a])
 assert.equal(summary.count, 3, '环之外的节点仍要被统计')
-
-// --- 4. 模型调用汇总走同一套遍历，同样不能卡 ---
-const modelLog = log('m', 'model')
-modelLog.children = [modelLog]
-const modelSummary = summarizeModelCalls([modelLog])
-assert.equal(modelSummary.count, 1)
 
 // --- 5. 正常结构不受影响：非环结构照常统计 ---
 const normalA = log('x')

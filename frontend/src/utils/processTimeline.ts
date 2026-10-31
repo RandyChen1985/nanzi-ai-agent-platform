@@ -543,27 +543,7 @@ export function selectTimelineRenderableItems(
 }
 
 /**
- * 模型调用（`category=model`）是**观测信息**，不是执行叙事：每问一次模型就多一条，
- * 而它又固定 push 到顶层数组末尾（工具都挂在旁白 children 下），于是主时间线表现为
- * 「工具全在上、模型调用全在下」，最新进度还被压在这一串下面。
- *
- * 默认折叠成一行汇总（次数 + 合计耗时 + 明细入口）；只有进行中的那条保留，
- * 否则模型思考期间主时间线完全静止，看起来像卡死。
- */
-export function isModelCallLog(item: ProcessTimelineItem): item is ProcessTimelineLogItem {
-  return item.kind === "log" && item.category === "model";
-}
-
-/** fallback 换模提示同属 model 类别，但它是用户必须看见的事件，不参与折叠。 */
-export function isModelFallbackNotice(log: ProcessTimelineLogItem): boolean {
-  return log.status === "warning" || /fallback/i.test(String(log.title || ""));
-}
-
-/**
  * 深度优先收集满足条件的 log 条目（含子代理嵌套在 children 里的那些）。
- *
- * 模型调用与工具执行两套汇总共用同一套遍历规则，避免两边对「嵌套在旁白 /
- * 子代理下的条目算不算」给出不同答案。
  */
 function collectLogsByPredicate(
   items: ProcessTimelineItem[] | undefined,
@@ -591,11 +571,6 @@ function collectLogsByPredicate(
   return found;
 }
 
-/** 深度优先收集模型调用条目（含子代理嵌套在 children 里的那些）。 */
-export function collectModelCallLogs(items: ProcessTimelineItem[] | undefined): ProcessTimelineLogItem[] {
-  return collectLogsByPredicate(items, isModelCallLog);
-}
-
 /** 工具执行条目（`category=tool`）：用于把「工具耗时」从总耗时里单独拎出来。 */
 export function isToolCallLog(item: ProcessTimelineItem): item is ProcessTimelineLogItem {
   return item.kind === "log" && item.category === "tool";
@@ -606,63 +581,6 @@ export function collectToolCallLogs(items: ProcessTimelineItem[] | undefined): P
   return collectLogsByPredicate(items, isToolCallLog);
 }
 
-/** 移除模型调用条目，返回新数组（不改动入参）。`keepPending` 默认保留进行中的一条。 */
-export function stripModelCallLogs(
-  items: ProcessTimelineItem[],
-  options: { keepPending?: boolean } = {},
-  // 防环：委派树会按 parent_id / subagent 元数据重挂容器，一旦某节点被挂到自己后代下，
-  // 没有 visited 就是主线程无限递归（Chrome「页面无响应」，实测直接 Maximum call stack）。
-  // 命中已访问节点时原样返回、不再展开子树。
-  visited: WeakSet<object> = new WeakSet(),
-): ProcessTimelineItem[] {
-  const keepPending = options.keepPending !== false;
-  // 引用稳定是这里的关键：本函数在 `items` computed 里，每来一条流事件就会重算一次。
-  // 原先对**每个**有 children 的节点无条件 `{...item}` 复制，即使子树里根本没有可过滤的
-  // model 调用——对象引用一变，下游 v-for 的每一条都会当成新数据重新渲染（委派时
-  // 单轮 214 条事件 × 二十多个节点 = 几千次无谓更新）。现在保持原引用：只有真正删掉了
-  // 子节点才复制，未变化时整棵子树直接返回入参。
-  let changed = false;
-  const out = items.flatMap((item): ProcessTimelineItem[] => {
-    if (visited.has(item)) return [item];
-    visited.add(item);
-    if (item.kind === "log") {
-      if (isModelCallLog(item) && !isModelFallbackNotice(item)) {
-        if (keepPending && item.status === "pending") return [item];
-        changed = true;
-        return [];
-      }
-      if (item.children?.length) {
-        const children = stripModelCallLogs(item.children, options, visited) as ProcessTimelineLogItem[];
-        if (children === item.children) return [item];
-        changed = true;
-        return [{ ...item, children }];
-      }
-      return [item];
-    }
-    if (item.kind === "text" && item.children?.length) {
-      const children = stripModelCallLogs(item.children, options, visited) as ProcessTimelineLogItem[];
-      if (children === item.children) return [item];
-      changed = true;
-      return [{ ...item, children }];
-    }
-    return [item];
-  });
-  return changed ? out : items;
-}
-
-/** 汇总行数据：调用次数、已完成调用的合计耗时、是否仍在调用中。 */
-export function summarizeModelCalls(items: ProcessTimelineItem[] | undefined): {
-  count: number;
-  totalMs: number;
-  pending: boolean;
-} {
-  const logs = collectModelCallLogs(items);
-  return {
-    count: logs.length,
-    totalMs: logs.reduce((sum, log) => sum + (Number(log.execution_time_ms) || 0), 0),
-    pending: logs.some((log) => log.status === "pending"),
-  };
-}
 
 /**
  * 工具执行汇总：次数与已完成工具的合计耗时。
@@ -1697,9 +1615,8 @@ export function hydrateHistoryProcessTimeline(
     // 历史消息不可能「正在执行」，pending 只表示落库时缺了终态事件（中断/超时/落库不全），
     // 按「未完成」展示更准确，也不再驱动动画与计时器。
     //
-    // 用独立的 `interrupted` 而不是复用 `warning`：`warning` 已被
-    // `isModelFallbackNotice` 占用（换模提示必须保留、不参与折叠），复用会让历史里
-    // 未完成的模型调用被当成换模提示，连带破坏「隐藏模型调用」。
+    // 用独立的 `interrupted` 而不是复用 `warning`：`warning` 已用于换模提示，
+    // 复用会让历史里未完成的条目被当成换模提示。
     status: log.status === "pending" ? "interrupted" : log.status,
     isExpanded: false,
     // 历史时间线**默认折叠**。

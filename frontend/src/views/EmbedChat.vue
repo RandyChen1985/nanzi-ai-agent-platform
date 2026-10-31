@@ -878,7 +878,6 @@
                 :tool-timeout-seconds="msg.agentMaxToolcallTimeoutSeconds"
                 dark-mode
                 @stop="stopGeneration({ notifySuccess: true })"
-                @open-model-stats="openModelCallStats(msg)"
               />
               <ToolPermissionCard
                 v-if="msg.pendingPermission"

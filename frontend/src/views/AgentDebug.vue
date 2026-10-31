@@ -5032,7 +5032,6 @@ onUnmounted(() => {
                 :tool-timeout-seconds="msg.agentMaxToolcallTimeoutSeconds"
                 bordered
                 @stop="stopGeneration({ notifySuccess: true })"
-                @open-model-stats="openModelCallStats(msg)"
               />
 
               <ToolPermissionCard

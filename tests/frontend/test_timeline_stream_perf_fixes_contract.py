@@ -2,7 +2,7 @@
 
 覆盖四类行为：
 1. 历史时间线的 `pending` 必须落定为独立的 `interrupted`（不是 `warning`，
-   否则会被 `isModelFallbackNotice` 当成换模提示，连"隐藏模型调用"一起失效）。
+   否则历史里未完成的条目会被当成换模提示）。
 2. 旁白首条 delta 仍做全量规范化（CRLF / 连续空行），快路径只用于无语义差异的续写。
 3. 旁白合帧缓冲在并行代理切换与非旁白事件前落盘，正文开始前先落盘再丢弃候选。
 4. 动效与滚动：reduced-motion 下进度条清掉位移；Embed 消息裁剪有 intrinsic-size 兜底，
@@ -63,8 +63,8 @@ process.stdout.write(JSON.stringify(result));
     return json.loads(completed.stdout)
 
 
-def test_history_pending_settles_as_interrupted_without_leaking_into_model_folding():
-    """历史里缺终态的步骤要显示「未完成」，且模型调用仍受「隐藏模型调用」管辖。"""
+def test_history_pending_settles_as_interrupted():
+    """历史里缺终态的步骤要显示「未完成」，而不是被当成正常完成。"""
     result = _run_typescript(
         "frontend/src/utils/processTimeline.ts",
         """
@@ -78,7 +78,6 @@ const items = api.hydrateHistoryProcessTimeline([
 return {
   statuses: items.map(item => item.status || null),
   nested: items.find(item => item.kind === 'text').children[0].status,
-  strippedIds: api.stripModelCallLogs(items).map(item => item.id),
 };
 """,
     )
@@ -86,8 +85,6 @@ return {
     assert result["statuses"][0] == "interrupted"
     assert result["statuses"][1] == "interrupted"
     assert result["nested"] == "interrupted"
-    # 模型调用未完成 → 不能被当成 fallback 提示留在列表里
-    assert "model-1" not in result["strippedIds"]
 
 
 def test_first_narration_delta_is_normalized_before_fast_path_takes_over():
@@ -186,24 +183,6 @@ def test_stream_scroll_is_coalesced_per_frame_not_per_event():
     assert code_only.index("programmaticScrollUntil.value") < code_only.index("scrollHeight")
 
 
-def test_timeline_strip_survives_cycles():
-    """委派树重挂可能产生自引用：剥模型调用是每次 items 重算都会跑的递归，
-    没有 visited 就是 Maximum call stack（Chrome「页面无响应」）。"""
-    result = _run_typescript(
-        "frontend/src/utils/processTimeline.ts",
-        """
-const a = { kind: 'log', id: 'a', title: 'a', details: '', status: 'pending', children: [] };
-const b = { kind: 'log', id: 'b', title: 'b', details: '', status: 'pending', children: [a] };
-a.children.push(b);
-let cycleOk = true;
-try { api.stripModelCallLogs([a]); } catch (error) { cycleOk = false; }
-return { cycleOk };
-""",
-    )
-
-    assert result["cycleOk"] is True
-
-
 def test_timeline_text_sanitize_is_cached_per_string():
     """`stripInternalContextBlocks` 有十来条跨行正则，500ms tick 会把整棵树重渲一遍。"""
     vue = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
@@ -214,6 +193,24 @@ def test_timeline_text_sanitize_is_cached_per_string():
     body = vue.split("function visibleTimelineText(text?: string | null): string {", 1)[1].split("function hasVisibleTimelineText", 1)[0]
     assert body.index("timelineTextCache.get(raw)") < body.index("stripInternalContextBlocks(raw)")
 
+
+def test_tool_summary_survives_cycles():
+    """工具汇总跑递归遍历：委派树成环时必须能返回，且不重复计数。"""
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const toolLog = { kind: 'log', id: 't1', title: 't', details: '', status: 'pending', category: 'tool', execution_time_ms: 300, children: [] };
+const narration = { kind: 'text', id: 'n1', textKind: 'narration', content: '', children: [toolLog] };
+// 委派容器会按 parent_id / subagent 元数据重挂，形成自引用环
+toolLog.children.push(narration);
+return {
+  tool: api.summarizeToolCalls([narration]),
+};
+""",
+    )
+
+    assert result["tool"]["count"] == 1
+    assert result["tool"]["totalMs"] == 300
 
 def test_message_list_scroll_listener_is_passive():
     """滚动监听不能阻塞滚动线程（内部不调用 preventDefault）。"""
@@ -258,3 +255,21 @@ def test_thinking_timer_does_not_force_full_message_list_refresh():
     assert "}, 500);" in vue
     # 调用必须彻底消失（注释里提到不算）：全列表强制刷新是这次的主要卡顿源之一
     assert "triggerRef(messages);" not in vue
+
+
+
+
+def test_timeline_keeps_model_calls_out_of_render_list():
+    """模型调用条目不进渲染列表：从源头排除，而不是「先显示再移除」（那会抖列表）。"""
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+
+    assert "const isHiddenModelCall = (item: ProcessTimelineItem): boolean =>" in timeline
+    assert 'item.category === "model"' in timeline
+    # fallback 换模提示必须保留可见
+    assert 'item.status !== "warning"' in timeline
+    assert "/fallback/i.test(String(item.title || \"\"))" in timeline
+    # items 是过滤后的结果，v-for 不会再长出模型调用行
+    assert ".filter((item) => !isHiddenModelCall(item))" in timeline
+    # 没有残留的折叠汇总行 / 明细入口
+    assert "modelCallSummary" not in timeline
+    assert "open-model-stats" not in timeline
