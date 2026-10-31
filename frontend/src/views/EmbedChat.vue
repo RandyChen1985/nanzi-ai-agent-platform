@@ -2855,6 +2855,12 @@ import {
   RUN_STATUS_NUDGE_INTERVAL_MS,
   shouldContinueRunStatusNudge,
 } from "@/utils/runStatusConvergence";
+import {
+  STREAM_LIVENESS_TICK_MS,
+  STREAM_RUN_STATUS_PROBE_INTERVAL_MS,
+  decideStreamAbort,
+  type StreamAbortReason,
+} from "@/utils/streamLiveness";
 import { createClientRequestId } from "@/utils/clientRequestId";
 import {
   USER_MESSAGE_CONTEXT_DIVIDER,
@@ -6727,6 +6733,10 @@ const resetConversationScopedState = () => {
     abortController = null;
   }
   streamInFlight = false;
+  // 看门狗属于本轮：切会话后不得再 abort 新会话的流（abortController 已在上面换掉）。
+  stopStreamLivenessWatch();
+  streamAbortReason = null;
+  streamPendingConfirmation = () => false;
   isProcessing.value = false;
   if (thoughtTimer) {
     clearInterval(thoughtTimer);
@@ -7216,6 +7226,61 @@ const clearStalePendingTimer = () => {
     stalePendingTimer = null;
   }
 };
+// --- 主流存活性看门狗 ---
+// `reader.read()` 没有空闲超时：页面被冻结/主线程停摆/连接假活时会永远挂在那一行，
+// 而恢复器又被 `streamInFlight` 闸门挡住，界面只能刷新。看门狗在停摆（或解冻）后
+// 主动 abort 本地流，让 finally 走 run-status 核验 + 历史收敛。
+// @conversation-scoped: streamLivenessTimer
+let streamLivenessTimer: ReturnType<typeof setInterval> | null = null;
+let streamLastFrameAt = 0;
+let lastRunStatusProbeAt = 0;
+let streamAbortReason: StreamAbortReason | null = null;
+// 等用户确认/外部执行时后端确实在等，静默是正常的：由发起流的一方注入本轮判定，
+// 不在这里读消息列表（`hasPendingConfirmation` 在恢复器闭包里，作用域不可见）。
+let streamPendingConfirmation: () => boolean = () => false;
+
+const stopStreamLivenessWatch = () => {
+  if (streamLivenessTimer) {
+    clearInterval(streamLivenessTimer);
+    streamLivenessTimer = null;
+  }
+};
+
+const tickStreamLiveness = () => {
+  if (!streamInFlight) {
+    stopStreamLivenessWatch();
+    return;
+  }
+  const now = Date.now();
+  if (now - lastRunStatusProbeAt >= STREAM_RUN_STATUS_PROBE_INTERVAL_MS) {
+    lastRunStatusProbeAt = now;
+    // 查询失败不会改 remoteRunActive（控制器保留旧锁态），只有明确 false 才会被判为
+    // 「后端已收尾」——所以这里可以直接发起探测，不必等结果。
+    void refreshCurrentRunStatus();
+  }
+  const reason = decideStreamAbort({
+    streamInFlight,
+    pendingConfirmation: streamPendingConfirmation(),
+    idleMs: now - streamLastFrameAt,
+    remoteRunActive: remoteRunActive.value,
+  });
+  if (!reason) return;
+  streamAbortReason = reason;
+  console.warn(
+    `[Stream] liveness watchdog abort (${reason}); handing over to run-status recovery`,
+  );
+  abortController?.abort();
+};
+
+const startStreamLivenessWatch = (isPendingConfirmation?: () => boolean) => {
+  stopStreamLivenessWatch();
+  streamAbortReason = null;
+  streamPendingConfirmation = isPendingConfirmation ?? (() => false);
+  streamLastFrameAt = Date.now();
+  lastRunStatusProbeAt = Date.now();
+  streamLivenessTimer = setInterval(tickStreamLiveness, STREAM_LIVENESS_TICK_MS);
+};
+
 const startStalePendingTimer = (msg: Message) => {
   clearStalePendingTimer();
   stalePendingTimer = setInterval(() => {
@@ -12240,6 +12305,11 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   markRunStarted();
   abortController = new AbortController();
   streamInFlight = true;
+  startStreamLivenessWatch(
+    () =>
+      agentMsg.value.pendingPermission?.status === "pending"
+      || agentMsg.value.pendingExternalExecution?.status === "pending",
+  );
   // 新一轮是新的写入方：令牌自增后，仍在收尾的旧恢复流就不能再复位本轮的锁态。
   liveWriterToken += 1;
   // 新一轮开始：续显游标整体归零。后端在 producer 启动时会清空上一轮日志并让 _seq
@@ -12404,6 +12474,8 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      // 每收到一帧（含 keepalive）就续命：正常长任务不会被空闲判据误杀。
+      streamLastFrameAt = Date.now();
 
       const dataLines = sseLineParser.feed(decoder.decode(value, { stream: true }));
 
@@ -12612,7 +12684,13 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   } catch (e: any) {
     flushContentBuffer();
     if (e.name === "AbortError") {
-      if (!embedUnmounted) agentMsg.value.content += "\n[用户终止]";
+      if (streamAbortReason) {
+        // 看门狗中止不是用户操作：不写「[用户终止]」，交给 finally 的 run-status 核验
+        // 与历史收敛把界面补齐（卡住时正文往往已在后端落库）。
+        console.warn(`[Stream] aborted by liveness watchdog (${streamAbortReason})`);
+      } else if (!embedUnmounted) {
+        agentMsg.value.content += "\n[用户终止]";
+      }
     } else if (document.visibilityState === "hidden") {
       console.log("[Stream] Client disconnected in background; awaiting background producer sync on resume.");
     } else if (!embedUnmounted) {
@@ -12623,6 +12701,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       agentMsg.value.clientTransportErrorSuffix = transportErrorSuffix;
     }
   } finally {
+    stopStreamLivenessWatch();
     streamInFlight = false;
     // SSE 已收流结束，此时才谈得上完成态：放在 streamInFlight 归零之后刷新，
     // 否则「本端仍在收流」的判据会把完成提示压掉。

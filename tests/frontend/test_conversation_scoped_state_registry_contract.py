@@ -24,6 +24,7 @@ RESET_VIA_FUNCTION = {
     "stalePendingTimer": ("clearStalePendingTimer()",),
     "stallTimer": ("resetStallTimer()",),
     "showStalledPrompt": ("resetStallTimer()",),
+    "streamLivenessTimer": ("stopStreamLivenessWatch()",),
 }
 
 ENTRY_SIGNATURE = "const resetConversationScopedState = () => {"
