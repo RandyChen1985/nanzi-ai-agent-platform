@@ -1133,3 +1133,24 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 
 |---|---|---|---|---|
 | 发版文档三件套（1.0.21.0） | `docs/release/1.0.21/release_log.md`（新增）、`docs/release/1.0.21/release_log_wechat.html`（新增）、`docs/release/1.0.21/release-cover-info.md`（新增）、`tests/CHECKLIST.md` | **需求来源（用户）**：「看看 release 里面 1.0.20，参考，我们写 1.0.21 的，从 git 1381e149f58c729d78ec364a2cf083a3de055daa 到现在的」。**统计口径**：`1381e149..c5d54aa8` 共 172 个提交（149 个非 Merge）、718 个文件（+133,623 / -3,552 行）；MySQL 迁移 12 组（V188~V201，V195/V196 预留）、PG 12 组（V88~V101，V95/V96 预留）。**产出**：① `release_log.md` 按 1.0.20 结构重写，归纳 7 大核心板块（知识库企业级治理 / 资源广场 / 会话分享与身份 / 技能广场与沙箱工具链 / 脚本工具与 MCP 进度流 / AgentScope 2.0.11 升级与流式性能 / 交互与嵌入体验），Bug Fixes 分 4 类，升级注意 6 条（含「V201 必须先于新后端执行」「沙箱镜像必须重建」）；② `release_log_wechat.html` 与 1.0.20 规范 1:1 对齐（7 处特性卡片 + 截图占位、4 类缺陷卡片、12 行横向滑动迁移表、三种升级方式终端代码块、统计卡片），HTML 标签平衡已校验；③ `release-cover-info.md` 提供三版文案钩子、6 组视觉关键词与 16:9 生图 Prompt。**验证**：前端契约 `pytest --confcutdir=tests/frontend tests/frontend -q` **3744 passed / 1 skipped**；后端 `pytest tests --ignore=tests/frontend -q` **8297 passed / 12 skipped / 40 xfailed / 2 failed**，2 条失败均非本版功能缺陷（`test_metadata_drift_service::test_resolve_alert_drop_table` 为历史既有基线；`test_portal_session_token::test_session_token_slides_ttl_on_activity` 断言未同步 `a8f3829c` 把滑动续期收敛为「仅复核时续期」的语义变更，待单独处理）。**未做**：未执行 `./dev.sh`、未提交 git、未生成封面图。 | ✅ 三件套齐备，数字与迁移清单逐条核对；⚠️ 2 条后端用例失败已如实登记在 Metrics 的 Known Test Debt | 2026-10-31 |
+
+## 2026-11-01 沙箱 bash 意图摘要丢失：MCP 工具名前缀未归一化
+
+|---|---|---|---|---|
+| 时间线里沙箱的 Bash 行只剩「工具完成 · sandbox::bash」，模型填的 `description` 白填。**根因两处**：沙箱 MCP 对模型暴露的工具名是 `<server>::<tool>`（`sandbox::bash`），而 `extract_tool_summary` 与绑定侧 `_workspace_native_name_for_spec()` 都按裸名精确比对 → ① 摘要恒取不到；② 别名表查不到 `sandbox::bash` 返回 `None`，`native_name == "Bash"` 分支被跳过，`BASH_INTENT_SUMMARY_GUIDANCE` 与 `_augment_bash_parameter_schema` 全都不生效，模型压根不知道要填该参数。**改法**：`stream_reconcile` 新增 `_normalize_intent_tool_name()`（匹配前取 `::` 末段）、`workspace` 的 native 名解析同样先剥前缀；前端 `mergeTimelineLogs` 补拷 `tool_summary`（此前只在 upsert 的新建/更新路径写入，已存在条目在合并时会被抹掉），`props.logs` 与两处入参类型补该字段 | `app/services/ai/runtime/agentscope/stream_reconcile.py`、`workspace.py`、`frontend/src/utils/processTimeline.ts`、`tests/ai/runtime/test_bash_intent_summary_guidance.py`、`tests/CHECKLIST.md` | ✅ 新增 3 项（MCP 前缀命中、非命令工具不误伤、native 名解析）；`tests/ai/runtime` 859 passed；`tests/frontend` 3744 passed / 1 skipped | 2026-11-01 |
+**测试**：`tests/ai/runtime/test_bash_intent_summary_guidance.py` 命中前 12 passed；`tests/ai/runtime` 全量 859 passed；`tests/frontend` 全量 3744 passed / 1 skipped；`vue-tsc` 改动文件 0 新增错误。
+**注意**：① MCP 声明被 AgentScope 持久化在 `<workdir>/.mcp` 且优先级高于构造参数，**老会话仍是旧脚本**，验证必须新开会话或清掉对应工作区的 `.mcp`；② 前缀归一化只取最后一段，若将来引入同名工具跨 server 并存的场景，需要改成「server + tool」联合匹配。
+
+## 2026-11-01 工具调用前统一说明意图（提示词升级为强制要求）
+
+|---|---|---|---|---|
+| 原规则是「常规低风险调用直接调用，仅在多步复杂任务或敏感操作时简短说明」，实际结果是绝大多数工具调用没有任何过程说明，用户只能看到一行「工具完成 · xxx」，不知道这一步在做什么。改为**统一要求**：每次调用任何工具前（Bash、文件读写、网络请求等全部工具）先用一句话说明将要执行什么，并强调写「要达成什么」而非复述工具名与参数——写「检查 5432 端口是否被占用」，不写「调用 exec_command 执行 ss -tulnp」。与既有段落不冲突：「执行倾向」里「不得用说明替代首个必要工具调用」仍然有效，正好防止模型只说不做；原「多步任务可先用一句简短进度说明」由建议升级为要求 | `app/services/ai/agent_prompts.py`、`tests/CHECKLIST.md` | ✅ `tests/ai -k "prompt or style"` 181 passed | 2026-11-01 |
+**测试**：`tests/ai -k "prompt or style"` 181 passed。
+**注意**：提示词是行为引导而非硬校验，模型仍可能漏说明；真正的强制手段是工具 schema 的 `description` 参数（见上一条），两者需配合观察一段时间后再决定是否加硬性校验。
+
+## 2026-11-01 执行时间线过程旁白支持折叠与自动收敛
+
+|---|---|---|---|---|
+| 旁白（`process_narration`）是模型的「我准备做什么」，此前平铺渲染、无法收起。配上「每次调用工具前都要说明」的提示词后，一次任务会产出七八段，时间线被撑得很长，真正要看的工具结果被挤出屏幕。**交互按长度分流**：短旁白（≤120 字且 ≤3 行）直接展示、无折叠控件；长旁白（>120 字或 >3 行）默认收起，给一行摘要 + 字数胶囊，点标题行展开。**默认态惰性判定**：未手动切换过时按长度计算，切换后以用户选择为准（不预设 `contentExpanded`，避免污染落库数据）；摘要压平换行后截 80 字，避免摘要本身又占两行。「全部展开 / 收起明细」同步覆盖长旁白——`hasExpandableItems` 计算与 `setExpand` 均纳入 narration，否则顶部按钮会漏掉它们 | `frontend/src/components/chat/ChatExecutionTimeline.vue`、`tests/CHECKLIST.md` | ✅ `tests/frontend` 3744 passed / 1 skipped；`vue-tsc` 改动文件 0 新增错误 | 2026-11-01 |
+**测试**：`tests/frontend` 全量 3744 passed / 1 skipped（新增摘要 span 带 `narration-preview` 标记，避开契约测试用 `class="min-w-0 flex-1 truncate"` 做「pending 指示点须在内容之前」的锚点匹配）。
+**注意**：① 折叠阈值是常量而非配置项，若要按用户偏好调整需改常量；② 摘要只做换行压平 + 截断，不解析 Markdown，含表格/代码的旁白摘要会是纯文本片段。
