@@ -63,15 +63,24 @@ const prefix = computed(() =>
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -40%;
+  left: 0;
   width: 40%;
   border-radius: 9999px;
   background: rgba(14, 165, 233, 0.75);
+  transform: translateX(-100%);
   animation: workspace-prewarm-slide 1.2s ease-in-out infinite;
+  will-change: transform;
+  backface-visibility: hidden;
 }
+/* 关键：这里原先动画的是 `left`。`left` 属于布局属性，浏览器**每帧都要重新排版**
+   整条时间线（reflow），且无法交给合成器。委派场景里主助手与子代理会同时挂起多个
+   pending 步骤，每个都在跑这条动画，于是每帧多次 reflow——表现为「主线程 JS 只有
+   24ms，但 Rendering 稳定几百毫秒、画面持续卡」。换成 transform 后位移在合成器完成，
+   布局只在首次发生。位移量与原来的 left:-40% → left:100% 等价（元素宽 40%：
+   -40%/40% = -100%，100%/40% = 250%）。 */
 @keyframes workspace-prewarm-slide {
-  0% { left: -40%; }
-  100% { left: 100%; }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
 }
 
 /* 挂起步骤的转圈：一个缺口圆环匀速旋转，示意后台仍在推进。
@@ -92,6 +101,9 @@ const prefix = computed(() =>
 @media (prefers-reduced-motion: reduce) {
   .workspace-prewarm-bar::after {
     animation: none;
+    /* 基础规则用 translateX(-100%) 把滑块放到轨道左侧外；降级态要铺满整条轨道，
+       必须同时清掉这个位移，否则宽 100% 的元素会被整体移出可视区（进度条看起来消失了）。 */
+    transform: none;
     left: 0;
     width: 100%;
     opacity: 0.5;

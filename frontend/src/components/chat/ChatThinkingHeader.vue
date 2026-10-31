@@ -146,13 +146,16 @@ const stepBadgeTitle = computed(() => {
   height: 0.55rem;
   border-radius: 9999px;
   background: #0ea5e9;
-  box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.35);
+  /* 光晕改成静态：动画只留 opacity / transform（可合成），但静态光环仍要保留，
+     否则与 ChatExecutionTimeline 里同款状态点不一致，圆点会显得单薄。 */
+  box-shadow: 0 0 0 0.12rem rgba(14, 165, 233, 0.18);
   animation: thought-header-breathe 1.6s ease-in-out infinite;
 }
 
+/* 同 ChatExecutionTimeline：只动画可合成的 opacity / transform。 */
 @keyframes thought-header-breathe {
-  0%, 100% { opacity: 0.55; transform: scale(0.85); box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.28); }
-  50% { opacity: 1; transform: scale(1.12); box-shadow: 0 0 0 0.28rem rgba(14, 165, 233, 0.08); }
+  0%, 100% { opacity: 0.55; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.12); }
 }
 
 @media (prefers-reduced-motion: reduce) {

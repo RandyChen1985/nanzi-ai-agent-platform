@@ -19,8 +19,22 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * 一次 O(n) 扫描判断文本里是否真的出现内部块起始标签。
+ *
+ * 原实现对 15 个标签名各跑两条 `[\s\S]*?` 全文正则（完整块 + 未闭合块），一次清洗
+ * 要扫全文 30 遍。而时间线的工具结果（子代理桥接的 MCP 返回）动辄几十 KB，并且
+ * 每次重渲染都会对每个节点的 details 调一次——委派场景下这就是主线程被吃掉的原因。
+ * 绝大多数文本根本不含这些标签，先用一条合并正则挡掉，命中不了直接返回。
+ */
+const INTERNAL_BLOCK_QUICK_TEST = new RegExp(
+  `<\\s*(?:${INTERNAL_CONTEXT_BLOCKS.map(escapeRegExp).join("|")})(?=[\\s>])`,
+  "i",
+);
+
 function stripInternalXmlBlocks(content: string, removeUnclosed: boolean): string {
   let text = content;
+  if (!INTERNAL_BLOCK_QUICK_TEST.test(text)) return text;
   for (const name of INTERNAL_CONTEXT_BLOCKS) {
     const escapedName = escapeRegExp(name);
     const completeBlock = new RegExp(
@@ -55,21 +69,27 @@ export function stripInternalContextBlocks(
   let text = stripInternalXmlBlocks(String(content), removeUnclosed);
 
   // normalize_messages_for_llm 包装的系统上下文区块，模型偶尔会原样复述。
-  text = text.replace(
-    /<!--[ \t]*SYSTEM_BLOCK_START:[\s\S]*?-->[\s\S]*?<!--[ \t]*SYSTEM_BLOCK_END:[\s\S]*?-->/gi,
-    "",
-  );
-  if (removeUnclosed) {
-    text = text.replace(/<!--[ \t]*SYSTEM_BLOCK_START:[\s\S]*?-->[\s\S]*$/gi, "");
+  // 同样是先判有无注释起始标记，没命中就不跑这两条跨行正则。
+  if (text.includes("<!--")) {
+    text = text.replace(
+      /<!--[ \t]*SYSTEM_BLOCK_START:[\s\S]*?-->[\s\S]*?<!--[ \t]*SYSTEM_BLOCK_END:[\s\S]*?-->/gi,
+      "",
+    );
+    if (removeUnclosed) {
+      text = text.replace(/<!--[ \t]*SYSTEM_BLOCK_START:[\s\S]*?-->[\s\S]*$/gi, "");
+    }
   }
 
   // 这些是模型上下文边界/身份提示，不是用户回答内容。
-  text = text
-    .replace(/^[ \t]*\[本回复由智能体「[^」\r\n]*」生成\][ \t]*\r?\n?/gim, "")
-    .replace(/^[ \t]*\[早前对话摘录\][ \t]*\r?\n?/gim, "")
-    .replace(/^[ \t]*\[上一轮可复用工具结果\][ \t]*\r?\n?/gim, "")
-    .replace(/^[ \t]*〔更早轮次对话要点〕[ \t]*\r?\n?/gim, "")
-    .replace(/^[ \t]*以下是更早轮次对话的要点.*\r?\n?/gim, "");
+  // 只有出现「[」或「〔」等标记时才需要逐行匹配，否则整段跳过。
+  if (text.includes("[") || text.includes("〔") || text.includes("以下是更早轮次对话的要点")) {
+    text = text
+      .replace(/^[ \t]*\[本回复由智能体「[^」\r\n]*」生成\][ \t]*\r?\n?/gim, "")
+      .replace(/^[ \t]*\[早前对话摘录\][ \t]*\r?\n?/gim, "")
+      .replace(/^[ \t]*\[上一轮可复用工具结果\][ \t]*\r?\n?/gim, "")
+      .replace(/^[ \t]*〔更早轮次对话要点〕[ \t]*\r?\n?/gim, "")
+      .replace(/^[ \t]*以下是更早轮次对话的要点.*\r?\n?/gim, "");
+  }
 
   if (!normalizeWhitespace) return text;
 

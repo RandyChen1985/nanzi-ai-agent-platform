@@ -481,7 +481,7 @@
       <div
         class="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-4 pt-3 sm:pt-4 pb-1 sm:pb-1.5 space-y-4 sm:space-y-6 w-full max-w-full min-w-0"
         ref="messagesContainer"
-        @scroll="handleScroll"
+        @scroll.passive="handleScroll"
       >
       <!-- Connection Status Overlay -->
       <div
@@ -570,6 +570,7 @@
         v-for="msg in displayMessages"
         :key="msg.id"
         class="flex flex-col space-y-4 animate-fade-in-up"
+        style="content-visibility: auto; contain-intrinsic-size: 180px; contain-intrinsic-size: auto 180px"
       >
         <!-- Time Label -->
         <div v-if="msg.isTimeLabel" class="flex justify-center py-2 animate-fade-in">
@@ -2584,7 +2585,7 @@
     </div>
 </template>
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed, triggerRef } from "vue";
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from "vue";
 import { CommandLineIcon } from "@heroicons/vue/24/outline";
 import { useRouter } from "vue-router";
 import axios from "@/utils/axios";
@@ -7352,6 +7353,10 @@ const startThoughtTimer = (msg: Message) => {
     "正在组织回答…",
   ];
   msg.thinkingText = THINKING_MESSAGES[0];
+  // 500ms 一跳（原 100ms）：这里改的是 `msg.thoughtDuration`，它是消息对象上的响应式
+  // 字段，模板读它就会精确更新那一处，**不需要** triggerRef(messages) 去强制整个消息
+  // 列表重渲染。原先 100ms 一次、每次 triggerRef，委派 16 秒内要跑 160 次全列表 diff，
+  // 与流事件叠加后是主线程的主要负担之一。
   thoughtTimer = setInterval(() => {
     ticks++;
     if (msg.thoughtStartTime) {
@@ -7359,30 +7364,27 @@ const startThoughtTimer = (msg: Message) => {
         (Date.now() - msg.thoughtStartTime) /
         1000
       ).toFixed(1);
-      triggerRef(messages);
     }
-    // Switch message every 3 seconds (30 * 100ms)
-    if (ticks % 30 === 0) {
+    // Switch message every 3 seconds (6 * 500ms)
+    if (ticks % 6 === 0) {
       const activePendingLog = msg.logs ? [...msg.logs].reverse().find((l) => l.status === "pending" && l.title) : null;
       if (activePendingLog && activePendingLog.title) {
         const titleStr = activePendingLog.title.startsWith("正在") ? activePendingLog.title : `正在${activePendingLog.title}`;
         msg.thinkingText = `${titleStr}…`;
       } else {
-        const stepIndex = ticks / 30;
+        const stepIndex = ticks / 6;
         if (stepIndex < THINKING_MESSAGES.length) {
           msg.thinkingText = THINKING_MESSAGES[stepIndex];
         } else {
           msg.thinkingText = "任务处理中，请稍候…";
         }
       }
-      triggerRef(messages);
     }
-  }, 100);
+  }, 500);
 };
 const finishThoughtTimer = (msg: Message) => {
   if (msg.thoughtStartTime) {
     msg.thoughtDuration = ((Date.now() - msg.thoughtStartTime) / 1000).toFixed(1);
-    triggerRef(messages);
   }
   if (thoughtTimer) clearInterval(thoughtTimer);
   thoughtTimer = null;
@@ -12128,7 +12130,13 @@ const confirmPendingPermission = async (
       const { done, value } = await reader.read();
       if (done) break;
       const dataLines = parser.feed(decoder.decode(value, { stream: true }));
+      let permissionFrameProcessed = 0;
       for (const dataStr of dataLines) {
+        permissionFrameProcessed += 1;
+        // 同主发送流：批量事件时让出主线程，避免连续占用。
+        if (permissionFrameProcessed % 20 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
         if (dataStr === "[DONE]") {
           isPermissionStreamDone = true;
           break;
@@ -12617,7 +12625,16 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
 
       const dataLines = sseLineParser.feed(decoder.decode(value, { stream: true }));
 
+      // 单帧可能一口气带回几十上百条事件：委派场景里子代理的事件先进 main_ctx.event_queue，
+      // 再由主 runner 快速消费，浏览器一次 read 就可能拿到一大段。同步逐条处理会连续占用
+      // 主线程（期间点击、滚动全部无响应），表现为「一委派就卡、直连却没事」。
+      // 每处理 20 条让出一个宏任务，把渲染与输入插进来。
+      let frameProcessed = 0;
       for (const dataStr of dataLines) {
+        frameProcessed += 1;
+        if (frameProcessed % 20 === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
         if (dataStr === "[DONE]") {
           isChatStreamDone = true;
           break;
@@ -12875,6 +12892,34 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
 
 const BOTTOM_THRESHOLD_PX = 80;
 
+/**
+ * `content-visibility: auto` 会让离屏消息先按 contain-intrinsic-size 估算高度，于是首次
+ * `scrollTop = scrollHeight` 只滚到「估算出来的底部」——历史越长，离真实底部越远；等元素
+ * 进入视口被真正渲染，scrollHeight 才会变大。这里在随后几帧里继续贴底，只在**强制贴底**
+ * （打开会话 / 发送 / 切会话）时使用。
+ *
+ * ⚠️ 流式增量绝不能走这条链：委派时高度每帧都在长，`height !== lastHeight` 恒真，12 帧
+ * 会全部跑满，而每帧都要读一次 `scrollHeight`——等于把每次贴底的强制布局放大成十几倍，
+ * 叠加 scroll 事件里的读取就是主线程被打满的直接原因（Chrome「页面无响应」）。
+ */
+const settleScrollToBottom = (
+  el: HTMLDivElement,
+  attempt = 0,
+  lastHeight = -1,
+  lastTop = -1,
+) => {
+  if (attempt >= 6 || messagesContainer.value !== el) return;
+  requestAnimationFrame(() => {
+    if (messagesContainer.value !== el) return;
+    if (attempt > 0 && lastTop >= 0 && el.scrollTop < lastTop - BOTTOM_THRESHOLD_PX) return;
+    const height = el.scrollHeight;
+    el.scrollTop = height;
+    if (height !== lastHeight) {
+      settleScrollToBottom(el, attempt + 1, height, el.scrollTop);
+    }
+  });
+};
+
 const runScrollToBottom = (force: boolean) => {
   const el = messagesContainer.value;
   if (!el) return;
@@ -12889,20 +12934,36 @@ const runScrollToBottom = (force: boolean) => {
     programmaticScrollUntil.value = Date.now() + 120;
     el.scrollTop = scrollHeight;
     showNewMessageHint.value = false;
-    queueMicrotask(() => {
-      const c = messagesContainer.value;
-      if (c) c.scrollTop = c.scrollHeight;
-    });
+    // 流式跟底只做这一次；下一帧有新内容时会再调进来，不需要链式补帧。
+    if (force) settleScrollToBottom(el);
   } else {
     showNewMessageHint.value = true;
   }
 };
 
+/**
+ * 流循环里每个 SSE 事件都会调它，原先逐条 `nextTick` + 读 `scrollHeight`：委派场景
+ * 单轮上千条事件 → 上千次强制同步布局。合并成「一帧最多贴一次」，force 会向上合并
+ * （任一调用要求强制，就按强制执行）。
+ */
+let scrollToBottomFrame: number | null = null;
+let scrollToBottomForcePending = false;
 const scrollToBottom = (force = false) => {
-  nextTick(() => runScrollToBottom(force));
+  scrollToBottomForcePending = scrollToBottomForcePending || force;
+  if (scrollToBottomFrame !== null) return;
+  scrollToBottomFrame = requestAnimationFrame(() => {
+    scrollToBottomFrame = null;
+    const pendingForce = scrollToBottomForcePending;
+    scrollToBottomForcePending = false;
+    nextTick(() => runScrollToBottom(pendingForce));
+  });
 };
 const handleScroll = (e: Event) => {
     const target = e.target as HTMLDivElement;
+    // 程序性贴底自己触发的 scroll 事件：下面每条判断都要读 scrollHeight，而贴底
+    // 那一刻已经决定了状态（autoScrollEnabled / showNewMessageHint）。委派时每秒
+    // 几十次贴底，这里每读一次就是一次整页强制同步布局，直接跳过。
+    if (Date.now() < programmaticScrollUntil.value) return;
     // 1. History Loading Logic (Scroll to Top)
     if (target.scrollTop === 0 && hasMoreHistory.value && !isLoadingHistory.value && messages.value.length > 0) {
        fetchConversationHistory(true);
@@ -12911,20 +12972,6 @@ const handleScroll = (e: Event) => {
     const maxScroll = Math.max(0, scrollHeight - clientHeight);
     const atBottom = maxScroll - scrollTop <= BOTTOM_THRESHOLD_PX;
     isAtBottom.value = atBottom;
-
-    if (Date.now() < programmaticScrollUntil.value) {
-      if (atBottom) {
-        showNewMessageHint.value = false;
-        autoScrollEnabled.value = true;
-      } else if (
-        isProcessing.value &&
-        maxScroll - scrollTop > BOTTOM_THRESHOLD_PX + 60
-      ) {
-        // 程序滚底后的中间帧不误判；但若用户已明显离开底部，仍尊重手动阅读
-        autoScrollEnabled.value = false;
-      }
-      return;
-    }
 
     if (atBottom) {
         showNewMessageHint.value = false;
