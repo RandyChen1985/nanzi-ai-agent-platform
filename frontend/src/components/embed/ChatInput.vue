@@ -47,6 +47,7 @@ import {
   PuzzlePieceIcon,
   ServerIcon,
   ServerStackIcon,
+  SparklesIcon,
   XMarkIcon,
 } from "@heroicons/vue/24/outline";
 
@@ -411,6 +412,8 @@ const emit = defineEmits<{
   (e: 'stop-sandbox-workspace'): void;
   (e: 'restart-sandbox-workspace'): void;
   (e: 'open-docker-terminal'): void;
+  /** 让 AI 对当前沙箱做一次系统体检并产出 HTML 报告 */
+  (e: 'sandbox-health-report'): void;
   (e: 'disable-grounding'): void;
   (e: 'open-grounding-settings'): void;
 }>();
@@ -2673,6 +2676,17 @@ defineExpose({
                                   class="absolute right-0 bottom-full mb-1.5 z-50 w-28 rounded-lg bg-white dark:bg-gray-800 py-1 shadow-lg ring-1 ring-black/5 dark:ring-white/10 border border-gray-100 dark:border-gray-700 text-[10px] font-sans"
                                   @click.stop
                                 >
+                                  <!-- 沙箱体检：让 AI 采集系统状态并产出 HTML 报告 -->
+                                  <button
+                                    type="button"
+                                    class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+                                    title="让 AI 对当前沙箱做一次系统体检，并把结果整理成 HTML 报告"
+                                    @click="showSandboxActionsMenu = false; emit('sandbox-health-report')"
+                                  >
+                                    <SparklesIcon class="h-3.5 w-3.5 text-amber-500" />
+                                    <span>体检报告</span>
+                                  </button>
+                                  <div class="my-0.5 border-t border-gray-100 dark:border-gray-700/60"></div>
                                   <!-- 沙箱终端：Docker 进容器，K8s 进 Pod -->
                                   <button
                                     type="button"

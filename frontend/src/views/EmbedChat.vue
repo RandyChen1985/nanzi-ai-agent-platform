@@ -1463,6 +1463,7 @@
         @stop-sandbox-workspace="handleStopSandboxWorkspaceRequest"
         @restart-sandbox-workspace="restartSandboxWorkspace"
         @open-docker-terminal="openDockerTerminal"
+        @sandbox-health-report="sendSandboxHealthReport"
         @update:approval-mode="(mode) => { config.approvalMode = mode; saveRoutingSettings(); }"
         @update:selected-model="handleEmbedModelSelection"
         @update:thinking-enable-override="thinkingEnableOverride = $event"
@@ -12392,6 +12393,34 @@ const sendMessage = async (overrides: ChatSendOverrides = {}) => runSendExclusiv
   if (isProcessing.value || remoteRunBusy.value || recoveryLocking.value || pendingPermissionLocking.value) return;
   return sendMessageInternal(captureSendSnapshot(overrides));
 });
+
+/**
+ * 沙箱体检的预设任务。
+ *
+ * 写成自然语言任务而不是命令清单：让模型自己决定先看什么、怎么补采，
+ * 报告才能反映真实状态；限定「保存成文件 + 告诉我路径」，方便用户直接打开。
+ */
+const SANDBOX_HEALTH_REPORT_PROMPT = [
+  "请对当前沙箱环境做一次「系统体检」并产出一份可交互的 HTML 报告，保存成文件后告诉我路径。",
+  "",
+  "采集范围（只采集，不做修复）：",
+  "1. 资源配额：cgroup 的 cpu.max / memory.max / memory.current / pids.max，以及容器内 nproc、free 的对比——必须区分「宿主机看到的值」和「实际配额」；",
+  "2. 实时负载：uptime、CPU 占用前几名进程、内存 Top、僵尸进程；",
+  "3. 磁盘：df -h 全量、/workspace 配额与占用、可写层剩余空间；",
+  "4. 工作区：/workspace 结构概览、已安装技能、.pylibs 是否存在；",
+  "5. 平台依赖：python / node / uv 版本，以及 agentscope、mcp、httpx2、fastapi 等关键包能否 import（失败要写清报错）；",
+  "6. 网络：DNS 解析、外网连通性、代理变量、内网 MCP 网关可达性；",
+  "7. 运行时：MCP 网关进程是否存活、监听端口、容器时间与宿主机偏差；",
+  "8. 硬件与内核：uname -a、发行版、CPU 架构。",
+  "",
+  "报告开头给一个「健康度总览」（正常 / 需关注 / 异常），每一项标注实测值和判定依据；采集失败的项目要明确写「无法获取」及原因，不要用推测值填充。",
+].join("\n");
+
+/** 沙箱体检入口：把预设任务直接发进当前会话。 */
+const sendSandboxHealthReport = () => {
+  if (isProcessing.value || remoteRunBusy.value) return;
+  void sendMessage({ content: SANDBOX_HEALTH_REPORT_PROMPT });
+};
 
 const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const { content, files } = snapshot;
