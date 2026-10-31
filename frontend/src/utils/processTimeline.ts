@@ -559,13 +559,21 @@ export function isModelFallbackNotice(log: ProcessTimelineLogItem): boolean {
   return log.status === "warning" || /fallback/i.test(String(log.title || ""));
 }
 
-/** 深度优先收集模型调用条目（含子代理嵌套在 children 里的那些）。 */
-export function collectModelCallLogs(items: ProcessTimelineItem[] | undefined): ProcessTimelineLogItem[] {
+/**
+ * 深度优先收集满足条件的 log 条目（含子代理嵌套在 children 里的那些）。
+ *
+ * 模型调用与工具执行两套汇总共用同一套遍历规则，避免两边对「嵌套在旁白 /
+ * 子代理下的条目算不算」给出不同答案。
+ */
+function collectLogsByPredicate(
+  items: ProcessTimelineItem[] | undefined,
+  match: (log: ProcessTimelineLogItem) => boolean,
+): ProcessTimelineLogItem[] {
   const found: ProcessTimelineLogItem[] = [];
   const walk = (list: ProcessTimelineItem[] | undefined) => {
     for (const item of list || []) {
       if (item.kind === "log") {
-        if (isModelCallLog(item)) found.push(item);
+        if (match(item)) found.push(item);
         if (item.children?.length) walk(item.children);
       } else if (item.kind === "text") {
         walk(item.children);
@@ -574,6 +582,21 @@ export function collectModelCallLogs(items: ProcessTimelineItem[] | undefined): 
   };
   walk(items);
   return found;
+}
+
+/** 深度优先收集模型调用条目（含子代理嵌套在 children 里的那些）。 */
+export function collectModelCallLogs(items: ProcessTimelineItem[] | undefined): ProcessTimelineLogItem[] {
+  return collectLogsByPredicate(items, isModelCallLog);
+}
+
+/** 工具执行条目（`category=tool`）：用于把「工具耗时」从总耗时里单独拎出来。 */
+export function isToolCallLog(item: ProcessTimelineItem): item is ProcessTimelineLogItem {
+  return item.kind === "log" && item.category === "tool";
+}
+
+/** 深度优先收集工具执行条目。 */
+export function collectToolCallLogs(items: ProcessTimelineItem[] | undefined): ProcessTimelineLogItem[] {
+  return collectLogsByPredicate(items, isToolCallLog);
 }
 
 /** 移除模型调用条目，返回新数组（不改动入参）。`keepPending` 默认保留进行中的一条。 */
@@ -605,6 +628,25 @@ export function summarizeModelCalls(items: ProcessTimelineItem[] | undefined): {
   pending: boolean;
 } {
   const logs = collectModelCallLogs(items);
+  return {
+    count: logs.length,
+    totalMs: logs.reduce((sum, log) => sum + (Number(log.execution_time_ms) || 0), 0),
+    pending: logs.some((log) => log.status === "pending"),
+  };
+}
+
+/**
+ * 工具执行汇总：次数与已完成工具的合计耗时。
+ *
+ * 单看「N 次模型调用 · 合计 5.4s」与顶部「耗时 36.2s」并排，用户会以为统计漏了
+ * 三十秒；把工具耗时也算出来，才能说明「36.2s = 模型 5.4s + 工具 30.4s + 收尾」。
+ */
+export function summarizeToolCalls(items: ProcessTimelineItem[] | undefined): {
+  count: number;
+  totalMs: number;
+  pending: boolean;
+} {
+  const logs = collectToolCallLogs(items);
   return {
     count: logs.length,
     totalMs: logs.reduce((sum, log) => sum + (Number(log.execution_time_ms) || 0), 0),

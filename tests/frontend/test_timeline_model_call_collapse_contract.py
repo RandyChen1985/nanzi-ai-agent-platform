@@ -81,3 +81,40 @@ def test_process_timeline_keeps_pending_and_fallback_visible():
     assert "keepPending && item.status === \"pending\"" in utils
     # fallback 换模提示是用户必须看见的事件，不能随 model 分类一起折叠
     assert "/fallback/i.test" in utils and "log.status === \"warning\"" in utils
+
+
+def test_summary_row_explains_time_breakdown():
+    """汇总行不能只报「合计 5.4s」：与顶部「耗时 36.2s」并排时会像统计漏了三十秒。"""
+    utils = _source("frontend/src/utils/processTimeline.ts")
+    timeline = _source("frontend/src/components/chat/ChatExecutionTimeline.vue")
+
+    # 工具耗时必须有独立汇总入口，且与模型调用共用同一套嵌套遍历规则
+    assert "export function isToolCallLog(" in utils
+    assert "export function summarizeToolCalls(" in utils
+    assert "collectLogsByPredicate" in utils
+
+    assert "summarizeToolCalls(timelineItems.value)" in timeline
+    # 构成文案依赖 header 的墙钟耗时；该值缺失时才回退旧口径
+    assert "const totalDurationMs = computed(" in timeline
+    assert "const toolCallSummary = computed(" in timeline
+    assert "toolCallSummary.value.totalMs" in timeline
+    assert "其他 ${formatDuration(restMs)}" in timeline
+    assert ":title=\"modelCallSummaryTitle\"" in timeline
+
+
+def test_summary_row_shows_model_token_usage():
+    """时间之外还要给 token：5.4s 可能只是几十 token 的短判断，token 才能说明工作量。"""
+    timeline = _source("frontend/src/components/chat/ChatExecutionTimeline.vue")
+
+    assert "promptTokens?: number;" in timeline
+    assert "completionTokens?: number;" in timeline
+    assert "promptTokens: 0," in timeline and "completionTokens: 0," in timeline
+    # 复用已有格式化工具，避免时间线与消息底部出现两套 token 写法
+    assert "formatTokenUsageAmount" in timeline
+    assert "const modelTokenUsageLabel = computed(" in timeline
+    assert "parts.push(modelTokenUsageLabel.value)" in timeline
+
+    for page in ("frontend/src/views/EmbedChat.vue", "frontend/src/views/AgentDebug.vue"):
+        source = _source(page)
+        assert ':prompt-tokens="msg.prompt_tokens"' in source, page
+        assert ':completion-tokens="msg.completion_tokens"' in source, page
