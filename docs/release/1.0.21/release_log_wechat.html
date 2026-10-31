@@ -1,0 +1,488 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.21.0
+  风格：深蓝渐变科技风 / 现代化精编版（卡片式阴影、微渐变、导读浅析）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等排版工具）
+  2. 封面图可在微信公众号后台直接使用 docs/release/1.0.21/release-cover-info.md 中的素材生成
+  3. 全部采用内联 style 样式，兼容微信图文排版规范
+-->
+
+<section style="box-sizing:border-box;max-width:760px;margin:0 auto;padding:0 2px;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;word-break:break-word;overflow-wrap:break-word;">
+
+  <!-- 标题区：科技感深蓝微渐变 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:linear-gradient(135deg,#060c1f 0%,#0f172a 48%,#1e293b 100%);box-shadow:0 4px 24px rgba(6,182,212,0.15);border-radius:6px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#38bdf8;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.21.0</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#cbd5e1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">知识库企业级治理 · 资源广场统一申请 · 会话在线分享 · 技能广场与沙箱工具链 · 脚本工具与 MCP 进度流 · AgentScope 2.0.11 升级</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#0f172a;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#0f172a;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与商用。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、持续打磨生产级 AI 智能体技术栈。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #0284c7;background:#f0f9ff;border-radius:0 4px 4px 0;">
+    <p style="margin:0;font-size:14px;color:#0369a1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#0c4a6e;">GitHub 仓库：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 24px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#0f172a;">v1.0.21.0</strong> 里程碑版本！这是一次以<strong>知识库企业级治理（部门归属 / 三级可见 / 归属人交接 / 操作审计 / 访问申请闭环 / 检索范围门禁）、资源广场统一申请、会话历史在线分享、技能广场与沙箱工具链、Python 脚本工具、MCP 工具进度流、AgentScope 2.0.11 运行时升级</strong>为核心驱动，并全面落地<strong>流式渲染性能治理、时间线与执行链路精简、移动端与嵌入端交互修复、批量运维能力</strong>的生产级加固版本。
+    </p>
+    <p style="margin:0;font-size:14px;color:#64748b;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">1381e149</code> 至 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">c5d54aa8</code>，共 <strong>172 个提交</strong>（149 个非 Merge 提交），变更 <strong>718 个文件</strong>，<strong>133,623 行新增</strong>、<strong>3,552 行删除</strong>。
+    </p>
+  </section>
+
+  <!-- 升级提示 -->
+  <section style="margin:0 0 28px 0;padding:14px 16px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 4px 4px 0;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#92400e;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      ⚠️ 升级核心须知 (Upgrade Notes)
+    </p>
+    <ul style="margin:0;padding-left:18px;font-size:13px;color:#78350f;line-height:1.8;">
+      <li style="margin-bottom:6px;"><strong>数据库迁移必跑</strong>：本版新增 12 组迁移（MySQL <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">V188 ~ V201</code> / PostgreSQL <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">V88 ~ V101</code>；<code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">V195/V196</code>、PG <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">V95/V96</code> 为预留编号未使用）。</li>
+      <li style="margin-bottom:6px;"><strong>先迁移再重启</strong>：<code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">V201 / V101</code> 为执行历史新增 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">agent_name</code> / <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">agent_display_name</code>；模型已按新结构读写，跳过迁移会 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">Unknown column</code> 导致历史接口 500。</li>
+      <li style="margin-bottom:6px;"><strong>沙箱镜像必须重建一次</strong>：内置 Node 22 / npm / npx、构建走国内镜像源、沙箱内 agentscope 钉后端版本，Dockerfile 参与 tag 哈希，既有镜像全部失效；K8s 策略需重新构建并重建 Pod。</li>
+      <li style="margin-bottom:6px;"><strong>运行时依赖升级</strong>：<code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">agentscope 2.0.9 → 2.0.11</code>、<code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">mcp 1.29.1 → 2.3.0</code>，新增 WebRTC 传导依赖，后端镜像会变大，需重新安装依赖。</li>
+      <li style="margin-bottom:6px;"><strong>平台技能安装权限收紧</strong>：平台级安装 / 导入统一由 <code style="background:#fef3c7;padding:1px 4px;border-radius:2px;">element:skills:admin</code> 把关（不再依赖角色字符串，未登录同样无法写入）；普通用户入口会消失，如需保留请在角色管理中显式授予。</li>
+      <li><strong>知识库 TEAM 级语义</strong>：归属部门（含下级）成员在 TEAM 可见范围下自动获得<strong>只读</strong>权限，调整归属部门等于调整可见人群，变更前请确认影响面。</li>
+    </ul>
+  </section>
+
+  <!-- 章节一：核心特性 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心特性 (Key Features)
+    </p>
+
+    <!-- 特性卡片 1 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #0284c7;padding-left:10px;">
+        01 · 知识库企业级治理：归属、可见范围、审计与申请闭环
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        回答「谁创建、谁维护、谁能看、谁能改」，把知识资产从个人收藏升级为平台治理：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>三级可见范围 + 部门归属</strong>：统一为个人私有 / TEAM 部门级 / 授权可见，新增业务归属部门，左侧树按部门分组并支持「包含下级部门」；TEAM 级下部门成员自动获得只读，可写仍由归属人与管理员决定。</li>
+        <li><strong>归属人交接</strong>：归属人改为主键判定（管理权唯一真源），支持一键转移交接，候选带部门并标注编辑权限；离职 / 改名的历史库回落旧口径，升级不会误收紧权限。</li>
+        <li><strong>操作审计与全局审计</strong>：创建 / 上传 / 删除 / 授权 / 转交 / 切片变更一库一条留痕，详情页「操作日志」Tab + 管理员跨库查询与 CSV 导出。</li>
+        <li><strong>访问申请闭环</strong>：发现 → 申请 → 审批（待审批 / 已处理、真实总数分页）→ 落授权；提交通知归属人、审批通知申请人；同一人同一资源只能有一条 pending（数据库唯一约束兜底并发）。</li>
+        <li><strong>检索范围门禁</strong>：未显式选库且有效库数超阈值时先确认范围（全部 / 仅默认 / 最相关 N 个 / 我自己指定）；全局总闸 + 智能体四态双层控制，「仅用绑定库」模式一律不弹卡；委派自动收窄、定时任务保持全量。</li>
+        <li><strong>内容运维与平台治理</strong>：文档重命名 / 启停、同名替换、切片增删改与回跳原文、引用影响面、批量操作、配额、零结果率与 P95 检索指标、按天健康巡检、失联库可解释、列表全量翻页与缓存降级。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：知识库概览页、部门归属与三级可见范围设置、操作日志 Tab、访问申请审批弹窗、检索范围确认卡</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 2 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #3b82f6;padding-left:10px;">
+        02 · 资源广场：知识库与数据集的发现、申请、审批
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        把「找不到入口、只能线下找人开权限」变成一条线上闭环：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>工作台资源广场 Tab</strong>：聚合授权可见 / TEAM 级知识库与全部启用数据集，支持搜索、状态与可见范围筛选、分页；卡片标题一键复制资源名。</li>
+        <li><strong>统一申请与审批</strong>：知识库与数据集走同一条链路，审批统一在用户管理页按类型混排分页；「我的申请」并入「我的权限」子 Tab。</li>
+        <li><strong>只读概览页</strong>：被授权但没有管理菜单的账号也能看到内容，路由守卫按只读页放行。</li>
+        <li><strong>申请质量治理</strong>：停用数据集不可申请、资源改私有后审批前拦截、ID 归一化、超长理由 400、审批行锁防并发双批、缓存清理失败重试并升级告警。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：工作台资源广场 Tab、资源卡片与申请弹窗、统一审批列表（待审批 / 已处理）、只读概览页</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 3 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #10b981;padding-left:10px;">
+        03 · 会话在线分享与个人身份
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        一次分析结果不必再导出 Markdown 手动传：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>分享即快照</strong>：创建时冻结提问与助手最终回复，原会话继续对话 / 被删除 / Redis 过期都不影响；不含思考过程、工具调用与文件路径。</li>
+        <li><strong>公开或密钥访问</strong>：地址与密码分离（密码不进 URL / Referer / 日志），有效期支持 1 小时 / 24 小时 / 7 天 / 30 天 / 永久与自定义。</li>
+        <li><strong>我分享的</strong>：查看打开次数与最近打开时间，复制链接 / 密码、随时作废；只有真正读到正文才计数，并发原子自增。</li>
+        <li><strong>安全细节</strong>：密码 Fernet 密文可回看以便重发，解锁换短期令牌走请求头且不超过分享剩余有效期、绑定单个分享；失效原因不区分，统一 404 防探测。</li>
+        <li><strong>用户自定义头像</strong>：上传 + 256×256 裁剪，删除回退姓名首字；按用户目录隔离、拒绝 SVG、2MB 上限，上传即生效并广播刷新。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：会话分享弹窗（访问方式 / 有效期）、分享页密码卡片、我分享的列表、个人中心头像裁剪</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 4 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #8b5cf6;padding-left:10px;">
+        04 · 技能广场、技能资产与沙箱工具链
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        从「会不会写技能」到「有没有现成的装」：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>技能广场 21 个精选技能</strong>：覆盖四个来源仓库，分类浏览 + 搜索 + 详情抽屉，复制提示词即可交给智能体安装，并补齐「装完之后」的已装 / 可更新闭环。</li>
+        <li><strong>技能可以带脚本、模板与图片</strong>：新增 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">write_skill_file</code>，支持文本与 Base64 二进制，路径防穿越、默认不覆盖、目录预算与上传解压同源。</li>
+        <li><strong>沙箱里装的技能可收录</strong>：<code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">import_skill_from_sandbox</code> 把 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">npx skills add</code> 装好的技能整目录搬进个人技能库，原子替换、跳过软链。</li>
+        <li><strong>沙箱运行时补齐</strong>：Docker / K8s 沙箱统一内置 Node 22 / npm / npx（构建期自检），构建默认走国内镜像源，沙箱内 agentscope 钉后端版本修复 gateway 起不来。</li>
+        <li><strong>依赖安装口径统一</strong>：提示词、工具描述与 Bash hints 一致指向 <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">uv pip install --target /workspace/.pylibs</code>；代码画布「运行」按沙箱策略分流并标注执行后端。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：工作台技能广场、技能详情与安装提示词、沙箱 Node 版本信息、画布运行后端标注</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 5 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #f59e0b;padding-left:10px;">
+        05 · 工具生态：脚本工具、JSON 分享与 MCP 进度流
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        自定义工具从「只能调 HTTP」扩展为「能写脚本、能分享、能看进度」：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>Python 脚本工具</strong>：脚本在会话沙箱内执行（docker / k8s 进容器，local 降级到用户工作区），沙箱不可用时报错而不是在宿主机偷跑；stdin 收 JSON、stdout 出结果、非 0 退出即失败，沙箱内单次超时 clamp 600 秒。</li>
+        <li><strong>5 个开箱内置脚本</strong>：文件转 Base64 / Base64 转文件 / 文件摘要 / 文本脱敏 / 正则抽取；源码只存在代码库，页面可「覆盖」也可「恢复内置默认」。</li>
+        <li><strong>工具 JSON 导出 / 导入</strong>：<code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">nanzi.tool.bundle</code> v1，凭据以占位符导出，跨平台分享不再靠截图手工重建。</li>
+        <li><strong>MCP 工具进度流</strong>：远端 progress 直通工具卡进度条，补上 Streamable HTTP 传输，端点不可达先 TCP 预检再降级；无进度时也有兜底「在动」反馈。</li>
+        <li><strong>调试与示例</strong>：测试台新增「curl 请求」分页（两步命令、令牌脱敏），Echo MCP 示例升级为可运行 Python / Java 版本，补传输安全与固定 Token 校验。</li>
+        <li><strong>会话级工具授权</strong>：确认卡支持「本会话总是允许」，一次确认覆盖本会话同类调用，跨会话不继承。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：脚本工具列表与编辑器、工具导入导出弹窗、MCP 工具卡进度条、curl 请求分页</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 6 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #06b6d4;padding-left:10px;">
+        06 · AgentScope 2.0.11 升级、执行韧性与流式性能
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        运行时内核升级，同时把「越输出越卡」的老问题逐层拆掉：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>升级与验收</strong>：<code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">agentscope 2.0.11</code> + <code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">mcp 2.3.0</code>，完成 P0–P2 全模块验收与 26 模块盘点，3 处行为变化全部适配，未删除平台在用能力。</li>
+        <li><strong>MCP 2.x 适配</strong>：端点工厂化 + Transport Security 显式配置，修复「在线调试必失败」的 session manager 生命周期隐患与「对外地址保存不生效」的静默失效。</li>
+        <li><strong>优雅收尾</strong>：步数将尽时注入收尾提示并禁用工具调用，让模型基于已有信息作答，替代直接输出「达到最大执行步骤」。</li>
+        <li><strong>可观测性</strong>：挂起工具行显示「已耗时 / 超时上限」（版本级优先、≥90% 变琥珀色），Bash 声明 description 让意图摘要覆盖率可提升。</li>
+        <li><strong>卡顿与渲染治理</strong>：贴底滚动按帧合并、时间线去 O(n²)、递归防环；模型调用条目与底部汇总行按实测性能结论移除，时间线回归纯执行叙事。</li>
+        <li><strong>分块渲染 + 看门狗</strong>：Markdown 按安全空行切块并缓存已完成块，每帧只重算尾块；流空闲 15 秒或 run-status 已结束时自动收敛，不必刷新页面。</li>
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：执行时间线（工具行耗时 / 超时上限）、委派场景长任务、长回答与代码块流式渲染</p>
+      </section>
+    </section>
+
+    <!-- 特性卡片 7 -->
+    <section style="margin:0 0 20px 0;padding:18px 16px;background:#ffffff;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);border-radius:6px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;line-height:1.45;border-left:4px solid #f43f5e;padding-left:10px;">
+        07 · 交互与嵌入体验：移动端、工作台与运维入口
+      </p>
+      <p style="margin:0 0 8px 0;font-size:14px;color:#334155;line-height:1.8;">
+        把「能用」打磨成「顺手」：
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:18px;font-size:13.5px;color:#475569;line-height:1.8;">
+        <li><strong>移动端</strong>：chat 页顶栏收起为一条把手、右侧「我的账号」把手进出对称，整页定高跟随 visualViewport（地址栏 / 键盘不再压住输入框），用户与角色工具栏压成一行。</li>
+        <li><strong>嵌入端</strong>：首屏骨架延后到历史落地、加号菜单一键挂载「数据 &amp; 知识库」、新增「隐藏聊天头像」把左右各 40px 还给正文、锁定智能体的历史提示与首屏补拉、快捷提问交接修复。</li>
+        <li><strong>工作台与任务中心</strong>：Cron 可视化生成器（常用周期 + 自定义 + 下次运行预览），静默提示条改中性灰并收敛同义文案。</li>
+        <li><strong>批量运维</strong>：用户管理支持批量改密与邮件批量重置（逐用户随机密码、不回显明文、发信失败不改密码、跳过当前管理员），角色分配支持按部门筛选。</li>
+        <li><strong>SSO 与登录</strong>：透传 loginType 并区分协议错误与认证失败，新增 AD / 本地登录方式开关；登录页 API Key Tab 不再闪现。</li>
+        <li><strong>镜像交付自动化</strong>：新增 GitHub Actions「Docker 镜像构建」workflow，手动可指定版本 / 平台（x86 / arm / both）与是否上传 tar，<code style="font-size:12px;background:#f1f5f9;padding:1px 4px;border-radius:2px;">v*</code> tag 自动触发；动态矩阵按需起 1 或 2 个构建 job。</li>
+
+      </ul>
+      <section style="margin:0;padding:14px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：移动端把手与顶栏、嵌入端隐藏头像对比、Cron 生成器、批量改密 / 邮件重置弹窗</p>
+      </section>
+    </section>
+  </section>
+
+  <!-- 章节二：Bug Fixes -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🐛 重点缺陷修复 (Bug Fixes)
+    </p>
+
+    <!-- 缺陷分类 1 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        📚 知识库与资源
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">建库重名绑到别人的库</strong>：建库前按名称查未删除元数据拦截 409，RAGFlow 未返回 ID 时只在同名候选唯一时认领。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">目录操作改可见范围 / 覆盖丢失</strong>：目录结构改独立端点，只写目录配置，不再整份 PUT 元数据。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">内置库出现在「发现」里</strong>：内置库判定收敛为单一函数并统一大小写，不再「可申请、批了也用不上」。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">越界 Dataset ID 静默回落</strong>：仅用绑定库时显式指定范围外的库改为明确阻断，部分越界只收窄不整体拒绝。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">知识库申请查重 500</strong>：子类覆写签名与基类调用不一致导致 TypeError，移除覆写并按资源类型分派。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">审批通过后权限仍不可用</strong>：权限缓存清理失败重试一次，仍失败升 error 并写明后果，不再等满一小时 TTL。</p>
+    </section>
+
+    <!-- 缺陷分类 2 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🌊 会话、时间线与流式
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">流式终帧正文渲染两遍</strong>：直出 / 合成路径不再重复下发正文。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">消息里 .json 路径被截断成 .js</strong>：修复路径解析与「打开」链接插入错位。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">代码块含反引号被截断</strong>：围栏内反引号等长屏蔽后解析再还原，代码卡片完整、后续段落不错位。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">用户停止后误弹恢复卡片</strong>：主动停止不再提示「内容已补齐」，取消提问终态持久化，刷新不再变回「等待回答」。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">挂起步骤文案噪音</strong>：沙箱保留三档递进文案，其余类别只转圈、30 秒后才补「仍在处理中…」。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">普通用户历史署名空白</strong>：写入固化智能体身份快照，读取按行内快照 → Redis → 直查三级回落。</p>
+    </section>
+
+    <!-- 缺陷分类 3 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🛠️ 工具、MCP 与沙箱
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">MCP 不可达时接口 500</strong>：握手前 TCP 预检 + anyio 取消语义兜底，不可达直接降级 Direct HTTP，清洁阶段异常不再打断降级。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">SSE 出站客户端类型错误</strong>：mcp 2.x 下返回 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">httpx2.AsyncClient</code>，否则必然 TypeError 并静默降级。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">脚本工具在宿主机执行</strong>：runner 摘除脚本工具 spec，绑定层显式拒绝，杜绝「以为在沙箱里跑」。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">失效引用误删有效配置</strong>：失效工具解析补上脚本工具，避免一键移除把有效配置删掉。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">RAGFlow 非 JSON 报错崩溃</strong>：上游返回 HTML 502 / 网关超时时提取诊断信息，返回友好提示。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">压缩包无法解压到指定目录</strong>：工作区压缩包右键支持「解压到…」。</p>
+    </section>
+
+    <!-- 缺陷分类 4 -->
+    <section style="margin:0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🛡️ 平台、部署与权限
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">授予功能点后菜单不显示</strong>：授予功能点时自动补齐祖先菜单，消除「仅分组」死权限。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">SQL 身份缺失可绕过</strong>：身份缺失一律 fail-closed，堵住匿名缓存与无过滤重写。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">鉴权与聊天 session 活到 SSE 结束</strong>：显式声明依赖作用域并提前释放，连接池超时可配并补 pre-ping / recycle。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">Docker 部署回落默认门户地址</strong>：compose 补 SSO 环境变量。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">部门路径编码旁路写入</strong>：封死组织架构快照旁路入口，强制走主更新链路校验。</p>
+    </section>
+  </section>
+
+  <!-- 章节三：数据库与配置变更 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库迁移清单
+    </p>
+
+    <!-- 数据库迁移对照表格 -->
+    <p style="margin:0 0 10px 0;font-size:12px;color:#94a3b8;line-height:1.6;">📱 下方表格较宽，移动端可<b>左右滑动</b>查看完整内容</p>
+    <section style="margin:0 0 18px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #e2e8f0;border-radius:4px;">
+      <table style="width:100%;min-width:680px;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:1.7;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <colgroup>
+          <col style="width:120px;">
+          <col style="width:320px;">
+          <col style="width:240px;">
+        </colgroup>
+        <thead>
+          <tr style="background:#0f172a;">
+            <th style="padding:10px;border:1px solid #1e293b;color:#e2e8f0;font-weight:bold;text-align:left;font-size:13px;">版本号</th>
+            <th style="padding:10px;border:1px solid #1e293b;color:#e2e8f0;font-weight:bold;text-align:left;font-size:13px;">变更内容</th>
+            <th style="padding:10px;border:1px solid #1e293b;color:#e2e8f0;font-weight:bold;text-align:left;font-size:13px;">迁移文件</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V188 / V88</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">知识库元数据新增业务归属部门 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">owner_dept_id</code> 与索引，支撑部门分组与 TEAM 级只读判定</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V188-add_owner_dept_to_knowledge_metadata.sql<br>
+              PG: V88-add_owner_dept_to_knowledge_metadata.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V189 / V89</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">知识库归属人改为主键 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">owner_user_id</code>（管理权唯一真源），按用户名回填，对不上的保持 NULL</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V189-add_owner_user_id_to_knowledge_base_metadata.sql<br>
+              PG: V89-add_owner_user_id_to_knowledge_base_metadata.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V190 / V90</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">创建知识库业务审计表 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">ai_agent_knowledge_audit_logs</code>，库删除后日志保留</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V190-create_knowledge_audit_logs.sql<br>
+              PG: V90-create_knowledge_audit_logs.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V191 / V91</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">创建知识库治理三张表：访问申请 / 检索日志 / 健康快照</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V191-create_knowledge_governance_tables.sql<br>
+              PG: V91-create_knowledge_governance_tables.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V192 / V92</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">申请表新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">resource_type</code>（知识库 / 数据集）、资源广场数据集开关与数据集业务审计</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V192-resource_square_and_metadata_audit.sql<br>
+              PG: V92-resource_square_and_metadata_audit.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V193 / V93</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">检索范围门禁三行 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">system_configs</code>：总开关 / 触发阈值 / 最相关库数（冲突时只更新说明，不覆盖管理员取值）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V193-add_knowledge_scope_gate_configs.sql<br>
+              PG: V93-add_knowledge_scope_gate_configs.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V194 / V94</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">同一人对同一资源只允许一条 pending 申请：先收敛存量重复，再加生成列唯一键 / 部分唯一索引</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V194-unique_pending_access_request.sql<br>
+              PG: V94-unique_pending_access_request.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V197 / V97</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">创建会话在线分享表 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">ai_conversation_shares</code>：快照正文、访问方式、密钥密文、有效期与打开计数</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V197-create-conversation-shares.sql<br>
+              PG: V97-create-conversation-shares.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V198 / V98</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">用户表新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">avatar_url</code> 自定义头像地址（NULL 时前端用姓名首字兜底）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V198-add-user-avatar.sql<br>
+              PG: V98-add-user-avatar.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V199 / V99</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">新增优雅收尾开关 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">agent_graceful_finish_enabled</code>（默认开启）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V199-add-agent-graceful-finish-enabled.sql<br>
+              PG: V99-add-agent-graceful-finish-enabled.sql
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V200 / V100</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">创建脚本工具表 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">sys_script_tools</code> 并 seed 5 个内置脚本（内置行 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">code</code> 恒为 NULL，源码以代码库为准）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V200-add-script-tools.sql<br>
+              PG: V100-add-script-tools.sql
+            </td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;vertical-align:top;">V201 / V101</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;vertical-align:top;">执行历史固化智能体身份快照 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">agent_name</code> / <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">agent_display_name</code>（必须先于新后端启动执行）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;color:#475569;vertical-align:top;word-break:break-all;">
+              MySQL: V201-add-history-agent-snapshot.sql<br>
+              PG: V101-add-history-agent-snapshot.sql
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7;">
+      💡 升级提示：MySQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod/apply-sql.sh</code>，PostgreSQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod-pg/apply-sql.sh</code>，具备完整的幂等性检查、断点续跑与结构校验。<code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">V195/V196</code>、PG <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">V95/V96</code> 为预留编号，本版未使用。
+    </p>
+  </section>
+
+  <!-- 章节四：平滑升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📖 平滑升级指南 (Upgrade Guide)
+    </p>
+    <p style="margin:0 0 14px 0;font-size:14px;color:#334155;line-height:1.8;">
+      遵循以下标准步骤即可平滑无缝升级至 <strong style="color:#0f172a;">v1.0.21.0</strong>。请务必注意：本版本新增 12 组数据库迁移必须执行，且沙箱镜像需要重建一次。
+    </p>
+
+    <!-- 方式一：源码拉取升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式一：源码拉取升级（开发与虚机部署）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 同步拉取主分支最新代码</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">git fetch origin &amp;&amp; git checkout main &amp;&amp; git pull origin main</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 执行数据库结构平滑迁移 (MySQL / PG)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 更新依赖环境并启动本地服务</p>
+        <p style="margin:0;color:#38bdf8;">poetry install --no-root &amp;&amp; ./dev.sh</p>
+      </section>
+    </section>
+
+    <!-- 方式二：Docker 容器化升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式二：Docker 容器化升级（生产环境推荐）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 执行数据库增量升级 (宿主或临时容器)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 导入官方 Release 镜像归档（x86_64 / ARM64 按架构选择）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.21.0_linux-amd64_*.tar</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.21.0_linux-arm64_*.tar</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 重建沙箱镜像（Dockerfile 已变更，tag 会变）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash sandbox/docker/build-docker-sandbox-image.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 4. 重启容器服务</p>
+        <p style="margin:0;color:#38bdf8;">cd docker &amp;&amp; ./start-nanzi-ai-agent.sh</p>
+      </section>
+    </section>
+
+    <!-- 方式三：沙箱构建与运维 CLI -->
+    <section style="margin:0 0 12px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式三：沙箱构建与运维 CLI（若启用沙箱）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># Docker 沙箱：环境预检与镜像构建（内置 Node 22 / npm / npx）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash sandbox/docker/build-docker-sandbox-image.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：重新构建并导入预置镜像，再重建运行中的 Pod</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash k8s_deploy/build-k8s-sandbox-image.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：集群就绪与 RBAC 权限健康检查</p>
+        <p style="margin:0;color:#38bdf8;">bash k8s_deploy/nanzi-k8s.sh health</p>
+      </section>
+    </section>
+  </section>
+
+  <!-- 统计指标卡片 -->
+  <section style="margin:0 0 28px 0;padding:16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#0f172a;line-height:1.5;">📊 版本统计速览 (Release Metrics)</p>
+    <div style="font-size:13px;color:#475569;line-height:1.9;">
+      <div>• <strong>版本编号</strong>：v1.0.21.0</div>
+      <div>• <strong>Commit 范围</strong>：<code style="background:#e2e8f0;padding:1px 4px;border-radius:2px;">1381e149</code> ... <code style="background:#e2e8f0;padding:1px 4px;border-radius:2px;">c5d54aa8</code></div>
+      <div>• <strong>累计提交</strong>：172 个 Commits（149 个非 Merge 提交）</div>
+      <div>• <strong>变更文件</strong>：718 个文件（+133,623 行新增，-3,552 行删除）</div>
+      <div>• <strong>数据库迁移</strong>：MySQL V188~V201（12 组）/ PG V88~V101（12 组）</div>
+      <div>• <strong>测试覆盖</strong>：前端契约 3,744 项通过（1 项跳过），后端 pytest 8,297 项通过（12 项跳过、40 项预期失败）</div>
+    </div>
+  </section>
+
+  <!-- 结语区 -->
+  <section style="margin:24px 0 10px 0;text-align:center;">
+    <p style="margin:0 0 8px 0;font-size:15px;color:#0f172a;font-weight:bold;">
+      致敬每一位在生产级 AI 道路上砥砺前行的开发者！
+    </p>
+    <p style="margin:0;font-size:13.5px;color:#64748b;line-height:1.8;">
+      欢迎在 GitHub Star 关注我们，参与社群交流与代码共建。
+    </p>
+  </section>
+
+</section>

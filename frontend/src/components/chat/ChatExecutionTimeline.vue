@@ -131,10 +131,25 @@
                   </button>
                   <pre class="w-fit max-w-full whitespace-pre-wrap break-words pr-6 font-sans">{{ visibleTimelineText(item.content) }}<span v-if="item.pending" class="ml-0.5 animate-pulse">▌</span></pre>
                 </blockquote>
-                <pre
-                  v-else
-                  class="w-fit max-w-full whitespace-pre-wrap break-words font-sans"
-                >{{ visibleTimelineText(item.content) }}<span v-if="item.pending" class="ml-0.5 animate-pulse">▌</span></pre>
+                <template v-else>
+                  <button
+                    v-if="narrationNeedsCollapse(item)"
+                    type="button"
+                    class="mb-0.5 flex w-full items-center gap-2 text-left text-[10px] text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+                    :aria-expanded="isNarrationBodyOpen(item)"
+                    @click="item.contentExpanded = !isNarrationBodyOpen(item)"
+                  >
+                    <span class="narration-preview min-w-0 flex-1 truncate">{{ narrationPreviewOf(item) }}</span>
+                    <span class="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500 dark:bg-gray-700 dark:text-gray-400">{{ narrationCharCountOf(item) }} 字</span>
+                    <svg class="h-3 w-3 shrink-0 transition-transform" :class="{ 'rotate-180': isNarrationBodyOpen(item) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+                    </svg>
+                  </button>
+                  <pre
+                    v-show="isNarrationBodyOpen(item)"
+                    class="w-fit max-w-full whitespace-pre-wrap break-words font-sans"
+                  >{{ visibleTimelineText(item.content) }}<span v-if="item.pending" class="ml-0.5 animate-pulse">▌</span></pre>
+                </template>
               </div>
             </div>
             <div v-if="item.children?.length" class="ml-5 mt-0.5 border-l border-gray-200/80 pl-1.5 dark:border-gray-700/80">
@@ -701,6 +716,9 @@ const props = withDefaults(defineProps<{
     status: "pending" | "success" | "error" | "warning";
     error_reason?: string;
     category?: string;
+    tool_args?: string;
+    /** 模型为本次调用写的意图摘要（沙箱 bash 的 description）。 */
+    tool_summary?: string;
     execution_time_ms?: number | null;
     started_at?: number | null;
     file_metadata?: FileToolMetadata;
@@ -885,7 +903,10 @@ const isAllDetailsExpanded = ref(false);
 
 const hasExpandableItems = computed(() => {
   return items.value.some((it: any) => {
-    if (it.kind === "text") return it.textKind === "reasoning" || it.children?.length;
+    if (it.kind === "text") {
+      if (it.textKind === "reasoning" || it.children?.length) return true;
+      return narrationNeedsCollapse(it);
+    }
     if (it.kind === "log") return hasVisibleTimelineText(it.details) || hasTimelineArgs(it) || it.children?.length;
     return false;
   });
@@ -896,7 +917,7 @@ function toggleAllDetails() {
   const target = isAllDetailsExpanded.value;
   function setExpand(it: any) {
     if (it.kind === "text") {
-      if (it.textKind === "reasoning") it.contentExpanded = target;
+      if (it.textKind === "reasoning" || narrationNeedsCollapse(it)) it.contentExpanded = target;
       if (it.children?.length) it.childrenExpanded = target;
     } else if (it.kind === "log") {
       it.isExpanded = target;
@@ -1088,6 +1109,44 @@ function reasoningPreviewOf(item: ProcessTimelineTextItem): ReasoningPreview {
 /** 折叠态字数胶囊口径，与摘要同源。 */
 function reasoningCharCountOf(item: ProcessTimelineTextItem): number {
   return reasoningCharCount(visibleTimelineText(item.content));
+}
+
+/**
+ * 旁白（process_narration）的折叠阈值。
+ *
+ * 旁白是模型的「我准备做什么」，一次任务可能产出七八段；平铺会把时间线撑得很长。
+ * 短旁白保持原样直接展示（不需要点开就能读完），超过任一阈值才默认收起，
+ * 收起态给一行摘要 + 字数，点标题行展开——与「深度思考」的交互保持一致。
+ */
+const NARRATION_COLLAPSE_CHAR_THRESHOLD = 120;
+const NARRATION_COLLAPSE_LINE_THRESHOLD = 3;
+
+function narrationTextOf(item: ProcessTimelineTextItem): string {
+  return visibleTimelineText(item.content);
+}
+
+function narrationNeedsCollapse(item: ProcessTimelineTextItem): boolean {
+  const text = narrationTextOf(item);
+  if (!text) return false;
+  if (text.length > NARRATION_COLLAPSE_CHAR_THRESHOLD) return true;
+  const lineCount = text.split(/\r?\n/).filter((line) => line.trim()).length;
+  return lineCount > NARRATION_COLLAPSE_LINE_THRESHOLD;
+}
+
+function narrationCharCountOf(item: ProcessTimelineTextItem): number {
+  return narrationTextOf(item).length;
+}
+
+/** 收起态的一行摘要：压平换行后截断，避免摘要本身又占两行。 */
+function narrationPreviewOf(item: ProcessTimelineTextItem): string {
+  const text = narrationTextOf(item).replace(/\s+/g, " ").trim();
+  return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+}
+
+/** 未手动切换过时按长度给默认态：短旁白展开、长旁白收起。 */
+function isNarrationBodyOpen(item: ProcessTimelineTextItem): boolean {
+  if (item.contentExpanded !== undefined) return item.contentExpanded;
+  return !narrationNeedsCollapse(item);
 }
 
 function isRouteGroup(item: ProcessTimelineLogItem): boolean {

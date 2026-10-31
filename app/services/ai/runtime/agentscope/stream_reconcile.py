@@ -44,6 +44,21 @@ def _coerce_tool_args_payload(tool_args: Any) -> Any:
     return decoded if isinstance(decoded, dict) else text
 
 
+def _normalize_intent_tool_name(tool_name: Any) -> str:
+    """把工具名归一到「参与规则匹配的名字」。
+
+    MCP 工具对模型暴露的是 ``<server>::<tool>``（沙箱 bash 即 ``sandbox::bash``），
+    绑定层也可能把它规范化成 ``Bash``。之前只按裸名 ``bash`` / ``Bash`` 精确匹配，
+    于是沙箱场景恒不命中、时间线永远只有「工具完成 · sandbox::bash」。
+    这里统一取 ``::`` 末段，三条路径（内置、沙箱 MCP、SSH 网关）口径一致。
+    """
+
+    text = str(tool_name or "").strip()
+    if "::" in text:
+        text = text.rsplit("::", 1)[-1].strip()
+    return text
+
+
 def extract_tool_summary(
     tool_args: Any,
     *,
@@ -56,7 +71,7 @@ def extract_tool_summary(
     比长命令原文直观。模型未填时返回空串，由调用方决定不追加后缀——不伪造摘要。
     """
 
-    if str(tool_name or "").strip() not in INTENT_SUMMARY_TOOL_NAMES:
+    if _normalize_intent_tool_name(tool_name) not in INTENT_SUMMARY_TOOL_NAMES:
         return ""
     payload = _coerce_tool_args_payload(tool_args)
     if not isinstance(payload, dict):

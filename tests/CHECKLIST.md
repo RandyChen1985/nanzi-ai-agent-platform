@@ -1128,3 +1128,29 @@ C7 落地时只走到「提交 → 待审批 → 批准」，剩下的路没走�
 |---|---|---|---|---|
 | **用户反馈（截图）**：让 AI 输出「嵌套反引号」教程后，界面出现——「PYTHON 源代码」卡片内容不全、`python\nprint('hi')\n``` print(...)` 变成正文、下一段标题「示例二」被包成**空代码卡片**。**归因**：与分块渲染无关（code 段不经过 `renderMarkdownSegment`），是 `segments` 的非贪婪正则 `(?:```\s*([a-zA-Z0-9_\-]+)?\s*\n([\s\S]*?)```)` 把**代码内容里**的三反引号当成了闭合围栏。用用户原文复现：正则只匹配出 3 段，其中第 0 段 body 止于 `sample = "`，第 1 段的 lang 变成 `**示例二：校验 Markdown 中的代码块是否成对闭合**`——与截图逐项吻合。根因是「教学代码反噬解析器」：这段代码本身就是教人如何包裹含三反引号的代码。 | `frontend/src/utils/markdownFenceMask.ts`（新增）、`frontend/src/components/MessageRenderer.vue`、`tests/frontend/test_markdown_fence_mask_contract.py`（新增）、`tests/CHECKLIST.md` | **等长屏蔽 + 还原**：新增 `maskFenceInnerBackticks()`——跑正则前把「围栏内部行」的反引号替换成私用区占位符 `\uE000`（与反引号等长，保证 `match.index` 仍对应 `cleanContent`，`slice` 不错位），匹配到的捕获组用 `unmaskFenceInnerBackticks()` 还原。围栏边界按 CommonMark：开门行可带 info string，闭合行必须「同字符 + 长度 ≥ 开门 + 除围栏外仅空白」，所以 ```` 包裹的 ``` 不会被误判为闭合。`sql_plan / thought / chart / mermaid / code` 的捕获组都做了还原（前四类通常不在围栏内，属保险）。**正则本身与特殊块分支一律未动**，只改输入与输出，避免影响图表/SQL/mermaid 的既有解析。 | ✅ 先 RED 后 GREEN：`test_markdown_fence_mask_contract.py` **7 passed**（普通文本不动、正常代码块不动、代码内反引号被屏蔽且长度不变、unmask 还原、```` 内层不误闭合、`~~~` 围栏、渲染器接线）。**端到端**：用用户原始教程跑「mask + 原正则」，从修复前的「3 段、第 2 段 lang 是标题」变为「**恰好 2 段、每段 body 完整**」（第 0 段包含 `sample = "```python…```"` 与 `print(wrap_code_block(…))`，第 1 段包含 `check_fences` 全文）。前端契约全量 **3726 passed / 1 skipped**；`vue-tsc -p tsconfig.app.json --noEmit` 与基线一致（102 条既有、**0 新增**）。 | ✅ 最终展示与预期一致；残余：① 占位符是私用区字符，正文若真的含 `\uE000` 会被误还原成反引号（实际几乎不可能）；② 只屏蔽围栏内的反引号，围栏外不受影响；③ 未启动服务实测，需用户在控制台 `./dev.sh` 后用同一条教程复验「两段代码卡片内容完整 + 后续段落不再错位」 |
 **注意**：① 该修复与「分块渲染」「看门狗」互相独立，可单独提交/回退；退回到改动前只需删掉 `maskedContent` 与 unmask 调用（正则改回 `regex.exec(cleanContent)`）；② 未闭合围栏仍按现状吞到消息末尾——本次只修「内容含反引号导致提前闭合」，不改变「漏写闭合」的既有行为，避免扩大改动面。
+
+## 2026-10-31 v1.0.21.0 发版文档（Release Notes / 微信公众号排版 / 封面文案）
+
+|---|---|---|---|---|
+| 发版文档三件套（1.0.21.0） | `docs/release/1.0.21/release_log.md`（新增）、`docs/release/1.0.21/release_log_wechat.html`（新增）、`docs/release/1.0.21/release-cover-info.md`（新增）、`tests/CHECKLIST.md` | **需求来源（用户）**：「看看 release 里面 1.0.20，参考，我们写 1.0.21 的，从 git 1381e149f58c729d78ec364a2cf083a3de055daa 到现在的」。**统计口径**：`1381e149..c5d54aa8` 共 172 个提交（149 个非 Merge）、718 个文件（+133,623 / -3,552 行）；MySQL 迁移 12 组（V188~V201，V195/V196 预留）、PG 12 组（V88~V101，V95/V96 预留）。**产出**：① `release_log.md` 按 1.0.20 结构重写，归纳 7 大核心板块（知识库企业级治理 / 资源广场 / 会话分享与身份 / 技能广场与沙箱工具链 / 脚本工具与 MCP 进度流 / AgentScope 2.0.11 升级与流式性能 / 交互与嵌入体验），Bug Fixes 分 4 类，升级注意 6 条（含「V201 必须先于新后端执行」「沙箱镜像必须重建」）；② `release_log_wechat.html` 与 1.0.20 规范 1:1 对齐（7 处特性卡片 + 截图占位、4 类缺陷卡片、12 行横向滑动迁移表、三种升级方式终端代码块、统计卡片），HTML 标签平衡已校验；③ `release-cover-info.md` 提供三版文案钩子、6 组视觉关键词与 16:9 生图 Prompt。**验证**：前端契约 `pytest --confcutdir=tests/frontend tests/frontend -q` **3744 passed / 1 skipped**；后端 `pytest tests --ignore=tests/frontend -q` **8297 passed / 12 skipped / 40 xfailed / 2 failed**，2 条失败均非本版功能缺陷（`test_metadata_drift_service::test_resolve_alert_drop_table` 为历史既有基线；`test_portal_session_token::test_session_token_slides_ttl_on_activity` 断言未同步 `a8f3829c` 把滑动续期收敛为「仅复核时续期」的语义变更，待单独处理）。**未做**：未执行 `./dev.sh`、未提交 git、未生成封面图。 | ✅ 三件套齐备，数字与迁移清单逐条核对；⚠️ 2 条后端用例失败已如实登记在 Metrics 的 Known Test Debt | 2026-10-31 |
+
+## 2026-11-01 沙箱 bash 意图摘要丢失：MCP 工具名前缀未归一化
+
+|---|---|---|---|---|
+| 时间线里沙箱的 Bash 行只剩「工具完成 · sandbox::bash」，模型填的 `description` 白填。**根因两处**：沙箱 MCP 对模型暴露的工具名是 `<server>::<tool>`（`sandbox::bash`），而 `extract_tool_summary` 与绑定侧 `_workspace_native_name_for_spec()` 都按裸名精确比对 → ① 摘要恒取不到；② 别名表查不到 `sandbox::bash` 返回 `None`，`native_name == "Bash"` 分支被跳过，`BASH_INTENT_SUMMARY_GUIDANCE` 与 `_augment_bash_parameter_schema` 全都不生效，模型压根不知道要填该参数。**改法**：`stream_reconcile` 新增 `_normalize_intent_tool_name()`（匹配前取 `::` 末段）、`workspace` 的 native 名解析同样先剥前缀；前端 `mergeTimelineLogs` 补拷 `tool_summary`（此前只在 upsert 的新建/更新路径写入，已存在条目在合并时会被抹掉），`props.logs` 与两处入参类型补该字段 | `app/services/ai/runtime/agentscope/stream_reconcile.py`、`workspace.py`、`frontend/src/utils/processTimeline.ts`、`tests/ai/runtime/test_bash_intent_summary_guidance.py`、`tests/CHECKLIST.md` | ✅ 新增 3 项（MCP 前缀命中、非命令工具不误伤、native 名解析）；`tests/ai/runtime` 859 passed；`tests/frontend` 3744 passed / 1 skipped | 2026-11-01 |
+**测试**：`tests/ai/runtime/test_bash_intent_summary_guidance.py` 命中前 12 passed；`tests/ai/runtime` 全量 859 passed；`tests/frontend` 全量 3744 passed / 1 skipped；`vue-tsc` 改动文件 0 新增错误。
+**注意**：① MCP 声明被 AgentScope 持久化在 `<workdir>/.mcp` 且优先级高于构造参数，**老会话仍是旧脚本**，验证必须新开会话或清掉对应工作区的 `.mcp`；② 前缀归一化只取最后一段，若将来引入同名工具跨 server 并存的场景，需要改成「server + tool」联合匹配。
+
+## 2026-11-01 工具调用前统一说明意图（提示词升级为强制要求）
+
+|---|---|---|---|---|
+| 原规则是「常规低风险调用直接调用，仅在多步复杂任务或敏感操作时简短说明」，实际结果是绝大多数工具调用没有任何过程说明，用户只能看到一行「工具完成 · xxx」，不知道这一步在做什么。改为**统一要求**：每次调用任何工具前（Bash、文件读写、网络请求等全部工具）先用一句话说明将要执行什么，并强调写「要达成什么」而非复述工具名与参数——写「检查 5432 端口是否被占用」，不写「调用 exec_command 执行 ss -tulnp」。与既有段落不冲突：「执行倾向」里「不得用说明替代首个必要工具调用」仍然有效，正好防止模型只说不做；原「多步任务可先用一句简短进度说明」由建议升级为要求 | `app/services/ai/agent_prompts.py`、`tests/CHECKLIST.md` | ✅ `tests/ai -k "prompt or style"` 181 passed | 2026-11-01 |
+**测试**：`tests/ai -k "prompt or style"` 181 passed。
+**注意**：提示词是行为引导而非硬校验，模型仍可能漏说明；真正的强制手段是工具 schema 的 `description` 参数（见上一条），两者需配合观察一段时间后再决定是否加硬性校验。
+
+## 2026-11-01 执行时间线过程旁白支持折叠与自动收敛
+
+|---|---|---|---|---|
+| 旁白（`process_narration`）是模型的「我准备做什么」，此前平铺渲染、无法收起。配上「每次调用工具前都要说明」的提示词后，一次任务会产出七八段，时间线被撑得很长，真正要看的工具结果被挤出屏幕。**交互按长度分流**：短旁白（≤120 字且 ≤3 行）直接展示、无折叠控件；长旁白（>120 字或 >3 行）默认收起，给一行摘要 + 字数胶囊，点标题行展开。**默认态惰性判定**：未手动切换过时按长度计算，切换后以用户选择为准（不预设 `contentExpanded`，避免污染落库数据）；摘要压平换行后截 80 字，避免摘要本身又占两行。「全部展开 / 收起明细」同步覆盖长旁白——`hasExpandableItems` 计算与 `setExpand` 均纳入 narration，否则顶部按钮会漏掉它们 | `frontend/src/components/chat/ChatExecutionTimeline.vue`、`tests/CHECKLIST.md` | ✅ `tests/frontend` 3744 passed / 1 skipped；`vue-tsc` 改动文件 0 新增错误 | 2026-11-01 |
+**测试**：`tests/frontend` 全量 3744 passed / 1 skipped（新增摘要 span 带 `narration-preview` 标记，避开契约测试用 `class="min-w-0 flex-1 truncate"` 做「pending 指示点须在内容之前」的锚点匹配）。
+**注意**：① 折叠阈值是常量而非配置项，若要按用户偏好调整需改常量；② 摘要只做换行压平 + 截断，不解析 Markdown，含表格/代码的旁白摘要会是纯文本片段。
