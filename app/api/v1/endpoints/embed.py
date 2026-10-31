@@ -12,6 +12,7 @@ from app.services.wechat_miniprogram_service import (
     warn_if_new_account_burst,
 )
 from app.schemas.response import StandardResponse
+from app.core.rate_limit import hit_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,20 @@ router = APIRouter()
 
 # 无需提前持有 API Key、凭 Ticket 自行兑换的路由（供前端 iframe 内部调用）
 public_router = APIRouter()
+
+# 频率上限。嵌入入口对第三方站点开放，且小程序侧会按 openid **自动开户**，
+# 没有上限时一次被刷就是一批垃圾账号 + Redis 灌满。
+# 阈值刻意留了余量：宿主后端可能在一屏里批量签发 ticket，小程序也有早高峰集中冷启动；
+# 这里挡的是脚本级刷量（千次/分钟），不是正常业务峰值。
+EMBED_TICKET_RATE_LIMIT_PER_MINUTE = 300
+MINIPROGRAM_OPENID_RATE_LIMIT_PER_MINUTE = 30
+MINIPROGRAM_APPID_RATE_LIMIT_PER_MINUTE = 600
+
+
+async def _enforce_rate_limit(key: str, limit: int) -> None:
+    """超限直接 429。调用点必须在业务 try 之外——HTTPException 也是 Exception。"""
+    if await hit_rate_limit(key, limit):
+        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
 
 
 class CreateTicketRequest(BaseModel):
@@ -65,6 +80,14 @@ class SessionTokenResponseData(BaseModel):
     expires_in: int = Field(..., description="Session 有效期（秒），活跃调用会自动滑动延长")
     user_info: dict = Field(..., description="用户基本信息")
     agent_id: Optional[str] = Field(None, description="绑定的智能体 ID")
+    allowed_origins: Optional[List[str]] = Field(
+        None,
+        description=(
+            "该票据限定的宿主来源列表，已归一化为 scheme://host[:port]。"
+            "空列表表示未限制来源；iframe 据此校验宿主 postMessage 的来源，"
+            "而不是无差别接受任意 origin。"
+        ),
+    )
     session_cookie_issued: Optional[bool] = Field(
         None,
         description="是否已同时下发 embed_session Cookie，供前端确认「刷新可免 URL 凭据」",
@@ -120,6 +143,11 @@ async def create_embed_ticket(
     current_user: dict = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
+    # 限流放在 try 之外：下面的 except Exception 会把 HTTPException 一并吞掉转成 500。
+    await _enforce_rate_limit(
+        f"embed:ticket:{current_user.get('user_id')}",
+        EMBED_TICKET_RATE_LIMIT_PER_MINUTE,
+    )
     try:
         data = await EmbedService.create_ticket(
             operator_user=current_user,
@@ -162,6 +190,17 @@ async def create_miniprogram_session(
 
     if await ConfigService.get("miniprogram_enabled") != "true":
         raise HTTPException(status_code=403, detail="微信小程序微端未开启")
+
+    # 自动开户是这里最敏感的副作用：同一 openid 每分钟 20 次、同一 appid 每分钟 200 次，
+    # 足以覆盖正常冷启动重试，又能挡住脚本批量刷号。
+    await _enforce_rate_limit(
+        f"embed:mp:openid:{payload.appid}:{payload.openid}",
+        MINIPROGRAM_OPENID_RATE_LIMIT_PER_MINUTE,
+    )
+    await _enforce_rate_limit(
+        f"embed:mp:appid:{payload.appid}",
+        MINIPROGRAM_APPID_RATE_LIMIT_PER_MINUTE,
+    )
 
     try:
         identity = await resolve_or_create_user(

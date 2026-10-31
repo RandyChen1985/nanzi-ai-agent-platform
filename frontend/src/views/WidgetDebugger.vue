@@ -937,7 +937,7 @@ const postMsg = (type: string, payload: any = {}) => {
     }
     
     // In production, targetOrigin should be specific
-    widgetFrame.value.contentWindow.postMessage({ type, ...payload }, '*');
+    widgetFrame.value.contentWindow.postMessage({ type, ...payload }, window.location.origin);
     log(`TX: ${type}`);
 };
 

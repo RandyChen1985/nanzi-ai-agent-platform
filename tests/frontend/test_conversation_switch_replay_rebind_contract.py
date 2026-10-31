@@ -26,11 +26,25 @@ def _source() -> str:
 
 
 def _body(signature: str) -> str:
-    """截取顶层箭头函数体：从签名到文件里下一个不带缩进的 `};`。"""
+    """按大括号配对截取函数体。
+
+    旧实现是「从签名找到下一个**顶格** `};`」——它隐含依赖「文件里后面还有一个顶层
+    箭头函数」。2026-10-31 清理掉末尾的死代码（打字机效果）后，这个前提消失，
+    两条断言直接以 ValueError 失败：断言本身没问题，切片方式太脆。改成按深度扫描。
+    """
     source = _source()
     start = source.index(signature)
-    end = source.index("\n};", start)
-    return source[start:end]
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+    raise AssertionError(f"未找到与签名配对的结束花括号: {signature}")
 
 
 # ---- F1 / F8：切会话复位续显三元组 ----

@@ -26,8 +26,14 @@ const emit = defineEmits<{
 /**
  * 懒加载组件本体：file-viewer 及其 renderer / Worker / WASM 资产
  * 不进入首屏包，仅在真正打开文档时才加载。
+ *
+ * 渲染器注册模块也在这里加载（`vite.config.ts` 已关掉插件的 HTML 入口注入）：
+ * 否则全部渲染器会被 index.html 的 modulepreload 拉进首屏——那是约 1MB 的
+ * 「可能永远用不到」的下载，挂在第三方站点里的挂件首屏尤其受影响。
+ * 先注册再取组件，保证 FileViewer 渲染时注册表已就绪。
  */
 const FileViewer = defineAsyncComponent(async () => {
+  await import('virtual:file-viewer-renderers')
   const mod = await import('@file-viewer/vue3')
   return mod.FileViewer
 })

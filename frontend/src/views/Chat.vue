@@ -153,7 +153,7 @@ const sendInitConfig = () => {
                 action: route.query.portal_action === 'fill' ? 'fill' : 'send',
                 request_id: portalQuestionRequestId
             } : null
-        }, '*');
+        }, window.location.origin);
 
         // 参数已经交给挂件，立刻从地址栏摘掉：否则这一页刷新（或回退再进）会把同一问题再发一遍。
         consumePortalQuestionFromUrl();
@@ -174,7 +174,7 @@ const retryInit = () => {
 
 const sendSavedReportOpenRequest = (target: SavedReportOpenRequest) => {
     if (!widgetReady.value || !target?.report_id || !chatFrame.value?.contentWindow) return;
-    chatFrame.value.contentWindow.postMessage(createSavedReportOpenMessage(target), '*');
+    chatFrame.value.contentWindow.postMessage(createSavedReportOpenMessage(target), window.location.origin);
 };
 
 const handleSavedReportOpenEvent = (event: Event) => {
@@ -190,7 +190,7 @@ const handleSavedReportOpenEvent = (event: Event) => {
 const openEmbeddedAccount = () => {
     const frame = chatFrame.value?.contentWindow;
     if (!frame) return;
-    frame.postMessage({ type: 'OPEN_ACCOUNT' }, '*');
+    frame.postMessage({ type: 'OPEN_ACCOUNT' }, window.location.origin);
 };
 
 const clearHostConversationPin = () => {
@@ -202,7 +202,14 @@ const clearHostConversationPin = () => {
 };
 
 const handleMessage = (event: MessageEvent) => {
+    // 只认自己那颗 iframe 发来的消息：本页是全站最外层容器，任何同源/跨源的窗口都能
+    // 向它 postMessage，不校验 source 就等于把「切视图/清置顶」这些动作开放给任意页面。
+    const frame = chatFrame.value?.contentWindow;
+    if (!frame || event.source !== frame) return;
+    if (event.origin && event.origin !== window.location.origin) return;
+
     const data = event.data;
+    if (!data || typeof data !== 'object') return;
     if (data.source === 'nanzi-agent-embed' && data.type === 'OPEN_DATA_PORTAL_FULL') {
         router.push({ path: '/dashboard/personal', query: { tab: 'data' } });
         return;

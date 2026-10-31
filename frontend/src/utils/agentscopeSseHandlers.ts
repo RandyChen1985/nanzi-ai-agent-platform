@@ -390,6 +390,8 @@ export function finalizeAllPendingStreamLogs(
   msg: AgentStreamMessage,
   now = Date.now(),
 ) {
+  // 流异常结束/用户中止时，最后一小段旁白可能还停在合帧缓冲里；收尾前先落盘。
+  flushTimelineNarrationDelta(msg);
   for (const log of msg.logs || []) {
     if (log.status !== "pending") continue;
     if (log.category && NON_LIVE_TIMER_CATEGORIES.has(log.category)) continue;
@@ -742,6 +744,9 @@ export function isDuplicateAssistantBodyDelta(existing: string, piece: string): 
 
 export function appendAssistantBodyDelta<T extends AgentStreamMessage>(msg: T, piece: string): void {
   if (!piece) return;
+  // 正文开始意味着旁白候选要被丢弃；先落盘合帧缓冲，保证「先写时间线、再丢弃」的顺序，
+  // 否则缓冲里残留的旁白会在后续 commit 时被重新插成一条与正文重复的条目。
+  flushTimelineNarrationDelta(msg);
   const existing = msg.content || "";
   if (existing) {
     const extra = visibleSuffixAfterWhitespacePrefix(existing, piece);
@@ -842,6 +847,32 @@ export function syncProcessTimelineTodo<T extends AgentStreamMessage>(
   });
 }
 
+/**
+ * 旁白 delta 的合帧缓冲。
+ *
+ * 只有**委派**会走这条路径：主助手要等子代理，近 30 秒里以纯文本增量持续输出等待话术
+ * （实测单轮 321 条），而直连时模型直接产正文，走的是 answer_delta，process_narration 为 0 条。
+ * 每条 delta 原先都要「累加 pending 文本 + 遍历时间线定位节点 + 赋值触发响应式」两遍，
+ * 合帧后按 100ms 聚合，321 次降到一个量级更小的常数次，且合并后的文本更长、
+ * 一次性规范化反而更省。
+ *
+ * 用 WeakMap 挂在 msg 上而不是给它加字段：后者本身就是一次响应式写入。
+ */
+const narrationDeltaBuffer = new WeakMap<
+  object,
+  { at: number; buf: string; sourceId?: string }
+>();
+
+/** 把缓冲中的旁白增量刷进时间线（切阶段 / 提交 / 提升时都要先刷）。 */
+export function flushTimelineNarrationDelta<T extends AgentStreamMessage>(msg: T): void {
+  const state = narrationDeltaBuffer.get(msg);
+  if (!state || !state.buf) return;
+  const { buf, sourceId } = state;
+  state.buf = "";
+  state.at = Date.now();
+  appendTimelineNarrationDelta(msg, buf, sourceId);
+}
+
 export function applyProcessNarrationEvent<T extends AgentStreamMessage>(
   msg: T,
   data: Record<string, unknown>,
@@ -852,12 +883,27 @@ export function applyProcessNarrationEvent<T extends AgentStreamMessage>(
   if (eventType === "process_narration") {
     if (piece) {
       msg.processNarrationPending = appendProcessNarrationText(msg.processNarrationPending || "", piece);
-      appendTimelineNarrationDelta(msg, piece, sourceId);
+      const state = narrationDeltaBuffer.get(msg) || { at: 0, buf: "", sourceId };
+      // 并行代理切换发言权时必须先把上一段落盘：缓冲只保存一个 sourceId，
+      // 合并后整段文本会被挂到最后说话那个 agent 的节点上。
+      if (state.buf && state.sourceId !== sourceId) {
+        flushTimelineNarrationDelta(msg);
+      }
+      state.buf += piece;
+      state.sourceId = sourceId;
+      if (Date.now() - state.at >= 100) {
+        const buffered = state.buf;
+        state.buf = "";
+        state.at = Date.now();
+        appendTimelineNarrationDelta(msg, buffered, sourceId);
+      }
+      narrationDeltaBuffer.set(msg, state);
       if (!msg.content) msg.isProcessNarrationExpanded = true;
     }
     return true;
   }
   if (eventType === "process_narration_commit") {
+    flushTimelineNarrationDelta(msg);
     if (piece) {
       const normalizedPiece = normalizeProcessNarrationText(piece, true);
       const previous = normalizeProcessNarrationText(msg.processNarration || "", true);
@@ -870,6 +916,7 @@ export function applyProcessNarrationEvent<T extends AgentStreamMessage>(
     return true;
   }
   if (eventType === "process_narration_promote") {
+    flushTimelineNarrationDelta(msg);
     if (piece) appendAssistantBodyDelta(msg, piece);
     promoteTimelineNarration(msg, piece, sourceId);
     msg.processNarrationPending = "";
@@ -910,6 +957,10 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
   }>,
   onBashEnv?: (env: "host" | "docker" | "e2b" | "ssh" | "k8s") => void,
 ): boolean {
+  const eventType = String(data.type || "");
+  // 旁白合帧最多延迟 100ms；任何非旁白事件都可能往时间线里插新节点（工具、正文、思考），
+  // 必须先落盘，否则旁白会被排到这些节点之后，顺序与真实发生顺序相反。
+  if (eventType && eventType !== "process_narration") flushTimelineNarrationDelta(msg);
   switch (data.type) {
     case "run_config": {
       const seconds = Number(data.agent_max_toolcall_timeout);

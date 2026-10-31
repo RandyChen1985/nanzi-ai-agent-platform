@@ -5023,6 +5023,8 @@ onUnmounted(() => {
                 :has-answer="Boolean(visibleStreamBody(msg))"
                 :thinking-text="msg.thinkingText"
                 :duration="msg.thoughtDuration"
+                :prompt-tokens="msg.prompt_tokens"
+                :completion-tokens="msg.completion_tokens"
                 :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
                 :skill-badges="getSkillFlowBadgesForMessage(msg, messages)"
                 :suppress-permission-logs="Boolean(msg.pendingPermission)"
@@ -5030,7 +5032,6 @@ onUnmounted(() => {
                 :tool-timeout-seconds="msg.agentMaxToolcallTimeoutSeconds"
                 bordered
                 @stop="stopGeneration({ notifySuccess: true })"
-                @open-model-stats="openModelCallStats(msg)"
               />
 
               <ToolPermissionCard

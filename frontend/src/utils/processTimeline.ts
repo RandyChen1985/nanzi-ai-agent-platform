@@ -1,6 +1,6 @@
 import type { SubagentTraceMeta } from "./subagentTrace";
 
-export type ProcessTimelineStatus = "pending" | "success" | "error" | "warning";
+export type ProcessTimelineStatus = "pending" | "success" | "error" | "warning" | "interrupted";
 export type ToolResolutionStatus = "disabled" | "missing" | "filtered";
 export type ProcessTimelineTodoStatus = "pending" | "in_progress" | "completed";
 
@@ -543,29 +543,24 @@ export function selectTimelineRenderableItems(
 }
 
 /**
- * 模型调用（`category=model`）是**观测信息**，不是执行叙事：每问一次模型就多一条，
- * 而它又固定 push 到顶层数组末尾（工具都挂在旁白 children 下），于是主时间线表现为
- * 「工具全在上、模型调用全在下」，最新进度还被压在这一串下面。
- *
- * 默认折叠成一行汇总（次数 + 合计耗时 + 明细入口）；只有进行中的那条保留，
- * 否则模型思考期间主时间线完全静止，看起来像卡死。
+ * 深度优先收集满足条件的 log 条目（含子代理嵌套在 children 里的那些）。
  */
-export function isModelCallLog(item: ProcessTimelineItem): item is ProcessTimelineLogItem {
-  return item.kind === "log" && item.category === "model";
-}
-
-/** fallback 换模提示同属 model 类别，但它是用户必须看见的事件，不参与折叠。 */
-export function isModelFallbackNotice(log: ProcessTimelineLogItem): boolean {
-  return log.status === "warning" || /fallback/i.test(String(log.title || ""));
-}
-
-/** 深度优先收集模型调用条目（含子代理嵌套在 children 里的那些）。 */
-export function collectModelCallLogs(items: ProcessTimelineItem[] | undefined): ProcessTimelineLogItem[] {
+function collectLogsByPredicate(
+  items: ProcessTimelineItem[] | undefined,
+  match: (log: ProcessTimelineLogItem) => boolean,
+): ProcessTimelineLogItem[] {
   const found: ProcessTimelineLogItem[] = [];
+  // ⚠️ 防环：这是深度优先递归，且每次 props 变化都会跑（模型 / 工具两套汇总各一次）。
+  // 委派场景的树是「旁白 → 子代理容器 → 步骤 → 子步骤」，容器会按 subagent 元数据
+  // 合并、按 parent_id 重挂；一旦某节点被挂到自己下面（或两节点互指），没有 visited
+  // 就是**主线程无限递归** → Chrome「页面无响应」，刷新后重新 hydrate 继续卡。
+  const visited = new WeakSet<object>();
   const walk = (list: ProcessTimelineItem[] | undefined) => {
     for (const item of list || []) {
+      if (!item || visited.has(item)) continue;
+      visited.add(item);
       if (item.kind === "log") {
-        if (isModelCallLog(item)) found.push(item);
+        if (match(item)) found.push(item);
         if (item.children?.length) walk(item.children);
       } else if (item.kind === "text") {
         walk(item.children);
@@ -576,35 +571,28 @@ export function collectModelCallLogs(items: ProcessTimelineItem[] | undefined): 
   return found;
 }
 
-/** 移除模型调用条目，返回新数组（不改动入参）。`keepPending` 默认保留进行中的一条。 */
-export function stripModelCallLogs(
-  items: ProcessTimelineItem[],
-  options: { keepPending?: boolean } = {},
-): ProcessTimelineItem[] {
-  const keepPending = options.keepPending !== false;
-  return items.flatMap((item): ProcessTimelineItem[] => {
-    if (item.kind === "log") {
-      if (isModelCallLog(item) && !isModelFallbackNotice(item)) {
-        return keepPending && item.status === "pending" ? [item] : [];
-      }
-      return item.children?.length
-        ? [{ ...item, children: stripModelCallLogs(item.children, options) as ProcessTimelineLogItem[] }]
-        : [item];
-    }
-    if (item.kind === "text" && item.children?.length) {
-      return [{ ...item, children: stripModelCallLogs(item.children, options) as ProcessTimelineLogItem[] }];
-    }
-    return [item];
-  });
+/** 工具执行条目（`category=tool`）：用于把「工具耗时」从总耗时里单独拎出来。 */
+export function isToolCallLog(item: ProcessTimelineItem): item is ProcessTimelineLogItem {
+  return item.kind === "log" && item.category === "tool";
 }
 
-/** 汇总行数据：调用次数、已完成调用的合计耗时、是否仍在调用中。 */
-export function summarizeModelCalls(items: ProcessTimelineItem[] | undefined): {
+/** 深度优先收集工具执行条目。 */
+export function collectToolCallLogs(items: ProcessTimelineItem[] | undefined): ProcessTimelineLogItem[] {
+  return collectLogsByPredicate(items, isToolCallLog);
+}
+
+/**
+ * 工具执行汇总：次数与已完成工具的合计耗时。
+ *
+ * 单看「N 次模型调用 · 合计 5.4s」与顶部「耗时 36.2s」并排，用户会以为统计漏了
+ * 三十秒；把工具耗时也算出来，才能说明「36.2s = 模型 5.4s + 工具 30.4s + 收尾」。
+ */
+export function summarizeToolCalls(items: ProcessTimelineItem[] | undefined): {
   count: number;
   totalMs: number;
   pending: boolean;
 } {
-  const logs = collectModelCallLogs(items);
+  const logs = collectToolCallLogs(items);
   return {
     count: logs.length,
     totalMs: logs.reduce((sum, log) => sum + (Number(log.execution_time_ms) || 0), 0),
@@ -662,8 +650,18 @@ export function normalizeProcessNarrationText(text: string, trimBoundary = false
 }
 
 export function appendProcessNarrationText(existing: string, piece: string): string {
-  const combined = normalizeProcessNarrationText(`${existing || ""}${piece || ""}`);
-  return existing ? combined : combined.replace(/^[ \t]*\n+/, "");
+  const prev = existing || "";
+  const next = piece || "";
+  // 增量拼接的快路径：绝大多数流式 delta 不含换行，而两处正则收拾的都是换行/空行。
+  // 原先每次都把**整段已累积文本**重新跑一遍多行正则——委派场景里主助手要等子代理，
+  // 近 30 秒内持续吐旁白（实测单轮 214 条），于是 214 次全量正则 = O(n²)，
+  // 且每次赋值都触发整条时间线重渲染。直连时没有这段等待期旁白，所以碰不到。
+  // 只有 delta 自身带换行时才需要走全量规范化。
+  // 首条 delta 仍要规范化：它可能自带 \r\n 或多空行，跳过会让时间线残留 CR/空行，
+  // 与「首条也走全量 normalize」的旧行为不一致（此时只有一次全量正则，成本可忽略）。
+  if (!prev) return normalizeProcessNarrationText(next).replace(/^[ \t]*\n+/, "");
+  if (!next.includes("\n") && !next.includes("\r")) return prev + next;
+  return normalizeProcessNarrationText(prev + next);
 }
 
 function isToolLog(data: { title?: string; category?: string; id?: string | number }): boolean {
@@ -688,19 +686,23 @@ function isToolLog(data: { title?: string; category?: string; id?: string | numb
 function findTimelineLog(
   items: ProcessTimelineItem[],
   id: string | number,
+  visited: WeakSet<object> = new WeakSet(),
 ): ProcessTimelineLogItem | undefined {
   for (const item of items) {
+    // 防环：查找同样是递归，环会让它在两条事件之间无限打转。
+    if (!item || visited.has(item)) continue;
+    visited.add(item);
     if (item.kind === "log") {
       if (item.id === id) return item;
       if (item.children?.length) {
-        const found = findTimelineLogInLogs(item.children, id);
+        const found = findTimelineLogInLogs(item.children, id, visited);
         if (found) return found;
       }
     } else if (item.kind === "text") {
       for (const child of item.children || []) {
         if (child.id === id) return child;
         if (child.children?.length) {
-          const found = findTimelineLogInLogs(child.children, id);
+          const found = findTimelineLogInLogs(child.children, id, visited);
           if (found) return found;
         }
       }
@@ -712,11 +714,14 @@ function findTimelineLog(
 function findTimelineLogInLogs(
   logs: ProcessTimelineLogItem[],
   id: string | number,
+  visited: WeakSet<object> = new WeakSet(),
 ): ProcessTimelineLogItem | undefined {
   for (const log of logs) {
+    if (!log || visited.has(log)) continue;
+    visited.add(log);
     if (log.id === id) return log;
     if (log.children?.length) {
-      const found = findTimelineLogInLogs(log.children, id);
+      const found = findTimelineLogInLogs(log.children, id, visited);
       if (found) return found;
     }
   }
@@ -1279,42 +1284,51 @@ export function mergeTimelineLogs(
   }> | undefined,
 ): ProcessTimelineItem[] {
   const items = [...(timeline || [])];
-  const indexes = new Map<string | number, number>();
-  items.forEach((item, index) => {
-    if (item.kind === "log") indexes.set(item.id, index);
-    if (item.kind === "text") {
-      for (const child of item.children || []) indexes.set(child.id, index);
+  // 全树 id → 节点索引。原实现对**每条** log 都跑一次 findTimelineLog 深度遍历，
+  // 委派时 logs（子代理桥接的每一步）和时间线节点都不少，是稳定的 O(n²)；
+  // 这里一次建索引 O(n)，之后每条 log O(1)。
+  // 用「首次命中」而不是覆盖，与 findTimelineLog 返回第一个匹配节点的语义一致。
+  const logIndexById = new Map<string | number, ProcessTimelineLogItem>();
+  const visited = new WeakSet<object>();
+  const indexTree = (list?: ProcessTimelineItem[]) => {
+    for (const item of list || []) {
+      if (!item || visited.has(item)) continue;
+      visited.add(item);
+      if (item.kind === "log") {
+        if (!logIndexById.has(item.id)) logIndexById.set(item.id, item);
+        if (item.children?.length) indexTree(item.children);
+      } else if (item.kind === "text") {
+        indexTree(item.children);
+      }
     }
-  });
+  };
+  indexTree(items);
 
   for (const log of logs || []) {
-    const existingIndex = indexes.get(log.id);
-    const nested = findTimelineLog(items, log.id);
-    if (existingIndex !== undefined || nested) {
-      const existing = existingIndex === undefined ? undefined : items[existingIndex];
-      const targetLog = nested || (existing?.kind === "log" ? existing : undefined);
-      if (targetLog) {
-        targetLog.parent_id = log.parent_id ?? targetLog.parent_id;
-        targetLog.title = log.title || targetLog.title;
-        targetLog.details = log.details ?? targetLog.details;
-        targetLog.status = log.status || targetLog.status;
-        targetLog.error_reason = log.error_reason ?? targetLog.error_reason;
-        targetLog.category = log.category ?? targetLog.category;
-        targetLog.tool_name = log.tool_name ?? targetLog.tool_name;
-        targetLog.tool_args = log.tool_args ?? targetLog.tool_args;
-        targetLog.model = log.model ?? targetLog.model;
-        targetLog.temperature = log.temperature ?? targetLog.temperature;
-        targetLog.tool_result_state = log.tool_result_state ?? targetLog.tool_result_state;
-        targetLog.file_metadata = log.file_metadata ?? targetLog.file_metadata;
-        targetLog.resolution_status = log.resolution_status ?? targetLog.resolution_status;
-        targetLog.execution_time_ms = log.execution_time_ms ?? targetLog.execution_time_ms;
-        targetLog.started_at = log.started_at ?? targetLog.started_at;
-        targetLog.subagent = log.subagent ?? targetLog.subagent;
-      }
+    const targetLog = logIndexById.get(log.id);
+    if (targetLog) {
+      targetLog.parent_id = log.parent_id ?? targetLog.parent_id;
+      targetLog.title = log.title || targetLog.title;
+      targetLog.details = log.details ?? targetLog.details;
+      targetLog.status = log.status || targetLog.status;
+      targetLog.error_reason = log.error_reason ?? targetLog.error_reason;
+      targetLog.category = log.category ?? targetLog.category;
+      targetLog.tool_name = log.tool_name ?? targetLog.tool_name;
+      targetLog.tool_args = log.tool_args ?? targetLog.tool_args;
+      targetLog.model = log.model ?? targetLog.model;
+      targetLog.temperature = log.temperature ?? targetLog.temperature;
+      targetLog.tool_result_state = log.tool_result_state ?? targetLog.tool_result_state;
+      targetLog.file_metadata = log.file_metadata ?? targetLog.file_metadata;
+      targetLog.resolution_status = log.resolution_status ?? targetLog.resolution_status;
+      targetLog.execution_time_ms = log.execution_time_ms ?? targetLog.execution_time_ms;
+      targetLog.started_at = log.started_at ?? targetLog.started_at;
+      targetLog.subagent = log.subagent ?? targetLog.subagent;
       continue;
     }
     upsertTimelineLog({ processTimeline: items }, log);
-    indexes.set(log.id, items.length - 1);
+    // 新增条目可能被挂到子代理容器 / 旁白 children 下，回填索引供后续事件命中。
+    const inserted = findTimelineLog(items, log.id);
+    if (inserted) logIndexById.set(log.id, inserted);
   }
   return items;
 }
@@ -1593,8 +1607,26 @@ export function hydrateHistoryProcessTimeline(
 ): ProcessTimelineItem[] {
   const mapLog = (log: ProcessTimelineLogItem): ProcessTimelineLogItem => ({
     ...log,
+    // 历史时间线里残留的 `pending` 必须落定，否则会同时踩两个坑：
+    //   1. `thought-status-dot` 是**无限循环**动画，几十条消息叠加后合成器被长期占用
+    //      （实测 Animations 连续 15 秒，而 Scripting 只有 24ms —— 正是「不占 CPU 但一直卡」的形态）；
+    //   2. `timelineHasPending` 恒为真 → `needsLiveTick` 恒真 → 每 500ms 重渲染整条时间线。
+    // 历史消息不可能「正在执行」，pending 只表示落库时缺了终态事件（中断/超时/落库不全），
+    // 按「未完成」展示更准确，也不再驱动动画与计时器。
+    //
+    // 用独立的 `interrupted` 而不是复用 `warning`：`warning` 已用于换模提示，
+    // 复用会让历史里未完成的条目被当成换模提示。
+    status: log.status === "pending" ? "interrupted" : log.status,
     isExpanded: false,
-    childrenExpanded: defaultChildrenExpandedForLog(log.id),
+    // 历史时间线**默认折叠**。
+    //
+    // 默认展开的代价在长会话里是灾难：36 条消息、每条 20~40 个节点，全部常驻 DOM
+    // 并参与布局；用户展开任意一张卡片都会触发整页重排（实测 Rendering 344ms，
+    // 观感就是「展开/折叠很卡」）。折叠后只渲染标题行，点开某一条才渲染它的子树。
+    //
+    // 实时流（upsertTimelineLog）仍沿用 defaultChildrenExpandedForLog 的默认展开，
+    // 保证「正在执行」的过程默认可见。
+    childrenExpanded: false,
     children: (log.children || []).map(mapLog),
   });
 
@@ -1606,7 +1638,8 @@ export function hydrateHistoryProcessTimeline(
         ...item,
         pending: false,
         contentExpanded: item.textKind === "reasoning" ? false : item.contentExpanded,
-        childrenExpanded: true,
+        // 同上：历史的内部步骤默认折叠，点开才渲染。
+        childrenExpanded: false,
         children: (item.children || []).map(mapLog),
       };
     }

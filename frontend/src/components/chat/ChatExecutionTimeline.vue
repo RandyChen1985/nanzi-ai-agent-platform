@@ -2,6 +2,7 @@
   <div
     v-if="visible"
     class="mb-1 w-full min-w-0 max-w-[42rem] lg:max-w-[48rem] 2xl:max-w-[52rem]"
+    style="contain: layout"
   >
     <ChatThinkingHeader
       v-model:expanded="expanded"
@@ -148,7 +149,7 @@
                 </svg>
                 <span>{{ item.children.length }} 个工具调用</span>
               </button>
-              <div v-show="item.childrenExpanded !== false" class="space-y-0">
+              <div v-if="item.childrenExpanded !== false" class="space-y-0">
                 <div
                   v-for="child in item.children"
                   :key="child.id"
@@ -188,11 +189,15 @@
                     <span
                       v-if="child.subagent && subagentStatusLabel(child.status)"
                       class="shrink-0 text-[10px]"
-                      :class="child.status === 'error' ? 'text-red-600' : child.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400'"
+                      :class="child.status === 'error' ? 'text-red-600' : child.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : child.status === 'interrupted' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'"
                     >
                       {{ subagentStatusLabel(child.status) }}
                     </span>
-                    <span v-if="child.status === 'error' && !child.subagent" class="shrink-0 text-[10px]">失败</span>
+                    <span
+                      v-if="!child.subagent && settledStatusLabel(child.status)"
+                      class="shrink-0 text-[10px]"
+                      :class="child.status === 'error' ? 'text-red-600' : 'text-amber-600 dark:text-amber-400'"
+                    >{{ settledStatusLabel(child.status) }}</span>
                     <span v-if="timelineDurationText(child)" class="shrink-0 font-mono text-[10px]" :class="timelineDurationClass(child)" :title="timelineDurationTitle(child)">{{ timelineDurationText(child) }}</span>
                     <svg v-if="hasVisibleTimelineText(child.details) || hasTimelineArgs(child) || child.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': isChildDetailsOpen(child) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
@@ -379,7 +384,7 @@
               <span
                 v-if="isPreparationParent(item)"
                 class="shrink-0 text-[10px] font-medium"
-                :class="item.status === 'error' ? 'text-red-600 dark:text-red-400' : item.status === 'pending' ? 'text-sky-600 dark:text-sky-400' : 'text-gray-400 dark:text-gray-500'"
+                :class="item.status === 'error' ? 'text-red-600 dark:text-red-400' : item.status === 'pending' ? 'text-sky-600 dark:text-sky-400' : item.status === 'interrupted' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-gray-500'"
               >
                 {{ preparationStatusLabel(item) }}
               </span>
@@ -392,11 +397,15 @@
               <span
                 v-if="item.subagent && subagentStatusLabel(item.status)"
                 class="shrink-0 text-[10px]"
-                :class="item.status === 'error' ? 'text-red-600' : item.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400'"
+                :class="item.status === 'error' ? 'text-red-600' : item.status === 'pending' ? 'text-emerald-500 dark:text-emerald-400' : item.status === 'interrupted' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'"
               >
                 {{ subagentStatusLabel(item.status) }}
               </span>
-              <span v-if="item.status === 'error' && !item.subagent" class="shrink-0 text-[10px]">失败</span>
+              <span
+                v-if="!item.subagent && settledStatusLabel(item.status)"
+                class="shrink-0 text-[10px]"
+                :class="item.status === 'error' ? 'text-red-600' : 'text-amber-600 dark:text-amber-400'"
+              >{{ settledStatusLabel(item.status) }}</span>
               <span v-if="timelineDurationText(item)" class="shrink-0 font-mono text-[10px]" :class="timelineDurationClass(item)" :title="timelineDurationTitle(item)">
                 {{ timelineDurationText(item) }}
               </span>
@@ -610,21 +619,6 @@
           </div>
         </div>
 
-        <!-- 模型调用折叠汇总：逐条不再占主时间线，只留次数 / 合计耗时 / 明细入口 -->
-        <div
-          v-if="modelCallSummary.count"
-          class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-dashed border-gray-200/80 px-2 py-1 text-[11px] leading-4 text-gray-400 dark:border-gray-700/70 dark:text-gray-500"
-        >
-          <SparklesIcon class="h-3 w-3 shrink-0" aria-hidden="true" />
-          <span>{{ modelCallSummaryLabel }}</span>
-          <button
-            type="button"
-            class="ml-auto shrink-0 font-medium text-gray-500 transition-colors hover:text-gray-800 hover:underline dark:text-gray-400 dark:hover:text-gray-200"
-            title="查看本次执行的大模型调用明细"
-            @click="emit('open-model-stats')"
-          >查看明细</button>
-        </div>
-
         <div v-if="isThinking && !items.length" class="px-2 py-1 text-xs text-gray-400 animate-pulse">
           {{ thinkingText || '正在处理…' }}
         </div>
@@ -685,8 +679,6 @@ import {
   resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
   selectTimelineRenderableItems,
-  stripModelCallLogs,
-  summarizeModelCalls,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
   isWorkspacePrewarmPending,
@@ -730,15 +722,17 @@ const props = withDefaults(defineProps<{
   /** 当前轮的清单正由输入框上方的 banner 卡片展示时，时间线内不再重复渲染。 */
   hideTodo?: boolean;
   /**
-   * 模型调用（category=model）默认折叠为底部一行汇总，避免「工具全在上、模型调用全在下」
-   * 的时间倒挂；需要逐条展示观测信息的场景传 false 恢复旧行为。
-   */
-  hideModelCalls?: boolean;
-  /**
    * 本轮工具调用的实际超时上限（秒，版本级优先、否则全局）。
    * 挂起中的工具行显示「已耗时 / 上限」，让用户知道还要等多久才算超时。
    */
   toolTimeoutSeconds?: number;
+  /**
+   * 本轮消息累计的输入 / 输出 token（后端 usage 口径）。
+   * 时间只说明「模型算了多久」，token 才说明「模型干了多少活」——
+   * 同一条回复里 10 次 × 0.8s 可能只是 10 段几十 token 的短判断。
+   */
+  promptTokens?: number;
+  completionTokens?: number;
 }>(), {
   timeline: () => [],
   logs: () => [],
@@ -754,8 +748,9 @@ const props = withDefaults(defineProps<{
   bordered: false,
   darkMode: false,
   suppressPermissionLogs: false,
-  hideModelCalls: true,
   toolTimeoutSeconds: 0,
+  promptTokens: 0,
+  completionTokens: 0,
 });
 
 const expanded = defineModel<boolean>("expanded", { default: false });
@@ -763,7 +758,6 @@ const routeGroupExpanded = ref(true);
 
 const emit = defineEmits<{
   (e: "stop"): void;
-  (e: "open-model-stats"): void;
 }>();
 
 // 会话运行锁的排队等待条目（id 由后端 preflight 下发）：这里提供直接终止入口，
@@ -786,15 +780,18 @@ const handleQueueWaitStop = (item: ProcessTimelineItem) => {
 function suppressPermissionLogs(items: ProcessTimelineLogItem[]): ProcessTimelineLogItem[];
 function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[];
 function suppressPermissionLogs(items: ProcessTimelineItem[]): ProcessTimelineItem[] {
+  // 用原型投影替换 `{ ...item, children }`：展开运算符会把 progress 这类字段也登记成
+  // timelineItems 的依赖，导致每条工具进度都触发整棵时间线重算。
   return items.flatMap((item): ProcessTimelineItem[] => {
-    if (item.kind === "log") {
-      if (item.category === "permission") return [];
-      return item.children?.length
-        ? [{ ...item, children: suppressPermissionLogs(item.children) }]
-        : [item];
-    }
-    if (item.kind === "text" && item.children?.length) {
-      return [{ ...item, children: suppressPermissionLogs(item.children) }];
+    if (item.kind === "log" && item.category === "permission") return [];
+    const children = item.children;
+    if (children?.length) {
+      const suppressed = suppressPermissionLogs(children as ProcessTimelineItem[]);
+      if (suppressed !== children) {
+        const projection = Object.create(item) as ProcessTimelineItem;
+        projection.children = suppressed;
+        return [projection];
+      }
     }
     return [item];
   });
@@ -810,27 +807,26 @@ const timelineItems = computed(() => {
   return selectTimelineRenderableItems(visibleItems, { hideTodo: props.hideTodo });
 });
 
-// 模型调用（category=model）不占主时间线：它们每次请求一条、又固定堆在数组末尾，
-// 留在列表里会造成「工具在上、模型调用在下」的时间倒挂。默认折叠为底部一行汇总，
-// 逐条明细由「查看明细」承载；进行中的那条仍保留，避免模型思考期间列表完全静止。
-const hideModelCalls = computed(() => props.hideModelCalls !== false);
-const items = computed(() => {
-  const grouped = groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value);
-  return hideModelCalls.value ? stripModelCallLogs(grouped) : grouped;
-});
+/**
+ * 模型调用（`category=model`）是观测信息，不是执行步骤：每次 LLM 请求一条，
+ * 又固定堆在顶层数组末尾，留在列表里就是「工具全在上、几十条模型调用全在下」。
+ *
+ * 这里直接把它挡在渲染列表之外——注意不是「先显示、完成后再移除」，
+ * 而是从来就不进 `items`，所以 v-for 的列表长度只随工具/旁白变化，
+ * 不会出现「入队 → 出队」的增删抖动（那才是之前拖死页面的原因）。
+ *
+ * fallback 换模提示同属 model 类别，但它是用户必须看见的事件，保留。
+ */
+const isHiddenModelCall = (item: ProcessTimelineItem): boolean =>
+  item.kind === "log"
+  && item.category === "model"
+  && item.status !== "warning"
+  && !/fallback/i.test(String(item.title || ""));
 
-const modelCallSummary = computed(() =>
-  hideModelCalls.value
-    ? summarizeModelCalls(timelineItems.value)
-    : { count: 0, totalMs: 0, pending: false }
+const items = computed(() =>
+  groupRouteTimelineItems(timelineItems.value, routeGroupExpanded.value)
+    .filter((item) => !isHiddenModelCall(item))
 );
-const modelCallSummaryLabel = computed(() => {
-  const { count, totalMs, pending } = modelCallSummary.value;
-  const parts = [`${count} 次模型调用`];
-  if (totalMs > 0) parts.push(`合计 ${formatDuration(totalMs)}`);
-  if (pending) parts.push("进行中");
-  return parts.join(" · ");
-});
 
 const hasPending = computed(() => timelineHasPending(items.value));
 const headerTitle = computed(() => props.hasAnswer ? "执行完成" : "执行过程");
@@ -842,7 +838,7 @@ const currentStep = computed(() => resolveTimelineCurrentStep(
 const visible = computed(() => Boolean(
   props.isThinking
   || items.value.length
-  || modelCallSummary.value.count
+  || timelineItems.value.length
   || props.skillBadges.length,
 ));
 const skillNoticeLabel = computed(() => skillFlowNoticeLabel(props.skillBadges));
@@ -913,8 +909,32 @@ function toggleAllDetails() {
   items.value.forEach(setExpand);
 }
 
+/**
+ * 时间线文本清洗带一层小缓存。
+ *
+ * `stripInternalContextBlocks` 要跑十来条正则（其中包含 `[\s\S]*?` 的跨行匹配），
+ * 而它在每次渲染里对每个节点的 details 至少调一次（`hasVisibleTimelineText` 决定
+ * 是否显示折叠箭头），时间线每 500ms 的秒表 tick 又会把整棵树重渲一遍。工具输出
+ * 动辄几十 KB，同一段文本被反复清洗是纯浪费。键就是原文本身，内容一变键就变，
+ * 不会读到脏值；上限 200 条避免长会话无限增长。
+ */
+const timelineTextCache = new Map<string, string>();
+let timelineTextCacheBytes = 0;
+/** 按总字节收敛：工具结果动辄几十 KB，按条数限制会吃掉上百 MB。 */
+const TIMELINE_TEXT_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 function visibleTimelineText(text?: string | null): string {
-  return stripInternalContextBlocks(text ?? "");
+  const raw = text ?? "";
+  if (!raw) return "";
+  const cached = timelineTextCache.get(raw);
+  if (cached !== undefined) return cached;
+  const cleaned = stripInternalContextBlocks(raw);
+  if (timelineTextCacheBytes + raw.length > TIMELINE_TEXT_CACHE_MAX_BYTES) {
+    timelineTextCache.clear();
+    timelineTextCacheBytes = 0;
+  }
+  timelineTextCache.set(raw, cleaned);
+  timelineTextCacheBytes += raw.length + cleaned.length;
+  return cleaned;
 }
 
 function hasVisibleTimelineText(text?: string | null): boolean {
@@ -1081,6 +1101,7 @@ function isPreparationParent(item: ProcessTimelineLogItem): boolean {
 function preparationStatusLabel(item: ProcessTimelineLogItem): string {
   if (item.status === "pending") return "准备中";
   if (item.status === "error") return "准备失败";
+  if (item.status === "interrupted") return "未完成";
   return "已完成";
 }
 
@@ -1251,7 +1272,15 @@ function timelineIconFor(item: ProcessTimelineLogItem): any {
 function subagentStatusLabel(status: ProcessTimelineLogItem["status"]): string {
   if (status === "pending") return "进行中";
   if (status === "error") return "失败";
+  if (status === "interrupted") return "未完成";
   return "已完成";
+}
+
+/** 落定但未成功的状态文案；pending / success / warning 不显示文字标签。 */
+function settledStatusLabel(status: ProcessTimelineLogItem["status"]): string {
+  if (status === "error") return "失败";
+  if (status === "interrupted") return "未完成";
+  return "";
 }
 
 function formatDuration(duration?: number | null): string {
@@ -1410,7 +1439,17 @@ async function handleCopy(key: string, text?: string | null) {
     #a5b4fc 55%,
     rgba(129, 140, 248, 0) 100%
   );
+  /* 扫光保持单向循环。曾试过「只播 3 次（约 7 秒）」：委派时 sub_agent_call 会 pending
+     近 30 秒，扫光 7 秒后停住，看起来像「已完成」，反而误导。这里持续循环的代价很低——
+     关键帧只改 transform（不改 background-position / left），配合下面的合成层提示由
+     合成器完成位移，不会每帧重绘整条 linear-gradient；真正贵的 box-shadow 动画已在
+     状态点上移除。契约也要求「只动 transform、不做亮度闪烁」，所以不加 opacity 呼吸。 */
   animation: timeline-progress-sweep 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  /* 显式合成层提示让位移交给合成器，避免重绘扩散到轨道容器。 */
+  will-change: transform;
+  transform: translateZ(0);
+  contain: paint;
+  backface-visibility: hidden;
 }
 
 /* 兜底进度条：几十毫秒就结束的工具不该闪一下，延后出现；确定态进度同样受益于此。 */
@@ -1447,13 +1486,18 @@ async function handleCopy(key: string, text?: string | null) {
   height: 0.42rem;
   border-radius: 9999px;
   background: #0ea5e9;
-  box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.35);
+  box-shadow: 0 0 0 0.12rem rgba(14, 165, 233, 0.18);
   animation: thought-status-breathe 1.6s ease-in-out infinite;
+  will-change: opacity, transform;
 }
 
+/* 只动画 opacity / transform：这两者可以交给合成器。
+   原先还动画 box-shadow，而 box-shadow 无法合成，必须每帧重绘整个元素——
+   委派时同时挂起多个 pending 步骤，多个阴影一起重绘会把绘制线程长期占住，
+   表现为主线程几乎空闲（Scripting 仅 20~30ms）但画面持续发卡。 */
 @keyframes thought-status-breathe {
-  0%, 100% { opacity: 0.55; transform: scale(0.85); box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.28); }
-  50% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 0 0.28rem rgba(14, 165, 233, 0.08); }
+  0%, 100% { opacity: 0.55; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
 
 @media (prefers-reduced-motion: reduce) {

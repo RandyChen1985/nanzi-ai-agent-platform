@@ -827,6 +827,34 @@ class AuthService:
                          except (TypeError, ValueError):
                              last_verified = 0
 
+                         # 绝对寿命：滑动续期只能延长「闲置超时」，不能让令牌靠持续打点
+                         # 永生。嵌入令牌会落在 iframe 的 sessionStorage 里（JS 可读），
+                         # 一旦泄露，没有绝对上限就只能靠管理员禁用账号来收场。
+                         from app.services.embed_service import (
+                             SESSION_TOKEN_MAX_LIFETIME_SECONDS,
+                             SESSION_TOKEN_TTL_SECONDS,
+                         )
+
+                         issued_at = 0
+                         try:
+                             issued_at = int(
+                                 AuthService._as_text(cached_user.get("issued_at")) or 0
+                             )
+                         except (TypeError, ValueError):
+                             issued_at = 0
+                         if issued_at and now_ts - issued_at > SESSION_TOKEN_MAX_LIFETIME_SECONDS:
+                             logger.info(
+                                 "会话令牌超过绝对寿命上限，已作废: user=%s type=%s age=%ds",
+                                 AuthService._as_text(cached_user.get("user_name")),
+                                 AuthService._as_text(cached_user.get("session_type")),
+                                 now_ts - issued_at,
+                             )
+                             try:
+                                 await redis.delete(cache_key)
+                             except Exception:
+                                 pass
+                             return None
+
                          if now_ts - last_verified > AuthService.SESSION_REVERIFY_SECONDS:
                              refreshed = await AuthService._reverify_session(
                                  redis, cache_key, cached_user, db
@@ -847,16 +875,32 @@ class AuthService:
                              except Exception as exc:
                                  logger.warning("刷新会话缓存失败，本次仍按复核结果放行: %s", exc)
 
-                         # 活跃即滑动续期（会话 TTL 与索引 TTL 同步顺延）
-                         try:
-                             from app.services.embed_service import SESSION_TOKEN_TTL_SECONDS
-                             await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
-                             await redis.expire(
-                                 AuthService._session_index_key(cached_user.get("user_id")),
-                                 AuthService.SESSION_INDEX_TTL_SECONDS,
-                             )
-                         except Exception:
-                             pass
+                             # 滑动续期**只跟随复核**发生（每 SESSION_REVERIFY_SECONDS 一次），
+                             # 不再每个请求都发两条 EXPIRE：
+                             #   - 24h 的 TTL 不需要精确到秒级顺延，晚 5 分钟续没有任何影响；
+                             #   - 聊天是高频接口（一轮对话几十个请求），每请求两次往返纯属浪费。
+                             # 续期时长取 min(闲置 TTL, 绝对寿命剩余)，避免把 TTL 续到
+                             # 绝对上限之外。
+                             ttl = SESSION_TOKEN_TTL_SECONDS
+                             if issued_at:
+                                 ttl = max(
+                                     0,
+                                     min(
+                                         SESSION_TOKEN_TTL_SECONDS,
+                                         issued_at
+                                         + SESSION_TOKEN_MAX_LIFETIME_SECONDS
+                                         - now_ts,
+                                     ),
+                                 )
+                             if ttl > 0:
+                                 try:
+                                     await redis.expire(cache_key, ttl)
+                                     await redis.expire(
+                                         AuthService._session_index_key(cached_user.get("user_id")),
+                                         AuthService.SESSION_INDEX_TTL_SECONDS,
+                                     )
+                                 except Exception:
+                                     pass
                      return cached_user
 
         # 2. DB Query
@@ -883,8 +927,13 @@ class AuthService:
                 await session.close()
 
     # 会话令牌回源复核间隔（秒）。取值要权衡：越短越能及时反映禁用/降权，
-    # 越长则 DB 压力越小。60s 对活跃会话意味着每用户每分钟一次单行查询。
-    SESSION_REVERIFY_SECONDS = 60
+    # 越长则 DB 压力越小。
+    #
+    # 取 300s 而不是 60s：管理路径（禁用用户、改角色、删号）都会走
+    # `revoke_sessions_for_user` 直接删缓存、**即时生效**；这里的回源只是兜住
+    # 「有人绕过管理接口直接改库」的漏网场景，晚 5 分钟发现可以接受。而 60s 对活跃
+    # 会话意味着每个嵌入用户每分钟一次单行查询，在挂件场景里被放大得很明显。
+    SESSION_REVERIFY_SECONDS = 300
 
     @staticmethod
     async def _reverify_session(
@@ -942,7 +991,9 @@ class AuthService:
         # 注：此处写回用的是 HSET，它只覆盖给出的字段、不删未提及的字段，所以即便不落键
         # 也不会造成缓存穿透；落键是为了让两支产出逻辑写法一致，避免以后改成整键重写时踩坑。
         refreshed["dept_name"] = refreshed_label or ""
-        for key in ("session_type", "agent_id", "created_by_user_id"):
+        # 会话自有字段：复核只刷新身份（角色/部门/状态），不得重置会话的**诞生时刻**——
+        # 丢了 issued_at 就等于给令牌续了一条绝对寿命。
+        for key in ("session_type", "agent_id", "created_by_user_id", "issued_at"):
             value = cached_user.get(key)
             if value is not None:
                 refreshed[key] = AuthService._as_text(value)

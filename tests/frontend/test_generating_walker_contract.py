@@ -147,8 +147,10 @@ def test_generating_animation_defaults_on_and_persists():
     """默认开启（新功能要被看见），关闭后写进 localStorage 并在启动时读回。"""
     source = _read(EMBED_CHAT)
     assert "showGeneratingAnimation: true" in source
-    assert 'localStorage.setItem("yovole_show_generating_animation"' in source
-    assert 'localStorage.getItem("yovole_show_generating_animation")' in source
+    # 读写走按实例分桶的 helper（同一页可嵌多个挂件，全局键会互相覆盖）
+    assert 'writeConfigValue("yovole_show_generating_animation"' in source
+    assert 'readConfigValue("yovole_show_generating_animation")' in source
+    assert "const configStorageKey = (name: string)" in source
     # 必须真的把开关接到输入框上，否则只是存了一个没人读的布尔值。
     assert ':show-generating-animation="config.showGeneratingAnimation"' in source
 

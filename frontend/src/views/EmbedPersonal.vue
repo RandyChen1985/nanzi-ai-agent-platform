@@ -185,6 +185,7 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import axios from "../utils/axios";
+import { evaluateHostMessageTrust, resolveHostTargetOrigin } from "@/utils/embedHostTrust";
 import PersonalCenter from "./PersonalCenter.vue";
 
 /**
@@ -388,10 +389,28 @@ const instanceId = ref("");
 const normalizeInstanceId = (value: unknown): string =>
   String(value ?? "").trim().slice(0, 128);
 
+/** 票据下发的宿主来源白名单（空 = 未限制，按历史兼容放行父窗口并告警一次）。 */
+const hostAllowedOrigins = ref<string[]>([]);
+const hostOriginUnverifiedWarned = ref(false);
+
+const selfOrigin = (): string => {
+  try {
+    return window.location.origin;
+  } catch {
+    return "";
+  }
+};
+
 const postMessageToHost = (payload: Record<string, any>) => {
   const message: Record<string, any> = { source: EMBED_MESSAGE_SOURCE, ...payload };
   if (instanceId.value) message.instance_id = instanceId.value;
-  window.parent?.postMessage(message, "*");
+  window.parent?.postMessage(
+    message,
+    resolveHostTargetOrigin({
+      allowedOrigins: hostAllowedOrigins.value,
+      referrer: document.referrer,
+    }),
+  );
 };
 
 // --- 嵌入会话令牌：ticket 兑换后注入请求头并落到本 tab ---
@@ -501,6 +520,9 @@ const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
     if (res.data && res.data.code === 200 && res.data.data?.session_token) {
       applySessionToken(String(res.data.data.session_token));
       lastSessionCookieIssued.value = Boolean(res.data.data.session_cookie_issued);
+      if (Array.isArray(res.data.data.allowed_origins)) {
+        hostAllowedOrigins.value = res.data.data.allowed_origins.map((item: unknown) => String(item));
+      }
       maybeStripUrlAfterSessionReady();
       return true;
     }
@@ -559,7 +581,43 @@ const applyTicketFromHost = async (ticket: string) => {
 
 // --- 宿主下行指令 ---
 
+/** 来源守卫：只接受父窗口发来、且 origin 可信（同源或命中票据白名单）的消息。
+ *
+ * 消息里能带 ticket / 短期会话令牌，来源不校验等于允许任意嵌了本页的站点改身份。
+ * 「未配置白名单」按历史兼容放行，但会告警一次并回传 ORIGIN_UNVERIFIED。 */
+const isTrustedHostMessage = (event: MessageEvent): boolean => {
+  const parent = window.parent;
+  // 除 parent 外也接受 top：宿主再套一层 iframe 时，有的实现由顶层窗口直发消息。
+  // origin 校验照常进行，这里只是不把「谁发的」限制得过窄。
+  const fromParentWindow =
+    !parent ||
+    !event.source ||
+    event.source === parent ||
+    event.source === window ||
+    event.source === window.top;
+  const verdict = evaluateHostMessageTrust({
+    origin: event.origin || "",
+    fromParentWindow,
+    selfOrigin: selfOrigin(),
+    allowedOrigins: hostAllowedOrigins.value,
+  });
+  if (!verdict.trusted) {
+    console.warn("[EmbedPersonal] 已忽略不可信来源的 postMessage:", event.origin);
+    return false;
+  }
+  if (verdict.unverified && !hostOriginUnverifiedWarned.value) {
+    hostOriginUnverifiedWarned.value = true;
+    console.warn(
+      "[EmbedPersonal] 宿主未配置 allowed_origins，postMessage 来源未校验。请在签发 Ticket 时传入该参数。",
+    );
+    postMessageToHost({ type: "ORIGIN_UNVERIFIED", origin: event.origin });
+  }
+  return true;
+};
+
 const handleHostMessage = (event: MessageEvent) => {
+  if (!isTrustedHostMessage(event)) return;
+
   const data = event.data;
   if (!data || typeof data !== "object") return;
 

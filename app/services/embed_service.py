@@ -3,6 +3,7 @@ import logging
 import secrets
 import time
 from typing import Optional, Dict, Any
+from urllib.parse import urlsplit
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.redis import get_redis
@@ -13,6 +14,69 @@ logger = logging.getLogger(__name__)
 
 TICKET_TTL_SECONDS = 300  # Ticket 一次性有效时长：5 分钟
 SESSION_TOKEN_TTL_SECONDS = 86400  # Session Token 初始时长：24 小时 (滑动续期)
+# 嵌入会话的**绝对**寿命上限：滑动续期只延长闲置超时，不能让一个从 iframe 里泄露的
+# 令牌靠定时打点永生。到点后必须重新走 Ticket 兑换。
+SESSION_TOKEN_MAX_LIFETIME_SECONDS = 86400 * 7
+
+
+def normalize_origin(value: Optional[str]) -> str:
+    """把「Origin / Referer / 配置里的白名单项」归一化成 ``scheme://host[:port]``。
+
+    三处输入形态并不一致：
+
+    - 浏览器的 ``Origin`` 头本身就是 ``scheme://host[:port]``；
+    - ``Referer`` 是**带路径与查询串的完整 URL**，直接与白名单比较必然不相等；
+    - 后台配置的白名单可能带结尾斜杠（``https://crm.example.com/``）。
+
+    旧实现直接拿原始字符串比较，于是「只有 Referer、没有 Origin」的请求会 100% 被判
+    ``origin_not_allowed``，且带斜杠的白名单项永远匹配不上。统一归一化后再比。
+    """
+    raw = (value or "").strip()
+    if not raw or raw == "*":
+        return raw
+    # 兼容没写 scheme 的配置（如 crm.example.com），按 https 处理
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return ""
+    if not parts.scheme or not parts.netloc:
+        return ""
+    return f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+
+
+def _normalized_origin_set(raw_allowed: Any) -> set[str]:
+    """把票据里存的 ``allowed_origins``（JSON 字符串或列表）归一化成集合。"""
+    if not raw_allowed:
+        return set()
+    if isinstance(raw_allowed, str):
+        try:
+            raw_allowed = json.loads(raw_allowed)
+        except json.JSONDecodeError:
+            return set()
+    if not isinstance(raw_allowed, list):
+        return set()
+    result = {normalize_origin(item) for item in raw_allowed if str(item or "").strip()}
+    return {item for item in result if item}
+
+
+def origin_allowed(origin: Optional[str], allowed_origins: Any) -> bool:
+    """判断请求来源是否被票据允许。
+
+    - 未配置白名单：放行（保持历史行为）。
+    - 配置了白名单但请求**没有** Origin/Referer：拒绝。旧实现这里是「跳过校验」，
+      等于白名单只对浏览器生效、对任何服务端直调不设防。
+    - 白名单含 ``*``：放行。
+    """
+    allowed = _normalized_origin_set(allowed_origins)
+    if not allowed:
+        return True
+    if "*" in allowed:
+        return True
+    normalized = normalize_origin(origin)
+    return bool(normalized) and normalized in allowed
+
 
 
 class EmbedService:
@@ -121,7 +185,18 @@ class EmbedService:
             "dept_name": dept_name or "",
             "extra_data": target_user.extra_data or "",
             "agent_id": agent_id or "",
-            "allowed_origins": json.dumps(allowed_origins or []),
+            # 归一化后再落库：兑换时才能把 Origin / 带路径的 Referer / 带斜杠的配置项
+            # 放在同一口径上比较（见 normalize_origin）。
+            "allowed_origins": json.dumps(
+                sorted(
+                    {
+                        normalize_origin(item)
+                        for item in (allowed_origins or [])
+                        if str(item or "").strip()
+                    }
+                    - {""}
+                )
+            ),
             "created_by_user_id": str(operator_user.get("user_id", "")),
         }
 
@@ -182,14 +257,16 @@ class EmbedService:
 
         # 2. 检查来源 Origin (若有配置限制)——此时票仍在，校验失败可直接重试
         allowed_origins_raw = ticket_data.get("allowed_origins")
-        if allowed_origins_raw:
-            try:
-                allowed_origins = json.loads(allowed_origins_raw)
-                if allowed_origins and origin:
-                    if origin not in allowed_origins and "*" not in allowed_origins:
-                        raise PermissionError(f"Origin '{origin}' is not allowed for this ticket")
-            except json.JSONDecodeError:
-                pass
+        if not origin_allowed(origin, allowed_origins_raw):
+            # 把归一化后的实际来源写进日志：带路径的 Referer 与白名单不匹配时，
+            # 现场只看到「来源不允许」而看不出到底比的是什么。
+            logger.warning(
+                "Embed ticket origin rejected: ticket=%s origin=%s allowed=%s",
+                ticket,
+                origin,
+                allowed_origins_raw,
+            )
+            raise PermissionError(f"Origin '{origin or '(empty)'}' is not allowed for this ticket")
 
         # 3. 校验通过，原子核销 (GETDEL) 防止并发重放，并核对核销到的内容与刚校验的一致。
         #
@@ -227,6 +304,9 @@ class EmbedService:
             "agent_id": ticket_data.get("agent_id", ""),
             "created_by_user_id": ticket_data.get("created_by_user_id", ""),
             "verified_at": str(int(time.time())),
+            # 会话诞生的绝对时刻：滑动续期靠它封顶（见 AuthService 的
+            # SESSION_TOKEN_MAX_LIFETIME_SECONDS 校验）。
+            "issued_at": str(int(time.time())),
         }
 
         # 5. 写入鉴权缓存，设置 24 小时 TTL (请求时会自动滑动续期)
@@ -250,6 +330,9 @@ class EmbedService:
                 "role": ticket_data.get("role", "user"),
             },
             "agent_id": ticket_data.get("agent_id") or None,
+            # 回传给 iframe：它据此校验后续 postMessage 的来源，而不是一律 `"*"`。
+            # 空列表 = 未配置白名单，前端退化为「只接受父窗口」的校验。
+            "allowed_origins": sorted(_normalized_origin_set(allowed_origins_raw)),
         }
 
     @staticmethod
@@ -308,6 +391,7 @@ class EmbedService:
             "agent_id": agent_id or "",
             "created_by_user_id": str(user.get("user_id", "")),
             "verified_at": str(int(time.time())),
+            "issued_at": str(int(time.time())),
         }
 
         await EmbedService._persist_session(redis, cache_key, user_session_data)
