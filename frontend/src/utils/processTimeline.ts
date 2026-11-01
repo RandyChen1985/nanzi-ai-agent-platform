@@ -174,6 +174,29 @@ export function defaultChildrenExpandedForLog(id: string | number | undefined): 
  * 1. 出了错 / 被中断——用户得看得见是哪一步出的问题，收起等于藏故障；
  * 2. 用户手动点开过（`userToggled`），否则正看着的人会被当场抽走。
  */
+/**
+ * 整张思考卡片的展开决策。
+ *
+ * 两条规则，顺序不能换：
+ * 1. **生成完就折叠**——有正文且没有待办步骤时一律收成标题行。「思考过程」开关
+ *    不参与这条判断，它只管生成过程中要不要摊开看进度。
+ * 2. **生成中听设置**——开关有值就按开关（开=展开看推理链、关=只留标题行），
+ *    没设置则默认展开看进度。
+ *
+ * 返回 `null` 表示「不要改」：用户手动点过标题栏，之后只认用户操作。
+ */
+export function resolveTimelineExpanded(input: {
+  hasAnswer?: boolean;
+  hasPending?: boolean;
+  expandThoughts?: boolean;
+  userToggled?: boolean;
+}): boolean | null {
+  if (input.userToggled) return null;
+  if (input.hasAnswer && !input.hasPending) return false;
+  if (input.expandThoughts !== undefined) return Boolean(input.expandThoughts);
+  return true;
+}
+
 export function shouldCollapsePreparationChildren(input: {
   isPreparation: boolean;
   userToggled?: boolean;

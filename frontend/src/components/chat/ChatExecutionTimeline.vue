@@ -702,6 +702,7 @@ import {
   type ProcessTimelineItem,
   type ProcessTimelineLogItem,
   type ProcessTimelineTextItem,
+  resolveTimelineExpanded,
   shouldCollapsePreparationChildren,
 } from "@/utils/processTimeline";
 import {
@@ -1030,24 +1031,25 @@ function timelineMetaText(item: {
  * 折叠决策只有一处，避免多条 watch 互相覆盖（历史上正是三个 watch 各自写
  * `expanded`，把用户的「思考过程」设置彻底盖掉了）。
  *
- * 接了用户设置（expandThoughts 有值）就完全听设置：开启=整张卡片展开、关闭=只留
- * 标题行，生成中也不例外——开关状态必须与页面表现一致。没接设置则退回旧的自动
- * 行为：生成中展开看进度，有正文即折叠。
+ * 两条规则，顺序不能换：
+ * 1. **生成完就折叠**——有正文且没有待办步骤时一律收成标题行。「思考过程」开关
+ *    不参与这条判断，它只管生成过程中要不要摊开看进度。
+ * 2. **生成中听设置**——开关有值就按开关（开=展开看推理链、关=只留标题行），
+ *    没设置则默认展开看进度。
+ *
  * 用户手动点过标题（userToggle）后一律让位，直到本条消息被重新创建。
  */
 watch(
   [hasPending, () => props.hasAnswer, () => props.expandThoughts],
   () => {
-    if (userToggledExpanded.value) return;
-    if (props.expandThoughts !== undefined) {
-      expanded.value = Boolean(props.expandThoughts);
-      return;
-    }
-    if (hasPending.value) {
-      expanded.value = true;
-    } else if (props.hasAnswer) {
-      expanded.value = false;
-    }
+    // 决策本身在 `resolveTimelineExpanded` 里，返回 null 表示用户手动点过、不要改。
+    const next = resolveTimelineExpanded({
+      hasAnswer: Boolean(props.hasAnswer),
+      hasPending: hasPending.value,
+      expandThoughts: props.expandThoughts,
+      userToggled: userToggledExpanded.value,
+    });
+    if (next !== null) expanded.value = next;
   },
   { immediate: true },
 );

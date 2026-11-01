@@ -975,7 +975,7 @@ const handleLogout = () => {
                 <div>
                   <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">思考过程</h5>
                   <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">
-                    {{ config.expandThoughts ? '智能体推理思维链默认展开，回答后仍保留在页面上' : '已关闭：执行过程默认折叠，只保留标题行，点标题可展开' }}
+                    {{ config.expandThoughts ? '思考过程中展开，可实时查看推理链；回答完成后自动折叠' : '思考过程中也不展开，只保留标题行；回答完成后同样折叠' }}
                   </p>
                 </div>
               </div>

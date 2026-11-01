@@ -1504,23 +1504,33 @@ def test_chat_execution_timeline_watch_and_meta_guard_premature_fold():
     embed_code = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
     debug_code = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
 
-    # ChatExecutionTimeline: 折叠只有一个决策点——接了设置就听设置（开启即展开、
-    # 关闭即折叠，生成中也不例外），没接设置才走旧的自动行为
+    # ChatExecutionTimeline: 折叠决策收敛到纯函数 resolveTimelineExpanded（可被真跑单测），
+    # 组件只负责把状态喂进去。两条规则顺序不能换——
+    # ① 生成完（有正文且无 pending）一律折叠，与开关无关；
+    # ② 生成中才听「思考过程」开关，没设置则默认展开看进度。
+    util_code = (ROOT / "frontend/src/utils/processTimeline.ts").read_text(encoding="utf-8")
     assert "[hasPending, () => props.hasAnswer, () => props.expandThoughts]" in timeline_code
-    assert "if (props.expandThoughts !== undefined) {" in timeline_code
-    assert "expanded.value = Boolean(props.expandThoughts);" in timeline_code
-    assert "} else if (props.hasAnswer) {" in timeline_code
-    assert "expanded.value = true;" in timeline_code
+    assert "resolveTimelineExpanded({" in timeline_code
+    assert "export function resolveTimelineExpanded(" in util_code
+    assert "if (input.hasAnswer && !input.hasPending) return false;" in util_code
+    assert "if (input.expandThoughts !== undefined) return Boolean(input.expandThoughts);" in util_code
+    # 生成完的折叠必须排在「听设置」之前，否则开关一开就永远不折
+    assert util_code.index("if (input.hasAnswer && !input.hasPending) return false;") < util_code.index(
+        "if (input.expandThoughts !== undefined) return Boolean(input.expandThoughts);"
+    )
 
     # 用户手动切换过（ChatThinkingHeader 的 userToggle）就停止自动决策：
     # 决策点只有一处，所以守卫也只有一处
-    assert timeline_code.count("if (userToggledExpanded.value) return;") == 1
+    assert "userToggled: userToggledExpanded.value" in timeline_code
+    assert "if (input.userToggled) return null;" in util_code
+    assert "if (next !== null) expanded.value = next;" in timeline_code
     assert '@user-toggle="userToggledExpanded = true"' in timeline_code
     assert 'emit("userToggle")' in (ROOT / "frontend/src/components/chat/ChatThinkingHeader.vue").read_text(encoding="utf-8")
 
-    # EmbedChat: 把界面设置传给组件；正文首字那处强制折叠也要让位给该设置
+    # EmbedChat: 把界面设置传给组件。开关只管生成中是否展开，正文首字那处
+    # 折叠不再让位给设置——回答落地后一律收起来。
     assert ':expand-thoughts="config.expandThoughts"' in embed_code
-    assert "&& !config.expandThoughts" in embed_code
+    assert "&& !config.expandThoughts" not in embed_code
 
     # EmbedChat: meta 事件不因非 data_query 强制将 isThoughtExpanded 抹杀为 false
     assert "if (data.thought_expanded_default === true) {" in embed_code
