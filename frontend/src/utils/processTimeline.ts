@@ -137,10 +137,14 @@ const PREWARM_STAGE_LABELS: Array<{ afterMs: number; label: string }> = [
 ];
 
 export function defaultChildrenExpandedForLog(id: string | number | undefined): boolean {
-  // 「鉴权及上下文与能力准备」父节点默认折叠，保持执行时间线清爽紧凑；用户可按需点击展开查看明细
-  if (String(id) === PREPARATION_TIMELINE_PARENT_ID) {
-    return false;
-  }
+  // 「鉴权及上下文与能力准备」父节点**默认展开**：准备阶段的子项
+  // （知识库和专家清单加载、工作区准备）正是用户此刻唯一能看到的进展，
+  // 折叠起来等于把进度藏了。清爽由 ChatExecutionTimeline 负责——它在
+  // 「已有回答且无 pending」时把这个父节点收起（见其 collapse watch），
+  // 因此已完成的历史消息仍然只占一行。
+  //
+  // 这里保留 id 入参是为了让调用方语义不变（曾经按 id 特判过折叠）。
+  void id;
   return true;
 }
 

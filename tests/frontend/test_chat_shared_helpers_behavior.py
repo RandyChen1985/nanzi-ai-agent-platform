@@ -1530,7 +1530,10 @@ return {
     )
 
     assert result["root"] == "preparation:auth_context_capability"
-    assert result["preparationExpanded"] is False
+    # 准备父节点默认展开：准备阶段的 pending 子项（能力目录 / 工作区准备）是用户此刻
+    # 唯一能看到的进展；「完成后收起」由 ChatExecutionTimeline 的 collapse watch 负责，
+    # 所以历史消息仍然只占一行（该收起行为由 test_execution_stage_card_contract 覆盖）。
+    assert result["preparationExpanded"] is True
     assert result["ordinaryExpanded"] is True
 
 

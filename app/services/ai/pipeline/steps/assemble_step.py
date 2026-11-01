@@ -9,7 +9,9 @@ import logging
 from app.services.ai.pipeline.base import BasePipelineStep
 from app.services.ai.pipeline.context import PipelineContext
 from app.services.ai.agent_service import (
+    _build_capability_catalog_failed_log,
     _build_capability_catalog_log,
+    _build_capability_catalog_pending_log,
     _build_prompt_assembly_log,
     _build_preparation_parent_log,
     build_chat_history_boundary_prompt,
@@ -181,21 +183,30 @@ class AssembleStep(BasePipelineStep):
                     context.performance_tracker.mark("knowledge_context_setup")
 
             if not preflight_ctx and self.agent_service and hasattr(self.agent_service, "_gather_turn_preflight_context"):
+                # 占位卡必须赶在 await 之前 yield：7 路预取由最慢的一路决定完成时刻，
+                # 期间没有任何子项事件；等 gather 返回再推卡，整段准备就是静默的。
+                # 完成后的 success 卡用同一 id 覆盖本卡（见 _build_capability_catalog_log）。
+                yield _build_capability_catalog_pending_log()
                 turn_decision = shared_state.get("turn_decision")
                 route_details = shared_state.get("route_details")
                 if not turn_decision and route_details:
                     turn_decision = getattr(route_details, "turn_decision", None)
-                preflight_ctx = await self.agent_service._gather_turn_preflight_context(
-                    agent_config=agent_config,
-                    user_info=user_info,
-                    user_query=str(context.user_query or shared_state.get("user_query") or ""),
-                    turn_decision=turn_decision,
-                    messages=context.messages,
-                    execution_options=execution_options,
-                    conversation_id=context.conversation_id,
-                    request_observability=context.request_observability,
-                    performance_tracker=context.performance_tracker,
-                )
+                try:
+                    preflight_ctx = await self.agent_service._gather_turn_preflight_context(
+                        agent_config=agent_config,
+                        user_info=user_info,
+                        user_query=str(context.user_query or shared_state.get("user_query") or ""),
+                        turn_decision=turn_decision,
+                        messages=context.messages,
+                        execution_options=execution_options,
+                        conversation_id=context.conversation_id,
+                        request_observability=context.request_observability,
+                        performance_tracker=context.performance_tracker,
+                    )
+                except Exception:
+                    # 预取中断也要收口占位卡，否则时间线会留一条永远转圈的卡
+                    yield _build_capability_catalog_failed_log()
+                    raise
                 shared_state["preflight_ctx"] = preflight_ctx
                 if context.performance_tracker is not None:
                     context.performance_tracker.mark("preflight_concurrency_load")
