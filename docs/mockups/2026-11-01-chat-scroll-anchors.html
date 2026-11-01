@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>聊天消息快速定位浮标 · Mock</title>
+<style>
+  :root{
+    --gray-50:#f9fafb; --gray-100:#f3f4f6; --gray-200:#e5e7eb; --gray-300:#d1d5db;
+    --gray-400:#9ca3af; --gray-500:#6b7280; --gray-600:#4b5563; --gray-700:#374151;
+    --gray-800:#1f2937; --gray-900:#111827;
+    --primary:#1677ff; --primary-50:#eff6ff; --primary-100:#dbeafe;
+    --emerald-500:#10b981;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+    background:#eef1f5;color:var(--gray-800);-webkit-font-smoothing:antialiased;
+    padding:28px 20px 60px;
+  }
+  .page{max-width:900px;margin:0 auto}
+  .page-title{font-size:20px;font-weight:700;letter-spacing:-.01em;margin:0 0 6px}
+  .page-sub{font-size:13px;color:var(--gray-500);margin:0 0 22px;line-height:1.75}
+  .page-sub b{color:var(--gray-700)}
+
+  .scene{
+    background:#fff;border:1px solid var(--gray-200);border-radius:14px;
+    margin-bottom:22px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(16,24,40,.04),0 8px 24px -18px rgba(16,24,40,.25);
+  }
+  .scene-head{
+    display:flex;align-items:center;gap:10px;
+    padding:13px 18px;border-bottom:1px solid var(--gray-100);background:var(--gray-50);
+  }
+  .scene-tag{
+    font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+    padding:3px 8px;border-radius:999px;background:var(--primary-100);color:var(--primary);
+  }
+  .scene-title{font-size:13.5px;font-weight:700}
+  .scene-note{font-size:11.5px;color:var(--gray-500);margin-left:auto;text-align:right}
+
+  /* ---------- 模拟聊天窗口 ---------- */
+  .chat-wrap{padding:20px;display:flex;justify-content:center;background:#fafbfc}
+  .chat{
+    position:relative;width:520px;height:340px;background:#fff;
+    border:1px solid var(--gray-200);border-radius:12px;overflow:hidden;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.6);
+  }
+  .chat-scroll{
+    height:100%;overflow-y:auto;overflow-x:hidden;
+    padding:16px 52px 16px 16px;scroll-behavior:smooth;
+  }
+  .chat-scroll::-webkit-scrollbar{width:6px}
+  .chat-scroll::-webkit-scrollbar-thumb{background:var(--gray-300);border-radius:99px}
+
+  .msg{display:flex;gap:8px;margin-bottom:14px;font-size:12px;line-height:1.65}
+  .msg.user{flex-direction:row-reverse}
+  .avatar{
+    width:24px;height:24px;border-radius:8px;flex:none;
+    display:flex;align-items:center;justify-content:center;
+    font-size:11px;font-weight:800;color:#fff;
+  }
+  .msg.ai .avatar{background:linear-gradient(135deg,#5b8def,#7c5cff)}
+  .msg.user .avatar{background:var(--gray-400)}
+  .bubble{
+    max-width:78%;padding:9px 12px;border-radius:10px;color:var(--gray-700);
+  }
+  .msg.ai .bubble{background:var(--gray-50);border:1px solid var(--gray-100)}
+  .msg.user .bubble{background:var(--primary-50);border:1px solid var(--primary-100)}
+  .bubble .t{font-weight:700;color:var(--gray-800);margin-bottom:2px;font-size:11.5px}
+  .fake-line{height:6px;border-radius:3px;background:var(--gray-200);margin:5px 0}
+  .fake-line.s{width:62%}
+
+  /* ---------- 浮标 ---------- */
+  .anchors{
+    position:absolute;right:12px;bottom:64px;
+    display:flex;flex-direction:column;gap:8px;z-index:5;
+    opacity:0;pointer-events:none;
+    transition:opacity .22s ease;
+    cursor:grab;touch-action:none;user-select:none;
+  }
+  .anchors.is-dragging{cursor:grabbing}
+  .anchors.is-visible{opacity:1;pointer-events:auto}
+  .anchor-btn{
+    width:34px;height:34px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(255,255,255,.62);
+    border:1px solid rgba(209,213,219,.55);
+    box-shadow:0 1px 4px rgba(16,24,40,.05);
+    color:var(--gray-400);cursor:pointer;
+    opacity:.68;
+    transition:opacity .18s ease,color .16s ease,border-color .16s ease;
+  }
+  .anchor-btn:hover{
+    opacity:1;
+    color:var(--primary);
+    border-color:var(--primary-100);
+    background:rgba(255,255,255,.97);
+  }
+  .anchor-btn svg{width:15px;height:15px}
+  .anchor-btn.is-hidden{display:none}
+
+  /* tooltip */
+  .anchor-btn[data-tip]{position:relative}
+  .anchor-btn[data-tip]:hover::after{
+    content:attr(data-tip);
+    position:absolute;right:calc(100% + 8px);top:50%;transform:translateY(-50%);
+    background:rgba(31,41,55,.86);color:#fff;font-size:10.5px;font-weight:600;
+    padding:4px 8px;border-radius:6px;white-space:nowrap;
+    box-shadow:0 2px 8px rgba(16,24,40,.2);
+  }
+
+  /* 现有的「查看最新消息」 */
+  .new-hint{
+    position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
+    display:flex;align-items:center;gap:6px;
+    padding:7px 14px;border-radius:99px;
+    background:var(--primary);color:#fff;
+    font-size:11px;font-weight:800;letter-spacing:.04em;
+    box-shadow:0 6px 18px rgba(22,119,255,.35);
+    cursor:pointer;z-index:6;
+  }
+  .new-hint svg{width:12px;height:12px}
+
+  /* ---------- 状态说明 ---------- */
+  .states{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:0 20px 18px}
+  .state{
+    border:1px solid var(--gray-200);border-radius:10px;padding:11px 13px;background:#fff;
+  }
+  .state h6{margin:0 0 5px;font-size:11.5px;font-weight:800;color:var(--gray-700)}
+  .state p{margin:0;font-size:10.5px;color:var(--gray-500);line-height:1.6}
+  .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:middle}
+  .dot.on{background:var(--emerald-500)}
+  .dot.off{background:var(--gray-300)}
+
+  .legend{padding:0 20px 20px;display:flex;gap:18px;flex-wrap:wrap}
+  .legend-item{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--gray-600)}
+
+  .note-list{margin:0;padding:0 20px 20px;list-style:none}
+  .note-list li{
+    position:relative;padding-left:16px;font-size:11.5px;color:var(--gray-600);
+    line-height:1.85;
+  }
+  .note-list li::before{
+    content:"";position:absolute;left:4px;top:8px;width:5px;height:5px;
+    border-radius:50%;background:var(--primary);
+  }
+  .note-list b{color:var(--gray-800)}
+
+  .hint{font-size:11px;color:var(--gray-400);text-align:center;margin:6px 0 0}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1 class="page-title">聊天消息快速定位浮标</h1>
+  <p class="page-sub">
+    右侧竖排两个圆形浮标：<b>↑ 第一条</b> / <b>↓ 最后一条</b>。
+    消息<b>条数超过阈值</b>才有资格出现（示意取 6 条）；<b>不滚动的时候完全不显示</b>，
+    滚动时才浮出来、停手约 1.2 秒淡出；已经在顶部就不显示「第一条」，已经在底部就不显示
+    「最后一条」。平时半透明，hover 才变清晰。<b>浮标可以按住拖到任意位置，落点会记住。</b>下面的窗口可以直接滚动、拖动试。
+  </p>
+
+  <!-- ========== 可交互演示 ========== -->
+  <div class="scene">
+    <div class="scene-head">
+      <span class="scene-tag">可交互</span>
+      <span class="scene-title">滚动试试：浮标会跟着位置自动增减</span>
+      <span class="scene-note" id="live-state">当前：中间位置</span>
+    </div>
+    <div class="chat-wrap">
+      <div class="chat">
+        <div class="chat-scroll" id="demoScroll">
+          <div class="msg user"><div class="avatar">我</div><div class="bubble"><div class="t">第 1 条提问</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">第 1 条回答</div><div class="fake-line"></div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg user"><div class="avatar">我</div><div class="bubble"><div class="t">第 2 条提问</div><div class="fake-line s"></div></div></div>
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">第 2 条回答</div><div class="fake-line"></div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg user"><div class="avatar">我</div><div class="bubble"><div class="t">第 3 条提问</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">第 3 条回答</div><div class="fake-line"></div><div class="fake-line"></div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg user"><div class="avatar">我</div><div class="bubble"><div class="t">第 4 条提问</div><div class="fake-line s"></div></div></div>
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">第 4 条回答</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg user"><div class="avatar">我</div><div class="bubble"><div class="t">第 5 条提问</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">第 5 条回答（最新）</div><div class="fake-line"></div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+        </div>
+
+        <div class="anchors" id="demoAnchors">
+          <button class="anchor-btn" id="btnTop" data-tip="第一条" aria-label="回到第一条">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+          <button class="anchor-btn" id="btnBottom" data-tip="最后一条" aria-label="回到最后一条">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="states">
+      <div class="state">
+        <h6><span class="dot on"></span>中间位置</h6>
+        <p>两个浮标都在，随时可以跳两端。</p>
+      </div>
+      <div class="state">
+        <h6><span class="dot off"></span>已经在顶部</h6>
+        <p>「第一条」自动隐藏，避免点了没反应。</p>
+      </div>
+      <div class="state">
+        <h6><span class="dot off"></span>已经在底部</h6>
+        <p>「最后一条」自动隐藏。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 短对话不显示 ========== -->
+  <div class="scene">
+    <div class="scene-head">
+      <span class="scene-tag">阈值</span>
+      <span class="scene-title">消息不够多时，浮标根本不出现</span>
+      <span class="scene-note">示意：3 条 &lt; 阈值 6 条</span>
+    </div>
+    <div class="chat-wrap">
+      <div class="chat" style="height:220px">
+        <div class="chat-scroll" id="shortScroll">
+          <div class="msg user"><div class="avatar">我</div><div class="bubble"><div class="t">第 1 条提问</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">第 1 条回答</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg user"><div class="avatar">我</div><div class="bubble"><div class="t">第 2 条提问</div><div class="fake-line s"></div></div></div>
+        </div>
+        <div class="anchors" id="shortAnchors" style="display:none">
+          <button class="anchor-btn" data-tip="第一条">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+          <button class="anchor-btn" data-tip="最后一条">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="states" style="grid-template-columns:1fr">
+      <div class="state">
+        <h6><span class="dot off"></span>3 条消息</h6>
+        <p>完全看不到浮标，页面保持干净；滚动区域仍在，只是不需要导航。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 与现有按钮的关系 ========== -->
+  <div class="scene">
+    <div class="scene-head">
+      <span class="scene-tag">位置关系</span>
+      <span class="scene-title">和现有的「查看最新消息」不打架</span>
+      <span class="scene-note">一个管导航，一个管新内容提醒</span>
+    </div>
+    <div class="chat-wrap">
+      <div class="chat">
+        <div class="chat-scroll" id="relScroll" style="scroll-behavior:auto">
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">历史消息</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg user"><div class="avatar">我</div><div class="bubble"><div class="t">历史提问</div><div class="fake-line s"></div></div></div>
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">历史消息</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg user"><div class="avatar">我</div><div class="bubble"><div class="t">历史提问</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">历史消息</div><div class="fake-line"></div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+          <div class="msg ai"><div class="avatar">AI</div><div class="bubble"><div class="t">新到达的消息</div><div class="fake-line"></div><div class="fake-line s"></div></div></div>
+        </div>
+
+        <div class="anchors is-visible" style="bottom:70px">
+          <button class="anchor-btn" data-tip="第一条">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+          <button class="anchor-btn" data-tip="最后一条">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+          </button>
+        </div>
+
+        <div class="new-hint">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M19 13l-7 7-7-7"/></svg>
+          <span>查看最新消息</span>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <div class="legend-item">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        右侧竖排 = 位置导航（滚动时出现）
+      </div>
+      <div class="legend-item">
+        <span style="width:10px;height:10px;border-radius:99px;background:var(--primary);display:inline-block"></span>
+        底部居中 = 有新消息（只在有新内容时弹一下）
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 说明 ========== -->
+  <div class="scene">
+    <div class="scene-head">
+      <span class="scene-tag">行为</span>
+      <span class="scene-title">几条要定下来的规则</span>
+    </div>
+    <ul class="note-list" style="padding-top:16px">
+      <li><b>消息条数超过阈值才有资格出现</b>：阈值建议 6~8 条（示意取 6），短对话完全不出现。</li>
+      <li><b>不滚动就不显示</b>：只在用户滚轮 / 触摸 / 翻页键操作后浮出来，停手约 1.2 秒淡出；流式输出自动跟底不算（否则生成过程中会一直挂着）。</li>
+      <li><b>悬停暂停淡出</b>：鼠标移到浮标上就保持可见，离开后重新计时——不然刚要点击按钮就没了。</li>
+      <li><b>可拖动，并记住位置</b>：按住浮标拖到任意位置，落点存 localStorage，下次打开还在那儿；拖动位移超过 4px 就吞掉随后的点击，不会拖完顺手跳一次。</li>
+      <li><b>到位即隐藏</b>：滚到顶部，「第一条」消失；滚到底部，「最后一条」消失。不会出现点了没反应的按钮。</li>
+      <li><b>平滑滚动</b>：跳转用 smooth，不用瞬移，避免失去空间感。</li>
+      <li><b>「第一条」会触发历史加载</b>：现有逻辑里滚到顶就自动拉更早的历史，所以跳到顶之后可能继续往上加载几段——这正是「看最早的内容」想要的效果。如果你希望跳顶时<b>不要</b>自动加载，需要额外加一个开关。</li>
+      <li><b>不抢焦点</b>：浮标只负责滚动，不改输入框焦点、不打断正在生成的流。</li>
+    </ul>
+  </div>
+
+  <p class="hint">示意稿，实际尺寸与配色按现有主题变量走</p>
+</div>
+
+<script>
+  const scroll = document.getElementById('demoScroll');
+  const anchors = document.getElementById('demoAnchors');
+  const btnTop = document.getElementById('btnTop');
+  const btnBottom = document.getElementById('btnBottom');
+  const liveState = document.getElementById('live-state');
+
+  const IDLE_MS = 1200;
+  let idleTimer = null;
+  let hovered = false;
+
+  function sync() {
+    const max = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    const top = scroll.scrollTop;
+    const atTop = top <= 4;
+    const atBottom = max - top <= 4;
+    btnTop.classList.toggle('is-hidden', atTop);
+    btnBottom.classList.toggle('is-hidden', atBottom);
+    liveState.textContent = atTop ? '当前：已在最顶'
+      : atBottom ? '当前：已在最底'
+      : '当前：中间位置';
+  }
+
+  function scheduleHide() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (hovered) return;
+      anchors.classList.remove('is-visible');
+    }, IDLE_MS);
+  }
+
+  /** 用户滚动 → 浮标露面并重置倒计时。 */
+  function wake() {
+    anchors.classList.add('is-visible');
+    scheduleHide();
+  }
+
+  btnTop.addEventListener('click', () => { if (movedFar) return; wake(); scroll.scrollTo({ top: 0, behavior: 'smooth' }); });
+  btnBottom.addEventListener('click', () => { if (movedFar) return; wake(); scroll.scrollTo({ top: scroll.scrollHeight, behavior: 'smooth' }); });
+  scroll.addEventListener('scroll', () => { sync(); wake(); }, { passive: true });
+
+  anchors.addEventListener('mouseenter', () => { hovered = true; clearTimeout(idleTimer); });
+  anchors.addEventListener('mouseleave', () => { hovered = false; scheduleHide(); });
+
+  // 拖动：按住浮标移动，位置限制在聊天窗口内
+  const chat = anchors.parentElement;
+  let dragStart = null;
+  let movedFar = false;
+
+  anchors.addEventListener('pointerdown', (e) => {
+    const chatRect = chat.getBoundingClientRect();
+    const aRect = anchors.getBoundingClientRect();
+    dragStart = {
+      x: e.clientX, y: e.clientY,
+      right: chatRect.right - aRect.right,
+      bottom: chatRect.bottom - aRect.bottom,
+      maxRight: chatRect.width - aRect.width - 8,
+      maxBottom: chatRect.height - aRect.height - 8,
+    };
+    movedFar = false;
+    anchors.classList.add('is-dragging');
+    anchors.setPointerCapture(e.pointerId);
+  });
+
+  anchors.addEventListener('pointermove', (e) => {
+    if (!dragStart) return;
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) movedFar = true;
+    const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
+    anchors.style.right = clamp(dragStart.right - dx, 8, dragStart.maxRight) + 'px';
+    anchors.style.bottom = clamp(dragStart.bottom - dy, 8, dragStart.maxBottom) + 'px';
+  });
+
+  anchors.addEventListener('pointerup', () => {
+    dragStart = null;
+    anchors.classList.remove('is-dragging');
+    setTimeout(() => { movedFar = false; }, 0);
+  });
+
+  scroll.scrollTop = 180;
+  sync();
+  wake();
+
+  // 第二个窗口停在中间，展示导航浮标与「查看最新消息」并存
+  const rel = document.getElementById('relScroll');
+  if (rel) rel.scrollTop = 150;
+</script>
+</body>
+</html>

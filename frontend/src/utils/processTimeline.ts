@@ -89,6 +89,13 @@ export type ProcessTimelineLogItem = {
   /** 远端给的进度文案，例如「检索数据集 3/10」。 */
   progressMessage?: string | null;
   isExpanded?: boolean;
+  /**
+   * 用户手动点开/收起过这条。
+   *
+   * 只由渲染层的点击入口置位，用来保护「用户正在看的内容」不被自动折叠抽走——
+   * 没有这个标记，就分不清「默认收起」和「用户特意展开」。
+   */
+  userToggled?: boolean;
   children?: ProcessTimelineLogItem[];
   childrenExpanded?: boolean;
 };
@@ -1078,6 +1085,8 @@ export function upsertTimelineLog(
   if (!target.processTimeline) target.processTimeline = [];
   const existing = findTimelineLog(target.processTimeline, data.id);
   if (existing) {
+    /** 这一条是不是刚好在本轮从「执行中」收敛成终态。 */
+    const wasPending = existing.status === "pending";
     if (data.parent_id !== undefined) existing.parent_id = data.parent_id;
     if (data.title !== undefined) existing.title = data.title;
     if (data.details !== undefined) existing.details = data.details;
@@ -1105,6 +1114,17 @@ export function upsertTimelineLog(
     if (data.progress !== undefined) existing.progress = data.progress;
     if (data.total !== undefined) existing.total = data.total;
     if (data.progressMessage !== undefined) existing.progressMessage = data.progressMessage;
+    // 执行完自动收起详情：一轮多工具跑下来，每张卡都把入参与输出摊着会占满整屏。
+    // 只在「本轮从 pending 收敛」时收一次，已收起的重复事件不再打扰；用户手动点开
+    // 过的（userToggled）保持原状，否则正看着结果的人会被当场抽走内容。
+    if (
+      wasPending
+      && data.status !== undefined
+      && data.status !== "pending"
+      && !existing.userToggled
+    ) {
+      existing.isExpanded = false;
+    }
     return;
   }
 

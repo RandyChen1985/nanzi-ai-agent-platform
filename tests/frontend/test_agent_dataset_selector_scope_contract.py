@@ -37,8 +37,8 @@ def test_selector_hides_private_datasets_behind_a_flag():
     page = _read(SELECTOR)
     assert "excludePrivate" in page
     # 渲染走过滤后的集合，而不是原始列表
-    assert 'v-for="ds in visibleDatasets"' in page
-    assert "visibleDatasets.length === 0" in page
+    assert 'v-for="ds in filteredDatasets"' in page
+    assert "filteredDatasets.length === 0" in page
     # 不能静默隐藏：要说明隐藏了几个，以及仍在配置里的私有库
     assert "hiddenPrivateCount" in page
     assert "selectedPrivateNames" in page

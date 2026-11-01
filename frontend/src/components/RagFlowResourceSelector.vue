@@ -7,6 +7,19 @@ import {
   type RagFlowDataset,
 } from "@/api/ragflow";
 import Modal from "@/components/Modal.vue";
+import {
+  countByScope,
+  docCountOf,
+  filterAndSortDatasets,
+  hasAnyFilter,
+  nameOf,
+  type KbDocsSize,
+  type KbFilters,
+  type KbScope,
+  type KbSortBy,
+  type KbUpdatedWithin,
+  type KbWriteAccess,
+} from "@/utils/kbDatasetFilter";
 
 const props = defineProps<{
   modelValue: boolean; // v-model for visibility
@@ -104,6 +117,11 @@ const engineStatusText = computed(() => {
   if (engineStatus.value === "connected") return "知识库引擎已连接";
   return "知识库引擎未连接";
 });
+
+/** API Key 缺失时连接照样是「已连接」，但检索会失败，必须继续用横幅提醒 */
+const apiKeyMissing = computed(() =>
+  Boolean(ragflowConfig.value && !ragflowConfig.value.api_key_configured)
+);
 
 const friendlyErrorMsg = computed(() => {
   if (!errorMsg.value) return "";
@@ -253,6 +271,102 @@ const formatDate = (ts?: number | string) => {
   // RAGFlow usually uses ms
   return new Date(ts).toLocaleDateString();
 };
+
+/* ------------------------------------------------------------------
+ * 搜索与筛选
+ *
+ * 知识库到百级之后，靠滚动找库不现实。这里全部在前端过滤：接口本来就
+ * 一次返回全量，再加一个后端搜索接口反而要处理分页与已选状态的同步。
+ * 过滤规则本身在 utils/kbDatasetFilter.ts，便于单独跑测试。
+ * 只在 type === "dataset" 时渲染这些控件（智能体列表短，不需要）。
+ * ------------------------------------------------------------------ */
+
+const keyword = ref("");
+const scopeFilter = ref<KbScope[]>([]);
+const updatedWithin = ref<KbUpdatedWithin | null>(null);
+const docsSize = ref<KbDocsSize | null>(null);
+const writeAccess = ref<KbWriteAccess | null>(null);
+const sortBy = ref<KbSortBy>("updated");
+const moreFiltersOpen = ref(false);
+
+/** 每次求值都取一次当前时间，避免长开页面里「近 7 天」逐渐失真 */
+const currentFilters = computed<KbFilters>(() => ({
+  keyword: keyword.value,
+  scopes: scopeFilter.value,
+  updatedWithin: updatedWithin.value,
+  docsSize: docsSize.value,
+  writeAccess: writeAccess.value,
+}));
+
+/** 过滤 + 排序后的列表 */
+const filteredDatasets = computed(() =>
+  filterAndSortDatasets(visibleDatasets.value, currentFilters.value, sortBy.value),
+);
+
+const scopeCounts = computed(() => countByScope(visibleDatasets.value, currentFilters.value));
+
+/** 已选区展示：按选中顺序取回实体，找不到的（已删除）跳过 */
+const selectedDatasets = computed(() =>
+  selectedIds.value
+    .map((id) => datasets.value.find((ds) => ds.id === id))
+    .filter((ds): ds is RagFlowDataset => Boolean(ds))
+);
+
+/** 可见范围选项：隐藏私有库时不给「个人私有」这一项，选了也筛不出东西 */
+const scopeOptions = computed(
+  () =>
+    (props.excludePrivate ? ["public", "team"] : ["public", "team", "private"]) as KbScope[],
+);
+
+const hasActiveFilters = computed(() => hasAnyFilter(currentFilters.value));
+
+/** 高级条件里已生效的条数，用于在「更多筛选」按钮上提示 */
+const advancedFilterCount = computed(
+  () =>
+    Number(updatedWithin.value !== null) +
+    Number(docsSize.value !== null) +
+    Number(writeAccess.value !== null),
+);
+
+const toggleScope = (scope: "public" | "team" | "private") => {
+  scopeFilter.value = scopeFilter.value.includes(scope)
+    ? scopeFilter.value.filter((item) => item !== scope)
+    : [...scopeFilter.value, scope];
+};
+
+/** 组内单选：再点一次取消 */
+const toggleUpdatedWithin = (value: "7" | "30" | "older") => {
+  updatedWithin.value = updatedWithin.value === value ? null : value;
+};
+const toggleDocsSize = (value: "empty" | "small" | "large") => {
+  docsSize.value = docsSize.value === value ? null : value;
+};
+const toggleWriteAccess = (value: "w" | "ro") => {
+  writeAccess.value = writeAccess.value === value ? null : value;
+};
+
+const resetFilters = () => {
+  keyword.value = "";
+  scopeFilter.value = [];
+  updatedWithin.value = null;
+  docsSize.value = null;
+  writeAccess.value = null;
+};
+
+/** 全选只作用于当前筛选结果：不做全库全选，避免误选上百个 */
+const selectAllFiltered = () => {
+  filteredDatasets.value.forEach((ds) => {
+    if (!selectedIds.value.includes(ds.id)) selectedIds.value.push(ds.id);
+  });
+};
+
+const clearSelected = () => {
+  selectedIds.value = [];
+};
+
+const removeSelected = (id: string) => {
+  selectedIds.value = selectedIds.value.filter((item) => item !== id);
+};
 </script>
 
 <template>
@@ -264,7 +378,24 @@ const formatDate = (ts?: number | string) => {
     size="max-w-3xl"
   >
     <div class="flex flex-col max-h-[calc(85vh-10rem)] min-h-[320px]">
+      <!--
+        引擎状态：连接正常时压成一行小字（约 14px 高），地址收进 tooltip。
+        原来是一整条 60px 横幅，每次打开都白占一截列表高度——只有检查中、
+        未连接、API Key 缺失这类需要用户处理的情况才值得展开。
+      -->
       <div
+        v-if="engineStatus === 'connected' && !apiKeyMissing"
+        class="mb-1.5 flex flex-shrink-0 items-center gap-1 text-[10.5px] leading-none"
+      >
+        <span class="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"></span>
+        <span
+          class="cursor-help whitespace-nowrap text-gray-400 hover:text-gray-600"
+          :title="`RAGFlow 地址：${ragflowApiUrl}`"
+          >知识库引擎已连接</span
+        >
+      </div>
+      <div
+        v-else
         class="mb-3 flex-shrink-0 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs"
         :class="{
           'border-blue-200 bg-blue-50 text-blue-700': engineStatus === 'checking',
@@ -404,6 +535,124 @@ const formatDate = (ts?: number | string) => {
 
         <!-- Dataset List -->
         <template v-else>
+          <!--
+            搜索与筛选：sticky 吸顶，列表滚动时始终可见。
+            用 sticky 而不是把筛选区提到滚动容器外面，是为了不动外层 flex 结构。
+          -->
+          <div class="sticky top-0 z-10 -mx-1 space-y-2 bg-white px-1 pb-2">
+            <div class="relative">
+              <svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5-5m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <!-- 用 type="search" 走全局统一的原生清空按钮样式，不再自绘 -->
+              <input
+                v-model="keyword"
+                type="search"
+                placeholder="搜索知识库名称、描述或创建人…"
+                autocomplete="off"
+                class="h-9 w-full rounded-lg border border-gray-200 bg-gray-50 py-0 pl-8 pr-8 text-xs text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/10"
+              />
+            </div>
+
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="mr-0.5 text-[10px] font-bold tracking-wide text-gray-400">可见范围</span>
+              <button
+                v-for="scope in scopeOptions"
+                :key="scope"
+                type="button"
+                @click="toggleScope(scope)"
+                class="flex h-[25px] items-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition-colors"
+                :class="
+                  scopeFilter.includes(scope)
+                    ? 'border-primary/30 bg-primary/5 text-primary'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+                "
+              >
+                {{ SCOPE_BADGE[scope].label }}
+                <span class="text-[9.5px] font-bold opacity-60">{{ scopeCounts[scope] }}</span>
+              </button>
+
+              <button
+                type="button"
+                @click="moreFiltersOpen = !moreFiltersOpen"
+                class="flex h-[25px] items-center gap-1 rounded-md border border-dashed border-gray-300 bg-white px-2 text-[11px] font-bold text-gray-500 transition-colors hover:border-primary hover:text-primary"
+              >
+                更多筛选
+                <span v-if="advancedFilterCount" class="rounded-full bg-primary px-1 text-[9px] leading-4 text-white">{{ advancedFilterCount }}</span>
+                <svg class="h-2.5 w-2.5 transition-transform" :class="{ 'rotate-180': moreFiltersOpen }" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+
+              <span class="ml-auto"></span>
+
+              <select
+                v-model="sortBy"
+                aria-label="排序方式"
+                class="h-[25px] cursor-pointer appearance-none rounded-md border border-gray-200 bg-white py-0 pl-2 pr-5 text-[11px] font-semibold text-gray-600 outline-none"
+                style="background-image: url(&quot;data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af' stroke-width='2.5'><path stroke-linecap='round' stroke-linejoin='round' d='M6 9l6 6 6-6'/></svg>&quot;); background-repeat: no-repeat; background-position: right 4px center; background-size: 11px"
+              >
+                <option value="updated">最近更新</option>
+                <option value="docs">文档最多</option>
+                <option value="name">名称 A→Z</option>
+              </select>
+            </div>
+
+            <div v-if="moreFiltersOpen" class="flex flex-wrap items-center gap-1.5 border-t border-dashed border-gray-200 pt-2">
+              <span class="text-[10px] font-bold tracking-wide text-gray-400">更新时间</span>
+              <button type="button" @click="toggleUpdatedWithin('7')" :class="updatedWithin === '7' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'" class="h-[25px] rounded-md border px-2 text-[11px] font-semibold transition-colors">近 7 天</button>
+              <button type="button" @click="toggleUpdatedWithin('30')" :class="updatedWithin === '30' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'" class="h-[25px] rounded-md border px-2 text-[11px] font-semibold transition-colors">近 30 天</button>
+              <button type="button" @click="toggleUpdatedWithin('older')" :class="updatedWithin === 'older' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'" class="h-[25px] rounded-md border px-2 text-[11px] font-semibold transition-colors">30 天以上</button>
+
+              <span class="ml-1.5 text-[10px] font-bold tracking-wide text-gray-400">文档规模</span>
+              <button type="button" @click="toggleDocsSize('empty')" :class="docsSize === 'empty' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'" class="h-[25px] rounded-md border px-2 text-[11px] font-semibold transition-colors">空库</button>
+              <button type="button" @click="toggleDocsSize('small')" :class="docsSize === 'small' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'" class="h-[25px] rounded-md border px-2 text-[11px] font-semibold transition-colors">1–50</button>
+              <button type="button" @click="toggleDocsSize('large')" :class="docsSize === 'large' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'" class="h-[25px] rounded-md border px-2 text-[11px] font-semibold transition-colors">50+</button>
+
+              <span class="ml-1.5 text-[10px] font-bold tracking-wide text-gray-400">权限</span>
+              <button type="button" @click="toggleWriteAccess('w')" :class="writeAccess === 'w' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'" class="h-[25px] rounded-md border px-2 text-[11px] font-semibold transition-colors">可写</button>
+              <button type="button" @click="toggleWriteAccess('ro')" :class="writeAccess === 'ro' ? 'border-primary/30 bg-primary/5 text-primary' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'" class="h-[25px] rounded-md border px-2 text-[11px] font-semibold transition-colors">只读</button>
+            </div>
+
+            <div class="flex items-center gap-2 text-[11px] text-gray-500">
+              <span>
+                筛选出 <b class="tabular-nums text-gray-800">{{ filteredDatasets.length }}</b>
+                / 共 <b class="tabular-nums text-gray-800">{{ visibleDatasets.length }}</b> 个
+              </span>
+              <span class="ml-auto"></span>
+              <button type="button" @click="selectAllFiltered" class="rounded px-1 py-0.5 text-[11px] font-bold text-primary hover:bg-primary/5">全选当前结果</button>
+              <button type="button" @click="clearSelected" class="rounded px-1 py-0.5 text-[11px] font-bold text-gray-400 hover:bg-gray-100 hover:text-gray-600">清空已选</button>
+            </div>
+          </div>
+
+          <!-- 已选区：多选时最容易选错却找不到，固定在列表上方，点 × 直接移除 -->
+          <div v-if="selectedDatasets.length" class="flex-shrink-0 rounded-lg border border-emerald-100 bg-emerald-50/60 px-2 py-1.5">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[10px] font-bold text-emerald-700">已选 {{ selectedDatasets.length }}</span>
+              <span
+                v-for="ds in selectedDatasets.slice(0, 6)"
+                :key="'sel-' + ds.id"
+                class="flex max-w-[150px] items-center gap-1 rounded-md border border-emerald-100 bg-white pl-1.5 pr-0.5 text-[10.5px] font-semibold text-emerald-700"
+                :title="nameOf(ds)"
+              >
+                <span class="truncate">{{ nameOf(ds) }}</span>
+                <button
+                  type="button"
+                  :aria-label="`移除 ${nameOf(ds)}`"
+                  @click="removeSelected(ds.id)"
+                  class="flex h-3.5 w-3.5 items-center justify-center rounded text-emerald-600 opacity-60 hover:bg-emerald-50 hover:opacity-100"
+                >
+                  <svg class="h-2 w-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3.4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </span>
+              <span v-if="selectedDatasets.length > 6" class="text-[10px] font-bold text-gray-400">
+                +{{ selectedDatasets.length - 6 }} 个
+              </span>
+            </div>
+          </div>
+
           <!-- 已绑定的个人私有库：只可解绑，不可新增 -->
           <div
             v-for="ds in pinnedPrivateDatasets"
@@ -437,7 +686,7 @@ const formatDate = (ts?: number | string) => {
           </div>
 
           <div
-            v-for="ds in visibleDatasets"
+            v-for="ds in filteredDatasets"
             :key="ds.id"
             @click="toggleSelection(ds.id)"
             class="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-green-50 transition-colors group"
@@ -503,7 +752,7 @@ const formatDate = (ts?: number | string) => {
                 >
                 <span
                   class="text-[10px] bg-gray-100 px-1.5 rounded text-gray-500"
-                  >{{ ds.doc_count ?? ds.document_count ?? 0 }} Docs</span
+                  >{{ docCountOf(ds) }} Docs</span
                 >
                 <span
                   class="text-[10px] bg-gray-100 px-1.5 rounded text-gray-500"
@@ -521,14 +770,24 @@ const formatDate = (ts?: number | string) => {
             </div>
           </div>
           <div
-            v-if="visibleDatasets.length === 0"
-            class="text-center py-10 text-gray-400"
+            v-if="filteredDatasets.length === 0"
+            class="flex flex-col items-center justify-center py-8 text-center text-gray-400"
           >
-            {{
-              hiddenPrivateCount
-                ? "没有可选的知识库（个人私有库已隐藏，见下方说明）"
-                : "暂无知识库数据"
-            }}
+            <svg class="mb-2 h-7 w-7 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5-5m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <p class="text-xs font-semibold text-gray-500">
+              {{ hasActiveFilters ? "没有匹配的知识库" : hiddenPrivateCount ? "没有可选的知识库（个人私有库已隐藏，见下方说明）" : "暂无知识库数据" }}
+            </p>
+            <p v-if="hasActiveFilters" class="mt-0.5 text-[11px] text-gray-400">换个关键词，或放宽筛选条件</p>
+            <button
+              v-if="hasActiveFilters"
+              type="button"
+              @click="resetFilters"
+              class="mt-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-bold text-primary hover:border-primary/30 hover:bg-primary/5"
+            >
+              清除全部筛选
+            </button>
           </div>
         </template>
       </div>
