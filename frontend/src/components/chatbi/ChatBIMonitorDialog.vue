@@ -83,10 +83,11 @@ const scheduleOptions = [
   { label: "每周", value: "weekly" },
   { label: "每月", value: "monthly" },
 ];
-const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"].map((label, value) => ({ label, value }));
+// 星期取值遵循标准 crontab 语义：周日 = 0，周一 = 1 … 周六 = 6
+const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"].map((label, index) => ({ label, value: (index + 1) % 7 }));
 const schedule_type = ref("daily");
 const time_value = ref("09:00");
-const weekday = ref(0);
+const weekday = ref(1);
 const monthday = ref(1);
 const notify_on_success = ref(true);
 const submitting = ref(false);
@@ -95,7 +96,7 @@ const errorMessage = ref("");
 const resetForm = () => {
   schedule_type.value = "daily";
   time_value.value = "09:00";
-  weekday.value = 0;
+  weekday.value = 1;
   monthday.value = 1;
   notify_on_success.value = true;
   errorMessage.value = "";

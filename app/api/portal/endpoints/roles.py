@@ -18,6 +18,16 @@ router = APIRouter()
 # 所以和 default/admin/system 一样按系统角色保护。
 SYSTEM_ROLE_CODES = {"default", "admin", "system", "miniprogram_user"}
 
+# 「持有即等于系统管理员」的 code：`get_user_permissions` 会把业务角色 code 并进
+# `roles`，而 `is_admin_user` / `check_permission` 只认 `"admin"`。因此 admin 必须
+# 永远禁止通过接口创建，否则「建 code=admin 的角色 + 把自己加进去」就是一键提权。
+#
+# 其余系统角色（default / system / miniprogram_user）**不附带任何特权**，却都有人工
+# 补建需求：default 是「新增用户时默认勾选」的业务角色，缺了它该流程直接退化，
+# 所以角色管理页提供了「一键初始化 default 角色」按钮。早前把整个 SYSTEM_ROLE_CODES
+# 都当成创建保留字，等于把这个按钮做成必然 400 —— 保留字清单只管提权，删除保护另算。
+PRIVILEGED_ROLE_CODES = {"admin"}
+
 # --- Request Models ---
 
 class CreateRoleRequest(BaseModel):
@@ -145,26 +155,36 @@ async def create_role(
     """
     Create a new role.
 
-    保留 code（``SYSTEM_ROLE_CODES``）一律拒绝：``get_user_permissions`` 会把
+    提权 code（``PRIVILEGED_ROLE_CODES``）一律拒绝：``get_user_permissions`` 会把
     业务角色的 ``code`` 一并并进 ``roles`` 列表，而 ``is_admin_user`` 判的就是
     ``"admin" in roles``。若允许建一个 code=admin 的业务角色，把任何人加进去
     就等于给他系统管理员权限（``check_permission`` 对 admin 直接放行）。
+
+    其余系统角色**不再拦**：``default`` / ``system`` / ``miniprogram_user`` 都不带
+    特权，而 ``default`` 需要能被「一键初始化 default 角色」补建出来（见
+    ``PRIVILEGED_ROLE_CODES`` 的注释）。它们不会被误删——删除保护看的是
+    ``SYSTEM_ROLE_CODES``。
     """
     code = (request.code or "").strip()
     if not code:
         raise HTTPException(status_code=400, detail="Role code is required")
-    if code.lower() in SYSTEM_ROLE_CODES:
+    if code.lower() in PRIVILEGED_ROLE_CODES:
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Role code '{code}' is reserved by the system "
-                f"({', '.join(sorted(SYSTEM_ROLE_CODES))})"
+                f"({', '.join(sorted(PRIVILEGED_ROLE_CODES))})"
             ),
         )
 
-    # Check duplicate code
-    existing = await db.execute(select(Role).where(Role.code == code))
-    if existing.scalar_one_or_none():
+    # Check duplicate code（去空白 + 大小写归一）：MySQL 默认排序规则本就忽略大小写，
+    # PostgreSQL 不忽略。不归一的话 PG 上能建出 ``Default``，与既有 ``default`` 并存，
+    # 而前端「是否已初始化 default」是大小写无关匹配的，会出现两个都算数的异形角色。
+    normalized = func.lower(func.trim(Role.code))
+    existing = await db.execute(
+        select(Role.id).where(normalized == code.lower())
+    )
+    if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=400, detail="Role code already exists")
         
     new_role = Role(

@@ -3,6 +3,8 @@
  *
  * - 字段顺序：分 时 日 月 周
  * - 星期字段按标准 crontab：0/7 = 周日，1 = 周一 … 6 = 周六
+ * - 调度侧由后端 app/services/cron_compat.py 把该星期语义翻译给 APScheduler，
+ *   前端不要自行做数字偏移，否则预览与实际执行会再次错开一天
  * - 「日」和「周」不能同时限定：APScheduler 对二者按 AND 匹配，与标准 crontab 的 OR 不同
  */
 
