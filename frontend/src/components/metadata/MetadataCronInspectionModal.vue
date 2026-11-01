@@ -7,6 +7,7 @@ import { useUser } from '@/composables/useUser'
 import axios from '../../utils/axios'
 import { metadataApi, type CronInspectionConfig } from '@/api/metadata'
 import { validateCronExpression } from '@/utils/cronSchedule'
+import CronFieldLegend from '@/components/common/CronFieldLegend.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -482,7 +483,8 @@ const getHealthBadge = (health: string) => {
           </div>
 
           <!-- 自定义 Cron 输入框 -->
-          <div v-if="selectedPreset === 'custom'" class="pt-2">
+          <div v-if="selectedPreset === 'custom'" class="pt-2 space-y-2">
+            <CronFieldLegend />
             <div class="flex items-center gap-2">
               <input
                 type="text"
@@ -500,9 +502,6 @@ const getHealthBadge = (health: string) => {
             </div>
             <p v-if="!customCronValidation.valid" class="text-[11px] text-rose-500 mt-1">
               {{ customCronValidation.message }}
-            </p>
-            <p v-else class="text-[11px] text-slate-400 mt-1">
-              格式说明：分(0-59) 时(0-23) 日(1-31) 月(1-12) 星期(0-7，0/7 为周日)。
             </p>
           </div>
         </div>

@@ -504,7 +504,14 @@
             <label v-if="savedReportSubscriptionForm.schedule_type !== 'cron'" class="block"><span class="text-xs font-bold text-gray-600">执行时间</span><input v-model="savedReportSubscriptionForm.time_value" type="time" class="mt-1 w-full rounded-lg border-gray-200 text-sm" /></label>
             <label v-if="savedReportSubscriptionForm.schedule_type === 'weekly'" class="block"><span class="text-xs font-bold text-gray-600">星期</span><select v-model.number="savedReportSubscriptionForm.weekday" class="mt-1 w-full rounded-lg border-gray-200 text-sm"><option v-for="day in 7" :key="day" :value="day - 1">星期{{ ['日','一','二','三','四','五','六'][day - 1] }}</option></select></label>
             <label v-if="savedReportSubscriptionForm.schedule_type === 'monthly'" class="block"><span class="text-xs font-bold text-gray-600">每月日期</span><input v-model.number="savedReportSubscriptionForm.monthday" type="number" min="1" max="31" class="mt-1 w-full rounded-lg border-gray-200 text-sm" /></label>
-            <label v-if="savedReportSubscriptionForm.schedule_type === 'cron'" class="block"><span class="text-xs font-bold text-gray-600">Cron 表达式</span><input v-model="savedReportSubscriptionForm.cron_expr" class="mt-1 w-full rounded-lg text-sm font-mono" :class="savedReportCronValidation.valid ? 'border-gray-200' : 'border-red-300 focus:border-red-400'" placeholder="0 9 * * *" /><small v-if="!savedReportCronValidation.valid" class="mt-1 block text-[10px] text-red-500">{{ savedReportCronValidation.message }}</small><small v-else class="mt-1 block text-[10px] text-gray-400">标准 5 段：分 时 日 月 周（星期 0/7 = 周日）</small></label>
+            <div v-if="savedReportSubscriptionForm.schedule_type === 'cron'" class="space-y-2">
+              <CronFieldLegend />
+              <label class="block">
+                <span class="text-xs font-bold text-gray-600">Cron 表达式</span>
+                <input v-model="savedReportSubscriptionForm.cron_expr" class="mt-1 w-full rounded-lg text-sm font-mono" :class="savedReportCronValidation.valid ? 'border-gray-200' : 'border-red-300 focus:border-red-400'" placeholder="0 9 * * *" />
+              </label>
+              <small v-if="!savedReportCronValidation.valid" class="block text-[10px] text-red-500">{{ savedReportCronValidation.message }}</small>
+            </div>
             <div v-if="savedReportCustomParameterSchema.length" class="space-y-2 rounded-xl border border-violet-100 bg-violet-50/50 p-3 dark:border-violet-900/40 dark:bg-violet-950/20">
               <p class="text-xs font-bold text-violet-800 dark:text-violet-200">定时运行参数</p>
               <p class="text-[10px] text-violet-700/80 dark:text-violet-300/80">这里的值会覆盖报表默认参数，并在每次订阅运行时复用。</p>
@@ -1444,6 +1451,7 @@ import { useToast } from "@/composables/useToast";
 import { renderSafeMarkdownPreview } from "@/utils/safeMarkdown";
 import { focusSavedReportTarget } from "@/utils/savedReportFocus";
 import { validateCronExpression } from "@/utils/cronSchedule";
+import CronFieldLegend from "@/components/common/CronFieldLegend.vue";
 import type { SavedReportOpenRequest } from "@/utils/savedReportOpenProtocol";
 import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";
 import SavedReportQuickViews from "@/components/chatbi/SavedReportQuickViews.vue";

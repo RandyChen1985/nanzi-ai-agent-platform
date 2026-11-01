@@ -89,3 +89,64 @@ def test_generator_and_preview_keep_standard_crontab_semantics():
     assert "`${minute} ${hour} * * 1-5`" in scenes  # 工作日执行
     assert "0/7 = 周日" in util
     assert "calendar.getUTCDay()" in util
+
+
+def test_task_center_advanced_cron_input_marks_itself_red_when_invalid():
+    """高级模式输入框的错误反馈必须落在输入框本身，而不是只有一行淡蓝色说明。"""
+    source = _read("frontend/src/views/TaskCenter.vue")
+
+    # 输入框在非法时切到玫红边框/底色（! 前缀覆盖原有的 focus:border-primary）
+    assert "cronExprValidation" in source
+    assert "!border-rose-300 bg-rose-50/40 text-rose-700 focus:!border-rose-400" in source
+    assert ':aria-invalid="cronExprValidation.valid ? \'false\' : \'true\'"' in source
+
+    # 说明框整体跟随切换配色，并在错误态换成醒目标签
+    assert "cronExprValidation.valid ? 'bg-blue-50/50 border-blue-100/50' : 'bg-rose-50/60 border-rose-200'" in source
+    assert "⚠ 格式有误:" in source
+
+    # 报警文案要具体到字段，不能只回一句「表达式格式不正确」
+    assert "if (!cronExprValidation.value.valid) return cronExprValidation.value.message" in source
+
+    # 空输入不标红，避免弹窗一打开就红一片
+    assert "if (!expr) return { valid: true, message: '' }" in source
+
+    # 非法表达式不能把 422 甩给用户：保存前就拦下并说明原因
+    assert "if (!cronExprValidation.value.valid) {" in source
+    assert "showToast(cronExprValidation.value.message, 'error')" in source
+
+
+def test_cron_builder_modal_marks_its_input_red_when_invalid():
+    """可视化生成器的「自定义」页签同样要把错误落在输入框上，而不是只给一行橙字。"""
+    source = _read("frontend/src/components/task/CronAdvancedBuilder.vue")
+
+    # ! 前缀用来压过原有的 focus:border-primary / focus:ring-primary/20
+    assert "!border-rose-300 !bg-rose-50/40 !text-rose-700 focus:!border-rose-400 focus:!ring-rose-200" in source
+    assert ':aria-invalid="validation.valid ? \'false\' : \'true\'"' in source
+    # 字段级原因由橙转红并加粗
+    assert 'class="text-[11px] leading-relaxed font-bold text-rose-600">{{ validation.message }}' in source
+    assert 'class="text-[10px] font-bold text-rose-600">表达式待修正' in source
+    # 合法态仍然保持绿色「格式检查通过」
+    assert 'text-emerald-600">格式检查通过。' in source
+
+
+def test_cron_field_legend_explains_the_five_fields_in_both_inputs():
+    """两处手输 cron 的地方都要先讲清 5 段是什么，再谈语法。"""
+    legend = _read("frontend/src/components/common/CronFieldLegend.vue")
+
+    # 五个字段与各自取值范围必须与后端口径一致
+    for label, rng in (("分", "0-59"), ("时", "0-23"), ("日", "1-31"), ("月", "1-12"), ("周", "0-7")):
+        assert f"label: '{label}', range: '{rng}'" in legend
+
+    # 写法说明 + 星期基准 + 可照抄的示例
+    assert "每个单位" in legend and "多个值" in legend
+    assert "= 周日" in legend and "= 周一" in legend and "= 周六" in legend
+    assert "每周一至周五 09:00" in legend
+
+    # 四个手输 cron 的入口都要挂上
+    for entry in (
+        "frontend/src/components/task/CronAdvancedBuilder.vue",      # 可视化生成器 · 自定义
+        "frontend/src/views/TaskCenter.vue",                         # 任务表单 · 高级
+        "frontend/src/components/chatbi/DatasetCapabilityMenu.vue",  # 报表订阅 · 高级 Cron
+        "frontend/src/components/metadata/MetadataCronInspectionModal.vue",  # 巡检 · 自定义 Cron
+    ):
+        assert "<CronFieldLegend />" in _read(entry), entry
