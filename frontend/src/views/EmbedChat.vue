@@ -1375,6 +1375,19 @@
       </div>
     </transition>
 
+    <!--
+      消息快速定位浮标（可拖动）。显示条件在脚本里判定：条数够、能滚动、且用户刚
+      滚动过；拖动与位置记忆交给组件自己处理。
+    -->
+    <ChatScrollAnchors
+      :visible="showScrollAnchors"
+      :show-top="showScrollAnchorTop"
+      :show-bottom="showScrollAnchorBottom"
+      @jump-first="jumpToFirstMessage"
+      @jump-last="jumpToLastMessage"
+      @hover="handleScrollAnchorHover"
+    />
+
     <CitationPopover
       :visible="citationPopover.visible"
       :citation="citationPopover.citation"
@@ -2790,6 +2803,7 @@ import ConfirmModal from "@/components/ConfirmModal.vue";
 import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
+import ChatScrollAnchors from "@/components/chat/ChatScrollAnchors.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import ChatRecoveryCard from "@/components/chat/ChatRecoveryCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
@@ -4087,6 +4101,31 @@ const abortThreadSkeleton = () => {
 const messagesContainer = ref<HTMLDivElement | null>(null);
 // Scroll State
 const isAtBottom = ref(true);
+/** 是否停在消息区最顶部，决定「第一条」浮标要不要露出来。 */
+const isAtTop = ref(true);
+/** 消息区当前是否真的能滚动：条数够了但内容不足一屏时，浮标点了也没效果。 */
+const canScrollMessages = ref(false);
+/**
+ * 消息条数达到该阈值才显示定位浮标。
+ *
+ * 取 8 条（约 4 轮问答）：更短的会话一屏基本看得完，浮标只会挤占空间。
+ * 同时还要满足 canScrollMessages，两个条件缺一不可。
+ */
+const SCROLL_ANCHOR_MIN_MESSAGES = 8;
+/** 判定「在顶 / 在底 / 可滚动」的容差，吸收亚像素与滚动回弹。 */
+const SCROLL_ANCHOR_EPSILON_PX = 4;
+/**
+ * 用户停手后浮标再撑这么久就淡出。
+ *
+ * 取 1.2s：够把手从滚轮移到按钮上，又不会让浮标长期占着屏幕——
+ * 不滚动的时候页面应该是干净的。
+ */
+const SCROLL_ANCHOR_IDLE_HIDE_MS = 1200;
+/** 用户刚滚动过（或正停在浮标上），浮标才露面。 */
+const isScrollingMessages = ref(false);
+/** 鼠标停在浮标上时不淡出，否则刚要点击按钮就没了。 */
+const scrollAnchorHovered = ref(false);
+let scrollAnchorIdleTimer: number | null = null;
 const showNewMessageHint = ref(false);
 const autoScrollEnabled = ref(true);
 /** 程序滚底后的短时间内忽略 handleScroll 的「误判为手动上滚」，避免关掉 autoScroll（smooth 中间帧会触发） */
@@ -13028,8 +13067,111 @@ const scrollToBottom = (force = false) => {
     nextTick(() => runScrollToBottom(pendingForce));
   });
 };
+/** 重新开始「停手后淡出」的倒计时；悬停期间不会被清掉。 */
+const scheduleScrollAnchorHide = () => {
+  if (scrollAnchorIdleTimer !== null) window.clearTimeout(scrollAnchorIdleTimer);
+  scrollAnchorIdleTimer = window.setTimeout(() => {
+    scrollAnchorIdleTimer = null;
+    if (scrollAnchorHovered.value) return;
+    isScrollingMessages.value = false;
+  }, SCROLL_ANCHOR_IDLE_HIDE_MS);
+};
+
+/**
+ * 点亮浮标。
+ *
+ * 只由「用户真实的滚动意图」调用（滚轮 / 触摸 / 指针 / 翻页键）——流式输出时的
+ * 自动跟底同样是 scroll 事件，若一并算进来，浮标会在整个生成过程中一直挂着，
+ * 与「不滚动就不显示」相悖。
+ */
+const markScrollAnchorActivity = () => {
+  isScrollingMessages.value = true;
+  scheduleScrollAnchorHide();
+};
+
+onUnmounted(() => {
+  if (scrollAnchorIdleTimer !== null) {
+    window.clearTimeout(scrollAnchorIdleTimer);
+    scrollAnchorIdleTimer = null;
+  }
+});
+
+/** 鼠标进入时暂停淡出倒计时，离开后重新计时。 */
+const handleScrollAnchorHover = (hovered: boolean) => {
+  scrollAnchorHovered.value = hovered;
+  if (hovered) {
+    if (scrollAnchorIdleTimer !== null) {
+      window.clearTimeout(scrollAnchorIdleTimer);
+      scrollAnchorIdleTimer = null;
+    }
+    return;
+  }
+  scheduleScrollAnchorHide();
+};
+
+/**
+ * 刷新定位浮标的显示条件。
+ *
+ * 单独抽出来是因为它有两个调用点：滚动事件，以及消息条数变化——新消息进来时
+ * 内容可能刚变得可滚动，但用户没滚过，scroll 事件不会来。
+ */
+const syncScrollAnchorState = (el?: HTMLDivElement | null) => {
+  const target = el ?? messagesContainer.value;
+  if (!target) return;
+  isAtTop.value = target.scrollTop <= SCROLL_ANCHOR_EPSILON_PX;
+  canScrollMessages.value =
+    target.scrollHeight - target.clientHeight > SCROLL_ANCHOR_EPSILON_PX;
+};
+
+/** 跳到当前已加载的第一条消息。若还有更早历史，滚到顶会继续向上加载。 */
+const jumpToFirstMessage = () => {
+  const el = messagesContainer.value;
+  if (!el) return;
+  markUserScrollIntent();
+  el.scrollTo({ top: 0, behavior: "smooth" });
+};
+
+/**
+ * 跳到最后一条消息。
+ *
+ * 这里不能复用 `scrollToBottom`：它是流式跟底用的，逐帧直接写 `scrollTop`
+ * （`el.scrollTop = scrollHeight`），视觉上是瞬移。用户手动点导航时应该看到
+ * 滚动过程，所以单独走 smooth，滚到底之后 `handleScroll` 照样会恢复贴底状态。
+ */
+const jumpToLastMessage = () => {
+  const el = messagesContainer.value;
+  if (!el) return;
+  markUserScrollIntent();
+  el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+};
+
+// 会话切换、历史加载、新消息到达都会改变「能不能滚」，但都不一定触发 scroll 事件。
+watch(
+  () => messages.value.length,
+  () => {
+    void nextTick(() => syncScrollAnchorState());
+  },
+);
+
+/** 条数够多、且确实能滚，两个条件都成立才显示定位浮标。 */
+const showScrollAnchors = computed(
+  () =>
+    isScrollingMessages.value
+    && messages.value.length >= SCROLL_ANCHOR_MIN_MESSAGES
+    && canScrollMessages.value,
+);
+/** 已经在顶部就藏掉「第一条」，避免点下去毫无反应。 */
+const showScrollAnchorTop = computed(() => showScrollAnchors.value && !isAtTop.value);
+const showScrollAnchorBottom = computed(() => showScrollAnchors.value && !isAtBottom.value);
+
 const handleScroll = (e: Event) => {
     const target = e.target as HTMLDivElement;
+    // 浮标的显示条件必须在保护窗口内也保持准确，先更新；
+    // 代价可以忽略——这个事件里本来就要读 scrollHeight。
+    syncScrollAnchorState(target);
+    // 只有用户动了滚轮/手指（markUserScrollIntent 留下的意图窗口）才点亮浮标；
+    // 流式自动跟底产生的事件不算，否则生成过程中浮标会一直挂着。
+    if (Date.now() < userScrollIntentUntil) markScrollAnchorActivity();
     // 程序性贴底自己触发的 scroll 事件：下面每条判断都要读 scrollHeight，而贴底
     // 那一刻已经决定了状态（autoScrollEnabled / showNewMessageHint）。委派时每秒
     // 几十次贴底，这里每读一次就是一次整页强制同步布局，直接跳过。
