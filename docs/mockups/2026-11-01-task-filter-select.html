@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>任务调度台 · 筛选控件优化对比</title>
+<style>
+  /* 复刻平台全局 base 层：所有 input/select/textarea 默认 8px 12px */
+  input, select, textarea { padding: 8px 12px; }
+
+  :root {
+    --primary: #2563eb;
+    --gray-200: #e5e7eb;
+    --gray-300: #d1d5db;
+    --gray-400: #9ca3af;
+    --gray-500: #6b7280;
+    --gray-800: #1f2937;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: #f3f4f6; color: var(--gray-800);
+  }
+  .panel {
+    background: #fff; border-radius: 12px; padding: 18px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 18px;
+  }
+  .panel h2 {
+    margin: 0 0 14px; font-size: 12px; font-weight: 700;
+    color: var(--gray-500); letter-spacing: .04em; text-transform: uppercase;
+  }
+  .panel.bad h2 { color: #dc2626; }
+  .panel.good h2 { color: #16a34a; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .title { font-size: 22px; font-weight: 800; margin-right: 6px; white-space: nowrap; }
+  .guide { font-size: 12px; color: var(--gray-500); text-decoration: underline; text-underline-offset: 2px; }
+  .spacer { flex: 1; }
+
+  /* 搜索框 */
+  .search-wrap { position: relative; width: 256px; }
+  .search-wrap svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: var(--gray-400); }
+  .search {
+    width: 100%; border: 1px solid var(--gray-300); border-radius: 8px; background: #fff;
+    padding: 8px 12px 8px 36px; font-size: 14px; box-shadow: 0 1px 2px rgba(0,0,0,.05);
+    outline: none; font-family: inherit;
+  }
+
+  /* 「改造前」：原生 select */
+  .select-native {
+    border: 1px solid var(--gray-300); border-radius: 8px; background: #fff;
+    font-size: 14px; box-shadow: 0 1px 2px rgba(0,0,0,.05); outline: none;
+    font-family: inherit; color: var(--gray-800);
+  }
+
+  /* 「改造后」：关掉原生外观，换单箭头，锁 38px */
+  .select-fixed {
+    appearance: none; -webkit-appearance: none;
+    height: 38px; padding: 0 32px 0 12px; line-height: 20px; cursor: pointer;
+    border: 1px solid var(--gray-300); border-radius: 8px; background: #fff;
+    font-size: 14px; box-shadow: 0 1px 2px rgba(0,0,0,.05); outline: none;
+    font-family: inherit; color: var(--gray-800);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280' stroke-width='2'><path stroke-linecap='round' stroke-linejoin='round' d='M6 9l6 6 6-6'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 14px;
+  }
+
+  .view-toggle {
+    display: flex; align-items: center; gap: 2px; padding: 2px;
+    border: 1px solid var(--gray-300); border-radius: 8px; background: rgba(229,231,235,.6);
+  }
+  .view-toggle button {
+    border: none; background: transparent; padding: 6px; border-radius: 6px;
+    cursor: pointer; display: flex; color: var(--gray-500);
+  }
+  .view-toggle button.active {
+    border: 1px solid var(--gray-200); background: #fff; color: var(--primary);
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+  .view-toggle svg { width: 16px; height: 16px; }
+
+  .icon-btn {
+    border: 1px solid var(--gray-300); background: #fff; border-radius: 8px;
+    padding: 9px; display: flex; cursor: pointer; color: var(--gray-500);
+    box-shadow: 0 1px 2px rgba(0,0,0,.05);
+  }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  .primary-btn {
+    border: none; background: var(--primary); color: #fff; border-radius: 8px;
+    padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; gap: 6px; font-family: inherit;
+    box-shadow: 0 1px 2px rgba(0,0,0,.08);
+  }
+  .primary-btn svg { width: 16px; height: 16px; }
+
+  .note { margin: 10px 0 0; font-size: 12px; color: var(--gray-500); line-height: 1.7; }
+  .note b { color: var(--gray-800); }
+  .mark { color: #dc2626; font-weight: 600; }
+  .ok { color: #16a34a; font-weight: 600; }
+</style>
+</head>
+<body>
+
+  <div class="panel bad">
+    <h2>改造前 · 原生 select</h2>
+    <div class="row">
+      <span class="title">任务调度台</span>
+      <span class="guide">显示指引</span>
+      <div class="spacer"></div>
+
+      <div class="search-wrap">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <input class="search" placeholder="搜索任务名称或指令..." />
+      </div>
+
+      <select class="select-native">
+        <option>状态：运行中</option>
+      </select>
+
+      <div class="view-toggle">
+        <button><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg></button>
+        <button class="active"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      </div>
+
+      <button class="icon-btn"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></button>
+
+      <button class="primary-btn">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        新建任务
+      </button>
+    </div>
+    <p class="note">
+      <span class="mark">问题 1</span> 浏览器自带箭头是<b>一对折线</b>（⇕ 观感），和旁边手绘 SVG 图标不是一套语言。<br />
+      <span class="mark">问题 2</span> 箭头区宽度由 UA 决定，文字与箭头的间距不受控，右边距比搜索框明显更挤。<br />
+      <span class="mark">问题 3</span> 高度随 UA 行高浮动，和 38px 的搜索框基线对不齐。
+    </p>
+  </div>
+
+  <div class="panel good">
+    <h2>改造后 · appearance-none + 单箭头</h2>
+    <div class="row">
+      <span class="title">任务调度台</span>
+      <span class="guide">显示指引</span>
+      <div class="spacer"></div>
+
+      <div class="search-wrap">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <input class="search" placeholder="搜索任务名称或指令..." />
+      </div>
+
+      <select class="select-fixed">
+        <option>状态：运行中</option>
+      </select>
+
+      <div class="view-toggle">
+        <button><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg></button>
+        <button class="active"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      </div>
+
+      <button class="icon-btn"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></button>
+
+      <button class="primary-btn">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        新建任务
+      </button>
+    </div>
+    <p class="note">
+      <span class="ok">改动</span> 关掉原生外观，换成 14px、2px 描边的单箭头，与搜索框图标、视图图标同粗细。<br />
+      <span class="ok">改动</span> 锁死 <b>38px</b> 高度（<code>py-2 + text-sm</code> 的输入框正好是这高度），右侧留 32px 放箭头，文字不再贴边。<br />
+      <span class="ok">改动</span> 过渡只留 <code>transition-colors</code>，聚焦时边框变主色 + 2px 光晕，和搜索框完全一致。
+    </p>
+  </div>
+
+</body>
+</html>

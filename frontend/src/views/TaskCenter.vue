@@ -1366,7 +1366,7 @@ onMounted(async () => {
         <div class="flex items-center gap-2">
           <select
             v-model="statusFilter"
-            class="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:flex-none"
+            class="task-filter-select min-w-0 flex-1 rounded-lg border border-gray-300 bg-white text-sm shadow-sm outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:flex-none"
             title="按状态筛选"
           >
             <option value="all">状态：全部</option>
@@ -1510,7 +1510,7 @@ onMounted(async () => {
         </div>
         <select
           v-model="historyStatus"
-          class="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary"
+          class="task-filter-select shrink-0 rounded-lg border border-gray-300 bg-white text-sm outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
         >
           <option value="">状态：全部</option>
           <option value="success">成功</option>
@@ -1522,7 +1522,7 @@ onMounted(async () => {
         </select>
         <select
           v-model="historyTaskId"
-          class="max-w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary lg:max-w-xs"
+          class="task-filter-select max-w-full rounded-lg border border-gray-300 bg-white text-sm outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20 lg:max-w-xs"
         >
           <option value="">任务：全部</option>
           <option v-for="task in agentTasksForFilter" :key="task.id" :value="task.id">
@@ -2973,6 +2973,28 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/*
+ * 筛选用的原生 select。
+ *
+ * 浏览器自带的箭头（Chrome 是一对折线）和这排圆角控件不是一套语言，宽度也由 UA
+ * 决定，跟左边的搜索框对不齐。这里关掉原生外观、换成与搜索框图标同粗细的单箭头，
+ * 并锁死 38px 高度——`py-2 + text-sm` 的输入框正好是这个高度，两者基线才对得上。
+ * padding 写在类里而不是用 Tailwind：全局 base 层给 select 兜了 `padding: 8px 12px`，
+ * 未分层的组件样式优先级更高，在这里一次说清最不容易被别处带偏。
+ */
+.task-filter-select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 38px;
+  padding: 0 2rem 0 0.75rem;
+  line-height: 1.25rem;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280' stroke-width='2'><path stroke-linecap='round' stroke-linejoin='round' d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.625rem center;
+  background-size: 0.875rem;
+}
+
 .custom-scrollbar::-webkit-scrollbar { width: 4px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #e5e7eb; border-radius: 10px; }
