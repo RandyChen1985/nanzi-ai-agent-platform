@@ -399,7 +399,7 @@
                     placeholder="例如: finance_manager"
                   />
                   <p class="text-[10px] text-gray-400 mt-1">
-                    唯一标识符，创建后不可修改；admin / default / system / miniprogram_user 为系统保留，不可使用
+                    唯一标识符，创建后不可修改；admin 为系统保留（持有即等于管理员），不可使用。default / system / miniprogram_user 属内置角色，可以创建但不可删除。
                   </p>
               </div>
 
@@ -2561,21 +2561,30 @@ const debouncedSearch = () => {
     }, 500)
 }
 
+// 探测序号：并发探测下只认最后一次结果。进入页面时的探测可能比「一键初始化」
+// 更早发出、更晚返回，旧结果会把刚置成「已存在」的状态改回「缺失」，
+// 于是出现「提示初始化成功/已存在，提示层却还在」的自相矛盾（线上截图复现）。
+let defaultRoleProbeSeq = 0
+
 const checkDefaultRole = async () => {
+    const seq = ++defaultRoleProbeSeq
     checkingDefaultRole.value = true
     try {
         // 角色列表是分页的，这里按关键词检索后再精确匹配，避免只凭当前页误判
         const response = await axios.get('/api/portal/roles', {
             params: { page: 1, size: 1000, search: DEFAULT_ROLE_KEY }
         })
+        if (seq !== defaultRoleProbeSeq) return
         const items: any[] = response.data?.items || []
         defaultRoleExists.value = items.some(matchesDefaultRole)
     } catch (e: any) {
         // 探测失败时不做提示，避免误报
         console.error('Check Default Role Error:', e)
+        if (seq !== defaultRoleProbeSeq) return
         defaultRoleExists.value = true
     } finally {
-        checkingDefaultRole.value = false
+        // 只有最新那次探测才允许关掉 loading，否则旧请求先返回会把新的探测态冲掉
+        if (seq === defaultRoleProbeSeq) checkingDefaultRole.value = false
     }
 }
 
@@ -2588,19 +2597,28 @@ const initializeDefaultRole = async () => {
             name: DEFAULT_ROLE_KEY,
             description: '新增用户时默认勾选的角色（初始不含任何权限）'
         })
+        // 作废在飞的旧探测：那次请求早于创建，返回结果会把状态改回「缺失」
+        defaultRoleProbeSeq++
         defaultRoleExists.value = true
         showToast('default 角色初始化成功，请按需分配权限', 'success')
         page.value = 1
         await fetchRoles()
     } catch (e: any) {
-        const status = e.response?.status
-        if (status === 400) {
-            // 已存在（例如多人同时初始化）时按已存在处理，不当作失败
-            defaultRoleExists.value = true
-            showToast('default 角色已存在', 'warning')
-            await fetchRoles()
+        const detail = e.response?.data?.detail || '初始化 default 角色失败'
+        if (e.response?.status === 400) {
+            // 400 不等于「已存在」：code 非法/保留同样走 400。一律按已存在处理会
+            // 出现「提示已存在、列表里却没有」的假成功（线上实际出现过）。
+            // 重新探测一次，确认真的存在才这么提示，否则把后端的 detail 原样抛出。
+            await checkDefaultRole()
+            if (defaultRoleExists.value) {
+                page.value = 1
+                showToast('default 角色已存在', 'warning')
+                await fetchRoles()
+            } else {
+                showToast(detail, 'error')
+            }
         } else {
-            showToast(e.response?.data?.detail || '初始化 default 角色失败', 'error')
+            showToast(detail, 'error')
         }
     } finally {
         initializingDefaultRole.value = false

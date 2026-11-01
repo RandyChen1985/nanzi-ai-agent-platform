@@ -84,13 +84,45 @@ def test_initialization_creates_empty_role_through_existing_api():
 
 
 def test_initialization_handles_already_exists_and_refreshes_list():
-    """重复初始化（后端 400 已存在）按已存在处理，并刷新列表。"""
+    """400 不能一律当「已存在」：必须先重新探测，确认存在才这么提示并刷新列表。
+
+    线上反馈「错误提示有，但是页面无法显示」的根因就在这里——后端因保留 code
+    拒绝创建（`default` 曾被整份 `SYSTEM_ROLE_CODES` 拦住）时也走 400，
+    旧代码把它当成功，提示「default 角色已存在」，而列表里根本没有这个角色。
+    """
     initializer = _initializer()
 
-    assert "status === 400" in initializer
-    assert "defaultRoleExists.value = true" in initializer
+    assert "e.response?.status === 400" in initializer
+    assert "await checkDefaultRole()" in initializer
+    assert "if (defaultRoleExists.value)" in initializer
     assert "showToast('default 角色已存在', 'warning')" in initializer
     assert "await fetchRoles()" in initializer
+
+
+def test_initialization_reports_backend_detail_when_role_still_missing():
+    """确认角色确实不存在时，把后端 detail 抛给用户，而不是谎报已存在。"""
+    source = _source()
+    catch_segment = _initializer().split("} catch", 1)[1]
+
+    assert "const detail = e.response?.data?.detail || '初始化 default 角色失败'" in source
+    assert "showToast(detail, 'error')" in catch_segment
+    assert "defaultRoleExists.value = true" not in catch_segment
+
+
+def test_stale_probe_cannot_flip_state_back():
+    """并发探测下旧结果不能覆盖新结果。
+
+    进入页面时的探测可能比「一键初始化」先发出、后返回：不看序号的话，
+    旧结果（那时角色还不存在）会把刚置成「已存在」的状态改回去，于是
+    「提示已存在/初始化成功，提示层却还挂着」——线上截图正是这个自相矛盾。
+    """
+    checker = _checker()
+    initializer = _initializer()
+
+    assert "const seq = ++defaultRoleProbeSeq" in checker
+    assert "if (seq !== defaultRoleProbeSeq) return" in checker
+    assert "if (seq === defaultRoleProbeSeq) checkingDefaultRole.value = false" in checker
+    assert "defaultRoleProbeSeq++" in initializer, "创建成功后要作废在飞的旧探测"
 
 
 def test_probe_failure_does_not_raise_false_banner():
