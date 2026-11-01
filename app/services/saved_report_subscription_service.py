@@ -3,6 +3,8 @@ from typing import Any, Optional
 
 from apscheduler.triggers.cron import CronTrigger
 
+from app.services.cron_compat import to_apscheduler_crontab
+
 
 @dataclass(frozen=True)
 class AlertEvaluation:
@@ -105,7 +107,7 @@ def schedule_to_cron(
     if schedule_type == "cron":
         expression = str(cron_expr or "").strip()
         try:
-            CronTrigger.from_crontab(expression)
+            CronTrigger.from_crontab(to_apscheduler_crontab(expression))
         except Exception as exc:
             raise ValueError("Cron 表达式无效") from exc
         return expression
@@ -114,8 +116,9 @@ def schedule_to_cron(
     if schedule_type == "daily":
         return f"{minute} {hour} * * *"
     if schedule_type == "weekly":
+        # weekday 采用标准 crontab 语义：0 = 周日，1 = 周一 … 6 = 周六
         if weekday is None or not 0 <= weekday <= 6:
-            raise ValueError("星期必须在 0 到 6 之间")
+            raise ValueError("星期必须在 0 到 6 之间（0 为周日）")
         return f"{minute} {hour} * * {weekday}"
     if schedule_type == "monthly":
         if monthday is None or not 1 <= monthday <= 31:

@@ -24,6 +24,7 @@ from app.models.saved_report import (
     PortalSavedReportRun,
     PortalSavedReportSubscription,
 )
+from app.services.cron_compat import to_apscheduler_crontab
 from app.services.platform_timezone import get_cached_platform_timezone
 
 logger = logging.getLogger(__name__)
@@ -1584,7 +1585,7 @@ class TaskSchedulerService:
             return
         job_id = f"saved_report_subscription_{subscription.id}"
         trigger = CronTrigger.from_crontab(
-            subscription.cron_expr,
+            to_apscheduler_crontab(subscription.cron_expr),
             timezone=subscription.timezone or get_cached_platform_timezone(),
         )
         existing_job = self._scheduler.get_job(job_id)
@@ -1619,7 +1620,7 @@ class TaskSchedulerService:
         job_id = f"task_{task.id}"
         try:
             trigger = CronTrigger.from_crontab(
-                task.cron_expr,
+                to_apscheduler_crontab(task.cron_expr),
                 timezone=get_cached_platform_timezone(),
             )
         except (ValueError, KeyError) as e:
