@@ -11,11 +11,13 @@ def test_bound_private_datasets_are_visible_and_removable():
     assert "selectedIds.value.includes(ds.id)" in body
 
     tpl = src[src.index('v-for="ds in pinnedPrivateDatasets"'):]
-    tpl = tpl[: tpl.index('v-for="ds in visibleDatasets"')]
+    tpl = tpl[: tpl.index('v-for="ds in filteredDatasets"')]
     assert '@click="toggleSelection(ds.id)"' in tpl, "必须能解除绑定"
     assert "仅归属人可检索" in tpl
-    # 未绑定的私有库仍然不能被新增
-    assert 'v-for="ds in visibleDatasets"' in src
-    listed = src[src.index('v-for="ds in visibleDatasets"'):]
+    # 未绑定的私有库仍然不能被新增（filteredDatasets 由 visibleDatasets 过滤而来）
+    assert "const filteredDatasets = computed(" in src
+    assert "filterAndSortDatasets(visibleDatasets.value," in src
+    assert 'v-for="ds in filteredDatasets"' in src
+    listed = src[src.index('v-for="ds in filteredDatasets"'):]
     listed = listed[: listed.index("</template>")]
     assert "pinnedPrivateDatasets" not in listed

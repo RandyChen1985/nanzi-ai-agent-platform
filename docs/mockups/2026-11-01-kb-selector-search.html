@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>知识库选择 · 搜索与筛选 Mock</title>
+<style>
+  :root{
+    --gray-50:#f9fafb; --gray-100:#f3f4f6; --gray-200:#e5e7eb; --gray-300:#d1d5db;
+    --gray-400:#9ca3af; --gray-500:#6b7280; --gray-600:#4b5563; --gray-700:#374151;
+    --gray-800:#1f2937; --gray-900:#111827;
+    --primary:#1677ff; --primary-50:#eff6ff; --primary-100:#dbeafe; --primary-600:#0d5fd6;
+    --emerald-50:#ecfdf5; --emerald-100:#d1fae5; --emerald-600:#059669; --emerald-500:#10b981;
+    --violet-50:#f5f3ff; --violet-100:#ede9fe; --violet-600:#7c3aed;
+    --amber-50:#fffbeb; --amber-100:#fef3c7; --amber-600:#d97706;
+    --blue-50:#eff6ff; --blue-100:#dbeafe; --blue-600:#2563eb;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+    background:#eef1f5;color:var(--gray-800);-webkit-font-smoothing:antialiased;
+    padding:28px 20px 60px;
+  }
+  .page{max-width:920px;margin:0 auto}
+  .page-title{font-size:20px;font-weight:700;letter-spacing:-.01em;margin:0 0 6px}
+  .page-sub{font-size:13px;color:var(--gray-500);margin:0 0 22px;line-height:1.75}
+  .page-sub b{color:var(--gray-700)}
+
+  .scene{
+    background:#fff;border:1px solid var(--gray-200);border-radius:14px;
+    margin-bottom:22px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(16,24,40,.04),0 8px 24px -18px rgba(16,24,40,.25);
+  }
+  .scene-head{
+    display:flex;align-items:center;gap:10px;
+    padding:13px 18px;border-bottom:1px solid var(--gray-100);background:var(--gray-50);
+  }
+  .scene-tag{
+    font-size:10px;font-weight:800;letter-spacing:.08em;
+    padding:3px 8px;border-radius:999px;background:var(--primary-100);color:var(--primary);
+  }
+  .scene-title{font-size:13.5px;font-weight:700}
+  .scene-note{font-size:11.5px;color:var(--gray-500);margin-left:auto;text-align:right}
+  .stage{padding:20px;background:#fafbfc;display:flex;justify-content:center}
+
+  /* ---------- 弹窗 ---------- */
+  .modal{
+    width:660px;background:#fff;border-radius:12px;border:1px solid var(--gray-200);
+    box-shadow:0 12px 40px -12px rgba(16,24,40,.25);
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+  .modal-head{
+    display:flex;align-items:flex-start;gap:10px;
+    padding:16px 20px 14px;border-bottom:1px solid var(--gray-100);
+  }
+  .modal-head h3{margin:0;font-size:15px;font-weight:800;letter-spacing:-.01em}
+  .modal-head p{margin:3px 0 0;font-size:11.5px;color:var(--gray-500)}
+  .close-x{
+    margin-left:auto;width:26px;height:26px;border-radius:7px;border:none;background:transparent;
+    color:var(--gray-400);cursor:pointer;display:flex;align-items:center;justify-content:center;
+    transition:all .14s;
+  }
+  .close-x:hover{background:var(--gray-100);color:var(--gray-600)}
+  .close-x svg{width:15px;height:15px}
+
+  /* 搜索区：常驻，不随列表滚动 */
+  .filters{padding:12px 20px 10px;border-bottom:1px solid var(--gray-100);background:#fff}
+
+  .search-row{position:relative}
+  .search-row .icon{
+    position:absolute;left:10px;top:50%;transform:translateY(-50%);
+    width:14px;height:14px;color:var(--gray-400);pointer-events:none;
+  }
+  .search-input{
+    width:100%;height:36px;padding:0 30px 0 30px;
+    border:1px solid var(--gray-200);border-radius:9px;background:var(--gray-50);
+    font-size:12.5px;color:var(--gray-800);outline:none;transition:all .15s;
+    font-family:inherit;
+  }
+  .search-input::placeholder{color:var(--gray-400)}
+  .search-input:focus{border-color:var(--primary);background:#fff;box-shadow:0 0 0 3px rgba(22,119,255,.10)}
+  .search-clear{
+    position:absolute;right:8px;top:50%;transform:translateY(-50%);
+    width:18px;height:18px;border-radius:50%;border:none;background:var(--gray-200);
+    color:var(--gray-500);cursor:pointer;display:none;align-items:center;justify-content:center;
+    padding:0;
+  }
+  .search-clear.show{display:flex}
+  .search-clear svg{width:10px;height:10px}
+  .search-clear:hover{background:var(--gray-300)}
+
+  .filter-row{
+    display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px;
+  }
+  .filter-label{font-size:10.5px;font-weight:700;color:var(--gray-400);letter-spacing:.04em;margin-right:2px}
+
+  .chip{
+    display:inline-flex;align-items:center;gap:4px;
+    height:25px;padding:0 9px;border-radius:7px;
+    border:1px solid var(--gray-200);background:#fff;
+    font-size:11px;font-weight:600;color:var(--gray-600);
+    cursor:pointer;transition:all .14s;white-space:nowrap;
+  }
+  .chip:hover{border-color:var(--gray-300);background:var(--gray-50)}
+  .chip.on{background:var(--primary-50);border-color:var(--primary-100);color:var(--primary)}
+  .chip .cnt{font-size:9.5px;font-weight:700;opacity:.65}
+
+  .more-btn{
+    display:inline-flex;align-items:center;gap:4px;
+    height:25px;padding:0 9px;border-radius:7px;
+    border:1px dashed var(--gray-300);background:#fff;
+    font-size:11px;font-weight:700;color:var(--gray-500);cursor:pointer;
+  }
+  .more-btn:hover{border-color:var(--primary);color:var(--primary)}
+  .more-btn svg{width:10px;height:10px;transition:transform .16s}
+  .more-btn.open svg{transform:rotate(180deg)}
+
+  .spacer{margin-left:auto}
+
+  .sort-select{
+    height:25px;padding:0 20px 0 8px;border-radius:7px;
+    border:1px solid var(--gray-200);background:#fff;
+    font-size:11px;font-weight:600;color:var(--gray-600);cursor:pointer;
+    appearance:none;font-family:inherit;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af' stroke-width='2.5'><path stroke-linecap='round' stroke-linejoin='round' d='M6 9l6 6 6-6'/></svg>");
+    background-repeat:no-repeat;background-position:right 5px center;background-size:11px;
+  }
+
+  /* 更多筛选 */
+  .advanced{
+    display:none;gap:6px;flex-wrap:wrap;align-items:center;
+    margin-top:9px;padding-top:9px;border-top:1px dashed var(--gray-200);
+  }
+  .advanced.open{display:flex}
+
+  /* 结果计数 + 批量 */
+  .result-row{
+    display:flex;align-items:center;gap:8px;
+    margin-top:10px;font-size:11px;color:var(--gray-500);
+  }
+  .result-row b{color:var(--gray-800);font-variant-numeric:tabular-nums}
+  .bulk-btn{
+    border:none;background:transparent;color:var(--primary);
+    font-size:11px;font-weight:700;cursor:pointer;padding:2px 4px;border-radius:5px;
+  }
+  .bulk-btn:hover{background:var(--primary-50)}
+  .bulk-btn.muted{color:var(--gray-400)}
+  .bulk-btn.muted:hover{background:var(--gray-100);color:var(--gray-600)}
+
+  /* 已选区 */
+  .selected-bar{
+    display:none;padding:8px 20px;border-bottom:1px solid var(--gray-100);
+    background:var(--gray-50);
+  }
+  .selected-bar.show{display:block}
+  .selected-bar-inner{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .selected-tag{
+    display:inline-flex;align-items:center;gap:4px;
+    height:22px;padding:0 4px 0 8px;border-radius:6px;
+    background:#fff;border:1px solid var(--emerald-100);
+    font-size:10.5px;font-weight:600;color:var(--emerald-600);
+    max-width:180px;
+  }
+  .selected-tag span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .selected-tag button{
+    width:14px;height:14px;border:none;background:transparent;border-radius:4px;
+    color:var(--emerald-600);cursor:pointer;display:flex;align-items:center;justify-content:center;
+    padding:0;opacity:.6;
+  }
+  .selected-tag button:hover{opacity:1;background:var(--emerald-50)}
+  .selected-tag button svg{width:9px;height:9px}
+  .selected-tag .overflow-note{color:var(--gray-400);font-size:10px;font-weight:700}
+
+  /* 列表 */
+  .list{
+    flex:1;min-height:0;max-height:290px;overflow-y:auto;
+    padding:10px 16px;display:flex;flex-direction:column;gap:6px;
+  }
+  .list::-webkit-scrollbar{width:6px}
+  .list::-webkit-scrollbar-thumb{background:rgba(0,0,0,.13);border-radius:99px}
+
+  .item{
+    display:flex;align-items:center;gap:9px;
+    padding:9px 10px;border:1px solid var(--gray-200);border-radius:9px;
+    cursor:pointer;transition:all .13s;
+  }
+  .item:hover{background:var(--gray-50);border-color:var(--gray-300)}
+  .item.on{border-color:var(--emerald-500);background:var(--emerald-50);box-shadow:inset 0 0 0 1px var(--emerald-500)}
+  .item .box{
+    width:17px;height:17px;border-radius:5px;border:1px solid var(--gray-300);background:#fff;
+    flex:none;display:flex;align-items:center;justify-content:center;
+  }
+  .item.on .box{background:var(--emerald-500);border-color:var(--emerald-500)}
+  .item .box svg{width:11px;height:11px;color:#fff;display:none}
+  .item.on .box svg{display:block}
+  .item .ico{
+    width:30px;height:30px;border-radius:7px;flex:none;
+    background:var(--emerald-50);border:1px solid var(--emerald-100);color:var(--emerald-600);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .item .ico svg{width:15px;height:15px}
+  .item .body{flex:1;min-width:0}
+  .item .name{font-size:12.5px;font-weight:700;color:var(--gray-900);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item .meta{display:flex;align-items:center;gap:5px;margin-top:3px;flex-wrap:wrap}
+  .badge{
+    font-size:9.5px;font-weight:700;padding:1px 5px;border-radius:4px;border:1px solid;
+  }
+  .badge.pub{background:var(--blue-50);color:var(--blue-600);border-color:var(--blue-100)}
+  .badge.team{background:var(--violet-50);color:var(--violet-600);border-color:var(--violet-100)}
+  .badge.priv{background:var(--amber-50);color:var(--amber-600);border-color:var(--amber-100)}
+  .meta .plain{font-size:9.5px;color:var(--gray-500);background:var(--gray-100);padding:1px 5px;border-radius:4px}
+  .meta .ro{font-size:9.5px;color:var(--gray-400);background:#fff;border:1px solid var(--gray-200);padding:1px 5px;border-radius:4px}
+  .item .right{text-align:right;flex:none}
+  .item .right .time{font-size:9.5px;color:var(--gray-400);display:block}
+  .item .right .id{font-size:9.5px;font-family:ui-monospace,monospace;color:var(--gray-300)}
+
+  .empty{
+    padding:38px 20px;text-align:center;color:var(--gray-400);
+  }
+  .empty svg{width:30px;height:30px;margin:0 auto 8px;color:var(--gray-300)}
+  .empty p{margin:0;font-size:12px;font-weight:600;color:var(--gray-500)}
+  .empty small{display:block;margin-top:4px;font-size:11px;color:var(--gray-400)}
+  .empty button{
+    margin-top:10px;border:1px solid var(--gray-200);background:#fff;border-radius:7px;
+    padding:5px 11px;font-size:11px;font-weight:700;color:var(--primary);cursor:pointer;
+  }
+  .empty button:hover{background:var(--primary-50);border-color:var(--primary-100)}
+
+  /* 底部 */
+  .modal-foot{
+    display:flex;align-items:center;padding:12px 20px;border-top:1px solid var(--gray-100);
+  }
+  .modal-foot .count{font-size:11.5px;color:var(--gray-500)}
+  .modal-foot .count b{color:var(--gray-900)}
+  .modal-foot .actions{margin-left:auto;display:flex;gap:8px}
+  .btn-ghost{
+    height:32px;padding:0 14px;border-radius:8px;border:none;
+    background:var(--gray-100);color:var(--gray-600);
+    font-size:12px;font-weight:700;cursor:pointer;
+  }
+  .btn-ghost:hover{background:var(--gray-200)}
+  .btn-primary{
+    height:32px;padding:0 18px;border-radius:8px;border:none;
+    background:var(--primary);color:#fff;font-size:12px;font-weight:700;cursor:pointer;
+    box-shadow:0 2px 8px -2px rgba(22,119,255,.45);
+  }
+  .btn-primary:hover{background:var(--primary-600)}
+
+  /* 说明 */
+  .states{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:0 20px 18px}
+  .state{border:1px solid var(--gray-200);border-radius:10px;padding:10px 13px}
+  .state h6{margin:0 0 4px;font-size:11.5px;font-weight:800;color:var(--gray-700)}
+  .state p{margin:0;font-size:10.5px;color:var(--gray-500);line-height:1.62}
+
+  .note-list{margin:0;padding:14px 20px 20px;list-style:none}
+  .note-list li{position:relative;padding-left:15px;font-size:11.5px;color:var(--gray-600);line-height:1.85}
+  .note-list li::before{
+    content:"";position:absolute;left:3px;top:8px;width:5px;height:5px;border-radius:50%;background:var(--primary);
+  }
+  .note-list b{color:var(--gray-800)}
+  .hint{font-size:11px;color:var(--gray-400);text-align:center;margin:6px 0 0}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1 class="page-title">知识库选择：搜索与筛选</h1>
+  <p class="page-sub">
+    知识库一多，光靠滚动找库不现实。<b>下面的弹窗可以直接输入、点筛选、勾选试。</b>
+    搜索框覆盖名称、描述、创建人；筛选分两级——可见范围常驻，其余收进「更多筛选」。
+  </p>
+
+  <div class="scene">
+    <div class="scene-head">
+      <span class="scene-tag">可交互</span>
+      <span class="scene-title">选择知识库（检索测试页 / 智能体绑定共用）</span>
+      <span class="scene-note" id="live-note">共 18 个知识库</span>
+    </div>
+    <div class="stage">
+      <div class="modal">
+
+        <div class="modal-head">
+          <div>
+            <h3>选择知识库</h3>
+            <p>支持多选，确认后用于本次检索</p>
+          </div>
+          <button class="close-x" aria-label="关闭">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <!-- 搜索 + 筛选：固定不滚动 -->
+        <div class="filters">
+          <div class="search-row">
+            <svg class="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.4"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5-5m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input id="q" class="search-input" type="text" placeholder="搜索知识库名称、描述或创建人…" autocomplete="off" />
+            <button class="search-clear" id="qClear" aria-label="清除搜索">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <div class="filter-row">
+            <span class="filter-label">可见范围</span>
+            <button class="chip" data-scope="public">授权可见 <span class="cnt" data-cnt="public"></span></button>
+            <button class="chip" data-scope="team">TEAM 级 <span class="cnt" data-cnt="team"></span></button>
+            <button class="chip" data-scope="private">个人私有 <span class="cnt" data-cnt="private"></span></button>
+            <button class="more-btn" id="moreBtn">
+              更多筛选
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <span class="spacer"></span>
+            <select class="sort-select" id="sort">
+              <option value="updated">最近更新</option>
+              <option value="docs">文档最多</option>
+              <option value="name">名称 A→Z</option>
+            </select>
+          </div>
+
+          <div class="advanced" id="advanced">
+            <span class="filter-label">更新时间</span>
+            <button class="chip" data-days="7">近 7 天</button>
+            <button class="chip" data-days="30">近 30 天</button>
+            <button class="chip" data-days="older">30 天以上</button>
+            <span class="filter-label" style="margin-left:8px">文档规模</span>
+            <button class="chip" data-docs="empty">空库</button>
+            <button class="chip" data-docs="small">1–50</button>
+            <button class="chip" data-docs="large">50+</button>
+            <span class="filter-label" style="margin-left:8px">权限</span>
+            <button class="chip" data-write="w">可写</button>
+            <button class="chip" data-write="ro">只读</button>
+          </div>
+
+          <div class="result-row">
+            <span>筛选出 <b id="shown">18</b> / 共 <b id="total">18</b> 个</span>
+            <span class="spacer"></span>
+            <button class="bulk-btn" id="selectAll">全选当前结果</button>
+            <button class="bulk-btn muted" id="clearAll">清空已选</button>
+          </div>
+        </div>
+
+        <!-- 已选标签：选了之后不用回长列表里找 -->
+        <div class="selected-bar" id="selectedBar">
+          <div class="selected-bar-inner" id="selectedInner"></div>
+        </div>
+
+        <div class="list" id="list"></div>
+
+        <div class="modal-foot">
+          <span class="count">已选 <b id="selCount">0</b> 个</span>
+          <div class="actions">
+            <button class="btn-ghost">取消</button>
+            <button class="btn-primary">确认选择</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="states">
+      <div class="state">
+        <h6>默认态</h6>
+        <p>只有搜索框 + 可见范围 + 排序，弹窗不显拥挤；需要更细的条件再展开「更多筛选」。</p>
+      </div>
+      <div class="state">
+        <h6>筛选生效</h6>
+        <p>结果计数与每个 chip 的数量角标实时更新，用户知道每个条件能筛出多少。</p>
+      </div>
+      <div class="state">
+        <h6>已选区</h6>
+        <p>已选的库以标签形式固定在列表上方，可逐个移除，不用回到长列表里翻找。</p>
+      </div>
+      <div class="state">
+        <h6>空结果</h6>
+        <p>明确说明「没有匹配项」，并给一键「清除全部筛选」，不让用户以为是没数据。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="scene">
+    <div class="scene-head">
+      <span class="scene-tag">设计要点</span>
+      <span class="scene-title">几条判断</span>
+    </div>
+    <ul class="note-list">
+      <li><b>搜索框放在最上面且常驻</b>：不随列表滚动，边滚边改条件不用滑回顶部。</li>
+      <li><b>关键词一次匹配三个字段</b>：名称、描述、创建人。用户记得的往往是「谁建的」或「描述里的一个词」，不一定记得全名。</li>
+      <li><b>筛选分两级</b>：可见范围是高频条件（决定能不能用），常驻；更新时间、文档规模、权限收进「更多筛选」，避免一进去就是七八行按钮。</li>
+      <li><b>chip 带数量角标</b>：直接告诉用户「个人私有只有 3 个」，不用点进去试。</li>
+      <li><b>已选区独立成行</b>：多选场景最容易出的事故是「选错了但在长列表里找不到」。标签固定在上方，点 × 就移除。</li>
+      <li><b>全选只作用于当前筛选结果</b>：不是全库全选，避免误选上百个库。</li>
+      <li><b>排序保留「最近更新」为默认</b>：新建的库通常就是要用的那个。</li>
+      <li><b>纯前端过滤即可</b>：知识库总数是百级，已有接口一次返回全量，前端过滤比再加一个后端搜索接口更简单，也不会引入分页与选中的状态同步问题。若将来破千再考虑后端搜索。</li>
+    </ul>
+  </div>
+
+  <p class="hint">示意稿，实际尺寸与配色按现有主题变量走</p>
+</div>
+
+<script>
+  const DB = [
+    { id:"kb01", name:"产品规范与需求文档", desc:"PRD、需求评审、版本规划", vis:"public", docs:128, chunks:8420, days:2,  owner:"张敏",      write:true  },
+    { id:"kb02", name:"售后工单知识库", desc:"常见问题、处理流程、话术", vis:"public", docs:64,  chunks:3910, days:5,  owner:"李伟",      write:true  },
+    { id:"kb03", name:"财务报销制度", desc:"差旅、采购、发票合规", vis:"public", docs:22,  chunks:1180, days:18, owner:"王芳",      write:false },
+    { id:"kb04", name:"研发架构设计", desc:"服务拆分、接口约定、部署拓扑", vis:"team", docs:96, chunks:6240, days:1, owner:"陈晓龙", write:true },
+    { id:"kb05", name:"前端组件库说明", desc:"组件用法、样式规范", vis:"team", docs:41, chunks:2650, days:9, owner:"刘洋",      write:true  },
+    { id:"kb06", name:"测试用例集", desc:"回归用例、自动化脚本说明", vis:"team", docs:210, chunks:14300, days:3, owner:"赵磊",      write:true },
+    { id:"kb07", name:"运维值班手册", desc:"告警处理、故障预案", vis:"team", docs:35, chunks:2210, days:26, owner:"孙婷",      write:false },
+    { id:"kb08", name:"我的会议纪要", desc:"个人周会与复盘记录", vis:"private", docs:17, chunks:640, days:1, owner:"陈晓龙", write:true },
+    { id:"kb09", name:"个人学习笔记", desc:"论文摘录与技术笔记", vis:"private", docs:52, chunks:3100, days:12, owner:"陈晓龙", write:true },
+    { id:"kb10", name:"客户成功案例", desc:"行业标杆案例与复盘", vis:"public", docs:73, chunks:5120, days:7, owner:"周杰",      write:true },
+    { id:"kb11", name:"合同法务条款", desc:"合同模板、风险条款说明", vis:"public", docs:14, chunks:980, days:44, owner:"吴楠",      write:false },
+    { id:"kb12", name:"数据字典", desc:"表结构、字段含义、口径定义", vis:"team", docs:118, chunks:7600, days:4, owner:"郑昊",      write:true },
+    { id:"kb13", name:"安全合规基线", desc:"等保、数据分级、审计要求", vis:"public", docs:29, chunks:1740, days:63, owner:"冯雪",      write:false },
+    { id:"kb14", name:"竞品分析", desc:"同类产品功能对比", vis:"public", docs:8, chunks:420, days:31, owner:"张敏",      write:true },
+    { id:"kb15", name:"培训课件", desc:"新人入职与产品培训材料", vis:"team", docs:46, chunks:3020, days:15, owner:"李伟",      write:true },
+    { id:"kb16", name:"临时验证库", desc:"空库，建来试检索", vis:"private", docs:0, chunks:0, days:0, owner:"陈晓龙", write:true },
+    { id:"kb17", name:"历史项目归档", desc:"已下线项目资料", vis:"public", docs:340, chunks:21800, days:180, owner:"周杰",     write:false },
+    { id:"kb18", name:"接口文档", desc:"对外 API 与错误码", vis:"team", docs:57, chunks:4480, days:6, owner:"刘洋",      write:true },
+  ];
+
+  const state = {
+    q: "",
+    scopes: new Set(),
+    days: null,
+    docs: null,
+    write: null,
+    sort: "updated",
+    selected: new Set(["kb01", "kb04", "kb08"]),
+  };
+
+  const el = (id) => document.getElementById(id);
+  const listEl = el("list");
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+  const SCOPE = { public: ["授权可见","pub"], team: ["TEAM 级","team"], private: ["个人私有","priv"] };
+  const relTime = (d) => d === 0 ? "今天" : d === 1 ? "昨天" : d < 30 ? `${d} 天前` : `${Math.floor(d/30)} 个月前`;
+  const fileIcon = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>`;
+  const checkIcon = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3.2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>`;
+
+  /** 只按「关键词 + 可见范围」过滤：用于给 chip 算数量角标，避免自己把自己算没 */
+  function baseMatch(d, ignoreScope) {
+    if (!ignoreScope && state.scopes.size && !state.scopes.has(d.vis)) return false;
+    if (!state.q) return true;
+    const q = state.q.toLowerCase();
+    return d.name.toLowerCase().includes(q)
+      || d.desc.toLowerCase().includes(q)
+      || d.owner.toLowerCase().includes(q);
+  }
+
+  function fullMatch(d) {
+    if (!baseMatch(d)) return false;
+    if (state.days !== null) {
+      if (state.days === "older" ? d.days <= 30 : d.days > state.days) return false;
+    }
+    if (state.docs !== null) {
+      if (state.docs === "empty" && d.docs !== 0) return false;
+      if (state.docs === "small" && (d.docs < 1 || d.docs > 50)) return false;
+      if (state.docs === "large" && d.docs <= 50) return false;
+    }
+    if (state.write !== null && state.write !== (d.write ? "w" : "ro")) return false;
+    return true;
+  }
+
+  function sortRows(rows) {
+    const s = state.sort;
+    return rows.slice().sort((a, b) => {
+      if (s === "docs") return b.docs - a.docs;
+      if (s === "name") return a.name.localeCompare(b.name, "zh");
+      return a.days - b.days;
+    });
+  }
+
+  function render() {
+    const filtered = sortRows(DB.filter(fullMatch));
+
+    // 计数角标：忽略当前 scope，只看关键词 + 其它条件，这样每个 chip 都显示「选了会有多少」
+    ["public", "team", "private"].forEach((scope) => {
+      const n = DB.filter((d) => d.vis === scope && baseMatch(d, true)
+        && (state.days === null || (state.days === "older" ? d.days > 30 : d.days <= state.days))
+        && (state.write === null || state.write === (d.write ? "w" : "ro"))).length;
+      document.querySelector(`[data-cnt="${scope}"]`).textContent = n;
+    });
+
+    el("shown").textContent = filtered.length;
+    el("total").textContent = DB.length;
+    el("live-note").textContent = `共 ${DB.length} 个知识库 · 命中 ${filtered.length}`;
+
+    // 列表
+    if (!filtered.length) {
+      listEl.innerHTML = `
+        <div class="empty">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5-5m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <p>没有匹配的知识库</p>
+          <small>换个关键词，或放宽筛选条件</small>
+          <button id="resetEmpty">清除全部筛选</button>
+        </div>`;
+      el("resetEmpty").addEventListener("click", resetAll);
+    } else {
+      listEl.innerHTML = filtered.map((d) => {
+        const on = state.selected.has(d.id);
+        const [label, cls] = SCOPE[d.vis];
+        return `
+          <div class="item ${on ? "on" : ""}" data-id="${d.id}" role="button" aria-pressed="${on}">
+            <div class="box">${checkIcon}</div>
+            <div class="ico">${fileIcon}</div>
+            <div class="body">
+              <div class="name">${esc(d.name)}</div>
+              <div class="meta">
+                <span class="badge ${cls}">${label}</span>
+                <span class="plain">${d.docs} Docs</span>
+                <span class="plain">${d.chunks.toLocaleString()} Chunks</span>
+                ${d.write ? "" : '<span class="ro">只读</span>'}
+                <span class="plain" style="background:transparent;color:#9ca3af">${esc(d.owner)}</span>
+              </div>
+            </div>
+            <div class="right">
+              <span class="time">${relTime(d.days)}</span>
+              <span class="id">${d.id}…</span>
+            </div>
+          </div>`;
+      }).join("");
+      listEl.querySelectorAll(".item").forEach((node) => {
+        node.addEventListener("click", () => {
+          const id = node.dataset.id;
+          state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
+          render();
+        });
+      });
+    }
+
+    // 已选区
+    const bar = el("selectedBar");
+    const inner = el("selectedInner");
+    const picked = DB.filter((d) => state.selected.has(d.id));
+    bar.classList.toggle("show", picked.length > 0);
+    const shownTags = picked.slice(0, 6);
+    inner.innerHTML = shownTags.map((d) => `
+      <span class="selected-tag" title="${esc(d.name)}">
+        <span>${esc(d.name)}</span>
+        <button data-remove="${d.id}" aria-label="移除 ${esc(d.name)}">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3.4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </span>`).join("") + (picked.length > shownTags.length
+        ? `<span class="overflow-note">+${picked.length - shownTags.length} 个</span>` : "");
+    inner.querySelectorAll("[data-remove]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        state.selected.delete(btn.dataset.remove);
+        render();
+      });
+    });
+
+    el("selCount").textContent = state.selected.size;
+  }
+
+  function resetAll() {
+    state.q = "";
+    el("q").value = "";
+    el("qClear").classList.remove("show");
+    state.scopes.clear();
+    state.days = null;
+    state.docs = null;
+    state.write = null;
+    document.querySelectorAll(".chip").forEach((c) => c.classList.remove("on"));
+    render();
+  }
+
+  // 搜索
+  el("q").addEventListener("input", (e) => {
+    state.q = e.target.value.trim();
+    el("qClear").classList.toggle("show", state.q.length > 0);
+    render();
+  });
+  el("qClear").addEventListener("click", () => {
+    state.q = "";
+    el("q").value = "";
+    el("qClear").classList.remove("show");
+    el("q").focus();
+    render();
+  });
+
+  // 可见范围（多选）
+  document.querySelectorAll("[data-scope]").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const v = chip.dataset.scope;
+      state.scopes.has(v) ? state.scopes.delete(v) : state.scopes.add(v);
+      chip.classList.toggle("on");
+      render();
+    });
+  });
+
+  // 更多筛选开关
+  el("moreBtn").addEventListener("click", () => {
+    el("advanced").classList.toggle("open");
+    el("moreBtn").classList.toggle("open");
+  });
+
+  // 更新时间 / 文档规模 / 权限：组内单选
+  document.querySelectorAll("[data-days]").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const v = chip.dataset.days;
+      state.days = state.days === v ? null : v;
+      document.querySelectorAll("[data-days]").forEach((c) => c.classList.toggle("on", c.dataset.days === state.days));
+      render();
+    });
+  });
+  document.querySelectorAll("[data-docs]").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const v = chip.dataset.docs;
+      state.docs = state.docs === v ? null : v;
+      document.querySelectorAll("[data-docs]").forEach((c) => c.classList.toggle("on", c.dataset.docs === state.docs));
+      render();
+    });
+  });
+  document.querySelectorAll("[data-write]").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const v = chip.dataset.write;
+      state.write = state.write === v ? null : v;
+      document.querySelectorAll("[data-write]").forEach((c) => c.classList.toggle("on", c.dataset.write === state.write));
+      render();
+    });
+  });
+
+  el("sort").addEventListener("change", (e) => { state.sort = e.target.value; render(); });
+
+  el("selectAll").addEventListener("click", () => {
+    sortRows(DB.filter(fullMatch)).forEach((d) => state.selected.add(d.id));
+    render();
+  });
+  el("clearAll").addEventListener("click", () => { state.selected.clear(); render(); });
+
+  render();
+</script>
+</body>
+</html>
