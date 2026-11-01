@@ -257,7 +257,7 @@
                         type="button"
                         class="flex w-full items-center gap-2 text-left"
                         :aria-expanded="subStep.isExpanded === true"
-                        @click="subStep.details || hasTimelineArgs(subStep) ? subStep.isExpanded = !subStep.isExpanded : undefined"
+                        @click="subStep.details || hasTimelineArgs(subStep) ? toggleChildItem(subStep) : undefined"
                       >
                         <span v-if="subStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
                         <WrenchScrewdriverIcon
@@ -547,7 +547,7 @@
                       type="button"
                       class="flex w-full items-center gap-2 text-left"
                       :aria-expanded="nestedStep.isExpanded === true"
-                      @click="hasVisibleTimelineText(nestedStep.details) || hasTimelineArgs(nestedStep) ? nestedStep.isExpanded = !nestedStep.isExpanded : undefined"
+                      @click="hasVisibleTimelineText(nestedStep.details) || hasTimelineArgs(nestedStep) ? toggleChildItem(nestedStep) : undefined"
                     >
                       <span v-if="nestedStep.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
                       <WrenchScrewdriverIcon
@@ -941,6 +941,9 @@ function toggleAllDetails() {
     } else if (it.kind === "log") {
       it.isExpanded = target;
       if (it.children?.length) it.childrenExpanded = target;
+      // 「全部展开/收起」是明确的用户意图，一并保护起来：否则随后跑完的工具
+      // 会被自动折叠掉，和刚点下的「全部展开」自相矛盾。
+      it.userToggled = true;
     }
     if (it.children?.length) {
       it.children.forEach(setExpand);
@@ -1278,6 +1281,8 @@ function toggleTimelineItem(item: ProcessTimelineLogItem): void {
   if (hasSelf) {
     item.isExpanded = nextOpen;
   }
+  // 手动点过就标记：执行完的自动折叠会跳过它，避免正看着结果时被收走。
+  item.userToggled = true;
 }
 
 function isChildDetailsOpen(child: ProcessTimelineLogItem): boolean {
@@ -1303,6 +1308,8 @@ function toggleChildItem(child: ProcessTimelineLogItem): void {
   if (hasSelf) {
     child.isExpanded = nextOpen;
   }
+  // 同上：子层也要标记，否则只有顶层被保护、子步骤照样在跑完后被收起。
+  child.userToggled = true;
 }
 
 // 子步骤（第三层）与 child（第二层）的展开语义必须完全一致：subStep 下有更深子步骤时，
