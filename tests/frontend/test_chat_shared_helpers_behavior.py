@@ -377,6 +377,8 @@ def test_execution_timeline_uses_compact_nested_step_spacing():
     timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
 
     assert 'class="mt-0.5 space-y-0.5 px-1 py-0.5"' in timeline
+    # 时间线整体不套「固定高度 + 内部滚动」的盒子，否则嵌套步骤的紧凑间距会被破坏；
+    # 旁白正文同样不限高（流式打字时要看得见新字）。
     assert "overflow-y-auto" not in timeline
     assert "max-h-[min(520px,60vh)]" not in timeline
     assert 'class="rounded-md px-1 py-0.5 text-[12px] leading-5' in timeline

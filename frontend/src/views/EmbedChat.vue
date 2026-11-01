@@ -4079,11 +4079,16 @@ const finishThreadSkeleton = (token: number) => {
     // 请求太快（本地十几毫秒）：骨架只出现一两帧反而更像「闪一下」，补足时长再撤。
     threadSkeletonTimeoutTimer = setTimeout(() => {
       threadSkeletonTimeoutTimer = null;
-      if (token === threadSkeletonToken) isInitialLoading.value = false;
+      if (token === threadSkeletonToken) {
+        isInitialLoading.value = false;
+        // 骨架撤掉后消息区才真正排版，贴底必须在这一刻再做一次。
+        settleInitialScroll();
+      }
     }, remaining);
     return;
   }
   isInitialLoading.value = false;
+  settleInitialScroll();
 };
 
 /**
@@ -10647,7 +10652,11 @@ const fetchConversationHistory = async (
             timestamp: timeStr,
           });
           messages.value = newHistoryBatch;
-          nextTick(scrollToBottom);
+          // 首屏必须走**强制**贴底：消息行是 `content-visibility: auto`，首次
+          // `scrollTop = scrollHeight` 只滚到「按 180px 估算出来的底部」，元素真正进入
+          // 视口后高度变大，滚动位置相对上移，看起来就是「打开会话没定位到最后一条」。
+          // 历史越长，偏差越大。force 会触发 settleScrollToBottom 在随后几帧里继续贴底。
+          settleInitialScroll();
         }
         // 回答回执是后续轮次的用户消息，用它把重建出的卡片从 pending 回填为
         // submitted/cancelled：否则历史卡片仍显示未作答，点击必然失败
@@ -13057,6 +13066,7 @@ const runScrollToBottom = (force: boolean) => {
  */
 let scrollToBottomFrame: number | null = null;
 let scrollToBottomForcePending = false;
+
 const scrollToBottom = (force = false) => {
   scrollToBottomForcePending = scrollToBottomForcePending || force;
   if (scrollToBottomFrame !== null) return;
@@ -13066,6 +13076,16 @@ const scrollToBottom = (force = false) => {
     scrollToBottomForcePending = false;
     nextTick(() => runScrollToBottom(pendingForce));
   });
+};
+
+/**
+ * 首屏贴底：历史落地与骨架撤掉后各做一次。
+ *
+ * 骨架占位期间消息区还没真正排版，只贴一次会在骨架撤掉的瞬间失效；两次都走强制，
+ * 因为此刻用户还没看过内容，不存在「打断手动浏览」的问题。
+ */
+const settleInitialScroll = () => {
+  nextTick(() => scrollToBottom(true));
 };
 /** 重新开始「停手后淡出」的倒计时；悬停期间不会被清掉。 */
 const scheduleScrollAnchorHide = () => {

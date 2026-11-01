@@ -146,12 +146,43 @@ const PREWARM_STAGE_LABELS: Array<{ afterMs: number; label: string }> = [
 export function defaultChildrenExpandedForLog(id: string | number | undefined): boolean {
   // 「鉴权及上下文与能力准备」父节点**默认展开**：准备阶段的子项
   // （知识库和专家清单加载、工作区准备）正是用户此刻唯一能看到的进展，
-  // 折叠起来等于把进度藏了。清爽由 ChatExecutionTimeline 负责——它在
-  // 「已有回答且无 pending」时把这个父节点收起（见其 collapse watch），
+  // 折叠起来等于把进度藏了。清爽由 `shouldCollapsePreparationChildren`
+  // 负责——它在「已有回答且无 pending」时把这个父节点收起，
   // 因此已完成的历史消息仍然只占一行。
   //
   // 这里保留 id 入参是为了让调用方语义不变（曾经按 id 特判过折叠）。
   void id;
+  return true;
+}
+
+/**
+ * 准备父级的子项此刻是否应该收起。
+ *
+ * **这一阶段一跑完就收，不等整轮回答结束**：准备项一节就有好几行，摊着会吃掉
+ * 大半个思考卡片，而它跑完之后只是参考信息，用户接下来关心的是工具与产出。
+ *
+ * **每次渲染重算，而不是在判定成立那一刻把 `childrenExpanded` 改成 false。**
+ * 时间线对象在流式过程中会被 `mergeTimelineLogs` 反复合并、历史恢复时整棵重建，
+ * 一次性写进去的标志会被新对象冲掉——用户看到的就是「跑完了准备项还摊着」。
+ * 判定改成派生值后，无论对象重建多少次，结果都跟着当前状态走。
+ *
+ * 三种情况保持展开：
+ * 1. 自身或任一子步骤还在跑（准备阶段是此刻唯一能看到的进展）；
+ * 2. 出了错 / 被中断——用户得看得见是哪一步出的问题，收起等于藏故障；
+ * 3. 用户手动点开过（`userToggled`），否则正看着的人会被当场抽走。
+ */
+export function shouldCollapsePreparationChildren(input: {
+  isPreparation: boolean;
+  userToggled?: boolean;
+  status?: string;
+  /** 子步骤里是否还有 pending；通常是 `timelineHasPending(item.children)` 的结果 */
+  childrenPending?: boolean;
+}): boolean {
+  if (!input.isPreparation) return false;
+  if (input.userToggled) return false;
+  if (input.status === "error" || input.status === "interrupted") return false;
+  if (input.status === "pending") return false;
+  if (input.childrenPending) return false;
   return true;
 }
 

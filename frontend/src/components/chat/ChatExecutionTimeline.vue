@@ -157,15 +157,15 @@
               <button
                 type="button"
                 class="mb-0 flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
-                :aria-expanded="item.childrenExpanded !== false"
+                :aria-expanded="isChildrenOpen(item)"
                 @click="item.childrenExpanded = item.childrenExpanded === false"
               >
-                <svg class="h-3 w-3 transition-transform" :class="{ 'rotate-180': item.childrenExpanded !== false }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="h-3 w-3 transition-transform" :class="{ 'rotate-180': isChildrenOpen(item) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                 </svg>
                 <span>{{ item.children.length }} 个工具调用</span>
               </button>
-              <div v-if="item.childrenExpanded !== false" class="space-y-0">
+              <div v-if="isChildrenOpen(item)" class="space-y-0">
                 <div
                   v-for="child in item.children"
                   :key="child.id"
@@ -481,7 +481,7 @@
             </div>
 
             <!-- 嵌套展示根级别子代理内部步骤 / 子步骤 -->
-            <div v-if="item.children?.length && item.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
+            <div v-if="item.children?.length && isChildrenOpen(item)" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
               <div
                 v-for="subStep in item.children"
                 :key="subStep.id"
@@ -702,6 +702,7 @@ import {
   type ProcessTimelineItem,
   type ProcessTimelineLogItem,
   type ProcessTimelineTextItem,
+  shouldCollapsePreparationChildren,
 } from "@/utils/processTimeline";
 import {
   formatSubagentTraceSummary,
@@ -1051,22 +1052,6 @@ watch(
   { immediate: true },
 );
 
-// 执行完成后自动折叠「鉴权及上下文与能力准备」子树，仅保留一行标题，让界面干净。
-// 进行中（存在 pending 子步骤）仍保持展开以观察每步推进；一旦达成有答案且无 pending，
-// 即把该准备父级子树收起。仅针对此父级，其它父级（路由等）不受影响。
-watch(
-  () => !hasPending.value && props.hasAnswer,
-  (done) => {
-    if (!done) return;
-    for (const item of timelineItems.value) {
-      if (item.kind === "log" && isPreparationParent(item) && item.children?.length) {
-        item.childrenExpanded = false;
-      }
-    }
-  },
-  { immediate: true },
-);
-
 // —— 沙箱工作区预热的"推进中"感知 ——
 // 占位日志是静态"创建中"文案，沙箱初始化（拉镜像/k8s bootstrap/wait_for 锁）可能
 // 持续数秒~数十秒。这里用一个 500ms 的 tick 驱动"已等待 Ns + 阶段文案 + 不确定进度条"，
@@ -1179,10 +1164,19 @@ function narrationPreviewOf(item: ProcessTimelineTextItem): string {
   return text.length > 80 ? `${text.slice(0, 80)}…` : text;
 }
 
-/** 未手动切换过时按长度给默认态：短旁白展开、长旁白收起。 */
+/**
+ * 未手动切换过时一律展开。
+ *
+ * 原来「超过 120 字默认收起」，理由是防止旁白占屏。但被撤回的长旁白往往是
+ * **答案级**内容（模型先写了一段，随后又调了工具，这段就被降级成过程旁白），
+ * 收起来等于让用户在答案区找不到它。现在默认展开、由用户主动收起。
+ *
+ * 这里**不做限高内滚**：流式时最后一条旁白还在逐字增长，套一个固定高度的滚动盒
+ * 会让新打出来的字落在可视区外，用户看不到打字过程；而且这段内容在模型
+ * 不继续调工具时会直接被提升为正文，本就该按正文的完整形态展示。
+ */
 function isNarrationBodyOpen(item: ProcessTimelineTextItem): boolean {
-  if (item.contentExpanded !== undefined) return item.contentExpanded;
-  return !narrationNeedsCollapse(item);
+  return item.contentExpanded !== false;
 }
 
 function isRouteGroup(item: ProcessTimelineLogItem): boolean {
@@ -1249,14 +1243,36 @@ function isToolTimelineItem(item: ProcessTimelineLogItem): boolean {
   return item.category === "tool" || item.category === "sql" || item.title.includes("工具");
 }
 
+/**
+ * 子项此刻是否展开。
+ *
+ * 准备父级的收起是**派生判定**（见 `shouldCollapsePreparationChildren`），
+ * 不再是把 `childrenExpanded` 改成 false 的一次性副作用——时间线对象在流式
+ * 合并与历史恢复时会被重建，一次性标志会被冲掉，表现为「跑完了还摊着」。
+ */
+function isChildrenOpen(item: ProcessTimelineLogItem): boolean {
+  if (
+    shouldCollapsePreparationChildren({
+      isPreparation: isPreparationParent(item),
+      userToggled: item.userToggled,
+      status: item.status,
+      // 只看这一棵子树：整轮其它步骤还在跑不该拖住准备项收起
+      childrenPending: timelineHasPending(item.children),
+    })
+  ) {
+    return false;
+  }
+  return item.childrenExpanded !== false;
+}
+
 function isTimelineItemExpanded(item: ProcessTimelineLogItem): boolean {
   if (isRouteGroup(item)) return routeGroupExpanded.value;
-  return item.children?.length ? item.childrenExpanded !== false : item.isExpanded === true;
+  return item.children?.length ? isChildrenOpen(item) : item.isExpanded === true;
 }
 
 function isTimelineItemDetailsOpen(item: ProcessTimelineLogItem): boolean {
   if (item.children?.length) {
-    return item.isExpanded === true || item.childrenExpanded !== false;
+    return item.isExpanded === true || isChildrenOpen(item);
   }
   return item.isExpanded === true;
 }

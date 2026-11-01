@@ -80,12 +80,14 @@ def test_preparation_children_expand_by_default_but_can_be_reopened():
     assert "defaultChildrenExpandedForLog" in timeline_utils
     assert "defaultChildrenExpandedForLog(data.id)" in timeline_utils
     assert "defaultChildrenExpandedForLog(log.id)" in timeline_utils
-    # 进行中默认展开由 utils 兜底；执行完成后仅在「鉴权及上下文与能力准备」父级 guard
-    # 分支内折叠其子树（childrenExpanded = false），不波及 route 等其它父级。
-    collapse_guard = "isPreparationParent(item) && item.children?.length"
-    assert collapse_guard in timeline
-    assert timeline.index("item.childrenExpanded = false") > timeline.index(collapse_guard)
-    assert "childrenExpanded = false" in timeline
+    # 进行中默认展开由 utils 兜底；执行完成后只在「鉴权及上下文与能力准备」父级上
+    # 收起子树，不波及 route 等其它父级。收起是**派生判定**而非一次性把
+    # childrenExpanded 改成 false——时间线对象在流式合并与历史恢复时会被重建，
+    # 一次性标志会被冲掉，表现为「跑完了准备项还摊着」。
+    assert "shouldCollapsePreparationChildren" in timeline
+    assert "export function shouldCollapsePreparationChildren(" in timeline_utils
+    assert "if (!input.isPreparation) return false;" in timeline_utils
+    assert "item.childrenExpanded = false" not in timeline
     assert "主专家开始处理" in timeline_utils
     assert "工具可用性检查" in timeline_utils
     assert "模型调用 ·" in timeline_utils

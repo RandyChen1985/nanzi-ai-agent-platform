@@ -179,7 +179,7 @@ def test_own_args_precede_children_while_output_stays_after():
             "顶级时间线项（委派智能体容器）",
             "(hasTimelineArgs(item) || timelineMetaText(item)) && isTimelineItemDetailsOpen(item)",
             "`item-args-${item.id}`",
-            'v-if="item.children?.length && item.childrenExpanded !== false"',
+            'v-if="item.children?.length && isChildrenOpen(item)"',
             '@click.stop="handleCopy(`item-${item.id}`, visibleTimelineText(',
         ),
     )
