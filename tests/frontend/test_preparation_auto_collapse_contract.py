@@ -1,7 +1,8 @@
 """「上下文能力准备」父级执行完后自动收起的契约。
 
-规则：这一步跑完就收起（不等整轮回答结束）；自身或子步骤还在跑、出错/被中断、
-用户手动点开过，这三种情况保持展开。
+规则：准备好之后**默认收起**，只有出错/被中断、或用户手动点开过才展开。
+收起判定必须从第一帧就成立——早先是「进行中展开、跑完收起」，同一个节点先摊开
+再收起来，视觉上会闪一下。
 
 历史实现是在「已有回答且无 pending」那一刻把 `childrenExpanded` 改成 `false`。
 时间线对象在流式合并与历史恢复时会被重建，这个一次性标志随之被冲掉，用户看到的
@@ -37,32 +38,34 @@ def _run_probe() -> dict:
 # --------------------------------------------------------------------------
 
 
-def test_collapses_as_soon_as_this_step_finishes():
-    """这一步跑完就收，不等整轮回答结束——摊着会吃掉大半个思考卡片。"""
+def test_collapsed_by_default_even_while_running():
+    """默认收起：从出现的第一帧就收，不等跑完。
+
+    早先的规则是「进行中展开、跑完收起」，同一个节点会先摊开再收起来，视觉上闪一下。
+    """
     out = _run_probe()
+    assert out["pending_collapses"] is True
     assert out["finished_collapses"] is True
-    # 历史数据可能没有 status，同样视为已完成
     assert out["finished_without_status_collapses"] is True
 
 
-def test_keeps_open_while_still_running():
-    """自身或任一子步骤还在跑时保持展开：准备阶段是此刻唯一能看到的进展。"""
-    out = _run_probe()
-    assert out["self_pending_keeps_open"] is False
-    assert out["child_pending_keeps_open"] is False
+def test_judgement_stable_across_status_transition():
+    """pending -> success 判定不变，这是「不闪」的充要条件。"""
+    assert _run_probe()["stable_across_pending_to_success"] is True
 
 
 def test_keeps_open_when_something_went_wrong():
-    """出错 / 被中断必须留着——收起等于把故障藏起来。"""
+    """出错 / 被中断必须展开——收起等于把故障藏起来。"""
     out = _run_probe()
     assert out["error_keeps_open"] is False
     assert out["interrupted_keeps_open"] is False
-    assert out["error_with_pending_child_keeps_open"] is False
 
 
 def test_user_toggle_wins_over_auto_collapse():
     """用户点开正在看的内容，不能被自动收走。"""
-    assert _run_probe()["user_toggled_keeps_open"] is False
+    out = _run_probe()
+    assert out["user_toggled_keeps_open"] is False
+    assert out["user_toggled_while_pending_keeps_open"] is False
 
 
 def test_other_parents_are_untouched():
@@ -73,8 +76,8 @@ def test_other_parents_are_untouched():
 
 
 def test_missing_input_tolerated():
-    """缺参数按「已完成且无 pending」处理，不能崩。"""
-    assert _run_probe()["undefined_tolerated"] is True
+    """缺参数按「默认收起」处理，不能崩。"""
+    assert _run_probe()["finished_without_status_collapses"] is True
 
 
 def test_result_is_deterministic():
@@ -102,8 +105,8 @@ def test_expansion_judgements_go_through_the_derived_check():
     assert "isPreparation: isPreparationParent(item)" in body
     assert "userToggled: item.userToggled" in body
     assert "status: item.status" in body
-    # 只看这一棵子树：整轮其它步骤还在跑不该拖住准备项收起
-    assert "childrenPending: timelineHasPending(item.children)" in body
+    # 收起判定不看「是否还在跑」，否则会先展开再收起
+    assert "childrenPending" not in body
     # 折叠与「整轮是否答完」解耦
     assert "hasAnswer: props.hasAnswer" not in body
 
@@ -130,6 +133,15 @@ def test_manual_toggle_still_marks_user_intent():
     body = source[source.index("function toggleTimelineItem"):]
     body = body[: body.index("function isChildDetailsOpen")]
     assert "item.userToggled = true" in body
+
+
+def test_rule_has_no_pending_branch():
+    """判定里不能有「进行中 -> 展开」的分支，否则同一个节点会先摊开再收起。"""
+    util = UTIL.read_text(encoding="utf-8")
+    fn = util[util.index("export function shouldCollapsePreparationChildren"):]
+    fn = fn[: fn.index("\n}")]
+    assert 'status === "pending"' not in fn
+    assert "childrenPending" not in fn
 
 
 def test_util_keeps_the_rule_documented():

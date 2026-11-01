@@ -65,7 +65,7 @@ def test_preparation_parent_uses_auth_context_title_and_shield_icon():
     assert 'return "🛡️"' in timeline
 
 
-def test_preparation_children_expand_by_default_but_can_be_reopened():
+def test_preparation_children_collapse_by_default_and_expand_on_error():
     timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
     header = _read("frontend/src/components/chat/ChatThinkingHeader.vue")
     timeline_utils = _read("frontend/src/utils/processTimeline.ts")
@@ -80,10 +80,10 @@ def test_preparation_children_expand_by_default_but_can_be_reopened():
     assert "defaultChildrenExpandedForLog" in timeline_utils
     assert "defaultChildrenExpandedForLog(data.id)" in timeline_utils
     assert "defaultChildrenExpandedForLog(log.id)" in timeline_utils
-    # 进行中默认展开由 utils 兜底；执行完成后只在「鉴权及上下文与能力准备」父级上
-    # 收起子树，不波及 route 等其它父级。收起是**派生判定**而非一次性把
-    # childrenExpanded 改成 false——时间线对象在流式合并与历史恢复时会被重建，
-    # 一次性标志会被冲掉，表现为「跑完了准备项还摊着」。
+    # 准备父级**默认收起**、只在出错/中断或用户手动点开时展开；只作用于
+    # 「鉴权及上下文与能力准备」，不波及 route 等其它父级。收起是**派生判定**
+    # 而非一次性把 childrenExpanded 改成 false——时间线对象在流式合并与历史恢复时
+    # 会被重建，一次性标志会被冲掉，表现为「跑完了准备项还摊着」。
     assert "shouldCollapsePreparationChildren" in timeline
     assert "export function shouldCollapsePreparationChildren(" in timeline_utils
     assert "if (!input.isPreparation) return false;" in timeline_utils

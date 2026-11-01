@@ -1246,9 +1246,12 @@ function isToolTimelineItem(item: ProcessTimelineLogItem): boolean {
 /**
  * 子项此刻是否展开。
  *
- * 准备父级的收起是**派生判定**（见 `shouldCollapsePreparationChildren`），
- * 不再是把 `childrenExpanded` 改成 false 的一次性副作用——时间线对象在流式
- * 合并与历史恢复时会被重建，一次性标志会被冲掉，表现为「跑完了还摊着」。
+ * 准备父级**默认收起**、只在出错/中断或用户手动点开时展开。收起判定必须从第一帧
+ * 就成立，否则树先摊开、跑完再收起，视觉上会闪一下。
+ *
+ * 判定是**派生值**（见 `shouldCollapsePreparationChildren`），不是把
+ * `childrenExpanded` 改成 false 的一次性副作用——时间线对象在流式合并与历史恢复时
+ * 会被重建，一次性标志会被冲掉，表现为「跑完了还摊着」。
  */
 function isChildrenOpen(item: ProcessTimelineLogItem): boolean {
   if (
@@ -1256,8 +1259,6 @@ function isChildrenOpen(item: ProcessTimelineLogItem): boolean {
       isPreparation: isPreparationParent(item),
       userToggled: item.userToggled,
       status: item.status,
-      // 只看这一棵子树：整轮其它步骤还在跑不该拖住准备项收起
-      childrenPending: timelineHasPending(item.children),
     })
   ) {
     return false;
