@@ -6,6 +6,7 @@
   >
     <ChatThinkingHeader
       v-model:expanded="expanded"
+      @user-toggle="userToggledExpanded = true"
       :is-thinking="!hasAnswer && (isThinking || hasPending)"
       :title="headerTitle"
       :step-count="countTimelineSteps(items)"
@@ -729,6 +730,15 @@ const props = withDefaults(defineProps<{
   processNarrationPending?: string;
   isThinking?: boolean;
   hasAnswer?: boolean;
+  /**
+   * 「思考过程默认展开」用户设置（界面设置 → 思考过程）。
+   *
+   * 传了值就**完全跟随**：开启则整张卡片始终展开（生成中也展开，能实时看到执行
+   * 明细），关闭则始终折叠，只留标题行。不传（undefined）退回旧的自动行为——
+   * 生成中展开、有正文即折叠，供 AgentDebug 这类不接该设置的调用方使用。
+   * 无论哪种情况，用户手动点过标题之后都只认用户操作。
+   */
+  expandThoughts?: boolean;
   thinkingText?: string;
   duration?: string;
   skillSummary?: string;
@@ -772,6 +782,15 @@ const props = withDefaults(defineProps<{
 });
 
 const expanded = defineModel<boolean>("expanded", { default: false });
+/**
+ * 用户是否手动切换过本条消息的展开状态。
+ *
+ * 一旦置位，下面两个自动 watch 全部让位：生成中不再强制展开，有正文/完成也不再
+ * 强制折叠。唯一置位入口是 `ChatThinkingHeader` 的 userToggle 事件，watch 内部
+ * 对 `expanded.value` 的自动写入不会走到这里，所以「自动决策」与「用户选择」
+ * 能真正区分开。
+ */
+const userToggledExpanded = ref(false);
 const routeGroupExpanded = ref(true);
 
 const emit = defineEmits<{
@@ -1003,17 +1022,31 @@ function timelineMetaText(item: {
   return parts.join(" · ");
 }
 
-watch(hasPending, (pending) => {
-  if (pending) {
-    expanded.value = true;
-  } else if (props.hasAnswer) {
-    expanded.value = false;
-  }
-}, { immediate: true });
-
-watch(() => props.hasAnswer, (answer) => {
-  if (answer && !hasPending.value) expanded.value = false;
-}, { immediate: true });
+/**
+ * 折叠决策只有一处，避免多条 watch 互相覆盖（历史上正是三个 watch 各自写
+ * `expanded`，把用户的「思考过程」设置彻底盖掉了）。
+ *
+ * 接了用户设置（expandThoughts 有值）就完全听设置：开启=整张卡片展开、关闭=只留
+ * 标题行，生成中也不例外——开关状态必须与页面表现一致。没接设置则退回旧的自动
+ * 行为：生成中展开看进度，有正文即折叠。
+ * 用户手动点过标题（userToggle）后一律让位，直到本条消息被重新创建。
+ */
+watch(
+  [hasPending, () => props.hasAnswer, () => props.expandThoughts],
+  () => {
+    if (userToggledExpanded.value) return;
+    if (props.expandThoughts !== undefined) {
+      expanded.value = Boolean(props.expandThoughts);
+      return;
+    }
+    if (hasPending.value) {
+      expanded.value = true;
+    } else if (props.hasAnswer) {
+      expanded.value = false;
+    }
+  },
+  { immediate: true },
+);
 
 // 执行完成后自动折叠「鉴权及上下文与能力准备」子树，仅保留一行标题，让界面干净。
 // 进行中（存在 pending 子步骤）仍保持展开以观察每步推进；一旦达成有答案且无 pending，

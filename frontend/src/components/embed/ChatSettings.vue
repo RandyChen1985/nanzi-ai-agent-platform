@@ -974,7 +974,9 @@ const handleLogout = () => {
                 </div>
                 <div>
                   <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">思考过程</h5>
-                  <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">智能体推理思维链默认展开展示</p>
+                  <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">
+                    {{ config.expandThoughts ? '智能体推理思维链默认展开，回答后仍保留在页面上' : '已关闭：执行过程默认折叠，只保留标题行，点标题可展开' }}
+                  </p>
                 </div>
               </div>
               <Switch :modelValue="config.expandThoughts" @update:modelValue="handleSetExpandThoughts" class="scale-[0.8] origin-right" />
