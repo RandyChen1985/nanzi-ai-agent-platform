@@ -212,10 +212,14 @@ def test_both_chat_surfaces_use_shared_thinking_header_component():
     assert "resolveTimelineCurrentStep" in timeline
     assert "timelineHasPending" in timeline
     assert ':is-thinking="!hasAnswer && (isThinking || hasPending)"' in timeline
-    # hasPending 变化时：仍 pending 则展开；pending 结束且有答案则自动折叠。
-    assert 'watch(hasPending, (pending) => {' in timeline
+    # 折叠决策收敛成一处：接了「思考过程默认展开」设置就完全听设置，
+    # 没接则退回旧的自动行为（生成中展开、有正文即折叠）。
+    assert "[hasPending, () => props.hasAnswer, () => props.expandThoughts]" in timeline
+    assert 'if (props.expandThoughts !== undefined) {' in timeline
+    assert 'expanded.value = Boolean(props.expandThoughts);' in timeline
     assert '} else if (props.hasAnswer) {' in timeline
-    assert 'if (answer && !hasPending.value) expanded.value = false;' in timeline
+    # 用户手动切换过就不再接受自动决策
+    assert 'if (userToggledExpanded.value) return;' in timeline
     assert "过程消息" not in timeline
     assert "reasoning" in timeline
     assert "tool" in timeline

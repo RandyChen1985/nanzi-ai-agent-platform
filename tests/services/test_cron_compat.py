@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.services.cron_compat import to_apscheduler_crontab
+from app.services.cron_compat import to_apscheduler_crontab, validate_standard_crontab
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -100,6 +100,59 @@ def test_range_with_step_is_expanded():
     assert _fire_weekdays("0 8 * * 1-5/2", 6) == ["周一", "周三", "周五", "周一", "周三", "周五"]
 
 
+def test_ranges_starting_at_sunday_must_not_use_symbolic_range():
+    """APScheduler 的 sun=6 > fri=4，写成 sun-fri 会被它判为非法范围。
+
+    因此凡是「含周日且与其它天连续」的集合只能输出逗号列表。
+    """
+    assert to_apscheduler_crontab("0 8 * * 1-5,0") == "0 8 * * sun,mon,tue,wed,thu,fri"
+    assert to_apscheduler_crontab("0 8 * * 0-5") == "0 8 * * sun,mon,tue,wed,thu,fri"
+    assert to_apscheduler_crontab("0 8 * * 0,1,2") == "0 8 * * sun,mon,tue"
+    assert set(_fire_weekdays("0 8 * * 1-5,0", 8)) == {"周日", "周一", "周二", "周三", "周四", "周五"}
+    # 不含周日的连续区间仍保留可读的范围写法
+    assert to_apscheduler_crontab("0 8 * * 1-5") == "0 8 * * mon-fri"
+
+
+def test_question_mark_in_day_field_behaves_like_wildcard():
+    """前端允许「日」或「周」单独用 ?（Quartz 的“不指定”），后端要能认。"""
+    assert to_apscheduler_crontab("0 9 ? * *") == "0 9 * * *"
+    assert to_apscheduler_crontab("0 9 ? * 1") == "0 9 * * mon"
+    assert to_apscheduler_crontab("0 9 ? * ?") == "0 9 * * *"
+    assert _fire_weekdays("0 9 ? * 1", 2) == ["周一", "周一"]
+
+
+def test_question_mark_cannot_carry_a_step():
+    # 与前端校验同口径：? 只能单独使用
+    for expr in ("0 9 ?/2 * *", "0 9 * * ?/2"):
+        with pytest.raises(ValueError):
+            to_apscheduler_crontab(expr)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "0 9 1 * 1",       # 日 + 周同时限定：crontab 是 OR，APScheduler 是 AND
+        "0 9 */2 * mon",
+        "0 9 15 * 5",
+    ],
+)
+def test_validate_rejects_day_and_weekday_together(expr):
+    with pytest.raises(ValueError, match="同时限定"):
+        validate_standard_crontab(expr)
+
+
+def test_validate_accepts_day_with_explicit_weekday_placeholder():
+    # 日指定 + 周用 ? 表示不限定，是合法组合
+    validate_standard_crontab("0 9 1 * ?")
+    validate_standard_crontab("0 9 ? * 1")
+    validate_standard_crontab("0 9 * * 1-5")
+
+
+def test_validate_rejects_six_field_seconds_expression():
+    with pytest.raises(ValueError):
+        validate_standard_crontab("0 0 2 * * *")
+
+
 @pytest.mark.parametrize(
     "expr",
     [
@@ -120,3 +173,11 @@ def test_invalid_expressions_raise_value_error(expr):
 
 def test_other_fields_are_passed_through_untouched():
     assert to_apscheduler_crontab("*/5 9-18 1,15 jan-mar 1-5") == "*/5 9-18 1,15 jan-mar mon-fri"
+
+
+def test_validate_rejects_overlong_expression():
+    # 任务表 cron_expr 是 VARCHAR(50)，超长会在入库时变成数据库错误（500）
+    long_expr = "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 * * * *"
+    with pytest.raises(ValueError, match="过长"):
+        validate_standard_crontab(long_expr)
+    validate_standard_crontab("0 8 * * 1-5")

@@ -871,6 +871,7 @@
                 :process-narration-pending="msg.processNarrationPending"
                 :is-thinking="msg.isThinking"
                 :has-answer="Boolean(visibleStreamBody(msg))"
+                :expand-thoughts="config.expandThoughts"
                 :thinking-text="msg.thinkingText"
                 :duration="msg.thoughtDuration"
                 :prompt-tokens="msg.prompt_tokens"
@@ -11882,7 +11883,14 @@ const applyPermissionStreamEvent = (
     ) {
       const piece = sanitizeStreamContent(String(data.content || ""));
       if (piece) {
-        if (msg.isThoughtExpanded && !msg.content && !timelineHasPending(msg.processTimeline)) {
+        // 正文开始输出时收起思考面板，让位给答案。用户开了「思考过程默认展开」就
+        // 不收起——那条设置的语义就是「回答完也保留推理链」。
+        if (
+          msg.isThoughtExpanded
+          && !msg.content
+          && !timelineHasPending(msg.processTimeline)
+          && !config.expandThoughts
+        ) {
           msg.isThoughtExpanded = false;
         }
         appendAssistantBodyDelta(msg, piece);

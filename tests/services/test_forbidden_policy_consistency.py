@@ -289,17 +289,23 @@ def test_model_whitelist_query_is_agent_scope_filtered():
 
 
 # ---------------------------------------------------------------------------
-# 9. 强制预载必须尊重 enabled
+# 9. 首轮强制预载已下线
 # ---------------------------------------------------------------------------
 
-def test_force_preload_respects_enabled_flag():
-    """已停用的 using-superpowers 不该在每个新会话首轮被塞进上下文。"""
+def test_no_first_turn_superpowers_forced_preload():
+    """新会话首轮强制预载 using-superpowers 的口径已移除。
+
+    该门禁曾对**所有智能体**生效、绕过 skills_custom 白名单，把 5.4 KB 的软件工程方法论
+    塞进每个新会话首轮（额外写一条「已启用技能」时间线日志，并计入技能激活统计），对业务
+    问答是纯噪音。移除后技能注入只剩「按本轮问题语义扫描 + 显式挂载」两条路，本用例防止
+    它被悄悄加回来。
+    """
     source = (ROOT / "app/services/ai/skills/injector.py").read_text(encoding="utf-8")
-    body = source[source.index("def ensure_first_turn_superpowers_candidate"):]
-    body = body[: body.index("def append_first_turn_superpowers")]
-    assert "is_skill_enabled(skill)" in body, (
-        "强制预载若不过滤 enabled，就会出现「被加载但在候选清单里看不到、因此禁不掉」"
-    )
+
+    assert "using-superpowers" not in source
+    assert "append_first_turn_superpowers" not in source
+    assert "ensure_first_turn_superpowers_candidate" not in source
+    assert "is_new_session_first_user_turn" not in source
 
 
 # ---------------------------------------------------------------------------

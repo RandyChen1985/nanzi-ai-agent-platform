@@ -1502,10 +1502,23 @@ def test_chat_execution_timeline_watch_and_meta_guard_premature_fold():
     embed_code = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
     debug_code = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
 
-    # ChatExecutionTimeline: pending 状态必定展开，且仅在无 pending 时响应 hasAnswer 折叠
-    assert "if (pending) {" in timeline_code
+    # ChatExecutionTimeline: 折叠只有一个决策点——接了设置就听设置（开启即展开、
+    # 关闭即折叠，生成中也不例外），没接设置才走旧的自动行为
+    assert "[hasPending, () => props.hasAnswer, () => props.expandThoughts]" in timeline_code
+    assert "if (props.expandThoughts !== undefined) {" in timeline_code
+    assert "expanded.value = Boolean(props.expandThoughts);" in timeline_code
+    assert "} else if (props.hasAnswer) {" in timeline_code
     assert "expanded.value = true;" in timeline_code
-    assert "if (answer && !hasPending.value) expanded.value = false;" in timeline_code
+
+    # 用户手动切换过（ChatThinkingHeader 的 userToggle）就停止自动决策：
+    # 决策点只有一处，所以守卫也只有一处
+    assert timeline_code.count("if (userToggledExpanded.value) return;") == 1
+    assert '@user-toggle="userToggledExpanded = true"' in timeline_code
+    assert 'emit("userToggle")' in (ROOT / "frontend/src/components/chat/ChatThinkingHeader.vue").read_text(encoding="utf-8")
+
+    # EmbedChat: 把界面设置传给组件；正文首字那处强制折叠也要让位给该设置
+    assert ':expand-thoughts="config.expandThoughts"' in embed_code
+    assert "&& !config.expandThoughts" in embed_code
 
     # EmbedChat: meta 事件不因非 data_query 强制将 isThoughtExpanded 抹杀为 false
     assert "if (data.thought_expanded_default === true) {" in embed_code
@@ -1530,7 +1543,10 @@ return {
     )
 
     assert result["root"] == "preparation:auth_context_capability"
-    assert result["preparationExpanded"] is False
+    # 准备父节点默认展开：准备阶段的 pending 子项（能力目录 / 工作区准备）是用户此刻
+    # 唯一能看到的进展；「完成后收起」由 ChatExecutionTimeline 的 collapse watch 负责，
+    # 所以历史消息仍然只占一行（该收起行为由 test_execution_stage_card_contract 覆盖）。
+    assert result["preparationExpanded"] is True
     assert result["ordinaryExpanded"] is True
 
 

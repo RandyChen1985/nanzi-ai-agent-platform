@@ -307,19 +307,19 @@ def test_prune_targets_only_the_forbidden_skill(tmp_path, skills_env):
 
 
 def test_injector_wires_forbidden_skills_into_every_injection_path():
-    """注入器四条路（挂载 / 点名 / 扫描 / 首轮门禁）都必须带上禁用集合。
+    """注入器每条路（挂载 / 点名 / 扫描）都必须带上禁用集合。
 
     只做源码级契约：过滤本身落在 list_skill_metas / drop_forbidden_skill_items，行为由上面的
     用例覆盖；这里守住接线——首版实现只改了挂载，把点名与扫描漏掉了。
+    注：原先还有第四条「新会话首轮门禁」，该门禁已整体移除（它对所有智能体无条件预载
+    using-superpowers，见 tests/services/test_forbidden_policy_consistency.py 第 9 节）。
     """
     source = Path("app/services/ai/skills/injector.py").read_text(encoding="utf-8")
 
-    # 三处 skill_filter 定义（点名、扫描、首轮门禁）都要补上禁用集合
-    assert source.count('skill_filter["excluded_skill_ids"] =') == 3
+    # 两处 skill_filter 定义（点名、扫描）都要补上禁用集合
+    assert source.count('skill_filter["excluded_skill_ids"] =') == 2
     # 挂载路径不走 skill_filter，单独过滤
     assert "drop_forbidden_skill_items(" in source
-    # 首轮 using-superpowers 的"白名单例外"不等于"禁用例外"
-    assert 'excluded_skill_ids=skill_filter.get("excluded_skill_ids")' in source
 
 
 def test_prune_also_drops_stale_partitions(tmp_path, skills_env):

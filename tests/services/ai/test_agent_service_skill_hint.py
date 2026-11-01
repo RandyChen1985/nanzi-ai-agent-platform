@@ -269,46 +269,12 @@ async def test_inject_skills_keeps_summary_for_lower_confidence_scan(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
-async def test_inject_skills_forces_using_superpowers_on_first_turn_scan(tmp_path):
-    service = AgentService()
-    skill_dir = tmp_path / "using-superpowers"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        "---\n"
-        "name: using-superpowers\n"
-        "description: superpowers 流程规范\n"
-        "---\n\n"
-        "# 完整流程\n"
-        "会话开始时先检查并使用相关技能。\n",
-        encoding="utf-8",
-    )
-    agent_config = ChatConfig(
-        agent_id="sys-agent-chat",
-        agent_name="assistant",
-        model_name="test-model",
-        temperature=0,
-        system_prompt="Base prompt",
-        tools=[],
-    )
+async def test_first_turn_no_longer_force_preloads_using_superpowers(tmp_path):
+    """新会话首轮不再预载 using-superpowers：不存在语义命中时一条技能都不注入。
 
-    with (
-        patch("app.core.config.Settings.SKILLS_DIR", str(tmp_path)),
-        patch("app.services.config_service.ConfigService.get", side_effect=_skill_config_get_strict_full_load),
-    ):
-        injections = await service._inject_skills(
-            messages=[{"role": "user", "content": "superpowers"}],
-            user_query="superpowers",
-            agent_config=agent_config,
-        )
-
-    joined = "\n".join(injections)
-    assert "已预载完整指令" in joined
-    assert "会话开始时先检查并使用相关技能" in joined
-
-
-@pytest.mark.asyncio
-@pytest.mark.no_infrastructure
-async def test_inject_skills_forces_using_superpowers_on_first_turn_even_without_lexical_match(tmp_path):
+    门禁曾把该技能强塞进每个新会话首轮（绕过 skills_custom 白名单、额外写一条时间线日志），
+    对业务问答属于纯噪音；移除后应回到「只按本轮问题语义扫描」的唯一口径。
+    """
     service = AgentService()
     skill_dir = tmp_path / "using-superpowers"
     skill_dir.mkdir()
@@ -318,7 +284,7 @@ async def test_inject_skills_forces_using_superpowers_on_first_turn_even_without
         "description: Use when starting any conversation\n"
         "---\n\n"
         "# 完整流程\n"
-        "首轮普通中文问题也应该启用该流程。\n",
+        "首轮也不应该被无条件预载。\n",
         encoding="utf-8",
     )
     agent_config = ChatConfig(
@@ -341,13 +307,15 @@ async def test_inject_skills_forces_using_superpowers_on_first_turn_even_without
         )
 
     joined = "\n".join(injections)
-    assert "已预载完整指令" in joined
-    assert "首轮普通中文问题也应该启用该流程" in joined
+    assert "using-superpowers" not in joined
+    assert "已预载完整指令" not in joined
+    assert "首轮也不应该被无条件预载" not in joined
 
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
-async def test_inject_skills_forces_using_superpowers_on_first_turn_greeting(tmp_path):
+async def test_first_turn_no_longer_force_preloads_using_superpowers_for_non_main_agent(tmp_path):
+    """专家 / ChatBI 等非主助手同样不再被门禁预载（门禁曾对「所有智能体」生效）。"""
     service = AgentService()
     skill_dir = tmp_path / "using-superpowers"
     skill_dir.mkdir()
@@ -357,47 +325,7 @@ async def test_inject_skills_forces_using_superpowers_on_first_turn_greeting(tmp
         "description: Use when starting any conversation\n"
         "---\n\n"
         "# 完整流程\n"
-        "问候首轮也应该启用该流程。\n",
-        encoding="utf-8",
-    )
-    agent_config = ChatConfig(
-        agent_id="sys-agent-chat",
-        agent_name="assistant",
-        model_name="test-model",
-        temperature=0,
-        system_prompt="Base prompt",
-        tools=[],
-    )
-
-    with (
-        patch("app.core.config.Settings.SKILLS_DIR", str(tmp_path)),
-        patch("app.services.config_service.ConfigService.get", side_effect=_skill_config_get_strict_full_load),
-    ):
-        injections = await service._inject_skills(
-            messages=[{"role": "user", "content": "你好"}],
-            user_query="你好",
-            agent_config=agent_config,
-        )
-
-    joined = "\n".join(injections)
-    assert "已预载完整指令" in joined
-    assert "问候首轮也应该启用该流程" in joined
-
-
-@pytest.mark.asyncio
-@pytest.mark.no_infrastructure
-async def test_inject_skills_forces_using_superpowers_on_first_turn_for_non_main_agent(tmp_path):
-    """专家 / ChatBI 等非主助手，新会话首轮也应强制预载 using-superpowers。"""
-    service = AgentService()
-    skill_dir = tmp_path / "using-superpowers"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        "---\n"
-        "name: using-superpowers\n"
-        "description: Use when starting any conversation\n"
-        "---\n\n"
-        "# 完整流程\n"
-        "非主助手首轮也应该启用该流程。\n",
+        "非主助手首轮也不应该被无条件预载。\n",
         encoding="utf-8",
     )
     agent_config = ChatConfig(
@@ -422,52 +350,8 @@ async def test_inject_skills_forces_using_superpowers_on_first_turn_for_non_main
         )
 
     joined = "\n".join(injections)
-    assert "已预载完整指令" in joined
-    assert "非主助手首轮也应该启用该流程" in joined
-    assert "using-superpowers" in joined
-
-
-@pytest.mark.asyncio
-@pytest.mark.no_infrastructure
-async def test_inject_skills_does_not_force_using_superpowers_after_first_turn(tmp_path):
-    service = AgentService()
-    skill_dir = tmp_path / "using-superpowers"
-    skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        "---\n"
-        "name: using-superpowers\n"
-        "description: superpowers 流程规范\n"
-        "---\n\n"
-        "# 完整流程\n"
-        "非首轮不应因为特殊门禁被强制预载。\n",
-        encoding="utf-8",
-    )
-    agent_config = ChatConfig(
-        agent_id="sys-agent-chat",
-        agent_name="assistant",
-        model_name="test-model",
-        temperature=0,
-        system_prompt="Base prompt",
-        tools=[],
-    )
-
-    with (
-        patch("app.core.config.Settings.SKILLS_DIR", str(tmp_path)),
-        patch("app.services.config_service.ConfigService.get", side_effect=_skill_config_get_strict_full_load),
-    ):
-        injections = await service._inject_skills(
-            messages=[
-                {"role": "user", "content": "你好"},
-                {"role": "agent", "content": "您好"},
-                {"role": "user", "content": "superpowers"},
-            ],
-            user_query="superpowers",
-            agent_config=agent_config,
-        )
-
-    joined = "\n".join(injections)
-    assert "未预载；执行前必须调用 read_skill_instruction" in joined
-    assert "非首轮不应因为特殊门禁被强制预载" not in joined
+    assert "using-superpowers" not in joined
+    assert "非主助手首轮也不应该被无条件预载" not in joined
 
 
 def test_skill_log_chunk_titles_say_skills():

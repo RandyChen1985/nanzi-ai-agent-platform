@@ -6,6 +6,7 @@ import pytest
 
 from app.services.ai.agent_service import (
     _build_capability_catalog_log,
+    _build_capability_catalog_pending_log,
     _build_context_history_log,
     _build_model_config_log,
     _build_prompt_assembly_log,
@@ -167,3 +168,49 @@ def test_capability_catalog_does_not_fake_permission_counts_when_catalog_is_unav
 
     assert "当前用户有权限：权限目录未统计" in event["details"]
     assert "暂不可用 个" not in event["details"]
+
+
+def test_capability_catalog_pending_log_converges_into_a_single_card():
+    """B4：占位卡与完成卡必须同 id 同父，前端按 id merge 成一张卡。
+
+    准备阶段的 7 路预取完成前没有任何子项事件；先挂 pending 占位，再用同 id 的
+    success 覆盖。若两者 id 或 parent_id 不一致，前端会出现「一张永远转圈 + 一张
+    已完成」的两张卡。
+    """
+    pending = _build_capability_catalog_pending_log()
+    success = _build_capability_catalog_log(
+        knowledge_dataset_count=2,
+        configured_dataset_count=1,
+        skill_count=3,
+        delegable_agent_count=5,
+        roster_loaded=True,
+        runtime_tool_count=8,
+        metadata_dataset_count=4,
+        session_dataset_count=2,
+        session_knowledge_base_count=1,
+        authorized_dataset_count=7,
+        authorized_knowledge_base_count=6,
+    )
+
+    assert pending["id"] == success["id"] == "capability:catalog"
+    assert pending["parent_id"] == success["parent_id"] == "preparation:auth_context_capability"
+    assert pending["status"] == "pending"
+    assert success["status"] == "success"
+    # 标题必须一致，否则 merge 过程中行标题会跳变
+    assert pending["title"] == success["title"] == "知识库和专家清单加载"
+    # 占位态不许暴露任何容易过期或伪造的统计数字
+    assert "正在加载" in pending["details"]
+    assert "个" not in pending["details"]
+
+    state = []
+    apply_stream_chunk(state, _build_preparation_parent_log(status="pending"))
+    apply_stream_chunk(state, pending)
+    apply_stream_chunk(state, success)
+
+    parent = state[0]
+    capability_children = [
+        child for child in parent["children"] if child["id"] == "capability:catalog"
+    ]
+    assert len(capability_children) == 1, "pending 与 success 必须收敛成同一张卡"
+    assert capability_children[0]["status"] == "success"
+    assert "当前用户有权限" in capability_children[0]["details"]

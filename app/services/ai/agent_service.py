@@ -770,6 +770,44 @@ def _build_capability_catalog_log(
     }
 
 
+def _build_capability_catalog_pending_log() -> Dict[str, Any]:
+    """能力目录占位日志：7 路预取合并前先挂一张 pending 卡。
+
+    准备阶段的预取是 ``asyncio.gather``，完成时刻由最慢的一路决定；期间没有任何
+    子项事件。若等 gather 返回才推卡，整段准备就是静默的（前端 keepalive 会不断
+    续命 Stall 计时器，用户只会看到父卡停住不动）。这里先占位，完成后由
+    ``_build_capability_catalog_log`` 用**同一个 id** 覆盖成 success —— 前端按 id
+    merge 更新，不会出现两张卡。
+    """
+    return {
+        "type": "log",
+        "id": "capability:catalog",
+        "parent_id": "preparation:auth_context_capability",
+        "title": "知识库和专家清单加载",
+        "details": "正在加载数据集 / 知识库 / 技能 / 专家清单与运行时工具清单…",
+        "status": "pending",
+        "category": "system",
+    }
+
+
+def _build_capability_catalog_failed_log() -> Dict[str, Any]:
+    """能力目录预取抛异常时收口占位卡，避免前端一直停在「准备中」。
+
+    ``_gather_turn_preflight_context`` 用的是不带 ``return_exceptions`` 的 gather，
+    任意一路抛异常都会让整个预取中断、本轮按错误结束；此时占位卡必须显式收口，
+    否则时间线会留一条永远转圈的「知识库和专家清单加载」。
+    """
+    return {
+        "type": "log",
+        "id": "capability:catalog",
+        "parent_id": "preparation:auth_context_capability",
+        "title": "知识库和专家清单加载",
+        "details": "准备阶段的数据预取未完成（本轮已中断）。",
+        "status": "error",
+        "category": "system",
+    }
+
+
 def _build_prompt_assembly_log(
     assembled_prompt: Any,
     *,
@@ -888,8 +926,6 @@ class TurnPreflightContext:
 
 
 class AgentService:
-    USING_SUPERPOWERS_SKILL_ID = "using-superpowers"
-
     """
     Unified Orchestrator for AI Agent interactions.
     Now refactored to delegate execution to specialized Executors.
@@ -1002,42 +1038,6 @@ class AgentService:
     _should_preload_skill_full_instruction = staticmethod(
         SkillInjector.should_preload_skill_full_instruction
     )
-    _is_new_session_first_user_turn = staticmethod(
-        SkillInjector.is_new_session_first_user_turn
-    )
-
-    @classmethod
-    def _should_force_preload_scanned_skill(
-        cls,
-        *,
-        skill_id: str,
-        messages: Optional[List[Dict[str, Any]]],
-    ) -> bool:
-        return SkillInjector.should_force_preload_scanned_skill(
-            skill_id=skill_id, messages=messages
-        )
-
-    @classmethod
-    def _ensure_first_turn_superpowers_candidate(
-        cls,
-        *,
-        scanned_skills: List[Dict[str, Any]],
-        available_skills: List[Dict[str, Any]],
-        messages: Optional[List[Dict[str, Any]]],
-        exclude_ids: Optional[set[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        return SkillInjector.ensure_first_turn_superpowers_candidate(
-            scanned_skills=scanned_skills,
-            available_skills=available_skills,
-            messages=messages,
-            exclude_ids=exclude_ids,
-        )
-
-    def _append_first_turn_superpowers(
-        self,
-        **kwargs: Any,
-    ) -> int:
-        return SkillInjector.append_first_turn_superpowers(**kwargs)
 
     _build_skill_injection = staticmethod(SkillInjector.build_skill_injection)
     _build_skill_log_chunk = staticmethod(SkillInjector.build_skill_log_chunk)

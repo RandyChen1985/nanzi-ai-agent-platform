@@ -7,9 +7,9 @@
       'border border-transparent hover:border-gray-200': bordered,
       'dark:hover:bg-gray-700/50': darkMode,
     }"
-    @click="expanded = !expanded"
-    @keydown.enter.prevent="expanded = !expanded"
-    @keydown.space.prevent="expanded = !expanded"
+    @click="toggleExpanded"
+    @keydown.enter.prevent="toggleExpanded"
+    @keydown.space.prevent="toggleExpanded"
   >
     <div class="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded bg-gray-100 text-gray-500" :class="{ 'dark:bg-gray-700': darkMode }">
       <span v-if="isThinking" class="thought-status-dot" aria-label="进行中" title="进行中" />
@@ -127,9 +127,22 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: "copy"): void;
+  /**
+   * 用户主动切换展开状态。
+   *
+   * 父级 `ChatExecutionTimeline` 有「生成中自动展开 / 完成后自动折叠」的自动决策，
+   * 不区分来源的话，用户手点一下会被下一次自动决策覆盖掉。这个事件让父级知道
+   * 「这是用户的选择」，此后本条消息只认用户操作。
+   */
+  (e: "userToggle"): void;
 }>();
 
 const expanded = defineModel<boolean>("expanded", { default: false });
+
+function toggleExpanded() {
+  expanded.value = !expanded.value;
+  emit("userToggle");
+}
 
 const stepBadgeTitle = computed(() => {
   if (!props.stepCount) return "";

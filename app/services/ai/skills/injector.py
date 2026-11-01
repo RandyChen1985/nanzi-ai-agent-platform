@@ -1,10 +1,10 @@
-"""SkillInjector: 负责运行时技能匹配、自动扫描、首轮门禁与指令提示词注入。"""
+"""SkillInjector: 负责运行时技能匹配、自动扫描与指令提示词注入。"""
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional
 
 from app.core.config import settings
 from app.services.ai.agent_prompts import AgentServicePrompts
@@ -21,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 class SkillInjector:
     """Encapsulates skill matching, scanning, policy resolution and prompt injection."""
-
-    USING_SUPERPOWERS_SKILL_ID = "using-superpowers"
 
     @staticmethod
     def _parse_bool_config(value: Any, default: bool) -> bool:
@@ -92,167 +90,6 @@ class SkillInjector:
             except (TypeError, ValueError):
                 return False
         return False
-
-    @staticmethod
-    def is_new_session_first_user_turn(messages: Optional[List[Dict[str, Any]]]) -> bool:
-        """Whether the current context only contains the first user turn."""
-        if not messages:
-            return False
-        conversation_roles = [
-            str(m.get("role") or "").strip().lower()
-            for m in messages
-            if str(m.get("role") or "").strip().lower() in {"user", "assistant", "agent"}
-        ]
-        return conversation_roles == ["user"]
-
-    @classmethod
-    def should_force_preload_scanned_skill(
-        cls,
-        *,
-        skill_id: str,
-        messages: Optional[List[Dict[str, Any]]],
-    ) -> bool:
-        return (
-            skill_id == cls.USING_SUPERPOWERS_SKILL_ID
-            and cls.is_new_session_first_user_turn(messages)
-        )
-
-    @classmethod
-    def ensure_first_turn_superpowers_candidate(
-        cls,
-        *,
-        scanned_skills: List[Dict[str, Any]],
-        available_skills: List[Dict[str, Any]],
-        messages: Optional[List[Dict[str, Any]]],
-        exclude_ids: Optional[Set[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Ensure using-superpowers is considered on the first user turn (any agent)."""
-        if not cls.is_new_session_first_user_turn(messages):
-            return scanned_skills
-        excluded = exclude_ids or set()
-        if cls.USING_SUPERPOWERS_SKILL_ID in excluded:
-            return scanned_skills
-        if any(skill.get("id") == cls.USING_SUPERPOWERS_SKILL_ID for skill in scanned_skills):
-            return scanned_skills
-
-        for skill in available_skills:
-            if skill.get("id") != cls.USING_SUPERPOWERS_SKILL_ID:
-                continue
-            # 强制预载也必须尊重 enabled：否则一个已停用的技能会在每个新会话首轮被塞进
-            # 上下文，而它在候选清单里是被剔除的——管理员在"禁用资源"页和智能体功能限定
-            # 弹框里都看不到它，也就无从禁掉（列不出来所以禁不掉）。
-            from app.utils.skill_metadata import is_skill_enabled
-
-            if not is_skill_enabled(skill):
-                continue
-            item = dict(skill)
-            item["match_score"] = 1.0
-            item["match_source"] = "scan"
-            item["force_first_turn"] = True
-            return [item] + scanned_skills
-        return scanned_skills
-
-    @classmethod
-    def append_first_turn_superpowers(
-        cls,
-        *,
-        messages: Optional[List[Dict[str, Any]]],
-        agent_config: Any,
-        user_info: Optional[Dict[str, Any]],
-        skills_injection: List[str],
-        mounted_skill_ids: Set[str],
-        full_load_policy: Dict[str, Any],
-        full_loaded_count: int,
-        skills_log_callback: Optional[Callable] = None,
-        forbidden_skill_ids: Optional[Set[str]] = None,
-    ) -> int:
-        """所有智能体：新会话首轮强制预载 using-superpowers（完整指令）。
-
-        forbidden_skill_ids 由调用方（``inject_skills``，async）查好后传入：本函数是同步
-        classmethod，自己没法查权限；而禁用优先级高于"白名单例外"，所以必须能拿到它。
-        """
-        if not cls.is_new_session_first_user_turn(messages):
-            return full_loaded_count
-        if cls.USING_SUPERPOWERS_SKILL_ID in mounted_skill_ids:
-            return full_loaded_count
-
-        from app.services.ai.skill_resolver import (
-            list_skill_metas,
-            load_skill_md_content,
-            skill_filter_kwargs_from_config,
-        )
-
-        skill_filter = skill_filter_kwargs_from_config(agent_config)
-        skill_filter["excluded_skill_ids"] = forbidden_skill_ids
-        available_skills = list_skill_metas(user_info=user_info, **skill_filter)
-        skill_meta = next(
-            (
-                skill
-                for skill in available_skills
-                if skill.get("id") == cls.USING_SUPERPOWERS_SKILL_ID
-            ),
-            None,
-        )
-        # 首轮门禁：即便 skills_custom 白名单未包含，也尽量从全局技能库加载
-        if skill_meta is None and skill_filter.get("skills_custom"):
-            available_skills = list_skill_metas(
-                user_info=user_info,
-                skills_custom=False,
-                allowed_global_skills=None,
-                # 白名单例外不等于禁用例外：被管理员禁用的技能即便在首轮门禁里也不加载
-                excluded_skill_ids=skill_filter.get("excluded_skill_ids"),
-            )
-            skill_meta = next(
-                (
-                    skill
-                    for skill in available_skills
-                    if skill.get("id") == cls.USING_SUPERPOWERS_SKILL_ID
-                ),
-                None,
-            )
-        if not skill_meta:
-            return full_loaded_count
-
-        skill_id = cls.USING_SUPERPOWERS_SKILL_ID
-        skill_name = skill_meta.get("name") or skill_id
-        description = skill_meta.get("description") or ""
-        full_instruction = load_skill_md_content(
-            skill_id,
-            max_bytes=int(full_load_policy["max_bytes"]),
-            user_info=user_info,
-            scope=skill_meta.get("scope"),
-            skill_md_path=skill_meta.get("skill_md_path"),
-        )
-        if full_instruction:
-            full_loaded_count += 1
-        skills_injection.append(
-            cls.build_skill_injection(
-                skill_name=skill_name,
-                skill_id=skill_id,
-                description=description,
-                full_instruction=full_instruction,
-            )
-        )
-        mounted_skill_ids.add(skill_id)
-        logger.info(
-            "[Skills] First-turn gate preloaded %s for agent=%s (%s).",
-            skill_id,
-            getattr(agent_config, "agent_id", None) or getattr(agent_config, "agent_name", None),
-            "full instruction" if full_instruction else "summary only",
-        )
-        if skills_log_callback:
-            if full_instruction:
-                details_msg = (
-                    f"新会话首轮门禁已强制启用；已预载「{skill_name}」(ID: {skill_id}) "
-                    "完整 SKILL.md 指令，本轮可直接按该技能执行。"
-                )
-            else:
-                details_msg = (
-                    f"新会话首轮门禁已启用「{skill_name}」(ID: {skill_id})，"
-                    "但未能读取完整指令；模型须调用 read_skill_instruction。"
-                )
-            skills_log_callback(skill_id, skill_name, details_msg)
-        return full_loaded_count
 
     @staticmethod
     def build_skill_injection(
@@ -636,7 +473,6 @@ class SkillInjector:
             try:
                 from app.services.ai.skill_resolver import (
                     is_main_general_agent,
-                    list_skill_metas,
                     load_skill_md_content,
                     scan_relevant_skills,
                     should_scan_skills_for_query,
@@ -683,16 +519,6 @@ class SkillInjector:
                                 min_score=min_score,
                                 **skill_filter,
                             )
-                        available_skills = list_skill_metas(
-                            user_info=user_info,
-                            **skill_filter,
-                        )
-                        scanned_skills = cls.ensure_first_turn_superpowers_candidate(
-                            scanned_skills=scanned_skills,
-                            available_skills=available_skills,
-                            messages=messages,
-                            exclude_ids=mounted_skill_ids,
-                        )
                         scanned_skills = scanned_skills[:max_scan_results]
 
                         for skill_meta in scanned_skills:
@@ -703,11 +529,7 @@ class SkillInjector:
                             description = skill_meta.get("description") or ""
                             match_score = skill_meta.get("match_score")
                             full_instruction = None
-                            force_full_instruction = cls.should_force_preload_scanned_skill(
-                                skill_id=skill_id,
-                                messages=messages,
-                            )
-                            if force_full_instruction or cls.should_preload_skill_full_instruction(
+                            if cls.should_preload_skill_full_instruction(
                                 match_source=str(skill_meta.get("match_source") or "scan"),
                                 match_score=match_score,
                                 policy=full_load_policy,
@@ -746,14 +568,9 @@ class SkillInjector:
                                     else ""
                                 )
                                 if full_instruction:
-                                    force_hint = (
-                                        "新会话首轮门禁已强制启用；"
-                                        if force_full_instruction
-                                        else ""
-                                    )
                                     details_msg = (
                                         f"已根据本轮问题扫描技能库并匹配「{skill_name}」(ID: {skill_id}){score_hint}。"
-                                        f"{force_hint}已预载完整 SKILL.md 指令，本轮可直接按该技能执行。"
+                                        "已预载完整 SKILL.md 指令，本轮可直接按该技能执行。"
                                     )
                                 else:
                                     details_msg = (
@@ -763,25 +580,6 @@ class SkillInjector:
                                 skills_log_callback(skill_id, skill_name, details_msg)
             except Exception as scan_err:
                 logger.warning("[Skills] Failed to scan skills from query: %s", scan_err)
-
-        # 所有智能体：新会话首轮强制预载 using-superpowers（主助手扫描路径若已注入则跳过）
-        try:
-            full_loaded_count = cls.append_first_turn_superpowers(
-                messages=messages,
-                agent_config=agent_config,
-                user_info=user_info,
-                skills_injection=skills_injection,
-                mounted_skill_ids=mounted_skill_ids,
-                full_load_policy=full_load_policy,
-                full_loaded_count=full_loaded_count,
-                skills_log_callback=skills_log_callback,
-                forbidden_skill_ids=forbidden_skill_ids,
-            )
-        except Exception as first_turn_err:
-            logger.warning(
-                "[Skills] Failed to preload first-turn using-superpowers: %s",
-                first_turn_err,
-            )
 
         if skills_injection:
             MAX_PRELOAD_SKILLS = 5

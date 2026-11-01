@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>聊天准备阶段 · 改动前后对照 Mock</title>
+<style>
+  :root{
+    --gray-50:#f9fafb; --gray-100:#f3f4f6; --gray-200:#e5e7eb; --gray-300:#d1d5db;
+    --gray-400:#9ca3af; --gray-500:#6b7280; --gray-600:#4b5563; --gray-700:#374151;
+    --gray-800:#1f2937; --gray-900:#111827;
+    --purple-50:#faf5ff; --purple-100:#f3e8ff; --purple-200:#e9d5ff;
+    --purple-600:#9333ea; --purple-700:#7e22ce;
+    --indigo-400:#818cf8; --indigo-500:#6366f1;
+    --sky-50:#f0f9ff; --sky-100:#e0f2fe; --sky-600:#0284c7;
+    --emerald-50:#ecfdf5; --emerald-100:#d1fae5; --emerald-500:#10b981; --emerald-700:#047857;
+    --amber-50:#fffbeb; --amber-100:#fef3c7; --amber-600:#d97706; --amber-700:#b45309;
+    --red-50:#fef2f2; --red-100:#fee2e2; --red-500:#ef4444; --red-600:#dc2626;
+    --blue-500:#3b82f6;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+    background:#eef1f5; color:var(--gray-800); -webkit-font-smoothing:antialiased;
+    padding:28px 20px 60px;
+  }
+  .page{max-width:820px;margin:0 auto}
+
+  /* ---------- 顶部说明 ---------- */
+  .page-title{font-size:20px;font-weight:700;letter-spacing:-0.01em;margin:0 0 6px}
+  .page-sub{font-size:13px;color:var(--gray-500);margin:0 0 22px;line-height:1.7}
+  .page-sub b{color:var(--gray-700)}
+
+  /* ---------- 场景卡片 ---------- */
+  .scene{
+    background:#fff;border:1px solid var(--gray-200);border-radius:14px;
+    margin-bottom:22px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(16,24,40,.04),0 8px 24px -18px rgba(16,24,40,.25);
+  }
+  .scene-head{
+    display:flex;align-items:center;gap:10px;
+    padding:12px 16px;border-bottom:1px solid var(--gray-100);background:var(--gray-50);
+  }
+  .tag{
+    font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;
+    border:1px solid transparent;white-space:nowrap;
+  }
+  .tag-now{background:var(--red-50);color:var(--red-600);border-color:var(--red-100)}
+  .tag-a{background:var(--sky-50);color:var(--sky-600);border-color:var(--sky-100)}
+  .tag-b{background:var(--emerald-50);color:var(--emerald-700);border-color:var(--emerald-100)}
+  .scene-head h3{font-size:13px;font-weight:600;margin:0;color:var(--gray-700)}
+  .scene-head .spacer{flex:1}
+  .scene-head .elapsed{font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--gray-400)}
+  .scene-body{padding:18px 18px 8px}
+
+  /* ---------- 用户气泡 ---------- */
+  .msg-user{display:flex;justify-content:flex-end;margin-bottom:14px}
+  .bubble-user{
+    max-width:78%;background:var(--gray-100);border-radius:14px 14px 4px 14px;
+    padding:9px 13px;font-size:13px;line-height:1.6;color:var(--gray-800);
+  }
+
+  /* ---------- agent 侧 ---------- */
+  .msg-agent{display:flex;gap:9px;align-items:flex-start}
+  .avatar{
+    width:26px;height:26px;border-radius:8px;flex:0 0 auto;
+    background:linear-gradient(135deg,#6366f1,#8b5cf6);
+    display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:12px;font-weight:700;margin-top:2px;
+  }
+  .agent-col{min-width:0;flex:1;max-width:680px}
+
+  /* ---------- 折叠面板头 ---------- */
+  .panel-head{
+    display:flex;align-items:center;gap:8px;
+    padding:7px 12px;border-radius:8px;cursor:default;
+  }
+  .panel-head:hover{background:var(--gray-100)}
+  .ph-icon{
+    width:20px;height:20px;border-radius:5px;background:var(--gray-100);
+    display:flex;align-items:center;justify-content:center;flex:0 0 auto;
+  }
+  .ph-title{font-size:12px;font-weight:600;color:var(--gray-700)}
+  .badge{
+    font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    background:var(--gray-100);color:var(--gray-500);
+    padding:2px 6px;border-radius:999px;white-space:nowrap;
+  }
+  .ph-cur{font-size:10px;color:var(--gray-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .chev{margin-left:auto;color:var(--gray-400);flex:0 0 auto}
+
+  /* ---------- 时间线明细 ---------- */
+  .timeline{padding:2px 4px 2px 8px}
+  .tl-topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:2px 4px 6px;font-size:10px;color:var(--gray-400);
+  }
+
+  .row{
+    display:flex;align-items:center;gap:8px;
+    padding:2px 4px;border-radius:8px;
+    font-size:11px;line-height:20px;transition:background .15s;
+  }
+  .row:hover{background:var(--gray-50)}
+  .row .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .s{flex:0 0 auto;font-size:10px;font-weight:600}
+  .row .c{flex:0 0 auto;font-size:10px;color:var(--gray-400)}
+  .row .d{
+    flex:0 0 auto;font-size:10px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:var(--gray-400);font-variant-numeric:tabular-nums;
+  }
+  .row.pending{color:var(--gray-600)}
+  .row.done{color:var(--gray-400)}
+  .row.error{background:var(--red-50);color:var(--red-600)}
+  .row.warn{background:var(--amber-50);color:var(--amber-700)}
+
+  /* 进行中的脉冲点（对应前端 .thought-status-dot） */
+  .dot{
+    width:6px;height:6px;border-radius:999px;background:var(--blue-500);
+    flex:0 0 auto;animation:pulse 1.15s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{opacity:1;transform:scale(1)}
+    50%{opacity:.35;transform:scale(.72)}
+  }
+  .dot-amber{background:var(--amber-600)}
+
+  /* 图标 */
+  .ico{width:14px;height:14px;flex:0 0 auto;display:block}
+  .ico-gray{color:var(--gray-400)}
+  .ico-sky{color:var(--sky-600)}
+  .ico-emerald{color:var(--emerald-500)}
+  .ico-amber{color:var(--amber-600)}
+  .ico-red{color:var(--red-500)}
+
+  /* 缩进层级 */
+  .lvl1{margin-left:18px;border-left:1px dashed var(--gray-200);padding-left:8px}
+  .lvl2{margin-left:34px;border-left:1px dashed var(--gray-200);padding-left:8px}
+
+  /* 详情行 */
+  .detail{
+    margin:0 0 2px 26px;padding:3px 8px;border-left:2px solid var(--gray-200);
+    font-size:10px;line-height:1.6;color:var(--gray-400);
+  }
+  .detail code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    background:var(--gray-100);border-radius:3px;padding:0 3px;color:var(--gray-500);
+  }
+
+  /* 工具卡片进度条（对应 timeline-progress-shell） */
+  .progress-shell{margin:3px 0 5px 26px;display:flex;align-items:center;gap:8px}
+  .progress-track{height:4px;flex:1;border-radius:999px;background:var(--gray-200);overflow:hidden}
+  .progress-fill{
+    height:100%;border-radius:999px;background:var(--indigo-500);
+    width:38%;transition:width .4s ease-out;
+  }
+  .progress-track.indet .progress-fill{
+    width:35%;animation:slide 1.4s ease-in-out infinite;
+  }
+  @keyframes slide{
+    0%{margin-left:-35%}100%{margin-left:100%}
+  }
+  .progress-text{font-size:10px;color:var(--gray-400);font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+
+  /* ---------- 静默空档 ---------- */
+  .void{
+    margin:8px 0 8px 18px;border:1px dashed var(--red-500);border-radius:10px;
+    background:linear-gradient(180deg,rgba(254,242,242,.75),rgba(254,242,242,.35));
+    padding:10px 12px;
+  }
+  .void-title{
+    display:flex;align-items:center;gap:6px;
+    font-size:11px;font-weight:700;color:var(--red-600);margin-bottom:4px;
+  }
+  .void-body{font-size:11px;line-height:1.65;color:#9f1239}
+  .void-body b{color:var(--red-600)}
+  .anno{font-weight:500;color:#b91c1c;opacity:.85}
+
+  /* ---------- 回答正文 ---------- */
+  .answer{
+    margin-top:10px;font-size:13px;line-height:1.75;color:var(--gray-800);
+    padding-left:2px;
+  }
+  .answer p{margin:0 0 8px}
+
+  /* ---------- 时间轴对比 ---------- */
+  .compare{
+    background:#fff;border:1px solid var(--gray-200);border-radius:14px;
+    padding:18px 20px 22px;box-shadow:0 1px 2px rgba(16,24,40,.04);
+  }
+  .compare h3{font-size:13px;font-weight:700;margin:0 0 4px}
+  .compare p.lead{font-size:11px;color:var(--gray-500);margin:0 0 18px}
+  .barrow{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .barlabel{width:112px;flex:0 0 auto;font-size:11px;color:var(--gray-600);text-align:right}
+  .bartrack{
+    position:relative;flex:1;height:24px;border-radius:6px;
+    background:var(--gray-100);overflow:hidden;
+  }
+  .seg{
+    position:absolute;top:0;bottom:0;
+    display:flex;align-items:center;justify-content:center;
+    font-size:9px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;
+  }
+  .seg.route{background:#93c5fd}
+  .seg.prep{background:#fdba74}
+  .seg.silent{
+    background:repeating-linear-gradient(45deg,#fca5a5,#fca5a5 6px,#fecaca 6px,#fecaca 12px);
+    color:#7f1d1d;
+  }
+  .seg.visible{background:#6ee7b7;color:#065f46}
+  .seg.exec{background:#c4b5fd;color:#4c1d95}
+  .scale{
+    display:flex;justify-content:space-between;
+    margin:6px 0 0 122px;font-size:9px;color:var(--gray-400);
+    font-family:ui-monospace,Menlo,monospace;
+  }
+  .legend{
+    display:flex;flex-wrap:wrap;gap:14px;margin-top:16px;
+    padding-top:14px;border-top:1px solid var(--gray-100);
+    font-size:10px;color:var(--gray-500);
+  }
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .sw{width:9px;height:9px;border-radius:2px;display:inline-block}
+  .note{
+    margin-top:18px;background:var(--gray-50);border:1px solid var(--gray-200);
+    border-radius:10px;padding:12px 14px;font-size:11px;line-height:1.75;color:var(--gray-600);
+  }
+  .note b{color:var(--gray-800)}
+  .kbd{
+    font-family:ui-monospace,Menlo,monospace;font-size:10px;
+    background:#fff;border:1px solid var(--gray-300);border-radius:4px;
+    padding:0 4px;color:var(--gray-600);
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1 class="page-title">聊天「准备阶段」改动前后对照</h1>
+  <p class="page-sub">
+    同一个问题、同一套后端，只改<b>事件推送时机</b>和<b>超时兜底</b>。<br>
+    下面是前端执行时间线的真实样式（灰字=已完成，蓝点脉冲=进行中，红框=用户什么都看不到的静默期）。
+  </p>
+
+  <!-- ============ 场景 1：现在 ============ -->
+  <section class="scene">
+    <div class="scene-head">
+      <span class="tag tag-now">现在</span>
+      <h3>准备阶段静默 8.6s，然后卡片一次性蹦出来</h3>
+      <span class="spacer"></span>
+      <span class="elapsed">首字 14.2s</span>
+    </div>
+    <div class="scene-body">
+
+      <div class="msg-user">
+        <div class="bubble-user">帮我看下昨天订单导出失败的原因</div>
+      </div>
+
+      <div class="msg-agent">
+        <div class="avatar">AI</div>
+        <div class="agent-col">
+
+          <div class="panel-head">
+            <div class="ph-icon">
+              <span class="dot"></span>
+            </div>
+            <span class="ph-title">思考过程</span>
+            <span class="badge">6 步骤</span>
+            <span class="ph-cur">正在加载入口专家配置...</span>
+            <svg class="ico chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m19 9-7 7-7-7"/></svg>
+          </div>
+
+          <div class="timeline">
+            <div class="tl-topbar">
+              <span>执行明细链路</span>
+              <span>全部展开明细 ⌄</span>
+            </div>
+
+            <!-- 准备父卡 -->
+            <div class="row pending">
+              <span class="dot"></span>
+              <svg class="ico ico-sky" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5M12 19.5V21M4.2 4.2l1.1 1.1M18.7 18.7l1.1 1.1M3 12h1.5M19.5 12H21M4.2 19.8l1.1-1.1M18.7 5.3l1.1-1.1"/></svg>
+              <span class="t">鉴权及上下文与能力准备</span>
+              <span class="s" style="color:var(--sky-600)">准备中</span>
+              <span class="c">3 项准备</span>
+              <span class="d">8.6s</span>
+            </div>
+
+            <div class="lvl1">
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">校验入口专家权限</span>
+                <span class="d">0.4s</span>
+              </div>
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">加载入口专家配置</span>
+                <span class="d">1.2s</span>
+              </div>
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">会话上下文</span>
+                <span class="d">0.3s</span>
+              </div>
+
+              <!-- 静默空档（注解，不在真实界面中） -->
+              <div class="void">
+                <div class="void-title">
+                  <svg class="ico ico-red" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 7.5v5M12 16h.01"/></svg>
+                  8.6s 内没有任何业务事件　<span class="anno">（这张红框是注解，真实界面上是一片空白）</span>
+                </div>
+                <div class="void-body">
+                  后端正在 <b>并发预取 7 路数据</b>（可访问资源目录、专家名单、技能、记忆、工具清单、工作区预热），
+                  但「知识库和专家清单加载」「沙箱工作区准备」这两张卡要等 <b>gather 全部完成</b>才推送。<br>
+                  前端只收到 <code>keepalive</code> 心跳 → Stall 计时器被不断续命 → 不会提示「AI 还在思考」，
+                  <b>用户看到的就是上面那 3 行停住不动，整整 8.6 秒</b>；连父卡右侧那个「3 项准备」也一直停在 3，直到最后才一次跳到 6。
+                </div>
+              </div>
+
+              <!-- 突然一起出现 -->
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">知识库和专家清单加载</span>
+                <span class="d">8.6s</span>
+              </div>
+              <div class="detail">
+                会话挂载：数据集 3 个、知识库 8 个；本轮选用：数据集 12 个…；可委派专家清单：已加载 6 个；运行时工具 24 个。
+              </div>
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">沙箱工作区准备</span>
+                <span class="d">8.6s</span>
+              </div>
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">Prompt 组装</span>
+                <span class="d">0.5s</span>
+              </div>
+            </div>
+
+            <div class="row done">
+              <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span class="t">模型调用 · DeepSeek-V4-Pro</span>
+              <span class="d">3.8s</span>
+            </div>
+          </div>
+
+          <div class="answer">
+            <p>昨天有 <b>3 笔</b>订单导出失败，原因都是同一个：导出字段里包含已下线渠道的枚举值……</p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 场景 2：+A1 +B4 ============ -->
+  <section class="scene">
+    <div class="scene-head">
+      <span class="tag tag-a">+ A1 + B4</span>
+      <h3>同样的 8.6s，但用户看得见在干什么</h3>
+      <span class="spacer"></span>
+      <span class="elapsed">首字 14.2s（不变）</span>
+    </div>
+    <div class="scene-body">
+
+      <div class="msg-user">
+        <div class="bubble-user">帮我看下昨天订单导出失败的原因</div>
+      </div>
+
+      <div class="msg-agent">
+        <div class="avatar">AI</div>
+        <div class="agent-col">
+
+          <div class="panel-head">
+            <div class="ph-icon"><span class="dot"></span></div>
+            <span class="ph-title">思考过程</span>
+            <span class="badge">7 步骤</span>
+            <span class="ph-cur">正在准备沙箱工作区...</span>
+            <svg class="ico chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m19 9-7 7-7-7"/></svg>
+          </div>
+
+          <div class="timeline">
+            <div class="tl-topbar">
+              <span>执行明细链路</span>
+              <span>全部展开明细 ⌄</span>
+            </div>
+
+            <div class="row pending">
+              <span class="dot"></span>
+              <svg class="ico ico-sky" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5M12 19.5V21M4.2 4.2l1.1 1.1M18.7 18.7l1.1 1.1M3 12h1.5M19.5 12H21M4.2 19.8l1.1-1.1M18.7 5.3l1.1-1.1"/></svg>
+              <span class="t">鉴权及上下文与能力准备</span>
+              <span class="s" style="color:var(--sky-600)">准备中</span>
+              <span class="c">5 项准备</span>
+              <span class="d">6.2s</span>
+            </div>
+
+            <div class="lvl1">
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">校验入口专家权限</span>
+                <span class="d">0.4s</span>
+              </div>
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">加载入口专家配置</span>
+                <span class="d">1.2s</span>
+              </div>
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">会话上下文</span>
+                <span class="d">0.3s</span>
+              </div>
+
+              <!-- ★ B4：知识库和专家清单加载先占位 -->
+              <div class="row pending">
+                <span class="dot"></span>
+                <svg class="ico ico-sky" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"/></svg>
+                <span class="t">知识库和专家清单加载</span>
+                <span class="s" style="color:var(--sky-600)">准备中</span>
+                <span class="c">数据集 / 知识库 / 技能 / 专家</span>
+                <span class="d">5.4s</span>
+              </div>
+
+              <!-- ★ A1：工作区准备先占位 -->
+              <div class="row pending">
+                <span class="dot"></span>
+                <svg class="ico ico-sky" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5v-9Z"/><path stroke-linecap="round" d="M12 12v9M3 7.5 12 12l9-4.5"/></svg>
+                <span class="t">沙箱工作区准备</span>
+                <span class="s" style="color:var(--sky-600)">创建中</span>
+                <span class="c">技能播种 / 建立连接</span>
+                <span class="d">3.8s</span>
+              </div>
+              <div class="detail">
+                正在准备工作区：<code>preseed_session_skills</code> → <code>LocalWorkspace.initialize()</code>
+              </div>
+
+              <!-- 并行完成的其它路（完成后才并入同一父卡） -->
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">记忆与用户画像</span>
+                <span class="d">0.2s</span>
+              </div>
+            </div>
+
+            <div class="row pending" style="margin-top:2px">
+              <span class="dot"></span>
+              <svg class="ico ico-sky" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2"/></svg>
+              <span class="t">模型调用 · DeepSeek-V4-Pro</span>
+              <span class="s" style="color:var(--sky-600)">生成中</span>
+              <span class="d">1.8s</span>
+            </div>
+            <div class="detail">已收到 42 个 token，首个可见活动在 12.9s</div>
+          </div>
+
+          <div class="answer">
+            <p>昨天有 <b>3 笔</b>订单导出失败，原因都是同一个：导出字段里包含已下线渠道的枚举值……<span style="color:var(--gray-400)">▌</span></p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 场景 3：+B1 超时兜底 ============ -->
+  <section class="scene">
+    <div class="scene-head">
+      <span class="tag tag-b">+ B1</span>
+      <h3>数据库卡住时：8s 到点降级，不再无限等</h3>
+      <span class="spacer"></span>
+      <span class="elapsed">首字 13.1s</span>
+    </div>
+    <div class="scene-body">
+
+      <div class="msg-user">
+        <div class="bubble-user">帮我看下昨天订单导出失败的原因</div>
+      </div>
+
+      <div class="msg-agent">
+        <div class="avatar">AI</div>
+        <div class="agent-col">
+
+          <div class="panel-head">
+            <div class="ph-icon"><span class="dot"></span></div>
+            <span class="ph-title">思考过程</span>
+            <span class="badge">7 步骤</span>
+            <span class="ph-cur">正在生成回复...</span>
+            <svg class="ico chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m19 9-7 7-7-7"/></svg>
+          </div>
+
+          <div class="timeline">
+            <div class="tl-topbar">
+              <span>执行明细链路</span>
+              <span>全部展开明细 ⌄</span>
+            </div>
+
+            <div class="row done">
+              <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span class="t">鉴权及上下文与能力准备</span>
+              <span class="s" style="color:var(--gray-400)">已完成</span>
+              <span class="c">5 项准备</span>
+              <span class="d">8.0s</span>
+            </div>
+
+            <div class="lvl1">
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">加载入口专家配置</span>
+                <span class="d">1.2s</span>
+              </div>
+
+              <!-- 超时降级：不是 error，是 warn -->
+              <div class="row warn">
+                <svg class="ico ico-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.5M12 16h.01"/><path stroke-linecap="round" stroke-linejoin="round" d="M10.3 3.9 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+                <span class="t">知识库和专家清单加载</span>
+                <span class="s">已超时，本轮跳过</span>
+                <span class="d">8.0s</span>
+              </div>
+              <div class="detail">
+                本轮提示词不含「可访问资源」段落；<code>spans.catalog_fetch.status = cancelled</code>，已记 warning。
+              </div>
+
+              <!-- roster 豁免，正常完成 -->
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">专家名单（豁免，不参与超时）</span>
+                <span class="d">2.1s</span>
+              </div>
+              <div class="detail">
+                roster 超时会导致 Main 无法委派专家，所以单独豁免 —— 宁可多等 2s，也不丢委派能力。
+              </div>
+
+              <div class="row done">
+                <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span class="t">沙箱工作区准备</span>
+                <span class="d">1.9s</span>
+              </div>
+            </div>
+
+            <div class="row done">
+              <svg class="ico ico-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span class="t">模型调用 · DeepSeek-V4-Pro</span>
+              <span class="d">4.6s</span>
+            </div>
+          </div>
+
+          <div class="answer">
+            <p>昨天有 <b>3 笔</b>订单导出失败，原因都是同一个：导出字段里包含已下线渠道的枚举值……</p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 时间轴对比 ============ -->
+  <div class="compare">
+    <h3>同样 14 秒，差别在「哪一段是黑的」</h3>
+    <p class="lead">横向是时间（0–15s）。红色斜纹 = 用户完全看不到任何进展的区间。</p>
+
+    <div class="barrow">
+      <div class="barlabel">现在</div>
+      <div class="bartrack">
+        <div class="seg route" style="left:0;width:6.7%">路由</div>
+        <div class="seg silent" style="left:6.7%;width:57.3%">8.6s 静默</div>
+        <div class="seg exec" style="left:64%;width:31.3%">执行 + 模型</div>
+      </div>
+    </div>
+
+    <div class="barrow">
+      <div class="barlabel">+ A1 + B4</div>
+      <div class="bartrack">
+        <div class="seg route" style="left:0;width:6.7%">路由</div>
+        <div class="seg visible" style="left:6.7%;width:57.3%">8.6s 有进度卡可看</div>
+        <div class="seg exec" style="left:64%;width:31.3%">执行 + 模型</div>
+      </div>
+    </div>
+
+    <div class="barrow">
+      <div class="barlabel">+ B1（DB 卡住）</div>
+      <div class="bartrack">
+        <div class="seg route" style="left:0;width:6.7%">路由</div>
+        <div class="seg visible" style="left:6.7%;width:53.3%">8.0s 封顶后降级</div>
+        <div class="seg exec" style="left:60%;width:35.3%">执行 + 模型</div>
+      </div>
+    </div>
+
+    <div class="scale">
+      <span>0s</span><span>5s</span><span>10s</span><span>15s</span>
+    </div>
+
+    <div class="legend">
+      <span><i class="sw" style="background:#93c5fd"></i>路由解析</span>
+      <span><i class="sw" style="background:#fdba74"></i>准备（可见）</span>
+      <span><i class="sw" style="background:repeating-linear-gradient(45deg,#fca5a5,#fca5a5 3px,#fecaca 3px,#fecaca 6px)"></i>静默无事件</span>
+      <span><i class="sw" style="background:#6ee7b7"></i>有进度卡</span>
+      <span><i class="sw" style="background:#c4b5fd"></i>执行 / 模型</span>
+    </div>
+
+    <div class="note">
+      <b>一句话总结：</b>A1 + B4 不缩短总耗时，但把「黑屏 8.6s」换成「看得见的 8.6s」；
+      B1 只在后端真的卡住时才起作用，把「无限等」压成 <span class="kbd">8s</span> 封顶。<br>
+      <b>为什么 roster 豁免：</b>超时后 Main 拿不到可委派专家名单，用户会看到「明明有专家却调不到」——功能退化比多等 2 秒更糟。
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

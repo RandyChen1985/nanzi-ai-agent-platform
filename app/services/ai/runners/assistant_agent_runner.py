@@ -2382,6 +2382,59 @@ class AssistantAgentRunner(BaseExecutor):
                 "content": "当前会话正在处理中，请稍后再试。",
             }
 
+    #: 工作区准备进度卡的固定 id。
+    #: 刻意与 ``workspace:sandbox``（沙箱容器拉起，由 LazySandboxWorkspaceProxy.
+    #: ensure_ready 负责）区分开：两者可能在同一轮先后出现，而前端按 id merge，
+    #: 共用 id 会互相覆盖标题与状态。
+    WORKSPACE_PREPARE_LOG_ID = "workspace:prepare"
+
+    async def _emit_workspace_prepare_log(
+        self,
+        *,
+        status: str,
+        started_at: Optional[float] = None,
+        details: Optional[str] = None,
+    ) -> None:
+        """把「工作区准备」进度推进前端执行时间线（尽力而为，绝不阻断构建）。
+
+        ``_build_native_agent`` 只返回 Agent 对象、本身不 yield，没法直接往 SSE 写
+        事件；但 ``_execute_raw`` 的 merge_streams 此刻已在实时消费
+        ``AgentContext.event_queue``，因此从这条旁路投递就能让用户看到进度。
+        队列缺失时（离线单测、非流式旁路）静默跳过。
+        """
+        try:
+            from app.core.context import get_current_agent_context
+
+            ctx = get_current_agent_context()
+            queue = getattr(ctx, "event_queue", None)
+            if queue is None:
+                return
+            # 子代理也会走 _build_native_agent，但它们的事件已经归到「委派智能体」容器里，
+            # 再往准备父节点挂一张同 id 的卡会让多个子代理互相覆盖状态。
+            if getattr(ctx, "delegation_depth", 0) or getattr(ctx, "parent_conversation_id", None):
+                return
+            payload: Dict[str, Any] = {
+                "type": "log",
+                "id": self.WORKSPACE_PREPARE_LOG_ID,
+                "parent_id": "preparation:auth_context_capability",
+                "title": "工作区准备",
+                "status": status,
+                "category": "system",
+            }
+            if details:
+                payload["details"] = details
+            if started_at is not None:
+                payload["execution_time_ms"] = max(
+                    1.0, (time.monotonic() - started_at) * 1000.0
+                )
+            await queue.put(payload)
+        except Exception as exc:  # noqa: BLE001 - 进度日志是旁路，失败不影响本轮
+            logger.debug(
+                "[AssistantAgentRunner] workspace prepare log skipped (status=%s): %s",
+                status,
+                exc,
+            )
+
     async def _build_native_agent(
         self,
         *,
@@ -2409,6 +2462,11 @@ class AssistantAgentRunner(BaseExecutor):
         # 不被沙箱拉不起阻断（“你好”等纯对话可继续；需要执行的轮次模型会看到 Bash 不可用
         # 而说明，而不是整轮报错）。沙箱恢复后下一轮自动回到完整模式（清除降级标记）。
         sandbox_degraded = False
+        # 工作区准备是本轮第一段「只返回对象、不产出事件」的阻塞：E2B/SSH 会在这里
+        # 真建连，所有策略都要做技能播种与 LocalWorkspace.initialize，整体被 90s 的
+        # wait_for 兜着。这段时间执行时间线一个字都不会动，所以先挂一张进度卡。
+        prepare_started_at = time.monotonic()
+        await self._emit_workspace_prepare_log(status="pending")
         try:
             workspace = await asyncio.wait_for(
                 get_local_workspace(
@@ -2465,6 +2523,11 @@ class AssistantAgentRunner(BaseExecutor):
                 "沙箱当前不可用，本轮已降级为本地执行（Bash 与脚本工具不可用）；沙箱恢复后将自动恢复。",
             )
             sandbox_degraded = True
+            await self._emit_workspace_prepare_log(
+                status="error",
+                started_at=prepare_started_at,
+                details="沙箱当前不可用，本轮已降级为本地执行（Bash 与脚本工具不可用），沙箱恢复后自动恢复。",
+            )
             workspace = (
                 None,
                 await build_host_only_workspace(
@@ -2487,6 +2550,11 @@ class AssistantAgentRunner(BaseExecutor):
         else:
             # 沙箱构建成功：清除历史降级提示，恢复后由前端自动隐藏。
             await clear_sandbox_degraded(self._runtime_user_id(), str(self.conversation_id or ""))
+            await self._emit_workspace_prepare_log(
+                status="success",
+                started_at=prepare_started_at,
+                details="工作区已就绪。",
+            )
         # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
         tools = await bind_configured_tools_to_workspace(
             workspace,

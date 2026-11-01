@@ -1572,7 +1572,14 @@ class TaskSchedulerService:
             subscriptions = result.scalars().all()
             for subscription in subscriptions:
                 active_subscription_ids.add(subscription.id)
-                await self.upsert_saved_report_subscription(subscription)
+                try:
+                    await self.upsert_saved_report_subscription(subscription)
+                except Exception as e:
+                    # 单条订阅装载失败不得中断其余订阅（曾经会让后续订阅全部不排期，
+                    # 甚至在 start() 里冒泡导致应用启动失败）
+                    logger.error(
+                        f"❌ Failed to schedule subscription {subscription.id}: {e}", exc_info=True
+                    )
 
         for job in list(self._scheduler.get_jobs()):
             subscription_id = _saved_report_subscription_id_from_job_id(job.id)
@@ -1584,10 +1591,21 @@ class TaskSchedulerService:
         if not self._scheduler:
             return
         job_id = f"saved_report_subscription_{subscription.id}"
-        trigger = CronTrigger.from_crontab(
-            to_apscheduler_crontab(subscription.cron_expr),
-            timezone=subscription.timezone or get_cached_platform_timezone(),
-        )
+        try:
+            trigger = CronTrigger.from_crontab(
+                to_apscheduler_crontab(subscription.cron_expr),
+                timezone=subscription.timezone or get_cached_platform_timezone(),
+            )
+        except (ValueError, KeyError) as e:
+            # 历史脏表达式（6 段、日 + 周同时限定等）不能拖垮整个装载流程：
+            # 这里只跳过这一条，并摘掉可能残留的旧 job，避免继续按旧排期运行。
+            logger.error(
+                f"❌ Subscription {subscription.id} has invalid cron_expr '{subscription.cron_expr}': {e}. "
+                f"Skipping scheduling. Please fix the cron expression in the subscription settings."
+            )
+            if self._scheduler.get_job(job_id):
+                self._scheduler.remove_job(job_id)
+            return
         existing_job = self._scheduler.get_job(job_id)
         if existing_job and subscription.status == "active" and repr(existing_job.trigger) == repr(trigger):
             return

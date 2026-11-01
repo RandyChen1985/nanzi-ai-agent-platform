@@ -16,6 +16,7 @@ import { useRoute, useRouter } from 'vue-router'
 import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
 import HoverTip from '../components/HoverTip.vue'
 import CronAdvancedBuilder from '@/components/task/CronAdvancedBuilder.vue'
+import CronFieldLegend from '@/components/common/CronFieldLegend.vue'
 import { validateCronExpression } from '@/utils/cronSchedule'
 import { describeScene, inferScene } from '@/utils/cronScenes'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
@@ -798,10 +799,22 @@ const parseCronToUI = (expr: string) => {
 }
 
 
+// 「高级」模式输入框直接绑定 editingTask.cron_expr，这里做即时校验：
+// 非法时把输入框本身标红，并在下方给出具体到字段的原因，而不是一句笼统的「格式不正确」
+const cronExprValidation = computed(() => {
+  const expr = String(editingTask.value?.cron_expr || '').trim()
+  // 空值不标红，交给「请输入」提示与保存时的必填校验
+  if (!expr) return { valid: true, message: '' }
+  return validateCronExpression(expr)
+})
+
 const cronDescription = computed(() => {
-  if (!editingTask.value.cron_expr || editingTask.value.cron_expr.includes('NaN')) return '请输入有效的 Cron 表达式'
+  const expr = String(editingTask.value?.cron_expr || '').trim()
+  if (!expr) return '请输入 Cron 表达式'
+  if (expr.includes('NaN')) return '表达式格式不正确'
+  if (!cronExprValidation.value.valid) return cronExprValidation.value.message
   try {
-    return cronstrue.toString(editingTask.value.cron_expr, { locale: 'zh_CN' })
+    return cronstrue.toString(expr, { locale: 'zh_CN' })
   } catch (e) {
     return '表达式格式不正确'
   }
@@ -917,6 +930,16 @@ const getTaskEditTitle = (task: AgentTask) => (
 
 const saveTask = async () => {
   try {
+    // 非法表达式就地拦截：后端会返回 422，但原因埋在 detail 里，不如直接说明是哪一段错了
+    const cronExpr = String(editingTask.value?.cron_expr || '').trim()
+    if (!cronExpr) {
+      showToast('请输入 Cron 表达式', 'error')
+      return
+    }
+    if (!cronExprValidation.value.valid) {
+      showToast(cronExprValidation.value.message, 'error')
+      return
+    }
     pruneUnavailableNotificationChannels()
     const baseConfig =
       editingTask.value.config && typeof editingTask.value.config === 'object'
@@ -2485,8 +2508,15 @@ onMounted(async () => {
                </div>
                <!-- Custom -->
                <div v-if="cronMode === 'custom'" class="space-y-2">
+                   <CronFieldLegend />
                    <div class="flex items-center gap-2">
-                       <input v-model="editingTask.cron_expr" placeholder="* * * * *" class="min-w-0 flex-1 px-3 py-2 border rounded-xl font-mono text-sm outline-none focus:border-primary bg-white" />
+                       <input
+                         v-model="editingTask.cron_expr"
+                         placeholder="* * * * *"
+                         class="min-w-0 flex-1 px-3 py-2 border rounded-xl font-mono text-sm outline-none focus:border-primary bg-white transition"
+                         :class="cronExprValidation.valid ? '' : '!border-rose-300 bg-rose-50/40 text-rose-700 focus:!border-rose-400'"
+                         :aria-invalid="cronExprValidation.valid ? 'false' : 'true'"
+                       />
                        <button
                          type="button"
                          class="shrink-0 inline-flex items-center gap-1 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary transition hover:bg-primary/10"
@@ -2499,9 +2529,18 @@ onMounted(async () => {
                </div>
             </div>
 
-            <div class="mt-2 p-2.5 bg-blue-50/50 rounded-xl flex items-start space-x-2 border border-blue-100/50">
-              <span class="text-blue-500 text-xs mt-0.5 italic">Auto-Translate:</span>
-              <p class="text-[11px] text-blue-700 font-bold leading-relaxed">{{ cronDescription }}</p>
+            <div
+              class="mt-2 p-2.5 rounded-xl flex items-start space-x-2 border transition"
+              :class="cronExprValidation.valid ? 'bg-blue-50/50 border-blue-100/50' : 'bg-rose-50/60 border-rose-200'"
+            >
+              <span
+                class="text-xs mt-0.5 italic shrink-0"
+                :class="cronExprValidation.valid ? 'text-blue-500' : 'text-rose-500'"
+              >{{ cronExprValidation.valid ? 'Auto-Translate:' : '⚠ 格式有误:' }}</span>
+              <p
+                class="text-[11px] font-bold leading-relaxed"
+                :class="cronExprValidation.valid ? 'text-blue-700' : 'text-rose-600'"
+              >{{ cronDescription }}</p>
             </div>
           </div>
 

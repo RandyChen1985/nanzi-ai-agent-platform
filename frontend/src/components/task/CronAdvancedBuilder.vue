@@ -246,14 +246,17 @@
     <!-- 自定义表达式 -->
     <div v-else class="space-y-2 rounded-xl border border-gray-100 bg-white p-3">
       <p class="text-[11px] font-bold text-gray-500">输入 Cron 表达式</p>
+      <CronFieldLegend />
       <input
         v-model="state.customText"
         type="text"
         spellcheck="false"
         placeholder="0 9 * * 1-5"
         class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 font-mono text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+        :class="validation.valid ? '' : '!border-rose-300 !bg-rose-50/40 !text-rose-700 focus:!border-rose-400 focus:!ring-rose-200'"
+        :aria-invalid="validation.valid ? 'false' : 'true'"
       />
-      <p v-if="!validation.valid" class="text-[11px] leading-relaxed text-amber-600">{{ validation.message }}</p>
+      <p v-if="!validation.valid" class="text-[11px] leading-relaxed font-bold text-rose-600">{{ validation.message }}</p>
       <p v-else class="text-[11px] text-emerald-600">格式检查通过。</p>
     </div>
 
@@ -274,7 +277,7 @@
           class="rounded-md bg-white px-1.5 py-0.5 text-[10px] text-gray-500 ring-1 ring-gray-100"
         >{{ formatCronRunTime(run, timezone) }}</span>
         <span v-if="!nextRuns.length && validation.valid" class="text-[10px] text-gray-400">未来 5 年无匹配</span>
-        <span v-if="!validation.valid" class="text-[10px] text-amber-600">表达式待修正</span>
+        <span v-if="!validation.valid" class="text-[10px] font-bold text-rose-600">表达式待修正</span>
       </div>
     </div>
 
@@ -286,6 +289,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
+import CronFieldLegend from '@/components/common/CronFieldLegend.vue';
 import {
   CRON_SCENES,
   CRON_SCENE_TABS,

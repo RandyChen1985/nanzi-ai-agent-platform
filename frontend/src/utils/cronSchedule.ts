@@ -81,7 +81,10 @@ function parseFieldToken(token: string, def: CronFieldDefinition): number {
   if (value < def.min || value > upper) {
     throw new Error(`${def.label}取值需在 ${def.min}-${upper} 之间`);
   }
-  return normalizeFieldValue(value, def);
+  // 这里必须返回原始值：星期允许 7（= 周日），若就地折成 0，`0-7`/`1-7` 这类范围的
+  // 终点会失真（前者被算成「只有周日」，后者被误判为起点大于终点）。
+  // 归一化只发生在写入集合处（expandCronField 的 values.add）。
+  return value;
 }
 
 /** 把单个字段展开为具体取值集合；非法时抛错。 */
@@ -124,6 +127,11 @@ export function expandCronField(text: string, def: CronFieldDefinition): Set<num
     }
 
     if (start > end) throw new Error(`${def.label}范围起始值不能大于结束值`);
+    // 调度器（APScheduler）要求步长不超过区间跨度，否则整条表达式直接拒绝
+    // （例如 */60 分钟、*/24 小时、*/32 日）。这里提前拦，避免「保存成功但不执行」。
+    if (slashIndex >= 0 && step > end - start) {
+      throw new Error(`${def.label}步长不能大于区间跨度 ${end - start}`);
+    }
     for (let value = start; value <= end; value += step) {
       values.add(normalizeFieldValue(value, def));
     }
