@@ -888,8 +888,6 @@ class TurnPreflightContext:
 
 
 class AgentService:
-    USING_SUPERPOWERS_SKILL_ID = "using-superpowers"
-
     """
     Unified Orchestrator for AI Agent interactions.
     Now refactored to delegate execution to specialized Executors.
@@ -1002,42 +1000,6 @@ class AgentService:
     _should_preload_skill_full_instruction = staticmethod(
         SkillInjector.should_preload_skill_full_instruction
     )
-    _is_new_session_first_user_turn = staticmethod(
-        SkillInjector.is_new_session_first_user_turn
-    )
-
-    @classmethod
-    def _should_force_preload_scanned_skill(
-        cls,
-        *,
-        skill_id: str,
-        messages: Optional[List[Dict[str, Any]]],
-    ) -> bool:
-        return SkillInjector.should_force_preload_scanned_skill(
-            skill_id=skill_id, messages=messages
-        )
-
-    @classmethod
-    def _ensure_first_turn_superpowers_candidate(
-        cls,
-        *,
-        scanned_skills: List[Dict[str, Any]],
-        available_skills: List[Dict[str, Any]],
-        messages: Optional[List[Dict[str, Any]]],
-        exclude_ids: Optional[set[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        return SkillInjector.ensure_first_turn_superpowers_candidate(
-            scanned_skills=scanned_skills,
-            available_skills=available_skills,
-            messages=messages,
-            exclude_ids=exclude_ids,
-        )
-
-    def _append_first_turn_superpowers(
-        self,
-        **kwargs: Any,
-    ) -> int:
-        return SkillInjector.append_first_turn_superpowers(**kwargs)
 
     _build_skill_injection = staticmethod(SkillInjector.build_skill_injection)
     _build_skill_log_chunk = staticmethod(SkillInjector.build_skill_log_chunk)
