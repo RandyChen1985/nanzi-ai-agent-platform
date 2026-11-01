@@ -8,8 +8,14 @@ nanzi 的 cron 表达式在数据库、前端可视化生成器（``cronScenes.t
 其基准是 ``0`` = 周一 … ``6`` = 周日（别名 ``mon``…``sun``）。直接把 crontab 交给
 ``CronTrigger.from_crontab()`` 会让「周一~周五」实际落在「周二~周六」，且周一漏跑。
 
-本模块只重写星期字段，把它翻译成 APScheduler 的别名写法（别名与数字不会混用，
-因此也规避了 APScheduler「numeric and symbolic 混用」的报错），其余四段原样透传。
+本模块只重写星期字段，把它翻译成纯 APScheduler 别名（``mon``…``sun``），其余四段
+原样透传。统一输出别名是为了消除三处实测差异：
+
+* 数字基准不同 —— APScheduler 里 ``1`` 是周二，``7`` 直接越界报错；
+* 数字与别名可混用但不会报错 —— ``1,mon`` 在 crontab 里是周一，在 APScheduler 里
+  会变成「周二 + 周一」，属于静默偏移，比报错更难发现；
+* 跨周范围 —— crontab 的 ``sun-mon`` 合法，APScheduler 会报
+  ``minimum value in a range must not be higher than the maximum``。
 """
 
 from typing import Iterable, Set
@@ -37,6 +43,10 @@ _APSCHEDULER_WEEKDAY_NAMES = {
 }
 
 _WEEKDAY_FIELD_INDEX = 4
+_DAY_FIELD_INDEX = 2
+
+#: 标准 crontab 取值 → APScheduler 内部数值（mon=0 … sun=6），用于判断能否写字符范围
+_APSCHEDULER_WEEKDAY_ORDER = {0: 6, 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5}
 
 
 def _parse_weekday_value(token: str, expr: str) -> int:
@@ -75,7 +85,7 @@ def _expand_weekday_field(field: str, expr: str) -> Set[int]:
             step = int(step_text)
 
         base = base.strip()
-        if base in ("*", "?"):
+        if base == "*":
             start, end = 0, 7
         elif "-" in base:
             left, _, right = base.partition("-")
@@ -100,16 +110,34 @@ def _render_weekday_field(values: Iterable[int]) -> str:
     if len(ordered) == 7:
         return "*"
     names = [_APSCHEDULER_WEEKDAY_NAMES[value] for value in ordered]
-    is_consecutive = ordered == list(range(ordered[0], ordered[-1] + 1))
+    # 用字符范围时必须以 APScheduler 的数值顺序也连续为前提：它的 sun=6 > fri=4，
+    # 一旦写成 `sun-fri` 会被判为「范围起点大于终点」。含周日的连续集合只能列出来。
+    apscheduler_values = [_APSCHEDULER_WEEKDAY_ORDER[value] for value in ordered]
+    is_consecutive = apscheduler_values == list(
+        range(apscheduler_values[0], apscheduler_values[-1] + 1)
+    )
     if is_consecutive and len(ordered) >= 3:
         return f"{names[0]}-{names[-1]}"
     return ",".join(names)
 
 
+def _normalize_placeholder(field: str, expr: str) -> str:
+    """``?`` 是 Quartz 的「不指定」，在 5 段 crontab 里等价于 ``*``。
+
+    前端允许它只出现在「日」或「周」字段，且必须独占该字段（不接受 ``?/2``、``1,?``）。
+    """
+    text = field.strip()
+    if "?" not in text:
+        return text
+    if text != "?":
+        raise ValueError(f"Cron 表达式中的 ? 只能单独占一个字段：{expr!r}")
+    return "*"
+
+
 def to_apscheduler_crontab(expr: str) -> str:
     """把标准 5 段 crontab 转成 APScheduler 能正确排期的等价表达式。
 
-    只改写星期字段；``*``/``?``、步长、范围、别名等写法在转换后语义不变。
+    只改写星期字段与 ``?`` 占位符；``*``、步长、范围、别名等写法在转换后语义不变。
     表达式非法时抛 ``ValueError``，错误信息带原始表达式，便于前端直接展示。
     """
     text = str(expr or "").strip()
@@ -118,14 +146,33 @@ def to_apscheduler_crontab(expr: str) -> str:
         raise ValueError(f"Cron 表达式必须是 5 段（分 时 日 月 周），当前 {len(parts)} 段：{text!r}")
 
     fields = list(parts)
+    fields[_DAY_FIELD_INDEX] = _normalize_placeholder(fields[_DAY_FIELD_INDEX], text)
     fields[_WEEKDAY_FIELD_INDEX] = _render_weekday_field(
-        _expand_weekday_field(fields[_WEEKDAY_FIELD_INDEX], text)
+        _expand_weekday_field(_normalize_placeholder(fields[_WEEKDAY_FIELD_INDEX], text), text)
     )
     return " ".join(fields)
 
 
-def build_cron_trigger(expr: str, timezone=None):
-    """按标准 crontab 语义构造 APScheduler 的 ``CronTrigger``。"""
+def validate_standard_crontab(expr: str) -> None:
+    """按平台口径校验一条 cron：必须是 5 段、字段合法、且「日」与「周」不同时限定。
+
+    后者不是风格问题：标准 crontab 对「日 + 周」按 OR 匹配，而 APScheduler 按 AND，
+    同时限定会让任务变成「两个条件都满足」才跑（例如「每月 1 号且是周二」），
+    几乎不执行且不会报错。前端早已拦住，后端此前漏了这道校验。
+    """
+    converted = to_apscheduler_crontab(expr)
+    parts = str(expr or "").strip().split()
+    day_field = parts[_DAY_FIELD_INDEX].strip()
+    weekday_field = parts[_WEEKDAY_FIELD_INDEX].strip()
+    if day_field not in ("*", "?") and weekday_field not in ("*", "?"):
+        raise ValueError(
+            f"Cron 表达式不支持同时限定「日」和「周」：标准 crontab 按 OR 匹配、"
+            f"调度器按 AND 匹配，同时指定会几乎不执行，请只保留一个维度：{expr!r}"
+        )
+
     from apscheduler.triggers.cron import CronTrigger
 
-    return CronTrigger.from_crontab(to_apscheduler_crontab(expr), timezone=timezone)
+    try:
+        CronTrigger.from_crontab(converted)
+    except Exception as exc:
+        raise ValueError(f"Cron 表达式无法被调度器解析：{exc}") from exc

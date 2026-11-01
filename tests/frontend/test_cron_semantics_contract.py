@@ -25,21 +25,56 @@ def test_scheduler_boundary_translates_before_building_trigger():
     assert "to_apscheduler_crontab(subscription.cron_expr)" in scheduler
 
 
-def test_task_schema_validation_translates_before_validating():
+def test_task_schema_validation_uses_shared_cron_rules():
     schema = _read("app/schemas/task.py")
-    assert "CronTrigger.from_crontab(to_apscheduler_crontab(v))" in schema
+    assert "validate_standard_crontab(v)" in schema
 
 
-def test_metadata_inspection_validation_translates_before_validating():
+def test_metadata_inspection_rejects_six_field_expression():
     endpoint = _read("app/api/portal/endpoints/metadata.py")
-    assert "CronTrigger.from_crontab(to_apscheduler_crontab(payload.cron_expr.strip()))" in endpoint
+    assert "validate_standard_crontab(payload.cron_expr.strip())" in endpoint
+    # 6 段（带秒）必须拒绝：过去会被「截前 5 段校验」放行，存库后永不调度
+    assert "len(cron_parts) != 5" in endpoint
+    assert "6 段" in endpoint
 
 
-def test_subscription_schedule_to_cron_validates_advanced_cron_with_compat():
+def test_subscription_schedule_to_cron_uses_shared_cron_rules():
     service = _read("app/services/saved_report_subscription_service.py")
-    assert "CronTrigger.from_crontab(to_apscheduler_crontab(expression))" in service
+    assert "validate_standard_crontab(expression)" in service
     # weekday 参数由调用方按标准 crontab 传值（0 = 周日）
     assert "0 = 周日" in service
+
+
+def test_frontend_rejects_step_wider_than_field_span():
+    util = _read("frontend/src/utils/cronSchedule.ts")
+    # 与 APScheduler 同口径：*/60 分钟、*/24 小时这类会被调度器整条拒绝
+    assert "步长不能大于区间跨度" in util
+
+
+def test_saved_report_cron_input_validates_inline():
+    menu = _read("frontend/src/components/chatbi/DatasetCapabilityMenu.vue")
+    # 「高级 Cron」过去是裸输入框，只有点保存打到后端才知道错
+    assert 'import { validateCronExpression } from "@/utils/cronSchedule"' in menu
+    assert "const savedReportCronValidation = computed(() => validateCronExpression(" in menu
+    assert "savedReportCronValidation.message" in menu
+    # 保存前拦截，避免非法表达式发到接口
+    assert "!savedReportCronValidation.value.valid" in menu
+
+
+def test_metadata_inspection_custom_cron_validates_inline():
+    modal = _read("frontend/src/components/metadata/MetadataCronInspectionModal.vue")
+    assert "import { validateCronExpression } from '@/utils/cronSchedule'" in modal
+    assert "customCronValidation" in modal
+    # 保存时对最终表达式再校验一次（自定义与预设都覆盖）
+    assert "validateCronExpression(finalCron)" in modal
+
+
+def test_frontend_keeps_weekday_seven_for_range_endpoints():
+    util = _read("frontend/src/utils/cronSchedule.ts")
+    # 7 只能在写入集合时折成 0；若在解析单值时折，`0-7` 会退化成「只有周日」、
+    # `1-7` 会被误判为「起点大于终点」
+    assert "return normalizeFieldValue(value, def);" not in util
+    assert "values.add(normalizeFieldValue(value, def))" in util
 
 
 def test_chatbi_dialog_passes_standard_crontab_weekday_numbers():

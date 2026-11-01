@@ -6,6 +6,7 @@ import { useToast } from '@/composables/useToast'
 import { useUser } from '@/composables/useUser'
 import axios from '../../utils/axios'
 import { metadataApi, type CronInspectionConfig } from '@/api/metadata'
+import { validateCronExpression } from '@/utils/cronSchedule'
 
 const props = withDefaults(
   defineProps<{
@@ -58,6 +59,12 @@ const config = ref<CronInspectionConfig>({
 
 const selectedPreset = ref<string>('0 2 * * *')
 const customCronInput = ref<string>('')
+// 空输入时不报错（还没开始填），只校验非空的表达式，与后端同口径
+const customCronValidation = computed<{ valid: boolean; message: string }>(() => {
+  const text = String(customCronInput.value || '').trim()
+  if (!text) return { valid: true, message: '' }
+  return validateCronExpression(text)
+})
 const notificationChannels = ref<string[]>(['portal'])
 
 const isChannelSelected = (ch: string) => notificationChannels.value.includes(ch)
@@ -240,6 +247,12 @@ const handleSave = async () => {
 
   if (!finalCron) {
     showToast('请输入有效的 Cron 表达式', 'warning')
+    return
+  }
+  // 与后端同口径：5 段、字段合法、日与周不同时限定；不合格直接拦下，不去打接口
+  const finalValidation = validateCronExpression(finalCron)
+  if (!finalValidation.valid) {
+    showToast(finalValidation.message || 'Cron 表达式不合法', 'warning')
     return
   }
 
@@ -476,12 +489,20 @@ const getHealthBadge = (health: string) => {
                 v-model="customCronInput"
                 @input="handleCustomCronChange"
                 placeholder="如: 0 1,13 * * * (分 时 日 月 周)"
-                class="flex-1 font-mono text-xs px-3 py-2 border rounded-lg border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                class="flex-1 font-mono text-xs px-3 py-2 border rounded-lg focus:outline-none focus:ring-2"
+                :class="customCronValidation.valid
+                  ? 'border-slate-300 focus:ring-primary-500/20 focus:border-primary-500'
+                  : 'border-rose-300 focus:ring-rose-500/20 focus:border-rose-500'"
               />
-              <span class="text-xs text-slate-400 font-mono">5位标准 Cron</span>
+              <span class="text-xs font-mono" :class="customCronValidation.valid ? 'text-slate-400' : 'text-rose-500'">
+                {{ customCronValidation.valid ? '5位标准 Cron' : '格式有误' }}
+              </span>
             </div>
-            <p class="text-[11px] text-slate-400 mt-1">
-              格式说明：分(0-59) 时(0-23) 日(1-31) 月(1-12) 星期(0-6或1-7)。
+            <p v-if="!customCronValidation.valid" class="text-[11px] text-rose-500 mt-1">
+              {{ customCronValidation.message }}
+            </p>
+            <p v-else class="text-[11px] text-slate-400 mt-1">
+              格式说明：分(0-59) 时(0-23) 日(1-31) 月(1-12) 星期(0-7，0/7 为周日)。
             </p>
           </div>
         </div>

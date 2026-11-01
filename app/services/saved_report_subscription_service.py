@@ -1,9 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from apscheduler.triggers.cron import CronTrigger
-
-from app.services.cron_compat import to_apscheduler_crontab
+from app.services.cron_compat import validate_standard_crontab
 
 
 @dataclass(frozen=True)
@@ -107,9 +105,9 @@ def schedule_to_cron(
     if schedule_type == "cron":
         expression = str(cron_expr or "").strip()
         try:
-            CronTrigger.from_crontab(to_apscheduler_crontab(expression))
+            validate_standard_crontab(expression)
         except Exception as exc:
-            raise ValueError("Cron 表达式无效") from exc
+            raise ValueError(f"Cron 表达式无效：{exc}") from exc
         return expression
 
     hour, minute = _parse_time(time_value)

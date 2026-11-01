@@ -33,8 +33,7 @@ from app.services.metadata_sync_log_service import metadata_sync_log_service
 from app.services.metadata_drift_service import MetadataDriftService
 from app.services.metadata_inspection_service import MetadataInspectionService
 from app.services.ai.scheduler_service import scheduler_service
-from app.services.cron_compat import to_apscheduler_crontab
-from apscheduler.triggers.cron import CronTrigger
+from app.services.cron_compat import validate_standard_crontab
 from sqlalchemy import select
 from datetime import datetime
 
@@ -1188,15 +1187,16 @@ async def update_cron_inspection_config(
 ):
     """开启/关闭或更新元数据全量定时巡检配置。"""
     cron_parts = (payload.cron_expr or "").strip().split()
-    if len(cron_parts) not in (5, 6):
-        raise HTTPException(status_code=400, detail="Cron 表达式格式不正确，需为 5 位或 6 位空格分隔格式")
+    if len(cron_parts) != 5:
+        # 6 段（带秒）此前会被「截前 5 段校验」放行并存库，但调度器解析 6 段必然失败，
+        # 表现为「配置保存成功、巡检永远不跑」，因此在这里直接拒绝。
+        raise HTTPException(
+            status_code=400,
+            detail="Cron 表达式必须是 5 段（分 时 日 月 周）；带秒的 6 段写法本平台无法调度",
+        )
     try:
-        if len(cron_parts) == 6:
-            # 6 段（秒 分 时 日 月 周）沿用既有校验方式：仅截前 5 段交给 APScheduler
-            CronTrigger.from_crontab(" ".join(cron_parts[:5]))
-        else:
-            # 5 段按标准 crontab 语义（星期 0/7 = 周日）翻译后再校验
-            CronTrigger.from_crontab(to_apscheduler_crontab(payload.cron_expr.strip()))
+        # 5 段按标准 crontab 语义（星期 0/7 = 周日）校验，与任务/订阅同口径
+        validate_standard_crontab(payload.cron_expr.strip())
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"非法的 Cron 表达式: {str(e)}")
 

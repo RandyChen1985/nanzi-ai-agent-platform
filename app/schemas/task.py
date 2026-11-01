@@ -3,17 +3,16 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator, model_valida
 from datetime import datetime
 
 def _validate_cron_expr(v: Optional[str]) -> Optional[str]:
-    """用 APScheduler CronTrigger 预校验 cron 表达式，避免非法值入库引发调度崩溃。
+    """用平台统一 cron 口径校验表达式，避免非法值入库引发调度崩溃。
 
-    表达式的人类语义一律是标准 crontab（星期 0/7 = 周日、1 = 周一），而 APScheduler
-    的 day_of_week 以 0 = 周一为基准，因此先经 cron_compat 翻译再交给调度器校验。
+    表达式的人类语义一律是标准 crontab（星期 0/7 = 周日、1 = 周一）；5 段、字段合法性、
+    「日」与「周」不得同时限定等规则统一收在 cron_compat 里，与前端校验保持同口径。
     """
     if v is None:
         return v
-    from apscheduler.triggers.cron import CronTrigger
-    from app.services.cron_compat import to_apscheduler_crontab
+    from app.services.cron_compat import validate_standard_crontab
     try:
-        CronTrigger.from_crontab(to_apscheduler_crontab(v))
+        validate_standard_crontab(v)
     except (ValueError, KeyError) as e:
         raise ValueError(f"无效的 Cron 表达式 '{v}'：{e}")
     return v
