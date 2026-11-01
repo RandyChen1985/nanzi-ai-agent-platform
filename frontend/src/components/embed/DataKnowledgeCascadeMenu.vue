@@ -7,11 +7,26 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from '@/utils/axios'
+import {
+  countByVisibility,
+  filterAndSortMountableItems,
+  hasAnyMountableFilter,
+  listMountableDataSources,
+  type MountableFilters,
+  type MountableSortBy,
+} from '@/utils/mountableItemFilter'
 
 export interface MountableItem {
   id: string
   name: string
   description?: string
+  /** 以下字段仅供筛选/排序，不参与展示；缺失时相关条件自然不生效 */
+  dataSource?: string
+  tags?: string[]
+  tableCount?: number
+  docCount?: number
+  visibility?: string
+  updatedAt?: string | number
 }
 
 type MountTab = 'datasets' | 'knowledge'
@@ -73,6 +88,16 @@ const knowledgeError = ref(false)
 const loadedDatasets = ref(false)
 const loadedKnowledge = ref(false)
 const searchQuery = ref('')
+const dataSourceFilter = ref('')
+const visibilityFilter = ref('')
+const sortBy = ref<MountableSortBy>('name')
+
+const currentFilters = computed<MountableFilters>(() => ({
+  keyword: searchQuery.value,
+  // 两个页签各用一个维度，切换时互不影响失效
+  dataSource: metaDatasetTab.value ? dataSourceFilter.value : '',
+  visibility: metaDatasetTab.value ? '' : visibilityFilter.value,
+}))
 
 /**
  * 页签本身是否不可用：只有「智能体不支持数据查询」才把数据集页签整个禁掉。
@@ -112,22 +137,13 @@ const scopedKnowledgeBases = computed(() =>
   knowledgeBases.value.filter((item) => isWithinScope(item, allowedKnowledgeSet.value)),
 )
 
-const matchesQuery = (item: MountableItem, query: string) =>
-  item.name.toLowerCase().includes(query)
-  || item.id.toLowerCase().includes(query)
-  || String(item.description || '').toLowerCase().includes(query)
+const filteredDatasets = computed(() =>
+  filterAndSortMountableItems(scopedDatasets.value, currentFilters.value, sortBy.value),
+)
 
-const filteredDatasets = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return scopedDatasets.value
-  return scopedDatasets.value.filter((item) => matchesQuery(item, query))
-})
-
-const filteredKnowledgeBases = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return scopedKnowledgeBases.value
-  return scopedKnowledgeBases.value.filter((item) => matchesQuery(item, query))
-})
+const filteredKnowledgeBases = computed(() =>
+  filterAndSortMountableItems(scopedKnowledgeBases.value, currentFilters.value, sortBy.value),
+)
 
 /**
  * 已挂载但不在当前列表里的 ID（库被删 / 权限被收回 / 落在会话资源范围外）。
@@ -148,6 +164,27 @@ const currentStaleIds = computed(() => (metaDatasetTab.value ? staleDatasetIds.v
 const currentLoading = computed(() => (metaDatasetTab.value ? loadingDatasets.value : loadingKnowledge.value))
 const currentError = computed(() => (metaDatasetTab.value ? datasetError.value : knowledgeError.value))
 const currentItems = computed(() => (metaDatasetTab.value ? filteredDatasets.value : filteredKnowledgeBases.value))
+
+/** 当前页签的完整列表（未过滤），用于「筛选出 N / 共 M」 */
+const currentSourceItems = computed(() => (metaDatasetTab.value ? scopedDatasets.value : scopedKnowledgeBases.value))
+
+const dataSourceOptions = computed(() => listMountableDataSources(scopedDatasets.value))
+const visibilityCounts = computed(() => countByVisibility(scopedKnowledgeBases.value))
+const hasActiveFilters = computed(() => hasAnyMountableFilter(currentFilters.value))
+
+const currentFilterValue = computed({
+  get: () => (metaDatasetTab.value ? dataSourceFilter.value : visibilityFilter.value),
+  set: (value: string) => {
+    if (metaDatasetTab.value) dataSourceFilter.value = value
+    else visibilityFilter.value = value
+  },
+})
+
+const resetFilters = () => {
+  searchQuery.value = ''
+  dataSourceFilter.value = ''
+  visibilityFilter.value = ''
+}
 
 const isActive = (id: string) =>
   metaDatasetTab.value ? activeDatasetSet.value.has(id) : activeKnowledgeSet.value.has(id)
@@ -177,6 +214,10 @@ const loadDatasets = async (force = false) => {
           id,
           name: String(item?.display_name || item?.name || item?.dataset_name || id),
           description: String(item?.description || item?.remark || item?.notes || `数据源：${item?.data_source || '默认'}`),
+          dataSource: String(item?.data_source || '').trim(),
+          tags: Array.isArray(item?.tags) ? item.tags.map(String) : [],
+          tableCount: Number(item?.table_count ?? 0) || 0,
+          updatedAt: item?.updated_at || item?.created_at || '',
         }
       })
       .filter((item) => item.id)
@@ -233,6 +274,9 @@ const loadKnowledgeBases = async (force = false) => {
           id,
           name: String(item?.name || item?.display_name || item?.dataset_name || id),
           description: String(item?.description || item?.summary || item?.notes || '暂无知识库描述'),
+          docCount: Number(item?.doc_count ?? item?.document_count ?? 0) || 0,
+          visibility: String(item?.visibility || '').trim(),
+          updatedAt: item?.update_time || '',
         }
       })
       .filter((item) => item.id)
@@ -259,6 +303,8 @@ const switchTab = (tab: MountTab) => {
   if (activeTab.value === tab) return
   activeTab.value = tab
   searchQuery.value = ''
+  dataSourceFilter.value = ''
+  visibilityFilter.value = ''
   ensureTabLoaded(tab)
 }
 
@@ -295,7 +341,7 @@ const tabCount = (tab: MountTab) => {
 }
 
 const resetSearch = () => {
-  searchQuery.value = ''
+  resetFilters()
 }
 
 watch(activeTab, (tab) => ensureTabLoaded(tab))
@@ -373,6 +419,49 @@ const hint = computed(() =>
         </button>
       </div>
 
+      <!--
+        筛选：数据集按数据源、知识库按可见范围，外加排序。
+        刻意只各留一个维度——浮层只有 26rem 宽，堆多了会把列表挤没；
+        522 个数据集真正缺的是「按来源收窄」这一下。
+      -->
+      <div class="flex items-center gap-1.5">
+        <select
+          v-model="currentFilterValue"
+          :aria-label="metaDatasetTab ? '按数据源筛选' : '按可见范围筛选'"
+          class="h-[25px] min-w-0 flex-1 cursor-pointer appearance-none truncate rounded-md border border-gray-200 bg-white py-0 pl-2 pr-5 text-[11px] font-semibold text-gray-600 outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+          style="background-image: url(&quot;data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af' stroke-width='2.5'><path stroke-linecap='round' stroke-linejoin='round' d='M6 9l6 6 6-6'/></svg>&quot;); background-repeat: no-repeat; background-position: right 4px center; background-size: 11px"
+          data-testid="data-knowledge-filter"
+        >
+          <template v-if="metaDatasetTab">
+            <option value="">全部数据源</option>
+            <option v-for="source in dataSourceOptions" :key="source" :value="source">{{ source }}</option>
+          </template>
+          <template v-else>
+            <option value="">全部范围</option>
+            <option value="public">授权可见（{{ visibilityCounts.public }}）</option>
+            <option value="team">TEAM 级（{{ visibilityCounts.team }}）</option>
+            <option value="private">个人私有（{{ visibilityCounts.private }}）</option>
+          </template>
+        </select>
+
+        <select
+          v-model="sortBy"
+          aria-label="排序方式"
+          class="h-[25px] shrink-0 cursor-pointer appearance-none rounded-md border border-gray-200 bg-white py-0 pl-2 pr-5 text-[11px] font-semibold text-gray-600 outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+          style="background-image: url(&quot;data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af' stroke-width='2.5'><path stroke-linecap='round' stroke-linejoin='round' d='M6 9l6 6 6-6'/></svg>&quot;); background-repeat: no-repeat; background-position: right 4px center; background-size: 11px"
+          data-testid="data-knowledge-sort"
+        >
+          <option value="name">名称</option>
+          <option value="size">{{ metaDatasetTab ? '表最多' : '文档最多' }}</option>
+          <option value="updated">最近更新</option>
+        </select>
+
+        <span
+          v-if="hasActiveFilters"
+          class="shrink-0 text-[10px] font-semibold tabular-nums text-gray-400 dark:text-gray-500"
+        >筛选出 {{ currentItems.length }}</span>
+      </div>
+
       <p
         v-if="currentItemsDisabled"
         class="text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed px-0.5"
@@ -387,7 +476,7 @@ const hint = computed(() =>
 
     <div
       class="overflow-y-auto overscroll-y-contain px-2 pb-1 custom-scrollbar"
-      :class="fillHeight ? 'flex-1 min-h-0' : 'min-h-[10rem] max-h-[min(48vh,22rem)]'"
+      :class="fillHeight ? 'flex-1 min-h-0' : 'flex-1 min-h-[10rem]'"
       data-testid="data-knowledge-list"
     >
       <div v-if="currentLoading" class="flex flex-col items-center justify-center py-12 opacity-50">
@@ -411,7 +500,7 @@ const hint = computed(() =>
 
       <div v-else-if="currentItems.length === 0" class="text-center py-10 px-4">
         <p class="text-sm text-gray-400 font-medium">
-          {{ searchQuery.trim() ? '没有匹配项' : (metaDatasetTab ? '暂无可挂载的数据集' : '暂无可挂载的知识库') }}
+          {{ hasActiveFilters ? '没有匹配项' : (metaDatasetTab ? '暂无可挂载的数据集' : '暂无可挂载的知识库') }}
         </p>
         <p v-if="!searchQuery.trim()" class="text-xs text-gray-400/80 mt-2 leading-relaxed">
           <template v-if="metaDatasetTab">
