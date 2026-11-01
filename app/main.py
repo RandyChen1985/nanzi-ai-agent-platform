@@ -95,7 +95,12 @@ async def lifespan(app: FastAPI):
     # Start Task Scheduler
     from app.services.ai.scheduler_service import scheduler_service
     if settings.TASK_SCHEDULER_ENABLED:
-        await scheduler_service.start()
+        try:
+            await scheduler_service.start()
+        except Exception as exc:
+            # 调度器装载失败不应连带整个 API 服务起不来：先保证服务可用，
+            # 用户还能登录修正导致失败的配置；装载循环本身已做逐条隔离。
+            logging.error("启动任务调度器失败，服务将以无调度器状态运行: %s", exc, exc_info=True)
     else:
         logging.info("TASK_SCHEDULER_ENABLED 已关闭，当前节点不启动任务调度器")
 

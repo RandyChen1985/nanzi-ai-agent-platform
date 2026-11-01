@@ -20,7 +20,12 @@ async def create_recurring_task(
 
     Args:
         name: A descriptive name for the task (e.g., 'Daily PUE Report').
-        cron: The standard Cron expression (e.g., '0 8 * * *' for daily 8 AM).
+        cron: Standard crontab with exactly 5 fields: minute hour day-of-month month day-of-week.
+            Weekday numbering: 0 or 7 = Sunday, 1 = Monday, ... 6 = Saturday.
+            Do NOT use 6 fields (no seconds field), macros like '@daily', or Quartz syntax.
+            Do NOT restrict both day-of-month and day-of-week: keep one of them as '*'.
+            Examples: '0 8 * * *' (daily 08:00), '0 8 * * 1-5' (weekdays 08:00),
+            '0 9 1 * *' (1st of every month 09:00), '30 2 * * 0' (Sunday 02:30).
         prompt: The specific business instruction for the AI to execute periodically.
             Prefer putting only the work to do here; delivery channels can use notification_channels.
         notification_channels: Optional delivery channels when the user explicitly asks to notify.

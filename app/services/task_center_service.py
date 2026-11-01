@@ -11,6 +11,7 @@ from app.services.ai.scheduler_service import (
     scheduler_service,
     _task_run_conversation_prefix,
 )
+from app.services.cron_compat import validate_standard_crontab
 from app.models.audit import AgentExecutionHistory
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,11 @@ class TaskCenterService:
         source: str = "web",
         config: Optional[Dict[str, Any]] = None
     ) -> AgentScheduledTask:
+        # 服务层是公共入口（Web API 与 AI 工具都经过这里），必须在落库前校验表达式：
+        # 否则非法值会先入库、再由调度器打日志跳过，形成「运行中但永不执行」的假成功，
+        # AI 调用方还会收到创建成功。
+        validate_standard_crontab(cron_expr)
+
         # Generate a dedicated conversation_id for this task
         conversation_id = f"task_conv_{uuid.uuid4().hex[:12]}"
         int_user_id = int(user_id) if user_id is not None else 0
@@ -70,6 +76,8 @@ class TaskCenterService:
         
         # Sync to scheduler
         await scheduler_service.upsert_task(new_task)
+        # 回填下次执行时间，让 Web 响应与 AI 工具返回值能反映调度是否真的生效
+        new_task.next_run_at = scheduler_service.get_next_run_time(new_task.id)
         
         return new_task
 
@@ -126,6 +134,19 @@ class TaskCenterService:
         task_id: int,
         updates: Dict[str, Any]
     ) -> Optional[AgentScheduledTask]:
+        if "cron_expr" in updates:
+            validate_standard_crontab(str(updates.get("cron_expr") or ""))
+        if updates.get("status") == 1:
+            # 启动前确认库内表达式可调度：历史脏数据若直接启用，调度器只会打日志跳过，
+            # 用户（或 AI）会以为「已启动」而任务永远不跑。
+            current_cron = (
+                await db.execute(
+                    select(AgentScheduledTask.cron_expr).where(AgentScheduledTask.id == task_id)
+                )
+            ).scalar_one_or_none()
+            if current_cron:
+                validate_standard_crontab(current_cron)
+
         # 执行指标存于 config.task_metrics（由调度器维护）；前端 PATCH 提交的 config
         # 通常不含该字段，整体覆盖会抹掉执行统计，这里始终以库内指标为准回填。
         if "config" in updates:

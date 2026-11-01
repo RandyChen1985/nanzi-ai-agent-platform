@@ -173,3 +173,11 @@ def test_invalid_expressions_raise_value_error(expr):
 
 def test_other_fields_are_passed_through_untouched():
     assert to_apscheduler_crontab("*/5 9-18 1,15 jan-mar 1-5") == "*/5 9-18 1,15 jan-mar mon-fri"
+
+
+def test_validate_rejects_overlong_expression():
+    # 任务表 cron_expr 是 VARCHAR(50)，超长会在入库时变成数据库错误（500）
+    long_expr = "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 * * * *"
+    with pytest.raises(ValueError, match="过长"):
+        validate_standard_crontab(long_expr)
+    validate_standard_crontab("0 8 * * 1-5")

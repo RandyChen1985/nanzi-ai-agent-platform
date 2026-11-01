@@ -161,7 +161,12 @@ def validate_standard_crontab(expr: str) -> None:
     几乎不执行且不会报错。前端早已拦住，后端此前漏了这道校验。
     """
     converted = to_apscheduler_crontab(expr)
-    parts = str(expr or "").strip().split()
+    text = str(expr or "").strip()
+    parts = text.split()
+    # 任务表 cron_expr 是 VARCHAR(50)，超长会在入库时抛数据库错误（500）；
+    # 这里提前用更严格的长度拒掉，给出可读提示。
+    if len(text) > 50:
+        raise ValueError(f"Cron 表达式过长（{len(text)} 字符，最多 50）：{text!r}")
     day_field = parts[_DAY_FIELD_INDEX].strip()
     weekday_field = parts[_WEEKDAY_FIELD_INDEX].strip()
     if day_field not in ("*", "?") and weekday_field not in ("*", "?"):
