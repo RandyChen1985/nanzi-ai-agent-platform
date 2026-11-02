@@ -7,6 +7,7 @@
 - Redis 不可用时签发返回 None，调用方回退到真实 API Key，保证仍能登录。
 """
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -99,6 +100,19 @@ def _patch_session(user):
     )
 
 
+def _patch_session_for_reverify(user):
+    """复核路径用 session.get(User, id) 取用户，与 execute 分支不同。"""
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=user)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = user
+    session.execute = AsyncMock(return_value=result)
+    return patch(
+        "app.services.auth_service.AuthService._get_session",
+        AsyncMock(return_value=(session, False)),
+    )
+
+
 def _patch_redis(redis):
     return patch("app.services.auth_service.get_redis", AsyncMock(return_value=redis))
 
@@ -163,8 +177,14 @@ async def test_session_token_passes_existing_verify_api_key():
 
 
 @pytest.mark.asyncio
-async def test_session_token_slides_ttl_on_activity():
-    """活跃调用要续期，否则用户会在 24 小时后被强制登出。"""
+async def test_session_token_slides_ttl_when_reverified():
+    """活跃调用要续期，否则用户会在 24 小时后被强制登出。
+
+    续期跟着「回源复核」走（每 SESSION_REVERIFY_SECONDS 一次），而不是每个请求都续：
+    只要用户还在用，最迟 5 分钟就会续到满血，24h 上限根本碰不到。
+    """
+    from app.services.embed_service import SESSION_TOKEN_TTL_SECONDS
+
     redis = _FakeRedis()
 
     with _patch_redis(redis), _patch_session(_fake_user()):
@@ -172,11 +192,43 @@ async def test_session_token_slides_ttl_on_activity():
 
     key = _session_key(token)
     redis.ttls[key] = 10  # 模拟即将过期
+    # 距上次复核已超过间隔 → 本次请求会回源复核，顺带续期
+    redis.hashes[key]["verified_at"] = str(
+        int(time.time()) - AuthService.SESSION_REVERIFY_SECONDS - 5
+    )
 
-    with _patch_redis(redis):
-        await AuthService.verify_api_key(token)
+    with _patch_redis(redis), _patch_session_for_reverify(_fake_user()):
+        user_info = await AuthService.verify_api_key(token)
 
-    assert redis.ttls[key] == AuthService.PORTAL_SESSION_TTL_SECONDS
+    assert user_info is not None
+    assert redis.ttls[key] == SESSION_TOKEN_TTL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_session_token_throttles_renewal_within_reverify_window():
+    """复核间隔内不再续期：聊天一轮几十个请求，每个都发 EXPIRE 是纯浪费。
+
+    锁住这个节流决策——不续期是因为「刚复核过、TTL 还很充裕」，
+    不是「忘了续期」。上一条用例保证活跃用户仍会被续期。
+    """
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        token = await AuthService.create_portal_session(7)
+
+    key = _session_key(token)
+    redis.ttls[key] = 10  # TTL 被人为压低，但 verified_at 是刚刚
+
+    session = AsyncMock()
+    with _patch_redis(redis), patch(
+        "app.services.auth_service.AuthService._get_session",
+        AsyncMock(return_value=(session, False)),
+    ):
+        user_info = await AuthService.verify_api_key(token)
+
+    assert user_info is not None
+    assert redis.ttls[key] == 10  # 未被续期
+    session.execute.assert_not_awaited()  # 也没有回源查库
 
 
 @pytest.mark.asyncio

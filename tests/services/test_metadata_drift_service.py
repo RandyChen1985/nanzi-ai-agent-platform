@@ -493,15 +493,11 @@ async def test_resolve_alert_drop_table():
     mock_other_alerts_res = MagicMock()
     mock_other_alerts_res.scalars.return_value.all.return_value = [other_alert]
 
-    # 第 3 次 execute 来自 MetadataService._mark_dataset_as_modified 内部（记录变更日志），
-    # 与本用例断言无关；给它一个通用结果，避免 side_effect 列表被提前耗尽。
-    mock_logging_res = MagicMock()
-    mock_logging_res.scalars.return_value.all.return_value = []
-    mock_logging_res.scalars.return_value.first.return_value = None
+    # 执行顺序：查告警 → 查物理表 → 查同表其它待处理告警。
+    # 变更日志与 mark_dataset_as_modified 走各自的会话，不消耗这里的 execute。
     mock_db.execute.side_effect = [
         mock_alert_res,
         mock_t_res,
-        mock_logging_res,
         mock_other_alerts_res,
     ]
 
