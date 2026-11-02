@@ -115,3 +115,46 @@ def test_readonly_agents_point_to_admin_instead_of_a_version_page():
     # 可编辑时仍保留原来的操作路径
     assert "modelIssueHint(agent.model_issue?.code)" in source
     assert "? MANAGED_AGENT_HINT : TOOL_ISSUE_HINT" in source
+
+
+def test_banner_issues_carry_owning_agent_id():
+    """顶部清单必须知道每条异常属于哪个智能体。
+
+    只列出「智能体名称 + 问题」时，用户还得在十几张卡片里按名字找。带上 id，
+    卡片才能直接描红。
+    """
+    source = _management_source()
+
+    assert "agentId?: string" in source
+    # 两个按智能体推送的分支都要带，系统默认模型那条没有归属
+    assert source.count("agentId: String(agent.id)") == 2
+
+
+def test_issue_agents_get_red_card_outline():
+    source = _management_source()
+
+    assert "const agentsWithConfigIssue = computed(() => {" in source
+    assert "const agentHasConfigIssue = (agent: { id: string | number })" in source
+    # 网格卡片描红
+    assert "ring-2 ring-red-300" in source
+    # 不与卡片自带引擎配色的 border-* 抢同一个属性
+    assert "ring-2 ring-red-300 border-red" not in source
+    # 表格视图同步标记
+    assert "agentHasConfigIssue(agent) ? 'bg-red-50/50' : ''" in source
+    assert ":title=\"agentConfigIssueHint(agent)\"" in source
+
+
+def test_red_outline_survives_dismissing_the_banner():
+    """点「知道了」只收起顶部清单，卡片标记必须留着。
+
+    否则用户收起提示后就彻底看不见这个问题了——而它正是「相关调用会失败」的那一类。
+    """
+    source = _management_source()
+
+    banner_at = source.index("const visibleConfigIssues = computed(")
+    card_at = source.index("const agentsWithConfigIssue = computed(")
+    card_block = source[card_at : source.index("const agentHasConfigIssue", card_at)]
+
+    assert card_at > banner_at
+    # 集合的构造不能引用 configIssuesDismissed
+    assert "configIssuesDismissed" not in card_block
