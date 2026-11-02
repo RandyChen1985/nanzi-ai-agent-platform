@@ -52,6 +52,9 @@ type KnowledgeBase = {
   is_missing_in_ragflow?: boolean
   /** 当前用户是否收藏过（后端列表接口带回，「我的收藏」按它过滤） */
   is_favorited?: boolean
+  /** 授权给了多少用户 / 多少角色（后端按 dataset 聚合，明细走 /permissions） */
+  grant_user_count?: number
+  grant_role_count?: number
   created_by?: string
   /** 归属人（管理权真源）。为空时后端回落 created_by 文本，兼容未回填的老库 */
   owner_user_id?: number
@@ -651,22 +654,22 @@ const docQuotaTone = computed(() => {
 })
 
 /**
- * 左栏配额条要的是「我还能建几个库」，与具体哪个库无关；
- * 而后端只提供了按库查询的 quota 接口，所以借第一个可读库问一次，
- * 只取其中的 owned_datasets（口径同 knowledge_quota_max_datasets_per_user）。
+ * 左栏配额条要的是「我还能建几个库」——与当前看哪个库无关，是全局固定值。
+ * 所以它有自己的状态：只由 /datasets/quota/me 写，切库、切页面都不动它。
+ * 千万不要复用按库查询的 datasetQuota（切库会被清空，数字就会跳）。
  */
+const ownedQuota = ref<{ used: number; limit: number } | null>(null)
 const quotaLoading = ref(true)
 const loadOwnedDatasetQuota = async () => {
-  if (ownedDatasetLimit.value) {
-    quotaLoading.value = false
-    return
-  }
   try {
     const response = await axios.get('/api/portal/ragflow/datasets/quota/me')
     const owned = response.data?.data?.owned_datasets
-    if (owned) datasetQuota.value = { ...(datasetQuota.value || {}), owned_datasets: owned }
+    if (owned && typeof owned.used === 'number') {
+      ownedQuota.value = { used: owned.used, limit: Number(owned.limit) || 0 }
+    }
   } catch {
-    // 配额只是辅助信息：拿不到就退回库数量，不打扰用户
+    // 拿不到就保持 null（显示「—」）。绝不拿「可见库数」顶替：
+    // 可见 = 我拥有的 + 别人授权给我的，口径不同，会让人以为配额在变。
   } finally {
     quotaLoading.value = false
   }
@@ -1247,9 +1250,45 @@ const listScope = ref<null | 'all' | 'favorite' | 'recent'>(null)
 const quickViewsCollapsed = ref(false)
 
 /** 左栏折叠：表格列多的时候把导航整列收起来，主区吃满宽度 */
-const navCollapsed = ref(false)
+const navCollapsed = ref(
+  typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches,
+)
 
 // 收藏与最近访问后端还没有接口，先占位：计数为 0、列表走空态，不放假数据
+/**
+ * 引用与授权两个数字回答「改动这个库会波及谁」：
+ * 引用 = 智能体检索不到内容，授权 = 这些人/角色失去入口。列表只给数量，明细在库信息里看。
+ */
+/** 列表看字段对齐、卡片看整体轮廓：库多时列表扫得快，库少时卡片更好点 */
+const LIBRARY_VIEW_OPTIONS = [
+  { key: 'list', label: '列表', icon: 'M4 6h16M4 12h16M4 18h16' },
+  { key: 'card', label: '卡片', icon: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z' },
+] as const
+const libraryView = ref<'list' | 'card'>('list')
+
+const libraryRefHint = (ds: KnowledgeBase): string => {
+  const count = ds.agent_ref_count ?? 0
+  return count ? `被 ${count} 个智能体引用` : '没有智能体引用这个库'
+}
+
+const libraryGrantText = (ds: KnowledgeBase): string => {
+  const users = ds.grant_user_count ?? 0
+  const roles = ds.grant_role_count ?? 0
+  if (!users && !roles) return '—'
+  if (users && roles) return `${users}+${roles}`
+  return users ? `${users} 人` : `${roles} 角色`
+}
+
+const libraryDescOf = (ds: KnowledgeBase): string =>
+  (ds.platform_description || ds.description || '').trim() || '暂无描述'
+
+const libraryGrantHint = (ds: KnowledgeBase): string => {
+  const users = ds.grant_user_count ?? 0
+  const roles = ds.grant_role_count ?? 0
+  if (!users && !roles) return '没有额外授权，只有归属人和可见范围决定谁能进'
+  return `授权给 ${users} 个用户、${roles} 个角色`
+}
+
 /** 收藏是个人视图：列表接口带回 is_favorited，前端直接数，不再留占位 */
 const favoriteCount = computed(() => datasets.value.filter(dataset => dataset.is_favorited).length)
 
@@ -1636,12 +1675,13 @@ const visibilityScopeDatasets = computed(() =>
  * 我的知识库配额：后端在 quota 接口里回 owned_datasets 才拿得到上限，
  * 拿不到就退回当前可见库数，不编造一个上限值。
  */
-const ownedDatasetUsage = computed(() => datasetQuota.value?.owned_datasets?.used ?? datasets.value.length)
-const ownedDatasetLimit = computed<number | null>(() => datasetQuota.value?.owned_datasets?.limit ?? null)
+const ownedDatasetUsage = computed<number | null>(() => ownedQuota.value?.used ?? null)
+const ownedDatasetLimit = computed<number | null>(() => ownedQuota.value?.limit || null)
 const ownedDatasetRatio = computed(() => {
   const limit = ownedDatasetLimit.value
-  if (!limit) return 0
-  return Math.min(1, Math.round((ownedDatasetUsage.value / limit) * 100) / 100)
+  const used = ownedDatasetUsage.value
+  if (!limit || used === null) return 0
+  return Math.min(1, Math.round((used / limit) * 100) / 100)
 })
 const quotaBarTone = computed(() => {
   if (ownedDatasetRatio.value >= 0.9) return 'bg-red-500'
@@ -3805,7 +3845,10 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <span class="text-gray-500">知识库配额</span>
               <span v-if="quotaLoading" class="h-3 w-9 animate-pulse rounded bg-gray-200" aria-hidden="true"></span>
               <span v-else class="font-semibold tabular-nums text-gray-700">
-                {{ ownedDatasetUsage }}<span v-if="ownedDatasetLimit" class="font-normal text-gray-400"> / {{ ownedDatasetLimit }}</span>
+                <template v-if="ownedDatasetUsage !== null">
+                  {{ ownedDatasetUsage }}<span v-if="ownedDatasetLimit" class="font-normal text-gray-400"> / {{ ownedDatasetLimit }}</span>
+                </template>
+                <span v-else class="font-normal text-gray-400" title="配额接口暂时不可用">—</span>
               </span>
             </div>
             <!-- 没有上限时也占住同样高度：否则加载完成后下面的入口会往上跳一截 -->
@@ -4128,7 +4171,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             在右侧详情区里把真正的内容（文档列表）挤到首屏之外。
           -->
           <div class="border-b border-gray-100 pb-2.5">
-            <div class="flex items-start justify-between gap-3">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 flex-wrap">
                 <h2 class="text-xl font-bold text-gray-900 truncate">{{ selectedDataset.platform_name || selectedDataset.name }}</h2>
@@ -4150,7 +4193,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
             </div>
 
-            <div class="flex shrink-0 items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 class="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-[12.5px] font-medium text-gray-600 transition-colors hover:bg-gray-50"
@@ -4274,6 +4317,27 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 负责人
                 <span class="font-medium text-gray-700">{{ datasetOwnerUserLabel(selectedDataset) }}</span>
               </span>
+              <!-- 文档配额：以前只藏在「库信息」抽屉里，快满时来不及反应 -->
+              <span
+                class="inline-flex items-center gap-1.5 w-full sm:ml-auto sm:w-auto"
+                :title="datasetQuota?.documents?.limit
+                  ? `这个库已用 ${datasetQuota.documents.used ?? 0} 篇，上限 ${datasetQuota.documents.limit} 篇`
+                  : '文档配额暂时读不到'"
+              >
+                <span>文档配额</span>
+                <span class="font-semibold tabular-nums" :class="datasetQuota?.documents?.limit ? docQuotaTone.split(' ')[1] : 'text-gray-300'">
+                  {{ datasetQuota?.documents?.used ?? '—' }}
+                  <span class="font-normal text-gray-300">/</span>
+                  {{ datasetQuota?.documents?.limit ?? '不限' }}
+                </span>
+                <span class="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-gray-200/70">
+                  <span
+                    class="block h-full rounded-full transition-all"
+                    :class="docQuotaTone.split(' ')[0]"
+                    :style="{ width: `${Math.round(docQuotaRatio * 100)}%` }"
+                  ></span>
+                </span>
+              </span>
             </div>
           </div>
 
@@ -4341,6 +4405,23 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <option v-for="tab in VISIBILITY_TABS" :key="tab.key" :value="tab.key">{{ tab.label }}</option>
               <option value="missing">仅失联库</option>
             </select>
+            <div class="flex shrink-0 items-center rounded-lg bg-gray-100 p-0.5" role="tablist" aria-label="视图切换">
+              <button
+                v-for="option in LIBRARY_VIEW_OPTIONS"
+                :key="option.key"
+                type="button"
+                class="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+                :class="libraryView === option.key ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                :aria-selected="libraryView === option.key"
+                role="tab"
+                @click="libraryView = option.key"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" :d="option.icon" />
+                </svg>
+                {{ option.label }}
+              </button>
+            </div>
             <button
               v-if="librarySelectedCount && canDelete"
               type="button"
@@ -4364,8 +4445,8 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             <p v-if="listScope !== 'all'" class="text-xs text-gray-300">接口就绪后这里会自动有内容</p>
           </div>
 
-          <div v-else class="mt-3 flex-1 overflow-y-auto">
-            <div class="grid h-8 grid-cols-[18px_24px_minmax(0,1fr)_96px_52px_76px_96px_16px] items-center gap-x-2.5 rounded-lg bg-gray-50 px-3 text-[11px] font-semibold text-gray-400">
+          <div v-else-if="libraryView === 'list'" class="mt-3 flex-1 overflow-y-auto">
+            <div class="grid h-8 grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_72px_88px_16px] items-center gap-x-2.5 rounded-lg bg-gray-50 px-3 text-[11px] font-semibold text-gray-400">
               <input
                 type="checkbox"
                 class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary/30"
@@ -4378,13 +4459,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <span>名称</span>
               <span>可见范围</span>
               <span>文档</span>
+              <span>引用</span>
+              <span>授权</span>
               <span>负责人</span>
               <span>更新时间</span>
             </div>
             <div
               v-for="ds in libraryListRows"
               :key="ds.ragflow_dataset_id || ds.id"
-              class="grid w-full cursor-pointer grid-cols-[18px_24px_minmax(0,1fr)_96px_52px_76px_96px_16px] items-center gap-x-2.5 border-b border-gray-100 px-3 h-11 text-left transition-colors hover:bg-gray-50"
+              class="grid w-full cursor-pointer grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_72px_88px_16px] items-center gap-x-2.5 border-b border-gray-100 px-3 h-11 text-left transition-colors hover:bg-gray-50"
               @click="selectDatasetNode(ds)"
             >
               <input
@@ -4419,12 +4502,61 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 >{{ visibilityLabel(ds) }}</span>
               </span>
               <span class="text-[11px] text-gray-500 tabular-nums">{{ docCountOf(ds) }}</span>
+              <span class="text-[11px] tabular-nums" :class="(ds.agent_ref_count ?? 0) ? 'text-gray-500' : 'text-gray-300'" :title="libraryRefHint(ds)">
+                {{ (ds.agent_ref_count ?? 0) || '—' }}
+              </span>
+              <span class="truncate text-[11px] tabular-nums" :class="(ds.grant_user_count ?? 0) || (ds.grant_role_count ?? 0) ? 'text-gray-500' : 'text-gray-300'" :title="libraryGrantHint(ds)">
+                {{ libraryGrantText(ds) }}
+              </span>
               <span class="truncate text-[11px] text-gray-500">{{ libraryOwnerOf(ds) }}</span>
               <span class="text-[11px] text-gray-500 tabular-nums">{{ libraryUpdatedAtOf(ds) }}</span>
               <svg class="h-3 w-3 text-gray-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6" />
               </svg>
             </div>
+          </div>
+
+          <!-- 卡片视图：同样的数据换一种扫读方式，点卡片等价于点行 -->
+          <div v-else class="mt-3 grid flex-1 content-start gap-3 overflow-y-auto pb-2 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <button
+              v-for="ds in libraryListRows"
+              :key="libraryRowId(ds)"
+              type="button"
+              class="group flex flex-col rounded-xl border border-gray-200 bg-white p-3 text-left transition-all hover:border-primary/40 hover:shadow-sm"
+              @click="selectDatasetNode(ds)"
+            >
+              <div class="flex min-w-0 items-center gap-1.5">
+                <span class="shrink-0 text-primary">
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24">
+                    <ellipse cx="12" cy="6.2" rx="7.6" ry="3" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.4 6.2v11.6c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3V6.2" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.4 12c0 1.66 3.4 3 7.6 3s7.6-1.34 7.6-3" />
+                  </svg>
+                </span>
+                <span class="truncate text-[13px] font-medium" :class="ds.is_missing_in_ragflow ? 'text-amber-600' : 'text-gray-800'">{{ ds.platform_name || ds.name }}</span>
+                <span
+                  v-if="ds.is_missing_in_ragflow"
+                  class="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
+                  :title="MISSING_DATASET_HINT"
+                >失联</span>
+                <span
+                  class="ml-auto shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                  :class="visibilityBadgeClass(ds)"
+                  :title="visibilityHint(ds)"
+                >{{ visibilityLabel(ds) }}</span>
+              </div>
+              <p class="mt-1.5 min-h-[34px] text-[11.5px] leading-relaxed text-gray-400 line-clamp-2">{{ libraryDescOf(ds) }}</p>
+              <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400">
+                <span><b class="font-semibold text-gray-600 tabular-nums">{{ docCountOf(ds) }}</b> 文档</span>
+                <span :title="libraryRefHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ (ds.agent_ref_count ?? 0) || '—' }}</b> 引用</span>
+                <span :title="libraryGrantHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ libraryGrantText(ds) }}</b> 授权</span>
+              </div>
+              <div class="mt-2 flex items-center gap-1.5 border-t border-dashed border-gray-100 pt-2 text-[10.5px] text-gray-400">
+                <span class="truncate">{{ libraryOwnerOf(ds) }}</span>
+                <span class="text-gray-300">·</span>
+                <span class="shrink-0">{{ libraryUpdatedAtOf(ds) }}</span>
+              </div>
+            </button>
           </div>
         </div>
 
@@ -5007,14 +5139,14 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </span>
               </div>
               <div
-                v-if="datasetQuota.owned_datasets"
+                v-if="ownedDatasetUsage !== null"
                 class="flex items-center justify-between border-t border-gray-100 pt-2 text-[11px] text-gray-400 select-none"
               >
                 <span>我的知识库</span>
                 <span class="font-semibold tabular-nums text-gray-600">
-                  {{ datasetQuota.owned_datasets.used }}
+                  {{ ownedDatasetUsage }}
                   <span class="font-normal text-gray-300">/</span>
-                  {{ datasetQuota.owned_datasets.limit }}
+                  {{ ownedDatasetLimit || '不限' }}
                 </span>
               </div>
             </div>

@@ -157,8 +157,9 @@
         </p>
       </div>
 
-      <!-- 列表视图 -->
+      <!-- 列表视图：7 列在窄屏塞不下，给个最小宽度让容器横向滚动 -->
       <template v-else-if="viewMode === 'list'">
+        <div class="min-w-[640px]">
         <div class="sticky top-0 z-10 grid items-center gap-2 border-b border-gray-100 bg-white px-4 py-2 text-[11px] font-medium text-gray-400" :class="GRID_COLS">
           <span class="flex items-center justify-center">
             <input
@@ -367,6 +368,7 @@
           <button type="button" class="text-[11px] text-gray-400 hover:text-primary" @click="startCreate(currentPath)">
             + 新建文件夹
           </button>
+        </div>
         </div>
       </template>
 
