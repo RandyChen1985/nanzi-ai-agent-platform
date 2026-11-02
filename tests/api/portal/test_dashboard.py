@@ -208,3 +208,86 @@ async def test_recent_users_are_sorted_by_latest_activity_not_registration_time(
                 )
             )
             await cleanup.commit()
+
+
+@pytest.mark.asyncio
+async def test_active_users_never_exceeds_total_users(
+    client: AsyncClient,
+    admin_api_key: str,
+    db_session,
+):
+    """活跃用户必须是「当前有效账号」的子集。
+
+    访问日志会一直保留已禁用 / 已删除账号的调用记录。只要统计时不与 User 表
+    取交集，分子就会累积历史账号，最终超过分母——线上实际出现过
+    「同一条卡片上写着 16 个用户、6050 个活跃」的读数。
+    """
+    now = datetime.now()
+    suffix = uuid4().hex[:8]
+    enabled_name = f"active-subset-{suffix}"
+    disabled_name = f"disabled-subset-{suffix}"
+
+    db_session.add_all([
+        User(
+            user_name=enabled_name,
+            api_key_hash=f"hash-enabled-{suffix}",
+            api_key_encrypted=f"encrypted-enabled-{suffix}",
+            role="user",
+            status=1,
+            created_at=now,
+        ),
+        User(
+            user_name=disabled_name,
+            api_key_hash=f"hash-disabled-{suffix}",
+            api_key_encrypted=f"encrypted-disabled-{suffix}",
+            role="user",
+            status=0,
+            created_at=now,
+        ),
+        # 两个账号在近 7 天内都有调用；只有启用那个算活跃
+        AccessLog(
+            trace_id=f"trace-enabled-{suffix}",
+            user_name=enabled_name,
+            endpoint="/api/portal/agents",
+            method="GET",
+            status_code=200,
+            process_time_ms=120.0,
+            client_ip="127.0.0.1",
+            created_at=now - timedelta(days=1),
+        ),
+        AccessLog(
+            trace_id=f"trace-disabled-{suffix}",
+            user_name=disabled_name,
+            endpoint="/api/portal/agents",
+            method="GET",
+            status_code=200,
+            process_time_ms=120.0,
+            client_ip="127.0.0.1",
+            created_at=now - timedelta(days=1),
+        ),
+    ])
+    await db_session.commit()
+
+    try:
+        response = await client.get(
+            "/api/portal/dashboard/admin-stats",
+            headers={"X-API-Key": admin_api_key},
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["total_users"] >= 2  # 两个新账号里启用那个必然被计入
+        assert data["active_users"] <= data["total_users"]
+    finally:
+        async with AsyncSessionLocal() as cleanup:
+            await cleanup.execute(
+                delete(AccessLog).where(
+                    AccessLog.user_name.in_([enabled_name, disabled_name])
+                )
+            )
+            await cleanup.execute(
+                delete(User).where(
+                    User.user_name.in_([enabled_name, disabled_name])
+                )
+            )
+            await cleanup.commit()
