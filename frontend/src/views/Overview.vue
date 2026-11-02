@@ -134,6 +134,7 @@
         v-if="apiFailed > 0"
         :count="apiFailed"
         :subjects="failureSubjects"
+        :scope="period"
       />
 
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1.32fr_1fr]">
@@ -265,6 +266,7 @@
         v-if="apiFailed > 0"
         :count="apiFailed"
         :subjects="failureSubjects"
+        :scope="period"
       />
 
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1.32fr_1fr]">

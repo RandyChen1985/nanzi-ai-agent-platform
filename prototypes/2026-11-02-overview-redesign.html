@@ -135,6 +135,13 @@
   .alert-strip svg { width: 15px; height: 15px; flex-shrink: 0; }
   .alert-strip strong { font-weight: 700; }
   .alert-strip a { color: var(--amber-deep); font-weight: 650; text-decoration: none; border-bottom: 1px solid rgba(180, 83, 9, .35); }
+  .alert-close {
+    margin-left: auto; flex: 0 0 auto; display: grid; place-items: center; width: 22px; height: 22px;
+    border: 0; border-radius: 6px; background: transparent; color: #b45309; opacity: .55; cursor: pointer;
+    transition: opacity .15s, background .15s;
+  }
+  .alert-close:hover { opacity: 1; background: rgba(180, 83, 9, .12); }
+  .alert-close svg { width: 13px; height: 13px; }
 
   /* ===== 中部 ===== */
   .mid-grid { display: grid; grid-template-columns: 1.32fr 1fr; gap: 16px; margin-bottom: 16px; }
@@ -324,6 +331,10 @@
         <path d="M12 9v4"/><path d="M12 17h.01"/>
       </svg>
       <span>今日 <strong class="num">12</strong> 次调用失败，集中在 <strong>sub_agent_call</strong> 与 <strong>mcp-public-admin</strong></span>
+      <button type="button" class="alert-close" title="今天不再提示" aria-label="关闭提示"
+        onclick="this.closest('.alert-strip').remove()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
     </div>
 
     <div class="mid-grid">
@@ -607,6 +618,10 @@
         <path d="M12 9v4"/><path d="M12 17h.01"/>
       </svg>
       <span>今日有 <strong class="num">4</strong> 次调用失败，均为 <strong>execute_sql_query</strong> 超时</span>
+      <button type="button" class="alert-close" title="今天不再提示" aria-label="关闭提示"
+        onclick="this.closest('.alert-strip').remove()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
     </div>
 
     <div class="mid-grid">
