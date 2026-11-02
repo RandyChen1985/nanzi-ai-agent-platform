@@ -172,8 +172,9 @@
                   class="rounded-md px-1 py-0.5 text-[11px] leading-5 transition-colors"
                   :class="{
                     'bg-red-50/60 text-red-700 dark:bg-red-950/20 dark:text-red-300': child.status === 'error',
+                    'bg-amber-50/60 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300': child.status === 'warning',
                     'text-gray-600 dark:text-gray-300': child.status === 'pending',
-                    'text-gray-400 hover:bg-gray-50 dark:text-gray-500 dark:hover:bg-gray-800/40': child.status !== 'pending' && child.status !== 'error',
+                    'text-gray-400 hover:bg-gray-50 dark:text-gray-500 dark:hover:bg-gray-800/40': child.status !== 'pending' && child.status !== 'error' && child.status !== 'warning',
                   }"
                 >
                   <button
@@ -349,8 +350,9 @@
             class="rounded-lg px-1 py-0.5 text-[11px] leading-5 transition-colors"
             :class="{
               'bg-red-50/60 text-red-700 dark:bg-red-950/20 dark:text-red-300': item.status === 'error',
+              'bg-amber-50/60 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300': item.status === 'warning',
               'text-gray-600 dark:text-gray-300': item.status === 'pending',
-              'text-gray-400 hover:bg-gray-50 dark:text-gray-500 dark:hover:bg-gray-800/40': item.status !== 'pending' && item.status !== 'error',
+              'text-gray-400 hover:bg-gray-50 dark:text-gray-500 dark:hover:bg-gray-800/40': item.status !== 'pending' && item.status !== 'error' && item.status !== 'warning',
             }"
           >
             <button
@@ -1369,6 +1371,8 @@ function iconFor(item: ProcessTimelineLogItem): string {
 function timelineIconFor(item: ProcessTimelineLogItem): any {
   if (item.category === "tool_resolution") return item.status === "error" ? ExclamationTriangleIcon : MapIcon;
   if (item.status === "error") return ExclamationTriangleIcon;
+  // 降级/重置这类提醒既不是错误也不是普通步骤：默认气泡图标会让人以为只是又一步。
+  if (item.status === "warning") return ExclamationTriangleIcon;
   if (item.title.includes("鉴权及上下文与能力准备") || item.title.includes("请求校验")) return ShieldCheckIcon;
   if (item.title.includes("会话上下文")) return FolderOpenIcon;
   if (item.title.includes("知识库和专家清单加载") || item.title.includes("获取可用专家")) return BookOpenIcon;

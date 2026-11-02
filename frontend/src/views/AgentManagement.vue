@@ -810,6 +810,11 @@ type ConfigIssueItem = {
   hint: string
   /** 只有「系统默认模型」有可靠的跳转入口；智能体的配置在版本配置里，位置随版本而异 */
   action?: 'system'
+  /**
+   * 归属的智能体 id。顶部清单只能说明「哪几个有问题」，用户仍要在十几张卡片里
+   * 自己找；带上 id 才能直接给对应卡片描红。系统级问题（默认模型）没有归属。
+   */
+  agentId?: string
 }
 
 // 智能体的模型在「版本配置」里，而用户可能一个版本都没建过，跳不过去也没意义。
@@ -852,6 +857,7 @@ const configIssueItems = computed<ConfigIssueItem[]>(() => {
         agent.is_editable === false
           ? MANAGED_AGENT_HINT
           : modelIssueHint(agent.model_issue?.code),
+      agentId: String(agent.id),
     })
   }
   for (const agent of toolIssues.value) {
@@ -861,6 +867,7 @@ const configIssueItems = computed<ConfigIssueItem[]>(() => {
       title: agent.display_name || agent.name,
       detail: agent.tool_issue?.message || '',
       hint: agent.is_editable === false ? MANAGED_AGENT_HINT : TOOL_ISSUE_HINT,
+      agentId: String(agent.id),
     })
   }
   return items
@@ -869,6 +876,27 @@ const configIssueItems = computed<ConfigIssueItem[]>(() => {
 const visibleConfigIssues = computed(() =>
   configIssuesDismissed.value ? [] : configIssueItems.value
 )
+
+/**
+ * 有配置异常的智能体 id 集合，用来给卡片描红。
+ *
+ * 不受 `configIssuesDismissed` 影响：用户点「知道了」只是收起顶部清单，卡片上的
+ * 标记要继续留着——否则收起提示就等于彻底看不见这个问题。
+ */
+const agentsWithConfigIssue = computed(() => {
+  const ids = new Set<string>()
+  for (const item of configIssueItems.value) {
+    if (item.agentId) ids.add(item.agentId)
+  }
+  return ids
+})
+
+const agentHasConfigIssue = (agent: { id: string | number }) =>
+  agentsWithConfigIssue.value.has(String(agent.id))
+
+/** 卡片悬停提示：只说结论，细节让用户回顶部清单看。 */
+const agentConfigIssueHint = (agent: { id: string | number }) =>
+  agentHasConfigIssue(agent) ? '该智能体存在配置异常，详见页面顶部的「配置异常」清单' : undefined
 // 问题清空后重置「知道了」，下次真的再出现时仍然提示
 watch(configIssueItems, (list) => {
   if (!list.length) configIssuesDismissed.value = false
@@ -4230,8 +4258,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           class="bg-white rounded-xl shadow-sm border hover:shadow-md transition-all duration-200 flex flex-col group relative"
           :class="[
             !agent.is_enabled ? 'bg-gray-100/80 grayscale opacity-60' : '',
-            isPendingReview(agent) ? 'ring-1 ring-amber-200 bg-amber-50/20' : '',
-            batchMode && selectedAgentIds.has(agent.id) ? 'ring-2 ring-blue-400 border-blue-300' : '',
+            // 三种描边互斥（批量选中 > 配置异常 > 待审核）：ring 宽度与颜色同时生效时
+            // 谁胜出取决于 Tailwind 的生成顺序，而不是 class 列表顺序，所以不能叠加。
+            // 只用 ring 不用 border：卡片自带的引擎配色就是 border-*，会抢同一个属性。
+            batchMode && selectedAgentIds.has(agent.id)
+              ? 'ring-2 ring-blue-400 border-blue-300'
+              : agentHasConfigIssue(agent)
+                ? 'ring-2 ring-red-300'
+                : isPendingReview(agent) ? 'ring-1 ring-amber-200 bg-amber-50/20' : '',
             getAgentColorTheme(agent).border,
             canDragAgents && !batchMode ? 'cursor-grab active:cursor-grabbing' : '',
             dragOverId === agent.id ? 'ring-2 ring-primary/40 scale-[1.01]' : '',
@@ -4239,6 +4273,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             savingAgentOrder ? 'pointer-events-none' : '',
           ]"
           :draggable="canDragAgents && !batchMode && !isMainAgent(agent)"
+          :title="agentConfigIssueHint(agent)"
           @dragstart="handleAgentDragStart($event, agent.id)"
           @dragover="handleAgentDragOver($event, agent.id)"
           @dragleave="handleAgentDragLeave($event)"
@@ -4763,13 +4798,17 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 class="hover:bg-blue-50/30 transition-colors group"
                 :class="[
                   !agent.is_enabled ? 'opacity-55 grayscale bg-gray-50/60' : '',
-                  batchMode && selectedAgentIds.has(agent.id) ? 'bg-blue-50/50' : '',
+                  // 表格行同样要标出来；批量模式下的选中底色优先，避免两种底色打架
+                  batchMode && selectedAgentIds.has(agent.id)
+                    ? 'bg-blue-50/50'
+                    : agentHasConfigIssue(agent) ? 'bg-red-50/50' : '',
                   canDragAgents && !batchMode ? 'cursor-grab active:cursor-grabbing' : '',
                   dragOverId === agent.id ? 'bg-blue-50/60 ring-1 ring-inset ring-primary/30' : '',
                   dragSourceId === agent.id ? 'opacity-50' : '',
                   savingAgentOrder ? 'pointer-events-none' : '',
                 ]"
                 :draggable="canDragAgents && !batchMode && !isMainAgent(agent)"
+                :title="agentConfigIssueHint(agent)"
                 @dragstart="handleAgentDragStart($event, agent.id)"
                 @dragover="handleAgentDragOver($event, agent.id)"
                 @dragleave="handleAgentDragLeave($event)"
