@@ -1,39 +1,46 @@
 <template>
-  <section
+  <div
     v-if="item"
-    class="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5 dark:border-gray-800 dark:bg-gray-800/80"
+    class="flex items-center gap-3 rounded-xl border border-gray-200/80 bg-white px-3.5 py-2.5 shadow-xs dark:border-gray-800 dark:bg-gray-900/40"
   >
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div class="min-w-0">
-        <div class="flex items-center gap-2">
-          <span class="h-1.5 w-1.5 rounded-full bg-blue-500" />
-          <p class="text-xs font-medium text-blue-600 dark:text-blue-400">下次定时任务</p>
-        </div>
-        <h2 class="mt-1 text-sm font-bold text-gray-900 dark:text-gray-100">{{ item.title }}</h2>
-        <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ item.subtitle || "定时任务" }}</p>
-        <WorkbenchItemMeta
-          :next-run-at="item.next_run_at"
-          :occurred-at="item.occurred_at"
-          :status="item.status"
-        />
-      </div>
-      <button
-        type="button"
-        class="shrink-0 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs hover:bg-blue-700 active:scale-95"
-        @click="$emit('open-item', item)"
-      >
-        查看任务
-      </button>
+    <span
+      class="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[8px] bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400"
+      aria-hidden="true"
+    >
+      <svg class="h-[14px] w-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4" /><path d="M8 2v4" /><path d="M3 10h18" />
+      </svg>
+    </span>
+
+    <div class="min-w-0 flex-1">
+      <p class="truncate text-[13px] font-semibold text-gray-900 dark:text-gray-100">{{ item.title }}</p>
+      <p class="mt-0.5 truncate text-[11.5px] text-gray-400 dark:text-gray-500">
+        下次执行 {{ nextRunText }}<span v-if="item.subtitle"> · {{ item.subtitle }}</span>
+      </p>
     </div>
-  </section>
+
+    <button
+      type="button"
+      class="shrink-0 rounded-[7px] border border-gray-200 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:border-blue-200 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:text-blue-400"
+      @click="$emit('open-item', item)"
+    >
+      查看任务
+    </button>
+  </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue"
 import type { WorkbenchItem } from "@/types/workbench"
-import WorkbenchItemMeta from "./WorkbenchItemMeta.vue"
+import { formatWorkbenchRelativeTime } from "@/utils/workbenchDisplay"
 
 export type WorkbenchScheduledItem = WorkbenchItem & { next_run_at?: string }
 
-defineProps<{ item: WorkbenchScheduledItem }>()
+const props = defineProps<{ item: WorkbenchScheduledItem }>()
 defineEmits<{ (event: "open-item", item: WorkbenchItem): void }>()
+
+const nextRunText = computed(() => {
+  const relative = formatWorkbenchRelativeTime(props.item.next_run_at || props.item.occurred_at || "")
+  return relative || "未排期"
+})
 </script>

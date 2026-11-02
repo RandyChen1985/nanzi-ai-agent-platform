@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的工作台 · 改版方案</title>
+<style>
+  :root {
+    --blue: #2563eb;
+    --blue-soft: #eff6ff;
+    --amber: #f59e0b;
+    --amber-deep: #b45309;
+    --amber-soft: #fffbeb;
+    --green: #059669;
+    --green-soft: #ecfdf5;
+    --violet: #7c3aed;
+    --violet-soft: #f5f3ff;
+    --red: #ef4444;
+    --ink: #0f172a;
+    --ink-2: #334155;
+    --ink-3: #64748b;
+    --ink-4: #94a3b8;
+    --line: #e8edf3;
+    --line-2: #f1f5f9;
+    --bg: #f6f8fb;
+    --shadow-sm: 0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.03);
+    --shadow-md: 0 2px 4px rgba(15,23,42,.04), 0 8px 24px -8px rgba(15,23,42,.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.5;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .switcher {
+    position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 16px;
+    padding: 12px 32px; background: rgba(255,255,255,.92);
+    backdrop-filter: saturate(180%) blur(12px); border-bottom: 1px solid var(--line);
+  }
+  .switcher h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-3); }
+  .tabs { display: flex; gap: 4px; padding: 3px; background: var(--line-2); border-radius: 10px; }
+  .tabs button {
+    appearance: none; border: 0; background: transparent; padding: 6px 14px; border-radius: 7px;
+    font-size: 13px; font-weight: 600; color: var(--ink-3); cursor: pointer; font-family: inherit; transition: all .16s;
+  }
+  .tabs button[aria-selected="true"] { background: #fff; color: var(--blue); box-shadow: var(--shadow-sm); }
+  .switcher .hint { margin-left: auto; font-size: 12px; color: var(--ink-4); }
+
+  .page { max-width: 1440px; margin: 0 auto; padding: 24px 32px 64px; }
+  .variant[hidden] { display: none; }
+
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+  .head h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+  .head p { margin: 4px 0 0; font-size: 13px; color: var(--ink-3); }
+  .refresh {
+    display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 9px;
+    border: 1px solid transparent; background: transparent; font-size: 13px; font-weight: 500;
+    color: var(--ink-3); cursor: pointer; font-family: inherit;
+  }
+  .refresh:hover { background: #fff; color: var(--blue); box-shadow: var(--shadow-sm); }
+  .refresh svg { width: 14px; height: 14px; }
+
+  .tabs-view { display: flex; gap: 22px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+  .tabs-view span {
+    padding-bottom: 10px; font-size: 14px; font-weight: 500; color: var(--ink-3);
+    border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer;
+  }
+  .tabs-view span.on { color: var(--blue); border-bottom-color: var(--blue); }
+
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-sm); }
+  .card-pad { padding: 20px; }
+
+  /* ---------- 个人资源条（A：原样 / B：压扁） ---------- */
+  .res-grid { display: grid; grid-template-columns: repeat(8, minmax(0,1fr)); gap: 10px; }
+  .res {
+    display: flex; align-items: center; gap: 10px; padding: 12px 13px; border-radius: 14px;
+    background: #fff; border: 1px solid var(--line); box-shadow: var(--shadow-sm); cursor: pointer;
+    transition: all .16s;
+  }
+  .res:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .res-ico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; }
+  .res-ico svg { width: 17px; height: 17px; }
+  .res-label { font-size: 11px; color: var(--ink-3); line-height: 1.3; }
+  .res-value { font-size: 18px; font-weight: 700; letter-spacing: -.02em; line-height: 1.15; }
+  .res-value small { font-size: 10px; font-weight: 600; color: var(--ink-4); margin-left: 1px; }
+
+  /* B 版的紧凑条 */
+  .res-strip {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0; padding: 0;
+    background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-sm); overflow: hidden;
+  }
+  .res-item {
+    display: flex; align-items: center; gap: 7px; padding: 11px 16px; flex: 1 1 auto;
+    border-right: 1px solid var(--line-2); cursor: pointer; transition: background .14s;
+  }
+  .res-item:last-child { border-right: 0; }
+  .res-item:hover { background: #fafcff; }
+  .res-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .res-item .lbl { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+  .res-item .val { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+
+  /* ---------- 区块标题 ---------- */
+  .sec-head { display: flex; align-items: center; gap: 8px; margin: 22px 0 10px; }
+  .sec-head .bar { width: 3px; height: 15px; border-radius: 2px; }
+  .sec-head h2 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+  .sec-head .count {
+    padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    background: var(--amber-soft); color: var(--amber-deep);
+  }
+  .sec-head .note { margin-left: auto; font-size: 12px; color: var(--ink-4); }
+
+  /* ---------- 需要你 ---------- */
+  .need-card { overflow: hidden; }
+  .need-row {
+    display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+    border-bottom: 1px solid var(--line-2); cursor: pointer; transition: background .14s;
+    position: relative;
+  }
+  .need-row:last-child { border-bottom: 0; }
+  .need-row:hover { background: #fcfdff; }
+  .need-row.critical::before {
+    content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
+    border-radius: 0 3px 3px 0; background: var(--red);
+  }
+  .need-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .need-main { min-width: 0; flex: 1; }
+  .need-title { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+  .need-sub { margin-top: 2px; font-size: 11.5px; color: var(--ink-4); }
+  .need-action {
+    flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--amber-deep);
+    display: inline-flex; align-items: center; gap: 3px;
+  }
+  .need-action.blue { color: var(--blue); }
+
+  /* 假进度条对比（A 版保留，用于说明问题） */
+  .fake-progress { margin-top: 8px; height: 4px; border-radius: 999px; background: #d1fae5; overflow: hidden; }
+  .fake-progress > span { display: block; height: 100%; width: 33%; border-radius: 999px; background: var(--green); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+
+  .badge-wrap { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 1.5px 6px; border-radius: 5px;
+    font-size: 10px; font-weight: 600; border: 1px solid var(--line); background: #fff; color: var(--ink-3);
+  }
+  .chip.emoji { font-size: 11px; }
+
+  /* ---------- 三列 ---------- */
+  .cols { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 16px; }
+  .col-card { display: flex; flex-direction: column; }
+  .col-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 15px 18px 12px;
+  }
+  .col-head .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--ink-4); }
+  .col-head h3 { margin: 3px 0 0; font-size: 14px; font-weight: 700; }
+  .col-head .all { font-size: 11.5px; font-weight: 600; color: var(--blue); text-decoration: none; flex-shrink: 0; }
+  .col-body { padding: 0 18px 16px; display: flex; flex-direction: column; gap: 9px; flex: 1; }
+  .row-item {
+    padding: 11px 12px; border-radius: 11px; border: 1px solid var(--line-2); background: #fcfdfe;
+    cursor: pointer; transition: all .15s;
+  }
+  .row-item:hover { background: #fff; border-color: #dbe6f5; box-shadow: var(--shadow-sm); }
+  .row-title { font-size: 12.5px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-sub { margin-top: 2px; font-size: 11px; color: var(--ink-4); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .row-meta { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10.5px; color: var(--ink-4); }
+
+  /* A 版的虚线占位，用来展示问题 */
+  .slot {
+    flex: 1; display: flex; align-items: center; justify-content: center; min-height: 58px;
+    border: 1px dashed #e2e8f0; border-radius: 11px; background: #fcfdfe;
+    font-size: 11px; color: var(--ink-4); text-align: center; padding: 10px;
+  }
+  /* B 版：底部一行文字链接取代占位 */
+  .col-foot {
+    margin-top: auto; padding-top: 10px; border-top: 1px dashed var(--line);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11.5px; color: var(--ink-4);
+  }
+  .col-foot a { font-size: 11.5px; font-weight: 600; color: var(--blue); text-decoration: none; }
+
+  /* ---------- 助手 ---------- */
+  .agents { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
+  .agent {
+    display: flex; align-items: flex-start; gap: 11px; padding: 14px; border-radius: 14px;
+    border: 1px solid var(--line); background: #fff; box-shadow: var(--shadow-sm);
+    cursor: pointer; transition: all .16s;
+  }
+  .agent:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .agent-ava {
+    width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center;
+    background: var(--green-soft); color: var(--green); font-size: 14px; font-weight: 700; flex-shrink: 0;
+  }
+  .agent-name { font-size: 13px; font-weight: 650; }
+  .agent-desc { margin-top: 2px; font-size: 11.5px; color: var(--ink-4); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .agent-foot { margin-top: 8px; display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--ink-4); }
+  .agent-go { margin-left: auto; color: var(--green); font-weight: 600; }
+
+  /* ---------- 顶部 chip（A 版展示重复问题） ---------- */
+  .chipbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .chip-lg {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 9px;
+    font-size: 12px; font-weight: 600; border: 1px solid;
+  }
+  .chip-lg.amber { background: var(--amber-soft); border-color: #fde68a; color: #92400e; }
+  .chip-lg.gray { background: #fff; border-color: var(--line); color: var(--ink-3); font-weight: 500; }
+  .dot-a { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+
+  .anno {
+    display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 5px;
+    background: #fef2f2; color: #b91c1c; font-size: 10px; font-weight: 650;
+    vertical-align: middle;
+  }
+  .anno.ok { background: var(--green-soft); color: #047857; }
+  .diag {
+    margin-bottom: 18px; padding: 14px 16px; border-radius: 12px;
+    background: #fff; border: 1px solid var(--line); box-shadow: var(--shadow-sm);
+    font-size: 12.5px; color: var(--ink-2);
+  }
+  .diag h4 { margin: 0 0 8px; font-size: 12.5px; font-weight: 700; color: var(--ink); }
+  .diag ol { margin: 0; padding-left: 18px; }
+  .diag li { margin-bottom: 4px; }
+  .diag code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: var(--line-2); padding: 1px 4px; border-radius: 4px; }
+
+  @media (max-width: 1180px) {
+    .res-grid { grid-template-columns: repeat(4, minmax(0,1fr)); }
+    .cols, .agents { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="switcher">
+  <h2>我的工作台 · 改版方案</h2>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-target="v-a">A · 克制修补</button>
+    <button role="tab" aria-selected="false" data-target="v-b">B · 结构重排</button>
+  </div>
+  <span class="hint" id="hint">A 保留现有结构只除噪，B 重排优先级</span>
+</div>
+
+<!-- ==================== A 克制修补 ==================== -->
+<section class="variant" id="v-a">
+  <div class="page">
+    <div class="head">
+      <div>
+        <h1>我的工作台</h1>
+        <p>先处理今天值得关注的事情，再继续最近的工作。</p>
+      </div>
+      <button class="refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"/></svg>
+        刷新
+      </button>
+    </div>
+
+    <div class="tabs-view">
+      <span class="on">工作台</span><span>资源广场</span><span>技能广场</span>
+    </div>
+
+    <!-- 只留一个状态 chip：原来还有一条「进行中 1 · 最新结果 3 · 可继续 4 · 任务 2」，
+         那些数字下面每张卡片都会再说一遍 -->
+    <div class="chipbar">
+      <span class="chip-lg amber"><span class="dot-a"></span>待处理 2</span>
+    </div>
+
+    <div class="res-grid" style="margin-bottom:16px">
+      <div class="res"><span class="res-ico" style="background:#f0f9ff;color:#0284c7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg></span><div><div class="res-label">知识库</div><div class="res-value num">12<small>个</small></div></div></div>
+      <div class="res"><span class="res-ico" style="background:#f0fdfa;color:#0d9488"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></svg></span><div><div class="res-label">数据集</div><div class="res-value num">34<small>个</small></div></div></div>
+      <div class="res"><span class="res-ico" style="background:#faf5ff;color:#9333ea"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></svg></span><div><div class="res-label">记忆</div><div class="res-value num">56<small>条</small></div></div></div>
+      <div class="res"><span class="res-ico" style="background:#ecfdf5;color:#059669"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span><div><div class="res-label">Token</div><div class="res-value num">2.8<small>M</small></div></div></div>
+      <div class="res"><span class="res-ico" style="background:#fffbeb;color:#d97706"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"/></svg></span><div><div class="res-label">技能</div><div class="res-value num">8<small>个</small></div></div></div>
+      <div class="res"><span class="res-ico" style="background:#eef2ff;color:#4f46e5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></span><div><div class="res-label">MCP</div><div class="res-value num">3<small>个</small></div></div></div>
+      <div class="res"><span class="res-ico" style="background:#fff1f2;color:#e11d48"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></span><div><div class="res-label">任务</div><div class="res-value num">5<small>个</small></div></div></div>
+      <div class="res"><span class="res-ico" style="background:#f8fafc;color:#475569"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><div><div class="res-label">通知</div><div class="res-value num">2<small>条</small></div></div></div>
+    </div>
+
+    <!-- 待处理：去掉「来源：未读站内通知 + 失败定时任务」，那是实现说明 -->
+    <div class="card need-card" style="margin-bottom:16px">
+      <div class="card-pad" style="padding-bottom:8px">
+        <div style="font-size:11.5px;font-weight:600;color:#b45309;display:flex;align-items:center;gap:6px">
+          <span style="width:6px;height:6px;border-radius:50%;background:#f59e0b"></span>待处理
+        </div>
+        <div style="margin:4px 0 0;font-size:14px;font-weight:700">有 2 件事情值得关注</div>
+      </div>
+      <div class="need-row critical">
+        <span class="need-dot" style="background:#ef4444"></span>
+        <div class="need-main">
+          <div class="need-title">华东区销售日报 · 生成失败</div>
+          <div class="need-sub">执行超时，已连续失败 2 次 · 12 分钟前</div>
+        </div>
+        <span class="need-action">重新运行 →</span>
+      </div>
+      <div class="need-row">
+        <span class="need-dot" style="background:#f59e0b"></span>
+        <div class="need-main">
+          <div class="need-title">知识库「产品手册」的权限申请</div>
+          <div class="need-sub">李雷申请访问，等待你确认 · 1 小时前</div>
+        </div>
+        <span class="need-action">去处理 →</span>
+      </div>
+    </div>
+
+    <!-- 进行中：假进度条换成真实耗时 -->
+    <div class="card need-card" style="margin-bottom:16px">
+      <div class="card-pad" style="padding-bottom:8px">
+        <div style="font-size:11.5px;font-weight:600;color:#047857;display:flex;align-items:center;gap:6px">
+          <span style="width:6px;height:6px;border-radius:50%;background:#10b981"></span>进行中
+        </div>
+        <div style="margin:4px 0 0;font-size:14px;font-weight:700">正在处理的工作</div>
+      </div>
+      <div class="need-row">
+        <span style="width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--green-soft);color:#047857;flex-shrink:0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        </span>
+        <div class="need-main">
+          <div class="need-title">华东区销售日报</div>
+          <div class="need-sub">正在生成 · 已运行 42 秒 · 通常需要 1–2 分钟</div>
+        </div>
+        <span class="need-action blue">查看 →</span>
+      </div>
+    </div>
+
+    <!-- 三列：虚线占位改成底部一行的条数 + 入口 -->
+    <div class="cols">
+      <div class="card col-card">
+        <div class="col-head">
+          <div>
+            <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:#3b82f6"></span>继续工作</div>
+            <h3>最近会话</h3>
+          </div>
+        </div>
+        <div class="col-body">
+          <div class="row-item"><div class="row-title">华东区销售数据分析</div><div class="row-sub">对比 Q2 / Q3 的客单价变化</div><div class="row-meta"><span class="chip">会话</span><span>2 小时前</span></div></div>
+          <div class="row-item"><div class="row-title">退货率异常排查</div><div class="row-sub">哪些产品线本月退货率抬头</div><div class="row-meta"><span class="chip">会话</span><span>昨天</span></div></div>
+          <div class="col-foot"><span>共 2 条</span><a href="#">打开智能助手 →</a></div>
+        </div>
+      </div>
+
+      <div class="card col-card">
+        <div class="col-head">
+          <div>
+            <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:#8b5cf6"></span>最新结果</div>
+            <h3>最近产出</h3>
+          </div>
+        </div>
+        <div class="col-body">
+          <div class="row-item"><div class="row-title">10 月华东区销售周报</div><div class="row-sub">覆盖 6 个城市、32 个 SKU</div><div class="row-meta"><span class="chip">报表</span><span>今天 09:12</span></div></div>
+          <div class="row-item"><div class="row-title">客户流失预警清单</div><div class="row-sub">近 30 天未下单的重点客户</div><div class="row-meta"><span class="chip">报表</span><span>昨天</span></div></div>
+          <div class="row-item"><div class="row-title">库存周转率看板</div><div class="row-sub">按仓库维度拆分</div><div class="row-meta"><span class="chip">报表</span><span>2 天前</span></div></div>
+          <div class="col-foot"><span>共 3 条</span><a href="#">查看全部结果 →</a></div>
+        </div>
+      </div>
+
+      <div class="card col-card">
+        <div class="col-head">
+          <div>
+            <div class="eyebrow"><span style="width:6px;height:6px;border-radius:50%;background:#f59e0b"></span>执行记录</div>
+            <h3>最近任务</h3>
+          </div>
+        </div>
+        <div class="col-body">
+          <div class="row-item">
+            <div class="row-title">华东区销售日报</div>
+            <div class="row-meta"><span class="chip" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c">失败</span><span>12 分钟前</span><span>耗时 30.0s</span></div>
+          </div>
+          <div class="row-item">
+            <div class="row-title">每日客户流失预警</div>
+            <div class="row-meta"><span class="chip" style="background:var(--green-soft);border-color:#a7f3d0;color:#047857">成功</span><span>今天 08:00</span><span>耗时 12.4s</span></div>
+          </div>
+          <div class="col-foot"><span>共 2 条</span><a href="#">查看执行记录 →</a></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec-head"><span class="bar" style="background:#059669"></span><h2>最近使用的助手</h2><a href="#" style="margin-left:auto;font-size:11.5px;font-weight:600;color:#2563eb;text-decoration:none">打开智能助手 →</a></div>
+    <div class="agents">
+      <div class="agent"><span class="agent-ava">数</span><div style="min-width:0;flex:1"><div class="agent-name">数据智能助手</div><div class="agent-desc">连接业务库，回答指标与趋势问题</div><div class="agent-foot"><span>142 次调用</span><span class="agent-go">对话 →</span></div></div></div>
+      <div class="agent"><span class="agent-ava">知</span><div style="min-width:0;flex:1"><div class="agent-name">知识库助手</div><div class="agent-desc">基于内部文档检索作答</div><div class="agent-foot"><span>46 次调用</span><span class="agent-go">对话 →</span></div></div></div>
+      <div class="agent"><span class="agent-ava">主</span><div style="min-width:0;flex:1"><div class="agent-name">主助手</div><div class="agent-desc">通用任务与文档撰写</div><div class="agent-foot"><span>98 次调用</span><span class="agent-go">对话 →</span></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== B 结构重排 ==================== -->
+<section class="variant" id="v-b" hidden>
+  <div class="page">
+    <div class="head">
+      <div>
+        <h1>我的工作台</h1>
+        <p>先处理今天值得关注的事情，再继续最近的工作。</p>
+      </div>
+      <button class="refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"/></svg>
+        刷新
+      </button>
+    </div>
+
+    <div class="tabs-view">
+      <span class="on">工作台</span><span>资源广场</span><span>技能广场</span>
+    </div>
+
+    <!-- 家底压成一条：既是概览也是导航，不再占据第一屏主视觉 -->
+    <div class="res-strip" style="margin-bottom:20px">
+      <div class="res-item"><svg viewBox="0 0 24 24" fill="none" stroke="#0284c7" stroke-width="2"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg><span class="lbl">知识库</span><span class="val num">12</span></div>
+      <div class="res-item"><svg viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg><span class="lbl">数据集</span><span class="val num">34</span></div>
+      <div class="res-item"><svg viewBox="0 0 24 24" fill="none" stroke="#9333ea" stroke-width="2"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg><span class="lbl">记忆</span><span class="val num">56</span></div>
+      <div class="res-item"><svg viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span class="lbl">Token</span><span class="val num">2.8M</span></div>
+      <div class="res-item"><svg viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><path d="m12 3 1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"/></svg><span class="lbl">技能</span><span class="val num">8</span></div>
+      <div class="res-item"><svg viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg><span class="lbl">MCP</span><span class="val num">3</span></div>
+      <div class="res-item"><svg viewBox="0 0 24 24" fill="none" stroke="#e11d48" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg><span class="lbl">任务</span><span class="val num">5</span></div>
+      <div class="res-item"><svg viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/></svg><span class="lbl">通知</span><span class="val num">2</span></div>
+    </div>
+
+    <!-- 需要你：待处理 + 进行中合并成一个区块，这是唯一有行动压力的区域 -->
+    <div class="sec-head">
+      <span class="bar" style="background:#f59e0b"></span>
+      <h2>需要你处理</h2>
+      <span class="count num">2</span>
+      <span class="note">越靠上越紧急</span>
+    </div>
+    <div class="card need-card" style="margin-bottom:20px">
+      <div class="need-row critical">
+        <span class="need-dot" style="background:#ef4444"></span>
+        <div class="need-main">
+          <div class="need-title">华东区销售日报 · 生成失败</div>
+          <div class="need-sub">执行超时，已连续失败 2 次 · 12 分钟前</div>
+        </div>
+        <span class="need-action">重新运行 →</span>
+      </div>
+      <div class="need-row">
+        <span class="need-dot" style="background:#f59e0b"></span>
+        <div class="need-main">
+          <div class="need-title">知识库「产品手册」的权限申请</div>
+          <div class="need-sub">李雷申请访问，等待你确认 · 1 小时前</div>
+        </div>
+        <span class="need-action">去处理 →</span>
+      </div>
+    </div>
+
+    <!-- 进行中：没有真实进度就不画进度条，只给「已运行多久」 -->
+    <div class="sec-head">
+      <span class="bar" style="background:#2563eb"></span>
+      <h2>正在运行</h2>
+      <span class="count num" style="background:var(--blue-soft);color:#1d4ed8">1</span>
+    </div>
+    <div class="card need-card" style="margin-bottom:20px">
+      <div class="need-row">
+        <span style="width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--blue-soft);color:var(--blue);flex-shrink:0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        </span>
+        <div class="need-main">
+          <div class="need-title">华东区销售日报</div>
+          <div class="need-sub">正在生成 · 已运行 42 秒</div>
+        </div>
+        <span class="need-action blue">查看 →</span>
+      </div>
+    </div>
+
+    <!-- 接着做：三列，去掉虚线占位，底部一行「全部」 -->
+    <div class="sec-head">
+      <span class="bar" style="background:#94a3b8"></span>
+      <h2>接着做</h2>
+      <span class="note">按时间倒序</span>
+    </div>
+    <div class="cols" style="margin-bottom:20px">
+      <div class="card col-card">
+        <div class="col-head">
+          <div>
+            <h3>最近会话</h3>
+            <div style="font-size:11px;color:#94a3b8;margin-top:1px">继续上次的对话</div>
+          </div>
+        </div>
+        <div class="col-body">
+          <div class="row-item"><div class="row-title">华东区销售数据分析</div><div class="row-sub">对比 Q2 / Q3 的客单价变化</div><div class="row-meta"><span>2 小时前</span></div></div>
+          <div class="row-item"><div class="row-title">退货率异常排查</div><div class="row-sub">哪些产品线本月退货率抬头</div><div class="row-meta"><span>昨天</span></div></div>
+          <div class="col-foot"><span>共 2 条</span><a href="#">打开智能助手 →</a></div>
+        </div>
+      </div>
+
+      <div class="card col-card">
+        <div class="col-head">
+          <div>
+            <h3>最近产出</h3>
+            <div style="font-size:11px;color:#94a3b8;margin-top:1px">生成的报表与简报</div>
+          </div>
+        </div>
+        <div class="col-body">
+          <div class="row-item"><div class="row-title">10 月华东区销售周报</div><div class="row-sub">覆盖 6 个城市、32 个 SKU</div><div class="row-meta"><span>今天 09:12</span></div></div>
+          <div class="row-item"><div class="row-title">客户流失预警清单</div><div class="row-sub">近 30 天未下单的重点客户</div><div class="row-meta"><span>昨天</span></div></div>
+          <div class="row-item"><div class="row-title">库存周转率看板</div><div class="row-sub">按仓库维度拆分</div><div class="row-meta"><span>2 天前</span></div></div>
+          <div class="col-foot"><span>共 3 条</span><a href="#">查看全部结果 →</a></div>
+        </div>
+      </div>
+
+      <div class="card col-card">
+        <div class="col-head">
+          <div>
+            <h3>最近任务</h3>
+            <div style="font-size:11px;color:#94a3b8;margin-top:1px">定时任务的执行记录</div>
+          </div>
+        </div>
+        <div class="col-body">
+          <div class="row-item">
+            <div class="row-title">华东区销售日报</div>
+            <div class="row-meta"><span class="chip" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c">失败</span><span>12 分钟前</span><span>耗时 30.0s</span></div>
+          </div>
+          <div class="row-item">
+            <div class="row-title">每日客户流失预警</div>
+            <div class="row-meta"><span class="chip" style="background:var(--green-soft);border-color:#a7f3d0;color:#047857">成功</span><span>今天 08:00</span><span>耗时 12.4s</span></div>
+          </div>
+          <div class="col-foot"><span>共 2 条</span><a href="#">查看执行记录 →</a></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 助手 -->
+    <div class="sec-head">
+      <span class="bar" style="background:#059669"></span>
+      <h2>常用助手</h2>
+      <a href="#" style="margin-left:auto;font-size:11.5px;font-weight:600;color:#2563eb;text-decoration:none">打开智能助手 →</a>
+    </div>
+    <div class="agents">
+      <div class="agent"><span class="agent-ava">数</span><div style="min-width:0;flex:1"><div class="agent-name">数据智能助手</div><div class="agent-desc">连接业务库，回答指标与趋势问题</div><div class="agent-foot"><span>142 次调用</span><span class="agent-go">对话 →</span></div></div></div>
+      <div class="agent"><span class="agent-ava">知</span><div style="min-width:0;flex:1"><div class="agent-name">知识库助手</div><div class="agent-desc">基于内部文档检索作答</div><div class="agent-foot"><span>46 次调用</span><span class="agent-go">对话 →</span></div></div></div>
+      <div class="agent"><span class="agent-ava">主</span><div style="min-width:0;flex:1"><div class="agent-name">主助手</div><div class="agent-desc">通用任务与文档撰写</div><div class="agent-foot"><span>98 次调用</span><span class="agent-go">对话 →</span></div></div></div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const tabs = document.querySelectorAll('.tabs button');
+  const hint = document.getElementById('hint');
+  const hints = {
+    'v-a': 'A 保留现有结构只除噪，B 重排优先级',
+    'v-b': '家底压成一条，待处理与运行中改用统一区块层级，三列底部统一入口'
+  };
+  tabs.forEach(btn => btn.addEventListener('click', () => {
+    tabs.forEach(b => b.setAttribute('aria-selected', 'false'));
+    btn.setAttribute('aria-selected', 'true');
+    const t = btn.dataset.target;
+    document.querySelectorAll('.variant').forEach(v => { v.hidden = v.id !== t; });
+    hint.textContent = hints[t] || '';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }));
+</script>
+</body>
+</html>

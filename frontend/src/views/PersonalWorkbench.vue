@@ -82,175 +82,142 @@
     </nav>
 
     <div
-      v-if="payload && !quietMode"
-      class="flex flex-wrap items-center gap-2"
-    >
-      <span
-        class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium"
-        :class="summaryToneClass"
-      >
-        <span class="h-1.5 w-1.5 rounded-full" :class="activeMode ? 'bg-amber-500 animate-pulse' : quietMode ? 'bg-gray-400' : 'bg-blue-500'" />
-        {{ summaryPrimary }}
-      </span>
-      <span
-        v-if="summarySecondary"
-        class="inline-flex items-center rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-600 shadow-xs dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300"
-      >
-        {{ summarySecondary }}
-      </span>
-    </div>
-
-    <div
       v-if="bannerMessage"
       class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-300"
     >
       {{ bannerMessage }}
     </div>
 
-    <!-- 资源广场是第二个 tab：工作台本体保持原样，避免改造牵连既有布局 -->
-    <div v-if="activeTab === 'workbench'" class="space-y-4 sm:space-y-5">
-      <WorkbenchPersonalResources
-        v-if="workbenchPersonalResources.length"
-        :items="workbenchPersonalResources"
-        @select="openPersonalResource"
-      />
-
-      <div v-if="loading && !payload" class="space-y-3">
-        <div v-for="index in 3" :key="index" class="h-28 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800/50" />
+    <div v-if="activeTab === 'workbench'">
+      <div
+        v-if="loading && !payload"
+        class="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_336px]"
+      >
+        <div class="space-y-3">
+          <div v-for="index in 3" :key="index" class="h-24 animate-pulse rounded-xl bg-gray-100 dark:bg-gray-800/50" />
+        </div>
+        <div class="hidden space-y-3 xl:block">
+          <div v-for="index in 2" :key="index" class="h-40 animate-pulse rounded-xl bg-gray-100 dark:bg-gray-800/50" />
+        </div>
       </div>
 
-      <template v-else-if="payload">
-        <template v-if="activeMode">
+      <div
+        v-else-if="payload"
+        class="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_336px]"
+      >
+        <div class="flex min-w-0 flex-col gap-5">
+          <!-- 安静态：没有待处理事项是好消息，用一行轻提示而不是留一块空卡片 -->
+          <div
+            v-if="quietMode"
+            class="flex items-center gap-2.5 rounded-xl border border-gray-200/80 bg-white px-3.5 py-3 shadow-xs dark:border-gray-800 dark:bg-gray-900/40"
+          >
+            <span
+              class="flex h-[21px] w-[21px] shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400"
+              aria-hidden="true"
+            >
+              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            </span>
+            <span class="text-[13px] font-semibold text-gray-900 dark:text-gray-100">今天没有待处理事项</span>
+            <span class="text-xs text-gray-400 dark:text-gray-500">有新的进展会在这里提示</span>
+          </div>
+
           <WorkbenchAttention
+            v-if="payload.attention.length"
             :items="payload.attention"
             @open-item="openItem"
             @view-all="openTasks"
           />
+
+          <!-- 运行中按「有没有在跑」显示，不跟模式绑死：安静态同样可能有任务在运行 -->
           <WorkbenchRunning
+            v-if="payload.running_items.length"
             :items="payload.running_items"
             @open-item="openItem"
           />
-          <div class="grid items-stretch gap-4 lg:grid-cols-2 xl:grid-cols-3">
-            <WorkbenchResume
-              :items="payload.resume_items"
-              @open-item="openItem"
-              @view-all="openChat"
-            />
-            <WorkbenchResults
-              :items="payload.latest_results"
-              @open-item="openItem"
-              @view-all="openReports"
-            />
-            <WorkbenchTasks
-              :items="payload.recent_tasks"
-              @open-item="openItem"
-              @view-all="openMyTasks"
-            />
-          </div>
+
           <WorkbenchNextScheduled
             v-if="payload.next_scheduled_item"
             :item="payload.next_scheduled_item"
             @open-item="openItem"
           />
-          <WorkbenchAgents
-            :agents="payload.favorite_agents"
-            @open-agent="openAgent"
-            @view-all="openChat"
-          />
-        </template>
 
-        <template v-else-if="quietMode">
-          <!-- 静默态用中性灰：这是「一切正常」的低优先级旁白，不是需要处理的信号。
-               原先的 emerald 底色在整页灰白卡片里过于抢眼（像成功 toast 常驻）。 -->
-          <div class="rounded-2xl border border-gray-200 bg-gray-50/80 px-4 py-3.5 dark:border-gray-700/60 dark:bg-gray-800/40">
-            <p class="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
-              <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-300 dark:bg-gray-600" aria-hidden="true" />
-              {{ quietPrimary }}
-            </p>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-              {{ quietDescription }}
-            </p>
-          </div>
-          <WorkbenchRunning
-            :items="payload.running_items"
-            @open-item="openItem"
-          />
-          <div class="grid items-stretch gap-4 lg:grid-cols-2 xl:grid-cols-3">
-            <WorkbenchResume
-              :items="payload.resume_items"
-              @open-item="openItem"
-              @view-all="openChat"
-            />
-            <WorkbenchResults
-              :items="payload.latest_results"
-              @open-item="openItem"
-              @view-all="openReports"
-            />
-            <WorkbenchTasks
-              :items="payload.recent_tasks"
-              @open-item="openItem"
-              @view-all="openMyTasks"
-            />
-          </div>
-          <WorkbenchNextScheduled
-            v-if="payload.next_scheduled_item"
-            :item="payload.next_scheduled_item"
-            @open-item="openItem"
-          />
-          <WorkbenchAgents
-            :agents="payload.favorite_agents"
-            @open-agent="openAgent"
-            @view-all="openChat"
-          />
-        </template>
+          <!-- 新用户：整页没有可展示的历史时，给的是「从哪开始」而不是四块空卡片 -->
+          <template v-if="newUserMode">
+            <section
+              class="rounded-xl border border-gray-200/80 bg-white px-6 py-8 text-center shadow-xs dark:border-gray-800 dark:bg-gray-900/40"
+            >
+              <span
+                class="mx-auto mb-3 flex h-[46px] w-[46px] items-center justify-center rounded-[14px] bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400"
+                aria-hidden="true"
+              >
+                <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3c.6 3.6 2.4 5.4 6 6-3.6.6-5.4 2.4-6 6-.6-3.6-2.4-5.4-6-6 3.6-.6 5.4-2.4 6-6Z" />
+                  <path d="M19 15c.3 1.8 1.2 2.7 3 3-1.8.3-2.7 1.2-3 3-.3-1.8-1.2-2.7-3-3 1.8-.3 2.7-1.2 3-3Z" />
+                </svg>
+              </span>
+              <h2 class="text-[17px] font-bold tracking-tight text-gray-900 dark:text-gray-100">
+                {{
+                  failedSources.length
+                    ? "工作台部分数据暂时不可用"
+                    : `欢迎使用 ${branding.product_name || "NanZi AI Agent"}`
+                }}
+              </h2>
+              <p class="mt-1.5 text-[13px] text-gray-500 dark:text-gray-400">
+                {{
+                  failedSources.length
+                    ? "你仍可从当前可用的业务助手继续工作。"
+                    : "选择一个业务场景，或直接找一个助手开始第一项工作。"
+                }}
+              </p>
+              <div class="mt-4 flex flex-wrap justify-center gap-2">
+                <button
+                  type="button"
+                  class="rounded-lg bg-gray-900 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-gray-800 active:scale-95 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+                  @click="openScenarios"
+                >
+                  浏览场景包
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] font-semibold text-gray-700 hover:border-blue-200 hover:text-blue-600 active:scale-95 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                  @click="openChat"
+                >
+                  打开智能助手
+                </button>
+              </div>
+            </section>
 
-        <template v-else-if="newUserMode">
-          <section class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6 dark:border-gray-800 dark:bg-gray-800/80">
-            <p class="text-xs font-medium text-blue-600 dark:text-blue-400">开始使用</p>
-            <h2 class="mt-1.5 text-lg font-bold text-gray-900 dark:text-gray-100">
-              {{
-                failedSources.length
-                  ? "工作台部分数据暂时不可用"
-                  : `欢迎使用 ${branding.product_name || "NanZi AI Agent"}`
-              }}
-            </h2>
-            <p class="mt-1.5 max-w-2xl text-sm text-gray-500 dark:text-gray-400">
-              {{
-                failedSources.length
-                  ? "你仍可从当前可用的业务助手继续工作。"
-                  : "选择一个业务场景，或直接找一个助手开始第一项工作。"
-              }}
-            </p>
-            <div class="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                class="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs hover:bg-blue-700 active:scale-95"
-                @click="openScenarios"
-              >
-                浏览场景包
-              </button>
-              <button
-                type="button"
-                class="rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 shadow-xs hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 active:scale-95"
-                @click="openChat"
-              >
-                打开智能助手
-              </button>
-            </div>
-          </section>
-          <WorkbenchScenarios
-            :scenarios="payload.recommended_scenarios"
-            :agents-available="payload.favorite_agents.length > 0"
-            @open-scenario="openScenario"
-            @view-all="openScenarios"
+            <WorkbenchScenarios
+              :scenarios="payload.recommended_scenarios"
+              :agents-available="payload.favorite_agents.length > 0"
+              @open-scenario="openScenario"
+              @view-all="openScenarios"
+            />
+          </template>
+
+          <WorkbenchFeed
+            v-if="feedItems.length"
+            :items="feedItems"
+            @open-item="openItem"
+            @view-all="onFeedViewAll"
+          />
+        </div>
+
+        <aside class="flex min-w-0 flex-col gap-4 xl:sticky xl:top-4">
+          <WorkbenchResourceGrid
+            v-if="workbenchPersonalResources.length"
+            :items="workbenchPersonalResources"
+            @select="openPersonalResource"
           />
           <WorkbenchAgents
             :agents="payload.favorite_agents"
             @open-agent="openAgent"
             @view-all="openChat"
           />
-        </template>
-      </template>
+        </aside>
+      </div>
     </div>
 
     <ResourceSquarePanel v-if="activeTab === 'square'" ref="squarePanel" />
@@ -262,14 +229,12 @@
 import { computed, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import WorkbenchAttention from "@/components/workbench/WorkbenchAttention.vue"
-import WorkbenchResults from "@/components/workbench/WorkbenchResults.vue"
-import WorkbenchResume from "@/components/workbench/WorkbenchResume.vue"
-import WorkbenchTasks from "@/components/workbench/WorkbenchTasks.vue"
+import WorkbenchFeed from "@/components/workbench/WorkbenchFeed.vue"
 import WorkbenchAgents from "@/components/workbench/WorkbenchAgents.vue"
 import WorkbenchScenarios from "@/components/workbench/WorkbenchScenarios.vue"
 import WorkbenchNextScheduled from "@/components/workbench/WorkbenchNextScheduled.vue"
 import WorkbenchRunning from "@/components/workbench/WorkbenchRunning.vue"
-import WorkbenchPersonalResources from "@/components/workbench/WorkbenchPersonalResources.vue"
+import WorkbenchResourceGrid from "@/components/workbench/WorkbenchResourceGrid.vue"
 import ResourceSquarePanel from "@/components/resource-square/ResourceSquarePanel.vue"
 import SkillGalleryPanel from "@/components/skill-gallery/SkillGalleryPanel.vue"
 
@@ -315,7 +280,7 @@ function switchTab(next: WorkbenchTab) {
   } else {
     query.tab = next
     // section 只在资源广场里有意义（锚到知识库/数据集），进技能广场要清掉，
-    // 否则从广场切过去时地址栏还挂着上一个小节。
+    // 否则从广场切过去时地址栏还挂在上一个小节。
     if (next === "gallery") {
       delete query.section
       delete query.status
@@ -376,12 +341,46 @@ async function refreshCurrent() {
     squareRefreshing.value = false
   }
 }
+
 const workbenchPersonalResources = computed(() =>
   filterWorkbenchPersonalResources(payload.value?.personal_resources || []),
 )
-const activeMode = computed(() => payload.value?.mode === "active")
 const quietMode = computed(() => payload.value?.mode === "quiet")
 const newUserMode = computed(() => payload.value?.mode === "new_user")
+
+/**
+ * 三类活动合并成一条时间线。
+ *
+ * 会话 / 产出 / 任务原来各占一张卡片，三张卡加起来近 500px 只装了 9 条记录，
+ * 中间还夹着三块虚线占位。它们本来就都带 occurred_at，按时间排一遍即可。
+ */
+const feedItems = computed<WorkbenchItem[]>(() => {
+  const data = payload.value
+  if (!data) return []
+  return [...data.resume_items, ...data.latest_results, ...data.recent_tasks].sort(
+    (a, b) => timestampOf(b.occurred_at) - timestampOf(a.occurred_at),
+  )
+})
+
+function timestampOf(value?: string | null): number {
+  if (!value) return 0
+  const parsed = new Date(value).getTime()
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+/** 活动流底部入口跟着当前筛选走：三类活动本来落在不同页面 */
+function onFeedViewAll(filter: string) {
+  if (filter === "report") {
+    openReports()
+    return
+  }
+  if (filter === "task") {
+    openMyTasks()
+    return
+  }
+  openChat()
+}
+
 const sourceLabels: Record<string, string> = {
   notifications: "通知",
   tasks: "任务",
@@ -404,62 +403,6 @@ const bannerMessage = computed(() => {
     parts.push(`部分数据暂时无法获取（${failedSources.value.join("、")}），其他区域仍可正常使用。`)
   }
   return parts.join(" ")
-})
-
-const summaryPrimary = computed(() => {
-  if (!payload.value) return ""
-  if (activeMode.value) return `待处理 ${payload.value.attention.length}`
-  // 静默态的顶部 chip 当前不渲染（提示条自己承担了状态），这里保留一份等价兜底，
-  // 免得将来放开 chip 时冒出「开始第一项工作」这种新用户语义。
-  if (quietMode.value) {
-    if (payload.value.running_items.length) return `进行中 ${payload.value.running_items.length}`
-    if (payload.value.resume_items.length) return `可继续 ${payload.value.resume_items.length}`
-    if (payload.value.latest_results.length) return `最近产出 ${payload.value.latest_results.length}`
-    return "今日运行正常"
-  }
-  return "开始第一项工作"
-})
-
-const summarySecondary = computed(() => {
-  if (!payload.value) return ""
-  if (activeMode.value) {
-    return `进行中 ${payload.value.running_items.length} · 最新结果 ${payload.value.latest_results.length} · 可继续 ${payload.value.resume_items.length} · 任务 ${payload.value.recent_tasks.length}`
-  }
-  // 静默态有自己的提示条，顶部这一组 chip 不渲染；数字也只在下方的卡片里出现一次，
-  // 不再在这里重复罗列（旧实现会把「最近产出 0 · 可继续 4 · 任务 0」拼进提示条文案）。
-  if (quietMode.value) return ""
-  return `推荐场景 ${payload.value.recommended_scenarios.length} · 可用助手 ${payload.value.favorite_agents.length}`
-})
-
-/**
- * 静默态的标题与副文案。
- *
- * 旧文案是「有 N 项工作可以继续」+「暂无失败任务和待确认事项。最近没有新的产出。
- * 最近产出 0 · 可继续 4 · 任务 0，可以从下方继续。」：三句话在说同一件事，数字又在
- * 同页卡片里重复一遍，读起来像模板拼接。现在标题只留「状态 + 数量」，副文案只给
- * 一句「接下来能做什么」，数字交给下方卡片。
- */
-const quietPrimary = computed(() => {
-  if (!payload.value) return "今日运行正常"
-  if (payload.value.running_items.length) return `${payload.value.running_items.length} 项工作进行中`
-  if (payload.value.resume_items.length) return `${payload.value.resume_items.length} 项可以继续`
-  if (payload.value.latest_results.length) return `最近有 ${payload.value.latest_results.length} 项产出`
-  return "今日运行正常"
-})
-
-const quietDescription = computed(() => {
-  if (!payload.value) return ""
-  if (payload.value.running_items.length) return "暂无失败任务或待确认事项，完成后会在这里提示。"
-  if (payload.value.resume_items.length) return "暂无失败任务或待确认事项，可从下方「继续工作」接着上次的进度。"
-  if (payload.value.latest_results.length) return "暂无失败任务或待确认事项，可从下方「最新结果」查看。"
-  return "没有进行中的工作，也没有待处理事项。"
-})
-
-const summaryToneClass = computed(() => {
-  if (activeMode.value) return "border-amber-200 bg-amber-50 text-amber-800"
-  // 静默态与下方提示条同口径用中性灰：绿色是「成功」信号，常驻会显得刺眼。
-  if (quietMode.value) return "border-gray-200 bg-gray-50 text-gray-700"
-  return "border-blue-200 bg-blue-50 text-blue-800"
 })
 
 function openPersonalResource(item: WorkbenchPersonalResource) {
