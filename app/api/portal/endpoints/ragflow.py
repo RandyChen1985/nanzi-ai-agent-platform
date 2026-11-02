@@ -403,6 +403,50 @@ async def _attach_agent_refs(db: AsyncSession, items: List[Dict[str, Any]]) -> N
         item["agent_refs"] = agents[:5]
 
 
+async def _attach_grant_counts(db: AsyncSession, items: List[Dict[str, Any]]) -> None:
+    """给列表项补「授权给了多少用户 / 多少角色」。
+
+    列表只回数量，完整名单仍走 ``GET /datasets/{id}/permissions``：数量用来判断
+    「收窄可见范围会影响到多少人」，点进去才需要看具体是谁。
+    """
+    from app.models.permission import ResourcePermission
+    from sqlalchemy import func, select
+
+    dataset_ids = [
+        str(item.get("ragflow_dataset_id") or item.get("id") or "") for item in items
+    ]
+    dataset_ids = [dataset_id for dataset_id in dataset_ids if dataset_id]
+    if not dataset_ids:
+        for item in items:
+            item["grant_user_count"] = 0
+            item["grant_role_count"] = 0
+        return
+
+    # 一次 group by 算全量，避免每个库各查一遍
+    rows = (
+        await db.execute(
+            select(
+                ResourcePermission.resource_id,
+                func.count(func.distinct(ResourcePermission.user_id)),
+                func.count(func.distinct(ResourcePermission.role_id)),
+            )
+            .where(
+                ResourcePermission.resource_type == "dataset",
+                ResourcePermission.resource_id.in_(dataset_ids),
+                ResourcePermission.enabled == True,  # noqa: E712
+            )
+            .group_by(ResourcePermission.resource_id)
+        )
+    ).all()
+    counts = {str(resource_id): (int(users or 0), int(roles or 0)) for resource_id, users, roles in rows}
+
+    for item in items:
+        dataset_id = str(item.get("ragflow_dataset_id") or item.get("id") or "")
+        users, roles = counts.get(dataset_id, (0, 0))
+        item["grant_user_count"] = users
+        item["grant_role_count"] = roles
+
+
 async def _attach_favorites(db: AsyncSession, items: List[Dict[str, Any]], user_id: int) -> None:
     """标注当前用户是否收藏过这些库。
 
@@ -623,6 +667,7 @@ async def list_ragflow_datasets(
         _apply_knowledge_permission_flags(merged, access)
         await _attach_owner_user_names(db, merged)
         await _attach_agent_refs(db, merged)
+        await _attach_grant_counts(db, merged)
         await _attach_favorites(db, merged, int(user["user_id"]))
         total = len(merged)
         if page_size and page_size > 0:
