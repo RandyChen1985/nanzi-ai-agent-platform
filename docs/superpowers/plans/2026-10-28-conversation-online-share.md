@@ -11,7 +11,7 @@
 **任务总量：** 13 个任务，后端 6 个（迁移 → 模型 → 纯函数 → 仓储 → 所有者接口 → 访客接口），前端 7 个（有效期纯函数 → API 层 → 弹窗 → 列表面板 → 渲染器只读 → 分享页 → 接线回归）。
 
 **设计文档：** `docs/superpowers/specs/2026-10-28-conversation-online-share-design.md`
-**视觉稿：** `docs/mockups/2026-10-28-conversation-share.html`
+**视觉稿：** `prototypes/2026-10-28-conversation-share.html`
 
 ---
 
@@ -2219,7 +2219,7 @@ Expected: 3 passed
 - Create: `frontend/src/components/ShareConversationDialog.vue`
 - Test: `tests/frontend/test_share_dialog_contract.py`
 
-视觉基准：`docs/mockups/2026-10-28-conversation-share.html` 的场景 1 与场景 2 右侧。
+视觉基准：`prototypes/2026-10-28-conversation-share.html` 的场景 1 与场景 2 右侧。
 
 - [ ] **Step 1: 写失败测试（源码契约）**
 

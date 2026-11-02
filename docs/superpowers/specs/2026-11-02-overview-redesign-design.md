@@ -1,7 +1,7 @@
 # 概览页改版设计（管理员 / 平台用户）
 
 日期：2026-11-02
-Mock：[`docs/mockups/2026-11-02-overview-redesign.html`](../../mockups/2026-11-02-overview-redesign.html)
+Mock：[`prototypes/2026-11-02-overview-redesign.html`](../../../prototypes/2026-11-02-overview-redesign.html)
 
 ## 背景
 

@@ -2,7 +2,7 @@
 
 - 日期：2026-10-27
 - 状态：待评审
-- 交互原型：[2026-10-27-resource-square.html](../../mockups/2026-10-27-resource-square.html)
+- 交互原型：[2026-10-27-resource-square.html](../../../prototypes/2026-10-27-resource-square.html)
 - 涉及模块：个人工作台、知识库、元数据/数据集、用户管理、个人中心、站内通知
 
 ## 1. 背景

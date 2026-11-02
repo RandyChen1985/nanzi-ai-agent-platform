@@ -89,7 +89,7 @@
 - `tests/frontend/test_personal_workbench_contract.py`：12 项通过。其中 2 项是重写的——正向断言新结构，反向断言旧形态不得回归（四个已删除组件名、`今日运行正常`、`待处理 0`、`animate-pulse`、`w-1/3`、三句「更多…会出现在这里」、`来源：`、六个 emoji 全部禁止出现）。
 - `vue-tsc --noEmit`：0 报错。
 - `vite build`：通过。
-- 三种状态（有待处理 / 空闲无待办 / 新用户全空）用真实组件 + 假数据在浏览器实渲染截图确认，截图存于 `docs/mockups/shots/impl-*.png`，设计稿为 `docs/mockups/2026-11-02-workbench-restructure.html`。
+- 三种状态（有待处理 / 空闲无待办 / 新用户全空）用真实组件 + 假数据在浏览器实渲染截图确认，截图存于 `prototypes/shots/impl-*.png`，设计稿为 `prototypes/2026-11-02-workbench-restructure.html`。
 
 ## 未做的事
 

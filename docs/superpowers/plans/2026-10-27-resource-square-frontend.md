@@ -10,7 +10,7 @@
 
 **Spec:** [`docs/superpowers/specs/2026-10-27-resource-square-design.md`](../specs/2026-10-27-resource-square-design.md)
 **后端计划（先执行）:** [`2026-10-27-resource-square-backend.md`](./2026-10-27-resource-square-backend.md)
-**交互原型:** [`docs/mockups/2026-10-27-resource-square.html`](../../mockups/2026-10-27-resource-square.html)
+**交互原型:** [`prototypes/2026-10-27-resource-square.html`](../../../prototypes/2026-10-27-resource-square.html)
 
 **前置：** 后端计划已合入，`/api/portal/resource-square/*` 与 `/api/portal/access-requests/*` 可用。
 
