@@ -55,6 +55,24 @@ class KnowledgeBaseMetadata(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
+class KnowledgeBaseFavorite(Base):
+    """知识库收藏：支撑左栏「我的收藏」。
+
+    收藏是「个人视图」而非权限：不收藏不代表看不见，收藏也不额外授权，
+    所以只记 (user_id, dataset_id)，列表接口按它过滤即可。
+    """
+
+    __tablename__ = "knowledge_base_favorites"
+    __table_args__ = (
+        UniqueConstraint("user_id", "dataset_id", name="uix_kbf_user_dataset"),
+    )
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(BigInteger, nullable=False, index=True, comment="收藏人用户ID")
+    dataset_id = Column(String(64), nullable=False, index=True, comment="RAGFlow Dataset ID")
+    created_at = Column(DateTime, default=datetime.now, nullable=False, comment="收藏时间")
+
+
 class KnowledgeBaseMetric(Base):
     """知识库与文档的每日运营统计指标。"""
 

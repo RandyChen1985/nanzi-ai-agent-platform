@@ -88,7 +88,7 @@ def test_review_records_are_reachable_after_decision(users: str) -> None:
 def test_admin_does_not_see_discover_entry(knowledge: str) -> None:
     """管理员对所有库都有权限，「发现」对他来说永远为空，不该占位。"""
     # 搜索行入口
-    assert 'v-if="!bulkSelectMode && !isAdmin"' in knowledge
+    assert 'v-if="!isAdmin"' in knowledge
     # 空状态入口
     assert knowledge.count('v-if="!isAdmin"') >= 1
 

@@ -42,13 +42,17 @@ def test_bulk_doc_ops_are_scoped_to_one_dataset(page: str) -> None:
 
 
 def test_bulk_selection_supports_select_all(page: str) -> None:
-    assert "toggleSelectAll" in page
-    assert "bulkSelectableDatasets" in page
+    """全选在「全部知识库」列表页表头，左栏树只负责导航。"""
+    assert "toggleLibrarySelectAll" in page
+    assert "librarySelectableRows" in page
     assert "取消全选" in page
 
 
 def test_select_all_is_scoped_to_current_tab_and_search(page: str) -> None:
     """全选不能跨 tab / 跨搜索：把看不见的库也选上，等于给自己埋雷。"""
-    block = page.split("const bulkSelectableDatasets", 1)[1].split("const toggleSelectAll", 1)[0]
-    assert "filteredDatasets.value" in block
-    assert "canManageDataset" in block
+    # 全选范围 = 列表页当前过滤结果（搜索 + 可见范围），看不见的库不会被选上
+    block = page.split("const libraryListRows = computed", 1)[1].split("const librarySelectedCount", 1)[0]
+    assert "libraryQuery" in block
+    assert "libraryScope" in block
+    block2 = page.split("const librarySelectableRows = computed(", 1)[1].split("\n)", 1)[0]
+    assert "canManageDataset" in block2

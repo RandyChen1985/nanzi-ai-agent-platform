@@ -51,14 +51,12 @@ def test_update_time_moves_to_the_top_right():
 
 def test_remaining_metadata_collapses_into_one_line():
     page = _page()
-    for text in ("创建人", "切片", "业务归属部门/负责人"):
+    # 元信息压成一行：份文档 · 文件夹 · 切片 · 更新时间 · 负责人
+    for text in ("份文档", "个文件夹", "个切片", "更新于", "负责人"):
         assert text in page
-    # ID 完整展示，不再截成 8 位 + 省略号：这个值就是 RAGFlow Dataset ID，
-    # 排障时要能和 RAGFlow 后台逐字符对照，也要能整段复制出去。
-    assert "复制知识库 ID" in page
-    assert ".slice(0, 8)" not in page
-    # 长 ID 用 break-all 在元信息条里折行，避免撑破布局
-    assert "break-all" in page
+    # 次要信息（ID、切片方法）不再挤在头部；表单里的归属部门下拉不算
+    assert "切片方法" not in page
+    assert "复制知识库 ID" not in page
     # 失联标记仍然跟着标题走
     assert "RAGFlow 侧已失联" in page
 
@@ -70,3 +68,11 @@ def test_team_scope_wording_says_read_only_everywhere():
     assert "成员自动可读" not in page
     # 徽标提示直接取下拉文案，不再自己拼一份
     assert "visibilityOptionOf(visibilityOf(dataset)).hint" in page
+
+
+def test_library_header_has_breadcrumb():
+    """库头上方要有「全部知识库 / 部门 / 库名」：没有它用户不知道自己在哪一层，也退不回去。"""
+    page = PAGE.read_text(encoding="utf-8")
+    assert 'aria-label="当前位置"' in page
+    assert "openLibraryList('all')" in page
+    assert "datasetOwnerLabel(selectedDataset)" in page

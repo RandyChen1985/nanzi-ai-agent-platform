@@ -120,10 +120,15 @@ def test_left_tree_has_three_visibility_tabs():
     assert "label: '授权可见'" in page
     assert "label: 'TEAM 级'" in page
     assert "label: '个人私有'" in page
-    # tab 切换必须驱动列表过滤，而不是只做视觉高亮
+    # 范围切换必须驱动列表过滤，而不是只做视觉高亮
     assert "activeVisibility" in page
     assert "visibilityScopeDatasets" in page
+    # 左栏「按范围」是一行文字筛选（不占独立操作块），授权可见排第一
+    assert "按范围" in page
+    assert page.index("label: '授权可见'") < page.index("label: 'TEAM 级'") < page.index("label: '个人私有'")
+    # 每个范围带数量角标
     assert "visibilityTabCount(tab.key)" in page
+    assert "v-for=\"tab in VISIBILITY_TABS\"" in page
 
 
 def test_tab_filters_list_before_search():
@@ -134,11 +139,12 @@ def test_tab_filters_list_before_search():
     assert "return visibilityScopeDatasets.value.filter(ds => {" in page
 
 
-def test_team_tab_groups_by_department_others_are_flat():
+def test_all_scopes_group_by_department():
+    """切范围只换「显示哪些库」，不改变树的形状——原来授权可见/私有会拍平，反而让人以为换了结构。"""
     page = _page()
-    assert "if (activeVisibility.value !== 'team')" in page
-    assert "isFlat: true" in page
-    # 平铺模式不渲染部门分组头
+    assert "if (activeVisibility.value !== 'team')" not in page
+    assert "isFlat: true" not in page
+    # 分组头仍然渲染
     assert 'v-if="!group.isFlat && !isDeptGroupHidden(group)"' in page
 
 
@@ -177,9 +183,10 @@ def test_create_and_edit_forms_expose_visibility_as_two_line_dropdown():
     assert ':d="option.iconPath"' in page
     assert ':d="visibilityOptionOf(form.visibility).iconPath"' in page
     assert page.count("visibilityOptionOf(form.visibility).iconPath") == 2  # 两处弹窗
-    # 左侧三个 tab 复用同一定义，不另写字面量
-    assert ':d="visibilityOptionOf(tab.key).iconPath"' in page
-    assert ':class="visibilityOptionOf(tab.key).iconClass"' in page
+    # 左侧「按范围」复用同一定义，不另写字面量（文字式筛选不带图标）
+    assert 'v-for="tab in VISIBILITY_TABS"' in page
+    assert "{{ tab.label }}" in page
+    assert "tab.hint" in page
 
 
 def test_new_dataset_defaults_to_private_with_explicit_warning():

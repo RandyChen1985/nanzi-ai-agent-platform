@@ -27,6 +27,7 @@ from app.services.knowledge_dataset_filters import is_internal_dataset_name
 from app.services.knowledge_health_service import KnowledgeHealthService
 from app.services.portal_notification_service import PortalNotificationService
 from app.services.knowledge_quota_service import KnowledgeQuotaService, QuotaExceeded
+from app.services.knowledge_recent_visit_service import KnowledgeRecentVisitService
 from app.services.knowledge_retrieval_log_service import (
     SOURCE_TEST,
     KnowledgeRetrievalLogService,
@@ -37,6 +38,7 @@ from app.services.knowledge_audit_service import (
     GLOBAL_AUDIT_DATASET_ID,
     KnowledgeAuditService,
 )
+from app.models.knowledge import KnowledgeBaseFavorite
 from app.models.permission import ResourcePermission
 
 router = APIRouter()
@@ -401,6 +403,33 @@ async def _attach_agent_refs(db: AsyncSession, items: List[Dict[str, Any]]) -> N
         item["agent_refs"] = agents[:5]
 
 
+async def _attach_favorites(db: AsyncSession, items: List[Dict[str, Any]], user_id: int) -> None:
+    """标注当前用户是否收藏过这些库。
+
+    「我的收藏」不额外查一套列表接口：收藏是个人视图，列表项上带布尔位，
+    前端按它过滤即可，也避免两个接口的可见范围打架。
+    """
+    dataset_ids = [
+        str(item.get("ragflow_dataset_id") or item.get("id") or "")
+        for item in items
+    ]
+    from sqlalchemy import select
+
+    dataset_ids = [item for item in dataset_ids if item]
+    favorited: set = set()
+    if dataset_ids:
+        rows = await db.execute(
+            select(KnowledgeBaseFavorite.dataset_id).where(
+                KnowledgeBaseFavorite.user_id == user_id,
+                KnowledgeBaseFavorite.dataset_id.in_(dataset_ids),
+            )
+        )
+        favorited = {str(row) for row in rows.scalars().all()}
+    for item in items:
+        dataset_id = str(item.get("ragflow_dataset_id") or item.get("id") or "")
+        item["is_favorited"] = dataset_id in favorited
+
+
 def _normalize_ragflow_items(data: Any) -> List[Dict[str, Any]]:
     items = data.get("data") if isinstance(data, dict) else data
     if isinstance(items, dict):
@@ -594,6 +623,7 @@ async def list_ragflow_datasets(
         _apply_knowledge_permission_flags(merged, access)
         await _attach_owner_user_names(db, merged)
         await _attach_agent_refs(db, merged)
+        await _attach_favorites(db, merged, int(user["user_id"]))
         total = len(merged)
         if page_size and page_size > 0:
             start = max(0, (page - 1) * page_size)
@@ -1018,6 +1048,112 @@ async def get_retrieval_stats(
         raise HTTPException(status_code=403, detail="需要管理员权限才能查看检索指标")
     data = await KnowledgeRetrievalLogService.stats(db, days=days, source=source)
     return {"code": 0, "data": data}
+
+
+@router.get("/datasets/quota/me")
+async def get_my_dataset_quota(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """我的知识库配额（与具体某个库无关）。
+
+    左栏配额条和「新建知识库」的额度提示都只需要 owned_datasets：
+    借某个库去查的话，那个库一旦失联或被删就拿不到数，所以单开一个入口。
+    上限取自配置 knowledge_quota_max_datasets_per_user。
+    """
+    limits = await KnowledgeQuotaService.limits()
+    used = await KnowledgeQuotaService.owned_dataset_count(db, int(user["user_id"]))
+    return {
+        "code": 0,
+        "data": {
+            "owned_datasets": {
+                "used": used,
+                "limit": limits["max_datasets_per_user"],
+            },
+            "documents": {
+                "limit": limits["max_documents_per_dataset"],
+            },
+        },
+    }
+
+
+@router.post("/datasets/{dataset_id}/visit")
+async def record_dataset_visit(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """记一次「最近访问」。
+
+    由前端进入某个库时上报一次；Redis 里按人留 30 天，
+    不做去抖是因为 ZSET 的 zadd 本身就是覆盖写，同一库重复访问只更新时间戳。
+    """
+    await require_dataset_access(user, db, [dataset_id])
+    await KnowledgeRecentVisitService.record(user["user_id"], dataset_id)
+    return {"code": 0, "data": {"visited": True}}
+
+
+@router.get("/datasets/recent")
+async def list_recent_datasets(
+    limit: int = 20,
+    user: dict = Depends(get_current_user),
+):
+    """我最近访问过的库（按时间倒序，只回 id）。
+
+    列表项本身仍由 ``GET /datasets`` 提供：这里只负责顺序，
+    避免两套接口各算一次可见范围，出现「最近里有、列表里没有」的库。
+    """
+    payload = await KnowledgeRecentVisitService.snapshot(user["user_id"], limit=limit)
+    return {"code": 0, "data": payload}
+
+
+@router.post("/datasets/{dataset_id}/favorite")
+async def favorite_dataset(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """收藏知识库。
+
+    只要求「可读」：收藏是个人视图，不额外授权，也不改变别人的可见范围。
+    重复收藏幂等（唯一键 uix_kbf_user_dataset 兜底）。
+    """
+    from sqlalchemy import select
+
+    await require_dataset_access(user, db, [dataset_id])
+    user_id = int(user["user_id"])
+    exists = (
+        await db.execute(
+            select(KnowledgeBaseFavorite.id).where(
+                KnowledgeBaseFavorite.user_id == user_id,
+                KnowledgeBaseFavorite.dataset_id == dataset_id,
+            )
+        )
+    ).scalar()
+    if not exists:
+        db.add(KnowledgeBaseFavorite(user_id=user_id, dataset_id=dataset_id))
+        await db.commit()
+    return {"code": 0, "data": {"favorited": True}}
+
+
+@router.delete("/datasets/{dataset_id}/favorite")
+async def unfavorite_dataset(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """取消收藏。没收藏过也返回成功，前端只看结果状态。"""
+    from sqlalchemy import delete
+
+    await require_dataset_access(user, db, [dataset_id])
+    await db.execute(
+        delete(KnowledgeBaseFavorite).where(
+            KnowledgeBaseFavorite.user_id == int(user["user_id"]),
+            KnowledgeBaseFavorite.dataset_id == dataset_id,
+        )
+    )
+    await db.commit()
+    return {"code": 0, "data": {"favorited": False}}
 
 
 @router.get("/datasets/{dataset_id}/quota")
