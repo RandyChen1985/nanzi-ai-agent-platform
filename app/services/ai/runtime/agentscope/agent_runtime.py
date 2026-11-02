@@ -282,14 +282,43 @@ async def build_model_config(
     return ModelConfig(fallback_model=fallback_model, max_retries=0)
 
 
+def _content_trimmed_tool_names() -> frozenset[str]:
+    """会被「本轮内容」裁剪掉的工具名。
+
+    运行时有两条裁剪会改变工具集，但它们取决于**这一轮问什么**，与已保存的运行时
+    状态是否还能复用无关：
+
+    - ``filter_tools_for_reusable_result``：命中可复用结果时移除事实获取工具；
+    - ``filter_redundant_time_tools``：system prompt 已带时间锚点时移除取时工具。
+
+    把它们算进指纹，会让「追问上一条结果」的下一轮被误判成配置变更，进而丢掉
+    上下文（含完整工具结果）与压缩摘要。更麻烦的是正常轮次会裁剪、挂起恢复路径
+    不裁剪（``_resolve_pending_runtime`` 明说不经过可复用结果裁剪），两条路径
+    同一份配置算出两个指纹、必然互相判为不一致。
+    """
+
+    from app.services.ai.session_tool_artifact import REUSABLE_RESULT_ACQUISITION_TOOLS
+    from app.services.ai.time_anchor import TIME_QUERY_TOOL_NAMES
+
+    return frozenset(REUSABLE_RESULT_ACQUISITION_TOOLS) | frozenset(TIME_QUERY_TOOL_NAMES)
+
+
 def build_tools_fingerprint(
     config: ChatConfig,
     tools: list[RuntimeToolSpec],
 ) -> str:
+    """运行时状态的兼容性指纹：只描述「配置层工具集」的稳定形态。
+
+    剔除按内容裁剪的工具后，正常轮次与挂起恢复路径对同一份配置给出同一个值，
+    只有真正换了模型 / 智能体版本 / 工具绑定才会变。
+    """
+
     import hashlib
     import json
 
-    tool_names = sorted(spec.name for spec in tools)
+    unstable = _content_trimmed_tool_names()
+    tool_names = sorted(str(getattr(spec, "name", "") or "") for spec in tools)
+    tool_names = [name for name in tool_names if name and name not in unstable]
     payload = {
         "agent_name": config.agent_name,
         "agent_version": config.agent_version,
