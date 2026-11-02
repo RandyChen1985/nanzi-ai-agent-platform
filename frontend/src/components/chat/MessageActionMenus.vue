@@ -201,7 +201,11 @@ onUnmounted(() => {
           </div>
           <button v-if="canExport" type="button" class="menu-item desktop-export-item" role="menuitem" @click="run(() => emit('exportData'))">↓ 导出数据（Excel）</button>
           <button v-if="hasTrace" type="button" class="menu-item flex items-center gap-1.5 whitespace-nowrap" role="menuitem" @click="run(() => emit('openTrace'))"><ShareIcon class="h-4 w-4 shrink-0 text-gray-500" /> 查看执行链路</button>
-          <button v-if="hasTokenStats" type="button" class="menu-item" role="menuitem" @click="run(() => emit('openStats'))">▤ 查看调用详情</button>
+          <!--
+            这里刻意不放「查看调用详情」：操作栏上的「用量 xxx tok」按钮点开的就是
+            同一个弹层（EmbedChat 的 openModelCallStats），同一个入口出现两次只是噪音。
+            移动端抽屉里保留——手机上的用量按钮空间更紧，需要这条文字入口兜底。
+          -->
           <button v-if="canSaveReport" type="button" class="menu-item" role="menuitem" @click="run(() => emit('saveReport'))">☆ 添加固化报表</button>
           </div>
         </Teleport>

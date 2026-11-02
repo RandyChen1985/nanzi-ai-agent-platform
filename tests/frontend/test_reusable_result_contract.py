@@ -84,8 +84,12 @@ def test_reusable_result_status_uses_user_facing_copy_with_parenthesized_session
 def test_message_action_menus_group_data_file_and_low_frequency_actions():
     source = ACTION_MENU.read_text(encoding="utf-8")
 
-    for label in ("数据 / 文件", "查看可复用结果", "导出数据（Excel）", "查看文件产物", "更多", "重新生成", "查看执行链路", "查看调用详情", "添加固化报表"):
+    for label in ("数据 / 文件", "查看可复用结果", "导出数据（Excel）", "查看文件产物", "更多", "重新生成", "查看执行链路", "添加固化报表"):
         assert label in source
+    # 菜单里不再放这一项：操作栏的「用量」按钮点开的是同一个弹层。
+    # 用带图标前缀的完整条目断言，避开源码注释里的同名字样。
+    assert "▤ 查看调用详情" not in source
+    assert "emit('openStats')" not in source
     assert "本次回答引用了上一轮数据" not in source
     assert source.count("emit('regenerate')") == 1
     assert source.index('v-if="canRegenerate"') < source.index('v-if="openMenu === \'more\'"')
