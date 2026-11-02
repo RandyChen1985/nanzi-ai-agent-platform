@@ -4,6 +4,12 @@ services:
   ai-agent:
     image: nanzi-ai-agent:latest
     container_name: nanzi-ai-agent
+    # 显式加载同目录 .env：Compose 本来就会读它做下方 ${VAR} 插值，这里显式声明是为了把
+    # .env 中未被 environment 列出的键（ALLOWED_ORIGINS / API_SERVICE_PORT / LOG_LEVEL /
+    # WORKSPACE_UPLOAD_MAX_MB 等）一并注入容器——容器内没有 .env 文件（.dockerignore 已排除），
+    # 未注入的键会静默回退到代码默认值。同名时 environment 优先级更高。
+    env_file:
+      - .env
     ports:
       - "8001:8001"
     volumes:
