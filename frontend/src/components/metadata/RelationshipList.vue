@@ -25,6 +25,11 @@ const props = defineProps<{
   tables: Table[];
 }>();
 
+// 关系增删后把最新数量抛给父级，避免详情页 tab 徽标停留在旧数字
+const emit = defineEmits<{
+  (e: "count-change", count: number): void;
+}>();
+
 const relationships = ref<Relationship[]>([]);
 const loading = ref(false);
 const showModal = ref(false);
@@ -304,6 +309,8 @@ const fetchRelationships = async () => {
   try {
     const res = await metadataApi.getRelationships(props.datasetId);
     relationships.value = res.data;
+    // 与后端 relationship_count 同口径（源表或目标表属于本数据集）
+    emit("count-change", relationships.value.length);
     if (viewMode.value === "graph") {
       nextTick(() => initOrUpdateGraph());
     }

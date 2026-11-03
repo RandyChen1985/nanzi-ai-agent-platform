@@ -343,6 +343,16 @@ const fetchDatasetInfo = async () => {
   }
 }
 
+// 关系增删后同步 tab 徽标数字，避免徽标停留在旧值
+const handleRelationshipCountChange = (count: number) => {
+  if (dataset.value) dataset.value.relationship_count = count
+}
+
+// 指标增删后同步 tab 徽标数字，避免徽标停留在旧值
+const handleMetricCountChange = (count: number) => {
+  if (dataset.value) dataset.value.metric_count = count
+}
+
 const openEditModal = (table: Table) => {
   // Deep copy to avoid modifying original list before save
   editingTable.value = JSON.parse(JSON.stringify(table))
@@ -1222,12 +1232,21 @@ defineExpose({ fetchMetrics })
 
     <!-- Content: Metrics -->
     <div v-if="activeTab === 'metrics'">
-      <MetricList :dataset-id="datasetId" ref="metricListRef" @show-smart-discovery="openGlobalSmartMetricModal" />
+      <MetricList
+        :dataset-id="datasetId"
+        ref="metricListRef"
+        @show-smart-discovery="openGlobalSmartMetricModal"
+        @count-change="handleMetricCountChange"
+      />
     </div>
 
     <!-- Content: Relationships -->
     <div v-if="activeTab === 'relationships'">
-      <RelationshipList :dataset-id="datasetId" :tables="tables" />
+      <RelationshipList
+        :dataset-id="datasetId"
+        :tables="tables"
+        @count-change="handleRelationshipCountChange"
+      />
     </div>
 
     <!-- Content: Visualization -->
