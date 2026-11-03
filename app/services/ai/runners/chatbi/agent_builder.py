@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from app.services.ai.runtime.agentscope.build_progress import (
+    BuildStageTimer,
+    emit_build_progress,
+    format_build_details,
+)
 from app.services.ai.runtime.agentscope.tools import (
     RuntimeToolSpec,
 )
@@ -48,6 +53,11 @@ async def build_native_agent(
     from app.services.ai.time_anchor import filter_redundant_time_tools
 
     dar = _runner_module()
+    build_timer = BuildStageTimer()
+    await emit_build_progress(
+        status="pending",
+        details="正在装配工作区、工具与会话状态…",
+    )
     tools = filter_redundant_time_tools(tools, system_content)
     workspace = await dar.get_local_workspace(
         user_id=runner._current_user_id(),
@@ -58,6 +68,7 @@ async def build_native_agent(
         allowed_global_skills=list(getattr(runner.config, "skills", None) or []),
         lazy_sandbox=True,
     )
+    build_timer.mark("workspace")
     from app.services.ai.runtime.agentscope.workspace import (
         bind_configured_tools_to_workspace,
         get_workspace_execution_backend,
@@ -69,6 +80,7 @@ async def build_native_agent(
         tools,
         user_info=runner.user_info,
     )
+    build_timer.mark("tool_bind")
     runner._execution_backend = get_workspace_execution_backend(workspace)
     toolkit = AgentScopeToolConsumer(builder=dar.build_toolkit).consume_specs(
         tools,
@@ -76,6 +88,7 @@ async def build_native_agent(
         user_id=runner._current_user_id(),
         conversation_id=runner.conversation_id,
     )
+    build_timer.mark("toolkit")
     from app.services.ai.runtime.agentscope.agent_runtime import (
         build_runtime_middlewares,
         load_injection_config,
@@ -87,12 +100,14 @@ async def build_native_agent(
         primary_model_name=primary_model_name,
     )
     injection_config = await load_injection_config()
+    build_timer.mark("config")
     middlewares = build_runtime_middlewares(
         user_id=runner._current_user_id(),
         conversation_id=runner.conversation_id,
         agent_name=runner._runtime_agent_name(),
         trace_id=runner.trace_id,
     )
+    build_timer.mark("middleware")
     kwargs: Dict[str, Any] = {
         "name": runner._runtime_agent_name(),
         "system_prompt": system_content,
@@ -110,4 +125,12 @@ async def build_native_agent(
         kwargs["model_config"] = model_config
     if context_config is not None:
         kwargs["context_config"] = context_config
-    return dar.Agent(**kwargs)
+    agent = dar.Agent(**kwargs)
+    build_timer.mark("agent")
+    total_ms = build_timer.elapsed_ms()
+    await emit_build_progress(
+        status="success",
+        details=format_build_details(build_timer.stages(), total_ms),
+        execution_time_ms=total_ms,
+    )
+    return agent
