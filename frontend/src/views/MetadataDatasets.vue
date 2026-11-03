@@ -34,7 +34,7 @@ const route = useRoute()
 
 const router = useRouter()
 const datasets = ref<Dataset[]>([])
-const loading = ref(false)
+const loading = ref(true)
 const showCreateModal = ref(false)
 const showCreateMenu = ref(false)
 const showImportModal = ref(false)
@@ -683,6 +683,22 @@ const displayDatasets = computed(() => {
 const hasActiveFilters = computed(() =>
   !!searchQuery.value || statusFilter.value !== 'all'
 )
+
+// 数据集多时（几百条）一次性渲染全部卡片会明显卡顿：先渲染一屏，按需追加
+const PAGE_SIZE = 24
+const visibleCount = ref(PAGE_SIZE)
+const visibleDatasets = computed(() => displayDatasets.value.slice(0, visibleCount.value))
+const hasMoreDatasets = computed(
+  () => visibleDatasets.value.length < displayDatasets.value.length
+)
+const loadMoreDatasets = () => {
+  visibleCount.value += PAGE_SIZE
+}
+
+// 筛选 / 排序变化后回到第一屏，避免停在旧的「加载更多」位置
+watch([searchQuery, statusFilter, sortField, sortDirection], () => {
+  visibleCount.value = PAGE_SIZE
+})
 
 // Test Retrieval State
 const testQuery = ref('')
@@ -1462,10 +1478,22 @@ onMounted(async () => {
       </button>
     </div>
 
-    <!-- Loading State -->
-    <div v-if="loading" class="space-y-4">
-      <!-- Skeleton Loader -->
-      <div v-for="i in 3" :key="i" class="h-32 bg-gray-100 rounded-xl animate-pulse"></div>
+    <!-- Loading State：首帧即显示，避免请求较慢时列表区整块空白 -->
+    <div v-if="loading" class="space-y-4" role="status" aria-live="polite" aria-busy="true">
+      <div class="flex items-center gap-2 text-xs text-gray-400">
+        <svg class="h-3.5 w-3.5 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <span>正在加载数据集…</span>
+      </div>
+      <!-- 骨架形态跟随当前视图，避免数据到达前后高度剧烈跳动 -->
+      <div v-if="viewMode === 'grid'" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div v-for="i in 6" :key="i" class="h-36 bg-gray-100 rounded-xl animate-pulse"></div>
+      </div>
+      <div v-else class="space-y-2">
+        <div v-for="i in 8" :key="i" class="h-[76px] bg-gray-100 rounded-xl animate-pulse"></div>
+      </div>
     </div>
 
     <!-- Filtered Empty State -->
@@ -1487,7 +1515,7 @@ onMounted(async () => {
     <!-- Grid View：紧凑卡片，降低无效留白 -->
     <div v-else-if="viewMode === 'grid'" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       <div 
-        v-for="ds in displayDatasets" 
+        v-for="ds in visibleDatasets" 
         :key="ds.id"
         class="bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 cursor-pointer group overflow-hidden flex flex-col relative"
         @click="goToTables(ds.id)"
@@ -1716,7 +1744,7 @@ onMounted(async () => {
        </div>
        <div class="divide-y divide-gray-100">
           <div 
-             v-for="ds in displayDatasets" 
+             v-for="ds in visibleDatasets" 
              :key="ds.id" 
              class="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-gray-50 transition-colors cursor-pointer group"
              @click="goToTables(ds.id)"
@@ -1872,6 +1900,18 @@ onMounted(async () => {
           </div>
        </div>
        </div>
+    </div>
+
+    <!-- 分批渲染：避免数据量大时一次挂载全部卡片造成卡顿 -->
+    <div v-if="!loading && hasMoreDatasets" class="flex flex-col items-center gap-1.5 pt-2">
+      <button
+        type="button"
+        class="px-4 py-2 text-xs font-semibold text-blue-600 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+        @click="loadMoreDatasets"
+      >
+        加载更多（已显示 {{ visibleDatasets.length }} / {{ displayDatasets.length }}）
+      </button>
+      <span class="text-[10px] text-gray-400">列表分批渲染，避免数据量大时卡顿</span>
     </div>
 
     <!-- Delete Confirmation Modal -->

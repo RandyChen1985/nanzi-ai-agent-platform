@@ -35,6 +35,12 @@ export interface RagFlowConfigSummary {
     configured: boolean;
     metadata_provider?: string;
     knowledge_base_enabled?: boolean;
+    /** 检索测试页的参数默认值，来自系统配置 knowledge_ragflow_* */
+    retrieval_defaults?: {
+        top_n: number;
+        similarity_threshold: number;
+        vector_similarity_weight: number;
+    };
 }
 
 export const ragflowApi = {

@@ -11,7 +11,7 @@ const props = defineProps<{
   datasetId: number
 }>()
 
-const emit = defineEmits(['show-smart-discovery'])
+const emit = defineEmits(['show-smart-discovery', 'count-change'])
 
 const metrics = ref<Metric[]>([])
 const loading = ref(false)
@@ -56,6 +56,8 @@ const fetchMetrics = async () => {
   try {
     const res = await metadataApi.getMetrics(props.datasetId)
     metrics.value = res.data
+    // 指标增删后把最新数量抛给父级，避免详情页 tab 徽标停留在旧数字
+    emit('count-change', metrics.value.length)
   } catch (e) {
     console.error(e)
     error.value = '无法加载指标列表'

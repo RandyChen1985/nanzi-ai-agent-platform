@@ -483,7 +483,7 @@ class MetadataRagService:
                 chunks = await client.retrieve(
                     query, 
                     rag_ids, 
-                    top_k=top_k,
+                    top_n=top_k,
                     similarity_threshold=threshold,
                     vector_similarity_weight=weight
                 )

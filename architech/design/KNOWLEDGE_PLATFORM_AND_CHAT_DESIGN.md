@@ -414,7 +414,7 @@ flowchart TD
 | `knowledge_ragflow_api_url` | — | RAGFlow 网关地址 |
 | `knowledge_ragflow_api_key` | — | API Key（secret） |
 | `knowledge_ragflow_dataset_ids` | — | 默认公开知识库 ID，逗号分隔 |
-| `knowledge_ragflow_metadata_top_k` | `5` | 召回 chunk 数 |
+| `knowledge_ragflow_metadata_top_k` | `5` | 返回 chunk 数（映射 RAGFlow `page_size`；`top_k` 是候选池，固定 1024） |
 | `knowledge_ragflow_similarity_threshold` | `0.2` | 相似度阈值 |
 | `knowledge_ragflow_vector_weight` | `0.3` | 向量权重（余下为全文） |
 

@@ -13,6 +13,31 @@ from app.services.changelog_service import ChangelogService
 
 logger = logging.getLogger(__name__)
 
+
+def build_relationship_count_stmt():
+    """按数据集统计关系数（一次 GROUP BY，替代逐数据集 count 的 N+1）。
+
+    一条关系只要源表或目标表属于某数据集就计入该数据集；跨库关系会同时计入
+    两侧数据集，与详情页 get_dataset_by_id 的口径一致。COUNT(DISTINCT id) 用于
+    防止同一条关系在 JOIN 中被重复计数。
+    """
+    return (
+        select(
+            MetaTable.dataset_id,
+            func.count(func.distinct(MetaRelationship.id)),
+        )
+        .select_from(MetaRelationship)
+        .join(
+            MetaTable,
+            or_(
+                MetaTable.id == MetaRelationship.source_table_id,
+                MetaTable.id == MetaRelationship.target_table_id,
+            ),
+        )
+        .group_by(MetaTable.dataset_id)
+    )
+
+
 class MetadataService:
     
     # --- Dataset CRUD ---
@@ -26,47 +51,21 @@ class MetadataService:
         )
         result = await db.execute(stmt)
         datasets = result.scalars().all()
-        
-        # Populate counts
+
+        # 关系数批量统计：一条关系只要源表或目标表属于某数据集就计入该数据集
+        # （跨库关系会同时计入两侧数据集，与详情页 get_dataset_by_id 同口径）。
+        # 旧实现对每个数据集循环 count 一次（N+1），数据集多时会明显拖慢列表加载。
+        rel_count_rows = await db.execute(build_relationship_count_stmt())
+        relationship_counts: Dict[int, int] = {
+            dataset_id: int(count or 0)
+            for dataset_id, count in rel_count_rows.all()
+        }
+
         for ds in datasets:
             ds.table_count = len(ds.tables)
             ds.metric_count = len(ds.metrics)
-            # Relationship count: Relationships are not directly on Dataset, but derived from tables
-            # This could be expensive in a loop. For list view, maybe we can skip or do a separate count query?
-            # Or assume we only need table/metric counts for list view? 
-            # Request asked for "Digital labels on cards: Table count, Metric count, Relationship count".
-            # So we need it. Let's do a quick query for each or optimize.
-            # OPTIMIZATION: Get all table IDs for this dataset
-            table_ids = [t.id for t in ds.tables]
-            ds.relationship_count = 0 
-            if table_ids:
-                # We need a synchronous way or await in loop. Await in loop is fine for N<50 datasets.
-                # But sqlalchemy objects in async session... 
-                # Better: Pre-fetch all relationships or use count query.
-                rel_count_stmt = select(func.count(MetaRelationship.id)).where(
-                    (MetaRelationship.source_table_id.in_(table_ids)) | 
-                    (MetaRelationship.target_table_id.in_(table_ids))
-                )
-                # We can't await inside this synchronous iteration if we return list directly.
-                # We need to change structure to async loop.
-                pass 
-                
-        # Since we need async execution for relationship counts, let's do it properly
-        for ds in datasets:
-            ds.table_count = len(ds.tables)
-            ds.metric_count = len(ds.metrics)
-            
-            table_ids = [t.id for t in ds.tables]
-            if table_ids:
-                 rel_count_stmt = select(func.count(MetaRelationship.id)).where(
-                    (MetaRelationship.source_table_id.in_(table_ids)) | 
-                    (MetaRelationship.target_table_id.in_(table_ids))
-                )
-                 rel_count = await db.scalar(rel_count_stmt)
-                 ds.relationship_count = rel_count or 0
-            else:
-                ds.relationship_count = 0
-                
+            ds.relationship_count = relationship_counts.get(ds.id, 0)
+
         return datasets
 
     @staticmethod

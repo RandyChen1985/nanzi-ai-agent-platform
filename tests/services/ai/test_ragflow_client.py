@@ -45,7 +45,7 @@ async def test_retrieve_success(ragflow_client, mock_config):
         results = await ragflow_client.retrieve(
             query="什么是南孜？",
             dataset_ids=["ds_001"],
-            top_k=1
+            top_n=1
         )
         
         assert len(results) == 1
@@ -57,6 +57,9 @@ async def test_retrieve_success(ragflow_client, mock_config):
         args, kwargs = mock_post.call_args
         assert kwargs["json"]["question"] == "什么是南孜？"
         assert kwargs["json"]["dataset_ids"] == ["ds_001"]
+        # top_n 是「返回条数」，必须落到 page_size；top_k 保持 RAGFlow 候选池默认值
+        assert kwargs["json"]["page_size"] == 1
+        assert kwargs["json"]["top_k"] == 1024
 
 @pytest.mark.asyncio
 async def test_chat_stream_success(ragflow_client, mock_config):

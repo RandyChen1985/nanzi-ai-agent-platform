@@ -10,6 +10,7 @@ import { useUser } from "../../composables/useUser";
 import { CircleStackIcon, KeyIcon, LightBulbIcon, LinkIcon } from "@heroicons/vue/24/outline";
 import { formatRelationshipJoinTypeLabel, normalizeRelationshipJoinType } from "../../utils/relationshipJoinType";
 import SmartRelationshipModal from "./SmartRelationshipModal.vue";
+import SearchableSelect from "../common/SearchableSelect.vue";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { GraphChart } from "echarts/charts";
@@ -22,6 +23,11 @@ const { isAdmin: _isAdmin, hasPermission } = useUser();
 const props = defineProps<{
   datasetId: number;
   tables: Table[];
+}>();
+
+// 关系增删后把最新数量抛给父级，避免详情页 tab 徽标停留在旧数字
+const emit = defineEmits<{
+  (e: "count-change", count: number): void;
 }>();
 
 const relationships = ref<Relationship[]>([]);
@@ -87,6 +93,70 @@ const targetColumns = computed(() => {
   const table = props.tables.find((t) => t.id === form.value.target_table_id);
   return table ? table.columns : [];
 });
+
+// ---- 可搜索下拉的候选数据（表 / 字段共用同一套结构） ----
+type SelectOption = { value: string | number; label: string; keywords: string[] };
+type SelectGroup = { label?: string; options: SelectOption[] };
+
+const tableOption = (t: Table): SelectOption => ({
+  value: t.id as number,
+  label: `${t.physical_name}${t.term ? ` (${t.term})` : ""}`,
+  keywords: [t.physical_name, t.term].filter(Boolean),
+});
+
+const columnOption = (col: { physical_name: string; term: string }): SelectOption => ({
+  value: col.physical_name,
+  label: `${col.physical_name}${col.term ? ` [${col.term}]` : ""}`,
+  keywords: [col.physical_name, col.term].filter(Boolean),
+});
+
+const sourceTableGroups = computed<SelectGroup[]>(() => [
+  { options: props.tables.filter((t) => t.id !== undefined).map(tableOption) },
+]);
+
+// 目标表：当前数据集 + 其它数据集（跨库关联），保持原生 optgroup 的分组语义
+const targetTableGroups = computed<SelectGroup[]>(() => {
+  const localIds = new Set(props.tables.map((t) => t.id));
+  const groups: SelectGroup[] = [
+    { label: "当前数据集", options: sourceTableGroups.value[0].options },
+  ];
+  for (const ds of allTablesList.value) {
+    const options = ds.tables
+      .filter((t) => !localIds.has(t.id))
+      .map(tableOption);
+    if (options.length) {
+      groups.push({
+        label: `${ds.display_name || ds.dataset_name} [跨数据集]`,
+        options,
+      });
+    }
+  }
+  return groups;
+});
+
+const sourceFieldGroups = computed<SelectGroup[]>(() => [
+  { options: sourceColumns.value.map(columnOption) },
+]);
+const targetFieldGroups = computed<SelectGroup[]>(() => [
+  { options: targetColumns.value.map(columnOption) },
+]);
+
+const handleSourceTableSelect = (value: string | number | null) => {
+  if (typeof value !== "number") return;
+  form.value.source_table_id = value;
+};
+const handleTargetTableSelect = (value: string | number | null) => {
+  if (typeof value !== "number") return;
+  form.value.target_table_id = value;
+};
+const handleSourceFieldSelect = (value: string | number | null) => {
+  sourceField.value = value == null ? "" : String(value);
+  applyJoinCondition();
+};
+const handleTargetFieldSelect = (value: string | number | null) => {
+  targetField.value = value == null ? "" : String(value);
+  applyJoinCondition();
+};
 
 const applyJoinCondition = () => {
   if (sourceField.value && targetField.value) {
@@ -239,6 +309,8 @@ const fetchRelationships = async () => {
   try {
     const res = await metadataApi.getRelationships(props.datasetId);
     relationships.value = res.data;
+    // 与后端 relationship_count 同口径（源表或目标表属于本数据集）
+    emit("count-change", relationships.value.length);
     if (viewMode.value === "graph") {
       nextTick(() => initOrUpdateGraph());
     }
@@ -995,35 +1067,31 @@ onUnmounted(() => {
                 <label class="block text-sm font-medium text-gray-700 mb-1"
                   >源表 (Left)</label
                 >
-                <select
-                  v-model="form.source_table_id"
-                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                >
-                  <option v-for="t in tables" :key="t.id" :value="t.id">
-                    {{ t.physical_name }} {{ t.term ? `(${t.term})` : "" }}
-                  </option>
-                </select>
+                <SearchableSelect
+                  :model-value="form.source_table_id"
+                  :groups="sourceTableGroups"
+                  aria-label="源表"
+                  placeholder="选择源表..."
+                  @update:model-value="handleSourceTableSelect"
+                />
                 <!-- Field Selector -->
                 <div class="mt-2">
                   <label
                     class="block text-[10px] uppercase font-bold text-gray-400 mb-1"
                     >关联字段</label
                   >
-                  <select
-                    v-model="sourceField"
-                    @change="applyJoinCondition"
-                    class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-white disabled:bg-gray-100"
-                  >
-                    <option value="">-- 选择字段 --</option>
-                    <option
-                      v-for="col in sourceColumns"
-                      :key="col.physical_name"
-                      :value="col.physical_name"
-                    >
-                      {{ col.physical_name }}
-                      {{ col.term ? `[${col.term}]` : "" }}
-                    </option>
-                  </select>
+                  <SearchableSelect
+                    :model-value="sourceField"
+                    :groups="sourceFieldGroups"
+                    :allow-empty="true"
+                    empty-label="-- 选择字段 --"
+                    empty-value=""
+                    empty-text="暂无可选字段"
+                    aria-label="源关联字段"
+                    size="sm"
+                    placeholder="-- 选择字段 --"
+                    @update:model-value="handleSourceFieldSelect"
+                  />
                 </div>
               </div>
               <div>
@@ -1031,53 +1099,31 @@ onUnmounted(() => {
                   >目标表 (Right)</label
                 >
                 <!-- 跨数据集分组下拉 -->
-                <select
-                  v-model="form.target_table_id"
-                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-none"
-                >
-                  <!-- 当前数据集（同库关联）-->
-                  <optgroup :label="'当前数据集'">
-                    <option v-for="t in tables" :key="t.id" :value="t.id">
-                      {{ t.physical_name }} {{ t.term ? `(${t.term})` : "" }}
-                    </option>
-                  </optgroup>
-                  <!-- 其他数据集（跨库关联）-->
-                  <template v-for="ds in allTablesList" :key="ds.dataset_id">
-                    <optgroup
-                      v-if="ds.tables.some(t => !tables.find(lt => lt.id === t.id))"
-                      :label="`${ds.display_name} [跨数据集]`"
-                    >
-                      <option
-                        v-for="t in ds.tables.filter(t => !tables.find(lt => lt.id === t.id))"
-                        :key="t.id"
-                        :value="t.id"
-                      >
-                        {{ t.physical_name }} {{ t.term ? `(${t.term})` : "" }}
-                      </option>
-                    </optgroup>
-                  </template>
-                </select>
+                <SearchableSelect
+                  :model-value="form.target_table_id"
+                  :groups="targetTableGroups"
+                  aria-label="目标表"
+                  placeholder="选择目标表..."
+                  @update:model-value="handleTargetTableSelect"
+                />
                 <!-- Field Selector：跨数据集时字段无法自动推断，提示手动填写 -->
                 <div class="mt-2">
                   <label
                     class="block text-[10px] uppercase font-bold text-gray-400 mb-1"
                     >关联字段</label
                   >
-                  <select
-                    v-model="targetField"
-                    @change="applyJoinCondition"
-                    class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-white disabled:bg-gray-100"
-                  >
-                    <option value="">-- 选择字段 --</option>
-                    <option
-                      v-for="col in targetColumns"
-                      :key="col.physical_name"
-                      :value="col.physical_name"
-                    >
-                      {{ col.physical_name }}
-                      {{ col.term ? `[${col.term}]` : "" }}
-                    </option>
-                  </select>
+                  <SearchableSelect
+                    :model-value="targetField"
+                    :groups="targetFieldGroups"
+                    :allow-empty="true"
+                    empty-label="-- 选择字段 --"
+                    empty-value=""
+                    empty-text="暂无可选字段"
+                    aria-label="目标关联字段"
+                    size="sm"
+                    placeholder="-- 选择字段 --"
+                    @update:model-value="handleTargetFieldSelect"
+                  />
                 </div>
               </div>
             </div>
