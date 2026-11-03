@@ -193,7 +193,7 @@ async def test_search_knowledge_base_parameter_priority():
         args, kwargs = mock_retrieve.call_args
         assert kwargs["similarity_threshold"] == 0.8
         assert kwargs["vector_similarity_weight"] == 0.6
-        assert kwargs["top_k"] == 9
+        assert kwargs["top_n"] == 9
 
 
 @pytest.mark.asyncio

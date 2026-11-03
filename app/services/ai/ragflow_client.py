@@ -24,6 +24,11 @@ DEFAULT_METADATA_TIMEOUT = 20.0
 DEFAULT_WRITE_TIMEOUT = 30.0
 DEFAULT_RETRIEVE_TIMEOUT = 30.0
 
+#: RAGFlow 的 ``top_k`` 是「参与向量余弦计算的候选 chunk 数」（官方默认 1024），
+#: 不是返回条数；返回条数由 ``page_size`` 控制。把 top_k 当成「前 n 条」会让
+#: 召回池被压缩到个位数，阈值过滤后基本凑不满，检索质量明显低于控制台。
+RAGFLOW_VECTOR_CANDIDATE_TOP_K = 1024
+
 # 库列表的短缓存：首屏要翻 10+ 页，不加缓存等于每个用户每次进页面都重打一遍；
 # 但也不能久，否则刚建的库要等很久才出现。写操作会显式 clear。
 DATASET_LIST_TTL = 60.0
@@ -1019,19 +1024,28 @@ class RagFlowClient:
         self, 
         query: str, 
         dataset_ids: List[str], 
-        top_k: int = 5,
+        top_n: int = 5,
         similarity_threshold: float = 0.5,
-        vector_similarity_weight: float = 0.3
+        vector_similarity_weight: float = 0.3,
+        vector_candidate_top_k: int = RAGFLOW_VECTOR_CANDIDATE_TOP_K,
     ) -> List[Dict[str, Any]]:
         """
         Retrieve chunks from specific datasets with robust auto-retry on network errors or 5xx failures.
-        
+
+        参数语义严格对齐 RAGFlow 官方定义（top_k 与 page_size 不是一回事）：
+
+        - ``top_n`` → 上游 ``page_size``，即最终返回给调用方的片段条数（控制台 UI 的「前 n 条」）；
+        - ``vector_candidate_top_k`` → 上游 ``top_k``，即参与向量余弦计算的候选池深度，
+          默认保持 RAGFlow 官方值 1024。把它设成「前 n 条」会压缩召回池，
+          导致阈值过滤后凑不满条数，这也是此前平台效果弱于控制台的原因。
+
         Args:
             query: User question.
             dataset_ids: List of dataset IDs.
-            top_k: Number of chunks to retrieve.
+            top_n: 最终返回条数（映射到上游 page_size）。
             similarity_threshold: Minimum similarity score.
             vector_similarity_weight: Weight for vector search (0-1). Remaining is full-text weight.
+            vector_candidate_top_k: 向量候选池深度（映射到上游 top_k），默认 1024。
         """
         await self._ensure_config()
         
@@ -1039,8 +1053,8 @@ class RagFlowClient:
         payload = {
             "question": query,
             "dataset_ids": dataset_ids,
-            "top_k": top_k,
-            "page_size": top_k * 3, # 增大候选池深度，提高重排稳定性
+            "top_k": max(1, int(vector_candidate_top_k)),
+            "page_size": max(1, int(top_n)),
             "similarity_threshold": similarity_threshold,
             "vector_similarity_weight": vector_similarity_weight
         }

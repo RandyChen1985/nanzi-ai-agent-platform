@@ -136,7 +136,7 @@ async def search_knowledge_base(query: str, dataset_ids: Optional[str | list[str
         chunks = await client.retrieve(
             query,
             target_datasets,
-            top_k=top_k,
+            top_n=top_k,
             similarity_threshold=threshold,
             vector_similarity_weight=vector_weight,
         )

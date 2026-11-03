@@ -668,7 +668,7 @@ class ExampleService:
             results = await client.retrieve(
                 search_query, 
                 [target_kb_id], 
-                top_k=top_k, 
+                top_n=top_k, 
                 similarity_threshold=similarity_threshold,
                 vector_similarity_weight=vector_weight
             )

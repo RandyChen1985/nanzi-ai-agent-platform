@@ -132,6 +132,12 @@ async def test_get_ragflow_config_summary_does_not_expose_api_key(monkeypatch):
         "configured": True,
         "knowledge_base_enabled": True,
         "metadata_provider": "ragflow",
+        # 检索测试页的默认参数与智能体链路同源，未配置时退回代码兜底值
+        "retrieval_defaults": {
+            "top_n": 5,
+            "similarity_threshold": 0.2,
+            "vector_similarity_weight": 0.3,
+        },
     }
     assert "secret-api-key" not in str(result)
 

@@ -1530,7 +1530,7 @@ async def knowledge_search(
         chunks = await RagFlowClient(config_prefix="knowledge_ragflow").retrieve(
             query.strip(),
             target_ids,
-            top_k=effective_top_k,
+            top_n=effective_top_k,
             similarity_threshold=resolved_threshold,
             vector_similarity_weight=vector_weight,
         )

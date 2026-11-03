@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -160,7 +162,8 @@ class ParseDocumentsRequest(BaseModel):
 class RetrievalTestRequest(BaseModel):
     query: str = Field(..., min_length=1)
     dataset_ids: List[str] = Field(..., min_length=1)
-    top_k: int = Field(default=5, ge=1, le=50)
+    #: 语义是「返回条数」，映射到 RAGFlow 的 page_size（不是 top_k）
+    top_n: int = Field(default=5, ge=1, le=50)
     similarity_threshold: float = Field(default=0.2, ge=0, le=1)
     vector_similarity_weight: float = Field(default=0.3, ge=0, le=1)
 
@@ -361,6 +364,23 @@ async def record_knowledge_audit(
     )
 
 
+#: 断连探测间隔：太密会空转 receive，太疏则上游白跑的时间变长。
+DISCONNECT_POLL_INTERVAL_SECONDS = 0.25
+
+
+async def _watch_client_disconnect(request: Request) -> bool:
+    """轮询客户端连接状态，断开即返回 True。
+
+    检索是高延迟的同步等待，用户点「取消检索」后浏览器到本服务的连接立刻断开，
+    但后端到 RAGFlow 的请求不会自己停：不主动取消就要等到超时（默认 30s），
+    期间上游的向量检索/重排算力照样被占用。
+    """
+    while True:
+        if await request.is_disconnected():
+            return True
+        await asyncio.sleep(DISCONNECT_POLL_INTERVAL_SECONDS)
+
+
 def _audit_status_code(error: Exception) -> int:
     """审计里的状态码要尽量还原真实原因，不能一律 500。
 
@@ -540,7 +560,10 @@ async def _collect_affected_dataset_permission_user_ids(
 
 @router.get("/config")
 async def get_ragflow_config_summary():
-    from app.services.ai.knowledge_utils import is_knowledge_base_enabled
+    from app.services.ai.knowledge_utils import (
+        is_knowledge_base_enabled,
+        resolve_rag_retrieval_params,
+    )
 
     base_url = await ConfigService.get("knowledge_ragflow_api_url")
     api_key = await ConfigService.get("knowledge_ragflow_api_key")
@@ -549,6 +572,13 @@ async def get_ragflow_config_summary():
     metadata_provider = await ConfigService.get("metadata_provider", default="local")
     knowledge_enabled = await is_knowledge_base_enabled()
     api_url = base_url.rstrip("/") + "/" if base_url else ""
+    # 检索测试页的参数默认值与智能体链路同源：配置改一次两边一起变，
+    # 避免「页面上写死 0.3、线上读配置 0.5」两套默认值打架。
+    threshold, vector_weight, top_k = resolve_rag_retrieval_params(
+        system_threshold=await ConfigService.get("knowledge_ragflow_similarity_threshold"),
+        system_weight=await ConfigService.get("knowledge_ragflow_vector_weight"),
+        system_top_k=await ConfigService.get("knowledge_ragflow_metadata_top_k"),
+    )
     return {
         "code": 0,
         "data": {
@@ -557,6 +587,11 @@ async def get_ragflow_config_summary():
             "configured": bool(api_url and api_key),
             "metadata_provider": metadata_provider,
             "knowledge_base_enabled": knowledge_enabled,
+            "retrieval_defaults": {
+                "top_n": top_k,
+                "similarity_threshold": threshold,
+                "vector_similarity_weight": vector_weight,
+            },
         },
     }
 
@@ -2235,13 +2270,40 @@ async def retrieval_test(
     await require_dataset_access(user, db, payload.dataset_ids)
     client = RagFlowClient(config_prefix="knowledge_ragflow")
     try:
-        chunks = await client.retrieve(
-            payload.query,
-            payload.dataset_ids,
-            top_k=payload.top_k,
-            similarity_threshold=payload.similarity_threshold,
-            vector_similarity_weight=payload.vector_similarity_weight,
+        # 「前 n 条」只映射到 page_size；向量候选池沿用 RAGFlow 官方默认 1024，
+        # 与在控制台用同一组参数检索完全一致，页面调参才有迁移意义。
+        retrieve_task = asyncio.create_task(
+            client.retrieve(
+                payload.query,
+                payload.dataset_ids,
+                top_n=payload.top_n,
+                similarity_threshold=payload.similarity_threshold,
+                vector_similarity_weight=payload.vector_similarity_weight,
+            )
         )
+        disconnect_task = asyncio.create_task(_watch_client_disconnect(request))
+        try:
+            done, _ = await asyncio.wait(
+                {retrieve_task, disconnect_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            disconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await disconnect_task
+            # 上游请求还没回来就收尾（客户端断开、或本请求本身被取消）时，
+            # 必须把它一起取消，否则 httpx 连接和协程会挂到超时才释放。
+            if not retrieve_task.done():
+                retrieve_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await retrieve_task
+
+        if retrieve_task not in done:
+            # 用户点了「取消检索」或关掉页面：浏览器到本服务的连接已断，
+            # 也不写检索日志——用户没拿到结果，算进零结果率会污染效果指标。
+            raise HTTPException(status_code=499, detail="客户端已断开，检索请求已取消")
+
+        chunks = retrieve_task.result()
         try:
             await KnowledgeRetrievalLogService.log(
                 query=payload.query,
@@ -2270,7 +2332,7 @@ async def retrieval_test(
             "action": "retrieval_test",
             "dataset_ids": payload.dataset_ids,
             "query_summary": payload.query[:200],
-            "top_k": payload.top_k,
+            "top_n": payload.top_n,
             "similarity_threshold": payload.similarity_threshold,
             "vector_similarity_weight": payload.vector_similarity_weight,
             "hit_count": len(chunks),
