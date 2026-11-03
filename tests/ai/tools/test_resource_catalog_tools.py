@@ -205,6 +205,8 @@ async def test_list_available_agents_returns_lightweight_fields():
         display_name="数据分析专家",
         description="负责数据查询与分析",
         capabilities=["text2sql", "chart"],
+        is_system=True,
+        is_enabled=True,
     )
 
     db = AsyncMock()
@@ -227,13 +229,17 @@ async def test_list_available_agents_returns_lightweight_fields():
         "app.services.ai.agent_manager.AgentManagerService.list_agents",
         AsyncMock(return_value=[]),
     ) as mock_list_agents, patch(
-        "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
+        # 目录要读调用方智能体的工具配置，才能对齐调度白名单
+        "app.services.ai.agent_manager.AgentManagerService.get_active_agent_config",
+        AsyncMock(return_value=None),
+    ), patch(
+        "app.services.ai.agent_roster.resolve_delegable_system_agents_for_user",
         AsyncMock(return_value=[agent_target]),
     ) as mock_resolve_delegable:
         result = await list_available_agents.ainvoke({})
 
     payload = json.loads(result)
-    assert payload["scope"] == "delegable_system_agents"
+    assert payload["scope"] == "delegable_agents"
     assert payload["count"] == 1
     assert "note" not in payload
     assert payload["items"] == [
@@ -243,16 +249,15 @@ async def test_list_available_agents_returns_lightweight_fields():
             "description": "负责数据查询与分析",
             "capabilities": ["text2sql", "chart"],
             "is_current": False,
+            "is_mine": False,
         }
     ]
     mock_list_agents.assert_not_awaited()
-    mock_resolve_delegable.assert_awaited_once_with(
-        db,
-        [agent_target],
-        user_id=7,
-        is_admin=False,
-        current_agent_id=None,
-    )
+    assert mock_resolve_delegable.await_count == 1
+    kwargs = mock_resolve_delegable.await_args.kwargs
+    assert kwargs["current_agent_id"] is None
+    assert kwargs["configured_tools"] is None
+    assert kwargs["user_info"]["user_id"] == 7
 
 
 @pytest.mark.asyncio
@@ -288,13 +293,16 @@ async def test_list_available_agents_empty_catalog_without_permitted_system_agen
         "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
         return_value=db_cm,
     ), patch(
-        "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
+        "app.services.ai.agent_manager.AgentManagerService.get_active_agent_config",
+        AsyncMock(return_value=None),
+    ), patch(
+        "app.services.ai.agent_roster.resolve_delegable_system_agents_for_user",
         AsyncMock(return_value=[]),
     ):
         result = await list_available_agents.ainvoke({})
 
     payload = json.loads(result)
-    assert payload["scope"] == "delegable_system_agents"
+    assert payload["scope"] == "delegable_agents"
     assert payload["items"] == []
     assert payload["count"] == 0
     assert "没有被分配" in payload["note"]
@@ -326,7 +334,10 @@ async def test_list_available_agents_empty_catalog_note_for_admin():
         "app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal",
         return_value=db_cm,
     ), patch(
-        "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
+        "app.services.ai.agent_manager.AgentManagerService.get_active_agent_config",
+        AsyncMock(return_value=None),
+    ), patch(
+        "app.services.ai.agent_roster.resolve_delegable_system_agents_for_user",
         AsyncMock(return_value=[]),
     ):
         result = await list_available_agents.ainvoke({})

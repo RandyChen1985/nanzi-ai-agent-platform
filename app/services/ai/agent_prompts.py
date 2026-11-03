@@ -225,8 +225,8 @@ class AgentServicePrompts:
     # marker: "has_all" 需工具全部可见才输出；"always" 无条件输出（fetch 未绑定时兜底）。
     # 行顺序即输出顺序，勿随意调整。
     _PLATFORM_KNOWLEDGE_LOOKUP_ROWS: Tuple[Tuple[Tuple[object, str], str], ...] = (
-        (("sub_agent_call", "has_all"), "| 明确需要查询内部业务数据库/结构化指标，或明确需要检索内部知识库/企业文档/制度手册，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造，可用子代理清单参见下文）；普通公网信息、编程概念、文本处理、生活常识或仅靠泛化关键词无法确认内部来源的问题，不要委派 |"),
-        (("sub_agent_batch_call", "has_all"), "| 需要同时处理多个彼此独立的内部任务 | 调用 **sub_agent_batch_call** 并行委派，结果按请求顺序返回；存在前后依赖时改用 **sub_agent_call** 串行委派 |"),
+        (("sub_agent_call", "has_all"), "| 明确需要查询内部业务数据库/结构化指标，或明确需要检索内部知识库/企业文档/制度手册，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造）；**只能调用「可委派子智能体清单」中列出的标识**，清单外的名字一律不可调用、也不要用相近名字猜测；普通公网信息、编程概念、文本处理、生活常识或仅靠泛化关键词无法确认内部来源的问题，不要委派 |"),
+        (("sub_agent_batch_call", "has_all"), "| 需要同时处理多个彼此独立的内部任务 | 调用 **sub_agent_batch_call** 并行委派，结果按请求顺序返回（每个目标同样受「可委派子智能体清单」约束）；存在前后依赖时改用 **sub_agent_call** 串行委派 |"),
         (("todo_write", "has_all"), "| 请求包含多个执行步骤、多个工具或子代理、明显前后依赖，或需要生成文件 | 先调用 **todo_write** 建立完整任务清单；每完成、失败或取消一个阶段都更新清单；单步问答、单次检索和单次查询不要调用 |"),
         (("__publish__", "special"), "__PUBLISH__"),
         (("memory_search", "has_all"), "| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |"),
@@ -617,6 +617,22 @@ class AgentServicePrompts:
                     tool_names.add("sub_agent_call")
                     tool_names.add("sub_agent_batch_call")
                     tool_names.add("todo_write")
+            except Exception:
+                pass
+            # 调度白名单被显式清空（`delegable_agent_ids = []`）时委派实际不可用：
+            # 能力表不能继续写「必须委派」，否则提示词与运行时相反，模型会对着一个
+            # 必然被拒的工具反复尝试。
+            try:
+                from app.services.ai.tools.agent_delegate_tool import (
+                    resolve_delegation_allowlist,
+                )
+
+                allowlist_configured, allowlist = resolve_delegation_allowlist(
+                    getattr(agent_config, "tools", None)
+                )
+                if allowlist_configured and not allowlist:
+                    tool_names.discard("sub_agent_call")
+                    tool_names.discard("sub_agent_batch_call")
             except Exception:
                 pass
 

@@ -67,14 +67,19 @@ async def test_roster_resolves_system_candidates_without_user_context():
     session.execute = AsyncMock(return_value=result)
 
     with patch(
-        "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
+        "app.services.ai.tools.agent_delegate_tool.resolve_effective_delegable_agents",
         AsyncMock(return_value=[]),
     ) as resolve_mock:
         await resolve_delegable_system_agents_for_user(
             session,
-            user_info={"user_id": 7, "role": "user"},
+            user_info={"user_id": 7, "user_name": "alice", "role": "user"},
             current_agent_id="current-agent",
         )
 
-    passed_agents = resolve_mock.await_args.args[1]
-    assert [a.name for a in passed_agents] == ["chat-bi", "knowledge-base"]
+    # roster 不再自己拼候选，而是把「用户维度 + 白名单」透传给统一出口，
+    # 保证通讯录与 sub_agent_call 用的是同一套过滤。
+    kwargs = resolve_mock.await_args.kwargs
+    assert kwargs["allowlist_configured"] is False
+    assert kwargs["allowlist"] is None
+    assert kwargs["user_name"] == "alice"
+    assert kwargs["current_agent_id"] == "current-agent"

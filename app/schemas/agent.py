@@ -14,6 +14,12 @@ class ToolConfigItem(BaseModel):
     description_override: Optional[str] = None # Optional: Allow prompting tuning
     engine_config_override: Optional[Dict[str, Any]] = None
     metadata_dataset_ids: Optional[List[str]] = None  # get_dataset_schema 可见元数据集范围
+    # sub_agent_call / sub_agent_batch_call 的调度白名单：
+    #   None = 未配置（维持默认：系统级全量、自建不可委派）
+    #   []   = 显式禁止委派任何子智能体
+    #   非空 = 只允许名单内的（系统级仍要过 agent 授权，自建仍要过本人创建）
+    # 与 metadata_dataset_ids 同构：只对特定工具生效，随发布版本走。
+    delegable_agent_ids: Optional[List[str]] = None
 
     @model_validator(mode="after")
     def _validate_metadata_dataset_ids(self):
@@ -36,6 +42,34 @@ class ToolConfigItem(BaseModel):
                 f"以下取值无法识别：{'、'.join(invalid)}。请重新选择数据集。"
             )
         return self
+
+    @field_validator("delegable_agent_ids", mode="before")
+    @classmethod
+    def _validate_delegable_agent_ids(cls, value: Any) -> Any:
+        """调度白名单只做「去空、去重、保序」，不在这里校验存在性。
+
+        智能体可能事后被删除或禁用，配置要能原样留着（版本回滚时还要用），
+        所以存在性校验放在运行时按「静默排除」处理，而不是保存时拒绝。
+
+        ``mode="before"``：历史/脏数据里可能混入 null 或空串，先在这里清掉，
+        否则 Pydantic 的 ``List[str]`` 会直接拒绝整条工具配置，导致保存失败。
+        """
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple, set)):
+            return value
+        seen: set[str] = set()
+        cleaned: List[str] = []
+        for item in value:
+            agent_id = str(item or "").strip()
+            if not agent_id or agent_id in seen:
+                continue
+            seen.add(agent_id)
+            cleaned.append(agent_id)
+        return cleaned
+
 
 class AIAgentVersionBase(BaseModel):
     version_number: Optional[int] = None

@@ -24,6 +24,7 @@ import AgentHistoryModal from "../components/agent/AgentHistoryModal.vue";
 import RagFlowResourceSelector from "../components/RagFlowResourceSelector.vue";
 import ToolRuntimeConfigModal from "../components/agent/ToolRuntimeConfigModal.vue";
 import MetadataDatasetBindingModal from "../components/agent/MetadataDatasetBindingModal.vue";
+import DelegationScopeModal from "../components/agent/DelegationScopeModal.vue";
 import DingTalkConfigModal from "../components/agent/DingTalkConfigModal.vue";
 import EmailConfigModal from "../components/agent/EmailConfigModal.vue";
 import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue";
@@ -66,6 +67,9 @@ const selectedAgent = ref<AIAgent | null>(null);
 
 const showToolRuntimeModal = ref(false);
 const showMetadataDatasetBindingModal = ref(false);
+const showDelegationScopeModal = ref(false);
+const delegationScopeToolName = ref<string>("sub_agent_call");
+const delegationScopeSelection = ref<string[]>([]);
 const showDingTalkModal = ref(false);
 const showEmailModal = ref(false);
 const showWeChatWorkModal = ref(false);
@@ -904,6 +908,40 @@ watch(configIssueItems, (list) => {
 
 /** 权属人已停用的智能体：管理员需要主动转交，否则会变成没人能动的孤儿。 */
 const orphanAgents = computed(() => agents.value.filter((a) => a.owner_active === false));
+
+/* ---------------- 方案 A：页头状态摘要 ----------------
+ * 顶部不再只有「共 N 个」，也不再让两条警示条各占一行：
+ * 先把「有多少需要处理」压成一行文字，再在下方用一条提示说清是哪几类、怎么处理。
+ */
+const unreadyCount = computed(() => agents.value.filter((a) => !a.readiness_ready).length)
+const reviewCount = computed(() => agents.value.filter((a) => isPendingReview(a)).length)
+const disabledCount = computed(() => agents.value.filter((a) => !a.is_enabled).length)
+
+/** 需要处理：未就绪 / 权属人停用 / 配置异常 / 审核中，按智能体去重 */
+const attentionAgentIds = computed(() => {
+  const ids = new Set<string>()
+  for (const agent of agents.value) {
+    if (
+      !agent.readiness_ready ||
+      agent.owner_active === false ||
+      isPendingReview(agent) ||
+      agentHasConfigIssue(agent)
+    ) {
+      ids.add(String(agent.id))
+    }
+  }
+  return ids
+})
+
+/** 合并提示条的明细文案；空串表示当前没有可提示的问题（整条不渲染） */
+const attentionSummaryText = computed(() => {
+  const parts: string[] = []
+  if (unreadyCount.value) parts.push(`${unreadyCount.value} 个待完善`)
+  if (visibleConfigIssues.value.length) parts.push(`${visibleConfigIssues.value.length} 处配置异常`)
+  if (orphanAgents.value.length) parts.push(`${orphanAgents.value.length} 个权属人已停用`)
+  if (reviewCount.value) parts.push(`${reviewCount.value} 个审核中`)
+  return parts.join(' · ')
+})
 
 const filteredAgents = computed(() => {
   let result = [...agents.value];
@@ -3361,6 +3399,98 @@ const hasToolMetadataDatasetBinding = (toolName: string) => {
   );
 };
 
+/** 取某个委派工具在 versionForm.tools 里的对象配置（字符串形态没有白名单可言）。 */
+const getDelegationToolConfig = (toolName: string): any | null => {
+  const found = versionForm.value.tools?.find(t =>
+    (typeof t !== 'string' && (t as any).name === toolName)
+  );
+  return found && typeof found === 'object' ? (found as any) : null;
+};
+
+/** 返回该工具自己的白名单；null 表示未配置（不能与空数组混为一谈）。 */
+const getDelegationAllowlist = (toolName: string): string[] | null => {
+  const cfg = getDelegationToolConfig(toolName);
+  const ids = cfg?.delegable_agent_ids;
+  return Array.isArray(ids) ? ids : null;
+};
+
+/**
+ * 生效中的白名单数量。
+ * sub_agent_batch_call 未单独配置时沿用 sub_agent_call 的名单（后端同样的回落规则），
+ * 前端若只读自己那份，就会出现「保存了却显示 0 个」的错觉。
+ */
+const delegationScopeCount = (toolName: string): number => {
+  const own = getDelegationAllowlist(toolName);
+  if (own !== null) return own.length;
+  if (toolName === 'sub_agent_batch_call') {
+    return getDelegationAllowlist('sub_agent_call')?.length ?? 0;
+  }
+  return 0;
+};
+
+const hasDelegationAllowlist = (toolName: string): boolean => delegationScopeCount(toolName) > 0;
+
+const openDelegationScope = (toolName: string) => {
+  delegationScopeToolName.value = toolName;
+  const own = getDelegationAllowlist(toolName);
+  delegationScopeSelection.value =
+    own ??
+    (toolName === 'sub_agent_batch_call' ? getDelegationAllowlist('sub_agent_call') ?? [] : []);
+  showDelegationScopeModal.value = true;
+};
+
+const saveDelegationScope = (ids: string[]) => {
+  const toolName = delegationScopeToolName.value;
+  const existing = getDelegationToolConfig(toolName);
+  // 保存即写入配置项：即使原本是字符串形态也升级为对象，否则字段存不下去。
+  const next = { ...(existing || { name: toolName }), name: toolName, delegable_agent_ids: ids };
+  const tools = [...(versionForm.value.tools || [])];
+  const idx = tools.findIndex(t =>
+    (typeof t === 'string' ? t === toolName : (t as any).name === toolName)
+  );
+  if (idx > -1) {
+    tools[idx] = next;
+    versionForm.value.tools = tools;
+    showToast(
+      ids.length ? `${toolName} 调度范围已更新（${ids.length} 个智能体）` : `${toolName} 已清空调度范围`,
+      "success",
+    );
+  }
+  showDelegationScopeModal.value = false;
+};
+
+/** 当前用户被授予的 agent 权限 id；null 表示拿不到（此时不标灰，避免误伤）。 */
+const delegationAuthorizedAgentIds = computed<string[] | null>(() => {
+  try {
+    const raw = localStorage.getItem('user_info');
+    if (!raw) return null;
+    const info = JSON.parse(raw);
+    if (info?.role === 'admin') return null;
+    const ids = info?.permissions?.agents;
+    return Array.isArray(ids) ? ids : null;
+  } catch {
+    return null;
+  }
+});
+
+const delegationScopeAgents = computed(() =>
+  (agents.value || [])
+    // 自己永远不能被自己委派（后端 filter_delegable_agents 也会排掉），
+    // 列出来只会让人误以为勾上就生效。
+    .filter(a => String(a.id) !== String((selectedAgent.value as any)?.id ?? ""))
+    .filter(a => (a as any).is_enabled !== false)
+    .map(a => ({
+      id: String(a.id),
+      name: a.name,
+      display_name: (a as any).display_name,
+      description: (a as any).description,
+      capabilities: (a as any).capabilities || [],
+      is_system: (a as any).is_system,
+      is_enabled: (a as any).is_enabled,
+      created_by: (a as any).created_by,
+    })),
+);
+
 const canEditVersion = computed(() => {
   return selectedAgent.value?.can_edit_versions !== false &&
          (!versionForm.value.id || versionForm.value.status === 'DRAFT');
@@ -3511,14 +3641,18 @@ const getPrimaryCardAction = (
   return 'configure'
 }
 
+/**
+ * 主按钮只表达一件事：进配置。
+ *
+ * 原实现按状态在「配置与发布 / 完善配置 / 继续配置 / 启用 / 编辑智能体 / 复制一份」
+ * 之间换文案，还配蓝橙绿白四套颜色——用户每张卡都要重新读一遍按钮在说什么。
+ * 现在状态差异交给卡片的就绪度行与开关，按钮恒为「配置与发布」；
+ * 只有系统级只读（改不了草稿）走「复制一份」这条唯一出路。
+ */
 const getPrimaryCardActionLabel = (agent: AIAgent) => {
   const action = getPrimaryCardAction(agent)
   if (action === 'frozen') return '审核中'
   if (action === 'readonly') return '复制一份'
-  if (action === 'continue') return '继续配置'
-  if (action === 'enable') return '启用'
-  if (action === 'edit') return '编辑智能体'
-  if (!agent.readiness_ready) return '完善配置'
   return '配置与发布'
 }
 
@@ -3534,7 +3668,13 @@ const runPrimaryCardAction = (agent: AIAgent) => {
     return
   }
   if (action === 'enable') {
-    if (!agent.is_enabled) toggleAgentStatus(agent)
+    // 按钮已统一为「配置与发布」，启用动作交回卡片右上角开关；
+    // 这里按引擎走配置入口，避免按钮说的和做的不是一回事。
+    if (agent.engine_type === 'RAGFLOW' || agent.engine_type === 'OPENCLAW') {
+      openAgentModal(agent)
+      return
+    }
+    openDrawer(agent)
     return
   }
   if (action === 'edit') {
@@ -3558,7 +3698,9 @@ const followReadinessGap = (agent: AIAgent) => {
 }
 
 const AGENT_FLOW_GUIDE_DISMISSED_KEY = 'nanzi_agent_flow_guide_dismissed'
-const showAgentFlowGuide = ref(localStorage.getItem(AGENT_FLOW_GUIDE_DISMISSED_KEY) !== '1')
+// 方案 A：5 步指引不再常驻首屏。默认收起，点标题右侧「显示指引」再展开；
+// 是否点过「不再提示」仍然记在本地，供后续「首次进入自动展开」复用。
+const showAgentFlowGuide = ref(false)
 
 const closeAgentFlowGuide = () => {
   showAgentFlowGuide.value = false
@@ -3742,39 +3884,63 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 <template>
   <div class="space-y-4 sm:space-y-5">
     <!-- 第 1 行：标题 + 主操作固定右上。主操作不再和筛选共用一行，
-         所以宽度再窄「新建智能体」也不会被单独挤到第二行。 -->
+         所以宽度再窄「新建智能体」也不会被单独挤到第二行。
+         方案 A：标题下补一行状态摘要（待完善 / 审核中 / 已停用），
+         「?」与「显示指引」收进右侧动作区，不再和主操作一起摊在标题旁。 -->
     <div class="flex items-start justify-between gap-4">
-      <div class="flex min-w-0 flex-wrap items-center gap-2.5">
-        <h1 class="shrink-0 whitespace-nowrap text-xl font-bold text-gray-900 sm:text-2xl">智能体中心</h1>
-        <span class="shrink-0 text-xs font-medium text-gray-500">共 {{ totalAgentCount }} 个</span>
-        <!-- 说明入口降到「附注」级别：无边框、灰色小图标，不再和主操作抢注意力 -->
-        <button
-          type="button"
-          class="hidden sm:flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 cursor-pointer"
-          title="智能体调度与托管说明"
-          @click="showHelp = true"
-        >
-          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </button>
-        <!-- 不再带图标：它和「?」都是圆圈符号，并排会显得重复 -->
-        <button
-          v-if="!showAgentFlowGuide"
-          type="button"
-          class="hidden sm:inline shrink-0 whitespace-nowrap text-xs font-medium text-gray-500 underline-offset-2 transition-colors hover:text-primary hover:underline cursor-pointer"
-          title="重新展开智能体全流程指引"
-          @click="restoreAgentFlowGuide"
-        >
-          显示指引
-        </button>
+      <div class="min-w-0">
+        <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <h1 class="shrink-0 whitespace-nowrap text-xl font-bold text-gray-900 sm:text-2xl">智能体中心</h1>
+          <span class="shrink-0 text-xs font-medium text-gray-500">共 {{ totalAgentCount }} 个</span>
+          <!-- 说明入口只作为附注：无边框、灰色小图标 -->
+          <button
+            type="button"
+            class="hidden h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 sm:flex"
+            title="智能体调度与托管说明"
+            @click="showHelp = true"
+          >
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </button>
+        </div>
+        <!-- 状态摘要替代两条警示条里的「有多少」，明细统一进下方合并提示 -->
+        <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
+          <span>待完善 <b class="font-semibold tabular-nums text-gray-700">{{ unreadyCount }}</b></span>
+          <span class="text-gray-300">·</span>
+          <span>审核中 <b class="font-semibold tabular-nums text-gray-700">{{ reviewCount }}</b></span>
+          <span class="text-gray-300">·</span>
+          <span>已停用 <b class="font-semibold tabular-nums text-gray-700">{{ disabledCount }}</b></span>
+        </p>
       </div>
 
       <div class="flex shrink-0 items-center gap-2">
         <button
+          v-if="!showAgentFlowGuide && (workspaceTab === 'mine' || workspaceTab === 'all')"
+          type="button"
+          class="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 shadow-sm transition-colors hover:border-primary/40 hover:text-primary sm:inline-flex"
+          title="展开智能体 5 步构建指引"
+          @click="restoreAgentFlowGuide"
+        >
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          显示指引
+        </button>
+        <button
+          v-else-if="workspaceTab === 'mine' || workspaceTab === 'all'"
+          type="button"
+          class="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 shadow-sm transition-colors hover:bg-blue-100 sm:inline-flex"
+          title="收起智能体全流程指引"
+          @click="closeAgentFlowGuide"
+        >
+          收起指引
+        </button>
+
+        <button
           v-if="canReviewSystem"
           type="button"
-          class="relative flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm transition-colors hover:border-primary/40 hover:text-primary"
+          class="relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm transition-colors hover:border-primary/40 hover:text-primary"
           title="查看待审核的「发布为系统级」申请"
           @click="openSystemReview"
         >
@@ -3799,7 +3965,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
             <button
               type="button"
-              class="flex items-center gap-1.5 bg-primary px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark cursor-pointer"
+              class="flex items-center gap-1.5 whitespace-nowrap bg-primary px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark cursor-pointer"
               @click="startAgentCreation"
             >
               <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -4010,6 +4176,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
     </div>
       <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
 
+    <!-- 智能体 5 步全流程指引：方案 A 起改为按需展开，不再常驻首屏 -->
+    <AgentFlowGuideBanner
+      v-if="showAgentFlowGuide"
+      @action="handleFlowGuideAction"
+      @close="closeAgentFlowGuide"
+      @dismiss="dismissAgentFlowGuide"
+    />
+
     <!-- 第 3 行：条件藏在面板里，收起后必须能看见筛了什么，也避免「筛选了但忘了」 -->
     <div v-if="activeFilterChips.length" class="flex flex-wrap items-center gap-2 text-xs">
       <span class="text-gray-500">已筛选：</span>
@@ -4030,61 +4204,52 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       <span class="ml-auto text-gray-500">找到 {{ filteredAgents.length }} 个智能体</span>
     </div>
 
-    <!-- 孤儿智能体提示：权属人已停用，没人能编辑。只在管理员视图且确实存在时渲染。 -->
+    <!-- 方案 A：原先「权属人已停用」「配置异常」两条独立警示各占一行、还和筛选 chips 挤在
+         同一竖列里，用户分不清哪条是全局状态、哪条是自己点的筛选。现在合并成一条
+         「N 个智能体需要处理」，明细默认收起；没有任何问题时整条不渲染。 -->
     <div
-      v-if="isAdminViewer && orphanAgents.length"
-      class="rounded-xl border border-violet-200 bg-violet-50/80 px-4 py-3"
-    >
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="flex min-w-0 items-center gap-2">
-          <svg class="h-4 w-4 shrink-0 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-2.99l-6.93-12a2 2 0 00-3.48 0l-6.93 12A2 2 0 005.07 19z" />
-          </svg>
-          <span class="text-sm font-medium text-violet-900">
-            {{ orphanAgents.length }} 个智能体的权属人已停用
-          </span>
-          <span class="hidden truncate text-xs text-violet-700 sm:inline">
-            已无人能编辑，建议转交给仍在岗的同事
-          </span>
-        </div>
-        <button
-          type="button"
-          class="shrink-0 cursor-pointer rounded-md px-2 py-1 text-xs font-medium text-violet-800 transition-colors hover:bg-violet-100"
-          @click="ownerFilter = 'orphan'"
-        >
-          只看这些
-        </button>
-      </div>
-    </div>
-
-    <!-- 模型配置异常提示：只在有问题时渲染，正常时完全不占空间 -->
-    <div
-      v-if="visibleConfigIssues.length"
-      class="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3"
+      v-if="attentionSummaryText"
+      class="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3"
     >
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex min-w-0 items-center gap-2">
           <svg class="h-4 w-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-2.99l-6.93-12a2 2 0 00-3.48 0l-6.93 12A2 2 0 005.07 19z" />
           </svg>
           <span class="text-sm font-medium text-amber-900">
-            {{ visibleConfigIssues.length }} 处配置异常
+            {{ attentionAgentIds.size }} 个智能体需要处理
           </span>
-          <span class="hidden truncate text-xs text-amber-700 sm:inline">
-            相关调用会失败，请尽快修复
-          </span>
+          <span class="hidden truncate text-xs text-amber-700 sm:inline">{{ attentionSummaryText }}</span>
         </div>
-        <div class="flex shrink-0 items-center gap-2">
+        <div class="flex shrink-0 items-center gap-1">
           <button
+            v-if="unreadyCount"
             type="button"
-            class="cursor-pointer rounded-md px-2 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100"
-            @click="modelIssuePanelOpen = !modelIssuePanelOpen"
+            class="cursor-pointer whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100"
+            @click="readinessFilter = 'unready'"
           >
-            {{ modelIssuePanelOpen ? '收起' : '查看' }}
+            只看待完善
           </button>
           <button
+            v-if="isAdminViewer && orphanAgents.length"
             type="button"
-            class="cursor-pointer rounded-md px-2 py-1 text-xs text-amber-700 transition-colors hover:bg-amber-100"
+            class="cursor-pointer whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100"
+            @click="ownerFilter = 'orphan'"
+          >
+            只看权属人停用
+          </button>
+          <button
+            v-if="visibleConfigIssues.length"
+            type="button"
+            class="cursor-pointer whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100"
+            @click="modelIssuePanelOpen = !modelIssuePanelOpen"
+          >
+            {{ modelIssuePanelOpen ? '收起配置异常' : '查看配置异常' }}
+          </button>
+          <button
+            v-if="visibleConfigIssues.length"
+            type="button"
+            class="cursor-pointer whitespace-nowrap rounded-md px-2 py-1 text-xs text-amber-700 transition-colors hover:bg-amber-100"
             @click="configIssuesDismissed = true"
           >
             知道了
@@ -4092,7 +4257,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
       </div>
 
-      <ul v-if="modelIssuePanelOpen" class="mt-2.5 space-y-1.5">
+      <ul v-if="visibleConfigIssues.length && modelIssuePanelOpen" class="mt-2.5 space-y-1.5">
         <li
           v-for="item in visibleConfigIssues"
           :key="item.key"
@@ -4128,14 +4293,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </li>
       </ul>
     </div>
-
-    <!-- 智能体 5 步全流程指引横幅 -->
-    <AgentFlowGuideBanner
-      v-if="showAgentFlowGuide"
-      @action="handleFlowGuideAction"
-      @close="closeAgentFlowGuide"
-      @dismiss="dismissAgentFlowGuide"
-    />
 
     </template>
 
@@ -4255,18 +4412,18 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <div
           v-for="agent in filteredAgents"
           :key="agent.id"
-          class="bg-white rounded-xl shadow-sm border hover:shadow-md transition-all duration-200 flex flex-col group relative"
+          class="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-all duration-200 flex flex-col group relative"
           :class="[
             !agent.is_enabled ? 'bg-gray-100/80 grayscale opacity-60' : '',
             // 三种描边互斥（批量选中 > 配置异常 > 待审核）：ring 宽度与颜色同时生效时
             // 谁胜出取决于 Tailwind 的生成顺序，而不是 class 列表顺序，所以不能叠加。
-            // 只用 ring 不用 border：卡片自带的引擎配色就是 border-*，会抢同一个属性。
+            // 方案 A：卡片不再按引擎上彩色描边、也不再有顶部色条——留下的 ring 只表示
+            // 「需要你看一眼」，颜色不再承担「这是哪个引擎」这种可读文字也能表达的信息。
             batchMode && selectedAgentIds.has(agent.id)
               ? 'ring-2 ring-blue-400 border-blue-300'
               : agentHasConfigIssue(agent)
                 ? 'ring-2 ring-red-300'
                 : isPendingReview(agent) ? 'ring-1 ring-amber-200 bg-amber-50/20' : '',
-            getAgentColorTheme(agent).border,
             canDragAgents && !batchMode ? 'cursor-grab active:cursor-grabbing' : '',
             dragOverId === agent.id ? 'ring-2 ring-primary/40 scale-[1.01]' : '',
             dragSourceId === agent.id ? 'opacity-50' : '',
@@ -4305,14 +4462,15 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <circle cx="4" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12" cy="8" r="1.2"/>
           </svg>
         </div>
-        <!-- Card Header Accent -->
-        <div class="h-1.5 w-full rounded-t-xl" :class="getAgentColorTheme(agent).accent"></div>
-        <!-- Card Header: title left, enable switch right -->
-        <div class="p-5 flex items-start justify-between gap-3" :class="batchMode ? 'pl-10' : ''">
+
+        <!-- Card Header：身份 + 一行状态（就绪度 / 类型 / 引擎），开关固定在右上。
+             原先把「类型」「引擎」「就绪度」做成三枚彩色小 pill 并排，一张卡上只剩颜色在抢注意力；
+             现在状态用一个圆点表达，其余降为同一行灰色文字。 -->
+        <div class="p-5 pb-0 flex items-start justify-between gap-3" :class="batchMode ? 'pl-10' : ''">
           <div class="flex items-center space-x-3 min-w-0 flex-1">
             <div
-              class="w-11 h-11 rounded-xl flex items-center justify-center text-xl shadow-inner border overflow-hidden shrink-0"
-              :class="[getAgentColorTheme(agent).bg, getAgentColorTheme(agent).border]"
+              class="w-11 h-11 rounded-xl flex items-center justify-center text-xl shadow-inner border border-gray-100 overflow-hidden shrink-0"
+              :class="getAgentColorTheme(agent).bg"
             >
               <img
                 v-if="agent.avatar_url"
@@ -4339,30 +4497,27 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   </svg>
                 </span>
               </div>
-              <div class="mt-1.5 flex items-center flex-wrap gap-1 text-[11px] text-gray-500">
-                <span
-                  class="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium tracking-wide"
-                  :class="getAgentTypeBadgeClass(agent)"
-                  :title="`智能体类型：${getAgentTypeLabel(agent)}；执行引擎：${getEngineShortLabel(agent)}`"
-                >{{ getAgentTypeLabel(agent) }} · {{ getEngineShortLabel(agent) }}</span>
-                
-                <!-- 就绪度：整张卡唯一的颜色信号就是这个小圆点 -->
+              <div class="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px]">
                 <button
                   type="button"
-                  class="shrink-0 rounded px-1.5 py-0.5 text-left flex items-center gap-1 bg-gray-100 text-gray-600 font-medium transition-colors"
-                  :class="agent.readiness_ready ? 'cursor-default' : 'hover:bg-gray-200 cursor-pointer'"
+                  class="flex shrink-0 items-center gap-1 rounded transition-colors"
+                  :class="agent.readiness_ready
+                    ? 'cursor-default text-gray-500'
+                    : 'cursor-pointer font-medium text-amber-700 hover:text-amber-800'"
                   :title="agent.readiness_ready
                     ? '已满足运行和委派条件'
                     : '点击查看就绪度诊断与检查项'"
                   @click.stop="agent.readiness_ready ? null : toggleReadinessPopover(agent.id, $event)"
                 >
-                  <span class="w-1.5 h-1.5 rounded-full" :class="agent.readiness_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'"></span>
-                  <span>{{ agent.readiness_ready ? '已就绪' : '尚未就绪' }}</span>
+                  <span class="h-1.5 w-1.5 rounded-full" :class="agent.readiness_ready ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+                  <span>{{ agent.readiness_ready ? '已就绪' : '待完善' }}</span>
                 </button>
+                <span class="shrink-0 text-gray-300">·</span>
+                <span class="truncate text-gray-500">{{ getAgentTypeLabel(agent) }} · {{ getEngineShortLabel(agent) }}</span>
                 <span
                   v-if="!agent.is_enabled"
-                  class="shrink-0 px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-500"
-                >已禁用</span>
+                  class="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-500"
+                >已停用</span>
               </div>
             </div>
           </div>
@@ -4404,7 +4559,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <!-- 诊断 Checklist Popover (卡片内自适应定位，居中贴合，绝不溢出卡片边界) -->
         <div
           v-if="!agent.readiness_ready && activeReadinessPopoverAgentId === agent.id"
-          class="absolute left-3 right-3 top-[80px] rounded-xl border border-amber-200 bg-white/95 backdrop-blur-xs p-3.5 shadow-xl z-30 text-left transition-all"
+          class="absolute left-3 right-3 top-[88px] rounded-xl border border-amber-200 bg-white/95 backdrop-blur-xs p-3.5 shadow-xl z-30 text-left transition-all"
           @click.stop
         >
           <div class="flex items-center justify-between pb-2 border-b border-amber-100">
@@ -4469,7 +4624,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
 
         <!-- Description -->
-        <div class="px-5 pb-3 flex-1 flex flex-col">
+        <div class="px-5 pb-4 pt-3 flex-1 flex flex-col">
           <p
             v-if="agent.description"
             class="text-sm text-gray-600 leading-relaxed line-clamp-2"
@@ -4478,14 +4633,23 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             {{ agent.description }}
           </p>
 
-          <div
+          <!-- 待完善：从「就绪度 chip + 独立黄条 + 橙色主按钮」三处重复，合并成卡内唯一一条可点入口 -->
+          <button
             v-if="!agent.readiness_ready && formatReadinessMissing(agent).length"
-            class="mt-2 rounded-lg border border-amber-100 bg-amber-50/70 px-2.5 py-1.5 text-[11px] text-amber-800"
+            type="button"
+            class="mt-2 flex w-full items-start gap-1.5 rounded-lg border border-amber-100 bg-amber-50/70 px-2.5 py-1.5 text-left text-[11px] text-amber-800 transition-colors hover:bg-amber-100/70 cursor-pointer"
+            :title="`待完善：${formatReadinessMissing(agent).join('、')}；点击去补齐`"
+            @click.stop="followReadinessGap(agent)"
           >
-            待完善：{{ formatReadinessMissing(agent).slice(0, 3).join('、') }}<span v-if="formatReadinessMissing(agent).length > 3">…</span>
-          </div>
+            <span class="shrink-0 text-amber-500">⚠</span>
+            <span class="min-w-0 flex-1 leading-relaxed">
+              待完善：{{ formatReadinessMissing(agent).slice(0, 3).join('、') }}<span v-if="formatReadinessMissing(agent).length > 3">…</span>
+            </span>
+            <span class="shrink-0 font-medium text-amber-700">去处理 →</span>
+          </button>
 
-          <!-- 已发布版本：工具 / MCP / 技能；显式绑定才显示数据集 / 知识库 -->
+          <!-- 已发布版本：工具 / MCP / 技能；显式绑定才显示数据集 / 知识库。
+               调用次数挪到 footer，与「多久没动过」这种运营信息放在一起。 -->
           <div
             v-if="showCapabilityChips(agent)"
             class="mt-3 flex items-center flex-wrap gap-1.5"
@@ -4530,13 +4694,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <span class="font-normal text-gray-400">知识库</span>
               <span class="tabular-nums font-medium">{{ agent.knowledge_base_count }}</span>
             </span>
-            <span
-              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600"
-              :title="`累计调用 ${agent.execution_count ?? 0} 次`"
-            >
-              <span class="tabular-nums font-medium">{{ agent.execution_count ?? 0 }}</span>
-              <span class="font-normal text-gray-400">次调用</span>
-            </span>
           </div>
           <div
             v-else-if="(agent.engine_type || 'LOCAL') === 'LOCAL'"
@@ -4571,11 +4728,11 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
         <!-- Actions Footer -->
         <div
-          class="bg-gray-50 px-4 py-3 border-t border-gray-100 flex items-center justify-between gap-2 group-hover:bg-blue-50/30 transition-colors"
+          class="bg-white px-4 py-3 border-t border-gray-100 flex items-center gap-2 transition-colors"
           @click.stop
         >
           <!-- 归属信息：管理员需要一眼看出是谁建的、多久没动过 -->
-          <div class="flex min-w-0 flex-col gap-0.5 leading-tight">
+          <div class="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
             <span
               v-if="isAdminViewer && agent.created_by_name"
               class="truncate text-[11px] text-gray-500"
@@ -4586,7 +4743,15 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             </span>
           </div>
 
-          <div class="flex items-center gap-2">
+          <!-- 调用次数单独占一项并禁止收缩：挤在「更新于」同一行时，
+               卡片一窄就被 truncate 吃掉，只剩「2958 次调…」 -->
+          <span
+            v-if="agent.execution_count != null"
+            class="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-gray-400"
+            :title="`累计调用 ${agent.execution_count ?? 0} 次`"
+          >{{ agent.execution_count ?? 0 }} 次调用</span>
+
+          <div class="flex shrink-0 items-center gap-2">
             <!-- 外置快捷预览对话：保留在动作区，收成图标避免和归属信息抢空间 -->
             <button
               type="button"
@@ -4752,20 +4917,16 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               type="button"
               :disabled="getPrimaryCardAction(agent) === 'frozen'"
               @click.stop="runPrimaryCardAction(agent)"
-              class="px-3 py-1.5 text-xs font-medium rounded-lg shadow-sm transition-colors flex items-center"
-              :class="{
-                'bg-amber-500 hover:bg-amber-600 text-white cursor-pointer': getPrimaryCardAction(agent) === 'continue' || (getPrimaryCardAction(agent) === 'configure' && !agent.readiness_ready),
-                'bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer': getPrimaryCardAction(agent) === 'enable',
-                'bg-primary hover:bg-primary-dark text-white cursor-pointer': getPrimaryCardAction(agent) === 'edit' || (getPrimaryCardAction(agent) === 'configure' && agent.readiness_ready),
-                'bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed': getPrimaryCardAction(agent) === 'frozen',
-                'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 cursor-pointer': getPrimaryCardAction(agent) === 'readonly',
-              }"
+              class="flex shrink-0 items-center whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm transition-colors"
+              :class="getPrimaryCardAction(agent) === 'readonly'
+                ? 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 cursor-pointer'
+                : 'bg-primary hover:bg-primary-dark text-white cursor-pointer'"
               :title="
-                getPrimaryCardAction(agent) === 'frozen'
+                isPendingReview(agent)
                   ? '审核中不能发布新配置；可继续改草稿并调试'
                   : getPrimaryCardAction(agent) === 'readonly'
                     ? '系统级智能体由管理员维护，内容只读；改动请复制一份继续开发'
-                    : undefined
+                    : getPrimaryCardActionLabel(agent)
               "
             >
               {{ getPrimaryCardActionLabel(agent) }}
@@ -4919,16 +5080,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                       type="button"
                       :disabled="getPrimaryCardAction(agent) === 'frozen'"
                       @click.stop="runPrimaryCardAction(agent)"
-                      class="inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1.5 text-xs font-medium shadow-sm"
-                      :class="{
-                        'bg-amber-500 hover:bg-amber-600 text-white': getPrimaryCardAction(agent) === 'continue' || (getPrimaryCardAction(agent) === 'configure' && !agent.readiness_ready),
-                        'bg-emerald-500 hover:bg-emerald-600 text-white': getPrimaryCardAction(agent) === 'enable',
-                        'bg-primary hover:bg-primary-dark text-white': getPrimaryCardAction(agent) === 'edit' || (getPrimaryCardAction(agent) === 'configure' && agent.readiness_ready),
-                        'bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed': getPrimaryCardAction(agent) === 'frozen',
-                        'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50': getPrimaryCardAction(agent) === 'readonly',
-                      }"
+                      class="inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium shadow-sm"
+                      :class="getPrimaryCardAction(agent) === 'readonly'
+                        ? 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                        : 'bg-primary hover:bg-primary-dark text-white'"
                       :title="
-                        getPrimaryCardAction(agent) === 'frozen'
+                        isPendingReview(agent)
                           ? '审核中不能发布新配置；可继续改草稿并调试'
                           : getPrimaryCardAction(agent) === 'readonly'
                             ? '系统级智能体由管理员维护，内容只读；改动请复制一份继续开发'
@@ -4941,44 +5098,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                       type="button"
                       @click.stop="openPreview(agent)"
                       class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium text-primary bg-blue-50/80 border border-blue-200 hover:bg-blue-100 transition-colors shadow-2xs cursor-pointer"
-                      title="快速预览对话"
+                      title="预览对话"
                     >
                       <ChatBubbleLeftRightIcon class="w-3.5 h-3.5 text-primary" />
                       <span>预览</span>
                     </button>
-                    <button v-has-perm="'element:agent:edit'" v-if="agent.is_editable !== false" :disabled="isPendingReview(agent)" @click.stop="openAgentModal(agent)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-gray-400" :title="isPendingReview(agent) ? '审核中不能改元数据；能力配置可在「配置与发布」里继续改草稿' : '编辑智能体'">
-                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                    <button v-has-perm="'element:agent:create'" @click.stop="openDuplicateModal(agent)" class="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="复制智能体">
-                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                    </button>
-                    <button @click.stop="openHistoryModal(agent)" class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="历史记录">
-                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </button>
-                    <button
-                      v-has-perm="'element:agent:delete'"
-                      v-if="
-                        !agent.is_system &&
-                        !isMainAgent(agent) &&
-                        agent.is_editable !== false &&
-                        !isPendingReview(agent)
-                      "
-                      @click.stop="handleDeleteAgent(agent)"
-                      class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100"
-                      title="删除"
-                    >
-                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
-                    <!-- 列表视图同样要能分享 / 走系统级流程：这些入口原先只在网格卡片菜单里，
-                         而 viewMode 会存 localStorage，用过列表的用户再也找不到它们 -->
+                    <!-- 编辑 / 复制 / 历史 / 删除原先散在行内，1280 宽下会叠成一条图标带；
+                         现在和分享、转交、发布流程一起收进「更多」。 -->
                     <div class="relative">
                       <button
                         type="button"
@@ -4995,6 +5121,33 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                         class="absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-xl"
                         @click.stop
                       >
+                        <button
+                          v-if="agent.is_editable !== false"
+                          v-has-perm="'element:agent:edit'"
+                          type="button"
+                          :disabled="isPendingReview(agent)"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                          :title="isPendingReview(agent) ? '审核中不能改元数据；能力配置可在「配置与发布」里继续改草稿' : undefined"
+                          @click="openRowMenuId = null; openAgentModal(agent)"
+                        >
+                          编辑智能体
+                        </button>
+                        <button
+                          v-has-perm="'element:agent:create'"
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          title="复制智能体"
+                          @click="openRowMenuId = null; openDuplicateModal(agent)"
+                        >
+                          复制智能体
+                        </button>
+                        <button
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          @click="openRowMenuId = null; openHistoryModal(agent)"
+                        >
+                          历史记录
+                        </button>
                         <button
                           v-if="canShareAgent(agent)"
                           type="button"
@@ -5030,7 +5183,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                         <button
                           v-if="systemCardAction(agent) === 'cancel'"
                           type="button"
-                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-amber-700 hover:bg-amber-50"
                           @click="openRowMenuId = null; cancelSystemRequest(agent)"
                         >
                           撤回上线申请
@@ -5038,7 +5191,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                         <button
                           v-if="systemCardAction(agent) === 'unpublish'"
                           type="button"
-                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                          class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
                           @click="openRowMenuId = null; openSystemUnpublish(agent)"
                         >
                           下架（取消系统级）
@@ -5051,6 +5204,24 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                         >
                           发布历史
                         </button>
+                        <template
+                          v-if="
+                            !agent.is_system &&
+                            !isMainAgent(agent) &&
+                            agent.is_editable !== false &&
+                            !isPendingReview(agent)
+                          "
+                        >
+                          <div class="my-1 border-t border-gray-100"></div>
+                          <button
+                            v-has-perm="'element:agent:delete'"
+                            type="button"
+                            class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                            @click="openRowMenuId = null; handleDeleteAgent(agent)"
+                          >
+                            删除
+                          </button>
+                        </template>
                       </div>
                     </div>
                   </div>
@@ -5873,6 +6044,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :is-skill-selected="isSkillSelected"
       :get-tool-custom-config="getToolCustomConfig"
       :has-tool-metadata-dataset-binding="hasToolMetadataDatasetBinding"
+      :has-delegation-allowlist="hasDelegationAllowlist"
+      :delegation-scope-count="delegationScopeCount"
       :is-all-mcp-selected="isAllMcpSelected"
       :is-all-static-group-selected="isAllStaticGroupSelected"
       :is-mcp-group-collapsed="isMcpGroupCollapsed"
@@ -5909,6 +6082,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @set-synthesis-temperature="setSynthesisTemperature"
       @open-tool-runtime-config="openToolRuntimeConfig"
       @open-metadata-dataset-binding="openMetadataDatasetBinding"
+      @open-delegation-scope="openDelegationScope"
       @open-ding-talk-config="openDingTalkConfig"
       @open-email-config="openEmailConfig"
       @open-we-chat-work-config="openWeChatWorkConfig"
@@ -6142,6 +6316,21 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :config="currentToolConfig"
       :readonly="!canEditVersion"
       @save="handleToolConfigSave"
+    />
+
+    <DelegationScopeModal
+      v-model:model="showDelegationScopeModal"
+      :tool-name="delegationScopeToolName"
+      :selected-ids="delegationScopeSelection"
+      :agents="delegationScopeAgents"
+      :authorized-agent-ids="delegationAuthorizedAgentIds"
+      :inherited-from="
+        delegationScopeToolName === 'sub_agent_batch_call' && !getDelegationAllowlist('sub_agent_batch_call')
+          ? 'sub_agent_call'
+          : null
+      "
+      :readonly="!canEditVersion"
+      @save="saveDelegationScope"
     />
 
     <DingTalkConfigModal

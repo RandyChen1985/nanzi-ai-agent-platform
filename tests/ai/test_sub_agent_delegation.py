@@ -168,8 +168,13 @@ def _mock_delegation_runtime_config():
     ), patch(
         # 就绪性判定（evaluate_agent_readiness）会去查发布版本与主类型所需资源，
         # 单测不铺这套数据，这里直接放行，聚焦委派逻辑本身。
-        "app.services.ai.tools.agent_delegate_tool.resolve_runnable_delegable_system_agents",
-        AsyncMock(side_effect=lambda session, agents, **kwargs: list(agents)),
+        # 候选链已收敛为「白名单 → 权限 → 就绪」三段，只掐掉最后一段即可。
+        "app.services.ai.tools.agent_delegate_tool._filter_ready_delegable_agents",
+        AsyncMock(side_effect=lambda session, agents: list(agents)),
+    ), patch(
+        # 权限层同样需要放行：单测没有 ResourcePermission 数据。
+        "app.services.ai.tools.agent_delegate_tool.can_delegate_to_agent",
+        AsyncMock(return_value=True),
     ):
         yield
 

@@ -2306,6 +2306,9 @@ class AgentService:
                             session,
                             user_info=user_info,
                             current_agent_id=getattr(agent_config, "agent_id", None),
+                            # 通讯录必须与运行时校验同源：配了调度白名单的智能体，
+                            # 这里也只能列名单内的，否则模型会照着通讯录去调一个被挡掉的。
+                            configured_tools=getattr(agent_config, "tools", None),
                         )
                         delegable_agent_count = len(delegable_agents or [])
                         roster_loaded = True

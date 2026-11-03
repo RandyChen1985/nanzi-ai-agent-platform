@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>sub_agent_call 调度白名单 · 工具级配置与选择器原型</title>
+<meta name="prototype-kind" content="交互原型">
+<style>
+  :root {
+    --teal: #12b5a5;
+    --teal-soft: #e6f7f5;
+    --teal-line: #9fe0d8;
+    --ink: #111827;
+    --ink-2: #374151;
+    --ink-3: #6b7280;
+    --ink-4: #9ca3af;
+    --line: #e5e7eb;
+    --line-2: #f3f4f6;
+    --bg: #f6f8fa;
+    --card: #ffffff;
+    --blue: #2563eb;
+    --blue-soft: #eff6ff;
+    --amber: #b45309;
+    --amber-soft: #fffbeb;
+    --red: #dc2626;
+    --red-soft: #fef2f2;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1180px; margin: 0 auto; padding: 28px 24px 72px; }
+
+  /* ---------- 页头 ---------- */
+  .head h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: .2px; }
+  .head p { margin: 0; color: var(--ink-3); font-size: 13px; }
+  .head .tagline { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: #fff; border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 11px; font-size: 12px; color: var(--ink-2);
+  }
+  .pill b { color: var(--ink); font-weight: 600; }
+  .pill.is-teal { background: var(--teal-soft); border-color: var(--teal-line); color: #0f766e; }
+
+  h2.sec { font-size: 15px; margin: 32px 0 4px; display: flex; align-items: baseline; gap: 10px; }
+  h2.sec span { font-size: 12.5px; color: var(--ink-3); font-weight: 400; }
+
+  /* ---------- 工具卡片 ---------- */
+  .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+  @media (max-width: 900px) { .card-grid { grid-template-columns: 1fr; } }
+
+  .tool-card {
+    background: #fff; border: 1.5px solid var(--line); border-radius: var(--radius);
+    padding: 16px 18px 14px; position: relative;
+  }
+  .tool-card.is-on { border-color: #bfdbfe; }
+  .tool-card .row1 { display: flex; align-items: center; gap: 9px; }
+  .cb {
+    width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #cbd5e1;
+    background: #fff; flex: none; display: grid; place-items: center; cursor: pointer;
+  }
+  .cb.is-on { background: var(--blue); border-color: var(--blue); }
+  .cb.is-on::after { content: ""; width: 9px; height: 5px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) translate(1px, -1px); }
+  .tname { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; font-weight: 700; letter-spacing: .2px; }
+  .badge {
+    font-size: 11.5px; padding: 1px 7px; border-radius: 6px;
+    background: var(--line-2); color: var(--ink-3); border: 1px solid var(--line);
+  }
+  .tdesc { margin: 8px 0 0; color: var(--ink-3); font-size: 12.5px; }
+  .tfoot { margin-top: 12px; padding-top: 11px; border-top: 1px dashed var(--line); display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .gear {
+    width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--line); background: #fff;
+    display: grid; place-items: center; color: var(--ink-4); cursor: default; flex: none;
+  }
+  .gear:hover { color: var(--ink-3); border-color: #d1d5db; }
+  .scope-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 1px solid var(--teal-line); background: var(--teal-soft); color: #0f766e;
+    padding: 5px 11px; border-radius: 9px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    transition: .15s ease;
+  }
+  .scope-btn:hover { background: #d7f2ee; }
+  .scope-btn.is-empty { border-color: var(--line); background: #fff; color: var(--ink-3); font-weight: 500; }
+  .scope-btn .n { font-variant-numeric: tabular-nums; }
+  .arrow-tag {
+    position: absolute; right: 14px; top: -10px;
+    background: var(--red); color: #fff; font-size: 11px; font-weight: 700;
+    padding: 2px 8px; border-radius: 999px; letter-spacing: .3px;
+  }
+  .scope-line { font-size: 12px; color: var(--ink-3); }
+  .scope-line b { color: var(--ink-2); font-weight: 600; }
+  .scope-line.is-warn { color: var(--amber); }
+
+  /* ---------- 弹窗舞台 ---------- */
+  .stage {
+    margin-top: 14px; border-radius: 18px; position: relative;
+    background:
+      radial-gradient(900px 300px at 12% -10%, #eef2ff 0%, transparent 60%),
+      linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+    border: 1px solid var(--line); padding: 26px; overflow: hidden;
+  }
+  .stage::before {
+    content: "智能体编辑 · 工具能力（背景）";
+    position: absolute; left: 26px; top: 10px; font-size: 11.5px; color: var(--ink-4);
+  }
+  .dialog {
+    max-width: 720px; margin: 18px auto 0; background: #fff; border-radius: 16px;
+    box-shadow: 0 18px 48px -12px rgba(15, 23, 42, .28), 0 0 0 1px rgba(15, 23, 42, .06);
+    overflow: hidden;
+  }
+  .dlg-head { padding: 18px 22px 14px; border-bottom: 1px solid var(--line-2); }
+  .dlg-head h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .dlg-head .sub { margin: 5px 0 0; color: var(--ink-3); font-size: 12.5px; }
+  .tool-chip {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    background: var(--line-2); border: 1px solid var(--line); color: var(--ink-2);
+    padding: 1px 7px; border-radius: 6px;
+  }
+
+  .hint {
+    margin: 0 22px; padding: 11px 13px; background: #f8fafc; border: 1px solid var(--line);
+    border-radius: 11px; font-size: 12.5px; color: var(--ink-2); display: flex; gap: 9px;
+  }
+  .hint .ic { flex: none; color: var(--teal); font-weight: 700; }
+  .hint b { color: var(--ink); }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; padding: 14px 22px 10px; }
+  .search {
+    flex: 1; display: flex; align-items: center; gap: 8px;
+    border: 1px solid var(--line); border-radius: 10px; padding: 0 11px; background: #fff;
+  }
+  .search input { border: 0; outline: 0; padding: 9px 0; font-size: 13px; width: 100%; background: transparent; color: var(--ink); }
+  .search .ic { color: var(--ink-4); font-size: 13px; }
+  .toggle {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2);
+    border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px; cursor: pointer; user-select: none;
+    background: #fff; white-space: nowrap;
+  }
+  .toggle input { accent-color: var(--teal); }
+
+  .list { max-height: 472px; overflow: auto; padding: 2px 12px 8px; }
+  .grp-title {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11.5px; font-weight: 700; color: var(--ink-3); letter-spacing: .4px;
+    padding: 12px 10px 7px; position: sticky; top: 0; background: #fff; z-index: 1;
+  }
+  .grp-title .count { font-weight: 500; color: var(--ink-4); letter-spacing: 0; }
+  .grp-title .line { flex: 1; height: 1px; background: var(--line-2); }
+
+  .item {
+    display: flex; align-items: flex-start; gap: 11px;
+    padding: 10px 10px; border-radius: 10px; cursor: pointer;
+  }
+  .item:hover { background: #f9fafb; }
+  .item.is-selected { background: var(--teal-soft); }
+  .item.is-selected:hover { background: #dcf3ef; }
+  .item.is-disabled { opacity: .55; cursor: not-allowed; }
+  .item.is-disabled:hover { background: transparent; }
+  .item .meta { flex: 1; min-width: 0; }
+  .item .l1 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .item .nm { font-size: 13.5px; font-weight: 600; }
+  .item .slug { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--ink-4); }
+  .item .l2 { margin-top: 3px; font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .caps { display: flex; gap: 5px; margin-top: 6px; flex-wrap: wrap; }
+  .cap { font-size: 11px; padding: 1px 6px; border-radius: 5px; background: #f1f5f9; color: var(--ink-3); border: 1px solid #e2e8f0; }
+  .st { flex: none; font-size: 11.5px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .st.ok { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+  .st.no { background: var(--amber-soft); color: var(--amber); border: 1px solid #fde68a; }
+  .st.dead { background: var(--red-soft); color: var(--red); border: 1px solid #fecaca; }
+  .mine-note { color: var(--amber); }
+
+  .dlg-foot {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 22px; border-top: 1px solid var(--line-2); background: #fcfdfe;
+  }
+  .sel-count { font-size: 12.5px; color: var(--ink-3); }
+  .sel-count b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+  .btn {
+    border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+    padding: 8px 15px; border-radius: 9px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  .btn:hover { background: #f9fafb; }
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .btn.primary:hover { background: #1f2937; }
+  .btn.ghost-danger { border-color: transparent; color: var(--red); background: transparent; }
+  .btn.ghost-danger:hover { background: var(--red-soft); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* ---------- 清空确认层 ---------- */
+  .confirm-mask {
+    position: absolute; inset: 0; background: rgba(15, 23, 42, .34);
+    display: none; place-items: center; border-radius: 18px; z-index: 5;
+  }
+  .confirm-mask.is-on { display: grid; }
+  .confirm {
+    width: 380px; background: #fff; border-radius: 14px; padding: 20px 20px 16px;
+    box-shadow: 0 20px 44px -14px rgba(15, 23, 42, .45);
+  }
+  .confirm h4 { margin: 0 0 8px; font-size: 14.5px; }
+  .confirm p { margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.6; }
+  .confirm p b { color: var(--red); }
+  .confirm .acts { display: flex; justify-content: flex-end; gap: 9px; margin-top: 16px; }
+
+  /* ---------- 规则卡片 ---------- */
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 12px; }
+  @media (max-width: 900px) { .rules { grid-template-columns: 1fr; } }
+  .rule { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 16px; }
+  .rule h4 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: center; gap: 7px; }
+  .rule h4 .idx {
+    width: 19px; height: 19px; border-radius: 6px; background: var(--ink); color: #fff;
+    font-size: 11px; display: grid; place-items: center; flex: none;
+  }
+  .rule p { margin: 0; font-size: 12.5px; color: var(--ink-3); }
+  .rule ul { margin: 8px 0 0; padding-left: 17px; font-size: 12.5px; color: var(--ink-2); }
+  .rule li { margin: 3px 0; }
+  .rule code, .errs code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+    background: var(--line-2); padding: 1px 5px; border-radius: 5px; color: var(--ink-2);
+  }
+
+  .errs { margin-top: 12px; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .errs .hd { padding: 13px 16px; border-bottom: 1px solid var(--line-2); font-size: 13px; font-weight: 600; }
+  .err-row { display: flex; gap: 14px; padding: 11px 16px; border-bottom: 1px solid var(--line-2); font-size: 12.5px; }
+  .err-row:last-child { border-bottom: 0; }
+  .err-row .k { flex: none; width: 172px; color: var(--ink-3); }
+  .err-row .v { flex: 1; color: var(--ink-2); }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 34px; transform: translate(-50%, 18px);
+    background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px;
+    opacity: 0; pointer-events: none; transition: .22s ease; z-index: 50;
+  }
+  .toast.is-on { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="head">
+    <h1>sub_agent_call 调度白名单 · 工具级配置</h1>
+    <p>给「多智能体协同与调度」的两个工具加一个可选的智能体名单：配了就只从名单里调度，没配就维持现状。</p>
+    <div class="tagline">
+      <span class="pill is-teal">方案 A：存在 <b>ToolConfigItem.delegable_agent_ids</b></span>
+      <span class="pill">与 <code>metadata_dataset_ids</code> 同构</span>
+      <span class="pill">随发布版本生效</span>
+    </div>
+  </div>
+
+  <!-- ============ 1. 工具卡片 ============ -->
+  <h2 class="sec">① 工具卡片 <span>红框位置就是新增的配置入口，齿轮保持原样</span></h2>
+  <div class="card-grid">
+
+    <div class="tool-card is-on">
+      <div class="arrow-tag">新增</div>
+      <div class="row1">
+        <div class="cb is-on"></div>
+        <span class="tname">sub_agent_call</span>
+        <span class="badge">系统</span>
+      </div>
+      <p class="tdesc">委派特定专有子智能体执行单项任务（如单独查数、查手册等串行任务）</p>
+      <div class="tfoot">
+        <div class="gear" title="工具通用设置"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.6v2.8M12 18.6v2.8M2.6 12h2.8M18.6 12h2.8M5.4 5.4l2 2M16.6 16.6l2 2M18.6 5.4l-2 2M7.4 16.6l-2 2"/></svg></div>
+        <button class="scope-btn" data-open="dialog">
+          <span>🎯</span><span>调度范围</span><span class="n" id="card-count">3 个</span>
+        </button>
+        <span class="scope-line">仅限名单内 · <b>修改</b></span>
+      </div>
+    </div>
+
+    <div class="tool-card is-on">
+      <div class="row1">
+        <div class="cb is-on"></div>
+        <span class="tname">sub_agent_batch_call</span>
+        <span class="badge">系统</span>
+      </div>
+      <p class="tdesc">并行委派多个彼此独立的子智能体任务，并聚合返回结果（适合多维度并发汇总）</p>
+      <div class="tfoot">
+        <div class="gear" title="工具通用设置"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.6v2.8M12 18.6v2.8M2.6 12h2.8M18.6 12h2.8M5.4 5.4l2 2M16.6 16.6l2 2M18.6 5.4l-2 2M7.4 16.6l-2 2"/></svg></div>
+        <button class="scope-btn is-empty" data-open="dialog">
+          <span>↩</span><span>沿用 sub_agent_call</span>
+        </button>
+        <span class="scope-line">未单独配置 · <b>单独配置</b></span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ 2. 配置弹窗 ============ -->
+  <h2 class="sec">② 配置弹窗 <span>勾选可实时生效，试试搜索、只看已选、清空</span></h2>
+  <div class="stage" id="stage">
+    <div class="dialog">
+      <div class="dlg-head">
+        <h3>调度白名单 <span class="tool-chip">sub_agent_call</span></h3>
+        <p class="sub">限制本智能体可以委派的子智能体范围。不配置则维持默认，配置后名单外的智能体一律拒绝。</p>
+      </div>
+
+      <div class="hint">
+        <span class="ic">i</span>
+        <div>
+          <b>未配置</b> = 全部「已授权给你的系统智能体」；<b>配置后</b> = 只从名单中调度。<br>
+          你自己的智能体默认<b>不可被委派</b>，加入名单后才开通；系统智能体即使进名单，仍要校验你的 agent 授权。
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <label class="search">
+          <span class="ic">🔍</span>
+          <input id="q" type="text" placeholder="搜索名称、标识或能力…" autocomplete="off">
+        </label>
+        <label class="toggle"><input type="checkbox" id="only-sel"> 只看已选</label>
+      </div>
+
+      <div class="list" id="list"></div>
+
+      <div class="dlg-foot">
+        <span class="sel-count">已选 <b id="sel-count">3</b> 个智能体</span>
+        <button class="btn ghost-danger" id="clear-btn">清空</button>
+        <span class="spacer"></span>
+        <button class="btn">取消</button>
+        <button class="btn primary" id="save-btn">保存</button>
+      </div>
+    </div>
+
+    <div class="confirm-mask" id="confirm-mask">
+      <div class="confirm">
+        <h4>清空调度白名单？</h4>
+        <p>清空后本智能体<b>将无法委派任何子智能体</b>（工具仍保留，但每次调用都会被拒绝）。<br>
+           如果只是想恢复默认范围，请改用「取消」并删除该配置项。</p>
+        <div class="acts">
+          <button class="btn" id="confirm-cancel">取消</button>
+          <button class="btn primary" id="confirm-ok">确认清空</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 3. 规则 ============ -->
+  <h2 class="sec">③ 规则 <span>两类智能体的含义不同：系统级是收窄，自建是开通</span></h2>
+  <div class="rules">
+    <div class="rule">
+      <h4><span class="idx">1</span>未配置（默认）</h4>
+      <p>与现状完全一致，老智能体不受影响。</p>
+      <ul>
+        <li>系统级：全部<b>已授权</b>的可委派</li>
+        <li>自建：<b>一个都不可委派</b></li>
+      </ul>
+    </div>
+    <div class="rule">
+      <h4><span class="idx">2</span>已配置（收窄 / 开通）</h4>
+      <p>名单成为唯一入口，三重交集。</p>
+      <ul>
+        <li>系统级：<b>收窄</b>到名单 ∩ 已授权</li>
+        <li>自建：<b>开通</b>为名单 ∩ 本人创建 ∩ 已启用</li>
+      </ul>
+    </div>
+    <div class="rule">
+      <h4><span class="idx">3</span>运行时动态校验</h4>
+      <p>配置保存后仍会逐次校验，不适用的静默排除。</p>
+      <ul>
+        <li>智能体被禁用 / 删除 / 转让 → 排除</li>
+        <li>用户失去 <code>agent:&lt;id&gt;</code> 授权 → 排除</li>
+        <li>缺少发布版本或资源绑定 → 排除</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="errs">
+    <div class="hd">运行时错误文案（现在统一报 <code>agent_not_found</code> 并列出全部候选，排障时看不出卡在哪一层）</div>
+    <div class="err-row">
+      <div class="k">不在白名单</div>
+      <div class="v">错误：智能体 <code>report-writer</code> 未被加入本智能体的委派名单。可在工具配置的「调度范围」中加入，或改用名单内智能体。</div>
+    </div>
+    <div class="err-row">
+      <div class="k">在白名单但无授权</div>
+      <div class="v">错误：当前用户无权使用智能体 <code>report-writer</code>（缺少该智能体的访问授权），请联系管理员。</div>
+    </div>
+    <div class="err-row">
+      <div class="k">有权限但未就绪</div>
+      <div class="v">错误：智能体 <code>report-writer</code> 尚未就绪，缺少可加载的发布版本或主类型所需的资源/工具。</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ---------------- 数据 ----------------
+  const SYSTEM_AGENTS = [
+    { id: 'a1', name: 'data-analyst',      label: '数据分析助手', desc: '把业务问题翻译成 SQL，查业务库并解释结果', caps: ['data_query'], perm: true,  selected: true  },
+    { id: 'a2', name: 'knowledge-base',    label: '知识库助手',   desc: '检索企业文档、制度手册与产品资料',           caps: ['knowledge_base'], perm: true,  selected: true  },
+    { id: 'a3', name: 'policy-manual',     label: '制度手册专家', desc: '只答制度、流程、报销与合规口径',             caps: ['knowledge_base'], perm: true,  selected: true  },
+    { id: 'a4', name: 'report-writer',     label: '报告生成助手', desc: '把查询结果整理成周报、月报与汇报材料',       caps: ['data_query'], perm: true,  selected: false },
+    { id: 'a5', name: 'chatbi-expert',     label: 'ChatBI 专家',  desc: '多维指标分析与图表解读',                     caps: ['data_query'], perm: false, selected: false },
+    { id: 'a6', name: 'browser-agent',     label: '浏览器助手',   desc: '打开网页、抓取公网信息并截图',               caps: [], perm: false, selected: false },
+    { id: 'a7', name: 'table-reader',      label: '表格解析助手', desc: '解析 Excel / CSV 并做字段核对',              caps: [], perm: false, selected: false },
+    { id: 'a8', name: 'meeting-notes',     label: '会议纪要助手', desc: '从录音转写整理行动项与决议',                 caps: [], perm: false, selected: false },
+    { id: 'a9', name: 'old-contract-bot',  label: '合同审阅（旧）', desc: '已删除的智能体，配置仍保留以便回滚',       caps: [], perm: true,  selected: true, dead: true }
+  ];
+  const MY_AGENTS = [
+    { id: 'm1', name: 'contract-reviewer',    label: '我的合同审阅助手', desc: '按我司模板检查合同风险条款', caps: ['knowledge_base'], mine: true, selected: false },
+    { id: 'm2', name: 'weekly-report',        label: '我的周报生成',     desc: '汇总本周我做的事，生成周报草稿', caps: [], mine: true, selected: false },
+    { id: 'm3', name: 'competitor-analysis',  label: '我的竞品分析',     desc: '抓取竞品公告并做对比表', caps: [], mine: true, selected: false }
+  ];
+
+  const state = {
+    agents: JSON.parse(JSON.stringify([...SYSTEM_AGENTS, ...MY_AGENTS])),
+    q: '',
+    onlySelected: false
+  };
+
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const selectedCount = () => state.agents.filter((a) => a.selected && !a.dead).length;
+
+  // ---------------- 渲染 ----------------
+  function itemHtml(a) {
+    const disabled = (!a.mine && !a.perm) || a.dead;
+    const cls = ['item', a.selected && !disabled ? 'is-selected' : '', disabled ? 'is-disabled' : ''].filter(Boolean).join(' ');
+    const status = a.dead
+      ? '<span class="st dead">已失效</span>'
+      : a.mine
+        ? ''
+        : a.perm
+          ? '<span class="st ok">已授权</span>'
+          : '<span class="st no">无 agent 授权</span>';
+    const caps = a.caps.map((c) => `<span class="cap">${esc(c)}</span>`).join('');
+    const mineNote = a.mine ? '<span class="cap mine-note">需加入名单后才能被调用</span>' : '';
+    return `
+      <div class="${cls}" data-id="${a.id}">
+        <div class="cb ${a.selected && !disabled ? 'is-on' : ''}"></div>
+        <div class="meta">
+          <div class="l1">
+            <span class="nm">${esc(a.label)}</span>
+            <span class="slug">${esc(a.name)}</span>
+            ${a.mine ? '<span class="cap">我的</span>' : ''}
+          </div>
+          <div class="l2">${esc(a.desc)}</div>
+          <div class="caps">${caps}${mineNote}</div>
+        </div>
+        ${status}
+      </div>`;
+  }
+
+  function visibleAgents(group) {
+    let rows = state.agents.filter((a) => (group === 'mine' ? a.mine : !a.mine));
+    if (state.q) {
+      const q = state.q.toLowerCase();
+      rows = rows.filter((a) =>
+        a.name.toLowerCase().includes(q) ||
+        a.label.toLowerCase().includes(q) ||
+        a.desc.toLowerCase().includes(q) ||
+        a.caps.some((c) => c.toLowerCase().includes(q))
+      );
+    }
+    if (state.onlySelected) rows = rows.filter((a) => a.selected);
+    return rows;
+  }
+
+  function render() {
+    const sys = visibleAgents('sys');
+    const mine = visibleAgents('mine');
+    let html = '';
+
+    if (sys.length) {
+      html += `<div class="grp-title">系统智能体 <span class="count">(${sys.length})</span><span class="line"></span></div>`;
+      html += sys.map(itemHtml).join('');
+    }
+    if (mine.length) {
+      html += `<div class="grp-title">我的智能体 <span class="count">(${mine.length})</span><span class="line"></span></div>`;
+      html += mine.map(itemHtml).join('');
+    }
+    if (!sys.length && !mine.length) {
+      html = `<div style="padding:44px 10px;text-align:center;color:var(--ink-4);font-size:12.5px">
+        ${state.onlySelected ? '还没有勾选任何智能体' : '没有匹配的智能体'}</div>`;
+    }
+    document.getElementById('list').innerHTML = html;
+    document.getElementById('sel-count').textContent = selectedCount();
+    document.getElementById('card-count').textContent = selectedCount() + ' 个';
+
+    document.querySelectorAll('.item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const a = state.agents.find((x) => x.id === el.dataset.id);
+        if (!a) return;
+        const disabled = (!a.mine && !a.perm) || a.dead;
+        if (disabled) return;
+        a.selected = !a.selected;
+        render();
+      });
+    });
+  }
+
+  // ---------------- 交互 ----------------
+  document.getElementById('q').addEventListener('input', (e) => {
+    state.q = e.target.value.trim();
+    render();
+  });
+  document.getElementById('only-sel').addEventListener('change', (e) => {
+    state.onlySelected = e.target.checked;
+    render();
+  });
+
+  const mask = document.getElementById('confirm-mask');
+  document.getElementById('clear-btn').addEventListener('click', () => mask.classList.add('is-on'));
+  document.getElementById('confirm-cancel').addEventListener('click', () => mask.classList.remove('is-on'));
+  document.getElementById('confirm-ok').addEventListener('click', () => {
+    state.agents.forEach((a) => { a.selected = false; });
+    mask.classList.remove('is-on');
+    render();
+    toast('已清空：保存后本智能体将无法委派任何子智能体');
+  });
+
+  const toastEl = document.getElementById('toast');
+  let toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('is-on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('is-on'), 2400);
+  }
+
+  document.getElementById('save-btn').addEventListener('click', () => {
+    toast(`已保存 ${selectedCount()} 个智能体到调度白名单`);
+  });
+
+  document.querySelectorAll('[data-open="dialog"]').forEach((el) => {
+    el.addEventListener('click', () => {
+      document.getElementById('stage').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+
+  render();
+</script>
+</body>
+</html>

@@ -124,6 +124,8 @@ export interface ToolConfigItem {
   description_override?: string | null
   engine_config_override?: Record<string, unknown> | null
   metadata_dataset_ids?: string[] | null
+  /** sub_agent_call / sub_agent_batch_call 的调度白名单；null=未配置，[]=显式禁止委派 */
+  delegable_agent_ids?: string[] | null
 }
 
 export interface AIAgentVersion {
