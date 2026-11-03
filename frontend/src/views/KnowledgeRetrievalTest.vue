@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import axios from '../utils/axios'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
+import RetrievalParamGroup from '../components/knowledge/RetrievalParamGroup.vue'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { copyToClipboard } from '../utils/clipboard'
@@ -27,7 +28,22 @@ type RagFlowConfigSummary = {
   api_key_configured: boolean
   configured: boolean
   knowledge_base_enabled?: boolean
+  /** 检索参数默认值，来自系统配置（knowledge_ragflow_*），缺省时退回页面兜底值 */
+  retrieval_defaults?: {
+    top_n: number
+    similarity_threshold: number
+    vector_similarity_weight: number
+  }
 }
+
+type RetrievalParams = {
+  topK: number
+  threshold: number
+  weight: number
+}
+
+// 与后端 Field(default=...) 及系统配置兜底保持一致
+const FALLBACK_PARAMS: RetrievalParams = { topK: 5, threshold: 0.2, weight: 0.3 }
 
 const { showToast } = useToast()
 const { hasPermission } = useUser()
@@ -39,16 +55,24 @@ const query = ref('')
 
 // A/B 对照检索模式状态
 const isCompareMode = ref(false)
+const activeGroup = ref<'A' | 'B'>('A')
 
-// A 参数组使用原本的变量名
-const topK = ref(5)
-const similarityThreshold = ref(0.2)
-const vectorSimilarityWeight = ref(0.3)
+// 参数默认值：进页面时从系统配置读取，页面改动只对本次检索生效、不回写配置
+const retrievalDefaults = ref<RetrievalParams>({ ...FALLBACK_PARAMS })
+const defaultsApplied = ref(false)
 
-// B 参数组
-const topK_B = ref(8)
-const similarityThreshold_B = ref(0.2)
-const vectorSimilarityWeight_B = ref(0.3)
+// 对照组 A
+const groupA = reactive<RetrievalParams>({ ...FALLBACK_PARAMS })
+// 对照组 B：默认把「前 n 条」放大一倍，一打开就能看出两组差异；阈值/权重与 A 同源
+const groupB = reactive<RetrievalParams>({ ...FALLBACK_PARAMS, topK: 8 })
+
+// 组件只 emit 新对象，父组件就地同步：groupA/groupB 是 const reactive，
+// 直接整体赋值（v-model 的默认行为）会抛 Assignment to constant variable
+const applyParams = (target: RetrievalParams, value: RetrievalParams) => {
+  target.topK = value.topK
+  target.threshold = value.threshold
+  target.weight = value.weight
+}
 
 const loading = ref(false)
 const loading_B = ref(false)
@@ -177,15 +201,15 @@ const validate = () => {
     showToast('请输入检索问题', 'warning')
     return false
   }
-  if (!Number.isInteger(topK.value) || topK.value < 1 || topK.value > 50) {
-    showToast('A组 top_k 需为 1 到 50 之间的整数', 'warning')
+  if (!Number.isInteger(groupA.topK) || groupA.topK < 1 || groupA.topK > 50) {
+    showToast('A组「前 n 条」需为 1 到 50 之间的整数', 'warning')
     return false
   }
-  if (!isValidRatio(similarityThreshold.value)) {
+  if (!isValidRatio(groupA.threshold)) {
     showToast('A组相似度阈值需在 0 到 1 之间', 'warning')
     return false
   }
-  if (!isValidRatio(vectorSimilarityWeight.value)) {
+  if (!isValidRatio(groupA.weight)) {
     showToast('A组向量相似度权重需在 0 到 1 之间', 'warning')
     return false
   }
@@ -193,15 +217,15 @@ const validate = () => {
 }
 
 const validateB = () => {
-  if (!Number.isInteger(topK_B.value) || topK_B.value < 1 || topK_B.value > 50) {
-    showToast('B组 top_k 需为 1 到 50 之间的整数', 'warning')
+  if (!Number.isInteger(groupB.topK) || groupB.topK < 1 || groupB.topK > 50) {
+    showToast('B组「前 n 条」需为 1 到 50 之间的整数', 'warning')
     return false
   }
-  if (!isValidRatio(similarityThreshold_B.value)) {
+  if (!isValidRatio(groupB.threshold)) {
     showToast('B组相似度阈值需在 0 到 1 之间', 'warning')
     return false
   }
-  if (!isValidRatio(vectorSimilarityWeight_B.value)) {
+  if (!isValidRatio(groupB.weight)) {
     showToast('B组向量相似度权重需在 0 到 1 之间', 'warning')
     return false
   }
@@ -226,10 +250,10 @@ const runRetrieval = async () => {
 
   // 记录本次真正提交的参数：否则用户改动输入框后，已有结果的表头与关键词高亮会跟着变
   executedQuery.value = query.value.trim()
-  executedTopK.value = topK.value
-  executedThreshold.value = similarityThreshold.value
-  executedTopK_B.value = topK_B.value
-  executedThreshold_B.value = similarityThreshold_B.value
+  executedTopK.value = groupA.topK
+  executedThreshold.value = groupA.threshold
+  executedTopK_B.value = groupB.topK
+  executedThreshold_B.value = groupB.threshold
   hasSearched.value = true
 
   if (!isCompareMode.value) {
@@ -240,15 +264,19 @@ const runRetrieval = async () => {
       const response = await axios.post('/api/portal/ragflow/retrieval-test', {
         query: query.value.trim(),
         dataset_ids: datasetIds.value,
-        top_k: topK.value,
-        similarity_threshold: similarityThreshold.value,
-        vector_similarity_weight: vectorSimilarityWeight.value
+        top_n: groupA.topK,
+        similarity_threshold: groupA.threshold,
+        vector_similarity_weight: groupA.weight
       }, { signal: controller.signal })
       results.value = response.data?.data || []
       notify(`检索完成，命中 ${results.value.length} 条`, 'success')
     } catch (err) {
-      errorMessage.value = extractError(err)
-      notify(errorMessage.value, 'error')
+      // 主动取消（或已被后一次检索取代）不是失败：abort 会让 axios 抛
+      // CanceledError，兜底文案只会弹出一个毫无信息量的「canceled」。
+      if (!controller.signal.aborted) {
+        errorMessage.value = extractError(err)
+        notify(errorMessage.value, 'error')
+      }
     } finally {
       loading.value = false
     }
@@ -261,13 +289,13 @@ const runRetrieval = async () => {
     const promiseA = axios.post('/api/portal/ragflow/retrieval-test', {
       query: query.value.trim(),
       dataset_ids: datasetIds.value,
-      top_k: topK.value,
-      similarity_threshold: similarityThreshold.value,
-      vector_similarity_weight: vectorSimilarityWeight.value
+      top_n: groupA.topK,
+      similarity_threshold: groupA.threshold,
+      vector_similarity_weight: groupA.weight
     }, { signal: controller.signal }).then(response => {
       results.value = response.data?.data || []
     }).catch(err => {
-      errorMessage.value = extractError(err)
+      if (!controller.signal.aborted) errorMessage.value = extractError(err)
     }).finally(() => {
       loading.value = false
     })
@@ -275,13 +303,13 @@ const runRetrieval = async () => {
     const promiseB = axios.post('/api/portal/ragflow/retrieval-test', {
       query: query.value.trim(),
       dataset_ids: datasetIds.value,
-      top_k: topK_B.value,
-      similarity_threshold: similarityThreshold_B.value,
-      vector_similarity_weight: vectorSimilarityWeight_B.value
+      top_n: groupB.topK,
+      similarity_threshold: groupB.threshold,
+      vector_similarity_weight: groupB.weight
     }, { signal: controller.signal }).then(response => {
       results_B.value = response.data?.data || []
     }).catch(err => {
-      errorMessage_B.value = extractError(err)
+      if (!controller.signal.aborted) errorMessage_B.value = extractError(err)
     }).finally(() => {
       loading_B.value = false
     })
@@ -418,10 +446,32 @@ const checkConnectivity = async () => {
   }
 }
 
+// 参数默认值来自系统配置（knowledge_ragflow_*），只在首次加载时灌进两组；
+// 之后用户改过的值不会被配置覆盖，避免「边调参边被后台改掉」。
+const applyRetrievalDefaults = () => {
+  const remote = ragflowConfig.value?.retrieval_defaults
+  if (!remote) return
+  const topK = Number(remote.top_n)
+  const threshold = Number(remote.similarity_threshold)
+  const weight = Number(remote.vector_similarity_weight)
+  const next: RetrievalParams = {
+    topK: Number.isInteger(topK) && topK > 0 ? Math.min(50, topK) : FALLBACK_PARAMS.topK,
+    threshold: Number.isFinite(threshold) ? Math.min(1, Math.max(0, threshold)) : FALLBACK_PARAMS.threshold,
+    weight: Number.isFinite(weight) ? Math.min(1, Math.max(0, weight)) : FALLBACK_PARAMS.weight,
+  }
+  retrievalDefaults.value = next
+  if (defaultsApplied.value) return
+  Object.assign(groupA, next)
+  // B 组默认把「前 n 条」放大一倍：一打开 A/B 就有可对照的差异，阈值/权重仍同源
+  Object.assign(groupB, { ...next, topK: Math.min(50, next.topK * 2) })
+  defaultsApplied.value = true
+}
+
 const fetchRagFlowConfig = async () => {
   try {
     const response = await axios.get('/api/portal/ragflow/config')
     ragflowConfig.value = response.data?.data || null
+    applyRetrievalDefaults()
     if (isKnowledgeEnabled.value) {
       await checkConnectivity()
     } else {
@@ -554,7 +604,7 @@ onMounted(fetchRagFlowConfig)
               rows="5"
               :disabled="!isEngineReady"
               class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none disabled:cursor-not-allowed disabled:bg-gray-50"
-              placeholder="输入要测试的检索问题（Ctrl + Enter 直接执行）..."
+              placeholder="输入要测试的问题"
             ></textarea>
           </div>
 
@@ -567,65 +617,75 @@ onMounted(fetchRagFlowConfig)
             </label>
           </div>
 
-          <!-- Parameters Block -->
-          <div v-if="!isCompareMode" class="space-y-3">
-            <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">参数调节</label>
-            <div class="grid grid-cols-3 gap-3">
-              <div>
-                <span class="block text-[10px] text-gray-500 mb-1">top_k</span>
-                <input v-model.number="topK" type="number" min="1" max="50" :disabled="!isEngineReady" aria-label="A组 top_k（1-50 整数）" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:cursor-not-allowed disabled:bg-gray-50" />
-              </div>
-              <div>
-                <span class="block text-[10px] text-gray-500 mb-1">相似度阈值</span>
-                <input v-model.number="similarityThreshold" type="number" min="0" max="1" step="0.01" :disabled="!isEngineReady" aria-label="A组相似度阈值（0-1）" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:cursor-not-allowed disabled:bg-gray-50" />
-              </div>
-              <div>
-                <span class="block text-[10px] text-gray-500 mb-1">向量权重</span>
-                <input v-model.number="vectorSimilarityWeight" type="number" min="0" max="1" step="0.01" :disabled="!isEngineReady" aria-label="A组向量相似度权重（0-1）" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:cursor-not-allowed disabled:bg-gray-50" />
-              </div>
+          <!-- 测试设置（方案 B：按 RAGFlow 控制台分组，参数默认值来自系统配置） -->
+          <details v-if="!isCompareMode" class="param-card" open>
+            <summary class="param-card-head">
+              <span class="param-card-title">测试设置</span>
+              <span class="param-card-badge">跟随系统配置</span>
+              <svg class="param-card-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </summary>
+            <div class="param-card-body">
+              <RetrievalParamGroup
+                :model-value="groupA"
+                :defaults="retrievalDefaults"
+                :disabled="!isEngineReady"
+                @update:model-value="applyParams(groupA, $event)"
+              />
+              <p class="param-hint">
+                默认值来自 系统配置 → 知识库设置，页面改动只对本次检索生效。
+                「前 n 条」映射上游 page_size；向量候选池固定 1024（RAGFlow 默认），与会话检索一致。
+              </p>
             </div>
-          </div>
+          </details>
 
-          <!-- Compare Mode Parameters Panel -->
-          <div v-else class="space-y-4">
-            <!-- Group A Config Card -->
-            <div class="p-3 border border-gray-200 rounded-xl bg-gray-50/20 space-y-2">
-              <span class="text-xs font-bold text-gray-800">对照组 A 参数</span>
-              <div class="grid grid-cols-3 gap-2">
-                <div>
-                  <span class="block text-[10px] text-gray-400 mb-1">top_k</span>
-                  <input v-model.number="topK" type="number" min="1" max="50" :disabled="!isEngineReady" class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-gray-50" />
-                </div>
-                <div>
-                  <span class="block text-[10px] text-gray-400 mb-1">相似度阈值</span>
-                  <input v-model.number="similarityThreshold" type="number" min="0" max="1" step="0.01" :disabled="!isEngineReady" class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-gray-50" />
-                </div>
-                <div>
-                  <span class="block text-[10px] text-gray-400 mb-1">向量权重</span>
-                  <input v-model.number="vectorSimilarityWeight" type="number" min="0" max="1" step="0.01" :disabled="!isEngineReady" class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-gray-50" />
-                </div>
+          <!-- 对照组参数：一次只展开一组，避免两套控件把左栏撑爆 -->
+          <details v-else class="param-card" open>
+            <summary class="param-card-head">
+              <span class="param-card-title">对照组参数</span>
+              <span class="param-card-badge">A / B</span>
+              <svg class="param-card-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </summary>
+            <div class="param-card-body">
+              <div class="group-switch">
+                <button
+                  type="button"
+                  :class="{ 'is-on': activeGroup === 'A' }"
+                  @click="activeGroup = 'A'"
+                >
+                  对照组 A · 前 {{ groupA.topK }} 条
+                </button>
+                <button
+                  type="button"
+                  :class="{ 'is-on': activeGroup === 'B' }"
+                  @click="activeGroup = 'B'"
+                >
+                  对照组 B · 前 {{ groupB.topK }} 条
+                </button>
               </div>
+              <RetrievalParamGroup
+                v-show="activeGroup === 'A'"
+                :model-value="groupA"
+                :defaults="retrievalDefaults"
+                :disabled="!isEngineReady"
+                @update:model-value="applyParams(groupA, $event)"
+              />
+              <RetrievalParamGroup
+                v-show="activeGroup === 'B'"
+                :model-value="groupB"
+                :defaults="retrievalDefaults"
+                :disabled="!isEngineReady"
+                @update:model-value="applyParams(groupB, $event)"
+              />
+              <p class="param-hint">
+                A：阈值 {{ groupA.threshold.toFixed(2) }} · 权重 {{ groupA.weight.toFixed(2) }}
+                ｜ B：阈值 {{ groupB.threshold.toFixed(2) }} · 权重 {{ groupB.weight.toFixed(2) }}
+              </p>
             </div>
-
-            <!-- Group B Config Card -->
-            <div class="p-3 border border-gray-200 rounded-xl bg-gray-50/20 space-y-2">
-              <span class="text-xs font-bold text-gray-800">对照组 B 参数</span>
-              <div class="grid grid-cols-3 gap-2">
-                <div>
-                  <span class="block text-[10px] text-gray-400 mb-1">top_k</span>
-                  <input v-model.number="topK_B" type="number" min="1" max="50" :disabled="!isEngineReady" class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-gray-50" />
-                </div>
-                <div>
-                  <span class="block text-[10px] text-gray-400 mb-1">相似度阈值</span>
-                  <input v-model.number="similarityThreshold_B" type="number" min="0" max="1" step="0.01" :disabled="!isEngineReady" class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-gray-50" />
-                </div>
-                <div>
-                  <span class="block text-[10px] text-gray-400 mb-1">向量权重</span>
-                  <input v-model.number="vectorSimilarityWeight_B" type="number" min="0" max="1" step="0.01" :disabled="!isEngineReady" class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-gray-50" />
-                </div>
-              </div>
-            </div>
-          </div>
+          </details>
 
           <!-- Execute -->
           <div class="pt-2 mt-auto shrink-0">
@@ -920,5 +980,100 @@ onMounted(fetchRagFlowConfig)
   color: #9ca3af;
   background-color: rgba(55, 65, 81, 0.5);
   border-color: #4b5563;
+}
+/* ---- 参数卡片（方案 B：对齐 RAGFlow 控制台的分组样式） ---- */
+.param-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  /* 不能用 overflow:hidden 裁剪圆角：参数说明气泡要溢出卡片底部，
+     被裁掉后最后一行文字会看不见。改由 head 自己带圆角。 */
+}
+
+.param-card-head {
+  list-style: none;
+  cursor: pointer;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #fcfcfd;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #374151;
+  user-select: none;
+}
+
+.param-card-head::-webkit-details-marker {
+  display: none;
+}
+
+.param-card-caret {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  color: #9ca3af;
+  transition: transform 0.15s ease;
+}
+
+.param-card[open] .param-card-caret {
+  transform: rotate(90deg);
+}
+
+.param-card[open] .param-card-head {
+  border-radius: 11px 11px 0 0;
+}
+
+
+.param-card-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e6f7f5;
+  color: #0f766e;
+}
+
+.param-card-body {
+  padding: 2px 12px 12px;
+  border-radius: 0 0 11px 11px;
+}
+
+.param-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #9ca3af;
+}
+
+.group-switch {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+
+.group-switch button {
+  flex: 1;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 9px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s ease;
+}
+
+.group-switch button.is-on {
+  border-color: #111827;
+  color: #111827;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px #111827;
+}
+
+.group-switch button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>
