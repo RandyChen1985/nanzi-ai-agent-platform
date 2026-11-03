@@ -32,12 +32,18 @@ def _runtime_blocks_to_agentscope(message: RuntimeMessage) -> list[Any]:
             continue
         if block.type != "image" or not block.data:
             continue
-        mime_type = block.mime_type or "image/png"
+        mime_type = block.mime_type or _IMAGE_MIME_FALLBACK
         if block.data.startswith("http://") or block.data.startswith("https://"):
             blocks.append(DataBlock(source=URLSource(url=block.data, media_type=mime_type)))
         else:
-            data = block.data.split(",", 1)[1] if block.data.startswith("data:") else block.data
-            blocks.append(DataBlock(source=Base64Source(data=data, media_type=mime_type)))
+            # 用 partition 而不是 split(",", 1)[1]：残缺的 data URI（没有逗号）会让
+            # 后者抛 IndexError，把整条消息转换带崩；这里直接跳过这个块。
+            payload = block.data
+            if payload.startswith("data:"):
+                _, _, payload = payload.partition(",")
+                if not payload:
+                    continue
+            blocks.append(DataBlock(source=Base64Source(data=payload, media_type=mime_type)))
     return blocks or [TextBlock(text="")]
 
 
@@ -96,20 +102,58 @@ def compat_to_runtime_messages(messages: list[BaseMessage] | str) -> list[Runtim
     return converted
 
 
+_IMAGE_MIME_FALLBACK = "image/png"
+
+
+def _image_mime_from_url(url: str) -> str:
+    """从 data URI 头取真实媒体类型，取不到才回退 ``image/png``。
+
+    上游 :func:`_encode_image_data_url` 按真实扩展名生成 ``data:image/jpeg;base64,...``
+    （jpg 规范成 jpeg，webp 就是 webp）。这里若一律标成 png，下游 ``Base64Source`` 会
+    把 jpeg 字节声明成 png——多数多模态模型能自行嗅探，但严格实现与 OpenAI 兼容网关
+    会直接判 ``Invalid image``。
+    """
+    if url.startswith("data:"):
+        header = url[5:].split(",", 1)[0].split(";", 1)[0].strip()
+        if header.startswith("image/"):
+            return header
+    return _IMAGE_MIME_FALLBACK
+
+
+def _image_url_of(item: dict[str, Any]) -> str:
+    """取出 ``image_url`` 里的 url，兼容 dict 与裸字符串两种写法。
+
+    OpenAI 标准是 ``{"image_url": {"url": ...}}``，但部分兼容实现直接给字符串；
+    按 dict 硬取会在字符串上抛 ``AttributeError``，把整条消息转换一起带崩。
+    """
+    raw = item.get("image_url")
+    if isinstance(raw, dict):
+        return str(raw.get("url") or "")
+    if isinstance(raw, str):
+        return raw
+    return ""
+
+
 def _compat_content_blocks(content: Any) -> list[RuntimeContentBlock]:
     if isinstance(content, list):
         blocks: list[RuntimeContentBlock] = []
         for item in content:
-            if isinstance(item, dict) and item.get("type") == "image_url":
-                image_url = item.get("image_url") or {}
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "image_url":
+                url = _image_url_of(item)
+                # 空 url 不产生 image 块：下游本来就会跳过，留一个 data="" 的块只会
+                # 让「这条消息到底有没有图」的判断变模糊。
+                if not url:
+                    continue
                 blocks.append(
                     RuntimeContentBlock(
                         type="image",
-                        mime_type="image/png",
-                        data=str(image_url.get("url") or ""),
+                        mime_type=_image_mime_from_url(url),
+                        data=url,
                     )
                 )
-            elif isinstance(item, dict) and item.get("type") == "text":
+            elif item.get("type") == "text":
                 blocks.append(RuntimeContentBlock(type="text", text=str(item.get("text") or "")))
         return blocks or [RuntimeContentBlock(type="text", text="")]
     return [RuntimeContentBlock(type="text", text="" if content is None else str(content))]
