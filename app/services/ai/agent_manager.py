@@ -595,7 +595,9 @@ class AgentManagerService:
                     tools=[],
                     capabilities=agent.capabilities or [],
                     engine_type=agent.engine_type,
-                    engine_config=agent.engine_config
+                    engine_config=agent.engine_config,
+                    is_expert_team_lead=bool(getattr(agent, "is_expert_team_lead", False)),
+                    team_profile=getattr(agent, "team_profile", None),
                 )
 
             # 3. Handle LOCAL Engine (Require PUBLISHED version)
@@ -639,7 +641,9 @@ class AgentManagerService:
                 welcome_config=safe_welcome_config(getattr(version, "welcome_config", None)),
                 capabilities=agent.capabilities or [],
                 engine_type=agent.engine_type,
-                engine_config=agent.engine_config
+                engine_config=agent.engine_config,
+                is_expert_team_lead=bool(getattr(agent, "is_expert_team_lead", False)),
+                team_profile=getattr(agent, "team_profile", None),
             )
             
         except OperationalError as e:
@@ -730,7 +734,9 @@ class AgentManagerService:
                     welcome_config=safe_welcome_config(getattr(version, "welcome_config", None)),
                     capabilities=version.agent.capabilities or [],
                     engine_type=version.agent.engine_type,
-                    engine_config=version.agent.engine_config
+                    engine_config=version.agent.engine_config,
+                    is_expert_team_lead=bool(getattr(version.agent, "is_expert_team_lead", False)),
+                    team_profile=getattr(version.agent, "team_profile", None),
                 )
             
             # 2. Fallback: Check if version_id is actually an Agent ID (for RAGFlow shortcut)

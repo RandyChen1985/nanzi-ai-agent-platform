@@ -9,9 +9,11 @@
 """
 import uuid
 
+import pytest
+
 from app.core.orm import AsyncSessionLocal
 from app.models.agent import AIAgent, AIAgentVersion
-from app.schemas.agent import AIAgentBase
+from app.schemas.agent import AIAgentBase, ChatConfig
 from app.services.ai.agent_manager import AgentManagerService
 
 
@@ -226,3 +228,129 @@ async def test_allowed_agents_exposes_team_name_for_badge():
         async with AsyncSessionLocal() as session:
             await session.delete(await session.get(AIAgent, lead.id))
             await session.commit()
+
+
+# ---------------- 团队身份段：进提示词，但不进父级路由 ----------------
+
+from types import SimpleNamespace
+
+from app.services.ai.agent_roster import (
+    TEAM_DELEGATION_BOUNDARY_HINT,
+    build_sub_agents_context,
+    build_team_identity_context,
+)
+
+
+def _member(name: str, display: str, desc: str, caps: list[str]) -> SimpleNamespace:
+    return SimpleNamespace(name=name, display_name=display, description=desc, capabilities=caps)
+
+
+def test_team_identity_is_injected_before_the_roster():
+    """团介绍里的流程约束要进提示词，且必须排在成员清单之前（先身份、再名单）。"""
+    context = build_sub_agents_context(
+        [_member("metadata-specialist", "元数据专家", "解析 DDL 与业务口径", ["DDL"])],
+        team_profile={
+            "name": "数据分析专家团",
+            "intro": "先问元数据专家确认口径，再让数据助手取数。",
+        },
+    )
+    assert context is not None
+    assert context.startswith("## 你的团队：数据分析专家团")
+    assert "先问元数据专家确认口径" in context
+    assert context.index("你的团队") < context.index("可委派子智能体清单")
+    assert "`metadata-specialist`" in context
+    # 有成员才指挥它去调
+    assert "把子任务交给对应成员" in context
+    assert TEAM_DELEGATION_BOUNDARY_HINT in context
+
+
+def test_team_identity_without_members_still_renders():
+    """写好了团介绍但还没配调度范围：只注入身份段，不出现空清单。"""
+    context = build_sub_agents_context([], team_profile={"name": "数据分析专家团"})
+    assert context is not None
+    assert "## 你的团队：数据分析专家团" in context
+    assert "可委派子智能体清单" not in context
+    # 没有成员时不能诱导它去调工具，否则必然撞 depth_exceeded
+    assert "把子任务交给对应成员" not in context
+
+
+def test_no_team_profile_keeps_plain_roster():
+    """普通智能体（非团主专家）拿到的清单一个字都不该变。"""
+    context = build_sub_agents_context(
+        [_member("chat-bi", "数据智能助手", "取数与报表", ["SQL"])],
+        team_profile=None,
+    )
+    assert context is not None
+    assert context.startswith("## 可委派子智能体清单")
+    assert "你的团队" not in context
+
+
+def test_blank_team_profile_produces_nothing():
+    assert build_team_identity_context(None, has_members=True) is None
+    assert build_team_identity_context({}, has_members=True) is None
+    # 全空白等同于没写
+    assert build_team_identity_context({"name": "   ", "intro": ""}, has_members=True) is None
+
+
+def test_team_identity_keeps_delegation_boundary():
+    """深度上限是 1：被委派而来的团主专家不能再往下调，提示词必须写清。"""
+    context = build_team_identity_context({"name": "销售支撑专家团"}, has_members=True)
+    assert context is not None
+    assert "无法再向下委派" in context
+    assert "`sub_agent_call`" in context
+
+
+def test_chat_config_roundtrip_keeps_team_profile():
+    """runner 会用 ChatConfig(**config) 重建配置，团身份不能在这条路上丢。"""
+    config = ChatConfig(
+        agent_id="agent-1",
+        agent_name="ds-lead",
+        system_prompt="p",
+        tools=[],
+        model_name="m",
+        temperature=0.1,
+        is_expert_team_lead=True,
+        team_profile={"name": "数据分析专家团", "intro": "先确认口径再取数"},
+    )
+    rebuilt = ChatConfig(**config.model_dump())
+    assert rebuilt.is_expert_team_lead is True
+    assert rebuilt.team_profile == {"name": "数据分析专家团", "intro": "先确认口径再取数"}
+
+
+@pytest.mark.asyncio
+async def test_active_config_carries_team_profile_from_db():
+    """链路验证：库里的团身份要能一路带到执行期配置，否则提示词段永远是空的。"""
+    from app.services.ai.agent_manager import AgentManagerService
+
+    lead = _agent(
+        name=f"team-lead-{uuid.uuid4().hex[:8]}",
+        created_by="admin",
+        is_expert_team_lead=True,
+        team_profile={"name": "数据分析专家团", "intro": "先确认口径再取数"},
+    )
+    version = AIAgentVersion(
+        id=str(uuid.uuid4()),
+        agent_id=lead.id,
+        version_number=1,
+        status="PUBLISHED",
+        model_name="qwen",
+        temperature=0.3,
+        system_prompt="你是数据分析专家团的主专家。",
+        tools=[],
+    )
+    async with AsyncSessionLocal() as session:
+        session.add(lead)
+        await session.flush()
+        session.add(version)
+        await session.commit()
+        try:
+            config = await AgentManagerService.get_active_agent_config(
+                session, agent_id=lead.id
+            )
+        finally:
+            await session.delete(await session.get(AIAgent, lead.id))
+            await session.commit()
+
+    assert config is not None
+    assert config.is_expert_team_lead is True
+    assert config.team_profile == {"name": "数据分析专家团", "intro": "先确认口径再取数"}

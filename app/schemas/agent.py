@@ -270,6 +270,10 @@ class ChatConfig(BaseModel):
     agent_display_name: Optional[str] = None
     agent_type: AgentType = AgentType.GENERAL
     description: str = ""
+    # 团主专家身份：只用于拼「当前智能体自己」的提示词（团队介绍里的流程与约束），
+    # 不进父级路由上下文——否则介绍里「找元数据专家」这类词会让主助手误派。
+    is_expert_team_lead: bool = False
+    team_profile: Optional[Dict[str, Any]] = None
     project_name: Optional[str] = None
     agent_version: Optional[str] = None
     model_name: Optional[str]

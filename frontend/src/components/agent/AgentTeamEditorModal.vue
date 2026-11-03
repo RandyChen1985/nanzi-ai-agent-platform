@@ -10,6 +10,7 @@
  */
 import { computed, ref, watch } from "vue";
 import Modal from "../Modal.vue";
+import TeamIntroGuide from "./TeamIntroGuide.vue";
 
 const TEAM_EDITOR_Z_INDEX = 10010;
 
@@ -37,6 +38,7 @@ const emit = defineEmits<{
 }>();
 
 const isLead = ref(false);
+const showIntroGuide = ref(false);
 const teamName = ref("");
 const teamIntro = ref("");
 
@@ -124,7 +126,18 @@ const submit = () => {
           />
         </div>
         <div>
-          <label class="mb-1 block text-xs font-medium text-gray-600">团队介绍</label>
+          <label class="mb-1 flex items-center gap-1 text-xs font-medium text-gray-600">
+            <span>团队介绍</span>
+            <button
+              type="button"
+              class="grid h-4 w-4 shrink-0 place-items-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-500 transition hover:border-primary hover:text-primary"
+              :aria-expanded="showIntroGuide"
+              title="怎么写才有效"
+              @click="showIntroGuide = !showIntroGuide"
+            >
+              ?
+            </button>
+          </label>
           <textarea
             v-model="teamIntro"
             rows="3"
@@ -133,8 +146,9 @@ const submit = () => {
             class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           ></textarea>
           <p class="mt-1 text-[11px] text-gray-400">
-            只用于列表页卡片展示，不会写进「描述信息」——那份描述会发给委派模型，混入团队文案会干扰路由。
+            会写进团主专家自己的系统提示词（团队身份段），模型会照着执行——可以写协作流程与能力边界；它不进「描述信息」，所以不会干扰主助手的委派选人。
           </p>
+          <TeamIntroGuide v-if="showIntroGuide" @apply="teamIntro = $event" />
         </div>
 
         <!-- 成员只读：成员属于版本级调度范围，这里不给改 -->

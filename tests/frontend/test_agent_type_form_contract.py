@@ -239,7 +239,9 @@ def test_agent_edit_dialog_is_compact_and_locks_engine_type_only():
     modal = Path("frontend/src/components/Modal.vue").read_text()
     edit_dialog = management[management.index('v-if="showAgentModal && isEditingAgent"'):]
 
-    assert 'size="max-w-4xl"' in edit_dialog[:300]
+    # 宽度必须给到 4xl：size 后面允许追加高度类（切页签时窗口高度要固定，
+    # 见 test_agent_form_window_stays_same_size_across_tabs），但别退化成 max-w-md。
+    assert 'size="max-w-4xl' in edit_dialog[:300]
     # 系统级不再通过编辑表单切换：只能走「发布为系统级」或申请审核（有事件、有流程）。
     # 表单里也不再解释这块——发布/下架/发布历史都在智能体卡片的操作菜单里。
     assert "设为系统智能体" not in management

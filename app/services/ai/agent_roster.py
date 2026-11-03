@@ -1,9 +1,52 @@
 """主助手欢迎语：从已启用系统智能体动态生成专家清单。"""
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, Mapping, Optional
 
 AGENT_ROSTER_PLACEHOLDER = "{agent_roster}"
+
+# 委派深度上限是 1：团主专家被别的智能体委派而来时（深度 1）不能再向下委派。
+# 团队介绍里往往写着「先问 A 再问 B」，模型会照着做然后撞 depth_exceeded，
+# 所以身份段必须自带这条边界，且不能指望按深度条件化——提示词构建阶段拿不到
+# delegation_depth（它在 MainAgentContext 里，执行期才存在）。
+TEAM_DELEGATION_BOUNDARY_HINT = (
+    "（边界）如果你本身就是被其他智能体委派来处理某个子任务的，你无法再向下委派；"
+    "此时请直接给出结论，或说明该由谁来做，不要调用 `sub_agent_call`。"
+)
+
+
+def build_team_identity_context(
+    team_profile: Optional[Mapping[str, Any]],
+    *,
+    has_members: bool,
+) -> Optional[str]:
+    """团主专家的身份段：我是哪个团的主专家、团队定位与流程约束是什么。
+
+    ``team_profile`` 是 ``ai_agents.team_profile``（``{name, intro}``）。两处都为空
+    时返回 None，调用方据此决定这一节要不要渲染。
+
+    刻意不放进 ``description``：那份描述会出现在**父级**的委派通讯录里被用作选人
+    依据，团队介绍里的「先找元数据专家」这类措辞会把路由带偏。这里注入的是当前
+    智能体自己的提示词，父级看不到。
+    """
+    profile = team_profile if isinstance(team_profile, Mapping) else {}
+    name = str(profile.get("name") or "").strip()
+    intro = str(profile.get("intro") or "").strip()
+    if not name and not intro:
+        return None
+
+    parts: List[str] = []
+    parts.append(f"## 你的团队：{name}" if name else "## 你的团队")
+    parts.append(f"你是「{name}」的主专家。" if name else "你是这个专家团的主专家。")
+    if intro:
+        parts.append("团队的定位、协作流程与能力边界如下，遇到对应场景必须遵守：")
+        parts.append(intro)
+    if has_members:
+        parts.append(
+            "需要成员专长时，用 `sub_agent_call` 把子任务交给对应成员，不要自己勉强回答。"
+        )
+    parts.append(TEAM_DELEGATION_BOUNDARY_HINT)
+    return "\n\n".join(parts)
 
 
 def format_agent_roster_markdown(
@@ -85,10 +128,25 @@ async def resolve_delegable_system_agents_for_user(
 
 
 
-def build_sub_agents_context(delegable_agents: Iterable[Any]) -> Optional[str]:
-    """供 sub_agent_call 工具使用的技术向通讯录（与欢迎语清单数据源一致）。"""
+def build_sub_agents_context(
+    delegable_agents: Iterable[Any],
+    *,
+    team_profile: Optional[Mapping[str, Any]] = None,
+) -> Optional[str]:
+    """供 sub_agent_call 工具使用的技术向通讯录（与欢迎语清单数据源一致）。
+
+    团主专家额外带上身份段：对它来说这份清单就是「我的团队」，介绍里写的流程与
+    能力边界属于必须遵守的约定，只列成员名字等于让它知道有人、却不知道该怎么配合。
+
+    ``team_profile`` 有内容而名单为空时**仍然返回身份段**（不返回 None）：用户写了
+    团介绍却还没配调度范围是常见中间态，此时模型至少该知道自己是团长、该找谁，
+    而不是对团的存在一无所知。
+    """
+    agents = [agent for agent in (delegable_agents or [])]
+    team_block = build_team_identity_context(team_profile, has_members=bool(agents))
+
     sub_agent_lines = []
-    for agent in delegable_agents or []:
+    for agent in agents:
         display = getattr(agent, "display_name", None) or getattr(agent, "name", "")
         desc = getattr(agent, "description", None) or "无描述"
         caps = ", ".join(getattr(agent, "capabilities", None) or [])
@@ -98,9 +156,10 @@ def build_sub_agents_context(delegable_agents: Iterable[Any]) -> Optional[str]:
             f"  **核心能力**: [{caps}]"
         )
     if not sub_agent_lines:
-        return None
-    return (
+        return team_block
+    roster = (
         "## 可委派子智能体清单 (可用通讯录)\n"
         "当且仅当你使用 `sub_agent_call` 工具时，可以通过传入 `agent_name`（标识）来调用以下已启用的智能体：\n\n"
         + "\n\n".join(sub_agent_lines)
     )
+    return f"{team_block}\n\n{roster}" if team_block else roster

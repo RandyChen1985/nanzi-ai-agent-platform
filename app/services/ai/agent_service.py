@@ -2285,7 +2285,21 @@ class AgentService:
             from app.services.ai.tools.agent_delegate_tool import has_delegation_tool
 
             if not has_delegation_tool(agent_config):
-                return None, 0, False, agent_system_prompt, None
+                # 没装 sub_agent_call 不代表没有团队：用户先开了「团主专家」开关、
+                # 写好团介绍，之后才去配调度范围，是常见的中间态。这里只注入身份段
+                # （不含成员清单），否则模型对「我是某个团」一无所知。
+                from app.services.ai.agent_roster import build_team_identity_context
+
+                return (
+                    None,
+                    0,
+                    False,
+                    agent_system_prompt,
+                    build_team_identity_context(
+                        getattr(agent_config, "team_profile", None),
+                        has_members=False,
+                    ),
+                )
 
             try:
                 with _measure("roster_fetch"):
@@ -2320,7 +2334,11 @@ class AgentService:
                                 current_description=current_desc,
                             )
                             updated_prompt = inject_agent_roster(agent_system_prompt, roster_md)
-                        sub_agents_context = build_sub_agents_context(delegable_agents)
+                        sub_agents_context = build_sub_agents_context(
+                            delegable_agents,
+                            # 团主专家这边就是「我的团队」：带上团名与介绍里的流程约束
+                            team_profile=getattr(agent_config, "team_profile", None),
+                        )
                         return delegable_agents, delegable_agent_count, roster_loaded, updated_prompt, sub_agents_context
             except Exception as sa_err:
                 logger.warning(f"Failed to build main-agent roster/sub-agents context: {sa_err}")

@@ -680,7 +680,10 @@
             <b>会话头部</b>：进对话后标题旁也标 <span class="badge-lite badge-team">👥 TEAM</span>，
             否则用户以为自己在跟一个普通专家聊。<br />
             <b>抽屉副标题</b>：团主专家那行第二行直接显示「团名 · N 位子专家」，
-            只给一枚徽标还是不知道是哪个团、有几个成员。
+            只给一枚徽标还是不知道是哪个团、有几个成员。<br />
+            <b>团介绍注入提示词</b>：原型把它定位成纯展示文案，实现里还会作为「你的团队」段
+            进团主专家自己的系统提示词（流程约束 + 被委派时的委派边界声明）；
+            父级路由上下文仍只看 <code>description</code>，否则介绍里的「先找谁」会把主助手带偏。
           </p>
         </div>
       </div>
@@ -1536,7 +1539,8 @@
         <tr>
           <td>表 <code>ai_agents</code></td>
           <td><code>team_profile</code> JSON</td>
-          <td><code>{"name": 团名, "intro": 团介绍}</code>。不能复用 <code>display_name</code>/<code>description</code>：后者是发给委派模型看的「职责描述」，写进团队文案会污染路由。</td>
+          <td><code>{"name": 团名, "intro": 团介绍}</code>。不能复用 <code>display_name</code>/<code>description</code>：后者是发给委派模型看的「职责描述」，写进团队文案会污染路由。
+              其中 <code>intro</code> 会作为「你的团队」段注入<b>团主专家自己</b>的系统提示词（含流程约束与「被委派时不能再向下委派」的边界声明），<b>不进父级路由上下文</b>。</td>
         </tr>
         <tr>
           <td>接口 <code>GET /agents</code></td>
