@@ -418,6 +418,30 @@ async def load_agents_by_delegation_ids(session: Any, agent_ids: Iterable[str]) 
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def load_accessible_personal_agents(
+    session: Any,
+    *,
+    user_name: str | None,
+    is_admin: bool = False,
+) -> List[Any]:
+    """用户自建的、已启用的智能体（管理员看全部，普通用户只看本人创建的）。"""
+    from sqlalchemy import select
+
+    from app.models.agent import AIAgent
+
+    conditions = [
+        AIAgent.is_system.is_(False),
+        AIAgent.is_enabled.is_(True),
+    ]
+    if not is_admin:
+        if not (user_name or "").strip():
+            return []
+        conditions.append(AIAgent.created_by == user_name)
+
+    stmt = select(AIAgent).where(*conditions)
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def filter_delegable_agents(
     session: Any,
     agents: Iterable[Any],
@@ -610,6 +634,37 @@ async def resolve_runnable_delegable_system_agents(
         current_agent_id=current_agent_id,
     )
     return await _filter_ready_delegable_agents(session, permitted)
+
+
+async def resolve_accessible_agents_for_user(
+    session: Any,
+    *,
+    user_id: int | str | None,
+    is_admin: bool,
+    user_name: str | None = None,
+) -> List[Any]:
+    """「这个用户能碰到哪些智能体」，与当前智能体的委派工具/白名单**无关**。
+
+    必须和「我能委派哪些」分开：用户问「我有那些智能体权限」问的是授权，
+    不该因为当前这个智能体没装委派工具就答成 0 个。后者由
+    ``resolve_delegable_agent_stages`` 在前面再叠一层工具与名单。
+    """
+    system_agents = await load_delegable_system_agent_candidates(session)
+    personal_agents = await load_accessible_personal_agents(
+        session,
+        user_name=user_name,
+        is_admin=is_admin,
+    )
+    return await filter_delegable_agents(
+        session,
+        list(system_agents) + list(personal_agents),
+        user_id=user_id,
+        is_admin=is_admin,
+        user_name=user_name,
+        # 传 None 表示不剔除自身，由调用方用 is_current 标注。
+        current_agent_id=None,
+        allow_personal=True,
+    )
 
 
 async def resolve_delegable_agent_stages(

@@ -234,7 +234,7 @@ class AgentServicePrompts:
         (("directory_tree_navigator", "has_all"), "| 「列出这个已知目录的文件树」「查看目录下有哪些文件」「按后缀或文件名筛选目录内容」 | 调用 **directory_tree_navigator**（只查看已知目录的树形元数据；不用于查询权限、目录映射或文件内容） |"),
         (("list_accessible_datasets", "has_all"), "| 「我有哪些数据集」「能查哪些数据」「数据集列表」 | 调用 **list_accessible_datasets**（仅已启用、目录级 id/名称/备注，不含表结构） |"),
         (("list_accessible_knowledge_bases", "has_all"), "| 「我有哪些知识库」「能检索哪些文档库」「知识库列表」 | 调用 **list_accessible_knowledge_bases**（仅目录级信息；正文检索用 search_knowledge_base） |"),
-        (("list_available_agents", "has_all"), "| 「我有哪些智能体」「能调用哪些专家」「可用智能体列表」，或准备委派子任务前需确认智能体标识 | 调用 **list_available_agents**（返回可用智能体标识 agent_name、名称、职责与能力）；若返回 `delegation_available=false`，说明本智能体没装委派工具，要如实告知用户「当前无法委派」，不要让用户挑完再说做不到 |"),
+        (("list_available_agents", "has_all"), "| 「我有哪些智能体」「能调用哪些专家」「可用智能体列表」，或准备委派子任务前需确认智能体标识 | 调用 **list_available_agents**：`items` 是当前可直接调用的，`blocked` 是用户有权限但当前不可委派的（带 blocked_reason）；问「我有那些智能体权限」看 `accessible_count` 与 `blocked`，问「我能委派哪些」看 `items` 与 `delegable_count`，两个问题不要混答；`delegation_available=false` 时如实说「当前无法委派」，但**不要**答成「你没有任何智能体」 |"),
         (("get_myinfo", "has_all"), "| 「我的用户信息」「我的部门/角色/权限」「查看我的资料」 | 调用 **get_myinfo**（只读取当前上下文中的本人，不接受 userid 或其他参数） |"),
         (("request_user_confirmation", "has_all"), "| 录入/修改/删除业务数据、向外部系统写入记录 | 先调用 **request_user_confirmation** 展示可编辑确认卡；等待「【业务确认】」用户回执后再决定是否调用写入工具；用户取消后禁止立刻再次弹确认卡 |"),
         (("ask_user_question", "has_all"), "| 缺少继续处理所需的关键输入，或存在需要用户选择的业务分支 | 调用 **ask_user_question** 展示 2-12 个清晰选项；等待「【用户回答】」回执后继续，禁止在本轮自行猜测或继续执行 |"),

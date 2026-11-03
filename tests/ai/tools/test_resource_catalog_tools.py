@@ -235,7 +235,11 @@ async def test_list_available_agents_returns_lightweight_fields():
     ), patch(
         "app.services.ai.agent_roster.resolve_delegable_system_agents_for_user",
         AsyncMock(return_value=[agent_target]),
-    ) as mock_resolve_delegable:
+    ) as mock_resolve_delegable, patch(
+        # 用户维度的可访问清单（与本智能体的工具配置无关）
+        "app.services.ai.tools.agent_delegate_tool.resolve_accessible_agents_for_user",
+        AsyncMock(return_value=[agent_target]),
+    ):
         result = await list_available_agents.ainvoke({})
 
     payload = json.loads(result)
@@ -349,8 +353,27 @@ async def test_list_available_agents_empty_catalog_note_for_admin():
 
 
 
-def _delegation_catalog_stubs(caller_config, agents):
-    """把 list_available_agents 的依赖打桩，返回 (ctx patches, resolve mock)。"""
+
+
+def _agent(agent_id, name, *, is_system=True, created_by="admin"):
+    return SimpleNamespace(
+        id=agent_id,
+        name=name,
+        display_name=name,
+        description="职责说明",
+        capabilities=["data_query"],
+        is_system=is_system,
+        is_enabled=True,
+        created_by=created_by,
+    )
+
+
+def _delegation_catalog_stubs(caller_config, delegable, accessible):
+    """把 list_available_agents 的依赖打桩。
+
+    ``delegable`` 是「当前能委派的」，``accessible`` 是「用户本人有权限访问的」——
+    两者刻意分开：前者还叠了工具/白名单/就绪，后者只看授权。
+    """
 
     ctx = MagicMock()
     ctx.user_id = 7
@@ -363,25 +386,30 @@ def _delegation_catalog_stubs(caller_config, agents):
     db_cm.__aenter__ = AsyncMock(return_value=db)
     db_cm.__aexit__ = AsyncMock(return_value=None)
 
-    resolve = AsyncMock(return_value=agents)
-    patches = [
+    return [
         patch("app.services.ai.tools.resource_catalog_tools.get_current_agent_context", return_value=ctx),
         patch("app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal", return_value=db_cm),
         patch(
             "app.services.ai.agent_manager.AgentManagerService.get_active_agent_config",
             AsyncMock(return_value=caller_config),
         ),
-        patch("app.services.ai.agent_roster.resolve_delegable_system_agents_for_user", resolve),
+        patch(
+            "app.services.ai.agent_roster.resolve_delegable_system_agents_for_user",
+            AsyncMock(return_value=delegable),
+        ),
+        patch(
+            "app.services.ai.tools.agent_delegate_tool.resolve_accessible_agents_for_user",
+            AsyncMock(return_value=accessible),
+        ),
     ]
-    return patches, resolve
 
 
 @pytest.mark.asyncio
-async def test_list_available_agents_refuses_when_delegation_tool_absent():
-    """没装委派工具时不能列「可委派清单」。
+async def test_list_available_agents_splits_access_from_delegation():
+    """没装委派工具时：委派能力要否掉，但用户本人的智能体权限必须照常列出。
 
-    用户实测：问「我能委派哪些」→ 列出一堆 → 挑一个让它委派 → 模型回「我没有工具」。
-    目录暗示了运行时并不存在的能力，纯属误导。
+    用户实测反馈：「那这样后，我要问我有那些智能体权限也无法问了吗？并不是问我能委托那些」。
+    说明「我有那些智能体权限」和「我能委派哪些」是两个问题，不能合并成一个空清单。
     """
     from app.services.ai.tools.resource_catalog_tools import list_available_agents
 
@@ -390,22 +418,26 @@ async def test_list_available_agents_refuses_when_delegation_tool_absent():
         agent_name="plain-agent",
         tools=["execute_sql_query"],
     )
-    patches, resolve = _delegation_catalog_stubs(caller_config, [])
+    target = _agent("agent_target", "data_expert")
+    patches = _delegation_catalog_stubs(caller_config, delegable=[], accessible=[target])
 
-    with patches[0], patches[1], patches[2], patches[3]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4]:
         result = await list_available_agents.ainvoke({})
 
     payload = json.loads(result)
     assert payload["delegation_available"] is False
-    assert payload["count"] == 0
+    assert payload["delegable_count"] == 0
     assert payload["items"] == []
-    assert "无法委派" in payload["note"]
-    # 既然一定不可委派，就没必要再去查一遍候选池
-    resolve.assert_not_awaited()
+    # 关键：有权限的智能体仍要出现，否则「我有那些智能体权限」也答不了
+    assert payload["accessible_count"] == 1
+    assert [item["agent_name"] for item in payload["blocked"]] == ["data_expert"]
+    assert payload["blocked"][0]["blocked_reason"] == "no_tool"
+    assert "当前无法委派" in payload["note"]
+    assert "有访问权限" in payload["note"]
 
 
 @pytest.mark.asyncio
-async def test_list_available_agents_lists_scope_when_tool_present():
+async def test_list_available_agents_lists_delegable_scope_when_tool_present():
     from app.schemas.agent import ToolConfigItem
     from app.services.ai.tools.resource_catalog_tools import list_available_agents
 
@@ -414,24 +446,43 @@ async def test_list_available_agents_lists_scope_when_tool_present():
         agent_name="plain-agent",
         tools=[ToolConfigItem(name="sub_agent_call")],
     )
-    target = SimpleNamespace(
-        id="agent_target",
-        name="data_expert",
-        display_name="数据分析专家",
-        description="负责数据查询与分析",
-        capabilities=["text2sql"],
-        is_system=True,
-        is_enabled=True,
-    )
-    patches, _ = _delegation_catalog_stubs(caller_config, [target])
+    target = _agent("agent_target", "data_expert")
+    patches = _delegation_catalog_stubs(caller_config, delegable=[target], accessible=[target])
 
-    with patches[0], patches[1], patches[2], patches[3]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4]:
         result = await list_available_agents.ainvoke({})
 
     payload = json.loads(result)
     assert payload["delegation_available"] is True
-    assert payload["count"] == 1
+    assert payload["delegable_count"] == 1
+    assert payload["accessible_count"] == 1
+    assert payload["blocked"] == []
     assert payload["items"][0]["agent_name"] == "data_expert"
+
+
+@pytest.mark.asyncio
+async def test_list_available_agents_explains_allowlist_exclusion():
+    """有权限、也有委派工具，但不在调度范围里——要说清是被白名单挡住的。"""
+    from app.schemas.agent import ToolConfigItem
+    from app.services.ai.tools.resource_catalog_tools import list_available_agents
+
+    caller_config = SimpleNamespace(
+        agent_id="agent_current",
+        agent_name="plain-agent",
+        tools=[ToolConfigItem(name="sub_agent_call", delegable_agent_ids=["agent_target"])],
+    )
+    allowed = _agent("agent_target", "data_expert")
+    excluded = _agent("agent_other", "knowledge_base")
+    patches = _delegation_catalog_stubs(caller_config, delegable=[allowed], accessible=[allowed, excluded])
+
+    with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        result = await list_available_agents.ainvoke({})
+
+    payload = json.loads(result)
+    assert payload["delegable_count"] == 1
+    assert payload["accessible_count"] == 2
+    assert [item["agent_name"] for item in payload["blocked"]] == ["knowledge_base"]
+    assert payload["blocked"][0]["blocked_reason"] == "not_in_allowlist"
 
 
 @pytest.mark.asyncio
@@ -442,25 +493,13 @@ async def test_list_available_agents_treats_main_assistant_as_delegation_capable
     """
     from app.services.ai.tools.resource_catalog_tools import list_available_agents
 
-    caller_config = SimpleNamespace(
-        agent_id="sys-agent-chat",
-        agent_name="assistant",
-        tools=[],
-    )
-    target = SimpleNamespace(
-        id="agent_target",
-        name="data_expert",
-        display_name="数据分析专家",
-        description="负责数据查询与分析",
-        capabilities=[],
-        is_system=True,
-        is_enabled=True,
-    )
-    patches, _ = _delegation_catalog_stubs(caller_config, [target])
+    caller_config = SimpleNamespace(agent_id="sys-agent-chat", agent_name="assistant", tools=[])
+    target = _agent("agent_target", "data_expert")
+    patches = _delegation_catalog_stubs(caller_config, delegable=[target], accessible=[target])
 
-    with patches[0], patches[1], patches[2], patches[3]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4]:
         result = await list_available_agents.ainvoke({})
 
     payload = json.loads(result)
     assert payload["delegation_available"] is True
-    assert payload["count"] == 1
+    assert payload["delegable_count"] == 1
