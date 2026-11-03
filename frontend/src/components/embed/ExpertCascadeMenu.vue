@@ -63,6 +63,16 @@ const customAgents = computed(() => {
     .sort((a, b) => (b.sort_order || 0) - (a.sort_order || 0))
 })
 
+/** 团主专家的副标题：只有 👥 TEAM 徽标的话，用户不知道是哪个团、有几个子专家 */
+const teamSubtitle = (agent: any): string => {
+  const name = String(agent.team_name || '').trim()
+  if (!name) return ''
+  const count = agent.team_member_count
+  if (count === null || count === undefined) return name
+  if (count === 0) return `${name} · 暂无子专家`
+  return `${name} · ${count} 位子专家`
+}
+
 const filterList = (list: any[]) => {
   const q = expertSearchQuery.value.trim().toLowerCase()
   if (!q) return list
@@ -331,6 +341,13 @@ const handleSelectExpert = (agentId: string) => {
                   v-else-if="agent.is_system"
                   class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 uppercase"
                 >SYS</span>
+                <!-- 专家团与 MAIN/SYS 正交：一个系统级智能体可以既是 SYS 又是团主专家，
+                     所以必须独立判断，不能并进上面的 v-else-if 链。 -->
+                <span
+                  v-if="agent.is_expert_team_lead"
+                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded border border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-300"
+                  :title="`专家团主专家：${agent.team_name || agent.display_name}`"
+                >👥 TEAM</span>
               </div>
               <svg
                 v-if="isExpertMode(routingMode, expertAgentId) && expertAgentId === agent.id"
@@ -344,7 +361,7 @@ const handleSelectExpert = (agentId: string) => {
             <p
               class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2"
               :title="agent.description || '专属能力专家'"
-            >{{ agent.description || '专属能力专家' }}</p>
+            >{{ teamSubtitle(agent) || agent.description || '专属能力专家' }}</p>
           </div>
         </button>
 
@@ -388,6 +405,13 @@ const handleSelectExpert = (agentId: string) => {
                     ? 'text-primary'
                     : 'text-gray-900 dark:text-gray-100'"
                 >{{ agent.display_name }}</span>
+                <!-- 与系统专家行同一枚标记：团主专家是「自定义」里的常见形态，
+                     漏了这里，用户只能在系统 tab 看到 TEAM。 -->
+                <span
+                  v-if="agent.is_expert_team_lead"
+                  class="shrink-0 px-1 py-px text-[8px] font-semibold rounded border border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-300"
+                  :title="`专家团主专家：${agent.team_name || agent.display_name}`"
+                >👥 TEAM</span>
               </div>
               <svg
                 v-if="isExpertMode(routingMode, expertAgentId) && expertAgentId === agent.id"
@@ -401,7 +425,7 @@ const handleSelectExpert = (agentId: string) => {
             <p
               class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2"
               :title="agent.description || '专属能力专家'"
-            >{{ agent.description || '专属能力专家' }}</p>
+            >{{ teamSubtitle(agent) || agent.description || '专属能力专家' }}</p>
           </div>
         </button>
 

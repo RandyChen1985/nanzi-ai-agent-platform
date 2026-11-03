@@ -150,6 +150,19 @@
                     >
                         锁定
                     </span>
+                    <!-- 团主专家在顶部也要能看出来：进对话后这里是最先被看到的位置，
+                         只在抽屉里标 TEAM 的话，用户会以为自己在跟一个普通专家聊。 -->
+                    <span
+                        v-if="headerExpertLabel && !isProcessing && currentExpertAgent?.is_expert_team_lead"
+                        class="inline-flex items-center gap-0.5 rounded-full border border-teal-200 bg-teal-50 px-1.5 py-px text-[9px] font-semibold text-teal-700 shrink-0 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-300"
+                        :title="`专家团主专家：${currentExpertAgent.team_name || currentExpertAgent.display_name}${
+                          currentExpertAgent.team_member_count
+                            ? ` · ${currentExpertAgent.team_member_count} 位子专家`
+                            : ''
+                        }`"
+                    >
+                        👥 TEAM
+                    </span>
                 </div>
                 <div class="text-[11px] text-gray-400 dark:text-gray-500 flex items-center gap-1.5 min-w-0 leading-tight mt-0.5">
                     <template v-if="isProcessing">

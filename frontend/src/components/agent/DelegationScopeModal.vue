@@ -30,6 +30,10 @@ export interface DelegationScopeAgent {
   is_system?: boolean | null;
   is_enabled?: boolean | null;
   created_by?: string | null;
+  /** 专家团主专家：它需要再委派一层才能用到团队，而委派深度上限是 1，所以不能直接选 */
+  is_expert_team_lead?: boolean | null;
+  team_name?: string | null;
+  team_member_ids?: string[] | null;
 }
 
 type ScopeTab = "system" | "mine" | "stale";
@@ -148,9 +152,35 @@ watch([keyword, onlySelected], () => {
   else if (activeTab.value === "mine" && visibleSystem.value.length) activeTab.value = "system";
 });
 
+/**
+ * 团主专家不能直接进白名单：主助手 → 团主专家已经用掉唯一的委派层级
+ * （MAX_DELEGATION_DEPTH = 1），它再想调自己的子专家会直接 depth_exceeded，
+ * 用户以为加了「团」，实际只得到一个不能委派的智能体。
+ * 真正想要的是团的能力 → 把成员加进来。
+ */
+const isTeamLead = (agent: DelegationScopeAgent) => agent.is_expert_team_lead === true;
+const isSelectable = (agent: DelegationScopeAgent) => isAuthorized(agent) && !isTeamLead(agent);
+
+const teamMembersOf = (agent: DelegationScopeAgent) =>
+  (agent.team_member_ids || [])
+    .map((id) => props.agents.find((item) => item.id === id))
+    .filter((item): item is DelegationScopeAgent => Boolean(item));
+
+const adoptTeamMembers = (agent: DelegationScopeAgent) => {
+  if (props.readonly) return;
+  const ids = teamMembersOf(agent)
+    .filter((member) => isAuthorized(member))
+    .map((member) => member.id);
+  if (!ids.length) return;
+  // 快照，不是引用：以后主专家改了成员，这里不会自动同步
+  const next = new Set(localSelected.value);
+  ids.forEach((id) => next.add(id));
+  localSelected.value = Array.from(next);
+};
+
 const toggle = (agent: DelegationScopeAgent) => {
   if (props.readonly) return;
-  if (!isAuthorized(agent)) return;
+  if (!isSelectable(agent)) return;
   const idx = localSelected.value.indexOf(agent.id);
   if (idx >= 0) {
     localSelected.value.splice(idx, 1);
@@ -284,7 +314,7 @@ const displayName = (agent: DelegationScopeAgent) => agent.display_name || agent
           class="flex cursor-pointer items-start gap-2.5 rounded-lg px-2 py-2 transition hover:bg-gray-50"
           :class="[
             localSelected.includes(agent.id) ? 'bg-primary/5' : '',
-            !isAuthorized(agent) ? 'cursor-not-allowed opacity-55 hover:bg-transparent' : '',
+            !isSelectable(agent) ? 'cursor-not-allowed opacity-55 hover:bg-transparent' : '',
           ]"
           @click="toggle(agent)"
         >
@@ -314,6 +344,15 @@ const displayName = (agent: DelegationScopeAgent) => agent.display_name || agent
               </span>
             </div>
             <div class="mt-0.5 text-[11px] leading-relaxed text-gray-500">{{ agent.description || "无描述" }}</div>
+            <button
+              v-if="isTeamLead(agent) && isAuthorized(agent)"
+              type="button"
+              class="mt-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="readonly || !teamMembersOf(agent).length"
+              @click.stop="adoptTeamMembers(agent)"
+            >
+              {{ teamMembersOf(agent).length ? `改用这 ${teamMembersOf(agent).length} 位成员` : "该团还没有成员" }}
+            </button>
             <div v-if="agent.capabilities && agent.capabilities.length" class="mt-1 flex flex-wrap gap-1">
               <span
                 v-for="cap in agent.capabilities"
@@ -325,7 +364,14 @@ const displayName = (agent: DelegationScopeAgent) => agent.display_name || agent
             </div>
           </div>
           <span
-            v-if="!isAuthorized(agent)"
+            v-if="isTeamLead(agent) && isAuthorized(agent)"
+            class="shrink-0 whitespace-nowrap rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] text-teal-700"
+            :title="`${agent.team_name || agent.display_name}：需要再委派一层才能用到团队，委派深度已到上限`"
+          >
+            团主专家 · 不可选
+          </span>
+          <span
+            v-else-if="!isAuthorized(agent)"
             class="shrink-0 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700"
           >
             无 agent 授权

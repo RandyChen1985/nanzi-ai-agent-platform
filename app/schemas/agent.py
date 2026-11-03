@@ -135,8 +135,29 @@ class AIAgentBase(BaseModel):
     is_system: Optional[bool] = False
     sort_order: Optional[int] = 0
     is_enabled: Optional[bool] = True
+    # 专家团主专家：智能体中心据此进入「专家团」tab；成员不在这里存，取版本调度范围
+    is_expert_team_lead: Optional[bool] = False
+    # {"name": 团名, "intro": 团介绍}；两项都空时归一成 None，避免前端拿到空壳对象
+    team_profile: Optional[Dict[str, Any]] = None
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None
+
+    @field_validator("is_expert_team_lead", mode="before")
+    @classmethod
+    def coerce_expert_team_lead(cls, value):
+        # 列是 NOT NULL，前端传 null 时必须归一成 False，否则插入直接报错
+        return bool(value) if value is not None else False
+
+    @field_validator("team_profile", mode="before")
+    @classmethod
+    def coerce_team_profile(cls, value):
+        if not isinstance(value, dict):
+            return None
+        name = str(value.get("name") or "").strip()[:100]
+        intro = str(value.get("intro") or "").strip()[:500]
+        if not name and not intro:
+            return None
+        return {"name": name, "intro": intro}
 
 class AgentDuplicateRequest(BaseModel):
     """复制智能体时的目标标识与显示名；其余配置一律从源智能体复制。"""
@@ -202,6 +223,13 @@ class AIAgentResponse(AIAgentBase):
     owner_active: Optional[bool] = None
     readiness_ready: bool = False
     readiness_missing: List[str] = Field(default_factory=list)
+    # 专家团展示：团名（未配置回落 display_name）与成员数（来自已发布版本的调度范围）。
+    # 成员数在这里算好，免得前端为每个团再查一次版本配置。
+    team_name: Optional[str] = None
+    team_member_count: Optional[int] = None
+    # 成员标识（来自已发布版本的调度范围）：调度范围弹窗要用它做「改用成员」，
+    # 只给数量不够——前端没法把数量变成可勾选的 id。
+    team_member_ids: Optional[List[str]] = None
     # 模型配置异常：null 表示正常；仅在列表接口计算，避免/health 之类的轻量接口多查库
     model_issue: Optional[AgentModelIssue] = None
     # 已发布版本的工具失效摘要：null 表示正常或没有已发布版本

@@ -25,6 +25,7 @@ import RagFlowResourceSelector from "../components/RagFlowResourceSelector.vue";
 import ToolRuntimeConfigModal from "../components/agent/ToolRuntimeConfigModal.vue";
 import MetadataDatasetBindingModal from "../components/agent/MetadataDatasetBindingModal.vue";
 import DelegationScopeModal from "../components/agent/DelegationScopeModal.vue";
+import AgentTeamEditorModal from "../components/agent/AgentTeamEditorModal.vue";
 import DingTalkConfigModal from "../components/agent/DingTalkConfigModal.vue";
 import EmailConfigModal from "../components/agent/EmailConfigModal.vue";
 import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue";
@@ -412,6 +413,8 @@ const agentForm = ref<AIAgentBase>({
   is_system: false,
   sort_order: 0,
   is_enabled: true, // New field
+  is_expert_team_lead: false,
+  team_profile: { name: "", intro: "" },
   engine_type: "LOCAL",
   engine_config: null,
 });
@@ -690,17 +693,252 @@ const handleShareDone = (count: number) => {
 
 // 分享：与技能 / MCP 分享同一套交互——平级视图 + 侧边菜单角标。
 // 不再做成「有待处理才出现的弹窗」：那样对方根本不知道去哪儿找。
-type AgentWorkspaceTab = 'all' | 'mine' | 'received' | 'sent'
+type AgentWorkspaceTab = 'all' | 'mine' | 'received' | 'sent' | 'teams'
+
+/** 专家团主专家：列表页「专家团」tab 的数据源 */
+const teamLeadAgents = computed<AIAgent[]>(() =>
+  agents.value.filter((agent) => agent.is_expert_team_lead),
+)
+
+/** 团卡片的成员摘要：null 表示没配调度范围（不是 0 个），必须与 0 个分开显示 */
+const resolveTeamMembersLabel = (agent: AIAgent): string => {
+  const count = agent.team_member_count
+  if (count === null || count === undefined) return '调度范围未限定'
+  if (count === 0) return '未配置子专家'
+  return `${count} 位子专家`
+}
+
+/** 团名未配置时后端已回落 display_name，这里再兜一层，防止老接口 */
+const resolveTeamName = (agent: AIAgent): string =>
+  (agent.team_name || '').trim() || agent.display_name
+
+const resolveTeamIntro = (agent: AIAgent): string =>
+  (agent.team_profile?.intro || '').trim() || agent.description || '这个团还没有写介绍'
+
+/** 展开态的团：成员明细默认收起，卡片保持一屏密度 */
+const expandedTeamIds = ref<Set<string>>(new Set())
+
+const toggleTeamExpanded = (id: string) => {
+  const next = new Set(expandedTeamIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedTeamIds.value = next
+}
+
+/** 成员 id → 智能体对象。成员本来就在 agents 列表里，不为每个团再查一次 */
+const agentsById = computed(() => {
+  const map = new Map<string, AIAgent>()
+  for (const agent of agents.value) map.set(String(agent.id), agent)
+  return map
+})
+
+type TeamMemberRow = {
+  id: string
+  display_name: string
+  name: string
+  description: string
+  avatar_url?: string | null
+  is_lead: boolean
+  issue: { label: string; cls: string } | null
+}
+
+/** 单个成员「有没有问题」：停用优先，其次 LOCAL 引擎没有已发布版本 */
+const memberIssue = (agent: AIAgent): { label: string; cls: string } | null => {
+  if (agent.is_enabled === false) return { label: '已停用', cls: 'bg-gray-100 text-gray-600' }
+  const isLocal = (agent.engine_type || 'LOCAL') === 'LOCAL'
+  if (isLocal && (agent.published_version_number ?? null) === null) {
+    return { label: '未发布', cls: 'bg-rose-50 text-rose-600' }
+  }
+  return null
+}
+
+/** 成员明细：主专家排第一，其后是调度范围里的子专家 */
+const teamMemberRows = (team: AIAgent): TeamMemberRow[] => {
+  const rows: TeamMemberRow[] = [
+    {
+      id: String(team.id),
+      display_name: team.display_name,
+      name: team.name,
+      description: team.description || '这个团的主专家',
+      avatar_url: team.avatar_url,
+      is_lead: true,
+      issue: memberIssue(team),
+    },
+  ]
+  for (const rawId of team.team_member_ids || []) {
+    const id = String(rawId)
+    if (id === String(team.id)) continue
+    const member = agentsById.value.get(id)
+    if (!member) {
+      // 已删除或当前账号看不到：仍然列出来，否则「3 位子专家」只显示 2 行更让人困惑
+      rows.push({
+        id,
+        display_name: '已不可见的智能体',
+        name: '',
+        description: '这个智能体已删除，或当前账号看不到它',
+        avatar_url: null,
+        is_lead: false,
+        issue: { label: '已失效', cls: 'bg-gray-100 text-gray-500' },
+      })
+      continue
+    }
+    rows.push({
+      id,
+      display_name: member.display_name,
+      name: member.name,
+      description: member.description || '无描述',
+      avatar_url: member.avatar_url,
+      is_lead: false,
+      issue: memberIssue(member),
+    })
+  }
+  return rows
+}
+
+/**
+ * 团能不能用：看子专家（不含主专家）。
+ * 「部分可用 N/M」对应原型里的 1/3——只报「可用」会把没发布的成员藏起来。
+ */
+const teamHasNoPublishedVersion = (team: AIAgent): boolean =>
+  (team.engine_type || 'LOCAL') === 'LOCAL' && (team.published_version_number ?? null) === null
+
+const resolveTeamHealth = (team: AIAgent): { label: string; cls: string } => {
+  if (!team.is_enabled) return { label: '未启用', cls: 'bg-gray-100 text-gray-600' }
+  // 成员取自「线上版本」的调度范围：还没发布过时，配了也等于没配
+  if (teamHasNoPublishedVersion(team)) return { label: '未发布', cls: 'bg-gray-100 text-gray-600' }
+  const ids = team.team_member_ids
+  if (ids === null || ids === undefined) return { label: '待配置', cls: 'bg-amber-100 text-amber-700' }
+  if (!ids.length) return { label: '待补成员', cls: 'bg-amber-100 text-amber-700' }
+  const children = teamMemberRows(team).filter((row) => !row.is_lead)
+  const ready = children.filter((row) => !row.issue).length
+  if (!ready) return { label: '不可用', cls: 'bg-rose-100 text-rose-700' }
+  if (ready < children.length) {
+    return { label: `部分可用 ${ready}/${children.length}`, cls: 'bg-amber-100 text-amber-700' }
+  }
+  return { label: '可用', cls: 'bg-emerald-100 text-emerald-700' }
+}
+
+/** 卡片里的橙色提示：区分「压根没配调度范围」和「配了但成员不齐」 */
+const teamScopeIssue = (team: AIAgent): string => {
+  if (teamHasNoPublishedVersion(team)) {
+    return '还没有已发布版本：团成员取自线上版本的调度范围，先发布一版才会生效。'
+  }
+  const ids = team.team_member_ids
+  if (ids === null || ids === undefined) {
+    return '还没配置调度范围：给它装上 sub_agent_call 并勾选子智能体，这个团才开始有成员。'
+  }
+  if (!ids.length) {
+    return '调度范围是空的：一个子专家都没勾，提问时它没有人可委派。'
+  }
+  const broken = teamMemberRows(team).filter((row) => !row.is_lead && row.issue).length
+  if (broken) return `${broken} 位子专家未发布或已停用，这部分任务暂时接不了。`
+  return ''
+}
+
+/** 进入团队对话 = 开一个与该主专家的新会话；用户不需要知道背后是主专家 + 子代理 */
+/* ---------------- 专家团设置弹窗 ---------------- */
+const showTeamEditorModal = ref(false)
+const teamEditorAgent = ref<AIAgent | null>(null)
+const teamEditorMembers = ref<any[]>([])
+const teamEditorSaving = ref(false)
+
+const openTeamEditor = (team: AIAgent) => {
+  teamEditorAgent.value = team
+  teamEditorMembers.value = teamMemberRows(team)
+  showTeamEditorModal.value = true
+}
+
+/**
+ * 只提交团元数据，其余字段原样回传。
+ * `is_system` 必须显式带上当前值：后端缺省按 False 处理，与系统级不一致会判成
+ * 「想改 is_system」而直接 400——管理员改任何系统级智能体都会失败。
+ */
+const saveTeamProfile = async (payload: {
+  is_expert_team_lead: boolean
+  team_profile: { name: string; intro: string } | null
+}) => {
+  const agent = teamEditorAgent.value
+  if (!agent || teamEditorSaving.value) return
+  teamEditorSaving.value = true
+  try {
+    await agentApi.updateAgent(agent.id, {
+      name: agent.name,
+      display_name: agent.display_name,
+      description: agent.description,
+      avatar_url: agent.avatar_url,
+      capabilities: agent.capabilities || [],
+      agent_type: agent.agent_type,
+      is_system: agent.is_system,
+      is_enabled: agent.is_enabled,
+      sort_order: agent.sort_order ?? 0,
+      engine_type: agent.engine_type,
+      engine_config: agent.engine_config ?? {},
+      is_expert_team_lead: payload.is_expert_team_lead,
+      team_profile: payload.team_profile,
+    } as any)
+    showTeamEditorModal.value = false
+    showToast(payload.is_expert_team_lead ? '专家团已更新' : '已取消专家团标记', 'success')
+    await fetchAgents()
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || '保存失败，请重试', 'error')
+  } finally {
+    teamEditorSaving.value = false
+  }
+}
+
+/**
+ * 去配成员：成员属于版本级调度范围，只能在「配置与发布」里改。
+ * 顺手给一句"具体在哪"，否则用户打开了抽屉也不知道该点哪儿。
+ */
+const openTeamScopeConfigurator = (team: AIAgent) => {
+  openDrawer(team)
+  showToast('在「配置与发布」里编辑版本，到工具里给 sub_agent_call 勾选可委派的子智能体', 'warning')
+}
+
+/** 从团设置直接去配成员 */
+const openTeamConfigureScope = () => {
+  const agent = teamEditorAgent.value
+  showTeamEditorModal.value = false
+  if (agent) openTeamScopeConfigurator(agent)
+}
+
+const openTeamChat = (agent: AIAgent) => {
+  window.open(`/dashboard/chat?agent_id=${encodeURIComponent(agent.id)}`, '_blank')
+}
+
+const teamProfileName = computed({
+  get: () => agentForm.value.team_profile?.name || '',
+  set: (value: string) => {
+    agentForm.value.team_profile = { ...(agentForm.value.team_profile || {}), name: value }
+  },
+})
+
+const teamProfileIntro = computed({
+  get: () => agentForm.value.team_profile?.intro || '',
+  set: (value: string) => {
+    agentForm.value.team_profile = { ...(agentForm.value.team_profile || {}), intro: value }
+  },
+})
 
 const workspaceTab = ref<AgentWorkspaceTab>('mine')
-const shareCounts = ref({ received_pending: 0, sent_pending: 0, sent_total: 0 })
+const shareCounts = ref({
+  received_pending: 0,
+  received_total: 0,
+  sent_pending: 0,
+  sent_total: 0,
+})
 
 const refreshShareCounts = async () => {
   try {
     const res = await agentSystemApi.shareCounts()
     shareCounts.value = res.data
   } catch {
-    shareCounts.value = { received_pending: 0, sent_pending: 0, sent_total: 0 }
+    shareCounts.value = {
+      received_pending: 0,
+      received_total: 0,
+      sent_pending: 0,
+      sent_total: 0,
+    }
   }
 }
 
@@ -709,7 +947,7 @@ const route = useRoute()
 /** 站内信/外链可以直接带 ?agents_tab=received 落位 */
 const resolveInitialTab = (): AgentWorkspaceTab => {
   const raw = String(route.query.agents_tab || '')
-  if (raw === 'received' || raw === 'sent' || raw === 'mine' || raw === 'all') {
+  if (raw === 'received' || raw === 'sent' || raw === 'mine' || raw === 'all' || raw === 'teams') {
     return raw as AgentWorkspaceTab
   }
   // 管理员默认看「全部」：他原本看到的就是平台全量，别因为加了视图就缩小范围
@@ -719,12 +957,17 @@ const resolveInitialTab = (): AgentWorkspaceTab => {
 /** 管理员多一个「全部」：他要能看别人名下的智能体；普通用户只有自己的 */
 const workspaceTabs = computed<Array<{ key: AgentWorkspaceTab; label: string; badge: number }>>(
   () => [
-    ...(isAdminViewer.value
-      ? [{ key: 'all' as AgentWorkspaceTab, label: '全部智能体', badge: 0 }]
-      : []),
+    // 「全部 / 我的」不带数字：页头已经写着「共 N 个」，同一屏说两遍是冗余，
+    // 而 14 − 11 这个差值才是用户想知道的——摆两个绝对值等于把减法留给用户。
+    ...(isAdminViewer.value ? [{ key: 'all' as AgentWorkspaceTab, label: '全部智能体', badge: 0 }] : []),
     { key: 'mine', label: '我的智能体', badge: 0 },
-    { key: 'received', label: '分享给我', badge: shareCounts.value.received_pending },
-    { key: 'sent', label: '我分享的', badge: shareCounts.value.sent_pending },
+    // 分享类 tab 只在真有东西时才带数字（0 没有行动价值，还分心），
+    // 且数字是「这个视图有多少条」而非「有几个待处理」——后者会被读成收到了 2 个智能体。
+    { key: 'received', label: '分享给我', badge: shareCounts.value.received_total },
+    { key: 'sent', label: '我分享的', badge: shareCounts.value.sent_total },
+    // 专家团不是独立实体，是「主专家」的另一种聚合视图；放在权属 tab 之后，
+    // 默认仍停在「我的智能体」，避免让人以为平台多了个东西要维护。
+    { key: 'teams', label: '专家团', badge: teamLeadAgents.value.length },
   ],
 )
 
@@ -743,7 +986,7 @@ watch(
   () => route.query.agents_tab,
   (raw) => {
     const next = String(raw || '')
-    const allowed: AgentWorkspaceTab[] = ['received', 'sent', 'mine', 'all']
+    const allowed: AgentWorkspaceTab[] = ['received', 'sent', 'mine', 'all', 'teams']
     if (next && allowed.includes(next as AgentWorkspaceTab)) {
       workspaceTab.value = next as AgentWorkspaceTab
       if (next !== 'mine') void refreshShareCounts()
@@ -941,6 +1184,23 @@ const attentionSummaryText = computed(() => {
   if (orphanAgents.value.length) parts.push(`${orphanAgents.value.length} 个权属人已停用`)
   if (reviewCount.value) parts.push(`${reviewCount.value} 个审核中`)
   return parts.join(' · ')
+})
+
+/** 「专家团」视图的搜索过滤：团名、介绍、主专家名与标识都算命中 */
+const filteredTeams = computed<AIAgent[]>(() => {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  if (!keyword) return teamLeadAgents.value
+  return teamLeadAgents.value.filter((agent) => {
+    const haystack = [
+      resolveTeamName(agent),
+      resolveTeamIntro(agent),
+      agent.display_name,
+      agent.name,
+    ]
+      .join(' ')
+      .toLowerCase()
+    return haystack.includes(keyword)
+  })
 })
 
 const filteredAgents = computed(() => {
@@ -2322,6 +2582,8 @@ const startAgentCreation = () => {
     is_system: false,
     sort_order: 0,
     is_enabled: true,
+    is_expert_team_lead: false,
+    team_profile: { name: "", intro: "" },
     engine_type: "LOCAL",
     engine_config: {
       dataset_ids: [],
@@ -2374,6 +2636,12 @@ const openAgentModal = (agent?: AIAgent) => {
       sort_order: agent.sort_order || 0,
       engine_type: agent.engine_type || "LOCAL",
       engine_config: agent.engine_config ? { ...agent.engine_config } : {},
+      is_expert_team_lead: agent.is_expert_team_lead === true,
+      // 归一成可 v-model 的形状：后端可能给 null，直接绑 .name 会报错
+      team_profile: {
+        name: agent.team_profile?.name || "",
+        intro: agent.team_profile?.intro || "",
+      },
     };
     selectedMarkdownTheme.value = agent.engine_config?.default_markdown_theme || "default";
     hideMessageBorder.value = agent.engine_config?.hide_message_border === true;
@@ -3488,6 +3756,10 @@ const delegationScopeAgents = computed(() =>
       is_system: (a as any).is_system,
       is_enabled: (a as any).is_enabled,
       created_by: (a as any).created_by,
+      // 团主专家在弹窗里要置灰并给「改用成员」，所以这三个字段必须一起带过去
+      is_expert_team_lead: (a as any).is_expert_team_lead === true,
+      team_name: (a as any).team_name ?? null,
+      team_member_ids: (a as any).team_member_ids ?? null,
     })),
 );
 
@@ -3916,7 +4188,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
       <div class="flex shrink-0 items-center gap-2">
         <button
-          v-if="!showAgentFlowGuide && (workspaceTab === 'mine' || workspaceTab === 'all')"
+          v-if="!showAgentFlowGuide"
           type="button"
           class="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 shadow-sm transition-colors hover:border-primary/40 hover:text-primary sm:inline-flex"
           title="展开智能体 5 步构建指引"
@@ -3928,7 +4200,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           显示指引
         </button>
         <button
-          v-else-if="workspaceTab === 'mine' || workspaceTab === 'all'"
+          v-else-if="showAgentFlowGuide"
           type="button"
           class="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 shadow-sm transition-colors hover:bg-blue-100 sm:inline-flex"
           title="收起智能体全流程指引"
@@ -4028,7 +4300,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <input
           v-model="searchKeyword"
           type="search"
-          :placeholder="workspaceTab === 'mine' || workspaceTab === 'all' ? '搜索名称或标识符…' : '搜索智能体或分享人…'"
+          :placeholder="
+            workspaceTab === 'teams'
+              ? '搜索专家团…'
+              : workspaceTab === 'mine' || workspaceTab === 'all'
+                ? '搜索名称或标识符…'
+                : '搜索智能体或分享人…'
+          "
           class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
       </div>
@@ -4174,15 +4452,17 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </div>
       </template>
     </div>
-      <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
-
-    <!-- 智能体 5 步全流程指引：方案 A 起改为按需展开，不再常驻首屏 -->
+    <!-- 智能体 5 步全流程指引：方案 A 起改为按需展开，不再常驻首屏。
+         放在视图条件之外——「显示指引」按钮现在所有 tab 都出现，面板必须跟着按钮，
+         否则在「专家团」里点开只会看到按钮变成「收起指引」而下面什么都没有。 -->
     <AgentFlowGuideBanner
       v-if="showAgentFlowGuide"
       @action="handleFlowGuideAction"
       @close="closeAgentFlowGuide"
       @dismiss="dismissAgentFlowGuide"
     />
+
+      <template v-if="workspaceTab === 'mine' || workspaceTab === 'all'">
 
     <!-- 第 3 行：条件藏在面板里，收起后必须能看见筛了什么，也避免「筛选了但忘了」 -->
     <div v-if="activeFilterChips.length" class="flex flex-wrap items-center gap-2 text-xs">
@@ -4315,10 +4595,30 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         :class="workspaceTab === tab.key ? 'bg-primary/10 text-primary' : 'text-gray-600 hover:bg-gray-50'"
         @click="switchWorkspaceTab(tab.key)"
       >
+        <svg
+          v-if="tab.key === 'teams'"
+          class="mr-1 inline-block h-3.5 w-3.5 shrink-0 align-text-bottom"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden="true"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+          />
+        </svg>
         {{ tab.label }}
         <span
-          v-if="tab.badge > 0"
-          class="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white"
+          v-if="tab.key === 'teams' || tab.badge > 0"
+          class="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold"
+          :class="
+            workspaceTab === tab.key || tab.badge > 0
+              ? 'bg-primary text-white'
+              : 'bg-gray-200 text-gray-600'
+          "
         >
           {{ tab.badge > 99 ? '99+' : tab.badge }}
         </span>
@@ -4336,6 +4636,149 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @updated="refreshShareCounts"
       :keyword="searchKeyword"
     />
+    <!-- 「专家团」：团 = 主专家 + 它的调度范围，成员不单独维护——改主专家的
+         调度范围，这个团就跟着变。与上面两个分享面板并列成互斥链，
+         这样切到任一侧，tab 栏都还在，用户能点回来。 -->
+    <div v-else-if="workspaceTab === 'teams'" class="space-y-3">
+      <p class="text-xs text-gray-500">
+        只列「专家团主专家」的智能体；卡片按团聚合，成员取自主专家的调度范围。
+      </p>
+      <div
+        v-if="!filteredTeams.length"
+        class="rounded-xl border border-dashed border-gray-300 bg-white py-12 text-center"
+      >
+        <p class="text-sm font-semibold text-gray-700">还没有专家团</p>
+        <p class="mt-1 text-xs text-gray-400">
+          在智能体编辑页打开「专家团主专家」并配好调度范围，它就会出现在这里
+        </p>
+      </div>
+      <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <article
+          v-for="team in filteredTeams"
+          :key="team.id"
+          class="flex flex-col rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md"
+        >
+          <!-- 头部：团名 + 可用度 + 展开/收起 -->
+          <div class="flex items-start gap-3">
+            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-50 text-lg">
+              👥
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <h3 class="truncate text-sm font-bold text-gray-900">{{ resolveTeamName(team) }}</h3>
+                <span
+                  class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                  :class="resolveTeamHealth(team).cls"
+                >
+                  {{ resolveTeamHealth(team).label }}
+                </span>
+              </div>
+              <p class="mt-0.5 text-[11px] text-gray-400">
+                主专家：{{ team.display_name }} · {{ resolveTeamMembersLabel(team) }}
+              </p>
+            </div>
+            <button
+              type="button"
+              class="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-500 transition hover:bg-gray-50"
+              :aria-expanded="expandedTeamIds.has(String(team.id))"
+              :title="expandedTeamIds.has(String(team.id)) ? '收起成员明细' : '展开看这个团里有谁'"
+              @click="toggleTeamExpanded(String(team.id))"
+            >
+              {{ expandedTeamIds.has(String(team.id)) ? "收起 ▲" : "展开 ▼" }}
+            </button>
+          </div>
+
+          <p class="mt-2 line-clamp-2 text-xs leading-relaxed text-gray-600">
+            {{ resolveTeamIntro(team) }}
+          </p>
+
+          <!-- 没配调度范围 / 成员不齐：这里是「还没配」，不是「团是空的」 -->
+          <div
+            v-if="teamScopeIssue(team)"
+            class="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-800"
+          >
+            <span class="shrink-0">⚠</span>
+            <span>{{ teamScopeIssue(team) }}</span>
+          </div>
+
+          <!-- 成员明细：数据就在 agents 列表里，不需要为每个团再查一次 -->
+          <div v-if="expandedTeamIds.has(String(team.id))" class="mt-3 space-y-1.5">
+            <div
+              v-for="member in teamMemberRows(team)"
+              :key="member.id"
+              class="flex items-start gap-2 rounded-lg border border-gray-100 bg-gray-50/70 px-2.5 py-2"
+            >
+              <div
+                class="mt-0.5 grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-lg bg-white text-[11px] font-bold text-gray-400 ring-1 ring-gray-200"
+              >
+                <img
+                  v-if="member.avatar_url"
+                  :src="member.avatar_url"
+                  class="h-full w-full object-cover"
+                  alt=""
+                />
+                <span v-else>{{ (member.display_name || "E").slice(0, 1) }}</span>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="truncate text-xs font-semibold text-gray-800">
+                    {{ member.display_name }}
+                  </span>
+                  <code
+                    v-if="member.name"
+                    class="shrink-0 rounded bg-white px-1 py-px text-[10px] text-gray-400 ring-1 ring-gray-200"
+                    >{{ member.name }}</code
+                  >
+                  <span
+                    class="shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium"
+                    :class="
+                      member.is_lead ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'
+                    "
+                    >{{ member.is_lead ? "主专家" : "子专家" }}</span
+                  >
+                  <span
+                    v-if="member.issue"
+                    class="shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium"
+                    :class="member.issue.cls"
+                    >{{ member.issue.label }}</span
+                  >
+                </div>
+                <p class="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-gray-500">
+                  {{ member.description }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-3">
+            <button
+              type="button"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-600 transition hover:bg-gray-50"
+              title="打开「配置与发布」，在工具里给 sub_agent_call 勾选可委派的子智能体"
+              @click="openTeamScopeConfigurator(team)"
+            >
+              配置调度范围
+            </button>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-600 transition hover:bg-gray-50"
+                @click="openTeamEditor(team)"
+              >
+                编辑专家团
+              </button>
+              <button
+                type="button"
+                class="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-primary/90"
+                @click="openTeamChat(team)"
+              >
+                进入团队对话
+              </button>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
 
     <!-- 列表区：管理员在「全部 / 我的智能体」两个视图共用，
          差异只体现在 filteredAgents 的归属过滤上 -->
@@ -4487,6 +4930,11 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 >
                   {{ agent.display_name }}
                 </h3>
+                <span
+                  v-if="agent.is_expert_team_lead"
+                  class="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700"
+                  :title="`专家团主专家：${resolveTeamName(agent)} · ${resolveTeamMembersLabel(agent)}`"
+                >👥 专家团</span>
                 <span
                   v-if="agent.is_system"
                   class="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-indigo-50 text-indigo-500 border border-indigo-100"
@@ -5728,6 +6176,68 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           ></textarea>
         </div>
 
+        <!-- 专家团：智能体级身份，不随版本发布；成员只读展示来自调度范围 -->
+        <div class="rounded-xl border border-gray-200 bg-gray-50/70 p-3">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                <span>👥</span><span>专家团主专家</span>
+              </div>
+              <p class="mt-0.5 text-[11px] leading-relaxed text-gray-500">
+                打开后，这个智能体会在智能体中心的「专家团」tab 以团的形式展示；
+                关闭不影响它作为普通智能体使用，已配好的调度范围会保留。
+              </p>
+            </div>
+            <button
+              type="button"
+              class="relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+              :class="agentForm.is_expert_team_lead ? 'bg-green-500' : 'bg-gray-200'"
+              role="switch"
+              :aria-checked="agentForm.is_expert_team_lead"
+              @click="agentForm.is_expert_team_lead = !agentForm.is_expert_team_lead"
+            >
+              <span
+                aria-hidden="true"
+                class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                :class="agentForm.is_expert_team_lead ? 'translate-x-4' : 'translate-x-0'"
+              ></span>
+            </button>
+          </div>
+
+          <div v-if="agentForm.is_expert_team_lead" class="mt-3 space-y-3">
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600">专家团名称</label>
+              <input
+                v-model="teamProfileName"
+                type="text"
+                maxlength="100"
+                placeholder="例如：数据分析专家团（留空则用智能体展示名）"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600">团队介绍</label>
+              <textarea
+                v-model="teamProfileIntro"
+                rows="2"
+                maxlength="500"
+                placeholder="一句话说清这个团能一起干什么，例如：从取数、口径到制度背景的一条龙团队。"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              ></textarea>
+              <p class="mt-1 text-[11px] text-gray-400">
+                只用于列表页卡片展示，不会写进「描述信息」——那份描述会发给委派模型，混入团队文案会干扰路由。
+              </p>
+            </div>
+            <div class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-gray-500">
+              团队成员来自「调度范围」（<code class="rounded bg-gray-100 px-1">sub_agent_call</code>
+              里的可委派智能体），<b>不在这里单独维护</b>：改调度范围，团就跟着变。
+              已发布版本里的调度范围：<b>{{
+                selectedAgent ? resolveTeamMembersLabel(selectedAgent) : '新建后需发布才生效'
+              }}</b>。
+            </div>
+          </div>
+        </div>
+
         <div v-if="agentForm.engine_type === 'LOCAL'">
           <!-- 编辑时类型不可改，三张卡只是占位；蓝色提示仍保留，用来说明当前类型的运行行为 -->
           <template v-if="!isEditingAgent">
@@ -6309,6 +6819,15 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :config="currentToolConfig"
       :readonly="!canEditVersion"
       @save="handleToolConfigSave"
+    />
+
+    <AgentTeamEditorModal
+      v-model:model="showTeamEditorModal"
+      :agent="teamEditorAgent"
+      :members="teamEditorMembers"
+      :saving="teamEditorSaving"
+      @save="saveTeamProfile"
+      @configure-scope="openTeamConfigureScope"
     />
 
     <DelegationScopeModal

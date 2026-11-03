@@ -180,4 +180,6 @@ async def test_sent_and_count_routes(db_session):
     assert sent.status_code == 200 and isinstance(sent.json(), list)
     assert counts.status_code == 200
     body = counts.json()
-    assert set(body) == {"received_pending", "sent_pending", "sent_total"}
+    # received_total / sent_total 供智能体中心的 tab 数字用（每个 tab 都显示「该视图条数」），
+    # pending 两个数留给菜单红点。字段集合必须锁死，避免以后又混进「待处理」语义。
+    assert set(body) == {"received_pending", "received_total", "sent_pending", "sent_total"}

@@ -817,12 +817,22 @@ class AgentShareService:
 
     @staticmethod
     async def menu_counts(session: AsyncSession, user: Any) -> Dict[str, int]:
-        """侧边菜单角标：待接受 / 待对方处理 / 我发出的总数。"""
+        """侧边菜单角标：待接受 / 待对方处理 / 双方的总数。
+
+        ``pending`` 两个数是给菜单红点用的（只有待处理才值得提醒）；
+        ``total`` 两个数是给智能体中心的 tab 数字用的——那里每个 tab 的角标都是
+        「这个视图里有多少条」，混进「待处理」会让人以为收到了 2 个智能体。
+        """
         from sqlalchemy import func
 
         _, _, user_id = AgentShareService.resolve_actor(user)
         if user_id is None:
-            return {"received_pending": 0, "sent_pending": 0, "sent_total": 0}
+            return {
+                "received_pending": 0,
+                "received_total": 0,
+                "sent_pending": 0,
+                "sent_total": 0,
+            }
 
         # 过期的要先落状态，否则角标会把已经失效的记录也算进去。
         # 上面两个方法已经各自 commit 过，这里不用再处理。
@@ -844,6 +854,7 @@ class AgentShareService:
                 AgentShareRequest.owner_user_id == user_id,
                 AgentShareRequest.status == STATUS_PENDING,
             ),
+            "received_total": await _count(AgentShareRequest.recipient_user_id == user_id),
             "sent_total": await _count(AgentShareRequest.owner_user_id == user_id),
         }
 
