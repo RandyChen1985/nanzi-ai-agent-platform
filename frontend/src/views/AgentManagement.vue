@@ -4731,7 +4731,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           class="bg-white px-4 py-3 border-t border-gray-100 flex items-center gap-2 transition-colors"
           @click.stop
         >
-          <!-- 归属信息：管理员需要一眼看出是谁建的、多久没动过 -->
+          <!-- 归属信息：管理员需要一眼看出是谁建的、多久没动过。
+               调用次数不再展示——运营数字对使用者的决策没帮助，还会挤掉这两行。 -->
           <div class="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
             <span
               v-if="isAdminViewer && agent.created_by_name"
@@ -4742,14 +4743,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               更新于 {{ formatDate(agent.updated_at) }}
             </span>
           </div>
-
-          <!-- 调用次数单独占一项并禁止收缩：挤在「更新于」同一行时，
-               卡片一窄就被 truncate 吃掉，只剩「2958 次调…」 -->
-          <span
-            v-if="agent.execution_count != null"
-            class="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-gray-400"
-            :title="`累计调用 ${agent.execution_count ?? 0} 次`"
-          >{{ agent.execution_count ?? 0 }} 次调用</span>
 
           <div class="flex shrink-0 items-center gap-2">
             <!-- 外置快捷预览对话：保留在动作区，收成图标避免和归属信息抢空间 -->

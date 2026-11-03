@@ -128,7 +128,9 @@ def test_agent_center_card_ux_hierarchy_and_primary_cta():
     assert 'v-if="agent.description"' in management
     assert "line-clamp-2" in management
     assert "grayscale opacity-60" in management
-    assert "累计调用 ${agent.execution_count ?? 0} 次" in management
+    # 调用次数不在卡片上展示（用户要求）：运营数字对使用者没有决策价值，
+    # 还会把「创建者 / 更新时间」两行挤掉。改回展示前请先确认需求变化。
+    assert "次调用" not in management
     # 归属信息：卡片 footer 左侧两行小字（创建者 / 更新时间），替代原来的「预览对话」文字按钮位置。
     # 管理员要能一眼看出是谁建的、多久没动过；创建者只对管理员渲染（普通用户只有自己的智能体）。
     assert "更新于 {{ formatDate(agent.updated_at) }}" in management
