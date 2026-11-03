@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>EmbedChat 专家团横幅 · 输入框上方的团队提示</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-dark:#0958d9; --primary-soft:#eaf2ff;
+    --ink:#0f172a; --ink-2:#334155; --muted:#64748b; --faint:#94a3b8;
+    --line:#e6ebf2; --line-soft:#eef2f7; --bg:#f4f6fa; --card:#fff;
+    --teal:#0f766e; --teal-soft:#f0fdfa; --teal-line:#99f6e4;
+    --ok:#12b76a; --warn:#e8890c; --danger:#e5484d;
+    --r:14px; --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -18px rgba(15,23,42,.25);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:#e9edf4; color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+  h1,h2,h3,h4,p{margin:0}
+
+  /* ============ 原型外壳 ============ */
+  .shell-bar{
+    position:sticky; top:0; z-index:60;
+    display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    padding:10px 20px; background:#0b0f19; color:#fff;
+    box-shadow:0 1px 0 rgba(255,255,255,.06),0 10px 30px -20px rgba(0,0,0,.9);
+  }
+  .sb-title{display:flex;align-items:center;gap:10px;min-width:0}
+  .sb-mark{
+    display:grid;place-items:center;width:26px;height:26px;border-radius:8px;
+    background:#0d9488;font-weight:800;font-size:13px;
+  }
+  .sb-title b{display:block;font-size:13px;line-height:1.3}
+  .sb-title small{display:block;color:#94a3b8;font-size:11px;line-height:1.4}
+  .sb-tabs{display:flex;gap:4px;background:rgba(255,255,255,.06);padding:3px;border-radius:10px;flex-wrap:wrap}
+  .sb-tabs button{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:6px 12px;border-radius:8px;font-size:12.5px;color:#cbd5e1;transition:.15s;
+  }
+  .sb-tabs button:hover{color:#fff;background:rgba(255,255,255,.06)}
+  .sb-tabs button.on{background:#fff;color:#0b0f19;font-weight:600}
+  .rec{font-style:normal;font-size:9.5px;padding:1px 5px;border-radius:999px;background:#ccfbf1;color:#0f766e;font-weight:700}
+  .sb-tabs button.on .rec{background:#f0fdfa;color:#0f766e}
+
+  .stage{max-width:1180px;margin:0 auto;padding:18px 20px 70px}
+  .pane{display:none}
+  .pane.on{display:block;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .preview-note{
+    display:flex;align-items:flex-start;gap:10px;
+    margin-bottom:14px;padding:11px 14px;border-radius:12px;
+    background:#fff;border:1px solid var(--line);
+    font-size:12.5px;color:var(--muted);line-height:1.6;
+  }
+  .preview-note b{color:var(--ink-2)}
+  .pn-dot{width:6px;height:6px;border-radius:50%;background:var(--teal);margin-top:7px;flex:0 0 auto}
+
+  /* ============ 聊天窗口 mock ============ */
+  .chat-wrap{display:flex;justify-content:center}
+  .chat{
+    width:760px;max-width:100%;height:600px;
+    display:flex;flex-direction:column;
+    background:var(--card);border:1px solid var(--line);border-radius:18px;
+    box-shadow:var(--shadow);overflow:hidden;
+  }
+  .chat-head{
+    flex:0 0 auto;display:flex;align-items:center;gap:10px;
+    padding:12px 16px;border-bottom:1px solid var(--line-soft);background:#fff;
+  }
+  .avatar{
+    width:34px;height:34px;border-radius:10px;flex:0 0 auto;
+    display:grid;place-items:center;font-size:16px;
+    background:linear-gradient(135deg,#2dd4bf,#0d9488);color:#fff;font-weight:700;
+  }
+  .chat-head-main{min-width:0;flex:1}
+  .chat-head .h1{display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:700}
+  .chat-head .h2{font-size:11px;color:var(--faint);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge-lock{
+    display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;
+    background:var(--primary-soft);color:var(--primary-dark);
+    font-size:9px;font-weight:700;letter-spacing:.04em;
+  }
+  .badge-team{
+    display:inline-flex;align-items:center;gap:3px;
+    padding:1px 6px;border-radius:999px;
+    background:var(--teal-soft);border:1px solid var(--teal-line);color:var(--teal);
+    font-size:9px;font-weight:700;letter-spacing:.04em;
+  }
+  .head-actions{display:flex;gap:2px;color:var(--faint)}
+  .head-actions span{width:26px;height:26px;display:grid;place-items:center;border-radius:7px;font-size:14px}
+  .head-actions span:hover{background:var(--line-soft)}
+
+  .chat-body{
+    flex:1 1 auto;overflow:auto;padding:16px;
+    background:#fafbfd;
+    display:flex;flex-direction:column;gap:12px;
+  }
+  .msg{display:flex;gap:8px;max-width:86%}
+  .msg.me{margin-left:auto;flex-direction:row-reverse}
+  .msg .who{width:26px;height:26px;border-radius:8px;flex:0 0 auto;display:grid;place-items:center;font-size:11px;font-weight:700;background:#e2e8f0;color:#475569}
+  .msg.me .who{background:#dbeafe;color:#1d4ed8}
+  .bubble{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 11px;font-size:12.5px;line-height:1.6;color:var(--ink-2)}
+  .msg.me .bubble{background:var(--primary);border-color:var(--primary);color:#fff}
+
+  /* ============ 横幅 ============ */
+  .banner-area{
+    flex:0 0 auto;padding:0 12px;background:var(--card);
+  }
+  .banner{
+    display:flex;align-items:flex-start;gap:8px;
+    margin:8px 0 6px;padding:8px 10px;
+    border-radius:12px;border:1px solid var(--teal-line);background:var(--teal-soft);
+    font-size:11.5px;line-height:1.6;color:#134e4a;
+  }
+  .b-ico{flex:0 0 auto;font-size:12px;line-height:1.7}
+  .b-title{font-weight:700;color:#0f766e;white-space:nowrap}
+  .b-desc{color:#115e59;min-width:0}
+  .b-x{
+    flex:0 0 auto;width:18px;height:18px;border-radius:5px;
+    display:grid;place-items:center;color:#0f766e;font-size:14px;line-height:1;opacity:.75;
+  }
+  .b-x:hover{background:rgba(13,148,136,.12);opacity:1}
+  .b-tag{
+    flex:0 0 auto;font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:999px;
+    background:#fff;border:1px solid var(--teal-line);color:var(--teal);
+  }
+
+  /* A 单行：文字在 b-body 里自己折行，× 永远贴在右上，不会被挤到第二行
+     （真实 embed 浮窗常只有 ~400px，单行一定放不下） */
+  .banner.b-one{flex-wrap:nowrap;align-items:flex-start}
+  .b-body{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;gap:0 6px;align-items:baseline}
+  .b-body .b-title{white-space:normal}
+
+  /* B 双行 */
+  .banner.b-block{padding:10px 12px}
+  .b-block-body{min-width:0;flex:1 1 auto}
+  .b-block-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .b-block-head b{font-size:12px;color:#0f766e}
+  .b-block .b-desc{display:block;margin-top:3px;color:#115e59}
+
+  /* C 可展开 */
+  .banner.b-expand{display:block;padding:9px 10px}
+  .b-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .b-row b{font-size:12px;color:#0f766e}
+  .b-toggle{
+    display:inline-flex;align-items:center;gap:3px;
+    padding:1px 7px;border-radius:999px;border:1px solid var(--teal-line);background:#fff;
+    font-size:10px;font-weight:600;color:var(--teal);
+  }
+  .b-toggle:hover{background:#ecfdf5}
+  .b-toggle .cv{transition:transform .18s}
+  .b-toggle.open .cv{transform:rotate(180deg)}
+  .b-members{display:none;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px dashed var(--teal-line)}
+  .b-members.open{display:flex}
+  .m-chip{
+    display:inline-flex;align-items:center;gap:4px;
+    padding:2px 8px;border-radius:999px;background:#fff;border:1px solid var(--teal-line);
+    font-size:10.5px;color:#115e59;
+  }
+  .m-chip i{font-style:normal;font-size:9px;color:var(--faint)}
+
+  /* ============ 输入区 ============ */
+  .composer{
+    flex:0 0 auto;padding:8px 12px 12px;background:var(--card);border-top:1px solid var(--line-soft);
+  }
+  .input-box{
+    display:flex;align-items:flex-end;gap:8px;
+    border:1px solid var(--line);border-radius:14px;padding:8px 10px;background:#fff;
+    box-shadow:0 1px 0 rgba(15,23,42,.02);
+  }
+  .input-box .ph{flex:1 1 auto;font-size:12.5px;color:var(--faint);padding:5px 0}
+  .tool{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;color:var(--faint);font-size:14px}
+  .tool:hover{background:var(--line-soft);color:var(--muted)}
+  .send{
+    width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+    background:var(--primary);color:#fff;font-size:14px;
+  }
+  .composer-foot{display:flex;align-items:center;justify-content:space-between;margin-top:7px;font-size:10px;color:var(--faint)}
+  .agent-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:var(--line-soft);font-size:10px;color:var(--muted)}
+
+  /* ============ 状态对比 ============ */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:900px){.grid2{grid-template-columns:1fr}}
+  .mini{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);
+    display:flex;flex-direction:column;height:330px;
+  }
+  .mini .cap{padding:8px 12px;border-bottom:1px solid var(--line-soft);font-size:11.5px;font-weight:600;color:var(--ink-2);background:#fcfdff}
+  .mini .cap span{font-weight:400;color:var(--faint)}
+  .mini-body{flex:1 1 auto;overflow:hidden;display:flex;flex-direction:column;background:#fafbfd}
+  .mini .banner-area{padding:0 10px}
+  .mini .composer{padding:6px 10px 10px}
+  .mini .input-box{padding:6px 8px}
+  .mini .input-box .ph{font-size:11.5px}
+
+  .phone{
+    width:330px;border-radius:24px;border:8px solid #0b0f19;overflow:hidden;background:#fff;
+    display:flex;flex-direction:column;height:600px;box-shadow:0 24px 60px -30px rgba(15,23,42,.5);
+  }
+  .phone .chat-head{padding:9px 11px}
+  .phone .chat-body{padding:11px;gap:9px}
+  .phone .bubble{font-size:11.5px}
+  .phone .banner-area{padding:0 8px}
+  .phone .banner{font-size:11px;padding:7px 9px}
+  .phone .composer{padding:6px 8px 10px}
+
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:11.5px;color:var(--muted)}
+  .legend i{font-style:normal;display:inline-flex;align-items:center;gap:5px}
+  .sw{width:10px;height:10px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+
+<div class="shell-bar">
+  <div class="sb-title">
+    <span class="sb-mark">团</span>
+    <div>
+      <b>EmbedChat · 专家团横幅</b>
+      <small>web 端 · 选中的智能体是团主专家时，在输入框上方提示，可关闭</small>
+    </div>
+  </div>
+  <div class="sb-tabs">
+    <button class="on" data-pane="a">A · 单行紧凑 <i class="rec">推荐</i></button>
+    <button data-pane="b">B · 双行说明</button>
+    <button data-pane="c">C · 可展开成员</button>
+    <button data-pane="state">状态 / 移动端</button>
+  </div>
+</div>
+
+<div class="stage">
+
+  <!-- ================= A ================= -->
+  <section class="pane on" id="pane-a">
+    <div class="preview-note">
+      <span class="pn-dot"></span>
+      <div>
+        <b>方案 A · 单行紧凑。</b>和现有的「仅检索已绑定的知识库」提示条同一套骨架（圆角条 + 加粗标题 + 一句说明 + 右侧 ×），只是换成团主专家的青绿色，和顶部 <b>👥 TEAM</b> 徽标同色系。
+        单行不够时文字自己折行、× 始终贴右上，不会挤压输入框；真实 embed 浮窗只有 ~400px 时，它会自然折成两行接近方案 B 的观感。关闭状态按智能体记：换一个团会重新提示。
+      </div>
+    </div>
+    <div class="chat-wrap">
+      <div class="chat">
+        <div class="chat-head">
+          <div class="avatar">资</div>
+          <div class="chat-head-main">
+            <div class="h1">
+              <span>原子 · AI</span>
+              <span class="badge-lock">锁定</span>
+              <span class="badge-team">👥 TEAM</span>
+            </div>
+            <div class="h2">资产管理专家团 · 4 位子专家</div>
+          </div>
+          <div class="head-actions"><span>⋯</span><span>≡</span></div>
+        </div>
+
+        <div class="chat-body">
+          <div class="msg"><span class="who">资</span><div class="bubble">你好，我是资产管理专家团的团主专家。口径、取数、制度依据这三类问题我都能接，会按分工转给对应的子专家。</div></div>
+          <div class="msg me"><span class="who">我</span><div class="bubble">上个月固收产品的规模口径是怎么定的？</div></div>
+          <div class="msg"><span class="who">资</span><div class="bubble">已转元数据专家确认口径，正在等结果…</div></div>
+        </div>
+
+        <!-- 横幅：方案 A -->
+        <div class="banner-area">
+          <div class="banner b-one" role="status">
+            <span class="b-ico">👥</span>
+            <div class="b-body">
+              <span class="b-title">资产管理专家团 · 团队模式</span>
+              <span class="b-desc">主专家会按分工调度 4 位子专家；想指定某位，在输入框里 @ 他</span>
+            </div>
+            <button class="b-x" title="隐藏提示" aria-label="关闭提示">×</button>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="input-box">
+            <span class="tool">＋</span>
+            <span class="ph">输入消息，Enter 发送…</span>
+            <span class="tool">🎤</span>
+            <span class="send">↑</span>
+          </div>
+          <div class="composer-foot">
+            <span class="agent-pill">👥 资产管理专家团</span>
+            <span>内容由 AI 生成，请自行核实</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= B ================= -->
+  <section class="pane" id="pane-b">
+    <div class="preview-note">
+      <span class="pn-dot"></span>
+      <div>
+        <b>方案 B · 双行说明。</b>第一行只放身份（团名 + 团队模式标签），第二行讲清楚「你现在是在跟谁说话、它会怎么干活、你要指定人该怎么做」。
+        比 A 多占一行高度，但不用把一句话塞进单行；信息密度更适合第一次见到团队模式的用户。
+      </div>
+    </div>
+    <div class="chat-wrap">
+      <div class="chat">
+        <div class="chat-head">
+          <div class="avatar">资</div>
+          <div class="chat-head-main">
+            <div class="h1">
+              <span>原子 · AI</span>
+              <span class="badge-lock">锁定</span>
+              <span class="badge-team">👥 TEAM</span>
+            </div>
+            <div class="h2">资产管理专家团 · 4 位子专家</div>
+          </div>
+          <div class="head-actions"><span>⋯</span><span>≡</span></div>
+        </div>
+
+        <div class="chat-body">
+          <div class="msg"><span class="who">资</span><div class="bubble">你好，我是资产管理专家团的团主专家。口径、取数、制度依据这三类问题我都能接，会按分工转给对应的子专家。</div></div>
+          <div class="msg me"><span class="who">我</span><div class="bubble">上个月固收产品的规模口径是怎么定的？</div></div>
+          <div class="msg"><span class="who">资</span><div class="bubble">已转元数据专家确认口径，正在等结果…</div></div>
+        </div>
+
+        <!-- 横幅：方案 B -->
+        <div class="banner-area">
+          <div class="banner b-block" role="status">
+            <span class="b-ico">👥</span>
+            <div class="b-block-body">
+              <div class="b-block-head">
+                <b>资产管理专家团</b>
+                <span class="b-tag">团队模式</span>
+              </div>
+              <span class="b-desc">你现在和团主专家对话，它会按团队分工把子任务派给 4 位子专家。要指定某位专家，在输入框里 @ 他的名字即可。</span>
+            </div>
+            <button class="b-x" title="隐藏提示" aria-label="关闭提示">×</button>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="input-box">
+            <span class="tool">＋</span>
+            <span class="ph">输入消息，Enter 发送…</span>
+            <span class="tool">🎤</span>
+            <span class="send">↑</span>
+          </div>
+          <div class="composer-foot">
+            <span class="agent-pill">👥 资产管理专家团</span>
+            <span>内容由 AI 生成，请自行核实</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= C ================= -->
+  <section class="pane" id="pane-c">
+    <div class="preview-note">
+      <span class="pn-dot"></span>
+      <div>
+        <b>方案 C · 可展开成员。</b>一行讲身份，把「有哪几位子专家」折进一个可点开的胶囊（默认收起，不占高度）。
+        点开是成员 chips —— 这正是用户最常问的「这团里有谁」。代价是多一个交互点，实现上要多拿一份成员名单。
+      </div>
+    </div>
+    <div class="chat-wrap">
+      <div class="chat">
+        <div class="chat-head">
+          <div class="avatar">资</div>
+          <div class="chat-head-main">
+            <div class="h1">
+              <span>原子 · AI</span>
+              <span class="badge-lock">锁定</span>
+              <span class="badge-team">👥 TEAM</span>
+            </div>
+            <div class="h2">资产管理专家团 · 4 位子专家</div>
+          </div>
+          <div class="head-actions"><span>⋯</span><span>≡</span></div>
+        </div>
+
+        <div class="chat-body">
+          <div class="msg"><span class="who">资</span><div class="bubble">你好，我是资产管理专家团的团主专家。口径、取数、制度依据这三类问题我都能接，会按分工转给对应的子专家。</div></div>
+          <div class="msg me"><span class="who">我</span><div class="bubble">上个月固收产品的规模口径是怎么定的？</div></div>
+          <div class="msg"><span class="who">资</span><div class="bubble">已转元数据专家确认口径，正在等结果…</div></div>
+        </div>
+
+        <!-- 横幅：方案 C -->
+        <div class="banner-area">
+          <div class="banner b-expand" role="status">
+            <div class="b-row">
+              <span class="b-ico">👥</span>
+              <b>资产管理专家团</b>
+              <span class="b-tag">团队模式</span>
+              <button class="b-toggle" data-toggle="c-members">4 位子专家 <span class="cv">▾</span></button>
+              <span style="flex:1 1 auto"></span>
+              <button class="b-x" title="隐藏提示" aria-label="关闭提示">×</button>
+            </div>
+            <div class="b-members" id="c-members">
+              <span class="m-chip">元数据专家 <i>口径</i></span>
+              <span class="m-chip">数据助手 <i>取数</i></span>
+              <span class="m-chip">规章问答 <i>制度</i></span>
+              <span class="m-chip">报表专家 <i>看板</i></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="input-box">
+            <span class="tool">＋</span>
+            <span class="ph">输入消息，Enter 发送…</span>
+            <span class="tool">🎤</span>
+            <span class="send">↑</span>
+          </div>
+          <div class="composer-foot">
+            <span class="agent-pill">👥 资产管理专家团</span>
+            <span>内容由 AI 生成，请自行核实</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 状态 ================= -->
+  <section class="pane" id="pane-state">
+    <div class="preview-note">
+      <span class="pn-dot"></span>
+      <div>
+        <b>边界情况。</b>关闭后横幅整条消失、输入框上移（不留空档）；成员数未知时不写「0 位」——那会读成「一个成员都没有」，而它实际是<b>范围未限定</b>（全部可委派的都能调）；移动端（&lt; 640px）单行放不下，标题和说明各占一行。
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="mini">
+        <div class="cap">未关闭 <span>· 桌面</span></div>
+        <div class="mini-body">
+          <div class="chat-body" style="flex:1 1 auto;padding:12px;gap:10px">
+            <div class="msg"><span class="who">资</span><div class="bubble">已转元数据专家确认口径，正在等结果…</div></div>
+          </div>
+          <div class="banner-area">
+            <div class="banner b-one">
+              <span class="b-ico">👥</span>
+              <div class="b-body">
+                <span class="b-title">资产管理专家团 · 团队模式</span>
+                <span class="b-desc">主专家会按分工调度 4 位子专家；想指定某位，在输入框里 @ 他</span>
+              </div>
+              <button class="b-x">×</button>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="input-box"><span class="tool">＋</span><span class="ph">输入消息…</span><span class="send">↑</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mini">
+        <div class="cap">点 × 之后 <span>· 输入框上移，不留空档</span></div>
+        <div class="mini-body">
+          <div class="chat-body" style="flex:1 1 auto;padding:12px;gap:10px">
+            <div class="msg"><span class="who">资</span><div class="bubble">已转元数据专家确认口径，正在等结果…</div></div>
+          </div>
+          <div class="banner-area"></div>
+          <div class="composer">
+            <div class="input-box"><span class="tool">＋</span><span class="ph">输入消息…</span><span class="send">↑</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mini">
+        <div class="cap">成员数未知 <span>· 范围未限定，别写成「0 位」</span></div>
+        <div class="mini-body">
+          <div class="chat-body" style="flex:1 1 auto;padding:12px;gap:10px">
+            <div class="msg"><span class="who">资</span><div class="bubble">这个团还没限定调度范围。</div></div>
+          </div>
+          <div class="banner-area">
+            <div class="banner b-one">
+              <span class="b-ico">👥</span>
+              <div class="b-body">
+                <span class="b-title">资产管理专家团 · 团队模式</span>
+                <span class="b-desc">主专家会按需调度可委派的子专家；调度范围还没限定，可从全部可委派专家里选</span>
+              </div>
+              <button class="b-x">×</button>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="input-box"><span class="tool">＋</span><span class="ph">输入消息…</span><span class="send">↑</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mini">
+        <div class="cap">深色模式 <span>· 与现有横幅同一套暗色变量</span></div>
+        <div class="mini-body" style="background:#0b1220">
+          <div class="chat-body" style="flex:1 1 auto;padding:12px;gap:10px;background:#0b1220">
+            <div class="msg"><span class="who" style="background:#1e293b;color:#94a3b8">资</span><div class="bubble" style="background:#111c2e;border-color:#1e2d45;color:#cbd5e1">已转元数据专家确认口径，正在等结果…</div></div>
+          </div>
+          <div class="banner-area" style="background:#0e1729">
+            <div class="banner b-one" style="background:rgba(13,148,136,.12);border-color:rgba(45,212,191,.3);color:#a7f3ea">
+              <span class="b-ico">👥</span>
+              <span class="b-title" style="color:#5eead4">资产管理专家团 · 团队模式</span>
+              <span class="b-desc" style="color:#99f6e4;opacity:.85">主专家会按分工调度 4 位子专家</span>
+              <button class="b-x" style="color:#5eead4">×</button>
+            </div>
+          </div>
+          <div class="composer" style="background:#0e1729;border-color:#1e2d45">
+            <div class="input-box" style="background:#111c2e;border-color:#1e2d45">
+              <span class="tool" style="color:#64748b">＋</span><span class="ph" style="color:#475569">输入消息…</span><span class="send">↑</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:26px;flex-wrap:wrap;margin-top:22px;align-items:flex-start">
+      <div>
+        <div style="font-size:12.5px;font-weight:700;color:var(--ink-2);margin-bottom:10px">移动端（&lt; 640px）：标题与说明各占一行</div>
+        <div class="phone">
+          <div class="chat-head">
+            <div class="avatar" style="width:28px;height:28px;border-radius:8px;font-size:13px">资</div>
+            <div class="chat-head-main">
+              <div class="h1" style="font-size:12px"><span>原子 · AI</span><span class="badge-team">👥 TEAM</span></div>
+              <div class="h2" style="font-size:10px">资产管理专家团 · 4 位子专家</div>
+            </div>
+          </div>
+          <div class="chat-body">
+            <div class="msg"><span class="who">资</span><div class="bubble">已转元数据专家确认口径，正在等结果…</div></div>
+          </div>
+          <div class="banner-area">
+            <div class="banner b-one" style="display:block">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span class="b-ico">👥</span>
+                <span class="b-title" style="font-size:11px">资产管理专家团 · 团队模式</span>
+                <span style="flex:1 1 auto"></span>
+                <button class="b-x">×</button>
+              </div>
+              <div class="b-desc" style="margin-top:2px">会按分工调度 4 位子专家；想指定某位，在输入框里 @ 他</div>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="input-box"><span class="tool">＋</span><span class="ph">输入消息…</span><span class="send">↑</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex:1 1 320px;min-width:280px">
+        <div class="legend">
+          <i><span class="sw" style="background:#f0fdfa;border:1px solid #99f6e4"></span>横幅底：teal-50</i>
+          <i><span class="sw" style="background:#0f766e"></span>标题：teal-700</i>
+          <i><span class="sw" style="background:#eaf2ff;border:1px solid #bfdbfe"></span>TEAM 徽标：同一色系</i>
+        </div>
+        <div style="margin-top:14px;font-size:12px;color:var(--muted);line-height:1.8">
+          <p><b style="color:var(--ink-2)">为什么用 teal 而不是提示黄/警告红</b>：这是身份说明，不是异常。「靠颜色报警」会让用户以为团队模式出了问题。</p>
+          <p style="margin-top:8px"><b style="color:var(--ink-2)">为什么可关闭</b>：老用户不需要每次被提醒，但换一个团要重新出现——所以关闭状态按 <code>agentId</code> 记，不是按浏览器会话记。</p>
+          <p style="margin-top:8px"><b style="color:var(--ink-2)">只在 web 端显示</b>：窄屏 widget 里横幅会挤掉消息区，移动端只保留顶部 TEAM 徽标。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // 方案切换
+  const tabs = document.querySelectorAll('.sb-tabs button');
+  const panes = document.querySelectorAll('.pane');
+  tabs.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      tabs.forEach((b) => b.classList.toggle('on', b === btn));
+      panes.forEach((p) => p.classList.toggle('on', p.id === 'pane-' + btn.dataset.pane));
+    });
+  });
+
+  // C 方案：展开成员
+  document.querySelectorAll('[data-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.toggle);
+      if (!target) return;
+      const open = target.classList.toggle('open');
+      btn.classList.toggle('open', open);
+    });
+  });
+
+  // 关闭横幅：点了就整条消失（演示用，刷新即恢复）
+  document.querySelectorAll('.b-x').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const banner = btn.closest('.banner');
+      if (!banner) return;
+      banner.style.transition = 'opacity .15s, transform .15s';
+      banner.style.opacity = '0';
+      banner.style.transform = 'translateY(-4px)';
+      setTimeout(() => { banner.style.display = 'none'; }, 150);
+    });
+  });
+</script>
+</body>
+</html>

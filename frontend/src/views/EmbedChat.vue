@@ -1596,6 +1596,13 @@
               @dismiss="scopeBoundDismissedAgentId = scopeBoundAgentId"
             />
           </div>
+          <div v-if="showTeamLeadBanner && !isMobile" class="mx-3 mt-2">
+            <TeamLeadBanner
+              :team-name="teamLeadName"
+              :member-count="teamLeadMemberCount"
+              @dismiss="teamLeadBannerDismissedAgentId = teamLeadAgentId"
+            />
+          </div>
           <div v-if="showDatasetScopeBanner" class="mx-3 mt-2">
             <DatasetScopeBanner
               :agent-name="datasetScopeAgentName"
@@ -2821,6 +2828,7 @@ import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import ChatRecoveryCard from "@/components/chat/ChatRecoveryCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
 import ScopeBoundBanner from "@/components/chat/ScopeBoundBanner.vue";
+import TeamLeadBanner from "@/components/chat/TeamLeadBanner.vue";
 import DatasetScopeBanner from "@/components/chat/DatasetScopeBanner.vue";
 import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
 import K8sTerminalModal from "@/components/chat/K8sTerminalModal.vue";
@@ -3336,6 +3344,39 @@ const showScopeBoundBanner = computed(() => {
   const agent: any = scopeBoundOnlyAgent.value;
   if (!agent) return false;
   return scopeBoundAgentId.value !== scopeBoundDismissedAgentId.value;
+});
+
+/**
+ * 团主专家在输入框上方的说明条。
+ *
+ * 用户选中的智能体是团主专家时，他其实是在跟「一个团」对话：主专家会把子任务派给
+ * 已发布版本调度范围里的子专家。这件事在页头和列表里只有一个小徽标，进对话后很容易
+ * 忘，所以在输入框上方补一条可关闭的说明（骨架与「仅检索已绑定的知识库」一致）。
+ *
+ * 关闭状态按智能体记：换一个团要重新提示，避免「关过一次就再也看不到」。
+ * 只在 web 端显示——移动端输入区本就窄，横幅会把消息区挤掉，顶部 TEAM 徽标已经够用。
+ */
+const teamLeadAgent = computed(() => {
+  const agent: any = effectiveChatAgent.value;
+  if (!agent) return null;
+  return agent.is_expert_team_lead === true ? agent : null;
+});
+const teamLeadAgentId = computed(() => String((teamLeadAgent.value as any)?.id || ""));
+const teamLeadName = computed(() => {
+  const agent: any = teamLeadAgent.value;
+  return String(agent?.team_name || agent?.display_name || agent?.name || "");
+});
+const teamLeadMemberCount = computed<number | null>(() => {
+  const agent: any = teamLeadAgent.value;
+  if (!agent) return null;
+  const raw = agent?.team_member_count;
+  // null = 未配置调度范围（全部可委派都能调），0 = 显式清空——两者语义不同，不能混成一个数
+  return raw === null || raw === undefined ? null : Number(raw);
+});
+const teamLeadBannerDismissedAgentId = ref<string>("");
+const showTeamLeadBanner = computed(() => {
+  if (!teamLeadAgent.value) return false;
+  return teamLeadAgentId.value !== teamLeadBannerDismissedAgentId.value;
 });
 
 /**
