@@ -595,6 +595,13 @@ const engineFilter = ref<"all" | "LOCAL" | "RAGFLOW" | "OPENCLAW">("all");
 const readinessFilter = ref<"all" | "ready" | "unready">("all");
 /** 权属人筛选：orphan = 权属人已停用，智能体已经没人能编辑 */
 const ownerFilter = ref<"all" | "orphan">("all");
+/**
+ * 团队维度三个条件。前两个是「是 / 否」，第三个按**团主 id** 过滤：
+ * 用 id 而不是团名，团改名后已生效的筛选不会悄悄失效。
+ */
+const teamLeadFilter = ref<"all" | "yes" | "no">("all");
+const subAgentFilter = ref<"all" | "yes" | "no">("all");
+const teamFilter = ref<"all" | string>("all");
 const filterPanelOpen = ref(false);
 const userInfo = ref<any>({});
 
@@ -827,6 +834,90 @@ const resolveTeamMembersLabel = (agent: AIAgent): string => {
 /** 团名未配置时后端已回落 display_name，这里再兜一层，防止老接口 */
 const resolveTeamName = (agent: AIAgent): string =>
   (agent.team_name || '').trim() || agent.display_name
+
+/** 「所属团」下拉的选项：列表里出现过的团 */
+const teamFilterOptions = computed(() =>
+  teamLeadAgents.value.map((team) => ({ id: String(team.id), name: resolveTeamName(team) })),
+)
+
+/**
+ * 子专家 → 所属团：把每个团主专家的 team_member_ids 反向展开。
+ *
+ * 列表接口只给团主专家返回成员 id（成员自己不带「我在哪个团」），所以这张反查表在前端
+ * 拼，不额外请求接口。一个子专家可以被多个团收录——调度范围各自独立，彼此不知道对方。
+ */
+const subAgentTeams = computed(() => {
+  const map = new Map<string, { id: string; name: string }[]>()
+  for (const team of teamLeadAgents.value) {
+    const teamId = String(team.id)
+    const teamName = resolveTeamName(team)
+    for (const rawId of team.team_member_ids || []) {
+      const memberId = String(rawId)
+      if (memberId === teamId) continue
+      const list = map.get(memberId) || []
+      if (!list.some((item) => item.id === teamId)) list.push({ id: teamId, name: teamName })
+      map.set(memberId, list)
+    }
+  }
+  return map
+})
+
+/** 某个智能体被哪些团收录（团主自己不算「子专家」） */
+const agentTeamsOf = (agent: AIAgent): { id: string; name: string }[] =>
+  subAgentTeams.value.get(String(agent.id)) || []
+
+/**
+ * 卡片徽标文案：一个团直接写团名，多个团写数量。
+ * 多团不展开团名——卡片放不下，完整名单进 title 与详情抽屉。
+ */
+const subAgentBadge = (agent: AIAgent): { label: string; title: string } | null => {
+  const teams = agentTeamsOf(agent)
+  const [only] = teams
+  if (!only) return null
+  if (teams.length === 1) {
+    return { label: `子专家 · ${only.name}`, title: `所属专家团：${only.name}` }
+  }
+  return {
+    label: `子专家 · ${teams.length} 个团`,
+    title: `所属专家团：${teams.map((team) => team.name).join('、')}`,
+  }
+}
+
+/** 点徽标后的「选哪个团」浮层；单团不弹，直接筛 */
+const teamPicker = ref<{ x: number; y: number; teams: { id: string; name: string }[] } | null>(null)
+
+const applyTeamFilter = (teamId: string) => {
+  teamFilter.value = teamId
+  teamPicker.value = null
+  // 点徽标是要看成员，不是继续调条件：面板开着会挡在徽标上面
+  filterPanelOpen.value = false
+}
+
+const openTeamPicker = (event: MouseEvent, agent: AIAgent) => {
+  const teams = agentTeamsOf(agent)
+  const [only] = teams
+  if (!only) return
+  if (teams.length === 1) {
+    applyTeamFilter(only.id)
+    return
+  }
+  const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  teamPicker.value = {
+    x: Math.max(12, Math.min(rect?.left ?? 12, window.innerWidth - 268)),
+    y: (rect?.bottom ?? 0) + 6,
+    teams,
+  }
+}
+
+const closeTeamPicker = () => {
+  teamPicker.value = null
+}
+
+/** 列表视图的紧凑徽标：列宽紧张，团名放进 title */
+const subAgentBadgeShort = (agent: AIAgent): string => {
+  const teams = agentTeamsOf(agent)
+  return teams.length > 1 ? `子专家 · ${teams.length}` : '子专家'
+}
 
 const resolveTeamIntro = (agent: AIAgent): string =>
   (agent.team_profile?.intro || '').trim() || agent.description || '这个团还没有写介绍'
@@ -1388,6 +1479,25 @@ const filteredAgents = computed(() => {
     result = result.filter((a) => a.owner_active === false);
   }
 
+  // 3.5 团队：团主专家 / 子专家 / 所属团。
+  //     「所属团」同时收团主本人和它的成员——「这个团有谁」应该包含带队的人。
+  if (teamLeadFilter.value !== "all") {
+    const wantLead = teamLeadFilter.value === "yes";
+    result = result.filter((a) => Boolean(a.is_expert_team_lead) === wantLead);
+  }
+
+  if (subAgentFilter.value !== "all") {
+    const wantSub = subAgentFilter.value === "yes";
+    result = result.filter((a) => (agentTeamsOf(a).length > 0) === wantSub);
+  }
+
+  if (teamFilter.value !== "all") {
+    const target = teamFilter.value;
+    result = result.filter(
+      (a) => String(a.id) === target || agentTeamsOf(a).some((team) => team.id === target),
+    );
+  }
+
   // 4. Sort: sort_order (descending), then is_system (descending), then Alphabetical
   return result.sort((a, b) => {
     if (isMainAgent(a) !== isMainAgent(b)) return isMainAgent(a) ? -1 : 1;
@@ -1415,7 +1525,12 @@ const hasActiveAgentFilters = computed(
     sourceFilter.value !== "all" ||
     engineFilter.value !== "all" ||
     readinessFilter.value !== "all" ||
-    ownerFilter.value !== "all",
+    ownerFilter.value !== "all" ||
+    // 团队三个条件也是「筛选」：漏掉它们会让带团队筛选时的空状态说成「你还没有创建智能体」，
+    // 并且拖拽排序仍然可用（筛选状态下顺序没有意义）
+    teamLeadFilter.value !== "all" ||
+    subAgentFilter.value !== "all" ||
+    teamFilter.value !== "all",
 );
 
 /** 「筛选」按钮上的角标：有几个条件在生效 */
@@ -1428,6 +1543,9 @@ const activeFilterCount = computed(
       engineFilter.value,
       readinessFilter.value,
       ownerFilter.value,
+      teamLeadFilter.value,
+      subAgentFilter.value,
+      teamFilter.value,
     ].filter((value) => value !== "all").length,
 );
 
@@ -1491,6 +1609,28 @@ const activeFilterChips = computed(() => {
       clear: () => (ownerFilter.value = "all"),
     });
   }
+  if (teamLeadFilter.value !== "all") {
+    chips.push({
+      key: "teamLead",
+      label: `专家团主专家：${teamLeadFilter.value === "yes" ? "是" : "否"}`,
+      clear: () => (teamLeadFilter.value = "all"),
+    });
+  }
+  if (subAgentFilter.value !== "all") {
+    chips.push({
+      key: "subAgent",
+      label: `子专家：${subAgentFilter.value === "yes" ? "是" : "否"}`,
+      clear: () => (subAgentFilter.value = "all"),
+    });
+  }
+  if (teamFilter.value !== "all") {
+    const team = teamFilterOptions.value.find((item) => item.id === teamFilter.value);
+    chips.push({
+      key: "team",
+      label: `所属团：${team?.name || "已失效的团"}`,
+      clear: () => (teamFilter.value = "all"),
+    });
+  }
   return chips;
 });
 
@@ -1501,6 +1641,9 @@ const clearAllAgentFilters = () => {
   engineFilter.value = "all";
   readinessFilter.value = "all";
   ownerFilter.value = "all";
+  teamLeadFilter.value = "all";
+  subAgentFilter.value = "all";
+  teamFilter.value = "all";
 };
 
 const canDragAgents = computed(
@@ -4571,6 +4714,44 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </label>
             </div>
 
+            <!-- 团队：前两个是「是/否」，第三个按团主 id 过滤。
+                 并排三个正好一行，与上面 6 个条件同一套视觉，不新开一层折叠。 -->
+            <div class="mt-3 border-t border-gray-100 pt-3">
+              <div class="mb-2 flex items-center gap-2 text-[11px] font-bold text-teal-700">
+                <span class="h-px flex-1 bg-teal-100"></span>
+                <span>团队</span>
+                <span class="h-px flex-1 bg-teal-100"></span>
+              </div>
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <label class="block">
+                  <span class="mb-1 block text-[11px] font-semibold text-gray-500">专家团主专家</span>
+                  <select v-model="teamLeadFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                    <option value="all">全部</option>
+                    <option value="yes">只看团主专家</option>
+                    <option value="no">排除团主专家</option>
+                  </select>
+                </label>
+                <label class="block">
+                  <span class="mb-1 block text-[11px] font-semibold text-gray-500">子专家</span>
+                  <select v-model="subAgentFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                    <option value="all">全部</option>
+                    <option value="yes">只看子专家</option>
+                    <option value="no">排除子专家</option>
+                  </select>
+                </label>
+                <label class="block">
+                  <span class="mb-1 block text-[11px] font-semibold text-gray-500">所属团</span>
+                  <select v-model="teamFilter" class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                    <option value="all">全部</option>
+                    <option v-for="team in teamFilterOptions" :key="team.id" :value="team.id">{{ team.name }}</option>
+                  </select>
+                </label>
+              </div>
+              <p class="mt-2 text-[11px] leading-5 text-gray-400">
+                子专家＝被某个专家团的调度范围纳入的智能体。两个条件都选「是」时结果为空：团主与子专家在当前版本里不重叠。
+              </p>
+            </div>
+
             <div class="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
               <button type="button" class="cursor-pointer text-xs text-gray-500 hover:text-gray-700" @click="clearAllAgentFilters">
                 重置
@@ -5071,6 +5252,15 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   class="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700"
                   :title="`专家团主专家：${resolveTeamName(agent)} · ${resolveTeamMembersLabel(agent)}`"
                 >👥 专家团</span>
+                <!-- 子专家徽标可点：单团直接筛，多团先选是哪个团。
+                     只在「被团收录」时出现，普通智能体不加，否则每张卡都挂一个等于噪音。 -->
+                <button
+                  v-if="subAgentBadge(agent)"
+                  type="button"
+                  class="shrink-0 cursor-pointer rounded-full border border-purple-200 bg-purple-50 px-1.5 py-px text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100"
+                  :title="`${subAgentBadge(agent)?.title}（点击只看这个团）`"
+                  @click.stop="openTeamPicker($event, agent)"
+                >{{ subAgentBadge(agent)?.label }}</button>
                 <span
                   v-if="agent.is_system"
                   class="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-indigo-50 text-indigo-500 border border-indigo-100"
@@ -5584,6 +5774,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   <div class="flex flex-col">
                     <span class="text-sm font-bold text-gray-900 group-hover:text-primary transition-colors">
                       {{ agent.display_name }}
+                      <button
+                        v-if="subAgentBadge(agent)"
+                        type="button"
+                        class="ml-1.5 inline-flex cursor-pointer items-center rounded-full border border-purple-200 bg-purple-50 px-1.5 py-px text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100"
+                        :title="`${subAgentBadge(agent)?.title}（点击只看这个团）`"
+                        @click.stop="openTeamPicker($event, agent)"
+                      >{{ subAgentBadgeShort(agent) }}</button>
                       <span v-if="!agent.is_enabled" class="ml-1.5 text-[10px] text-gray-400 font-normal underline decoration-gray-200">已禁用</span>
                     </span>
                     <span class="text-[10px] text-gray-400 font-mono line-clamp-1">{{ agent.description || agent.name }}</span>
@@ -6788,6 +6985,32 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :agent="selectedAgent"
       @close="showHistoryModal = false"
     />
+
+    <!-- 点徽标后的「选哪个团」浮层：固定在触发元素下方，不跟着卡片滚动裁切 -->
+    <Teleport to="body">
+      <div v-if="teamPicker" class="fixed inset-0 z-[10050]" @click="closeTeamPicker">
+        <div
+          class="absolute w-[250px] rounded-xl border border-gray-200 bg-white p-1.5 shadow-2xl"
+          :style="{ left: `${teamPicker.x}px`, top: `${teamPicker.y}px` }"
+          @click.stop
+        >
+          <p class="px-2 py-1.5 text-[10.5px] font-semibold text-gray-400">
+            这个子专家属于 {{ teamPicker.teams.length }} 个团
+          </p>
+          <button
+            v-for="team in teamPicker.teams"
+            :key="team.id"
+            type="button"
+            class="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-gray-700 hover:bg-primary/10 hover:text-primary"
+            @click="applyTeamFilter(team.id)"
+          >
+            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-purple-400"></span>
+            <span class="min-w-0 flex-1 truncate">{{ team.name }}</span>
+            <span class="shrink-0 text-[10.5px] text-primary">只看这个团 →</span>
+          </button>
+        </div>
+      </div>
+    </Teleport>
 
     <Teleport to="body">
       <div
