@@ -347,6 +347,36 @@ def _delegable_ids_of_tool_config(item: Any) -> tuple[bool, Optional[List[str]]]
     return True, cleaned
 
 
+def has_delegation_tool(agent_config: Any) -> bool:
+    """当前智能体到底有没有委派能力：配置里勾了委派工具，或主助手运行时隐式挂载。
+
+    ``list_available_agents`` 是**隐式工具**，任何智能体都能调。它若不看这一层，
+    就会出现「列出一堆可委派智能体 → 用户挑一个 → 模型说自己没工具」的自相矛盾：
+    目录暗示了能力，运行时却没有。所有「能不能委派」的判断都应走这里。
+    """
+    if agent_config is None:
+        return False
+
+    for item in getattr(agent_config, "tools", None) or []:
+        if isinstance(item, str):
+            name = item
+        elif isinstance(item, dict):
+            name = item.get("name")
+        else:
+            name = getattr(item, "name", None)
+        if str(name or "").strip() in (DELEGATION_TOOL_NAME, DELEGATION_BATCH_TOOL_NAME):
+            return True
+
+    # 主助手（通用对话兜底 Agent）由 AssistantAgentRunner 在运行时隐式挂载委派工具，
+    # 它的 tools 配置里通常没有这一项，不能因此判定为「没有委派能力」。
+    try:
+        from app.services.ai.skill_resolver import is_main_general_agent
+
+        return is_main_general_agent(agent_config)
+    except Exception:
+        return False
+
+
 def resolve_delegation_allowlist(
     configured_tools: Iterable[Any] | None,
     *,

@@ -122,6 +122,9 @@ async def list_available_agents() -> str:
     - 目录内容就是**本智能体当前可委派的全集**，委派工具只能调用其中出现的标识。
     - 平台系统级智能体需要在角色权限里被授予访问权才会出现；用户自建智能体**默认不可委派**，
       只有被显式加入本智能体的「调度范围」后才出现（此时带 `is_mine=true`）。
+    - 若本智能体**没有启用委派工具**，本工具会直接返回
+      `delegation_available=false` 与说明，而不是列出清单——此时必须明确告诉用户「当前无法委派」，
+      不要让用户先挑一个再发现没工具。
     - 返回体含 scope/items/count；当前对话的智能体若在列则标注 is_current=true。
     - 空目录时返回体附带 note 说明原因，必须据此向用户解释（例如「你没被分配可委派的系统级智能体」或
       「调度名单为空」），不要简化成「你没有任何智能体」。
@@ -136,6 +139,7 @@ async def list_available_agents() -> str:
             resolve_delegable_system_agents_for_user,
         )
         from app.services.ai.tools.agent_delegate_tool import (
+            has_delegation_tool,
             resolve_delegation_allowlist,
         )
 
@@ -150,6 +154,25 @@ async def list_available_agents() -> str:
                 if current_agent_id
                 else None
             )
+            # 目录暗示能力，运行时却没有——这是本次用户实测的原始症状：
+            # 问「我能委派哪些」→ 列出一堆 → 挑一个 → 模型回「我没有工具」。
+            # 没装委派工具就当场说清楚，别让用户白挑一轮。
+            if caller_config is not None and not has_delegation_tool(caller_config):
+                return json.dumps(
+                    {
+                        "scope": "delegable_agents",
+                        "items": [],
+                        "count": 0,
+                        "delegation_available": False,
+                        "note": (
+                            "本智能体未启用委派工具（sub_agent_call / sub_agent_batch_call），"
+                            "当前无法委派任何子智能体。若需要使用委派能力，"
+                            "需要先在智能体配置的工具中启用并发布该工具。"
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+
             available_agents = await resolve_delegable_system_agents_for_user(
                 db,
                 user_info={
@@ -168,6 +191,7 @@ async def list_available_agents() -> str:
                 "scope": "delegable_agents",
                 "items": items,
                 "count": len(items),
+                "delegation_available": True,
             }
             if not items:
                 # 空目录必须自带原因。只给 {"items": [], "count": 0} 时，模型很容易把它

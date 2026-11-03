@@ -347,3 +347,120 @@ async def test_list_available_agents_empty_catalog_note_for_admin():
     assert "没有可委派的系统级智能体" in payload["note"]
     assert "没有被分配" not in payload["note"]
 
+
+
+def _delegation_catalog_stubs(caller_config, agents):
+    """把 list_available_agents 的依赖打桩，返回 (ctx patches, resolve mock)。"""
+
+    ctx = MagicMock()
+    ctx.user_id = 7
+    ctx.is_admin = False
+    ctx.agent_id = "agent_current"
+    ctx.user_dimensions = {"user_name": "alice"}
+
+    db = AsyncMock()
+    db_cm = MagicMock()
+    db_cm.__aenter__ = AsyncMock(return_value=db)
+    db_cm.__aexit__ = AsyncMock(return_value=None)
+
+    resolve = AsyncMock(return_value=agents)
+    patches = [
+        patch("app.services.ai.tools.resource_catalog_tools.get_current_agent_context", return_value=ctx),
+        patch("app.services.ai.tools.resource_catalog_tools.AsyncSessionLocal", return_value=db_cm),
+        patch(
+            "app.services.ai.agent_manager.AgentManagerService.get_active_agent_config",
+            AsyncMock(return_value=caller_config),
+        ),
+        patch("app.services.ai.agent_roster.resolve_delegable_system_agents_for_user", resolve),
+    ]
+    return patches, resolve
+
+
+@pytest.mark.asyncio
+async def test_list_available_agents_refuses_when_delegation_tool_absent():
+    """没装委派工具时不能列「可委派清单」。
+
+    用户实测：问「我能委派哪些」→ 列出一堆 → 挑一个让它委派 → 模型回「我没有工具」。
+    目录暗示了运行时并不存在的能力，纯属误导。
+    """
+    from app.services.ai.tools.resource_catalog_tools import list_available_agents
+
+    caller_config = SimpleNamespace(
+        agent_id="agent_current",
+        agent_name="plain-agent",
+        tools=["execute_sql_query"],
+    )
+    patches, resolve = _delegation_catalog_stubs(caller_config, [])
+
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await list_available_agents.ainvoke({})
+
+    payload = json.loads(result)
+    assert payload["delegation_available"] is False
+    assert payload["count"] == 0
+    assert payload["items"] == []
+    assert "无法委派" in payload["note"]
+    # 既然一定不可委派，就没必要再去查一遍候选池
+    resolve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_list_available_agents_lists_scope_when_tool_present():
+    from app.schemas.agent import ToolConfigItem
+    from app.services.ai.tools.resource_catalog_tools import list_available_agents
+
+    caller_config = SimpleNamespace(
+        agent_id="agent_current",
+        agent_name="plain-agent",
+        tools=[ToolConfigItem(name="sub_agent_call")],
+    )
+    target = SimpleNamespace(
+        id="agent_target",
+        name="data_expert",
+        display_name="数据分析专家",
+        description="负责数据查询与分析",
+        capabilities=["text2sql"],
+        is_system=True,
+        is_enabled=True,
+    )
+    patches, _ = _delegation_catalog_stubs(caller_config, [target])
+
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await list_available_agents.ainvoke({})
+
+    payload = json.loads(result)
+    assert payload["delegation_available"] is True
+    assert payload["count"] == 1
+    assert payload["items"][0]["agent_name"] == "data_expert"
+
+
+@pytest.mark.asyncio
+async def test_list_available_agents_treats_main_assistant_as_delegation_capable():
+    """主助手的委派工具是运行时隐式挂载的，tools 配置里没有这一项。
+
+    只看配置会把它误判成「没有委派能力」，把主助手最核心的能力说没了。
+    """
+    from app.services.ai.tools.resource_catalog_tools import list_available_agents
+
+    caller_config = SimpleNamespace(
+        agent_id="sys-agent-chat",
+        agent_name="assistant",
+        tools=[],
+    )
+    target = SimpleNamespace(
+        id="agent_target",
+        name="data_expert",
+        display_name="数据分析专家",
+        description="负责数据查询与分析",
+        capabilities=[],
+        is_system=True,
+        is_enabled=True,
+    )
+    patches, _ = _delegation_catalog_stubs(caller_config, [target])
+
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await list_available_agents.ainvoke({})
+
+    payload = json.loads(result)
+    assert payload["delegation_available"] is True
+    assert payload["count"] == 1
