@@ -3,8 +3,8 @@
  * 「团队介绍」写法指引：这段文字会作为系统提示词的「你的团队」段，
  * 模型会照着执行，所以它既是说明也是约束——写得好能约束行为，写得空等于没写。
  *
- * 做成可展开的内联说明而不是 popover：弹窗 body 是滚动容器，绝对定位浮层会被
- * 裁掉；内容也不短，浮层放不下。
+ * 现在挂在「?」弹层里（能力标签的「?」也是弹层，两处交互统一）。弹层已有标题，
+ * 用 `hide-intro` 隐掉组件自带的标题与导语，避免一个弹层里出现两遍。
  */
 const EXAMPLE = [
   "涉及指标口径、建表语句的问题，先转元数据专家确认口径，再让数据助手取数。",
@@ -13,20 +13,22 @@ const EXAMPLE = [
   "超出以上范围的问题，直接说明该找哪个智能体，不要勉强作答。",
 ].join("\n");
 
+withDefaults(defineProps<{ hideIntro?: boolean }>(), { hideIntro: false });
+
 const emit = defineEmits<{ apply: [value: string] }>();
 </script>
 
 <template>
-  <div
-    class="mt-2 rounded-xl border border-primary/30 bg-primary/5 p-3 text-[11px] leading-relaxed text-gray-700"
-  >
-    <p class="font-semibold text-gray-800">这段文字会进模型提示词，写法有讲究</p>
-    <p class="mt-1 text-gray-600">
-      它会作为「你的团队」段写进<b>团主专家自己</b>的系统提示词，模型会照着执行。
-      写得好能约束行为，写空话则等于没写。
-    </p>
+  <div class="rounded-xl border border-primary/30 bg-primary/5 p-3 text-[11px] leading-relaxed text-gray-700">
+    <template v-if="!hideIntro">
+      <p class="font-semibold text-gray-800">这段文字会进模型提示词，写法有讲究</p>
+      <p class="mt-1 text-gray-600">
+        它会作为「你的团队」段写进<b>团主专家自己</b>的系统提示词，模型会照着执行。
+        写得好能约束行为，写空话则等于没写。
+      </p>
+    </template>
 
-    <div class="mt-2 grid gap-1.5">
+    <div class="grid gap-1.5" :class="hideIntro ? '' : 'mt-2'">
       <p class="text-emerald-700">
         ✓ 写「什么情况找谁」和先后顺序，别写成员名单——成员清单模型本来就有
       </p>

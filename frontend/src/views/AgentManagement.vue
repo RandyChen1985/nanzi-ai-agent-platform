@@ -1029,8 +1029,12 @@ const teamProfileName = computed({
   },
 })
 
-/** 「团队介绍」写法指引的展开态：内容较长，默认收起，避免把表单撑高 */
-const showTeamIntroGuide = ref(false)
+/**
+ * 「团队介绍」写法指引改成弹层：这段指引有 5 条要点 + 一个示例，内联展开会把
+ * 专家团这一页撑得很长，收起后又要多点一次才看得到。能力标签的「?」已经是弹层，
+ * 两处交互统一。
+ */
+const showTeamIntroHelp = ref(false)
 
 const teamProfileIntro = computed({
   get: () => agentForm.value.team_profile?.intro || '',
@@ -1038,6 +1042,12 @@ const teamProfileIntro = computed({
     agentForm.value.team_profile = { ...(agentForm.value.team_profile || {}), intro: value }
   },
 })
+
+/** 从指引弹层里「填入示例」：填完就收起，用户接着改即可 */
+const applyTeamIntroExample = (value: string) => {
+  teamProfileIntro.value = value
+  showTeamIntroHelp.value = false
+}
 
 const workspaceTab = ref<AgentWorkspaceTab>('mine')
 const shareCounts = ref({
@@ -6426,8 +6436,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     <span>👥</span><span>专家团主专家</span>
                   </div>
                   <p class="mt-0.5 text-[11px] leading-relaxed text-gray-500">
-                    打开后，这个智能体会在智能体中心的「专家团」tab 以团的形式展示；
-                    关闭不影响它作为普通智能体使用，已配好的调度范围会保留。
+                    打开后会在智能体中心以「专家团」形式展示；关闭不影响它作为普通智能体使用，已配好的调度范围会保留。
                   </p>
                 </div>
                 <button
@@ -6453,7 +6462,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     v-model="teamProfileName"
                     type="text"
                     maxlength="100"
-                    placeholder="例如：数据分析专家团（留空则用智能体展示名）"
+                    placeholder="例如：数据分析专家团（留空用展示名）"
                     class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
@@ -6463,9 +6472,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     <button
                       type="button"
                       class="grid h-4 w-4 shrink-0 place-items-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-500 transition hover:border-primary hover:text-primary"
-                      :aria-expanded="showTeamIntroGuide"
                       title="怎么写才有效"
-                      @click="showTeamIntroGuide = !showTeamIntroGuide"
+                      aria-haspopup="dialog"
+                      @click.stop="showTeamIntroHelp = true"
                     >
                       ?
                     </button>
@@ -6474,18 +6483,19 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     v-model="teamProfileIntro"
                     rows="2"
                     maxlength="500"
-                    placeholder="一句话说清这个团能一起干什么，例如：从取数、口径到制度背景的一条龙团队。"
+                    placeholder="例如：从取数、口径到制度背景的一条龙团队。"
                     class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   ></textarea>
-                  <p class="mt-1 text-[11px] text-gray-400">
-                    会写进团主专家自己的系统提示词（团队身份段），模型会照着执行——可以写协作流程与能力边界；它不进「描述信息」，所以不会干扰主助手的委派选人。
+                  <p class="mt-1 flex items-start justify-between gap-2 text-[11px] text-gray-400">
+                    <span>写协作流程与能力边界；这段话会进团主专家的系统提示词，不影响主助手的选人判断。</span>
+                    <!-- 有 500 字上限但原来没有任何提示，写到截断才发现 -->
+                    <span class="shrink-0 tabular-nums">{{ (teamProfileIntro || '').length }}/500</span>
                   </p>
-                  <TeamIntroGuide v-if="showTeamIntroGuide" @apply="teamProfileIntro = $event" />
                 </div>
                 <div class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-gray-500">
-                  团队成员来自「调度范围」（<code class="rounded bg-gray-100 px-1">sub_agent_call</code>
-                  里的可委派智能体），<b>不在这里单独维护</b>：改调度范围，团就跟着变。
-                  已发布版本里的调度范围：<b>{{
+                  成员来自「调度范围」（<code class="rounded bg-gray-100 px-1">sub_agent_call</code>
+                  可委派的智能体），这里不单独维护；改调度范围，团就跟着变。
+                  当前已发布版本：<b>{{
                     selectedAgent ? resolveTeamMembersLabel(selectedAgent) : '新建后需发布才生效'
                   }}</b>。
                 </div>
@@ -6825,6 +6835,44 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               type="button"
               class="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary-dark"
               @click="showCapabilityHelp = false"
+            >知道了</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 「团队介绍」写法指引：与能力标签的「?」同样是弹层，不再把这一页内联撑长 -->
+    <Teleport to="body">
+      <div
+        v-if="showTeamIntroHelp"
+        class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 p-4"
+        @click.self="showTeamIntroHelp = false"
+      >
+        <div class="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
+            <div>
+              <h3 class="text-lg font-bold text-gray-900">团队介绍怎么写？</h3>
+              <p class="mt-1 text-sm text-gray-500">
+                这段话会写进团主专家的系统提示词（团队身份段），模型会照着执行；它不进「描述信息」，所以不会影响主助手的委派选人。
+              </p>
+            </div>
+            <button
+              type="button"
+              class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              aria-label="关闭"
+              @click="showTeamIntroHelp = false"
+            >
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div class="max-h-[70vh] overflow-y-auto px-6 py-5">
+            <TeamIntroGuide hide-intro @apply="applyTeamIntroExample" />
+          </div>
+          <div class="flex justify-end border-t border-gray-100 px-6 py-4">
+            <button
+              type="button"
+              class="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary-dark"
+              @click="showTeamIntroHelp = false"
             >知道了</button>
           </div>
         </div>

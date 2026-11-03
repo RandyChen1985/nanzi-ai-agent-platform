@@ -236,6 +236,22 @@ def test_agent_form_splits_sections_into_tabs(agent_management_source):
     assert "scrollIntoView" in agent_management_source
 
 
+def test_team_intro_guide_opens_in_modal(agent_management_source):
+    """「团队介绍」的写法指引要和能力标签的「?」一样弹层显示。
+
+    内联展开会把「专家团」这一页撑长，收起后还得再点一次才看得到；两处「?」交互
+    不一致时，用户会以为其中一个没反应。弹层还得保留「填入示例」这条路。
+    """
+    assert "const showTeamIntroHelp = ref(false)" in agent_management_source
+    assert "const applyTeamIntroExample" in agent_management_source
+    assert '@click.stop="showTeamIntroHelp = true"' in agent_management_source
+    assert 'v-if="showTeamIntroHelp"' in agent_management_source
+    # 内联展开版不许回来：同一个指引不能有两个入口
+    assert "showTeamIntroGuide" not in agent_management_source
+    # 弹层自带标题，组件不要再重复一遍标题和导语
+    assert '<TeamIntroGuide hide-intro @apply="applyTeamIntroExample" />' in agent_management_source
+
+
 def test_agent_form_window_stays_same_size_across_tabs(agent_management_source):
     """切页签时弹窗不许跳高度。
 
