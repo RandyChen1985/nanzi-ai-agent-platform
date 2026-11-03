@@ -252,6 +252,26 @@ def test_team_intro_guide_opens_in_modal(agent_management_source):
     assert '<TeamIntroGuide hide-intro @apply="applyTeamIntroExample" />' in agent_management_source
 
 
+def test_team_editor_modal_uses_the_same_intro_guide_popup():
+    """「专家团设置」弹窗里的「团队介绍 ?」也要走弹层，跟智能体编辑弹窗保持一致。
+
+    这是另一个组件（AgentTeamEditorModal），容易只改了一边：用户在智能体中心看到
+    的是弹层，点进「专家团设置」又变回内联展开。层级也要盯住——它自己的 Modal 是
+    10010，帮助层必须更高，否则会被父弹窗盖住。
+    """
+    editor = (ROOT / "frontend/src/components/agent/AgentTeamEditorModal.vue").read_text(
+        encoding="utf-8"
+    )
+    assert "const showIntroHelp = ref(false)" in editor
+    assert "const applyIntroExample" in editor
+    assert '@click.stop="showIntroHelp = true"' in editor
+    assert 'v-if="showIntroHelp"' in editor
+    # 内联展开版不许回来
+    assert "showIntroGuide" not in editor
+    assert '<TeamIntroGuide hide-intro @apply="applyIntroExample" />' in editor
+    assert 'class="fixed inset-0 z-[10020]' in editor
+
+
 def test_agent_form_window_stays_same_size_across_tabs(agent_management_source):
     """切页签时弹窗不许跳高度。
 

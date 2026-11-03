@@ -38,7 +38,8 @@ const emit = defineEmits<{
 }>();
 
 const isLead = ref(false);
-const showIntroGuide = ref(false);
+/** 写法指引走弹层（与智能体编辑弹窗一致）：内联展开会把设置页撑长 */
+const showIntroHelp = ref(false);
 const teamName = ref("");
 const teamIntro = ref("");
 
@@ -62,6 +63,12 @@ watch(
 const close = () => emit("update:model", false);
 
 const childCount = computed(() => props.members.filter((row) => !row.is_lead).length);
+
+/** 从写法指引里「填入示例」：填完收起，用户接着改 */
+const applyIntroExample = (value: string) => {
+  teamIntro.value = value;
+  showIntroHelp.value = false;
+};
 
 const submit = () => {
   if (props.saving) return;
@@ -93,8 +100,7 @@ const submit = () => {
               <span>👥</span><span>专家团主专家</span>
             </div>
             <p class="mt-0.5 text-[11px] leading-relaxed text-gray-500">
-              打开后，这个智能体会在智能体中心的「专家团」tab 以团的形式展示；
-              关闭不影响它作为普通智能体使用，已配好的调度范围会保留。
+              打开后会在智能体中心以「专家团」形式展示；关闭不影响它作为普通智能体使用，已配好的调度范围会保留。
             </p>
           </div>
           <button
@@ -121,7 +127,7 @@ const submit = () => {
             v-model="teamName"
             type="text"
             maxlength="100"
-            placeholder="例如：数据分析专家团（留空则用智能体展示名）"
+            placeholder="例如：数据分析专家团（留空用展示名）"
             class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </div>
@@ -131,9 +137,9 @@ const submit = () => {
             <button
               type="button"
               class="grid h-4 w-4 shrink-0 place-items-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-500 transition hover:border-primary hover:text-primary"
-              :aria-expanded="showIntroGuide"
               title="怎么写才有效"
-              @click="showIntroGuide = !showIntroGuide"
+              aria-haspopup="dialog"
+              @click.stop="showIntroHelp = true"
             >
               ?
             </button>
@@ -142,13 +148,13 @@ const submit = () => {
             v-model="teamIntro"
             rows="3"
             maxlength="500"
-            placeholder="一句话说清这个团能一起干什么，例如：从取数、口径到制度背景的一条龙团队。"
+            placeholder="例如：从取数、口径到制度背景的一条龙团队。"
             class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           ></textarea>
-          <p class="mt-1 text-[11px] text-gray-400">
-            会写进团主专家自己的系统提示词（团队身份段），模型会照着执行——可以写协作流程与能力边界；它不进「描述信息」，所以不会干扰主助手的委派选人。
+          <p class="mt-1 flex items-start justify-between gap-2 text-[11px] text-gray-400">
+            <span>写协作流程与能力边界；这段话会进团主专家的系统提示词，不影响主助手的选人判断。</span>
+            <span class="shrink-0 tabular-nums">{{ (teamIntro || '').length }}/500</span>
           </p>
-          <TeamIntroGuide v-if="showIntroGuide" @apply="teamIntro = $event" />
         </div>
 
         <!-- 成员只读：成员属于版本级调度范围，这里不给改 -->
@@ -240,4 +246,42 @@ const submit = () => {
       </div>
     </template>
   </Modal>
+
+  <!-- 写法指引弹层：z 比「专家团设置」本身（10010）高一层 -->
+  <Teleport to="body">
+    <div
+      v-if="showIntroHelp"
+      class="fixed inset-0 z-[10020] flex items-center justify-center bg-black/40 p-4"
+      @click.self="showIntroHelp = false"
+    >
+      <div class="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div class="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
+          <div>
+            <h3 class="text-lg font-bold text-gray-900">团队介绍怎么写？</h3>
+            <p class="mt-1 text-sm text-gray-500">
+              这段话会写进团主专家的系统提示词（团队身份段），模型会照着执行；它不进「描述信息」，所以不会影响主助手的委派选人。
+            </p>
+          </div>
+          <button
+            type="button"
+            class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            aria-label="关闭"
+            @click="showIntroHelp = false"
+          >
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="max-h-[70vh] overflow-y-auto px-6 py-5">
+          <TeamIntroGuide hide-intro @apply="applyIntroExample" />
+        </div>
+        <div class="flex justify-end border-t border-gray-100 px-6 py-4">
+          <button
+            type="button"
+            class="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary-dark"
+            @click="showIntroHelp = false"
+          >知道了</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
