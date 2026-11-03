@@ -5933,11 +5933,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
         <div v-if="!isOnboardingFlow || onboardingStep === 'BASIC'" class="space-y-4">
           <!-- 章节 tab：低频项不再靠折叠隐藏，而是各占一页；吸顶保证长表单里随时能换页。
-               负边距抵掉 Modal 内容区的 padding，让页签条直接顶到标题栏下沿——
-               之前这里留着一大块空白。ref 挂在页签条上，换页签时滚回它即可。 -->
+               sticky 的 top 用负值（-1rem / -1.5rem）而不是 0：滚动容器带 p-4/p-6，
+               top-0 只会贴住「内容区」，滚动时内容会从页签条上方那圈 padding 里钻出来，
+               看起来就是页签上方永远悬着一条空白。负 top 让页签条顶到容器边缘，
+               再用不透明底色（不用 bg-white/95，否则下面滚过的文字会透出来）。
+               ref 挂在页签条上，换页签时滚回它即可。 -->
           <div
             ref="agentFormTopAnchor"
-            class="sticky top-0 z-10 -mx-4 -mt-4 border-b border-gray-100 bg-white/95 px-4 pb-2 pt-2 backdrop-blur sm:-mx-6 sm:-mt-6 sm:px-6 sm:pt-3"
+            class="sticky -top-4 z-10 -mx-4 -mt-4 border-b border-gray-100 bg-white px-4 pb-1.5 pt-2 sm:-top-6 sm:-mx-6 sm:-mt-6 sm:px-6 sm:pt-2.5"
           >
             <div class="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="智能体配置分组">
               <button

@@ -250,6 +250,17 @@ def test_agent_form_window_stays_same_size_across_tabs(agent_management_source):
     # 补 16px 上边距，顶部又出现一块空白（之前就是被这块空白顶下来的）
     assert '<div ref="agentFormTopAnchor" aria-hidden="true"></div>' not in agent_management_source
     assert 'ref="agentFormTopAnchor"' in agent_management_source
+    # 吸顶必须用负 top。滚动容器带 p-4/p-6，`top-0` 只贴到内边距**下方**，
+    # 滚动时内容会从页签条上方那圈 padding 里钻出来——实测就是这样永远悬着一条空白。
+    assert "sticky -top-4" in agent_management_source
+    assert "sm:-top-6" in agent_management_source
+    # 底色必须不透明：半透明会把滚过页签条的文字透出来（截图里能看到半截字）。
+    # 只看页签条那一行——文件别处的筛选条/下拉用半透明是正常的。
+    tab_bar_line = next(
+        line for line in agent_management_source.splitlines() if "sticky -top-4" in line
+    )
+    assert "bg-white " in tab_bar_line or tab_bar_line.rstrip().endswith("bg-white")
+    assert "bg-white/95" not in tab_bar_line
 
 
 def test_agent_form_tracks_unsaved_changes_per_tab(agent_management_source):
