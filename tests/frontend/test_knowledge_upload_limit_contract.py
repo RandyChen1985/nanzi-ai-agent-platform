@@ -22,4 +22,6 @@ def test_upload_validates_size_and_extension_client_side(page: str) -> None:
 
 
 def test_upload_hint_mentions_limit(page: str) -> None:
-    assert "单文件不超过" in page
+    # 抽屉排版压缩后文案从「单文件不超过 256MB」改成更短的「单文件 ≤ 256MB」，
+    # 断言跟着文案走，但守的东西不变：提示里必须出现上限值。
+    assert "单文件 ≤ {{ KNOWLEDGE_UPLOAD_MAX_MB }}MB" in page

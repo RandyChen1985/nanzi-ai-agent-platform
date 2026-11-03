@@ -8,8 +8,10 @@ import Modal from '../components/Modal.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import KnowledgeFlowGuideBanner from '../components/knowledge/KnowledgeFlowGuideBanner.vue'
 import DocWorkspace from '../components/knowledge/DocWorkspace.vue'
+import ImageToMarkdownUploader from '../components/knowledge/ImageToMarkdownUploader.vue'
 import HeroSilhouette from '../components/common/HeroSilhouette.vue'
 import { useToast } from '../composables/useToast'
+import { ragflowApi } from '../api/ragflow'
 import { useUser } from '../composables/useUser'
 import { formatDate } from '../utils/date'
 import { copyToClipboard as copyText } from '../utils/clipboard'
@@ -647,6 +649,12 @@ const docQuotaRatio = computed(() => {
   if (!docs || !docs.limit || docs.used == null) return 0
   return Math.min(1, Number(docs.used) / Number(docs.limit))
 })
+/** 剩余额度：比比例更直观，「还能传 1997 份」和「用了 3/2000」是同一个数的两种说法 */
+const docQuotaRemaining = computed(() => {
+  const docs = datasetQuota.value?.documents
+  if (!docs || !docs.limit || docs.used == null) return null
+  return Math.max(0, Number(docs.limit) - Number(docs.used))
+})
 const docQuotaTone = computed(() => {
   if (docQuotaRatio.value >= 0.95) return 'bg-red-500 text-red-600'
   if (docQuotaRatio.value >= 0.8) return 'bg-amber-500 text-amber-600'
@@ -1025,6 +1033,20 @@ const toggleDatasetExpand = async (dataset: KnowledgeBase, forceExpand = false) 
 // 获取某个知识库下的文档
 // 同一知识库可能被轮询、手动刷新、上传后刷新同时触发，用序号只认最后一次请求
 const documentsReqSeq: Record<string, number> = {}
+
+/** 图片转 md 确认入库后刷新列表：新文档会出现在别处渲染的文档区 */
+const onImageMarkdownUploaded = () => {
+  if (selectedDataset.value?.id) {
+    fetchDocumentsForDataset(selectedDataset.value.id, { silent: true })
+  }
+}
+
+const onUploaderNotify = (payload: { message: string; type: 'success' | 'error' | 'warning' }) => {
+  showToast(payload.message, payload.type)
+}
+
+/** 上传入口分两档：文档走 RAGFlow 直接解析，图片先转 md 再入库 */
+const uploadTab = ref<'doc' | 'img'>('doc')
 
 const fetchDocumentsForDataset = async (dsId: string, options: { silent?: boolean } = {}) => {
   const seq = (documentsReqSeq[dsId] = (documentsReqSeq[dsId] || 0) + 1)
@@ -1486,6 +1508,33 @@ const selectDatasetNode = (dataset: KnowledgeBase) => {
   }
 }
 
+/**
+ * 原图入口：只有「图片转 md」的文档才有。
+ * 靠文档名的哈希尾巴（`名字-8位内容哈希.md`）认出这类文档，再去问后端原图还在不在，
+ * 存在才渲染入口——不然点开是裂图。
+ */
+const sourceImage = ref<{ name: string; size: number; url: string } | null>(null)
+const sourceImageOpen = ref(false)
+
+const looksLikeImageDerivedDoc = (name?: string) => !!name && /-[0-9a-f]{8}\.md$/i.test(name)
+
+const probeSourceImage = async (doc: KnowledgeDocument | null | undefined, dataset: KnowledgeBase | null | undefined) => {
+  sourceImage.value = null
+  sourceImageOpen.value = false
+  const dsId = dataset?.ragflow_dataset_id || dataset?.id
+  if (!doc?.name || !dsId || !looksLikeImageDerivedDoc(doc.name)) return
+  try {
+    const res = await ragflowApi.getImageSourceInfo(dsId, doc.name)
+    const data = res.data?.data
+    if (data?.exists && data.url && data.name) {
+      sourceImage.value = { name: data.name, size: data.size ?? 0, url: data.url }
+    }
+  } catch {
+    // 探测失败就当没有原图：这是旁路信息，不该在详情里报错
+    sourceImage.value = null
+  }
+}
+
 // 选中文档节点
 const selectDocumentNode = (doc: KnowledgeDocument, dataset: KnowledgeBase) => {
   selectedType.value = 'document'
@@ -1495,6 +1544,7 @@ const selectDocumentNode = (doc: KnowledgeDocument, dataset: KnowledgeBase) => {
   // 详情走右侧抽屉：主区保持文档列表不动，关掉抽屉就回到原浏览位置
   drawerMode.value = 'doc'
   drawerOpen.value = true
+  void probeSourceImage(doc, dataset)
   const dsId = dataset.ragflow_dataset_id || dataset.id || ''
   const status = getDocStatus(doc)
   if (dsId && (status === 'parsing' || parsingDocIds.value[doc.id])) {
@@ -2333,9 +2383,11 @@ const confirmDeleteDataset = async () => {
 // 与后端 KNOWLEDGE_UPLOAD_MAX_BYTES / ALLOWED_EXTENSIONS 保持一致；
 // 前端先拦一道，用户不用等整个文件传上去才看到 413。
 const KNOWLEDGE_UPLOAD_MAX_MB = 256
+// 不含图片：RAGFlow 的图片解析要视觉模型，当前部署没打通，传上去只会停在「解析失败」。
+// 需要图片里的内容，先转成 PDF 再传。
 const KNOWLEDGE_UPLOAD_EXTENSIONS = [
   'pdf', 'doc', 'docx', 'txt', 'md', 'csv', 'xls', 'xlsx',
-  'ppt', 'pptx', 'html', 'htm', 'epub', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tif', 'tiff',
+  'ppt', 'pptx', 'html', 'htm', 'epub',
 ]
 
 /** 选择文件和拖拽走同一套校验：拖进来的也必须拦，否则到服务端才 415 */
@@ -3577,6 +3629,18 @@ onMounted(async () => {
   applyDeepLinkFromQuery()
 })
 
+// 标题区折叠：只收起副标题和上下留白，操作区一律保留——
+// 折叠是为了把高度让给文档列表，不能顺手把「新建知识库」也藏起来。
+const HERO_COLLAPSED_KEY = 'nanzi_knowledge_hero_collapsed'
+// 默认折叠：这块卡占 100px 左右，多数时候只是路过；要看副标题点一下展开。
+// 判断写成「不等于 '0'」而不是「等于 '1'」——没存过值时也要落到折叠态，
+// 用户手动展开过才存 '0'。
+const heroCollapsed = ref(localStorage.getItem(HERO_COLLAPSED_KEY) !== '0')
+const toggleHeroCollapsed = () => {
+  heroCollapsed.value = !heroCollapsed.value
+  localStorage.setItem(HERO_COLLAPSED_KEY, heroCollapsed.value ? '1' : '0')
+}
+
 // 知识库 5 步全流程指引状态管理
 const KNOWLEDGE_FLOW_GUIDE_DISMISSED_KEY = 'nanzi_knowledge_flow_guide_dismissed'
 const showHelp = ref(false)
@@ -3627,12 +3691,20 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
     </div>
 
     <!-- Header Section -->
-    <div class="hero-surface flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm">
+    <div
+      class="hero-surface flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white rounded-2xl border border-gray-200/80 shadow-sm transition-all"
+      :class="heroCollapsed ? 'p-3' : 'p-5'"
+    >
       <!-- 书架剪影：贴着卡片下沿的一排书脊，只在视觉上交代「这里放的是知识库」 -->
       <HeroSilhouette variant="books" />
       <div class="relative z-10 flex min-w-0 flex-col gap-1">
         <div class="flex items-center gap-3">
-          <h1 class="text-2xl font-bold text-gray-900 tracking-tight">知识库管理</h1>
+          <h1
+            class="font-bold text-gray-900 tracking-tight transition-all"
+            :class="heroCollapsed ? 'text-lg' : 'text-2xl'"
+          >
+            知识库管理
+          </h1>
           <button
             type="button"
             class="hidden sm:flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300 cursor-pointer"
@@ -3652,8 +3724,24 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           >
             <span class="whitespace-nowrap">显示指引</span>
           </button>
+          <!-- 折叠按钮独立于整卡点击：卡里有四个可点控件，整卡可点会互相抢事件 -->
+          <button
+            type="button"
+            class="hidden sm:flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-200 text-gray-400 transition-colors hover:border-primary/40 hover:text-primary cursor-pointer"
+            :title="heroCollapsed ? '展开标题区' : '折叠标题区'"
+            :aria-expanded="!heroCollapsed"
+            @click="toggleHeroCollapsed"
+          >
+            <svg
+              class="h-3.5 w-3.5 transition-transform duration-200"
+              :class="{ 'rotate-180': heroCollapsed }"
+              fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 15l6-6 6 6" />
+            </svg>
+          </button>
         </div>
-        <p class="text-sm text-gray-500 mt-0.5">管理 RAGFlow 知识库、平台扩展元数据及一体化文档解析。</p>
+        <p v-if="!heroCollapsed" class="text-sm text-gray-500 mt-0.5">管理 RAGFlow 知识库、平台扩展元数据及一体化文档解析。</p>
       </div>
       <!--
         操作区：窄屏一行图标，lg 起恢复文字按钮。
@@ -4862,11 +4950,15 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       </section>
 
       <!-- Right Drawer: 文档详情 -->
-      <!-- 浮层抽屉：不占布局宽度，主区始终是「导航 + 主体」两栏 -->
+      <!-- 浮层抽屉：不占布局宽度，主区始终是「导航 + 主体」两栏。
+           定位用 fixed 而不是 absolute：absolute 会相对页面内容容器，于是抽屉顶部
+           落在 hero 下沿、高度跟着内容走；改成 relative 到视口后，它紧贴 header 下沿
+           一直铺到屏幕底部，滚主区时抽屉也不跟着动。
+           top-12 = 顶栏 h-12，正好从 header 下沿开始，不遮住面包屑与右侧操作。 -->
       <transition name="drawer-slide">
       <aside
         v-if="drawerOpen"
-        class="absolute inset-y-0 right-0 z-30 flex w-full flex-col overflow-hidden border-l border-gray-200 bg-white shadow-[-18px_0_44px_rgba(16,24,40,0.16)] lg:w-[402px] lg:max-w-[calc(100%-72px)]"
+        class="fixed bottom-0 right-0 top-12 z-40 flex w-full flex-col overflow-hidden border-l border-gray-200 bg-white shadow-[-18px_0_44px_rgba(16,24,40,0.16)] lg:w-[402px] lg:max-w-[calc(100%-72px)]"
       >
         <div class="flex items-center justify-between gap-2 border-b border-gray-100 px-4 py-2.5 shrink-0">
           <span class="text-xs font-semibold text-gray-500 select-none">
@@ -4964,6 +5056,20 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 ></span>
                 {{ getDocStatusText(selectedDocument) }}
                 <span class="text-[11px] font-normal text-gray-400">· {{ selectedDocument.chunk_count ?? 0 }} 个切片</span>
+              </dd>
+            </div>
+            <div v-if="sourceImage" class="flex items-center justify-between gap-3 px-3.5 py-2.5">
+              <dt class="shrink-0 text-[11.5px] text-gray-500">原图</dt>
+              <dd class="min-w-0 text-right">
+                <button
+                  type="button"
+                  class="text-[12px] font-semibold text-primary underline decoration-dashed decoration-primary/40 underline-offset-2 transition-colors hover:decoration-solid cursor-pointer"
+                  :title="sourceImage.name"
+                  @click="sourceImageOpen = true"
+                >
+                  查看原图
+                </button>
+                <span class="ml-1.5 text-[10.5px] font-normal text-gray-400">{{ formatSize(sourceImage.size) }}</span>
               </dd>
             </div>
             <div class="flex items-center justify-between px-3.5 py-2.5">
@@ -5114,212 +5220,260 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </div>
 
             <template v-if="detailTab === 'settings'">
+            <section class="space-y-2.5">
 
-            <!-- 配额用量：接近上限时提前预警，别等传不进去才发现 -->
-            <div
-              v-if="datasetQuota?.documents?.limit"
-              class="space-y-2.5 rounded-xl border border-gray-200 bg-white px-4 py-3"
-            >
-              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span class="text-[11px] font-medium text-gray-500 select-none">文档配额</span>
-                <span class="text-xs font-semibold font-mono" :class="docQuotaTone.split(' ')[1]">
-                  {{ datasetQuota.documents.used ?? '-' }}
-                  <span class="font-normal text-gray-300">/</span>
-                  {{ datasetQuota.documents.limit }}
-                </span>
-                <div class="h-1.5 w-24 overflow-hidden rounded-full bg-gray-100">
+              <!-- 配额用量：接近上限时提前预警，别等传不进去才发现 -->
+              <div
+                v-if="datasetQuota?.documents?.limit"
+                class="space-y-2.5 rounded-xl border border-gray-200 bg-white px-4 py-3"
+              >
+                <div class="flex items-baseline justify-between gap-2 select-none">
+                  <span class="text-[11px] font-medium text-gray-500">文档配额</span>
+                  <span class="text-[11px] text-gray-400">
+                    <span class="text-sm font-semibold font-mono" :class="docQuotaTone.split(' ')[1]">
+                      {{ datasetQuota.documents.used ?? '-' }}
+                    </span>
+                    <span class="text-gray-300"> / {{ datasetQuota.documents.limit }}</span>
+                  </span>
+                </div>
+                <div class="h-[5px] w-full overflow-hidden rounded-full bg-gray-100">
                   <div
                     class="h-full rounded-full transition-all"
                     :class="docQuotaTone.split(' ')[0]"
-                    :style="{ width: `${Math.round(docQuotaRatio * 100)}%` }"
+                    :style="{ width: `${Math.max(0.5, Math.round(docQuotaRatio * 100))}%` }"
                   ></div>
                 </div>
-                <span v-if="docQuotaRatio >= 0.9" class="text-[11px] font-semibold text-red-600">
-                  快满了，建议先清理不再需要的文档
-                </span>
-              </div>
-              <div
-                v-if="ownedDatasetUsage !== null"
-                class="flex items-center justify-between border-t border-gray-100 pt-2 text-[11px] text-gray-400 select-none"
-              >
-                <span>我的知识库</span>
-                <span class="font-semibold tabular-nums text-gray-600">
-                  {{ ownedDatasetUsage }}
-                  <span class="font-normal text-gray-300">/</span>
-                  {{ ownedDatasetLimit || '不限' }}
-                </span>
-              </div>
-            </div>
-
-            <!-- Tags & Notes -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-              <div class="space-y-2.5">
-                <div class="flex items-center gap-1.5 text-gray-400">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M6 20h12a2 2 0 002-2V8a2 2 0 00-2-2H6a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                  </svg>
-                  <h3 class="text-xs font-semibold uppercase tracking-wider">分类标签</h3>
-                </div>
-                <div v-if="selectedDataset.tags?.length" class="flex flex-wrap gap-1.5">
-                  <span
-                    v-for="tag in selectedDataset.tags"
-                    :key="tag"
-                    class="px-2.5 py-1 text-xs rounded-lg bg-blue-50/60 text-blue-700 border border-blue-100/60 font-medium transition-all hover:bg-blue-100/50 select-none cursor-default"
-                  >
-                    {{ tag }}
+                <div class="flex items-center justify-between gap-2 text-[10.5px] text-gray-400 select-none">
+                  <span v-if="docQuotaRemaining !== null">还能上传 {{ docQuotaRemaining }} 份</span>
+                  <span v-else />
+                  <span v-if="ownedDatasetUsage !== null">
+                    我的知识库
+                    <span class="ml-1 font-semibold tabular-nums text-gray-600">
+                      {{ ownedDatasetUsage }}
+                      <span class="font-normal text-gray-300">/</span>
+                      {{ ownedDatasetLimit || '不限' }}
+                    </span>
                   </span>
                 </div>
-                <span v-else class="text-sm text-gray-400 italic select-none block pt-1">暂无分类标签</span>
-              </div>
-
-              <div class="space-y-2.5">
-                <div class="flex items-center gap-1.5 text-gray-400">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                  <h3 class="text-xs font-semibold uppercase tracking-wider">平台备注说明</h3>
-                </div>
-                <p class="text-sm text-gray-600 bg-amber-50/20 p-3.5 rounded-xl border border-amber-100/50 leading-relaxed">
-                  {{ selectedDataset.notes || '暂无备注说明。' }}
+                <p v-if="docQuotaRatio >= 0.9" class="text-[11px] font-semibold text-red-600">
+                  快满了，建议先清理不再需要的文档
                 </p>
               </div>
-            </div>
+            </section>
 
-            <!-- Document Upload Region -->
-            <div class="space-y-3">
-              <h3 class="text-sm font-semibold text-gray-800">上传新文档到此知识库</h3>
-              <div
-                v-if="canUpload && !selectedDataset.is_missing_in_ragflow && !isReadOnlyDataset(selectedDataset)"
-                class="border-2 border-dashed rounded-2xl p-6 transition-all duration-300 flex flex-col items-center justify-center bg-gray-50/30 group relative overflow-hidden"
-                :class="[
-                  isDragOver ? 'border-primary bg-primary/5 scale-[1.01]' : 'border-gray-300 hover:border-primary',
-                  uploading ? 'pointer-events-none' : ''
-                ]"
-                @dragover.prevent="isDragOver = true"
-                @dragleave.prevent="isDragOver = false"
-                @drop.prevent="onFileDrop"
-              >
-                <!-- 隐藏的真实多文件输入框 -->
-                <input
-                  ref="fileInputRef"
-                  type="file"
-                  multiple
-                  class="hidden"
-                  accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.pptx,.ppt,.html,.htm,.epub,.png,.jpg,.jpeg,.gif,.bmp,.tif,.tiff"
-                  :disabled="uploading || !isEngineReady"
-                  @change="onFileChange"
-                />
+            <section class="space-y-2.5 border-t border-gray-200 pt-5 mt-5">
 
-                <!-- 上传中全局模糊遮罩 -->
-                <div
-                  v-if="uploading"
-                  class="absolute inset-0 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center rounded-2xl transition-all duration-300 z-10 p-4"
-                >
-                  <span class="w-9 h-9 rounded-full border-2 border-primary border-t-transparent animate-spin"></span>
-                  <p class="text-xs font-bold text-gray-800 mt-4 text-center animate-pulse leading-relaxed">
-                    {{ uploadProgressText || '正在上传文件，请稍候...' }}
-                  </p>
-                </div>
-
-                <!-- 1. 未选择文件时的引导界面 -->
-                <div 
-                  v-if="uploadFiles.length === 0"
-                  class="w-full flex flex-col items-center justify-center py-5 cursor-pointer select-none"
-                  @click="triggerFileSelect"
-                >
-                  <div class="w-12 h-12 rounded-full bg-primary/5 flex items-center justify-center text-primary group-hover:scale-110 transition-transform duration-300">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              <!-- ② 上传文档 -->
+              <div class="space-y-2.5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <h3 class="flex items-center gap-1.5 text-[12.5px] font-semibold text-gray-800">
+                    <svg class="h-3.5 w-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" />
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.5 15v3.5A1.5 1.5 0 006 20h12a1.5 1.5 0 001.5-1.5V15" />
                     </svg>
-                  </div>
-                  <p class="text-sm font-medium text-gray-700 mt-3">
-                    将一个或多个文件拖拽至此处，或 <span class="text-primary hover:underline font-semibold">点击上传</span>
-                  </p>
-                  <p class="text-xs text-gray-400 mt-1.5">
-                    支持多文件上传，类型包含 PDF, DOCX, TXT, MD, XLSX 等，单文件不超过 {{ KNOWLEDGE_UPLOAD_MAX_MB }}MB
-                  </p>
-                </div>
-
-                <!-- 2. 已选择文件时的批量卡片队列展示 -->
-                <div v-else class="w-full space-y-4">
-                  <div class="flex items-center justify-between text-xs text-gray-400 border-b pb-2 select-none">
-                    <span>待上传队列 ({{ uploadFiles.length }} 个文件)</span>
-                    <button class="text-red-500 hover:underline font-semibold" @click="clearAllUploadFiles">清空全部</button>
-                  </div>
-                
-                  <!-- 待上传文件滚动卡片容器 -->
-                  <div class="max-h-[160px] overflow-y-auto pr-1 space-y-2 custom-scrollbar">
-                    <div 
-                      v-for="(f, fIdx) in uploadFiles" 
-                      :key="fIdx"
-                      class="flex items-center gap-3 p-2.5 bg-white rounded-xl border border-gray-200 shadow-sm relative group/card"
+                    上传文档
+                  </h3>
+                  <div class="flex gap-0.5 rounded-lg bg-gray-100 p-0.5">
+                    <button
+                      type="button"
+                      class="rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors"
+                      :class="uploadTab === 'doc' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                      @click="uploadTab = 'doc'"
                     >
-                      <!-- 文件后缀高亮块 -->
-                      <div 
-                        class="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 font-bold text-[9px] uppercase select-none"
-                        :class="getFileIconClass(f.name)"
-                      >
-                        {{ getFileExtension(f.name) }}
-                      </div>
-                      <!-- 文件名与大小 -->
-                      <div class="flex-1 min-w-0">
-                        <p class="text-xs font-semibold text-gray-800 truncate" :title="f.name">
-                          {{ f.name }}
-                        </p>
-                        <p class="text-[10px] text-gray-400 mt-0.5 select-none">
-                          {{ formatFileSize(f.size) }}
-                        </p>
-                      </div>
-                      <!-- 移出队列按钮 -->
-                      <button 
-                        class="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                        title="移出队列"
-                        @click="removeUploadFile(fIdx)"
-                      >
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                      文档
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors"
+                      :class="uploadTab === 'img' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                      @click="uploadTab = 'img'"
+                    >
+                      图片
+                    </button>
+                  </div>
+                </div>
+                <template v-if="uploadTab === 'doc'">
+                <div
+                  v-if="canUpload && !selectedDataset.is_missing_in_ragflow && !isReadOnlyDataset(selectedDataset)"
+                  class="border border-dashed rounded-xl px-3.5 py-3 transition-all duration-300 flex flex-col justify-center bg-gray-50/30 group relative overflow-hidden"
+                  :class="[
+                    isDragOver ? 'border-primary bg-primary/5 scale-[1.01]' : 'border-gray-300 hover:border-primary',
+                    uploading ? 'pointer-events-none' : ''
+                  ]"
+                  @dragover.prevent="isDragOver = true"
+                  @dragleave.prevent="isDragOver = false"
+                  @drop.prevent="onFileDrop"
+                >
+                  <!-- 隐藏的真实多文件输入框 -->
+                  <input
+                    ref="fileInputRef"
+                    type="file"
+                    multiple
+                    class="hidden"
+                    accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.pptx,.ppt,.html,.htm,.epub"
+                    :disabled="uploading || !isEngineReady"
+                    @change="onFileChange"
+                  />
+
+                  <!-- 上传中全局模糊遮罩 -->
+                  <div
+                    v-if="uploading"
+                    class="absolute inset-0 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center rounded-2xl transition-all duration-300 z-10 p-4"
+                  >
+                    <span class="w-9 h-9 rounded-full border-2 border-primary border-t-transparent animate-spin"></span>
+                    <p class="text-xs font-bold text-gray-800 mt-4 text-center animate-pulse leading-relaxed">
+                      {{ uploadProgressText || '正在上传文件，请稍候...' }}
+                    </p>
+                  </div>
+
+                  <!-- 1. 未选择文件时的引导界面 -->
+                  <div
+                    v-if="uploadFiles.length === 0"
+                    class="w-full flex items-center gap-2.5 cursor-pointer select-none"
+                    @click="triggerFileSelect"
+                  >
+                    <div class="w-8 h-8 shrink-0 rounded-lg bg-white border border-gray-200 flex items-center justify-center text-primary group-hover:border-primary/40 transition-colors">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                    </div>
+                    <div class="min-w-0">
+                      <p class="text-[12.5px] font-semibold leading-tight text-gray-700">
+                        拖拽文件到此处，或 <span class="text-primary font-semibold">点击上传</span>
+                      </p>
+                      <p class="mt-0.5 text-[10.5px] leading-snug text-gray-400">
+                        PDF / DOCX / TXT / MD / XLSX 等 · 单文件 ≤ {{ KNOWLEDGE_UPLOAD_MAX_MB }}MB · 支持多选
+                      </p>
                     </div>
                   </div>
 
-                  <!-- 动作按钮区 -->
-                  <div class="flex items-center justify-center gap-3 pt-2">
-                    <button
-                      class="px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-600 text-xs font-semibold transition-all"
-                      @click="triggerFileSelect"
-                    >
-                      继续添加文件
-                    </button>
-                    <button
-                      class="px-5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-semibold shadow-md shadow-primary/10 hover:shadow-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-                      :disabled="uploading || !isEngineReady"
-                      @click="uploadDocument"
-                    >
-                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                      </svg>
-                      <span>确认批量上传解析</span>
-                    </button>
+                  <!-- 2. 已选择文件时的批量卡片队列展示 -->
+                  <div v-else class="w-full space-y-4">
+                    <div class="flex items-center justify-between text-xs text-gray-400 border-b pb-2 select-none">
+                      <span>待上传队列 ({{ uploadFiles.length }} 个文件)</span>
+                      <button class="text-red-500 hover:underline font-semibold" @click="clearAllUploadFiles">清空全部</button>
+                    </div>
+                
+                    <!-- 待上传文件滚动卡片容器 -->
+                    <div class="max-h-[160px] overflow-y-auto pr-1 space-y-2 custom-scrollbar">
+                      <div 
+                        v-for="(f, fIdx) in uploadFiles" 
+                        :key="fIdx"
+                        class="flex items-center gap-3 p-2.5 bg-white rounded-xl border border-gray-200 shadow-sm relative group/card"
+                      >
+                        <!-- 文件后缀高亮块 -->
+                        <div 
+                          class="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 font-bold text-[9px] uppercase select-none"
+                          :class="getFileIconClass(f.name)"
+                        >
+                          {{ getFileExtension(f.name) }}
+                        </div>
+                        <!-- 文件名与大小 -->
+                        <div class="flex-1 min-w-0">
+                          <p class="text-xs font-semibold text-gray-800 truncate" :title="f.name">
+                            {{ f.name }}
+                          </p>
+                          <p class="text-[10px] text-gray-400 mt-0.5 select-none">
+                            {{ formatFileSize(f.size) }}
+                          </p>
+                        </div>
+                        <!-- 移出队列按钮 -->
+                        <button 
+                          class="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          title="移出队列"
+                          @click="removeUploadFile(fIdx)"
+                        >
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- 动作按钮区 -->
+                    <div class="flex items-center justify-center gap-3 pt-2">
+                      <button
+                        class="px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-600 text-xs font-semibold transition-all"
+                        @click="triggerFileSelect"
+                      >
+                        继续添加文件
+                      </button>
+                      <button
+                        class="px-5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-semibold shadow-md shadow-primary/10 hover:shadow-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                        :disabled="uploading || !isEngineReady"
+                        @click="uploadDocument"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        <span>确认批量上传解析</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
+                <div v-else class="rounded-xl bg-gray-50/50 p-4 border text-center text-sm text-gray-400 select-none">
+                  <span v-if="isReadOnlyDataset(selectedDataset)" class="text-amber-600 font-medium">⚠️ 只读模式：您不是该知识库的创建人，仅可查看，不可修改或上传文档</span>
+                  <span v-else>当前状态无法向知识库上传文档（可能由于 RAGFlow 失联或权限受限）</span>
+                </div>
+                </template>
+                <ImageToMarkdownUploader
+                  v-else
+                  :dataset-id="selectedDataset.id"
+                  :can-upload="canUpload && !selectedDataset.is_missing_in_ragflow && !isReadOnlyDataset(selectedDataset)"
+                  @uploaded="onImageMarkdownUploaded"
+                  @notify="onUploaderNotify"
+                />
               </div>
-              <div v-else class="rounded-xl bg-gray-50/50 p-4 border text-center text-sm text-gray-400 select-none">
-                <span v-if="isReadOnlyDataset(selectedDataset)" class="text-amber-600 font-medium">⚠️ 只读模式：您不是该知识库的创建人，仅可查看，不可修改或上传文档</span>
-                <span v-else>当前状态无法向知识库上传文档（可能由于 RAGFlow 失联或权限受限）</span>
-              </div>
-            </div>
+            </section>
+
+            <section class="space-y-2.5 border-t border-gray-200 pt-5 mt-5">
+              <!-- ③ 分类标签 -->
+              <div class="space-y-2.5">
+                  <div class="flex items-center gap-1.5 text-gray-400">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M6 20h12a2 2 0 002-2V8a2 2 0 00-2-2H6a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    <h3 class="text-xs font-semibold uppercase tracking-wider">分类标签</h3>
+                  </div>
+                  <div v-if="selectedDataset.tags?.length" class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="tag in selectedDataset.tags"
+                      :key="tag"
+                      class="px-2.5 py-1 text-xs rounded-lg bg-blue-50/60 text-blue-700 border border-blue-100/60 font-medium transition-all hover:bg-blue-100/50 select-none cursor-default"
+                    >
+                      {{ tag }}
+                    </span>
+                  </div>
+                  <span v-else class="text-sm text-gray-400 italic select-none block pt-1">暂无分类标签</span>
+                </div>
+            </section>
+
+            <section class="space-y-2.5 border-t border-gray-200 pt-5 mt-5">
+              <!-- ④ 平台备注说明 -->
+              <div class="space-y-2.5">
+                  <div class="flex items-center gap-1.5 text-gray-400">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    <h3 class="text-xs font-semibold uppercase tracking-wider">平台备注说明</h3>
+                  </div>
+                  <p class="max-h-24 overflow-auto text-sm text-gray-600 bg-amber-50/20 p-3.5 rounded-xl border border-amber-100/50 leading-relaxed">
+                    {{ selectedDataset.notes || '暂无备注说明。' }}
+                  </p>
+                </div>
+            </section>
+
 
             <!--
               Extended config JSON：与编辑弹窗的「高级设置」同一口径——默认收起。
               这坨 JSON 只有 folder_structure / custom_questions 两个键有消费者，
               平时挂在详情页最底部纯属视觉噪音，还把左右分栏的高度全吃掉了。
             -->
-            <div class="flex flex-col shrink-0">
+            <div class="flex flex-col shrink-0 border-t border-gray-200 pt-5 mt-5">
               <div class="flex items-center justify-between gap-2">
                 <button
                   type="button"
-                  class="flex items-center gap-1.5 text-left text-xs font-semibold uppercase tracking-wider text-gray-400 transition-colors hover:text-gray-600"
+                  class="flex items-center gap-1.5 text-left text-[12.5px] font-semibold text-gray-800 transition-colors hover:text-primary"
                   :aria-expanded="detailConfigOpen"
                   @click="detailConfigOpen = !detailConfigOpen"
                 >
@@ -5554,6 +5708,37 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         </div>
       </aside>
       </transition>
+    </div>
+
+    <!--
+      原图预览浮层：图片走鉴权端点（同源带 cookie），不是 /static/uploads 裸链。
+      放抽屉外层：抽屉本身 overflow-hidden，浮层放进去会被裁掉右半边。
+    -->
+    <div
+      v-if="sourceImage && sourceImageOpen"
+      class="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/60 p-6 backdrop-blur-sm"
+      @click.self="sourceImageOpen = false"
+    >
+      <div class="relative flex max-h-full max-w-3xl flex-col gap-2 rounded-xl bg-white p-2.5 shadow-2xl">
+        <button
+          type="button"
+          class="absolute -right-2.5 -top-2.5 grid h-7 w-7 place-items-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm transition-colors hover:border-red-200 hover:text-red-500 cursor-pointer"
+          aria-label="关闭原图预览"
+          @click="sourceImageOpen = false"
+        >
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+        <img
+          :src="sourceImage.url"
+          :alt="sourceImage.name"
+          class="max-h-[72vh] max-w-full rounded-lg object-contain"
+        />
+        <p class="px-1 pb-0.5 text-center text-[10.5px] text-gray-400">
+          {{ sourceImage.name }} · {{ formatSize(sourceImage.size) }} · 点击空白处关闭
+        </p>
+      </div>
     </div>
 
     <!-- Create dataset modal -->
@@ -6855,7 +7040,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                             <h4 class="font-bold text-gray-900 text-sm">文档上传与解析</h4>
                          </div>
                          <p class="text-xs text-gray-500 leading-relaxed">
-                            批量上传 PDF/Word/Excel/Markdown/图片等；自动化 OCR 版面分析并生成 Chunks 切片，支持逐条审校与修正。
+                            批量上传 PDF/Word/Excel/Markdown 等；自动完成版面分析并生成 Chunks 切片，支持逐条审校与修正。
                          </p>
                       </div>
                       <div class="mt-4 pt-3 border-t border-gray-100 flex justify-end text-xs text-gray-400">

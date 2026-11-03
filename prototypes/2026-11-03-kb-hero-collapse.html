@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>知识库管理 · hero 可折叠 + 章节分割线留白</title>
+<style>
+  :root{
+    --ink:#1d2129; --ink-2:#4e5969; --ink-3:#86909c; --ink-4:#a9b0bb;
+    --line:#e9ecf2; --line-2:#f1f3f7; --bg:#f4f5f8;
+    --blue:#1677ff; --blue-50:#eff6ff; --green:#12b76a; --green-bg:#e8f8f0;
+    --red:#f04438; --red-bg:#fef0ef;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased; font-size:13px; line-height:1.55;
+  }
+  button{font-family:inherit;font-size:inherit;color:inherit;background:none;border:none;padding:0;cursor:pointer}
+  svg{display:block}
+  .page{max-width:1240px;margin:0 auto;padding:24px 22px 40px}
+
+  h2.sec{font-size:15px;margin:26px 0 4px}
+  h2.sec:first-of-type{margin-top:0}
+  p.hint{margin:0 0 12px;font-size:11.5px;color:var(--ink-3);line-height:1.75}
+  p.hint b{color:var(--ink-2)}
+
+  .pair{display:grid;grid-template-columns:1fr;gap:14px}
+  .cap{font-size:10.5px;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:5px;display:inline-block;margin-bottom:7px}
+  .cap.now{background:#eef0f4;color:var(--ink-3)}
+  .cap.new{background:var(--green-bg);color:#067647}
+
+  /* ---------- hero 卡 ---------- */
+  .hero{
+    position:relative;overflow:hidden;background:#fff;border:1px solid #e5e8ef;border-radius:16px;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+    box-shadow:0 1px 2px rgba(16,24,40,.05);
+  }
+  .hero.open{padding:20px}
+  .hero.boiled{padding:10px 20px}
+  .hero .bars{position:absolute;left:0;right:0;bottom:0;height:52%;display:flex;align-items:flex-end;gap:5px;opacity:.5;pointer-events:none}
+  .hero .bars i{flex:0 0 9px;background:#dbe7fd;border-radius:2px 2px 0 0}
+  .hero .bars i:nth-child(3n){height:78%}
+  .hero .bars i:nth-child(3n+1){height:52%}
+  .hero .bars i:nth-child(3n+2){height:96%}
+
+  .hero .lead{position:relative;z-index:2;min-width:0}
+  .hero .titleline{display:flex;align-items:center;gap:10px}
+  .hero h1{font-size:24px;font-weight:700;margin:0;letter-spacing:-.2px}
+  .hero.boiled h1{font-size:17px}
+  .hero .q{width:18px;height:18px;border-radius:50%;color:var(--ink-4);display:grid;place-items:center}
+  .hero .guide{font-size:11.5px;color:var(--ink-3);text-decoration:underline;text-underline-offset:2px;text-decoration-color:#d5dae3}
+  .hero .sub{margin:3px 0 0;font-size:12.5px;color:var(--ink-3)}
+  .hero .fold{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:var(--ink-3);border:1px solid var(--line);background:#fff}
+  .hero .fold:hover{color:var(--blue);border-color:#cfe0ff;background:var(--blue-50)}
+
+  .hero .ops{position:relative;z-index:2;display:flex;align-items:center;gap:8px;flex-shrink:0}
+  .pill{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 11px;border-radius:10px;border:1px solid #d7f0e2;background:var(--green-bg);color:#067647;font-size:11.5px;font-weight:600}
+  .pill .dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
+  .btn{height:34px;padding:0 13px;border-radius:9px;border:1px solid var(--line);background:#fff;font-size:12px;font-weight:600;color:var(--ink-2);display:inline-flex;align-items:center;justify-content:center}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  .btn.icon{width:34px;padding:0}
+
+  .gain{font-size:10.5px;color:var(--ink-3);margin-top:6px}
+  .gain b{color:#067647}
+
+  /* ---------- 章节间距 ---------- */
+  .drawer{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 8px 24px rgba(16,24,40,.08)}
+  .dr-head{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line-2);font-weight:650;font-size:14px}
+  .dr-head .x{margin-left:auto;color:var(--ink-3)}
+  .dr-body{padding:0 18px 18px}
+  .blk h4{margin:0 0 8px;font-size:12.5px;font-weight:650;display:flex;align-items:center;gap:6px}
+  .blk h4 svg{color:var(--ink-3)}
+  .blk .txt{font-size:11.5px;color:var(--ink-2);line-height:1.8}
+  .tag{display:inline-block;font-size:11px;font-weight:500;padding:3px 9px;border-radius:8px;background:#f2f7ff;border:1px solid #e0ecff;color:#1e5ecc;margin:0 5px 5px 0}
+  .note{font-size:11.5px;color:var(--ink-2);line-height:1.8;background:#fffbeb;border:1px solid #fdf0c8;border-radius:9px;padding:9px 11px}
+
+  /* 现状：14px 上下，线贴着标题 */
+  .blk.tight{border-top:1px solid #e3e7ef;padding:14px 0}
+  .blk.tight:first-child{border-top:0;padding-top:14px}
+  /* 优化：线上下各留 20px */
+  .blk.roomy{border-top:1px solid #e3e7ef;padding:20px 0}
+  .blk.roomy:first-child{border-top:0;padding-top:14px}
+
+  .ruler{display:flex;align-items:center;gap:6px;font-size:10px;color:#b42318;margin:2px 0 0}
+  .ruler i{display:block;height:1px;flex:1;background:repeating-linear-gradient(90deg,#f0a9a2 0 4px,transparent 4px 8px)}
+  .foot{margin-top:26px;font-size:11.5px;color:var(--ink-3);line-height:1.9}
+  .foot b{color:var(--ink-2)}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h2 class="sec">① 顶部 hero 卡：支持折叠</h2>
+  <p class="hint">
+    这块卡占 100px 左右，折叠后只剩一行标题 + 操作区，省下 <b>约 45px</b>。
+    抽屉打开时主区本来就窄，列表能多露一到两行。<b>默认就是折叠态</b>，
+    想看副标题点一下展开；选择记在 localStorage，刷新后保持。
+  </p>
+
+  <div class="pair">
+    <div>
+      <span class="cap now">展开态</span>
+      <div class="hero open">
+        <div class="bars">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="lead">
+          <div class="titleline">
+            <h1>知识库管理</h1>
+            <button class="q"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 114 2c-.8.6-1.5 1-1.5 2"/><path d="M12 17h.01"/></svg></button>
+            <span class="guide">显示指引</span>
+            <button class="fold" title="折叠"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 15l6-6 6 6"/></svg></button>
+          </div>
+          <p class="sub">管理 RAGFlow 知识库、平台扩展元数据及一体化文档解析。</p>
+        </div>
+        <div class="ops">
+          <span class="pill"><span class="dot"></span>引擎 已连接</span>
+          <button class="btn">刷新</button>
+          <button class="btn icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></button>
+          <button class="btn primary">新建知识库</button>
+        </div>
+      </div>
+      <div class="gain">高度 ≈ 100px</div>
+    </div>
+
+    <div>
+      <span class="cap new">默认 · 折叠态</span>
+      <div class="hero boiled">
+        <div class="bars">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="lead">
+          <div class="titleline">
+            <h1>知识库管理</h1>
+            <button class="q"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 114 2c-.8.6-1.5 1-1.5 2"/><path d="M12 17h.01"/></svg></button>
+            <span class="guide">显示指引</span>
+            <button class="fold" title="展开"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6"/></svg></button>
+          </div>
+        </div>
+        <div class="ops">
+          <span class="pill"><span class="dot"></span>引擎 已连接</span>
+          <button class="btn">刷新</button>
+          <button class="btn icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></button>
+          <button class="btn primary">新建知识库</button>
+        </div>
+      </div>
+      <div class="gain">高度 ≈ 56px ｜ <b>省 45px</b>，标题缩到 17px、副标题收起、上下 padding 20→10</div>
+    </div>
+  </div>
+
+  <h2 class="sec">② 章节分割线：上下各留一行空</h2>
+  <p class="hint">
+    现在分割线上下各 14px，标题贴着线、上一段内容也贴着线，五章连读像一张密排表格。
+    改成各 <b>20px</b>：线在中间，上面一段收得住、下面标题起得来。
+  </p>
+
+  <div class="pair" style="grid-template-columns:1fr 1fr;align-items:start">
+    <div>
+      <span class="cap now">现在 · 14px</span>
+      <div class="drawer">
+        <div class="dr-head">库信息 <span class="x">✕</span></div>
+        <div class="dr-body">
+          <div class="blk tight">
+            <h4>上传文档</h4>
+            <div class="txt">拖拽文件到此处，或点击上传</div>
+          </div>
+          <div class="blk tight">
+            <h4>分类标签</h4>
+            <span class="tag">AgentScope</span><span class="tag">ETL技术评审</span><span class="tag">机器盘点</span>
+          </div>
+          <div class="blk tight">
+            <h4>平台备注说明</h4>
+            <div class="note">面向技术决策者与运维人员，注意评审记录时效性，盘点数据需定期更新核对。</div>
+          </div>
+        </div>
+      </div>
+      <div class="ruler"><span>线到标题 14px</span><i></i></div>
+    </div>
+
+    <div>
+      <span class="cap new">优化 · 20px</span>
+      <div class="drawer">
+        <div class="dr-head">库信息 <span class="x">✕</span></div>
+        <div class="dr-body">
+          <div class="blk roomy">
+            <h4>上传文档</h4>
+            <div class="txt">拖拽文件到此处，或点击上传</div>
+          </div>
+          <div class="blk roomy">
+            <h4>分类标签</h4>
+            <span class="tag">AgentScope</span><span class="tag">ETL技术评审</span><span class="tag">机器盘点</span>
+          </div>
+          <div class="blk roomy">
+            <h4>平台备注说明</h4>
+            <div class="note">面向技术决策者与运维人员，注意评审记录时效性，盘点数据需定期更新核对。</div>
+          </div>
+        </div>
+      </div>
+      <div class="ruler"><span>线到标题 20px</span><i></i></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>折叠逻辑</b>：只收起副标题与上下留白，标题、指引入口、引擎状态、刷新、新建全部保留——折叠是为了省高度，不能顺手把操作也藏了。
+    按钮形状是一枚 22px 的小方块，放在「显示指引」右边；展开态朝上、折叠态朝下。<br>
+    <b>为什么不做「点整卡折叠」</b>：卡片里有四个可点控件，整卡可点会互相抢事件，误触概率高。用明确的折叠按钮更稳。<br>
+    <b>默认折叠</b>：没存过值时按折叠渲染（判断是「不等于 '0'」），用户手动展开后存 '0'、折叠存 '1'。<br>
+    <b>状态持久化</b>：<code>localStorage['nanzi_knowledge_hero_collapsed']</code>，与告警条那种「当天记住」不同，这个偏个人偏好，一直记住。
+  </div>
+</div>
+</body>
+</html>

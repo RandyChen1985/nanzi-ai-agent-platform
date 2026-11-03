@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>图片转 Markdown 入库 · 图片走多模态模型先转 md 再进 RAGFlow</title>
+<style>
+  :root{
+    --ink:#1d2129; --ink-2:#4e5969; --ink-3:#86909c; --ink-4:#a9b0bb;
+    --line:#e9ecf2; --line-2:#f1f3f7; --bg:#f4f5f8; --card:#fff;
+    --blue:#1677ff; --blue-h:#4096ff; --blue-d:#0958d9;
+    --blue-50:#eff6ff; --blue-100:#dbeafe;
+    --green:#12b76a; --green-bg:#e8f8f0;
+    --amber:#f59e0b; --amber-bg:#fff7e6;
+    --red:#f04438; --red-bg:#fef0ef;
+    --grey-bg:#f2f4f7;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sh-1: 0 1px 2px rgba(16,24,40,.05);
+    --sh-2: 0 10px 32px rgba(16,24,40,.10), 0 2px 8px rgba(16,24,40,.05);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased; font-size:13px; line-height:1.55;
+  }
+  button{font-family:inherit;font-size:inherit;color:inherit;background:none;border:none;padding:0;cursor:pointer}
+  input,select{font-family:inherit;font-size:inherit}
+  svg{display:block}
+  .page{max-width:1560px;margin:0 auto;padding:24px 22px 40px}
+
+  .head{display:flex;flex-wrap:wrap;gap:14px 28px;align-items:flex-end;justify-content:space-between;margin-bottom:14px}
+  .head h1{font-size:20px;margin:0 0 6px}
+  .head .sub{margin:0;color:var(--ink-2);max-width:900px;line-height:1.8}
+  .head .sub b{color:var(--ink);font-weight:600}
+  .head .sub code{font-family:var(--mono);font-size:11.5px;background:#eceff5;padding:1px 5px;border-radius:4px}
+
+  /* ---------- 流程条 ---------- */
+  .flow{display:flex;align-items:stretch;gap:0;margin:18px 0 16px;background:#fff;border:1px solid var(--line);border-radius:13px;overflow:hidden}
+  .flow .step{flex:1;padding:13px 15px;position:relative;display:flex;gap:10px;align-items:flex-start}
+  .flow .step + .step{border-left:1px solid var(--line-2)}
+  .flow .step .n{
+    flex:0 0 20px;width:20px;height:20px;border-radius:50%;background:var(--blue-50);color:var(--blue-d);
+    font-size:10.5px;font-weight:800;display:grid;place-items:center;margin-top:1px;
+  }
+  .flow .step .t{font-size:12.5px;font-weight:650;margin-bottom:2px}
+  .flow .step .d{font-size:11px;color:var(--ink-3);line-height:1.6}
+  .flow .step.new{background:linear-gradient(180deg,#f7fbff,#fff)}
+  .flow .step.new .n{background:var(--blue);color:#fff}
+  .flow .step .tag{
+    position:absolute;top:10px;right:12px;font-size:9px;font-weight:800;letter-spacing:.04em;
+    padding:1px 5px;border-radius:4px;background:var(--green-bg);color:#067647;
+  }
+  .flow .step .tag.keep{background:var(--grey-bg);color:var(--ink-3)}
+
+  /* ---------- 主区 ---------- */
+  .cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px;align-items:start}
+  @media (max-width:1180px){ .cols{grid-template-columns:1fr} }
+
+  .panel{background:#fff;border:1px solid var(--line);border-radius:13px;overflow:hidden}
+  .panel-head{display:flex;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--line-2)}
+  .panel-head h2{margin:0;font-size:13px;font-weight:650}
+  .panel-head .hint{margin-left:auto;font-size:11px;color:var(--ink-3)}
+  .panel-body{padding:14px}
+
+  /* 上传面板 tab */
+  .utabs{display:flex;gap:3px;padding:3px;background:#eef1f6;border-radius:9px;margin-bottom:12px;width:fit-content}
+  .utabs button{padding:6px 13px;border-radius:7px;font-size:12px;font-weight:600;color:var(--ink-3);display:flex;align-items:center;gap:6px}
+  .utabs button.on{background:#fff;color:var(--blue);box-shadow:var(--sh-1)}
+  .utabs svg{width:13px;height:13px}
+
+  .drop{
+    border:2px dashed #d6dae3;border-radius:12px;background:#fafbfd;padding:20px 16px;text-align:center;
+    transition:.18s;cursor:pointer;
+  }
+  .drop:hover{border-color:var(--blue-h);background:var(--blue-50)}
+  .drop .ic{width:34px;height:34px;border-radius:10px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;margin:0 auto 9px;color:var(--blue)}
+  .drop .t{font-size:12.5px;font-weight:600;margin-bottom:3px}
+  .drop .d{font-size:11px;color:var(--ink-3);line-height:1.6}
+  .drop .d b{color:var(--ink-2)}
+
+  /* 图片队列 */
+  .queue{margin-top:13px;display:flex;flex-direction:column;gap:8px}
+  .qitem{border:1px solid var(--line);border-radius:10px;padding:9px 11px;display:flex;gap:10px;align-items:center;transition:.15s}
+  .qitem.on{border-color:var(--blue-h);box-shadow:0 0 0 3px rgba(22,119,255,.08)}
+  .qitem .thumb{
+    flex:0 0 34px;width:34px;height:34px;border-radius:7px;display:grid;place-items:center;
+    background:linear-gradient(135deg,#e8f0ff,#f5f8ff);color:#7aa7f0;font-size:9px;font-weight:800;
+  }
+  .qitem .meta{min-width:0;flex:1}
+  .qitem .nm{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qitem .sub{font-size:10.5px;color:var(--ink-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qitem .st{flex:0 0 auto;display:flex;align-items:center;gap:6px}
+  .badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .badge.wait{background:var(--grey-bg);color:var(--ink-3)}
+  .badge.busy{background:var(--blue-50);color:var(--blue-d)}
+  .badge.ok{background:var(--green-bg);color:#067647}
+  .badge.err{background:var(--red-bg);color:#b42318}
+  .mini{font-size:10.5px;color:var(--ink-3);border-bottom:1px dashed #c8cdd6}
+  .mini:hover{color:var(--blue);border-color:var(--blue-h)}
+  .bar{height:3px;border-radius:99px;background:#eef0f4;overflow:hidden;margin-top:6px}
+  .bar i{display:block;height:100%;background:var(--blue);border-radius:99px;transition:width .3s}
+
+  .actions{display:flex;align-items:center;gap:10px;margin-top:13px;padding-top:12px;border-top:1px solid var(--line-2)}
+  .actions .note{font-size:11px;color:var(--ink-3);line-height:1.5}
+  .btn{
+    display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:8px;font-size:12px;font-weight:600;
+    border:1px solid var(--line);background:#fff;color:var(--ink-2);transition:.15s;
+  }
+  .btn:hover{border-color:var(--blue-h);color:var(--blue)}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  .btn.primary:hover{background:var(--blue-h);border-color:var(--blue-h);color:#fff}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn svg{width:13px;height:13px}
+
+  /* Markdown 预览 */
+  .md{
+    font-family:var(--mono);font-size:11.5px;line-height:1.75;white-space:pre-wrap;word-break:break-word;
+    background:#fbfcfe;border:1px solid var(--line-2);border-radius:10px;padding:13px 14px;max-height:430px;overflow:auto;
+    color:var(--ink-2);
+  }
+  .md .h{color:var(--blue-d);font-weight:700}
+  .md .quote{color:var(--ink-3)}
+  .md .kw{color:#7c3aed}
+  .md .empty{color:var(--ink-4)}
+
+  .kv{display:flex;flex-wrap:wrap;gap:5px 16px;font-size:11px;color:var(--ink-3);margin-bottom:10px}
+  .kv b{color:var(--ink-2);font-weight:600}
+
+  /* 决策卡 */
+  .dec{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+  .dcard{border:1px solid var(--line);border-radius:12px;padding:12px 13px;background:#fff}
+  .dcard .qt{font-size:12px;font-weight:650;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+  .dcard .qt .k{font-size:9px;font-weight:800;padding:1px 5px;border-radius:4px;background:var(--amber-bg);color:#b54708}
+  .dcard .qt .k.ok{background:var(--green-bg);color:#067647}
+  .dcard p{margin:0;font-size:11.5px;color:var(--ink-2);line-height:1.7}
+  .dcard p + p{margin-top:6px}
+  .dcard .rec{margin-top:7px;font-size:11.5px;color:var(--ink-2);background:#f7fbff;border-left:2px solid var(--blue);padding:6px 9px;border-radius:0 6px 6px 0}
+  .dcard .rec b{color:var(--blue-d)}
+
+  .foot{margin-top:22px;font-size:11.5px;color:var(--ink-3);line-height:1.8}
+  .foot b{color:var(--ink-2)}
+
+  .toast{
+    position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(12px);opacity:0;pointer-events:none;
+    background:rgba(29,33,41,.94);color:#fff;font-size:12px;padding:9px 15px;border-radius:9px;transition:.22s;z-index:99;
+  }
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="head">
+    <div>
+      <h1>图片转 Markdown 入库</h1>
+      <p class="sub">
+        上传面板拆出「图片」tab：图片先交给系统配置的<b>多模态模型</b>解析，生成对应的
+        <code>.md</code> 再上传到 RAGFlow。RAGFlow 侧只收文本，检索链路不用改；
+        图片里读不到的东西（版面关系、图表数值）由模型用自然语言补出来。
+      </p>
+    </div>
+  </div>
+
+  <!-- 流程条 -->
+  <div class="flow">
+    <div class="step keep">
+      <span class="n">1</span>
+      <div>
+        <div class="t">上传图片</div>
+        <div class="d">png / jpg / webp，单张 ≤ 10MB，可批量</div>
+      </div>
+      <span class="tag keep">新入口</span>
+    </div>
+    <div class="step new">
+      <span class="n">2</span>
+      <div>
+        <div class="t">多模态模型解析</div>
+        <div class="d">读系统配置的「默认多模态模型」，逐张生成结构化描述</div>
+      </div>
+      <span class="tag">核心</span>
+    </div>
+    <div class="step new">
+      <span class="n">3</span>
+      <div>
+        <div class="t">生成 .md</div>
+        <div class="d">标题 + 图片说明 + 文字识别 + 表格 + 解析元信息</div>
+      </div>
+      <span class="tag">可预览可编辑</span>
+    </div>
+    <div class="step keep">
+      <span class="n">4</span>
+      <div>
+        <div class="t">入库 RAGFlow</div>
+        <div class="d">走现有上传 + 解析链路，切片与召回规则不变</div>
+      </div>
+      <span class="tag keep">复用</span>
+    </div>
+  </div>
+
+  <div class="cols">
+
+    <!-- 左：上传面板 -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>上传到「合同归档」</h2>
+        <span class="hint">多模态模型：qwen-vl-max</span>
+      </div>
+      <div class="panel-body">
+        <div class="utabs" id="utabs">
+          <button type="button" data-tab="doc">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3.5h7l4 4V20a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 016 20V5a1.5 1.5 0 011-1.5z"/></svg>
+            文档
+          </button>
+          <button type="button" data-tab="img" class="on">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></svg>
+            图片
+          </button>
+        </div>
+
+        <!-- 文档 tab（现状，仅示意） -->
+        <div id="pane-doc" style="display:none">
+          <div class="drop">
+            <div class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4.5 15v3.5A1.5 1.5 0 006 20h12a1.5 1.5 0 001.5-1.5V15"/></svg></div>
+            <div class="t">把文件拖到这里，或点击选择</div>
+            <div class="d">PDF / Word / Excel / PPT / Markdown / TXT / HTML / EPUB<br>单文件 ≤ 256MB</div>
+          </div>
+          <div class="actions">
+            <span class="note">上传后由 RAGFlow 直接解析，切片规则不变。</span>
+          </div>
+        </div>
+
+        <!-- 图片 tab（新增） -->
+        <div id="pane-img">
+          <div class="drop" id="imgdrop">
+            <div class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></svg></div>
+            <div class="t">把图片拖到这里，或点击选择</div>
+            <div class="d">PNG / JPG / WEBP，单张 <b>≤ 10MB</b>，一次最多 <b>20 张</b><br>每张会调用一次多模态模型，解析约 3～8 秒</div>
+          </div>
+
+          <div class="queue" id="queue">
+            <div class="qitem on" data-i="0">
+              <span class="thumb">PNG</span>
+              <div class="meta">
+                <div class="nm">合同-第 3 页-盖章版.png</div>
+                <div class="sub" id="s0">1.8 MB · 待解析</div>
+                <div class="bar" id="b0" style="display:none"><i style="width:0%"></i></div>
+              </div>
+              <div class="st" id="st0"><span class="badge wait">待解析</span></div>
+            </div>
+            <div class="qitem" data-i="1">
+              <span class="thumb" style="background:linear-gradient(135deg,#e9f7ef,#f6fdf9);color:#5bbf8f">JPG</span>
+              <div class="meta">
+                <div class="nm">组织架构图.jpg</div>
+                <div class="sub" id="s1">642 KB · 待解析</div>
+                <div class="bar" id="b1" style="display:none"><i style="width:0%"></i></div>
+              </div>
+              <div class="st" id="st1"><span class="badge wait">待解析</span></div>
+            </div>
+            <div class="qitem" data-i="2">
+              <span class="thumb" style="background:linear-gradient(135deg,#fff3e6,#fffaf3);color:#d99a4e">PNG</span>
+              <div class="meta">
+                <div class="nm">发票-2026-10.png</div>
+                <div class="sub" id="s2">980 KB · 待解析</div>
+                <div class="bar" id="b2" style="display:none"><i style="width:0%"></i></div>
+              </div>
+              <div class="st" id="st2"><span class="badge wait">待解析</span></div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button type="button" class="btn primary" id="run">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4.5 13h6L11 22l8.5-11h-6z"/></svg>
+              开始解析并入库
+            </button>
+            <button type="button" class="btn" id="commit" disabled>确认入库（0）</button>
+            <button type="button" class="btn" id="reset">重置演示</button>
+            <span class="note">原图存平台附件，RAGFlow 只收 .md</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右：md 预览 + 决策 -->
+    <div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>生成的 Markdown</h2>
+          <button type="button" class="mini" id="editmd" style="margin-left:auto">编辑</button>
+          <span class="hint" id="mdhint">合同-第 3 页-盖章版.md</span>
+        </div>
+        <div class="panel-body">
+          <div class="kv">
+            <span>源图 <b id="kvsrc">合同-第 3 页-盖章版.png</b></span>
+            <span>模型 <b>qwen-vl-max</b></span>
+            <span>耗时 <b id="kvcost">—</b></span>
+            <span>字符数 <b id="kvlen">—</b></span>
+          </div>
+          <div class="md" id="md"><span class="empty">点左侧「开始解析并入库」，这里会显示模型生成的 Markdown。</span></div>
+        </div>
+      </div>
+
+      <div class="dec">
+        <div class="dcard">
+          <div class="qt"><span class="k ok">前置 ①</span>多模态模型配置</div>
+          <p>系统配置里已有 <code>multimodal_model_name</code>，代码里也有 <code>resolve_default_multimodal_model_name()</code> 与 <code>describe_images_with_vision_model()</code>，不用新写模型调用层。</p>
+          <p>没配或模型类型不是 <code>multimodal / vision / image2text</code> 时，图片 tab 直接置灰并给「去系统配置」的入口，而不是等用户传完再报错。</p>
+        </div>
+
+        <div class="dcard">
+          <div class="qt"><span class="k ok">已定 ②</span>原图存平台附件，只把 md 传给 RAGFlow</div>
+          <p>原图落 <code>data/uploads/knowledge_images/{dataset_id}/</code>，md 里的元信息行写源图路径；RAGFlow 只收 <code>.md</code>，文档数不会被图片占满。</p>
+          <div class="rec"><b>命名约定</b>：md 文件名 = <code>{原图名}-{8位hash}.md</code>，原图用同一个 hash。这样从文档名就能反推原图，第一版不用为此加表。</div>
+        </div>
+
+        <div class="dcard">
+          <div class="qt"><span class="k ok">已定 ③</span>解析完停在「待确认」，确认后才入库</div>
+          <p>模型对公章、手写、密集表格会有偏差。md 在弹层里可编辑，点「确认入库」才走上传；批量时可以勾「全部通过」一次性确认。</p>
+          <div class="rec"><b>为什么不自动入库</b>：md 一旦进了知识库就会被检索召回，模型编造的数字没人能分辨——先看一眼的成本远低于事后清理。</div>
+        </div>
+
+        <div class="dcard">
+          <div class="qt"><span class="k">成本</span>一张图 = 一次视觉调用</div>
+          <p>20 张图就是 20 次调用，串行跑大约 1～3 分钟。建议并发 3、逐张出状态，失败的可单独重试，不要整批失败。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>和现状的关系</b>：文档 tab 完全不变，图片只是多一条入口。md 上传走现有 <code>POST /datasets/{id}/documents</code>（content-type <code>text/markdown</code>），
+    RAGFlow 的切片、参与检索开关、解析状态全部复用，不需要改检索链路。<br>
+    <b>失败兜底</b>：模型超时 / 未配置 / 返回空，都停在图片队列里显示原因 + 「重试」，不产生半成品文档。
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id)
+
+  let toastTimer = null
+  function toast(msg) {
+    const el = $('toast')
+    el.textContent = msg
+    el.classList.add('on')
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => el.classList.remove('on'), 1900)
+  }
+
+  /* tab 切换 */
+  $('utabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-tab]')
+    if (!btn) return
+    const tab = btn.dataset.tab
+    $('utabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn))
+    $('pane-doc').style.display = tab === 'doc' ? '' : 'none'
+    $('pane-img').style.display = tab === 'img' ? '' : 'none'
+  })
+
+  const NAMES = ['合同-第 3 页-盖章版', '组织架构图', '发票-2026-10']
+  const SIZES = ['1.8 MB', '642 KB', '980 KB']
+
+  const MD_SAMPLES = [
+`# 合同-第 3 页-盖章版
+
+> 源图：合同-第 3 页-盖章版.png ｜ 解析模型：qwen-vl-max ｜ 2026-11-03 10:42
+
+## 页面类型
+合同签署页，含双方签字与公章。
+
+## 文字内容
+
+### 甲方（盖章）
+华越科技有限公司
+统一社会信用代码：91310000MA1FL2K73X
+
+### 乙方（盖章）
+宁波云枢信息技术有限公司
+
+### 签署信息
+- 签署日期：2026 年 10 月 28 日
+- 合同编号：HY-2026-1042
+
+## 印章
+- 位置：右下角，压住乙方签字行
+- 印文：「宁波云枢信息技术有限公司」循环排列
+- 颜色：鲜红，边缘清晰，未见重影
+
+## 表格
+
+| 项目 | 金额（元） | 备注 |
+| --- | --- | --- |
+| 平台建设费 | 268,000 | 一期 |
+| 年度运维 | 96,000 | 含 12 次现场 |
+| 合计 | 364,000 | 含税 |
+
+## 可信度提示
+印章遮挡了部分签字笔迹，「张伟」二字按字形推断，建议人工核对。`,
+
+`# 组织架构图
+
+> 源图：组织架构图.jpg ｜ 解析模型：qwen-vl-max ｜ 2026-11-03 10:43
+
+## 图片内容
+三级纵向架构图，顶层为总经理，下设技术与市场两个中心，再往下是 5 个部门。
+
+## 层级结构
+- 总经理：张伟
+  - 技术中心 · 负责人：李强
+    - 平台研发部（24 人）
+    - 数据智能部（12 人）
+  - 市场中心 · 负责人：王芳
+    - 品牌市场部（8 人）
+    - 渠道合作部（6 人）
+    - 客户成功部（9 人）
+
+## 图中文字
+方框内为部门名与人数，箭头自上而下表示汇报关系；虚线框为「外包团队」，与正式编制区分。
+
+## 可信度提示
+「数据智能部 12 人」处文字较小且有压缩噪点，人数按字形推断。`,
+
+`# 发票-2026-10
+
+> 源图：发票-2026-10.png ｜ 解析模型：qwen-vl-max ｜ 2026-11-03 10:44
+
+## 票种
+增值税专用发票（电子）
+
+## 抬头信息
+- 购买方：华越科技有限公司
+- 税号：91310000MA1FL2K73X
+- 销售方：宁波云枢信息技术有限公司
+
+## 明细
+
+| 项目 | 数量 | 单价 | 金额 | 税率 |
+| --- | --- | --- | --- | --- |
+| 知识库授权 | 1 | 268,000 | 268,000 | 6% |
+| 实施服务 | 1 | 96,000 | 96,000 | 6% |
+
+## 合计
+价税合计：386,080 元（大写：叁拾捌万陆仟零捌拾元整）
+
+## 可信度提示
+发票代码与校验码区域有反光，数字清晰，未见异常。`
+  ]
+
+  function setState(i, state, opts) {
+    const st = $('st' + i)
+    const sub = $('s' + i)
+    const bar = $('b' + i)
+    if (state === 'busy') {
+      st.innerHTML = '<span class="badge busy">解析中</span>'
+      sub.textContent = SIZES[i] + ' · 调用多模态模型…'
+      bar.style.display = ''
+      bar.firstElementChild.style.width = '0%'
+    } else if (state === 'ok') {
+      st.innerHTML = '<span class="badge ok">已生成 md</span>'
+      sub.textContent = SIZES[i] + ' · ' + (opts || '') + ' · 待确认'
+      bar.style.display = 'none'
+    } else if (state === 'err') {
+      st.innerHTML = '<span class="badge err">解析失败</span> <button type="button" class="mini" data-retry="' + i + '">重试</button>'
+      sub.textContent = SIZES[i] + ' · 模型返回空内容'
+      bar.style.display = 'none'
+    } else {
+      st.innerHTML = '<span class="badge wait">待解析</span>'
+      sub.textContent = SIZES[i] + ' · 待解析'
+      bar.style.display = 'none'
+    }
+    updateCommit()
+  }
+
+  function showMd(i, cost) {
+    $('md').innerHTML = mdToHtml(MD_SAMPLES[i])
+    $('mdhint').textContent = NAMES[i] + '.md'
+    $('kvsrc').textContent = NAMES[i] + (i === 0 ? '.png' : '.jpg')
+    $('kvcost').textContent = cost
+    $('kvlen').textContent = MD_SAMPLES[i].length + ' 字'
+    document.querySelectorAll('.qitem').forEach((el) => el.classList.toggle('on', Number(el.dataset.i) === i))
+  }
+
+  function mdToHtml(src) {
+    return src.split('\n').map((line) => {
+      if (line.startsWith('# ')) return '<span class="h">' + esc(line) + '</span>'
+      if (line.startsWith('## ')) return '<span class="h">' + esc(line) + '</span>'
+      if (line.startsWith('> ')) return '<span class="quote">' + esc(line) + '</span>'
+      if (line.startsWith('|')) return '<span class="kw">' + esc(line) + '</span>'
+      return esc(line)
+    }).join('\n')
+  }
+
+  function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+
+  let running = false
+
+  function runQueue() {
+    if (running) return
+    running = true
+    $('run').disabled = true
+    const costs = ['4.2s', '6.8s', '3.9s']
+    let i = 0
+
+    const next = () => {
+      if (i >= 3) {
+        running = false
+        $('run').disabled = false
+        toast('3 张图已生成 md，确认后才入库')
+        return
+      }
+      const idx = i
+      setState(idx, 'busy')
+      showMd(idx, '—')
+      // 模拟进度
+      let p = 0
+      const bar = $('b' + idx).firstElementChild
+      const timer = setInterval(() => {
+        p = Math.min(96, p + 6 + Math.random() * 10)
+        bar.style.width = p + '%'
+      }, 90)
+
+      setTimeout(() => {
+        clearInterval(timer)
+        // 第 3 张演示失败，展示失败与重试路径
+        if (idx === 2 && !window.__retried) {
+          setState(idx, 'err')
+          showMd(0, costs[0])
+          toast('第 3 张解析失败：模型返回空内容')
+        } else {
+          setState(idx, 'ok', costs[idx])
+          showMd(idx, costs[idx])
+        }
+        i += 1
+        setTimeout(next, 320)
+      }, 900 + idx * 180)
+    }
+    next()
+  }
+
+  $('run').addEventListener('click', runQueue)
+
+  $('queue').addEventListener('click', (e) => {
+    const retry = e.target.closest('[data-retry]')
+    if (retry) {
+      const idx = Number(retry.dataset.retry)
+      window.__retried = true
+      setState(idx, 'busy')
+      setTimeout(() => {
+        setState(idx, 'ok', '4.1s')
+        showMd(idx, '4.1s')
+        toast('重试成功')
+      }, 800)
+      return
+    }
+    const item = e.target.closest('.qitem')
+    if (!item) return
+    const idx = Number(item.dataset.i)
+    document.querySelectorAll('.qitem').forEach((el) => el.classList.toggle('on', el === item))
+    showMd(idx, '4.2s')
+  })
+
+  /* 待确认 → 确认入库：只统计「已生成 md」的条目 */
+  function updateCommit() {
+    const n = document.querySelectorAll('.badge.ok').length
+    const btn = $('commit')
+    btn.textContent = '确认入库（' + n + '）'
+    btn.disabled = n === 0
+  }
+
+  $('commit').addEventListener('click', () => {
+    const n = document.querySelectorAll('.badge.ok').length
+    if (!n) return
+    toast(n + ' 份 md 已入库，正在解析切片')
+    document.querySelectorAll('.badge.ok').forEach((el) => {
+      el.className = 'badge busy'
+      el.textContent = '已入库 · 解析中'
+    })
+    updateCommit()
+  })
+
+  /* md 可编辑：确认前允许改，避免「模型读错只能整篇重传」 */
+  let editing = false
+  $('editmd').addEventListener('click', () => {
+    editing = !editing
+    const box = $('md')
+    box.contentEditable = editing ? 'true' : 'false'
+    box.style.background = editing ? '#fff' : ''
+    box.style.borderColor = editing ? 'var(--blue-h)' : ''
+    $('editmd').textContent = editing ? '完成' : '编辑'
+    if (editing) { box.focus(); toast('可直接修改，确认入库时以当前内容为准') }
+    else { updateCommit() }
+  })
+
+  $('reset').addEventListener('click', () => {
+    window.__retried = false
+    running = false
+    $('run').disabled = false
+    ;[0, 1, 2].forEach((i) => setState(i, 'wait'))
+    $('md').contentEditable = 'false'
+    $('md').style.background = ''
+    $('md').style.borderColor = ''
+    editing = false
+    $('editmd').textContent = '编辑'
+    updateCommit()
+    $('md').innerHTML = '<span class="empty">点左侧「开始解析并入库」，这里会显示模型生成的 Markdown。</span>'
+    $('mdhint').textContent = '—'
+    $('kvcost').textContent = '—'
+    $('kvlen').textContent = '—'
+    $('kvsrc').textContent = '—'
+  })
+
+  $('imgdrop').addEventListener('click', () => toast('演示原型：真实实现里会打开文件选择'))
+
+  showMd(0, '4.2s')
+</script>
+</body>
+</html>

@@ -486,6 +486,14 @@
   .chunk{border:1px solid var(--line-2);border-radius:7px;padding:6px 8px;font-size:10.5px;color:var(--ink-3);background:#fbfcfe;line-height:1.6}
   .chunk b{color:var(--ink-2);font-weight:600}
   .dr-foot{padding:10px 14px;border-top:1px solid var(--line-2);display:flex;gap:6px;background:#fff;box-shadow:0 -4px 12px rgba(16,24,40,.04)}
+  .img-link{font-size:10.5px;font-weight:600;color:var(--blue);border-bottom:1px dashed rgba(22,119,255,.45);padding-bottom:1px}
+  .img-link:hover{color:var(--blue-d);border-bottom-style:solid}
+  .img-layer{position:fixed;inset:0;z-index:80;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;padding:32px;backdrop-filter:blur(2px)}
+  .img-card{position:relative;max-width:min(760px,92vw);max-height:88vh;background:#fff;border-radius:14px;padding:10px;box-shadow:0 24px 64px rgba(15,23,42,.35);display:flex;flex-direction:column;gap:8px}
+  .img-card img{max-width:100%;max-height:72vh;object-fit:contain;border-radius:8px;display:block}
+  .img-x{position:absolute;top:-10px;right:-10px;width:28px;height:28px;border-radius:50%;background:#fff;border:1px solid var(--line);color:var(--ink-2);display:grid;place-items:center;box-shadow:var(--sh-1)}
+  .img-x:hover{color:var(--red);border-color:#ffd7d4}
+  .img-meta{font-size:10.5px;color:var(--ink-3);text-align:center;padding:2px 0 4px}
   .dr-foot .btn{flex:1;justify-content:center}
 
   /* 菜单 */
@@ -1460,6 +1468,7 @@
     ['d15', '离职交接清单.xlsx', 'xls', 'f12', 98304, 'done', 12, '林静', '2024-05-18', 20240518, ['流程']],
     ['d16', '女职工权益保护规定.pdf', 'pdf', 'f12', 393216, 'done', 39, '赵敏', '2024-03-08', 20240308, ['制度']],
 
+    ['d24', '会议室白板纪要-a3f9c2d1.md', 'md', 'f11', 4210, 'done', 3, '陈晓龙', '10-29', 20251029, ['会议', '图片转写']],
     ['d17', '组织架构与汇报关系.pdf', 'pdf', 'f12', 1048576, 'done', 54, '陈晓龙', '09-15', 20250915, ['组织']],
     ['d18', '岗位职级体系说明.pdf', 'pdf', 'f12', 917504, 'done', 67, '陈晓龙', '09-15', 20250915, ['组织']],
 
@@ -1832,6 +1841,48 @@
       '<div class="dr-foot">' + foot + '</div>';
   }
 
+  /* 图片转来的 md：命名约定「名字-8位内容哈希.md」，原图是同名前缀的图片文件 */
+  function isImageDerived(d) {
+    return d && d.type === 'md' && /-[0-9a-f]{8}\.md$/i.test(d.name);
+  }
+
+  /* 原图浮层：自包含，图片用内联 SVG data-uri 画一张白板示意 */
+  var SOURCE_IMAGE_SVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420">' +
+    '<rect width="640" height="420" fill="#f7f9fc"/>' +
+    '<rect x="24" y="24" width="592" height="372" rx="10" fill="#fff" stroke="#c9d3e4" stroke-width="2"/>' +
+    '<text x="56" y="86" font-family="PingFang SC,sans-serif" font-size="22" font-weight="700" fill="#1d2129">10-30 ETL 技术评审 · 白板</text>' +
+    '<line x1="56" y1="106" x2="584" y2="106" stroke="#e9ecf2" stroke-width="2"/>' +
+    '<text x="56" y="150" font-family="PingFang SC,sans-serif" font-size="16" fill="#4e5969">1. 抽取层：增量水位改为按天分区</text>' +
+    '<text x="56" y="186" font-family="PingFang SC,sans-serif" font-size="16" fill="#4e5969">2. 转换层：脏数据落 dead-letter 表</text>' +
+    '<text x="56" y="222" font-family="PingFang SC,sans-serif" font-size="16" fill="#4e5969">3. 调度：Airflow DAG 拆成 3 条链路</text>' +
+    '<rect x="56" y="252" width="300" height="96" rx="8" fill="#eff6ff" stroke="#cfe0ff"/>' +
+    '<text x="72" y="286" font-family="PingFang SC,sans-serif" font-size="14" fill="#1e5ecc">待确认：回刷 2024 历史数据？</text>' +
+    '<text x="72" y="314" font-family="PingFang SC,sans-serif" font-size="14" fill="#1e5ecc">负责人：王海 / 下周三前给结论</text>' +
+    '</svg>'
+  );
+
+  function openSourceImage() {
+    var layer = document.createElement('div');
+    layer.className = 'img-layer';
+    layer.innerHTML =
+      '<div class="img-card">' +
+        '<button class="img-x" aria-label="关闭">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>' +
+        '</button>' +
+        '<img src="' + SOURCE_IMAGE_SVG + '" alt="原图预览" />' +
+        '<div class="img-meta">会议室白板纪要-a3f9c2d1.png · 4.1 MB · 点击空白处关闭</div>' +
+      '</div>';
+    document.body.appendChild(layer);
+    function close() { layer.remove(); }
+    layer.addEventListener('click', function (e) {
+      if (e.target === layer || e.target.closest('.img-x')) close();
+    });
+    document.addEventListener('keydown', function esc(e) {
+      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
+    });
+  }
+
   function renderDrawer() {
     const box = $('drawer');
     if (state.drawerMode === 'lib') { renderLibPanel(box); return; }
@@ -1856,6 +1907,9 @@
         (d.status === 'done' ? '<div style="font-size:10.5px;color:#86909c">已参与检索，最近召回 12 次。</div>' : '') +
       '</div></div>' +
       '<div class="dr-sec"><h5>基本信息</h5>' +
+        (isImageDerived(d)
+          ? '<div class="kv"><span class="k">原图</span><span class="v"><button class="img-link" id="view-source-img">查看原图 · png</button></span></div>'
+          : '') +
         '<div class="kv"><span class="k">文件大小</span><span class="v">' + fmtBytes(d.size) + '</span></div>' +
         '<div class="kv"><span class="k">上传人</span><span class="v">' + d.owner + '</span></div>' +
         '<div class="kv"><span class="k">更新时间</span><span class="v">' + d.updated + '</span></div>' +
@@ -1881,6 +1935,8 @@
       '</div>';
     const close = $('dr-close');
     if (close) close.onclick = function () { state.drawerOpen = false; applyDrawer(); };
+    const viewImg = $('view-source-img');
+    if (viewImg) viewImg.onclick = openSourceImage;
   }
 
   /* 快捷视图：点标题收起/展开，收起后只剩标题一行 */

@@ -57,5 +57,14 @@ export const ragflowApi = {
         }),
 
     getConfig: () =>
-        axios.get<{code: number, data: RagFlowConfigSummary}>('/api/portal/ragflow/config')
+        axios.get<{code: number, data: RagFlowConfigSummary}>('/api/portal/ragflow/config'),
+
+    /** 图片转来的 md 才有原图：传 md 文件名，后端按哈希尾巴反查图片文件。 */
+    getImageSourceInfo: (datasetId: string, mdName: string) =>
+        axios.get<{
+            code: number;
+            data: { exists: boolean; name?: string; size?: number; content_type?: string; url?: string };
+        }>(`/api/portal/ragflow/datasets/${encodeURIComponent(datasetId)}/images/source-info/${encodeURIComponent(mdName)}`, {
+            timeout: 5000,
+        })
 };

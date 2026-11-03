@@ -55,9 +55,13 @@ def test_lib_info_lives_in_the_drawer():
 
 
 def test_drawer_is_an_overlay_not_a_third_column():
-    """抽屉必须浮在主区之上：一旦回到 flex 第三列，列表又被挤窄。"""
+    """抽屉必须浮在主区之上：一旦回到 flex 第三列，列表又被挤窄。
+
+    定位从 ``absolute`` 改成了 ``fixed``（贴视口右上、从顶栏下沿铺到屏幕底部），
+    「脱离文档流、不占主区宽度」这个约束不变，所以断言跟着换成 fixed。
+    """
     page = _page()
-    assert "absolute inset-y-0 right-0" in page
+    assert "fixed bottom-0 right-0 top-12" in page
     assert "lg:w-[402px]" in page
     assert "lg:w-[380px] flex-shrink-0" not in page
 

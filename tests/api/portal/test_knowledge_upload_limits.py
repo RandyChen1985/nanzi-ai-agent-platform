@@ -13,6 +13,21 @@ from app.api.portal.endpoints import ragflow
 pytestmark = pytest.mark.no_infrastructure
 
 
+@pytest.fixture(autouse=True)
+def _silence_knowledge_audit(monkeypatch):
+    """拦掉审计写入。
+
+    ``record_knowledge_audit`` 走的是**独立的 AsyncSessionLocal**，不共用测试注入的
+    ``db``；不 mock 的话，每跑一次这些拒绝用例就往真实审计表里塞一条
+    「alice / 413 / 文件超过 1MB 上限」，在库信息「操作日志」里看起来像真事故。
+    """
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(ragflow, "record_knowledge_audit", _noop)
+
+
 class _FakeUpload:
     def __init__(self, filename: str, payload: bytes):
         self.filename = filename
