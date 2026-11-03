@@ -92,187 +92,257 @@
 
     <!-- Admin View -->
     <template v-else-if="userInfo?.role === 'admin'">
-      <!-- Statistics Cards -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-        <StatsCard
-          title="总用户数"
-          :value="stats?.total_users || 0"
-          type="info"
-        >
-          <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-          </template>
-        </StatsCard>
-
-        <StatsCard
-          title="活跃用户"
-          :value="stats?.active_users || 0"
-          type="success"
-          subtext="近 7 天"
-        >
-          <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </template>
-        </StatsCard>
-
-        <StatsCard
-          title="API 调用"
-          :value="stats?.api_calls?.total || 0"
-          type="purple"
-        >
-          <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </template>
-        </StatsCard>
-
-        <StatsCard
-          title="Token 消耗"
-          :value="formatTokenCompact(stats?.total_tokens || 0)"
-          type="warning"
-        >
-          <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-          </template>
-          <template #subtext>
-            <div class="flex flex-col gap-0.5 leading-tight">
-              <span>输入 {{ formatTokenCompact(stats?.prompt_tokens || 0) }}</span>
-              <span>输出 {{ formatTokenCompact(stats?.completion_tokens || 0) }}</span>
-            </div>
-          </template>
-        </StatsCard>
-
-        <StatsCard
-          title="成功率"
-          :value="stats?.success_rate || 0"
-          :type="successRateType"
+      <!-- 主角卡承担「当前是否健康」这个问题，其余四个退为背景信息 -->
+      <div class="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.62fr_repeat(4,minmax(0,1fr))]">
+        <MetricHeroCard
+          label="接口成功率"
+          :value="successPercent.toFixed(2)"
           unit="%"
+          :percent="successPercent"
+          :total="apiTotal"
+          :success="apiSuccess"
+          :failed="apiFailed"
+        />
+        <MetricMiniCard label="API 调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" foot="今日累计">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+          </template>
+        </MetricMiniCard>
+        <MetricMiniCard label="Token 消耗" icon-color="#ea580c" :value="formatTokenCompact(stats?.total_tokens || 0)" foot="含输入与输出">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+          </template>
+        </MetricMiniCard>
+        <MetricMiniCard label="用户" icon-color="#2563eb" :value="totalUsers" :foot="activeUsersFoot">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+          </template>
+        </MetricMiniCard>
+        <MetricMiniCard
+          label="工具成功率" icon-color="#059669"
+          :value="toolSuccessRate.toFixed(2)"
+          unit="%"
+          :foot="`${toolCallsTotal} 次工具调用`"
         >
           <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           </template>
-          <template #subtext>
-            {{ stats?.api_calls?.success || 0 }} / {{ stats?.api_calls?.total || 0 }}
-          </template>
-        </StatsCard>
+        </MetricMiniCard>
       </div>
 
-      <AgentHealthPanel :agent-stats="agentStats" />
-
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 items-stretch">
-        <div class="lg:col-span-2 h-full">
-          <AgentPerformancePanel :agent-stats="agentStats" />
-        </div>
-        <div class="h-full">
-          <AgentTokenDistributionChart :data="agentTokens" />
-        </div>
-      </div>
-
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
-        <RecentUsersCard :users="activities?.recent_users" />
-        <RecentCallsCard
-          :calls="activities?.recent_calls"
-          mode="compact"
-        />
-      </div>
-
-      <RecentFailuresCard
-        :errors="agentStats?.recent_errors"
-        @view-trace="goToAgentDebug"
+      <DashboardAlertStrip
+        v-if="apiFailed > 0"
+        :count="apiFailed"
+        :subjects="failureSubjects"
+        :scope="period"
       />
+
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1.32fr_1fr]">
+        <div class="ov-card">
+          <div class="ov-card-head">
+            <h3 class="ov-card-title"><span class="ov-dot"></span>工具调用分布</h3>
+            <span class="text-xs text-gray-400">今日 · 共 {{ toolCallsTotal }} 次</span>
+          </div>
+          <div class="ov-card-body">
+            <ToolUsageRanking :items="toolRankingItems" :total="toolCallsTotal">
+              <template #footer>
+                <div v-if="recentErrors.length" class="mt-4 border-t border-dashed border-gray-200 pt-3.5">
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="text-[11.5px] font-semibold text-gray-400">最近失败</span>
+                    <button type="button" class="text-[11px] font-semibold text-primary hover:underline" @click="openFailureDetails">全部 →</button>
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <button
+                      v-for="(err, index) in recentErrors"
+                      :key="`${err.trace_id}-${index}`"
+                      type="button"
+                      class="flex items-center gap-2 text-left text-[11.5px] transition-colors hover:text-primary"
+                      @click="err.trace_id && goToAgentDebug(err.trace_id)"
+                    >
+                      <span class="h-1 w-1 shrink-0 rounded-full bg-red-500"></span>
+                      <span class="shrink-0 font-mono text-gray-700">{{ err.tool || '未知工具' }}</span>
+                      <span class="min-w-0 flex-1 truncate text-gray-400">{{ err.message || '执行失败' }}</span>
+                      <span class="shrink-0 text-gray-400">{{ formatClock(err.time) }}</span>
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </ToolUsageRanking>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-4">
+          <div class="ov-card">
+            <div class="ov-card-head">
+              <h3 class="ov-card-title"><span class="ov-dot"></span>执行耗时趋势</h3>
+              <span class="text-xs text-gray-400">24h · 峰值 {{ maxLatency.toLocaleString() }}ms</span>
+            </div>
+            <div class="ov-card-body">
+              <LatencyTrendPanel :points="latencyPoints" :threshold="LATENCY_THRESHOLD" />
+            </div>
+          </div>
+
+          <div class="ov-card">
+            <div class="ov-card-head">
+              <h3 class="ov-card-title"><span class="ov-dot"></span>核心指标</h3>
+            </div>
+            <div class="ov-card-body pt-2 pb-4">
+              <CoreMetricsPanel :items="healthKpis" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div class="ov-card">
+          <div class="ov-card-head">
+            <h3 class="ov-card-title"><span class="ov-dot"></span>智能体性能排行</h3>
+            <span class="text-xs text-gray-400">按调用量</span>
+          </div>
+          <div class="ov-card-body pt-3">
+            <AgentPerformanceTable :rows="agentPerfRows" />
+          </div>
+        </div>
+        <div class="ov-card">
+          <div class="ov-card-head">
+            <h3 class="ov-card-title"><span class="ov-dot"></span>Token 消耗分布</h3>
+            <span class="text-xs text-gray-400">今日 · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
+          </div>
+          <div class="ov-card-body pt-4">
+            <AgentTokenBars :items="tokenBarItems" />
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <RecentUsersCard :users="activities?.recent_users" />
+        <RecentCallsCard :calls="activities?.recent_calls" mode="compact" />
+      </div>
 
       <RequestTrendChart :trends="trends24h" />
     </template>
 
     <!-- User View -->
     <template v-else-if="userInfo">
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-        <StatsCard
-          title="API Key"
-          :value="stats?.api_key_status === 'active' ? '正常' : '已禁用'"
-          :type="stats?.api_key_status === 'active' ? 'success' : 'danger'"
-        >
-          <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-            </svg>
-          </template>
-        </StatsCard>
-
-        <StatsCard
-          title="我的调用"
-          :value="stats?.api_calls?.total || 0"
-          type="info"
-        >
-          <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </template>
-        </StatsCard>
-
-        <StatsCard
-          title="我的 Token"
-          :value="formatTokenCompact(stats?.total_tokens || 0)"
-          type="purple"
-        >
-          <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-          </template>
-          <template #subtext>
-            <div class="flex flex-col gap-0.5 leading-tight">
-              <span>输入 {{ formatTokenCompact(stats?.prompt_tokens || 0) }}</span>
-              <span>输出 {{ formatTokenCompact(stats?.completion_tokens || 0) }}</span>
-            </div>
-          </template>
-        </StatsCard>
-
-        <StatsCard
-          title="平均响应"
-          :value="stats?.avg_response_time || 0"
-          unit="ms"
-          type="warning"
-        >
-          <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </template>
-        </StatsCard>
-
-        <StatsCard
-          title="成功率"
-          :value="stats?.success_rate || 0"
+      <div class="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.62fr_repeat(4,minmax(0,1fr))]">
+        <MetricHeroCard
+          label="我的成功率"
+          :value="successPercent.toFixed(2)"
           unit="%"
-          :type="successRateType"
+          :percent="successPercent"
+          :total="apiTotal"
+          :success="apiSuccess"
+          :failed="apiFailed"
+        />
+        <MetricMiniCard label="我的调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" foot="今日累计">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+          </template>
+        </MetricMiniCard>
+        <MetricMiniCard label="我的 Token" icon-color="#ea580c" :value="formatTokenCompact(stats?.total_tokens || 0)" foot="含输入与输出">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+          </template>
+        </MetricMiniCard>
+        <MetricMiniCard label="平均响应" icon-color="#059669" :value="(stats?.avg_response_time || 0).toLocaleString()" unit="ms" foot="接口平均耗时">
+          <template #icon>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          </template>
+        </MetricMiniCard>
+        <!-- API Key 状态是配置项而非数量，用文字与颜色表达，不做成数字 -->
+        <MetricMiniCard
+          label="API Key" icon-color="#2563eb"
+          :value="apiKeyLabel"
+          :value-class="apiKeyActive ? 'text-[19px] text-emerald-700' : 'text-[19px] text-red-600'"
+          :foot="apiKeyActive ? '可正常调用接口' : '已被禁用，请联系管理员'"
         >
           <template #icon>
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
           </template>
-        </StatsCard>
+        </MetricMiniCard>
       </div>
 
-      <AgentHealthPanel :agent-stats="agentStats" />
+      <DashboardAlertStrip
+        v-if="apiFailed > 0"
+        :count="apiFailed"
+        :subjects="failureSubjects"
+        :scope="period"
+      />
 
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 items-stretch">
-        <div class="lg:col-span-2 h-full">
-          <AgentPerformancePanel :agent-stats="agentStats" />
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1.32fr_1fr]">
+        <div class="ov-card">
+          <div class="ov-card-head">
+            <h3 class="ov-card-title"><span class="ov-dot"></span>我的工具使用</h3>
+            <span class="text-xs text-gray-400">今日 · 共 {{ toolCallsTotal }} 次</span>
+          </div>
+          <div class="ov-card-body">
+            <ToolUsageRanking :items="toolRankingItems" :total="toolCallsTotal">
+              <template #footer>
+                <div v-if="recentErrors.length" class="mt-4 border-t border-dashed border-gray-200 pt-3.5">
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="text-[11.5px] font-semibold text-gray-400">我的最近失败</span>
+                    <button type="button" class="text-[11px] font-semibold text-primary hover:underline" @click="openFailureDetails">全部 →</button>
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <button
+                      v-for="(err, index) in recentErrors"
+                      :key="`${err.trace_id}-${index}`"
+                      type="button"
+                      class="flex items-center gap-2 text-left text-[11.5px] transition-colors hover:text-primary"
+                      @click="err.trace_id && goToAgentDebug(err.trace_id)"
+                    >
+                      <span class="h-1 w-1 shrink-0 rounded-full bg-red-500"></span>
+                      <span class="shrink-0 font-mono text-gray-700">{{ err.tool || '未知工具' }}</span>
+                      <span class="min-w-0 flex-1 truncate text-gray-400">{{ err.message || '执行失败' }}</span>
+                      <span class="shrink-0 text-gray-400">{{ formatClock(err.time) }}</span>
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </ToolUsageRanking>
+          </div>
         </div>
-        <div class="h-full">
-          <AgentTokenDistributionChart :data="agentTokens" />
+
+        <div class="flex flex-col gap-4">
+          <div class="ov-card">
+            <div class="ov-card-head">
+              <h3 class="ov-card-title"><span class="ov-dot"></span>我的耗时趋势</h3>
+              <span class="text-xs text-gray-400">24h · 峰值 {{ maxLatency.toLocaleString() }}ms</span>
+            </div>
+            <div class="ov-card-body">
+              <LatencyTrendPanel :points="latencyPoints" :threshold="LATENCY_THRESHOLD" line-color="#60a5fa" />
+            </div>
+          </div>
+
+          <div class="ov-card">
+            <div class="ov-card-head">
+              <h3 class="ov-card-title"><span class="ov-dot"></span>我的指标</h3>
+            </div>
+            <div class="ov-card-body pt-2 pb-4">
+              <CoreMetricsPanel :items="healthKpis" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div class="ov-card">
+          <div class="ov-card-head">
+            <h3 class="ov-card-title"><span class="ov-dot"></span>智能体性能</h3>
+            <span class="text-xs text-gray-400">我常用的</span>
+          </div>
+          <div class="ov-card-body pt-3">
+            <AgentPerformanceTable :rows="agentPerfRows" />
+          </div>
+        </div>
+        <div class="ov-card">
+          <div class="ov-card-head">
+            <h3 class="ov-card-title"><span class="ov-dot"></span>我的 Token 分布</h3>
+            <span class="text-xs text-gray-400">今日 · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
+          </div>
+          <div class="ov-card-body pt-4">
+            <AgentTokenBars :items="tokenBarItems" />
+          </div>
         </div>
       </div>
 
@@ -354,14 +424,17 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import axios from "../utils/axios";
 import Toast from "../components/Toast.vue";
-import StatsCard from "../components/dashboard/StatsCard.vue";
-import AgentHealthPanel from "../components/dashboard/AgentHealthPanel.vue";
-import AgentPerformancePanel from "../components/dashboard/AgentPerformancePanel.vue";
-import AgentTokenDistributionChart from "../components/dashboard/AgentTokenDistributionChart.vue";
+import MetricHeroCard from "../components/dashboard/MetricHeroCard.vue";
+import MetricMiniCard from "../components/dashboard/MetricMiniCard.vue";
+import ToolUsageRanking from "../components/dashboard/ToolUsageRanking.vue";
+import LatencyTrendPanel from "../components/dashboard/LatencyTrendPanel.vue";
+import CoreMetricsPanel from "../components/dashboard/CoreMetricsPanel.vue";
+import DashboardAlertStrip from "../components/dashboard/DashboardAlertStrip.vue";
+import AgentPerformanceTable from "../components/dashboard/AgentPerformanceTable.vue";
+import AgentTokenBars from "../components/dashboard/AgentTokenBars.vue";
 import RecentUsersCard from "../components/dashboard/RecentUsersCard.vue";
 import RecentCallsCard from "../components/dashboard/RecentCallsCard.vue";
 import RequestTrendChart from "../components/dashboard/RequestTrendChart.vue";
-import RecentFailuresCard from "../components/dashboard/RecentFailuresCard.vue";
 import DeploymentChecklist from "../components/system/DeploymentChecklist.vue";
 import { formatTokenCompact } from "@/utils/tokenFormat";
 
@@ -424,13 +497,6 @@ const flushSectionErrors = () => {
   );
   sectionErrors.value = [];
 };
-
-/** 无调用时不显示告警红，避免把"该周期没有数据"误读成"成功率异常" */
-const successRateType = computed<"success" | "danger" | "info">(() => {
-  const total = stats.value?.api_calls?.total ?? 0;
-  if (total === 0) return "info";
-  return (stats.value?.success_rate || 0) >= 90 ? "success" : "danger";
-});
 
 const fetchAgentStats = async () => {
   const seq = dataSeq;
@@ -578,6 +644,112 @@ const goToAgentDebug = (traceId: string) => {
   });
 };
 
+/** 耗时阈值：超过即判定「偏高」，与趋势图的阈值线共用同一个数 */
+const LATENCY_THRESHOLD = 5000;
+
+const apiTotal = computed(() => Number(stats.value?.api_calls?.total || 0));
+const apiSuccess = computed(() => Number(stats.value?.api_calls?.success || 0));
+const apiFailed = computed(() => Math.max(apiTotal.value - apiSuccess.value, 0));
+const successPercent = computed(() => Number(stats.value?.success_rate || 0));
+
+const totalUsers = computed(() => Number(stats.value?.total_users || 0));
+const activeUsers = computed(() => Number(stats.value?.active_users || 0));
+
+/** 活跃数现在是总用户的子集，才敢算占比；修复前分子大于分母，比值没有意义 */
+const activeUsersFoot = computed(() => {
+  if (!totalUsers.value) return "近 7 天无活跃";
+  return `活跃 ${activeUsers.value} · 占 ${Math.round((activeUsers.value / totalUsers.value) * 100)}%`;
+});
+
+const toolSuccessRate = computed(() =>
+  Number(agentStats.value?.health_stats?.success_rate || 0),
+);
+const toolCallsTotal = computed(() =>
+  Number(agentStats.value?.health_stats?.total_tool_calls || 0),
+);
+
+/** 工具分布直接取接口顺序，排行组件内部按调用量重排，长度按占总量比例 */
+const toolRankingItems = computed(() =>
+  (agentStats.value?.tool_usage || []).map((item: any) => ({
+    name: String(item?.name ?? ""),
+    value: Number(item?.value || 0),
+  })),
+);
+
+const latencyPoints = computed(() => agentStats.value?.performance_trend || []);
+const maxLatency = computed(() =>
+  (latencyPoints.value as any[]).reduce(
+    (max, point) => Math.max(max, Number(point?.avg_ms || 0)),
+    0,
+  ),
+);
+
+const recentErrors = computed(() => (agentStats.value?.recent_errors || []).slice(0, 3));
+
+/** 失败集中在哪些工具：只说「12 次失败」用户还得自己翻日志 */
+const failureSubjects = computed(() => {
+  const names = recentErrors.value
+    .map((item: any) => item?.tool)
+    .filter((name: unknown): name is string => Boolean(name));
+  return [...new Set(names)].slice(0, 2).join(" 与 ");
+});
+
+const healthKpis = computed(() => {
+  const rate = toolSuccessRate.value;
+  const avgLatency = Number(agentStats.value?.health_stats?.avg_latency || 0);
+  return [
+    {
+      label: "工具成功率",
+      value: rate.toFixed(2),
+      unit: "%",
+      tone: rate < 95 ? ("danger" as const) : ("ok" as const),
+    },
+    {
+      label: "平均执行耗时",
+      value: Math.round(avgLatency).toLocaleString(),
+      unit: "ms",
+      tone: avgLatency > LATENCY_THRESHOLD ? ("warn" as const) : undefined,
+    },
+    { label: "工具调用总数", value: toolCallsTotal.value.toLocaleString() },
+  ];
+});
+
+const agentPerfRows = computed(() =>
+  (agentStats.value?.agent_performance || []).map((agent: any) => ({
+    name: String(agent?.name ?? agent?.agent_id ?? "未命名智能体"),
+    calls: Number(agent?.calls || 0),
+    avgLatency: Number(agent?.avg_latency || 0),
+    successRate: Number(agent?.success_rate || 0),
+  })),
+);
+
+const tokenBarItems = computed(() =>
+  (agentTokens.value || []).map((item: any) => ({
+    name: String(item?.name ?? ""),
+    value: Number(item?.total_tokens || 0),
+  })),
+);
+
+const apiKeyActive = computed(() => stats.value?.api_key_status === "active");
+const apiKeyLabel = computed(() => (apiKeyActive.value ? "正常" : "已禁用"));
+
+/** 列表里只显示时分，日期换行反而让一列变高 */
+const formatClock = (iso?: string | null) => {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+};
+
+/** 异常条的出口：有具体 trace 就直达那一条，否则落到调试页列表 */
+const openFailureDetails = () => {
+  const firstTraceId = recentErrors.value[0]?.trace_id;
+  router.push({
+    path: "/dashboard/agent-debug",
+    query: firstTraceId ? { traceId: firstTraceId } : {},
+  });
+};
+
 const loadUserInfo = () => {
   const stored = localStorage.getItem("user_info");
   if (!stored) return;
@@ -597,6 +769,22 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.ov-card {
+  @apply overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm;
+}
+.ov-card-head {
+  @apply flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-3.5;
+}
+.ov-card-title {
+  @apply flex items-center text-sm font-bold text-gray-900;
+}
+.ov-card-body {
+  @apply p-5;
+}
+.ov-dot {
+  @apply mr-2 h-1.5 w-1.5 rounded-full bg-primary;
+}
+
 .overview-period-select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
   background-position: right 0.35rem center;

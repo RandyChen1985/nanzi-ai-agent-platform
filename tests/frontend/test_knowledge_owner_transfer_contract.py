@@ -136,7 +136,8 @@ def test_transfer_entry_is_visible_to_management_only(page):
 
 
 def test_transfer_entry_and_modal_are_wired(page):
-    assert '@click="openTransferOwner(selectedDataset)"' in page
+    # 入口只在库头「更多」下拉里：头部元数据行是只读信息，不挂操作按钮
+    assert '@click="libMoreOpen = false; openTransferOwner(selectedDataset)"' in page
     assert "转移知识库归属人" in page
     assert "/api/portal/ragflow/owner-candidates" in page
     assert "/owner`," in page
@@ -151,9 +152,10 @@ def test_modal_explains_private_library_loses_access(page):
     assert "立刻失去访问" in footer
 
 
-def test_header_shows_owner_with_creator_in_title(page):
+def test_header_shows_owner(page):
     assert "datasetOwnerUserLabel(selectedDataset)" in page
-    assert "创建人：" in page
+    # 转移入口与负责人同一行
+    assert "openTransferOwner(selectedDataset)" in page
 
 
 def test_candidates_are_flagged_when_target_cannot_manage(backend):

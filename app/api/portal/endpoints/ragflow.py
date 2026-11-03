@@ -6,7 +6,7 @@ import uuid
 import datetime
 import httpx
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,9 @@ from app.services.knowledge_dataset_filters import is_internal_dataset_name
 from app.services.knowledge_health_service import KnowledgeHealthService
 from app.services.portal_notification_service import PortalNotificationService
 from app.services.knowledge_quota_service import KnowledgeQuotaService, QuotaExceeded
+from app.services import knowledge_image_service as image_service
+from app.services.ai.multimodal_support import resolve_default_multimodal_model_name
+from app.services.knowledge_recent_visit_service import KnowledgeRecentVisitService
 from app.services.knowledge_retrieval_log_service import (
     SOURCE_TEST,
     KnowledgeRetrievalLogService,
@@ -37,6 +40,7 @@ from app.services.knowledge_audit_service import (
     GLOBAL_AUDIT_DATASET_ID,
     KnowledgeAuditService,
 )
+from app.models.knowledge import KnowledgeBaseFavorite
 from app.models.permission import ResourcePermission
 
 router = APIRouter()
@@ -48,10 +52,13 @@ KNOWLEDGE_UPLOAD_MAX_BYTES = 256 * 1024 * 1024
 KNOWLEDGE_UPLOAD_MAX_MB = KNOWLEDGE_UPLOAD_MAX_BYTES // (1024 * 1024)
 
 #: 与 RAGFlow 解析器支持的格式保持一致；不在白名单的直接拒绝，不做静默透传。
+#:
+#: 刻意不收图片（png/jpg/gif/bmp/tif）：RAGFlow 的图片解析需要视觉模型配合，
+#: 当前部署没有可用链路，传上去只会停在「解析失败」。与其让用户传完再发现，
+#: 不如在入口就挡掉——需要图片内容时先转成 PDF 再上传。
 KNOWLEDGE_UPLOAD_ALLOWED_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".txt", ".md", ".csv",
-    ".xls", ".xlsx", ".ppt", ".pptx", ".html", ".htm",
-    ".epub", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff",
+    ".xls", ".xlsx", ".ppt", ".pptx", ".html", ".htm", ".epub",
 }
 
 
@@ -66,7 +73,7 @@ def _validate_knowledge_upload(file_name: str, size: int) -> None:
             status_code=415,
             detail=(
                 f"不支持的文件类型「{ext or '无扩展名'}」，"
-                "支持 PDF/Word/Excel/PPT/Markdown/TXT/HTML/图片/EPUB"
+                "支持 PDF/Word/Excel/PPT/Markdown/TXT/HTML/EPUB"
             ),
         )
     if size > KNOWLEDGE_UPLOAD_MAX_BYTES:
@@ -76,11 +83,20 @@ def _validate_knowledge_upload(file_name: str, size: int) -> None:
         )
 
 
-async def _read_upload_with_limit(file: UploadFile) -> bytes:
+async def _read_upload_with_limit(
+    file: UploadFile,
+    limit_bytes: Optional[int] = None,
+    limit_label: str = "",
+) -> bytes:
     """分块读取并卡上限，避免 ``await file.read()`` 把整个文件读进内存。
 
     不能只信 ``file.size``：部分客户端不传 Content-Length，边读边卡才可靠。
+
+    图片走同一条读取逻辑，只是上限低一个数量级（多模态模型吃不下 256MB 的图）。
     """
+    # 上限在这里取而不是当默认参数：默认值在定义时就绑定了，
+    # 于是 monkeypatch KNOWLEDGE_UPLOAD_MAX_BYTES 对已导入的函数不生效。
+    cap = KNOWLEDGE_UPLOAD_MAX_BYTES if limit_bytes is None else limit_bytes
     chunks: list[bytes] = []
     total = 0
     while True:
@@ -88,10 +104,11 @@ async def _read_upload_with_limit(file: UploadFile) -> bytes:
         if not chunk:
             break
         total += len(chunk)
-        if total > KNOWLEDGE_UPLOAD_MAX_BYTES:
+        if total > cap:
+            label = limit_label or f"{KNOWLEDGE_UPLOAD_MAX_MB}MB"
             raise HTTPException(
                 status_code=413,
-                detail=f"文件超过 {KNOWLEDGE_UPLOAD_MAX_MB}MB 上限，请拆分后再上传",
+                detail=f"文件超过 {label} 上限，请压缩或拆分后再上传",
             )
         chunks.append(chunk)
     return b"".join(chunks)
@@ -401,6 +418,77 @@ async def _attach_agent_refs(db: AsyncSession, items: List[Dict[str, Any]]) -> N
         item["agent_refs"] = agents[:5]
 
 
+async def _attach_grant_counts(db: AsyncSession, items: List[Dict[str, Any]]) -> None:
+    """给列表项补「授权给了多少用户 / 多少角色」。
+
+    列表只回数量，完整名单仍走 ``GET /datasets/{id}/permissions``：数量用来判断
+    「收窄可见范围会影响到多少人」，点进去才需要看具体是谁。
+    """
+    from app.models.permission import ResourcePermission
+    from sqlalchemy import func, select
+
+    dataset_ids = [
+        str(item.get("ragflow_dataset_id") or item.get("id") or "") for item in items
+    ]
+    dataset_ids = [dataset_id for dataset_id in dataset_ids if dataset_id]
+    if not dataset_ids:
+        for item in items:
+            item["grant_user_count"] = 0
+            item["grant_role_count"] = 0
+        return
+
+    # 一次 group by 算全量，避免每个库各查一遍
+    rows = (
+        await db.execute(
+            select(
+                ResourcePermission.resource_id,
+                func.count(func.distinct(ResourcePermission.user_id)),
+                func.count(func.distinct(ResourcePermission.role_id)),
+            )
+            .where(
+                ResourcePermission.resource_type == "dataset",
+                ResourcePermission.resource_id.in_(dataset_ids),
+                ResourcePermission.enabled == True,  # noqa: E712
+            )
+            .group_by(ResourcePermission.resource_id)
+        )
+    ).all()
+    counts = {str(resource_id): (int(users or 0), int(roles or 0)) for resource_id, users, roles in rows}
+
+    for item in items:
+        dataset_id = str(item.get("ragflow_dataset_id") or item.get("id") or "")
+        users, roles = counts.get(dataset_id, (0, 0))
+        item["grant_user_count"] = users
+        item["grant_role_count"] = roles
+
+
+async def _attach_favorites(db: AsyncSession, items: List[Dict[str, Any]], user_id: int) -> None:
+    """标注当前用户是否收藏过这些库。
+
+    「我的收藏」不额外查一套列表接口：收藏是个人视图，列表项上带布尔位，
+    前端按它过滤即可，也避免两个接口的可见范围打架。
+    """
+    dataset_ids = [
+        str(item.get("ragflow_dataset_id") or item.get("id") or "")
+        for item in items
+    ]
+    from sqlalchemy import select
+
+    dataset_ids = [item for item in dataset_ids if item]
+    favorited: set = set()
+    if dataset_ids:
+        rows = await db.execute(
+            select(KnowledgeBaseFavorite.dataset_id).where(
+                KnowledgeBaseFavorite.user_id == user_id,
+                KnowledgeBaseFavorite.dataset_id.in_(dataset_ids),
+            )
+        )
+        favorited = {str(row) for row in rows.scalars().all()}
+    for item in items:
+        dataset_id = str(item.get("ragflow_dataset_id") or item.get("id") or "")
+        item["is_favorited"] = dataset_id in favorited
+
+
 def _normalize_ragflow_items(data: Any) -> List[Dict[str, Any]]:
     items = data.get("data") if isinstance(data, dict) else data
     if isinstance(items, dict):
@@ -594,6 +682,8 @@ async def list_ragflow_datasets(
         _apply_knowledge_permission_flags(merged, access)
         await _attach_owner_user_names(db, merged)
         await _attach_agent_refs(db, merged)
+        await _attach_grant_counts(db, merged)
+        await _attach_favorites(db, merged, int(user["user_id"]))
         total = len(merged)
         if page_size and page_size > 0:
             start = max(0, (page - 1) * page_size)
@@ -1020,6 +1110,112 @@ async def get_retrieval_stats(
     return {"code": 0, "data": data}
 
 
+@router.get("/datasets/quota/me")
+async def get_my_dataset_quota(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """我的知识库配额（与具体某个库无关）。
+
+    左栏配额条和「新建知识库」的额度提示都只需要 owned_datasets：
+    借某个库去查的话，那个库一旦失联或被删就拿不到数，所以单开一个入口。
+    上限取自配置 knowledge_quota_max_datasets_per_user。
+    """
+    limits = await KnowledgeQuotaService.limits()
+    used = await KnowledgeQuotaService.owned_dataset_count(db, int(user["user_id"]))
+    return {
+        "code": 0,
+        "data": {
+            "owned_datasets": {
+                "used": used,
+                "limit": limits["max_datasets_per_user"],
+            },
+            "documents": {
+                "limit": limits["max_documents_per_dataset"],
+            },
+        },
+    }
+
+
+@router.post("/datasets/{dataset_id}/visit")
+async def record_dataset_visit(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """记一次「最近访问」。
+
+    由前端进入某个库时上报一次；Redis 里按人留 30 天，
+    不做去抖是因为 ZSET 的 zadd 本身就是覆盖写，同一库重复访问只更新时间戳。
+    """
+    await require_dataset_access(user, db, [dataset_id])
+    await KnowledgeRecentVisitService.record(user["user_id"], dataset_id)
+    return {"code": 0, "data": {"visited": True}}
+
+
+@router.get("/datasets/recent")
+async def list_recent_datasets(
+    limit: int = 20,
+    user: dict = Depends(get_current_user),
+):
+    """我最近访问过的库（按时间倒序，只回 id）。
+
+    列表项本身仍由 ``GET /datasets`` 提供：这里只负责顺序，
+    避免两套接口各算一次可见范围，出现「最近里有、列表里没有」的库。
+    """
+    payload = await KnowledgeRecentVisitService.snapshot(user["user_id"], limit=limit)
+    return {"code": 0, "data": payload}
+
+
+@router.post("/datasets/{dataset_id}/favorite")
+async def favorite_dataset(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """收藏知识库。
+
+    只要求「可读」：收藏是个人视图，不额外授权，也不改变别人的可见范围。
+    重复收藏幂等（唯一键 uix_kbf_user_dataset 兜底）。
+    """
+    from sqlalchemy import select
+
+    await require_dataset_access(user, db, [dataset_id])
+    user_id = int(user["user_id"])
+    exists = (
+        await db.execute(
+            select(KnowledgeBaseFavorite.id).where(
+                KnowledgeBaseFavorite.user_id == user_id,
+                KnowledgeBaseFavorite.dataset_id == dataset_id,
+            )
+        )
+    ).scalar()
+    if not exists:
+        db.add(KnowledgeBaseFavorite(user_id=user_id, dataset_id=dataset_id))
+        await db.commit()
+    return {"code": 0, "data": {"favorited": True}}
+
+
+@router.delete("/datasets/{dataset_id}/favorite")
+async def unfavorite_dataset(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """取消收藏。没收藏过也返回成功，前端只看结果状态。"""
+    from sqlalchemy import delete
+
+    await require_dataset_access(user, db, [dataset_id])
+    await db.execute(
+        delete(KnowledgeBaseFavorite).where(
+            KnowledgeBaseFavorite.user_id == int(user["user_id"]),
+            KnowledgeBaseFavorite.dataset_id == dataset_id,
+        )
+    )
+    await db.commit()
+    return {"code": 0, "data": {"favorited": False}}
+
+
 @router.get("/datasets/{dataset_id}/quota")
 async def get_dataset_quota(
     dataset_id: str,
@@ -1347,6 +1543,10 @@ async def delete_ragflow_datasets(
 
         await metadata_service.mark_deleted(payload.ids, user_name=user.get("user_name"))
         clear_dataset_list_cache()
+        # 原图与 md 快照是本地文件，RAGFlow 删库不会带它们走。
+        # 放在 mark_deleted 之后：前面的步骤抛异常就不清，免得库还在、图先没了。
+        for dataset_id in payload.ids:
+            image_service.delete_dataset_images(dataset_id)
         await record_knowledge_audit(request, user, "datasets:delete", 200, {
             "action": "delete_dataset",
             "dataset_ids": payload.ids,
@@ -1695,6 +1895,195 @@ async def replace_dataset_document(
         raise
 
 
+# ── 图片 → Markdown ──────────────────────────────────────────────────────
+# 图片不走 RAGFlow 的图片解析（当前部署没有可用的视觉链路），而是先用系统配置的
+# 多模态模型读成 md，再把 md 当普通文档入库。原图只留平台附件，用于事后核对。
+
+@router.get("/datasets/{dataset_id}/images/source-info/{md_filename}")
+async def get_dataset_image_source_info(
+    dataset_id: str,
+    md_filename: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """文档详情里「查看原图」的探测。
+
+    前端拿到 ``exists: true`` 才渲染入口，避免点开是裂图或 404。
+    入参是 **md 文件名**（RAGFlow 里的文档名），原图名靠哈希尾巴反查。
+    返回的 ``url`` 交给 ``<img src>``：同源请求会带 cookie，鉴权仍由下载端点负责。
+    """
+    await require_dataset_access(user, db, [dataset_id])
+    path = image_service.source_path_for_markdown(dataset_id, md_filename)
+    if not path:
+        return {"code": 0, "data": {"exists": False}}
+    name = os.path.basename(path)
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return {"code": 0, "data": {"exists": False}}
+    return {
+        "code": 0,
+        "data": {
+            "exists": True,
+            "name": name,
+            "size": size,
+            "content_type": image_service.mime_for_extension(name),
+            "url": f"/api/portal/ragflow/datasets/{dataset_id}/images/source/{name}",
+        },
+    }
+
+
+@router.get("/datasets/{dataset_id}/images/source/{file_name}")
+async def get_dataset_image_source(
+    dataset_id: str,
+    file_name: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """按库读权限取原图。
+
+    原图目录已经从 ``data/uploads`` 挪走，不再被 ``/static/uploads`` 无鉴权托管；
+    要拿到图片只能经过这里的 ``require_dataset_access``。
+    """
+    await require_dataset_access(user, db, [dataset_id])
+    path = image_service.absolute_source_path(dataset_id, file_name)
+    if not path:
+        raise HTTPException(status_code=404, detail="原图不存在")
+    return FileResponse(
+        path,
+        media_type=image_service.mime_for_extension(file_name),
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+class ImageCommitPayload(BaseModel):
+    """确认入库的 md 正文。
+
+    文件名与正文都由前端回传：解析和确认之间用户可能改过内容，服务端不做二次生成。
+    """
+
+    md_filename: str = Field(..., min_length=1, max_length=200)
+    markdown: str = Field(..., min_length=1, max_length=2_000_000)
+
+
+@router.get("/knowledge-images/vision-model")
+async def get_vision_model_status(user: dict = Depends(get_current_user)):
+    """前端据此决定「图片」tab 是否可用，以及置灰时给什么引导。"""
+    model = await resolve_default_multimodal_model_name()
+    return {"code": 0, "data": {"ready": bool(model), "model": model}}
+
+
+@router.post("/datasets/{dataset_id}/images/parse")
+async def parse_dataset_image(
+    dataset_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """单张图片 → Markdown。只返回结果，不入库、不占配额。"""
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:upload_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    file_name = file.filename or "image.png"
+    if not image_service.is_supported_image(file_name):
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"不支持的图片格式「{image_service.image_extension(file_name) or '无扩展名'}」，"
+                "支持 PNG/JPG/WEBP"
+            ),
+        )
+
+    model = await resolve_default_multimodal_model_name()
+    if not model:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "系统还没有配置可用的默认多模态模型，图片无法解析。"
+                "请管理员在「系统配置 · 模型配置」里指定 multimodal/vision 类型的模型。"
+            ),
+        )
+
+    blob = await _read_upload_with_limit(
+        file,
+        limit_bytes=image_service.MAX_IMAGE_BYTES,
+        limit_label=f"{image_service.MAX_IMAGE_MB}MB",
+    )
+    image_service.save_source_image(dataset_id, file_name, blob)
+
+    try:
+        result = await image_service.image_to_markdown(
+            dataset_id=dataset_id, file_name=file_name, blob=blob, model=model
+        )
+    except Exception as e:
+        await record_knowledge_audit(request, user, "documents:upload", 502, {
+            "action": "parse_image",
+            "dataset_id": dataset_id,
+            "file_name": file_name,
+        }, error_message=str(e), started_at=started)
+        raise HTTPException(status_code=502, detail=f"图片解析失败：{e}")
+
+    await record_knowledge_audit(request, user, "documents:upload", 200, {
+        "action": "parse_image",
+        "dataset_id": dataset_id,
+        "file_name": file_name,
+        "model": model,
+        "char_count": result["char_count"],
+    }, started_at=started)
+    return {"code": 0, "data": result}
+
+
+@router.post("/datasets/{dataset_id}/images/commit")
+async def commit_dataset_image_markdown(
+    dataset_id: str,
+    payload: ImageCommitPayload,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """把用户确认后的 md 当普通文档上传，走与文档完全相同的入库链路。"""
+    started = time.time()
+    await require_element_permission(user, db, "element:knowledge:upload_document")
+    await require_dataset_content_write_access(user, db, [dataset_id])
+
+    md_filename = os.path.basename(payload.md_filename or "").strip()
+    if not md_filename.lower().endswith(".md"):
+        raise HTTPException(status_code=400, detail="文件名必须以 .md 结尾")
+
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        await KnowledgeQuotaService.ensure_can_upload(client, dataset_id, incoming=1)
+        uploaded = await client.upload_document(
+            dataset_id,
+            md_filename,
+            payload.markdown.encode("utf-8"),
+            "text/markdown",
+        )
+        await record_knowledge_audit(request, user, "documents:upload", 200, {
+            "action": "upload_image_markdown",
+            "dataset_id": dataset_id,
+            "file_name": md_filename,
+            "char_count": len(payload.markdown),
+        }, started_at=started)
+        return {"code": 0, "data": uploaded}
+    except QuotaExceeded as quota_err:
+        await record_knowledge_audit(request, user, "documents:upload", 400, {
+            "action": "upload_image_markdown",
+            "dataset_id": dataset_id,
+            "file_name": md_filename,
+        }, error_message=str(quota_err), started_at=started)
+        raise HTTPException(status_code=400, detail=str(quota_err))
+    except Exception as e:
+        await record_knowledge_audit(request, user, "documents:upload", _audit_status_code(e), {
+            "action": "upload_image_markdown",
+            "dataset_id": dataset_id,
+            "file_name": md_filename,
+        }, error_message=str(e), started_at=started)
+        raise
+
+
 @router.delete("/datasets/{dataset_id}/documents")
 async def delete_dataset_documents(
     dataset_id: str,
@@ -1709,8 +2098,24 @@ async def delete_dataset_documents(
     if not payload.ids:
         raise HTTPException(status_code=400, detail="No document ids provided")
     client = RagFlowClient(config_prefix="knowledge_ragflow")
+    # 删除接口只吃 document_id，返回的也没有文件名，所以先查一次名字：
+    # 图片转来的文档靠「原图与 md 同名（仅后缀不同）」反查本地原图。
+    # 查不到就跳过清理，不能让一次列表失败挡住删除本身。
+    try:
+        listed = await client.list_documents(dataset_id, page=1, page_size=1000)
+        wanted = set(payload.ids)
+        names_by_id = {
+            str(doc.get("id")): doc.get("name")
+            for doc in (listed or [])
+            if str(doc.get("id")) in wanted and doc.get("name")
+        }
+    except Exception as exc:  # noqa: BLE001 - 清原图是旁路
+        logger.warning("删除文档前取文件名失败（跳过原图清理）: %s", exc)
+        names_by_id = {}
     try:
         await client.delete_documents(dataset_id, payload.ids)
+        for name in names_by_id.values():
+            image_service.delete_source_for_markdown(dataset_id, name)
         await record_knowledge_audit(request, user, "documents:delete", 200, {
             "action": "delete_document",
             "dataset_id": dataset_id,

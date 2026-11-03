@@ -22,9 +22,11 @@ def page() -> str:
 def test_detail_page_has_audit_tab(page):
     assert "detailTab" in page
     assert "操作日志" in page
-    # 切换的是「文档与设置 / 操作日志」两个视图
-    assert "'documents', label: '文档与设置'" in page
+    # 文档常驻主区，库设置/操作日志/引用授权收进右侧浮层抽屉
+    assert "openLibDrawer" in page
+    assert "'settings', label: '库设置'" in page
     assert "'audit', label: '操作日志'" in page
+    assert "'references', label: '引用与授权'" in page
 
 
 def test_audit_log_is_rendered_as_readable_sentence(page):

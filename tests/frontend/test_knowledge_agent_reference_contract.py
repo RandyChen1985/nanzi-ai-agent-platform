@@ -33,9 +33,10 @@ def test_references_tab_lists_agents_and_grants_separately(page: str) -> None:
     assert "给角色分配知识库不等于智能体会用它" in page
 
 
-def test_detail_header_shows_reference_slot_even_when_zero(page: str) -> None:
-    """0 引用时也要有「未被智能体引用」，否则没人知道这里有这个维度。"""
-    assert "未被智能体引用" in page
+def test_detail_header_links_to_references(page: str) -> None:
+    """头部改成原型那排按钮后，「引用与授权」收进「更多」，入口仍在。"""
+    assert "openDatasetReferences" in page
+    assert "引用与授权" in page
 
 
 def test_delete_confirm_lists_referencing_agents(page: str) -> None:

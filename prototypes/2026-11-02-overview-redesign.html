@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>系统概览 · 美化方案</title>
+<style>
+  :root {
+    --blue: #2563eb;
+    --blue-deep: #1d4ed8;
+    --blue-soft: #eff6ff;
+    --amber-deep: #b45309;
+    --amber-soft: #fffbeb;
+    --green-deep: #047857;
+    --green-soft: #ecfdf5;
+    --red: #ef4444;
+    --red-soft: #fef2f2;
+    --ink: #0f172a;
+    --ink-2: #334155;
+    --ink-3: #64748b;
+    --ink-4: #94a3b8;
+    --line: #e8edf3;
+    --line-2: #f1f5f9;
+    --card: #ffffff;
+    --bg: #f6f8fb;
+    --radius: 16px;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, .04), 0 1px 3px rgba(15, 23, 42, .03);
+    --shadow-md: 0 2px 4px rgba(15, 23, 42, .04), 0 8px 24px -8px rgba(15, 23, 42, .08);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.5;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "PingFang SC",
+      "Helvetica Neue", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+  /* ===== 切换条 ===== */
+  .switcher {
+    position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 16px;
+    padding: 12px 32px; background: rgba(255, 255, 255, .9);
+    backdrop-filter: saturate(180%) blur(12px); border-bottom: 1px solid var(--line);
+  }
+  .switcher h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-3); }
+  .tabs { display: flex; gap: 4px; padding: 3px; background: var(--line-2); border-radius: 10px; }
+  .tabs button {
+    appearance: none; border: 0; background: transparent; padding: 6px 14px; border-radius: 7px;
+    font-size: 13px; font-weight: 600; color: var(--ink-3); cursor: pointer;
+    font-family: inherit; transition: all .16s ease;
+  }
+  .tabs button:hover { color: var(--ink); }
+  .tabs button[aria-selected="true"] { background: #fff; color: var(--blue); box-shadow: var(--shadow-sm); }
+  .switcher .hint { margin-left: auto; font-size: 12px; color: var(--ink-4); }
+
+  /* ===== 骨架 ===== */
+  .page { max-width: 1560px; margin: 0 auto; padding: 24px 32px 64px; }
+  .variant[hidden] { display: none; }
+
+  .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+  .page-head h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+  .page-head .sub { margin: 4px 0 0; font-size: 13px; color: var(--ink-3); }
+  .toolbar { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .tb-btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 9px;
+    border: 1px solid transparent; background: transparent; font-size: 13px; font-weight: 500;
+    color: var(--ink-3); cursor: pointer; font-family: inherit; transition: all .14s ease;
+  }
+  .tb-btn:hover { background: #fff; color: var(--ink); box-shadow: var(--shadow-sm); }
+  .tb-btn svg { width: 14px; height: 14px; }
+  .tb-btn.is-active { background: #fff; color: var(--blue); box-shadow: var(--shadow-sm); }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 15px 20px; border-bottom: 1px solid var(--line-2);
+  }
+  .card-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); flex-shrink: 0; }
+  .card-sub { font-size: 12px; color: var(--ink-4); }
+  .card-body { padding: 20px; }
+
+  /* ===== 顶部：主角卡 + 次级卡 ===== */
+  .top-grid {
+    display: grid; grid-template-columns: 1.62fr repeat(4, minmax(0, 1fr));
+    gap: 14px; margin-bottom: 16px;
+  }
+
+  /* 主角卡：不再是整块蓝，用极淡冷色底 + 左侧主色竖条建立层级 */
+  .hero {
+    position: relative; display: flex; flex-direction: column; justify-content: space-between;
+    gap: 12px; padding: 15px 18px 14px; border-radius: 14px;
+    background: linear-gradient(135deg, #f7faff 0%, #ffffff 64%);
+    border: 1px solid #e4ecf9; box-shadow: var(--shadow-sm); overflow: hidden;
+  }
+  .hero::before {
+    content: ""; position: absolute; left: 0; top: 15px; bottom: 15px;
+    width: 3px; border-radius: 0 3px 3px 0; background: var(--blue);
+  }
+  .hero-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
+  .hero-label { font-size: 12.5px; font-weight: 500; color: var(--ink-3); }
+  .hero-value {
+    font-size: 37px; font-weight: 700; letter-spacing: -.035em; line-height: 1;
+    margin-top: 5px; color: var(--ink);
+  }
+  .hero-value .unit { font-size: 17px; font-weight: 600; color: var(--ink-3); margin-left: 2px; letter-spacing: 0; }
+  .hero-side { text-align: right; font-size: 11.5px; color: var(--ink-4); line-height: 1.7; padding-bottom: 3px; }
+  .hero-side strong { color: var(--ink-2); font-weight: 650; }
+  .hero-side .fail { color: var(--amber-deep); font-weight: 650; }
+  .hero-bar { height: 5px; border-radius: 999px; background: #eef2f7; overflow: hidden; }
+  .hero-bar > span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #34d399, #10b981); }
+  .hero-bar.is-warn > span { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+
+  .mini {
+    background: #fff; border: 1px solid var(--line); border-radius: 14px;
+    padding: 14px 15px; box-shadow: var(--shadow-sm);
+    display: flex; flex-direction: column; justify-content: space-between; gap: 9px;
+    transition: box-shadow .18s ease, transform .18s ease;
+  }
+  .mini:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .mini-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); font-weight: 500; }
+  .mini-label svg { width: 13px; height: 13px; flex-shrink: 0; }
+  .mini-value { font-size: 23px; font-weight: 700; letter-spacing: -.022em; line-height: 1.1; }
+  .mini-value .unit { font-size: 12.5px; font-weight: 600; color: var(--ink-4); margin-left: 2px; letter-spacing: 0; }
+  .mini-foot { font-size: 11px; color: var(--ink-4); }
+  .mini-foot strong { color: var(--ink-2); font-weight: 600; }
+
+  /* ===== 异常条 ===== */
+  .alert-strip {
+    display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: 12px;
+    margin-bottom: 16px; background: var(--amber-soft); border: 1px solid #fde68a;
+    font-size: 12.5px; color: #92400e;
+  }
+  .alert-strip svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .alert-strip strong { font-weight: 700; }
+  .alert-strip a { color: var(--amber-deep); font-weight: 650; text-decoration: none; border-bottom: 1px solid rgba(180, 83, 9, .35); }
+  .alert-close {
+    margin-left: auto; flex: 0 0 auto; display: grid; place-items: center; width: 22px; height: 22px;
+    border: 0; border-radius: 6px; background: transparent; color: #b45309; opacity: .55; cursor: pointer;
+    transition: opacity .15s, background .15s;
+  }
+  .alert-close:hover { opacity: 1; background: rgba(180, 83, 9, .12); }
+  .alert-close svg { width: 13px; height: 13px; }
+
+  /* ===== 中部 ===== */
+  .mid-grid { display: grid; grid-template-columns: 1.32fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .mid-right { display: flex; flex-direction: column; gap: 16px; }
+
+  .rank-list { display: flex; flex-direction: column; gap: 10px; }
+  .rank-row { display: grid; grid-template-columns: 1fr 46px; gap: 10px; align-items: center; }
+  .rank-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .rank-name-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .rank-name {
+    font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  .rank-count { font-size: 12px; font-weight: 650; color: var(--ink-2); flex-shrink: 0; }
+  .rank-track { height: 6px; border-radius: 999px; background: #f1f5f9; overflow: hidden; }
+  .rank-fill { height: 100%; border-radius: 999px; }
+  .rank-pct { font-size: 11px; color: var(--ink-4); text-align: right; }
+
+  .sub-block { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line); }
+  .sub-block-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+  .sub-block-head span { font-size: 11.5px; font-weight: 600; color: var(--ink-4); }
+  .sub-block-head a { font-size: 11px; color: var(--blue); text-decoration: none; font-weight: 600; }
+  .fail-row { display: flex; align-items: center; gap: 9px; font-size: 11.5px; }
+  .fail-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
+  .fail-tool { font-family: ui-monospace, Menlo, monospace; color: var(--ink-2); flex-shrink: 0; }
+  .fail-msg { color: var(--ink-4); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fail-time { color: var(--ink-4); flex-shrink: 0; }
+
+  .trend-svg { width: 100%; height: 150px; display: block; }
+  .trend-x { display: flex; justify-content: space-between; font-size: 9.5px; color: var(--ink-4); margin-top: 2px; }
+
+  .kpi-list { display: flex; flex-direction: column; }
+  .kpi-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 0; border-bottom: 1px dashed var(--line);
+  }
+  .kpi-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+  .kpi-row:first-child { padding-top: 2px; }
+  .kpi-name { font-size: 12.5px; color: var(--ink-3); }
+  .kpi-right { display: flex; align-items: center; gap: 9px; }
+  .kpi-value { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600; white-space: nowrap;
+  }
+  .badge.ok { background: var(--green-soft); color: var(--green-deep); }
+  .badge.warn { background: var(--amber-soft); color: var(--amber-deep); }
+
+  /* ===== 底部 ===== */
+  .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+  .table { width: 100%; border-collapse: collapse; }
+  .table th {
+    text-align: left; font-size: 10.5px; font-weight: 600; color: var(--ink-4);
+    padding: 0 14px 9px 0; text-transform: uppercase; letter-spacing: .03em;
+  }
+  .table th:last-child, .table td:last-child { text-align: right; padding-right: 0; }
+  .table td { padding: 9px 14px 9px 0; border-top: 1px solid var(--line-2); font-size: 12px; color: var(--ink-2); }
+  .table td.num { text-align: right; font-weight: 650; }
+  .pill { display: inline-flex; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; }
+  .pill.ok { background: var(--green-soft); color: var(--green-deep); }
+  .pill.err { background: var(--red-soft); color: #b91c1c; }
+
+  .token-bar { display: flex; flex-direction: column; gap: 11px; }
+  .token-row { display: grid; grid-template-columns: 92px 1fr 52px; gap: 10px; align-items: center; }
+  .token-name { font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .token-track { height: 7px; border-radius: 999px; background: #f1f5f9; overflow: hidden; }
+  .token-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #93c5fd, #3b82f6); }
+  .token-val { font-size: 11.5px; color: var(--ink-4); text-align: right; }
+
+  .quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .quick-item {
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: #fcfdfe;
+    transition: all .16s ease;
+  }
+  .quick-item:hover { background: #fff; border-color: #dbe6f5; box-shadow: var(--shadow-sm); }
+  .quick-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .quick-ico { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; flex-shrink: 0; }
+  .quick-ico svg { width: 13px; height: 13px; }
+  .quick-head h4 { margin: 0; font-size: 12.5px; font-weight: 650; }
+  .quick-item p { margin: 0 0 9px; font-size: 11.5px; color: var(--ink-4); line-height: 1.5; }
+  .quick-item a { font-size: 11.5px; font-weight: 600; color: var(--blue); text-decoration: none; }
+
+  .placeholder { font-size: 11.5px; color: var(--ink-4); text-align: center; padding: 26px 0; }
+  .anno {
+    display: inline-block; margin-left: 7px; padding: 1px 6px; border-radius: 5px;
+    background: var(--blue-soft); color: var(--blue-deep); font-size: 10px; font-weight: 650;
+  }
+  .anno.fix { background: var(--green-soft); color: var(--green-deep); }
+
+  @media (max-width: 1180px) {
+    .top-grid { grid-template-columns: 1.62fr repeat(2, minmax(0, 1fr)); }
+    .mid-grid { grid-template-columns: 1fr; }
+    .bottom-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="switcher">
+  <h2>系统概览 · 美化方案</h2>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-target="view-admin">管理员 · 系统概览</button>
+    <button role="tab" aria-selected="false" data-target="view-user">平台用户 · 我的概览</button>
+  </div>
+  <span class="hint" id="hint">成功率主角化 + 工具排行 + 异常直达</span>
+</div>
+
+<!-- ==================== 管理员 ==================== -->
+<section class="variant" id="view-admin">
+  <div class="page">
+    <div class="page-head">
+      <div>
+        <h1>系统概览</h1>
+        <p class="sub">平台运行状态与智能体健康度 · 数据更新于 14:35</p>
+      </div>
+      <div class="toolbar">
+        <button class="tb-btn is-active">今日
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <button class="tb-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          刷新
+        </button>
+        <button class="tb-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          部署检查
+        </button>
+      </div>
+    </div>
+
+    <div class="top-grid">
+      <div class="hero">
+        <div class="hero-top">
+          <div>
+            <div class="hero-label">接口成功率</div>
+            <div class="hero-value num">99.16<span class="unit">%</span></div>
+          </div>
+          <div class="hero-side">
+            <strong class="num">1,418</strong> / <strong class="num">1,430</strong> 次成功<br>
+            <span class="fail num">12</span> 次失败
+          </div>
+        </div>
+        <div class="hero-bar"><span style="width:99.16%"></span></div>
+      </div>
+
+      <div class="mini">
+        <div class="mini-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          API 调用
+        </div>
+        <div class="mini-value num">1,430</div>
+        <div class="mini-foot">今日累计</div>
+      </div>
+
+      <div class="mini">
+        <div class="mini-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2"><path d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+          Token 消耗
+        </div>
+        <div class="mini-value num">2.8<span class="unit">M</span></div>
+        <div class="mini-foot">入 2.75M · 出 47.6K</div>
+      </div>
+
+      <div class="mini">
+        <div class="mini-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          用户
+        </div>
+        <div class="mini-value num">35</div>
+        <div class="mini-foot">活跃 <strong>21</strong> · 占 60%</div>
+      </div>
+
+      <div class="mini">
+        <div class="mini-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          工具成功率
+        </div>
+        <div class="mini-value num">96.67<span class="unit">%</span></div>
+        <div class="mini-foot">30 次工具调用</div>
+      </div>
+    </div>
+
+    <div class="alert-strip">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10.29 3.86a2 2 0 013.42 0l8.6 14.86A2 2 0 0120.6 21H3.4a2 2 0 01-1.71-2.28z"/>
+        <path d="M12 9v4"/><path d="M12 17h.01"/>
+      </svg>
+      <span>今日 <strong class="num">12</strong> 次调用失败，集中在 <strong>sub_agent_call</strong> 与 <strong>mcp-public-admin</strong></span>
+      <button type="button" class="alert-close" title="今天不再提示" aria-label="关闭提示"
+        onclick="this.closest('.alert-strip').remove()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="mid-grid">
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title"><span class="dot"></span>工具调用分布<span class="anno fix">图例不再被裁切</span></h3>
+          <span class="card-sub">今日 · 共 30 次</span>
+        </div>
+        <div class="card-body">
+          <div class="rank-list">
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name" title="agentscope_model_call">agentscope_model_call</span><span class="rank-count num">12</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:40%;background:linear-gradient(90deg,#3b5bdb,#4c6ef5)"></div></div>
+              </div>
+              <div class="rank-pct num">40.0%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name" title="system_http_request">system_http_request</span><span class="rank-count num">6</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:20%;background:linear-gradient(90deg,#52b788,#74c69d)"></div></div>
+              </div>
+              <div class="rank-pct num">20.0%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name" title="Bash">Bash</span><span class="rank-count num">4</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:13.3%;background:linear-gradient(90deg,#f0a500,#f6bd60)"></div></div>
+              </div>
+              <div class="rank-pct num">13.3%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name" title="todo_write">todo_write</span><span class="rank-count num">2</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:6.7%;background:linear-gradient(90deg,#e56b6f,#f28482)"></div></div>
+              </div>
+              <div class="rank-pct num">6.7%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name" title="sub_agent_call">sub_agent_call</span><span class="rank-count num">2</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:6.7%;background:linear-gradient(90deg,#5aa9d6,#84c5e8)"></div></div>
+              </div>
+              <div class="rank-pct num">6.7%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name" title="mcp-public-admin-hcp_get-tickets_12ee6abffd">mcp-public-admin-hcp_get-tickets_12ee6abffd</span><span class="rank-count num">1</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:3.3%;background:#94a3b8"></div></div>
+              </div>
+              <div class="rank-pct num">3.3%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name" title="search / get_rag_flow / mcp_rag_search / Glob / mcp_metrics_query / publish_generated_file">其余 6 项：search、get_rag_flow、mcp_rag_search…</span><span class="rank-count num">6</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:20%;background:#cbd5e1"></div></div>
+              </div>
+              <div class="rank-pct num">20.0%</div>
+            </div>
+          </div>
+
+          <div class="sub-block">
+            <div class="sub-block-head">
+              <span>最近失败</span>
+              <a href="#">全部 →</a>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:7px">
+              <div class="fail-row">
+                <span class="fail-dot"></span>
+                <span class="fail-tool">sub_agent_call</span>
+                <span class="fail-msg">上游超时 30s</span>
+                <span class="fail-time">14:12</span>
+              </div>
+              <div class="fail-row">
+                <span class="fail-dot"></span>
+                <span class="fail-tool">mcp-public-admin</span>
+                <span class="fail-msg">连接被拒绝</span>
+                <span class="fail-time">13:48</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mid-right">
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title"><span class="dot"></span>执行耗时趋势</h3>
+            <span class="card-sub">24h · 峰值 20,000ms</span>
+          </div>
+          <div class="card-body">
+            <svg class="trend-svg" viewBox="0 0 340 150" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="gAdmin" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#f59e0b" stop-opacity=".26"/>
+                  <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <line x1="0" y1="96" x2="340" y2="96" stroke="#fca5a5" stroke-width="1" stroke-dasharray="4 4"/>
+              <text x="4" y="92" style="font-size:9px;fill:#f87171">5,000ms 阈值</text>
+              <line x1="0" y1="120" x2="340" y2="120" stroke="#f1f5f9"/>
+              <line x1="0" y1="80" x2="340" y2="80" stroke="#f1f5f9"/>
+              <line x1="0" y1="40" x2="340" y2="40" stroke="#f1f5f9"/>
+              <rect x="196" y="0" width="46" height="150" fill="#fef3c7" opacity=".55"/>
+              <path d="M4,30 C28,46 52,62 76,64 C100,66 124,98 148,112 L172,114 C196,116 220,102 244,58 C254,38 264,8 274,14 C284,32 294,108 304,100 C314,92 324,108 334,102 L334,150 L4,150 Z" fill="url(#gAdmin)"/>
+              <path d="M4,30 C28,46 52,62 76,64 C100,66 124,98 148,112 L172,114 C196,116 220,102 244,58 C254,38 264,8 274,14 C284,32 294,108 304,100 C314,92 324,108 334,102" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="274" cy="14" r="3.6" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
+              <text x="282" y="12" style="font-size:9.5px;font-weight:700;fill:#b45309">20,000</text>
+            </svg>
+            <div class="trend-x"><span>15:00</span><span>19:00</span><span>23:00</span><span>03:00</span><span>07:00</span><span>11:00</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title"><span class="dot"></span>核心指标</h3>
+          </div>
+          <div class="card-body" style="padding-top:8px;padding-bottom:16px">
+            <div class="kpi-list">
+              <div class="kpi-row">
+                <span class="kpi-name">工具成功率</span>
+                <span class="kpi-right"><span class="badge ok">正常</span><span class="kpi-value num">96.67%</span></span>
+              </div>
+              <div class="kpi-row">
+                <span class="kpi-name">平均执行耗时</span>
+                <span class="kpi-right"><span class="badge warn">偏高</span><span class="kpi-value num" style="color:#b45309">6,053ms</span></span>
+              </div>
+              <div class="kpi-row">
+                <span class="kpi-name">总工具调用</span>
+                <span class="kpi-right"><span class="kpi-value num">30</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom-grid">
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title"><span class="dot"></span>智能体性能排行</h3>
+          <span class="card-sub">按调用量</span>
+        </div>
+        <div class="card-body" style="padding-top:12px">
+          <table class="table">
+            <thead><tr><th>智能体</th><th>调用</th><th>平均耗时</th><th>成功率</th></tr></thead>
+            <tbody>
+              <tr><td>主助手 (Main)</td><td class="num">486</td><td>2,140ms</td><td><span class="pill ok">99.8%</span></td></tr>
+              <tr><td>数据智能助手</td><td class="num">312</td><td>8,420ms</td><td><span class="pill ok">97.1%</span></td></tr>
+              <tr><td>知识库助手</td><td class="num">241</td><td>3,680ms</td><td><span class="pill ok">99.2%</span></td></tr>
+              <tr><td>元数据专家</td><td class="num">58</td><td>12,900ms</td><td><span class="pill err">88.3%</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title"><span class="dot"></span>Token 消耗分布</h3>
+          <span class="card-sub">今日 · 共 2.8M</span>
+        </div>
+        <div class="card-body" style="padding-top:16px">
+          <div class="token-bar">
+            <div class="token-row">
+              <span class="token-name">数据智能助手</span>
+              <div class="token-track"><div class="token-fill" style="width:100%"></div></div>
+              <span class="token-val num">1.24M</span>
+            </div>
+            <div class="token-row">
+              <span class="token-name">主助手</span>
+              <div class="token-track"><div class="token-fill" style="width:63%"></div></div>
+              <span class="token-val num">786K</span>
+            </div>
+            <div class="token-row">
+              <span class="token-name">知识库助手</span>
+              <div class="token-track"><div class="token-fill" style="width:41%"></div></div>
+              <span class="token-val num">512K</span>
+            </div>
+            <div class="token-row">
+              <span class="token-name">内容创作助手</span>
+              <div class="token-track"><div class="token-fill" style="width:16%"></div></div>
+              <span class="token-val num">198K</span>
+            </div>
+            <div class="token-row">
+              <span class="token-name">元数据专家</span>
+              <div class="token-track"><div class="token-fill" style="width:6%"></div></div>
+              <span class="token-val num">74K</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+      <div class="card">
+        <div class="card-head"><h3 class="card-title"><span class="dot"></span>最近用户</h3><span class="card-sub">近 7 天新增</span></div>
+        <div class="card-body" style="padding-top:8px"><div class="placeholder">RecentUsersCard（沿用现有组件与样式）</div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3 class="card-title"><span class="dot"></span>24h 请求趋势</h3><span class="card-sub">全部接口</span></div>
+        <div class="card-body" style="padding-top:8px"><div class="placeholder">RequestTrendChart（沿用现有组件与样式）</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 平台用户 ==================== -->
+<section class="variant" id="view-user" hidden>
+  <div class="page">
+    <div class="page-head">
+      <div>
+        <h1>我的概览</h1>
+        <p class="sub">我的调用概况与智能体表现 · 数据更新于 14:35</p>
+      </div>
+      <div class="toolbar">
+        <button class="tb-btn is-active">今日
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <button class="tb-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          刷新
+        </button>
+      </div>
+    </div>
+
+    <div class="top-grid">
+      <div class="hero">
+        <div class="hero-top">
+          <div>
+            <div class="hero-label">我的成功率</div>
+            <div class="hero-value num">98.60<span class="unit">%</span></div>
+          </div>
+          <div class="hero-side">
+            <strong class="num">282</strong> / <strong class="num">286</strong> 次成功<br>
+            <span class="fail num">4</span> 次失败
+          </div>
+        </div>
+        <div class="hero-bar is-warn"><span style="width:98.6%"></span></div>
+      </div>
+
+      <div class="mini">
+        <div class="mini-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          我的调用
+        </div>
+        <div class="mini-value num">286</div>
+        <div class="mini-foot">今日 · 日均 240</div>
+      </div>
+
+      <div class="mini">
+        <div class="mini-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2"><path d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+          我的 Token
+        </div>
+        <div class="mini-value num">412<span class="unit">K</span></div>
+        <div class="mini-foot">入 398K · 出 14K</div>
+      </div>
+
+      <div class="mini">
+        <div class="mini-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          平均响应
+        </div>
+        <div class="mini-value num">3,240<span class="unit">ms</span></div>
+        <div class="mini-foot">较昨日持平</div>
+      </div>
+
+      <div class="mini">
+        <div class="mini-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+          API Key
+        </div>
+        <div class="mini-value" style="font-size:19px;color:#047857">正常</div>
+        <div class="mini-foot">末次使用 14:31</div>
+      </div>
+    </div>
+
+    <div class="alert-strip">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10.29 3.86a2 2 0 013.42 0l8.6 14.86A2 2 0 0120.6 21H3.4a2 2 0 01-1.71-2.28z"/>
+        <path d="M12 9v4"/><path d="M12 17h.01"/>
+      </svg>
+      <span>今日有 <strong class="num">4</strong> 次调用失败，均为 <strong>execute_sql_query</strong> 超时</span>
+      <button type="button" class="alert-close" title="今天不再提示" aria-label="关闭提示"
+        onclick="this.closest('.alert-strip').remove()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="mid-grid">
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title"><span class="dot"></span>我的工具使用</h3>
+          <span class="card-sub">今日 · 共 186 次</span>
+        </div>
+        <div class="card-body">
+          <div class="rank-list">
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name">agentscope_model_call</span><span class="rank-count num">98</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:52.7%;background:linear-gradient(90deg,#3b5bdb,#4c6ef5)"></div></div>
+              </div>
+              <div class="rank-pct num">52.7%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name">execute_sql_query</span><span class="rank-count num">42</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:22.6%;background:linear-gradient(90deg,#52b788,#74c69d)"></div></div>
+              </div>
+              <div class="rank-pct num">22.6%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name">search_knowledge_base</span><span class="rank-count num">31</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:16.7%;background:linear-gradient(90deg,#f0a500,#f6bd60)"></div></div>
+              </div>
+              <div class="rank-pct num">16.7%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name">system_http_request</span><span class="rank-count num">24</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:12.9%;background:linear-gradient(90deg,#5aa9d6,#84c5e8)"></div></div>
+              </div>
+              <div class="rank-pct num">12.9%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name">publish_generated_file</span><span class="rank-count num">18</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:9.7%;background:linear-gradient(90deg,#e56b6f,#f28482)"></div></div>
+              </div>
+              <div class="rank-pct num">9.7%</div>
+            </div>
+            <div class="rank-row">
+              <div class="rank-main">
+                <div class="rank-name-row"><span class="rank-name">其余 3 项：get_dataset_schema、read_file、Glob</span><span class="rank-count num">9</span></div>
+                <div class="rank-track"><div class="rank-fill" style="width:4.8%;background:#cbd5e1"></div></div>
+              </div>
+              <div class="rank-pct num">4.8%</div>
+            </div>
+          </div>
+
+          <div class="sub-block">
+            <div class="sub-block-head">
+              <span>我的最近失败</span>
+              <a href="#">全部 →</a>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:7px">
+              <div class="fail-row">
+                <span class="fail-dot"></span>
+                <span class="fail-tool">execute_sql_query</span>
+                <span class="fail-msg">查询超时 30s</span>
+                <span class="fail-time">13:52</span>
+              </div>
+              <div class="fail-row">
+                <span class="fail-dot"></span>
+                <span class="fail-tool">execute_sql_query</span>
+                <span class="fail-msg">查询超时 30s</span>
+                <span class="fail-time">11:20</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mid-right">
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title"><span class="dot"></span>我的耗时趋势</h3>
+            <span class="card-sub">24h · 峰值 9,800ms</span>
+          </div>
+          <div class="card-body">
+            <svg class="trend-svg" viewBox="0 0 340 150" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="gUser" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#60a5fa" stop-opacity=".24"/>
+                  <stop offset="100%" stop-color="#60a5fa" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <line x1="0" y1="96" x2="340" y2="96" stroke="#fca5a5" stroke-width="1" stroke-dasharray="4 4"/>
+              <text x="4" y="92" style="font-size:9px;fill:#f87171">5,000ms 阈值</text>
+              <line x1="0" y1="120" x2="340" y2="120" stroke="#f1f5f9"/>
+              <line x1="0" y1="80" x2="340" y2="80" stroke="#f1f5f9"/>
+              <line x1="0" y1="40" x2="340" y2="40" stroke="#f1f5f9"/>
+              <path d="M4,58 C28,66 52,84 76,88 C100,92 124,88 148,96 L172,98 C196,100 220,64 244,44 C254,36 264,26 274,22 C284,18 294,86 304,92 C314,96 324,98 334,100 L334,150 L4,150 Z" fill="url(#gUser)"/>
+              <path d="M4,58 C28,66 52,84 76,88 C100,92 124,88 148,96 L172,98 C196,100 220,64 244,44 C254,36 264,26 274,22 C284,18 294,86 304,92 C314,96 324,98 334,100" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="274" cy="22" r="3.6" fill="#fff" stroke="#60a5fa" stroke-width="2"/>
+              <text x="282" y="20" style="font-size:9.5px;font-weight:700;fill:#1d4ed8">9,800</text>
+            </svg>
+            <div class="trend-x"><span>15:00</span><span>19:00</span><span>23:00</span><span>03:00</span><span>07:00</span><span>11:00</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title"><span class="dot"></span>我的指标</h3>
+          </div>
+          <div class="card-body" style="padding-top:8px;padding-bottom:16px">
+            <div class="kpi-list">
+              <div class="kpi-row">
+                <span class="kpi-name">工具成功率</span>
+                <span class="kpi-right"><span class="badge ok">正常</span><span class="kpi-value num">96.24%</span></span>
+              </div>
+              <div class="kpi-row">
+                <span class="kpi-name">平均执行耗时</span>
+                <span class="kpi-right"><span class="badge warn">偏高</span><span class="kpi-value num" style="color:#b45309">3,240ms</span></span>
+              </div>
+              <div class="kpi-row">
+                <span class="kpi-name">工具调用总数</span>
+                <span class="kpi-right"><span class="kpi-value num">186</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom-grid">
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title"><span class="dot"></span>智能体性能</h3>
+          <span class="card-sub">我常用的</span>
+        </div>
+        <div class="card-body" style="padding-top:12px">
+          <table class="table">
+            <thead><tr><th>智能体</th><th>调用</th><th>平均耗时</th><th>成功率</th></tr></thead>
+            <tbody>
+              <tr><td>数据智能助手</td><td class="num">142</td><td>8,420ms</td><td><span class="pill ok">97.1%</span></td></tr>
+              <tr><td>主助手 (Main)</td><td class="num">98</td><td>2,140ms</td><td><span class="pill ok">99.8%</span></td></tr>
+              <tr><td>知识库助手</td><td class="num">46</td><td>3,680ms</td><td><span class="pill ok">99.2%</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3 class="card-title"><span class="dot"></span>我的 Token 分布</h3>
+          <span class="card-sub">今日 · 共 412K</span>
+        </div>
+        <div class="card-body" style="padding-top:16px">
+          <div class="token-bar">
+            <div class="token-row">
+              <span class="token-name">数据智能助手</span>
+              <div class="token-track"><div class="token-fill" style="width:100%"></div></div>
+              <span class="token-val num">246K</span>
+            </div>
+            <div class="token-row">
+              <span class="token-name">主助手</span>
+              <div class="token-track"><div class="token-fill" style="width:52%"></div></div>
+              <span class="token-val num">128K</span>
+            </div>
+            <div class="token-row">
+              <span class="token-name">知识库助手</span>
+              <div class="token-track"><div class="token-fill" style="width:15%"></div></div>
+              <span class="token-val num">38K</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-head">
+        <h3 class="card-title"><span class="dot"></span>我的最近调用</h3>
+        <span class="card-sub">最近 5 条</span>
+      </div>
+      <div class="card-body" style="padding-top:12px">
+        <table class="table">
+          <thead><tr><th>时间</th><th>智能体</th><th>提问</th><th>耗时</th><th>状态</th></tr></thead>
+          <tbody>
+            <tr><td>14:31</td><td>数据智能助手</td><td style="color:var(--ink-3)">查一下上个月华东区的订单趋势</td><td class="num">8,120ms</td><td><span class="pill ok">成功</span></td></tr>
+            <tr><td>14:02</td><td>主助手</td><td style="color:var(--ink-3)">帮我写一段周报总结</td><td class="num">2,040ms</td><td><span class="pill ok">成功</span></td></tr>
+            <tr><td>13:52</td><td>数据智能助手</td><td style="color:var(--ink-3)">统计各产品线本月退货率</td><td class="num">30,000ms</td><td><span class="pill err">超时</span></td></tr>
+            <tr><td>11:20</td><td>数据智能助手</td><td style="color:var(--ink-3)">对比 Q2 与 Q3 的客单价</td><td class="num">30,000ms</td><td><span class="pill err">超时</span></td></tr>
+            <tr><td>10:48</td><td>知识库助手</td><td style="color:var(--ink-3)">员工报销流程怎么走</td><td class="num">3,640ms</td><td><span class="pill ok">成功</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-head">
+        <h3 class="card-title"><span class="dot"></span>快速开始</h3>
+      </div>
+      <div class="card-body">
+        <div class="quick-grid">
+          <div class="quick-item">
+            <div class="quick-head">
+              <span class="quick-ico" style="background:var(--blue-soft);color:var(--blue)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+              </span>
+              <h4>API 文档</h4>
+            </div>
+            <p>查看完整的接口说明与调用示例</p>
+            <a href="#">查看文档 →</a>
+          </div>
+          <div class="quick-item">
+            <div class="quick-head">
+              <span class="quick-ico" style="background:#f5f3ff;color:#7c3aed">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+              </span>
+              <h4>接口调试台</h4>
+            </div>
+            <p>在线测试接口，快速验证返回结果</p>
+            <a href="#">开始调试 →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const tabs = document.querySelectorAll('.tabs button');
+  const hint = document.getElementById('hint');
+  const hints = {
+    'view-admin': '成功率主角化 + 工具排行 + 异常直达',
+    'view-user': '同一套语言，指标换成「我的」视角'
+  };
+  tabs.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabs.forEach(b => b.setAttribute('aria-selected', 'false'));
+      btn.setAttribute('aria-selected', 'true');
+      const target = btn.dataset.target;
+      document.querySelectorAll('.variant').forEach(v => { v.hidden = v.id !== target; });
+      hint.textContent = hints[target] || '';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  });
+</script>
+</body>
+</html>

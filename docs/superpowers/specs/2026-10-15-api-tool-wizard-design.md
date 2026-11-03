@@ -2,7 +2,7 @@
 
 - 日期：2026-10-15
 - 涉及页面：系统配置 › 工具管理 › API 工具注册表 › 添加/编辑工具
-- 设计稿：`docs/mockups/2026-10-15-api-tool-wizard.html`（可交互）+ `docs/mockups/shots/*.png`
+- 设计稿：`prototypes/2026-10-15-api-tool-wizard.html`（可交互）+ `prototypes/shots/*.png`
 - 迁移：**零迁移**（不改表结构、不新增配置项、不新增权限）
 
 ## 1. 背景与现状
@@ -238,5 +238,5 @@ async def _perform_request(
 
 ## 12. 附：设计稿
 
-- `docs/mockups/2026-10-15-api-tool-wizard.html`：可交互（点 tab 切换、点步骤条跳步）
-- `docs/mockups/shots/wizard-step1.png` ~ `wizard-step4.png`、`form-mode.png`
+- `prototypes/2026-10-15-api-tool-wizard.html`：可交互（点 tab 切换、点步骤条跳步）
+- `prototypes/shots/wizard-step1.png` ~ `wizard-step4.png`、`form-mode.png`

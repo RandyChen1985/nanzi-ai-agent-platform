@@ -1,23 +1,18 @@
 <template>
-  <div class="mb-3.5">
-    <div class="flex items-start justify-between gap-3">
-      <div class="min-w-0">
-        <div class="flex items-center gap-2">
-          <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="dotClass" />
-          <p class="text-xs font-medium" :class="toneClass">{{ eyebrow }}</p>
-        </div>
-        <h2 class="mt-1 text-sm font-bold text-gray-900 dark:text-gray-100">{{ title }}</h2>
-        <p v-if="description" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ description }}</p>
-      </div>
-      <button
-        v-if="viewAllLabel"
-        type="button"
-        class="hidden shrink-0 text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 md:inline"
-        @click="$emit('view-all')"
-      >
-        {{ viewAllLabel }}
-      </button>
-    </div>
+  <div class="mb-2.5 flex items-center gap-2">
+    <span class="h-3.5 w-[3px] shrink-0 rounded-full" :class="barClass" aria-hidden="true" />
+    <h2 class="text-[13px] font-semibold tracking-tight text-gray-900 dark:text-gray-100">{{ title }}</h2>
+    <span
+      v-if="count !== undefined"
+      class="inline-grid h-[17px] min-w-[18px] place-items-center rounded-[5px] px-1 text-[10.5px] font-bold tabular-nums"
+      :class="
+        countTone === 'warn'
+          ? 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-400'
+          : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
+      "
+    >{{ count }}</span>
+    <span class="flex-1" />
+    <slot name="action" />
   </div>
 </template>
 
@@ -26,28 +21,19 @@ import { computed } from "vue"
 
 const props = withDefaults(
   defineProps<{
-    eyebrow: string
     title: string
-    description?: string
-    tone?: "blue" | "violet" | "emerald" | "amber"
-    viewAllLabel?: string
+    count?: number
+    countTone?: "default" | "warn"
+    /** 左侧竖条颜色：只有「需要你处理」值得用琥珀，其余保持中性 */
+    tone?: "amber" | "blue" | "slate" | "green"
   }>(),
-  { tone: "blue" }
+  { countTone: "default", tone: "slate" }
 )
 
-defineEmits<{ (event: "view-all"): void }>()
-
-const toneClass = computed(() => {
-  if (props.tone === "violet") return "text-violet-600 dark:text-violet-400"
-  if (props.tone === "emerald") return "text-emerald-600 dark:text-emerald-400"
-  if (props.tone === "amber") return "text-amber-700 dark:text-amber-400"
-  return "text-blue-600 dark:text-blue-400"
-})
-
-const dotClass = computed(() => {
-  if (props.tone === "violet") return "bg-violet-500"
-  if (props.tone === "emerald") return "bg-emerald-500"
+const barClass = computed(() => {
   if (props.tone === "amber") return "bg-amber-500"
-  return "bg-blue-500"
+  if (props.tone === "blue") return "bg-blue-500"
+  if (props.tone === "green") return "bg-emerald-500"
+  return "bg-gray-300 dark:bg-gray-600"
 })
 </script>

@@ -91,9 +91,20 @@ async def get_admin_stats(
         total_users = count_users.scalar()
         
         seven_days_ago = datetime.now() - timedelta(days=7)
+        # 活跃用户必须限定在「当前有效账号」里。
+        #
+        # 访问日志会一直保留历史账号（已禁用、已删除）的调用记录，直接
+        # count(distinct user_name) 会把它们一并算进来，于是出现
+        # 「总用户 16 / 活跃 6050」这种自相矛盾的读数——分子比分母还大，
+        # 页面上没法解读，也算不出活跃率。
         count_active = await db.execute(
             select(func.count(func.distinct(AccessLog.user_name)))
-            .where(AccessLog.created_at >= seven_days_ago)
+            .select_from(AccessLog)
+            .join(User, User.user_name == AccessLog.user_name)
+            .where(
+                AccessLog.created_at >= seven_days_ago,
+                User.status == 1,
+            )
         )
         active_users = count_active.scalar()
 

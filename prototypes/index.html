@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>原型总览 · Prototypes</title>
+<style>
+  :root{
+    --primary:#1677ff; --ink:#111827; --ink-2:#4b5563; --ink-3:#6b7280; --ink-4:#9ca3af;
+    --line:#e8ebf0; --line-2:#eef1f5; --bg:#f7f8fa;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 64px}
+  header h1{margin:0;font-size:24px;font-weight:700;letter-spacing:-.3px}
+  header p{margin:8px 0 0;color:var(--ink-3);font-size:13px}
+  header p b{color:var(--primary)}
+  .bar{display:flex;align-items:center;gap:10px;margin:22px 0 14px}
+  .search{position:relative;flex:1;max-width:420px}
+  .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--ink-4)}
+  .search input{width:100%;height:38px;padding:0 12px 0 34px;border:1px solid var(--line);
+    border-radius:9px;background:#fff;font-size:13px;color:var(--ink);outline:none;
+    transition:border-color .15s,box-shadow .15s}
+  .search input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(22,119,255,.12)}
+  .count{color:var(--ink-4);font-size:12px}
+  .list{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .row{display:grid;grid-template-columns:88px minmax(0,1fr) 92px 24px;align-items:center;gap:14px;
+    padding:12px 16px;border-top:1px solid var(--line-2);text-decoration:none;color:inherit;
+    transition:background .12s}
+  .row:first-child{border-top:0}
+  .row:hover{background:#f8faff}
+  .row:hover .t{color:var(--primary)}
+  .d{color:var(--ink-4);font-size:12px;font-variant-numeric:tabular-nums}
+  .t{font-size:13.5px;font-weight:500;transition:color .12s;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .k{justify-self:start;font-size:11px;font-weight:600;padding:1px 7px;border-radius:99px;
+    border:1px solid transparent;white-space:nowrap}
+  .k.compare{background:#fff4e5;color:#b45309;border-color:#fde3c0}
+  .k.mock{background:#eaf2ff;color:#1677ff;border-color:#d6e6ff}
+  .k.preview{background:#f3f0ff;color:#7c5cff;border-color:#e4dcff}
+  .go{color:#d1d5db}
+  .row:hover .go{color:var(--primary)}
+  .empty{padding:48px;text-align:center;color:var(--ink-4);font-size:13px}
+  footer{margin-top:18px;color:var(--ink-4);font-size:12px}
+  footer code{font-size:11px;color:var(--ink-3)}
+  footer a{color:var(--ink-3)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>原型总览</h1>
+    <p>需求评审用的静态 HTML 原型，共 <b id="total">0</b> 个。命名与归档规范见
+      <a href="prototypes.md" style="color:var(--primary)">prototypes.md</a>。</p>
+  </header>
+
+  <div class="bar">
+    <div class="search">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="M20 20l-3.6-3.6"/></svg>
+      <input id="q" placeholder="搜索标题或文件名" autocomplete="off">
+    </div>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="list" id="list"></div>
+  <footer>
+    本页由 <code>python prototypes/build_index.py</code> 生成，请勿手工编辑。<br>
+    新增原型放在本目录，按 <code>YYYY-MM-DD-主题.html</code> 命名，再跑一次脚本。
+  </footer>
+</div>
+
+<script>
+const ITEMS = [
+  {
+    "file": "2026-11-03-lib-drawer-settings-layout.html",
+    "date": "2026-11-03",
+    "title": "知识库 · 库信息抽屉排版优化（上传区过高、标题与 tab 打架、两栏不齐）",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-11-03-kb-hero-collapse.html",
+    "date": "2026-11-03",
+    "title": "知识库管理 · hero 可折叠 + 章节分割线留白",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-11-03-image-to-markdown-upload.html",
+    "date": "2026-11-03",
+    "title": "图片转 Markdown 入库 · 图片走多模态模型先转 md 再进 RAGFlow",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-11-02-workbench-restructure.html",
+    "date": "2026-11-02",
+    "title": "我的工作台 · 重构方案",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-11-02-workbench-redesign.html",
+    "date": "2026-11-02",
+    "title": "我的工作台 · 改版方案",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-11-02-overview-redesign.html",
+    "date": "2026-11-02",
+    "title": "系统概览 · 美化方案",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-11-02-knowledge-doc-workspace.html",
+    "date": "2026-11-02",
+    "title": "知识库 · 文档组织管理优化原型",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-11-01-task-filter-select.html",
+    "date": "2026-11-01",
+    "title": "任务调度台 · 筛选控件优化对比",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-11-01-kb-selector-search.html",
+    "date": "2026-11-01",
+    "title": "知识库选择 · 搜索与筛选 Mock",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-11-01-chat-scroll-anchors.html",
+    "date": "2026-11-01",
+    "title": "聊天消息快速定位浮标 · Mock",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-11-01-chat-preflight-visibility.html",
+    "date": "2026-11-01",
+    "title": "聊天准备阶段 · 改动前后对照 Mock",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-10-30-todo-card-placement.html",
+    "date": "2026-10-30",
+    "title": "任务清单卡的位置 · 五种方案对比",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-10-30-timeline-variants.html",
+    "date": "2026-10-30",
+    "title": "执行时间线 · 三种排布方案对照",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-10-30-prompt-injection-guide.html",
+    "date": "2026-10-30",
+    "title": "提示词注入说明 · 折叠面板 Mock",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-10-30-knowledge-overview.html",
+    "date": "2026-10-30",
+    "title": "知识库管理 · 概览态原型",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-10-30-hide-chat-avatar.html",
+    "date": "2026-10-30",
+    "title": "EmbedChat · 隐藏聊天头像开关",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-10-30-hero-silhouette-variants.html",
+    "date": "2026-10-30",
+    "title": "页头剪影方案对比 · 数据源 / 元数据 / 案例集",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-10-30-health-missing-list.html",
+    "date": "2026-10-30",
+    "title": "治理巡检 · 失联库列表 改前 / 改后",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-10-29-tool-progress-fallback.html",
+    "date": "2026-10-29",
+    "title": "工具进度：兜底不确定态 vs 远端确定态",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-10-29-script-tool-tabs.html",
+    "date": "2026-10-29",
+    "title": "工具注册表 · 脚本工具类型切换方案对比",
+    "kind": "方案对比"
+  },
+  {
+    "file": "2026-10-29-mcp-tool-progress.html",
+    "date": "2026-10-29",
+    "title": "MCP 工具进度流 · 效果预览",
+    "kind": "效果预览"
+  },
+  {
+    "file": "2026-10-28-skill-gallery.html",
+    "date": "2026-10-28",
+    "title": "技能广场 · 静态原型",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-10-28-conversation-share.html",
+    "date": "2026-10-28",
+    "title": "会话在线分享 · Mockup",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-10-27-resource-square.html",
+    "date": "2026-10-27",
+    "title": "资源广场 · 交互原型",
+    "kind": "交互原型"
+  },
+  {
+    "file": "2026-10-15-api-tool-wizard.html",
+    "date": "2026-10-15",
+    "title": "添加工具 · 向导模式 Mockup",
+    "kind": "交互原型"
+  }
+];
+const KIND_CLASS = { '方案对比': 'compare', '交互原型': 'mock', '效果预览': 'preview' };
+const list = document.getElementById('list');
+const q = document.getElementById('q');
+const countEl = document.getElementById('count');
+document.getElementById('total').textContent = ITEMS.length;
+
+function esc(s) {
+  return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function render(kw) {
+  const key = (kw || '').trim().toLowerCase();
+  const rows = ITEMS.filter(it =>
+    !key || it.title.toLowerCase().includes(key) || it.file.toLowerCase().includes(key));
+  if (!rows.length) {
+    list.innerHTML = '<div class="empty">没有匹配的原型</div>';
+    countEl.textContent = '';
+    return;
+  }
+  list.innerHTML = rows.map(it => `
+    <a class="row" href="${it.file}" target="_blank" rel="noopener">
+      <span class="d">${it.date}</span>
+      <span class="t" title="${esc(it.file)}">${esc(it.title)}</span>
+      <span class="k ${KIND_CLASS[it.kind] || 'mock'}">${esc(it.kind)}</span>
+      <span class="go">›</span>
+    </a>`).join('');
+  countEl.textContent = key ? `${rows.length} / ${ITEMS.length}` : '';
+}
+
+q.addEventListener('input', e => render(e.target.value));
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); q.focus(); }
+  if (e.key === 'Escape') { q.value = ''; render(''); q.blur(); }
+});
+render('');
+</script>
+</body>
+</html>

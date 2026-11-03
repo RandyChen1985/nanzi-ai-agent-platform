@@ -15,6 +15,17 @@
 - **数据库变更**：只新增对应版本的迁移 SQL，不直接修改本地或线上数据库。
 - **执行边界**：Agent 不主动执行 `./dev.sh`、部署脚本或生产数据库操作；服务启停和部署由用户在控制台执行。
 
+## 原型（prototypes/）
+
+用户说「先给我看看效果」「出个 mock」「做个原型」时，按这套流程走：
+
+1. **位置**：所有原型 HTML **只能**放 `prototypes/`。禁止放 `html/`、`docs/`、`frontend/public/` 或仓库根目录。
+2. **命名**：`YYYY-MM-DD-<topic>.html`，日期是首次创建日，topic 用小写英文连字符（如 `2026-11-02-knowledge-doc-workspace.html`）。一个需求一个文件，多方案做在同一个文件里（tab / 并排），不拆成多个。
+3. **登记**：写完或改名后**必须**跑 `python prototypes/build_index.py`，它会重写总览页 `prototypes/index.html`（该页是生成物，不要手工改）。
+4. **自包含**：CSS/JS 内联，不引外部资源，双击即可打开；`<title>` 写成「功能 · 做了什么」。
+5. **顺序**：先出原型让用户确认，确认后再改实现代码——不要跳过原型直接写实现。
+6. 完整规范见 [`prototypes/prototypes.md`](./prototypes/prototypes.md)。
+
 ## Git 协作：用户说「代码已合」
 
 用户表示 PR/代码已合并后，**必须立即执行本地 git 同步**，不要只口头确认：

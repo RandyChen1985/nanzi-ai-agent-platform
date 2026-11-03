@@ -71,6 +71,11 @@ from app.services.ai.runtime.agentscope.agent_runtime import (
     build_tools_fingerprint,
     load_context_config,
 )
+from app.services.ai.runtime.agentscope.build_progress import (
+    BuildStageTimer,
+    emit_build_progress,
+    format_build_details,
+)
 from app.services.ai.runtime.agentscope.chat import compat_to_runtime_messages, to_agentscope_messages
 from app.services.ai.runtime.agentscope.state_store import agent_state_store
 from app.services.ai.runtime.agentscope.event_stream import (
@@ -477,6 +482,13 @@ class AssistantAgentRunner(BaseExecutor):
         self._last_turn_tool_meta: Optional[Dict[str, Any]] = None
         self._execution_backend: str | None = None
         self.current_user_query = current_user_query
+        # 构建分段耗时：`_build_native_agent` 只返回对象、不 yield，所以用旁路事件
+        # 把各阶段耗时推到时间线；首个模型调用开始时再补记「首 token 前的静默段」。
+        self._build_timer: BuildStageTimer | None = None
+        self._build_timing_details: str = ""
+        self._build_total_ms: float = 0.0
+        self._build_finished_at: float | None = None
+        self._first_model_call_wait_logged: bool = False
 
     def _runtime_user_id(self) -> str | None:
         if not self.user_info:
@@ -2452,12 +2464,25 @@ class AssistantAgentRunner(BaseExecutor):
             load_injection_config,
         )
 
+        build_timer = BuildStageTimer()
+        self._build_timer = build_timer
+        self._build_timing_details = ""
+        self._build_total_ms = 0.0
+        self._build_finished_at = None
+        self._first_model_call_wait_logged = False
+        # 先挂 pending：构建期间只有 keepalive 心跳，用户需要知道系统在准备而不是卡死。
+        await emit_build_progress(
+            status="pending",
+            details="正在装配工作区、工具与会话状态…",
+        )
+
         context_config = await load_context_config()
         model_config = await build_model_config(
             config=self.config,
             primary_model_name=primary_model_name,
         )
         injection_config = await load_injection_config()
+        build_timer.mark("config")
         # 沙箱失败策略：一律降级为宿主本地工作区（文件工具可用、Bash 工具移除），保证聊天
         # 不被沙箱拉不起阻断（“你好”等纯对话可继续；需要执行的轮次模型会看到 Bash 不可用
         # 而说明，而不是整轮报错）。沙箱恢复后下一轮自动回到完整模式（清除降级标记）。
@@ -2555,6 +2580,7 @@ class AssistantAgentRunner(BaseExecutor):
                 started_at=prepare_started_at,
                 details="工作区已就绪。",
             )
+        build_timer.mark("workspace")
         # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
         tools = await bind_configured_tools_to_workspace(
             workspace,
@@ -2562,6 +2588,7 @@ class AssistantAgentRunner(BaseExecutor):
             user_info=self.user_info,
             sandbox_degraded=sandbox_degraded,
         )
+        build_timer.mark("tool_bind")
         self._execution_backend = get_workspace_execution_backend(workspace)
         toolkit = AgentScopeToolConsumer(builder=build_toolkit).consume_specs(
             tools,
@@ -2570,13 +2597,15 @@ class AssistantAgentRunner(BaseExecutor):
             user_id=self._runtime_user_id(),
             conversation_id=self.conversation_id,
         )
+        build_timer.mark("toolkit")
         middlewares = build_runtime_middlewares(
             user_id=self._runtime_user_id(),
             conversation_id=self.conversation_id,
             agent_name=self._runtime_agent_name(),
             trace_id=self.trace_id,
         )
-        return Agent(
+        build_timer.mark("middleware")
+        agent = Agent(
             name=self._runtime_agent_name(),
             system_prompt=system_content,
             model=native_model,
@@ -2588,6 +2617,51 @@ class AssistantAgentRunner(BaseExecutor):
             injection_config=injection_config,
             react_config=ReActConfig(max_iters=max_steps),
             middlewares=middlewares,
+        )
+        build_timer.mark("agent")
+        await self._emit_build_timing()
+        return agent
+
+    async def _emit_build_timing(self) -> None:
+        """把构建分段耗时推到时间线（旁路，见 ``build_progress``）。
+
+        ``_build_native_agent`` 只返回 Agent 对象、不 yield；构建期间 ``_execute_raw``
+        的 merge_streams 正在消费 ``AgentContext.event_queue``，因此从这里投递就能让
+        用户看到「这一段等了多久、花在哪」。
+        """
+        timer = getattr(self, "_build_timer", None)
+        if timer is None:
+            return
+        total_ms = timer.elapsed_ms()
+        details = format_build_details(timer.stages(), total_ms)
+        self._build_timing_details = details
+        self._build_total_ms = total_ms
+        self._build_finished_at = time.monotonic()
+        await emit_build_progress(
+            status="success",
+            details=details,
+            execution_time_ms=total_ms,
+        )
+
+    async def _emit_first_model_call_wait(self) -> None:
+        """首个模型调用开始：补记「REPLY_START 到真正发请求」的静默段。
+
+        这段覆盖 AgentScope 在首轮推理前的 ``compress_context()``（超阈值时是一次
+        额外的模型调用，期间没有任何事件）与入参准备。只补一次：后续模型调用之间的
+        等待已由「模型调用」卡本身可见。
+        """
+        if getattr(self, "_first_model_call_wait_logged", False):
+            return
+        details = getattr(self, "_build_timing_details", "")
+        finished_at = getattr(self, "_build_finished_at", None)
+        if not details or finished_at is None:
+            return
+        self._first_model_call_wait_logged = True
+        wait_ms = max(0.0, (time.monotonic() - finished_at) * 1000.0)
+        await emit_build_progress(
+            status="success",
+            details=f"{details}\n首次模型调用前 {wait_ms:.0f}ms（含上下文压缩/入参准备）",
+            execution_time_ms=getattr(self, "_build_total_ms", 0.0),
         )
 
     @staticmethod
@@ -2768,6 +2842,7 @@ class AssistantAgentRunner(BaseExecutor):
                 for chunk in process_narration_events.on_model_call_start(state):
                     async for item in self._yield_process_narration_chunk(state, chunk):
                         yield item
+                await self._emit_first_model_call_wait()
             elif event_type == "TOOL_CALL_START":
                 for chunk in process_narration_events.on_tool_call_start(
                     state,

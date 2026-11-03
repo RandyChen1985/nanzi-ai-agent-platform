@@ -37,12 +37,6 @@ export function workbenchSeverityLabel(severity?: string | null): string {
   return ""
 }
 
-export function workbenchSeverityClass(severity?: string | null): string {
-  if (severity === "critical") return "bg-red-50 text-red-700 border-red-200"
-  if (severity === "warning") return "bg-amber-50 text-amber-700 border-amber-200"
-  return "bg-gray-50 text-gray-600 border-gray-200"
-}
-
 export function workbenchStatusLabel(status?: string | null): string {
   if (!status) return ""
   const map: Record<string, string> = {
@@ -102,42 +96,6 @@ export function resolveWorkbenchKind(item: {
   return "other"
 }
 
-export function workbenchKindLabel(kind: WorkbenchKind): string {
-  const map: Record<WorkbenchKind, string> = {
-    task: "任务",
-    digest: "简报",
-    report: "报表",
-    conversation: "会话",
-    notification: "通知",
-    other: "事项",
-  }
-  return map[kind]
-}
-
-export function workbenchKindClass(kind: WorkbenchKind): string {
-  const map: Record<WorkbenchKind, string> = {
-    task: "bg-amber-50 text-amber-700 border-amber-200",
-    digest: "bg-violet-50 text-violet-700 border-violet-200",
-    report: "bg-indigo-50 text-indigo-700 border-indigo-200",
-    conversation: "bg-blue-50 text-blue-700 border-blue-200",
-    notification: "bg-slate-50 text-slate-600 border-slate-200",
-    other: "bg-gray-50 text-gray-600 border-gray-200",
-  }
-  return map[kind]
-}
-
-export function workbenchKindIcon(kind: WorkbenchKind): string {
-  const map: Record<WorkbenchKind, string> = {
-    task: "⏱",
-    digest: "📰",
-    report: "📊",
-    conversation: "💬",
-    notification: "🔔",
-    other: "•",
-  }
-  return map[kind]
-}
-
 export function workbenchActionLabel(item: {
   action?: string | null
   type?: string | null
@@ -153,14 +111,4 @@ export function workbenchActionLabel(item: {
   if (kind === "task") return "查看任务"
   if (kind === "conversation") return "继续对话"
   return "查看详情"
-}
-
-const AGENT_EMOJIS = ["🤖", "📘", "📈", "🧠", "🗂️", "🛠️", "💡", "🛰️"]
-
-export function workbenchAgentEmoji(name: string): string {
-  let hash = 0
-  for (let i = 0; i < name.length; i += 1) {
-    hash = (hash + name.charCodeAt(i) * (i + 1)) % AGENT_EMOJIS.length
-  }
-  return AGENT_EMOJIS[hash] || "🤖"
 }

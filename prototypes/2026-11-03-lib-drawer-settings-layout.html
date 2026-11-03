@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>知识库 · 库信息抽屉排版优化（上传区过高、标题与 tab 打架、两栏不齐）</title>
+<style>
+  :root{
+    --ink:#1d2129; --ink-2:#4e5969; --ink-3:#86909c; --ink-4:#a9b0bb;
+    --line:#e9ecf2; --line-2:#f1f3f7; --bg:#f4f5f8; --card:#fff;
+    --blue:#1677ff; --blue-h:#4096ff; --blue-d:#0958d9; --blue-50:#eff6ff;
+    --green:#12b76a; --green-bg:#e8f8f0; --amber:#f59e0b; --amber-bg:#fff7e6;
+    --red:#f04438; --red-bg:#fef0ef; --grey-bg:#f2f4f7;
+    --sh-1:0 1px 2px rgba(16,24,40,.05);
+    --sh-2:0 10px 32px rgba(16,24,40,.10), 0 2px 8px rgba(16,24,40,.05);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased; font-size:13px; line-height:1.55;
+  }
+  button{font-family:inherit;font-size:inherit;color:inherit;background:none;border:none;padding:0;cursor:pointer}
+  svg{display:block}
+  .page{max-width:1400px;margin:0 auto;padding:24px 22px 44px}
+
+  .head h1{font-size:20px;margin:0 0 6px}
+  .head p{margin:0;color:var(--ink-2);max-width:920px;line-height:1.8}
+  .head p b{color:var(--ink);font-weight:600}
+
+  .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin:16px 0 18px}
+  .issue{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .issue .n{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:50%;background:var(--red-bg);color:#b42318;font-size:10px;font-weight:800;margin-right:6px;vertical-align:1px}
+  .issue .t{font-size:12px;font-weight:650;display:inline}
+  .issue p{margin:5px 0 0;font-size:11px;color:var(--ink-3);line-height:1.65}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:start}
+  @media (max-width:1180px){ .cols{grid-template-columns:1fr} }
+
+  .colhead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .colhead .badge{font-size:10px;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:5px}
+  .colhead .badge.now{background:var(--grey-bg);color:var(--ink-3)}
+  .colhead .badge.new{background:var(--green-bg);color:#067647}
+  .colhead .cap{font-size:11.5px;color:var(--ink-3)}
+
+  /* 按 851px 真实宽度渲染，再等比缩小，保证排版比例不失真 */
+  .scaler{width:100%;overflow:hidden}
+  .frame{
+    width:851px;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    transform-origin:top left;box-shadow:var(--sh-2);
+  }
+  .frame.small{transform:scale(.68)}
+  .scaler.small{height:auto;overflow:hidden}
+
+  /* ---------- 抽屉内部（现状） ---------- */
+  .dr-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line-2)}
+  .dr-head h2{margin:0;font-size:15px;font-weight:650}
+  .dr-head .x{margin-left:auto;color:var(--ink-3);width:24px;height:24px;display:grid;place-items:center;border-radius:6px}
+  .dr-head .x:hover{background:var(--grey-bg)}
+  .drtabs{display:flex;gap:2px;padding:0 18px;border-bottom:1px solid var(--line-2)}
+  .drtabs button{padding:9px 10px;font-size:12.5px;font-weight:600;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px}
+  .drtabs button.on{color:var(--blue);border-color:var(--blue)}
+  .dr-body{padding:14px 18px 18px;display:flex;flex-direction:column;gap:14px}
+
+  .qcard{border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .qrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .qrow .lb{font-size:11px;color:var(--ink-3);font-weight:500}
+  .qrow .num{font-size:12px;font-weight:700;font-family:ui-monospace,Menlo,monospace}
+  .qbar{height:6px;width:96px;border-radius:99px;background:#eef0f4;overflow:hidden}
+  .qbar i{display:block;height:100%;border-radius:99px;background:var(--green)}
+  .qsep{display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line-2);margin-top:9px;padding-top:8px;font-size:11px;color:var(--ink-3)}
+  .qsep b{color:var(--ink-2);font-weight:600}
+
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .twocol h3{margin:0 0 9px;font-size:11.5px;font-weight:600;color:var(--ink-3);display:flex;align-items:center;gap:5px}
+  .tags{display:flex;flex-wrap:wrap;gap:6px}
+  .tag{font-size:11px;font-weight:500;padding:3px 9px;border-radius:8px;background:#f2f7ff;border:1px solid #e0ecff;color:#1e5ecc}
+  .note{font-size:11.5px;color:var(--ink-2);line-height:1.8;background:#fffbeb;border:1px solid #fdf0c8;border-radius:9px;padding:9px 11px}
+
+  .uph{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .uph h3{margin:0;font-size:12.5px;font-weight:650;color:var(--ink)}
+  .seg{display:flex;gap:2px;padding:2px;background:#f2f4f7;border-radius:8px}
+  .seg button{padding:4px 11px;border-radius:6px;font-size:11.5px;font-weight:600;color:var(--ink-3)}
+  .seg button.on{background:#fff;color:var(--blue);box-shadow:var(--sh-1)}
+
+  /* 现状：巨大的拖拽区 */
+  .drop-old{border:2px dashed #c9d3e4;border-radius:14px;padding:30px 20px;text-align:center;background:#fbfcfe;margin-top:10px}
+  .drop-old .circle{width:54px;height:54px;border-radius:50%;background:#eff6ff;display:grid;place-items:center;margin:0 auto 14px;color:var(--blue)}
+  .drop-old .t{font-size:14px;font-weight:600;margin-bottom:6px}
+  .drop-old .t em{font-style:normal;color:var(--blue)}
+  .drop-old .d{font-size:11.5px;color:var(--ink-3);line-height:1.7}
+
+  /* 优化后：紧凑拖拽区 */
+  .drop-new{display:flex;align-items:center;gap:11px;border:1.5px dashed #cdd7e6;border-radius:11px;padding:12px 14px;background:#fbfcfe;margin-top:9px;transition:.15s;cursor:pointer}
+  .drop-new:hover{border-color:var(--blue-h);background:var(--blue-50)}
+  .drop-new .ic{flex:0 0 32px;width:32px;height:32px;border-radius:9px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;color:var(--blue)}
+  .drop-new .txt{min-width:0;flex:1}
+  .drop-new .t{font-size:12.5px;font-weight:600;margin-bottom:1px}
+  .drop-new .t em{font-style:normal;color:var(--blue)}
+  .drop-new .d{font-size:10.5px;color:var(--ink-3);line-height:1.6}
+
+  .fold{display:flex;align-items:center;gap:7px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:11.5px;font-weight:600;color:var(--ink-2);background:#fff}
+  .fold svg{color:var(--ink-3)}
+  .fold .tail{margin-left:auto;font-size:10.5px;font-weight:500;color:var(--ink-4)}
+
+  /* 标注 */
+  .anno{
+    display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.03em;padding:1px 6px;border-radius:5px;
+    background:#fff1f0;color:#b42318;border:1px solid #ffd7d4;vertical-align:2px;
+  }
+  .anno.ok{background:var(--green-bg);color:#067647;border-color:#bdf0d3}
+  .foot{margin-top:24px;font-size:11.5px;color:var(--ink-3);line-height:1.85}
+  .foot b{color:var(--ink-2)}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="head">
+    <h1>库信息抽屉 · 库设置页排版</h1>
+    <p>
+      抽屉宽 851px，比主区窄得多，但「库设置」页仍按主区排版在用：<b>上传区占了近三分之一屏高</b>，
+      标题和「文档/图片」切换挤在同一行，两栏高度不齐，折叠条贴着拖拽区。<br>
+      左边是现状复刻，右边是把这些块重新排过之后的对照。
+    </p>
+  </div>
+
+  <div class="issues">
+    <div class="issue"><span class="n">1</span><span class="t">上传区过高</span>
+      <p>54px 圆圈 + 14px 主文案，整块约 390px，抽屉里等于一屏只能看这一块。</p></div>
+    <div class="issue"><span class="n">2</span><span class="t">标题与切换打架</span>
+      <p>「上传新文档到此知识库」和「文档/图片」同一行，两者字号只差 2px，像两个平级标题。</p></div>
+    <div class="issue"><span class="n">3</span><span class="t">两栏高度不齐</span>
+      <p>左栏 5 个标签 3 行、右栏备注 5 行，顶部对齐后底部悬空 80px。</p></div>
+    <div class="issue"><span class="n">4</span><span class="t">配额卡挤成一行</span>
+      <p>标签 + 数值 + 96px 进度条 + 警告全挤一行，进度条短到看不出比例。</p></div>
+    <div class="issue"><span class="n">5</span><span class="t">拖拽区粘住折叠条</span>
+      <p>虚线框下边缘直接压在「业务元数据扩展配置」上，两个可点区域视觉粘连。</p></div>
+  </div>
+
+  <div class="cols">
+
+    <!-- ================= 现状 ================= -->
+    <div>
+      <div class="colhead"><span class="badge now">现状</span><span class="cap">按线上截图 1:1 复刻</span></div>
+      <div class="scaler small" id="s1">
+        <div class="frame small">
+          <div class="dr-head">
+            <h2>库信息</h2>
+            <button class="x"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="drtabs">
+            <button class="on">库设置</button><button>操作日志</button><button>引用与授权</button>
+          </div>
+          <div class="dr-body">
+            <div class="qcard">
+              <div class="qrow">
+                <span class="lb">文档配额</span>
+                <span class="num" style="color:#12b76a">3 <span style="color:#c9cdd4;font-weight:400">/</span> 2000</span>
+                <div class="qbar"><i style="width:2%"></i></div>
+              </div>
+              <div class="qsep"><span>我的知识库</span><b>10 <span style="color:#c9cdd4;font-weight:400">/</span> 50</b></div>
+            </div>
+
+            <div class="twocol" style="padding-top:6px">
+              <div>
+                <h3>分类标签</h3>
+                <div class="tags">
+                  <span class="tag">AgentScope</span><span class="tag">ETL技术评审</span>
+                  <span class="tag">机器盘点</span><span class="tag">自研能力</span>
+                  <span class="tag">会议记录</span>
+                </div>
+              </div>
+              <div>
+                <h3>平台备注说明</h3>
+                <div class="note">面向技术决策者与运维人员，注意评审记录时效性，盘点数据需定期更新核对。</div>
+              </div>
+            </div>
+
+            <div>
+              <div class="uph">
+                <h3>上传新文档到此知识库 <span class="anno">标题与切换抢位</span></h3>
+                <div class="seg"><button class="on">文档</button><button>图片</button></div>
+              </div>
+              <div class="drop-old">
+                <div class="circle"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4.5 15v3.5A1.5 1.5 0 006 20h12a1.5 1.5 0 001.5-1.5V15"/></svg></div>
+                <div class="t">将一个或多个文件拖拽至此处，或 <em>点击上传</em></div>
+                <div class="d">支持多文件上传，类型包含 PDF, DOCX, TXT, MD, XLSX 等，单文件不超过 256MB</div>
+              </div>
+            </div>
+
+            <div class="fold">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M9 6l6 6-6 6"/></svg>
+              <span>业务元数据扩展配置（JSON）</span>
+              <span class="tail">展开</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 优化后 ================= -->
+    <div>
+      <div class="colhead"><span class="badge ok new">优化后</span><span class="cap">同样的内容，重排后的高度少约 300px</span></div>
+      <div class="scaler small" id="s2">
+        <div class="frame small">
+          <div class="dr-head">
+            <h2>库信息</h2>
+            <button class="x"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <div class="drtabs">
+            <button class="on">库设置</button><button>操作日志</button><button>引用与授权</button>
+          </div>
+          <div class="dr-body" style="gap:0">
+
+            <!-- ① 配额 -->
+            <section style="padding:2px 0 14px">
+              <div class="qcard">
+                <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px">
+                  <span class="lb" style="font-size:11px;color:var(--ink-3)">文档配额</span>
+                  <span style="font-size:11px;color:var(--ink-3)">
+                    <b class="num" style="font-size:14px;color:#12b76a">4</b>
+                    <span style="color:#c9cdd4"> / 2000</span>
+                  </span>
+                </div>
+                <div class="qbar" style="width:100%;margin-top:7px;height:5px"><i style="width:0.8%"></i></div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-top:9px;font-size:10.5px;color:var(--ink-4)">
+                  <span>还能上传 1,996 份</span>
+                  <span>我的知识库 <b style="color:var(--ink-2);font-weight:600">10 / 50</b></span>
+                </div>
+              </div>
+            </section>
+
+            <!-- ② 上传文档 -->
+            <section style="border-top:1px solid #e3e7ef;padding:14px 0">
+              <div class="uph" style="margin-bottom:9px">
+                <h3 style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--ink-3)"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4.5 15v3.5A1.5 1.5 0 006 20h12a1.5 1.5 0 001.5-1.5V15"/></svg>
+                  上传文档
+                </h3>
+                <div class="seg" style="transform:scale(.92);transform-origin:right center">
+                  <button class="on">文档</button><button>图片</button>
+                </div>
+              </div>
+              <div class="drop-new" style="margin-top:0">
+                <div class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4.5 15v3.5A1.5 1.5 0 006 20h12a1.5 1.5 0 001.5-1.5V15"/></svg></div>
+                <div class="txt">
+                  <div class="t">拖拽文件到此处，或 <em>点击上传</em></div>
+                  <div class="d">PDF / DOCX / TXT / MD / XLSX 等 · 单文件 ≤ 256MB · 支持多选</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- ③ 分类标签 -->
+            <section style="border-top:1px solid #e3e7ef;padding:14px 0">
+              <h3 style="display:flex;align-items:center;gap:5px;font-size:12.5px;font-weight:650;color:var(--ink);margin:0 0 9px">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--ink-3)"><path d="M7 7h.01M6 20h12a2 2 0 002-2V8a2 2 0 00-2-2H6a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                分类标签
+              </h3>
+              <div class="tags">
+                <span class="tag">AgentScope</span><span class="tag">ETL技术评审</span>
+                <span class="tag">机器盘点</span><span class="tag">自研能力</span>
+                <span class="tag">会议记录</span>
+              </div>
+            </section>
+
+            <!-- ④ 平台备注说明 -->
+            <section style="border-top:1px solid #e3e7ef;padding:14px 0">
+              <h3 style="display:flex;align-items:center;gap:5px;font-size:12.5px;font-weight:650;color:var(--ink);margin:0 0 9px">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--ink-3)"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                平台备注说明
+              </h3>
+              <div class="note">面向技术决策者与运维人员，注意评审记录时效性，盘点数据需定期更新核对。</div>
+            </section>
+
+            <!-- ⑤ 业务元数据扩展配置 -->
+            <section style="border-top:1px solid #e3e7ef;padding:14px 0 2px">
+              <div class="fold" style="border:0;padding:0">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" d="M9 6l6 6-6 6"/></svg>
+                <span style="font-size:12.5px;font-weight:650;color:var(--ink)">业务元数据扩展配置 (JSON)</span>
+                <span class="tail">展开</span>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>章节顺序</b>：配额 → 上传文档 → 分类标签 → 平台备注 → 扩展配置。上传是这一页最高频的动作，紧跟在配额后面；标签与备注原来并排两栏，
+    现在各自独立成段，段落之间用 1px 实线分隔，扫视时一眼是一块。<br>
+    <b>关键改动</b><br>
+    ① 配额卡：数值放大到 14px 右对齐，进度条占满整行宽度，「还能上传 N 份」与「我的知识库」并成底部一行 —— 三个数字的关系一眼能读出来。<br>
+    ② 两栏 `align-items:start`：标签区多长都不再撑高备注框；备注超过 96px 内部滚动，避免一段长文本把上传区顶出屏幕。<br>
+    ③ 上传区：标题简短到「上传新文档」，切换控件缩到 92% 靠右；拖拽区从 390px 压到 56px —— 抽屉里上传是高频动作，但不该占掉一屏。<br>
+    ④ 上传区与上方内容之间加 1px 分隔线，与折叠条之间留 2px：三个可点区域互不粘连。<br>
+    <b>没动的</b>：配额告警阈值（≥90% 才红）、标签增删入口、扩展配置折叠逻辑，这些都保持原样。
+  </div>
+</div>
+
+<script>
+  // 按 851px 真实宽度渲染后缩放，外层容器高度跟着缩，避免出现大片空白
+  function fit() {
+    document.querySelectorAll('.frame.small').forEach(function (f) {
+      var scaler = f.parentElement;
+      scaler.style.height = (f.offsetHeight * 0.68) + 'px';
+    });
+  }
+  window.addEventListener('load', fit);
+  window.addEventListener('resize', fit);
+  fit();
+</script>
+</body>
+</html>

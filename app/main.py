@@ -55,6 +55,14 @@ install_cancellation_log_filters()
 async def lifespan(app: FastAPI):
     # Startup
     install_cancellation_log_filters()
+    # 知识库图片原图曾放在 data/uploads/knowledge_images 下，而 data/uploads 整个
+    # 挂在 /static/uploads 上（无鉴权）。现在目录已经挪到 data/knowledge_images，
+    # 这里把历史文件搬过去——搬不动的只记日志，不影响启动。
+    try:
+        from app.services.knowledge_image_service import migrate_legacy_dir
+        migrate_legacy_dir()
+    except Exception as exc:  # noqa: BLE001 - 迁移是旁路
+        logging.warning("知识库原图目录迁移失败（已忽略）: %s", exc)
     await database.init_db()
     await redis.init_redis()
     await AuditService.start_worker()

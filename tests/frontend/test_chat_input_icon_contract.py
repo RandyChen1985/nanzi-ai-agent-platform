@@ -5,7 +5,6 @@ from pathlib import Path
 CHAT_INPUT = Path(__file__).parents[2] / "frontend/src/components/embed/ChatInput.vue"
 EMBED_CHAT = Path(__file__).parents[2] / "frontend/src/views/EmbedChat.vue"
 AGENT_MANAGEMENT = Path(__file__).parents[2] / "frontend/src/views/AgentManagement.vue"
-STATS_CARD = Path(__file__).parents[2] / "frontend/src/components/dashboard/StatsCard.vue"
 AGENT_DEBUG = Path(__file__).parents[2] / "frontend/src/views/AgentDebug.vue"
 WELCOME_DASHBOARD = Path(__file__).parents[2] / "frontend/src/components/embed/WelcomeDashboard.vue"
 EXECUTION_TIMELINE = Path(__file__).parents[2] / "frontend/src/components/chat/ChatExecutionTimeline.vue"
@@ -74,12 +73,6 @@ def test_agent_cards_use_svg_for_default_avatars_but_keep_custom_avatar_urls() -
     assert ":src=\"agent.avatar_url\"" in source
     assert "getAgentEmoji(agent)" not in source
 
-
-def test_stats_card_aligns_icon_and_content_to_the_top() -> None:
-    source = STATS_CARD.read_text(encoding="utf-8")
-
-    assert "class=\"flex items-start gap-3.5\"" in source
-    assert "text-[15px] font-semibold text-gray-600" in source
 
 
 def test_welcome_entry_cards_render_svg_icons() -> None:

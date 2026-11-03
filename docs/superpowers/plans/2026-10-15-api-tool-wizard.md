@@ -11,7 +11,7 @@
 **Tech Stack:** Vue 3 + TypeScript + Vite + Tailwind；FastAPI + Pydantic 2 + httpx；pytest（含 `node --experimental-strip-types` 真跑纯函数）。
 
 **Spec:** `docs/superpowers/specs/2026-10-15-api-tool-wizard-design.md`
-**设计稿:** `docs/mockups/2026-10-15-api-tool-wizard.html`
+**设计稿:** `prototypes/2026-10-15-api-tool-wizard.html`
 
 ---
 
