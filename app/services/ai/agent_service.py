@@ -2279,14 +2279,12 @@ class AgentService:
             return accessible_resources
 
         async def _fetch_roster():
-            from app.services.ai.skill_resolver import is_main_general_agent
-            has_subagent_tool = any(
-                (isinstance(t, str) and t in ("sub_agent_call", "sub_agent_batch_call"))
-                or (isinstance(t, dict) and t.get("name") in ("sub_agent_call", "sub_agent_batch_call"))
-                or (getattr(t, "name", None) in ("sub_agent_call", "sub_agent_batch_call"))
-                for t in (getattr(agent_config, "tools", None) or [])
-            )
-            if not (is_main_general_agent(agent_config) or has_subagent_tool):
+            # 「有没有委派能力」统一走 has_delegation_tool：它在 配置里的工具 之外
+            # 还认主助手（运行时隐式挂载）。这里原先各自实现一遍，两处条件一旦
+            # 漂移就会出现「通讯录注入了、运行时却没有工具」或反过来的错位。
+            from app.services.ai.tools.agent_delegate_tool import has_delegation_tool
+
+            if not has_delegation_tool(agent_config):
                 return None, 0, False, agent_system_prompt, None
 
             try:
