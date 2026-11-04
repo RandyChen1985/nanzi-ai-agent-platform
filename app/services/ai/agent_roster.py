@@ -19,6 +19,7 @@ def build_team_identity_context(
     team_profile: Optional[Mapping[str, Any]],
     *,
     has_members: bool,
+    delegation_depth: int = 0,
 ) -> Optional[str]:
     """团主专家的身份段：我是哪个团的主专家、团队定位与流程约束是什么。
 
@@ -28,6 +29,12 @@ def build_team_identity_context(
     刻意不放进 ``description``：那份描述会出现在**父级**的委派通讯录里被用作选人
     依据，团队介绍里的「先找元数据专家」这类措辞会把路由带偏。这里注入的是当前
     智能体自己的提示词，父级看不到。
+
+    ``delegation_depth`` 是**执行期**才知道的信息（``MainAgentContext.delegation_depth``）。
+    深度 > 0 表示这一轮它本身就是被别的智能体委派来的（例如它同时是另一个团的子专家），
+    此时「需要成员就用 sub_agent_call」这句必须反过来写：深度上限是 1，它再调只会拿到
+    ``depth_exceeded``，而模型照着前一句去试就会先白失败一次、再降级作答。构建提示词的
+    地方用 ``get_current_agent_context()`` 就能读到深度，不必等到工具调用阶段。
     """
     profile = team_profile if isinstance(team_profile, Mapping) else {}
     name = str(profile.get("name") or "").strip()
@@ -35,17 +42,31 @@ def build_team_identity_context(
     if not name and not intro:
         return None
 
+    is_delegated = int(delegation_depth or 0) > 0
+
     parts: List[str] = []
     parts.append(f"## 你的团队：{name}" if name else "## 你的团队")
     parts.append(f"你是「{name}」的主专家。" if name else "你是这个专家团的主专家。")
     if intro:
-        parts.append("团队的定位、协作流程与能力边界如下，遇到对应场景必须遵守：")
+        if is_delegated:
+            # 介绍里常写「先问 A 再问 B」，这一轮它执行不了，只能拿来判断该由谁做
+            parts.append("你的团队定位与分工如下，供你判断这类问题该交给哪位成员：")
+        else:
+            parts.append("团队的定位、协作流程与能力边界如下，遇到对应场景必须遵守：")
         parts.append(intro)
-    if has_members:
+    if is_delegated:
+        parts.append(
+            "但你这一轮是被其他智能体委派来处理某个子任务的，只能用你自己的能力作答："
+            "不要调用 `sub_agent_call`，委派深度已到上限，那样调用只会失败。"
+            "若这件事确实需要你团队里某位成员，请直接说明该由谁来做。"
+        )
+    elif has_members:
         parts.append(
             "需要成员专长时，用 `sub_agent_call` 把子任务交给对应成员，不要自己勉强回答。"
         )
-    parts.append(TEAM_DELEGATION_BOUNDARY_HINT)
+    # 深度已知且 > 0 时上面已经写明确了，条件句只留给「读不到深度」的兜底路径
+    if not is_delegated:
+        parts.append(TEAM_DELEGATION_BOUNDARY_HINT)
     return "\n\n".join(parts)
 
 
@@ -132,6 +153,7 @@ def build_sub_agents_context(
     delegable_agents: Iterable[Any],
     *,
     team_profile: Optional[Mapping[str, Any]] = None,
+    delegation_depth: int = 0,
 ) -> Optional[str]:
     """供 sub_agent_call 工具使用的技术向通讯录（与欢迎语清单数据源一致）。
 
@@ -143,7 +165,11 @@ def build_sub_agents_context(
     而不是对团的存在一无所知。
     """
     agents = [agent for agent in (delegable_agents or [])]
-    team_block = build_team_identity_context(team_profile, has_members=bool(agents))
+    team_block = build_team_identity_context(
+        team_profile,
+        has_members=bool(agents),
+        delegation_depth=delegation_depth,
+    )
 
     sub_agent_lines = []
     for agent in agents:

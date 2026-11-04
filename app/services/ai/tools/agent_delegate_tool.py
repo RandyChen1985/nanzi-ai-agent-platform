@@ -457,6 +457,15 @@ async def filter_delegable_agents(
     系统级要求 ``agent:<id>`` 显式授权（走 PermissionService）；用户自建要求
     ``created_by`` 是本人。``allow_personal=False`` 时自建智能体一律不进结果——
     这是未配置白名单时的历史行为，自建只有被显式写进白名单才「开通」。
+
+    刻意**不**在这里排除 ``is_expert_team_lead``（专家团主专家）：智能委派（routingMode
+    为 auto 时由主助手发起）面对的是「一个智能体」，团主被委派进来后因
+    ``MAX_DELEGATION_DEPTH = 1`` 无法再调度自己的成员，此时他就是一个普通专家——
+    这是设计语义，不是漏洞。要用团的完整能力得由用户在输入框选定团主（深度 0 起步）；
+    白名单里把团主选为子专家也是合法用法（它在别处就是普通专才），此时提示词会按
+    深度改口为「只能用个人能力」，不会推它去撞 depth_exceeded。因此**别在这里补一道
+    排除**：那会把「未配置白名单 = 系统级全量」和「显式白名单」两个口径同时改窄，
+    且没有任何界面提示。
     """
     delegable: List[Any] = []
     for agent in agents or []:
