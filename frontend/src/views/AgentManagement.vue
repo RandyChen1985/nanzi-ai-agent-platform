@@ -1095,11 +1095,12 @@ const saveTeamProfile = async (payload: {
 
 /**
  * 去配成员：成员属于版本级调度范围，只能在「配置与发布」里改。
- * 顺手给一句"具体在哪"，否则用户打开了抽屉也不知道该点哪儿。
+ *
+ * 只打开抽屉，不再弹 toast：按钮的 title 已经写了下一步点哪里，抽屉里也有版本列表，
+ * 每点一次都盖一条警告反而挡住刚打开的界面。
  */
 const openTeamScopeConfigurator = (team: AIAgent) => {
   openDrawer(team)
-  showToast('在「配置与发布」里编辑版本，到工具里给 sub_agent_call 勾选可委派的子智能体', 'warning')
 }
 
 /** 从团设置直接去配成员 */

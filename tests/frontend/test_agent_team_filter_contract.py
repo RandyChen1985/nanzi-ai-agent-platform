@@ -184,3 +184,19 @@ def test_short_badge_reads_as_team_count():
     """「子专家 · 2」会被读成 2 个成员，补一个「团」字。"""
     page = _read()
     assert "`子专家 · ${teams.length} 团`" in page
+
+
+def test_scope_configurator_opens_the_drawer_without_a_toast():
+    """点「配置调度范围」直接把「配置与发布」抽屉打开即可，别再盖一条警告。
+
+    按钮的 title 已经写着「在工具里给 sub_agent_call 勾选可委派的子智能体」，
+    抽屉本身也带版本列表；每点一次都弹 toast，反而挡住刚打开的界面。
+    """
+    page = _read()
+    start = page.index("const openTeamScopeConfigurator")
+    # 函数体只有一行调用，结尾是不带分号的 `}`；用 `\n};` 会一路切到很后面的函数
+    body = page[start : page.index("\n}", start)]
+    assert "openDrawer(team)" in body
+    assert "showToast" not in body
+    # 按钮上的说明要留着，否则用户就真不知道下一步点哪了
+    assert 'title="打开「配置与发布」，在工具里给 sub_agent_call 勾选可委派的子智能体"' in page
