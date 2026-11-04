@@ -4,6 +4,7 @@ import './style.css'
 import App from '@/App.vue'
 import router from '@/router'
 import { tooltip } from '@/directives/tooltip'
+import { clearUserScopedStorage } from './utils/sessionCleanup'
 
 import axios from 'axios'
 
@@ -30,19 +31,14 @@ axios.interceptors.response.use(
 
       // 清除客户端存储并跳转登录。
       //
-      // 这些 localStorage 键是历史遗留（现版本凭据只走 HttpOnly Cookie，不再写入本地
-      // 存储），清掉即可——但注意这只影响前端缓存快照，**不构成登出**。
+      // 清理范围统一由 `utils/sessionCleanup` 决定：这里和 `utils/axios.ts` 的 401
+      // 分支此前各写一份 removeItem，都漏掉了导航快照、MCP 会话令牌和 sessionStorage，
+      // 换账号后能看到上一个人的菜单/业务状态。
       //
-      // 此处刻意不再尝试用 document.cookie 删门户会话 Cookie：后端自项目初始化起即以
-      // httponly=True 下发，JS 既读不到也写不了，那种赋值纯属空操作（曾是误导性的死代码）。
-      // 会话真正失效只有两条路：后端 POST /api/portal/auth/logout（吊销 Redis 会话 +
-      // delete_cookie），或会话自然过期。
-      localStorage.removeItem('api_key')
-      localStorage.removeItem('user_info')
-      // 'admin_token' 是**历史遗留的 localStorage 键名**，与现在的 Cookie 名无关，
-      // 保留原样才能清掉老版本留下的垃圾；Cookie 本身由后端删。
-      localStorage.removeItem('admin_token')
-      localStorage.removeItem('yovole_token')
+      // 注意这只影响前端本地副本，**不构成登出**：门户会话 Cookie 是 HttpOnly，
+      // JS 既读不到也写不了；会话真正失效只有两条路：后端
+      // POST /api/portal/auth/logout（吊销 Redis 会话 + delete_cookie），或自然过期。
+      clearUserScopedStorage()
       if (window.location.pathname !== '/login') {
         window.location.href = '/login'
       }

@@ -1,3 +1,6 @@
+import json
+from types import SimpleNamespace
+
 import pytest
 import pytest_asyncio
 from app.services.permission_service import PermissionService
@@ -160,3 +163,49 @@ async def test_update_permissions_normalizes_menu_ids_submitted_as_elements(db_s
     perms = await service.get_user_permissions(test_user.id)
     assert "menu:system:config" in perms.permissions.menus
     assert "element:system:config_save" in perms.permissions.elements
+
+
+class _FakeRedis:
+    def __init__(self, payload):
+        self.payload = payload
+
+    async def get(self, key):
+        return self.payload
+
+
+@pytest.mark.asyncio
+async def test_get_user_menu_codes_reads_cache_without_building_details(monkeypatch):
+    """导航指纹只需要菜单码：缓存命中时不得再走完整聚合（那里会查 DB 拼展示名）。"""
+    service = PermissionService(db=None)
+
+    async def fake_redis():
+        return _FakeRedis(
+            json.dumps({"permissions": {"menus": ["menu:ai_chat", "menu:data_sources"]}})
+        )
+
+    monkeypatch.setattr(service, "_get_redis", fake_redis)
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("缓存命中时不应调用 get_user_permissions")
+
+    monkeypatch.setattr(service, "get_user_permissions", boom)
+
+    assert await service.get_user_menu_codes(7) == ["menu:ai_chat", "menu:data_sources"]
+
+
+@pytest.mark.asyncio
+async def test_get_user_menu_codes_falls_back_when_cache_misses(monkeypatch):
+    """缓存未命中时回落完整聚合（顺带写热缓存），返回同样的菜单码。"""
+    service = PermissionService(db=None)
+
+    async def fake_redis():
+        return _FakeRedis(None)
+
+    monkeypatch.setattr(service, "_get_redis", fake_redis)
+
+    async def fake_full(uid):
+        return SimpleNamespace(permissions=SimpleNamespace(menus=["menu:knowledge_management"]))
+
+    monkeypatch.setattr(service, "get_user_permissions", fake_full)
+
+    assert await service.get_user_menu_codes("9") == ["menu:knowledge_management"]

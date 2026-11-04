@@ -2,6 +2,7 @@
 import { ApiReference } from '@scalar/api-reference'
 import '@scalar/api-reference/style.css'
 import { computed, ref, onMounted } from 'vue'
+import { clearUserSession } from '../utils/userSession'
 
 // 门户凭据由同源 HttpOnly Cookie 承载，前端不再从 localStorage 读取。
 // token 为空时，Scalar 的 Try-it 请求仍会携带同源 Cookie。
@@ -49,8 +50,8 @@ const configuration = computed(() => ({
 } as const))
 
 const goToLogin = () => {
-  localStorage.removeItem('api_key')
-  localStorage.removeItem('user_info')
+  // 与其它 401 出口共用同一份清理清单，避免残留导航快照 / 业务偏好
+  clearUserSession()
   window.location.href = '/login'
 }
 </script>

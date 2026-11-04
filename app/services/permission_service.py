@@ -439,6 +439,39 @@ class PermissionService:
 
         return response
 
+    async def get_user_menu_codes(self, user_id: int) -> List[str]:
+        """只取用户的**菜单**权限码。
+
+        导航接口每次进后台都要现算一次快照指纹（`MenuService._nav_signature`），
+        而 `get_user_permissions` 即使在缓存命中后仍会组装展示名（`details`，含菜单名
+        与智能体名的 DB 查询）。条件请求本来就是为了省掉一次整树传输，不该为此多付
+        这份开销，所以缓存命中时直接读 `permissions.menus`；缓存未命中才走完整聚合
+        （顺带把缓存写热）。语义与 `get_user_permissions().permissions.menus` 一致。
+        """
+        try:
+            parsed_uid = int(user_id)
+        except (TypeError, ValueError):
+            parsed_uid = user_id
+
+        redis = await self._get_redis()
+        if redis:
+            try:
+                cache_key = await self._get_cache_key(parsed_uid, None)
+                cached_data = await redis.get(cache_key)
+            except Exception:  # noqa: BLE001 - 缓存故障退回完整聚合
+                cached_data = None
+            if cached_data:
+                try:
+                    data = json.loads(cached_data)
+                    menus = ((data or {}).get("permissions") or {}).get("menus")
+                    if isinstance(menus, list):
+                        return [str(code) for code in menus]
+                except Exception:  # noqa: BLE001 - 坏缓存走完整聚合重建
+                    logger.warning("解析权限缓存失败，改为完整聚合", exc_info=True)
+
+        permissions = await self.get_user_permissions(parsed_uid)
+        return list(permissions.permissions.menus or [])
+
     async def get_user_direct_permissions(self, user_id: int) -> PermissionSet:
         """仅该用户直配的**全局**权限（不含角色继承，也不含智能体级作用域）。
 

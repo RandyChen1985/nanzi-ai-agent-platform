@@ -73,15 +73,17 @@ def _bad_request(exc: Exception) -> HTTPException:
 @router.get("/nav")
 async def get_nav(
     version: Optional[int] = Query(default=None, description="客户端已持有的菜单版本号"),
+    signature: Optional[str] = Query(default=None, description="客户端快照的身份指纹"),
     user: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
 ):
     """当前用户可见的导航树。
 
-    `version` 与客户端快照一致时只回 `{"unchanged": true}`，避免每次进后台都重传整棵树。
+    只有 `version` 与 `signature` 同时命中当前用户，才回 `{"unchanged": true}`：
+    单看版本号会让上一个身份的快照在菜单表未变更期间一直被当成最新（换号串菜单）。
     """
     service = MenuService(db)
-    return await service.get_nav(user, version)
+    return await service.get_nav(user, version, client_signature=signature)
 
 
 @router.get("/tree")

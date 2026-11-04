@@ -22,9 +22,17 @@ def _grant(monkeypatch, menus: list[str], recorder: dict) -> None:
         recorder["user_id"] = user_id
         return SimpleNamespace(permissions=SimpleNamespace(menus=menus))
 
+    async def no_redis(self):  # noqa: ANN001 - 与真实签名对齐
+        return None
+
     monkeypatch.setattr(
         "app.services.permission_service.PermissionService.get_user_permissions",
         fake_get_user_permissions,
+    )
+    # `_load_user_menus` 现在走 `get_user_menu_codes`，后者会先读权限缓存；
+    # 本机 Redis 里可能残留真实用户的缓存，会让用例依赖外部状态，故这里禁掉缓存。
+    monkeypatch.setattr(
+        "app.services.permission_service.PermissionService._get_redis", no_redis
     )
 
 

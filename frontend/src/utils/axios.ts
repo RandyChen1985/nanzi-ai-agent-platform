@@ -4,6 +4,7 @@
  */
 import axios from 'axios'
 import type { AxiosError, InternalAxiosRequestConfig } from 'axios'
+import { clearUserScopedStorage } from './sessionCleanup'
 
 // 创建 axios instance
 const instance = axios.create({
@@ -59,14 +60,14 @@ instance.interceptors.response.use(
           }
           // 未授权，清除本地存储并跳转登录。
           //
-          // 与 main.ts 的 401 拦截器同理：localStorage 清理只针对前端历史遗留副本，
-          // 不构成登出；门户会话 Cookie 是 HttpOnly，document.cookie 无法增删，故不在此处
-          // 尝试删 Cookie（会话失效只能由后端 logout 完成）。
-          localStorage.removeItem('api_key')
-          localStorage.removeItem('user_info')
-          // 'admin_token' 是历史遗留的 localStorage 键名（非当前 Cookie 名），保留原样
-          localStorage.removeItem('admin_token')
-          localStorage.removeItem('yovole_token')
+          // 与 main.ts 的 401 拦截器同理：本地清理不构成登出；门户会话 Cookie 是
+          // HttpOnly，document.cookie 无法增删，故不在此处尝试删 Cookie（会话失效
+          // 只能由后端 logout 完成）。
+          //
+          // 清理范围统一由 `sessionCleanup` 决定：此前这里手写 removeItem，漏掉了
+          // 导航快照、MCP 会话令牌以及整个 sessionStorage，换号后会看到上一个人的
+          // 菜单/业务状态（见 2026-11 换号串菜单排查）。
+          clearUserScopedStorage()
           window.location.href = '/login'
           break;
           

@@ -199,10 +199,10 @@ const fetchUserInfo = async () => {
     if (seq !== userInfoSeq) return; // 过期请求的失败不应影响当前状态
     console.error("Auth check failed", e);
     if (isAuthFailure(e)) {
-      // 拦截器已处理跳转，这里彻底清理本地与 Cookie 凭据
+      // 拦截器已处理跳转，这里彻底清理本地与 Cookie 凭据。
+      // 清理入口统一在 `clearUserSession`（含导航快照、MCP 令牌、sessionStorage），
+      // 不再在这里补 removeItem——补一处漏一处正是上一个版本的遗留问题。
       clearUserSession();
-      localStorage.removeItem("api_key");
-      localStorage.removeItem("user_info");
       router.push("/login");
       return;
     }

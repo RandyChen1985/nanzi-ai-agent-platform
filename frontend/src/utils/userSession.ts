@@ -10,6 +10,7 @@
  */
 
 import { clearNavigationSnapshot } from '../composables/useNavigation'
+import { clearUserScopedStorage } from './sessionCleanup'
 
 type UserInfoLike = Record<string, any>
 
@@ -45,13 +46,11 @@ export function persistUserInfo(userInfo: UserInfoLike | null | undefined): User
  * 这里也不再写 `document.cookie` 删它——那种赋值是空操作，只会误导排查者。
  */
 export function clearUserSession(): void {
-  localStorage.removeItem('api_key')
-  localStorage.removeItem('user_info')
-  // 'admin_token' 是历史遗留的 localStorage 键名，保留原样以清理老版本残留
-  localStorage.removeItem('admin_token')
-  localStorage.removeItem('yovole_token')
-  localStorage.removeItem('yovole_embed_agent_avatar')
-  // 侧栏菜单快照属于「上一个身份」的数据：换账号登录后若不清，会先闪出别人的菜单
+  // 先清内存：`clearNavigationSnapshot` 会作废在途的导航请求，避免旧身份迟到的响应
+  // 把菜单与快照重新写回来（只删 localStorage 挡不住它）。
   clearNavigationSnapshot()
+  // 再清 localStorage / sessionStorage 中属于这个身份的所有副本，清单集中在
+  // `sessionCleanup`，401 拦截器走同一个入口，避免两套清理逻辑各自漏键。
+  clearUserScopedStorage()
 }
 

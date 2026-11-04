@@ -25,12 +25,12 @@ def test_dashboard_auth_check_only_logs_out_on_auth_failure():
 
 
 def test_dashboard_does_not_clear_session_before_auth_failure_is_confirmed():
-    """catch 分支必须先判定认证类失败，再清空 api_key，不能无条件清理。"""
+    """catch 分支必须先判定认证类失败，再清本地会话，不能无条件清理。"""
     source = _read("frontend/src/views/Dashboard.vue")
 
     fetch_start = source.index("const fetchUserInfo")
     guard_index = source.index("if (isAuthFailure(e))", fetch_start)
-    clear_index = source.index('localStorage.removeItem("api_key")', fetch_start)
+    clear_index = source.index("clearUserSession()", fetch_start)
 
     assert guard_index < clear_index
 
@@ -90,13 +90,20 @@ def test_authenticated_axios_instance_does_not_inject_api_key():
     assert "withCredentials: true" in source
 
 
-def test_both_axios_401_interceptors_clear_the_same_credentials():
-    """两个 401 拦截器清理的凭据必须一致，避免残留半登录态。"""
+def test_both_axios_401_interceptors_share_one_cleanup_entry():
+    """两个 401 拦截器必须走同一个清理入口，否则迟早各自漏一套键。
+
+    2026-11 换号残留排查发现：`main.ts` 与 `utils/axios.ts` 各写一份 removeItem，
+    两份都漏了导航快照、MCP 会话令牌与整个 sessionStorage。现在清单集中在
+    `sessionCleanup`，这里只钉住「两处都调它」+ 历史凭据键仍在清单里。
+    """
+    cleanup = _read("frontend/src/utils/sessionCleanup.ts")
+    for key in ("api_key", "user_info", "admin_token", "yovole_token"):
+        assert f"'{key}'" in cleanup, f"sessionCleanup 漏掉了历史凭据键 {key}"
+
     for path in ("frontend/src/main.ts", "frontend/src/utils/axios.ts"):
         source = _read(path)
-
-        for key in ("api_key", "user_info", "admin_token", "yovole_token"):
-            assert f"localStorage.removeItem('{key}')" in source, (path, key)
+        assert "clearUserScopedStorage()" in source, path
 
 
 def test_persist_user_info_purges_legacy_credential_copies():

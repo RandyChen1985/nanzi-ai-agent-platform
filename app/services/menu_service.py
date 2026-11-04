@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -309,34 +310,86 @@ class MenuService:
         user: Dict[str, Any],
         client_version: Optional[int] = None,
         *,
+        client_signature: Optional[str] = None,
         menus: Optional[Sequence[str]] = None,
         is_admin: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """当前用户的导航树。
 
         `menus` / `is_admin` 允许调用方注入（测试与内部复用），缺省时自行读取权限。
+
+        条件请求必须同时命中 `version` 与 `signature` 才算 unchanged：
+
+        - 只比全局菜单版本时，浏览器里**上一个身份**的快照会在菜单表未变更期间
+          一直被判定为最新，表现为「换账号后仍是管理员的菜单，点进去又被路由守卫
+          弹回工作台」，且只能靠清缓存恢复；
+        - `signature` 由「版本 + 用户身份 + 权限集合」现算，因此授权变更（它不会
+          INCR `sys:menu:version`）也会让旧快照自然失效，不依赖任何调用方记得失效。
         """
         version = await self.get_version()
-        # version == 0 表示 Redis 不可用或表未建立：此时不能回 unchanged，
-        # 否则客户端会一直停在旧快照上。
-        if client_version is not None and version > 0 and client_version == version:
-            return {"version": version, "unchanged": True}
-
-        nodes = await self.get_nodes()
 
         if is_admin is None:
             is_admin = (user or {}).get("role") == "admin"
         if menus is None and not is_admin:
             menus = await self._load_user_menus(user)
 
+        signature = self._nav_signature(version, user, menus or [], bool(is_admin))
+
+        # version == 0 表示 Redis 不可用或表未建立：此时不能回 unchanged，
+        # 否则客户端会一直停在旧快照上。
+        # 缺少 signature 的旧客户端一律回完整树：宁可多传一次，也不能让它停在
+        # 可能属于其他身份的快照上。
+        #
+        # 签名不是秘密，也不用于鉴权（伪造它只会拿到「按伪造者自己权限过滤」的树），
+        # 因此用普通字符串比较即可。不能用 hmac.compare_digest：它对非 ASCII 字符串
+        # 会直接抛 TypeError，一个 `?signature=中文` 就能把接口打成 500。
+        if (
+            version > 0
+            and client_version is not None
+            and client_version == version
+            and client_signature
+            and str(client_signature) == signature
+        ):
+            return {"version": version, "signature": signature, "unchanged": True}
+
+        nodes = await self.get_nodes()
         visible = self.filter_visible(nodes, menus or [], bool(is_admin))
         landing = self.resolve_landing(visible)
         return {
             "version": version,
+            "signature": signature,
             "unchanged": False,
             "nodes": build_tree(visible),
             "landing_path": landing,
         }
+
+    def _nav_signature(
+        self,
+        version: int,
+        user: Dict[str, Any],
+        menus: Sequence[str],
+        is_admin: bool,
+    ) -> str:
+        """导航快照的身份指纹：版本 + 用户 + 是否管理员 + 权限集合（集合语义）。
+
+        用 SHA-1 截断只是为了让客户端把它当成不透明串回传；这里不做安全校验，
+        真正的权限过滤仍在服务端按当前会话执行，伪造签名只会换来一份「按伪造者
+        自己权限过滤」的树，拿不到额外数据。
+        """
+        raw_user = user or {}
+        user_id = raw_user.get("user_id")
+        if user_id in (None, ""):
+            user_id = raw_user.get("id", "")
+        normalized_menus = ",".join(sorted({str(code) for code in menus or [] if code}))
+        payload = "\x1f".join(
+            [
+                str(version),
+                str(user_id),
+                "1" if is_admin else "0",
+                normalized_menus,
+            ]
+        )
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
     async def _load_user_menus(self, user: Dict[str, Any]) -> List[str]:
         # 认证依赖（require_api_key → verify_api_key）下发的用户字典只有 `user_id`，
@@ -355,8 +408,8 @@ class MenuService:
             return []
         from app.services.permission_service import PermissionService
 
-        permissions = await PermissionService(self.db).get_user_permissions(user_id)
-        return list(permissions.permissions.menus or [])
+        # 只取菜单码：条件请求每次都要算指纹，不该为它组装一次权限展示名（含 DB 查询）
+        return await PermissionService(self.db).get_user_menu_codes(user_id)
 
     @staticmethod
     def filter_visible(

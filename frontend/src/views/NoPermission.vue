@@ -48,15 +48,16 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import axios from '../utils/axios';
-import { persistUserInfo } from '../utils/userSession';
+import { clearUserSession, persistUserInfo } from '../utils/userSession';
 
 const router = useRouter();
 const refreshing = ref(false);
 const errorMessage = ref('');
 
 const logout = () => {
-  localStorage.removeItem('api_key');
-  localStorage.removeItem('user_info');
+  // 统一清理入口：导航快照、业务偏好、sessionStorage 里的令牌一并清掉。
+  // Cookie 由后端 logout 负责，本页只做「退出到登录页」的本地清理。
+  clearUserSession();
   router.push('/login');
 };
 
