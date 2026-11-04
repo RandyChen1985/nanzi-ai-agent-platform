@@ -2921,7 +2921,11 @@ import {
   splitUserMessageContent,
   useChatAttachments,
 } from "@/composables/chat/useChatAttachments";
-import { splitHistoryByPin } from "@/composables/chat/useChatHistoryGroups";
+import {
+  mergePendingHistoryItem,
+  resolvePendingHistoryItem,
+  splitHistoryByPin,
+} from "@/composables/chat/useChatHistoryGroups";
 import { usePinnedConversations } from "@/composables/chat/usePinnedConversations";
 import {
   applyStreamTraceId,
@@ -4875,6 +4879,13 @@ const onModeChange = (mode: string) => {
     }
 };
 const conversationId = ref("");
+/**
+ * 临时历史条目的时间锚点：切换会话时重置。
+ *
+ * 不能每次都取「现在」——`pendingHistoryItem` 会因为任意依赖变化重算，时间戳跟着跳动，
+ * 分组与 `formatDate` 也就随之重渲染。
+ */
+const pendingHistoryAnchor = ref(new Date());
 /** 会话内各 trace_id → 产物数量 的缓存（后端 /artifacts/counts 返回），驱动「产物」按钮显示与数量角标 */
 const artifactCountByTrace = ref<Record<string, number>>({});
 /** 某 trace 对应的产物数量（无则 0） */
@@ -6819,6 +6830,8 @@ const updateActiveConversationOnServer = async (cid: string) => {
 };
 
 watch(conversationId, () => {
+  // 临时历史条目的时间锚点随会话走：每个会话一个稳定的「本页打开时刻」
+  pendingHistoryAnchor.value = new Date();
   void loadResourceScope();
 });
 
@@ -7577,6 +7590,13 @@ const restoreHistorySidebarPreference = () => {
 };
 
 const historyList = ref<any[]>([]);
+/**
+ * 历史接口是否成功返回过至少一次。
+ *
+ * 「当前会话临时条目」必须挂在这个闸门后面：首屏还没拿到历史时插入，会先闪一条
+ * 随后被接口数据替换的假条目。
+ */
+const historyLoadedOnce = ref(false);
 const historyPage = ref(1);
 const historyHasMore = ref(true);
 const loadingHistory = ref(false);
@@ -7646,6 +7666,33 @@ const aggregatedHistoryList = computed(() => {
   return orderedKeys.map(key => groups[key]);
 });
 
+/**
+ * 「未落库的当前会话」临时条目：侧栏读的是 DB 历史（一行一个轮次，轮次收尾才落库），
+ * 而用户消息在 ContextStep 就进了 Redis 会话记忆——新会话首轮结束前界面上有内容、
+ * 侧栏里却没有条目。这里先补一条 `is_pending` 占位，落库后由接口数据自动接管
+ * （该 cid 出现在 historyList 里时 `resolvePendingHistoryItem` 直接返回 null）。
+ */
+const pendingHistoryItem = computed(() => {
+  // 只看第一条用户消息：流式输出期间 agent 正文在变，但它的 role 不是 user，
+  // `find` 在这里短路返回，不会把高频变化的 agent 内容收成依赖。
+  const firstUserMessage = messages.value.find(
+    (item) => item.role === "user" && String(item.content || "").trim(),
+  );
+  return resolvePendingHistoryItem({
+    conversationId: conversationId.value,
+    firstUserQuery: firstUserMessage ? firstUserMessage.content : "",
+    history: historyList.value,
+    historyLoaded: historyLoadedOnce.value,
+    keyword: historyKeyword.value,
+    isDefaultFilters: isDefaultHistoryFilters(historyFilters.value),
+    now: pendingHistoryAnchor.value,
+  });
+});
+
+const historyListWithPending = computed(() =>
+  mergePendingHistoryItem(aggregatedHistoryList.value, pendingHistoryItem.value),
+);
+
 /** 会话置顶（账号级偏好）：加载失败只降级，不影响聊天。 */
 const {
   pinned: pinnedConversations,
@@ -7665,7 +7712,8 @@ const handleTogglePin = async (item: any) => {
 
 const groupedHistoryList = computed(() => {
   const { pinnedGroup, dateGroups } = splitHistoryByPin(
-    aggregatedHistoryList.value,
+    // 用合并后的列表分组：未落库的当前会话要先露一条，落库后自动由接口数据接替
+    historyListWithPending.value,
     pinnedConversations.value,
     {
       // 搜索/筛选时不允许快照项凭空出现（会让人以为它命中了关键词）
@@ -7722,6 +7770,7 @@ const fetchHistory = async (isLoadMore = false) => {
 
     const res = await axios.get("/api/v1/chat/history", { params });
     if (res.data?.data) {
+        historyLoadedOnce.value = true;
         const newItems = res.data.data.items || [];
         if (isLoadMore) {
             historyList.value = [...historyList.value, ...newItems];
@@ -7931,6 +7980,14 @@ const handleActiveRunTerminate = async (item: { conversation_id: string; trace_i
 };
 
 const handleHistoryClick = async (item: any) => {
+    // 未落库的临时条目就是当前会话本身：它在 DB 里还没有行，归属校验只会返回
+    // 「无法确认」，然后弹一个没有意义的警告。这里直接滚到底（移动端顺手收起侧栏）。
+    if (item?.is_pending) {
+        if (isMobile.value) showHistorySidebar.value = false;
+        scrollToBottom();
+        return;
+    }
+
     if (!item.conversation_id) {
         if (item.query) userInput.value = item.query;
         return;
@@ -8027,8 +8084,13 @@ const showDeleteGroupModal = ref(false);
 const groupToDelete = ref<any>(null);
 
 const handleDeleteGroup = (group: any) => {
-  if (!group || !group.items || group.items.length === 0) return;
-  groupToDelete.value = group;
+  // 临时条目（未落库的当前会话）不能进删除名单：它在 DB 里没有行，batch-delete 删完
+  // 它仍然在列表里（只要它还是当前会话），而且确认弹窗里的「这 N 个会话」会多算一条。
+  const deletableItems = (group?.items || []).filter(
+    (item: any) => item && !item.is_pending && item.conversation_id,
+  );
+  if (!group || deletableItems.length === 0) return;
+  groupToDelete.value = { ...group, items: deletableItems };
   showDeleteGroupModal.value = true;
 };
 

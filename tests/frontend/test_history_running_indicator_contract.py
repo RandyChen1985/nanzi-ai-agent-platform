@@ -60,8 +60,10 @@ def test_running_item_gets_a_text_label_beside_the_active_tag():
     # 三元顺序是「是僵死吗」在前：僵死 → 疑似僵死，否则 → 进行中。
     assert "{{ isItemStale(item) ? '疑似僵死' : '进行中' }}" in source, "缺少「进行中」文字标签"
     # 标签要和「当前会话」并排，不能互相顶掉。
+    # 窗口从 600 放宽到 1200：同一行现在多了「待保存」（未落库的当前会话）这一个
+    # v-else-if 分支，顺序仍是 进行中 → 待保存 → 当前会话，并排语义不变。
     assert re.search(
-        r"<div class=\"flex items-center gap-1\">[\s\S]{0,600}?进行中[\s\S]{0,600}?当前会话",
+        r"<div class=\"flex items-center gap-1\">[\s\S]{0,600}?进行中[\s\S]{0,1200}?当前会话",
         source,
     ), "「进行中」与「当前会话」标签没有并排渲染"
 
