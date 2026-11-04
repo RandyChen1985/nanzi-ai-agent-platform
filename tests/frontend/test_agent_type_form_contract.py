@@ -218,10 +218,11 @@ def test_knowledge_base_agent_blocks_tools_step_without_tool_or_binding():
     assert "versionConfigIncompleteHint" in drawer
     assert "tool-action-btn--attention" in drawer
 
-    assert "CHATBI_TOOL_GROUP_LABEL" in management
-    assert "getDefaultCollapsedStaticGroups" in management
-    assert "applyKnowledgeBaseToolGroupDefaults" in management
-    assert "collapsed.add(CHATBI_TOOL_GROUP_LABEL)" in management
+    # 工具分组改为**默认全部折叠**（记录「已展开」，默认空集），知识库助手不再需要
+    # 单独把 ChatBI 组收起来——所有组进来都是收着的，「工具分组区不该一进来就铺满卡片」
+    # 这个诉求由默认折叠统一满足。
+    assert "expandedStaticGroups = ref<Set<string>>(new Set())" in management
+    assert "const isStaticGroupCollapsed = (label: string) => !expandedStaticGroups.value.has(label)" in management
 
     management = Path("frontend/src/views/AgentManagement.vue").read_text()
     list_section = management.split("<!-- List View -->", 1)[1]

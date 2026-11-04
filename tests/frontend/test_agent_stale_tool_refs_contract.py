@@ -48,8 +48,10 @@ def test_management_checks_unsaved_versions_through_stateless_endpoint():
 
 
 def test_removing_stale_refs_only_mutates_local_form():
+    # 取到下一个顶层 const 为止即可：原来拿 "watch(versionConfigStep" 当分界，那个
+    # watch 后来被删了（工具分组改为默认折叠），split 找不到锚点会把整份文件当成函数体
     remove_body = MANAGEMENT.split("const removeStaleToolRefs", 1)[1].split(
-        "watch(versionConfigStep", 1
+        "const fetchTools", 1
     )[0]
     assert "versionForm.value.tools" in remove_body
     # 只做本地过滤：任何直接写库/删工具的动作都会绕过「保存版本」这一确认步骤

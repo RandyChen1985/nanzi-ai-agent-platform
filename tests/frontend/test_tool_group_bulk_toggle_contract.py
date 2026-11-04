@@ -106,31 +106,31 @@ def test_management_binds_bulk_handlers(handler: str, kebab: str):
     assert f'@{kebab}="{handler}"' in _source(MANAGEMENT)
 
 
-def test_expand_all_clears_the_collapsed_set():
+def test_expand_all_fills_every_static_group():
+    """静态工具分组默认折叠（展开集合默认空），「全部展开」得把全量分组填进去。
+
+    改用「记录已展开」之后，一键展开与一键折叠的职责互换了：填满 vs 清空。
+    MCP 侧语义没动，仍是「记录已折叠」。
+    """
     source = _source(MANAGEMENT)
-    assert re.search(
-        r"collapsedStaticGroups\.value = new Set(?:<string>)?\(\)",
-        _body(source, "expandAllStaticGroups"),
-    )
+    expand = _body(source, "expandAllStaticGroups")
+    assert "groupedTools" in expand
+    assert "filteredGroupedTools" not in expand
     assert re.search(
         r"collapsedMcpGroups\.value = new Set(?:<string>)?\(\)",
         _body(source, "expandAllMcpGroups"),
     )
 
 
-def test_collapse_all_targets_every_group_not_the_filtered_view():
-    """「全部折叠」必须用全量分组 key；用 filtered* 会被搜索框或子 scope 缩小作用域。"""
+def test_collapse_all_clears_the_expanded_set():
+    """「全部折叠」= 清空展开集合；MCP 侧仍写入全量分组 key（不得被搜索框缩小）。"""
     source = _source(MANAGEMENT)
     static_body = _body(source, "collapseAllStaticGroups")
     mcp_body = _body(source, "collapseAllMcpGroups")
 
-    assert "filteredGroupedTools" not in static_body
-    assert "groupedTools" in static_body
+    assert re.search(r"expandedStaticGroups\.value = new Set(?:<string>)?\(\)", static_body)
     assert "filteredGroupedMcpTools" not in mcp_body
     assert "groupedMcpTools" in mcp_body
-
-    # 更强的一层：真正写入折叠集合的那一行也不得出现 filter
-    assert "filter" not in _line_with(static_body, "collapsedStaticGroups.value =")
     assert "filter" not in _line_with(mcp_body, "collapsedMcpGroups.value =")
 
 
@@ -193,7 +193,21 @@ def test_bulk_toggle_stays_in_memory():
     assert "sessionStorage" not in window
 
 
+def test_static_groups_are_collapsed_by_default():
+    """进「工具能力」先看到一屏分组标题（各组 x/y 一目了然），想改哪组再点开。
+
+    以前状态记的是「已折叠」、默认空集 = 全部展开，一进来就是几十张工具卡片。
+    """
+    source = _source(MANAGEMENT)
+    assert "const expandedStaticGroups = ref<Set<string>>(new Set())" in source
+    assert (
+        "const isStaticGroupCollapsed = (label: string) => !expandedStaticGroups.value.has(label)"
+        in source
+    )
+
+
 def test_reset_still_clears_group_collapse_state():
+    """重开版本配置要回到「全部分组收起」：展开集合必须清空。"""
     body = _body(_source(MANAGEMENT), "resetVersionEditorUi")
     assert re.search(r"collapsedMcpGroups\.value = new Set(?:<string>)?\(\)", body)
-    assert re.search(r"collapsedStaticGroups\.value = getDefaultCollapsedStaticGroups\(\)", body)
+    assert re.search(r"expandedStaticGroups\.value = new Set(?:<string>)?\(\)", body)

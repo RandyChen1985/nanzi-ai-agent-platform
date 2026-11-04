@@ -2335,60 +2335,28 @@ const filteredEnabledSkills = computed(() => {
   );
 });
 
-const collapsedStaticGroups = ref<Set<string>>(new Set());
-// 只读态（已发布版本）下，业务分组默认折叠；这里记录用户手动展开过哪些
-const expandedBusinessGroups = ref<Set<string>>(new Set());
-const CHATBI_TOOL_GROUP_LABEL = 'ChatBI 数据分析';
+// 分组默认**折叠**：进「工具能力」先看到一屏分组标题（各组已选/总数一目了然），
+// 想改哪组再点开。这里记录的是「用户展开过哪些」，默认空集 = 全部收起。
+// 以前记的是「已折叠」，空集等于全部铺开，一进来就是几十张工具卡片。
+const expandedStaticGroups = ref<Set<string>>(new Set());
 
-const getDefaultCollapsedStaticGroups = () => {
-  const collapsed = new Set<string>();
-  if (getActiveAgentType() === 'KNOWLEDGE_BASE') {
-    collapsed.add(CHATBI_TOOL_GROUP_LABEL);
-  }
-  return collapsed;
-};
-
-const applyKnowledgeBaseToolGroupDefaults = () => {
-  if (getActiveAgentType() !== 'KNOWLEDGE_BASE') return;
-  const next = new Set(collapsedStaticGroups.value);
-  next.add(CHATBI_TOOL_GROUP_LABEL);
-  collapsedStaticGroups.value = next;
-};
-
-// 业务分组（注册表页给 API 工具填的 group_name）判定
-const isBusinessGroupLabel = (label: string) =>
-  groupedTools.value.some((group) => group.kind === 'business' && group.label === label);
-
-const isStaticGroupCollapsed = (label: string) => {
-  if (collapsedStaticGroups.value.has(label)) return true;
-  // 只读态（如已发布版本）默认折叠业务分组：否则打开就是一屏几十张卡片；用户仍可点开
-  if (canEditVersion.value || !isBusinessGroupLabel(label)) return false;
-  return !expandedBusinessGroups.value.has(label);
-};
+const isStaticGroupCollapsed = (label: string) => !expandedStaticGroups.value.has(label);
 
 const toggleStaticGroupCollapse = (label: string) => {
-  // 只读态下业务分组走「默认折叠 + 手动展开」这套独立状态，避免污染可编辑态的折叠集合
-  if (!canEditVersion.value && isBusinessGroupLabel(label)) {
-    const expanded = new Set(expandedBusinessGroups.value);
-    if (expanded.has(label)) expanded.delete(label);
-    else expanded.add(label);
-    expandedBusinessGroups.value = expanded;
-    return;
-  }
-  const next = new Set(collapsedStaticGroups.value);
+  const next = new Set(expandedStaticGroups.value);
   if (next.has(label)) next.delete(label);
   else next.add(label);
-  collapsedStaticGroups.value = next;
+  expandedStaticGroups.value = next;
 };
 
 // 一键展开 / 一键折叠：作用于系统工具页签的**全部分组**。同样刻意使用全量
 // groupedTools，而不是搜索过滤后的 filteredGroupedTools。
 const expandAllStaticGroups = () => {
-  collapsedStaticGroups.value = new Set();
+  expandedStaticGroups.value = new Set(groupedTools.value.map((group) => group.label));
 };
 
 const collapseAllStaticGroups = () => {
-  collapsedStaticGroups.value = new Set(groupedTools.value.map((group) => group.label));
+  expandedStaticGroups.value = new Set();
 };
 
 const getStaticGroupSelectedCount = (tools: any[]) => {
@@ -2506,8 +2474,7 @@ const resetVersionEditorUi = () => {
   versionConfigStep.value = 'model';
   toolSearchQuery.value = '';
   collapsedMcpGroups.value = new Set();
-  collapsedStaticGroups.value = getDefaultCollapsedStaticGroups();
-  expandedBusinessGroups.value = new Set();
+  expandedStaticGroups.value = new Set();
   versionToolHealth.value = [];
   versionToolHealthLoading.value = false;
   versionToolHealthError.value = '';
@@ -2569,12 +2536,6 @@ const removeStaleToolRefs = (names: string[]) => {
     showToast(`已移除 ${removed} 项失效引用，保存版本后生效`, 'success');
   }
 };
-
-watch(versionConfigStep, (step, previousStep) => {
-  if (step === 'tools' && previousStep !== 'tools') {
-    applyKnowledgeBaseToolGroupDefaults();
-  }
-});
 
 const fetchTools = async () => {
   try {
@@ -2656,7 +2617,7 @@ type ToolGroup = { label: string; icon: string; tools: any[]; kind?: 'builtin' |
  * 分组（能力域 → 业务分组 → 兜底），两处各写一份必然漂移。
  *
  * `kind` 取名沿用这里的既有语义：共享模块的 `capability` 就是原来的内置关键字组，
- * 而 `isBusinessGroupLabel` 只认 `'business'`，语义必须保持不变。
+ * `business` 是注册表页填的 `group_name`，其余落到 `fallback`。
  */
 const groupedTools = computed<ToolGroup[]>(() =>
   groupToolsForDisplay(
