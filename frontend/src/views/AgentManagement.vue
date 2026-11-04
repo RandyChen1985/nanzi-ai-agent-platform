@@ -916,7 +916,7 @@ const closeTeamPicker = () => {
 /** 列表视图的紧凑徽标：列宽紧张，团名放进 title */
 const subAgentBadgeShort = (agent: AIAgent): string => {
   const teams = agentTeamsOf(agent)
-  return teams.length > 1 ? `子专家 · ${teams.length}` : '子专家'
+  return teams.length > 1 ? `子专家 · ${teams.length} 团` : '子专家'
 }
 
 const resolveTeamIntro = (agent: AIAgent): string =>
@@ -1434,13 +1434,21 @@ const filteredAgents = computed(() => {
   }
 
   // 1. Filter by keyword
+  // 关键词：名称、标识、描述，再加上团队关系（团名 / 所属团）。
+  // 与「专家团」视图的搜索保持同一套规则——同一页不能两套规则：用户在列表里搜
+  // 只写在描述里的「合同审查」却搜不到，切成专家团视图反而能搜到。
   if (searchKeyword.value) {
-    const k = searchKeyword.value.toLowerCase();
-    result = result.filter(
-      (a) =>
-        (a.name && a.name.toLowerCase().includes(k)) ||
-        (a.display_name && a.display_name.toLowerCase().includes(k))
-    );
+    const k = searchKeyword.value.trim().toLowerCase();
+    result = result.filter((a) => {
+      const haystack = [a.name, a.display_name, a.description]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (haystack.includes(k)) return true;
+      // 团主专家按团名命中；子专家按所属团名命中
+      if (a.is_expert_team_lead && resolveTeamName(a).toLowerCase().includes(k)) return true;
+      return agentTeamsOf(a).some((team) => team.name.toLowerCase().includes(k));
+    });
   }
 
   // 2. Filter by Status
@@ -1659,6 +1667,11 @@ const emptyStateMessage = computed(() => {
   // 管理员切到「我的智能体」时列表可能是空的，要说清「是因为只看自己」
   if (!hasActiveAgentFilters.value && workspaceTab.value === "mine") {
     return "你名下还没有智能体。切到「全部智能体」可以看到平台上其他人的。";
+  }
+  // 按团筛完是空的：多半不是「没数据」，而是这个团的成员对当前账号不可见
+  // （未发布 / 已删除 / 无权限），要和大海捞针式的「没匹配」区分开
+  if (teamFilter.value !== "all") {
+    return "这个团在当前列表里没有可见成员（成员可能未发布、已删除，或你没有访问权限）。";
   }
   return "没有找到匹配的智能体";
 });
@@ -4651,7 +4664,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <div v-if="filterPanelOpen" class="fixed inset-0 z-30" @click="filterPanelOpen = false"></div>
           <div
             v-if="filterPanelOpen"
-            class="absolute right-0 top-full z-40 mt-1.5 w-[560px] max-w-[calc(100vw-2rem)] rounded-xl border border-gray-100 bg-white p-4 shadow-2xl"
+            class="absolute right-0 top-full z-40 mt-1.5 max-h-[calc(100vh-9rem)] w-[560px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-gray-100 bg-white p-4 shadow-2xl"
           >
             <div class="mb-3 flex items-center justify-between">
               <span class="text-sm font-bold text-gray-800">高级筛选</span>
@@ -4752,10 +4765,16 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               </p>
             </div>
 
-            <div class="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
-              <button type="button" class="cursor-pointer text-xs text-gray-500 hover:text-gray-700" @click="clearAllAgentFilters">
-                重置
-              </button>
+            <!-- 条件已经 9 个，面板在小屏上会超一屏：底部操作条贴住容器底部，
+                 否则「应用」要滚到底才点得到 -->
+            <div class="sticky -bottom-4 -mx-4 mt-4 flex items-center justify-between border-t border-gray-100 bg-white px-4 pb-4 pt-3">
+              <div class="flex items-center gap-3">
+                <button type="button" class="cursor-pointer text-xs text-gray-500 hover:text-gray-700" @click="clearAllAgentFilters">
+                  重置
+                </button>
+                <!-- 应用前就能看到会剩几个：选完三个条件点应用才发现是空的最挫 -->
+                <span class="text-[11px] text-gray-400">匹配 {{ filteredAgents.length }} 个</span>
+              </div>
               <button
                 type="button"
                 class="cursor-pointer rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-dark"
@@ -5241,8 +5260,10 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             </div>
             <div class="min-w-0">
               <div class="flex items-center gap-1.5 min-w-0">
+                <!-- min-w-0 + truncate：flex item 的默认最小宽度是内容宽度，
+                     line-clamp 在这层不生效，长名称会把后面的徽标挤出卡片 -->
                 <h3
-                  class="font-bold text-gray-900 line-clamp-1"
+                  class="min-w-0 truncate font-bold text-gray-900"
                   :title="`${agent.display_name}（${agent.name}）`"
                 >
                   {{ agent.display_name }}
@@ -5257,8 +5278,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <button
                   v-if="subAgentBadge(agent)"
                   type="button"
-                  class="shrink-0 cursor-pointer rounded-full border border-purple-200 bg-purple-50 px-1.5 py-px text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100"
+                  class="max-w-[8.5rem] shrink-0 cursor-pointer truncate rounded-full border border-purple-200 bg-purple-50 px-1.5 py-px text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100"
                   :title="`${subAgentBadge(agent)?.title}（点击只看这个团）`"
+                  :aria-label="`${subAgentBadge(agent)?.title}，点击只看这个团`"
                   @click.stop="openTeamPicker($event, agent)"
                 >{{ subAgentBadge(agent)?.label }}</button>
                 <span
@@ -5777,8 +5799,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                       <button
                         v-if="subAgentBadge(agent)"
                         type="button"
-                        class="ml-1.5 inline-flex cursor-pointer items-center rounded-full border border-purple-200 bg-purple-50 px-1.5 py-px text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100"
+                        class="ml-1.5 inline-flex max-w-[7rem] cursor-pointer items-center overflow-hidden whitespace-nowrap rounded-full border border-purple-200 bg-purple-50 px-1.5 py-px text-[10px] font-semibold text-purple-700 transition-colors hover:border-purple-300 hover:bg-purple-100"
                         :title="`${subAgentBadge(agent)?.title}（点击只看这个团）`"
+                        :aria-label="`${subAgentBadge(agent)?.title}，点击只看这个团`"
                         @click.stop="openTeamPicker($event, agent)"
                       >{{ subAgentBadgeShort(agent) }}</button>
                       <span v-if="!agent.is_enabled" class="ml-1.5 text-[10px] text-gray-400 font-normal underline decoration-gray-200">已禁用</span>

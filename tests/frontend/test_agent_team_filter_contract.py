@@ -136,3 +136,51 @@ def test_team_section_is_a_flat_group_not_a_collapsed_panel():
     assert page.count('v-model="teamFilter"') == 1
     # 同时选「是」会空，面板里要提前交代，别让用户以为筛坏了
     assert "两个条件都选「是」时结果为空" in page
+
+
+# ---------------------------------------------------------------------------
+# 同日优化：筛选面板变成 9 个条件之后暴露出来的一批小问题
+# ---------------------------------------------------------------------------
+
+
+def test_search_covers_description_and_team_names():
+    """列表搜索只匹配 name/display_name，而「专家团」视图匹配团名 + 介绍。
+
+    同一页两套规则的结果是：搜只写在描述里的词，在列表里搜不到，切个视图反而能搜到。
+    """
+    page = _read()
+    start = page.index("// 关键词：名称、标识、描述")
+    block = page[start:start + 900]
+    assert "a.description" in block
+    assert "resolveTeamName(a).toLowerCase().includes(k)" in block
+    assert "agentTeamsOf(a).some((team) => team.name.toLowerCase().includes(k))" in block
+
+
+def test_panel_is_scrollable_and_shows_match_count():
+    """9 个条件后面板约 450px 高，没有 max-h 时「应用」要滚页面才点得到。"""
+    page = _read()
+    assert "max-h-[calc(100vh-9rem)]" in page
+    assert "overflow-y-auto" in page
+    # 底部操作条贴底，滚动时始终可点
+    assert "sticky -bottom-4" in page
+    # 应用前就能看到会剩几个
+    assert "匹配 {{ filteredAgents.length }} 个" in page
+
+
+def test_card_title_can_shrink():
+    """flex item 的默认最小宽度是内容宽度，缺 min-w-0 时 line-clamp 不生效，
+    长名称会把后面的徽标顶出卡片。"""
+    page = _read()
+    assert 'class="min-w-0 truncate font-bold text-gray-900"' in page
+
+
+def test_empty_state_explains_team_filter():
+    """按团筛完为空 ≠ 没有数据：成员可能未发布、已删除，或当前账号看不到。"""
+    page = _read()
+    assert "这个团在当前列表里没有可见成员" in page
+
+
+def test_short_badge_reads_as_team_count():
+    """「子专家 · 2」会被读成 2 个成员，补一个「团」字。"""
+    page = _read()
+    assert "`子专家 · ${teams.length} 团`" in page
