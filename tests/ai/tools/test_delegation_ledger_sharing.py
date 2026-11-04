@@ -73,15 +73,17 @@ async def _capture_child_context(monkeypatch, main_ctx: AgentContext) -> AgentCo
     monkeypatch.setattr(
         mod, "load_delegable_system_agent_candidates", AsyncMock(return_value=[fake_agent])
     )
+    # 候选链路已收敛到三段式统一出口：名单层 / 权限层 / 就绪层，这里直接让三段都返回同一批。
     monkeypatch.setattr(
         mod,
-        "filter_delegable_system_agents",
-        AsyncMock(side_effect=lambda session, agents, **kwargs: list(agents)),
-    )
-    monkeypatch.setattr(
-        mod,
-        "resolve_runnable_delegable_system_agents",
-        AsyncMock(side_effect=lambda session, agents, **kwargs: list(agents)),
+        "resolve_delegable_agent_stages",
+        AsyncMock(
+            side_effect=lambda session, **kwargs: (
+                [fake_agent],
+                [fake_agent],
+                [fake_agent],
+            )
+        ),
     )
     monkeypatch.setattr(
         mod.AgentManagerService,

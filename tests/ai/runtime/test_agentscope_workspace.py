@@ -1970,9 +1970,22 @@ async def test_idle_docker_workspace_is_reaped_and_recreated_on_next_request(
     cache_key = next(iter(workspace_module._docker_workspace_cache))
     workspace_module._docker_workspace_last_used[cache_key] = 0
 
+    # 会话仍持有引用（refcount > 0）：阈值放宽到
+    # DOCKER_WORKSPACE_REFERENCED_IDLE_MULTIPLIER 倍，30 秒的空闲不该回收——
+    # 心跳只覆盖工具执行期，Read/Grep/长思考期间活跃时间不动，按原阈值关容器会让
+    # 正在跑的那次 Bash 直接吃 404。
     await workspace_module.reap_idle_docker_workspaces(
         idle_seconds=30,
         now=31,
+    )
+
+    assert created[0].closed is False
+    assert workspace_module._docker_workspace_cache != {}
+
+    # 超过放宽后的阈值才真正回收（兜底：避免「不删除会话就永不回收」的泄漏）。
+    await workspace_module.reap_idle_docker_workspaces(
+        idle_seconds=30,
+        now=30 * workspace_module.DOCKER_WORKSPACE_REFERENCED_IDLE_MULTIPLIER + 1,
     )
 
     assert created[0].closed is True

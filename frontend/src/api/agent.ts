@@ -87,6 +87,19 @@ export interface AIAgent {
   owner_active?: boolean | null
   readiness_ready?: boolean
   readiness_missing?: string[]
+  /** 是否专家团主专家：为 true 时智能体中心以「团」的形式展示它 */
+  is_expert_team_lead?: boolean
+  /** 专家团展示信息 {name, intro}；两项都空时后端归一成 null */
+  team_profile?: { name?: string; intro?: string } | null
+  /** 团名（未配置时后端回落 display_name；非团主专家为 null） */
+  team_name?: string | null
+  /**
+   * 子专家数，取自已发布版本的调度范围。
+   * null 表示「未配置调度范围」（此时全部有权限的系统级都可调），不等于 0 个。
+   */
+  team_member_count?: number | null
+  /** 成员标识（来自已发布版本的调度范围）；null 表示未配置调度范围 */
+  team_member_ids?: string[] | null
   /**
    * 已发布版本绑定的模型在当前环境不可用的原因；null/undefined 表示正常。
    * code: missing | unregistered | disabled | missing_api_key
@@ -114,6 +127,10 @@ export interface AIAgentBase {
   engine_type?: 'LOCAL' | 'RAGFLOW' | 'OPENCLAW'
   engine_config?: any
   sort_order?: number
+  /** 是否专家团主专家（智能体级，不随版本发布） */
+  is_expert_team_lead?: boolean
+  /** 专家团展示信息；两项都空时后端归一成 null */
+  team_profile?: { name?: string; intro?: string } | null
 }
 
 export interface ToolConfigItem {
@@ -124,6 +141,8 @@ export interface ToolConfigItem {
   description_override?: string | null
   engine_config_override?: Record<string, unknown> | null
   metadata_dataset_ids?: string[] | null
+  /** sub_agent_call / sub_agent_batch_call 的调度白名单；null=未配置，[]=显式禁止委派 */
+  delegable_agent_ids?: string[] | null
 }
 
 export interface AIAgentVersion {

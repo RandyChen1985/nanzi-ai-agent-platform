@@ -225,8 +225,8 @@ class AgentServicePrompts:
     # marker: "has_all" 需工具全部可见才输出；"always" 无条件输出（fetch 未绑定时兜底）。
     # 行顺序即输出顺序，勿随意调整。
     _PLATFORM_KNOWLEDGE_LOOKUP_ROWS: Tuple[Tuple[Tuple[object, str], str], ...] = (
-        (("sub_agent_call", "has_all"), "| 明确需要查询内部业务数据库/结构化指标，或明确需要检索内部知识库/企业文档/制度手册，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造，可用子代理清单参见下文）；普通公网信息、编程概念、文本处理、生活常识或仅靠泛化关键词无法确认内部来源的问题，不要委派 |"),
-        (("sub_agent_batch_call", "has_all"), "| 需要同时处理多个彼此独立的内部任务 | 调用 **sub_agent_batch_call** 并行委派，结果按请求顺序返回；存在前后依赖时改用 **sub_agent_call** 串行委派 |"),
+        (("sub_agent_call", "has_all"), "| 明确需要查询内部业务数据库/结构化指标，或明确需要检索内部知识库/企业文档/制度手册，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造）；**只能调用「可委派子智能体清单」中列出的标识**，清单外的名字一律不可调用、也不要用相近名字猜测；普通公网信息、编程概念、文本处理、生活常识或仅靠泛化关键词无法确认内部来源的问题，不要委派 |"),
+        (("sub_agent_batch_call", "has_all"), "| 需要同时处理多个彼此独立的内部任务 | 调用 **sub_agent_batch_call** 并行委派，结果按请求顺序返回（每个目标同样受「可委派子智能体清单」约束）；存在前后依赖时改用 **sub_agent_call** 串行委派 |"),
         (("todo_write", "has_all"), "| 请求包含多个执行步骤、多个工具或子代理、明显前后依赖，或需要生成文件 | 先调用 **todo_write** 建立完整任务清单；每完成、失败或取消一个阶段都更新清单；单步问答、单次检索和单次查询不要调用 |"),
         (("__publish__", "special"), "__PUBLISH__"),
         (("memory_search", "has_all"), "| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |"),
@@ -234,7 +234,7 @@ class AgentServicePrompts:
         (("directory_tree_navigator", "has_all"), "| 「列出这个已知目录的文件树」「查看目录下有哪些文件」「按后缀或文件名筛选目录内容」 | 调用 **directory_tree_navigator**（只查看已知目录的树形元数据；不用于查询权限、目录映射或文件内容） |"),
         (("list_accessible_datasets", "has_all"), "| 「我有哪些数据集」「能查哪些数据」「数据集列表」 | 调用 **list_accessible_datasets**（仅已启用、目录级 id/名称/备注，不含表结构） |"),
         (("list_accessible_knowledge_bases", "has_all"), "| 「我有哪些知识库」「能检索哪些文档库」「知识库列表」 | 调用 **list_accessible_knowledge_bases**（仅目录级信息；正文检索用 search_knowledge_base） |"),
-        (("list_available_agents", "has_all"), "| 「我有哪些智能体」「能调用哪些专家」「可用智能体列表」，或准备委派子任务前需确认智能体标识 | 调用 **list_available_agents**（返回可用智能体标识 agent_name、名称、职责与能力） |"),
+        (("list_available_agents", "has_all"), "| 「我有哪些智能体」「能调用哪些专家」「可用智能体列表」，或准备委派子任务前需确认智能体标识 | 调用 **list_available_agents**：`items` 是当前可直接调用的，`blocked` 是用户有权限但当前不可委派的（带 blocked_reason）；问「我有那些智能体权限」看 `accessible_count` 与 `blocked`，问「我能委派哪些」看 `items` 与 `delegable_count`，两个问题不要混答；`delegation_available=false` 时如实说「当前无法委派」，但**不要**答成「你没有任何智能体」 |"),
         (("get_myinfo", "has_all"), "| 「我的用户信息」「我的部门/角色/权限」「查看我的资料」 | 调用 **get_myinfo**（只读取当前上下文中的本人，不接受 userid 或其他参数） |"),
         (("request_user_confirmation", "has_all"), "| 录入/修改/删除业务数据、向外部系统写入记录 | 先调用 **request_user_confirmation** 展示可编辑确认卡；等待「【业务确认】」用户回执后再决定是否调用写入工具；用户取消后禁止立刻再次弹确认卡 |"),
         (("ask_user_question", "has_all"), "| 缺少继续处理所需的关键输入，或存在需要用户选择的业务分支 | 调用 **ask_user_question** 展示 2-12 个清晰选项；等待「【用户回答】」回执后继续，禁止在本轮自行猜测或继续执行 |"),
@@ -617,6 +617,22 @@ class AgentServicePrompts:
                     tool_names.add("sub_agent_call")
                     tool_names.add("sub_agent_batch_call")
                     tool_names.add("todo_write")
+            except Exception:
+                pass
+            # 调度白名单被显式清空（`delegable_agent_ids = []`）时委派实际不可用：
+            # 能力表不能继续写「必须委派」，否则提示词与运行时相反，模型会对着一个
+            # 必然被拒的工具反复尝试。
+            try:
+                from app.services.ai.tools.agent_delegate_tool import (
+                    resolve_delegation_allowlist,
+                )
+
+                allowlist_configured, allowlist = resolve_delegation_allowlist(
+                    getattr(agent_config, "tools", None)
+                )
+                if allowlist_configured and not allowlist:
+                    tool_names.discard("sub_agent_call")
+                    tool_names.discard("sub_agent_batch_call")
             except Exception:
                 pass
 

@@ -23,6 +23,14 @@ class AIAgent(Base):
     # ResourcePermission.agent_id 的既有做法）。
     sort_order = Column(Integer, default=0)
     is_enabled = Column(Boolean, default=True)
+    # 专家团主专家：为 True 时智能体中心的「专家团」tab 会以「团」的形式展示它。
+    # 成员**不落库**——取的是版本 tools 里 sub_agent_call 的 delegable_agent_ids，
+    # 避免「团里 5 个、调度实际 3 个」两套真相。
+    # 注意：这两列由 db-prod/V203（PG 为 db-prod-pg/V103）加入，代码先于迁移上线
+    # 会让智能体列表 1054——部署顺序必须是先迁移、后重启后端。
+    is_expert_team_lead = Column(Boolean, default=False, nullable=False)
+    # {"name": 团名, "intro": 团介绍}；NULL 表示未配置
+    team_profile = Column(JSON, nullable=True)
     engine_type = Column(String(20), default='LOCAL')
     engine_config = Column(JSON, nullable=True)
     created_by = Column(String(64), nullable=True)

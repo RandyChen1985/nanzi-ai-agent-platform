@@ -40,6 +40,12 @@ _docker_workspace_cache: dict[str, Any] = {}
 _docker_workspace_refcounts: dict[str, int] = {}
 _docker_workspace_locks: dict[str, asyncio.Lock] = {}
 _docker_workspace_last_used: dict[str, float] = {}
+#: 最近一次确认「容器确实还在」的探测时间（monotonic），见
+#: :data:`DOCKER_WORKSPACE_ALIVE_PROBE_TTL_SECONDS`。
+_docker_workspace_verified_at: dict[str, float] = {}
+#: 「技能快照过期 → 逐出并重建」的串行化锁（键即沙箱缓存键）：同一台沙箱被多个
+#: 并发请求同时判定过期时，只允许第一个真正逐出，其余在锁内双检后复用重建结果。
+_sandbox_rebuild_locks: dict[str, asyncio.Lock] = {}
 _k8s_workspace_cache: dict[str, Any] = {}
 _k8s_workspace_refcounts: dict[str, int] = {}
 _k8s_workspace_locks: dict[str, asyncio.Lock] = {}
@@ -70,7 +76,33 @@ def _sandbox_host_prepare_lock(host_workdir: str) -> asyncio.Lock:
     return lock
 
 
+def _sandbox_rebuild_lock(sandbox_cache_key: str) -> asyncio.Lock:
+    """取该沙箱的「核对指纹 → 逐出 → 重建」串行锁。
+
+    与 ``_docker_workspace_locks`` 分工不同：那把握住「同一技能集合不会被并发建两次」，
+    这把握住「判过期之后只逐出一次」。两把锁获取顺序固定（先 rebuild、后 workspace），
+    不会成环；构建容器的长耗时部分在 workspace 锁里，不在 rebuild 锁里。
+    """
+    lock = _sandbox_rebuild_locks.get(sandbox_cache_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _sandbox_rebuild_locks[sandbox_cache_key] = lock
+    return lock
+
+
 DOCKER_WORKSPACE_INIT_RETRY_DELAY_SECONDS = 0.5
+#: 缓存命中的沙箱多久做一次「容器真的还在吗」的轻量探测（秒）。
+#:
+#: AgentScope 的 ``is_alive`` 只是普通布尔属性，只在 ``initialize()`` / ``close()``
+#: 时改写：容器被 ``docker rm``、daemon prune、OOM 或**别的实例** ``create_or_replace``
+#: 掉之后它仍是 True，平台于是把 404 ``No such container`` 一直抛给工具层，且永不自愈
+#: （代理只在「沙箱对象为 None」时才重建）。每次命中都调 Docker 又会把热路径变成一次
+#: RPC，所以按 TTL 摊薄：正常路径每 30 秒最多一次 ``container.show()``，换来
+#: 「容器没了最多 30 秒内被发现、并就地重建」。
+DOCKER_WORKSPACE_ALIVE_PROBE_TTL_SECONDS = 30.0
+#: 单次存活探测的超时（秒）。探测发生在 ``cache_key`` 锁内，daemon 卡住时不能让它
+#: 把该沙箱上所有请求一起拖死：超时按「还活着」处理，宁可多跑一盘 404 也不锁死。
+DOCKER_WORKSPACE_ALIVE_PROBE_TIMEOUT_SECONDS = 5.0
 K8S_WORKSPACE_IDLE_SECONDS = 900.0
 K8S_WORKSPACE_REAPER_INTERVAL_SECONDS = 60.0
 
@@ -1291,6 +1323,14 @@ SANDBOX_POLICY_K8S = "k8s"
 SANDBOX_POLICY_E2B = "e2b"
 SANDBOX_POLICY_SSH = "ssh"
 DOCKER_WORKSPACE_IDLE_SECONDS = 15 * 60
+#: 「仍有会话持有引用」的沙箱，空闲阈值放宽到这个倍数。
+#:
+#: 心跳只在**工具执行期**刷新活跃时间（Bash / 终端 / 代码执行），Read / Grep / 长思考
+#: 都不刷新，于是「会话还开着、接连读了一批文件」的场景会在 15 分钟整被当空闲回收，
+#: 而回收会连带清掉会话缓存条目、关掉容器——正在跑的那次 Bash 直接吃 404。
+#: 放宽到 4 倍（默认 1 小时）躲开这类长任务，同时保留兜底：不删除会话的用户不会
+#: 把容器一直留到进程重启（那才是真的泄漏）。
+DOCKER_WORKSPACE_REFERENCED_IDLE_MULTIPLIER = 4.0
 DOCKER_WORKSPACE_REAPER_INTERVAL_SECONDS = 60
 KNOWN_SANDBOX_POLICIES = frozenset(
     {
@@ -2060,11 +2100,25 @@ async def _sandbox_skills_snapshot_is_current(
     return current == recorded
 
 
-async def _evict_sandbox_cache_entry(cache_key: str, *, reason: str) -> int:
-    """按缓存键里的策略后缀逐出一台沙箱（Docker / K8s 各自的逐出实现）。"""
+async def _evict_sandbox_cache_entry(
+    cache_key: str,
+    *,
+    reason: str,
+    expected_last_used: float | None = None,
+) -> int:
+    """按缓存键里的策略后缀逐出一台沙箱（Docker / K8s 各自的逐出实现）。
+
+    ``expected_last_used`` 是并发保护：调用方在**判定过期时**记下这台条目的活跃时间，
+    逐出前用它确认「缓存里还是我看到的那一台」。不传就是无条件逐出（用户主动停止/重启
+    等语义明确的操作）。
+    """
     if str(cache_key).endswith(f"::{SANDBOX_POLICY_K8S}"):
-        return await _evict_k8s_workspace_cache_entry(cache_key, reason=reason)
-    return await _evict_docker_workspace_cache_entry(cache_key, reason=reason)
+        return await _evict_k8s_workspace_cache_entry(
+            cache_key, reason=reason, expected_last_used=expected_last_used
+        )
+    return await _evict_docker_workspace_cache_entry(
+        cache_key, reason=reason, expected_last_used=expected_last_used
+    )
 
 
 #: 技能集合目录被回收的最小"年龄"（秒）：刚建好就被回收的目录留着，避免
@@ -2169,6 +2223,57 @@ def collect_orphan_sandbox_skills_dir(cache_key: str) -> str | None:
         pass
     logger.info("[workspace] Reclaimed orphan sandbox skills dir: %s", skills_dir)
     return skills_dir
+
+
+def _workspace_id_parts(workspace_id: str) -> tuple[str, str] | None:
+    """把容器/Pod 的 ``workspace_id`` 拆回 ``(用户键前缀, 技能集合令牌)``。
+
+    令牌只有两种形态：``noskills``（空技能集）或 12 位十六进制，由
+    :func:`_skill_paths_cache_token` 产生。历史命名（``as_ws_<user_key>``，不带令牌）
+    返回 ``None``——那是共用的 ``sandbox/skills`` 单份布局，不归这里回收
+    （见 :func:`_migrate_legacy_sandbox_skills_dir`）。
+
+    ``prefix`` 可能与原始 ``user_key`` 不同：超长用户键在拼令牌前被
+    :func:`_sandbox_user_key_prefix` 压缩过。这种情况下算出的宿主路径根本不存在，
+    :func:`collect_orphan_sandbox_skills_dir` 会直接返回 ``None``——安全，不会误删。
+    """
+    match = re.match(
+        r"^(?P<prefix>.+)-(?P<token>noskills|[0-9a-f]{12})$", str(workspace_id or "")
+    )
+    if match is None:
+        return None
+    return match.group("prefix"), match.group("token")
+
+
+async def _reclaim_orphan_sandbox_skills_dir_for_workspace_id(
+    workspace_id: str, *, policy: str
+) -> str | None:
+    """孤儿容器/Pod 被对账删掉之后，回收它留在宿主机上的技能集合目录。
+
+    **为什么必须单独补这一下**：对账走的是 ``container.delete(force=True)`` /
+    ``delete_namespaced_pod``，不经过 :func:`_evict_docker_workspace_cache_entry`，
+    而目录回收只挂在逐出路径上。不补，进程每重启一次 ``sandbox/skills-<令牌>`` 就在
+    磁盘上多留一份，只增不减（这类目录里还可能有分区副本，体积不小）。
+
+    判据完全复用 :func:`collect_orphan_sandbox_skills_dir`：无活跃缓存条目、
+    目录年龄超过 :data:`SANDBOX_SKILLS_DIR_MIN_AGE_SECONDS`、且没有 agent 自建技能。
+    ``to_thread`` 是因为它要 ``os.walk`` 整棵目录树，不能卡住事件循环。
+    """
+    parts = _workspace_id_parts(workspace_id)
+    if parts is None:
+        return None
+    prefix, layout = parts
+    try:
+        root = await resolve_workspace_root()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] orphan skills dir reclaim skipped: %s", exc)
+        return None
+    cache_key = f"{os.path.abspath(root)}::{prefix}::{layout}::{policy}"
+    try:
+        return await asyncio.to_thread(collect_orphan_sandbox_skills_dir, cache_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[workspace] orphan skills dir reclaim failed: %s", exc)
+        return None
 
 
 def _resolve_docker_host_data_path(service_path: str) -> str:
@@ -2719,6 +2824,61 @@ def _resolve_sandbox_user_key(
     )
 
 
+async def _docker_workspace_container_alive(workspace: Any) -> bool:
+    """容器是否**真的**还在；只把 404 判成「不在」。
+
+    ``is_alive`` 不反映外部删除（``docker rm`` / daemon prune / OOM / 别的实例
+    ``create_or_replace``），所以这里问一次 Docker。其它异常一律判「还在」：探测本身
+    失败（daemon 抖动、超时、权限）不该触发重建——重建会 ``create_or_replace`` 掉一台
+    可能好着的容器，代价远大于多跑一盘 404。
+    """
+    container = getattr(workspace, "_container", None)
+    show = getattr(container, "show", None)
+    if show is None:
+        return getattr(workspace, "is_alive", True) is not False
+    try:
+        result = show()
+        if inspect.isawaitable(result):
+            await asyncio.wait_for(
+                result, timeout=DOCKER_WORKSPACE_ALIVE_PROBE_TIMEOUT_SECONDS
+            )
+        return True
+    except asyncio.TimeoutError:
+        logger.debug("[workspace] container liveness probe timed out (treated as alive)")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "status", None) == 404:
+            return False
+        logger.debug(
+            "[workspace] container liveness probe failed (treated as alive): %s", exc
+        )
+        return True
+
+
+def _drop_docker_workspace_entry_locked(cache_key: str) -> tuple[Any, list[Any]]:
+    """在已持有 ``cache_key`` 锁时摘除沙箱条目与引用它的会话条目，返回待关闭对象。
+
+    **会话级条目必须一起摘**：留着它们会让 ``_ensure_workspace`` 继续命中那个「沙箱已经
+    没了」的旧组合，而指纹核对读不到指纹文件时会判「最新」放行，于是下一轮又把死沙箱
+    交给工具层——正是「404 不自愈」的成因之一。
+
+    调用方负责 ``close`` 返回值（锁内不做长耗时关闭）。
+    """
+    sandbox = _docker_workspace_cache.pop(cache_key, None)
+    _docker_workspace_refcounts.pop(cache_key, None)
+    _docker_workspace_last_used.pop(cache_key, None)
+    _docker_workspace_verified_at.pop(cache_key, None)
+    pairs: list[Any] = []
+    for workspace_cache_key, sandbox_ref in list(_workspace_sandbox_refs.items()):
+        if sandbox_ref != cache_key:
+            continue
+        cached = _workspace_cache.pop(workspace_cache_key, None)
+        _workspace_sandbox_refs.pop(workspace_cache_key, None)
+        if cached is not None:
+            pairs.append(cached)
+    return sandbox, pairs
+
+
 async def _acquire_docker_workspace(
     *,
     root: str,
@@ -2731,11 +2891,27 @@ async def _acquire_docker_workspace(
     条目各自拥有自己的容器与目录。此前只把令牌放进缓存键、容器名仍按用户唯一，
     于是第二条条目会在 ``create_or_replace`` 里把第一条正在用的容器删掉重建，而第一条
     仍被当作可用（``is_alive`` 只是布尔属性），后续 Bash 全部打在已删除的容器上。
+
+    命中缓存时按 :data:`DOCKER_WORKSPACE_ALIVE_PROBE_TTL_SECONDS` 做一次存在性探测：
+    容器被外部删除后 ``is_alive`` 仍是 True，不探测就会把 404 一直抛给工具层且永不自愈。
     """
     cache_key = _docker_workspace_cache_key(root, user_key, skill_paths)
     lock = _docker_workspace_locks.setdefault(cache_key, asyncio.Lock())
+    stale: tuple[Any, list[Any]] | None = None
     async with lock:
         workspace = _docker_workspace_cache.get(cache_key)
+        if workspace is not None and getattr(workspace, "is_alive", True) is not False:
+            now = time.monotonic()
+            verified_at = _docker_workspace_verified_at.get(cache_key, 0.0)
+            if now - verified_at >= DOCKER_WORKSPACE_ALIVE_PROBE_TTL_SECONDS:
+                if await _docker_workspace_container_alive(workspace):
+                    _docker_workspace_verified_at[cache_key] = now
+                else:
+                    logger.warning(
+                        "[workspace] Docker 沙箱容器已不存在，逐出并重建: %s", cache_key
+                    )
+                    stale = _drop_docker_workspace_entry_locked(cache_key)
+                    workspace = None
         if workspace is None or getattr(workspace, "is_alive", True) is False:
             workspace = await _policy_docker_workspace(
                 skill_paths,
@@ -2745,29 +2921,55 @@ async def _acquire_docker_workspace(
             )
             _docker_workspace_cache[cache_key] = workspace
             _docker_workspace_refcounts[cache_key] = 0
+            _docker_workspace_verified_at[cache_key] = time.monotonic()
         _docker_workspace_refcounts[cache_key] = (
             _docker_workspace_refcounts.get(cache_key, 0) + 1
         )
         _docker_workspace_last_used[cache_key] = time.monotonic()
+
+    if stale is not None:
+        stale_sandbox, stale_pairs = stale
+        closed_ids: set[int] = set()
+        to_close: list[Any] = [stale_sandbox]
+        for cached in stale_pairs:
+            to_close.extend(_normalize_workspace_pair(cached))
+        for item in to_close:
+            if item is None or id(item) in closed_ids:
+                continue
+            closed_ids.add(id(item))
+            await _close_workspace_safely(item, reason="container disappeared")
     return workspace, cache_key
 
 
 async def _release_docker_workspace(cache_key: str, *, reason: str) -> None:
-    """Release one conversation reference and close the user container at zero."""
+    """Release one conversation reference and close the user container at zero.
+
+    归零时要**连引用它的会话条目一起摘**（:func:`_drop_docker_workspace_entry_locked`）：
+    只 pop 沙箱条目会留下「指向已关闭容器」的会话组合，而指纹核对读得到指纹文件、
+    判定「最新」，下一轮直接把它交给工具层——死容器就这样被复用，且 ``is_alive``
+    已经是 False 却没有人去重建。
+    """
     lock = _docker_workspace_locks.get(cache_key)
     if lock is None:
         return
-    workspace = None
+    workspace: Any = None
+    stale_pairs: list[Any] = []
     async with lock:
         current = _docker_workspace_refcounts.get(cache_key, 0)
         if current > 1:
             _docker_workspace_refcounts[cache_key] = current - 1
             return
-        workspace = _docker_workspace_cache.pop(cache_key, None)
-        _docker_workspace_refcounts.pop(cache_key, None)
-        _docker_workspace_last_used.pop(cache_key, None)
-    if workspace is not None:
-        await _close_workspace_safely(workspace, reason=reason)
+        workspace, stale_pairs = _drop_docker_workspace_entry_locked(cache_key)
+
+    closed_ids: set[int] = set()
+    to_close: list[Any] = [workspace]
+    for cached in stale_pairs:
+        to_close.extend(_normalize_workspace_pair(cached))
+    for item in to_close:
+        if item is None or id(item) in closed_ids:
+            continue
+        closed_ids.add(id(item))
+        await _close_workspace_safely(item, reason=reason)
 
 
 def _touch_docker_workspace(cache_key: str) -> None:
@@ -2787,22 +2989,17 @@ async def _evict_docker_workspace_cache_entry(
         return 0
 
     cached_pairs: list[Any] = []
+    sandbox_ws: Any = None
     async with lock:
         if (
             expected_last_used is not None
             and _docker_workspace_last_used.get(cache_key) != expected_last_used
         ):
+            # 我判定「过期」之后，这台条目已经被别人刷新或重建过：不能再关它。
+            # 这正是并发逐出的旧故障：B 拿着 A 重建前算出的 stale 判断，把 A 刚建好
+            # 的容器当过期删掉，A 后续 Bash 全部 404。
             return 0
-        sandbox_ws = _docker_workspace_cache.pop(cache_key, None)
-        _docker_workspace_refcounts.pop(cache_key, None)
-        _docker_workspace_last_used.pop(cache_key, None)
-        for workspace_cache_key, sandbox_ref in list(_workspace_sandbox_refs.items()):
-            if sandbox_ref != cache_key:
-                continue
-            cached = _workspace_cache.pop(workspace_cache_key, None)
-            _workspace_sandbox_refs.pop(workspace_cache_key, None)
-            if cached is not None:
-                cached_pairs.append(cached)
+        sandbox_ws, cached_pairs = _drop_docker_workspace_entry_locked(cache_key)
 
     to_close: list[Any] = []
     if sandbox_ws is not None:
@@ -2857,22 +3054,51 @@ async def _acquire_k8s_workspace(
     return workspace, cache_key
 
 
+def _drop_k8s_workspace_entry_locked(cache_key: str) -> tuple[Any, list[Any]]:
+    """在已持有 ``cache_key`` 锁时摘除 Pod 条目与引用它的会话条目（语义同 Docker 版）。
+
+    调用方负责 ``close`` 返回值（锁内不做长耗时关闭）。
+    """
+    sandbox = _k8s_workspace_cache.pop(cache_key, None)
+    _k8s_workspace_refcounts.pop(cache_key, None)
+    _k8s_workspace_last_used.pop(cache_key, None)
+    pairs: list[Any] = []
+    for workspace_cache_key, sandbox_ref in list(_workspace_sandbox_refs.items()):
+        if sandbox_ref != cache_key:
+            continue
+        cached = _workspace_cache.pop(workspace_cache_key, None)
+        _workspace_sandbox_refs.pop(workspace_cache_key, None)
+        if cached is not None:
+            pairs.append(cached)
+    return sandbox, pairs
+
+
 async def _release_k8s_workspace(cache_key: str, *, reason: str) -> None:
-    """Release one conversation reference and close the user Pod when active count reaches zero."""
+    """Release one conversation reference and close the user Pod when active count reaches zero.
+
+    归零时连引用它的会话条目一起摘，理由同 :func:`_release_docker_workspace`。
+    """
     lock = _k8s_workspace_locks.get(cache_key)
     if lock is None:
         return
-    workspace = None
+    workspace: Any = None
+    stale_pairs: list[Any] = []
     async with lock:
         current = _k8s_workspace_refcounts.get(cache_key, 0)
         if current > 1:
             _k8s_workspace_refcounts[cache_key] = current - 1
             return
-        workspace = _k8s_workspace_cache.pop(cache_key, None)
-        _k8s_workspace_refcounts.pop(cache_key, None)
-        _k8s_workspace_last_used.pop(cache_key, None)
-    if workspace is not None:
-        await _close_workspace_safely(workspace, reason=reason)
+        workspace, stale_pairs = _drop_k8s_workspace_entry_locked(cache_key)
+
+    closed_ids: set[int] = set()
+    to_close: list[Any] = [workspace]
+    for cached in stale_pairs:
+        to_close.extend(_normalize_workspace_pair(cached))
+    for item in to_close:
+        if item is None or id(item) in closed_ids:
+            continue
+        closed_ids.add(id(item))
+        await _close_workspace_safely(item, reason=reason)
 
 
 def _touch_k8s_workspace(cache_key: str) -> None:
@@ -2892,22 +3118,14 @@ async def _evict_k8s_workspace_cache_entry(
         return 0
 
     cached_pairs: list[Any] = []
+    sandbox_ws: Any = None
     async with lock:
         if (
             expected_last_used is not None
             and _k8s_workspace_last_used.get(cache_key) != expected_last_used
         ):
             return 0
-        sandbox_ws = _k8s_workspace_cache.pop(cache_key, None)
-        _k8s_workspace_refcounts.pop(cache_key, None)
-        _k8s_workspace_last_used.pop(cache_key, None)
-        for workspace_cache_key, sandbox_ref in list(_workspace_sandbox_refs.items()):
-            if sandbox_ref != cache_key:
-                continue
-            cached = _workspace_cache.pop(workspace_cache_key, None)
-            _workspace_sandbox_refs.pop(workspace_cache_key, None)
-            if cached is not None:
-                cached_pairs.append(cached)
+        sandbox_ws, cached_pairs = _drop_k8s_workspace_entry_locked(cache_key)
 
     to_close: list[Any] = []
     if sandbox_ws is not None:
@@ -2934,7 +3152,12 @@ async def reap_idle_k8s_workspaces(
     idle_seconds: float = K8S_WORKSPACE_IDLE_SECONDS,
     now: float | None = None,
 ) -> int:
-    """Close user K8s workspaces idle for at least ``idle_seconds``."""
+    """Close user K8s workspaces idle for at least ``idle_seconds``.
+
+    与 Docker 版同一取舍：``refcount > 0`` 的条目按
+    :data:`DOCKER_WORKSPACE_REFERENCED_IDLE_MULTIPLIER` 倍放宽，避免「会话还开着、
+    正在跑长任务」的 Pod 被当成空闲关掉。
+    """
     if idle_seconds < 0:
         raise ValueError("idle_seconds must be non-negative")
     current = time.monotonic() if now is None else now
@@ -2953,6 +3176,11 @@ async def reap_idle_k8s_workspaces(
             last_used = _k8s_workspace_last_used.get(cache_key)
             if last_used is None or current - last_used < idle_seconds:
                 continue
+        if _k8s_workspace_refcounts.get(cache_key, 0) > 0 and (
+            current - last_used
+            < idle_seconds * DOCKER_WORKSPACE_REFERENCED_IDLE_MULTIPLIER
+        ):
+            continue
         reaped += await _evict_k8s_workspace_cache_entry(
             cache_key,
             reason="K8s workspace idle timeout",
@@ -3158,7 +3386,14 @@ async def reap_idle_docker_workspaces(
     idle_seconds: float = DOCKER_WORKSPACE_IDLE_SECONDS,
     now: float | None = None,
 ) -> int:
-    """Close user Docker workspaces idle for at least ``idle_seconds``."""
+    """Close user Docker workspaces idle for at least ``idle_seconds``.
+
+    **还有会话持有引用（``refcount > 0``）的条目按**
+    :data:`DOCKER_WORKSPACE_REFERENCED_IDLE_MULTIPLIER` **倍放宽**：心跳只覆盖工具
+    执行期，Read/Grep/长思考期间活跃时间不动，按原阈值回收会把「会话还开着、正在
+    跑长任务」的沙箱关掉，那次 Bash 直接 404。放宽而不是直接跳过，是因为没有别处
+    会释放 refcount——直接跳过等于「不删除会话就永不回收」，把泄漏留给进程重启。
+    """
     if idle_seconds < 0:
         raise ValueError("idle_seconds must be non-negative")
     current = time.monotonic() if now is None else now
@@ -3177,6 +3412,11 @@ async def reap_idle_docker_workspaces(
             last_used = _docker_workspace_last_used.get(cache_key)
             if last_used is None or current - last_used < idle_seconds:
                 continue
+        if _docker_workspace_refcounts.get(cache_key, 0) > 0 and (
+            current - last_used
+            < idle_seconds * DOCKER_WORKSPACE_REFERENCED_IDLE_MULTIPLIER
+        ):
+            continue
         reaped += await _evict_docker_workspace_cache_entry(
             cache_key,
             reason="Docker workspace idle timeout",
@@ -3198,6 +3438,7 @@ def _prune_idle_workspace_locks() -> int:
     for locks, cache in (
         (_docker_workspace_locks, _docker_workspace_cache),
         (_k8s_workspace_locks, _k8s_workspace_cache),
+        (_sandbox_rebuild_locks, _docker_workspace_cache),
     ):
         for cache_key, lock in list(locks.items()):
             if cache_key in cache or lock.locked():
@@ -3333,6 +3574,12 @@ async def reconcile_orphan_docker_workspaces(
                 workspace_id,
                 current - created,
             )
+            # 容器没了，它在宿主机上的技能集合目录也成了孤儿。对账不经过逐出函数，
+            # 而目录回收只挂在逐出路径上，这里必须显式补一次，否则进程每重启一轮就
+            # 在磁盘上多留一份 ``sandbox/skills-<令牌>``。
+            await _reclaim_orphan_sandbox_skills_dir_for_workspace_id(
+                workspace_id, policy=SANDBOX_POLICY_DOCKER
+            )
     finally:
         if client is not None:
             with contextlib.suppress(Exception):
@@ -3410,6 +3657,10 @@ async def reconcile_orphan_k8s_workspaces(
                     namespace,
                     workspace_id,
                     current - created,
+                )
+                # 同上：Pod 没了，它的技能集合目录也要跟着回收（K8s 用 PVC 内路径）。
+                await _reclaim_orphan_sandbox_skills_dir_for_workspace_id(
+                    workspace_id, policy=SANDBOX_POLICY_K8S
                 )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[workspace] orphan pod scan failed: %s", exc)
@@ -4295,36 +4546,69 @@ async def get_local_workspace(
     )
 
     cache_key = f"{workdir}::{skills_fp}::{policy}"
+
+    async def _reuse_cached(cached_pair: Any, sandbox_key: str | None) -> Any:
+        """复用命中且核对通过的缓存条目（换成并发方刚重建的那台也走这里）。"""
+        pair_sandbox, _pair_local = _normalize_workspace_pair(cached_pair)
+        if isinstance(pair_sandbox, LazySandboxWorkspaceProxy) and not lazy_sandbox:
+            await pair_sandbox.ensure_ready()
+        if sandbox_key:
+            _touch_sandbox_workspace(sandbox_key)
+        # 缓存命中不代表权限没变：按当前禁用集合清一次会话快照
+        # （见 ``_prune_forbidden_session_skills`` docstring）
+        await _prune_forbidden_session_skills(workdir, user_info)
+        return cached_pair
+
     cached = _workspace_cache.get(cache_key)
     if cached is not None:
-        sandbox_ws_cached, _ = _normalize_workspace_pair(cached)
         sandbox_cache_key = _workspace_sandbox_refs.get(cache_key)
         if sandbox_cache_key is None:
             # 纯宿主策略，或 lazy 代理尚未拉起：没有物化快照可核对。
-            if isinstance(sandbox_ws_cached, LazySandboxWorkspaceProxy) and not lazy_sandbox:
-                await sandbox_ws_cached.ensure_ready()
-            await _prune_forbidden_session_skills(workdir, user_info)
-            return cached
+            return await _reuse_cached(cached, None)
         if await _sandbox_skills_snapshot_is_current(
             sandbox_cache_key,
             skill_paths=skill_paths,
         ):
-            if isinstance(sandbox_ws_cached, LazySandboxWorkspaceProxy) and not lazy_sandbox:
-                await sandbox_ws_cached.ensure_ready()
-            _touch_sandbox_workspace(sandbox_cache_key)
-            # 缓存命中不代表权限没变：按当前禁用集合清一次会话快照
-            # （见 ``_prune_forbidden_session_skills`` docstring）
-            await _prune_forbidden_session_skills(workdir, user_info)
-            return cached
-        # 快照已过期：先逐出这台沙箱（连带引用它的会话条目），再落到下面按当前技能
-        # 集合重建容器/Pod。逐出会打断同技能集合上**正在跑**的其它会话那一次 Bash，
-        # 这是权限变更时"宁可报错也不越权执行"的取舍。
-        logger.info(
-            "[workspace] 沙箱技能快照过期，逐出并重建: %s", sandbox_cache_key
-        )
-        await _evict_sandbox_cache_entry(
-            sandbox_cache_key, reason="skill snapshot stale"
-        )
+            return await _reuse_cached(cached, sandbox_cache_key)
+        # 快照已过期。**只让第一个请求真正逐出**：同一台沙箱上并发命中同一个过期判断
+        # 时，后到者若照旧无条件逐出，会把先到者刚重建好的新容器当过期删掉——先到者
+        # 后续 Bash 全部 404，且 ``is_alive`` 仍是 True，永不自愈。
+        stale_last_used = _docker_workspace_last_used.get(sandbox_cache_key)
+        async with _sandbox_rebuild_lock(sandbox_cache_key):
+            refreshed = _workspace_cache.get(cache_key)
+            refreshed_ref = _workspace_sandbox_refs.get(cache_key)
+            if refreshed is not None and refreshed_ref != sandbox_cache_key:
+                # 并发方已把这台沙箱整个换掉了：直接用它，别再逐出。
+                return await _reuse_cached(refreshed, refreshed_ref)
+            if refreshed is not None and await _sandbox_skills_snapshot_is_current(
+                sandbox_cache_key,
+                skill_paths=skill_paths,
+            ):
+                # 并发方已按当前技能集合重建完成（指纹文件已是新的）：复用。
+                return await _reuse_cached(refreshed, sandbox_cache_key)
+            logger.info(
+                "[workspace] 沙箱技能快照过期，逐出并重建: %s", sandbox_cache_key
+            )
+            # 逐出会打断同技能集合上**正在跑**的其它会话那一次 Bash，这是权限变更时
+            # "宁可报错也不越权执行"的取舍。
+            evicted = await _evict_sandbox_cache_entry(
+                sandbox_cache_key,
+                reason="skill snapshot stale",
+                expected_last_used=stale_last_used,
+            )
+            if not evicted:
+                # 条目在我判定过期之后被别人动过：可能是重建（那就直接用），也可能只是
+                # 心跳 touch（那它仍然过期，得再逐出一次）。不能在这里直接往下走——
+                # `_acquire_docker_workspace` 会命中那台过期沙箱，等于没修。
+                refreshed_now = _workspace_cache.get(cache_key)
+                if refreshed_now is not None and await _sandbox_skills_snapshot_is_current(
+                    sandbox_cache_key,
+                    skill_paths=skill_paths,
+                ):
+                    return await _reuse_cached(refreshed_now, sandbox_cache_key)
+                await _evict_sandbox_cache_entry(
+                    sandbox_cache_key, reason="skill snapshot stale"
+                )
         cached = None
 
     is_sandbox = policy in (
@@ -5762,6 +6046,7 @@ def clear_workspace_cache() -> None:
     _docker_workspace_refcounts.clear()
     _docker_workspace_locks.clear()
     _docker_workspace_last_used.clear()
+    _docker_workspace_verified_at.clear()
     _k8s_workspace_cache.clear()
     _k8s_workspace_refcounts.clear()
     _k8s_workspace_locks.clear()
@@ -5769,6 +6054,7 @@ def clear_workspace_cache() -> None:
     # 用户级准备锁只保护同步的目录准备动作，不会被长期持有；这里一并清掉，
     # 避免测试/长生命周期进程里按路径无限累积。
     _sandbox_host_prepare_locks.clear()
+    _sandbox_rebuild_locks.clear()
 
 
 def normalize_workspace_tool_names(tool_names: set[str] | frozenset[str]) -> set[str]:

@@ -211,15 +211,126 @@ def scope_select_source() -> str:
     return SCOPE_SELECT.read_text(encoding="utf-8")
 
 
-def test_agent_form_has_collapsible_sections_with_bulk_toggle(agent_management_source):
-    """配置项多，低频块要能折叠，并且有一键展开/折叠。"""
-    assert "toggleSection('capabilities')" in agent_management_source
-    assert "toggleSection('scopeGate')" in agent_management_source
-    assert "toggleSection('markdownTheme')" in agent_management_source
-    assert "toggleAllSections" in agent_management_source
-    assert "全部展开" in agent_management_source and "全部折叠" in agent_management_source
-    # 折叠头里的「?」必须 stop，否则点帮助会连带折叠
+def test_agent_form_splits_sections_into_tabs(agent_management_source):
+    """配置项多，按章节拆 tab：基本信息 / 专家团 / 能力标签 / 排版样式。
+
+    折叠（含「全部折叠」批量按钮）已去掉：低频项各占一页，不再需要点开才看得见，
+    页签也不该退化成「四个块还是一页、只是加了个锚点」。
+    """
+    assert 'role="tablist"' in agent_management_source
+    for label in ("基本信息", "专家团", "能力标签", "排版样式"):
+        assert f'label: "{label}"' in agent_management_source, f"缺少「{label}」页签"
+    for key in ("basic", "team", "capabilities", "appearance"):
+        assert f"v-show=\"agentFormTab === '{key}'\"" in agent_management_source, (
+            f"「{key}」页签没有对应内容块"
+        )
+    # 折叠与批量折叠入口不再保留，避免两套隐藏机制并存
+    assert "toggleSection" not in agent_management_source
+    assert "全部折叠" not in agent_management_source
+    assert "全部展开" not in agent_management_source
+    # 页签头里的「?」必须 stop，否则看帮助会连带切页签
     assert '@click.stop="showCapabilityHelp = true"' in agent_management_source
+    # 换页签必须走统一入口：直接改 agentFormTab 会丢掉「滚回顶部」，
+    # 内容更短的一页会从半截开始显示（浏览器把 scrollTop 夹在中间）。
+    assert '@click="switchAgentFormTab(tab.key)"' in agent_management_source
+    assert "scrollIntoView" in agent_management_source
+
+
+def test_team_intro_guide_opens_in_modal(agent_management_source):
+    """「团队介绍」的写法指引要和能力标签的「?」一样弹层显示。
+
+    内联展开会把「专家团」这一页撑长，收起后还得再点一次才看得到；两处「?」交互
+    不一致时，用户会以为其中一个没反应。弹层还得保留「填入示例」这条路。
+    """
+    assert "const showTeamIntroHelp = ref(false)" in agent_management_source
+    assert "const applyTeamIntroExample" in agent_management_source
+    assert '@click.stop="showTeamIntroHelp = true"' in agent_management_source
+    assert 'v-if="showTeamIntroHelp"' in agent_management_source
+    # 内联展开版不许回来：同一个指引不能有两个入口
+    assert "showTeamIntroGuide" not in agent_management_source
+    # 弹层自带标题，组件不要再重复一遍标题和导语
+    assert '<TeamIntroGuide hide-intro @apply="applyTeamIntroExample" />' in agent_management_source
+
+
+def test_team_editor_modal_uses_the_same_intro_guide_popup():
+    """「专家团设置」弹窗里的「团队介绍 ?」也要走弹层，跟智能体编辑弹窗保持一致。
+
+    这是另一个组件（AgentTeamEditorModal），容易只改了一边：用户在智能体中心看到
+    的是弹层，点进「专家团设置」又变回内联展开。层级也要盯住——它自己的 Modal 是
+    10010，帮助层必须更高，否则会被父弹窗盖住。
+    """
+    editor = (ROOT / "frontend/src/components/agent/AgentTeamEditorModal.vue").read_text(
+        encoding="utf-8"
+    )
+    assert "const showIntroHelp = ref(false)" in editor
+    assert "const applyIntroExample" in editor
+    assert '@click.stop="showIntroHelp = true"' in editor
+    assert 'v-if="showIntroHelp"' in editor
+    # 内联展开版不许回来
+    assert "showIntroGuide" not in editor
+    assert '<TeamIntroGuide hide-intro @apply="applyIntroExample" />' in editor
+    assert 'class="fixed inset-0 z-[10020]' in editor
+
+
+def test_agent_form_window_stays_same_size_across_tabs(agent_management_source):
+    """切页签时弹窗不许跳高度。
+
+    原先高度由最长的「基本信息」决定，切到「排版样式」这种短页时窗口会缩下去，
+    鼠标停在的位置跟着变、按钮也会移位。这里靠固定弹窗高度让它稳定：
+    内容区（Modal 自带 overflow-y-auto）继续滚动，页签条 sticky 才有意义。
+    """
+    assert 'size="max-w-4xl sm:h-[min(84vh,820px)]"' in agent_management_source, (
+        "编辑弹窗没有固定高度，切换页签窗口高度会跳"
+    )
+    # 页签条必须是内层容器的第一个子元素：多一个前置空 div，space-y-4 就会给它
+    # 补 16px 上边距，顶部又出现一块空白（之前就是被这块空白顶下来的）
+    assert '<div ref="agentFormTopAnchor" aria-hidden="true"></div>' not in agent_management_source
+    assert 'ref="agentFormTopAnchor"' in agent_management_source
+    # 吸顶必须用负 top。滚动容器带 p-4/p-6，`top-0` 只贴到内边距**下方**，
+    # 滚动时内容会从页签条上方那圈 padding 里钻出来——实测就是这样永远悬着一条空白。
+    assert "sticky -top-4" in agent_management_source
+    assert "sm:-top-6" in agent_management_source
+    # 底色必须不透明：半透明会把滚过页签条的文字透出来（截图里能看到半截字）。
+    # 只看页签条那一行——文件别处的筛选条/下拉用半透明是正常的。
+    tab_bar_line = next(
+        line for line in agent_management_source.splitlines() if "sticky -top-4" in line
+    )
+    assert "bg-white " in tab_bar_line or tab_bar_line.rstrip().endswith("bg-white")
+    assert "bg-white/95" not in tab_bar_line
+
+
+def test_agent_form_tracks_unsaved_changes_per_tab(agent_management_source):
+    """改动散在四页里时，必须能看出「改了几处、改在哪页」。
+
+    tab 化本身把信息藏起来了：只剩一个「保存修改」，用户改完两页再回头，
+    没法确认有没有漏掉的页。这条契约锁三件事：
+    1. 打开弹窗取一次基线（否则一进来就满屏「有改动」）；
+    2. 每个字段只归属一个页签（engine_config 里的键不许被两页重复计数）；
+    3. 页签数字、底栏总数、一键跳转三个入口都在。
+    """
+    script = agent_management_source[: agent_management_source.index("</script>")]
+    for name in (
+        "takeAgentFormSnapshot",
+        "dirtyFieldKeys",
+        "dirtyCountByTab",
+        "dirtyTotal",
+        "jumpToNextDirtyTab",
+    ):
+        assert f"const {name}" in script, f"缺少未保存改动统计用的 {name}"
+
+    open_body = script[script.index("const openAgentModal"):]
+    open_body = open_body[: open_body.index("const agentPayloadWithoutSystemFlag")]
+    assert "takeAgentFormSnapshot();" in open_body, "打开弹窗没有取基线，改动数会算错"
+
+    fields = re.findall(r'\{ tab: "(basic|team|capabilities|appearance)", key: "([^"]+)"', script)
+    keys = [key for _, key in fields]
+    assert keys, "没有定义字段归属表"
+    assert len(keys) == len(set(keys)), f"同一字段被多个页签重复计数：{keys}"
+    assert {tab for tab, _ in fields} == {"basic", "team", "capabilities", "appearance"}
+
+    assert "dirtyCountByTab[tab.key]" in agent_management_source, "页签上没有显示改动数"
+    assert "处修改未保存" in agent_management_source, "底栏没有提示未保存改动"
+    assert '@click="jumpToNextDirtyTab"' in agent_management_source, "底栏提示不可点击跳转"
 
 
 def test_version_drawer_syncs_agent_engine_config_on_save(agent_management_source):
@@ -251,27 +362,66 @@ def test_new_agent_wizard_exposes_scope_gate(agent_editor_source):
 
 
 def test_template_helpers_are_declared_in_script(agent_management_source):
-    """模板里用到的折叠辅助函数必须在 script 中真的定义。
+    """模板里用到的状态与辅助函数必须在 script 中真的定义。
 
     踩过的坑：一次区间替换把 `collapsedSections` / `isSectionOpen` /
     `toggleSection` / `toggleAllSections` 整段删掉，模板却还在用。
     Vue 渲染时抛 `isSectionOpen is not a function`，编辑弹窗直接不出现；
     而 `vue-tsc --noEmit` 走的是 solution-style 根 tsconfig（`files: []`），
     压根没检查任何文件，于是一直显示"通过"。这条契约不依赖 tsc。
+
+    换成 tab 后风险点跟着换：模板依赖 `agentFormTab` / `agentFormTabs`，
+    另需保证「换智能体回到首页」和「页签消失时回落」两处逻辑存在。
     """
     script_end = agent_management_source.index("</script>")
     script = agent_management_source[:script_end]
     for name in (
-        "collapsedSections",
-        "isSectionOpen",
-        "toggleSection",
-        "toggleAllSections",
-        "allSectionsCollapsed",
+        "agentFormTab",
+        "agentFormTabs",
+        "agentFormTopAnchor",
+        "switchAgentFormTab",
+        "scrollAgentFormToTop",
+        "revealBasicTab",
         "scopeGateMode",
         "scopeGateModeModel",
         "setScopeGateMode",
     ):
         assert f"const {name}" in script, f"模板用到的 {name} 没有在 script 中定义"
+    # 打开另一个智能体时不能停在上次翻到的页签
+    assert 'agentFormTab.value = "basic";' in script
+    # 切类型/引擎导致某页签消失时，要回落而不是白屏
+    assert "watch(agentFormTabs" in script
+    # 保存校验失败必须把用户带回基本信息页，否则只弹一句 toast，人不知道该改哪个字段
+    save_body = script[script.index("const saveAgent = async"):]
+    save_body = save_body[: save_body.index("const saveOnboardingVersion")]
+    assert save_body.count("revealBasicTab();") == 2, "缺标识符/标识符撞名两条校验都要回页"
+
+
+def test_agent_tab_state_is_declared_after_form_refs(agent_management_source):
+    """页签状态的声明顺序必须晚于它读到的 ref。
+
+    `watch(agentFormTabs, …)` 建立时会**立即求值一次** source（不是 only-when-changed），
+    而 `agentFormTabs` 的 getter 里读 `agentForm.value`。一旦 watch 早于 `const agentForm`
+    声明，setup 期就抛 `Cannot access 'agentForm' before initialization`（TDZ），
+    `<script setup>` 整体失败——整个智能体中心白屏。
+
+    这条契约存在的原因：`compile_vue_templates.cjs`（语法）与 `vue-tsc`（类型）都发现不了
+    这类顺序错误，当时的白屏就是一路"全绿"之后实机才炸出来的。只锁顺序，不锁位置。
+    """
+    script = agent_management_source[: agent_management_source.index("</script>")]
+    form_decl = script.index("const agentForm = ref<AIAgentBase>(")
+    tab_decl = script.index("const agentFormTab = ref<AgentFormTab>")
+    tabs_decl = script.index("const agentFormTabs = computed")
+    # 只认行首：注释里也会出现 `watch(agentFormTabs, …)` 这段文字
+    watch_match = re.search(r"^watch\(agentFormTabs", script, re.M)
+    assert watch_match is not None, "watch(agentFormTabs) 没有定义在顶层"
+    watch_decl = watch_match.start()
+    assert form_decl < tab_decl < tabs_decl < watch_decl, (
+        "agentForm → agentFormTab → agentFormTabs → watch(agentFormTabs) 必须依次声明，"
+        "否则 setup 期 TDZ 会让页面白屏"
+    )
+    # 滚动复位依赖模板里的锚点，ref 名写错时只会静默失效，这里一起锁住
+    assert 'ref="agentFormTopAnchor"' in agent_management_source
 
 
 def test_knowledge_portal_toggle_is_locked_under_bound_only():

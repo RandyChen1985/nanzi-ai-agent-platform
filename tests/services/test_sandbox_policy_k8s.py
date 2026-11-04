@@ -757,6 +757,9 @@ async def test_k8s_reaper_start_stop_and_idle_reap():
                 - ws_module.K8S_WORKSPACE_IDLE_SECONDS
                 - 5
             )
+            # 仍有会话持有的条目会按 DOCKER_WORKSPACE_REFERENCED_IDLE_MULTIPLIER 倍
+            # 放宽（心跳只覆盖工具执行期）；这里要测的是基础回收路径，先摘掉引用。
+            ws_module._k8s_workspace_refcounts[k8s_key] = 0
             reaped = await ws_module.reap_idle_k8s_workspaces(
                 idle_seconds=ws_module.K8S_WORKSPACE_IDLE_SECONDS
             )

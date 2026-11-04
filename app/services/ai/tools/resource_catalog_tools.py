@@ -99,69 +99,163 @@ async def list_accessible_knowledge_bases() -> str:
 def _agent_item(agent: Any, *, current_agent_id: Optional[str] = None) -> dict[str, Any]:
     agent_id = str(getattr(agent, "id", "") or "")
     is_current = bool(current_agent_id and agent_id == str(current_agent_id))
+    is_system = bool(getattr(agent, "is_system", False))
     return {
         "agent_name": getattr(agent, "name", "") or "",
         "display_name": getattr(agent, "display_name", "") or getattr(agent, "name", "") or "",
         "description": getattr(agent, "description", "") or "",
         "capabilities": list(getattr(agent, "capabilities", None) or []),
         "is_current": is_current,
+        # 只有「调度范围」里显式加入的自建智能体才会带 is_mine=true 出现在这里，
+        # 模型据此刻度说明「这是你自己的智能体，已被本智能体授权调用」。
+        "is_mine": not is_system,
     }
 
 
 @tool
 async def list_available_agents() -> str:
-    """列出当前用户有权委派且运行就绪的系统级智能体/专家目录（包含 agent_name、展示名称、职责描述、核心能力与当前会话标识 is_current）。
+    """列出智能体目录：本智能体当前可委派的，以及用户本人有访问权限的（含 agent_name、展示名称、职责描述、核心能力、当前会话标识 is_current 与来源标识 is_mine）。
 
     使用规则：
-    - 当用户问「我有哪些智能体」「能调用哪些专家」「可用智能体列表」时调用。
+    - 当用户问「我有哪些智能体」「能调用哪些专家」「可用智能体列表」「我有那些智能体权限」时调用。
     - 在需要委派子任务前，若需查询或确认可委派的智能体标识 (agent_name) 与核心能力，可调用此工具。
-    - 目录只包含**平台系统级智能体**：用户自建智能体即使由本人自动授权，也不能被委派，故不在此列。
+    - 返回体分两段：`items` 是**当前可直接调用**的可委派智能体，委派工具只能调用其中出现的标识；
+      `blocked` 是用户本人有访问权限、但当前调不了的（附 blocked_reason：no_tool / self /
+      not_in_allowlist / not_ready）。
+    - 「我有那些智能体权限」看 `accessible_count` 与 `blocked`；「我能委派哪些」只看 `items`
+      与 `delegable_count`。两个问题不要混着答。
+    - 平台系统级智能体需要在角色权限里被授予访问权才会出现；用户自建智能体**默认不可委派**，
+      只有被显式加入本智能体的「调度范围」后才出现（此时带 `is_mine=true`）。
+    - 若本智能体**没有启用委派工具**，`delegation_available=false`：要明确告诉用户「当前无法委派」，
+      但仍可照 `blocked` 回答他本人的智能体权限清单，**不要**答成「你没有任何智能体」。
     - 返回体含 scope/items/count；当前对话的智能体若在列则标注 is_current=true。
-    - 空目录时返回体附带 note 说明原因，必须据此向用户解释（例如「你没被分配可委派的系统级智能体，自建的不可委派」），不要简化成「你没有任何智能体」。
+    - 空目录时返回体附带 note 说明原因，必须据此向用户解释（例如「你没被分配可委派的系统级智能体」或
+      「调度名单为空」），不要简化成「你没有任何智能体」。
     """
     ctx = get_current_agent_context()
     if not ctx or not ctx.user_id:
         return "无法识别当前用户，拒绝列出可用智能体。"
 
     try:
+        from app.services.ai.agent_manager import AgentManagerService
+        from app.services.ai.agent_roster import (
+            resolve_delegable_system_agents_for_user,
+        )
         from app.services.ai.tools.agent_delegate_tool import (
-            load_delegable_system_agent_candidates,
-            resolve_runnable_delegable_system_agents,
+            resolve_accessible_agents_for_user,
+        )
+        from app.services.ai.tools.agent_delegate_tool import (
+            has_delegation_tool,
+            resolve_delegation_allowlist,
         )
 
         current_agent_id = getattr(ctx, "agent_id", None)
         async with AsyncSessionLocal() as db:
-            # 候选口径与委派链其余环节共用同一来源（目录 / 专家清单 / 子代理候选 /
-            # sub_agent_call 全部走 load_delegable_system_agent_candidates）。
+            # 候选口径与委派链其余环节共用同一出口（目录 / 专家清单 / 子代理通讯录 /
+            # sub_agent_call 全部走 resolve_delegable_system_agents_for_user）。
             # 不能复用 AgentManagerService.list_agents：那是 UI 可见性口径，按 created_by
             # 归属过滤，而工具侧没有 user 可传，会把候选整批剃成空目录。
-            active_agents = await load_delegable_system_agent_candidates(db)
-            available_agents = await resolve_runnable_delegable_system_agents(
+            caller_config = (
+                await AgentManagerService.get_active_agent_config(db, agent_id=str(current_agent_id))
+                if current_agent_id
+                else None
+            )
+            # 「我能委派哪些」与「我有那些智能体权限」是两个问题，必须分开答：
+            # 后者只看用户被授了什么，跟前一个智能体装没装委派工具无关；
+            # 前者还要再叠「工具 → 白名单 → 就绪」三层。把两者混成一个清单，
+            # 就会出现「没装委派工具 → 连我有权限的智能体都查不到」。
+            accessible_agents = await resolve_accessible_agents_for_user(
                 db,
-                active_agents,
                 user_id=ctx.user_id,
                 is_admin=bool(ctx.is_admin),
-                # 传 None 才能把自身也纳入目录（由 is_current 标识）；传当前 id 会把自己剔除。
-                current_agent_id=None,
+                user_name=(ctx.user_dimensions or {}).get("user_name"),
             )
+            # caller_config 读不到（未发布 / 外部引擎）时不判定为「没装工具」，
+            # 否则会把「查不到配置」误判成「没有委派能力」。
+            delegation_available = caller_config is None or has_delegation_tool(caller_config)
+
+            if delegation_available:
+                available_agents = await resolve_delegable_system_agents_for_user(
+                    db,
+                    user_info={
+                        "user_id": ctx.user_id,
+                        "user_name": (ctx.user_dimensions or {}).get("user_name"),
+                        "role": "admin" if ctx.is_admin else "user",
+                    },
+                    # 传 None 才能把自身也纳入目录（由 is_current 标识）；传当前 id 会把自己剔除。
+                    current_agent_id=None,
+                    # 配了调度白名单的智能体，目录也只能列名单内的，否则模型会照着目录
+                    # 去调一个必被拒绝的目标。
+                    configured_tools=getattr(caller_config, "tools", None) if caller_config else None,
+                )
+            else:
+                available_agents = []
+
+            allowlist_configured, allowlist = resolve_delegation_allowlist(
+                getattr(caller_config, "tools", None) if caller_config else None
+            )
+            allowlist_ids = {str(a or "").strip() for a in (allowlist or []) if str(a or "").strip()}
+
             items = [_agent_item(a, current_agent_id=current_agent_id) for a in available_agents]
+            delegable_ids = {str(getattr(a, "id", "")) for a in available_agents}
+
+            # 「有权限但现在调不了」单独分组：模型直接调 items，别从 blocked 里挑；
+            # 用户问「我有那些智能体权限」时，blocked 才是答案的主体。
+            blocked: list[dict[str, Any]] = []
+            for agent in accessible_agents:
+                agent_id = str(getattr(agent, "id", ""))
+                if agent_id in delegable_ids:
+                    continue
+                entry = _agent_item(agent, current_agent_id=current_agent_id)
+                if not delegation_available:
+                    reason, explain = "no_tool", "本智能体未启用委派工具，暂时无法委派"
+                elif current_agent_id and agent_id == str(current_agent_id):
+                    reason, explain = "self", "就是当前对话的智能体本身，不能委派给自己"
+                elif allowlist_configured and agent_id not in allowlist_ids:
+                    reason, explain = "not_in_allowlist", "不在本智能体的「调度范围」内"
+                else:
+                    reason, explain = "not_ready", "运行不就绪（缺发布版本或所需资源）"
+                entry["blocked_reason"] = reason
+                entry["blocked_explain"] = explain
+                blocked.append(entry)
+
             payload: dict[str, Any] = {
-                "scope": "delegable_system_agents",
+                "scope": "delegable_agents",
+                "delegation_available": delegation_available,
+                # items 才是可直接调用集合；blocked 是「你有权限但当前不行」。
                 "items": items,
                 "count": len(items),
+                "delegable_count": len(items),
+                "accessible_count": len(items) + len(blocked),
+                "blocked": blocked,
             }
             if not items:
                 # 空目录必须自带原因。只给 {"items": [], "count": 0} 时，模型很容易把它
                 # 转述成「你没有任何智能体」，与智能体中心里用户自建的条目直接冲突——
                 # 页面上有 3 个、对话里说 0 个。note 让模型能照着解释「为什么是 0」。
-                payload["note"] = (
-                    "当前平台没有可委派的系统级智能体（可能均未启用、未发布或运行不就绪）。"
-                    if bool(ctx.is_admin)
-                    else (
-                        "你没有被分配可委派的系统级智能体；自己创建的智能体不可委派，"
-                        "故不在本目录中（仍可在智能体中心直接使用）。"
+                if not delegation_available:
+                    payload["note"] = (
+                        "本智能体未启用委派工具（sub_agent_call / sub_agent_batch_call），"
+                        "当前无法委派任何子智能体。blocked 中列出的是你本人有访问权限的智能体，"
+                        "它们与此智能体的委派能力无关；如需委派，需要先在智能体配置里启用该工具并发布。"
                     )
-                )
+                elif allowlist_configured and not allowlist:
+                    payload["note"] = (
+                        "本智能体已配置「调度白名单」且名单为空，任何子智能体都不可委派；"
+                        "如需恢复，请在工具配置的「调度范围」中加入智能体。blocked 中列出的是"
+                        "你本人有访问权限的智能体。"
+                    )
+                elif bool(ctx.is_admin):
+                    payload["note"] = (
+                        "当前平台没有可委派的系统级智能体（可能均未启用、未发布或运行不就绪）。"
+                    )
+                else:
+                    payload["note"] = (
+                        "你没有被分配可委派的系统级智能体；自己创建的智能体默认不可委派，"
+                        "需由本智能体的「调度范围」显式加入后才会出现在本目录。"
+                        "blocked 中列出的是你本人有访问权限的智能体。"
+                    )
+            return json.dumps(payload, ensure_ascii=False)
             return json.dumps(payload, ensure_ascii=False)
     except Exception as e:
         logger.error("[list_available_agents] failed: %s", e, exc_info=True)

@@ -195,7 +195,7 @@ async def share_menu_counts(
     from app.services.ai.agent_share_service import AgentShareService
 
     if not await AgentShareService.supports_share(session):
-        return {"received_pending": 0, "sent_pending": 0, "sent_total": 0}
+        return {"received_pending": 0, "received_total": 0, "sent_pending": 0, "sent_total": 0}
     return await AgentShareService.menu_counts(session, user)
 
 
@@ -286,7 +286,9 @@ async def list_allowed_agents(
     # 输入框据此决定是否展示模型切换入口：该字段属于 ai_agent_versions，这里一次性补齐，避免前端逐条回查
     agents = await AgentManagerService.attach_published_model_switch_flags(session, agents)
     # 卡片与输入框上方要提示「绑定了数据集范围」，同样来自已发布版本，一并补齐
-    return await AgentManagerService.attach_bound_metadata_dataset_counts(session, agents)
+    await AgentManagerService.attach_bound_metadata_dataset_counts(session, agents)
+    # 专家中心抽屉要显示「团名 · N 位子专家」，只对团主专家查一次已发布版本
+    return await AgentManagerService.attach_team_metadata(session, agents)
 
 
 @router.get("/{agent_id}/embed-access", response_model=AIAgentResponse)

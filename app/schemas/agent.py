@@ -14,6 +14,12 @@ class ToolConfigItem(BaseModel):
     description_override: Optional[str] = None # Optional: Allow prompting tuning
     engine_config_override: Optional[Dict[str, Any]] = None
     metadata_dataset_ids: Optional[List[str]] = None  # get_dataset_schema 可见元数据集范围
+    # sub_agent_call / sub_agent_batch_call 的调度白名单：
+    #   None = 未配置（维持默认：系统级全量、自建不可委派）
+    #   []   = 显式禁止委派任何子智能体
+    #   非空 = 只允许名单内的（系统级仍要过 agent 授权，自建仍要过本人创建）
+    # 与 metadata_dataset_ids 同构：只对特定工具生效，随发布版本走。
+    delegable_agent_ids: Optional[List[str]] = None
 
     @model_validator(mode="after")
     def _validate_metadata_dataset_ids(self):
@@ -36,6 +42,34 @@ class ToolConfigItem(BaseModel):
                 f"以下取值无法识别：{'、'.join(invalid)}。请重新选择数据集。"
             )
         return self
+
+    @field_validator("delegable_agent_ids", mode="before")
+    @classmethod
+    def _validate_delegable_agent_ids(cls, value: Any) -> Any:
+        """调度白名单只做「去空、去重、保序」，不在这里校验存在性。
+
+        智能体可能事后被删除或禁用，配置要能原样留着（版本回滚时还要用），
+        所以存在性校验放在运行时按「静默排除」处理，而不是保存时拒绝。
+
+        ``mode="before"``：历史/脏数据里可能混入 null 或空串，先在这里清掉，
+        否则 Pydantic 的 ``List[str]`` 会直接拒绝整条工具配置，导致保存失败。
+        """
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple, set)):
+            return value
+        seen: set[str] = set()
+        cleaned: List[str] = []
+        for item in value:
+            agent_id = str(item or "").strip()
+            if not agent_id or agent_id in seen:
+                continue
+            seen.add(agent_id)
+            cleaned.append(agent_id)
+        return cleaned
+
 
 class AIAgentVersionBase(BaseModel):
     version_number: Optional[int] = None
@@ -101,8 +135,29 @@ class AIAgentBase(BaseModel):
     is_system: Optional[bool] = False
     sort_order: Optional[int] = 0
     is_enabled: Optional[bool] = True
+    # 专家团主专家：智能体中心据此进入「专家团」tab；成员不在这里存，取版本调度范围
+    is_expert_team_lead: Optional[bool] = False
+    # {"name": 团名, "intro": 团介绍}；两项都空时归一成 None，避免前端拿到空壳对象
+    team_profile: Optional[Dict[str, Any]] = None
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None
+
+    @field_validator("is_expert_team_lead", mode="before")
+    @classmethod
+    def coerce_expert_team_lead(cls, value):
+        # 列是 NOT NULL，前端传 null 时必须归一成 False，否则插入直接报错
+        return bool(value) if value is not None else False
+
+    @field_validator("team_profile", mode="before")
+    @classmethod
+    def coerce_team_profile(cls, value):
+        if not isinstance(value, dict):
+            return None
+        name = str(value.get("name") or "").strip()[:100]
+        intro = str(value.get("intro") or "").strip()[:500]
+        if not name and not intro:
+            return None
+        return {"name": name, "intro": intro}
 
 class AgentDuplicateRequest(BaseModel):
     """复制智能体时的目标标识与显示名；其余配置一律从源智能体复制。"""
@@ -168,6 +223,13 @@ class AIAgentResponse(AIAgentBase):
     owner_active: Optional[bool] = None
     readiness_ready: bool = False
     readiness_missing: List[str] = Field(default_factory=list)
+    # 专家团展示：团名（未配置回落 display_name）与成员数（来自已发布版本的调度范围）。
+    # 成员数在这里算好，免得前端为每个团再查一次版本配置。
+    team_name: Optional[str] = None
+    team_member_count: Optional[int] = None
+    # 成员标识（来自已发布版本的调度范围）：调度范围弹窗要用它做「改用成员」，
+    # 只给数量不够——前端没法把数量变成可勾选的 id。
+    team_member_ids: Optional[List[str]] = None
     # 模型配置异常：null 表示正常；仅在列表接口计算，避免/health 之类的轻量接口多查库
     model_issue: Optional[AgentModelIssue] = None
     # 已发布版本的工具失效摘要：null 表示正常或没有已发布版本
@@ -208,6 +270,10 @@ class ChatConfig(BaseModel):
     agent_display_name: Optional[str] = None
     agent_type: AgentType = AgentType.GENERAL
     description: str = ""
+    # 团主专家身份：只用于拼「当前智能体自己」的提示词（团队介绍里的流程与约束），
+    # 不进父级路由上下文——否则介绍里「找元数据专家」这类词会让主助手误派。
+    is_expert_team_lead: bool = False
+    team_profile: Optional[Dict[str, Any]] = None
     project_name: Optional[str] = None
     agent_version: Optional[str] = None
     model_name: Optional[str]

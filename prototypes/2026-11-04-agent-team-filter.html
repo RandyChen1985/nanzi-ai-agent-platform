@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>智能体中心筛选 · 团主专家与子专家两个条件</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-dark:#0958d9; --primary-soft:#eaf2ff;
+    --ink:#0f172a; --ink-2:#334155; --muted:#64748b; --faint:#94a3b8;
+    --line:#e6ebf2; --line-soft:#eef2f7; --bg:#f4f6fa; --card:#fff;
+    --teal:#0f766e; --teal-soft:#f0fdfa; --teal-line:#99f6e4;
+    --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -18px rgba(15,23,42,.25);
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  html,body{margin:0}
+  body{
+    background:#e9edf4;color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+  h1,h2,h3,p{margin:0}
+  select{font:inherit}
+
+  /* ============ 外壳 ============ */
+  .shell-bar{
+    position:sticky;top:0;z-index:60;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+    padding:10px 20px;background:#0b0f19;color:#fff;
+    box-shadow:0 1px 0 rgba(255,255,255,.06),0 10px 30px -20px rgba(0,0,0,.9);
+  }
+  .sb-title{display:flex;align-items:center;gap:10px;min-width:0}
+  .sb-mark{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:#1677ff;font-weight:800;font-size:13px}
+  .sb-title b{display:block;font-size:13px;line-height:1.3}
+  .sb-title small{display:block;color:#94a3b8;font-size:11px;line-height:1.4}
+  .sb-tabs{display:flex;gap:4px;background:rgba(255,255,255,.06);padding:3px;border-radius:10px;flex-wrap:wrap}
+  .sb-tabs button{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;font-size:12.5px;color:#cbd5e1;transition:.15s}
+  .sb-tabs button:hover{color:#fff;background:rgba(255,255,255,.06)}
+  .sb-tabs button.on{background:#fff;color:#0b0f19;font-weight:600}
+  .rec{font-style:normal;font-size:9.5px;padding:1px 5px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-weight:700}
+  .sb-tabs button.on .rec{background:#eaf2ff;color:#0958d9}
+
+  .stage{max-width:1080px;margin:0 auto;padding:18px 20px 90px}
+  .pane{display:none}
+  .pane.on{display:block;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .preview-note{display:flex;align-items:flex-start;gap:10px;margin-bottom:14px;padding:11px 14px;border-radius:12px;background:#fff;border:1px solid var(--line);font-size:12.5px;color:var(--muted);line-height:1.65}
+  .preview-note b{color:var(--ink-2)}
+  .pn-dot{width:6px;height:6px;border-radius:50%;background:var(--primary);margin-top:7px;flex:0 0 auto}
+
+  /* ============ 智能体中心 mock ============ */
+  .center{position:relative;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+  /* 只有面板展开时才给容器留高，否则筛选后只剩一张卡会拖出一大片空白 */
+  .center:has(.fp:not([hidden])){min-height:470px}
+  /* 筛选面板 absolute 弹出、比列表长，overflow:hidden 会把它裁掉——圆角改由子元素各自处理 */
+  .center-bar{border-radius:15px 15px 0 0}
+  .cards{border-radius:0 0 15px 15px;background:#fff}
+  .center-bar{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+  .search{flex:1 1 220px;min-width:180px;display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:9px;padding:7px 10px;background:#fff;color:var(--faint);font-size:12.5px}
+  .btn-filter{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:7px 11px;font-size:12.5px;color:var(--ink-2);background:#fff}
+  .btn-filter.active{border-color:var(--primary);color:var(--primary)}
+  .badge-count{display:inline-flex;height:16px;min-width:16px;align-items:center;justify-content:center;border-radius:999px;background:var(--primary);color:#fff;font-size:10px;font-weight:700;padding:0 4px}
+  .seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{padding:7px 10px;font-size:12px;color:var(--muted)}
+  .seg button.on{background:var(--primary-soft);color:var(--primary-dark);font-weight:600}
+
+  .chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--line-soft);background:#fcfdff;font-size:11.5px;color:var(--muted)}
+  .chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;background:var(--primary-soft);border:1px solid #cfe2ff;color:var(--primary-dark);font-size:11px}
+  .chip i{font-style:normal;cursor:pointer;opacity:.6}
+  .chip i:hover{opacity:1}
+
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 14px 16px}
+  @media (max-width:760px){.cards{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fff;transition:.15s}
+  .card:hover{border-color:#cfe2ff;box-shadow:var(--shadow)}
+  .card.hide{display:none}
+  .card-top{display:flex;align-items:flex-start;gap:9px}
+  .c-avatar{width:30px;height:30px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;font-size:13px;font-weight:700;background:#e2e8f0;color:#475569}
+  .c-avatar.lead{background:linear-gradient(135deg,#2dd4bf,#0d9488);color:#fff}
+  .c-main{min-width:0;flex:1}
+  .c-name{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:13px;font-weight:700}
+  .badge-team{display:inline-flex;align-items:center;gap:3px;padding:0 5px;border-radius:999px;background:var(--teal-soft);border:1px solid var(--teal-line);color:var(--teal);font-size:9px;font-weight:700}
+  .badge-sub{display:inline-flex;align-items:center;gap:3px;padding:0 5px;border-radius:999px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:9px;font-weight:700}
+  .badge-sub.multi{background:#fdf4ff;border-color:#f5d0fe;color:#a21caf}
+  .badge-sub.sm{font-size:9px;padding:0 4px}
+  .badge-sub{cursor:pointer;transition:.12s}
+  .badge-sub:hover{background:#ede9fe;border-color:#c4b5fd;box-shadow:0 0 0 2px rgba(168,85,247,.12)}
+  /* 点徽标后的「选哪个团」浮层 */
+  .team-picker{position:fixed;z-index:900;width:250px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 40px -18px rgba(15,23,42,.45),0 2px 6px rgba(15,23,42,.06);padding:6px}
+  .tp-head{padding:6px 8px 4px;font-size:10.5px;font-weight:600;color:var(--faint)}
+  .tp-item{display:flex;align-items:center;gap:7px;width:100%;padding:7px 8px;border-radius:8px;font-size:12px;color:var(--ink-2);text-align:left}
+  .tp-item:hover{background:var(--primary-soft);color:var(--primary-dark)}
+  .tp-dot{width:6px;height:6px;border-radius:50%;background:#a855f7;flex:0 0 auto}
+  .tp-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tp-go{flex:0 0 auto;font-size:10.5px;color:var(--primary);opacity:0;transition:.12s}
+  .tp-item:hover .tp-go{opacity:1}
+
+  /* 徽标展示区 */
+  .sc{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff;box-shadow:var(--shadow)}
+  .sc-head{display:flex;align-items:baseline;gap:8px;padding:10px 14px;background:#fcfdff;border-bottom:1px solid var(--line-soft);font-size:12.5px;font-weight:700}
+  .sc-head span{font-weight:400;color:var(--faint);font-size:11.5px}
+  .sc-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:14px}
+  .sc-rows{display:flex;flex-direction:column;padding:0 14px 14px}
+  .row{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line-soft)}
+  .row:first-child{border-top:0}
+  .row .c-avatar{width:26px;height:26px;border-radius:8px;font-size:12px}
+  .row-main{min-width:0;flex:1}
+  .row-name{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700}
+  .row-desc{font-size:11px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row-meta{flex:0 0 auto;font-size:10.5px;color:var(--faint)}
+  .c-desc{margin-top:2px;font-size:11.5px;color:var(--muted);line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .c-meta{display:flex;align-items:center;gap:6px;margin-top:7px;font-size:10.5px;color:var(--faint)}
+
+  .empty{padding:34px 16px;text-align:center;color:var(--faint);font-size:12.5px;display:none}
+  .empty.on{display:block}
+
+  /* ============ 筛选面板 ============ */
+  .fp{
+    position:absolute;right:14px;top:56px;z-index:40;width:560px;max-width:calc(100% - 28px);
+    background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;
+    box-shadow:0 24px 60px -30px rgba(15,23,42,.45),0 2px 8px rgba(15,23,42,.06);
+  }
+  .fp[hidden]{display:none}
+  .fp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .fp-head b{font-size:13.5px}
+  .fp-x{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:var(--faint);font-size:15px}
+  .fp-x:hover{background:var(--line-soft);color:var(--muted)}
+  .fp-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 12px}
+  .fp-grid.two{grid-template-columns:1fr 1fr}
+  .field > span{display:block;margin-bottom:4px;font-size:11px;font-weight:600;color:var(--muted)}
+  .field select{width:100%;border:1px solid #d5dbe5;border-radius:8px;padding:6px 8px;font-size:12.5px;background:#fff;color:var(--ink-2);outline:none}
+  .field select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(22,119,255,.12)}
+  .field.picked select{border-color:#bcd7ff;background:#f7fbff}
+
+  .fp-divider{display:flex;align-items:center;gap:8px;margin:14px 0 10px;color:var(--teal);font-size:11px;font-weight:700}
+  .fp-divider::before,.fp-divider::after{content:"";height:1px;background:var(--teal-line);flex:1}
+  .fp-hint{margin-top:8px;font-size:11px;color:var(--faint);line-height:1.55}
+  .fp-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-soft)}
+  .fp-reset{font-size:12px;color:var(--muted)}
+  .fp-reset:hover{color:var(--ink-2)}
+  .fp-apply{border-radius:8px;background:var(--primary);color:#fff;font-size:12.5px;font-weight:600;padding:6px 16px}
+  .fp-apply:hover{background:var(--primary-dark)}
+
+  /* C：胶囊开关 */
+  .toggles{display:flex;gap:8px;flex-wrap:wrap;padding:10px;border:1px dashed var(--line);border-radius:10px;background:#fcfdff}
+  .tg{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:#fff;font-size:12px;color:var(--ink-2)}
+  .tg[aria-pressed="true"]{border-color:var(--teal-line);background:var(--teal-soft);color:var(--teal);font-weight:600}
+  .tg .dot{width:7px;height:7px;border-radius:50%;background:#cbd5e1}
+  .tg[aria-pressed="true"] .dot{background:var(--teal)}
+
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:11.5px;color:var(--muted)}
+  .legend i{font-style:normal}
+  .kbd{display:inline-block;padding:0 5px;border:1px solid var(--line);border-radius:4px;background:#fff;font-size:10.5px;color:var(--ink-2)}
+</style>
+</head>
+<body>
+
+<div class="shell-bar">
+  <div class="sb-title">
+    <span class="sb-mark">筛</span>
+    <div>
+      <b>智能体中心 · 团队筛选</b>
+      <small>在「高级筛选」里加「专家团主专家」「子专家」两个条件</small>
+    </div>
+  </div>
+  <div class="sb-tabs">
+    <button class="on" data-pane="a">A · 两个下拉 <i class="rec">推荐</i></button>
+    <button data-pane="b">B · 合并成团队角色</button>
+    <button data-pane="c">C · 胶囊开关</button>
+    <button data-pane="d">D · 卡片徽标</button>
+  </div>
+</div>
+
+<div class="stage">
+
+<div id="view-filters">
+
+  <!-- ============ 共用：说明 ============ -->
+  <div class="preview-note">
+    <span class="pn-dot"></span>
+    <div>
+      <b>两个条件各自回答一个问题：</b>「专家团主专家」＝ 这个智能体是不是某个团的团主（<code>is_expert_team_lead</code>）；
+      「子专家」＝ 它有没有被某个团纳入调度范围（反过来查 <code>team_member_ids</code>）。
+      和现有 6 个条件一样，选中后按钮出现角标、面板收起后保留可点掉的 chip。演示：面板里选完点「应用」，下面的卡片会真的被过滤。
+    </div>
+  </div>
+
+  <div class="center" id="center">
+    <div class="center-bar">
+      <label class="search">🔍 搜索智能体名称…</label>
+      <button class="btn-filter" id="btn-filter" type="button">
+        <svg class="h-4 w-4" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/></svg>
+        筛选
+        <span class="badge-count" id="filter-count" hidden>0</span>
+      </button>
+      <div class="seg"><button class="on">网格</button><button>列表</button></div>
+    </div>
+
+    <div class="chips" id="chips">
+      <span>未筛选</span>
+    </div>
+
+    <div class="cards" id="cards">
+      <article class="card" data-role="lead" data-name="资产管理专家团" data-own-team="资产管理专家团">
+        <div class="card-top">
+          <span class="c-avatar lead">资</span>
+          <div class="c-main">
+            <div class="c-name">资产管理专家团 <span class="badge-team">👥 TEAM</span></div>
+            <div class="c-desc">从取数、口径到制度背景的一条龙团队</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>ChatBI</span><span>·</span><span>4 位子专家</span><span>·</span><span>已发布</span></div>
+      </article>
+
+      <article class="card" data-role="sub" data-name="元数据专家" data-teams="资产管理专家团">
+        <div class="card-top">
+          <span class="c-avatar">元</span>
+          <div class="c-main">
+            <div class="c-name">元数据专家 <span class="badge-sub" title="所属专家团：资产管理专家团">子专家 · 资产管理专家团</span></div>
+            <div class="c-desc">回答指标口径、表结构、血缘相关问题</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>通用助手</span><span>·</span><span>被 1 个团调度</span></div>
+      </article>
+
+      <article class="card" data-role="sub" data-name="数据助手" data-teams="资产管理专家团,投研专家团">
+        <div class="card-top">
+          <span class="c-avatar">数</span>
+          <div class="c-main">
+            <div class="c-name">数据助手 <span class="badge-sub multi" title="所属专家团：资产管理专家团、投研专家团">子专家 · 2 个团</span></div>
+            <div class="c-desc">按口径取数、生成 SQL 并执行</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>ChatBI</span><span>·</span><span>被 2 个团调度</span></div>
+      </article>
+
+      <article class="card" data-role="plain" data-name="营销文案助手">
+        <div class="card-top">
+          <span class="c-avatar">营</span>
+          <div class="c-main">
+            <div class="c-name">营销文案助手</div>
+            <div class="c-desc">写活动文案、朋友圈短文案</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>通用助手</span><span>·</span><span>未发布</span></div>
+      </article>
+
+      <article class="card" data-role="sub" data-name="规章问答" data-teams="资产管理专家团">
+        <div class="card-top">
+          <span class="c-avatar">规</span>
+          <div class="c-main">
+            <div class="c-name">规章问答 <span class="badge-sub" title="所属专家团：资产管理专家团">子专家 · 资产管理专家团</span></div>
+            <div class="c-desc">制度、办法、操作规程的问答</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>知识库助手</span><span>·</span><span>被 1 个团调度</span></div>
+      </article>
+
+      <article class="card" data-role="lead" data-name="投研专家团" data-own-team="投研专家团">
+        <div class="card-top">
+          <span class="c-avatar lead">投</span>
+          <div class="c-main">
+            <div class="c-name">投研专家团 <span class="badge-team">👥 TEAM</span></div>
+            <div class="c-desc">研报解读、行业比较与估值测算</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>通用助手</span><span>·</span><span>2 位子专家</span><span>·</span><span>已发布</span></div>
+      </article>
+
+      <article class="card" data-role="plain" data-name="合同审查助手">
+        <div class="card-top">
+          <span class="c-avatar">合</span>
+          <div class="c-main">
+            <div class="c-name">合同审查助手</div>
+            <div class="c-desc">按审查要点逐条比对合同条款</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>通用助手</span><span>·</span><span>已发布</span></div>
+      </article>
+    </div>
+
+    <div class="empty" id="empty">没有符合这些条件的智能体：放宽团队条件或 <b style="color:var(--primary)">重置筛选</b></div>
+
+    <!-- ============ 方案 A ============ -->
+    <div class="fp" id="fp-a">
+      <div class="fp-head"><b>高级筛选</b><button class="fp-x" data-close>×</button></div>
+      <div class="fp-grid">
+        <label class="field"><span>状态</span><select data-key="status"><option value="all">全部</option><option>已启用</option><option>已禁用</option></select></label>
+        <label class="field"><span>类型</span><select data-key="type"><option value="all">全部</option><option>通用助手</option><option>ChatBI</option><option>知识库助手</option></select></label>
+        <label class="field"><span>引擎</span><select data-key="engine"><option value="all">全部</option><option>LOCAL</option><option>RAGFlow</option><option>OpenClaw</option></select></label>
+        <label class="field"><span>就绪度</span><select data-key="readiness"><option value="all">全部</option><option>已就绪</option><option>待完善</option></select></label>
+        <label class="field"><span>来源</span><select data-key="source"><option value="all">全部</option><option>系统级</option><option>自定义</option></select></label>
+        <label class="field"><span>权属人</span><select data-key="owner"><option value="all">全部</option><option>权属人已停用</option></select></label>
+      </div>
+
+      <div class="fp-divider">团队</div>
+      <div class="fp-grid">
+        <label class="field"><span>专家团主专家</span>
+          <select data-key="teamLead"><option value="all">全部</option><option value="yes">只看团主专家</option><option value="no">排除团主专家</option></select>
+        </label>
+        <label class="field"><span>子专家</span>
+          <select data-key="subAgent"><option value="all">全部</option><option value="yes">只看子专家</option><option value="no">排除子专家</option></select>
+        </label>
+        <label class="field"><span>所属团</span>
+          <select data-key="team">
+            <option value="all">全部</option>
+            <option value="资产管理专家团">资产管理专家团</option>
+            <option value="投研专家团">投研专家团</option>
+          </select>
+        </label>
+      </div>
+      <p class="fp-hint">子专家＝被某个专家团的调度范围纳入的智能体。两个条件都选「是」时结果为空：团主与子专家在当前版本里不重叠。</p>
+
+      <div class="fp-foot">
+        <button class="fp-reset" type="button" data-reset>重置</button>
+        <button class="fp-apply" type="button" data-apply>应用</button>
+      </div>
+    </div>
+
+    <!-- ============ 方案 B ============ -->
+    <div class="fp" id="fp-b" hidden>
+      <div class="fp-head"><b>高级筛选</b><button class="fp-x" data-close>×</button></div>
+      <div class="fp-grid">
+        <label class="field"><span>状态</span><select data-key="status"><option value="all">全部</option><option>已启用</option><option>已禁用</option></select></label>
+        <label class="field"><span>类型</span><select data-key="type"><option value="all">全部</option><option>通用助手</option><option>ChatBI</option><option>知识库助手</option></select></label>
+        <label class="field"><span>引擎</span><select data-key="engine"><option value="all">全部</option><option>LOCAL</option><option>RAGFlow</option><option>OpenClaw</option></select></label>
+        <label class="field"><span>就绪度</span><select data-key="readiness"><option value="all">全部</option><option>已就绪</option><option>待完善</option></select></label>
+        <label class="field"><span>来源</span><select data-key="source"><option value="all">全部</option><option>系统级</option><option>自定义</option></select></label>
+        <label class="field"><span>权属人</span><select data-key="owner"><option value="all">全部</option><option>权属人已停用</option></select></label>
+      </div>
+
+      <div class="fp-divider">团队</div>
+      <div class="fp-grid">
+        <label class="field"><span>所属团</span>
+          <select data-key="team">
+            <option value="all">全部</option>
+            <option value="资产管理专家团">资产管理专家团</option>
+            <option value="投研专家团">投研专家团</option>
+          </select>
+        </label>
+        <label class="field"><span>团队角色</span>
+          <select data-key="teamRole">
+            <option value="all">全部</option>
+            <option value="lead">团主专家</option>
+            <option value="sub">子专家</option>
+            <option value="none">不属于任何团</option>
+          </select>
+        </label>
+      </div>
+      <p class="fp-hint">合并成一个维度：一个智能体在任一时刻只可能是团主、子专家或普通智能体三者之一，拆成两个下拉会出现「两个都选是 → 永远空」的组合。</p>
+
+      <div class="fp-foot">
+        <button class="fp-reset" type="button" data-reset>重置</button>
+        <button class="fp-apply" type="button" data-apply>应用</button>
+      </div>
+    </div>
+
+    <!-- ============ 方案 C ============ -->
+    <div class="fp" id="fp-c" hidden>
+      <div class="fp-head"><b>高级筛选</b><button class="fp-x" data-close>×</button></div>
+      <div class="fp-grid">
+        <label class="field"><span>状态</span><select data-key="status"><option value="all">全部</option><option>已启用</option><option>已禁用</option></select></label>
+        <label class="field"><span>类型</span><select data-key="type"><option value="all">全部</option><option>通用助手</option><option>ChatBI</option><option>知识库助手</option></select></label>
+        <label class="field"><span>引擎</span><select data-key="engine"><option value="all">全部</option><option>LOCAL</option><option>RAGFlow</option><option>OpenClaw</option></select></label>
+        <label class="field"><span>就绪度</span><select data-key="readiness"><option value="all">全部</option><option>已就绪</option><option>待完善</option></select></label>
+        <label class="field"><span>来源</span><select data-key="source"><option value="all">全部</option><option>系统级</option><option>自定义</option></select></label>
+        <label class="field"><span>权属人</span><select data-key="owner"><option value="all">全部</option><option>权属人已停用</option></select></label>
+      </div>
+
+      <div class="fp-divider">团队</div>
+      <div class="toggles">
+        <button class="tg" type="button" aria-pressed="false" data-role-toggle="lead"><span class="dot"></span>只看团主专家</button>
+        <button class="tg" type="button" aria-pressed="false" data-role-toggle="sub"><span class="dot"></span>只看子专家</button>
+      </div>
+      <div class="fp-grid" style="margin-top:10px">
+        <label class="field"><span>所属团</span>
+          <select data-key="team">
+            <option value="all">全部</option>
+            <option value="资产管理专家团">资产管理专家团</option>
+            <option value="投研专家团">投研专家团</option>
+          </select>
+        </label>
+      </div>
+      <p class="fp-hint">胶囊开关：点一下即时生效，不用「应用」。适合「临时看一眼有哪些团主专家」这种浏览动作。</p>
+
+      <div class="fp-foot">
+        <button class="fp-reset" type="button" data-reset>重置</button>
+        <button class="fp-apply" type="button" data-apply>应用</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <i>角标 = 生效条件数（团队两个条件各算一个）</i>
+    <i>·</i>
+    <i>面板收起后 chip 保留：<span class="chip">团队角色：团主专家 <i>×</i></span></i>
+    <i>·</i>
+    <i>点卡片上的「子专家」徽标 → 直接按团筛选</i>
+    <i>·</i>
+    <i>键盘：<span class="kbd">Esc</span> 关面板</i>
+  </div>
+
+  <div class="preview-note" style="margin-top:16px">
+    <span class="pn-dot" style="background:var(--teal)"></span>
+    <div>
+      <b>数据从哪来：</b>列表接口已经给每个团主专家返回 <code>team_member_ids</code>，前端把它们反向展开成「子专家 → 所属团」的映射即可，
+      <b>不需要新接口</b>。代价是「子专家」条件依赖列表里已加载的团——如果以后列表分页只加载一部分，这条筛选要改成后端过滤。
+      现在列表是全量拉取，前端过滤与其它 6 个条件一致。
+    </div>
+  </div>
+
+</div><!-- /view-filters -->
+
+<div id="view-badges" hidden>
+  <div class="preview-note">
+    <span class="pn-dot" style="background:#a21caf"></span>
+    <div>
+      <b>子专家徽标：网格给团名，列表给短标。</b>筛出子专家之后，用户还得知道它是「哪个团的」——徽标直接给答案，不用点进详情。
+      一个智能体可以被<b>多个团</b>同时收录（调度范围各自独立），所以徽标要能表达「1 个团」和「N 个团」两种情况。
+    </div>
+  </div>
+
+  <div class="sc">
+    <div class="sc-head">网格卡片 <span>宽度充足：直接写团名；多团时写数量，hover 看名单</span></div>
+    <div class="sc-grid">
+      <article class="card">
+        <div class="card-top">
+          <span class="c-avatar">元</span>
+          <div class="c-main">
+            <div class="c-name">元数据专家
+              <span class="badge-sub" title="所属专家团：资产管理专家团">子专家 · 资产管理专家团</span>
+            </div>
+            <div class="c-desc">回答指标口径、表结构、血缘相关问题</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>通用助手</span><span>·</span><span>被 1 个团调度</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top">
+          <span class="c-avatar">数</span>
+          <div class="c-main">
+            <div class="c-name">数据助手
+              <span class="badge-sub multi" title="所属专家团：资产管理专家团、投研专家团">子专家 · 2 个团</span>
+            </div>
+            <div class="c-desc">按口径取数、生成 SQL 并执行</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>ChatBI</span><span>·</span><span>被 2 个团调度</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top">
+          <span class="c-avatar">营</span>
+          <div class="c-main">
+            <div class="c-name">营销文案助手</div>
+            <div class="c-desc">写活动文案、朋友圈短文案（不属于任何团，所以没有徽标）</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>通用助手</span><span>·</span><span>未发布</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top">
+          <span class="c-avatar lead">资</span>
+          <div class="c-main">
+            <div class="c-name">资产管理专家团 <span class="badge-team">👥 TEAM</span></div>
+            <div class="c-desc">团主专家的既有徽标，保持不变；子专家徽标是另一件事，两者不会同时出现在一个智能体上</div>
+          </div>
+        </div>
+        <div class="c-meta"><span>ChatBI</span><span>·</span><span>4 位子专家</span></div>
+      </article>
+    </div>
+
+    <div class="sc-head" style="border-top:1px solid var(--line-soft)">列表视图 <span>宽度紧张：只留「子专家」，团名进 title 与详情</span></div>
+    <div class="sc-rows">
+      <div class="row">
+        <span class="c-avatar">元</span>
+        <div class="row-main">
+          <div class="row-name">元数据专家 <span class="badge-sub sm" title="所属专家团：资产管理专家团">子专家</span></div>
+          <div class="row-desc">回答指标口径、表结构、血缘相关问题</div>
+        </div>
+        <span class="row-meta">通用助手 · 已发布</span>
+      </div>
+      <div class="row">
+        <span class="c-avatar">数</span>
+        <div class="row-main">
+          <div class="row-name">数据助手 <span class="badge-sub sm multi" title="所属专家团：资产管理专家团、投研专家团">子专家 · 2</span></div>
+          <div class="row-desc">按口径取数、生成 SQL 并执行</div>
+        </div>
+        <span class="row-meta">ChatBI · 已发布</span>
+      </div>
+      <div class="row">
+        <span class="c-avatar">营</span>
+        <div class="row-main">
+          <div class="row-name">营销文案助手</div>
+          <div class="row-desc">写活动文案、朋友圈短文案</div>
+        </div>
+        <span class="row-meta">通用助手 · 未发布</span>
+      </div>
+    </div>
+  </div>
+
+    <div class="sc-head" style="border-top:1px solid var(--line-soft)">点徽标之后 <span>单团直接筛；多团先弹出团列表让你选</span></div>
+    <div class="sc-grid" style="grid-template-columns:1fr">
+      <div style="position:relative;padding-bottom:104px">
+        <article class="card">
+          <div class="card-top">
+            <span class="c-avatar">数</span>
+            <div class="c-main">
+              <div class="c-name">数据助手
+                <span class="badge-sub multi" style="background:#ede9fe;border-color:#c4b5fd;box-shadow:0 0 0 2px rgba(168,85,247,.12)" title="所属专家团：资产管理专家团、投研专家团">子专家 · 2 个团</span>
+              </div>
+              <div class="c-desc">按口径取数、生成 SQL 并执行</div>
+            </div>
+          </div>
+          <div class="c-meta"><span>ChatBI</span><span>·</span><span>被 2 个团调度</span></div>
+        </article>
+
+        <div class="team-picker" style="position:absolute;left:150px;top:56px;width:250px">
+          <div class="tp-head">这个子专家属于 2 个团</div>
+          <button type="button" class="tp-item"><span class="tp-dot"></span><span class="tp-name">资产管理专家团</span><span class="tp-go" style="opacity:1">只看这个团 →</span></button>
+          <button type="button" class="tp-item"><span class="tp-dot"></span><span class="tp-name">投研专家团</span><span class="tp-go">只看这个团 →</span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sc-head" style="border-top:1px solid var(--line-soft)">选中「资产管理专家团」后 <span>列表只剩这个团的成员，chip 说明筛的是哪个团</span></div>
+    <div class="sc-rows">
+      <div style="padding:10px 0 6px"><span class="chip">所属团：资产管理专家团 <i>×</i></span></div>
+      <div class="row">
+        <span class="c-avatar lead">资</span>
+        <div class="row-main">
+          <div class="row-name">资产管理专家团 <span class="badge-team">👥 TEAM</span></div>
+          <div class="row-desc">团主专家本人也在结果里——「这个团有谁」应该包含带队的人</div>
+        </div>
+        <span class="row-meta">ChatBI · 4 位子专家</span>
+      </div>
+      <div class="row">
+        <span class="c-avatar">元</span>
+        <div class="row-main">
+          <div class="row-name">元数据专家 <span class="badge-sub sm" title="所属专家团：资产管理专家团">子专家</span></div>
+          <div class="row-desc">回答指标口径、表结构、血缘相关问题</div>
+        </div>
+        <span class="row-meta">通用助手 · 已发布</span>
+      </div>
+      <div class="row">
+        <span class="c-avatar">数</span>
+        <div class="row-main">
+          <div class="row-name">数据助手 <span class="badge-sub sm multi" title="所属专家团：资产管理专家团、投研专家团">子专家 · 2</span></div>
+          <div class="row-desc">按口径取数、生成 SQL 并执行</div>
+        </div>
+        <span class="row-meta">ChatBI · 已发布</span>
+      </div>
+      <div class="row">
+        <span class="c-avatar">规</span>
+        <div class="row-main">
+          <div class="row-name">规章问答 <span class="badge-sub sm" title="所属专家团：资产管理专家团">子专家</span></div>
+          <div class="row-desc">制度、办法、操作规程的问答</div>
+        </div>
+        <span class="row-meta">知识库助手 · 已发布</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="preview-note" style="margin-top:16px">
+    <span class="pn-dot"></span>
+    <div>
+      <b>三条约定：</b>
+      ① 徽标只在「被团收录」时出现，普通智能体不加——否则每张卡都挂一个「非子专家」等于噪音；
+      ② 多团不展开团名（会撑破卡片），写「子专家 · N 个团」，完整名单放 <code>title</code> 与详情抽屉；
+      ③ 徽标与团主专家的 <b>👥 TEAM</b> 是互斥的：一个智能体要么带队、要么被收录，不会同时是两者（<code>MAX_DELEGATION_DEPTH = 1</code>）。
+    </div>
+  </div>
+
+  <div class="preview-note" style="margin-top:10px">
+    <span class="pn-dot" style="background:var(--teal)"></span>
+    <div>
+      <b>点徽标筛团的价值：</b>「这个团到底有谁」是用户最常问的问题，但答案分散在两处——团卡片上只有数量，成员清单要进详情抽屉才看得到。
+      徽标可点等于把这条路缩成一次点击，而且筛完还能叠加其它条件（比如「资产管理专家团 + 待完善」）。
+      <b>它靠的是第三个筛选条件「所属团」</b>，所以面板里也同步多了一个下拉（回到 A/B/C 可以看到），三者是同一个状态：徽标点击 = 快速设置该下拉。
+    </div>
+  </div>
+</div><!-- /view-badges -->
+</div>
+
+<script>
+  const CENTER = document.getElementById('center');
+  const CARDS = () => Array.from(document.querySelectorAll('#cards .card'));
+  const CHIPS = document.getElementById('chips');
+  const COUNT = document.getElementById('filter-count');
+  const EMPTY = document.getElementById('empty');
+  const BTN = document.getElementById('btn-filter');
+
+  let openPanel = 'a';
+
+  function panels() { return Array.from(document.querySelectorAll('.fp')); }
+  function currentPanel() { return document.getElementById('fp-' + openPanel); }
+
+  function setPanelOpen(open) {
+    panels().forEach((p) => { p.hidden = !(open && p.id === 'fp-' + openPanel); });
+    BTN.classList.toggle('active', open && activeCount() > 0);
+  }
+
+  function readState() {
+    return { lead: 'all', sub: 'all', role: 'all', team: 'all', toggles: [] };
+  }
+  let state = readState();
+
+  function activeCount() {
+    let n = 0;
+    if (state.lead !== 'all') n++;
+    if (state.sub !== 'all') n++;
+    if (state.role !== 'all') n++;
+    if (state.team !== 'all') n++;
+    state.toggles.forEach(() => n++);
+    return n;
+  }
+
+  function renderChips() {
+    const chips = [];
+    if (state.lead !== 'all') chips.push({ k: 'lead', t: state.lead === 'yes' ? '专家团主专家：是' : '专家团主专家：否' });
+    if (state.sub !== 'all') chips.push({ k: 'sub', t: state.sub === 'yes' ? '子专家：是' : '子专家：否' });
+    if (state.role !== 'all') {
+      const map = { lead: '团主专家', sub: '子专家', none: '不属于任何团' };
+      chips.push({ k: 'role', t: '团队角色：' + map[state.role] });
+    }
+    if (state.team !== 'all') chips.push({ k: 'team', t: '所属团：' + state.team });
+    if (state.toggles.includes('lead')) chips.push({ k: 'toggleLead', t: '只看团主专家' });
+    if (state.toggles.includes('sub')) chips.push({ k: 'toggleSub', t: '只看子专家' });
+
+    if (!chips.length) { CHIPS.innerHTML = '<span>未筛选</span>'; }
+    else {
+      CHIPS.innerHTML = '<span>已筛选：</span>' + chips
+        .map((c) => `<span class="chip">${c.t}<i data-clear="${c.k}">×</i></span>`)
+        .join('');
+    }
+    COUNT.hidden = chips.length === 0;
+    COUNT.textContent = String(chips.length);
+    BTN.classList.toggle('active', chips.length > 0);
+  }
+
+  function apply() {
+    const all = CARDS();
+    let shown = 0;
+    all.forEach((card) => {
+      const role = card.dataset.role;
+      let ok = true;
+      if (state.role !== 'all') {
+        const want = state.role === 'none' ? 'plain' : state.role;
+        ok = ok && (role === want);
+      }
+      if (state.lead !== 'all') ok = ok && (role === 'lead') === (state.lead === 'yes');
+      if (state.sub !== 'all') ok = ok && (role === 'sub') === (state.sub === 'yes');
+      // 按团筛：团主专家本人 + 它的成员，两处都要匹配
+      if (state.team !== 'all') {
+        const ownTeam = card.dataset.ownTeam || '';
+        const teams = (card.dataset.teams || '').split(',').filter(Boolean);
+        ok = ok && (ownTeam === state.team || teams.includes(state.team));
+      }
+      if (state.toggles.includes('lead') || state.toggles.includes('sub')) {
+        const want = [];
+        if (state.toggles.includes('lead')) want.push('lead');
+        if (state.toggles.includes('sub')) want.push('sub');
+        ok = ok && want.includes(role);
+      }
+      card.classList.toggle('hide', !ok);
+      if (ok) shown++;
+    });
+    EMPTY.classList.toggle('on', shown === 0);
+    renderChips();
+  }
+
+  function resetState() {
+    state = readState();
+    currentPanel().querySelectorAll('select').forEach((s) => { s.value = 'all'; });
+    currentPanel().querySelectorAll('[data-role-toggle]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+    CARDS().forEach((c) => c.classList.remove('hide'));
+    EMPTY.classList.remove('on');
+    renderChips();
+  }
+
+  // 打开 / 关闭
+  BTN.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const p = currentPanel();
+    setPanelOpen(p.hidden);
+  });
+  document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => setPanelOpen(false)));
+  document.addEventListener('click', (e) => {
+    if (!CENTER.contains(e.target)) return;
+    if (e.target.closest('.fp') || e.target.closest('#btn-filter')) return;
+    setPanelOpen(false);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setPanelOpen(false); });
+
+  // 方案切换：a/b/c 是面板形态，d 是独立的徽标展示视图
+  const VIEW_FILTERS = document.getElementById('view-filters');
+  const VIEW_BADGES = document.getElementById('view-badges');
+  document.querySelectorAll('.sb-tabs button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.sb-tabs button').forEach((b) => b.classList.toggle('on', b === btn));
+      const isBadges = btn.dataset.pane === 'd';
+      VIEW_FILTERS.hidden = isBadges;
+      VIEW_BADGES.hidden = !isBadges;
+      if (isBadges) { setPanelOpen(false); return; }
+      openPanel = btn.dataset.pane;
+      resetState();
+      setPanelOpen(true);
+    });
+  });
+
+  // 应用 / 重置 / chips 清除
+  document.querySelectorAll('[data-apply]').forEach((b) => b.addEventListener('click', () => { apply(); setPanelOpen(false); }));
+  document.querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', resetState));
+  CHIPS.addEventListener('click', (e) => {
+    const k = e.target.dataset && e.target.dataset.clear;
+    if (!k) return;
+    if (k === 'lead') state.lead = 'all';
+    if (k === 'sub') state.sub = 'all';
+    if (k === 'role') state.role = 'all';
+    if (k === 'team') state.team = 'all';
+    if (k === 'toggleLead') state.toggles = state.toggles.filter((x) => x !== 'lead');
+    if (k === 'toggleSub') state.toggles = state.toggles.filter((x) => x !== 'sub');
+    // 面板里的控件跟着回到「全部」，否则 chip 消掉了但下拉还留着旧值
+    const p = currentPanel();
+    if (k === 'lead') { const s = p.querySelector('[data-key="teamLead"]'); if (s) s.value = 'all'; }
+    if (k === 'sub') { const s = p.querySelector('[data-key="subAgent"]'); if (s) s.value = 'all'; }
+    if (k === 'role') { const s = p.querySelector('[data-key="teamRole"]'); if (s) s.value = 'all'; }
+    if (k === 'team') { p.querySelectorAll('[data-key="team"]').forEach((s) => { s.value = 'all'; }); }
+    if (k === 'toggleLead') { const b = p.querySelector('[data-role-toggle="lead"]'); if (b) b.setAttribute('aria-pressed', 'false'); }
+    if (k === 'toggleSub') { const b = p.querySelector('[data-role-toggle="sub"]'); if (b) b.setAttribute('aria-pressed', 'false'); }
+    apply();
+  });
+
+  // 面板控件变化
+  panels().forEach((p) => {
+    p.querySelectorAll('select').forEach((s) => {
+      s.addEventListener('change', () => {
+        if (s.dataset.key === 'teamLead') state.lead = s.value;
+        if (s.dataset.key === 'subAgent') state.sub = s.value;
+        if (s.dataset.key === 'teamRole') state.role = s.value;
+        if (s.dataset.key === 'team') state.team = s.value;
+      });
+    });
+    p.querySelectorAll('[data-role-toggle]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const on = b.getAttribute('aria-pressed') === 'true';
+        b.setAttribute('aria-pressed', String(!on));
+        const role = b.dataset.roleToggle;
+        state.toggles = state.toggles.filter((x) => x !== role);
+        if (!on) state.toggles.push(role);
+        apply();
+      });
+    });
+  });
+
+  // 点卡片上的「子专家 · X」徽标：单团直接筛，多团先让用户选是哪个团
+  function setTeamFilter(team) {
+    state.team = team;
+    // 面板里的下拉跟着变，否则会出现「chip 显示所属团，面板里还是全部」
+    document.querySelectorAll('.fp [data-key="team"]').forEach((s) => { s.value = team; });
+    apply();
+    setPanelOpen(false);
+  }
+
+  function closeTeamPicker() {
+    const el = document.getElementById('team-picker');
+    if (el) el.remove();
+  }
+
+  function openTeamPicker(anchorEl, teams) {
+    closeTeamPicker();
+    // 面板开着会挡在徽标上面，先收起——用户点徽标就是想看团成员，不是想继续调条件
+    setPanelOpen(false);
+    const tip = document.createElement('div');
+    tip.className = 'team-picker';
+    tip.id = 'team-picker';
+    tip.innerHTML =
+      '<div class="tp-head">这个子专家属于 ' + teams.length + ' 个团</div>' +
+      teams.map((name) =>
+        '<button type="button" class="tp-item" data-team-pick="' + name + '">' +
+        '<span class="tp-dot"></span><span class="tp-name">' + name + '</span>' +
+        '<span class="tp-go">只看这个团 →</span></button>').join('');
+    document.body.appendChild(tip);
+    const r = anchorEl.getBoundingClientRect();
+    const left = Math.min(r.left, window.innerWidth - 268);
+    tip.style.left = Math.max(12, left) + 'px';
+    tip.style.top = (r.bottom + 6) + 'px';
+    tip.querySelectorAll('[data-team-pick]').forEach((b) => {
+      b.addEventListener('click', () => { setTeamFilter(b.dataset.teamPick); closeTeamPicker(); });
+    });
+    setTimeout(() => document.addEventListener('click', closeTeamPicker, { once: true }), 0);
+  }
+
+  document.querySelectorAll('#cards .badge-sub').forEach((badge) => {
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const card = badge.closest('.card');
+      const teams = (card.dataset.teams || '').split(',').filter(Boolean);
+      if (!teams.length) return;
+      if (teams.length === 1) { setTeamFilter(teams[0]); return; }
+      openTeamPicker(badge, teams);
+    });
+  });
+
+  // 初始：打开 A 面板
+  setPanelOpen(true);
+  renderChips();
+</script>
+</body>
+</html>

@@ -5,6 +5,7 @@ import re
 import uuid
 import inspect
 import time
+from contextvars import ContextVar
 from dataclasses import replace
 from typing import Optional, Dict, Any, List, Tuple, Iterable
 from pydantic import BaseModel, Field, field_validator
@@ -288,13 +289,16 @@ async def can_delegate_to_agent(
 
 
 async def load_delegable_system_agent_candidates(session: Any) -> List[Any]:
-    """加载「可委派候选」：已启用的系统级智能体。
+    """加载「未配置白名单时」的可委派候选：已启用的系统级智能体。
 
-    这是委派链的**唯一候选来源**（可用智能体目录、欢迎语专家清单、子代理通讯录、
-    子代理能力候选、``sub_agent_call`` 自身都用它）。不要在调用方各自复用
-    ``AgentManagerService.list_agents``：那是 **UI 可见性**口径，按 ``created_by``
-    归属过滤，而工具/后台链路普遍拿不到 user，会退化成「created_by 必须为空字符串」，
-    把全部系统级智能体（``created_by='admin'``）整批剃成空列表。
+    配置了 ``delegable_agent_ids`` 的智能体不再走这里——它按名单里的 ID 直接取行
+    （见 ``load_agents_by_delegation_ids``），从而能把用户自建智能体也纳入候选。
+    无论哪条路，最终都汇聚到 ``resolve_effective_delegable_agents`` 这一个出口。
+
+    不要在调用方各自复用 ``AgentManagerService.list_agents``：那是 **UI 可见性**口径，
+    按 ``created_by`` 归属过滤，而工具/后台链路普遍拿不到 user，会退化成
+    「created_by 必须为空字符串」，把全部系统级智能体（``created_by='admin'``）
+    整批剃成空列表。
     """
     from sqlalchemy import select
 
@@ -307,6 +311,180 @@ async def load_delegable_system_agent_candidates(session: Any) -> List[Any]:
     return list((await session.execute(stmt)).scalars().all())
 
 
+DELEGATION_TOOL_NAME = "sub_agent_call"
+DELEGATION_BATCH_TOOL_NAME = "sub_agent_batch_call"
+
+# 批量委派内部复用 ``sub_agent_call`` 的实现，但白名单要按 ``sub_agent_batch_call``
+# 自己那份来算（未单独配置才回落）。用 ContextVar 传递「当前是谁在调」，避免给
+# 用户可见的工具签名加内部参数（模型会把它当真实入参去填）。
+_active_delegation_tool: ContextVar[str | None] = ContextVar(
+    "active_delegation_tool",
+    default=None,
+)
+
+
+def _delegable_ids_of_tool_config(item: Any) -> tuple[bool, Optional[List[str]]]:
+    """从单个工具配置项里读调度白名单，返回 ``(是否显式配置, 名单)``。
+
+    配置项有三种历史形态：``str``（老格式只存名字）、``dict``（版本表 JSON）、
+    ``ToolConfigItem``（运行时）。三种都要认，否则老智能会读成「未配置」。
+    """
+    if item is None:
+        return False, None
+    if isinstance(item, dict):
+        raw = item.get("delegable_agent_ids")
+    else:
+        raw = getattr(item, "delegable_agent_ids", None)
+    if raw is None:
+        return False, None
+    cleaned: List[str] = []
+    seen: set[str] = set()
+    for value in raw:
+        agent_id = str(value or "").strip()
+        if agent_id and agent_id not in seen:
+            seen.add(agent_id)
+            cleaned.append(agent_id)
+    return True, cleaned
+
+
+def has_delegation_tool(agent_config: Any) -> bool:
+    """当前智能体到底有没有委派能力：配置里勾了委派工具，或主助手运行时隐式挂载。
+
+    ``list_available_agents`` 是**隐式工具**，任何智能体都能调。它若不看这一层，
+    就会出现「列出一堆可委派智能体 → 用户挑一个 → 模型说自己没工具」的自相矛盾：
+    目录暗示了能力，运行时却没有。所有「能不能委派」的判断都应走这里。
+    """
+    if agent_config is None:
+        return False
+
+    for item in getattr(agent_config, "tools", None) or []:
+        if isinstance(item, str):
+            name = item
+        elif isinstance(item, dict):
+            name = item.get("name")
+        else:
+            name = getattr(item, "name", None)
+        if str(name or "").strip() in (DELEGATION_TOOL_NAME, DELEGATION_BATCH_TOOL_NAME):
+            return True
+
+    # 主助手（通用对话兜底 Agent）由 AssistantAgentRunner 在运行时隐式挂载委派工具，
+    # 它的 tools 配置里通常没有这一项，不能因此判定为「没有委派能力」。
+    try:
+        from app.services.ai.skill_resolver import is_main_general_agent
+
+        return is_main_general_agent(agent_config)
+    except Exception:
+        return False
+
+
+def resolve_delegation_allowlist(
+    configured_tools: Iterable[Any] | None,
+    *,
+    tool_name: str = DELEGATION_TOOL_NAME,
+) -> tuple[bool, Optional[List[str]]]:
+    """解析当前智能体的调度白名单。
+
+    语义（见 docs/superpowers/specs/2026-11-03-sub-agent-delegation-allowlist-design.md）：
+    - ``(False, None)``：未配置 → 系统级全量、自建不可委派（与历史行为一致）
+    - ``(True, [])``：显式清空 → 任何智能体都不许委派
+    - ``(True, [...])``：只许名单内的
+
+    ``sub_agent_batch_call`` 自己没配时回落到 ``sub_agent_call`` 的名单：两个工具是
+    同一件事的串行/并行两种形态，只配一个而另一个还能自由调度等于白名单被绕过。
+    """
+    own: Any = None
+    for item in configured_tools or []:
+        if _configured_tool_name(item) == tool_name:
+            own = item
+            break
+    configured, ids = _delegable_ids_of_tool_config(own)
+    if configured:
+        return True, ids
+    if tool_name != DELEGATION_TOOL_NAME:
+        return resolve_delegation_allowlist(configured_tools, tool_name=DELEGATION_TOOL_NAME)
+    return False, None
+
+
+async def load_agents_by_delegation_ids(session: Any, agent_ids: Iterable[str]) -> List[Any]:
+    """按白名单里的 ID 直接取智能体行（含用户自建，不做 is_system 过滤）。"""
+    from sqlalchemy import select
+
+    from app.models.agent import AIAgent
+
+    ids = [str(a or "").strip() for a in agent_ids or [] if str(a or "").strip()]
+    if not ids:
+        return []
+    stmt = select(AIAgent).where(AIAgent.id.in_(ids))
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def load_accessible_personal_agents(
+    session: Any,
+    *,
+    user_name: str | None,
+    is_admin: bool = False,
+) -> List[Any]:
+    """用户自建的、已启用的智能体（管理员看全部，普通用户只看本人创建的）。"""
+    from sqlalchemy import select
+
+    from app.models.agent import AIAgent
+
+    conditions = [
+        AIAgent.is_system.is_(False),
+        AIAgent.is_enabled.is_(True),
+    ]
+    if not is_admin:
+        if not (user_name or "").strip():
+            return []
+        conditions.append(AIAgent.created_by == user_name)
+
+    stmt = select(AIAgent).where(*conditions)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def filter_delegable_agents(
+    session: Any,
+    agents: Iterable[Any],
+    *,
+    user_id: int | str | None,
+    is_admin: bool,
+    user_name: str | None,
+    current_agent_id: str | None,
+    allow_personal: bool = False,
+) -> List[Any]:
+    """权限层过滤。
+
+    系统级要求 ``agent:<id>`` 显式授权（走 PermissionService）；用户自建要求
+    ``created_by`` 是本人。``allow_personal=False`` 时自建智能体一律不进结果——
+    这是未配置白名单时的历史行为，自建只有被显式写进白名单才「开通」。
+    """
+    delegable: List[Any] = []
+    for agent in agents or []:
+        if not getattr(agent, "is_enabled", False):
+            continue
+        is_system = bool(getattr(agent, "is_system", False))
+        if not is_system and not allow_personal:
+            continue
+        agent_id = str(getattr(agent, "id", "") or "")
+        if current_agent_id and agent_id == str(current_agent_id):
+            continue
+        if is_system:
+            if await can_delegate_to_agent(
+                session,
+                user_id=user_id,
+                is_admin=is_admin,
+                target_agent_id=agent_id,
+            ):
+                delegable.append(agent)
+            continue
+        # 自建：管理员可跨人配置，普通用户只认本人创建的（分享是副本语义，
+        # 对方接受后 created_by 就是他自己，天然满足）。
+        created_by = str(getattr(agent, "created_by", "") or "")
+        if is_admin or (user_name and created_by == str(user_name)):
+            delegable.append(agent)
+    return delegable
+
+
 async def filter_delegable_system_agents(
     session: Any,
     agents: Iterable[Any],
@@ -315,44 +493,31 @@ async def filter_delegable_system_agents(
     is_admin: bool,
     current_agent_id: str | None,
 ) -> List[Any]:
-    delegable: List[Any] = []
-    for agent in agents or []:
-        if not getattr(agent, "is_enabled", False) or not getattr(agent, "is_system", False):
-            continue
-        agent_id = str(getattr(agent, "id", "") or "")
-        if current_agent_id and agent_id == str(current_agent_id):
-            continue
-        if await can_delegate_to_agent(
-            session,
-            user_id=user_id,
-            is_admin=is_admin,
-            target_agent_id=agent_id,
-        ):
-            delegable.append(agent)
-    return delegable
+    """系统级专用过滤（历史入口，保留供旧调用方使用）。"""
+    return await filter_delegable_agents(
+        session,
+        agents,
+        user_id=user_id,
+        is_admin=is_admin,
+        user_name=None,
+        current_agent_id=current_agent_id,
+        allow_personal=False,
+    )
 
 
-async def resolve_runnable_delegable_system_agents(
-    session: Any,
-    agents: Iterable[Any],
-    *,
-    user_id: int | str | None,
-    is_admin: bool,
-    current_agent_id: str | None,
-) -> List[Any]:
-    """Return permitted system agents that have a loadable, ready runtime."""
+
+async def _filter_ready_delegable_agents(session: Any, agents: Iterable[Any]) -> List[Any]:
+    """就绪层过滤：必须有可加载的发布版本，且主类型所需资源/工具齐全。
+
+    与候选来源解耦——系统级候选和「白名单点名」的候选走同一套就绪判定，
+    否则白名单里的自建智能体会绕过发布版本检查，委派到半残配置上。
+    """
     import json
     from app.services.ai.agent_readiness import evaluate_agent_readiness
     from app.services.ai.agent_types import resolve_agent_type
     from app.services.ai.knowledge_utils import load_system_default_dataset_ids
 
-    permitted = await filter_delegable_system_agents(
-        session,
-        agents,
-        user_id=user_id,
-        is_admin=is_admin,
-        current_agent_id=current_agent_id,
-    )
+    permitted = list(agents or [])
     if not permitted:
         return []
 
@@ -450,6 +615,126 @@ async def resolve_runnable_delegable_system_agents(
             str(getattr(agent, "id", "") or ""),
         ),
     )
+
+
+async def resolve_runnable_delegable_system_agents(
+    session: Any,
+    agents: Iterable[Any],
+    *,
+    user_id: int | str | None,
+    is_admin: bool,
+    current_agent_id: str | None,
+) -> List[Any]:
+    """Return permitted system agents that have a loadable, ready runtime."""
+    permitted = await filter_delegable_system_agents(
+        session,
+        agents,
+        user_id=user_id,
+        is_admin=is_admin,
+        current_agent_id=current_agent_id,
+    )
+    return await _filter_ready_delegable_agents(session, permitted)
+
+
+async def resolve_accessible_agents_for_user(
+    session: Any,
+    *,
+    user_id: int | str | None,
+    is_admin: bool,
+    user_name: str | None = None,
+) -> List[Any]:
+    """「这个用户能碰到哪些智能体」，与当前智能体的委派工具/白名单**无关**。
+
+    必须和「我能委派哪些」分开：用户问「我有那些智能体权限」问的是授权，
+    不该因为当前这个智能体没装委派工具就答成 0 个。后者由
+    ``resolve_delegable_agent_stages`` 在前面再叠一层工具与名单。
+    """
+    system_agents = await load_delegable_system_agent_candidates(session)
+    personal_agents = await load_accessible_personal_agents(
+        session,
+        user_name=user_name,
+        is_admin=is_admin,
+    )
+    return await filter_delegable_agents(
+        session,
+        list(system_agents) + list(personal_agents),
+        user_id=user_id,
+        is_admin=is_admin,
+        user_name=user_name,
+        # 传 None 表示不剔除自身，由调用方用 is_current 标注。
+        current_agent_id=None,
+        allow_personal=True,
+    )
+
+
+async def resolve_delegable_agent_stages(
+    session: Any,
+    *,
+    user_id: int | str | None,
+    is_admin: bool,
+    user_name: str | None = None,
+    current_agent_id: str | None = None,
+    allowlist_configured: bool = False,
+    allowlist: Optional[Iterable[str]] = None,
+) -> tuple[List[Any], List[Any], List[Any]]:
+    """按「白名单 → 权限 → 就绪」三段过滤，返回三层结果。
+
+    返回 ``(名单层候选, 权限层通过, 就绪层可用)``。``sub_agent_call`` 需要中间层
+    才能把「不在名单」和「无权限」区分成不同错误码，因此这里不做封装；对外统一
+    用 ``resolve_effective_delegable_agents`` 取第三层，保证三处消费方同源。
+    """
+    if allowlist_configured:
+        agent_ids = [str(a or "").strip() for a in (allowlist or []) if str(a or "").strip()]
+        # 显式清空：任何智能体都不许委派，不必再查库
+        candidates = await load_agents_by_delegation_ids(session, agent_ids) if agent_ids else []
+    else:
+        candidates = await load_delegable_system_agent_candidates(session)
+
+    permitted = await filter_delegable_agents(
+        session,
+        candidates,
+        user_id=user_id,
+        is_admin=is_admin,
+        user_name=user_name,
+        current_agent_id=current_agent_id,
+        allow_personal=allowlist_configured,
+    )
+    ready = await _filter_ready_delegable_agents(session, permitted)
+    return candidates, permitted, ready
+
+
+async def resolve_effective_delegable_agents(
+    session: Any,
+    *,
+    user_id: int | str | None,
+    is_admin: bool,
+    user_name: str | None = None,
+    current_agent_id: str | None = None,
+    allowlist_configured: bool = False,
+    allowlist: Optional[Iterable[str]] = None,
+) -> List[Any]:
+    """本次请求**真正可委派**的智能体集合：白名单 ∧ 权限 ∧ 就绪。
+
+    这是委派链的**唯一出口**，三处消费方必须都走它，否则会出现
+    「通讯录列了 A → 模型调 A → 被白名单挡掉」的事故：
+    1. ``sub_agent_call`` / ``sub_agent_batch_call`` 的运行时校验；
+    2. ``build_sub_agents_context`` 注入的可委派通讯录；
+    3. ``list_available_agents`` 目录工具。
+
+    ``allowlist_configured`` 为 False 时保持历史口径（仅系统级）；为 True 时以名单
+    为准，名单里的自建智能体才「开通」。
+    """
+    _, _, ready = await resolve_delegable_agent_stages(
+        session,
+        user_id=user_id,
+        is_admin=is_admin,
+        user_name=user_name,
+        current_agent_id=current_agent_id,
+        allowlist_configured=allowlist_configured,
+        allowlist=allowlist,
+    )
+    return ready
+
 
 
 def delegable_agent_name_aliases(agents: Iterable[Any]) -> set[str]:
@@ -709,34 +994,65 @@ async def sub_agent_call(
     # 2. 校验目标智能体是否存在并加载配置
     target_config = None
     async with AsyncSessionLocal() as session:
-        # 与目录/专家清单共用同一候选口径（启用的系统级智能体）。
-        all_active_system = await load_delegable_system_agent_candidates(session)
-        for a in all_active_system:
-            if str(getattr(a, "id", "") or "") == str(main_ctx.agent_id) and _matches_requested_agent(a, agent_name):
-                return SubAgentResult(
-                    status=SubAgentResultStatus.FAILED,
-                    target_agent_name=(agent_name or "").strip() or None,
-                    content="错误：主智能体无法委派调用自身。",
-                    run_id=run_id,
-                    parent_trace_id=parent_trace_id,
-                    parent_conversation_id=main_ctx.conversation_id,
-                    error_code="self_delegation",
-                ).to_tool_text()
+        # 调度白名单来自「当前智能体生效版本」的工具配置。主助手在运行时会隐式挂载
+        # sub_agent_call，只有 tools 里真实存在该项才认白名单，否则一律按未配置处理
+        # （= 系统级全量），保证老智能体的行为不变。
+        caller_config = await AgentManagerService.get_active_agent_config(
+            session, agent_id=str(main_ctx.agent_id)
+        )
+        allowlist_configured, allowlist = resolve_delegation_allowlist(
+            getattr(caller_config, "tools", None) if caller_config else None,
+            tool_name=_active_delegation_tool.get() or DELEGATION_TOOL_NAME,
+        )
+        caller_user_name = str((main_ctx.user_dimensions or {}).get("user_name") or "") or None
 
-        permitted_agents = await filter_delegable_system_agents(
+        # 自委派用上下文里的标识直接比对，不再回查 AIAgent 行：
+        # 少一次查询，也不会因为测试替身缺 session.get 而误判。
+        requested_key = _normalize_agent_name(agent_name)
+        self_keys = {
+            _normalize_agent_name(getattr(main_ctx, "agent_name", None)),
+            _normalize_agent_name(getattr(main_ctx, "agent_id", None)),
+        }
+        if requested_key and requested_key in self_keys:
+            return SubAgentResult(
+                status=SubAgentResultStatus.FAILED,
+                target_agent_name=(agent_name or "").strip() or None,
+                content="错误：主智能体无法委派调用自身。",
+                run_id=run_id,
+                parent_trace_id=parent_trace_id,
+                parent_conversation_id=main_ctx.conversation_id,
+                error_code="self_delegation",
+            ).to_tool_text()
+
+        # 三层结果都要：可委派的、通过权限但未就绪的、连权限都没过的，分别对应三种错误。
+        candidate_agents, permitted_agents, delegable_agents = await resolve_delegable_agent_stages(
             session,
-            all_active_system,
             user_id=main_ctx.user_id,
             is_admin=main_ctx.is_admin,
+            user_name=caller_user_name,
             current_agent_id=main_ctx.agent_id,
+            allowlist_configured=allowlist_configured,
+            allowlist=allowlist,
         )
-        delegable_agents = await resolve_runnable_delegable_system_agents(
-            session,
-            permitted_agents,
-            user_id=main_ctx.user_id,
-            is_admin=main_ctx.is_admin,
-            current_agent_id=main_ctx.agent_id,
+
+        # 名字可能和上下文里的 agent_name 不同（同一智能体被改名、或按别名调用），
+        # 所以还要拿候选行按 id 再比一次，否则「调自己」会被当成「无权访问」。
+        self_by_candidate = next(
+            (a for a in candidate_agents if _matches_requested_agent(a, agent_name)),
+            None,
         )
+        if self_by_candidate is not None and str(
+            getattr(self_by_candidate, "id", "")
+        ) == str(main_ctx.agent_id):
+            return SubAgentResult(
+                status=SubAgentResultStatus.FAILED,
+                target_agent_name=(agent_name or "").strip() or None,
+                content="错误：主智能体无法委派调用自身。",
+                run_id=run_id,
+                parent_trace_id=parent_trace_id,
+                parent_conversation_id=main_ctx.conversation_id,
+                error_code="self_delegation",
+            ).to_tool_text()
 
         matched_agent = None
 
@@ -781,6 +1097,48 @@ async def sub_agent_call(
                     parent_conversation_id=main_ctx.conversation_id,
                     error_code="agent_not_ready",
                 ).to_tool_text()
+            # 命中候选池但被权限层挡掉：白名单在内、权限不在；或系统级没有 agent 授权。
+            blocked_match = next(
+                (a for a in candidate_agents if _matches_requested_agent(a, agent_name)),
+                None,
+            )
+            if blocked_match is not None:
+                blocked_display = getattr(blocked_match, "display_name", None) or blocked_match.name
+                return SubAgentResult(
+                    status=SubAgentResultStatus.PERMISSION_DENIED,
+                    target_agent_id=str(getattr(blocked_match, "id", "") or "") or None,
+                    target_agent_name=str(blocked_display),
+                    content=(
+                        f"错误：当前用户无权使用智能体 `{blocked_match.name}`（{blocked_display}）。"
+                        "系统级智能体需要管理员在角色权限中授予该智能体的访问权，"
+                        "你自己的智能体则须由本人创建。请联系管理员开通后再试。"
+                    ),
+                    run_id=run_id,
+                    parent_trace_id=parent_trace_id,
+                    parent_conversation_id=main_ctx.conversation_id,
+                    error_code="agent_permission_denied",
+                ).to_tool_text()
+
+            # 连候选池都没命中。配置了白名单就明确说「不在名单里」，
+            # 这比笼统的 not_found 有用得多——用户能直接去改配置。
+            if allowlist_configured:
+                available = ", ".join(
+                    f"`{a.name}` ({a.display_name or a.name})" for a in delegable_agents
+                ) or "（当前名单内没有可用智能体）"
+                return SubAgentResult(
+                    status=SubAgentResultStatus.FAILED,
+                    target_agent_name=(agent_name or "").strip() or None,
+                    content=(
+                        f"错误：智能体 `{agent_name}` 未被加入本智能体的委派名单，因此不可调用。"
+                        f"如确需使用，请在本智能体的 `sub_agent_call` 工具配置「调度范围」中加入它；"
+                        f"当前名单内可用：{available}。"
+                    ),
+                    run_id=run_id,
+                    parent_trace_id=parent_trace_id,
+                    parent_conversation_id=main_ctx.conversation_id,
+                    error_code="agent_not_in_allowlist",
+                ).to_tool_text()
+
             # 无论如何都找不到，只列出当前用户可委派的候选，供模型自我纠错
             candidates = [
                 f"`{a.name}` ({a.display_name or a.name})"
@@ -791,7 +1149,7 @@ async def sub_agent_call(
                 status=SubAgentResultStatus.FAILED,
                 target_agent_name=(agent_name or "").strip() or None,
                 content=(
-                    f"错误：未找到名为 '{agent_name}' 的启用系统智能体。请重新反思问题，并只能从以下当前已启用的系统内置候选智能体列表中选择正确的英文标识 (agent_name) 进行 `sub_agent_call` 调用：{candidates_str}"
+                    f"错误：未找到名为 '{agent_name}' 的已启用智能体。请重新反思问题，并只能从以下当前可委派的候选智能体列表中选择正确的英文标识 (agent_name) 进行 `sub_agent_call` 调用：{candidates_str}"
                 ),
                 run_id=run_id,
                 parent_trace_id=parent_trace_id,
@@ -1291,6 +1649,8 @@ class BatchSubAgentTool(BaseTool):
             task_ctx = main_ctx.model_copy(deep=False, update={"trace_buffer": []})
             original_ctx = get_current_agent_context()
             set_agent_context(task_ctx)
+            # ContextVar 在每个 task 内独立，并行项之间不会互相覆盖。
+            tool_token = _active_delegation_tool.set(DELEGATION_BATCH_TOOL_NAME)
             try:
                 content = await sub_agent_call.func(
                     **call.model_dump(exclude_none=True)
@@ -1318,6 +1678,7 @@ class BatchSubAgentTool(BaseTool):
                     "trace_buffer": task_ctx.trace_buffer,
                 }
             finally:
+                _active_delegation_tool.reset(tool_token)
                 set_agent_context(original_ctx)
 
         tasks = [

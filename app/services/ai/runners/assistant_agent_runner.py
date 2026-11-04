@@ -680,27 +680,23 @@ class AssistantAgentRunner(BaseExecutor):
         if not is_main_general_agent(self.config):
             return None, {}
         try:
+            from app.services.ai.agent_roster import (
+                resolve_delegable_system_agents_for_user,
+            )
             from app.services.ai.tools.agent_delegate_tool import (
                 delegable_agent_name_aliases,
-                load_delegable_system_agent_candidates,
-                resolve_runnable_delegable_system_agents,
             )
 
-            raw_user_id = None
-            is_admin = False
-            if self.user_info:
-                raw_user_id = self.user_info.get("user_id") or self.user_info.get("id")
-                is_admin = self.user_info.get("role") == "admin"
             async with AsyncSessionLocal() as session:
-                # 与目录/专家清单共用候选口径；走 UI 可见性口径会因拿不到 user 而恒空，
-                # 导致别名集合与能力候选都为空、模型挑不到委派目标。
-                agents = await load_delegable_system_agent_candidates(session)
-                delegable_agents = await resolve_runnable_delegable_system_agents(
+                # 与目录/专家清单/通讯录共用同一出口；走 UI 可见性口径会因拿不到 user
+                # 而恒空，导致别名集合与能力候选都为空、模型挑不到委派目标。
+                # configured_tools 让调度白名单在这里同样生效——否则别名集合会放过
+                # 被白名单挡掉的智能体，模型以为能调、实际必被拒。
+                delegable_agents = await resolve_delegable_system_agents_for_user(
                     session,
-                    agents,
-                    user_id=raw_user_id,
-                    is_admin=is_admin,
+                    user_info=self.user_info,
                     current_agent_id=self.config.agent_id,
+                    configured_tools=getattr(self.config, "tools", None),
                 )
             return (
                 delegable_agent_name_aliases(delegable_agents),
