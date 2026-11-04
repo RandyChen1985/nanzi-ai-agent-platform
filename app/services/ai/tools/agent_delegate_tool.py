@@ -34,9 +34,145 @@ from app.services.ai.turn_decision import TurnDecision
 logger = logging.getLogger(__name__)
 
 DEFAULT_DELEGATION_RESULT_MAX_CHARS = 8000
-MAX_DELEGATION_CALLS_PER_AGENT = 2
+
+#: 委派上限（系统配置可调，改后无需重启；读不到配置时回退到这些默认值）
+#:
+#: - ``delegation_max_batch_calls``：一次 ``sub_agent_batch_call`` 允许的任务数；
+#: - ``delegation_max_calls_per_agent``：同一轮对同一个子代理的调用次数上限。
+#:
+#: 常量只是默认值，运行时事实来源是下面的 getter。
 MAX_DELEGATION_DEPTH = 1
-MAX_BATCH_DELEGATION_CALLS = 4
+
+DELEGATION_MAX_BATCH_CALLS_KEY = "delegation_max_batch_calls"
+DEFAULT_MAX_BATCH_DELEGATION_CALLS = 4
+MIN_BATCH_DELEGATION_CALLS = 1
+MAX_BATCH_DELEGATION_CALLS_LIMIT = 20
+
+DELEGATION_MAX_CALLS_PER_AGENT_KEY = "delegation_max_calls_per_agent"
+DEFAULT_MAX_DELEGATION_CALLS_PER_AGENT = 2
+MIN_DELEGATION_CALLS_PER_AGENT = 1
+MAX_DELEGATION_CALLS_PER_AGENT_LIMIT = 10
+
+#: 兼容旧引用：语义是「默认值」，实际上限请用 getter。
+MAX_BATCH_DELEGATION_CALLS = DEFAULT_MAX_BATCH_DELEGATION_CALLS
+MAX_DELEGATION_CALLS_PER_AGENT = DEFAULT_MAX_DELEGATION_CALLS_PER_AGENT
+
+_max_batch_delegation_calls = DEFAULT_MAX_BATCH_DELEGATION_CALLS
+_max_delegation_calls_per_agent = DEFAULT_MAX_DELEGATION_CALLS_PER_AGENT
+
+
+def validate_max_batch_delegation_calls(value: Any) -> int:
+    """校验 ``delegation_max_batch_calls``：1-20 的整数。"""
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"delegation_max_batch_calls 必须是整数，范围 "
+            f"{MIN_BATCH_DELEGATION_CALLS}-{MAX_BATCH_DELEGATION_CALLS_LIMIT}"
+        )
+    if not (MIN_BATCH_DELEGATION_CALLS <= parsed <= MAX_BATCH_DELEGATION_CALLS_LIMIT):
+        raise ValueError(
+            f"delegation_max_batch_calls 必须在 "
+            f"{MIN_BATCH_DELEGATION_CALLS}-{MAX_BATCH_DELEGATION_CALLS_LIMIT} 之间，"
+            f"当前 {parsed}"
+        )
+    return parsed
+
+
+def validate_max_delegation_calls_per_agent(value: Any) -> int:
+    """校验 ``delegation_max_calls_per_agent``：1-10 的整数。"""
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"delegation_max_calls_per_agent 必须是整数，范围 "
+            f"{MIN_DELEGATION_CALLS_PER_AGENT}-{MAX_DELEGATION_CALLS_PER_AGENT_LIMIT}"
+        )
+    if not (
+        MIN_DELEGATION_CALLS_PER_AGENT
+        <= parsed
+        <= MAX_DELEGATION_CALLS_PER_AGENT_LIMIT
+    ):
+        raise ValueError(
+            f"delegation_max_calls_per_agent 必须在 "
+            f"{MIN_DELEGATION_CALLS_PER_AGENT}-{MAX_DELEGATION_CALLS_PER_AGENT_LIMIT} 之间，"
+            f"当前 {parsed}"
+        )
+    return parsed
+
+
+def get_max_batch_delegation_calls() -> int:
+    return _max_batch_delegation_calls
+
+
+def get_max_delegation_calls_per_agent() -> int:
+    return _max_delegation_calls_per_agent
+
+
+def _sync_delegation_tool_texts() -> None:
+    """把当前上限写回工具描述，让模型看到的约束与实际校验一致。"""
+    batch = _max_batch_delegation_calls
+    per_agent = _max_delegation_calls_per_agent
+    calls_field = BatchSubAgentArgs.model_fields.get("calls")
+    if calls_field is not None:
+        calls_field.description = (
+            f"彼此独立、可以并行执行的子代理任务，最多 {batch} 个"
+            f"（系统配置 {DELEGATION_MAX_BATCH_CALLS_KEY}，默认 "
+            f"{DEFAULT_MAX_BATCH_DELEGATION_CALLS}，上限 "
+            f"{MAX_BATCH_DELEGATION_CALLS_LIMIT}）"
+        )
+    BatchSubAgentTool.description = (
+        f"并行委派 1-{batch} 个彼此独立的子智能体任务。"
+        f"同一轮对同一个子智能体最多调用 {per_agent} 次"
+        f"（系统配置 {DELEGATION_MAX_CALLS_PER_AGENT_KEY}）。"
+        "仅用于任务之间互不依赖的场景；有先后依赖时逐次调用 sub_agent_call。"
+        "结果按 calls 输入顺序返回，单个任务失败不会丢弃其他结果。"
+    )
+
+
+def set_max_batch_delegation_calls(value: Any) -> None:
+    """更新 batch 上限（配置保存时热更新；非法值抛 ValueError 由调用方转 400）。"""
+    global _max_batch_delegation_calls
+    _max_batch_delegation_calls = validate_max_batch_delegation_calls(value)
+    _sync_delegation_tool_texts()
+
+
+def set_max_delegation_calls_per_agent(value: Any) -> None:
+    """更新「同一子代理每轮调用次数」上限。"""
+    global _max_delegation_calls_per_agent
+    _max_delegation_calls_per_agent = validate_max_delegation_calls_per_agent(value)
+    _sync_delegation_tool_texts()
+
+
+async def refresh_delegation_limits_from_config() -> None:
+    """从系统配置同步两个上限。
+
+    每次委派前调用一次：``ConfigService.get`` 自带 Redis + 60s 内存缓存，开销可忽略；
+    读配置失败时保持当前值——配置服务异常不能把委派整块打挂。
+    """
+    try:
+        from app.services.config_service import ConfigService
+
+        batch_raw = await ConfigService.get(DELEGATION_MAX_BATCH_CALLS_KEY)
+        per_agent_raw = await ConfigService.get(DELEGATION_MAX_CALLS_PER_AGENT_KEY)
+    except Exception:  # noqa: BLE001 - 配置不可用不应影响委派
+        logger.debug("读取委派上限配置失败，沿用当前值", exc_info=True)
+        return
+
+    for raw, setter, name in (
+        (batch_raw, set_max_batch_delegation_calls, DELEGATION_MAX_BATCH_CALLS_KEY),
+        (
+            per_agent_raw,
+            set_max_delegation_calls_per_agent,
+            DELEGATION_MAX_CALLS_PER_AGENT_KEY,
+        ),
+    ):
+        if raw is None:
+            continue
+        try:
+            setter(raw)
+        except ValueError:
+            logger.warning("系统配置 %s 的值非法（%r），沿用当前值", name, raw)
 
 INTERRUPT_SSE_TYPES = frozenset({"permission_required", "external_execution_required", "error"})
 
@@ -250,9 +386,12 @@ def _record_delegation_attempt(
 
     agent_key = _normalize_agent_name(agent_name)
     agent_counts = ctx.delegation_agent_call_counts
-    if agent_counts.get(agent_key, 0) >= MAX_DELEGATION_CALLS_PER_AGENT:
+    max_calls_per_agent = get_max_delegation_calls_per_agent()
+    if agent_counts.get(agent_key, 0) >= max_calls_per_agent:
         return (
-            f"错误：本轮已多次委派 `{agent_name}`（{display_name}），系统已阻止继续重复调用。"
+            f"错误：本轮已多次委派 `{agent_name}`（{display_name}），系统已阻止继续重复调用"
+            f"（同一子智能体每轮最多 {max_calls_per_agent} 次，可由系统配置 "
+            f"{DELEGATION_MAX_CALLS_PER_AGENT_KEY} 调整）。"
             "请基于已有子智能体结果回答，或向用户说明需要切换到对应子智能体对话继续处理。"
         )
 
@@ -987,6 +1126,10 @@ async def sub_agent_call(
         agent_name: 目标子智能体的英文名称标识（如 data-agent，knowledge-base）
         query: 委派的具体任务指令或查询词
     """
+    # 每次委派前同步一次上限配置（ConfigService 自带 Redis + 60s 内存缓存，代价可忽略）。
+    # 放在上下文检查之前：纯配置读取，不依赖执行上下文。
+    await refresh_delegation_limits_from_config()
+
     main_ctx = get_current_agent_context()
     if not main_ctx:
         return "错误：无法获取当前执行上下文，委派失败。"
@@ -1660,8 +1803,13 @@ class BatchSubAgentArgs(BaseModel):
     def _bounded_calls(cls, value: list[BatchSubAgentCall]) -> list[BatchSubAgentCall]:
         if not value:
             raise ValueError("calls 不能为空")
-        if len(value) > MAX_BATCH_DELEGATION_CALLS:
-            raise ValueError(f"calls 最多 {MAX_BATCH_DELEGATION_CALLS} 个")
+        # 这里是绝对上限（schema 层），实际生效上限由系统配置在 ainvoke 里校验：
+        # Pydantic validator 是同步的，读不了异步配置，不能把它写死成 4。
+        if len(value) > MAX_BATCH_DELEGATION_CALLS_LIMIT:
+            raise ValueError(
+                f"calls 最多 {MAX_BATCH_DELEGATION_CALLS_LIMIT} 个"
+                f"（系统配置 {DELEGATION_MAX_BATCH_CALLS_KEY}）"
+            )
         return value
 
 
@@ -1688,6 +1836,21 @@ class BatchSubAgentTool(BaseTool):
                 ensure_ascii=False,
             )
 
+        # 先同步系统配置里的上限，再按实际值校验：schema 只能挡住绝对上限。
+        await refresh_delegation_limits_from_config()
+        max_calls = get_max_batch_delegation_calls()
+        if len(args.calls) > max_calls:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": (
+                        f"批量委派一次最多 {max_calls} 个任务"
+                        f"（系统配置 {DELEGATION_MAX_BATCH_CALLS_KEY}），"
+                        f"已收到 {len(args.calls)} 个。"
+                    ),
+                },
+                ensure_ascii=False,
+            )
         main_ctx = get_current_agent_context()
         if not main_ctx:
             return json.dumps(
