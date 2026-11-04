@@ -416,12 +416,23 @@ const engineConfigUI = ref({
   safety_check_output_strategy: "append",
 });
 
+/**
+ * 主助手（系统兜底对话入口）不能被设成专家团主专家：否则它会作为「团」出现在
+ * 专家团视图里、被当成可被分派的专才，而它的职责是接住所有没被路由走的请求。
+ * 定义必须早于 `agentFormTabs`——那里的 `watch` 建立时会立即求值一次（见下方注释）。
+ */
+const isMainAgent = (agent: { id?: string; name?: string } | string) => {
+  if (typeof agent === 'string') return agent === 'sys-agent-chat' || agent === 'main'
+  return agent.id === 'sys-agent-chat' ||
+    ['main', 'assistant', 'general-chat'].includes(String(agent.name || '').trim().toLowerCase())
+}
+
 // 注意：这一段必须放在 `agentForm` / `supportsCapabilityTags` 之后。
 // `watch(agentFormTabs, …)` 建立时会立即求值一次 source，computed 里读的是
 // `agentForm.value`；提前声明会踩 TDZ（Cannot access before initialization），
 // `<script setup>` 直接抛错、整个智能体中心白屏——编译与 vue-tsc 都查不出来。
 /**
- * 编辑弹窗按章节拆成 tab：基本信息 / 专家团 / 能力标签 / 排版样式。
+ * 编辑弹窗按章节拆成 tab：基本信息 / 专家团（主助手除外）/ 能力标签 / 排版样式。
  *
  * 原来是「一页到底 + 低频块折叠 + 批量展开收起按钮」：折叠头与批量按钮先抢视线，
  * 想找某项还得先猜它藏在哪个折叠里。拆成 tab 后每页只放一类信息，
@@ -434,8 +445,11 @@ const agentFormTab = ref<AgentFormTab>("basic");
 const agentFormTabs = computed<{ key: AgentFormTab; label: string }[]>(() => {
   const tabs: { key: AgentFormTab; label: string }[] = [
     { key: "basic", label: "基本信息" },
-    { key: "team", label: "专家团" },
   ];
+  // 主助手不当团主：整个「专家团」页（开关 + 团队介绍）都不出现，避免误开。
+  if (!isMainAgent(selectedAgent.value ?? agentForm.value)) {
+    tabs.push({ key: "team", label: "专家团" });
+  }
   // 扩展能力标签与「知识库检索范围」都是能力配置，合成一页；两者都不适用时整页不出现。
   if (supportsCapabilityTags.value || agentForm.value.agent_type === "KNOWLEDGE_BASE") {
     tabs.push({ key: "capabilities", label: "能力标签" });
@@ -818,9 +832,10 @@ const handleShareDone = (count: number) => {
 // 不再做成「有待处理才出现的弹窗」：那样对方根本不知道去哪儿找。
 type AgentWorkspaceTab = 'all' | 'mine' | 'received' | 'sent' | 'teams'
 
-/** 专家团主专家：列表页「专家团」tab 的数据源 */
+/** 专家团主专家：列表页「专家团」tab 的数据源。主助手不当团主，历史数据即使为
+ *  true 也不进这个视图——否则会冒出一个不该被当成专才分派的「团」。 */
 const teamLeadAgents = computed<AIAgent[]>(() =>
-  agents.value.filter((agent) => agent.is_expert_team_lead),
+  agents.value.filter((agent) => agent.is_expert_team_lead && !isMainAgent(agent)),
 )
 
 /** 团卡片的成员摘要：null 表示没配调度范围（不是 0 个），必须与 0 个分开显示 */
@@ -1492,7 +1507,8 @@ const filteredAgents = computed(() => {
   //     「所属团」同时收团主本人和它的成员——「这个团有谁」应该包含带队的人。
   if (teamLeadFilter.value !== "all") {
     const wantLead = teamLeadFilter.value === "yes";
-    result = result.filter((a) => Boolean(a.is_expert_team_lead) === wantLead);
+    // 主助手恒按「非团主」处理，与列表视图/编辑页保持同一判定
+    result = result.filter((a) => (Boolean(a.is_expert_team_lead) && !isMainAgent(a)) === wantLead);
   }
 
   if (subAgentFilter.value !== "all") {
@@ -2149,13 +2165,20 @@ const versionConfigSteps = computed<{ id: VersionConfigStep; label: string }[]>(
   ];
 });
 
-const selectedToolsCount = computed(() => versionForm.value.tools?.length ?? 0);
+const selectedToolsCount = computed(() => {
+  // 两个委派工具按一个算：历史版本可能把 single/batch 都存了进去，
+  // 直接数长度会变成「只勾了一个却显示已选 2 个」。
+  const items = versionForm.value.tools || [];
+  const others = items.filter((item) => !isDelegationToolName(toolItemName(item))).length;
+  const hasDelegation = items.some((item) => isDelegationToolName(toolItemName(item)));
+  return others + (hasDelegation ? 1 : 0);
+});
 const selectedSkillsCount = computed(() => versionForm.value.skills?.length ?? 0);
 const enabledGlobalSkills = computed(() =>
   availableSkills.value.filter((s) => isSkillEnabled(s.enabled))
 );
 const selectedStaticToolsCount = computed(() =>
-  allAvailableTools.value.filter((t) => isToolSelected(t.name)).length
+  displayAvailableTools.value.filter((t) => isToolSelected(t.name)).length
 );
 const selectedMcpToolsCount = computed(() =>
   mcpTools.value.filter((t) => isToolSelected(t.name)).length
@@ -2387,6 +2410,10 @@ const toggleSelectAllStatic = (label: string) => {
   const currentTools = [...(versionForm.value.tools || [])];
   if (isAllStaticGroupSelected(label)) {
     const groupToolNames = new Set(tools.map((tool) => tool.name));
+    // 取消全选时两个委派工具一起删，否则单删 single 会留下 batch，等于还开着。
+    if (groupToolNames.has(DELEGATION_TOOL_NAME)) {
+      groupToolNames.add(DELEGATION_BATCH_TOOL_NAME);
+    }
     versionForm.value.tools = currentTools.filter((item) => {
       const name = typeof item === 'string' ? item : (item as any).name;
       return !groupToolNames.has(name);
@@ -2405,7 +2432,8 @@ const toggleSelectAllStatic = (label: string) => {
     });
     if (!isSelected) currentTools.push(tool.name);
   });
-  versionForm.value.tools = currentTools;
+  // 全选把 single 加进来时，batch 也要跟着进来（页面只有一个开关）。
+  versionForm.value.tools = normalizeDelegationToolsForSubmit(currentTools);
 };
 
 const nextVersionStep = () => {
@@ -2613,6 +2641,23 @@ const allAvailableTools = computed(() => {
 
 type ToolGroup = { label: string; icon: string; tools: any[]; kind?: 'builtin' | 'business' | 'fallback' };
 
+// 两个委派工具在页面上只保留 sub_agent_call 一个开关：勾选它 = 同时拥有串行与
+// 并行委派，batch 不需要单独勾选、也不需要单独配置调度范围。
+const DELEGATION_TOOL_NAME = 'sub_agent_call';
+const DELEGATION_BATCH_TOOL_NAME = 'sub_agent_batch_call';
+
+/** 取出配置项的工具名，兼容字符串与对象两种历史存储形态。 */
+const toolItemName = (item: any): string =>
+  typeof item === 'string' ? item : String((item as any)?.name || '');
+
+const isDelegationToolName = (name: string): boolean =>
+  name === DELEGATION_TOOL_NAME || name === DELEGATION_BATCH_TOOL_NAME;
+
+/** 展示用工具清单：隐藏 batch 卡片（它由 sub_agent_call 自动带上）。 */
+const displayAvailableTools = computed(() =>
+  allAvailableTools.value.filter((tool) => tool.name !== DELEGATION_BATCH_TOOL_NAME)
+);
+
 /**
  * 工具分组交给 `utils/toolGrouping` 统一实现：权限页的「功能限定」弹框要显示**同一套**
  * 分组（能力域 → 业务分组 → 兜底），两处各写一份必然漂移。
@@ -2622,7 +2667,7 @@ type ToolGroup = { label: string; icon: string; tools: any[]; kind?: 'builtin' |
  */
 const groupedTools = computed<ToolGroup[]>(() =>
   groupToolsForDisplay(
-    allAvailableTools.value,
+    displayAvailableTools.value,
     (tool) => tool.name,
     (tool) => tool.group_name,
   ).map((group) => ({
@@ -2885,7 +2930,8 @@ const openAgentModal = (agent?: AIAgent) => {
       sort_order: agent.sort_order || 0,
       engine_type: agent.engine_type || "LOCAL",
       engine_config: agent.engine_config ? { ...agent.engine_config } : {},
-      is_expert_team_lead: agent.is_expert_team_lead === true,
+      // 主助手不允许当团主：历史数据里若被置过 true，打开即按关闭处理，保存时清掉。
+      is_expert_team_lead: agent.is_expert_team_lead === true && !isMainAgent(agent),
       // 归一成可 v-model 的形状：后端可能给 null，直接绑 .name 会报错
       team_profile: {
         name: agent.team_profile?.name || "",
@@ -3591,6 +3637,8 @@ const saveVersion = async () => {
 
   const payload = {
     ...versionForm.value,
+    // 页面只有一个委派开关，提交时补成对：缺 batch 就没有并行委派入口。
+    tools: normalizeDelegationToolsForSubmit(versionForm.value.tools || []),
     skills_custom: !!versionForm.value.skills_custom,
     skills: versionForm.value.skills_custom ? (versionForm.value.skills || []) : [],
   };
@@ -3653,6 +3701,7 @@ const publishVersionFromEditor = async () => {
       if (!selectedAgent.value) return;
       const payload = {
         ...versionForm.value,
+        tools: normalizeDelegationToolsForSubmit(versionForm.value.tools || []),
         skills_custom: !!versionForm.value.skills_custom,
         skills: versionForm.value.skills_custom ? (versionForm.value.skills || []) : [],
       };
@@ -3796,9 +3845,38 @@ const handleToolConfigSave = (newConfig: any) => {
   }
 };
 
+/**
+ * 提交前把两个委派工具补成对。
+ * 页面只暴露 sub_agent_call 一个开关，底层必须两个都在；历史版本只存了其中一个
+ * 时也在这里补齐，保存一次即收敛，不需要额外迁移。
+ */
+const normalizeDelegationToolsForSubmit = (tools: any[]): any[] => {
+  const items = [...(tools || [])];
+  if (!items.some((item) => isDelegationToolName(toolItemName(item)))) return items;
+  const rest = items.filter((item) => !isDelegationToolName(toolItemName(item)));
+  const single =
+    items.find((item) => toolItemName(item) === DELEGATION_TOOL_NAME) ?? DELEGATION_TOOL_NAME;
+  const batch =
+    items.find((item) => toolItemName(item) === DELEGATION_BATCH_TOOL_NAME) ??
+    DELEGATION_BATCH_TOOL_NAME;
+  return [...rest, single, batch];
+};
+
 const toggleTool = (toolName: string) => {
   if (!canEditVersion.value) return;
   const tools = [...(versionForm.value.tools || [])];
+
+  // 两个委派工具共用一个开关：开启时成对写入（否则模型没有并行委派入口），
+  // 关闭时两份一起删。历史版本里可能只存了其中一个，这里按「是否已选」统一处理。
+  if (isDelegationToolName(toolName)) {
+    const selected = tools.some((item) => isDelegationToolName(toolItemName(item)));
+    const rest = tools.filter((item) => !isDelegationToolName(toolItemName(item)));
+    versionForm.value.tools = selected
+      ? rest
+      : [...rest, DELEGATION_TOOL_NAME, DELEGATION_BATCH_TOOL_NAME];
+    return;
+  }
+
   const index = tools.findIndex(t =>
     (typeof t === 'string' ? t === toolName : (t as any).name === toolName)
   );
@@ -3823,10 +3901,17 @@ const toggleTool = (toolName: string) => {
   versionForm.value.tools = tools;
 };
 
-const isVersionToolSelected = (toolName: string) =>
-  (versionForm.value.tools || []).some((item) =>
+const isVersionToolSelected = (toolName: string) => {
+  // 存量版本可能只勾了 batch：按新语义它等价于勾了 sub_agent_call，回显要一致。
+  if (isDelegationToolName(toolName)) {
+    return (versionForm.value.tools || []).some((item) =>
+      isDelegationToolName(toolItemName(item))
+    );
+  }
+  return (versionForm.value.tools || []).some((item) =>
     (typeof item === "string" ? item : (item as any).name) === toolName
   );
+};
 
 const setSkillsCustom = (enabled: boolean) => {
   if (!canEditVersion.value) return;
@@ -3855,6 +3940,12 @@ const isSkillSelected = (skillId: string) => {
 };
 
 const isToolSelected = (toolName: string) => {
+  // 两个委派工具在 UI 上共用一个开关，任一存在即视为已选。
+  if (isDelegationToolName(toolName)) {
+    return (versionForm.value.tools || []).some((item) =>
+      isDelegationToolName(toolItemName(item))
+    );
+  }
   return !!versionForm.value.tools?.find(t =>
     (typeof t === 'string' ? t === toolName : (t as any).name === toolName)
   );
@@ -3929,7 +4020,7 @@ const getDelegationToolConfig = (toolName: string): any | null => {
   return found && typeof found === 'object' ? (found as any) : null;
 };
 
-/** 返回该工具自己的白名单；null 表示未配置（不能与空数组混为一谈）。 */
+/** 返回指定工具上的白名单；null 表示未配置（不能与空数组混为一谈）。 */
 const getDelegationAllowlist = (toolName: string): string[] | null => {
   const cfg = getDelegationToolConfig(toolName);
   const ids = cfg?.delegable_agent_ids;
@@ -3937,47 +4028,65 @@ const getDelegationAllowlist = (toolName: string): string[] | null => {
 };
 
 /**
- * 生效中的白名单数量。
- * sub_agent_batch_call 未单独配置时沿用 sub_agent_call 的名单（后端同样的回落规则），
- * 前端若只读自己那份，就会出现「保存了却显示 0 个」的错觉。
+ * 生效中的白名单。
+ *
+ * 名单只有一份、以 `sub_agent_call` 为准：它和 `sub_agent_batch_call` 是同一件事的
+ * 串行/并行两种形态，各配一份时一旦只填了其中一个，另一个就会按「未配置」走全量，
+ * 自建子专家因此整批消失（用户实测「团里配了成员却委派不了」）。存量数据可能只配在
+ * batch 上，后端同样兜底读取，前端必须一致，否则会出现「配过却显示 0 个」的错觉。
  */
-const delegationScopeCount = (toolName: string): number => {
-  const own = getDelegationAllowlist(toolName);
-  if (own !== null) return own.length;
-  if (toolName === 'sub_agent_batch_call') {
-    return getDelegationAllowlist('sub_agent_call')?.length ?? 0;
-  }
-  return 0;
+const effectiveDelegationAllowlist = (): string[] | null => {
+  const single = getDelegationAllowlist('sub_agent_call');
+  if (single !== null) return single;
+  return getDelegationAllowlist('sub_agent_batch_call');
 };
+
+/** 参数保留只为让工具卡片照旧传名字；名单不分工具，两个名字返回同一个数。 */
+const delegationScopeCount = (_toolName?: string): number =>
+  effectiveDelegationAllowlist()?.length ?? 0;
 
 const hasDelegationAllowlist = (toolName: string): boolean => delegationScopeCount(toolName) > 0;
 
-const openDelegationScope = (toolName: string) => {
-  delegationScopeToolName.value = toolName;
-  const own = getDelegationAllowlist(toolName);
-  delegationScopeSelection.value =
-    own ??
-    (toolName === 'sub_agent_batch_call' ? getDelegationAllowlist('sub_agent_call') ?? [] : []);
+/** 弹窗固定操作 sub_agent_call：批量委派跟随它，不再单独配置。 */
+const openDelegationScope = (_toolName?: string) => {
+  delegationScopeToolName.value = 'sub_agent_call';
+  delegationScopeSelection.value = [...(effectiveDelegationAllowlist() ?? [])];
   showDelegationScopeModal.value = true;
 };
 
 const saveDelegationScope = (ids: string[]) => {
-  const toolName = delegationScopeToolName.value;
-  const existing = getDelegationToolConfig(toolName);
-  // 保存即写入配置项：即使原本是字符串形态也升级为对象，否则字段存不下去。
-  const next = { ...(existing || { name: toolName }), name: toolName, delegable_agent_ids: ids };
+  const toolName = 'sub_agent_call';
   const tools = [...(versionForm.value.tools || [])];
   const idx = tools.findIndex(t =>
     (typeof t === 'string' ? t === toolName : (t as any).name === toolName)
   );
-  if (idx > -1) {
-    tools[idx] = next;
-    versionForm.value.tools = tools;
-    showToast(
-      ids.length ? `${toolName} 调度范围已更新（${ids.length} 个智能体）` : `${toolName} 已清空调度范围`,
-      "success",
-    );
+  if (idx === -1) {
+    // 名单挂在 sub_agent_call 上：工具没启用就没有可写的位置，不能静默丢弃
+    showToast('请先启用 sub_agent_call 工具，调度范围由它统一管理', "error");
+    showDelegationScopeModal.value = false;
+    return;
   }
+  const existing = getDelegationToolConfig(toolName);
+  // 保存即写入配置项：即使原本是字符串形态也升级为对象，否则字段存不下去。
+  tools[idx] = { ...(existing || { name: toolName }), name: toolName, delegable_agent_ids: ids };
+
+  // 清掉批量委派上的历史字段：名单只有一份，留着两份迟早再次分叉。
+  const batchIdx = tools.findIndex(t =>
+    (typeof t !== 'string' && (t as any).name === 'sub_agent_batch_call')
+  );
+  if (batchIdx > -1 && tools[batchIdx] && typeof tools[batchIdx] === 'object') {
+    const rest = { ...(tools[batchIdx] as Record<string, any>) };
+    delete rest.delegable_agent_ids;
+    tools[batchIdx] = rest as any;
+  }
+
+  versionForm.value.tools = tools;
+  showToast(
+    ids.length
+      ? `调度范围已更新（${ids.length} 个智能体，批量委派跟随）`
+      : '已清空调度范围（批量委派同样禁止）',
+    "success",
+  );
   showDelegationScopeModal.value = false;
 };
 
@@ -4131,12 +4240,6 @@ const getAgentTypeLabel = (agent: AIAgent) => {
 const getAgentTypeBadgeClass = (_agent: AIAgent) =>
   'bg-gray-100 text-gray-600'
 
-
-const isMainAgent = (agent: AIAgent | string) => {
-  if (typeof agent === 'string') return agent === 'sys-agent-chat' || agent === 'main'
-  return agent.id === 'sys-agent-chat' ||
-    ['main', 'assistant', 'general-chat'].includes(String(agent.name || '').trim().toLowerCase())
-}
 
 const READINESS_MISSING_LABELS: Record<string, string> = {
   published_version: '发布版本',
@@ -5231,7 +5334,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   {{ agent.display_name }}
                 </h3>
                 <span
-                  v-if="agent.is_expert_team_lead"
+                  v-if="agent.is_expert_team_lead && !isMainAgent(agent)"
                   class="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700"
                   :title="`专家团主专家：${resolveTeamName(agent)} · ${resolveTeamMembersLabel(agent)}`"
                 >👥 专家团</span>
@@ -6906,7 +7009,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :filtered-grouped-mcp-tools="filteredGroupedMcpTools"
       :filtered-enabled-skills="filteredEnabledSkills"
       :enabled-global-skills-count="enabledGlobalSkills.length"
-      :all-available-tools-count="allAvailableTools.length"
+      :all-available-tools-count="displayAvailableTools.length"
       :mcp-tools-count="mcpTools.length"
       :stale-tool-refs="versionToolHealth"
       :stale-tool-refs-loading="versionToolHealthLoading"
@@ -7266,11 +7369,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :selected-ids="delegationScopeSelection"
       :agents="delegationScopeAgents"
       :authorized-agent-ids="delegationAuthorizedAgentIds"
-      :inherited-from="
-        delegationScopeToolName === 'sub_agent_batch_call' && !getDelegationAllowlist('sub_agent_batch_call')
-          ? 'sub_agent_call'
-          : null
-      "
       :readonly="!canEditVersion"
       @save="saveDelegationScope"
     />

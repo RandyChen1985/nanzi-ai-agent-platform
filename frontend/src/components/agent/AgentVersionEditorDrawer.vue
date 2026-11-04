@@ -58,9 +58,9 @@ const props = withDefaults(defineProps<{
   isSkillSelected: (skillId: string) => boolean;
   getToolCustomConfig: (name: string) => any;
   hasToolMetadataDatasetBinding: (name: string) => boolean;
-  /** 该工具是否已配置调度白名单（含 batch 沿用单次调用的情形）。 */
+  /** 该工具是否已配置调度白名单；两个委派工具共用 sub_agent_call 那一份。 */
   hasDelegationAllowlist: (name: string) => boolean;
-  /** 该工具当前生效的白名单数量；batch 沿用时会返回单次调用的数量。 */
+  /** 当前生效的白名单数量；名单只有一份，传哪个委派工具都返回同一个数。 */
   delegationScopeCount: (name: string) => number;
   isAllMcpSelected: (serverName: string, tools: any[]) => boolean;
   isAllStaticGroupSelected: (label: string) => boolean;
@@ -1237,8 +1237,10 @@ const externalCreationMissingFields = computed(() => {
                         <span v-if="tool.isSystem" class="text-[9px] bg-gray-100 text-gray-500 px-1 rounded font-sans font-normal">系统</span>
                       </div>
                       <div class="text-[10px] text-gray-400 mt-0.5 line-clamp-2">{{ tool.description }}</div>
+                      <!-- 调度范围只有一份，入口只挂在 sub_agent_call；
+                           sub_agent_batch_call 由它自动带上，不单独出卡片。 -->
                       <div
-                        v-if="(tool.name === 'sub_agent_call' || tool.name === 'sub_agent_batch_call') && hasDelegationAllowlist(tool.name)"
+                        v-if="tool.name === 'sub_agent_call' && hasDelegationAllowlist(tool.name)"
                         class="text-[10px] text-primary mt-0.5"
                       >
                         调度范围：{{ delegationScopeCount(tool.name) }} 个智能体
@@ -1257,8 +1259,9 @@ const externalCreationMissingFields = computed(() => {
                         >
                           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7c0 1.657 3.582 3 8 3s8-1.343 8-3-3.582-3-8-3-8 1.343-8 3zm0 0v5c0 1.657 3.582 3 8 3s8-1.343 8-3V7M4 12v5c0 1.657 3.582 3 8 3s8-1.343 8-3v-5" /></svg>
                         </button>
+                        <!-- 调度范围只有一份，入口只挂在 sub_agent_call；批量委派跟随它。 -->
                         <button
-                          v-if="tool.name === 'sub_agent_call' || tool.name === 'sub_agent_batch_call'"
+                          v-if="tool.name === 'sub_agent_call'"
                           type="button"
                           @click="emit('openDelegationScope', tool.name)"
                           class="tool-action-btn"

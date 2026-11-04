@@ -45,8 +45,6 @@ const props = defineProps<{
   agents: DelegationScopeAgent[];
   /** 当前用户被授予的 agent 权限 id；null 表示拿不到权限信息，此时不标灰。 */
   authorizedAgentIds?: string[] | null;
-  /** sub_agent_batch_call 未单独配置时，展示它沿用的是哪个工具的名单。 */
-  inheritedFrom?: string | null;
   readonly?: boolean;
 }>();
 
@@ -234,11 +232,8 @@ const displayName = (agent: DelegationScopeAgent) => agent.display_name || agent
         <span class="font-bold text-gray-800">未配置</span> = 全部「已授权给你的系统智能体」；
         <span class="font-bold text-gray-800">配置后</span> = 只从名单中调度。<br />
         你自己的智能体默认<span class="font-semibold text-amber-600">不可被委派</span>，加入名单后才开通；
-        系统智能体即使进名单，仍要校验你的 agent 授权。
-        <p v-if="inheritedFrom" class="mt-1.5 text-[11px] text-gray-500">
-          当前未单独配置，沿用 <code class="rounded bg-white px-1">{{ inheritedFrom }}</code> 的名单；
-          在此保存后会改为独立配置。
-        </p>
+        系统智能体即使进名单，仍要校验你的 agent 授权。<br />
+        该名单同时作用于<code class="rounded bg-white px-1">sub_agent_batch_call</code>，批量委派不单独配置。
       </div>
 
       <!-- 搜索 + 只看已选：容器画边框，内部控件必须 border-0 p-0

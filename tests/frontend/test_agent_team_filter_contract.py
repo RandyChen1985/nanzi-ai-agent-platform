@@ -61,8 +61,8 @@ def test_team_filters_count_as_active_filters():
 
 def test_team_role_filter_semantics():
     page = _read()
-    # 团主用 is_expert_team_lead 判定
-    assert "Boolean(a.is_expert_team_lead) === wantLead" in page
+    # 团主用 is_expert_team_lead 判定，但主助手恒按「非团主」处理
+    assert "(Boolean(a.is_expert_team_lead) && !isMainAgent(a)) === wantLead" in page
     # 子专家 = 出现在某个团主专家的调度范围里，不是「非团主」
     assert "(agentTeamsOf(a).length > 0) === wantSub" in page
     # 所属团同时收团主本人与成员

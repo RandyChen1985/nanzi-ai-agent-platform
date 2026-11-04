@@ -329,7 +329,11 @@ class AgentManagerService:
             is_system=False,
             sort_order=data.sort_order or 0,
             is_enabled=data.is_enabled if data.is_enabled is not None else True,
-            is_expert_team_lead=bool(data.is_expert_team_lead),
+            # 主助手是系统兜底入口，不允许被设成专家团主专家（前端也不提供该开关）
+            is_expert_team_lead=(
+                bool(data.is_expert_team_lead)
+                and str(data.name or "").strip().lower() not in MAIN_GENERAL_AGENT_NAMES
+            ),
             team_profile=data.team_profile,
             created_by=created_by,
             engine_type=data.engine_type,
@@ -438,6 +442,10 @@ class AgentManagerService:
 
         返回 None 表示**未配置**调度范围：那意味着全部有权限的系统级智能体都能被调，
         不是「0 个成员」。两者前端必须分开显示，否则会把「没设范围」说成「团是空的」。
+
+        名单只有一份（``sub_agent_call`` 为准，batch 上的历史字段兜底），与运行时
+        ``sub_agent_call`` / ``sub_agent_batch_call`` 的校验口径完全同源——这里若
+        再单独回落一次 batch，就会出现「卡片显示有成员、委派时却读不到」的分叉。
         """
         if published_version is None:
             return None
@@ -445,9 +453,6 @@ class AgentManagerService:
 
         tools = getattr(published_version, "tools", None) or []
         configured, ids = resolve_delegation_allowlist(tools)
-        if not configured:
-            # 只配了批量委派时，成员取它自己的名单（batch 未配则回落 sub_agent_call）
-            configured, ids = resolve_delegation_allowlist(tools, tool_name="sub_agent_batch_call")
         if not configured:
             return None
         return [str(item) for item in (ids or []) if str(item or "").strip()]
@@ -1132,7 +1137,14 @@ class AgentManagerService:
         if not agent_list:
             return list(agents or [])
 
-        leads = [agent for agent in agent_list if getattr(agent, "is_expert_team_lead", False)]
+        # 主助手即使历史数据里 is_expert_team_lead=true 也不算团主：它不该被当成
+        # 可分派的专才，前端专家团视图也按同一口径过滤。
+        leads = [
+            agent
+            for agent in agent_list
+            if getattr(agent, "is_expert_team_lead", False)
+            and not _is_main_general_agent_record(agent)
+        ]
         if not leads:
             return list(agents)
 
@@ -1637,7 +1649,11 @@ class AgentManagerService:
         # 专家团字段是局部更新：编辑页的其他表单不会带这两项，无条件赋值会把开关和
         # 团名悄悄清空，所以只在 model_fields_set 里出现时才落库。
         if "is_expert_team_lead" in data.model_fields_set:
-            agent.is_expert_team_lead = bool(data.is_expert_team_lead)
+            # 主助手是系统兜底对话入口，不允许当团主：前端已隐藏「专家团」页，
+            # 这里兜住 API 直调，也顺手清理历史数据里被置过 true 的记录。
+            agent.is_expert_team_lead = (
+                bool(data.is_expert_team_lead) and not _is_main_general_agent_record(agent)
+            )
         if "team_profile" in data.model_fields_set:
             agent.team_profile = data.team_profile
         agent.avatar_url = adopt_pending_avatar(data.avatar_url, agent.id)
@@ -1770,10 +1786,14 @@ class AgentManagerService:
     def _normalize_tools_for_db(tools: List[Any]) -> List[Any]:
         """
         Converts ToolConfigItem objects to plain dictionaries for JSON serialization.
+
+        顺带把两个委派工具补成对：页面只让用户勾 ``sub_agent_call``，落库时若缺
+        ``sub_agent_batch_call``，模型就拿不到并行委派入口；batch 上遗留的名单
+        字段也在这里丢弃（名单只有一份）。
         """
         if not tools:
             return []
-        
+
         normalized = []
         for item in tools:
             if hasattr(item, "model_dump"): # Pydantic v2
@@ -1782,7 +1802,10 @@ class AgentManagerService:
                 normalized.append(item.dict(exclude_none=True))
             else:
                 normalized.append(item)
-        return normalized
+
+        from app.services.ai.tools.agent_delegate_tool import ensure_delegation_tool_pair
+
+        return ensure_delegation_tool_pair(normalized, as_dict=True)
 
     @staticmethod
     def _normalize_skills_list(skills: Any) -> List[str]:

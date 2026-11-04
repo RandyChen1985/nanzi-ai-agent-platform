@@ -648,11 +648,15 @@ class ToolRegistry:
         """
         Retrieve a list of tools, filtering out unknown ones (Async).
         Supports tool_configs as List[str] (legacy) or List[ToolConfigItem] (runtime config).
+
+        委派工具按对补齐：历史版本可能只勾了 ``sub_agent_call``，缺 batch 就调不了
+        并行委派；页面也只有一个开关，不该逼用户勾两次。
         """
         from app.schemas.agent import ToolConfigItem
-        
+        from app.services.ai.tools.agent_delegate_tool import ensure_delegation_tool_pair
+
         tools = []
-        for item in tool_configs:
+        for item in ensure_delegation_tool_pair(tool_configs):
             name = ""
             config_item: Optional[ToolConfigItem] = None
             
@@ -687,10 +691,15 @@ class ToolRegistry:
         """
         Retrieve runtime tool specs, filtering unknown tools.
         Supports the same config item shapes as get_tools().
+
+        与 get_tools() 一样按对补齐委派工具，否则「serial 能调、batch 不可见」
+        这种半残状态只会在运行时暴露。
         """
+        from app.services.ai.tools.agent_delegate_tool import ensure_delegation_tool_pair
+
         runtime_tools = []
         seen_tool_names = set()
-        for item in tool_configs:
+        for item in ensure_delegation_tool_pair(tool_configs):
             config_item = None
             if isinstance(item, str):
                 name = item
