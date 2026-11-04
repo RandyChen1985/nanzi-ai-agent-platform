@@ -115,3 +115,22 @@ def test_modal_splits_system_and_personal_into_tabs():
     # 搜索时 tab 上的数字要跟着变，否则用户不知道命中在哪个 tab
     assert "visibleSystem.value.length" in MODAL
     assert "visibleMine.value.length" in MODAL
+
+
+def test_team_lead_can_be_selected_as_a_sub_expert():
+    """团主专家可以被选进调度范围：它在自己的团里是主专家，但同时也可以是
+    另一个团的子专家，此时只能用个人能力（深度 1 无法再委派）。
+
+    这条锁的是「不许因为深度限制就一刀切禁止」——不少智能体本身就带一个团，
+    同时又是别处需要的专才，「当子专家用」和「当团用」只是两种取用方式。
+    """
+    assert "const isSelectable = (agent: DelegationScopeAgent) => isAuthorized(agent);" in MODAL
+    # 反向：不能再出现「授权 + 非团主」的组合式禁止
+    assert "isAuthorized(agent) && !isTeamLead(agent)" not in MODAL
+
+
+def test_team_lead_badge_states_the_personal_only_scope():
+    """徽标不能再说「不可选」，要说清代价：只能用个人能力、不会调度它的团成员。"""
+    assert "团主 · 仅个人能力" in MODAL
+    assert "团主专家 · 不可选" not in MODAL
+    assert "只能用个人能力" in MODAL

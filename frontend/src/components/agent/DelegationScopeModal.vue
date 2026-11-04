@@ -153,13 +153,18 @@ watch([keyword, onlySelected], () => {
 });
 
 /**
- * 团主专家不能直接进白名单：主助手 → 团主专家已经用掉唯一的委派层级
- * （MAX_DELEGATION_DEPTH = 1），它再想调自己的子专家会直接 depth_exceeded，
- * 用户以为加了「团」，实际只得到一个不能委派的智能体。
- * 真正想要的是团的能力 → 把成员加进来。
+ * 团主专家**可以**选进来，但要看清两件事：
+ *
+ * 1. 它在自己的团里是主专家，被委派进来时深度已经是 1（MAX_DELEGATION_DEPTH = 1），
+ *    这一轮只能用**个人能力**，不会再调度它自己的团成员——提示词那一侧会按深度改口，
+ *    不会再推它去撞 depth_exceeded。
+ * 2. 这是合法用法，不是错误：不少智能体本身就带一个团，同时又是别处需要的专才，
+ *    「当子专家用」和「当团用」只是两种取用方式。
+ *
+ * 真正想要的是**那个团的能力**时，才该改用成员——见下面的 adoptTeamMembers 快捷操作。
  */
 const isTeamLead = (agent: DelegationScopeAgent) => agent.is_expert_team_lead === true;
-const isSelectable = (agent: DelegationScopeAgent) => isAuthorized(agent) && !isTeamLead(agent);
+const isSelectable = (agent: DelegationScopeAgent) => isAuthorized(agent);
 
 const teamMembersOf = (agent: DelegationScopeAgent) =>
   (agent.team_member_ids || [])
@@ -366,9 +371,9 @@ const displayName = (agent: DelegationScopeAgent) => agent.display_name || agent
           <span
             v-if="isTeamLead(agent) && isAuthorized(agent)"
             class="shrink-0 whitespace-nowrap rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] text-teal-700"
-            :title="`${agent.team_name || agent.display_name}：需要再委派一层才能用到团队，委派深度已到上限`"
+            :title="`它在「${agent.team_name || agent.display_name}」里是主专家；被委派进来时深度已到上限，只能用个人能力，不会调度它的团成员。想要整个团的能力请改用成员。`"
           >
-            团主专家 · 不可选
+            团主 · 仅个人能力
           </span>
           <span
             v-else-if="!isAuthorized(agent)"

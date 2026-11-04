@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "智能委派链路：谁选人、怎么判、怎么兜底",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1200,
+      520
+    ],
+    "views": [
+      {
+        "id": "main-path",
+        "label": "主链路",
+        "focus": [
+          "user",
+          "main",
+          "pool",
+          "tool",
+          "sub"
+        ],
+        "note": "提问落到主助手，取清单、模型决策、工具校验、子智能体执行、结果回填。"
+      },
+      {
+        "id": "who-can-be-called",
+        "label": "谁能被委派",
+        "focus": [
+          "main",
+          "pool",
+          "tool"
+        ],
+        "note": "构建清单与运行时校验走同一个出口：白名单 ∧ 权限 ∧ 就绪。"
+      },
+      {
+        "id": "guardrails",
+        "label": "硬约束",
+        "focus": [
+          "tool",
+          "sub"
+        ],
+        "note": "深度、自委派、重复提问、超时都由工具侧拦，不靠模型自觉。"
+      }
+    ],
+    "column_fit": "spread",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "用户",
+      "sublabel": "提出请求"
+    },
+    {
+      "id": "main",
+      "type": "backend",
+      "label": "主助手",
+      "sublabel": "sys-agent-chat"
+    },
+    {
+      "id": "pool",
+      "type": "database",
+      "label": "候选池",
+      "sublabel": "白名单 ∧ 权限 ∧ 就绪"
+    },
+    {
+      "id": "tool",
+      "type": "backend",
+      "label": "委派工具",
+      "sublabel": "sub_agent_call"
+    },
+    {
+      "id": "sub",
+      "type": "backend",
+      "label": "子智能体",
+      "sublabel": "独立子上下文"
+    }
+  ],
+  "segments": [
+    {
+      "from": 152,
+      "to": 236,
+      "label": "选人"
+    },
+    {
+      "from": 244,
+      "to": 326,
+      "label": "校验"
+    },
+    {
+      "from": 334,
+      "to": 474,
+      "label": "执行与回填"
+    }
+  ],
+  "messages": [
+    {
+      "id": "ask",
+      "from": "user",
+      "to": "main",
+      "y": 160,
+      "label": "提问：routingMode = auto",
+      "variant": "emphasis"
+    },
+    {
+      "id": "roster",
+      "from": "main",
+      "to": "pool",
+      "y": 191,
+      "label": "取可委派候选"
+    },
+    {
+      "id": "roster-back",
+      "from": "pool",
+      "to": "main",
+      "y": 222,
+      "label": "清单：标识 / 职责 / 能力",
+      "variant": "return"
+    },
+    {
+      "id": "decide",
+      "from": "main",
+      "to": "tool",
+      "y": 252,
+      "label": "sub_agent_call(agent_name, query)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "verify",
+      "from": "tool",
+      "to": "pool",
+      "y": 283,
+      "label": "运行时复校（同一出口）"
+    },
+    {
+      "id": "verify-back",
+      "from": "pool",
+      "to": "tool",
+      "y": 314,
+      "label": "通过 / no_tool · not_ready",
+      "variant": "return"
+    },
+    {
+      "id": "run",
+      "from": "tool",
+      "to": "sub",
+      "y": 344,
+      "label": "子上下文：新 session、深度 +1",
+      "variant": "emphasis"
+    },
+    {
+      "id": "result",
+      "from": "sub",
+      "to": "tool",
+      "y": 375,
+      "label": "结果（裁至 8000 字符）",
+      "variant": "return"
+    },
+    {
+      "id": "backfill",
+      "from": "tool",
+      "to": "main",
+      "y": 406,
+      "label": "作为工具返回值回填"
+    },
+    {
+      "id": "answer",
+      "from": "main",
+      "to": "user",
+      "y": 437,
+      "label": "汇总回答",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "main",
+      "from": 160,
+      "to": 445,
+      "type": "backend"
+    },
+    {
+      "participant": "pool",
+      "from": 191,
+      "to": 330,
+      "type": "database"
+    },
+    {
+      "participant": "tool",
+      "from": 252,
+      "to": 420,
+      "type": "backend"
+    },
+    {
+      "participant": "sub",
+      "from": 340,
+      "to": 380,
+      "type": "backend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "谁能被委派",
+      "items": [
+        "三层交集：调度白名单 ∧ 用户权限 ∧ 就绪",
+        "未配置白名单只到系统级，自建不进来；显式清空则谁都不许",
+        "清单、运行时校验、目录工具共用同一出口"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "怎么判断要不要委派",
+      "items": [
+        "没有规则路由表，是模型自己发起的工具调用",
+        "判据在提示词：要查内部数据 / 知识库且自身没工具就必须委派",
+        "只能调清单内的标识，不许用相近名字猜"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "硬约束兜底",
+      "items": [
+        "委派深度上限 1：子智能体不能再向下派",
+        "禁止自委派；同问每轮一次，单智能体最多 2 次",
+        "超时强制中断，结果裁至 8000 字符"
+      ]
+    }
+  ]
+}

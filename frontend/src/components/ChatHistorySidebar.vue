@@ -304,6 +304,17 @@ const isItemRunning = (item: any) =>
 const isItemStale = (item: any) =>
   Boolean(item?.conversation_id) && props.staleConversationIds.includes(item.conversation_id);
 
+/**
+ * 组内是否还有真正落库的会话。
+ *
+ * 未落库的临时条目删不掉（DB 里没有行，batch-delete 是空操作，列表刷新后它还在），
+ * 所以整组只剩它一条时「清空此组」必须隐藏，不能点了没反应。
+ */
+const hasDeletableItems = (group: any) =>
+  (group?.items || []).some(
+    (item: any) => item && !item.is_pending && item.conversation_id,
+  );
+
 // Group Accordion State
 const collapsedGroups = ref<Record<string, boolean>>({
   older: true, // 默认将更早的分组折叠，减少首屏垂直滚动负担
@@ -728,9 +739,10 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
                 </span>
               </div>
 
-              <!-- Delete Entire Group Action（置顶组不提供：删掉整组会连置顶一起清掉） -->
+              <!-- Delete Entire Group Action（置顶组不提供：删掉整组会连置顶一起清掉；
+                   只剩未落库的临时条目时也不提供：删了它不会消失） -->
               <button
-                v-if="group.id !== 'pinned'"
+                v-if="group.id !== 'pinned' && hasDeletableItems(group)"
                 @click.stop="emit('delete-group', group)"
                 class="p-1 opacity-0 group-hover/header:opacity-100 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/40 rounded-lg text-gray-400 transition-all"
                 title="清空此组全部会话"
@@ -777,8 +789,9 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
 
                   <!-- Hover Action Buttons -->
                   <div class="flex items-center gap-0.5 transition-opacity">
-                    <!-- Pin / Unpin：已置顶时实心且常显，不再依赖 hover -->
+                    <!-- Pin / Unpin：已置顶时实心且常显，不再依赖 hover。临时条目没有落库行，不能置顶 -->
                     <button
+                      v-if="!item.is_pending"
                       @click.stop="emit('toggle-pin', item)"
                       class="p-1 rounded-md transition-opacity"
                       :class="item.__pinned
@@ -798,8 +811,9 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
                       </svg>
                     </button>
 
-                    <!-- Export Chat -->
+                    <!-- Export Chat：未落库的临时条目没有可导出的历史轮次 -->
                     <button
+                      v-if="!item.is_pending"
                       @click.stop="emit('export-chat', item)"
                       class="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
                       :class="actionVisibilityClass"
@@ -810,9 +824,9 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
                       </svg>
                     </button>
 
-                    <!-- Share Chat：仅主聊天页开启，复用 hover 显隐规则 -->
+                    <!-- Share Chat：仅主聊天页开启，复用 hover 显隐规则；未落库的会话分享会拿到空记录 -->
                     <button
-                      v-if="enableShare && (item.conversation_id || item.trace_id)"
+                      v-if="enableShare && !item.is_pending && (item.conversation_id || item.trace_id)"
                       @click.stop="triggerShare(item)"
                       class="p-1 rounded-md text-gray-400 hover:text-primary hover:bg-primary/10 transition-all"
                       :class="actionVisibilityClass"
@@ -837,8 +851,9 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
                       </svg>
                     </button>
 
-                    <!-- Delete Single -->
+                    <!-- Delete Single：临时条目在 DB 里没有行，删了也不会消失 -->
                     <button
+                      v-if="!item.is_pending"
                       @click.stop="triggerDelete(item)"
                       class="p-1 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/40 rounded-md text-gray-400 transition-colors"
                       :class="actionVisibilityClass"
@@ -883,6 +898,13 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
                       class="w-2 h-2 rounded-full bg-amber-500"
                       title="疑似僵死（锁已停止续约）"
                     ></span>
+                    <!-- 未落库的当前会话（首轮还没收尾）：中性灰点。绝不能掉进下面的红点兜底，
+                         那会把一条正在生成的会话画成失败。 -->
+                    <span
+                      v-else-if="item.is_pending"
+                      class="w-1.5 h-1.5 rounded-full bg-slate-400"
+                      title="首轮回复结束后自动保存到历史"
+                    ></span>
                     <span
                       v-else
                       class="w-1.5 h-1.5 rounded-full"
@@ -901,6 +923,14 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
                       :class="isItemStale(item) ? 'bg-amber-500/10 text-amber-600' : 'bg-primary/10 text-primary'"
                     >
                       {{ isItemStale(item) ? '疑似僵死' : '进行中' }}
+                    </span>
+                    <!-- 正在跑时已有「进行中」，不要再叠一个「待保存」 -->
+                    <span
+                      v-else-if="item.is_pending"
+                      class="px-1.5 py-0.5 rounded-md bg-slate-500/10 text-slate-500 dark:text-slate-400 font-bold text-[9px] tracking-wider"
+                      title="首轮回复结束后自动保存到历史"
+                    >
+                      待保存
                     </span>
                     <span
                       v-if="isItemActive(item)"

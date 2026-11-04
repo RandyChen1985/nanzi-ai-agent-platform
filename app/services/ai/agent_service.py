@@ -2284,6 +2284,18 @@ class AgentService:
             # 漂移就会出现「通讯录注入了、运行时却没有工具」或反过来的错位。
             from app.services.ai.tools.agent_delegate_tool import has_delegation_tool
 
+            # 本轮深度：>0 表示自己就是被别的智能体委派来的（比如它同时是另一个团的
+            # 子专家）。身份段要据此改口，否则「需要成员就调 sub_agent_call」会推着它
+            # 去撞深度上限，先白失败一次再降级回答。
+            from app.core.context import get_current_agent_context
+
+            try:
+                _roster_depth = int(
+                    getattr(get_current_agent_context(), "delegation_depth", 0) or 0
+                )
+            except Exception:
+                _roster_depth = 0
+
             if not has_delegation_tool(agent_config):
                 # 没装 sub_agent_call 不代表没有团队：用户先开了「团主专家」开关、
                 # 写好团介绍，之后才去配调度范围，是常见的中间态。这里只注入身份段
@@ -2298,6 +2310,7 @@ class AgentService:
                     build_team_identity_context(
                         getattr(agent_config, "team_profile", None),
                         has_members=False,
+                        delegation_depth=_roster_depth,
                     ),
                 )
 
@@ -2338,6 +2351,7 @@ class AgentService:
                             delegable_agents,
                             # 团主专家这边就是「我的团队」：带上团名与介绍里的流程约束
                             team_profile=getattr(agent_config, "team_profile", None),
+                            delegation_depth=_roster_depth,
                         )
                         return delegable_agents, delegable_agent_count, roster_loaded, updated_prompt, sub_agents_context
             except Exception as sa_err:

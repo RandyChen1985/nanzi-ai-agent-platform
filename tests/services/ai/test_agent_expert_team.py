@@ -300,6 +300,84 @@ def test_team_identity_keeps_delegation_boundary():
     assert "`sub_agent_call`" in context
 
 
+def test_delegated_team_lead_is_told_it_can_only_use_its_own_ability():
+    """团主专家同时是另一个团的子专家时（深度 1），身份段必须改口。
+
+    默认那句「需要成员专长时用 sub_agent_call 交给成员」在深度 1 是**做不到**的：
+    深度上限 1，再调只会拿到 depth_exceeded。若提示词不改，模型会照着去试，
+    先白失败一次再降级作答——用户看到的是「它试了一下，然后自己答了」。
+    """
+    profile = {"name": "销售支撑专家团", "intro": "先问元数据专家，再问指标口径。"}
+    delegated = build_team_identity_context(profile, has_members=True, delegation_depth=1)
+
+    assert delegated is not None
+    # 不再推它去委派
+    assert "不要调用 `sub_agent_call`" in delegated
+    assert "只能用你自己的能力作答" in delegated
+    # 介绍里的流程仍要给它，用来判断该由谁做，但不能说「必须遵守」
+    assert "供你判断这类问题该交给哪位成员" in delegated
+    assert "遇到对应场景必须遵守" not in delegated
+
+
+def test_handoff_is_not_conflated_with_doing_it_yourself():
+    """团介绍写「不查不写」时，团主会退化成「请你自己去那边办」。
+
+    真实反馈：某团主明明配好了 4 位子专家，却回「总入口不查设备明细，我不替你代查，
+    你进入【资产查询】后把这段话发给我」。它把「我不动手」读成了「我不委派」。
+    提示词必须把界线写死：转交是本职，不是越权。
+    """
+    context = build_team_identity_context(
+        {"name": "资产档案专家", "intro": "资产运维总入口：识别意图并转到查询、写操作或模板导出。不查不写。"},
+        has_members=True,
+        delegation_depth=0,
+    )
+    assert context is not None
+    assert "「交给成员办」不算「你代为执行」" in context
+    assert "不查不写" in context
+    assert "不要退化成让用户自己去找人" in context
+
+
+def test_explicit_no_delegation_members_keep_their_rule():
+    """写操作类成员常写「必须直选，禁止委派」：这条只对那位成员生效，不能被泛化。"""
+    context = build_team_identity_context({"name": "资产档案专家"}, has_members=True)
+    assert context is not None
+    assert "必须直选 / 禁止委派" in context
+    assert "这条只对那一位生效" in context
+
+
+def test_team_without_members_does_not_promise_a_handoff():
+    """开了团主开关、写了介绍但调度范围还没配：不能承诺「我帮你转给某位专家」。"""
+    context = build_team_identity_context(
+        {"name": "资产档案专家", "intro": "识别意图并转到对应专家。"},
+        has_members=False,
+    )
+    assert context is not None
+    assert "还没有可调用的成员" in context
+    assert "不要承诺「我帮你转给某位专家」" in context
+    assert "「交给成员办」不算「你代为执行」" not in context
+
+
+def test_top_level_team_lead_still_gets_the_delegate_instruction():
+    """深度 0（用户直接选定这个团）时行为不变：该怎么调度成员还怎么写。"""
+    # 必须带 intro：只有写了团队介绍才会出现「遇到对应场景必须遵守」那句引导
+    profile = {"name": "销售支撑专家团", "intro": "先确认口径再取数。"}
+    top = build_team_identity_context(profile, has_members=True, delegation_depth=0)
+
+    assert top is not None
+    assert "用 `sub_agent_call` 把子任务交给对应成员" in top
+    # 条件句兜底（「如果你本身就是被委派的…」）在任何深度都保留，这里只要求
+    # 「确定句」不出现——它会把一个真正的主专家误判成被委派的
+    assert "只能用你自己的能力作答" not in top
+    assert "遇到对应场景必须遵守" in top
+
+
+def test_unknown_depth_falls_back_to_conditional_boundary():
+    """读不到深度时（默认 0 但成员场景）保留条件句兜底，不能凭空断言「你是被委派的」。"""
+    context = build_team_identity_context({"name": "销售支撑专家团"}, has_members=True)
+    assert context is not None
+    assert "如果你本身就是被其他智能体委派来处理某个子任务的" in context
+
+
 def test_chat_config_roundtrip_keeps_team_profile():
     """runner 会用 ChatConfig(**config) 重建配置，团身份不能在这条路上丢。"""
     config = ChatConfig(

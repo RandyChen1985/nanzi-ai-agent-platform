@@ -142,7 +142,8 @@ def test_grouped_tools_uses_plain_array_helpers():
     source = _source(MANAGEMENT)
     assert "Object.values(groupedTools.value)" not in source
     assert "groupedTools.value\n" in source or "groupedTools.value." in source
-    assert "groupedTools.value.map" in _statement(source, "collapseAllStaticGroups")
+    # 静态分组改成「记录已展开、默认全收」之后，需要全量 key 的一键操作是「全部展开」
+    assert "groupedTools.value.map" in _statement(source, "expandAllStaticGroups")
 
 
 def test_dynamic_tools_keep_business_group_when_mapped():
@@ -151,14 +152,24 @@ def test_dynamic_tools_keep_business_group_when_mapped():
     assert "group_name" in body
 
 
-def test_business_groups_collapse_by_default_in_read_only_mode():
-    """已发布版本是只读的：业务分组默认折叠，避免一屏几十张卡；用户仍可点开。"""
+def test_static_groups_collapse_by_default_in_every_mode():
+    """工具分组默认折叠，可编辑态与只读态一视同仁。
+
+    以前只有「只读态的业务分组」默认折叠（靠 canEditVersion + expandedBusinessGroups
+    这套独立状态），可编辑态一进来是几十张工具卡片。现在统一成一份「已展开」集合，
+    默认空集即全部收起。
+    """
     source = _source(MANAGEMENT)
     body = _statement(source, "isStaticGroupCollapsed")
-    assert "canEditVersion" in body, "只读态才默认折叠"
-    assert "isBusinessGroupLabel" in body
-    assert "expandedBusinessGroups" in body, "只读态下用户手动展开的分组要单独记录"
-    assert "expandedBusinessGroups" in _statement(source, "resetVersionEditorUi")
+    assert "expandedStaticGroups" in body
+    assert ".has(label)" in body
+    # 两套默认折叠状态合并成一套：不再按可编辑/只读、业务/内置分叉
+    assert "canEditVersion" not in body
+    assert "expandedBusinessGroups" not in source
+    assert re.search(
+        r"expandedStaticGroups\.value = new Set",
+        _statement(source, "resetVersionEditorUi"),
+    )
 
 
 # --------------------------------------------------------------------------- #
