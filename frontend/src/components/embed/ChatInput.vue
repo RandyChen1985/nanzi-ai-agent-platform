@@ -1705,6 +1705,14 @@ const currentExpertAgent = computed(() => {
   return props.allowedAgents?.find((a: any) => a.id === props.expertAgentId) || null;
 });
 
+/**
+ * 当前专家是不是团主专家：胶囊图标要换成「团队」。
+ * 用单人图标会让人以为只跟一个专家在聊，可背后是一整个团在调度。
+ */
+const currentExpertIsTeamLead = computed(
+  () => currentExpertAgent.value?.is_expert_team_lead === true,
+);
+
 const expertCapsuleLabel = computed(() => {
   if (isExpertMode.value) {
     return currentExpertAgent.value?.display_name
@@ -3238,8 +3246,19 @@ defineExpose({
                       aria-haspopup="listbox"
                       @click.stop="toggleExpertSelector"
                     >
+                        <!-- 团主专家用「团队」图标；普通专家用单人图标；智能委派仍是闪电 -->
                         <svg
-                          v-if="isExpertMode"
+                          v-if="currentExpertIsTeamLead"
+                          class="h-3.5 w-3.5 flex-shrink-0 opacity-90"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        <svg
+                          v-else-if="isExpertMode"
                           class="h-3.5 w-3.5 flex-shrink-0 opacity-90"
                           fill="none"
                           stroke="currentColor"
