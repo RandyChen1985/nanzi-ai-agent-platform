@@ -1,12 +1,14 @@
 """委派工具「调度白名单」的前端契约。
 
-用户场景：在智能体编辑页给 `sub_agent_call` / `sub_agent_batch_call` 指定可调度的
-子智能体。锁住四个关键点：
+用户场景：在智能体编辑页给 `sub_agent_call` 指定可调度的子智能体。锁住六个关键点：
 
 1. 配置字段能存进工具配置（`delegable_agent_ids`），否则保存即丢；
-2. 工具卡片上有独立入口，且「已配置」要看得见（白名单是会被遗忘的配置）；
-3. `sub_agent_batch_call` 未单独配置时数量回落到 `sub_agent_call`，与后端一致；
-4. 「清空」必须二次确认——它是「禁止委派」而不是「恢复默认」。
+2. **页面只有一个开关**：工具列表只显示 `sub_agent_call`，勾选它自动带上
+   `sub_agent_batch_call`（并行委派入口），batch 不需要单独勾选或配置；
+3. **名单只有一份**：入口只挂 `sub_agent_call`，批量委派跟随它；
+4. 存量只配在 batch 上时，计数、回显、保存都要与后端读取一致；
+5. 存量只存了其中一个工具时，选中态按「已启用委派」显示，保存时补成对；
+6. 「清空」必须二次确认——它是「禁止委派」而不是「恢复默认」。
 """
 from pathlib import Path
 
@@ -25,29 +27,79 @@ def test_agent_api_exposes_delegable_agent_ids():
     assert "调度白名单" in API
 
 
-def test_drawer_renders_delegation_entry_for_both_tools():
+def test_drawer_renders_a_single_delegation_entry():
+    """入口只保留 sub_agent_call：两个工具各挂一个按钮，用户就会各配一份。"""
     assert "openDelegationScope" in DRAWER
     assert "hasDelegationAllowlist" in DRAWER
-    # 两个工具都要有入口：只给 sub_agent_call 配，批量调用就成了绕过白名单的后门。
     button = DRAWER.split("emit('openDelegationScope'", 1)[0]
-    assert "sub_agent_call" in button
-    assert "sub_agent_batch_call" in button
+    assert "tool.name === 'sub_agent_call'" in button
+    # 反向：批量委派不再有独立入口
+    assert "tool.name === 'sub_agent_call' || tool.name === 'sub_agent_batch_call'" not in button
+
+
+def test_tool_list_shows_only_one_delegation_card():
+    """batch 卡片直接从列表里拿掉：它不是独立的配置对象，由 sub_agent_call 自动带上。"""
+    display = MANAGEMENT.split("const displayAvailableTools", 1)[1].split(");", 1)[0]
+    assert "DELEGATION_BATCH_TOOL_NAME" in display
+    # 分组、计数、分母都必须走过滤后的清单，否则「已选 X/Y」永远差 1
+    assert "displayAvailableTools.value" in MANAGEMENT.split("const groupedTools", 1)[1]
+    assert 'displayAvailableTools.length' in MANAGEMENT
+    assert "displayAvailableTools.value.filter((t) => isToolSelected(t.name))" in MANAGEMENT
+
+
+def test_toggling_delegation_writes_both_tools():
+    """勾选/取消都成对处理：只写 single 会让模型没有并行委派入口。"""
+    toggle = MANAGEMENT.split("const toggleTool", 1)[1].split("const isVersionToolSelected", 1)[0]
+    assert "isDelegationToolName(toolName)" in toggle
+    assert "DELEGATION_TOOL_NAME, DELEGATION_BATCH_TOOL_NAME" in toggle
+
+
+def test_submit_normalizes_delegation_pair():
+    normalize = MANAGEMENT.split("const normalizeDelegationToolsForSubmit", 1)[1].split(
+        "const toggleTool", 1
+    )[0]
+    assert "DELEGATION_TOOL_NAME" in normalize
+    assert "DELEGATION_BATCH_TOOL_NAME" in normalize
+    # 两处保存（普通保存 / 发布）都要过一遍
+    assert MANAGEMENT.count("normalizeDelegationToolsForSubmit(versionForm.value.tools") >= 2
+
+
+def test_legacy_single_tool_version_counts_as_delegation_enabled():
+    """老版本可能只存了 batch 或只存了 single：选中态按「已启用委派」显示。"""
+    for marker in ("const isToolSelected", "const isVersionToolSelected"):
+        block = MANAGEMENT.split(marker, 1)[1].split("const ", 1)[0]
+        assert "isDelegationToolName(toolName)" in block
+        assert "isDelegationToolName(toolItemName(item))" in block
+    # 计数只算一个：两个都存了进去也不能显示已选 2 个
+    count = MANAGEMENT.split("const selectedToolsCount", 1)[1].split(
+        "const selectedSkillsCount", 1
+    )[0]
+    assert "isDelegationToolName" in count
+    assert "hasDelegation ? 1 : 0" in count
 
 
 def test_management_persists_allowlist_into_tool_config():
     save = MANAGEMENT.split("const saveDelegationScope", 1)[1].split("const canEditVersion", 1)[0]
     assert "delegable_agent_ids" in save
+    # 名单固定写 sub_agent_call，不接受调用方传别的工具名
+    assert "const toolName = 'sub_agent_call'" in save
     # 字符串形态的工具项没有字段可写，必须升级成对象
     assert "name: toolName" in save
+    # 清掉 batch 上的历史字段，避免两份再次分叉
+    assert "delete rest.delegable_agent_ids" in save
 
 
-def test_management_batch_count_falls_back_to_single_call():
-    counter = MANAGEMENT.split("const delegationScopeCount", 1)[1].split(
+def test_management_reads_one_shared_allowlist():
+    counter = MANAGEMENT.split("const effectiveDelegationAllowlist", 1)[1].split(
+        "const delegationScopeCount", 1
+    )[0]
+    assert "sub_agent_call" in counter
+    # 存量兜底：只配在 batch 上时也要读到
+    assert "sub_agent_batch_call" in counter
+    count = MANAGEMENT.split("const delegationScopeCount", 1)[1].split(
         "const hasDelegationAllowlist", 1
     )[0]
-    assert "sub_agent_batch_call" in counter
-    assert "sub_agent_call" in counter
-    assert "??" in counter  # 未单独配置时取沿用值
+    assert "effectiveDelegationAllowlist" in count
 
 
 def test_management_wires_modal_with_authorized_agent_ids():

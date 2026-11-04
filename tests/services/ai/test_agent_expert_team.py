@@ -56,7 +56,7 @@ def test_resolve_team_members_distinguishes_unconfigured_from_empty():
     assert AgentManagerService._resolve_team_members(
         SimpleNamespace(tools=[{"name": "sub_agent_call", "delegable_agent_ids": ["a", "b", "c"]}])
     ) == ["a", "b", "c"]
-    # 只配了批量委派时，成员取它自己的名单
+    # 存量：历史上只配在批量委派上也照样生效（名单只有一份，batch 字段兜底读取）
     assert AgentManagerService._resolve_team_members(
         SimpleNamespace(tools=[{"name": "sub_agent_batch_call", "delegable_agent_ids": ["x"]}])
     ) == ["x"]

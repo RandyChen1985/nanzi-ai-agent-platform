@@ -172,6 +172,11 @@ def resolve_effective_prompt_tool_names(
     except Exception:
         pass
 
+    # 两个委派工具在页面上是一个开关，能力表也必须成对：只勾 sub_agent_call 的版本
+    # 若不补 batch，「并发汇总」那行提示就永远不出现，模型也就不知道能并行调。
+    if names & {"sub_agent_call", "sub_agent_batch_call"}:
+        names.update({"sub_agent_call", "sub_agent_batch_call"})
+
     return names
 
 

@@ -5,7 +5,6 @@ import re
 import uuid
 import inspect
 import time
-from contextvars import ContextVar
 from dataclasses import replace
 from typing import Optional, Dict, Any, List, Tuple, Iterable
 from pydantic import BaseModel, Field, field_validator
@@ -314,13 +313,9 @@ async def load_delegable_system_agent_candidates(session: Any) -> List[Any]:
 DELEGATION_TOOL_NAME = "sub_agent_call"
 DELEGATION_BATCH_TOOL_NAME = "sub_agent_batch_call"
 
-# 批量委派内部复用 ``sub_agent_call`` 的实现，但白名单要按 ``sub_agent_batch_call``
-# 自己那份来算（未单独配置才回落）。用 ContextVar 传递「当前是谁在调」，避免给
-# 用户可见的工具签名加内部参数（模型会把它当真实入参去填）。
-_active_delegation_tool: ContextVar[str | None] = ContextVar(
-    "active_delegation_tool",
-    default=None,
-)
+# 名单只有一份（见 ``resolve_delegation_allowlist``），批量委派内部复用
+# ``sub_agent_call`` 时不再需要「当前是谁在调」的 ContextVar——那套机制存在的前提
+# 是两个工具各有一份名单，现在前提没了，留着只会让后来者以为还能分开配。
 
 
 def _delegable_ids_of_tool_config(item: Any) -> tuple[bool, Optional[List[str]]]:
@@ -345,6 +340,46 @@ def _delegable_ids_of_tool_config(item: Any) -> tuple[bool, Optional[List[str]]]
             seen.add(agent_id)
             cleaned.append(agent_id)
     return True, cleaned
+
+
+def _configured_tool_name(item: Any) -> str:
+    """取配置项的工具名，兼容 str / dict / ToolConfigItem 三种形态。"""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        return str(item.get("name") or "")
+    return str(getattr(item, "name", "") or "")
+
+
+def ensure_delegation_tool_pair(tools: Any, *, as_dict: bool = False) -> List[Any]:
+    """让两个委派工具在配置里始终成对出现，并清掉 batch 上遗留的名单字段。
+
+    页面只暴露 ``sub_agent_call`` 一个开关：勾选它 = 同时拥有串行与并行委派。
+    但配置层必须成对——只存 ``sub_agent_call`` 的话，模型就没有
+    ``sub_agent_batch_call`` 这个入口，「并发汇总」场景直接不可用；反过来只存
+    batch 的老版本，串行委派又会消失。
+
+    历史版本可能只勾了其中一个（甚至两个都勾、各带一份名单），这里统一补齐/清理：
+    名单只认 ``sub_agent_call`` 那份，batch 上的 ``delegable_agent_ids`` 丢弃。
+
+    ``as_dict=True`` 时补出来的项写成 ``{"name": ...}``（落库形态）；否则补字符串，
+    与 ``get_tools`` 的输入约定一致。
+    """
+    items = list(tools or [])
+    names = {_configured_tool_name(item) for item in items}
+    if not names & {DELEGATION_TOOL_NAME, DELEGATION_BATCH_TOOL_NAME}:
+        return items
+
+    result: List[Any] = []
+    for item in items:
+        if isinstance(item, dict) and _configured_tool_name(item) == DELEGATION_BATCH_TOOL_NAME:
+            item = {k: v for k, v in item.items() if k != "delegable_agent_ids"}
+        result.append(item)
+
+    for missing in (DELEGATION_TOOL_NAME, DELEGATION_BATCH_TOOL_NAME):
+        if missing not in names:
+            result.append({"name": missing} if as_dict else missing)
+    return result
 
 
 def has_delegation_tool(agent_config: Any) -> bool:
@@ -389,19 +424,25 @@ def resolve_delegation_allowlist(
     - ``(True, [])``：显式清空 → 任何智能体都不许委派
     - ``(True, [...])``：只许名单内的
 
-    ``sub_agent_batch_call`` 自己没配时回落到 ``sub_agent_call`` 的名单：两个工具是
-    同一件事的串行/并行两种形态，只配一个而另一个还能自由调度等于白名单被绕过。
+    **两个委派工具共用同一份名单**：``sub_agent_call`` 与 ``sub_agent_batch_call``
+    是同一件事的串行/并行两种形态，配置入口也只有一个。早先允许各配一份，结果是
+    「只配 batch」时 batch 收窄、``sub_agent_call`` 反而按未配置走系统级全量——
+    同一份名单在两个工具上语义相反：既让批量名单形同虚设（绕过白名单），也让
+    「团里配好了成员却调不到」无解（自建成员只有名单生效才进候选）。
+
+    现在 ``sub_agent_call`` 是唯一事实源；``sub_agent_batch_call`` 上历史遗留的
+    ``delegable_agent_ids`` 只作为兜底读取，保证存量配置不丢，保存时由前端清掉。
+    ``tool_name`` 参数保留只为兼容既有调用方，不再影响解析结果。
     """
-    own: Any = None
-    for item in configured_tools or []:
-        if _configured_tool_name(item) == tool_name:
-            own = item
-            break
-    configured, ids = _delegable_ids_of_tool_config(own)
-    if configured:
-        return True, ids
-    if tool_name != DELEGATION_TOOL_NAME:
-        return resolve_delegation_allowlist(configured_tools, tool_name=DELEGATION_TOOL_NAME)
+    for candidate in (DELEGATION_TOOL_NAME, DELEGATION_BATCH_TOOL_NAME):
+        own: Any = None
+        for item in configured_tools or []:
+            if _configured_tool_name(item) == candidate:
+                own = item
+                break
+        configured, ids = _delegable_ids_of_tool_config(own)
+        if configured:
+            return True, ids
     return False, None
 
 
@@ -1009,9 +1050,9 @@ async def sub_agent_call(
         caller_config = await AgentManagerService.get_active_agent_config(
             session, agent_id=str(main_ctx.agent_id)
         )
+        # 名单只有一份：串行与批量委派都从 sub_agent_call 读（batch 上的历史字段兜底）。
         allowlist_configured, allowlist = resolve_delegation_allowlist(
-            getattr(caller_config, "tools", None) if caller_config else None,
-            tool_name=_active_delegation_tool.get() or DELEGATION_TOOL_NAME,
+            getattr(caller_config, "tools", None) if caller_config else None
         )
         caller_user_name = str((main_ctx.user_dimensions or {}).get("user_name") or "") or None
 
@@ -1658,8 +1699,6 @@ class BatchSubAgentTool(BaseTool):
             task_ctx = main_ctx.model_copy(deep=False, update={"trace_buffer": []})
             original_ctx = get_current_agent_context()
             set_agent_context(task_ctx)
-            # ContextVar 在每个 task 内独立，并行项之间不会互相覆盖。
-            tool_token = _active_delegation_tool.set(DELEGATION_BATCH_TOOL_NAME)
             try:
                 content = await sub_agent_call.func(
                     **call.model_dump(exclude_none=True)
@@ -1687,7 +1726,6 @@ class BatchSubAgentTool(BaseTool):
                     "trace_buffer": task_ctx.trace_buffer,
                 }
             finally:
-                _active_delegation_tool.reset(tool_token)
                 set_agent_context(original_ctx)
 
         tasks = [

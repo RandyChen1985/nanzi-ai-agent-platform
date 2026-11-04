@@ -5,7 +5,9 @@
 - 系统级：未配置 = 全部有 ``agent:<id>`` 授权的；配置后 = 名单 ∩ 授权。
 - 用户自建：未配置 = 一个都不可委派（历史行为）；配置后 = 名单 ∩ 本人创建。
 
-以及 ``sub_agent_batch_call`` 未单独配置时回落到 ``sub_agent_call`` 的名单。
+名单只有一份：``sub_agent_call`` 是唯一事实源，``sub_agent_batch_call`` 跟随它。
+batch 上历史遗留的字段仅作兜底读取，不再允许两个工具各配一份——否则「只配一个」
+时另一个按未配置走全量，自建子专家会整批消失。
 """
 from __future__ import annotations
 
@@ -79,7 +81,7 @@ def test_allowlist_drops_blank_and_duplicated_ids():
     assert resolve_delegation_allowlist([item]) == (True, ["a1", "a2"])
 
 
-def test_batch_falls_back_to_single_call_allowlist():
+def test_batch_follows_single_call_allowlist():
     from app.services.ai.tools.agent_delegate_tool import resolve_delegation_allowlist
 
     tools = [
@@ -89,24 +91,98 @@ def test_batch_falls_back_to_single_call_allowlist():
     assert resolve_delegation_allowlist(tools, tool_name="sub_agent_batch_call") == (True, ["a1"])
 
 
-def test_batch_own_allowlist_wins_over_fallback():
+def test_single_call_is_the_only_source_of_truth():
+    """两个都配时以 sub_agent_call 为准：batch 自己的那份不再生效。
+
+    曾经「各配一份」的结果是：只填 batch 的人，batch 收窄、single 却走全量；
+    两条委派路径对同一份配置给出相反语义。统一到 single 后，batch 上的配置只是
+    存量的兜底来源，不参与覆盖。
+    """
     from app.services.ai.tools.agent_delegate_tool import resolve_delegation_allowlist
 
     tools = [
         ToolConfigItem(name="sub_agent_call", delegable_agent_ids=["a1", "a2"]),
         ToolConfigItem(name="sub_agent_batch_call", delegable_agent_ids=["a3"]),
     ]
-    assert resolve_delegation_allowlist(tools, tool_name="sub_agent_batch_call") == (True, ["a3"])
+    assert resolve_delegation_allowlist(tools) == (True, ["a1", "a2"])
+    assert resolve_delegation_allowlist(tools, tool_name="sub_agent_batch_call") == (True, ["a1", "a2"])
 
 
-def test_batch_does_not_inherit_when_it_explicitly_denies():
+def test_batch_empty_list_does_not_override_single_call():
+    """batch 上的空数组不再单独表示「禁止批量委派」：名单只有一份。"""
     from app.services.ai.tools.agent_delegate_tool import resolve_delegation_allowlist
 
     tools = [
         ToolConfigItem(name="sub_agent_call", delegable_agent_ids=["a1"]),
         ToolConfigItem(name="sub_agent_batch_call", delegable_agent_ids=[]),
     ]
-    assert resolve_delegation_allowlist(tools, tool_name="sub_agent_batch_call") == (True, [])
+    assert resolve_delegation_allowlist(tools, tool_name="sub_agent_batch_call") == (True, ["a1"])
+
+
+def test_single_call_reads_batch_legacy_allowlist():
+    """存量：历史上只配在 sub_agent_batch_call 上时，串行委派也必须认这份名单。
+
+    这正是用户反馈的现场：团成员只配在批量委派上，单次委派按「未配置」走系统级
+    全量，自建子专家被静默剔除。兜底读取让存量配置无需重配即可生效。
+    """
+    from app.services.ai.tools.agent_delegate_tool import resolve_delegation_allowlist
+
+    tools = [ToolConfigItem(name="sub_agent_batch_call", delegable_agent_ids=["a1"])]
+    assert resolve_delegation_allowlist(tools) == (True, ["a1"])
+    assert resolve_delegation_allowlist(tools, tool_name="sub_agent_batch_call") == (True, ["a1"])
+
+
+# --------------------------------------------------------------------------
+# 工具开关：一个入口，两个工具
+# --------------------------------------------------------------------------
+
+
+def test_pair_keeps_both_tools_when_single_is_configured():
+    """页面只勾 sub_agent_call，落库必须同时有 batch——否则模型没有并行入口。"""
+    from app.services.ai.tools.agent_delegate_tool import ensure_delegation_tool_pair
+
+    tools = [{"name": "sub_agent_call", "delegable_agent_ids": ["a1"]}]
+    paired = ensure_delegation_tool_pair(tools, as_dict=True)
+    assert {item["name"] for item in paired if isinstance(item, dict)} == {
+        "sub_agent_call",
+        "sub_agent_batch_call",
+    }
+    # 名单仍只挂 single，batch 上不复制一份
+    assert next(i for i in paired if i["name"] == "sub_agent_call")["delegable_agent_ids"] == ["a1"]
+    assert "delegable_agent_ids" not in next(i for i in paired if i["name"] == "sub_agent_batch_call")
+
+
+def test_pair_upgrades_batch_only_legacy_version():
+    """存量只勾了 batch：补上 single，串行委派才不会消失。"""
+    from app.services.ai.tools.agent_delegate_tool import ensure_delegation_tool_pair
+
+    paired = ensure_delegation_tool_pair(["sub_agent_batch_call"])
+    assert paired == ["sub_agent_batch_call", "sub_agent_call"]
+
+
+def test_pair_drops_allowlist_from_batch_tool():
+    """两个工具都带名单的存量配置：batch 那份丢弃，只认 single。"""
+    from app.services.ai.tools.agent_delegate_tool import ensure_delegation_tool_pair
+
+    paired = ensure_delegation_tool_pair(
+        [
+            {"name": "sub_agent_call", "delegable_agent_ids": ["a1"]},
+            {"name": "sub_agent_batch_call", "delegable_agent_ids": ["a2"]},
+        ],
+        as_dict=True,
+    )
+    batch = next(i for i in paired if i["name"] == "sub_agent_batch_call")
+    assert "delegable_agent_ids" not in batch
+
+
+def test_pair_leaves_non_delegation_tools_untouched():
+    """没勾委派工具的智能体不能被凭空塞进两个工具。"""
+    from app.services.ai.tools.agent_delegate_tool import ensure_delegation_tool_pair
+
+    tools = [{"name": "search_knowledge_base"}]
+    assert ensure_delegation_tool_pair(tools, as_dict=True) == tools
+    assert ensure_delegation_tool_pair([]) == []
+    assert ensure_delegation_tool_pair(None) == []
 
 
 # --------------------------------------------------------------------------
@@ -280,10 +356,11 @@ class _FakeSession:
 
 
 @pytest.mark.asyncio
-async def test_batch_call_uses_its_own_allowlist(monkeypatch):
-    """``sub_agent_batch_call`` 内部复用 ``sub_agent_call`` 的实现，但白名单必须走自己那份。
+async def test_batch_call_uses_shared_allowlist(monkeypatch):
+    """``sub_agent_batch_call`` 内部复用 ``sub_agent_call``，名单也必须是同一份。
 
-    否则「两个工具分别配置」形同虚设：并行委派会拿串行那份名单去校验。
+    早先按「当前是谁在调」各取一份，结果 batch 上的配置能单独收窄、single 反而走
+    全量；现在名单只有一个事实源，批量委派必须读到 sub_agent_call 那份。
     """
     from app.core.context import AgentContext, set_agent_context
     from app.services.ai.tools import agent_delegate_tool as mod
@@ -322,9 +399,7 @@ async def test_batch_call_uses_its_own_allowlist(monkeypatch):
     tool = mod.BatchSubAgentTool()
     await tool.ainvoke({"calls": [{"agent_name": "data-agent", "query": "查一下订单量"}]})
 
-    assert captured == [(True, ["batch-only"])]
-    # 结束后必须复位，否则同一事件循环里的后续单次委派会误用批量名单。
-    assert mod._active_delegation_tool.get() is None
+    assert captured == [(True, ["serial-only"])]
 
 
 @pytest.mark.asyncio

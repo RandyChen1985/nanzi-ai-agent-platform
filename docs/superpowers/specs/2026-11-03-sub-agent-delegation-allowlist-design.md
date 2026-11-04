@@ -1,6 +1,6 @@
 # sub_agent_call 调度白名单 · 设计
 
-日期：2026-11-03
+日期：2026-11-03（2026-11-04 修订：名单合并为一份，batch 不再单独配置）
 状态：已确认（用户批准方案 A + 四条语义）
 
 ## 目标
@@ -17,7 +17,26 @@ delegable_agent_ids: Optional[List[str]] = None
 ```
 
 - 存在智能体版本的 `tools` JSON 里，随发布版本生效（与 `metadata_dataset_ids` 同构）。
-- 只对 `sub_agent_call` / `sub_agent_batch_call` 有意义，其它工具上设置会被忽略。
+- **名单只有一份**：事实源是 `sub_agent_call` 的配置项。`sub_agent_batch_call` 是同一个
+  动作的并行形态，跟随 `sub_agent_call`，不再单独配置。
+- 存量数据里只配在 `sub_agent_batch_call` 上的字段仍会被兜底读取（不丢配置），
+  前端保存时清理掉，避免两份并存再次分叉。
+
+## 工具开关：一个入口，两个工具
+
+页面只显示 `sub_agent_call` 一张工具卡，勾选它 = 同时拥有串行与并行委派：
+
+- 前端勾选/取消都成对处理（`toggleTool`），全选/取消全选同样成对；
+- 提交前 `normalizeDelegationToolsForSubmit` 补齐，保存后 `tools` 里两个工具同时存在；
+- 后端 `ensure_delegation_tool_pair` 在**保存落库**（`_normalize_tools_for_db`）和
+  **运行时工具解析**（`ToolRegistry.get_tools` / `get_runtime_tools`）两处兜底补齐。
+
+只存 `sub_agent_call` 而没有 `sub_agent_batch_call`，模型就看不到并行委派入口，
+「并发汇总」场景直接不可用；反过来只存 batch 则串行委派消失。历史已发布版本不
+需要重新发布——运行时解析会补齐。
+
+能力表（提示词里的工具清单）同样成对补齐：只勾 `sub_agent_call` 的版本若不补
+batch，「需要同时处理多个独立任务」那行提示永远不出现。
 
 ## 语义（两套不对称规则）
 
@@ -32,7 +51,9 @@ delegable_agent_ids: Optional[List[str]] = None
 ## 运行时解析
 
 1. 从当前智能体的**生效版本** `tools` 里找 `sub_agent_call` 项（`ChatConfig.tools`）。
-2. `sub_agent_batch_call` 自身没配时，回落到 `sub_agent_call` 的名单。
+2. 两个委派工具共用这一份名单：`sub_agent_batch_call` 跟随 `sub_agent_call`；
+   batch 上的历史字段仅作兜底。**不允许**出现「只配一个、另一个按未配置走全量」——
+   那会让自建子专家在一条路径上消失，正是「团里配了成员却委派不了」的根因。
 3. 三重过滤，顺序固定：**白名单 → 权限 → 就绪**。
    - 任意一步不满足即**静默排除**（不进通讯录、运行时不可达），不报错。
 4. 主助手隐式挂载：只有 `tools` 里真实存在该项才认白名单；没有即按「未配置」处理。
@@ -59,10 +80,13 @@ delegable_agent_ids: Optional[List[str]] = None
 
 ## 前端
 
-- 工具卡片（`sub_agent_call`）齿轮旁新增「🎯 调度范围 · N 个」按钮。
+- 工具卡片只有 `sub_agent_call` 一张：齿轮旁「🎯 调度范围 · N 个」按钮。
+- `sub_agent_batch_call` 不出卡片（`displayAvailableTools` 过滤），由 `sub_agent_call` 自动带上；
+  「已选 X/Y」的分母与计数都按一个算，历史版本里两个都存了也不会显示成 2 个。
+- 存量只存了 batch 或只存了 single 的版本：选中态按「已启用委派」显示，保存时补成对。
 - 弹窗 `DelegationScopeModal`：搜索 / 只看已选 / 系统分组 / 我的分组（橙色提示默认不可委派）/ 失效项禁用 / 清空二次确认。
 - 未授权的系统智能体显示但禁用（排障友好）。
-- `sub_agent_batch_call` 显示「沿用 sub_agent_call」，可单独配置。
+- 保存时写 `sub_agent_call` 并清掉 batch 上的历史字段；计数与后端一样支持存量兜底。
 
 ## 不做
 

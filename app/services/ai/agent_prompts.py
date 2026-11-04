@@ -619,6 +619,11 @@ class AgentServicePrompts:
                     tool_names.add("todo_write")
             except Exception:
                 pass
+            # 页面只让用户勾一个委派工具，能力表要成对补齐：只勾 sub_agent_call 的
+            # 版本若不补 batch，「需要同时处理多个独立任务」那行提示就不出现。
+            if "sub_agent_call" in tool_names or "sub_agent_batch_call" in tool_names:
+                tool_names.add("sub_agent_call")
+                tool_names.add("sub_agent_batch_call")
             # 调度白名单被显式清空（`delegable_agent_ids = []`）时委派实际不可用：
             # 能力表不能继续写「必须委派」，否则提示词与运行时相反，模型会对着一个
             # 必然被拒的工具反复尝试。
