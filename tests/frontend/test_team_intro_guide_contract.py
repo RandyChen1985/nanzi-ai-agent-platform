@@ -1,4 +1,4 @@
-"""「团队介绍」写法指引的内容契约。
+"""「团队介绍&提示词」写法指引的内容契约。
 
 这段指引本身就是一份提示词写作规范，而它服务的对象——团介绍——已经出过事故：
 某团主在介绍里写了「不查不写」，模型把「我不动手」读成了「我不委派」，配好 4 位
@@ -65,3 +65,17 @@ def test_guide_still_supports_the_popup_usage():
     """弹层自带标题，组件要能用 hide-intro 隐掉自己那套标题。"""
     assert "hideIntro?" in GUIDE
     assert "v-if=\"!hideIntro\"" in GUIDE
+
+
+def test_label_says_it_is_a_prompt_not_a_note():
+    """名字里必须带「提示词」：只叫「团队介绍」会被当成备注随便写。"""
+    for path in (
+        "frontend/src/components/agent/AgentTeamEditorModal.vue",
+        "frontend/src/views/AgentManagement.vue",
+    ):
+        source = Path(path).read_text(encoding="utf-8")
+        assert "团队介绍&amp;提示词" in source, path
+        assert "团队介绍&提示词怎么写？" in source, path
+        # 占位示例要能直接照抄，别再写「一条龙团队」这种无法执行的营销话术
+        assert "一条龙团队" not in source, path
+        assert "取数只读，禁止写库" in source, path

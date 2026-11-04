@@ -1121,7 +1121,7 @@ const teamProfileName = computed({
 })
 
 /**
- * 「团队介绍」写法指引改成弹层：这段指引有 5 条要点 + 一个示例，内联展开会把
+ * 「团队介绍&提示词」写法指引改成弹层：这段指引有 5 条要点 + 一个示例，内联展开会把
  * 专家团这一页撑得很长，收起后又要多点一次才看得到。能力标签的「?」已经是弹层，
  * 两处交互统一。
  */
@@ -6649,7 +6649,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 </div>
                 <div>
                   <label class="mb-1 flex items-center gap-1 text-xs font-medium text-gray-600">
-                    <span>团队介绍</span>
+                    <span>团队介绍&amp;提示词</span>
                     <button
                       type="button"
                       class="grid h-4 w-4 shrink-0 place-items-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-500 transition hover:border-primary hover:text-primary"
@@ -6664,7 +6664,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     v-model="teamProfileIntro"
                     rows="2"
                     maxlength="500"
-                    placeholder="例如：从取数、口径到制度背景的一条龙团队。"
+                    placeholder="例如：涉及指标口径的先转元数据专家确认，再让数据助手取数；取数只读，禁止写库。"
                     class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   ></textarea>
                   <p class="mt-1 flex items-start justify-between gap-2 text-[11px] text-gray-400">
@@ -7048,7 +7048,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </div>
     </Teleport>
 
-    <!-- 「团队介绍」写法指引：与能力标签的「?」同样是弹层，不再把这一页内联撑长 -->
+    <!-- 「团队介绍&提示词」写法指引：与能力标签的「?」同样是弹层，不再把这一页内联撑长 -->
     <Teleport to="body">
       <div
         v-if="showTeamIntroHelp"
@@ -7058,7 +7058,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         <div class="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
           <div class="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
             <div>
-              <h3 class="text-lg font-bold text-gray-900">团队介绍怎么写？</h3>
+              <h3 class="text-lg font-bold text-gray-900">团队介绍&提示词怎么写？</h3>
               <p class="mt-1 text-sm text-gray-500">
                 这段话会写进团主专家的系统提示词（团队身份段），模型会照着执行；它不进「描述信息」，所以不会影响主助手的委派选人。
               </p>
