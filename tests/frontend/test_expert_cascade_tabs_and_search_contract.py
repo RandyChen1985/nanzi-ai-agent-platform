@@ -1,4 +1,4 @@
-"""Contract: EmbedChat ExpertCascadeMenu supports dual tabs (system/custom) and search filtering."""
+"""Contract: EmbedChat ExpertCascadeMenu supports three tabs (system/custom/team) and search filtering."""
 
 from pathlib import Path
 
@@ -10,8 +10,8 @@ TASK_CENTER = ROOT / "frontend/src/views/TaskCenter.vue"
 def test_expert_cascade_menu_dual_tabs_and_search_contract():
     content = EXPERT_MENU.read_text(encoding="utf-8")
 
-    # Tab state & search state
-    assert "expertTab = ref<'system' | 'custom'>('system')" in content
+    # Tab state & search state（第三个 tab 是「专家团」：团主专家单独成一类）
+    assert "expertTab = ref<'system' | 'custom' | 'team'>('system')" in content
     assert "expertSearchQuery = ref('')" in content
 
     # Computed filtered lists
@@ -25,11 +25,13 @@ def test_expert_cascade_menu_dual_tabs_and_search_contract():
     assert "currentTabTotalCount.value > 5 || !!expertSearchQuery.value.trim()" in content
     assert 'v-if="showSearchInput"' in content
 
-    # Dual tabs markup & switch tab handler
+    # Tabs markup & switch tab handler
     assert '@click.stop="switchTab(\'system\')"' in content
     assert '@click.stop="switchTab(\'custom\')"' in content
+    assert '@click.stop="switchTab(\'team\')"' in content
     assert "系统专家" in content
     assert "自定义专家" in content
+    assert "专家团" in content
 
     # Search bar markup
     assert 'placeholder="搜索专家名称、标识或说明..."' in content

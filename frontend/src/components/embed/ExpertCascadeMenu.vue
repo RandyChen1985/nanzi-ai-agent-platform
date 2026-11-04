@@ -35,7 +35,9 @@ const emit = defineEmits<{
 const isExpertMode = (routingMode?: string, expertAgentId?: string) =>
   routingMode === 'expert' && !!expertAgentId
 
-const expertTab = ref<'system' | 'custom'>('system')
+// 三个 tab 互斥分类：专家团 > 系统 > 自定义。团主专家一律归到「专家团」，
+// 否则总数会和三个 tab 的计数对不上（同一张卡在两个 tab 各算一次）。
+const expertTab = ref<'system' | 'custom' | 'team'>('system')
 const expertSearchQuery = ref('')
 
 const isMainAgent = (agent: any) => {
@@ -48,7 +50,9 @@ const isMainAgent = (agent: any) => {
 }
 
 const systemAgents = computed(() => {
-  const sys = (props.allowedAgents || []).filter((agent) => agent.is_system || isMainAgent(agent))
+  const sys = (props.allowedAgents || []).filter(
+    (agent) => (agent.is_system || isMainAgent(agent)) && !agent.is_expert_team_lead,
+  )
   return [...sys].sort((a, b) => {
     const aMain = isMainAgent(a) ? 1 : 0
     const bMain = isMainAgent(b) ? 1 : 0
@@ -59,7 +63,20 @@ const systemAgents = computed(() => {
 
 const customAgents = computed(() => {
   return (props.allowedAgents || [])
-    .filter((agent) => !agent.is_system && !isMainAgent(agent))
+    .filter((agent) => !agent.is_system && !isMainAgent(agent) && !agent.is_expert_team_lead)
+    .sort((a, b) => (b.sort_order || 0) - (a.sort_order || 0))
+})
+
+/**
+ * 专家团：团主专家单独成一类。
+ *
+ * 它们的用法和普通专家不同——选中之后背后是一整团在调度，会先看团介绍再派人。
+ * 混在「自定义专家」里只能靠一枚 👥 TEAM 徽标区分，团多了就很难挑。系统级的团主
+ * 同样归到这里（分类按「是不是团主」而不是「归谁所有」）。
+ */
+const expertTeams = computed(() => {
+  return (props.allowedAgents || [])
+    .filter((agent) => !isMainAgent(agent) && agent.is_expert_team_lead === true)
     .sort((a, b) => (b.sort_order || 0) - (a.sort_order || 0))
 })
 
@@ -86,6 +103,14 @@ const filterList = (list: any[]) => {
 
 const filteredSystemAgents = computed(() => filterList(systemAgents.value))
 const filteredCustomAgents = computed(() => filterList(customAgents.value))
+const filteredExpertTeams = computed(() => filterList(expertTeams.value))
+
+const isTeamTab = computed(() => expertTab.value === 'team')
+
+/** 当前 tab 的列表：自定义专家与专家团共用同一套行渲染，只换数据源 */
+const currentTabAgents = computed(() =>
+  isTeamTab.value ? filteredExpertTeams.value : filteredCustomAgents.value,
+)
 
 const shouldShowAutoCard = computed(() => {
   if (expertTab.value !== 'system') return false
@@ -100,7 +125,8 @@ watch(
     if (props.routingMode === 'expert' && props.expertAgentId) {
       const match = (props.allowedAgents || []).find((a) => a.id === props.expertAgentId)
       if (match) {
-        expertTab.value = match.is_system || isMainAgent(match) ? 'system' : 'custom'
+        if (match.is_expert_team_lead) expertTab.value = 'team'
+        else expertTab.value = match.is_system || isMainAgent(match) ? 'system' : 'custom'
       }
     }
   },
@@ -108,14 +134,16 @@ watch(
 )
 
 const currentTabTotalCount = computed(() => {
-  return expertTab.value === 'system' ? systemAgents.value.length : customAgents.value.length
+  if (expertTab.value === 'system') return systemAgents.value.length
+  if (expertTab.value === 'team') return expertTeams.value.length
+  return customAgents.value.length
 })
 
 const showSearchInput = computed(() => {
   return currentTabTotalCount.value > 5 || !!expertSearchQuery.value.trim()
 })
 
-const switchTab = (tab: 'system' | 'custom') => {
+const switchTab = (tab: 'system' | 'custom' | 'team') => {
   if (expertTab.value === tab) return
   expertTab.value = tab
   expertSearchQuery.value = ''
@@ -195,7 +223,7 @@ const handleSelectExpert = (agentId: string) => {
           <svg class="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
           </svg>
-          <span>系统专家</span>
+          <span class="whitespace-nowrap">系统专家</span>
           <span
             class="rounded px-1 text-[9px] font-normal"
             :class="expertTab === 'system' ? 'bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300' : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-300'"
@@ -215,11 +243,32 @@ const handleSelectExpert = (agentId: string) => {
           <svg class="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
           </svg>
-          <span>自定义专家</span>
+          <span class="whitespace-nowrap">自定义专家</span>
           <span
             class="rounded px-1 text-[9px] font-normal"
             :class="expertTab === 'custom' ? 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300' : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-300'"
           >{{ expertSearchQuery ? `${filteredCustomAgents.length}/${customAgents.length}` : customAgents.length }}</span>
+        </button>
+
+        <button
+          type="button"
+          class="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-semibold transition-all"
+          :class="
+            expertTab === 'team'
+              ? 'bg-white dark:bg-gray-800 text-teal-600 dark:text-teal-400 shadow-sm'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          "
+          title="只看专家团：选中后由团主专家调度整团"
+          @click.stop="switchTab('team')"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+          <span class="whitespace-nowrap">专家团</span>
+          <span
+            class="rounded px-1 text-[9px] font-normal"
+            :class="expertTab === 'team' ? 'bg-teal-50 dark:bg-teal-900/40 text-teal-600 dark:text-teal-300' : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-300'"
+          >{{ expertSearchQuery ? `${filteredExpertTeams.length}/${expertTeams.length}` : expertTeams.length }}</span>
         </button>
       </div>
 
@@ -343,8 +392,9 @@ const handleSelectExpert = (agentId: string) => {
                 >SYS</span>
                 <!-- 专家团与 MAIN/SYS 正交：一个系统级智能体可以既是 SYS 又是团主专家，
                      所以必须独立判断，不能并进上面的 v-else-if 链。 -->
+                <!-- 专家团 tab 里整列都是团，这枚徽标只在「自定义专家」中才起区分作用 -->
                 <span
-                  v-if="agent.is_expert_team_lead"
+                  v-if="agent.is_expert_team_lead && !isTeamTab"
                   class="shrink-0 px-1 py-px text-[8px] font-semibold rounded border border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-700 dark:bg-teal-950/40 dark:text-teal-300"
                   :title="`专家团主专家：${agent.team_name || agent.display_name}`"
                 >👥 TEAM</span>
@@ -379,10 +429,10 @@ const handleSelectExpert = (agentId: string) => {
         </div>
       </template>
 
-      <!-- 自定义专家 Tab 内容 -->
-      <template v-else-if="expertTab === 'custom'">
+      <!-- 自定义专家 / 专家团 Tab 内容：同一套行渲染，只有数据源与空状态不同 -->
+      <template v-else-if="expertTab === 'custom' || expertTab === 'team'">
         <button
-          v-for="agent in filteredCustomAgents"
+          v-for="agent in currentTabAgents"
           :key="agent.id"
           type="button"
           class="w-full flex items-start gap-2.5 px-2.5 py-2.5 rounded-lg cursor-pointer transition-colors border border-transparent text-left"
@@ -429,8 +479,10 @@ const handleSelectExpert = (agentId: string) => {
           </div>
         </button>
 
-        <div v-if="!filteredCustomAgents.length" class="py-8 text-center text-xs text-gray-400">
-          <p v-if="expertSearchQuery">未找到与 "<span class="text-gray-600 dark:text-gray-300 font-medium">{{ expertSearchQuery }}</span>" 匹配的自定义专家</p>
+        <div v-if="!currentTabAgents.length" class="py-8 text-center text-xs text-gray-400">
+          <p v-if="expertSearchQuery && isTeamTab">未找到与 "<span class="text-gray-600 dark:text-gray-300 font-medium">{{ expertSearchQuery }}</span>" 匹配的专家团</p>
+          <p v-else-if="expertSearchQuery">未找到与 "<span class="text-gray-600 dark:text-gray-300 font-medium">{{ expertSearchQuery }}</span>" 匹配的自定义专家</p>
+          <p v-else-if="isTeamTab">还没有专家团。在智能体编辑里打开「专家团主专家」并配好调度范围即可。</p>
           <p v-else>暂无自定义专家</p>
           <button
             v-if="expertSearchQuery"
@@ -448,7 +500,7 @@ const handleSelectExpert = (agentId: string) => {
     <div class="px-3 py-2 border-t border-gray-200 dark:border-gray-700 text-center shrink-0 bg-gray-50 dark:bg-gray-900/80">
       <span class="text-[11px] text-gray-500 dark:text-gray-400">
         <template v-if="expertSearchQuery">
-          筛选到 {{ filteredSystemAgents.length + filteredCustomAgents.length }} 个专家 (共 {{ allowedAgents.length }} 个)
+          筛选到 {{ filteredSystemAgents.length + filteredCustomAgents.length + filteredExpertTeams.length }} 个专家 (共 {{ allowedAgents.length }} 个)
         </template>
         <template v-else>
           共 {{ allowedAgents.length }} 个专家
