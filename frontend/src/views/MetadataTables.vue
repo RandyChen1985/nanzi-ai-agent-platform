@@ -232,6 +232,70 @@ const fetchDatasetPermissions = async () => {
 }
 
 // 权限管理交互逻辑
+// --- 行级数据权限（只读） ---
+// 与上面的「成员访问授权」是两个维度：成员授权决定谁能进这个数据集，
+// 行级策略决定进来之后能看到哪些行。编辑入口仍只在元数据管理页，这里只读展示。
+const extractRowFilterConditions = (rules: any): string[] => {
+  if (!Array.isArray(rules)) return []
+  return rules
+    .map((rule) => (typeof rule?.condition === 'string' ? rule.condition.trim() : ''))
+    .filter(Boolean)
+}
+
+const rowFilterConfig = computed<Record<string, any>>(() => {
+  const cfg = dataset.value?.row_filter_config
+  return cfg && typeof cfg === 'object' ? (cfg as Record<string, any>) : {}
+})
+
+const rowFilterEnabled = computed(() => Boolean(dataset.value?.enable_data_perm))
+
+const rowFilterUserGroups = computed(() => {
+  const bucket = rowFilterConfig.value.user_overrides
+  if (!bucket || typeof bucket !== 'object') return []
+  return Object.entries(bucket)
+    .map(([key, rules]) => {
+      const matched = datasetPermissions.value.users.find((u: any) => String(u.id) === String(key))
+      const realName = String(matched?.real_name || '').trim()
+      const userName = String(matched?.user_name || '').trim()
+      const label = realName && userName && realName !== userName
+        ? `${realName}（${userName}）`
+        : realName || userName
+      return { key: String(key), label, conditions: extractRowFilterConditions(rules) }
+    })
+    .filter((group) => group.conditions.length > 0)
+})
+
+const rowFilterRoleGroups = computed(() => {
+  const bucket = rowFilterConfig.value.role_policies
+  if (!bucket || typeof bucket !== 'object') return []
+  return Object.entries(bucket)
+    .map(([code, rules]) => {
+      const matched = datasetPermissions.value.roles.find((r: any) => r.code === code)
+      return {
+        code: String(code),
+        label: String(matched?.name || '').trim(),
+        conditions: extractRowFilterConditions(rules),
+      }
+    })
+    .filter((group) => group.conditions.length > 0)
+})
+
+const rowFilterDefaultRules = computed(() => extractRowFilterConditions(rowFilterConfig.value.default_policy))
+
+const rowFilterRuleCount = computed(
+  () =>
+    rowFilterUserGroups.value.reduce((sum, group) => sum + group.conditions.length, 0) +
+    rowFilterRoleGroups.value.reduce((sum, group) => sum + group.conditions.length, 0) +
+    rowFilterDefaultRules.value.length,
+)
+
+// 已授权成员行上的徽标：让「这个人其实只能看部分行」在列表里一眼可见，不用来回对账。
+const userRowFilterCount = (userId: any) =>
+  extractRowFilterConditions(rowFilterConfig.value.user_overrides?.[String(userId)]).length
+
+const roleRowFilterCount = (roleCode: any) =>
+  extractRowFilterConditions(rowFilterConfig.value.role_policies?.[String(roleCode)]).length
+
 const showAddPermissionModal = ref(false)
 const assignType = ref<'role' | 'user'>('role')
 const selectedCandidateIds = ref<number[]>([])
@@ -1267,9 +1331,9 @@ defineExpose({ fetchMetrics })
             <svg class="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
-            数据集成员授权管理
+            数据集权限管理
           </h2>
-          <p class="text-xs text-gray-400 mt-1 select-none">控制并配置当前数据集在当前元数据平台中的访问分配关系。</p>
+          <p class="text-xs text-gray-400 mt-1 select-none">成员授权决定谁能访问这个数据集；行级数据权限决定已授权成员能看到哪些数据行。</p>
         </div>
 
         <div v-if="hasEditPermission" class="flex items-center gap-3">
@@ -1305,7 +1369,16 @@ defineExpose({ fetchMetrics })
                   R
                 </div>
                 <div>
-                  <div class="text-sm font-semibold text-gray-800">{{ r.name }}</div>
+                  <div class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                    {{ r.name }}
+                    <span
+                      v-if="rowFilterEnabled && roleRowFilterCount(r.code)"
+                      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-[10px] font-semibold text-amber-600"
+                      :title="`该角色配置了 ${roleRowFilterCount(r.code)} 条行级过滤条件`"
+                    >
+                      行级策略 {{ roleRowFilterCount(r.code) }}
+                    </span>
+                  </div>
                   <div class="text-[10px] text-gray-400 font-mono mt-0.5 select-all">{{ r.code }}</div>
                 </div>
               </div>
@@ -1345,7 +1418,16 @@ defineExpose({ fetchMetrics })
                   U
                 </div>
                 <div>
-                  <div class="text-sm font-semibold text-gray-800">{{ u.real_name || u.user_name }}</div>
+                  <div class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                    {{ u.real_name || u.user_name }}
+                    <span
+                      v-if="rowFilterEnabled && userRowFilterCount(u.id)"
+                      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-[10px] font-semibold text-amber-600"
+                      :title="`该用户有 ${userRowFilterCount(u.id)} 条行级例外条件`"
+                    >
+                      行级例外 {{ userRowFilterCount(u.id) }}
+                    </span>
+                  </div>
                   <div class="text-[10px] text-gray-400 font-mono mt-0.5 select-all">{{ u.user_name }}</div>
                 </div>
               </div>
@@ -1363,6 +1445,96 @@ defineExpose({ fetchMetrics })
           </div>
           <div v-else class="text-xs text-gray-400 italic py-6 text-center border border-dashed border-gray-200 rounded-xl bg-gray-50/30 select-none">
             暂无用户授权。
+          </div>
+        </div>
+      </div>
+
+      <!-- 行级数据权限（只读）：与上面的成员授权分开——上面管「谁能进这个数据集」，
+           这里管「进来后能看到哪些行」。编辑入口仍只在元数据管理页。 -->
+      <div v-if="dataset" class="border-t border-gray-100 pt-6">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2 select-none">
+              <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+              行级数据权限
+              <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 border border-gray-200">只读</span>
+            </h3>
+            <p class="text-xs text-gray-400 mt-1 select-none">决定已授权成员能看到哪些数据行，不控制数据集本身的访问权限；配置入口在「元数据管理 → 数据权限配置」。</p>
+          </div>
+          <span
+            class="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold border select-none"
+            :class="rowFilterEnabled ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-500 border-gray-200'"
+          >
+            <span class="w-1.5 h-1.5 rounded-full" :class="rowFilterEnabled ? 'bg-amber-500' : 'bg-gray-300'"></span>
+            {{ rowFilterEnabled ? '已启用校验' : '未启用' }}
+          </span>
+        </div>
+
+        <!-- 未启用：说清默认行为，避免误以为这里有隔离 -->
+        <div v-if="!rowFilterEnabled" class="mt-4 text-xs text-gray-500 bg-gray-50/60 border border-dashed border-gray-200 rounded-xl px-4 py-5 text-center select-none">
+          未启用精细化权限校验，已授权成员可以查看该数据集的全部数据行。
+        </div>
+
+        <div v-else-if="rowFilterRuleCount === 0" class="mt-4 text-xs text-amber-700 bg-amber-50/60 border border-dashed border-amber-200 rounded-xl px-4 py-5 text-center select-none">
+          校验已开启，但尚未配置任何过滤规则。
+        </div>
+
+        <div v-else class="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <!-- 用户例外：优先级最高，命中即忽略角色与默认规则 -->
+          <div class="rounded-xl border border-amber-100 bg-amber-50/30 p-3.5">
+            <div class="flex items-center justify-between">
+              <h4 class="text-[11px] font-bold text-amber-700 uppercase tracking-wider select-none">用户例外</h4>
+              <span class="text-[10px] text-amber-600 font-mono">{{ rowFilterUserGroups.length }}</span>
+            </div>
+            <div v-if="rowFilterUserGroups.length" class="mt-2.5 space-y-2.5">
+              <div v-for="group in rowFilterUserGroups" :key="group.key">
+                <div class="text-[11px] font-semibold text-gray-700">
+                  用户 #{{ group.key }}
+                  <span v-if="group.label" class="text-gray-500 font-normal">· {{ group.label }}</span>
+                </div>
+                <div class="mt-1 space-y-1">
+                  <code v-for="(condition, idx) in group.conditions" :key="idx" class="block rounded-md bg-white border border-amber-100 px-2 py-1.5 text-[11px] font-mono text-gray-700 break-all">{{ condition }}</code>
+                </div>
+              </div>
+            </div>
+            <p v-else class="mt-2.5 text-[11px] text-gray-400 italic select-none">无用户例外</p>
+            <p class="mt-2.5 text-[10px] text-gray-400 leading-relaxed select-none">命中即生效，不再叠加角色策略与默认规则。</p>
+          </div>
+
+          <!-- 角色策略 -->
+          <div class="rounded-xl border border-emerald-100 bg-emerald-50/30 p-3.5">
+            <div class="flex items-center justify-between">
+              <h4 class="text-[11px] font-bold text-emerald-700 uppercase tracking-wider select-none">角色策略</h4>
+              <span class="text-[10px] text-emerald-600 font-mono">{{ rowFilterRoleGroups.length }}</span>
+            </div>
+            <div v-if="rowFilterRoleGroups.length" class="mt-2.5 space-y-2.5">
+              <div v-for="group in rowFilterRoleGroups" :key="group.code">
+                <div class="text-[11px] font-semibold text-gray-700">
+                  角色 {{ group.code }}
+                  <span v-if="group.label" class="text-gray-500 font-normal">· {{ group.label }}</span>
+                </div>
+                <div class="mt-1 space-y-1">
+                  <code v-for="(condition, idx) in group.conditions" :key="idx" class="block rounded-md bg-white border border-emerald-100 px-2 py-1.5 text-[11px] font-mono text-gray-700 break-all">{{ condition }}</code>
+                </div>
+              </div>
+            </div>
+            <p v-else class="mt-2.5 text-[11px] text-gray-400 italic select-none">无角色策略</p>
+            <p class="mt-2.5 text-[10px] text-gray-400 leading-relaxed select-none">用户命中多个角色时按 OR 合并。</p>
+          </div>
+
+          <!-- 默认规则：用户例外和角色策略都没命中时生效 -->
+          <div class="rounded-xl border border-slate-200 bg-slate-50/40 p-3.5">
+            <div class="flex items-center justify-between">
+              <h4 class="text-[11px] font-bold text-slate-600 uppercase tracking-wider select-none">默认规则</h4>
+              <span class="text-[10px] text-slate-500 font-mono">{{ rowFilterDefaultRules.length }}</span>
+            </div>
+            <div v-if="rowFilterDefaultRules.length" class="mt-2.5 space-y-1">
+              <code v-for="(condition, idx) in rowFilterDefaultRules" :key="idx" class="block rounded-md bg-white border border-slate-200 px-2 py-1.5 text-[11px] font-mono text-gray-700 break-all">{{ condition }}</code>
+            </div>
+            <p v-else class="mt-2.5 text-[11px] text-gray-400 italic select-none">无默认规则</p>
+            <p class="mt-2.5 text-[10px] text-gray-400 leading-relaxed select-none">用户例外、角色策略都没命中时生效。</p>
           </div>
         </div>
       </div>

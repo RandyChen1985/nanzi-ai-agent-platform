@@ -17,6 +17,7 @@ import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
 import { createSseLineParser } from '../utils/chartRenderer'
 import { BUILTIN_USER_VARIABLES, collectExtraDataVariables } from '../utils/userVariables'
+import { parseRowFilterCondition } from '../utils/rowFilterCondition'
 import {
   CircleStackIcon,
   CpuChipIcon,
@@ -334,8 +335,13 @@ const appendBuilderCondition = (rule: any) => {
   }
   
   const condition = `${rule._builder_table}.${rule._builder_field} ${rule._builder_op} ${rule._builder_val}`
+  // 构建器里的是打开配置时从已有 condition 回填来的：再点 + 应当替换原条件，
+  // 否则会拼出 `A = 1 AND A = 1` 这种重复片段。
+  const replacing = Boolean(rule._builder_from_condition && rule.condition && rule.condition.trim())
   
-  if (rule.condition) {
+  if (replacing) {
+    rule.condition = condition
+  } else if (rule.condition) {
     rule.condition = `${rule.condition} AND ${condition}`
   } else {
     rule.condition = condition
@@ -346,8 +352,9 @@ const appendBuilderCondition = (rule: any) => {
   rule._builder_field = ''
   rule._builder_op = ''
   rule._builder_val = ''
+  rule._builder_from_condition = false
   
-  showToast('条件已追加到规则中', 'success')
+  showToast(replacing ? '已用编辑框内容替换原条件' : '条件已追加到规则中', 'success')
 }
 
 // 模拟后端校验API（实际中应该调用真实API）
@@ -499,7 +506,61 @@ const selectUserFromModal = (user: any) => {
 }
 
 
-const openPermConfigModal = (ds: any) => {
+/**
+ * 把已有规则的 condition 反向解析回「目标表 / 字段 / 操作符 / 过滤值」四个框。
+ *
+ * 依赖 datasetTables：下拉组件的 modelValue 只要在 options 里找不到就渲染成占位符，
+ * 所以表名或字段不在当前数据集内的条件一律跳过，否则会变成「看着是空白、其实是脏值」。
+ * 已经手动填过构建器的规则也不覆盖。
+ */
+const hydrateBuilderFromConditions = () => {
+  const tables = datasetTables.value || []
+  if (!tables.length) return
+
+  const columnIndex = new Map<string, Set<string>>()
+  tables.forEach((table: any) => {
+    const tableName = String(table?.physical_name || '')
+    if (!tableName) return
+    const columns = (table.columns || []).map((column: any) => String(column?.physical_name || ''))
+    columnIndex.set(tableName, new Set(columns))
+  })
+
+  let hydratedCount = 0
+  const applyRule = (rule: any) => {
+    if (!rule || typeof rule !== 'object') return
+    if (rule._builder_table || rule._builder_field || rule._builder_op || rule._builder_val) return
+
+    const parts = parseRowFilterCondition(rule.condition)
+    if (!parts) return
+    const columns = columnIndex.get(parts.table)
+    if (!columns || !columns.has(parts.field)) return
+
+    rule._builder_table = parts.table
+    rule._builder_field = parts.field
+    rule._builder_op = parts.op
+    rule._builder_val = parts.value
+    rule._builder_from_condition = true
+    hydratedCount += 1
+  }
+
+  const walkPolicyMap = (bucket: any) => {
+    if (!bucket || typeof bucket !== 'object') return
+    Object.values(bucket).forEach((rules: any) => {
+      if (Array.isArray(rules)) rules.forEach(applyRule)
+    })
+  }
+
+  walkPolicyMap(visualRules.value.user_overrides)
+  walkPolicyMap(visualRules.value.role_policies)
+  if (Array.isArray(visualRules.value.default_policy)) {
+    visualRules.value.default_policy.forEach(applyRule)
+  }
+
+  if (hydratedCount > 0) visualRules.value = { ...visualRules.value }
+}
+
+const openPermConfigModal = async (ds: any) => {
+  const datasetId = ds?.id
   configuringDataset.value = JSON.parse(JSON.stringify(ds))
   // Initialize default if missing
   if (!configuringDataset.value.row_filter_config) {
@@ -520,7 +581,11 @@ const openPermConfigModal = (ds: any) => {
   // Load data for selectors
   fetchRoles()
   fetchUsers()
-  fetchDatasetColumns(ds.id)
+  await fetchDatasetColumns(ds.id)
+
+  // 回填依赖 datasetTables，必须等表结构到位；期间用户关掉或切了别的数据集就不再回填
+  if (configuringDataset.value?.id !== datasetId) return
+  hydrateBuilderFromConditions()
 }
 
 const handleSavePermConfig = async () => {
@@ -2843,7 +2908,7 @@ onMounted(async () => {
                                   />
                                 </div>
                               </div>
-                              <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                              <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" :title="rule._builder_from_condition ? '用编辑框内容替换上方条件' : '追加条件'">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0h6"/></svg>
                               </button>
                               <button @click="rules.splice(idx, 1)" class="text-red-500 hover:text-red-700">
@@ -2977,7 +3042,7 @@ onMounted(async () => {
                                   </div>
                                 </div>
                               
-                                <button @click="appendBuilderCondition(rule)" class="bg-emerald-700 hover:bg-emerald-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                                <button @click="appendBuilderCondition(rule)" class="bg-emerald-700 hover:bg-emerald-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" :title="rule._builder_from_condition ? '用编辑框内容替换上方条件' : '追加条件'">
                                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
                                 </button>
                               </div>
@@ -3078,7 +3143,7 @@ onMounted(async () => {
                                     </div>
                                   </div>
                                 
-                                  <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                                  <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" :title="rule._builder_from_condition ? '用编辑框内容替换上方条件' : '追加条件'">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
                                   </button>
                                 </div>
@@ -3169,7 +3234,7 @@ onMounted(async () => {
                                </div>
                              </div>
                            
-                             <button @click="appendBuilderCondition(rule)" class="bg-slate-700 hover:bg-slate-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                             <button @click="appendBuilderCondition(rule)" class="bg-slate-700 hover:bg-slate-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" :title="rule._builder_from_condition ? '用编辑框内容替换上方条件' : '追加条件'">
                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
                              </button>
                            </div>
