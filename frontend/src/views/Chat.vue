@@ -118,7 +118,6 @@ const initChat = () => {
     const embedQuery = new URLSearchParams();
     if (String(route.query.preview || '') === '1') embedQuery.set('preview', '1');
     if (String(route.query.new || '') === '1') embedQuery.set('new', '1');
-    if (String(route.query.history || '') === '1') embedQuery.set('history', '1');
     const embedSearch = embedQuery.toString();
     iframeUrl.value = `/embed/chat${embedSearch ? `?${embedSearch}` : ''}`;
 
@@ -251,23 +250,9 @@ const handleMessage = (event: MessageEvent) => {
     }
 };
 
-/**
- * 宿主侧栏「查看全部会话」。
- *
- * 两种情况：
- * - 从别的页面点进来：URL 带 `history=1`，initChat 会把它透传给挂件，挂件自己展开；
- * - 已经在聊天页时再点：URL 没变、iframe 不会重建，只能靠这条事件通知挂件展开。
- */
-const OPEN_HISTORY_EVENT = 'portal:open-history';
-
-const handleOpenHistoryRequest = () => {
-    chatFrame.value?.contentWindow?.postMessage({ type: 'OPEN_HISTORY' }, window.location.origin);
-};
-
 onMounted(() => {
     window.addEventListener('message', handleMessage);
     window.addEventListener(SAVED_REPORT_OPEN_EVENT, handleSavedReportOpenEvent);
-    window.addEventListener(OPEN_HISTORY_EVENT, handleOpenHistoryRequest);
     initChat();
 });
 
@@ -295,7 +280,6 @@ watch(
 onUnmounted(() => {
     window.removeEventListener('message', handleMessage);
     window.removeEventListener(SAVED_REPORT_OPEN_EVENT, handleSavedReportOpenEvent);
-    window.removeEventListener(OPEN_HISTORY_EVENT, handleOpenHistoryRequest);
     clearTimeout(timeoutTimer);
 });
 </script>

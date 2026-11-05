@@ -104,14 +104,14 @@ def test_sidebar_renders_locked_hint_instead_of_navigating(sidebar: str) -> None
 def test_sidebar_lists_conversations_with_total_count(sidebar: str) -> None:
     assert "/api/v1/chat/history" in sidebar
     assert "USER_MODE_TASK_PAGE_SIZE" in sidebar
-    assert "查看全部会话" in sidebar
+    assert "任务（{{ taskTotal }}）" in sidebar
 
 
 def test_dashboard_switches_sidebar_by_mode(dashboard: str) -> None:
     assert "UserModeSidebar" in dashboard
     assert "isUserMode" in dashboard
-    # 用户模式固定 252，菜单文案更长；专业模式维持原来的折叠宽度
-    assert 'if (isUserMode.value) return "w-[252px]"' in dashboard
+    # 用户模式展开 252、收起 68；专业模式维持原来的折叠宽度
+    assert 'if (isUserMode.value) return isCollapsed.value ? "w-[68px]" : "w-[252px]"' in dashboard
     # 专业模式仍然渲染动态菜单
     assert "visibleNavNodes" in dashboard
 
@@ -174,9 +174,9 @@ def test_permission_filtering_runs_correctly() -> None:
     # 管理员才有系统管理；普通用户给满菜单码也不该出现
     assert payload["adminHasSystem"] is True
     assert payload["userHasSystem"] is False
-    # 专家组子项全无权限 → 整组丢弃；部分有权限 → 只留有的那个
-    assert payload["hasExpertsGroup"] is False
-    assert payload["partialExperts"] == ["skill"]
+    # 专家组在用户模式下不挂权限：零权限账号也能看到三个子项
+    assert payload["hasExpertsGroup"] is True
+    assert payload["partialExperts"] == ["expert", "skill", "connector"]
 
 
 def test_new_task_opens_a_blank_conversation_not_the_last_one() -> None:
@@ -353,7 +353,7 @@ def test_overview_item_does_not_prefix_match_every_dashboard_route() -> None:
     侧栏会同时出现「Token 消耗 + 系统概览」两条高亮。
     """
     sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
-    assert 'if (path === "/dashboard" || path === "/dashboard/") return route.path === "/dashboard"' in sidebar
+    assert 'if (target === "/dashboard" || target === "/dashboard/") return current === "/dashboard"' in sidebar
 
 
 def test_notification_panel_opens_to_the_right_inside_sidebar() -> None:
@@ -370,31 +370,6 @@ def test_workspace_page_uses_shared_hero_silhouette() -> None:
     assert "hero-surface" in page
 
 
-def test_open_history_actually_opens_the_sidebar() -> None:
-    """「查看全部会话」要真的打开历史侧栏。
-
-    原来只是 push('/dashboard/chat')：已经在聊天页时什么都不发生，
-    从别处跳过来侧栏也是关的。
-    """
-    dashboard = _read("frontend/src/views/Dashboard.vue")
-    chat = _read("frontend/src/views/Chat.vue")
-    embed = _read("frontend/src/views/EmbedChat.vue")
-
-    # 宿主：冷启动走 URL，已在聊天页走事件
-    assert 'query: { history: "1" }' in dashboard
-    assert "portal:open-history" in dashboard
-    assert "window.dispatchEvent(new CustomEvent(OPEN_HISTORY_EVENT))" in dashboard
-
-    # iframe 宿主：透传 + 事件转发
-    assert "embedQuery.set('history', '1')" in chat
-    assert "postMessage({ type: 'OPEN_HISTORY' }" in chat
-
-    # 挂件：两个入口都落到同一个状态
-    assert 'query.get("history") === "1"' in embed
-    assert 'case "OPEN_HISTORY":' in embed
-    assert "showHistorySidebar.value = true;" in embed
-
-
 def test_workspace_preview_reuses_chat_canvas() -> None:
     """预览必须复用聊天页的画布，不能退化成「新窗口打开原始响应」。
 
@@ -407,6 +382,12 @@ def test_workspace_preview_reuses_chat_canvas() -> None:
     assert "buildWorkspaceCanvasPayload" in page
     # 不能再走裸 window.open
     assert 'window.open(url, "_blank", "noopener")' not in page
+    # 必须经 useWorkspaceCanvas 解析 canvas:// 协议后再交给画布，
+    # 否则画布拿到的只是一串 `canvas://file?path=...`，什么都渲染不出来
+    assert "useWorkspaceCanvas" in page
+    assert "void handleOpenCanvas(buildWorkspaceCanvasPayload(" in page
+    assert ':data="canvasData"' in page
+    assert ':visible="canvasVisible"' in page
 
 
 def test_only_the_active_group_stays_expanded() -> None:
@@ -417,8 +398,12 @@ def test_only_the_active_group_stays_expanded() -> None:
     """
     sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
 
-    assert "const containsCurrent = item.children.some(" in sidebar
+    assert "const containsCurrent = item.children.some((child) => pathMatches(path, child.path))" in sidebar
     assert "expanded[item.key] = containsCurrent" in sidebar
+    # 「更多」里挂着指向 /dashboard 的「系统概览」：分组判断若按前缀匹配，
+    # 任意 /dashboard/* 都算命中，「更多」就永远展开。
+    assert "function pathMatches(current: string, target?: string): boolean" in sidebar
+    assert 'if (target === "/dashboard" || target === "/dashboard/") return current === "/dashboard"' in sidebar
 
 
 def test_professional_mode_defaults_to_dark_theme() -> None:
@@ -434,3 +419,142 @@ def test_professional_mode_defaults_to_dark_theme() -> None:
     assert 'setTheme("dark")' in ui_mode
     assert "else applyProModeDefaultTheme()" in ui_mode
     assert "applyProModeDefaultTheme()" in login
+
+
+def test_user_mode_sidebar_can_collapse() -> None:
+    """用户模式的侧栏要能真的收起，而不是只有原型里的一个箭头。
+
+    收起后：宽度 252→68、只留图标、任务列表与用户卡文字隐藏；
+    分组没有空间展开，点一下直接进第一个子项。
+    """
+    dashboard = _read("frontend/src/views/Dashboard.vue")
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert 'if (isUserMode.value) return isCollapsed.value ? "w-[68px]" : "w-[252px]"' in dashboard
+    assert ':collapsed="isCollapsed && !isMobile"' in dashboard
+    assert '@toggle-collapse="toggleSidebar"' in dashboard
+
+    assert "emit('toggle-collapse')" in sidebar
+    assert "if (props.collapsed) {" in sidebar
+    assert '<span v-if="!collapsed" class="min-w-0 flex-1 truncate">{{ item.label }}</span>' in sidebar
+    assert 'v-show="!collapsed && expanded[item.key] !== false"' in sidebar
+
+
+def test_collapsed_sidebar_keeps_a_way_back() -> None:
+    """收起后必须有展开入口。
+
+    折叠按钮自己在 `v-if="!collapsed"` 里，收起来就一起消失了；
+    没有别的入口（用户模式桌面把顶栏的折叠按钮也藏了），等于只能刷新页面才能回来。
+    """
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert 'title="展开侧栏"' in sidebar
+    assert 'aria-label="展开侧栏"' in sidebar
+
+
+def test_task_list_pages_in_eight_and_loads_on_scroll() -> None:
+    """任务列表首屏 8 条，滚到底部自动补一页；不再跳去聊天页看全部。"""
+    menu = _read("frontend/src/constants/userModeMenu.ts")
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert "USER_MODE_TASK_PAGE_SIZE = 8" in menu
+    assert "const loadMoreTasks = async () =>" in sidebar
+    assert '@scroll.passive="onScroll"' in sidebar
+    assert "el.scrollTop + el.clientHeight >= el.scrollHeight - 48" in sidebar
+    # 「查看全部会话」跳转已移除
+    assert "查看全部会话" not in sidebar
+    assert "已加载全部会话" in sidebar
+
+
+def test_workspace_rows_open_on_double_click() -> None:
+    """双击行/卡片打开：目录进去、文件开预览。
+
+    列表视图里文件名对文件是不可点的，「⋯」菜单又要点两层，
+    双击是最直接的「打开」手势。
+    """
+    page = _read("frontend/src/views/WorkspaceManage.vue")
+
+    assert 'const openItem = (item: FsItem) => {' in page
+    assert '@dblclick="openItem(item)"' in page
+    assert '@dblclick.stop="openItem(item)"' in page
+    assert "if (item.is_dir) {" in page
+
+
+def test_switching_to_user_mode_falls_back_when_page_is_unreachable() -> None:
+    """切到用户模式时，若当前页不在用户菜单里，回落到新建任务页。
+
+    典型场景：在专业模式的「用户管理」页切模式，用户模式根本没有那个入口，
+    停在原页面会让侧栏里「找不到自己」。
+    """
+    menu = _read("frontend/src/constants/userModeMenu.ts")
+    dashboard = _read("frontend/src/views/Dashboard.vue")
+
+    assert "export function collectUserModePaths(" in menu
+    assert "collectUserModePaths()" in dashboard
+    assert "if (!stillReachable) router.replace(\"/dashboard/chat\");" in dashboard
+
+
+def test_task_list_has_keyword_search() -> None:
+    """任务列表要能搜索。
+
+    滚动加载解决的是"翻得到"，解决不了"找得到"——839 条会话靠滑是不现实的。
+    搜索复用 /chat/history 的 keyword 参数，与分页、滚动加载共用同一条加载链路。
+    """
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert "const taskSearchOpen = ref(false)" in sidebar
+    assert "const taskKeyword = ref" in sidebar
+    assert "if (keyword) params.keyword = keyword" in sidebar
+    assert "没有匹配的任务" in sidebar
+
+
+def test_workspace_page_is_left_aligned() -> None:
+    """工作空间内容靠左，不居中。
+
+    居中（mx-auto）在侧栏收起成 68px 后会把富余宽度全堆到左侧，
+    表现为"折叠之后多出一大块空白"。
+    """
+    page = _read("frontend/src/views/WorkspaceManage.vue")
+
+    assert 'class="relative flex h-full w-full max-w-[1200px] flex-col' in page
+    assert "relative mx-auto flex h-full w-full max-w-[1200px]" not in page
+
+
+def test_experts_group_is_open_in_user_mode_only() -> None:
+    """专家/技能/连接器在用户模式放开，专业模式仍按 menu:* 控制。
+
+    三者的路由 meta.perm 保留（专业模式用），另加 `userModeAllowed`；
+    守卫只在「用户模式 + 该标记」时跳过权限检查。
+    """
+    menu = _read("frontend/src/constants/userModeMenu.ts")
+    router_source = _read("frontend/src/router/index.ts")
+
+    experts_block = menu.split('key: "experts"', 1)[1].split('key: "tasks"', 1)[0]
+    assert "permission" not in experts_block
+
+    assert "userModeAllowed: true" in router_source
+    assert router_source.count("userModeAllowed: true") == 3
+    assert "const userModePass = Boolean(to.meta.userModeAllowed) && resolveInitialUiMode() === 'user'" in router_source
+    # 专业模式的口径没有变：perm 还在
+    assert "perm: 'menu:agent_management', userModeAllowed: true" in router_source
+    assert "perm: 'menu:skills_management', userModeAllowed: true" in router_source
+    assert "perm: 'menu:mcp_management', userModeAllowed: true" in router_source
+
+
+def test_submenu_items_carry_icons() -> None:
+    """子菜单项要有图标。
+
+    缩进从 41px 收到 30px 给图标留位，图标 15px；没有图标时这一级只剩缩进，
+    在长列表里很难一眼分辨「这是专家还是技能」。
+    """
+    menu = _read("frontend/src/constants/userModeMenu.ts")
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    # 三个专家子项 + 更多里的四项
+    for key in ('"expert"', '"skill"', '"connector"', '"workbench"', '"token"', '"overview"', '"personal"'):
+        segment = menu.split(f"key: {key}", 1)[1].split("}", 1)[0]
+        assert "icon:" in segment, f"{key} 缺少图标"
+
+    assert 'v-if="child.icon"' in sidebar
+    assert 'class="h-[15px] w-[15px] flex-shrink-0 opacity-85"' in sidebar
+    assert "pb-1 pl-[30px]" in sidebar

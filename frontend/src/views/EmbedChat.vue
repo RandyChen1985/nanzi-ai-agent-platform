@@ -9916,11 +9916,6 @@ const handlePostMessage = (event: MessageEvent) => {
         handleQuickQuestion(data.command);
       }
       break;
-    case "OPEN_HISTORY":
-      // 宿主要求展开会话历史（用户模式侧栏的「查看全部会话」）。
-      // 与 URL `history=1` 走同一状态，不重载挂件、不丢当前对话。
-      showHistorySidebar.value = true;
-      break;
     case "OPEN_ACCOUNT":
       // 宿主（网页面板移动端右侧把手）要求切到「我的账号」。与「更多 → 我的账号」
       // 走同一跳转：/embed/personal 与本页同 layout、同为 public，iframe 内 SPA 切换即可，
@@ -13477,11 +13472,6 @@ onMounted(() => {
   if (query.get("preview") === "1") {
     isPreviewSession = true;
     console.log("[LifeCycle] Preview mode: clean temporary conversation, no resume.");
-  }
-  // 用户模式「查看全部会话」：`history=1` = 进来就把左侧会话历史展开。
-  // 放在 restoreHistorySidebarPreference() 之后，覆盖「上次是关着」的本地偏好。
-  if (query.get("history") === "1") {
-    showHistorySidebar.value = true;
   }
   // 用户模式「新建任务」：`new=1` = 跳过续接、开一条正式的空白会话。
   // 与 preview 同时出现时以 preview 为准（预览不落盘，优先级更高）。

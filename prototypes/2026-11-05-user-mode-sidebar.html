@@ -87,12 +87,13 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:
 .nav-chevron{margin-left:auto;transition:transform .18s;color:var(--ink-3)}
 .nav-item.open .nav-chevron{transform:rotate(180deg)}
 
-.sub-nav{padding:2px 0 5px 41px;display:flex;flex-direction:column;gap:1px}
+.sub-nav{padding:2px 0 5px 30px;display:flex;flex-direction:column;gap:1px}
 .sub-nav[hidden]{display:none}
 .nav-sub{
-  height:34px;border:0;background:transparent;border-radius:9px;text-align:left;padding:0 10px;
+  height:34px;border:0;background:transparent;border-radius:9px;text-align:left;padding:0 8px;
   font-size:14px;color:var(--ink-2);cursor:pointer;display:flex;align-items:center;gap:8px;width:100%;
 }
+.ic-sub{width:15px;height:15px;flex:0 0 15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
 .nav-sub:hover{background:var(--hover);color:var(--ink)}
 .nav-sub.active{background:var(--sel);color:var(--ink);font-weight:650;box-shadow:inset 2px 0 0 var(--brand)}
 .sub-sep{height:1px;background:var(--line);margin:6px 8px}
@@ -126,6 +127,22 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:
 }
 .task-item:hover .task-menu{opacity:1}
 .task-menu:hover{background:#e6e7ea;color:var(--ink)}
+.task-head .sb-icon-btn{width:22px;height:22px;margin-left:auto}
+.task-search{
+  display:flex;align-items:center;gap:6px;flex:1;min-width:0;border:1px solid var(--line-2);
+  border-radius:8px;padding:3px 8px;background:#fff;color:var(--ink-3);
+}
+.task-search[hidden]{display:none}
+.task-search input{
+  flex:1;min-width:0;border:0;outline:none;background:transparent;font-size:12.5px;
+  font-family:inherit;color:var(--ink);padding:0;
+}
+.task-search input::placeholder{color:#b3b8c0}
+/* type=search 自带一个原生清除按钮，会和右侧的关闭按钮并排出现两个 × */
+.task-search input::-webkit-search-cancel-button,
+.task-search input::-webkit-search-decoration{-webkit-appearance:none;appearance:none}
+.ic-sm{width:14px;height:14px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
 .task-more{
   padding:8px 10px 4px;font-size:12.5px;color:var(--ink-3);cursor:pointer;border:0;background:none;
   text-align:left;border-radius:8px;
@@ -548,9 +565,18 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff
           <svg class="ic-sm nav-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
         </button>
         <div class="sub-nav" id="sub-experts" hidden>
-          <button class="nav-sub" data-nav="expert" type="button">专家</button>
-          <button class="nav-sub" data-nav="skill" type="button">技能</button>
-          <button class="nav-sub" data-nav="connector" type="button">连接器</button>
+          <button class="nav-sub" data-nav="expert" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M12 3.4l1.9 4.9 4.9 1.9-4.9 1.9L12 17l-1.9-4.9L5.2 10.2l4.9-1.9z"/></svg>
+            <span>专家</span>
+          </button>
+          <button class="nav-sub" data-nav="skill" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M9.5 4.5h5v2.6a1.9 1.9 0 1 0 0 3.8v2.6h-2.6a1.9 1.9 0 1 0-3.8 0H5.5v-5h2.6a1.9 1.9 0 1 0 1.4-3.2z"/><path d="M14.5 13.5h2.6a1.9 1.9 0 1 1 1.4 3.2v2.8h-4"/></svg>
+            <span>技能</span>
+          </button>
+          <button class="nav-sub" data-nav="connector" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M10 13.5a4 4 0 0 0 5.7 0l2.6-2.6a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10.5a4 4 0 0 0-5.7 0l-2.6 2.6a4 4 0 0 0 5.7 5.7l1.5-1.5"/></svg>
+            <span>连接器</span>
+          </button>
         </div>
 
         <button class="nav-item" data-nav="tasks" type="button">
@@ -574,18 +600,40 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff
           <svg class="ic-sm nav-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
         </button>
         <div class="sub-nav" id="sub-more" hidden>
-          <button class="nav-sub" data-nav="workbench" type="button">我的工作台</button>
-          <button class="nav-sub" data-nav="token" type="button">Token 消耗</button>
-          <button class="nav-sub" data-nav="overview" type="button">系统概览</button>
-          <button class="nav-sub" data-nav="personal" type="button">个人中心</button>
+          <button class="nav-sub" data-nav="workbench" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17"/><path d="M9.5 9.5V19.5"/></svg>
+            <span>我的工作台</span>
+          </button>
+          <button class="nav-sub" data-nav="token" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15l4-4 3 3 4-5"/></svg>
+            <span>Token 消耗</span>
+          </button>
+          <button class="nav-sub" data-nav="overview" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 12l3.5-2"/><path d="M7.5 16.5h9"/></svg>
+            <span>系统概览</span>
+          </button>
+          <button class="nav-sub" data-nav="personal" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.4"/><path d="M5.2 20a6.8 6.8 0 0 1 13.6 0"/></svg>
+            <span>个人中心</span>
+          </button>
           <div class="sub-sep"></div>
-          <button class="nav-sub mode-jump" data-nav="to-pro" type="button">切换到专业模式</button>
+          <button class="nav-sub mode-jump" data-nav="to-pro" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M8 7h8l-3-3M16 17H8l3 3"/></svg>
+            <span>切换到专业模式</span>
+          </button>
         </div>
       </nav>
 
       <div class="task-block">
         <div class="task-head">
-          <span>任务（<span id="taskCount">12</span>）</span>
+          <span id="taskTitle">任务（<span id="taskCount">839</span>）</span>
+          <label class="task-search" id="taskSearchWrap" hidden>
+            <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+            <input id="taskSearchInput" type="search" placeholder="搜索任务" autocomplete="off" />
+          </label>
+          <button class="sb-icon-btn" id="taskSearchToggle" type="button" title="搜索任务" aria-label="搜索任务">
+            <svg class="ic-sm" id="taskSearchIcon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+          </button>
         </div>
         <ul class="task-list" id="taskList">
           <li class="task-item" data-conv="c1">
@@ -631,7 +679,7 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff
             </button>
           </li>
         </ul>
-        <button class="task-more" id="taskMore" type="button">查看全部会话（12）</button>
+        <button class="task-more" id="taskMore" type="button">滚到底部自动加载更多…</button>
       </div>
       </div>
 
@@ -1383,7 +1431,7 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff
     <div class="note-grid">
       <div class="note-card">
         <h3>1. 菜单写死，权限决定「置灰」还是「隐藏」</h3>
-        <p>新增 <code>userModeMenu.ts</code> 常量数组（不请求 nav 接口）。<b>知识库</b>没权限时保留位置并置灰，点击提示联系管理员（用户能知道有这么个能力）；其余入口没权限直接不渲染。<b>工作空间</b>按用户自己的目录，不需要权限。</p>
+        <p>新增 <code>userModeMenu.ts</code> 常量数组（不请求 nav 接口）。<b>知识库</b>没权限时保留位置并置灰，点击提示联系管理员（用户能知道有这么个能力）；其余入口没权限直接不渲染。<b>工作空间</b>按用户自己的目录，不需要权限。<b>专家 / 技能 / 连接器</b>在用户模式下不挂菜单权限（浏览性质，数据边界在页面内），专业模式仍按 menu:* 控制。</p>
       </div>
       <div class="note-card">
         <h3>2. 模式存 Redis，默认值写死</h3>
@@ -1844,7 +1892,55 @@ table.table{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff
   });
 
   document.getElementById('taskMore').addEventListener('click', function () {
-    toast('打开完整会话历史（原型占位）');
+    toast('滚到底部自动加载更多（原型占位）');
+  });
+
+  // 任务搜索：标题与输入框互斥，输入即过滤当前列表
+  var taskTitleEl = document.getElementById('taskTitle');
+  var taskSearchWrap = document.getElementById('taskSearchWrap');
+  var taskSearchInput = document.getElementById('taskSearchInput');
+  var taskSearchToggle = document.getElementById('taskSearchToggle');
+  var taskSearchIcon = document.getElementById('taskSearchIcon');
+  var taskMoreBtn = document.getElementById('taskMore');
+
+  function applyTaskFilter() {
+    var kw = (taskSearchInput.value || '').trim().toLowerCase();
+    var shown = 0;
+    document.querySelectorAll('#taskList .task-item').forEach(function (li) {
+      var title = li.querySelector('.task-title');
+      var text = title ? title.textContent.toLowerCase() : '';
+      var hit = !kw || text.indexOf(kw) >= 0;
+      li.style.display = hit ? '' : 'none';
+      if (hit) shown += 1;
+    });
+    // 搜索是本地过滤、不是分页，所以这时不显示"加载更多"
+    if (taskMoreBtn) taskMoreBtn.style.display = kw ? 'none' : '';
+    taskSearchInput.title = kw ? '匹配 ' + shown + ' 条' : '';
+  }
+
+  function closeTaskSearch() {
+    taskSearchWrap.hidden = true;
+    taskSearchInput.value = '';
+    taskTitleEl.hidden = false;
+    document.querySelectorAll('#taskList .task-item').forEach(function (li) { li.style.display = ''; });
+    if (taskMoreBtn) taskMoreBtn.style.display = '';
+    taskSearchIcon.innerHTML = '<circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/>';
+  }
+
+  taskSearchToggle.addEventListener('click', function () {
+    if (!taskSearchWrap.hidden) {
+      closeTaskSearch();
+      return;
+    }
+    taskSearchWrap.hidden = false;
+    taskTitleEl.hidden = true;
+    taskSearchIcon.innerHTML = '<path d="M6 6l12 12M18 6L6 18"/>';
+    taskSearchInput.focus();
+  });
+
+  taskSearchInput.addEventListener('input', applyTaskFilter);
+  taskSearchInput.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') closeTaskSearch();
   });
 
   userStage.addEventListener('click', function (ev) {

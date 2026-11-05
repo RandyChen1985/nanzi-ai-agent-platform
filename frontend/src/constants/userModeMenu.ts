@@ -33,6 +33,8 @@ export interface UserModeMenuChild {
   key: string
   label: string
   path: string
+  /** 子项图标（menuIcons 的 key）。有图标时缩进会相应收窄一点 */
+  icon?: UserModeIconKey
   /** 缺省 = 无需权限 */
   permission?: string
   onDenied?: "lock" | "hide"
@@ -85,26 +87,14 @@ export const USER_MODE_MENU: readonly UserModeMenuItem[] = [
     icon: "agent_mgmt",
     kind: "group",
     expandOpensFirst: true,
+    // 这三项在用户模式下不挂菜单权限：它们是浏览性质（有哪些专家 / 技能 / 连接器），
+    // 真正的数据边界在各个页面的资源级过滤上。专业模式仍按 menu:* 控制，
+    // 由路由的 `meta.userModeAllowed` 在守卫里区分——见 router/index.ts。
     children: [
-      {
-        key: "expert",
-        label: "专家",
-        path: "/dashboard/agent-management",
-        permission: "menu:agent_management",
-      },
-      {
-        key: "skill",
-        label: "技能",
-        path: "/dashboard/skills",
-        permission: "menu:skills_management",
-      },
-      {
-        key: "connector",
-        label: "连接器",
-        // 连接器面向用户，打开 MCP 工具集页；MCP 服务台（/dashboard/mcp-service）留给专业模式
-        path: "/dashboard/mcp",
-        permission: "menu:mcp_service",
-      },
+      { key: "expert", label: "专家", icon: "agent_mgmt", path: "/dashboard/agent-management" },
+      { key: "skill", label: "技能", icon: "skills", path: "/dashboard/skills" },
+      // 连接器面向用户，打开 MCP 工具集页；MCP 服务台（/dashboard/mcp-service）留给专业模式
+      { key: "connector", label: "连接器", icon: "link", path: "/dashboard/mcp" },
     ],
   },
   {
@@ -139,22 +129,24 @@ export const USER_MODE_MENU: readonly UserModeMenuItem[] = [
     icon: "widget",
     kind: "group",
     children: [
-      { key: "workbench", label: "我的工作台", path: "/dashboard/workbench" },
+      { key: "workbench", label: "我的工作台", icon: "widget", path: "/dashboard/workbench" },
       {
         key: "token",
         label: "Token 消耗",
+        icon: "token_stats",
         path: "/dashboard/token-stats",
         permission: "menu:token_stats",
       },
       {
         key: "overview",
         label: "系统概览",
+        icon: "dashboard",
         // 概览页本身要 menu:dashboard：没这个权限的账号点了只会被守卫弹回来，
         // 所以按 hide 处理，不在这里露出来。
         path: "/dashboard",
         permission: "menu:dashboard",
       },
-      { key: "personal", label: "个人中心", path: "/dashboard/personal" },
+      { key: "personal", label: "个人中心", icon: "user_circle", path: "/dashboard/personal" },
     ],
   },
 ]
@@ -212,8 +204,25 @@ export function resolveUserModeMenu(
   return resolved
 }
 
-/** 侧栏「任务（n）」列表一次显示多少条 */
-export const USER_MODE_TASK_PAGE_SIZE = 6
+/** 侧栏「任务（n）」每页条数：首屏 8 条，滚到底部自动再拉一页 */
+export const USER_MODE_TASK_PAGE_SIZE = 8
 
 /** 「更多 → 切换到专业模式」的固定 key，供组件 emit */
 export const USER_MODE_SWITCH_MODE_KEY = "switch-mode"
+
+
+/**
+ * 用户模式能到达的全部路径（一级 + 子项）。
+ *
+ * 用来判断「切到用户模式时，当前页面还在不在新菜单里」——比如从专业模式的
+ * 用户管理页切过来，用户模式根本没有那个入口，应该回落到新建任务页而不是
+ * 停在一个「侧栏里找不到自己」的页面上。
+ */
+export function collectUserModePaths(menu: readonly UserModeMenuItem[] = USER_MODE_MENU): string[] {
+  const paths: string[] = []
+  for (const item of menu) {
+    if (item.path) paths.push(item.path)
+    for (const child of item.children || []) paths.push(child.path)
+  }
+  return paths
+}

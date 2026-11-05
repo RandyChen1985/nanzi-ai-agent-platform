@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { getSnapshotLandingPath } from '../composables/useNavigation'
-import { getCachedUiMode } from '../composables/useUiMode'
+import { getCachedUiMode, resolveInitialUiMode } from '../composables/useUiMode'
 
 // 这四个页面此前是**静态** import，等于把整套管理后台（Dashboard 及其依赖）打进
 // 首屏主包——第三方站点嵌入的 `/embed/*` 挂件也得先下载它。改成路由级懒加载后，
@@ -196,7 +196,9 @@ const router = createRouter({
           path: 'agent-management',
           name: 'AgentManagement',
           component: () => import('../views/AgentManagement.vue'),
-          meta: { perm: 'menu:agent_management', title: '智能体中心' }
+          // userModeAllowed：用户模式下跳过这个 perm（三项是浏览性质，数据边界在页面内）；
+          // 专业模式仍按 menu:* 控制。见守卫里的注释。
+          meta: { perm: 'menu:agent_management', userModeAllowed: true, title: '智能体中心' }
         },
         {
           path: 'scenario-templates',
@@ -258,13 +260,13 @@ const router = createRouter({
           path: 'skills',
           name: 'SkillsManagement',
           component: () => import('../views/SkillsManagement.vue'),
-          meta: { perm: 'menu:skills_management', title: '技能工作台' }
+          meta: { perm: 'menu:skills_management', userModeAllowed: true, title: '技能工作台' }
         },
         {
           path: 'mcp',
           name: 'McpManagement',
           component: () => import('../views/McpManagement.vue'),
-          meta: { perm: 'menu:mcp_management', title: 'MCP 工具集' }
+          meta: { perm: 'menu:mcp_management', userModeAllowed: true, title: 'MCP 工具集' }
         },
         {
           path: 'mcp-service',
@@ -351,7 +353,11 @@ router.beforeEach((to: any, _from: any, next: any) => {
 
       // 2. 缺目标页权限时落到当前用户实际可见的落地页，避免误送无权限页
       const requiredPerm = to.meta.perm
-      if (requiredPerm && !userMenus.includes(requiredPerm)) {
+      // 用户模式下，标注 userModeAllowed 的页面（专家 / 技能 / 连接器）不再要求菜单权限：
+      // 这三个入口是浏览性质，能列哪些数据由各自接口的资源级过滤决定。
+      // 专业模式维持原有口径——没权限就是进不去。
+      const userModePass = Boolean(to.meta.userModeAllowed) && resolveInitialUiMode() === 'user'
+      if (requiredPerm && !userMenus.includes(requiredPerm) && !userModePass) {
         console.warn(`[Guard] Access denied to ${to.path}. Missing ${requiredPerm}`)
         const fallbackPath = resolveFallbackPath()
         if (fallbackPath === to.path) {

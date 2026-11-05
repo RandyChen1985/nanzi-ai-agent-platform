@@ -14,6 +14,7 @@ import SidebarMenuLink from "../components/menu/SidebarMenuLink.vue";
 import { useNavigation, type NavNode } from "../composables/useNavigation";
 import UserModeSidebar from "../components/layout/UserModeSidebar.vue";
 import { useUiMode } from "../composables/useUiMode";
+import { collectUserModePaths } from "../constants/userModeMenu";
 
 const router = useRouter();
 const route = useRoute();
@@ -597,7 +598,8 @@ const sidebarWidthClass = computed(() => {
   if (isMobile.value) {
     return showMobileSidebar.value ? "translate-x-0 w-64" : "-translate-x-full w-64";
   }
-  if (isUserMode.value) return "w-[252px]";
+  // 用户模式：展开 252（菜单文案更长），收起 68（只剩图标）
+  if (isUserMode.value) return isCollapsed.value ? "w-[68px]" : "w-[252px]";
   return isCollapsed.value ? "w-20" : "w-[208px]";
 });
 
@@ -642,27 +644,26 @@ const handleUserModeOpenConversation = (item: { conversation_id?: string | null 
   router.push({ path: "/dashboard/chat", query: { conversation_id: String(item.conversation_id) } });
 };
 
-/**
- * 「查看全部会话」= 进聊天页并展开左侧历史侧栏。
- *
- * 只 push 到 /dashboard/chat 是不够的：已经在聊天页时什么都不会发生，
- * 从别处跳过来也是关着的。两条路一起走：
- * - URL 带 `history=1`，负责冷启动（Chat.vue 会透传给挂件）；
- * - 派发事件，负责「已经在聊天页」这种不重建 iframe 的情况。
- */
-const OPEN_HISTORY_EVENT = "portal:open-history";
-
-const handleUserModeOpenHistory = () => {
-  closeMobileSidebarIfNeeded();
-  window.dispatchEvent(new CustomEvent(OPEN_HISTORY_EVENT));
-  if (route.name === "AIChat") return;
-  router.push({ path: "/dashboard/chat", query: { history: "1" } });
-};
-
 const handleUserModeOpenPersonal = () => {
   closeMobileSidebarIfNeeded();
   router.push("/dashboard/personal");
 };
+
+/**
+ * 切到用户模式后，如果当前页面不在用户模式菜单里（多半是从专业模式的
+ * 「用户管理 / 系统配置」这类页面切过来的），回落到新建任务页。
+ * 否则用户会停在一个侧栏里根本没有入口的页面上，不知道该往哪走。
+ */
+watch(isUserMode, (userMode) => {
+  if (!userMode) return;
+  const paths = collectUserModePaths();
+  const stillReachable = paths.some((path) =>
+    path === "/dashboard"
+      ? route.path === "/dashboard"
+      : route.path === path || route.path.startsWith(`${path}/`),
+  );
+  if (!stillReachable) router.replace("/dashboard/chat");
+});
 
 const handleUserModeToggleTheme = () => {
   toggleTheme();
@@ -718,6 +719,7 @@ onMounted(() => {
         v-if="isUserMode"
         :light-theme="theme === 'light'"
         :mobile="isMobile"
+        :collapsed="isCollapsed && !isMobile"
         :user-id="String(userInfo.id || '')"
         :user-name="userInfo.user_name"
         :real-name="userInfo.real_name || userInfo.user_name"
@@ -728,11 +730,11 @@ onMounted(() => {
         @navigate="handleUserModeNavigate"
         @new-chat="handleUserModeNewChat"
         @open-conversation="handleUserModeOpenConversation"
-        @open-history="handleUserModeOpenHistory"
         @open-personal="handleUserModeOpenPersonal"
         @switch-mode="handleUserModeSwitchMode"
         @toggle-theme="handleUserModeToggleTheme"
         @logout="handleUserModeLogout"
+        @toggle-collapse="toggleSidebar"
         @toast="(message: string) => showToast(message, 'warning')"
       />
 

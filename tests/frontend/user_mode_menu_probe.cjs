@@ -90,20 +90,20 @@ const partial = resolveUserModeMenu({
 out.partialExperts = childKeys(partial.find((i) => i.key === "experts") || {});
 
 const expect = {
-  limited: ["new-chat", "tasks", "library", "workspace", "more"],
+  limited: ["new-chat", "experts", "tasks", "library", "workspace", "more"],
   limitedMore: ["workbench", "personal"],
   libraryLocked: false,
-  noKb: ["new-chat", "tasks", "library", "workspace", "more"],
+  noKb: ["new-chat", "experts", "tasks", "library", "workspace", "more"],
   noKbLibraryLocked: true,
-  nothing: ["tasks", "library", "workspace", "more"],
+  nothing: ["experts", "tasks", "library", "workspace", "more"],
   tasksAlwaysVisible: true,
   admin: ["new-chat", "experts", "tasks", "library", "workspace", "more"],
   adminMore: ["workbench", "token", "overview", "personal"],
   adminHasSystem: true,
   userAllMenusMore: ["workbench", "token", "personal"],
   userHasSystem: false,
-  hasExpertsGroup: false,
-  partialExperts: ["skill"],
+  hasExpertsGroup: true,
+  partialExperts: ["expert", "skill", "connector"],
 };
 
 const problems = [];

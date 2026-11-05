@@ -22,7 +22,7 @@
 -->
 <template>
   <div
-    class="relative mx-auto flex h-full w-full max-w-[1200px] flex-col gap-3 px-4 py-4 sm:px-6 sm:py-5"
+    class="relative flex h-full w-full max-w-[1200px] flex-col gap-3 px-4 py-4 sm:px-6 sm:py-5"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
@@ -277,7 +277,9 @@
             v-for="item in visibleItems"
             v-else
             :key="item.path"
-            class="border-t border-gray-100 transition-colors hover:bg-gray-50/70 dark:border-gray-800 dark:hover:bg-gray-800/50"
+            class="cursor-default select-none border-t border-gray-100 transition-colors hover:bg-gray-50/70 dark:border-gray-800 dark:hover:bg-gray-800/50"
+            :title="item.is_dir ? '双击进入目录' : '双击打开预览'"
+            @dblclick="openItem(item)"
           >
             <td class="px-2 py-2">
               <input
@@ -340,6 +342,7 @@
           :key="item.path"
           class="group flex flex-col gap-1 rounded-xl border border-gray-200 bg-white p-3 transition-colors hover:border-primary/40 dark:border-gray-800 dark:bg-gray-800/60"
           :class="selectedPaths.has(item.path) ? 'ring-1 ring-primary' : ''"
+          @dblclick.stop="openItem(item)"
         >
           <div class="flex items-start justify-between gap-1">
             <button
@@ -409,11 +412,11 @@
     <!-- 预览复用聊天页的 Canvas：markdown 渲染 / 代码高亮 / CSV 透视 / 文档查看器全都在这里，
          自己再写一套预览只会出现「同一个文件两种样子」 -->
     <ChatCanvas
-      v-model:pinned="previewPinned"
-      :visible="Boolean(previewTarget)"
-      :data="previewTarget"
+      v-model:pinned="canvasPinned"
+      :visible="canvasVisible"
+      :data="canvasData"
       dock-side="right"
-      @close="closePreview"
+      @close="closeCanvas"
     />
 
     <ConfirmModal
@@ -437,7 +440,7 @@ import ConfirmModal from "@/components/ConfirmModal.vue"
 import WorkspaceRowActions from "@/components/workspace/WorkspaceRowActions.vue"
 import HeroSilhouette from "@/components/common/HeroSilhouette.vue"
 import ChatCanvas from "@/components/embed/ChatCanvas.vue"
-import type { CanvasPanelData } from "@/types/canvas"
+import { useWorkspaceCanvas } from "@/composables/chat/useWorkspaceCanvas"
 import { useToast } from "@/composables/useToast"
 import { useWorkspaceUploadQueue } from "@/composables/useWorkspaceUploadQueue"
 import { isExtractableArchive } from "@/utils/workspaceActionEntries"
@@ -452,6 +455,7 @@ import {
   purgeWorkspaceEntry,
   renameWorkspaceEntry,
   buildWorkspaceCanvasPayload,
+  resolveFsPreviewUrl,
   restoreWorkspaceEntry,
 } from "@/utils/workspaceFilePreview"
 
@@ -738,23 +742,42 @@ const onDocumentClick = (event: MouseEvent) => {
 }
 
 /* ---------------- 文件操作 ---------------- */
-const previewTarget = ref<CanvasPanelData | null>(null)
-const previewPinned = ref(true)
+/**
+ * 预览走聊天页同一套画布。
+ *
+ * 关键：`buildWorkspaceCanvasPayload()` 产出的是 `canvas://file?path=...` 这种**协议字符串**，
+ * 必须交给 `useWorkspaceCanvas.handleOpenCanvas()` 解析成真实内容（文本/图片/PDF/Office 分流、
+ * CSV 透视、旧版 .ppt 降级为下载），再把结果喂给 `ChatCanvas` 渲染。
+ * 直接把 payload 塞进 canvas，画布拿到的只是一串 `canvas://`，所以什么都显示不出来。
+ */
+const {
+  canvasVisible,
+  canvasPinned,
+  canvasData,
+  handleOpenCanvas,
+  closeCanvas,
+} = useWorkspaceCanvas({
+  // 独立页没有会话上下文：预览接口的 conversation_id 是可选参数
+  getConversationId: () => "",
+  resolveFileUrl: (url: string) => resolveFsPreviewUrl(url, null),
+  showToast,
+})
 
-const closePreview = () => {
-  previewTarget.value = null
+/** 双击/单击送达的统一入口：目录进去，文件开预览 */
+const openItem = (item: FsItem) => {
+  if (item.is_dir) {
+    navigate(item.path)
+    return
+  }
+  handlePreview(item)
 }
 
-/**
- * 预览走聊天页同一套画布（ChatCanvas）：markdown 渲染、代码高亮、CSV 透视、Office 文档查看器
- * 都在那里。之前用新窗口打开 `/fs/preview`，文本只会显示成一坨纯文本、Office 直接触发下载。
- */
 const handlePreview = (item: Pick<FsItem, "path" | "name">) => {
   if (!canPreviewWorkspaceFile(item.name)) {
     showToast("该格式不支持预览，请下载后查看", "warning")
     return
   }
-  previewTarget.value = buildWorkspaceCanvasPayload(item.path, item.name) as CanvasPanelData
+  void handleOpenCanvas(buildWorkspaceCanvasPayload(item.path, item.name))
 }
 
 const handleDownload = (item: FsItem) => {
