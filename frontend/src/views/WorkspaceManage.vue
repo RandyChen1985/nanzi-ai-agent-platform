@@ -22,8 +22,10 @@
   和聊天布局强耦合，强行页面化会破坏现有功能（抽屉文件保持零改动）。
 -->
 <template>
+  <!-- 间距只由 Dashboard 的 main 统一给（与知识库同口径）：这里再叠加一层
+       px-4/py-4，会让工作空间的左右、上下留白比知识库明显大一截。 -->
   <div
-    class="relative flex h-full w-full max-w-[1200px] flex-col gap-3 px-4 py-4 sm:px-6 sm:py-5"
+    class="relative flex h-full w-full max-w-[1200px] flex-col gap-3"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
