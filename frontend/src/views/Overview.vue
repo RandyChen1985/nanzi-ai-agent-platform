@@ -18,20 +18,16 @@
           {{ userInfo?.role === "admin" ? "系统概览" : "我的概览" }}
         </h1>
         <div class="overview-toolbar flex shrink-0 items-center gap-1">
-          <label class="sr-only" for="overview-period">统计周期</label>
-          <select
-            id="overview-period"
-            v-model="period"
-            class="overview-period-select cursor-pointer appearance-none rounded-lg border-0 bg-transparent py-1.5 pl-2.5 pr-7 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200"
-            @change="onPeriodChange"
-          >
-            <option value="today">今日</option>
-            <option value="week">本周</option>
-            <option value="month">本月</option>
-          </select>
+          <!-- 统计区间：默认今日，快捷项偏自然周期（本周/上周/本月/上月），也可翻日历任选 -->
+          <DateRangePicker
+            v-model="dateRange"
+            :max-days="90"
+            :preset-keys="OVERVIEW_PRESET_KEYS"
+            @change="onRangeChange"
+          />
           <button
             type="button"
-            class="overview-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
+            class="overview-refresh-btn inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="loading"
             :aria-busy="loading"
             :aria-label="loading ? '刷新中' : '刷新概览数据'"
@@ -103,7 +99,7 @@
           :success="apiSuccess"
           :failed="apiFailed"
         />
-        <MetricMiniCard label="API 调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" foot="今日累计">
+        <MetricMiniCard label="API 调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" :foot="rangeFoot">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
           </template>
@@ -134,14 +130,15 @@
         v-if="apiFailed > 0"
         :count="apiFailed"
         :subjects="failureSubjects"
-        :scope="period"
+        :scope="rangeScope"
+        :period-label="rangeName"
       />
 
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1.32fr_1fr]">
         <div class="ov-card">
           <div class="ov-card-head">
             <h3 class="ov-card-title"><span class="ov-dot"></span>工具调用分布</h3>
-            <span class="text-xs text-gray-400">今日 · 共 {{ toolCallsTotal }} 次</span>
+            <span class="text-xs text-gray-400">{{ rangeName }} · 共 {{ toolCallsTotal }} 次</span>
           </div>
           <div class="ov-card-body">
             <ToolUsageRanking :items="toolRankingItems" :total="toolCallsTotal">
@@ -206,7 +203,7 @@
         <div class="ov-card">
           <div class="ov-card-head">
             <h3 class="ov-card-title"><span class="ov-dot"></span>Token 消耗分布</h3>
-            <span class="text-xs text-gray-400">今日 · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
+            <span class="text-xs text-gray-400">{{ rangeName }} · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
           </div>
           <div class="ov-card-body pt-4">
             <AgentTokenBars :items="tokenBarItems" />
@@ -234,7 +231,7 @@
           :success="apiSuccess"
           :failed="apiFailed"
         />
-        <MetricMiniCard label="我的调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" foot="今日累计">
+        <MetricMiniCard label="我的调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" :foot="rangeFoot">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
           </template>
@@ -266,14 +263,15 @@
         v-if="apiFailed > 0"
         :count="apiFailed"
         :subjects="failureSubjects"
-        :scope="period"
+        :scope="rangeScope"
+        :period-label="rangeName"
       />
 
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1.32fr_1fr]">
         <div class="ov-card">
           <div class="ov-card-head">
             <h3 class="ov-card-title"><span class="ov-dot"></span>我的工具使用</h3>
-            <span class="text-xs text-gray-400">今日 · 共 {{ toolCallsTotal }} 次</span>
+            <span class="text-xs text-gray-400">{{ rangeName }} · 共 {{ toolCallsTotal }} 次</span>
           </div>
           <div class="ov-card-body">
             <ToolUsageRanking :items="toolRankingItems" :total="toolCallsTotal">
@@ -338,7 +336,7 @@
         <div class="ov-card">
           <div class="ov-card-head">
             <h3 class="ov-card-title"><span class="ov-dot"></span>我的 Token 分布</h3>
-            <span class="text-xs text-gray-400">今日 · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
+            <span class="text-xs text-gray-400">{{ rangeName }} · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
           </div>
           <div class="ov-card-body pt-4">
             <AgentTokenBars :items="tokenBarItems" />
@@ -436,14 +434,45 @@ import RecentUsersCard from "../components/dashboard/RecentUsersCard.vue";
 import RecentCallsCard from "../components/dashboard/RecentCallsCard.vue";
 import RequestTrendChart from "../components/dashboard/RequestTrendChart.vue";
 import DeploymentChecklist from "../components/system/DeploymentChecklist.vue";
+import DateRangePicker from "@/components/common/DateRangePicker.vue";
 import { formatTokenCompact } from "@/utils/tokenFormat";
+import { buildRangePresets, formatDayKey, startOfDay } from "@/utils/dateRange";
 
 const router = useRouter();
 const API_BASE = "";
 
 const userInfo = ref<any>(null);
 const loading = ref(false);
-const period = ref("today");
+
+/**
+ * 统计区间：默认今天。
+ *
+ * 原来只有「今日/本周/本月」三选一，且后端 `week` 其实是滚动 7 天——标签和
+ * 口径对不上。改成日历后口径由用户选的日期决定，快捷项里的「本周」是自然周
+ * （周一至今），「上周」是上周一至上周日。
+ */
+const dateRange = ref({ start: formatDayKey(new Date()), end: formatDayKey(new Date()) });
+
+const OVERVIEW_PRESET_KEYS = ["today", "yesterday", "thisWeek", "lastWeek", "thisMonth", "lastMonth"];
+
+const rangeParams = computed(() => ({
+  start_date: dateRange.value.start,
+  end_date: dateRange.value.end,
+}));
+
+const rangePreset = computed(
+  () =>
+    buildRangePresets(startOfDay(new Date())).find(
+      (preset) => preset.start === dateRange.value.start && preset.end === dateRange.value.end,
+    ) ?? null,
+);
+
+/** 命中快捷项就用它的名字，否则说明是手选区间 */
+const rangeName = computed(() => rangePreset.value?.label ?? "自定义区间");
+const rangeFoot = computed(() => (rangePreset.value ? `${rangePreset.value.label}累计` : "区间累计"));
+const rangeScope = computed(() =>
+  rangePreset.value ? rangePreset.value.key : `${dateRange.value.start}~${dateRange.value.end}`,
+);
 
 const stats = ref<any>(null);
 const agentStats = ref<any>(null);
@@ -504,7 +533,7 @@ const fetchAgentStats = async () => {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/agent-stats`,
       {
-        params: { period: period.value },
+        params: rangeParams.value,
       }
     );
     if (seq !== dataSeq) return; // 已有更新的请求，丢弃过期响应
@@ -537,7 +566,7 @@ const fetchAdminStats = async () => {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/admin-stats`,
       {
-        params: { period: period.value },
+        params: rangeParams.value,
       }
     );
     if (seq !== dataSeq) return;
@@ -555,7 +584,7 @@ const fetchUserStats = async () => {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/user-stats`,
       {
-        params: { period: period.value },
+        params: rangeParams.value,
       }
     );
     if (seq !== dataSeq) return;
@@ -591,7 +620,7 @@ const fetchAgentTokens = async () => {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/token-stats/agents`,
       {
-        params: { period: period.value },
+        params: rangeParams.value,
       }
     );
     if (seq !== dataSeq) return;
@@ -614,7 +643,7 @@ const refreshPeriodBoundData = async () => {
   await Promise.all([fetchAgentStats(), fetchAgentTokens()]);
 };
 
-const onPeriodChange = async () => {
+const onRangeChange = async () => {
   sectionErrors.value = [];
   loading.value = true;
   try {
@@ -785,10 +814,4 @@ onMounted(async () => {
   @apply mr-2 h-1.5 w-1.5 rounded-full bg-primary;
 }
 
-.overview-period-select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
-  background-position: right 0.35rem center;
-  background-repeat: no-repeat;
-  background-size: 0.9rem;
-}
 </style>

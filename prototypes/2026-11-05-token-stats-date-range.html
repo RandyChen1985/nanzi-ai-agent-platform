@@ -1,0 +1,1123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>Token 统计 · 时间范围改为日历区间选择</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-dark:#0958d9; --primary-soft:#eaf2ff;
+    --ink:#0f172a; --ink2:#334155; --muted:#64748b; --faint:#94a3b8;
+    --line:#e6ebf2; --line-soft:#eef2f7; --bg:#eef1f6; --card:#fff;
+    --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -18px rgba(15,23,42,.25);
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  html,body{margin:0}
+  body{
+    background:var(--bg);color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+  h1,h2,h3,p{margin:0}
+  svg{display:block}
+
+  /* ============ 顶部方案条 ============ */
+  .shell-bar{
+    position:sticky;top:0;z-index:80;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+    padding:10px 20px;background:#0b0f19;color:#fff;
+    box-shadow:0 1px 0 rgba(255,255,255,.06),0 10px 30px -22px rgba(0,0,0,.9);
+  }
+  .sb-title{display:flex;align-items:center;gap:10px;min-width:0}
+  .sb-mark{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--primary);font-weight:800;font-size:13px}
+  .sb-title b{display:block;font-size:13px;line-height:1.3}
+  .sb-title small{display:block;color:#94a3b8;font-size:11px;line-height:1.4}
+  .sb-tabs{display:flex;gap:4px;background:rgba(255,255,255,.06);padding:3px;border-radius:10px;flex-wrap:wrap}
+  .sb-tabs button{padding:6px 12px;border-radius:8px;font-size:12.5px;color:#cbd5e1;transition:.15s;white-space:nowrap}
+  .sb-tabs button:hover{color:#fff;background:rgba(255,255,255,.07)}
+  .sb-tabs button.on{background:#fff;color:#0b0f19;font-weight:700}
+  .sb-open{padding:6px 12px;border-radius:9px;font-size:12.5px;font-weight:700;color:#0b0f19;background:#fbbf24}
+  .sb-open:hover{background:#fcd34d}
+
+  .scheme-note{
+    display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;
+    padding:10px 24px;background:#fff;border-bottom:1px solid var(--line);
+    font-size:12.5px;color:var(--ink2);
+  }
+  .scheme-note b{font-size:13px;color:var(--ink)}
+  .scheme-note .tag{
+    display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;
+    background:var(--primary-soft);color:var(--primary-dark);font-size:11px;font-weight:700;white-space:nowrap;
+  }
+  .scheme-note .tag.warn{background:#fff7ed;color:#b45309}
+  .scheme-note .tag.ok{background:#ecfdf5;color:#047857}
+  .scheme-note .sep{color:var(--line)}
+  .scheme-note .txt{color:var(--muted)}
+
+  /* ============ 页面 ============ */
+  .page{max-width:1380px;margin:0 auto;padding:22px 24px 72px;display:flex;flex-direction:column;gap:16px}
+  .page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .page-head h1{font-size:22px;font-weight:800;letter-spacing:-.2px}
+  .page-head p{font-size:13px;color:var(--muted);margin-top:3px}
+  .head-actions{display:flex;align-items:center;gap:10px}
+
+  /* 时间范围按钮 */
+  .picker{position:relative}
+  .range-btn{
+    display:flex;align-items:center;gap:10px;padding:7px 12px 7px 11px;
+    background:#fff;border:1px solid var(--line);border-radius:12px;
+    box-shadow:0 1px 2px rgba(15,23,42,.05);transition:.15s;text-align:left;
+  }
+  .range-btn:hover{border-color:#bfd3f6;box-shadow:0 4px 14px -8px rgba(22,119,255,.5)}
+  .range-btn.open{border-color:var(--primary);box-shadow:0 0 0 3px rgba(22,119,255,.12)}
+  .rb-ico{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--primary-soft);color:var(--primary-dark);flex:0 0 auto}
+  .rb-text{display:flex;flex-direction:column;line-height:1.25;min-width:96px}
+  .rb-text b{font-size:13px;font-weight:700}
+  .rb-text small{font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+  .rb-caret{color:var(--faint);font-size:10px;transition:transform .15s}
+  .range-btn.open .rb-caret{transform:rotate(180deg)}
+  .refresh-btn{
+    display:inline-flex;align-items:center;gap:7px;padding:9px 14px;border-radius:12px;
+    border:1px solid var(--line);background:#fff;font-size:13px;font-weight:700;color:var(--ink2);
+    box-shadow:0 1px 2px rgba(15,23,42,.05);
+  }
+  .refresh-btn:hover{background:#f8fafc}
+
+  /* ============ 时间面板 ============ */
+  .panel{
+    position:absolute;right:0;top:calc(100% + 9px);z-index:70;background:#fff;
+    border:1px solid var(--line);border-radius:16px;
+    box-shadow:0 28px 64px -28px rgba(15,23,42,.45),0 6px 18px -12px rgba(15,23,42,.25);
+    overflow:hidden;
+  }
+  .panel[data-scheme="A"]{width:644px}
+  .panel[data-scheme="B"]{width:722px}
+  .panel[data-scheme="C"]{width:392px}
+  .p-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 10px;border-bottom:1px solid var(--line-soft)}
+  .p-title{font-size:13px;font-weight:800;color:var(--ink)}
+  .p-close{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;color:var(--faint)}
+  .p-close:hover{background:#f1f5f9;color:var(--ink2)}
+
+  /* A：左快捷 + 单月 */
+  .p-body-a{display:grid;grid-template-columns:150px 1fr}
+  .presets{padding:10px 8px;border-right:1px solid var(--line-soft);background:#fbfcfe;display:flex;flex-direction:column;gap:2px}
+  .presets-label{font-size:10.5px;font-weight:700;letter-spacing:.4px;color:var(--faint);padding:2px 10px 6px}
+  .preset{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;padding:7px 10px;border-radius:8px;font-size:12.5px;color:var(--ink2);text-align:left}
+  .preset:hover{background:#eef4ff}
+  .preset.on{background:var(--primary-soft);color:var(--primary-dark);font-weight:700}
+  .preset .dot{width:6px;height:6px;border-radius:50%;background:var(--primary);opacity:0}
+  .preset.on .dot{opacity:1}
+  .presets .divider{height:1px;background:var(--line-soft);margin:6px 8px}
+
+  /* B：顶部快捷 + 双月 */
+  .p-top{padding:10px 14px 8px;border-bottom:1px solid var(--line-soft);display:flex;flex-wrap:wrap;gap:6px}
+  .chip{padding:5px 11px;border-radius:999px;font-size:12px;color:var(--ink2);background:#f3f6fb;border:1px solid transparent}
+  .chip:hover{background:#eaf2ff;color:var(--primary-dark)}
+  .chip.on{background:var(--primary-soft);border-color:#c7ddff;color:var(--primary-dark);font-weight:700}
+  .p-dual{display:flex;padding:10px 12px 0}
+  .p-dual .cal{flex:1}
+  .p-dual .cal + .cal{border-left:1px solid var(--line-soft);margin-left:10px;padding-left:10px}
+
+  /* C：紧凑单月 + 底部快捷 */
+  .p-main{padding:10px 12px 0}
+  .panel[data-scheme="A"] .cal{max-width:356px;margin:0 auto}
+  .p-chips{padding:8px 12px 10px;border-top:1px solid var(--line-soft);display:flex;flex-wrap:wrap;gap:6px;background:#fbfcfe}
+
+  .cal{min-width:0}
+  .cal-head{display:flex;align-items:center;justify-content:space-between;padding:2px 4px 8px}
+  .cal-title{font-size:13px;font-weight:800;letter-spacing:.2px}
+  .cal-nav{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;color:var(--muted);font-size:15px;line-height:1}
+  .cal-nav:hover:not(:disabled){background:#f1f5f9;color:var(--ink)}
+  .cal-nav:disabled{opacity:.25;cursor:not-allowed}
+  .cal-week,.cal-grid{display:grid;grid-template-columns:repeat(7,1fr)}
+  .cal-week span{font-size:10.5px;font-weight:600;color:var(--faint);text-align:center;padding:2px 0 6px}
+  .cal-week span.we{color:#a8b3c4}
+  .cell{
+    position:relative;height:33px;display:grid;place-items:center;
+    font-size:12.5px;color:var(--ink2);cursor:pointer;font-variant-numeric:tabular-nums;
+    border-radius:8px;transition:background .1s,color .1s;
+  }
+  .cell .d{position:relative;z-index:1;display:grid;place-items:center;width:26px;height:26px;border-radius:8px}
+  .cell:hover .d{background:#eef4ff}
+  .cell.out{color:#c3ccda}
+  .cell.disabled{color:#d7dee9;cursor:not-allowed}
+  .cell.disabled:hover .d{background:none}
+  .cell.today .d{box-shadow:inset 0 0 0 1.5px #bfd3f6}
+  .cell.in-range{background:#e3efff;border-radius:0}
+  .cell.in-range:hover .d{background:transparent}
+  .cell.edge{background:#e3efff}
+  .cell.edge .d{background:var(--primary);color:#fff;font-weight:700}
+  .cell.edge.start{border-radius:8px 0 0 8px}
+  .cell.edge.end{border-radius:0 8px 8px 0}
+  .cell.edge.single{border-radius:8px}
+  .cell.edge.focus .d{box-shadow:0 0 0 3px rgba(22,119,255,.22)}
+  .cell.sel-hover{background:#dbeafe}
+
+  .p-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px 12px;border-top:1px solid var(--line-soft);margin-top:10px}
+  .p-sel{font-size:11.5px;color:var(--muted);line-height:1.35;min-width:0}
+  .p-sel b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+  .p-sel .err{display:block;color:#dc2626;font-size:11px;margin-top:2px}
+  .p-actions{display:flex;gap:8px;flex:0 0 auto}
+  .btn{padding:7px 14px;border-radius:9px;font-size:12.5px;font-weight:700;border:1px solid transparent;transition:.15s}
+  .btn.ghost{background:#fff;border-color:var(--line);color:var(--ink2)}
+  .btn.ghost:hover{background:#f8fafc}
+  .btn.primary{background:var(--primary);color:#fff;box-shadow:0 4px 12px -6px rgba(22,119,255,.8)}
+  .btn.primary:hover{background:var(--primary-dark)}
+  .btn.primary:disabled{background:#c7d6ee;box-shadow:none;cursor:not-allowed}
+  .btn.sm{padding:5px 10px;font-size:11.5px;border-radius:8px}
+
+  /* ============ 指标卡 ============ */
+  .cards{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+  .stat{padding:16px 18px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+  .stat .label{font-size:12.5px;font-weight:600;color:var(--muted)}
+  .stat .value{font-size:28px;font-weight:800;letter-spacing:-.6px;line-height:1.15;margin-top:4px;font-variant-numeric:tabular-nums}
+  .stat .value .unit{font-size:18px;font-weight:800;margin-left:1px}
+  .stat .exact{font-size:10.5px;color:var(--faint);font-variant-numeric:tabular-nums;margin-left:6px}
+  .stat .sub{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--faint);margin-top:6px;font-variant-numeric:tabular-nums}
+  .stat .sub b{font-weight:700}
+  .stat .sub .in{color:#0369a1}
+  .stat .sub .out{color:#be123c}
+  .stat .sub .in b,.stat .sub .out b{font-weight:700}
+  .ico{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;flex:0 0 auto}
+  .ico.amber{background:#fff7e6;color:#d97706}
+  .ico.violet{background:#f5f0ff;color:#7c3aed}
+  .ico.yellow{background:#fefce8;color:#ca8a04}
+  .ico.green{background:#eefbf3;color:#059669}
+
+  /* ============ 图表 / 榜单 ============ */
+  .block{padding:16px 18px 18px}
+  .block-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .block-title{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800}
+  .block-title .bullet{width:6px;height:6px;border-radius:50%;background:var(--primary)}
+  .block-title small{font-weight:500;color:var(--faint);font-size:11.5px;margin-left:2px}
+  .range-pill{padding:3px 9px;border-radius:999px;background:#f1f5f9;color:var(--muted);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+  .trend-wrap{position:relative;height:280px}
+  .trend-wrap svg{width:100%;height:100%}
+  .chart-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);padding:8px 4px 0}
+  .chart-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+
+  .grid-2{display:grid;grid-template-columns:1fr 1.55fr;gap:14px}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  thead th{font-size:11px;font-weight:600;color:var(--faint);text-align:right;padding:8px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+  thead th:first-child{text-align:left}
+  tbody td{font-size:12.5px;color:var(--ink2);padding:9px 10px;text-align:right;border-bottom:1px solid #f5f7fa;white-space:nowrap}
+  tbody td:first-child{text-align:left;font-weight:600;color:var(--ink);max-width:200px;overflow:hidden;text-overflow:ellipsis}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:hover td{background:#fafcff}
+  .bar{display:inline-block;height:6px;border-radius:4px;background:linear-gradient(90deg,#93c5fd,#1677ff);vertical-align:middle}
+
+  /* ============ 说明卡 ============ */
+  .note-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:14px}
+  .note-list{margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:9px}
+  .note-list li{display:flex;gap:9px;font-size:12.5px;color:var(--ink2);line-height:1.6}
+  .note-list li .n{flex:0 0 auto;display:grid;place-items:center;width:18px;height:18px;border-radius:6px;background:var(--primary-soft);color:var(--primary-dark);font-size:10.5px;font-weight:800;margin-top:1px}
+  .note-list li b{color:var(--ink)}
+  .note-list li code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;background:#f1f5f9;padding:1px 5px;border-radius:5px;color:#334155}
+  .cmp th{text-align:left;padding:8px 10px;font-size:11px;color:var(--faint);font-weight:600;border-bottom:1px solid var(--line-soft)}
+  .cmp td{padding:9px 10px;font-size:12px;border-bottom:1px solid #f5f7fa;color:var(--ink2);text-align:left}
+  .cmp td:first-child{color:var(--faint)}
+  .cmp tr:last-child td{border-bottom:0}
+  .cmp .win{color:#047857;font-weight:700}
+
+  /* ============ 响应式 ============ */
+  @media (max-width:1180px){
+    .cards{grid-template-columns:1fr 1fr}
+    .grid-2,.note-grid{grid-template-columns:1fr}
+  }
+  @media (max-width:820px){
+    .page{padding:16px 14px 56px}
+    .cards{grid-template-columns:1fr 1fr}
+    .stat .value{font-size:24px}
+    .panel{position:fixed;left:12px;right:12px;top:auto;bottom:12px;width:auto !important;max-height:78vh;overflow:auto}
+    .p-body-a{grid-template-columns:1fr}
+    .presets{border-right:0;border-bottom:1px solid var(--line-soft);flex-direction:row;overflow-x:auto;padding:8px}
+    .presets-label,.presets .divider{display:none}
+    .preset{width:auto;white-space:nowrap}
+    .p-dual{flex-direction:column}
+    .p-dual .cal + .cal{border-left:0;border-top:1px solid var(--line-soft);margin:10px 0 0;padding:10px 0 0}
+  }
+</style>
+</head>
+<body>
+
+<!-- ================= 方案条 ================= -->
+<div class="shell-bar">
+  <div class="sb-title">
+    <span class="sb-mark">T</span>
+    <div>
+      <b>Token 统计 · 时间范围选择</b>
+      <small>日历面板 + 快捷区间 · 三套方案可切换</small>
+    </div>
+  </div>
+  <div class="sb-tabs" id="schemeTabs">
+    <button data-scheme="A" class="on">A · 侧栏快捷 + 单月</button>
+    <button data-scheme="B">B · 顶部快捷 + 双月</button>
+    <button data-scheme="C">C · 紧凑单月</button>
+  </div>
+  <button class="sb-open" id="openAll">展开时间面板</button>
+</div>
+
+<div class="scheme-note" id="schemeNote"></div>
+
+<!-- ================= 页面 ================= -->
+<main class="page">
+  <section class="page-head">
+    <div>
+      <h1>Token 统计分析</h1>
+      <p>系统大模型算力消耗量、交互频次及智能体分布审计</p>
+    </div>
+    <div class="head-actions">
+      <div class="picker" id="picker">
+        <button class="range-btn" id="rangeBtn" aria-haspopup="dialog" aria-expanded="false">
+          <span class="rb-ico">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
+            </svg>
+          </span>
+          <span class="rb-text">
+            <b id="rbLabel">最近 7 天</b>
+            <small id="rbSub">10/30 – 11/05</small>
+          </span>
+          <span class="rb-caret">▲</span>
+        </button>
+        <div class="panel" id="panel" data-scheme="A" role="dialog" aria-label="选择时间范围" hidden></div>
+      </div>
+      <button class="refresh-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary)">
+          <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        刷新
+      </button>
+    </div>
+  </section>
+
+  <!-- 指标卡 -->
+  <section class="cards">
+    <article class="card stat">
+      <div>
+        <div class="label">Token 消耗</div>
+        <div class="value"><span id="stTotal">0</span><span class="exact" id="stTotalExact"></span></div>
+        <div class="sub">
+          <span class="in">输入 <b id="stPrompt">0</b></span>
+          <span class="out">输出 <b id="stCompletion">0</b></span>
+        </div>
+      </div>
+      <div class="ico amber">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+        </svg>
+      </div>
+    </article>
+
+    <article class="card stat">
+      <div>
+        <div class="label">对话交互</div>
+        <div class="value" id="stCalls">0</div>
+        <div class="sub"><span>会话发起次数</span></div>
+      </div>
+      <div class="ico violet">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+        </svg>
+      </div>
+    </article>
+
+    <article class="card stat">
+      <div>
+        <div class="label">平均单次</div>
+        <div class="value" id="stAvg">0</div>
+        <div class="sub"><span>Token / 会话</span></div>
+      </div>
+      <div class="ico yellow">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+      </div>
+    </article>
+
+    <article class="card stat">
+      <div>
+        <div class="label">活跃智能体</div>
+        <div class="value" id="stAgents">0</div>
+        <div class="sub"><span>有 Token 记录</span></div>
+      </div>
+      <div class="ico green">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+      </div>
+    </article>
+  </section>
+
+  <!-- 趋势 -->
+  <section class="card block">
+    <div class="block-head">
+      <div class="block-title">
+        <span class="bullet"></span>
+        趋势分析 · 输入/输出 Token 与交互频次
+        <small id="trendHint">按日聚合</small>
+      </div>
+      <span class="range-pill" id="trendRange">—</span>
+    </div>
+    <div class="trend-wrap" id="trendWrap"></div>
+    <div class="chart-legend">
+      <span><i style="background:#38bdf8"></i>输入 Token</span>
+      <span><i style="background:#fb7185"></i>输出 Token</span>
+      <span><i style="background:#10b981"></i>交互次数（右轴示意）</span>
+    </div>
+  </section>
+
+  <!-- 排行 -->
+  <section class="grid-2">
+    <article class="card block">
+      <div class="block-head">
+        <div class="block-title"><span class="bullet"></span>智能体占比</div>
+      </div>
+      <div id="pieWrap" style="display:grid;place-items:center;min-height:180px"></div>
+    </article>
+    <article class="card block">
+      <div class="block-head">
+        <div class="block-title"><span class="bullet"></span>智能体算力消耗排行榜</div>
+        <span class="range-pill" id="rankRange">—</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr><th>智能体</th><th>交互</th><th>输入</th><th>输出</th><th>合计</th><th>均次</th></tr>
+          </thead>
+          <tbody id="rankBody"></tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <!-- 说明 -->
+  <section class="note-grid">
+    <article class="card block">
+      <div class="block-head">
+        <div class="block-title"><span class="bullet"></span>三套方案怎么选</div>
+      </div>
+      <table class="cmp">
+        <thead><tr><th>维度</th><th>A · 侧栏快捷</th><th>B · 双月 + 确认</th><th>C · 紧凑单月</th></tr></thead>
+        <tbody>
+          <tr><td>面板宽度</td><td>644px</td><td>722px</td><td>392px</td></tr>
+          <tr><td>快捷项</td><td>8 项，竖排常驻</td><td>8 项，顶部胶囊</td><td>7 项，底部换行</td></tr>
+          <tr><td>生效方式</td><td class="win">选完即生效</td><td>点「确定」生效</td><td class="win">选完即生效</td></tr>
+          <tr><td>跨月选择</td><td>需翻月</td><td class="win">双月并排</td><td>需翻月</td></tr>
+          <tr><td>遮挡首屏</td><td>中</td><td>较大</td><td class="win">小</td></tr>
+          <tr><td>窄屏（&lt;820px）</td><td>快捷变横条，仍可用</td><td class="win">自动叠成上下两月</td><td class="win">几乎不用改</td></tr>
+          <tr><td>适合</td><td>高频切「最近 N 天」</td><td>常查跨月账单</td><td>侧边栏/窄容器复用</td></tr>
+        </tbody>
+      </table>
+    </article>
+
+    <article class="card block">
+      <div class="block-head">
+        <div class="block-title"><span class="bullet"></span>落地要点（实现时按此改）</div>
+      </div>
+      <ul class="note-list">
+        <li><span class="n">1</span><span><b>后端口径已具备</b>：<code>/token-stats/trends</code> 与 <code>/records</code> 已支持 <code>start_date</code> / <code>end_date</code>，跨度上限 90 天（<code>_resolve_token_stats_range</code>）。</span></li>
+        <li><span class="n">2</span><span><b>需要补的两个接口</b>：<code>/token-stats/agents</code> 与 <code>/users</code> 目前只吃 <code>period=today|week|month</code>，要改成同款 <code>start_date/end_date</code>（或统一走一个 range 参数），否则指标卡、占比、榜单和趋势会对不上区间。</span></li>
+        <li><span class="n">3</span><span><b>前端状态</b>：<code>period</code> 字符串改成 <code>{startDate, endDate, presetKey}</code>；三个请求共用一组区间参数，版本号防竞态的逻辑保留。</span></li>
+        <li><span class="n">4</span><span><b>边界</b>：未来日期禁用；跨度超 90 天给出行内提示而非静默截断；单日区间合法（趋势图退化成一个点）。</span></li>
+        <li><span class="n">5</span><span><b>待定</b>：区间是否写进 URL query（刷新/分享后保留筛选）；「本月」按自然月还是按最近 30 天，需要你确认。</span></li>
+      </ul>
+    </article>
+  </section>
+</main>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- 基础日期工具 ----------
+  const TODAY = new Date(2026, 10, 5);          // 原型固定“今天”，避免打开时间不同导致演示漂移
+  const MAX_DAYS = 90;
+  const WEEK_LABEL = ["一","二","三","四","五","六","日"];
+
+  const addDays = (d, n) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() + n); return x; };
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const startOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
+  const endOfMonth = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  const daysBetween = (a, b) => Math.round((startOfDay(b) - startOfDay(a)) / 86400000);
+  const sameDay = (a, b) => !!a && !!b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const md = (d) => `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`;
+
+  // ---------- 快捷区间 ----------
+  const PRESETS = [
+    { key:"today",     label:"今日",       short:"今日",   range:() => [TODAY, TODAY] },
+    { key:"yesterday", label:"昨日",       short:"昨日",   range:() => [addDays(TODAY,-1), addDays(TODAY,-1)] },
+    { key:"last7",     label:"最近 7 天",  short:"近 7 天", range:() => [addDays(TODAY,-6), TODAY] },
+    { key:"last14",    label:"最近 14 天", short:"近 14 天",range:() => [addDays(TODAY,-13), TODAY] },
+    { key:"last30",    label:"最近 30 天", short:"近 30 天",range:() => [addDays(TODAY,-29), TODAY] },
+    { key:"last90",    label:"最近 90 天", short:"近 90 天",range:() => [addDays(TODAY,-89), TODAY] },
+    { key:"thisMonth", label:"本月",       short:"本月",   range:() => [startOfMonth(TODAY), TODAY] },
+    { key:"lastMonth", label:"上月",       short:"上月",   range:() => [startOfMonth(addDays(startOfMonth(TODAY),-1)), endOfMonth(addDays(startOfMonth(TODAY),-1))] },
+  ];
+  const presetOf = (key) => PRESETS.find(p => p.key === key);
+
+  // 日历可回溯一年，但后端只允许一次查 90 天：超过就红字拦住，不静默截断
+  const DATA_START = addDays(TODAY, -365);
+
+  // ---------- 状态 ----------
+  let scheme = "A";
+  let state = { start: addDays(TODAY,-6), end: TODAY, preset: "last7" };
+  let draft = { start: null, end: null, hover: null, view: null };
+  let open = false;
+
+  // ---------- 假数据 ----------
+  function hash(str){
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function rand(seed){
+    let t = seed + 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const AGENTS = [
+    { id:"compliance-review",  name:"合规审查助手",     weight:24 },
+    { id:"bid-doc-analysis",   name:"招投标文档分析",   weight:19 },
+    { id:"kb-qa",              name:"客服知识问答",     weight:17 },
+    { id:"expense-audit",      name:"财务报销稽核",     weight:14 },
+    { id:"contract-diff",      name:"法务合同比对",     weight:11 },
+    { id:"weekly-report",      name:"研发周报生成",     weight:9  },
+    { id:"lead-scoring",       name:"销售线索研判",     weight:6  },
+  ];
+  const weekWeight = (d) => (d.getDay() === 0 || d.getDay() === 6) ? 0.38 : 1;
+
+  const dayCache = new Map();
+  function dayData(d){
+    const key = iso(d);
+    if (dayCache.has(key)) return dayCache.get(key);
+    const h = hash(key);
+    const w = weekWeight(d);
+    // 越近的数据量略高，制造真实的上扬趋势
+    const drift = 1 + Math.max(0, 60 - daysBetween(d, TODAY)) / 150;
+    const calls = Math.max(1, Math.round((11 + (h % 17) + rand(h) * 6) * w * drift));
+    const prompt = Math.round((760000 + (h % 1100000) + rand(h ^ 0x9e37) * 520000) * w * drift);
+    const completion = Math.round((72000 + (h % 190000) + rand(h ^ 0x51ed) * 90000) * w * drift);
+    const data = { date:d, key, calls, prompt, completion, total: prompt + completion };
+    dayCache.set(key, data);
+    return data;
+  }
+
+  function rangeDays(start, end){
+    const n = daysBetween(start, end);
+    const out = [];
+    for (let i = 0; i <= n; i++) out.push(dayData(addDays(start, i)));
+    return out;
+  }
+
+  // 按 agent 分摊（同一套 hash，保证区间变化时单体占比稳定）
+  function agentTotals(days){
+    return AGENTS.map(a => {
+      let calls = 0, prompt = 0, completion = 0;
+      days.forEach(d => {
+        const f = (a.weight / 100) * (0.82 + rand(hash(d.key + a.id)) * 0.36);
+        calls += d.calls * f;
+        prompt += d.prompt * f;
+        completion += d.completion * f;
+      });
+      return { ...a, calls: Math.round(calls), prompt: Math.round(prompt), completion: Math.round(completion), total: Math.round(prompt + completion) };
+    }).sort((x,y) => y.total - x.total);
+  }
+
+  // ---------- 格式化 ----------
+  const fmtInt = (n) => Math.round(n).toLocaleString("en-US");
+  function fmtCompact(n){
+    const v = Number(n) || 0;
+    if (v >= 1e9) return (v/1e9).toFixed(2).replace(/\.?0+$/,"") + "B";
+    if (v >= 1e6) return (v/1e6).toFixed(2).replace(/\.?0+$/,"") + "M";
+    if (v >= 1e3) return (v/1e3).toFixed(1).replace(/\.?0+$/,"") + "K";
+    return String(Math.round(v));
+  }
+  function splitCompact(n){
+    const s = fmtCompact(n);
+    const m = s.match(/^([\d.]+)([KMB]?)$/);
+    return m ? { num:m[1], unit:m[2] } : { num:s, unit:"" };
+  }
+
+  // ---------- 区间解析 ----------
+  function effectiveRange(){
+    const s = draft.start, e = draft.end;
+    if (!s) return null;
+    if (!e) {
+      const h = draft.hover || s;
+      return h < s ? { start:h, end:s } : { start:s, end:h };
+    }
+    return s <= e ? { start:s, end:e } : { start:e, end:s };
+  }
+  function spanOf(r){ return r ? daysBetween(r.start, r.end) + 1 : 0; }
+  function matchPreset(r){
+    if (!r) return null;
+    const hit = PRESETS.find(p => {
+      const [s, e] = p.range();
+      return sameDay(s, r.start) && sameDay(e, r.end);
+    });
+    return hit ? hit.key : null;
+  }
+
+  // ---------- 页面渲染 ----------
+  const $ = (id) => document.getElementById(id);
+
+  function renderButton(){
+    const p = presetOf(state.preset);
+    const single = sameDay(state.start, state.end);
+    $("rbLabel").textContent = p ? p.label : "自定义区间";
+    $("rbSub").textContent = single ? md(state.start) : `${md(state.start)} – ${md(state.end)}`;
+  }
+
+  function renderStats(){
+    const days = rangeDays(state.start, state.end);
+    const calls = days.reduce((a,d) => a + d.calls, 0);
+    const prompt = days.reduce((a,d) => a + d.prompt, 0);
+    const completion = days.reduce((a,d) => a + d.completion, 0);
+    const total = prompt + completion;
+    const agents = agentTotals(days).filter(a => a.total > 0);
+
+    const sp = splitCompact(total);
+    $("stTotal").innerHTML = sp.num + (sp.unit ? `<span class="unit">${sp.unit}</span>` : "");
+    $("stTotalExact").textContent = fmtInt(total);
+    $("stPrompt").textContent = fmtCompact(prompt);
+    $("stCompletion").textContent = fmtCompact(completion);
+    $("stCalls").textContent = fmtInt(calls);
+    $("stAvg").innerHTML = (() => { const s = splitCompact(calls ? total / calls : 0); return s.num + (s.unit ? `<span class="unit">${s.unit}</span>` : ""); })();
+    $("stAgents").textContent = String(agents.length);
+
+    const single = sameDay(state.start, state.end);
+    const label = single ? `${iso(state.start)}（单日）` : `${iso(state.start)} ~ ${iso(state.end)} · 共 ${days.length} 天`;
+    $("trendRange").textContent = label;
+    $("rankRange").textContent = `共 ${days.length} 天`;
+    $("trendHint").textContent = days.length === 1 ? "单日合计" : (days.length > 31 ? `按日聚合 · ${days.length} 个数据点` : "按日聚合");
+
+    renderTrend(days);
+    renderPie(agents);
+    renderRank(agents, calls);
+  }
+
+  function renderTrend(days){
+    const wrap = $("trendWrap");
+    if (days.length === 1){
+      const d = days[0];
+      wrap.innerHTML = `<div style="height:100%;display:grid;place-items:center;text-align:center;gap:6px">
+        <div style="font-size:13px;color:var(--faint)">单日区间不画趋势线</div>
+        <div style="font-size:20px;font-weight:800">${fmtCompact(d.total)} Token</div>
+        <div style="font-size:12px;color:var(--muted)">${fmtInt(d.calls)} 次交互 · ${iso(d.date)}</div>
+      </div>`;
+      return;
+    }
+
+    const W = 1000, H = 280, PL = 58, PR = 18, PT = 16, PB = 34;
+    const iw = W - PL - PR, ih = H - PT - PB;
+    const n = days.length;
+    const maxTok = Math.max(...days.map(d => d.prompt + d.completion)) || 1;
+    const maxCalls = Math.max(...days.map(d => d.calls)) || 1;
+    const x = (i) => PL + (n === 1 ? iw/2 : (i / (n - 1)) * iw);
+    const yTok = (v) => PT + ih - (v / (maxTok * 1.12)) * ih;
+    const yCalls = (v) => PT + ih - (v / (maxCalls * 1.25)) * ih;
+
+    // y 轴网格
+    let grid = "";
+    const ticks = 4;
+    for (let i = 0; i <= ticks; i++){
+      const v = (maxTok * 1.12) * (i / ticks);
+      const y = yTok(v);
+      grid += `<line x1="${PL}" y1="${y.toFixed(1)}" x2="${W-PR}" y2="${y.toFixed(1)}" stroke="#f1f5f9" stroke-dasharray="4 4"/>`;
+      grid += `<text x="${PL-10}" y="${(y+3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="#94a3b8">${fmtCompact(v)}</text>`;
+    }
+
+    // 堆叠面积：输入在下、输出在上
+    const ptsPrompt = days.map((d,i) => `${x(i).toFixed(1)},${yTok(d.prompt).toFixed(1)}`);
+    const ptsTotal  = days.map((d,i) => `${x(i).toFixed(1)},${yTok(d.prompt + d.completion).toFixed(1)}`);
+    const linePrompt = ptsPrompt.join(" ");
+    const lineTotal  = ptsTotal.join(" ");
+    // 输入面积贴基线；输出面积只铺在「输入线 → 总计线」之间，否则上层渐变会把输入区盖成灰紫
+    const areaPrompt = `M ${PL},${(PT+ih).toFixed(1)} L ${linePrompt.split(" ").join(" L ")} L ${(PL+iw).toFixed(1)},${(PT+ih).toFixed(1)} Z`;
+    const areaOutput = `M ${lineTotal.split(" ").join(" L ")} L ${ptsPrompt.slice().reverse().join(" L ")} Z`;
+
+    // 交互次数折线
+    const callsPath = days.map((d,i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)},${yCalls(d.calls).toFixed(1)}`).join(" ");
+
+    // x 轴标签抽稀
+    const step = Math.ceil(n / 8);
+    let xlabels = "";
+    days.forEach((d,i) => {
+      if (i % step !== 0 && i !== n - 1) return;
+      if (i !== 0 && i !== n - 1 && n - 1 - i < step * 0.6) return;
+      xlabels += `<text x="${x(i).toFixed(1)}" y="${H-12}" text-anchor="middle" font-size="10" fill="#94a3b8">${md(d.date)}</text>`;
+    });
+
+    // hover 热区
+    let hotspots = "";
+    days.forEach((d,i) => {
+      const c = iw / Math.max(1, n - 1);
+      hotspots += `<rect x="${(x(i)-c/2).toFixed(1)}" y="${PT}" width="${c.toFixed(1)}" height="${ih}" fill="transparent" class="hs" data-i="${i}"/>`;
+    });
+
+    wrap.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="趋势图">
+        <defs>
+          <linearGradient id="gIn" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#38bdf8" stop-opacity=".34"/>
+            <stop offset="100%" stop-color="#38bdf8" stop-opacity=".04"/>
+          </linearGradient>
+          <linearGradient id="gOut" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#fb7185" stop-opacity=".28"/>
+            <stop offset="100%" stop-color="#fb7185" stop-opacity=".03"/>
+          </linearGradient>
+        </defs>
+        ${grid}
+        <path d="${areaPrompt}" fill="url(#gIn)"/>
+        <path d="${areaOutput}" fill="url(#gOut)"/>
+        <polyline points="${linePrompt}" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round"/>
+        <polyline points="${lineTotal}" fill="none" stroke="#fb7185" stroke-width="2" stroke-linejoin="round"/>
+        <path d="${callsPath}" fill="none" stroke="#10b981" stroke-width="1.6" stroke-dasharray="5 4" opacity=".9"/>
+        ${xlabels}
+        <g class="hover-g" style="display:none">
+          <line class="hl" y1="${PT}" y2="${PT+ih}" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+          <circle class="hc1" r="3.5" fill="#38bdf8" stroke="#fff" stroke-width="2"/>
+          <circle class="hc2" r="3.5" fill="#fb7185" stroke="#fff" stroke-width="2"/>
+          <circle class="hc3" r="3.5" fill="#10b981" stroke="#fff" stroke-width="2"/>
+        </g>
+        ${hotspots}
+      </svg>
+      <div id="tip" style="position:absolute;pointer-events:none;display:none;background:rgba(15,23,42,.92);color:#fff;padding:8px 10px;border-radius:9px;font-size:11px;line-height:1.7;white-space:nowrap;transform:translate(-50%,-100%);z-index:5"></div>`;
+
+    const svg = wrap.querySelector("svg");
+    const tip = wrap.querySelector("#tip");
+    const hg = wrap.querySelector(".hover-g");
+    wrap.querySelectorAll(".hs").forEach(rect => {
+      rect.addEventListener("mouseenter", () => {
+        const i = Number(rect.dataset.i), d = days[i];
+        const cx = x(i);
+        hg.style.display = "";
+        hg.querySelector(".hl").setAttribute("x1", cx);
+        hg.querySelector(".hl").setAttribute("x2", cx);
+        hg.querySelector(".hc1").setAttribute("cx", cx);
+        hg.querySelector(".hc1").setAttribute("cy", yTok(d.prompt));
+        hg.querySelector(".hc2").setAttribute("cx", cx);
+        hg.querySelector(".hc2").setAttribute("cy", yTok(d.prompt + d.completion));
+        hg.querySelector(".hc3").setAttribute("cx", cx);
+        hg.querySelector(".hc3").setAttribute("cy", yCalls(d.calls));
+        tip.style.display = "block";
+        tip.innerHTML = `<b>${iso(d.date)}</b><br>输入 ${fmtCompact(d.prompt)} · 输出 ${fmtCompact(d.completion)}<br>交互 ${fmtInt(d.calls)} 次`;
+        const pct = cx / W * 100;
+        tip.style.left = pct + "%";
+        tip.style.top = "8px";
+      });
+      rect.addEventListener("mouseleave", () => { hg.style.display = "none"; tip.style.display = "none"; });
+    });
+  }
+
+  function renderPie(agents){
+    const wrap = $("pieWrap");
+    const top = agents.slice(0, 4);
+    const rest = agents.slice(4);
+    const data = top.map(a => ({ name:a.name, value:a.total }));
+    if (rest.length) data.push({ name:"其他", value: rest.reduce((s,a) => s + a.total, 0) });
+    const total = data.reduce((s,a) => s + a.value, 0) || 1;
+    const colors = ["#6366f1","#ec4899","#10b981","#f59e0b","#94a3b8"];
+    const R = 62, C = 70, SW = 22;
+    let acc = 0, arcs = "";
+    data.forEach((seg,i) => {
+      const frac = seg.value / total;
+      const a0 = acc * Math.PI * 2 - Math.PI / 2;
+      acc += frac;
+      const a1 = acc * Math.PI * 2 - Math.PI / 2;
+      const large = frac > 0.5 ? 1 : 0;
+      const x0 = C + R * Math.cos(a0), y0 = C + R * Math.sin(a0);
+      const x1 = C + R * Math.cos(a1 - 0.006), y1 = C + R * Math.sin(a1 - 0.006);
+      arcs += `<path d="M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${R} ${R} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}" fill="none" stroke="${colors[i]}" stroke-width="${SW}" stroke-linecap="butt"><title>${seg.name}: ${fmtCompact(seg.value)}（${(frac*100).toFixed(1)}%）</title></path>`;
+    });
+    const legend = data.map((seg,i) => `<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);min-width:0">
+        <i style="width:8px;height:8px;border-radius:3px;background:${colors[i]};flex:0 0 auto"></i>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:96px">${seg.name}</span>
+        <b style="color:var(--ink2);font-variant-numeric:tabular-nums">${(seg.value/total*100).toFixed(0)}%</b>
+      </div>`).join("");
+    wrap.innerHTML = `
+      <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:center">
+        <svg width="140" height="140" viewBox="0 0 140 140">
+          <circle cx="${C}" cy="${C}" r="${R}" fill="none" stroke="#f1f5f9" stroke-width="${SW}"/>
+          ${arcs}
+          <text x="${C}" y="${C-2}" text-anchor="middle" font-size="10" fill="#94a3b8">合计</text>
+          <text x="${C}" y="${C+14}" text-anchor="middle" font-size="13" font-weight="800" fill="#0f172a">${fmtCompact(total)}</text>
+        </svg>
+        <div style="display:flex;flex-direction:column;gap:7px">${legend}</div>
+      </div>`;
+  }
+
+  function renderRank(agents, totalCalls){
+    const rows = agents.slice(0, 6);
+    $("rankBody").innerHTML = rows.map(a => {
+      const avg = a.calls ? Math.round(a.total / a.calls) : 0;
+      return `<tr>
+        <td title="${a.name}">${a.name}</td>
+        <td>${fmtInt(a.calls)}</td>
+        <td style="color:#0369a1">${fmtCompact(a.prompt)}</td>
+        <td style="color:#be123c">${fmtCompact(a.completion)}</td>
+        <td style="font-weight:700">${fmtCompact(a.total)}</td>
+        <td style="color:var(--muted)">${fmtCompact(avg)}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  // ---------- 面板 ----------
+  function calendarHTML(viewYear, viewMonth, uniq){
+    const first = new Date(viewYear, viewMonth, 1);
+    const lead = (first.getDay() + 6) % 7;
+    const gridStart = addDays(first, -lead);
+    const cells = [];
+    for (let i = 0; i < 42; i++) cells.push(addDays(gridStart, i));
+    // 末尾整行不属于本月则去掉
+    const lastRow = cells.slice(35);
+    if (lastRow.every(d => d.getMonth() !== viewMonth)) cells.length = 35;
+
+    const r = effectiveRange();
+    const canNext = !(viewYear === TODAY.getFullYear() && viewMonth >= TODAY.getMonth());
+    const canPrev = !(viewYear === DATA_START.getFullYear() && viewMonth <= DATA_START.getMonth());
+
+    const week = WEEK_LABEL.map((w,i) => `<span class="${i >= 5 ? "we" : ""}">${w}</span>`).join("");
+    const body = cells.map(d => {
+      const inMonth = d.getMonth() === viewMonth;
+      const isToday = sameDay(d, TODAY);
+      const disabled = d > TODAY || d < DATA_START;
+      const cls = ["cell"];
+      if (!inMonth) cls.push("out");
+      if (disabled) cls.push("disabled");
+      if (isToday) cls.push("today");
+      let edgeCls = "";
+      if (r && !disabled){
+        const s = r.start, e = r.end;
+        if (sameDay(d, s) && sameDay(d, e)) { cls.push("in-range","edge","single"); edgeCls = "single"; }
+        else if (sameDay(d, s)) { cls.push("in-range","edge","start"); edgeCls = "start"; }
+        else if (sameDay(d, e)) { cls.push("in-range","edge","end"); edgeCls = "end"; }
+        else if (d > s && d < e) cls.push("in-range");
+      }
+      const focus = draft.start && !draft.end && sameDay(d, draft.start) ? " focus" : "";
+      return `<div class="${cls.join(" ")}${focus}" ${disabled ? "" : `data-day="${iso(d)}"`}><span class="d">${d.getDate()}</span></div>`;
+    }).join("");
+
+    return `<div class="cal" data-cal="${uniq}">
+      <div class="cal-head">
+        <button class="cal-nav" data-nav="-1" data-cal="${uniq}" aria-label="上个月" ${canPrev ? "" : "disabled"}>‹</button>
+        <span class="cal-title">${viewYear} 年 ${viewMonth + 1} 月</span>
+        <button class="cal-nav" data-nav="1" data-cal="${uniq}" aria-label="下个月" ${canNext ? "" : "disabled"}>›</button>
+      </div>
+      <div class="cal-week">${week}</div>
+      <div class="cal-grid">${body}</div>
+    </div>`;
+  }
+
+  function selectedText(){
+    const r = effectiveRange();
+    if (!r) return `<b>请选择开始日期</b>`;
+    const span = spanOf(r);
+    const single = sameDay(r.start, r.end);
+    if (!draft.end){
+      if (draft.hover && !sameDay(draft.hover, draft.start))
+        return `预览 <b>${iso(r.start)} ~ ${iso(r.end)}</b> · 共 ${span} 天，点击确认`;
+      return `已选起点 <b>${iso(r.start)}</b>，再点一天作为结束`;
+    }
+    return `${iso(r.start)} ${single ? "（单日）" : "至 " + iso(r.end)} · <b>共 ${span} 天</b>`;
+  }
+
+  function errorText(){
+    const r = effectiveRange();
+    if (!r || !draft.end) return "";
+    const span = spanOf(r);
+    if (span > MAX_DAYS) return `<span class="err">跨度 ${span} 天超过上限 ${MAX_DAYS} 天，请缩短范围</span>`;
+    return "";
+  }
+
+  // A 的左侧竖排列表
+  function presetButtons(){
+    return PRESETS.map(p => {
+      const on = matchPreset(effectiveRange()) === p.key;
+      return `<button class="preset ${on ? "on" : ""}" data-preset="${p.key}">
+        <span>${p.label}</span><span class="dot"></span>
+      </button>`;
+    }).join("");
+  }
+  // B / C 的横排胶囊
+  function chipButtons(short){
+    return PRESETS.map(p => {
+      const on = matchPreset(effectiveRange()) === p.key;
+      return `<button class="chip ${on ? "on" : ""}" data-preset="${p.key}">${short ? p.short : p.label}</button>`;
+    }).join("");
+  }
+
+  function panelHTML(){
+    const r = effectiveRange();
+    const view = draft.view || r && r.end || TODAY;
+    const vy = view.getFullYear(), vm = view.getMonth();
+    const span = spanOf(r);
+    const tooLong = !!draft.end && span > MAX_DAYS;
+    const ready = !!(draft.start && draft.end) && !tooLong;
+
+    if (scheme === "A"){
+      return `
+        <div class="p-head">
+          <div class="p-title">选择统计区间</div>
+          <button class="p-close" data-act="close" aria-label="关闭">✕</button>
+        </div>
+        <div class="p-body-a">
+          <div class="presets">
+            <div class="presets-label">快捷选择</div>
+            ${presetButtons()}
+          </div>
+          <div class="p-main">
+            ${calendarHTML(vy, vm, "main")}
+            <div class="p-foot" style="margin-top:6px">
+              <div class="p-sel">${selectedText()}${errorText()}</div>
+              <div class="p-actions"><button class="btn ghost" data-act="close">取消</button></div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    if (scheme === "B"){
+      const prev = addDays(new Date(vy, vm, 1), -1);
+      return `
+        <div class="p-head">
+          <div class="p-title">选择统计区间</div>
+          <button class="p-close" data-act="close" aria-label="关闭">✕</button>
+        </div>
+        <div class="p-top">${chipButtons(true)}</div>
+        <div class="p-dual">
+          ${calendarHTML(prev.getFullYear(), prev.getMonth(), "left")}
+          ${calendarHTML(vy, vm, "right")}
+        </div>
+        <div class="p-foot">
+          <div class="p-sel">${selectedText()}${errorText()}</div>
+          <div class="p-actions">
+            <button class="btn ghost" data-act="close">取消</button>
+            <button class="btn primary" data-act="apply" ${ready ? "" : "disabled"}>确定</button>
+          </div>
+        </div>`;
+    }
+
+    return `
+      <div class="p-head">
+        <div class="p-title">选择统计区间</div>
+        <button class="p-close" data-act="close" aria-label="关闭">✕</button>
+      </div>
+      <div class="p-main">${calendarHTML(vy, vm, "main")}</div>
+      <div class="p-chips">${chipButtons(true)}</div>
+      <div class="p-foot" style="margin-top:0;border-top:0">
+        <div class="p-sel">${selectedText()}${errorText()}</div>
+        <div class="p-actions"><button class="btn ghost" data-act="close">取消</button></div>
+      </div>`;
+  }
+
+  function renderPanel(){
+    const panel = $("panel");
+    panel.dataset.scheme = scheme;
+    panel.innerHTML = panelHTML();
+    bindPanel();
+  }
+
+  function openPanel(){
+    if (open) return;
+    open = true;
+    draft = { start: state.start, end: state.end, hover: null, view: state.end };
+    $("panel").hidden = false;
+    $("rangeBtn").classList.add("open");
+    $("rangeBtn").setAttribute("aria-expanded", "true");
+    renderPanel();
+  }
+
+  function closePanel(){
+    if (!open) return;
+    open = false;
+    $("panel").hidden = true;
+    $("rangeBtn").classList.remove("open");
+    $("rangeBtn").setAttribute("aria-expanded", "false");
+  }
+
+  // ---------- 交互 ----------
+  function pickDay(dayStr){
+    const d = startOfDay(new Date(dayStr + "T00:00:00"));
+    if (d > TODAY || d < DATA_START) return;
+    if (!draft.start || draft.end){
+      draft.start = d; draft.end = null; draft.hover = null;
+      renderPanel();
+      return;
+    }
+    if (d < draft.start){ draft.end = draft.start; draft.start = d; }
+    else draft.end = d;
+    draft.hover = null;
+
+    const r = effectiveRange();
+    if (spanOf(r) > MAX_DAYS){ renderPanel(); return; }   // 超限时留在面板内提示
+
+    if (scheme === "B"){ renderPanel(); return; }
+    commit();
+  }
+
+  function choosePreset(key){
+    const p = presetOf(key);
+    if (!p) return;
+    const [s, e] = p.range();
+    draft.start = s; draft.end = e; draft.hover = null; draft.view = e;
+    state.preset = key;
+    if (scheme === "B"){ renderPanel(); return; }
+    commit();
+  }
+
+  function commit(){
+    const r = effectiveRange();
+    if (!r) return;
+    if (spanOf(r) > MAX_DAYS) { renderPanel(); return; }
+    state.start = r.start;
+    state.end = r.end;
+    state.preset = matchPreset(r);
+    closePanel();
+    renderButton();
+    renderStats();
+  }
+
+  function bindPanel(){
+    const panel = $("panel");
+    panel.onclick = (ev) => {
+      const dayEl = ev.target.closest("[data-day]");
+      if (dayEl){ pickDay(dayEl.dataset.day); return; }
+      const presetEl = ev.target.closest("[data-preset]");
+      if (presetEl){ choosePreset(presetEl.dataset.preset); return; }
+      const navEl = ev.target.closest("[data-nav]");
+      if (navEl && !navEl.disabled){
+        const dir = Number(navEl.dataset.nav);
+        const v = draft.view || TODAY;
+        const next = new Date(v.getFullYear(), v.getMonth() + dir, 1);
+        if (next > startOfMonth(TODAY)) return;
+        draft.view = next;
+        renderPanel();
+        return;
+      }
+      const actEl = ev.target.closest("[data-act]");
+      if (actEl){
+        if (actEl.dataset.act === "close") closePanel();
+        if (actEl.dataset.act === "apply") commit();
+      }
+    };
+
+    // hover 预览范围：不整体重绘，只改 class
+    panel.onmouseover = (ev) => {
+      const dayEl = ev.target.closest("[data-day]");
+      if (!dayEl) return;
+      if (!draft.start || draft.end) return;
+      const d = startOfDay(new Date(dayEl.dataset.day + "T00:00:00"));
+      if (sameDay(d, draft.hover)) return;
+      draft.hover = d;
+      paintSelection();
+    };
+    panel.onmouseleave = () => {
+      if (open && draft.start && !draft.end && draft.hover){
+        draft.hover = null;
+        paintSelection();
+      }
+    };
+  }
+
+  function paintSelection(){
+    const panel = $("panel");
+    const r = effectiveRange();
+    panel.querySelectorAll(".cell").forEach(cell => {
+      cell.classList.remove("in-range","edge","start","end","single");
+      const ds = cell.dataset.day;
+      if (!ds || !r) return;
+      const d = startOfDay(new Date(ds + "T00:00:00"));
+      if (sameDay(d, r.start) && sameDay(d, r.end)) { cell.classList.add("in-range","edge","single"); }
+      else if (sameDay(d, r.start)) { cell.classList.add("in-range","edge","start"); }
+      else if (sameDay(d, r.end)) { cell.classList.add("in-range","edge","end"); }
+      else if (d > r.start && d < r.end) cell.classList.add("in-range");
+    });
+    const sel = panel.querySelector(".p-sel");
+    if (sel) sel.innerHTML = selectedText() + errorText();
+  }
+
+  // ---------- 方案切换 ----------
+  const SCHEME_META = {
+    A: {
+      name: "方案 A · 侧栏快捷 + 单月日历（选完即生效）",
+      tags: ["快捷项常驻可扫视", "两步完成选择", "面板 644px"],
+      txt: "左侧 8 个快捷区间一眼看全，右侧单月日历负责任意日期。适合「大多数时候点快捷、偶尔挑具体几天」的用法，也最贴近当前下拉的入口位置。"
+    },
+    B: {
+      name: "方案 B · 顶部快捷 + 双月日历（确定后生效）",
+      tags: ["跨月免翻页", "可反悔再确定", "面板 722px"],
+      txt: "两个自然月并排，查「上月 1 号到现在」这类跨月区间不用翻页。代价是面板更宽、多一次「确定」点击；快捷项在顶部横排。"
+    },
+    C: {
+      name: "方案 C · 紧凑单月 + 底部快捷（选完即生效）",
+      tags: ["面板最窄 392px", "遮挡最少", "快捷项 7 项"],
+      txt: "把日历压到最小可用尺寸，快捷项换成底部短标签。适合以后要在侧边栏、抽屉或窄容器里复用同一套选择器。"
+    }
+  };
+
+  function renderNote(){
+    const m = SCHEME_META[scheme];
+    $("schemeNote").innerHTML = `
+      <b>${m.name}</b>
+      ${m.tags.map(t => `<span class="tag">${t}</span>`).join("")}
+      <span class="txt">${m.txt}</span>`;
+  }
+
+  function setScheme(next){
+    scheme = next;
+    document.querySelectorAll("#schemeTabs button").forEach(b => b.classList.toggle("on", b.dataset.scheme === next));
+    $("panel").dataset.scheme = next;
+    renderNote();
+    if (open) renderPanel();
+  }
+
+  // ---------- 事件绑定 ----------
+  $("rangeBtn").addEventListener("click", () => { open ? closePanel() : openPanel(); });
+  $("openAll").addEventListener("click", () => { if (!open) openPanel(); });
+  $("schemeTabs").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-scheme]");
+    if (b) setScheme(b.dataset.scheme);
+  });
+  document.addEventListener("click", (ev) => {
+    if (!open) return;
+    // 面板每次选择都会整体重绘，此刻 ev.target 已脱离文档，
+    // 用 contains 判断会误判成“点了外部”而闪退；用事件路径（派发时快照）才可靠。
+    const path = ev.composedPath ? ev.composedPath() : [];
+    if (path.includes($("picker")) || path.includes($("openAll"))) return;
+    closePanel();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && open) { closePanel(); return; }
+    if (ev.key === "Enter" && open && scheme === "B"){
+      const r = effectiveRange();
+      if (r && draft.end && spanOf(r) <= MAX_DAYS) commit();
+    }
+  });
+
+  // ---------- 启动 ----------
+  renderButton();
+  renderStats();
+  renderNote();
+  setScheme("A");
+
+  // 便于评审：点开页面时先亮一下按钮，提示这里可以点
+  setTimeout(() => {
+    const btn = $("rangeBtn");
+    btn.style.transition = "box-shadow .4s";
+    btn.style.boxShadow = "0 0 0 4px rgba(22,119,255,.18)";
+    setTimeout(() => { btn.style.boxShadow = ""; }, 1400);
+  }, 600);
+
+  // 暴露给控制台调试
+  window.__tokenStatsPrototype = { setScheme, openPanel, closePanel, state, PRESETS };
+})();
+</script>
+</body>
+</html>

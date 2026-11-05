@@ -149,11 +149,12 @@ def test_metrics_endpoint_merges_before_querying():
 
 
 def test_metrics_view_has_custom_range_and_comparison_and_freshness():
+    """任意区间改由日历面板承担，不再是一排快捷按钮 + 两个原生 date input。"""
     view = _source(VIEW)
 
-    assert "自定义" in view
-    assert "type=\"date\"" in view
-    assert "applyCustomRange" in view
+    assert "<DateRangePicker" in view
+    assert ':max-days="MAX_RANGE_DAYS"' in view
+    assert "type=\"date\"" not in view
     # 环比与数据新鲜度
     assert "computeDelta" in view
     assert "formatDataFreshness" in view
@@ -172,9 +173,12 @@ def test_metrics_view_is_accessible():
     # 图表提供文本替代
     assert ":aria-label=\"trendAriaLabel\"" in view
     assert "知识库${orderByLabel}排行榜" in view
-    # 日期输入有 label
-    assert 'for="metrics-start-date"' in view
-    assert 'for="metrics-end-date"' in view
+    # 日期选择的可访问性由共享组件承担：触发器声明弹层关系，面板是 dialog
+    picker = _source("frontend/src/components/common/DateRangePicker.vue")
+    assert 'aria-haspopup="dialog"' in picker
+    assert ':aria-expanded="open"' in picker
+    assert 'role="dialog"' in picker
+    assert 'aria-label="选择统计区间"' in picker
 
 
 def test_metrics_view_drops_the_force_remount_hack():
@@ -218,11 +222,15 @@ def test_chart_utils_centralize_theme_sorting_and_colour_contrast():
 
 
 def test_metrics_date_range_is_inclusive_without_off_by_one():
-    utils_view = _source(VIEW)
+    """天数口径收敛到共享工具：11-01 到 11-05 必须是 5 天，不是 4 天也不是 6 天。"""
+    view = _source(VIEW)
+    utils = _source("frontend/src/utils/dateRange.ts")
 
-    # 近 N 天按「含今天在内的 N 天」计算，不再多算一天
-    assert "end.getDate() - (days - 1)" in utils_view
-    assert "end.getDate() - 7" not in utils_view
+    assert "inclusiveDaySpan(dateRange.value.start, dateRange.value.end)" in view
+    assert "export function inclusiveDaySpan" in utils
+    assert "+ 1" in utils.split("export function inclusiveDaySpan", 1)[1].split("export function", 1)[0]
+    # 页面自己算天数的旧写法必须消失
+    assert "86400000" not in view
 
 
 def test_knowledge_base_management_accepts_drilldown_query():

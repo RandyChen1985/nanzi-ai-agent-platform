@@ -1126,6 +1126,8 @@ async def get_knowledge_health(
 @router.get("/retrieval-stats")
 async def get_retrieval_stats(
     days: int = 7,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     source: Optional[str] = None,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
@@ -1141,7 +1143,30 @@ async def get_retrieval_stats(
     )
     if not access.get("is_admin"):
         raise HTTPException(status_code=403, detail="需要管理员权限才能查看检索指标")
-    data = await KnowledgeRetrievalLogService.stats(db, days=days, source=source)
+
+    if start_date or end_date:
+        # 与 /metrics/summary 共用同一个上限，避免页面上两块卡片能查的范围不一致
+        from app.services.knowledge_metrics_service import MAX_RANGE_DAYS
+
+        if not (start_date and end_date):
+            raise HTTPException(status_code=400, detail="start_date 与 end_date 必须同时提供")
+        try:
+            start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="start_date/end_date 必须为 YYYY-MM-DD 格式")
+        if start_dt > end_dt:
+            raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
+        if (end_dt - start_dt).days + 1 > MAX_RANGE_DAYS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"查询区间不能超过 {MAX_RANGE_DAYS} 天",
+            )
+        data = await KnowledgeRetrievalLogService.stats(
+            db, start_date=start_date, end_date=end_date, source=source
+        )
+    else:
+        data = await KnowledgeRetrievalLogService.stats(db, days=days, source=source)
     return {"code": 0, "data": data}
 
 

@@ -174,7 +174,7 @@ onUnmounted(() => window.removeEventListener('deployment-checklist:open', openDe
     </div>
     <p v-if="isComplete" class="mt-3 text-xs font-medium text-emerald-700">✓ 首次部署检查已完成；后续可随时重新打开查看。</p>
   </section>
-  <button v-else-if="!loading && visible && props.compact" type="button" class="hidden lg:inline-flex items-center gap-1.5 rounded-lg border-0 bg-transparent px-2 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700" @click="scrollToDetails">
+  <button v-else-if="!loading && visible && props.compact" type="button" class="hidden h-9 items-center gap-1.5 rounded-lg border-0 bg-transparent px-2 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 lg:inline-flex" @click="scrollToDetails">
     <span aria-hidden="true">✓</span>
     <span>部署检查</span>
   </button>

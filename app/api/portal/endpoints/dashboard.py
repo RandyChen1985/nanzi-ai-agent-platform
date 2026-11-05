@@ -53,12 +53,16 @@ def _resolve_token_stats_range(
     """解析 Token 统计时间范围，返回 (start, end, span_days)。"""
     now = datetime.now()
     if start_date and end_date:
-        start = datetime.strptime(start_date, "%Y-%m-%d").replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        end = datetime.strptime(end_date, "%Y-%m-%d").replace(
-            hour=23, minute=59, second=59, microsecond=999999
-        )
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d").replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            end = datetime.strptime(end_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, microsecond=999999
+            )
+        except ValueError:
+            # 前端日历传的是纯日期；格式不对是调用方问题，不该冒成 500。
+            raise HTTPException(status_code=400, detail="日期格式应为 YYYY-MM-DD")
         if end < start:
             raise HTTPException(status_code=400, detail="结束日期不能早于开始日期")
         span_days = (end.date() - start.date()).days + 1
@@ -73,24 +77,56 @@ def _resolve_token_stats_range(
     end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
     return start, end, span_days
 
+
+def _resolve_stats_window(
+    period: str = "today",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> tuple[datetime, datetime]:
+    """统计窗口：日期区间优先，否则回落到 period 枚举。
+
+    Token 统计、概览、运营分析三个页面的时间筛选都改成日历后，后端只需要
+    一套解析：日历传 `start_date`/`end_date`，旧调用方继续传 `period`。
+    显式日期只给一端视为调用错误——静默按 period 兜底会让「选了半截区间」
+    变成「悄悄返回今日数据」。
+    """
+    if start_date or end_date:
+        if not (start_date and end_date):
+            raise HTTPException(status_code=400, detail="start_date 与 end_date 必须同时提供")
+        start, end, _ = _resolve_token_stats_range(0, start_date, end_date)
+        return start, end
+
+    now = datetime.now()
+    if period == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "week":
+        start = now - timedelta(days=7)
+    else:
+        start = now - timedelta(days=30)
+    return start, now
+
+
 @router.get("/admin-stats")
 async def get_admin_stats(
     period: str = Query("today", pattern="^(today|week|month)$"),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     user: dict = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session)
 ):
     admin_flag = is_admin(user)
     user_name = user["user_name"]
-    
+
+    range_start, range_end = _resolve_stats_window(period, start_date, end_date)
+
     # 1. User Stats (Admin Only)
     total_users = None
     active_users = None
-    
+
     if admin_flag:
         count_users = await db.execute(select(func.count()).select_from(User).where(User.status == 1))
         total_users = count_users.scalar()
         
-        seven_days_ago = datetime.now() - timedelta(days=7)
         # 活跃用户必须限定在「当前有效账号」里。
         #
         # 访问日志会一直保留历史账号（已禁用、已删除）的调用记录，直接
@@ -102,29 +138,26 @@ async def get_admin_stats(
             .select_from(AccessLog)
             .join(User, User.user_name == AccessLog.user_name)
             .where(
-                AccessLog.created_at >= seven_days_ago,
+                # 活跃数跟随所选区间：否则切到「上月」时活跃用户仍是近 7 天，
+                # 与同一张卡上的调用量不是同一个时间口径。
+                AccessLog.created_at >= range_start,
+                AccessLog.created_at <= range_end,
                 User.status == 1,
             )
         )
         active_users = count_active.scalar()
 
-    # 2. Time Range
-    now = datetime.now()
-    if period == "today":
-        start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "week":
-        start_time = now - timedelta(days=7)
-    else:
-        start_time = now - timedelta(days=30)
-        
-    # 3. API Stats
+    # 2. API Stats
     stmt = select(
         func.count().label("total"),
         func.avg(AccessLog.process_time_ms).label("avg_time"),
         func.sum(case(((AccessLog.status_code >= 200) & (AccessLog.status_code < 300), 1), else_=0)).label("success"),
         func.sum(case((AccessLog.status_code >= 400, 1), else_=0)).label("error")
-    ).where(AccessLog.created_at >= start_time)
-    
+    ).where(
+        AccessLog.created_at >= range_start,
+        AccessLog.created_at <= range_end,
+    )
+
     if not admin_flag:
         stmt = stmt.where(AccessLog.user_name == user_name)
         
@@ -143,7 +176,10 @@ async def get_admin_stats(
         func.coalesce(func.sum(AgentExecutionHistory.prompt_tokens), 0).label("prompt_tokens"),
         func.coalesce(func.sum(AgentExecutionHistory.completion_tokens), 0).label("completion_tokens"),
         func.coalesce(func.sum(AgentExecutionHistory.total_tokens), 0).label("total_tokens"),
-    ).where(AgentExecutionHistory.created_at >= start_time)
+    ).where(
+        AgentExecutionHistory.created_at >= range_start,
+        AgentExecutionHistory.created_at <= range_end,
+    )
     if not admin_flag:
         stmt_tokens = stmt_tokens.where(AgentExecutionHistory.username == user_name)
     tokens_row = (await db.execute(stmt_tokens)).one()
@@ -172,6 +208,8 @@ async def get_admin_stats(
 @router.get("/user-stats")
 async def get_user_stats(
     period: str = Query("today", pattern="^(today|week|month)$"),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     user: dict = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session)
 ):
@@ -182,15 +220,8 @@ async def get_user_stats(
     status_val = res.scalar_one_or_none()
     api_key_status = "active" if status_val == 1 else "inactive"
     
-    # Time Range
-    now = datetime.now()
-    if period == "today":
-        start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "week":
-        start_time = now - timedelta(days=7)
-    else:
-        start_time = now - timedelta(days=30)
-        
+    range_start, range_end = _resolve_stats_window(period, start_date, end_date)
+
     # Stats
     stmt = select(
         func.count().label("total"),
@@ -199,7 +230,8 @@ async def get_user_stats(
         func.max(AccessLog.created_at).label("last_call")
     ).where(
         AccessLog.user_name == user_name,
-        AccessLog.created_at >= start_time
+        AccessLog.created_at >= range_start,
+        AccessLog.created_at <= range_end,
     )
     
     row = (await db.execute(stmt)).one()
@@ -216,8 +248,9 @@ async def get_user_stats(
         func.coalesce(func.sum(AgentExecutionHistory.completion_tokens), 0).label("completion_tokens"),
         func.coalesce(func.sum(AgentExecutionHistory.total_tokens), 0).label("total_tokens"),
     ).where(
-        AgentExecutionHistory.created_at >= start_time,
-        AgentExecutionHistory.username == user_name
+        AgentExecutionHistory.created_at >= range_start,
+        AgentExecutionHistory.created_at <= range_end,
+        AgentExecutionHistory.username == user_name,
     )
     tokens_row = (await db.execute(stmt_tokens)).one()
 
@@ -425,19 +458,16 @@ async def get_online_users(
 @router.get("/agent-stats")
 async def get_agent_stats(
     period: str = Query("today", pattern="^(today|week|month)$"),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     user: dict = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session)
 ):
     admin_flag = is_admin(user)
     user_name = user["user_name"]
-    
+
     now = datetime.now()
-    if period == "today":
-        start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "week":
-        start_time = now - timedelta(days=7)
-    else:
-        start_time = now - timedelta(days=30)
+    range_start, range_end = _resolve_stats_window(period, start_date, end_date)
         
     # 1. Health Stats
     stmt = select(
@@ -445,7 +475,8 @@ async def get_agent_stats(
         func.sum(case((AgentExecutionTrace.status == 'success', 1), else_=0)).label("success"),
         func.avg(AgentExecutionTrace.execution_time_ms).label("avg_lat")
     ).where(
-        AgentExecutionTrace.created_at >= start_time,
+        AgentExecutionTrace.created_at >= range_start,
+        AgentExecutionTrace.created_at <= range_end,
         AgentExecutionTrace.event_type.in_(['tool_call', 'tool_result'])
     )
     
@@ -454,7 +485,8 @@ async def get_agent_stats(
         # Subquery to get trace_ids for the current user
         user_trace_ids = select(AgentExecutionHistory.trace_id).where(
             AgentExecutionHistory.username == user_name,
-            AgentExecutionHistory.created_at >= start_time
+            AgentExecutionHistory.created_at >= range_start,
+            AgentExecutionHistory.created_at <= range_end,
         )
         stmt = stmt.where(AgentExecutionTrace.trace_id.in_(user_trace_ids))
         
@@ -467,7 +499,8 @@ async def get_agent_stats(
     stmt_usage = select(
         AgentExecutionTrace.tool_name, func.count().label("count")
     ).where(
-        AgentExecutionTrace.created_at >= start_time,
+        AgentExecutionTrace.created_at >= range_start,
+        AgentExecutionTrace.created_at <= range_end,
         AgentExecutionTrace.tool_name != None
     )
     
@@ -475,7 +508,8 @@ async def get_agent_stats(
     if not admin_flag:
         user_trace_ids = select(AgentExecutionHistory.trace_id).where(
             AgentExecutionHistory.username == user_name,
-            AgentExecutionHistory.created_at >= start_time
+            AgentExecutionHistory.created_at >= range_start,
+            AgentExecutionHistory.created_at <= range_end,
         )
         stmt_usage = stmt_usage.where(AgentExecutionTrace.trace_id.in_(user_trace_ids))
         
@@ -545,7 +579,8 @@ async def get_agent_stats(
         func.avg(AgentExecutionHistory.execution_time_ms).label("avg_lat"),
         func.sum(case((AgentExecutionHistory.status == 'success', 1), else_=0)).label("success")
     ).outerjoin(AIAgent, AgentExecutionHistory.agent_id == AIAgent.id).where(
-        AgentExecutionHistory.created_at >= start_time,
+        AgentExecutionHistory.created_at >= range_start,
+        AgentExecutionHistory.created_at <= range_end,
         or_(
             AgentExecutionHistory.status.is_(None),
             AgentExecutionHistory.status.notin_(SUSPENDED_HISTORY_STATUSES),
@@ -715,19 +750,15 @@ async def get_token_stats_records(
 @router.get("/token-stats/agents")
 async def get_token_stats_agents(
     period: str = Query("today", pattern="^(today|week|month)$"),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     user: dict = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session)
 ):
     admin_flag = is_admin(user)
     user_name = user["user_name"]
-    now = datetime.now()
-    if period == "today":
-        start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "week":
-        start_time = now - timedelta(days=7)
-    else:
-        start_time = now - timedelta(days=30)
-        
+    range_start, range_end = _resolve_stats_window(period, start_date, end_date)
+
     stmt = select(
         AgentExecutionHistory.agent_id,
         AIAgent.display_name,
@@ -736,7 +767,8 @@ async def get_token_stats_agents(
         func.coalesce(func.sum(AgentExecutionHistory.completion_tokens), 0).label("completion_tokens"),
         func.coalesce(func.sum(AgentExecutionHistory.total_tokens), 0).label("total_tokens"),
     ).outerjoin(AIAgent, AgentExecutionHistory.agent_id == AIAgent.id).where(
-        AgentExecutionHistory.created_at >= start_time
+        AgentExecutionHistory.created_at >= range_start,
+        AgentExecutionHistory.created_at <= range_end,
     )
     
     if not admin_flag:
@@ -760,26 +792,25 @@ async def get_token_stats_agents(
 @router.get("/token-stats/users")
 async def get_token_stats_users(
     period: str = Query("today", pattern="^(today|week|month)$"),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     user: dict = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session)
 ):
     admin_flag = is_admin(user)
     user_name = user["user_name"]
-    now = datetime.now()
-    if period == "today":
-        start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "week":
-        start_time = now - timedelta(days=7)
-    else:
-        start_time = now - timedelta(days=30)
-        
+    range_start, range_end = _resolve_stats_window(period, start_date, end_date)
+
     stmt = select(
         AgentExecutionHistory.username,
         func.count().label("calls"),
         func.coalesce(func.sum(AgentExecutionHistory.prompt_tokens), 0).label("prompt_tokens"),
         func.coalesce(func.sum(AgentExecutionHistory.completion_tokens), 0).label("completion_tokens"),
         func.coalesce(func.sum(AgentExecutionHistory.total_tokens), 0).label("total_tokens"),
-    ).where(AgentExecutionHistory.created_at >= start_time)
+    ).where(
+        AgentExecutionHistory.created_at >= range_start,
+        AgentExecutionHistory.created_at <= range_end,
+    )
     
     if not admin_flag:
         stmt = stmt.where(AgentExecutionHistory.username == user_name)

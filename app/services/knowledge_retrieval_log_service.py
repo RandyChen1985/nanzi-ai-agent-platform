@@ -66,12 +66,36 @@ class KnowledgeRetrievalLogService:
             return False
 
     @classmethod
-    async def stats(cls, db, *, days: int = 7, source: Optional[str] = None) -> dict:
-        """近 N 天的检索效果：量、零结果率、平均命中、P95 延迟、搜不到的 query。"""
-        days = max(1, min(90, int(days or 7)))
-        since = datetime.now() - timedelta(days=days)
+    async def stats(
+        cls,
+        db,
+        *,
+        days: int = 7,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> dict:
+        """检索效果：量、零结果率、平均命中、P95 延迟、搜不到的 query。
+
+        两种入口：`days` 是「最近 N 天」的滚动窗口（旧调用方），
+        `start_date`/`end_date` 是运营分析日历面板选的具体区间。两者不能混用——
+        选了 9 月 1~15 日却回「最近 7 天」的数据，卡片上的数字和页面上的区间
+        就是两回事。
+        """
+        until = None
+        if start_date and end_date:
+            start_day = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
+            since = datetime.combine(start_day, datetime.min.time())
+            until = datetime.combine(end_day, datetime.max.time())
+            days = (end_day - start_day).days + 1
+        else:
+            days = max(1, min(90, int(days or 7)))
+            since = datetime.now() - timedelta(days=days)
 
         conditions = [KnowledgeRetrievalLog.created_at >= since]
+        if until is not None:
+            conditions.append(KnowledgeRetrievalLog.created_at <= until)
         if source in (SOURCE_TEST, SOURCE_AGENT):
             conditions.append(KnowledgeRetrievalLog.source == source)
 
@@ -128,6 +152,8 @@ class KnowledgeRetrievalLogService:
 
         return {
             "days": days,
+            "start_date": start_date,
+            "end_date": end_date,
             "total_queries": int(total),
             "zero_result_count": int(zero),
             # 零结果率保留 4 位：7 天只有几十次查询时，1% 的差别也有意义
