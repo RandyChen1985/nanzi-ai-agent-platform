@@ -120,8 +120,11 @@ const recommendedPrompts = computed(() => {
       </p>
     </div>
 
-    <!-- 资源条单独放宽，避免 max-w-3xl 下 5 列被挤扁 -->
-    <div v-if="personalResources?.length" class="w-full max-w-3xl mb-8 sm:mb-10">
+    <!-- 资源条单独放宽，避免 5 列被挤扁；宽屏跟着视口铺开，卡片才不至于缩在中间 -->
+    <div
+      v-if="personalResources?.length"
+      class="w-full max-w-3xl mb-8 sm:mb-10 lg:max-w-5xl xl:max-w-[1080px]"
+    >
       <div class="mb-3 flex items-center gap-1.5 px-1">
         <p class="text-[10px] font-black text-gray-300 uppercase tracking-widest">我的资源</p>
         <button
@@ -159,7 +162,7 @@ const recommendedPrompts = computed(() => {
 
     <!-- Version-configured cards replace fixed capabilities only when enabled. -->
     <Transition name="welcome-card-set" mode="out-in">
-      <div :key="welcomeCardSetKey" class="w-full max-w-3xl mb-12">
+      <div :key="welcomeCardSetKey" class="w-full max-w-3xl mb-12 lg:max-w-5xl xl:max-w-[1080px]">
         <div class="mb-3 px-1">
           <p class="text-[10px] font-black text-gray-300 uppercase tracking-widest">快捷入口</p>
         </div>
@@ -171,16 +174,16 @@ const recommendedPrompts = computed(() => {
             type="button"
             :aria-label="card.title"
             :style="{ '--welcome-card-index': index }"
-            class="welcome-card-item p-4 rounded-2xl bg-white dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all group text-left cursor-pointer"
+            class="welcome-card-item p-4 lg:p-5 rounded-2xl bg-white dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all group text-left cursor-pointer"
             @click="emit('quick-question', card.prompt)"
           >
-            <div class="flex items-start gap-3">
-              <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform group-hover:scale-110">
-                <component :is="welcomeCardIcon(card.icon)" class="h-6 w-6" aria-hidden="true" />
+            <div class="flex items-start gap-3 lg:gap-3.5">
+              <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform group-hover:scale-110 lg:h-[52px] lg:w-[52px] lg:rounded-[14px]">
+                <component :is="welcomeCardIcon(card.icon)" class="h-6 w-6 lg:h-[26px] lg:w-[26px]" aria-hidden="true" />
               </span>
               <div class="min-w-0">
-                <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ card.title }}</h3>
-                <p class="text-[10px] text-gray-400 leading-normal">{{ card.subtitle }}</p>
+                <h3 class="text-[13px] lg:text-[15px] font-bold text-gray-800 dark:text-gray-200 mb-1 lg:mb-1.5 group-hover:text-primary transition-colors">{{ card.title }}</h3>
+                <p class="text-[11px] lg:text-[12px] text-gray-400 leading-normal">{{ card.subtitle }}</p>
               </div>
             </div>
           </button>
@@ -191,17 +194,17 @@ const recommendedPrompts = computed(() => {
             :key="cap.title"
             type="button"
             :style="{ '--welcome-card-index': index }"
-            class="welcome-card-item p-4 rounded-2xl bg-white dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all group text-left cursor-pointer"
+            class="welcome-card-item p-4 lg:p-5 rounded-2xl bg-white dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all group text-left cursor-pointer"
             :aria-label="cap.title"
             @click="handleCapabilityClick(cap.action)"
           >
-            <div class="flex items-start gap-3">
-              <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform group-hover:scale-110">
-                <component :is="welcomeCardIcon(cap.icon)" class="h-6 w-6" aria-hidden="true" />
+            <div class="flex items-start gap-3 lg:gap-3.5">
+              <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform group-hover:scale-110 lg:h-[52px] lg:w-[52px] lg:rounded-[14px]">
+                <component :is="welcomeCardIcon(cap.icon)" class="h-6 w-6 lg:h-[26px] lg:w-[26px]" aria-hidden="true" />
               </span>
               <div class="min-w-0">
-                <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ cap.title }}</h3>
-                <p class="text-[10px] text-gray-400 leading-normal">{{ cap.desc }}</p>
+                <h3 class="text-[13px] lg:text-[15px] font-bold text-gray-800 dark:text-gray-200 mb-1 lg:mb-1.5 group-hover:text-primary transition-colors">{{ cap.title }}</h3>
+                <p class="text-[11px] lg:text-[12px] text-gray-400 leading-normal">{{ cap.desc }}</p>
               </div>
             </div>
           </button>
@@ -211,7 +214,7 @@ const recommendedPrompts = computed(() => {
     </Transition>
 
     <!-- Recommended Prompts (Actionable Grid) -->
-    <div class="w-full max-w-3xl animate-fade-in-up delay-200" v-if="recommendedPrompts.length > 0">
+    <div class="w-full max-w-3xl animate-fade-in-up delay-200 lg:max-w-5xl xl:max-w-[1080px]" v-if="recommendedPrompts.length > 0">
       <div class="flex items-center space-x-2 mb-4 px-1">
         <span class="h-px flex-1 bg-gray-100 dark:bg-gray-800"></span>
         <span class="text-[10px] font-black text-gray-300 uppercase tracking-widest">您可以试着问我</span>
