@@ -255,7 +255,7 @@ onMounted(() => {
             </svg>
             <input
               v-model="keyword"
-              type="text"
+              type="search"
               placeholder="搜索数据集名称 / 标识 / 授权对象"
               class="w-full bg-transparent text-xs text-gray-700 placeholder:text-gray-400 focus:outline-none"
             />

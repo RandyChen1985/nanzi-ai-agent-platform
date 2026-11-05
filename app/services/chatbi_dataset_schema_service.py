@@ -63,6 +63,7 @@ def _filter_hits_by_table_scope(
     *,
     authorized_datasets: list[Any],
     allowed_table_names_by_dataset: dict[int, set[str] | None],
+    dropped_out: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """在数据集级过滤之后，再按表级白名单剔除命中的 schema 块。
 
@@ -91,9 +92,29 @@ def _filter_hits_by_table_scope(
             str(hit.get("content") or ""), str(hit.get("doc_name") or "")
         )
         if table_name and table_name.lower() not in allowed:
+            # 记下来只用于「有几张表被挡了」的计数与排查日志，绝不回传给模型：
+            # 表名本身也可能是敏感信息。
+            if dropped_out is not None:
+                dropped_out.append(str(table_name))
             continue
         accepted.append(hit)
     return accepted
+
+
+def _append_table_scope_notice(schema_text: str, dropped_count: int) -> str:
+    """被表级白名单挡掉的表要告诉模型「有表但没权限」，而不是让它以为「没有这张表」。
+
+    静默剔除的副作用是模型会回答「数据集里没有用户表」，或者凭记忆编一个表名再试。
+    这里只给数量不给表名，并明确要求它照实说明权限问题。
+    """
+    if dropped_count <= 0 or not str(schema_text or "").strip():
+        return schema_text
+    return schema_text + (
+        f"\n\n（另有 {dropped_count} 张与本次检索相关、但不在你授权范围内的表未展示。"
+        "如果用户问到的表没有出现在上面的 Schema 中，通常是权限范围不含它："
+        "请直接说明「该表不在你的授权范围内，需要管理员在「权限管理」中授权」，"
+        "不要猜测表名，也不要用其它数据集里的同名表绕过。）"
+    )
 
 
 def _metadata_dataset_id_from_hit(hit: dict[str, Any], authorized_datasets: list[Any]) -> str | None:
@@ -354,6 +375,7 @@ async def _fetch_dataset_schema_impl(
         if not chunks:
             return f"No relevant schema info found for '{query}'.\nDebug Logs: {'; '.join(trace_logs)}"
 
+        dropped_table_hits = []
         filtered_hits = []
         for chunk in _filter_hits_by_table_scope(
             filter_schema_hits_to_scope(
@@ -364,6 +386,7 @@ async def _fetch_dataset_schema_impl(
             ),
             authorized_datasets=authorized_datasets,
             allowed_table_names_by_dataset=allowed_table_names_by_dataset,
+            dropped_out=dropped_table_hits,
         ):
             try:
                 similarity = float(chunk.get("similarity", 0.0) or 0.0)
@@ -398,7 +421,7 @@ async def _fetch_dataset_schema_impl(
                 authorized_dataset_ids=authorized_dataset_ids,
                 allowed_table_names_by_dataset=allowed_table_names_by_dataset,
             )
-            return schema_text
+            return _append_table_scope_notice(schema_text, len(dropped_table_hits))
         return f"No relevant schema info found for '{query}'.\nDebug Logs: {'; '.join(trace_logs)}"
 
     # --- Local Mode (Default) ---
@@ -407,6 +430,7 @@ async def _fetch_dataset_schema_impl(
     top_k = int(await ConfigService.get("ragflow_metadata_top_k") or 5)
 
     schema_text: str | None = None  # 先收集到变量，再统一做跨数据集补全
+    dropped_table_hits: list[str] = []  # 被表级白名单挡掉的表（只计数，不回传表名）
 
     if query:
         try:
@@ -418,6 +442,7 @@ async def _fetch_dataset_schema_impl(
                 if configured_dataset_ids is not None or not is_admin_eff
                 else None
             )
+            dropped_table_hits = []
             query_embedding = await EmbeddingClient.embed_text(query, use_global=True)
             redis_results = await MetadataIndexService.search_knn(
                 query_embedding=query_embedding,
@@ -435,6 +460,7 @@ async def _fetch_dataset_schema_impl(
                 ),
                 authorized_datasets=authorized_datasets,
                 allowed_table_names_by_dataset=allowed_table_names_by_dataset,
+                dropped_out=dropped_table_hits,
             ):
                 try:
                     similarity = float(item.get("similarity", 0.0) or 0.0)
@@ -519,7 +545,7 @@ async def _fetch_dataset_schema_impl(
         allowed_table_names_by_dataset=allowed_table_names_by_dataset,
     )
 
-    return schema_text
+    return _append_table_scope_notice(schema_text, len(dropped_table_hits))
 
 
 def _normalize_authorized_dataset_ids(raw: Optional[list[Any]]) -> Optional[set[str]]:

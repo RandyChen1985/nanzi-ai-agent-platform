@@ -11,13 +11,12 @@
 -- 后端不把这些列映射进 ORM（见 app/services/dataset_scope_service.py 的列探测），
 -- 因此迁移执行前代码可以先上线，会降级为数据集级授权。
 --
--- 注意：ALTER 不可重入，仅执行一次（与本目录其它版本化迁移一致）。
-ALTER TABLE "ai_agent_resource_permissions"
-  ADD COLUMN "subject_type" VARCHAR(16),
-  ADD COLUMN "scope" JSONB,
-  ADD COLUMN "row_policy" VARCHAR(16),
-  ADD COLUMN "row_condition" TEXT,
-  ADD COLUMN "expire_at" TIMESTAMP NULL;
+-- 幂等：逐列 IF NOT EXISTS，重复执行不会报「列已存在」。
+ALTER TABLE "ai_agent_resource_permissions" ADD COLUMN IF NOT EXISTS "subject_type" VARCHAR(16);
+ALTER TABLE "ai_agent_resource_permissions" ADD COLUMN IF NOT EXISTS "scope" JSONB;
+ALTER TABLE "ai_agent_resource_permissions" ADD COLUMN IF NOT EXISTS "row_policy" VARCHAR(16);
+ALTER TABLE "ai_agent_resource_permissions" ADD COLUMN IF NOT EXISTS "row_condition" TEXT;
+ALTER TABLE "ai_agent_resource_permissions" ADD COLUMN IF NOT EXISTS "expire_at" TIMESTAMP NULL;
 
 COMMENT ON COLUMN "ai_agent_resource_permissions"."subject_type" IS
   '授权主体: user/role/all；NULL 按 user_id/role_id 推断';

@@ -1414,6 +1414,7 @@ onMounted(async () => {
           <input
             v-model="searchQuery"
             type="text"
+            data-search-no-clear
             placeholder="搜索数据集名称、ID或描述..."
             class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-8 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
           />

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ConfirmModal from '@/components/ConfirmModal.vue'
 /**
  * 数据集权限控制台：数据集级（谁能进）→ 表级（能看哪些表）→ 行级（能看哪些行）。
  *
@@ -378,8 +379,20 @@ const submitDrawer = async () => {
   }
 }
 
-const removeGrant = async (grant: Grant) => {
-  if (!confirm(`确认移除「${grant.label}」在该数据集上的授权？`)) return
+const pendingRemoval = ref<Grant | null>(null)
+
+const removeGrant = (grant: Grant) => {
+  pendingRemoval.value = grant
+}
+
+const cancelRemoval = () => {
+  pendingRemoval.value = null
+}
+
+const confirmRemoval = async () => {
+  const grant = pendingRemoval.value
+  pendingRemoval.value = null
+  if (!grant) return
   try {
     await axios.delete(`/api/portal/metadata/datasets/${props.datasetId}/permissions`, {
       data: {
@@ -1081,7 +1094,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
               <input
                 v-if="draft.kind !== 'all'"
                 v-model="subjectSearch"
-                type="text"
+                type="search"
                 placeholder="搜索名称…"
                 class="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs"
               />
@@ -1152,7 +1165,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
                 <div class="flex items-center gap-2">
                   <input
                     v-model="tableSearch"
-                    type="text"
+                    type="search"
                     placeholder="搜索表名或业务术语…"
                     class="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-xs"
                   />
@@ -1388,7 +1401,7 @@ const subjectBadgeClass = (kind: SubjectKind) =>
                 <input
                   ref="simSearchRef"
                   v-model="simQuery"
-                  type="text"
+                  type="search"
                   placeholder="搜索姓名或账号"
                   class="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs focus:border-emerald-300 focus:outline-none"
                   @keydown.esc.stop="closeSimPicker"
@@ -1511,4 +1524,14 @@ const subjectBadgeClass = (kind: SubjectKind) =>
       </div>
     </Teleport>
   </div>
+
+  <ConfirmModal
+    v-if="pendingRemoval"
+    title="移除授权"
+    :message="`确认移除「${pendingRemoval.label}」在该数据集上的授权？`"
+    confirm-text="移除"
+    type="danger"
+    @confirm="confirmRemoval"
+    @cancel="cancelRemoval"
+  />
 </template>

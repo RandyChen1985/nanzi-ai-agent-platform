@@ -17,6 +17,7 @@ _REPO = pathlib.Path(__file__).resolve().parents[2]
 _DATA_API = (_REPO / "app/services/ai/tools/data_api.py").read_text(encoding="utf-8")
 _REGISTRY = (_REPO / "app/services/ai/tools/registry.py").read_text(encoding="utf-8")
 _SCHEMA_SERVICE = (_REPO / "app/services/chatbi_dataset_schema_service.py").read_text(encoding="utf-8")
+_DELEGATE = (_REPO / "app/services/ai/tools/agent_delegate_tool.py").read_text(encoding="utf-8")
 
 
 def test_schema_tool_falls_back_to_mounted_dataset_scope() -> None:
@@ -171,3 +172,19 @@ def test_mounted_scope_ignores_blank_entries() -> None:
         assert resolve_mounted_dataset_scope_ids() == []
     finally:
         set_execution_options_context({})
+
+
+def test_delegation_inherits_mounted_dataset_scope() -> None:
+    """委派给 ChatBI 专家时，本轮范围必须继承，否则子 agent 完全不受限。
+
+    真实事故：用户在主助手界面上选定了数据集 1，主助手委派给「数据智能助手」，
+    子 context 是新建的 AgentContext、子 execution_options 只有
+    {"delegated_sub_agent": True} —— 两条渠道都断了，于是又能检索到 53、54。
+    """
+    source = _DELEGATE
+    # 子上下文显式继承
+    assert "metadata_dataset_ids=list(main_ctx.metadata_dataset_ids or [])" in source
+    # 子 execution_options 透传范围
+    assert 'sub_execution_options: Dict[str, Any] = {"delegated_sub_agent": True}' in source
+    assert 'sub_execution_options["metadata_dataset_scope"] = parent_scope' in source
+    assert "execution_options=sub_execution_options" in source

@@ -71,22 +71,40 @@ def normalize_bound_dataset_ids(raw: Any) -> list[str]:
 
 
 def resolve_mounted_dataset_scope_ids() -> list[str]:
-    """本轮真正生效的数据集范围：本轮请求优先，其次会话固定；空列表表示「未限定」。
+    """本轮真正生效的数据集范围：AgentContext 优先，其次 execution_options；空列表表示「未限定」。
 
-    这两个值一直只写进 ``execution_options['metadata_dataset_scope']`` 用于日志，
-    schema 检索和 SQL 执行都没读过它——于是「会话固定了数据集 1」时，模型照样能
-    检索到用户有权限的其它数据集（同一张物理表可能注册在多个数据集里），
+    两条渠道都要读，因为它们在不同链路里生效：
+      * ``AgentContext.metadata_dataset_ids`` —— pipeline 初始化时由
+        ``agent_service`` 用 ``effective_metadata_dataset_ids``（已合并本轮请求 +
+        会话固定）写入，工具执行期最可靠；
+      * ``execution_options['metadata_dataset_scope']`` —— chat 入口写入，
+        回答追问 / 只挂会话时可能只有这一条。
+
+    这两处一直只被用来看日志、从没参与过滤，于是「会话固定了数据集 1」时
+    模型照样能检索到用户有权限的其它数据集（同一张物理表可能注册在多个数据集里），
     日志还会诚实地打印「会话固定: 1 / 最终生效: 1、53、54」。
     """
-    from app.core.context import get_execution_option
+    from app.core.context import get_current_agent_context, get_execution_option
 
-    scope = get_execution_option("metadata_dataset_scope", {}) or {}
-    ids: list[str] = []
-    for group in (scope.get("request_ids") or [], scope.get("session") or []):
-        for item in group:
-            # session 存的是 {id, name, ...} 字典，request_ids 存的是裸 ID
+    def collect(group: Any, into: list[str]) -> None:
+        for item in group or []:
+            # session 存的是 {id, name, ...} 字典，其余是裸 ID
             value = item.get("id") if isinstance(item, dict) else item
             text = str(value or "").strip()
-            if text and text not in ids:
-                ids.append(text)
+            if text and text not in into:
+                into.append(text)
+
+    ids: list[str] = []
+    ctx = get_current_agent_context()
+    if ctx is not None:
+        collect(getattr(ctx, "metadata_dataset_ids", None), ids)
+    if ids:
+        return ids
+
+    scope = get_execution_option("metadata_dataset_scope", {}) or {}
+    # 老请求里这个键可能是布尔开关，不是范围描述，直接忽略
+    if not isinstance(scope, dict):
+        return []
+    collect(scope.get("request_ids"), ids)
+    collect(scope.get("session"), ids)
     return ids

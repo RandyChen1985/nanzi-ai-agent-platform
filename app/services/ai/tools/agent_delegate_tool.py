@@ -1437,6 +1437,10 @@ async def sub_agent_call(
         engine_type=target_config.engine_type or "LOCAL",
         engine_config=sub_engine_config,
         user_id=main_ctx.user_id,
+        # 本轮手选 / 会话固定的元数据集范围必须跟着委派走：子 context 是新建的，
+        # 不显式继承就等于「主助手选了数据集、委派出去的专家不受限」，
+        # 而 ChatBI 恰好几乎总是通过委派执行。
+        metadata_dataset_ids=list(main_ctx.metadata_dataset_ids or []),
         conversation_id=child_session_id,
         parent_conversation_id=main_ctx.conversation_id,
         child_session_id=child_session_id,
@@ -1516,6 +1520,14 @@ async def sub_agent_call(
         output_schema=output_schema,
     )
 
+    # 临时切换到子 Context 运行。execution_options 也要一并保存：
+    # 子代理 setup_context 会把它覆盖成 {"delegated_sub_agent": True}，
+    # 只恢复 agent_context 会让主智能体在同一 task 的后续轮次被误判成无人值守，
+    # 连它自己的 ask_user_question 都会被拒。
+    # 注意顺序：必须在 dispatch 之前取，子执行器要拿它把本轮数据集范围带过去。
+    original_ctx = get_current_agent_context()
+    original_execution_options = dict(execution_options_context.get() or {})
+
     sub_executor = await _dispatch_sub_agent_executor(
         target_config,
         delegation_request.query,
@@ -1526,14 +1538,9 @@ async def sub_agent_call(
         user_info=user_info,
         conversation_id=child_session_id,
         turn_decision=TurnDecision.for_direct_agent_selection(target_config),
+        parent_execution_options=original_execution_options,
     )
 
-    # 临时切换到子 Context 运行。execution_options 也要一并保存：
-    # 子代理 setup_context 会把它覆盖成 {"delegated_sub_agent": True}，
-    # 只恢复 agent_context 会让主智能体在同一 task 的后续轮次被误判成无人值守，
-    # 连它自己的 ask_user_question 都会被拒。
-    original_ctx = get_current_agent_context()
-    original_execution_options = dict(execution_options_context.get() or {})
     set_agent_context(sub_ctx)
 
     full_output = ""
@@ -1935,8 +1942,17 @@ async def _dispatch_sub_agent_executor(
     user_info: Dict[str, Any] | None,
     conversation_id: str | None,
     turn_decision: TurnDecision,
+    parent_execution_options: Dict[str, Any] | None = None,
 ) -> Any:
     from app.services.ai.dispatcher import AgentDispatcher
+
+    # 子代理 setup_context 会用这里的 options 覆盖掉主链路的，
+    # 所以数据集范围必须显式带过去，否则委派后的 schema 检索 / SQL 执行
+    # 又退回「用户可访问的全部数据集」。
+    sub_execution_options: Dict[str, Any] = {"delegated_sub_agent": True}
+    parent_scope = (parent_execution_options or {}).get("metadata_dataset_scope")
+    if isinstance(parent_scope, dict) and parent_scope:
+        sub_execution_options["metadata_dataset_scope"] = parent_scope
 
     return await AgentDispatcher.dispatch(
         target_config,
@@ -1948,7 +1964,7 @@ async def _dispatch_sub_agent_executor(
         # _consume_sub_agent_stream 的白名单过滤掉（user_question 既不在中断类型里，
         # 也不在转发类型里），而且子代理跑在 child_session_{run_id} 独立会话上，
         # 就算卡片冒到前端，回执也查不到登记记录。打上标记让下游别再尝试交互。
-        execution_options={"delegated_sub_agent": True},
+        execution_options=sub_execution_options,
         permission_options=permission_options,
         user_info=user_info,
         conversation_id=conversation_id,
