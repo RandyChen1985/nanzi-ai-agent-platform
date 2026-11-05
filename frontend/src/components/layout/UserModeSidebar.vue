@@ -177,21 +177,87 @@
             @keydown.esc="closeTaskSearch"
           />
         </label>
+        <div class="flex flex-shrink-0 items-center gap-1">
+          <!-- 手动刷新：列表只在切页 / 流结束 / 收到会话激活时自动拉一次，
+               用户想「看看有没有新会话」时得能自己触发，不能逼他刷新整页 -->
+          <button
+            type="button"
+            class="flex h-5 w-5 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-white/[0.06]"
+            :title="refreshingTasks ? '刷新中…' : '刷新会话列表'"
+            aria-label="刷新会话列表"
+            :disabled="refreshingTasks"
+            @click="refreshTasks"
+          >
+            <svg
+              class="h-3.5 w-3.5"
+              :class="refreshingTasks ? 'animate-spin' : ''"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.9"
+            >
+              <path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1" stroke-linecap="round" />
+              <path d="M20.5 4.5V11h-6.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <!-- 筛选：条件与聊天页历史面板同一套，浮层贴按钮右下方展开 -->
+          <span ref="filterButtonRef" class="relative flex-shrink-0">
+            <button
+              type="button"
+              class="flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-gray-100 dark:hover:bg-white/[0.06]"
+              :class="filterPanelOpen || activeFilterCount ? 'bg-primary/10 text-primary' : 'text-gray-400 hover:text-gray-700'"
+              :title="filterPanelOpen ? '收起筛选' : '筛选会话'"
+              aria-label="筛选会话"
+              :aria-expanded="filterPanelOpen"
+              @click.stop="toggleFilterPanel"
+            >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M3 5h18M6.5 12h11M10 19h4" stroke-linecap="round" />
+              </svg>
+            </button>
+            <span
+              v-if="activeFilterCount"
+              class="pointer-events-none absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-bold text-white"
+            >{{ activeFilterCount }}</span>
+          </span>
+          <button
+            type="button"
+            class="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06]"
+            :title="taskSearchOpen ? '关闭搜索' : '搜索会话'"
+            :aria-label="taskSearchOpen ? '关闭搜索' : '搜索会话'"
+            @click="toggleTaskSearch"
+          >
+            <svg v-if="!taskSearchOpen" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M16.5 16.5L21 21" stroke-linecap="round" />
+            </svg>
+            <svg v-else class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 激活的筛选条件：不显示的话筛完就忘了自己筛过什么，列表变短会以为是数据丢了 -->
+      <div v-if="activeFilterCount" class="flex flex-wrap items-center gap-1 px-2.5 pb-1">
         <button
+          v-for="chip in activeFilterChips"
+          :key="chip.key"
           type="button"
-          class="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06]"
-          :title="taskSearchOpen ? '关闭搜索' : '搜索会话'"
-          :aria-label="taskSearchOpen ? '关闭搜索' : '搜索会话'"
-          @click="toggleTaskSearch"
+          class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/20"
+          :title="`移除「${chip.label}」`"
+          @click.stop="removeTaskFilter(chip.key)"
         >
-          <svg v-if="!taskSearchOpen" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M16.5 16.5L21 21" stroke-linecap="round" />
-          </svg>
-          <svg v-else class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          {{ chip.label }}
+          <svg class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6">
             <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round" />
           </svg>
         </button>
+        <button
+          type="button"
+          class="text-[10px] text-gray-400 transition-colors hover:text-gray-600"
+          @click.stop="resetTaskFilters"
+        >清除</button>
       </div>
 
       <div
@@ -222,10 +288,10 @@
           <p class="px-2.5 pb-1 pt-2 text-[11px] font-medium text-gray-400">{{ section.title }}</p>
           <ul class="flex flex-col gap-0.5">
             <li v-for="item in section.items" :key="taskKeyOf(item)">
-              <div class="group/item">
+              <div class="group/item relative">
                 <button
                   type="button"
-                  class="flex h-9 w-full items-center gap-1.5 rounded-[9px] px-2.5 text-left text-sm transition-colors"
+                  class="flex h-9 w-full items-center gap-1.5 rounded-[9px] px-2.5 pr-7 text-left text-sm transition-colors sm:pr-2.5"
                   :class="
                     isConversationActive(item)
                       ? lightTheme
@@ -249,23 +315,27 @@
                     <path d="M14.5 2.5l7 7-2.2 2.2-1.1-1.1-3.2 3.2.4 3.5-2 2-4.7-4.7-4.2 4.2-1.4-1.4 4.2-4.2L2.6 8.5l2-2 3.5.4 3.2-3.2-1.1-1.1z" />
                   </svg>
                   <span class="min-w-0 flex-1 truncate">{{ itemTitle(item) }}</span>
-                  <span class="flex-shrink-0 text-[11px] text-gray-400">{{ formatTaskTime(item.created_at) }}</span>
-                  <button
-                    type="button"
-                    data-task-menu
-                    class="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-gray-400 transition-all hover:bg-gray-200/70 hover:text-gray-700 focus:opacity-100 dark:hover:bg-white/10"
-                    :class="isMenuOpen(item) ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover/item:opacity-100'"
-                    :title="isMenuOpen(item) ? '收起操作' : '更多操作'"
-                    :aria-label="isMenuOpen(item) ? '收起操作' : '更多操作'"
-                    :aria-expanded="isMenuOpen(item)"
-                    @click.stop="toggleTaskMenu(item)"
-                  >
-                    <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                      <circle cx="5" cy="12" r="1.6" />
-                      <circle cx="12" cy="12" r="1.6" />
-                      <circle cx="19" cy="12" r="1.6" />
-                    </svg>
-                  </button>
+                  <!-- 时间贴右边缘；鼠标移上来时淡出，把位置让给操作按钮。用透明度而不是
+                       条件渲染：占位不变，标题宽度不会跟着跳。 -->
+                  <span class="flex-shrink-0 text-[11px] text-gray-400 transition-opacity duration-150 sm:group-hover/item:opacity-0">{{ formatTaskTime(item.created_at) }}</span>
+                </button>
+                <!-- 操作按钮不能嵌在行按钮里（HTML 不允许 button 套 button），改成同层绝对定位：
+                     不占宽度，时间才能真正贴到右边缘 -->
+                <button
+                  type="button"
+                  data-task-menu
+                  class="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-gray-400 transition-opacity hover:bg-gray-200/70 hover:text-gray-700 focus-visible:opacity-100 focus-visible:outline-none dark:hover:bg-white/10"
+                  :class="isMenuOpen(item) ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover/item:opacity-100'"
+                  :title="isMenuOpen(item) ? '收起操作' : '更多操作'"
+                  :aria-label="isMenuOpen(item) ? '收起操作' : '更多操作'"
+                  :aria-expanded="isMenuOpen(item)"
+                  @click.stop="toggleTaskMenu(item)"
+                >
+                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <circle cx="5" cy="12" r="1.6" />
+                    <circle cx="12" cy="12" r="1.6" />
+                    <circle cx="19" cy="12" r="1.6" />
+                  </svg>
                 </button>
 
                 <!-- 操作行内联展开：不做浮层，窄侧栏里不会被裁剪，移动端也点得到 -->
@@ -460,7 +530,25 @@
       @confirm="confirmDelete"
       @cancel="deleteTarget = null"
     />
-  </div>
+    <!-- 会话筛选浮层：fixed + teleport，避免被侧栏的滚动容器裁剪；移动端降级为底部抽屉 -->
+  <Teleport to="body">
+    <div
+      v-if="filterPanelOpen"
+      ref="filterPanelRef"
+      data-conversation-filter-panel
+      class="fixed z-[80] rounded-2xl border border-gray-200/80 bg-white p-3 shadow-xl dark:border-gray-700/80 dark:bg-gray-900"
+      :class="mobile ? 'inset-x-0 bottom-0 rounded-b-none' : ''"
+      :style="filterPanelStyle"
+    >
+      <ConversationFilterPanel
+        :filters="taskFilters"
+        :agents="agentOptions"
+        @update:filters="applyTaskFilters"
+        @reset="resetTaskFilters"
+      />
+    </div>
+  </Teleport>
+</div>
 </template>
 
 <script setup lang="ts">
@@ -472,6 +560,13 @@ import PortalNotificationBell from "@/components/PortalNotificationBell.vue"
 import ConfirmModal from "@/components/ConfirmModal.vue"
 import { useBranding } from "@/composables/useBranding"
 import { usePinnedConversations } from "@/composables/chat/usePinnedConversations"
+import {
+  DEFAULT_HISTORY_FILTERS,
+  buildHistoryFilterParams,
+  type ChatHistoryFilters,
+} from "@/composables/chat/useHistoryFilters"
+import { agentApi } from "@/api/agent"
+import ConversationFilterPanel from "@/components/chat/ConversationFilterPanel.vue"
 import {
   USER_MODE_TASK_PAGE_SIZE,
   computeUserModeTaskPageSize,
@@ -718,6 +813,15 @@ const pinned = pinnedApi.pinned
 const isPinned = pinnedApi.isPinned
 
 const taskKeyword = ref("")
+/** 会话列表筛选（来源 / 智能体 / 状态 / 时间）：与聊天页历史面板同一套条件 */
+const taskFilters = ref<ChatHistoryFilters>({ ...DEFAULT_HISTORY_FILTERS })
+const filterPanelOpen = ref(false)
+const filterButtonRef = ref<HTMLElement | null>(null)
+const filterPanelRef = ref<HTMLElement | null>(null)
+const filterPanelStyle = ref<Record<string, string>>({})
+const agentOptions = ref<Array<{ id: string; display_name: string; avatar_url?: string }>>([])
+/** 智能体列表只在首次打开面板时拉一次；失败下次还能重试 */
+let agentOptionsLoaded = false
 const taskSearchOpen = ref(false)
 const taskSearchRef = ref<HTMLInputElement | null>(null)
 /** 用户自己点开的那条会话：它不在当前列表里（比如从置顶区点开）时不该触发重新拉取 */
@@ -731,6 +835,7 @@ const fetchTaskPage = async (page: number) => {
   }
   const keyword = taskKeyword.value.trim()
   if (keyword) params.keyword = keyword
+  Object.assign(params, buildHistoryFilterParams(taskFilters.value))
   const res = await axios.get("/api/v1/chat/history", { params })
   return res?.data?.data || {}
 }
@@ -787,6 +892,109 @@ const loadTasks = async () => {
   } finally {
     if (serial === loadSerial) loadingTasks.value = false
   }
+}
+
+/* ---------------- 会话列表筛选 ---------------- */
+const activeFilterChips = computed(() => {
+  const chips: Array<{ key: keyof ChatHistoryFilters; label: string }> = []
+  const f = taskFilters.value
+  if (f.scope === "task") chips.push({ key: "scope", label: "任务会话" })
+  if (f.scope === "chat") chips.push({ key: "scope", label: "普通对话" })
+  if (f.agentId) {
+    const matched = agentOptions.value.find((a) => a.id === f.agentId)
+    chips.push({ key: "agentId", label: matched?.display_name || "指定智能体" })
+  }
+  if (f.status === "success") chips.push({ key: "status", label: "成功" })
+  if (f.status === "failed") chips.push({ key: "status", label: "失败" })
+  if (f.timeRange === "today") chips.push({ key: "timeRange", label: "今天" })
+  if (f.timeRange === "7d") chips.push({ key: "timeRange", label: "近 7 天" })
+  if (f.timeRange === "30d") chips.push({ key: "timeRange", label: "近 30 天" })
+  if (f.timeRange === "custom") chips.push({ key: "timeRange", label: "自定义时间" })
+  return chips
+})
+const activeFilterCount = computed(() => activeFilterChips.value.length)
+
+/** 浮层用 fixed 定位：侧栏根节点在窄屏下会 overflow 裁剪，absolute 会被切掉 */
+const positionFilterPanel = () => {
+  const btn = filterButtonRef.value
+  if (!btn) return
+  const rect = btn.getBoundingClientRect()
+  if (props.mobile) {
+    filterPanelStyle.value = {}
+    return
+  }
+  const width = 300
+  const left = Math.min(rect.right + 8, window.innerWidth - width - 12)
+  filterPanelStyle.value = {
+    left: `${Math.max(12, left)}px`,
+    top: `${Math.max(12, rect.top - 8)}px`,
+    width: `${width}px`,
+  }
+}
+
+const loadAgentOptions = async () => {
+  if (agentOptionsLoaded) return
+  agentOptionsLoaded = true
+  try {
+    const res = await agentApi.listAllowedAgents()
+    const rows = Array.isArray(res?.data) ? (res.data as any[]) : []
+    agentOptions.value = rows.map((agent) => ({
+      id: String(agent.id),
+      display_name: agent.display_name || agent.name || "未命名智能体",
+      avatar_url: agent.avatar_url || "",
+    }))
+  } catch {
+    // 拉不到就只留「全部智能体」，不影响其他筛选条件可用
+    agentOptionsLoaded = false
+  }
+}
+
+const toggleFilterPanel = () => {
+  filterPanelOpen.value = !filterPanelOpen.value
+  if (!filterPanelOpen.value) return
+  positionFilterPanel()
+  void loadAgentOptions()
+}
+
+const applyTaskFilters = (next: ChatHistoryFilters) => {
+  taskFilters.value = next
+  void loadTasks()
+}
+
+const removeTaskFilter = (key: keyof ChatHistoryFilters) => {
+  const next = { ...taskFilters.value }
+  if (key === "scope") next.scope = "all"
+  if (key === "agentId") next.agentId = ""
+  if (key === "status") next.status = ""
+  if (key === "timeRange") {
+    next.timeRange = ""
+    next.startDate = ""
+    next.endDate = ""
+  }
+  applyTaskFilters(next)
+}
+
+const resetTaskFilters = () => {
+  filterPanelOpen.value = false
+  applyTaskFilters({ ...DEFAULT_HISTORY_FILTERS })
+}
+
+/**
+ * 手动刷新会话列表：任务列表与置顶一起拉。
+ * 至少转 500ms —— 内网请求常常 30ms 就回来，按钮闪一下反而像是没点到。
+ */
+const refreshingTasks = ref(false)
+let refreshFlashTimer: number | null = null
+const refreshTasks = async () => {
+  if (refreshingTasks.value) return
+  refreshingTasks.value = true
+  const startedAt = Date.now()
+  await Promise.all([loadTasks(), pinnedApi.load()])
+  const remain = 500 - (Date.now() - startedAt)
+  refreshFlashTimer = window.setTimeout(() => {
+    refreshingTasks.value = false
+    refreshFlashTimer = null
+  }, Math.max(0, remain))
 }
 
 /** 追加下一页 */
@@ -1019,7 +1227,18 @@ const toggleTaskMenu = (item: ChatHistoryItem) => {
   menuTaskKey.value = menuTaskKey.value === key ? "" : key
 }
 
+/** 浮层是 fixed 定位，列表一滚就与按钮脱开：直接关掉，比让它飘着更符合直觉 */
+const onFilterPanelClose = () => {
+  if (filterPanelOpen.value) filterPanelOpen.value = false
+}
+
 const onDocumentClick = (event: MouseEvent) => {
+  if (filterPanelOpen.value) {
+    const target = event.target as HTMLElement | null
+    const insidePanel = Boolean(target?.closest("[data-conversation-filter-panel]"))
+    const insideButton = Boolean(filterButtonRef.value?.contains(target as Node))
+    if (!insidePanel && !insideButton) filterPanelOpen.value = false
+  }
   if (!menuTaskKey.value) return
   const target = event.target as HTMLElement | null
   if (target?.closest("[data-task-menu]")) return
@@ -1106,6 +1325,7 @@ const roleLabel = computed(() =>
 )
 
 onMounted(() => {
+  window.addEventListener("scroll", onFilterPanelClose, true)
   pageSize.value = computeUserModeTaskPageSize(window.innerHeight)
   document.addEventListener("click", onDocumentClick)
   window.addEventListener("resize", handleResize)
@@ -1124,6 +1344,12 @@ onUnmounted(() => {
   }
   if (resizeTimer) clearTimeout(resizeTimer)
   if (taskSearchTimer) clearTimeout(taskSearchTimer)
+  if (refreshFlashTimer) {
+    clearTimeout(refreshFlashTimer)
+    refreshFlashTimer = null
+  }
+  // 与 addEventListener 的 capture 参数保持一致，否则移除不掉
+  window.removeEventListener("scroll", onFilterPanelClose, true)
 })
 
 // 从聊天页回到列表时刷新一次：刚发起的会话可能才刚写进历史

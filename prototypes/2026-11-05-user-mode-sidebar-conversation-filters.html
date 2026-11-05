@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会话列表搜索 · 把筛选条件放进筛选面板</title>
+<style>
+  :root {
+    --bg:#f2f3f5; --panel:#fff; --line:#e8eaed; --text:#1f2329; --text2:#5c6370; --text3:#8f959e;
+    --blue:#1677ff; --blue-soft:#eaf2ff; --sidebar:#fff; --sidebar-line:#eceef1;
+    --content:#f4f5f7; --shadow:0 1px 2px rgba(16,24,40,.05),0 10px 28px rgba(16,24,40,.10);
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:13px; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1060px; margin:0 auto; padding:26px 22px 50px; }
+  h1 { font-size:19px; margin:0 0 6px; letter-spacing:-.2px; }
+  .sub { color:var(--text2); line-height:1.7; margin:0 0 16px; }
+  .sub code { background:#fff; border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:12px; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:9px; align-items:center; margin-bottom:12px; }
+  .seg { display:inline-flex; background:#fff; border:1px solid var(--line); border-radius:9px; padding:3px; gap:2px; }
+  .seg button { border:0; background:transparent; color:var(--text2); font:inherit; font-size:12px; font-weight:500;
+    padding:6px 11px; border-radius:7px; cursor:pointer; transition:.15s; }
+  .seg button[aria-selected="true"] { background:var(--blue); color:#fff; font-weight:600; }
+  .hint { margin-left:auto; color:var(--text3); font-size:12px; }
+
+  .stage { background:#e6e8ec; border:1px solid #dcdfe4; border-radius:14px; padding:16px; }
+  .app { display:flex; height:620px; background:var(--panel); border-radius:10px; overflow:hidden; box-shadow:var(--shadow); }
+
+  /* 侧栏 */
+  .side { width:262px; flex-shrink:0; background:var(--sidebar); border-right:1px solid var(--sidebar-line);
+    display:flex; flex-direction:column; position:relative; }
+  .brand { display:flex; align-items:center; gap:9px; padding:14px 14px 10px; }
+  .brand .logo { width:28px; height:28px; border-radius:8px; background:var(--blue); color:#fff; display:grid;
+    place-items:center; font-weight:800; font-size:14px; }
+  .brand b { font-size:14px; }
+  .nav { padding:2px 8px 8px; display:flex; flex-direction:column; gap:1px; }
+  .nav .item { display:flex; align-items:center; gap:9px; height:34px; padding:0 10px; border-radius:9px;
+    color:var(--text2); font-size:13px; }
+  .nav .item.on { background:#eef1f5; color:var(--text); font-weight:600; }
+  .nav .item svg { width:15px; height:15px; }
+
+  .listhead { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:6px 12px 4px; }
+  .listhead .t { font-size:11px; color:var(--text3); }
+  .listhead .acts { display:flex; align-items:center; gap:2px; }
+  .icobtn { width:22px; height:22px; border:0; background:transparent; color:var(--text3); border-radius:6px;
+    display:grid; place-items:center; cursor:pointer; }
+  .icobtn:hover { background:#f1f3f6; color:var(--text2); }
+  .icobtn.on { background:var(--blue-soft); color:var(--blue); }
+  .icobtn svg { width:14px; height:14px; }
+  .badge { position:absolute; top:-3px; right:-3px; min-width:13px; height:13px; border-radius:999px; background:var(--blue);
+    color:#fff; font-size:9px; font-weight:700; display:grid; place-items:center; padding:0 3px; }
+  .rel { position:relative; }
+
+  .chips-row { display:flex; gap:5px; padding:0 12px 6px; overflow:hidden; }
+  .fchip { border:1px solid var(--line); background:#fff; color:var(--text2); border-radius:999px; font-size:10.5px;
+    padding:2px 8px; white-space:nowrap; }
+  .fchip.on { background:var(--blue-soft); border-color:#c9dcff; color:#1f63d6; font-weight:600; }
+
+  .list { flex:1; overflow:hidden; padding:0 8px; }
+  .group-h { padding:8px 6px 3px; font-size:10.5px; color:var(--text3); }
+  .row { display:flex; align-items:center; gap:6px; height:32px; padding:0 8px; border-radius:8px; color:var(--text2); }
+  .row.on { background:var(--blue-soft); color:#1f63d6; font-weight:600; }
+  .row .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; }
+  .row .time { font-size:10.5px; color:var(--text3); }
+
+  /* 浮层面板 */
+  .popover { position:absolute; top:40px; left:262px; width:296px; background:#fff; border:1px solid var(--line);
+    border-radius:14px; box-shadow:var(--shadow); padding:12px; z-index:20; }
+  .popover .grp { margin-bottom:10px; }
+  .popover .grp:last-child { margin-bottom:0; }
+  .popover .lab { font-size:10px; font-weight:700; color:var(--text3); margin-bottom:5px; }
+  .popover .opts { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
+  .popover .opts.two { grid-template-columns:repeat(2,1fr); }
+  .opt { border:1px solid transparent; background:transparent; color:var(--text2); border-radius:8px;
+    font-size:11.5px; font-weight:600; padding:5px 4px; cursor:pointer; text-align:center; }
+  .opt:hover { background:#f4f6f8; }
+  .opt.on { background:var(--blue-soft); color:#1f63d6; border-color:#c9dcff; }
+  .popover select { width:100%; padding:5px 7px; font-size:11.5px; border:1px solid var(--line); border-radius:8px;
+    background:#fafbfc; color:var(--text2); }
+  .popover .foot { display:flex; justify-content:space-between; align-items:center; border-top:1px solid #f1f3f5;
+    margin-top:10px; padding-top:8px; font-size:11px; }
+  .popover .foot .clear { color:var(--text2); background:none; border:0; cursor:pointer; font-size:11px; }
+  .popover .foot .apply { color:var(--blue); font-weight:700; background:none; border:0; cursor:pointer; font-size:11px; }
+
+  /* 内容区 */
+  .content { flex:1; background:var(--content); padding:14px; min-width:0; }
+  .searchbar { display:flex; gap:8px; margin-bottom:10px; }
+  .searchbar .s { flex:1; display:flex; align-items:center; gap:7px; background:#fff; border:1px solid var(--line);
+    border-radius:9px; padding:8px 11px; color:var(--text3); font-size:12px; }
+  .searchbar .s svg { width:15px; height:15px; flex-shrink:0; }
+  .card { background:#fff; border-radius:10px; border:1px solid var(--line); padding:14px; }
+  .card h3 { margin:0 0 6px; font-size:14px; }
+  .card p { margin:0; color:var(--text2); font-size:12px; line-height:1.7; }
+
+  /* 移动端：底部抽屉 */
+  .sheet svg { width:15px; height:15px; }
+  .sheet { position:absolute; left:0; right:0; bottom:0; background:#fff; border-radius:16px 16px 0 0;
+    box-shadow:0 -10px 30px rgba(16,24,40,.18); padding:14px; z-index:20; }
+  .sheet .grab { width:34px; height:4px; border-radius:999px; background:#e3e6ea; margin:0 auto 10px; }
+
+  .notes { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
+  .note { background:#fff; border:1px solid var(--line); border-radius:12px; padding:13px 15px; }
+  .note h4 { margin:0 0 7px; font-size:12.5px; }
+  .note li, .note p { color:var(--text2); font-size:12px; line-height:1.75; margin:0; }
+  .note ul { margin:0; padding-left:16px; }
+  .note code { background:#f6f7f9; border-radius:4px; padding:1px 4px; font-size:11px; }
+  .tag { display:inline-block; font-size:10px; font-weight:700; border-radius:5px; padding:1px 6px; margin-right:6px; }
+  .tag.rec { background:#e8f8f0; color:#0f8a4d; }
+  .tag.alt { background:#eef2f7; color:#5c6370; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>会话列表搜索 · 把筛选条件放进筛选面板</h1>
+  <p class="sub">
+    侧栏的放大镜现在只能按关键词搜（<code>/api/v1/chat/history?keyword=</code>），但接口其实已经支持
+    <code>scope / agent_id / status / start_date / end_date</code>。聊天页右侧的历史面板已经有一套完整筛选，
+    这里要定的是：<strong>在 260px 宽的侧栏里，这些条件怎么放</strong>。
+  </p>
+
+  <div class="toolbar">
+    <div class="seg" role="tablist" aria-label="方案">
+      <button role="tab" aria-selected="true" data-variant="a">方案 A · 浮层面板</button>
+      <button role="tab" aria-selected="false" data-variant="b">方案 B · 精简三项</button>
+      <button role="tab" aria-selected="false" data-variant="c">方案 C · 常驻 chips</button>
+    </div>
+    <div class="seg" role="tablist" aria-label="设备">
+      <button role="tab" aria-selected="true" data-device="desktop">桌面</button>
+      <button role="tab" aria-selected="false" data-device="mobile">移动</button>
+    </div>
+    <span class="hint" id="hint">浮层贴侧栏右边缘滑出，不遮挡列表</span>
+  </div>
+
+  <div class="stage">
+    <div class="app" id="app"></div>
+  </div>
+
+  <div class="notes">
+    <div class="note">
+      <h4><span class="tag rec">推荐</span>方案 A：搜索框旁的漏斗按钮 + 浮层面板</h4>
+      <ul>
+        <li>与聊天页历史面板<strong>同一套条件</strong>（来源 / 智能体 / 状态 / 时间），用户不用学两遍；</li>
+        <li>浮层向右展开、盖住内容区，不受 260px 侧栏宽度限制；移动端降级为底部抽屉；</li>
+        <li>筛选生效时标题行显示「筛选 · 2」+ 一键清除，不至于筛完忘了自己筛过什么；</li>
+        <li>成本：把 <code>ChatHistorySidebar</code> 里的面板抽成公共组件，两处复用。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h4><span class="tag alt">备选</span>方案 B：只做来源 / 状态 / 时间</h4>
+      <ul>
+        <li>侧栏不请求智能体列表，<strong>零额外接口</strong>，面板也更窄（260px 内可放下）；</li>
+        <li>代价：与历史面板条件不一致，用户想按智能体筛还得去聊天页；</li>
+        <li>适合「只想快速收窄，不做精细筛选」的定位。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h4><span class="tag alt">备选</span>方案 C：搜索行下方常驻筛选 chips</h4>
+      <ul>
+        <li>一行 chips：全部 / 任务会话 / 普通对话 / 今天 / 失败 …，点一下即时生效，零浮层、零遮挡；</li>
+        <li>最省事也最快，但条件一多就放不下（侧栏一行只够 3～4 个），「更多筛选」最终还是要回到浮层。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h4>实现要点（三个方案共用）</h4>
+      <ul>
+        <li>请求参数直接扩到 <code>scope / agent_id / status / start_date / end_date</code>，后端已支持，<strong>无需改接口</strong>；</li>
+        <li>浮层不要放在 <code>overflow-y-auto</code> 的列表容器里，会被裁剪 —— 挂在侧栏根部或用 teleport；</li>
+        <li>智能体列表懒加载：首次打开面板才请求，失败就只剩「全部智能体」，不阻塞列表；</li>
+        <li>筛选变化后与关键词一样走 300ms 防抖 + 回到第一页，沿用现有分页与「已加载全部」逻辑。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+const app = document.getElementById('app');
+const hint = document.getElementById('hint');
+let variant = 'a';
+let device = 'desktop';
+
+const icons = {
+  grid:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6" height="6" rx="1.6"/><rect x="14" y="4" width="6" height="6" rx="1.6"/><rect x="4" y="14" width="6" height="6" rx="1.6"/><rect x="14" y="14" width="6" height="6" rx="1.6"/></svg>',
+  spark:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>',
+  clock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+  book:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5.5A2.5 2.5 0 016.5 3H20v15H6.5A2.5 2.5 0 004 20.5z"/></svg>',
+  folder:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>',
+  more:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6" height="6" rx="1.6"/><rect x="14" y="4" width="6" height="6" rx="1.6"/><rect x="4" y="14" width="6" height="6" rx="1.6"/><rect x="14" y="14" width="6" height="6" rx="1.6"/></svg>',
+  refresh:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20.5 12a8.5 8.5 0 11-2.6-6.1" stroke-linecap="round"/><path d="M20.5 4.5V11h-6.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21" stroke-linecap="round"/></svg>',
+  filter:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5h18M6.5 12h11M10 19h4" stroke-linecap="round"/></svg>',
+  chev:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+
+const navItems = [
+  ['新建会话','grid'],['专家·技能·连接器','spark'],['定时任务','clock'],
+  ['知识库','book'],['工作空间','folder'],['更多','more'],
+];
+
+const rows = [
+  ['今天日期','14:32'],['我的开源项目是什么','14:10'],['你是谁','13:59'],
+  ['我明天从广州出发去…','13:46'],['帮我总结这份周报','11:20'],
+];
+
+function sidebar() {
+  return `
+    <div class="side">
+      <div class="brand"><span class="logo">N</span><b>NanZi AI Agent</b></div>
+      <div class="nav">
+        ${navItems.map(([label, icon]) => `
+          <div class="item ${label === '工作空间' ? '' : ''}">${icons[icon]}<span>${label}</span></div>`).join('')}
+      </div>
+      <div class="listhead">
+        <span class="t">${variant === 'a' && false ? '' : '会话列表（54）'}</span>
+        <span class="acts">
+          <button class="icobtn" title="刷新">${icons.refresh}</button>
+          ${variant === 'c' ? '' : `<span class="rel"><button class="icobtn ${variant === 'a' ? 'on' : ''}" title="筛选">${icons.filter}${variant === 'a' ? '<span class="badge">2</span>' : ''}</button></span>`}
+          <button class="icobtn" title="搜索">${icons.search}</button>
+        </span>
+      </div>
+      ${variant === 'c' ? `<div class="chips-row">
+        <button class="fchip on">全部</button><button class="fchip">任务会话</button>
+        <button class="fchip">今天</button><button class="fchip">失败</button>
+        <button class="fchip">⋯</button></div>` : ''}
+      ${variant === 'a' ? `<div class="chips-row">
+        <button class="fchip on">任务会话 ✕</button><button class="fchip on">近 7 天 ✕</button></div>` : ''}
+      <div class="list">
+        <div class="group-h">置顶</div>
+        ${rows.slice(0,1).map(([n,t]) => `<div class="row"><span class="name">【用户回答】${n}</span><span class="time">10月14日</span></div>`).join('')}
+        <div class="group-h">今天</div>
+        ${rows.map(([n,t], i) => `<div class="row ${i === 0 ? 'on' : ''}"><span class="name">${n}</span><span class="time">${t}</span></div>`).join('')}
+      </div>
+      ${variant === 'a' && device === 'desktop' ? popover() : ''}
+      ${variant === 'a' && device === 'mobile' ? sheet() : ''}
+    </div>`;
+}
+
+function popover() {
+  return `
+    <div class="popover">
+      <div class="grp">
+        <div class="lab">会话来源</div>
+        <div class="opts">
+          <button class="opt">全部</button><button class="opt on">任务会话</button><button class="opt">普通对话</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="lab">智能体</div>
+        <select><option>全部智能体</option><option>数据分析助手</option><option>文档问答</option></select>
+      </div>
+      <div class="grp">
+        <div class="lab">执行状态</div>
+        <div class="opts">
+          <button class="opt on">全部</button><button class="opt">成功</button><button class="opt">失败</button>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="lab">时间范围</div>
+        <div class="opts">
+          <button class="opt">全部</button><button class="opt">今天</button><button class="opt on">近 7 天</button>
+        </div>
+        <div class="opts" style="margin-top:4px">
+          <button class="opt">近 30 天</button><button class="opt">自定义</button><button class="opt" style="visibility:hidden">—</button>
+        </div>
+      </div>
+      <div class="foot">
+        <button class="clear">重置筛选</button>
+        <button class="apply">完成</button>
+      </div>
+    </div>`;
+}
+
+function sheet() {
+  return `
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="grp">
+        <div class="lab">会话来源</div>
+        <div class="opts"><button class="opt">全部</button><button class="opt on">任务会话</button><button class="opt">普通对话</button></div>
+      </div>
+      <div class="grp">
+        <div class="lab">执行状态</div>
+        <div class="opts"><button class="opt on">全部</button><button class="opt">成功</button><button class="opt">失败</button></div>
+      </div>
+      <div class="grp">
+        <div class="lab">时间范围</div>
+        <div class="opts"><button class="opt">全部</button><button class="opt">今天</button><button class="opt on">近 7 天</button></div>
+      </div>
+      <div class="foot" style="display:flex;justify-content:space-between;border-top:1px solid #f1f3f5;margin-top:10px;padding-top:8px">
+        <button class="clear">重置筛选</button><button class="apply">查看 12 条结果</button>
+      </div>
+    </div>`;
+}
+
+function content() {
+  return `
+    <div class="content">
+      <div class="searchbar">
+        <div class="s">${icons.search}<span>搜索历史记录…</span></div>
+        <div class="s" style="flex:0 0 40px;justify-content:center">${icons.filter}</div>
+      </div>
+      <div class="card">
+        <h3>这里是会话内容区</h3>
+        <p>浮层面板会盖住这一块的一小部分（296px 宽），点面板外任意处关闭。侧栏本身不因筛选变形，
+           列表行高、时间位置都不受影响。</p>
+      </div>
+    </div>`;
+}
+
+function render() {
+  app.innerHTML = `${sidebar()}${content()}`;
+  hint.textContent = {
+    a: '浮层从侧栏右边缘滑出，不遮挡列表与按钮；移动端降级为底部抽屉',
+    b: '面板收窄到侧栏内，只保留来源 / 状态 / 时间，无需请求智能体列表',
+    c: '搜索行下方常驻 chips，点一下即时生效，超过 4 个收进「⋯」',
+  }[variant];
+}
+
+document.querySelectorAll('[data-variant]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-variant]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  variant = b.dataset.variant; render();
+}));
+document.querySelectorAll('[data-device]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-device]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  device = b.dataset.device; render();
+}));
+render();
+</script>
+</body>
+</html>
