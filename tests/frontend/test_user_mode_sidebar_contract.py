@@ -774,3 +774,11 @@ def test_new_conversation_refreshes_task_list_on_stream_end() -> None:
     assert 'window.addEventListener("nanzi:conversation-active", onConversationActive)' in sidebar
     assert "refreshTasksForConversation" in sidebar
     assert "attempt >= 3" in sidebar
+
+
+def test_group_header_does_not_highlight_with_active_child(sidebar: str) -> None:
+    """分组只负责展开/收起：子项选中时父项不跟着高亮，否则一屏两个「选中」。"""
+    assert "navItemClass(item, false)" in sidebar
+    assert "navItemClass(item, isChildActive(item))" not in sidebar
+    # 子项选中仍要高亮
+    assert "navSubClass(isActive(child.path), child.locked)" in sidebar

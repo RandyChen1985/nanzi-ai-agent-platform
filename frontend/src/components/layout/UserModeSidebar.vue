@@ -86,10 +86,11 @@
 
             <!-- 分组：标题本身可展开，展开后显示子项 -->
             <template v-else>
+              <!-- 分组只负责展开/收起：子项选中时父项不跟着高亮，否则一屏会有两个「选中」 -->
               <button
                 type="button"
                 class="flex h-10 w-full items-center rounded-[11px] text-left transition-colors"
-                :class="[navItemClass(item, isChildActive(item)), collapsed ? 'justify-center px-0' : 'gap-2.5 px-2.5', !collapsed && (mobile ? 'text-[15px]' : 'text-[14px]')]"
+                :class="[navItemClass(item, false), collapsed ? 'justify-center px-0' : 'gap-2.5 px-2.5', !collapsed && (mobile ? 'text-[15px]' : 'text-[14px]')]"
                 :aria-expanded="expanded[item.key] !== false"
                 :title="collapsed ? item.label : undefined"
                 @click="toggleGroup(item)"
