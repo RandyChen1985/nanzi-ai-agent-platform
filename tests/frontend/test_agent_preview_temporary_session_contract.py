@@ -91,8 +91,13 @@ def test_host_init_config_cannot_reintroduce_conversation_or_reset_preview():
 
 
 def test_dashboard_chat_host_forwards_preview_flag_to_embed_iframe():
-    """降级入口 /dashboard/chat?preview=1 经 iframe 打开 embed 时必须透传标记。"""
+    """降级入口 /dashboard/chat?preview=1 经 iframe 打开 embed 时必须透传标记。
+
+    透视方式改成 URLSearchParams 之后（同时还要透传用户模式的 `new=1`），
+    断言跟着换成「参数被写进 embedQuery」+「iframe 地址由它拼出来」。
+    """
     source = _source(CHAT)
 
-    assert 'const previewQuery = String(route.query.preview || \'\') === \'1\' ? \'?preview=1\' : \'\';' in source
-    assert "iframeUrl.value = `/embed/chat${previewQuery}`;" in source
+    assert "const embedQuery = new URLSearchParams();" in source
+    assert "embedQuery.set('preview', '1')" in source
+    assert "iframeUrl.value = `/embed/chat${embedSearch ? `?${embedSearch}` : ''}`;" in source

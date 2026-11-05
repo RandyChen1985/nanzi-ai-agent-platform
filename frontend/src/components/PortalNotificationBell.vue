@@ -16,9 +16,15 @@ const props = withDefaults(defineProps<{
   variant?: "bell" | "modal";
   /** 是否监听全局打开事件；Embed 内嵌实例应关闭，避免与 Dashboard 铃铛抢事件 */
   listenGlobalEvent?: boolean;
+  /**
+   * 下拉面板相对按钮的展开方向。
+   * 顶栏用 down（默认）；用户模式的侧栏底部空间在下方被视口切掉，得改成向上展开。
+   */
+  panelPlacement?: "down" | "up";
 }>(), {
   variant: "bell",
   listenGlobalEvent: undefined,
+  panelPlacement: "down",
 });
 
 const emit = defineEmits<{
@@ -394,7 +400,8 @@ defineExpose({ open: openFromExternal, toggle });
     <!-- Dashboard 铃铛：下拉面板 -->
     <div
       v-if="open && !isModalVariant"
-      class="notification-panel fixed left-3 right-3 top-[3.25rem] z-50 max-h-[min(28rem,calc(100dvh-5rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[22rem] sm:max-w-[min(22rem,calc(100vw-1.5rem))]"
+      class="notification-panel fixed left-3 right-3 top-[3.25rem] z-50 max-h-[min(28rem,calc(100dvh-5rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:w-[22rem] sm:max-w-[min(22rem,calc(100vw-1.5rem))]"
+      :class="panelPlacement === 'up' ? 'sm:top-auto sm:bottom-full sm:left-0 sm:right-auto sm:mb-2' : 'sm:top-auto sm:mt-2'"
     >
       <div class="border-b border-gray-100">
         <div class="notification-header-main flex items-start justify-between gap-3 px-4 pb-2 pt-3">

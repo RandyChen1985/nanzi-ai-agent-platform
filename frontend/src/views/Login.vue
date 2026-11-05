@@ -5,6 +5,7 @@ import axios from 'axios'
 import { useBranding } from '../composables/useBranding'
 import { persistUserInfo } from '../utils/userSession'
 import { clearNavigationSnapshot } from '../composables/useNavigation'
+import { applyProModeDefaultTheme, applyUserModeDefaultTheme, resolveInitialUiMode } from '../composables/useUiMode'
 import MagnifierTitle from '../components/login/MagnifierTitle.vue'
 import BrowserUpgradeModal from '../components/login/BrowserUpgradeModal.vue'
 import { detectBrowser, isBrowserUpgradeDismissed, dismissBrowserUpgrade } from '../utils/browserDetect'
@@ -201,12 +202,21 @@ const handleLoginSuccess = (userData: any) => {
     // 凭据由后端下发的 HttpOnly Cookie 承载，不再写入 localStorage：
     // 落在 localStorage 的只是 JS 可读的副本，任何一次 XSS 都能带走它。
     
-    // 普通业务用户进入个人工作台；管理员保留平台概览入口。
+    // 落地页按界面模式分：用户模式直接落在「新建任务」（可以立刻开聊），
+    // 专业模式保留原口径——普通用户工作台、管理员平台概览。
+    //
+    // 这里只能同步判断：登录当下还没拉 `/portal-prefs`，等接口回来再决定落地页会先
+    // 跳一次再跳一次。所以先看本机缓存里这个人上次选的模式，没有则按角色给默认，
+    // 真正的权威值随后由 Dashboard 的 `ensureUiMode()` 覆盖。
     const returnPath = typeof route.query.next === 'string'
       && route.query.next.startsWith('/')
       && !route.query.next.startsWith('//')
       ? route.query.next
       : ''
+    const uiMode = resolveInitialUiMode(userData?.role)
+    // 两种模式各自的默认主题：用户模式亮色、专业模式深色
+    if (uiMode === 'user') applyUserModeDefaultTheme()
+    else applyProModeDefaultTheme()
     if (returnPath) {
       // OAuth 授权端点由后端处理；必须整页请求，不能只让 SPA 改地址。
       if (returnPath.startsWith('/oauth/authorize')) {
@@ -214,6 +224,9 @@ const handleLoginSuccess = (userData: any) => {
       } else {
         router.push(returnPath)
       }
+    } else if (uiMode === 'user') {
+      // new=1：挂件据此跳过会话续接，开一条空白会话（否则会接回上次对话）
+      router.push({ path: '/dashboard/chat', query: { new: '1' } })
     } else if (userData.role !== 'admin') {
       router.push('/dashboard/workbench')
     } else {

@@ -5550,6 +5550,17 @@ let requestedConversationId = "";
  */
 let isPreviewSession = false;
 /**
+ * 强制新会话（URL 携带 `new=1`）。
+ *
+ * 和预览模式的区别：预览是「看一眼就走」的临时会话（不落盘、不顶掉用户的续接指针），
+ * 而这里要的是**正式的新会话**——跳过所有续接来源（宿主 resume id、本地指针、
+ * 服务端活跃会话），生成一个新 cid 并正常持久化，之后刷新还能接回这一条。
+ *
+ * 用户模式的「新建任务」走这条路：门户侧的 iframe 重新挂载并不等于挂件里开了新会话，
+ * 只重挂载的话挂件仍会按指针续接上一次对话，用户点完看到的还是老内容。
+ */
+let isForceNewSession = false;
+/**
  * 当前界面上的会话所属身份。身份与它不一致时（同一 tab 换用户登录、宿主换票），
  * 必须把上一位用户的会话现场整个丢掉，而不能只是换个存储键。
  */
@@ -9905,6 +9916,11 @@ const handlePostMessage = (event: MessageEvent) => {
         handleQuickQuestion(data.command);
       }
       break;
+    case "OPEN_HISTORY":
+      // 宿主要求展开会话历史（用户模式侧栏的「查看全部会话」）。
+      // 与 URL `history=1` 走同一状态，不重载挂件、不丢当前对话。
+      showHistorySidebar.value = true;
+      break;
     case "OPEN_ACCOUNT":
       // 宿主（网页面板移动端右侧把手）要求切到「我的账号」。与「更多 → 我的账号」
       // 走同一跳转：/embed/personal 与本页同 layout、同为 public，iframe 内 SPA 切换即可，
@@ -10478,8 +10494,26 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
         generateNewConversation({ persist: false });
       }
       loadedCid = true;
+    } else if (isForceNewSession) {
+      // 强制新会话：同样跳过所有续接来源，但**正常落盘**——这是一条正式的空白会话，
+      // 刷新后应当还能接回来，所以不能沿用预览的 `persist: false`。
+      //
+      // 两个边界：
+      // 1. 宿主已经下发了会话 ID（点历史会话进来）时必须让位——否则点历史还是开新会话；
+      // 2. `new=1` 是一次性指令，首次建立会话后立刻消费掉。它是 iframe URL 上的参数，
+      //    会一直留在挂件实例里；不清掉的话，此后每次 INIT_CONFIG 都会把宿主刚下发的
+      //    会话 ID 抹掉，表现为「无论点哪条历史都停在新会话」。
+      if (!requestedConversationId) {
+        if (!conversationId.value) {
+          generateNewConversation();
+        }
+        isForceNewSession = false;
+        loadedCid = true;
+      }
     }
     if (requestedConversationId) {
+      // 宿主明确要某个会话时，「新建」这条一次性指令直接作废
+      isForceNewSession = false;
       const requested = String(requestedConversationId);
       const requestedAdoption = await checkConversationAdoption(requested);
       // await 期间可能已经开始了新一次初始化（宿主重发 INIT_CONFIG / 重新校验身份）：
@@ -13443,6 +13477,17 @@ onMounted(() => {
   if (query.get("preview") === "1") {
     isPreviewSession = true;
     console.log("[LifeCycle] Preview mode: clean temporary conversation, no resume.");
+  }
+  // 用户模式「查看全部会话」：`history=1` = 进来就把左侧会话历史展开。
+  // 放在 restoreHistorySidebarPreference() 之后，覆盖「上次是关着」的本地偏好。
+  if (query.get("history") === "1") {
+    showHistorySidebar.value = true;
+  }
+  // 用户模式「新建任务」：`new=1` = 跳过续接、开一条正式的空白会话。
+  // 与 preview 同时出现时以 preview 为准（预览不落盘，优先级更高）。
+  if (!isPreviewSession && query.get("new") === "1") {
+    isForceNewSession = true;
+    console.log("[LifeCycle] Force new session: skip resume and start a blank conversation.");
   }
   const queryInstanceId = normalizeEmbedInstanceId(query.get("instance_id"));
   if (queryInstanceId) config.instanceId = queryInstanceId;

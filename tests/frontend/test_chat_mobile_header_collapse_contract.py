@@ -49,7 +49,9 @@ def test_header_hides_only_for_mobile_chat_route():
     # 桌面端（!isMobile）恒显示：cond 必须同时包含移动端与 chat 路由两个否定条件
     assert "const showDashboardHeader = computed(" in source
     assert "() => !isMobile.value || !isChatRoute.value || chatChromeOpen.value," in source
-    assert 'v-if="showDashboardHeader"' in source
+    # 用户模式的顶栏在桌面整体隐藏（通知/主题/退出已收进左下角用户卡），
+    # 但移动端必须保留，否则没有抽屉入口。
+    assert 'v-if="showDashboardHeader && (!isUserMode || isMobile)"' in source
 
 
 def test_collapsed_state_shows_a_handle_that_expands_the_header():

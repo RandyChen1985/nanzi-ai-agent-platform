@@ -111,10 +111,24 @@ const parseSavedReportDetailTab = (value: unknown): SavedReportOpenRequest["deta
 };
 
 const initChat = () => {
-    // 基础路径。预览入口（/dashboard/chat?preview=1）需把标记透传给挂件：
-    // 挂件据此开一个干净的临时会话，而不是续接上次对话。
-    const previewQuery = String(route.query.preview || '') === '1' ? '?preview=1' : '';
-    iframeUrl.value = `/embed/chat${previewQuery}`;
+    // 基础路径。两个标记都要透传给挂件：
+    // - preview=1：预览对话，开干净的临时会话（不落盘）；
+    // - new=1：用户模式「新建任务」，开干净的正式会话（正常落盘）。
+    // 都不传时挂件会按会话指针续接上一次对话。
+    const embedQuery = new URLSearchParams();
+    if (String(route.query.preview || '') === '1') embedQuery.set('preview', '1');
+    if (String(route.query.new || '') === '1') embedQuery.set('new', '1');
+    if (String(route.query.history || '') === '1') embedQuery.set('history', '1');
+    const embedSearch = embedQuery.toString();
+    iframeUrl.value = `/embed/chat${embedSearch ? `?${embedSearch}` : ''}`;
+
+    // `new=1` 已经交给挂件了，立刻从地址栏摘掉：否则这一页刷新会再开一条新的空会话，
+    // 刚建的那条就"丢"了。摘掉之后刷新走正常续接，接回刚开的会话。
+    if (embedQuery.has('new')) {
+        const nextQuery = { ...route.query };
+        delete nextQuery.new;
+        void router.replace({ path: route.path, query: nextQuery });
+    }
     
     // 设置超时检测 (5秒)
     isInitTimedOut.value = false;
@@ -237,9 +251,23 @@ const handleMessage = (event: MessageEvent) => {
     }
 };
 
+/**
+ * 宿主侧栏「查看全部会话」。
+ *
+ * 两种情况：
+ * - 从别的页面点进来：URL 带 `history=1`，initChat 会把它透传给挂件，挂件自己展开；
+ * - 已经在聊天页时再点：URL 没变、iframe 不会重建，只能靠这条事件通知挂件展开。
+ */
+const OPEN_HISTORY_EVENT = 'portal:open-history';
+
+const handleOpenHistoryRequest = () => {
+    chatFrame.value?.contentWindow?.postMessage({ type: 'OPEN_HISTORY' }, window.location.origin);
+};
+
 onMounted(() => {
     window.addEventListener('message', handleMessage);
     window.addEventListener(SAVED_REPORT_OPEN_EVENT, handleSavedReportOpenEvent);
+    window.addEventListener(OPEN_HISTORY_EVENT, handleOpenHistoryRequest);
     initChat();
 });
 
@@ -267,6 +295,7 @@ watch(
 onUnmounted(() => {
     window.removeEventListener('message', handleMessage);
     window.removeEventListener(SAVED_REPORT_OPEN_EVENT, handleSavedReportOpenEvent);
+    window.removeEventListener(OPEN_HISTORY_EVENT, handleOpenHistoryRequest);
     clearTimeout(timeoutTimer);
 });
 </script>

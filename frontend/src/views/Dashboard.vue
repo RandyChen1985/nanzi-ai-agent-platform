@@ -12,6 +12,8 @@ import PortalNotificationBell from "../components/PortalNotificationBell.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import SidebarMenuLink from "../components/menu/SidebarMenuLink.vue";
 import { useNavigation, type NavNode } from "../composables/useNavigation";
+import UserModeSidebar from "../components/layout/UserModeSidebar.vue";
+import { useUiMode } from "../composables/useUiMode";
 
 const router = useRouter();
 const route = useRoute();
@@ -138,9 +140,12 @@ const sidebarInitialClass = computed(() => {
 });
 // 落地页已可在「菜单管理」里配置（is_landing），点 Logo 就该回那里；
 // 菜单数据还没到位时退回原有口径，避免首屏跳到一个空路由。
-const homeRoute = computed(
-  () => landingPath.value || (userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench'),
-);
+const homeRoute = computed(() => {
+  // 用户模式的「首页」就是新建任务页：点 logo 回到可以立刻开聊的地方，
+  // 而不是绕回工作台再找入口。
+  if (isUserMode.value) return "/dashboard/chat";
+  return landingPath.value || (userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench');
+});
 
 // 刷新时的会话校验策略：服务重启窗口期（超时/5xx/断网）保留本地会话并退避重试，
 // 只有确认是认证类失败（401/403）才清理凭据并回到登录页。
@@ -581,8 +586,103 @@ const retryNavigation = () => {
   void ensureNavigation(true);
 };
 
+// ---------------- 界面模式：用户模式 / 专业模式 ----------------
+// 偏好存 Redis（账号级），这里只负责渲染分支与切换。
+const { isUserMode, setUiMode, ensureUiMode } = useUiMode();
+/** 用户模式「新建任务」时自增，用来强制重挂载聊天页（换掉 key 即丢掉当前 iframe 会话） */
+const pageReloadToken = ref(0);
+
+/** 侧栏宽度：用户模式固定 252（菜单文案更长），专业模式维持原有折叠宽度 */
+const sidebarWidthClass = computed(() => {
+  if (isMobile.value) {
+    return showMobileSidebar.value ? "translate-x-0 w-64" : "-translate-x-full w-64";
+  }
+  if (isUserMode.value) return "w-[252px]";
+  return isCollapsed.value ? "w-20" : "w-[208px]";
+});
+
+const userModeMenus = computed<string[]>(() => {
+  const perms = (userInfo.value as any)?.permissions;
+  return Array.isArray(perms?.menus) ? perms.menus : [];
+});
+
+const closeMobileSidebarIfNeeded = () => {
+  if (isMobile.value) showMobileSidebar.value = false;
+};
+
+const handleUserModeNavigate = (path: string) => {
+  closeMobileSidebarIfNeeded();
+  router.push(path);
+};
+
+/**
+ * 用户模式「新建任务」。
+ *
+ * 已经在聊天页时不能再 push 同一个地址——路由不变、组件不重挂载，看起来像「点了没反应」。
+ * 这里清掉会话参数并换一个渲染 key，让 Chat.vue 重新初始化，等价于挂件里的「新会话」。
+ */
+const handleUserModeNewChat = () => {
+  closeMobileSidebarIfNeeded();
+  // `new=1` 会透传到挂件的 iframe URL：只换 key 重挂载是不够的——挂件仍会按会话指针
+  // 续接上一次对话，用户点完看到的还是老内容。带上 new 才能开一条真正的空白会话。
+  if (route.name === "AIChat") {
+    const nextQuery: Record<string, any> = { ...route.query, new: "1" };
+    delete nextQuery.conversation_id;
+    delete nextQuery.agent_id;
+    pageReloadToken.value += 1;
+    router.replace({ path: "/dashboard/chat", query: nextQuery });
+    return;
+  }
+  router.push({ path: "/dashboard/chat", query: { new: "1" } });
+};
+
+const handleUserModeOpenConversation = (item: { conversation_id?: string | null }) => {
+  closeMobileSidebarIfNeeded();
+  if (!item?.conversation_id) return;
+  router.push({ path: "/dashboard/chat", query: { conversation_id: String(item.conversation_id) } });
+};
+
+/**
+ * 「查看全部会话」= 进聊天页并展开左侧历史侧栏。
+ *
+ * 只 push 到 /dashboard/chat 是不够的：已经在聊天页时什么都不会发生，
+ * 从别处跳过来也是关着的。两条路一起走：
+ * - URL 带 `history=1`，负责冷启动（Chat.vue 会透传给挂件）；
+ * - 派发事件，负责「已经在聊天页」这种不重建 iframe 的情况。
+ */
+const OPEN_HISTORY_EVENT = "portal:open-history";
+
+const handleUserModeOpenHistory = () => {
+  closeMobileSidebarIfNeeded();
+  window.dispatchEvent(new CustomEvent(OPEN_HISTORY_EVENT));
+  if (route.name === "AIChat") return;
+  router.push({ path: "/dashboard/chat", query: { history: "1" } });
+};
+
+const handleUserModeOpenPersonal = () => {
+  closeMobileSidebarIfNeeded();
+  router.push("/dashboard/personal");
+};
+
+const handleUserModeToggleTheme = () => {
+  toggleTheme();
+};
+
+const handleUserModeLogout = () => {
+  logout();
+};
+
+const handleUserModeSwitchMode = async (mode: "user" | "pro") => {
+  const ok = await setUiMode(mode);
+  showToast(
+    ok ? (mode === "pro" ? "已切换到专业模式" : "已切换到用户模式") : "切换失败，请稍后重试",
+    ok ? "success" : "error",
+  );
+};
+
 onMounted(() => {
   void ensureNavigation();
+  void ensureUiMode();
 });
 </script>
 
@@ -610,11 +710,33 @@ onMounted(() => {
           ? '!bg-white !text-gray-700 !border-gray-200/80' 
           : 'border-white/[0.06]',
         isMobile ? 'fixed inset-y-0 left-0 h-full' : 'relative',
-        isMobile 
-            ? (showMobileSidebar ? 'translate-x-0 w-64' : '-translate-x-full w-64') 
-            : (isCollapsed ? 'w-20' : 'w-[208px]')
+        sidebarWidthClass
       ]"
     >
+      <!-- 用户模式：独立侧栏（菜单写死，不读 /menus/nav） -->
+      <UserModeSidebar
+        v-if="isUserMode"
+        :light-theme="theme === 'light'"
+        :mobile="isMobile"
+        :user-id="String(userInfo.id || '')"
+        :user-name="userInfo.user_name"
+        :real-name="userInfo.real_name || userInfo.user_name"
+        :avatar-url="userInfo.avatar_url || ''"
+        :role="String(userInfo.role || '')"
+        :menus="userModeMenus"
+        :active-conversation-id="String(route.query.conversation_id || '')"
+        @navigate="handleUserModeNavigate"
+        @new-chat="handleUserModeNewChat"
+        @open-conversation="handleUserModeOpenConversation"
+        @open-history="handleUserModeOpenHistory"
+        @open-personal="handleUserModeOpenPersonal"
+        @switch-mode="handleUserModeSwitchMode"
+        @toggle-theme="handleUserModeToggleTheme"
+        @logout="handleUserModeLogout"
+        @toast="(message: string) => showToast(message, 'warning')"
+      />
+
+      <template v-else>
       <!-- Brand Header -->
       <div
         class="h-12 flex items-center border-b transition-colors overflow-hidden whitespace-nowrap"
@@ -880,18 +1002,20 @@ onMounted(() => {
           </div>
         </transition>
       </div>
+      </template>
     </aside>
 
     <!-- Main Content Area -->
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
       <!-- Top Header -->
       <header
-        v-if="showDashboardHeader"
+        v-if="showDashboardHeader && (!isUserMode || isMobile)"
         class="relative bg-white shadow-sm h-12 flex justify-between items-center px-4 z-30 border-b border-gray-200 flex-shrink-0"
       >
         <div class="flex items-center">
-          <!-- Sidebar Toggle Button -->
+          <!-- Sidebar Toggle Button：用户模式是固定 252 宽、没有折叠态，按钮隐藏 -->
           <button
+            v-if="!isUserMode || isMobile"
             type="button"
             :aria-label="isCollapsed ? '展开侧边栏' : '收起侧边栏'"
             :aria-expanded="!isCollapsed"
@@ -980,7 +1104,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 flex-nowrap">
+        <div v-if="!isUserMode" class="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 flex-nowrap">
           <!-- Online Users Widget：仅管理员可见 -->
           <template v-if="userInfo.role === 'admin'">
             <button
@@ -1134,7 +1258,8 @@ onMounted(() => {
           <transition name="page">
             <Suspense>
               <template #default>
-                <component :is="Component" :key="$route.path" />
+                <!-- pageReloadToken：用户模式点「新建任务」时 +1，强制重挂载聊天页拿到干净会话 -->
+                <component :is="Component" :key="$route.path + '#' + pageReloadToken" />
               </template>
               <template #fallback>
                 <div class="flex items-center justify-center h-64">
