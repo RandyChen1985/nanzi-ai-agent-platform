@@ -28,10 +28,16 @@ def test_sidebar_renders_pinned_agent_notice_above_search():
 
 
 def test_sidebar_hides_agent_filter_and_agent_chip_when_pinned():
-    """锁定后不允许再改智能体筛选：下拉不渲染，chip 也不给。"""
+    """锁定后不允许再改智能体筛选：筛选面板里不出现该下拉，chip 也不给。
+
+    筛选入口已从侧栏内联下拉搬到 ``ConversationFilterPanel``（所以旧的
+    ``showAgentFilter`` prop 连同两处调用一起删了）；这里断言的是**行为**——
+    锁定时面板用 ``hide-agent`` 关掉智能体选项，chips 也不渲染这一项。
+    """
     source = _source(SIDEBAR)
 
-    assert '<div v-if="showAgentFilter">' in source
+    # 面板里关掉智能体选项：锁定智能体（或调用方整体关掉筛选）时都不给改
+    assert ':hide-agent="Boolean(pinnedAgentName) || !showAgentFilter"' in source
     assert "if (f.agentId && !props.pinnedAgentName) {" in source
 
 

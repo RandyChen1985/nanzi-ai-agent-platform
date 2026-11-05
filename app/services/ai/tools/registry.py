@@ -11,6 +11,10 @@ from app.services.ai.tools.generic_api import GenericApiToolFactory
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from app.services.ai.tools.system_tools import get_current_model, system_http_request, SYSTEM_IMPLICIT_TOOLS
 from app.services.ai.tools.knowledge_tool import search_knowledge_base
+from app.services.ai.tools.knowledge_admin_tools import (
+    create_knowledge_base,
+    upload_document_to_knowledge_base,
+)
 from app.services.ai.tools.example_search_tool import search_qa_examples
 from app.services.ai.tools.task_manager_tools import (
     create_recurring_task, get_my_tasks, cancel_task, 
@@ -307,6 +311,9 @@ class ToolRegistry:
         "session_status": session_status,
         "get_runtime_capabilities": get_runtime_capabilities,
         "search_knowledge_base": search_knowledge_base,
+        # 知识库写操作：建库（仅个人私有）与上传文档
+        "create_knowledge_base": create_knowledge_base,
+        "upload_document_to_knowledge_base": upload_document_to_knowledge_base,
         "search_qa_examples": search_qa_examples,
         # Register Task Manager Tools
         "create_recurring_task": create_recurring_task,

@@ -176,6 +176,8 @@ BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "search_github_repos": "检索 GitHub 仓库与代码",
     # 知识与数据
     "search_knowledge_base": "检索平台知识库文档",
+    "create_knowledge_base": "创建个人私有知识库",
+    "upload_document_to_knowledge_base": "上传文档到指定知识库",
     "get_dataset_schema": "获取数据集（数据库）表结构",
     "execute_sql_query": "对已授权数据集执行只读 SQL 查询",
     "get_room_list": "获取会议室/场地列表",

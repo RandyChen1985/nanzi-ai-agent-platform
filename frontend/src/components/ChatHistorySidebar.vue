@@ -532,7 +532,7 @@ defineExpose({ reloadShares: () => sharesPanelRef.value?.reload?.() });
           <ConversationFilterPanel
             :filters="currentFilters"
             :agents="availableAgents"
-            :hide-agent="Boolean(pinnedAgentName)"
+            :hide-agent="Boolean(pinnedAgentName) || !showAgentFilter"
             @update:filters="emitFilters"
             @reset="resetFilters"
           />
