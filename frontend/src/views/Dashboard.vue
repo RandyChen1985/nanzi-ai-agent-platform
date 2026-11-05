@@ -174,6 +174,8 @@ const fetchUserInfo = async () => {
     const cachedUserInfo = localStorage.getItem("user_info");
     if (cachedUserInfo) {
       try {
+        // 缓存里的 password_info 保留：/auth/me 失败时靠它兜底，别让快到期的人
+        // 因为一次接口抖动就完全看不到提醒（闪烁由下面的 passwordNoticeReady 门控解决）
         userInfo.value = JSON.parse(cachedUserInfo);
       } catch {
         localStorage.removeItem("user_info");

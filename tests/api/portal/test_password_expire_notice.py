@@ -47,3 +47,40 @@ async def test_user_password_expire_notice_calc():
             assert pwd_info["days_since_last_change"] == 35
             assert pwd_info["days_until_next_change"] == -5
             assert pwd_info["is_expired"] is True
+
+
+@pytest.mark.asyncio
+async def test_updated_at_does_not_reset_password_age():
+    """登录 / 改资料会刷新 updated_at，它不能被当成「密码最后修改时间」。
+
+    老账号 password_updated_at 为空，若退到 updated_at，每次登录都会把天数重置为 0，
+    快到期提醒就永远弹不出来（用户看到的是「横幅闪一下就不见」）。
+    """
+    mock_db = AsyncMock()
+    user_token_payload = {"user_id": "2", "user_name": "u2", "role": "user"}
+
+    mock_user = MagicMock(spec=User)
+    mock_user.id = 2
+    mock_user.password_hash = "$2b$12$fakehash"
+    mock_user.password_updated_at = None
+    mock_user.updated_at = datetime.now()                        # 刚登录刷新过
+    mock_user.created_at = datetime.now() - timedelta(days=40)  # 从未改过密码
+    mock_user.last_login_at = None
+    mock_user.email = None
+    mock_user.two_factor_enabled = False
+    mock_db.get.return_value = mock_user
+
+    mock_perm = MagicMock()
+    mock_perm.permissions.model_dump.return_value = {}
+
+    with patch("app.services.permission_service.PermissionService.get_user_permissions", new_callable=AsyncMock) as mock_get_perm:
+        mock_get_perm.return_value = mock_perm
+        with patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config:
+            mock_config.side_effect = lambda k: "30" if k == "password_expire_days" else None
+
+            res = await get_current_user_info(user=user_token_payload, db=mock_db)
+            pwd_info = res["data"]["password_info"]
+            assert pwd_info["has_password"] is True
+            assert pwd_info["days_since_last_change"] == 40
+            assert pwd_info["days_until_next_change"] == -10
+            assert pwd_info["is_expired"] is True

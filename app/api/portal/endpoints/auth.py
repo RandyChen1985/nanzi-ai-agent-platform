@@ -821,7 +821,10 @@ async def get_current_user_info(
     is_expired = False
 
     if has_password and user_obj:
-        dt = user_obj.password_updated_at or user_obj.updated_at or user_obj.created_at
+        # 不能退到 updated_at：模型上它是 onupdate，登录（last_login_at）或改资料都会
+        # 刷新它，拿它当「密码最后修改时间」会把天数重置成 0，快到期提醒永远弹不出来。
+        # 老账号没有 password_updated_at 时按创建时间算——从未改过密码，本就该提醒。
+        dt = user_obj.password_updated_at or user_obj.created_at
         if dt:
             password_updated_at = dt.strftime("%Y-%m-%d %H:%M:%S")
             now = datetime.now()
