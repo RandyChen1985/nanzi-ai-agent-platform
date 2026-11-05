@@ -108,3 +108,42 @@ def resolve_mounted_dataset_scope_ids() -> list[str]:
     collect(scope.get("request_ids"), ids)
     collect(scope.get("session"), ids)
     return ids
+
+
+async def resolve_mounted_dataset_id_set(session: Any) -> Optional[set[int]]:
+    """把本轮挂载值（可能是 ID，也可能是名称）解析成数据集 ID 集合。
+
+    未限定范围时返回 ``None``（保持历史行为）。解析不出来时返回**空集合**——
+    调用方据此 fail-closed，不会悄悄放宽成「全部数据集」。
+    """
+    raw = resolve_mounted_dataset_scope_ids()
+    if not raw:
+        return None
+
+    from sqlalchemy import func, or_, select
+
+    from app.models.metadata import MetaDataset
+
+    wanted_ids: list[int] = []
+    wanted_names: set[str] = set()
+    for item in raw:
+        text = str(item).strip()
+        if not text:
+            continue
+        if text.isdigit():
+            wanted_ids.append(int(text))
+        else:
+            wanted_names.add(text.lower())
+
+    conditions = []
+    if wanted_ids:
+        conditions.append(MetaDataset.id.in_(wanted_ids))
+    if wanted_names:
+        conditions.append(func.lower(MetaDataset.name).in_(sorted(wanted_names)))
+    if not conditions:
+        return None
+
+    rows = (
+        await session.execute(select(MetaDataset.id).where(or_(*conditions)))
+    ).scalars().all()
+    return {int(item) for item in rows if item is not None}

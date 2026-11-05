@@ -188,3 +188,26 @@ def test_delegation_inherits_mounted_dataset_scope() -> None:
     assert 'sub_execution_options: Dict[str, Any] = {"delegated_sub_agent": True}' in source
     assert 'sub_execution_options["metadata_dataset_scope"] = parent_scope' in source
     assert "execution_options=sub_execution_options" in source
+
+
+def test_table_scope_gate_accepts_restrict_dataset_ids() -> None:
+    """表级门禁要能按「本轮限定数据集」判定。
+
+    实测：ds1 只给 1 张表，但 ai_agent_users 同时注册在 ds9/ds54（都是 all），
+    旧规则 allowed_by_any 直接放行，表级收窄完全失效。
+    """
+    from app.services.dataset_scope_service import enforce_table_scope_for_refs
+    import inspect
+
+    sig = inspect.signature(enforce_table_scope_for_refs)
+    assert "restrict_dataset_ids" in sig.parameters
+
+    source = (_REPO / "app/services/dataset_scope_service.py").read_text(encoding="utf-8")
+    # 只在「表确实注册在限定范围内」时收紧，联邦维表保持可用
+    assert "restricted = [row for row in candidates if row[1] in restrict_dataset_ids]" in source
+    assert "if restricted:" in source
+    assert "candidates = restricted" in source
+
+    sql_service = (_REPO / "app/services/sql_query_execution_service.py").read_text(encoding="utf-8")
+    assert "restrict_ids = await resolve_mounted_dataset_id_set(session)" in sql_service
+    assert "restrict_dataset_ids=restrict_ids" in sql_service

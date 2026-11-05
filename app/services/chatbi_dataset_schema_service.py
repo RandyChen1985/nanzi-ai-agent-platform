@@ -58,6 +58,69 @@ def filter_schema_hits_to_scope(
     return accepted
 
 
+def _metric_physical_names(metric: "dict[str, Any]") -> Optional[set[str]]:
+    """指标计算逻辑里引用的物理表（lower）；解析不出来返回 None（保守保留）。"""
+    sql = str((metric or {}).get("sql") or "").strip()
+    if not sql:
+        return None
+    try:
+        from app.services.sql_query_execution_service import (
+            extract_physical_table_refs_from_select_sql,
+        )
+
+        err, refs = extract_physical_table_refs_from_select_sql(sql, "mysql")
+    except Exception:  # noqa: BLE001 - 解析失败宁可保留，由执行层兜底拦截
+        return None
+    if err or not refs:
+        return None
+    return set(refs.keys())
+
+
+def _filter_metrics_chunk_by_table_scope(content: str, allowed: set[str]) -> Optional[str]:
+    """按表级白名单过滤指标块，逐指标判定。
+
+    指标块的 ``sql`` 字段是**完整 SQL**（`SELECT count(*) ... FROM ai_agent_users`），
+    直接原样返回等于把无权表的表名、字段名和口径一起交给模型；模型随后会照着它生成
+    一条注定被 ``[Permission Denied]`` 拦下的 SQL，白跑好几轮。
+    这里逐条剔除「计算逻辑引用了白名单外表」的指标，全部被剔除时整块丢弃。
+
+    返回 ``None`` 表示整块丢弃；返回原文表示无需改动。
+    """
+    text = str(content or "")
+    if not text.strip():
+        return content
+
+    import yaml
+
+    try:
+        data = yaml.safe_load(text)
+    except Exception:  # noqa: BLE001 - YAML 异常时保留原文，交给执行层兜底
+        return content
+    if not isinstance(data, dict) or not isinstance(data.get("metrics"), list):
+        return content
+
+    metrics = data["metrics"]
+    kept = []
+    for metric in metrics:
+        if not isinstance(metric, dict):
+            kept.append(metric)
+            continue
+        names = _metric_physical_names(metric)
+        if names is None or names.issubset(allowed):
+            kept.append(metric)
+
+    if len(kept) == len(metrics):
+        return content
+    if not kept:
+        return None
+
+    # 保留文件头的说明注释（yaml.dump 不会输出它们）
+    header = [line for line in text.splitlines() if line.startswith("#")]
+    data["metrics"] = kept
+    body = yaml.dump(data, allow_unicode=True, sort_keys=False)
+    return ("\n".join(header) + "\n" + body) if header else body
+
+
 def _filter_hits_by_table_scope(
     items: list[dict[str, Any]],
     *,
@@ -67,8 +130,10 @@ def _filter_hits_by_table_scope(
 ) -> list[dict[str, Any]]:
     """在数据集级过滤之后，再按表级白名单剔除命中的 schema 块。
 
-    指标块（无 ``table_name``）不按表过滤：它只描述口径，不暴露表结构；
-    表块则必须命中白名单，否则模型会看到并尝试查询被收窄掉的表。
+    表块必须命中白名单，否则模型会看到并尝试查询被收窄掉的表；
+    指标块没有 ``table_name``，但它的 ``sql`` 字段是完整 SQL，按每条指标引用的表过滤。
+    归属数据集识别不出来的命中（索引缺字段等）用「各数据集白名单的并集」兜底，
+    不能因为「查不到归属」就整块放行。
     """
     hit_list = list(items)
     if not allowed_table_names_by_dataset:
@@ -85,6 +150,15 @@ def _filter_hits_by_table_scope(
                 allowed = allowed_table_names_by_dataset.get(int(dataset_id))
             except (TypeError, ValueError):
                 allowed = None
+        else:
+            # 归属不明：用所有数据集白名单的并集兜底。并集为空说明全是「不限表」，
+            # 此时才真正放行；否则按并集判定，避免「查不到归属」变成一条绕过路径。
+            union: set[str] = set()
+            for allowed_set in allowed_table_names_by_dataset.values():
+                if allowed_set:
+                    union |= allowed_set
+            if union:
+                allowed = union
         if allowed is None:
             accepted.append(hit)
             continue
@@ -97,6 +171,17 @@ def _filter_hits_by_table_scope(
             if dropped_out is not None:
                 dropped_out.append(str(table_name))
             continue
+        if not table_name:
+            # 指标块：没有 table_name，但它的 sql 字段是完整 SQL，同样会泄露表名。
+            filtered_content = _filter_metrics_chunk_by_table_scope(
+                str(hit.get("content") or ""), allowed
+            )
+            if filtered_content is None:
+                if dropped_out is not None:
+                    dropped_out.append("<metrics>")
+                continue
+            if filtered_content != hit.get("content"):
+                hit = {**hit, "content": filtered_content}
         accepted.append(hit)
     return accepted
 
@@ -227,6 +312,12 @@ async def _format_fallback_dataset_chunks(
     formatted: list[str] = []
     index = start_index
     for content in raw_chunks:
+        if allowed_table_names is not None and "metrics_scope:" in str(content):
+            # 兜底路径的指标块也是完整 YAML（含每条指标的 sql），同样按白名单逐条过滤
+            filtered = _filter_metrics_chunk_by_table_scope(content, allowed_table_names)
+            if filtered is None:
+                continue
+            content = filtered
         piece = format_schema_chunk(index, content, dataset_id=dataset_id)
         if piece:
             formatted.append(piece)
@@ -294,7 +385,12 @@ async def _fetch_dataset_schema_impl(
                 effective_datasets=[],
                 provider=str(provider),
             )
-            return "No configured metadata datasets are authorized for current user."
+            # 区分「没权限」和「参数里根本没有能识别的数据集」：后者多半是模型传了
+            # 不存在的 ID/名称，把请求范围回显出去，它才知道要改参数而不是继续硬试。
+            return (
+                "No configured metadata datasets are authorized for current user. "
+                f"Requested scope: {sorted(configured_dataset_ids)}"
+            )
 
     _set_metadata_scope_debug(
         authorized_datasets=all_authorized_datasets,
@@ -524,6 +620,18 @@ async def _fetch_dataset_schema_impl(
 
         results: list[str] = []
         next_index = 1
+        # 兜底路径同样要把「被白名单挡掉的表」算进提示：这里按数据集总表数
+        # 与白名单大小做差，否则走 MySQL 关键词兜底时模型还是以为「没有这张表」。
+        for _ds in found_datasets:
+            _allowed = allowed_table_names_by_dataset.get(int(getattr(_ds, "id", 0) or 0))
+            if _allowed is None:
+                continue
+            _total = await session.scalar(
+                select(func.count())
+                .select_from(MetaTable)
+                .where(MetaTable.dataset_id == int(_ds.id), MetaTable.status == 1)
+            )
+            dropped_table_hits.extend(["_"] * max(0, int(_total or 0) - len(_allowed)))
         for ds in found_datasets:
             chunks, next_index = await _format_fallback_dataset_chunks(
                 session,
@@ -728,6 +836,9 @@ async def _enrich_with_cross_dataset_schema(
         return schema_text
 
     # 表级白名单：跨数据集补全同样不能泄露被收窄掉的表。
+    # 注意 `allowed_table_names_by_dataset` 里没有 key 表示「这个数据集不在本轮范围内」，
+    # 有 key 且值为 None 才表示「不限表」——用 .get() 会把前者误当成后者，
+    # 于是限定 ds1 时仍可能把 ds54 的关联表补进来。
     if allowed_table_names_by_dataset:
         scoped_tables = []
         for table in cross_tables:
@@ -735,7 +846,9 @@ async def _enrich_with_cross_dataset_schema(
                 dataset_id = int(getattr(table, "dataset_id", 0) or 0)
             except (TypeError, ValueError):
                 dataset_id = 0
-            allowed = allowed_table_names_by_dataset.get(dataset_id)
+            if dataset_id not in allowed_table_names_by_dataset:
+                continue
+            allowed = allowed_table_names_by_dataset[dataset_id]
             if allowed is None or str(getattr(table, "physical_name", "") or "").lower() in allowed:
                 scoped_tables.append(table)
         cross_tables = scoped_tables

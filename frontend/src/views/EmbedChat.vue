@@ -1011,6 +1011,17 @@
                 </button>
                                                                 <AgentHandoffNotice v-if="msg.agentHandoff" :handoff="msg.agentHandoff" />
                                                                 <div
+                                                                  v-if="msg.metadataScopeNotice"
+                                                                  class="mb-2 inline-flex max-w-full items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+                                                                >
+                                                                  <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M4.515 19h14.97a1 1 0 00.864-1.503l-7.485-12.97a1 1 0 00-1.728 0L3.651 17.497A1 1 0 004.515 19z" />
+                                                                  </svg>
+                                                                  <span>
+                                                                    {{ msg.metadataScopeNotice.message || '你选择的数据集已被该智能体绑定的数据集覆盖，本次查询使用的是绑定范围。' }}
+                                                                  </span>
+                                                                </div>
+                                                                <div
                                                                   v-if="msg.permissionNotice?.row_filter_applied && !msg.chatbiInsight"
                                                                   class="mb-2 inline-flex max-w-full items-start gap-1.5 rounded-lg border border-emerald-100 bg-emerald-50/70 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300"
                                                                 >
@@ -3138,6 +3149,12 @@ interface Message {
   toolResultData?: Record<string, Array<{ block_id?: string; media_type?: string; data?: unknown; url?: string | null }>>;
   datasetNavigation?: DatasetNavigationPayload;
   permissionNotice?: PermissionNotice;
+  /** 用户手选的数据集被智能体绑定覆盖时的提示（后端 meta 事件下发）。 */
+  metadataScopeNotice?: {
+    mounted: string[];
+    bound: string[];
+    message?: string;
+  };
   groundingBlocked?: GroundingBlockedPayload;
   reusableResultStatus?: {
     status: "saved" | "reused" | "fallback" | string;
@@ -12136,6 +12153,7 @@ const applyPermissionStreamEvent = (
     if (data.completion_tokens !== undefined) msg.completion_tokens = data.completion_tokens;
     if (data.has_data_output) msg.hasDataOutput = true;
     if (data.permission_notice) msg.permissionNotice = data.permission_notice;
+    if (data.metadata_scope_notice) msg.metadataScopeNotice = data.metadata_scope_notice;
   } else if (data.type === "error") {
     if (msg.pendingPermission) msg.pendingPermission.status = "error";
     msg.isThinking = false;
@@ -13033,6 +13051,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             }
             if (data.permission_notice) {
               agentMsg.value.permissionNotice = data.permission_notice;
+            }
+            if (data.metadata_scope_notice) {
+              agentMsg.value.metadataScopeNotice = data.metadata_scope_notice;
             }
             if (data.ltm_applied && data.ltm_data) {
               if (!ltmAlertedInSession.value) {

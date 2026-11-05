@@ -72,6 +72,16 @@ class ExecutionStep(BasePipelineStep):
                     "model_source": runtime_model_info.source,
                     "model_resolution_status": runtime_model_info.resolution_status,
                 })
+            # 用户手选的数据集被工具级绑定覆盖 → 随 meta 事件告诉前端，别让用户以为
+            # 自己选的范围生效了。
+            _scope_override = (getattr(context, "shared_state", None) or {}).get("metadata_scope_override")
+            if isinstance(_scope_override, dict) and _scope_override.get("mounted"):
+                meta_event["metadata_scope_notice"] = {
+                    "mounted": list(_scope_override.get("mounted") or []),
+                    "bound": list(_scope_override.get("bound") or []),
+                    "message": "你在输入框选择的数据集已被该智能体绑定的数据集覆盖，本次查询使用的是绑定范围。",
+                }
+
             if turn_decision:
                 from app.services.ai.turn_decision import (
                     default_thought_expanded,

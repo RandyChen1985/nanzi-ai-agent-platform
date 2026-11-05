@@ -490,6 +490,7 @@ async def enforce_table_scope_for_refs(
     user_id: Optional[int],
     is_admin: bool = False,
     user_identity_label: Optional[str] = None,
+    restrict_dataset_ids: Optional[set[int]] = None,
 ) -> Optional[str]:
     """表级门禁：SQL 引用的每一张已注册表都必须落在该用户的表授权范围内。
 
@@ -553,6 +554,22 @@ async def enforce_table_scope_for_refs(
         candidates = owners.get(str(lower_name).lower()) or []
         if not candidates:
             continue
+        # 本轮限定了数据集时，先看这张表有没有注册在限定范围内：
+        #   * 注册了 → 只按限定数据集的授权判定。否则「在别的数据集里全开」会直接
+        #     抹掉本次收窄（同一张表常同时注册在多个数据集，实测 ds1 只给 1 张表，
+        #     却能通过 ds9/ds54 的 all 授权查到 ai_agent_users）；
+        #   * 没注册 → 保持原规则，联邦查询里关联外部维表仍然可用。
+        if restrict_dataset_ids is not None:
+            restricted = [row for row in candidates if row[1] in restrict_dataset_ids]
+            if restricted:
+                candidates = restricted
+            elif not restrict_dataset_ids:
+                # 限定了范围，但挂载的数据集一个都解析不出来（多半刚被删除）：
+                # 不放行，否则「限定」会静默退化成「不限」。
+                return (
+                    f"[Permission Denied] {subject}本次会话限定的数据集已不存在，"
+                    "无法校验表级权限，请重新选择数据集后再试。"
+                )
         # 同名物理表可能注册在多个数据集（不同数据源）：只要存在一条**已授权且允许**的
         # 路径就放行；没有授权的数据集不算路径（不能用「查不到 scope」来放行）。
         allowed_by_any = False

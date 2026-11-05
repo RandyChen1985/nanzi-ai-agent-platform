@@ -547,6 +547,12 @@ async def execute_sql_query_core(
             return perm_err
 
         from app.services.dataset_scope_service import enforce_table_scope_for_refs
+        from app.services.ai.metadata_dataset_scope import resolve_mounted_dataset_id_set
+
+        # 本轮限定了数据集时，表级门禁要按「限定范围」判定：否则同一张表在别的
+        # 数据集里被全开，就会把本次收窄整个抹掉（实测 ds1 只给 1 张表，
+        # 却能经 ds9/ds54 的 all 授权查到 ai_agent_users）。
+        restrict_ids = await resolve_mounted_dataset_id_set(session)
 
         table_scope_err = await enforce_table_scope_for_refs(
             session,
@@ -554,6 +560,7 @@ async def execute_sql_query_core(
             user_id=user_id_eff,
             is_admin=is_admin_eff,
             user_identity_label=user_identity_label,
+            restrict_dataset_ids=restrict_ids,
         )
         if table_scope_err:
             return table_scope_err
