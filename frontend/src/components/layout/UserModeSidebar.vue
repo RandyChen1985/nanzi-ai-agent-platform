@@ -146,7 +146,7 @@
       </div>
     </div>
 
-    <!-- 任务（历史会话）：收起侧栏时空间不够，整块隐藏（v-show 保住滚动位置与搜索态） -->
+    <!-- 会话列表（历史会话）：收起侧栏时空间不够，整块隐藏（v-show 保住滚动位置与搜索态） -->
     <div
       v-show="!collapsed"
       ref="scrollRef"
@@ -159,7 +159,7 @@
         :class="lightTheme ? 'bg-white' : 'bg-sidebar'"
       >
         <template v-if="!taskSearchOpen">
-          <span v-if="!taskKeyword.trim()" class="text-xs text-gray-400">任务（{{ taskTotal }}）</span>
+          <span v-if="!taskKeyword.trim()" class="text-xs text-gray-400">会话列表（{{ taskTotal }}）</span>
           <span v-else class="text-xs text-gray-400">找到 {{ taskTotal }} 条</span>
         </template>
         <label v-else class="relative flex min-w-0 flex-1 items-center">
@@ -171,7 +171,7 @@
             ref="taskSearchRef"
             v-model="taskKeyword"
             type="search"
-            placeholder="搜索任务 / 智能体"
+            placeholder="搜索会话 / 智能体"
             class="w-full rounded-md border border-gray-200 bg-white py-1 pl-6 pr-1 text-xs outline-none focus:border-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             @input="onTaskSearchInput"
             @keydown.esc="closeTaskSearch"
@@ -180,8 +180,8 @@
         <button
           type="button"
           class="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06]"
-          :title="taskSearchOpen ? '关闭搜索' : '搜索任务'"
-          :aria-label="taskSearchOpen ? '关闭搜索' : '搜索任务'"
+          :title="taskSearchOpen ? '关闭搜索' : '搜索会话'"
+          :aria-label="taskSearchOpen ? '关闭搜索' : '搜索会话'"
           @click="toggleTaskSearch"
         >
           <svg v-if="!taskSearchOpen" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
@@ -206,12 +206,12 @@
         />
       </div>
 
-      <!-- 加载失败：不能伪装成「没有任务」，否则用户会以为历史丢了 -->
+      <!-- 加载失败：不能伪装成「没有会话」，否则用户会以为历史丢了 -->
       <div
         v-else-if="loadError && !tasks.length"
         class="mx-1 mt-1 rounded-lg border border-rose-200/70 bg-rose-50/60 px-2.5 py-2 text-xs text-rose-600 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300"
       >
-        <p>任务列表加载失败。</p>
+        <p>会话列表加载失败。</p>
         <button type="button" class="mt-1 font-semibold underline underline-offset-2" @click="loadTasks">
           点此重试
         </button>
@@ -238,7 +238,7 @@
                   :title="itemTitle(item)"
                   @click="openConversation(item)"
                 >
-                  <!-- 置顶项：常显小图钉，和普通任务区分开 -->
+                  <!-- 置顶项：常显小图钉，和普通会话区分开 -->
                   <svg
                     v-if="item.__pinned"
                     class="h-3 w-3 flex-shrink-0 text-primary"
@@ -295,19 +295,19 @@
           </ul>
         </div>
 
-        <!-- 空态：文案里的「新建任务」直接做成按钮，不用再让用户回菜单找 -->
+        <!-- 空态：文案里的「新建会话」直接做成按钮，不用再让用户回菜单找 -->
         <div
           v-if="!taskSections.length && !loadError"
           class="px-2.5 py-2 text-xs text-gray-400"
         >
-          <p v-if="taskKeyword.trim()">没有匹配的任务。</p>
+          <p v-if="taskKeyword.trim()">没有匹配的会话。</p>
           <template v-else>
-            <p>还没有任务。</p>
+            <p>还没有会话。</p>
             <button
               type="button"
               class="mt-1 font-semibold text-primary hover:underline"
               @click="emit('new-chat')"
-            >新建任务</button>
+            >新建会话</button>
           </template>
         </div>
 
@@ -621,10 +621,10 @@ const isChildActive = (item: ResolvedUserModeItem): boolean =>
   (item.children || []).some((child) => isActive(child.path))
 
 /**
- * 「新建任务」只在「聊天页 + 没有打开任何会话」时高亮。
+ * 「新建会话」只在「聊天页 + 没有打开任何会话」时高亮。
  *
  * 聊天页的路径恒为 /dashboard/chat，打开历史会话只改 query；按路径判断的话
- * 「新建任务」会和当前任务同时亮，用户分不清自己到底在新会话还是历史里。
+ * 「新建会话」会和当前会话同时亮，用户分不清自己到底在新会话还是历史里。
  */
 const isNewChatActive = computed(
   () => route.path === "/dashboard/chat" && !String(props.activeConversationId || ""),

@@ -217,7 +217,7 @@ const uiModeOptions: Array<{ value: 'user' | 'pro'; label: string; desc: string 
   {
     value: 'user',
     label: '用户模式',
-    desc: '只保留最常用的入口：新建任务、专家·技能·连接器、定时任务、知识库、工作空间，下面是历史任务。',
+    desc: '只保留最常用的入口：新建会话、专家·技能·连接器、定时任务、知识库、工作空间，下面是会话列表。',
   },
   {
     value: 'pro',

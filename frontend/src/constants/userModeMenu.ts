@@ -2,8 +2,8 @@
  * 用户模式的侧栏菜单（写死，不读 /api/portal/menus/nav）。
  *
  * 设计背景：动态菜单有 6 个分组、26 个入口，把「智能体调试 / 接口调试台 / 组件调试台」
- * 这类开发者入口也混在里面，普通用户很难一眼找到「新建任务」。
- * 用户模式只保留 5 个一级入口（新建任务 / 专家·技能·连接器 / 定时任务 / 知识库 /
+ * 这类开发者入口也混在里面，普通用户很难一眼找到「新建会话」。
+ * 用户模式只保留 5 个一级入口（新建会话 / 专家·技能·连接器 / 定时任务 / 知识库 /
  * 工作空间）+ 「更多」，页面本身全部复用现有路由。
  *
  * 权限策略（和动态菜单不同，刻意做了区分）：
@@ -76,7 +76,7 @@ export interface ResolvedUserModeChild extends UserModeMenuChild {
 export const USER_MODE_MENU: readonly UserModeMenuItem[] = [
   {
     key: "new-chat",
-    label: "新建任务",
+    label: "新建会话",
     icon: "squares_plus",
     kind: "new-chat",
     path: "/dashboard/chat",
@@ -205,7 +205,7 @@ export function resolveUserModeMenu(
   return resolved
 }
 
-/** 侧栏「任务（n）」每页条数：首屏 8 条，滚到底部自动再拉一页 */
+/** 侧栏「会话列表（n）」每页条数：首屏 8 条，滚到底部自动再拉一页 */
 export const USER_MODE_TASK_PAGE_SIZE = 8
 /** 按视口高度自适应时的上限：再高也没必要一次拉满 */
 export const USER_MODE_TASK_PAGE_SIZE_MAX = 20
@@ -242,7 +242,7 @@ export const USER_MODE_SWITCH_MODE_KEY = "switch-mode"
  * 用户模式能到达的全部路径（一级 + 子项）。
  *
  * 用来判断「切到用户模式时，当前页面还在不在新菜单里」——比如从专业模式的
- * 用户管理页切过来，用户模式根本没有那个入口，应该回落到新建任务页而不是
+ * 用户管理页切过来，用户模式根本没有那个入口，应该回落到新建会话页而不是
  * 停在一个「侧栏里找不到自己」的页面上。
  */
 export function collectUserModePaths(menu: readonly UserModeMenuItem[] = USER_MODE_MENU): string[] {

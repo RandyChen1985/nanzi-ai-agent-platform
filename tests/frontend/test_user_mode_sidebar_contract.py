@@ -51,7 +51,7 @@ def ui_mode_composable() -> str:
 
 
 def test_menu_keeps_only_four_primary_entries(menu: str) -> None:
-    """一级入口固定为：新建任务 / 专家技能连接器 / 定时任务 / 知识库 / 工作空间 / 更多。"""
+    """一级入口固定为：新建会话 / 专家技能连接器 / 定时任务 / 知识库 / 工作空间 / 更多。"""
     for key in ('key: "new-chat"', 'key: "experts"', 'key: "tasks"', 'key: "library"', 'key: "workspace"', 'key: "more"'):
         assert key in menu
     # 助理入口已废弃，不能加回来
@@ -104,7 +104,7 @@ def test_sidebar_renders_locked_hint_instead_of_navigating(sidebar: str) -> None
 def test_sidebar_lists_conversations_with_total_count(sidebar: str) -> None:
     assert "/api/v1/chat/history" in sidebar
     assert "USER_MODE_TASK_PAGE_SIZE" in sidebar
-    assert "任务（{{ taskTotal }}）" in sidebar
+    assert "会话列表（{{ taskTotal }}）" in sidebar
 
 
 def test_dashboard_switches_sidebar_by_mode(dashboard: str) -> None:
@@ -117,7 +117,7 @@ def test_dashboard_switches_sidebar_by_mode(dashboard: str) -> None:
 
 
 def test_new_chat_remounts_chat_page_when_already_there(dashboard: str) -> None:
-    """已经在聊天页时再点新建任务，必须换 key 重挂载，否则看起来「点了没反应」。"""
+    """已经在聊天页时再点新建会话，必须换 key 重挂载，否则看起来「点了没反应」。"""
     assert "pageReloadToken.value += 1" in dashboard
     assert 'route.name === "AIChat"' in dashboard
 
@@ -180,7 +180,7 @@ def test_permission_filtering_runs_correctly() -> None:
 
 
 def test_new_task_opens_a_blank_conversation_not_the_last_one() -> None:
-    """「新建任务」必须跳过会话续接，开一条空白会话。
+    """「新建会话」必须跳过会话续接，开一条空白会话。
 
     只重挂载 iframe 是不够的：挂件会按会话指针续接上一次对话。
     `new=1` 由 Dashboard → Chat.vue → iframe URL 一路透传，挂件据此生成新 cid。
@@ -198,7 +198,7 @@ def test_new_task_opens_a_blank_conversation_not_the_last_one() -> None:
 
 
 def test_user_mode_lands_on_new_task_after_login() -> None:
-    """用户模式登录直接落在「新建任务」，不绕概览/工作台。"""
+    """用户模式登录直接落在「新建会话」，不绕概览/工作台。"""
     login = _read("frontend/src/views/Login.vue")
     router_source = _read("frontend/src/router/index.ts")
 
@@ -484,7 +484,7 @@ def test_workspace_rows_open_on_double_click() -> None:
 
 
 def test_switching_to_user_mode_falls_back_when_page_is_unreachable() -> None:
-    """切到用户模式时，若当前页不在用户菜单里，回落到新建任务页。
+    """切到用户模式时，若当前页不在用户菜单里，回落到新建会话页。
 
     典型场景：在专业模式的「用户管理」页切模式，用户模式根本没有那个入口，
     停在原页面会让侧栏里「找不到自己」。
@@ -508,7 +508,7 @@ def test_task_list_has_keyword_search() -> None:
     assert "const taskSearchOpen = ref(false)" in sidebar
     assert "const taskKeyword = ref" in sidebar
     assert "if (keyword) params.keyword = keyword" in sidebar
-    assert "没有匹配的任务" in sidebar
+    assert "没有匹配的会话" in sidebar
 
 
 def test_workspace_page_is_left_aligned() -> None:
@@ -583,12 +583,12 @@ def test_locked_entry_stays_clickable_for_hint() -> None:
 
 
 def test_task_list_survives_load_failure() -> None:
-    """接口失败不能伪装成「还没有任务」。"""
+    """接口失败不能伪装成「还没有会话」。"""
     sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
 
     assert "const loadError = ref(false)" in sidebar
     assert "loadError.value = true" in sidebar
-    assert "任务列表加载失败。" in sidebar
+    assert "会话列表加载失败。" in sidebar
     assert "点此重试" in sidebar
     # 失败时保留旧列表，不能清空
     failed_branch = sidebar.split("} catch {", 2)[1]
@@ -649,7 +649,7 @@ def test_menu_and_task_list_scroll_independently() -> None:
 
 
 def test_new_chat_highlight_requires_no_active_conversation() -> None:
-    """「新建任务」只在聊天页且没有打开会话时高亮。
+    """「新建会话」只在聊天页且没有打开会话时高亮。
 
     否则点开历史会话后它和当前任务同时亮，用户分不清自己在哪个会话里。
     """
@@ -698,8 +698,8 @@ def test_mobile_drawer_hides_collapse_button() -> None:
 def test_empty_state_offers_new_chat_button() -> None:
     sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
 
-    assert 'v-if="taskKeyword.trim()">没有匹配的任务。' in sidebar
-    assert ">新建任务</button>" in sidebar
+    assert 'v-if="taskKeyword.trim()">没有匹配的会话。' in sidebar
+    assert ">新建会话</button>" in sidebar
 
 
 def test_search_also_matches_agent_name() -> None:
