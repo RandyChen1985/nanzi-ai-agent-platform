@@ -1668,7 +1668,7 @@ async def update_dataset_edit_policy(
         "mode": requested_mode,
         "editors": editors,
         "updated_by": str(user.get("user_name") or ""),
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": datetime.datetime.now().isoformat(),
     }
     await metadata_service.update_extra_config_key(
         dataset_id,

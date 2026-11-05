@@ -171,7 +171,13 @@ const submit = async () => {
     emit("saved", res?.data?.data?.edit_policy || { mode: mode.value, editors: editors.value });
     emit("close");
   } catch (err: any) {
-    errorMessage.value = err?.response?.data?.detail || "保存失败，请稍后重试";
+    // 5xx 只给通用文案：内部异常信息（如 AttributeError）不该展示给使用者，
+    // 4xx 的 detail 是面向前端写的校验说明，可以直接显示。
+    const status = Number(err?.response?.status || 0);
+    errorMessage.value =
+      status >= 500
+        ? "保存失败，请稍后重试"
+        : String(err?.response?.data?.detail || "保存失败，请稍后重试");
   } finally {
     saving.value = false;
   }

@@ -4659,11 +4659,28 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               </span>
               <button
                 type="button"
-                class="truncate text-left text-[11px]"
-                :class="editPolicyOf(ds).mode === 'readonly' ? 'text-gray-400' : 'text-primary font-semibold'"
-                :title="editPolicyHint(ds)"
+                class="group/edit inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:cursor-default"
+                :class="[
+                  editPolicyOf(ds).mode === 'readonly'
+                    ? 'border-gray-200 bg-white text-gray-500'
+                    : 'border-primary/30 bg-primary/10 text-primary',
+                  canConfigureEditPolicy(ds) ? 'hover:border-primary/50 hover:bg-primary/5' : '',
+                ]"
+                :disabled="!canConfigureEditPolicy(ds)"
+                :title="canConfigureEditPolicy(ds) ? '点击设置编辑权限范围' : editPolicyHint(ds)"
                 @click.stop="canConfigureEditPolicy(ds) ? openEditPolicyDialog(ds) : undefined"
-              >{{ editPolicyLabel(ds) }}</button>
+              >
+                <span class="truncate">{{ editPolicyLabel(ds) }}</span>
+                <!-- 只有有权限时才显示笔图标：它是「这里可以点」的信号，不是装饰 -->
+                <svg
+                  v-if="canConfigureEditPolicy(ds)"
+                  class="h-2.5 w-2.5 shrink-0 opacity-0 transition-opacity group-hover/edit:opacity-100 group-hover/edit:text-primary"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                >
+                  <path d="M12 20h9" stroke-linecap="round" />
+                  <path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
               <span class="truncate text-[11px] text-gray-500">{{ libraryOwnerOf(ds) }}</span>
               <span class="text-[11px] text-gray-500 tabular-nums">{{ libraryUpdatedAtOf(ds) }}</span>
               <svg class="h-3 w-3 text-gray-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -4706,7 +4723,19 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <span><b class="font-semibold text-gray-600 tabular-nums">{{ docCountOf(ds) }}</b> 文档</span>
                 <span :title="libraryRefHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ (ds.agent_ref_count ?? 0) || '—' }}</b> 引用</span>
                 <span :title="libraryGrantHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ libraryGrantText(ds) }}</b> 授权</span>
-                <span :title="editPolicyHint(ds)" :class="editPolicyOf(ds).mode === 'readonly' ? '' : 'text-primary font-semibold'">{{ editPolicyLabel(ds) }}</span>
+                <!-- 卡片本身是 <button>，这里只能用 span：HTML 不允许 button 套 button。
+                     有权限时给下划线 + hover 变蓝，和行视图的笔图标表达同一件事 -->
+                <span
+                  role="button"
+                  tabindex="0"
+                  class="inline-flex items-center gap-0.5"
+                  :class="canConfigureEditPolicy(ds)
+                    ? 'cursor-pointer underline decoration-dotted underline-offset-2 hover:text-primary'
+                    : ''"
+                  :title="canConfigureEditPolicy(ds) ? '点击设置编辑权限范围' : editPolicyHint(ds)"
+                  @click.stop="canConfigureEditPolicy(ds) ? openEditPolicyDialog(ds) : undefined"
+                  @keydown.enter.stop="canConfigureEditPolicy(ds) ? openEditPolicyDialog(ds) : undefined"
+                >{{ editPolicyLabel(ds) }}</span>
               </div>
               <div class="mt-2 flex items-center gap-1.5 border-t border-dashed border-gray-100 pt-2 text-[10.5px] text-gray-400">
                 <span class="truncate">{{ libraryOwnerOf(ds) }}</span>
