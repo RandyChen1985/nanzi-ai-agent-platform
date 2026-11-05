@@ -1602,6 +1602,7 @@ onMounted(async () => {
               </svg>
               <span>权限总览</span>
             </button>
+            <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
             <button
               type="button"
               class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"

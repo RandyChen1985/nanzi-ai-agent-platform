@@ -746,21 +746,37 @@ class ToolRegistry:
         original_callable = spec.callable
 
         async def invoke_schema_with_config(**kwargs: Any) -> Any:
-            if metadata_dataset_ids:
+            # 生效范围：智能体绑定优先；没绑定时回退到「本轮用户手选」。
+            # 手选原来只拼进 prompt 文案，属于软约束——模型照样能检索到范围外、
+            # 但用户有权限的其它数据集（同一张物理表可能注册在多个数据集里），
+            # 于是「限定在这个数据集里查」变成一句空话。
+            effective_ids = metadata_dataset_ids
+            if not effective_ids:
+                try:
+                    from app.services.ai.metadata_dataset_scope import (
+                        resolve_mounted_dataset_scope_ids,
+                    )
+
+                    effective_ids = resolve_mounted_dataset_scope_ids()
+                except Exception:  # noqa: BLE001 - 取不到上下文就退回原行为
+                    effective_ids = []
+
+            if effective_ids:
                 # 智能体绑定会覆盖本轮挂载：自动路由到「绑定了数据集」的专家时，用户在手选
                 # 数据集后看不到任何提示，属于静默失效。这里只留痕不改行为——真正要提示
                 # 用户时再基于这条日志判断触发频次。
                 incoming = kwargs.get("metadata_dataset_ids")
                 if incoming and {str(item) for item in incoming} != {
-                    str(item) for item in metadata_dataset_ids
+                    str(item) for item in effective_ids
                 }:
                     logger.warning(
-                        "[get_dataset_schema] 本轮挂载的数据集被智能体绑定覆盖，"
-                        "用户所选不会生效: mounted=%s bound=%s",
+                        "[get_dataset_schema] 数据集范围被覆盖，用户所选不会生效: "
+                        "mounted=%s effective=%s bound=%s",
                         incoming,
+                        effective_ids,
                         metadata_dataset_ids,
                     )
-                kwargs["metadata_dataset_ids"] = metadata_dataset_ids
+                kwargs["metadata_dataset_ids"] = effective_ids
             result = original_callable(**kwargs)
             import inspect
             if inspect.isawaitable(result):

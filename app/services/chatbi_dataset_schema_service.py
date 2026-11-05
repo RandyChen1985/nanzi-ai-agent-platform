@@ -251,6 +251,14 @@ async def _fetch_dataset_schema_impl(
 
     all_authorized_datasets = list(authorized_datasets)
     configured_dataset_ids = _normalize_authorized_dataset_ids(authorized_dataset_ids)
+    if configured_dataset_ids is None:
+        # 工具参数没绑定（智能体没配数据集）时，还有一层「本轮请求 / 会话固定」。
+        # 这层之前只进日志不参与过滤，等于「会话固定了数据集 1」也能检索到别的数据集。
+        from app.services.ai.metadata_dataset_scope import resolve_mounted_dataset_scope_ids
+
+        mounted_ids = resolve_mounted_dataset_scope_ids()
+        if mounted_ids:
+            configured_dataset_ids = _normalize_authorized_dataset_ids(mounted_ids)
     if configured_dataset_ids is not None:
         authorized_datasets = [
             ds for ds in authorized_datasets

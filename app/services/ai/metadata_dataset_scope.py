@@ -68,3 +68,25 @@ def normalize_bound_dataset_ids(raw: Any) -> list[str]:
     返回纯数字 ID（去重、保序）；全部无效时返回空列表（等价于未绑定）。
     """
     return [value for value in _normalize_id_list(raw) if value.isdigit()]
+
+
+def resolve_mounted_dataset_scope_ids() -> list[str]:
+    """本轮真正生效的数据集范围：本轮请求优先，其次会话固定；空列表表示「未限定」。
+
+    这两个值一直只写进 ``execution_options['metadata_dataset_scope']`` 用于日志，
+    schema 检索和 SQL 执行都没读过它——于是「会话固定了数据集 1」时，模型照样能
+    检索到用户有权限的其它数据集（同一张物理表可能注册在多个数据集里），
+    日志还会诚实地打印「会话固定: 1 / 最终生效: 1、53、54」。
+    """
+    from app.core.context import get_execution_option
+
+    scope = get_execution_option("metadata_dataset_scope", {}) or {}
+    ids: list[str] = []
+    for group in (scope.get("request_ids") or [], scope.get("session") or []):
+        for item in group:
+            # session 存的是 {id, name, ...} 字典，request_ids 存的是裸 ID
+            value = item.get("id") if isinstance(item, dict) else item
+            text = str(value or "").strip()
+            if text and text not in ids:
+                ids.append(text)
+    return ids
