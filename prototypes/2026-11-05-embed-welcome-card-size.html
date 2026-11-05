@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prototype-kind" content="方案对比">
+<title>首页欢迎页 · 资源卡与快捷入口放大方案</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-dark:#0958d9; --primary-soft:#eaf2ff;
+    --ink:#0f172a; --ink2:#334155; --muted:#64748b; --faint:#94a3b8;
+    --line:#e6ebf2; --line-soft:#eef2f7; --bg:#eef1f6; --card:#fff;
+    --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px -18px rgba(15,23,42,.25);
+
+    /* —— 方案变量（由 body[data-scheme] 覆盖）—— */
+    --content-max:768px;
+    --res-gap:8px;
+    --res-pad:8px;
+    --res-icon:36px;
+    --res-icon-svg:20px;
+    --res-value:16px;
+    --res-label:11px;
+    --res-unit:9px;
+    --quick-gap:16px;
+    --quick-pad:16px;
+    --quick-icon:44px;
+    --quick-icon-svg:24px;
+    --quick-title:12px;
+    --quick-desc:10px;
+    --section-gap:32px;
+  }
+  body[data-scheme="b"]{
+    --content-max:1080px;
+    --res-gap:12px; --res-pad:12px; --res-icon:40px; --res-icon-svg:22px;
+    --res-value:20px; --res-label:12.5px; --res-unit:11px;
+    --quick-gap:16px; --quick-pad:20px; --quick-icon:52px; --quick-icon-svg:26px;
+    --quick-title:15px; --quick-desc:12px;
+    --section-gap:36px;
+  }
+  body[data-scheme="c"]{
+    --content-max:1240px;
+    --res-gap:14px; --res-pad:14px; --res-icon:44px; --res-icon-svg:24px;
+    --res-value:24px; --res-label:13px; --res-unit:12px;
+    --quick-gap:20px; --quick-pad:24px; --quick-icon:60px; --quick-icon-svg:30px;
+    --quick-title:16px; --quick-desc:13px;
+    --section-gap:40px;
+  }
+
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  html,body{margin:0}
+  body{
+    background:var(--bg);color:var(--ink);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+  h1,h2,h3,p{margin:0}
+  svg{display:block}
+
+  /* ============ 顶部方案条 ============ */
+  .shell-bar{
+    position:sticky;top:0;z-index:80;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+    padding:10px 20px;background:#0b0f19;color:#fff;
+    box-shadow:0 1px 0 rgba(255,255,255,.06),0 10px 30px -22px rgba(0,0,0,.9);
+  }
+  .sb-title{display:flex;align-items:center;gap:10px;min-width:0}
+  .sb-mark{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--primary);font-weight:800;font-size:13px}
+  .sb-title b{display:block;font-size:13px;line-height:1.3}
+  .sb-title small{display:block;color:#94a3b8;font-size:11px;line-height:1.4}
+  .sb-tabs{display:flex;gap:4px;background:rgba(255,255,255,.06);padding:3px;border-radius:10px;flex-wrap:wrap}
+  .sb-tabs button{padding:6px 12px;border-radius:8px;font-size:12.5px;color:#cbd5e1;transition:.15s;white-space:nowrap}
+  .sb-tabs button:hover{color:#fff;background:rgba(255,255,255,.07)}
+  .sb-tabs button.on{background:#fff;color:#0b0f19;font-weight:700}
+  .sb-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .sb-zoom{display:flex;gap:3px;background:rgba(255,255,255,.06);padding:3px;border-radius:10px}
+  .sb-zoom button{padding:5px 10px;border-radius:7px;font-size:12px;color:#cbd5e1;white-space:nowrap}
+  .sb-zoom button.on{background:#1e293b;color:#fff;font-weight:700}
+  .sb-zoom button:hover{color:#fff}
+
+  .scheme-note{
+    display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;
+    padding:10px 24px;background:#fff;border-bottom:1px solid var(--line);
+    font-size:12.5px;color:var(--ink2);
+  }
+  .scheme-note b{font-size:13px;color:var(--ink)}
+  .scheme-note .tag{
+    display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;
+    background:var(--primary-soft);color:var(--primary-dark);font-size:11px;font-weight:700;white-space:nowrap;
+  }
+  .scheme-note .tag.warn{background:#fff7ed;color:#b45309}
+  .scheme-note .tag.ok{background:#ecfdf5;color:#047857}
+  .scheme-note .txt{color:var(--muted)}
+
+  /* ============ 舞台 ============ */
+  .stage-wrap{padding:24px;display:flex;justify-content:center}
+  .stage{
+    width:100%;max-width:1640px;background:#fff;border-radius:14px;overflow:hidden;
+    border:1px solid #dbe3ee;box-shadow:0 24px 60px -40px rgba(15,23,42,.5);
+    transform-origin:top center;
+  }
+  .stage-bar{
+    display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line-soft);
+    background:#f8fafc;color:var(--muted);font-size:11.5px;
+  }
+  .dots{display:flex;gap:5px}
+  .dots i{width:9px;height:9px;border-radius:50%;background:#e2e8f0;display:block}
+  .stage-bar .url{flex:1;text-align:center;color:var(--faint)}
+  .stage-bar .w{font-variant-numeric:tabular-nums}
+
+  /* —— 应用内部 —— */
+  .app{position:relative;background:#fff;padding-bottom:18px}
+  .app-top{
+    display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid var(--line-soft);
+    font-size:12.5px;color:var(--ink2);
+  }
+  .app-logo{width:18px;height:18px;border-radius:5px;background:var(--primary);opacity:.85}
+  .app-top small{color:var(--faint);font-size:11px}
+  .app-top .right{margin-left:auto;display:flex;gap:12px;color:#cbd5e1}
+  .app-top .right span{width:14px;height:14px;border-radius:4px;background:#e8eef7;display:block}
+
+  .welcome{padding:34px 24px 0;display:flex;flex-direction:column;align-items:center}
+  .welcome h1{font-size:30px;font-weight:900;letter-spacing:-.5px;text-align:center}
+  .welcome .hello{margin-top:6px;font-size:13.5px;color:var(--muted);text-align:center}
+
+  .block{width:100%;max-width:var(--content-max);margin-left:auto;margin-right:auto}
+  .block + .block{margin-top:var(--section-gap)}
+
+  .sec-head{display:flex;align-items:center;gap:6px;margin-bottom:10px;padding:0 2px}
+  .sec-head .eyebrow{font-size:10.5px;font-weight:800;letter-spacing:.14em;color:#cbd5e1;text-transform:uppercase}
+  .sec-head .refresh{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;color:#cbd5e1}
+  .sec-head .refresh:hover{background:#f1f5f9;color:var(--primary)}
+
+  /* —— 我的资源 —— */
+  .res-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:var(--res-gap)}
+  .res-card{
+    display:flex;align-items:center;gap:10px;text-align:left;overflow:hidden;
+    padding:var(--res-pad);border:1px solid #eef2f7;border-radius:13px;background:#fff;
+    box-shadow:0 1px 2px rgba(15,23,42,.03);
+    transition:transform .16s,box-shadow .16s,border-color .16s;
+  }
+  .res-card:hover{transform:translateY(-2px);box-shadow:0 10px 22px -16px rgba(15,23,42,.45);border-color:#cfe0ff}
+  .res-ico{
+    flex:0 0 auto;display:grid;place-items:center;border-radius:10px;
+    width:var(--res-icon);height:var(--res-icon);
+  }
+  .res-ico svg{width:var(--res-icon-svg);height:var(--res-icon-svg)}
+  .res-body{min-width:0;flex:1}
+  .res-label{font-size:var(--res-label);font-weight:500;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .res-num{display:flex;align-items:baseline;gap:5px;margin-top:2px}
+  .res-num b{font-size:var(--res-value);font-weight:800;letter-spacing:-.4px;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .res-num small{font-size:var(--res-unit);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .c-emerald{background:#ecfdf5;color:#059669}
+  .c-amber{background:#fffbeb;color:#d97706}
+  .c-indigo{background:#eef2ff;color:#4f46e5}
+  .c-rose{background:#fff1f2;color:#e11d48}
+  .c-sky{background:#f0f9ff;color:#0284c7}
+
+  /* —— 快捷入口 —— */
+  .quick-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--quick-gap)}
+  .quick-card{
+    display:flex;align-items:flex-start;gap:14px;text-align:left;
+    padding:var(--quick-pad);border:1px solid #eef2f7;border-radius:18px;background:#fff;
+    box-shadow:0 1px 2px rgba(15,23,42,.03);
+    transition:transform .16s,box-shadow .16s,border-color .16s,background .16s;
+  }
+  .quick-card:hover{transform:translateY(-2px);box-shadow:0 14px 30px -20px rgba(15,23,42,.45);border-color:#cfe0ff;background:#f8fbff}
+  .quick-ico{
+    flex:0 0 auto;display:grid;place-items:center;border-radius:14px;
+    width:var(--quick-icon);height:var(--quick-icon);background:var(--primary-soft);color:var(--primary);
+  }
+  .quick-ico svg{width:var(--quick-icon-svg);height:var(--quick-icon-svg)}
+  .quick-body{min-width:0}
+  .quick-title{display:block;font-size:var(--quick-title);font-weight:800;color:#1e293b}
+  .quick-desc{display:block;margin-top:4px;font-size:var(--quick-desc);line-height:1.6;color:#94a3b8}
+
+  /* —— 输入区 —— */
+  .composer{
+    margin:26px 20px 0;border:1px solid var(--line);border-radius:14px;padding:12px 14px;color:#b6c2d2;font-size:13px;
+    display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fff;
+  }
+  .composer .hint{color:#cbd5e1}
+
+  /* ============ 规格表 ============ */
+  .spec{max-width:1100px;margin:0 auto 40px;padding:0 24px}
+  .spec h2{font-size:15px;margin:0 0 10px}
+  .spec table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .spec th,.spec td{padding:9px 12px;text-align:left;font-size:12.5px;border-bottom:1px solid var(--line-soft)}
+  .spec th{background:#f8fafc;color:var(--muted);font-weight:700;font-size:12px}
+  .spec td:first-child{color:var(--ink2);font-weight:600}
+  .spec tr:last-child td{border-bottom:0}
+  .spec .num{font-variant-numeric:tabular-nums}
+  .spec .cur{color:#b45309;font-weight:700}
+  .spec .pick{color:#047857;font-weight:700}
+</style>
+</head>
+<body data-scheme="b">
+
+<!-- ============ 顶部方案条 ============ -->
+<div class="shell-bar">
+  <div class="sb-title">
+    <span class="sb-mark">N</span>
+    <div>
+      <b>首页欢迎页 · 卡片放大</b>
+      <small>嵌入对话空会话首页：我的资源 5 卡 + 快捷入口 3 卡</small>
+    </div>
+  </div>
+  <div class="sb-tabs" id="schemeTabs">
+    <button data-scheme="a">方案 A · 现状</button>
+    <button data-scheme="b" class="on">方案 B · 放宽 + 放大</button>
+    <button data-scheme="c">方案 C · 大卡</button>
+  </div>
+  <div class="sb-right">
+    <div class="sb-zoom" id="zoomTabs">
+      <button data-vp="1280">1280</button>
+      <button data-vp="1440" class="on">1440</button>
+      <button data-vp="1920">1920</button>
+      <button data-vp="full">铺满</button>
+    </div>
+  </div>
+</div>
+
+<div class="scheme-note" id="schemeNote">
+  <b>方案 B</b>
+  <span class="tag ok">推荐</span>
+  <span class="txt">内容宽度 768 → 1080px，资源卡数字 16 → 20px、图标 36 → 40px，快捷入口标题 12 → 15px、描述 10 → 12px。卡片面积约 +45%，一屏仍然放得下。</span>
+</div>
+
+<!-- ============ 舞台 ============ -->
+<div class="stage-wrap">
+  <div class="stage" id="stage">
+    <div class="stage-bar">
+      <span class="dots"><i></i><i></i><i></i></span>
+      <span class="url">nanzi-ai-agent-platform · /embed</span>
+      <span class="w" id="vpLabel">视口 1440px</span>
+    </div>
+
+    <div class="app" id="app">
+      <div class="app-top">
+        <span class="app-logo"></span>
+        <b style="font-weight:700">NanZi · AI</b>
+        <small>准备就绪</small>
+        <span class="right"><span></span><span></span><span></span></span>
+      </div>
+
+      <div class="welcome">
+        <h1>下午好！</h1>
+        <p class="hello">您好，陈小龙！我是你的智能体助手，很高兴为您服务。</p>
+
+        <!-- 我的资源 -->
+        <section class="block" style="margin-top:30px">
+          <div class="sec-head">
+            <span class="eyebrow">我的资源</span>
+            <button class="refresh" title="刷新我的资源" aria-label="刷新我的资源">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+            </button>
+          </div>
+          <div class="res-grid">
+            <button class="res-card">
+              <span class="res-ico c-emerald">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </span>
+              <span class="res-body">
+                <span class="res-label">我的 Token</span>
+                <span class="res-num"><b>17.2万</b><small>本月</small></span>
+              </span>
+            </button>
+
+            <button class="res-card">
+              <span class="res-ico c-amber">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m12 3 1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"/>
+                  <path d="M18 15.5 18.9 18l2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9.9-2.5Z"/>
+                </svg>
+              </span>
+              <span class="res-body">
+                <span class="res-label">我的技能</span>
+                <span class="res-num"><b>5</b><small>个</small></span>
+              </span>
+            </button>
+
+            <button class="res-card">
+              <span class="res-ico c-indigo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/>
+                  <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>
+                </svg>
+              </span>
+              <span class="res-body">
+                <span class="res-label">我的 MCP</span>
+                <span class="res-num"><b>2</b><small>个服务</small></span>
+              </span>
+            </button>
+
+            <button class="res-card">
+              <span class="res-ico c-rose">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="8" y="2" width="8" height="4" rx="1"/>
+                  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                  <path d="m9 14 2 2 4-4"/>
+                </svg>
+              </span>
+              <span class="res-body">
+                <span class="res-label">我的任务</span>
+                <span class="res-num"><b>0</b><small>个</small></span>
+              </span>
+            </button>
+
+            <button class="res-card">
+              <span class="res-ico c-sky">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+                </svg>
+              </span>
+              <span class="res-body">
+                <span class="res-label">我的站内消息</span>
+                <span class="res-num"><b>3</b><small>条未读</small></span>
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <!-- 快捷入口 -->
+        <section class="block">
+          <div class="sec-head">
+            <span class="eyebrow">快捷入口</span>
+          </div>
+          <div class="quick-grid">
+            <button class="quick-card">
+              <span class="quick-ico">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6" rx="1"/><rect x="12" y="8" width="3" height="10" rx="1"/><rect x="17" y="5" width="3" height="13" rx="1"/>
+                </svg>
+              </span>
+              <span class="quick-body">
+                <span class="quick-title">自然语言查数</span>
+                <span class="quick-desc">用中文询问机房 PUE、负载等业务指标。</span>
+              </span>
+            </button>
+
+            <button class="quick-card">
+              <span class="quick-ico">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
+                </svg>
+              </span>
+              <span class="quick-body">
+                <span class="quick-title">智能知识检索</span>
+                <span class="quick-desc">查询企业 SOP、运维手册和内部规范文档。</span>
+              </span>
+            </button>
+
+            <button class="quick-card">
+              <span class="quick-ico">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>
+                </svg>
+              </span>
+              <span class="quick-body">
+                <span class="quick-title">管理工作空间</span>
+                <span class="quick-desc">浏览、上传和整理您的 AI 工作目录文件。</span>
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <div class="composer">
+          <span>今天帮你做些什么？ <span class="hint">@ 选择专家或文件，/ 调用技能与指令</span></span>
+          <span style="font-size:11px;color:#94a3b8">0 / 256k</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 规格对照 ============ -->
+<div class="spec">
+  <h2>三档尺寸对照（选中方案高亮）</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>项</th>
+        <th class="num">方案 A · 现状</th>
+        <th class="num">方案 B · 放宽 + 放大</th>
+        <th class="num">方案 C · 大卡</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>内容宽度上限</td><td class="num cur">768px</td><td class="num pick">1080px</td><td class="num">1240px</td></tr>
+      <tr><td>资源卡宽度（1440 视口）</td><td class="num cur">147px</td><td class="num pick">209px</td><td class="num">240px</td></tr>
+      <tr><td>资源卡数字 / 标签 / 单位</td><td class="num cur">16 / 11 / 9px</td><td class="num pick">20 / 12.5 / 11px</td><td class="num">24 / 13 / 12px</td></tr>
+      <tr><td>资源卡图标 / 内边距</td><td class="num cur">36px / 8px</td><td class="num pick">40px / 12px</td><td class="num">44px / 14px</td></tr>
+      <tr><td>快捷入口卡宽度</td><td class="num cur">245px</td><td class="num pick">349px</td><td class="num">400px</td></tr>
+      <tr><td>快捷入口标题 / 描述</td><td class="num cur">12 / 10px</td><td class="num pick">15 / 12px</td><td class="num">16 / 13px</td></tr>
+      <tr><td>快捷入口图标 / 内边距</td><td class="num cur">44px / 16px</td><td class="num pick">52px / 20px</td><td class="num">60px / 24px</td></tr>
+      <tr><td>首屏信息量</td><td class="num">3 块全在，两侧大量留白</td><td class="num">3 块全在，横向铺开但不散</td><td class="num">3 块全在，接近满宽</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:12px;color:#94a3b8;margin-top:10px">
+    说明：A 行的数据取自 <code>WelcomeDashboard.vue</code> 与 <code>WorkbenchPersonalResources.vue</code> 当前类名换算（<code>max-w-3xl</code> + <code>compact</code> 的 <code>sm:grid-cols-5</code>）。B / C 只是把这两处变量调大，不改 DOM 结构与交互。
+  </p>
+</div>
+
+<script>
+  const NOTES = {
+    a: { name: '方案 A · 现状（对照用）', tag: '当前线上', cls: 'warn',
+      txt: '内容宽度固定 768px，资源卡 5 列硬挤、数字 16px、单位 9px；快捷入口标题 12px、描述 10px。宽屏下左右各空 400px 以上，卡片看起来「缩」在中间。' },
+    b: { name: '方案 B · 放宽 + 放大', tag: '推荐', cls: 'ok',
+      txt: '内容宽度 768 → 1080px，资源卡数字 16 → 20px、图标 36 → 40px，快捷入口标题 12 → 15px、描述 10 → 12px。卡片面积约 +45%，一屏仍然放得下。' },
+    c: { name: '方案 C · 大卡', tag: '激进', cls: '',
+      txt: '内容宽度 1240px，数字 24px、快捷入口标题 16px / 图标 60px。视觉最舒展，但资源卡只有「图标 + 数字 + 单位」，拉这么宽内部会显空（需要补一行副信息，或干脆改 3 列），1280 以下笔记本也会开始收窄。' },
+  };
+
+  const body = document.body;
+  const tabs = document.getElementById('schemeTabs');
+  const note = document.getElementById('schemeNote');
+  const stage = document.getElementById('stage');
+  const wrap = document.querySelector('.stage-wrap');
+  const vpLabel = document.getElementById('vpLabel');
+  const zoomTabs = document.getElementById('zoomTabs');
+
+  function renderNote(key) {
+    const n = NOTES[key];
+    note.innerHTML = `<b>${n.name}</b><span class="tag ${n.cls}">${n.tag}</span><span class="txt">${n.txt}</span>`;
+  }
+
+  tabs.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-scheme]');
+    if (!btn) return;
+    const key = btn.dataset.scheme;
+    body.dataset.scheme = key;
+    [...tabs.querySelectorAll('button')].forEach(b => b.classList.toggle('on', b === btn));
+    renderNote(key);
+    fit();
+  });
+
+  let targetVp = 1440; // number | 'full'
+
+  function fit() {
+    const available = wrap.clientWidth - 48;
+    if (targetVp === 'full') {
+      stage.style.width = '100%';
+      stage.style.transform = 'none';
+      vpLabel.textContent = '视口 铺满（' + Math.round(available) + 'px）';
+      return;
+    }
+    const scale = Math.min(1, available / targetVp);
+    stage.style.width = targetVp + 'px';
+    stage.style.transform = scale < 1 ? `scale(${scale})` : 'none';
+    stage.style.marginBottom = scale < 1 ? (-(1 - scale) * stage.offsetHeight) + 'px' : '0';
+    vpLabel.textContent = '视口 ' + targetVp + 'px' + (scale < 1 ? ` · 缩放 ${Math.round(scale * 100)}%` : '');
+  }
+
+  zoomTabs.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-vp]');
+    if (!btn) return;
+    targetVp = btn.dataset.vp === 'full' ? 'full' : Number(btn.dataset.vp);
+    [...zoomTabs.querySelectorAll('button')].forEach(b => b.classList.toggle('on', b === btn));
+    fit();
+  });
+
+  window.addEventListener('resize', fit);
+
+  // 联动主页面：方案切换后同步高亮规格表
+  function highlightScheme() {
+    const key = body.dataset.scheme;
+    const idx = { a: 1, b: 2, c: 3 }[key];
+    document.querySelectorAll('.spec tbody tr').forEach(tr => {
+      [...tr.children].forEach((td, i) => {
+        td.style.background = i === idx ? '#f0fdf4' : '';
+      });
+    });
+  }
+  tabs.addEventListener('click', highlightScheme);
+
+  renderNote('b');
+  highlightScheme();
+  fit();
+</script>
+</body>
+</html>

@@ -148,7 +148,6 @@ export const USER_MODE_MENU: readonly UserModeMenuItem[] = [
         path: "/dashboard",
         permission: "menu:dashboard",
       },
-      { key: "personal", label: "个人中心", icon: "user_circle", path: "/dashboard/personal" },
     ],
   },
 ]

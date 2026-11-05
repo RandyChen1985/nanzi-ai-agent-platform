@@ -10,7 +10,7 @@ import type { McpPersonalMenuKey } from '@/utils/mcpShare'
 const props = withDefaults(defineProps<{
   active: McpPersonalMenuKey
   counts?: { received_pending: number; sent_pending: number; sent_total: number }
-  variant?: 'aside' | 'chips'
+  variant?: 'aside' | 'chips' | 'tabs'
 }>(), {
   counts: () => ({ received_pending: 0, sent_pending: 0, sent_total: 0 }),
   variant: 'aside',
@@ -80,6 +80,35 @@ const badgeText = (value: number | null): string =>
       </button>
     </nav>
   </aside>
+
+  <!-- 只有一个一级 Tab：二级视图直接作为顶部 tab（与「智能体中心」同款） -->
+  <div
+    v-else-if="variant === 'tabs'"
+    class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2 dark:border-gray-800"
+    role="tablist"
+    aria-label="MCP 视图"
+  >
+    <button
+      v-for="item in items"
+      :key="item.key"
+      type="button"
+      role="tab"
+      :aria-selected="active === item.key"
+      class="cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+      :class="active === item.key ? 'bg-primary/10 text-primary' : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/5'"
+      @click="emit('select', item.key)"
+    >
+      <svg class="mr-1 inline-block h-3.5 w-3.5 shrink-0 align-text-bottom" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="item.path" />
+      </svg>
+      <span>{{ item.label }}</span>
+      <span
+        v-if="badgeText(item.badge)"
+        class="ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+        :class="active === item.key ? 'bg-primary/15 text-primary' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'"
+      >{{ badgeText(item.badge) }}</span>
+    </button>
+  </div>
 
   <!-- 窄屏：横向胶囊 -->
   <div v-else class="flex gap-2 overflow-x-auto pb-1 md:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

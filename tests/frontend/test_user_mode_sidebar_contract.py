@@ -274,6 +274,8 @@ def test_more_menu_drops_memory_and_system_adds_overview(menu: str) -> None:
     assert 'path: "/dashboard"' in more_block
     assert 'key: "memory"' not in more_block
     assert 'key: "system"' not in more_block
+    # 个人中心入口收敛到头像弹层（AccountMenu），侧栏不重复第二份
+    assert 'key: "personal"' not in more_block
 
 
 def test_workspace_page_hides_session_mount_action() -> None:
@@ -551,8 +553,8 @@ def test_submenu_items_carry_icons() -> None:
     menu = _read("frontend/src/constants/userModeMenu.ts")
     sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
 
-    # 三个专家子项 + 更多里的四项
-    for key in ('"expert"', '"skill"', '"connector"', '"workbench"', '"token"', '"overview"', '"personal"'):
+    # 三个专家子项 + 更多里的三项
+    for key in ('"expert"', '"skill"', '"connector"', '"workbench"', '"token"', '"overview"'):
         segment = menu.split(f"key: {key}", 1)[1].split("}", 1)[0]
         assert "icon:" in segment, f"{key} 缺少图标"
 

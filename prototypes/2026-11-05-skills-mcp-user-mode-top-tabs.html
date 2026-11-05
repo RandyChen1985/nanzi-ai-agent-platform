@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的技能 / 我的 MCP · 单 Tab 时把左侧导航提到顶部</title>
+<style>
+  :root {
+    --bg: #f2f3f5;
+    --panel: #ffffff;
+    --line: #e8eaed;
+    --text: #1f2329;
+    --text-2: #5c6370;
+    --text-3: #8f959e;
+    --blue: #1677ff;
+    --blue-soft: #eaf2ff;
+    --green: #00b96b;
+    --green-soft: #e8f8f0;
+    --aside-bg: #fafbfc;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 24px rgba(16, 24, 40, .06);
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 24px 56px; }
+  h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: -.2px; }
+  .sub { color: var(--text-2); line-height: 1.7; margin: 0 0 18px; }
+  .sub code { background: #fff; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12px; }
+
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    margin-bottom: 14px;
+  }
+  .seg { display: inline-flex; background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 2px; }
+  .seg button {
+    border: 0; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; font-weight: 500;
+    padding: 6px 12px; border-radius: 7px; cursor: pointer; transition: .15s;
+  }
+  .seg button[aria-selected="true"] { background: var(--blue); color: #fff; font-weight: 600; }
+  .seg.ghost button[aria-selected="true"] { background: #eef1f5; color: var(--text); }
+  .hint { margin-left: auto; color: var(--text-3); font-size: 12px; }
+
+  .stage {
+    background: #e9ebef;
+    border: 1px solid #dfe2e7;
+    border-radius: 14px;
+    padding: 18px;
+  }
+  .mock {
+    background: var(--panel);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 520px;
+  }
+
+  /* ---------- 顶部一级 tab ---------- */
+  .page-head { border-bottom: 1px solid var(--line); padding: 0 20px; flex-shrink: 0; background: #fff; }
+  .tabs { display: flex; gap: 26px; align-items: flex-end; }
+  .tab {
+    position: relative; display: inline-flex; align-items: center; gap: 7px;
+    padding: 14px 2px 12px; font-size: 14px; font-weight: 500; color: var(--text-2); cursor: pointer;
+  }
+  .tab.active { color: var(--green); font-weight: 600; }
+  .tab.active::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px; background: var(--green);
+  }
+  .tab .count {
+    background: var(--green-soft); color: var(--green); border-radius: 999px; font-size: 11px; font-weight: 600;
+    padding: 1px 7px;
+  }
+  .tab svg { width: 17px; height: 17px; }
+
+  /* ---------- 需求：标题 + 胶囊同一行 ---------- */
+  .head-inline { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: #fff; flex-shrink: 0; }
+  .head-title { display: inline-flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 700; letter-spacing: -.1px; }
+  .head-title svg { width: 18px; height: 18px; color: var(--green); }
+  .head-title .count { background: var(--green-soft); color: var(--green); border-radius: 999px; font-size: 11px; font-weight: 600; padding: 1px 7px; }
+  .chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+    border: 1px solid var(--line); background: #fff; color: var(--text-2);
+    border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 500; cursor: pointer; transition: .15s;
+  }
+  .chip svg { width: 14px; height: 14px; }
+  .chip:hover { border-color: #c9dcff; color: var(--blue); }
+  .chip.active { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 2px 6px rgba(22, 119, 255, .25); }
+  .chip .badge { background: #fff2e0; color: #c47b0a; border-radius: 999px; font-size: 10px; font-weight: 600; padding: 0 5px; }
+  .chip.active .badge { background: rgba(255, 255, 255, .24); color: #fff; }
+
+  /* ---------- 智能体中心同款：一行圆角 tab ---------- */
+  .tablist { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: #fff; }
+  .tablist .t {
+    display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; font: inherit;
+    border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 500; color: var(--text-2); cursor: pointer; transition: .15s;
+  }
+  .tablist .t svg { width: 14px; height: 14px; }
+  .tablist .t:hover { background: #f5f6f8; }
+  .tablist .t.active { background: var(--blue-soft); color: var(--blue); font-weight: 600; }
+  .tablist .t .badge { background: #fff2e0; color: #c47b0a; border-radius: 999px; font-size: 10px; font-weight: 600; padding: 0 5px; }
+  .tablist .t.active .badge { background: #dbe9ff; color: #1f63d6; }
+
+  /* ---------- 二级一行（方案 B） ---------- */
+  .subrow { display: flex; align-items: center; gap: 8px; padding: 10px 20px; border-bottom: 1px solid #f1f3f5; background: #fcfcfd; flex-shrink: 0; }
+  .subrow .label { font-size: 11px; color: var(--text-3); margin-right: 2px; }
+
+  /* ---------- 主体 ---------- */
+  .body { display: flex; min-height: 0; flex: 1; background: #fff; }
+  .aside {
+    width: 200px; flex-shrink: 0; border-right: 1px solid var(--line); background: var(--aside-bg);
+    padding: 16px 14px; display: flex; flex-direction: column;
+  }
+  .aside-group { display: flex; align-items: center; gap: 8px; padding: 0 6px 14px; font-size: 13px; font-weight: 700; }
+  .aside-group .ico {
+    width: 30px; height: 30px; border-radius: 9px; background: var(--blue); color: #fff;
+    display: grid; place-items: center; box-shadow: 0 2px 6px rgba(22, 119, 255, .25);
+  }
+  .aside-group .ico svg { width: 15px; height: 15px; }
+  .aside-item {
+    display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: 10px;
+    font-size: 13px; font-weight: 500; color: var(--text-2); cursor: pointer;
+  }
+  .aside-item svg { width: 15px; height: 15px; }
+  .aside-item:hover { background: #fff; color: var(--text); }
+  .aside-item.active { background: var(--blue); color: #fff; font-weight: 600; box-shadow: 0 2px 6px rgba(22, 119, 255, .22); }
+  .aside-item .n { margin-left: auto; background: #fff2e0; color: #c47b0a; border-radius: 999px; font-size: 10px; padding: 0 5px; font-weight: 600; }
+  .aside-item.active .n { background: rgba(255,255,255,.24); color: #fff; }
+
+  .content { flex: 1; min-width: 0; padding: 16px 20px 18px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+  .searchrow { display: flex; gap: 10px; flex-shrink: 0; }
+  .search {
+    flex: 1; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line);
+    border-radius: 9px; padding: 9px 12px; color: var(--text-3); background: #fff;
+  }
+  .search svg { width: 15px; height: 15px; }
+  .sortbtn { border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; color: var(--text-2); background: #fff; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #fff; }
+  .card-top { display: flex; align-items: flex-start; gap: 10px; }
+  .card-ico { width: 38px; height: 38px; border-radius: 9px; background: var(--green-soft); color: var(--green); display: grid; place-items: center; flex-shrink: 0; }
+  .card-ico svg { width: 18px; height: 18px; }
+  .card-title { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+  .tag-personal { background: #eef8f2; color: #1a9e63; border-radius: 5px; font-size: 10px; font-weight: 600; padding: 1px 5px; }
+  .tag-muted { background: #f2f3f5; color: #7a828d; border-radius: 5px; font-size: 10px; font-weight: 600; padding: 1px 5px; }
+  .card-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-3); font-size: 10.5px; letter-spacing: .2px; margin-top: 3px; }
+  .switch { margin-left: auto; width: 34px; height: 19px; border-radius: 999px; background: var(--blue); position: relative; flex-shrink: 0; }
+  .switch::after { content: ""; position: absolute; right: 2px; top: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; }
+  .card-desc { color: var(--text-2); font-size: 12px; line-height: 1.65; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .card-from { color: var(--blue); font-size: 11.5px; display: inline-flex; align-items: center; gap: 4px; }
+  .card-foot { margin-top: auto; display: flex; gap: 8px; }
+  .btn { border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; font-size: 12px; color: var(--text-2); background: #fff; }
+  .btn.primary { border-color: #c9dcff; color: var(--blue); background: var(--blue-soft); font-weight: 500; }
+
+  /* MCP 页用：服务卡片 */
+  .mcp-card { border: 1px solid var(--line); border-radius: 10px; padding: 13px 14px; display: flex; align-items: center; gap: 12px; }
+  .mcp-logo { width: 34px; height: 34px; border-radius: 9px; background: #f2f4f8; display: grid; place-items: center; color: #6b7280; flex-shrink: 0; }
+  .mcp-logo svg { width: 18px; height: 18px; }
+  .mcp-name { font-size: 13px; font-weight: 600; }
+  .mcp-meta { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #35c26b; display: inline-block; margin-right: 5px; }
+
+  .notes { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .note { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .note h3 { margin: 0 0 8px; font-size: 13px; }
+  .note p, .note li { color: var(--text-2); line-height: 1.75; margin: 0; }
+  .note ul { margin: 0; padding-left: 18px; }
+  .note code { background: #f6f7f9; border-radius: 4px; padding: 1px 4px; font-size: 11.5px; }
+  .bad { color: #c0271a; }
+  .good { color: #0f8a4d; }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 600; border-radius: 5px; padding: 1px 6px; margin-right: 6px; }
+  .tag.rec { background: #e8f8f0; color: #0f8a4d; }
+  .tag.alt { background: #eef2f7; color: #5c6370; }
+
+  .dark { --bg:#111417; --panel:#171b1f; --line:#252b31; --text:#e6e8eb; --text-2:#a6adb6; --text-3:#7d858f; --blue:#2f7cf6; --blue-soft:#16283f; --green:#2ec27e; --green-soft:#123126; --aside-bg:#14181c; --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px rgba(0,0,0,.35); }
+  body.dark { background: #0d1013; }
+  body.dark .stage { background: #0f1215; border-color: #1e242a; }
+  body.dark .seg { background: #171b1f; border-color: #252b31; }
+  body.dark .seg button { color: #a6adb6; }
+  body.dark .seg button[aria-selected="true"] { background: #2f7cf6; color: #fff; }
+  body.dark .seg.ghost button[aria-selected="true"] { background: #262d34; color: #e6e8eb; }
+  body.dark .note { background: #171b1f; border-color: #252b31; }
+  body.dark .mock { background: #171b1f; }
+  body.dark .page-head, body.dark .head-inline, body.dark .subrow { background: #171b1f; border-color: #252b31; }
+  body.dark .body { background: #171b1f; }
+  body.dark .aside { background: #14181c; border-color: #252b31; }
+  body.dark .aside-item:hover { background: #1d232a; }
+  body.dark .card, body.dark .mcp-card { background: #1a1f24; border-color: #252b31; }
+  body.dark .search, body.dark .sortbtn, body.dark .btn, body.dark .chip { background: #1a1f24; border-color: #2b323a; color: #a6adb6; }
+  body.dark .chip.active { background: #2f7cf6; border-color: #2f7cf6; color: #fff; }
+  body.dark .sub { color: #a6adb6; }
+  body.dark h1 { color: #e6e8eb; }
+  body.dark .hint { color: #7d858f; }
+  body.dark .tag.alt { background: #262d34; color: #a6adb6; }
+  body.dark .tag.rec { background: #123126; color: #2ec27e; }
+  body.dark .tag-muted { background: #262d34; color: #9aa3ad; }
+  body.dark .subrow { background: #14181c; }
+  body.dark .tablist { background: #171b1f; border-color: #252b31; }
+  body.dark .tablist .t:hover { background: #20262c; }
+  body.dark .tablist .t.active { background: #16283f; color: #5aa0ff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>我的技能 / 我的 MCP · 单 Tab 时把左侧导航提到顶部</h1>
+  <p class="sub">
+    普通用户进入 <code>/dashboard/skills</code>、<code>/dashboard/mcp</code> 时，顶部只有一个一级 Tab（「我的技能」/「我的 MCP」），
+    下面却还挂着一条 200px 的左侧二级导航（我的技能 / 收到的分享 / 我的分享）——一个 Tab 撑起一整列，内容区白白少掉 200px。
+    这版原型把「只有一个一级 Tab」时的二级导航提到顶部，内容区全宽。
+  </p>
+
+  <div class="toolbar">
+    <div class="seg" role="tablist" aria-label="页面">
+      <button role="tab" aria-selected="true" data-page="skills">技能页</button>
+      <button role="tab" aria-selected="false" data-page="mcp">MCP 页</button>
+    </div>
+    <div class="seg ghost" role="tablist" aria-label="方案">
+      <button role="tab" aria-selected="true" data-variant="now">现状</button>
+      <button role="tab" aria-selected="false" data-variant="a">方案 A（推荐）</button>
+      <button role="tab" aria-selected="false" data-variant="b">方案 B</button>
+      <button role="tab" aria-selected="false" data-variant="c">方案 C（已采用）</button>
+    </div>
+    <button class="seg ghost" id="themeBtn" style="border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 12px;font-size:12px;color:var(--text-2);cursor:pointer">切换深色</button>
+    <span class="hint" id="stageHint">现状：一级 Tab 下再挂一条左侧栏</span>
+  </div>
+
+  <div class="stage">
+    <div class="mock" id="mock"></div>
+  </div>
+
+  <div class="notes">
+    <div class="note">
+      <h3><span class="tag rec">已采用</span>方案 C：直接 3 个 tab（与「智能体中心」同款）</h3>
+      <p>
+        只有一个一级 Tab 时，那一行整行不出现，顶部直接是「我的技能 / 收到的分享 / 我的分享」三个圆角 tab，
+        选中态浅蓝底 + 蓝字（<code>bg-primary/10 text-primary</code>），内容区全宽。
+      </p>
+      <ul>
+        <li>与「智能体中心」的「我的智能体 / 分享给我 / 我分享的」完全同一种视觉，不再自造第二套；</li>
+        <li>没有页面标题，Tab 行本身就是页面标识；管理员多 Tab 时保持原样。</li>
+      </ul>
+      <p style="margin-top:10px"><strong>备选（未采用）：</strong>方案 A「标题 + 胶囊」、方案 B「一级 Tab + 胶囊行」。</p>
+      <p>
+        只有一个一级 Tab 时，把它从「绿色下划线的 Tab」降级成左侧标题（保留图标与计数），
+        二级导航用胶囊紧跟在右侧；内容区直接全宽。
+      </p>
+      <ul>
+        <li>顶部只占一行，层级变成「页面标题 → 视图切换」，不再有「Tab 套 Tab」的错觉；</li>
+        <li>「我的技能」重复出现一次（标题 + 胶囊），但一个是页面名、一个是视图，视觉上能分开；</li>
+        <li>管理员（有多枚一级 Tab：平台技能 / 待审核 / 已发布）保持现状，不受影响。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3><span class="tag alt">备选</span>方案 B：一级 Tab 保留，下面贴一行胶囊</h3>
+      <p>
+        不动现有 Tab 行，只在它下方加一条浅底的胶囊行，左侧栏隐藏。改动最小、层级最直白，
+        代价是顶部占两行（约 96px），内容区略矮。
+      </p>
+      <ul>
+        <li>适合不想动现有 Tab 样式、只做「把左侧挪上去」的场景；</li>
+        <li>移动端现在已经是胶囊形态（<code>variant="chips"</code>），方案 B 等于把窄屏样式推广到宽屏。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>实现落点（两个页面同构）</h3>
+      <ul>
+        <li>技能页：<code>SkillPersonalMenu</code> 已有 <code>variant="aside" | "chips"</code>，只需在「一级 Tab 数量 ≤ 1」时隐藏 aside、把 chips 从 <code>md:hidden</code> 容器里放出来；</li>
+        <li>MCP 页：<code>McpPersonalMenu</code> 同样两套；注意它现在宽屏下 aside 与 chips <strong>同时显示</strong>（重复），顺手收掉；</li>
+        <li>判定条件用「可见一级 Tab 数量」而不是 <code>ui_mode</code>：专业模式下无平台权限的账号同样只有一个 Tab，也适用同一形态。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>保持不变</h3>
+      <ul>
+        <li>路由、深链（<code>?menu=received</code> 之类）、计数徽标、搜索与排序逻辑都不动；</li>
+        <li>「收到的分享 / 我的分享」的内容面板原样复用，只换导航容器；</li>
+        <li>深色主题沿用现有变量，不新增颜色。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+const mock = document.getElementById('mock');
+const stageHint = document.getElementById('stageHint');
+let page = 'skills';
+let variant = 'now';
+
+const icons = {
+  book: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>',
+  down: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4"/></svg>',
+  up: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 20V8m0 0l4 4m-4-4l-4 4"/></svg>',
+  menu: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10"/></svg>',
+  search: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>',
+  person: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>',
+  sort: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:13px;height:13px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16m0 0l-3-3m3 3l3-3M17 20V4m0 0l-3 3m3-3l3 3"/></svg>',
+  server: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2M7 8h.01M7 16h.01"/></svg>',
+  arrow: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:12px;height:12px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4"/></svg>',
+};
+
+const titles = {
+  skills: { page: '我的技能', group: '个人技能', count: '5' },
+  mcp: { page: '我的 MCP', group: '个人 MCP', count: '3' },
+};
+
+function sideItems() {
+  return [
+    { key: 'mine', label: page === 'skills' ? '我的技能' : '我的 MCP', icon: icons.book, badge: '' },
+    { key: 'received', label: '收到的分享', icon: icons.down, badge: '2' },
+    { key: 'sent', label: '我的分享', icon: icons.up, badge: '' },
+  ];
+}
+
+function chipsHtml(activeKey) {
+  return sideItems().map((it) => `
+    <button class="chip ${it.key === activeKey ? 'active' : ''}" data-chip="${it.key}">
+      ${it.icon}<span>${it.label}</span>${it.badge ? `<span class="badge">${it.badge}</span>` : ''}
+    </button>`).join('');
+}
+
+function asideHtml(activeKey) {
+  return `
+    <aside class="aside">
+      <div class="aside-group">
+        <span class="ico">${icons.menu}</span>${titles[page].group}
+      </div>
+      ${sideItems().map((it) => `
+        <div class="aside-item ${it.key === activeKey ? 'active' : ''}" data-chip="${it.key}">
+          ${it.icon}<span>${it.label}</span>${it.badge ? `<span class="n">${it.badge}</span>` : ''}
+        </div>`).join('')}
+    </aside>`;
+}
+
+function skillsCards() {
+  return `
+    <div class="searchrow">
+      <div class="search">${icons.search}<span>搜索技能名称或描述…</span></div>
+      <div class="sortbtn">${icons.sort}名称</div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="card-top">
+          <div class="card-ico">${icons.book}</div>
+          <div style="min-width:0">
+            <div class="card-title">city-weat… <span class="tag-personal">个人</span></div>
+            <div class="card-id">ID: CITY-WEATHER-QUERY</div>
+          </div>
+          <div class="switch"></div>
+        </div>
+        <div class="card-desc">查询指定城市的实时天气与未来几天预报。当用户询问「今天天气怎么样」「北京明天会下雨吗」「上海现在多少度」…「查一下某城市天气/气温/湿度/风力」</div>
+        <div class="card-foot"><span class="btn">查看</span><span class="btn">分享</span></div>
+      </div>
+      <div class="card">
+        <div class="card-top">
+          <div class="card-ico">${icons.book}</div>
+          <div style="min-width:0">
+            <div class="card-title">用户信息与… <span class="tag-personal">个人</span></div>
+            <div class="card-id">ID: USER-INFO-PERMISSION-QUERY</div>
+            <div class="card-from">${icons.arrow} 来自 admin 的分享</div>
+          </div>
+          <div class="switch"></div>
+        </div>
+        <div class="card-desc">当用户询问自己的用户信息、账号资料、角色与权限，或需要查询当前账号的基本信息、部门、组织路径…</div>
+        <div class="card-foot"><span class="btn primary">安装到我的技能</span></div>
+      </div>
+      <div class="card">
+        <div class="card-top">
+          <div class="card-ico">${icons.book}</div>
+          <div style="min-width:0">
+            <div class="card-title">doc-summarizer <span class="tag-personal">个人</span></div>
+            <div class="card-id">ID: DOC-SUMMARIZER</div>
+          </div>
+          <div class="switch"></div>
+        </div>
+        <div class="card-desc">把长文档压缩成结构化摘要，支持 Markdown / PDF / Word；可指定摘要长度与关注点，输出标题层级保留原文档结构。</div>
+        <div class="card-foot"><span class="btn">查看</span><span class="btn">分享</span></div>
+      </div>
+    </div>`;
+}
+
+function mcpCards() {
+  return `
+    <div class="searchrow">
+      <div class="search">${icons.search}<span>搜索 MCP 服务器…</span></div>
+      <div class="sortbtn">${icons.sort}名称</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${[
+        ['filesystem', '本地文件读写 · 12 个工具', '已启用'],
+        ['sqlite', '只读 SQL 查询 · 4 个工具', '已启用'],
+        ['weather-api', '天气查询 · 来自 admin 的分享', '待启用'],
+        ['github', '仓库与 Issue 检索 · 8 个工具', '已停用'],
+      ].map(([n, m, s]) => `
+        <div class="mcp-card">
+          <div class="mcp-logo">${icons.server}</div>
+          <div style="min-width:0;flex:1">
+            <div class="mcp-name">${n}</div>
+            <div class="mcp-meta"><span class="dot"></span>${m}</div>
+          </div>
+          <span class="${s === '已启用' ? 'tag-personal' : 'tag-muted'}">${s}</span>
+        </div>`).join('')}
+    </div>`;
+}
+
+function headVariantA() {
+  return `
+    <div class="head-inline">
+      <span class="head-title">${icons.book}${titles[page].page}<span class="count">${titles[page].count}</span></span>
+      <div class="chips">${chipsHtml('mine')}</div>
+    </div>`;
+}
+
+function headVariantB() {
+  return `
+    <div class="page-head">
+      <div class="tabs">
+        <span class="tab active">${icons.book}${titles[page].page}<span class="count">${titles[page].count}</span></span>
+      </div>
+    </div>
+    <div class="subrow"><span class="label">视图</span><div class="chips">${chipsHtml('mine')}</div></div>`;
+}
+
+function headVariantC() {
+  return `
+    <div class="tablist">
+      ${sideItems().map((it) => `
+        <button class="t ${it.key === 'mine' ? 'active' : ''}" data-chip="${it.key}">
+          ${it.icon}<span>${it.label}</span>${it.badge ? `<span class="badge">${it.badge}</span>` : ''}
+        </button>`).join('')}
+    </div>`;
+}
+
+function headNow() {
+  return `
+    <div class="page-head">
+      <div class="tabs">
+        <span class="tab active">${icons.book}${titles[page].page}<span class="count">${titles[page].count}</span></span>
+      </div>
+    </div>`;
+}
+
+function render() {
+  const content = page === 'skills' ? skillsCards() : mcpCards();
+  let html = '';
+  if (variant === 'now') {
+    html = headNow() + `<div class="body">${asideHtml('mine')}<div class="content">${content}</div></div>`;
+    stageHint.textContent = '现状：一级 Tab 下再挂一条 200px 左侧栏，内容区被挤窄';
+  } else if (variant === 'a') {
+    html = headVariantA() + `<div class="body"><div class="content">${content}</div></div>`;
+    stageHint.textContent = '方案 A：标题 + 胶囊同一行，内容区全宽（推荐）';
+  } else if (variant === 'b') {
+    html = headVariantB() + `<div class="body"><div class="content">${content}</div></div>`;
+    stageHint.textContent = '方案 B：一级 Tab 保留，下面贴一行胶囊，内容区全宽';
+  } else {
+    html = headVariantC() + `<div class="body"><div class="content">${content}</div></div>`;
+    stageHint.textContent = '方案 C（已采用）：只有一个一级 Tab 时，直接展示 3 个圆角 tab，同「智能体中心」';
+  }
+  mock.innerHTML = html;
+  bindChips();
+}
+
+function bindChips() {
+  mock.querySelectorAll('[data-chip]').forEach((el) => {
+    el.addEventListener('click', () => {
+      mock.querySelectorAll('[data-chip]').forEach((x) => x.classList.remove('active'));
+      const dupes = mock.querySelectorAll(`[data-chip="${el.dataset.chip}"]`);
+      dupes.forEach((d) => d.classList.add('active'));
+    });
+  });
+}
+
+document.querySelectorAll('[data-page]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-page]').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
+    page = btn.dataset.page;
+    render();
+  });
+});
+document.querySelectorAll('[data-variant]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-variant]').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
+    variant = btn.dataset.variant;
+    render();
+  });
+});
+document.getElementById('themeBtn').addEventListener('click', () => {
+  document.body.classList.toggle('dark');
+});
+render();
+</script>
+</body>
+</html>
