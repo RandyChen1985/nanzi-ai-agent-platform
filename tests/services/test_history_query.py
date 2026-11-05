@@ -70,8 +70,9 @@ def test_scope_condition_invalid_value_returns_none():
 def test_turn_level_keys_merge_keyword_and_status_into_one_subquery():
     stmt = turn_level_conversation_keys(user_id="7", keyword="巡检", status="failed")
     compiled = _compile(stmt)
-    # 关键词与状态必须同处一个子查询：只应存在一个 SELECT
-    assert compiled.upper().count("SELECT") == 1
+    # 关键词与状态必须同处「轮次存在性」子查询：带 DISTINCT 的那个 SELECT 只应有一个。
+    # （关键词还会再嵌一层「智能体名命中」的子查询，见 agent_name_matching_clause。）
+    assert compiled.upper().count("SELECT DISTINCT") == 1
     assert "巡检" in compiled
     assert "failed" in compiled
     assert "user_id = '7'" in compiled
@@ -96,8 +97,26 @@ def test_ungrouped_keyword_filters_current_row_only():
         user_id="7", keyword="巡检", group_by_conversation=False
     )
     compiled = _compile(query)
-    assert not _has_turn_filter_subquery(compiled)
+    # 非分组模式不能套「会话内存在匹配轮次」的子查询（特征是 SELECT DISTINCT）；
+    # 智能体名匹配用的是 agent_id IN (SELECT ...)，仍然只约束当前行。
+    assert "SELECT DISTINCT" not in compiled.upper()
     assert "巡检" in compiled
+
+
+def test_keyword_also_matches_agent_name():
+    """搜「周报助手」要能命中该智能体跑过的会话，而不只是提问正文。"""
+    query, _ = build_history_query(
+        user_id="7", keyword="周报助手", group_by_conversation=True
+    )
+    compiled = _compile(query)
+    assert "ai_agents.name LIKE '%周报助手%'" in compiled
+    assert "ai_agents.display_name LIKE '%周报助手%'" in compiled
+    assert "agent_id IN (SELECT" in compiled
+
+    ungrouped, _ = build_history_query(
+        user_id="7", keyword="周报助手", group_by_conversation=False
+    )
+    assert "ai_agents.display_name LIKE '%周报助手%'" in _compile(ungrouped)
 
 
 def test_grouped_query_without_turn_filters_has_no_subquery_filter():

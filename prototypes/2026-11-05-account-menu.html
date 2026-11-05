@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>个人中心菜单 · 点头像弹层，一步切换用户模式</title>
+<style>
+  :root {
+    --brand: #1677ff;
+    --brand-soft: rgba(22, 119, 255, 0.1);
+    --danger: #dc2626;
+    --radius-card: 16px;
+    --font: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  /* 组件类里的 display:flex 会盖掉 UA 的 [hidden]，这里统一兜底 */
+  [hidden] { display: none !important; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font);
+    background: #eef2f7;
+    color: #0f172a;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page-head {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 36px 28px 10px;
+  }
+
+  .page-head h1 {
+    margin: 0 0 8px;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .page-head p {
+    margin: 0;
+    max-width: 760px;
+    font-size: 13.5px;
+    line-height: 1.75;
+    color: #5b6675;
+  }
+
+  .page-head .meta {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 500;
+    background: #fff;
+    border: 1px solid #dbe3ee;
+    color: #4b5869;
+  }
+
+  .tabs {
+    max-width: 1120px;
+    margin: 18px auto 0;
+    padding: 0 28px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .tab-btn {
+    appearance: none;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #5b6675;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .tab-btn:hover { background: rgba(255, 255, 255, 0.75); color: #0f172a; }
+
+  .tab-btn[aria-selected="true"] {
+    background: #fff;
+    border-color: #dbe3ee;
+    color: #0f172a;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  }
+
+  .stage-wrap {
+    max-width: 1120px;
+    margin: 16px auto 0;
+    padding: 0 28px 12px;
+  }
+
+  /* ---------------- 模拟应用舞台 ---------------- */
+  .mock {
+    position: relative;
+    display: flex;
+    height: 620px;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px -20px rgba(15, 23, 42, 0.28), 0 4px 14px rgba(15, 23, 42, 0.06);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+  }
+
+  .mock[data-theme="light"] {
+    --s-bg: #ffffff;
+    --s-border: #e8edf4;
+    --s-text: #1e293b;
+    --s-muted: #7c8798;
+    --s-hover: #f1f5f9;
+    --s-active: #eef2f7;
+    --content-bg: #f7f9fc;
+    --card-bg: #ffffff;
+    --card-border: #e6ebf3;
+    --card-text: #0f172a;
+    --card-muted: #77808f;
+    --card-hover: #f4f6fa;
+    --card-divider: #eef1f6;
+    --pill-bg: #f4f6fa;
+    --seg-active-bg: #ffffff;
+    --chip-active-bg: #eff6ff;
+    --chip-active-border: #bcd6ff;
+    --card-shadow: 0 18px 44px -12px rgba(15, 23, 42, 0.26), 0 2px 8px rgba(15, 23, 42, 0.08);
+  }
+
+  .mock[data-theme="dark"] {
+    --s-bg: #0f141c;
+    --s-border: rgba(255, 255, 255, 0.07);
+    --s-text: #e2e8f0;
+    --s-muted: #7d8798;
+    --s-hover: rgba(255, 255, 255, 0.055);
+    --s-active: rgba(255, 255, 255, 0.09);
+    --content-bg: #0a0f16;
+    --card-bg: #171d27;
+    --card-border: rgba(255, 255, 255, 0.09);
+    --card-text: #e8edf5;
+    --card-muted: #8b95a7;
+    --card-hover: rgba(255, 255, 255, 0.055);
+    --card-divider: rgba(255, 255, 255, 0.07);
+    --pill-bg: rgba(255, 255, 255, 0.05);
+    --seg-active-bg: rgba(255, 255, 255, 0.16);
+    --chip-active-bg: rgba(22, 119, 255, 0.16);
+    --chip-active-border: rgba(22, 119, 255, 0.45);
+    --card-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.7), 0 2px 10px rgba(0, 0, 0, 0.4);
+  }
+
+  /* 用户模式侧栏内容更少，舞台加高一点，才看得到「菜单 + 任务 + 头像」三者关系 */
+  .mock[data-mode="user"] { height: 780px; }
+
+  .mock-sidebar {
+    position: relative;
+    width: 252px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--s-bg);
+    border-right: 1px solid var(--s-border);
+    color: var(--s-text);
+  }
+
+  .mock-main {
+    position: relative;
+    flex: 1;
+    background: var(--content-bg);
+    overflow: hidden;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    height: 52px;
+    padding: 0 14px;
+    flex-shrink: 0;
+  }
+
+  .brand-logo {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: linear-gradient(140deg, #4f8dff, #1b4fd8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 800;
+    flex-shrink: 0;
+  }
+
+  .brand-name {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .brand-collapse {
+    margin-left: auto;
+    color: var(--s-muted);
+    display: flex;
+    align-items: center;
+  }
+
+  .nav-scroll {
+    padding: 4px 10px;
+    overflow-y: auto;
+    flex-shrink: 0;
+    max-height: 380px;
+  }
+
+  .nav-scroll::-webkit-scrollbar { width: 4px; }
+  .nav-scroll::-webkit-scrollbar-thumb { background: rgba(120, 130, 145, 0.3); border-radius: 4px; }
+
+  .nav-group-label {
+    padding: 12px 10px 5px;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--s-muted);
+    text-transform: uppercase;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 9px;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--s-text);
+    cursor: default;
+    transition: background 0.12s ease;
+  }
+
+  .nav-item:hover { background: var(--s-hover); }
+  .nav-item.active { background: var(--s-active); }
+  .nav-item svg { width: 17px; height: 17px; opacity: 0.75; flex-shrink: 0; }
+  .nav-item .nav-hint { margin-left: auto; font-size: 10.5px; color: var(--s-muted); }
+
+  .nav-task-block {
+    flex: 1;
+    min-height: 0;
+    padding: 2px 10px;
+    overflow-y: auto;
+  }
+
+  .task-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px 4px;
+    font-size: 11.5px;
+    color: var(--s-muted);
+  }
+
+  .task-section {
+    padding: 6px 10px 2px;
+    font-size: 10.5px;
+    color: var(--s-muted);
+  }
+
+  .task-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    color: var(--s-text);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .task-row span:first-child { overflow: hidden; text-overflow: ellipsis; }
+  .task-row .task-time { margin-left: auto; font-size: 10.5px; color: var(--s-muted); flex-shrink: 0; }
+  .task-row.active { background: var(--s-active); font-weight: 600; }
+
+  .user-card-wrap {
+    flex-shrink: 0;
+    border-top: 1px solid var(--s-border);
+    padding: 8px;
+  }
+
+  .user-card {
+    appearance: none;
+    border: 0;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+
+  .user-card:hover, .user-card[aria-expanded="true"] { background: var(--s-hover); }
+
+  .avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    background: linear-gradient(140deg, #34d399, #059669);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .avatar.lg { width: 44px; height: 44px; font-size: 15px; }
+
+  .user-meta { min-width: 0; flex: 1; }
+  .user-name { font-size: 13px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .user-sub { margin-top: 2px; font-size: 10.5px; line-height: 1; color: var(--s-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .user-caret { color: var(--s-muted); flex-shrink: 0; display: flex; }
+
+  .version-line {
+    padding: 2px 10px 6px;
+    font-size: 10px;
+    color: var(--s-muted);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ---------------- 浮层卡片 ---------------- */
+  .account-pop {
+    position: absolute;
+    left: 10px;
+    bottom: 88px;
+    width: 352px;
+    z-index: 40;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--card-shadow);
+    color: var(--card-text);
+    padding: 8px;
+    transform-origin: bottom left;
+    animation: pop-in 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+    /* 侧栏矮时卡片自身滚动，退出登录不会被挤出屏幕 */
+    max-height: calc(100% - 76px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  @keyframes pop-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .account-pop[hidden] { display: none; }
+
+  .pop-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px 8px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+
+  .pop-head:hover { background: var(--card-hover); }
+  .pop-head .user-name { font-size: 14px; }
+  .pop-head .user-sub { color: var(--card-muted); }
+  .pop-head .go { margin-left: auto; color: var(--card-muted); flex-shrink: 0; display: flex; align-items: center; gap: 3px; font-size: 10.5px; }
+
+  .pop-divider { height: 1px; background: var(--card-divider); margin: 6px 4px; }
+
+  .mode-block { padding: 2px 4px 6px; }
+
+  .mode-block-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 6px 6px;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--card-muted);
+  }
+
+  .mode-block-label .new {
+    font-size: 9.5px;
+    font-weight: 600;
+    color: var(--brand);
+    background: var(--brand-soft);
+    padding: 1.5px 6px;
+    border-radius: 999px;
+  }
+
+  .mode-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .mode-chip {
+    appearance: none;
+    border: 1px solid var(--card-border);
+    background: transparent;
+    border-radius: 11px;
+    padding: 8px 10px;
+    text-align: left;
+    font-family: inherit;
+    color: var(--card-text);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    transition: all 0.14s ease;
+    position: relative;
+  }
+
+  .mode-chip:hover { background: var(--card-hover); }
+
+  .mode-chip[aria-pressed="true"] {
+    background: var(--chip-active-bg);
+    border-color: var(--chip-active-border);
+  }
+
+  .mode-chip .chip-top { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+  .mode-chip .chip-top svg { width: 15px; height: 15px; }
+  .mode-chip .chip-desc { font-size: 10.5px; color: var(--card-muted); line-height: 1.3; }
+  .mode-chip .chip-check {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: var(--brand);
+    color: #fff;
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mode-chip[aria-pressed="true"] .chip-check { display: flex; }
+
+  .menu-group { padding: 2px 0; }
+
+  .menu-item {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 38px;
+    padding: 0 10px;
+    border-radius: 10px;
+    color: var(--card-text);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+
+  .menu-item:hover { background: var(--card-hover); }
+  .menu-item svg { width: 17px; height: 17px; color: var(--card-muted); flex-shrink: 0; }
+  .menu-item .hint { margin-left: auto; font-size: 11px; color: var(--card-muted); }
+  .menu-item .chev { margin-left: 3px; color: var(--card-muted); display: flex; flex-shrink: 0; }
+  .menu-item .chev svg { width: 13px; height: 13px; }
+  .menu-item.danger { color: var(--danger); }
+  .menu-item.danger svg { color: var(--danger); }
+  .menu-item.danger:hover { background: rgba(220, 38, 38, 0.08); }
+
+  .theme-seg {
+    display: inline-flex;
+    margin-left: auto;
+    background: var(--pill-bg);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .theme-seg button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--card-muted);
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .theme-seg button[aria-pressed="true"] {
+    background: var(--seg-active-bg);
+    color: var(--card-text);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+  }
+
+  .theme-seg svg { width: 11px; height: 11px; }
+
+  .pop-foot-note {
+    padding: 8px 10px 2px;
+    font-size: 10px;
+    line-height: 1.55;
+    color: var(--card-muted);
+  }
+
+  /* ---------------- 内容区骨架 ---------------- */
+  .skeleton {
+    position: absolute;
+    inset: 0;
+    padding: 18px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    opacity: 0.55;
+  }
+
+  .sk-bar {
+    height: 12px;
+    border-radius: 6px;
+    background: var(--s-border);
+  }
+
+  .sk-card {
+    height: 96px;
+    border-radius: 14px;
+    background: var(--s-bg);
+    border: 1px solid var(--s-border);
+  }
+
+  /* ---------------- 文档区 ---------------- */
+  .demo-hint {
+    margin: 12px 2px 0;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: #6b7788;
+  }
+
+  .doc {
+    max-width: 1120px;
+    margin: 16px auto 60px;
+    padding: 0 28px;
+  }
+
+  .doc-card {
+    background: #fff;
+    border: 1px solid #e4e9f1;
+    border-radius: 18px;
+    padding: 26px 28px;
+    box-shadow: 0 8px 30px -18px rgba(15, 23, 42, 0.18);
+  }
+
+  .doc-card h2 { margin: 0 0 6px; font-size: 17px; letter-spacing: -0.01em; }
+  .doc-card h3 { margin: 22px 0 8px; font-size: 13.5px; }
+  .doc-card p { margin: 0 0 8px; font-size: 13px; line-height: 1.8; color: #4b5869; }
+  .doc-card ul { margin: 6px 0 0; padding-left: 18px; }
+  .doc-card li { font-size: 12.5px; line-height: 1.85; color: #4b5869; }
+  .doc-card code {
+    font-size: 11.5px;
+    background: #f1f5f9;
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: #334155;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { text-align: left; padding: 9px 10px; font-size: 12px; border-bottom: 1px solid #eef1f6; vertical-align: top; }
+  th { font-size: 11px; color: #77808f; font-weight: 600; letter-spacing: 0.03em; background: #f8fafc; }
+  td:first-child, th:first-child { padding-left: 12px; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; }
+  .badge.ok { background: #ecfdf5; color: #047857; }
+  .badge.new { background: #eff6ff; color: #1d4ed8; }
+  .badge.no { background: #f1f5f9; color: #64748b; }
+
+  .note {
+    margin-top: 14px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: #f8fafc;
+    border: 1px solid #e8edf4;
+    font-size: 12px;
+    line-height: 1.8;
+    color: #475569;
+  }
+
+  .note strong { color: #0f172a; }
+
+  @media (max-width: 860px) {
+    .mock, .mock[data-mode="user"] { height: 540px; }
+    .mock-main { display: none; }
+    .mock-sidebar { width: 100%; }
+    /* 移动端：底部抽屉，全宽、只留上圆角 */
+    .account-pop {
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: auto;
+      border-radius: 18px 18px 0 0;
+      max-height: 86%;
+      border-bottom: 0;
+    }
+  }
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <h1>个人中心菜单 · 点头像弹层</h1>
+  <p>
+    专业模式左下角的头像现在直接跳「个人中心」，想切用户模式要再点进「界面偏好」，三步。
+    改成点头像弹卡片：<strong>模式切换放在第一屏</strong>，个人中心/权限/用量/通知设置排下面，退出登录收在底部。
+    参考了外部产品的头像菜单结构，但只保留本平台真实存在的入口（套餐、积分、升级这类本平台没有计费的入口不照搬）。
+  </p>
+  <div class="meta">
+    <span class="tag">2026-11-05</span>
+    <span class="tag">头像弹层</span>
+    <span class="tag">模式切换 · 一步可达</span>
+    <span class="tag">深浅两套</span>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="原型视图">
+  <button class="tab-btn" role="tab" data-tab="pro-light" aria-selected="true">专业模式 · 浅色</button>
+  <button class="tab-btn" role="tab" data-tab="pro-dark" aria-selected="false">专业模式 · 深色</button>
+  <button class="tab-btn" role="tab" data-tab="user-light" aria-selected="false">用户模式 · 头像菜单</button>
+  <button class="tab-btn" role="tab" data-tab="items" aria-selected="false">菜单项清单</button>
+  <button class="tab-btn" role="tab" data-tab="spec" aria-selected="false">设计说明</button>
+</nav>
+
+<main>
+  <section class="stage-wrap" id="stageWrap" aria-label="界面预览">
+    <div class="mock" id="mock" data-theme="light" data-mode="pro">
+      <aside class="mock-sidebar" aria-label="侧栏">
+        <div class="brand">
+          <div class="brand-logo">N</div>
+          <div class="brand-name">NanZi AI Agent</div>
+          <span class="brand-collapse" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </div>
+
+        <div class="nav-scroll" id="navScroll"></div>
+        <div class="nav-task-block" id="taskBlock" hidden></div>
+
+        <div class="user-card-wrap">
+          <button class="user-card" id="userCard" aria-haspopup="menu" aria-expanded="true" aria-controls="accountPop">
+            <span class="avatar" aria-hidden="true">龙</span>
+            <span class="user-meta">
+              <span class="user-name">陈小龙</span>
+              <span class="user-sub" id="cardSub">@chenxiaolong · 普通用户</span>
+            </span>
+            <span class="user-caret" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 15l6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+          </button>
+          <div class="version-line"><span id="versionText">v1.8.2</span><span id="modeText">专业模式</span></div>
+        </div>
+
+        <!-- 账户浮层 -->
+        <div class="account-pop" id="accountPop" role="menu" aria-label="账户菜单">
+          <div class="pop-head" role="menuitem" tabindex="0" data-action="personal">
+            <span class="avatar lg" aria-hidden="true">龙</span>
+            <span class="user-meta">
+              <span class="user-name">陈小龙</span>
+              <span class="user-sub">@chenxiaolong · 普通用户</span>
+            </span>
+            <span class="go">个人中心
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+          </div>
+
+          <div class="mode-block">
+            <div class="mode-block-label">
+              <span>界面模式</span>
+              <span class="new">一步切换</span>
+            </div>
+            <div class="mode-grid" role="group" aria-label="界面模式">
+              <button class="mode-chip" data-mode-chip="user" aria-pressed="false">
+                <span class="chip-top">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+                  用户模式
+                </span>
+                <span class="chip-desc">只留任务与知识库</span>
+                <span class="chip-check" aria-hidden="true">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+              </button>
+              <button class="mode-chip" data-mode-chip="pro" aria-pressed="true">
+                <span class="chip-top">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>
+                  专业模式
+                </span>
+                <span class="chip-desc">完整工作台与权限</span>
+                <span class="chip-check" aria-hidden="true">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div class="pop-divider" role="separator"></div>
+
+          <div class="menu-group" role="group" aria-label="账户">
+            <button class="menu-item" role="menuitem" data-action="personal">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-3.6 3.6-6 8-6s8 2.4 8 6"/></svg>
+              个人中心
+              <span class="hint">资料 · 安全 · 偏好</span>
+              <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </button>
+            <button class="menu-item" role="menuitem" data-action="permissions">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+              我的权限
+              <span class="hint">菜单与功能</span>
+              <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </button>
+            <button class="menu-item" role="menuitem" data-action="tokens">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>
+              Token 用量
+              <span class="hint">本月消耗</span>
+              <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </button>
+          </div>
+
+          <div class="pop-divider" role="separator"></div>
+
+          <div class="menu-group" role="group" aria-label="设置">
+            <button class="menu-item" role="menuitem" data-action="notifications">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
+              通知设置
+              <span class="hint">站内消息</span>
+              <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </button>
+            <div class="menu-item" role="menuitem" tabindex="0" data-action="appearance">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 000 18c1.5 0 2.5-1 2.5-2.2 0-1.2-.9-1.9-.9-2.8 0-.9.7-1.5 1.6-1.5H17a4 4 0 004-4c0-4.4-4-7.5-9-7.5z"/></svg>
+              外观
+              <span class="theme-seg" id="themeSeg" role="group" aria-label="界面主题">
+                <button type="button" data-theme-set="light" aria-pressed="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4l1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4l1.4-1.4"/></svg>
+                  浅色
+                </button>
+                <button type="button" data-theme-set="dark" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.3A8.5 8.5 0 019.7 3.5a8.5 8.5 0 1010.8 10.8z"/></svg>
+                  深色
+                </button>
+              </span>
+            </div>
+            <button class="menu-item" role="menuitem" data-action="about">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.8" r="0.7" fill="currentColor" stroke="none"/></svg>
+              关于
+              <span class="hint" id="aboutVersion">v1.8.2</span>
+              <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </button>
+          </div>
+
+          <div class="pop-divider" role="separator"></div>
+
+          <button class="menu-item danger" role="menuitem" data-action="logout">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3.5A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5H15"/><path d="M10 8l4 4-4 4M14 12H3.5"/></svg>
+            退出登录
+            <span class="hint">需要重新登录</span>
+          </button>
+
+        </div>
+      </aside>
+
+      <div class="mock-main" aria-hidden="true">
+        <div class="skeleton">
+          <div class="sk-bar" style="width: 32%"></div>
+          <div class="sk-bar" style="width: 58%"></div>
+          <div class="sk-card"></div>
+          <div class="sk-card"></div>
+          <div class="sk-bar" style="width: 44%"></div>
+        </div>
+      </div>
+    </div>
+    <p class="demo-hint" id="demoHint">演示：点击头像开合菜单，Esc 或点击空白处关闭；点击菜单项会显示落地提示。</p>
+  </section>
+
+  <section class="doc" id="itemsDoc" hidden>
+    <div class="doc-card">
+      <h2>菜单项清单（按平台真实能力）</h2>
+      <p>参考图的「套餐 / 积分 / 升级 / 购买」在本平台没有计费体系，不放进菜单；「意见反馈」「检查更新」也没有独立页面，暂不做。下表每一项都能落到现有路由或现有状态。</p>
+      <table>
+        <thead>
+          <tr><th>分组</th><th>菜单项</th><th>点击行为</th><th>现状</th><th>落地方式</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>头部</td><td>用户信息（头像 + 姓名 + 角色）</td><td>打开个人中心</td><td><span class="badge ok">已有</span></td><td>复用 <code>openUserInfo()</code>，整行可点</td></tr>
+          <tr><td>界面模式</td><td>用户模式</td><td><code>setUiMode('user')</code> → 跳 <code>/dashboard/chat</code></td><td><span class="badge new">新增入口</span></td><td>能力已有（个人中心「界面偏好」），移到菜单第一屏</td></tr>
+          <tr><td>界面模式</td><td>专业模式</td><td><code>setUiMode('pro')</code> → 跳 <code>/dashboard/overview</code></td><td><span class="badge new">新增入口</span></td><td>同上，两枚胶囊互斥高亮</td></tr>
+          <tr><td>账户</td><td>个人中心</td><td><code>/dashboard/personal</code></td><td><span class="badge ok">已有</span></td><td>现有路由</td></tr>
+          <tr><td>账户</td><td>我的权限</td><td><code>/dashboard/personal?tab=permissions</code></td><td><span class="badge ok">已有</span></td><td>现有 Tab，带 <code>subtab=requests</code> 可直达申请</td></tr>
+          <tr><td>账户</td><td>Token 用量</td><td><code>/dashboard/personal?tab=tokens</code></td><td><span class="badge ok">已有</span></td><td>现有 Tab</td></tr>
+          <tr><td>设置</td><td>通知设置</td><td><code>/dashboard/personal?tab=notifications</code></td><td><span class="badge ok">已有</span></td><td>现有 Tab；与顶栏铃铛不重复（一个消息流、一个偏好）</td></tr>
+          <tr><td>设置</td><td>外观</td><td>菜单内直接切浅色 / 深色</td><td><span class="badge ok">已有</span></td><td>复用 <code>useAppTheme().setTheme</code>，不跳页</td></tr>
+          <tr><td>设置</td><td>关于</td><td>展示版本号；<code>hide_version_link</code> 时隐藏仓库链接</td><td><span class="badge ok">已有</span></td><td>复用 <code>VITE_APP_VERSION</code> 与品牌配置</td></tr>
+          <tr><td>底部</td><td>退出登录</td><td>现有二次确认弹窗</td><td><span class="badge ok">已有</span></td><td>复用 <code>logout</code> + ConfirmModal</td></tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <strong>没放进菜单的</strong>：记忆管理、数据权限、我的技能、MCP 连接、任务中心——低频且偏配置，留在个人中心 Tab 里，避免菜单变成第二个个人中心。顶栏的通知铃铛与主题按钮也保留：它们高频且单手可达，菜单里只放「设置」而不是消息列表。
+      </div>
+    </div>
+  </section>
+
+  <section class="doc" id="specDoc" hidden>
+    <div class="doc-card">
+      <h2>设计说明</h2>
+
+      <h3>为什么是「点头像弹菜单」</h3>
+      <ul>
+        <li>头像在左下角、位置固定，用户已经习惯点它看「我是谁 / 我能改什么」，这是唯一不需要解释的位置。</li>
+        <li>现在从专业模式切用户模式要「头像 → 个人中心 → 界面偏好 → 点用户模式」四步；放进菜单后一步，且切换后立刻看到界面变化。</li>
+        <li>用户模式侧栏的「更多 → 切换到专业模式」与这里形成对称：两边都在自己最顺手的角落，随时可逆。</li>
+      </ul>
+
+      <h3>和参考图的取舍</h3>
+      <ul>
+        <li>保留：头部用户块、分组、分隔线、右侧 hint / chevron、底部红色退出。</li>
+        <li>替换：参考图的「套餐 / 积分 / 升级 / 购买」占视觉重心，本平台没有计费，换成「界面模式」两枚胶囊——这是用户当前真正会点的东西。</li>
+        <li>去掉：早安问候、成长计划、邀约、检查更新（本平台没有对应功能，不画假入口）。</li>
+      </ul>
+
+      <h3>交互与可达性</h3>
+      <ul>
+        <li>点击头像开/关；点击外部或 <code>Esc</code> 关闭；打开时焦点进入菜单，关闭后回到头像。</li>
+        <li><code>role="menu"</code> + 每项 <code>role="menuitem"</code>，上下键移动、回车执行（落地时用现有 focus trap 或原生按钮 + 方向键）。</li>
+        <li>模式胶囊 <code>aria-pressed</code> 表达当前态，切换后 toast 提示并跳转到对应首页。</li>
+        <li>移动端：浮层改底部抽屉（bottom sheet），宽度撑满、圆角只保留上方，避免 320px 侧栏里浮层被裁。</li>
+      </ul>
+
+      <h3>落地改动点</h3>
+      <ul>
+        <li>新建 <code>frontend/src/components/AccountMenu.vue</code>：接收 <code>visible / user / mode / theme</code>，emit <code>close / switch-mode / set-theme / navigate / logout</code>。</li>
+        <li><code>Dashboard.vue</code>：<code>openUserInfo</code> 改为切换 <code>accountMenuOpen</code>；把 <code>handleUserModeSwitchMode</code> 复用给菜单。</li>
+        <li><code>UserModeSidebar.vue</code>：头像点击 emit <code>open-account-menu</code>，由 Dashboard 统一渲染（收起态也能用）。</li>
+        <li>模式切换复用 <code>useUiMode().setUiMode</code>，主题复用 <code>useAppTheme().setTheme</code>，不新增接口。</li>
+      </ul>
+
+      <div class="note">
+        <strong>待确认</strong>：① 切模式后是否自动跳首页（建议跳：用户模式 → 聊天页，专业模式 → 概览）；② 是否把「通知设置」换成「消息中心」直达；③ 关于页要不要加「更新日志」。
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+  const NAV = {
+    pro: [
+      { group: '工作台' },
+      { label: '概览', icon: 'grid' },
+      { label: '智能体管理', icon: 'bot', hint: '12' },
+      { label: '知识库', icon: 'book' },
+      { label: '工作空间', icon: 'folder' },
+      { group: '运营' },
+      { label: 'Token 统计', icon: 'chart' },
+      { label: '审计日志', icon: 'list' }
+    ],
+    user: [
+      { label: '新建任务', icon: 'plus' },
+      { label: '专家 · 技能 · 连接器', icon: 'spark' },
+      { label: '定时任务', icon: 'clock' },
+      { label: '知识库', icon: 'book' },
+      { label: '工作空间', icon: 'folder' },
+      { label: '更多', icon: 'grid' }
+    ]
+  };
+
+  const ICONS = {
+    grid: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
+    bot: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M8 13h.01M16 13h.01"/>',
+    book: '<path d="M4 5.5A2.5 2.5 0 016.5 3H20v15H6.5A2.5 2.5 0 004 20.5z"/><path d="M4 20.5V5.5"/>',
+    folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+    chart: '<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>',
+    list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+    plus: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><path d="M17.5 14v7M14 17.5h7"/>',
+    spark: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
+  };
+
+  const state = { tab: 'pro-light', menuOpen: true, theme: 'light', mode: 'pro' };
+
+  const ACTION_LABEL = {
+    personal: '个人中心',
+    permissions: '我的权限',
+    tokens: 'Token 用量',
+    notifications: '通知设置',
+    about: '关于',
+    logout: '退出登录'
+  };
+
+  const mock = document.getElementById('mock');
+  const navScroll = document.getElementById('navScroll');
+  const taskBlock = document.getElementById('taskBlock');
+  const pop = document.getElementById('accountPop');
+  const userCard = document.getElementById('userCard');
+
+  function icon(name) {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || '') + '</svg>';
+  }
+
+  function renderNav() {
+    const items = NAV[state.mode];
+    navScroll.innerHTML = items.map(function (item) {
+      if (item.group) return '<div class="nav-group-label">' + item.group + '</div>';
+      return '<div class="nav-item' + (item.label === '概览' || item.label === '新建任务' ? ' active' : '') + '">' +
+        icon(item.icon) + '<span>' + item.label + '</span>' +
+        (item.hint ? '<span class="nav-hint">' + item.hint + '</span>' : '') + '</div>';
+    }).join('');
+
+    if (state.mode === 'user') {
+      navScroll.style.maxHeight = '300px';
+      taskBlock.hidden = false;
+      taskBlock.innerHTML = [
+        '<div class="task-title"><span>任务（51）</span><span aria-hidden="true">⌕</span></div>',
+        '<div class="task-section">置顶</div>',
+        '<div class="task-row"><span>【用户回答】问…</span><span class="task-time">昨天</span></div>',
+        '<div class="task-section">今天</div>',
+        '<div class="task-row active"><span>我明天从广州出发去…</span><span class="task-time">13:46</span></div>',
+        '<div class="task-section">更早</div>',
+        '<div class="task-row"><span>我有那些数据集</span><span class="task-time">11月3日</span></div>',
+        '<div class="task-row"><span>请检索 bumen-do…</span><span class="task-time">11月2日</span></div>'
+      ].join('');
+    } else {
+      navScroll.style.maxHeight = '380px';
+      taskBlock.hidden = true;
+      taskBlock.innerHTML = '';
+    }
+  }
+
+  function applyStage() {
+    mock.dataset.theme = state.theme;
+    mock.dataset.mode = state.mode;
+    renderNav();
+    document.getElementById('modeText').textContent = state.mode === 'pro' ? '专业模式' : '用户模式';
+    document.querySelector('.version-line').hidden = state.mode === 'user';
+    document.querySelectorAll('.mode-chip').forEach(function (chip) {
+      chip.setAttribute('aria-pressed', String(chip.dataset.modeChip === state.mode));
+    });
+    document.querySelectorAll('[data-theme-set]').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', String(btn.dataset.themeSet === state.theme));
+    });
+    document.getElementById('demoHint').textContent = state.mode === 'pro'
+      ? '演示：当前是专业模式。点「用户模式」看侧栏如何简化；模式偏好会写入账号，下次登录沿用。'
+      : '演示：当前是用户模式。点「专业模式」恢复完整工作台；两个模式各自记住主题。';
+    pop.hidden = !state.menuOpen;
+    userCard.setAttribute('aria-expanded', String(state.menuOpen));
+  }
+
+  function setTab(tab) {
+    state.tab = tab;
+    const isStage = tab === 'pro-light' || tab === 'pro-dark' || tab === 'user-light';
+    document.getElementById('stageWrap').hidden = !isStage;
+    document.getElementById('itemsDoc').hidden = tab !== 'items';
+    document.getElementById('specDoc').hidden = tab !== 'spec';
+
+    if (tab === 'pro-light') { state.theme = 'light'; state.mode = 'pro'; state.menuOpen = true; }
+    if (tab === 'pro-dark') { state.theme = 'dark'; state.mode = 'pro'; state.menuOpen = true; }
+    if (tab === 'user-light') { state.theme = 'light'; state.mode = 'user'; state.menuOpen = true; }
+
+    document.querySelectorAll('.tab-btn').forEach(function (btn) {
+      btn.setAttribute('aria-selected', String(btn.dataset.tab === tab));
+    });
+    applyStage();
+  }
+
+  document.querySelectorAll('.tab-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () { setTab(btn.dataset.tab); });
+  });
+
+  userCard.addEventListener('click', function () {
+    state.menuOpen = !state.menuOpen;
+    applyStage();
+  });
+
+  document.querySelectorAll('.mode-chip').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      state.mode = chip.dataset.modeChip;
+      applyStage();
+    });
+  });
+
+  document.querySelectorAll('[data-theme-set]').forEach(function (btn) {
+    btn.addEventListener('click', function (event) {
+      event.stopPropagation();
+      state.theme = btn.dataset.themeSet;
+      applyStage();
+    });
+  });
+
+  pop.addEventListener('click', function (event) {
+    const item = event.target.closest('[data-action]');
+    if (!item) return;
+    const action = item.dataset.action;
+    if (action === 'appearance') return;
+    const label = ACTION_LABEL[action] || action;
+    document.getElementById('demoHint').textContent = '演示：点击「' + label + '」在真实实现里会跳转对应页面或执行动作。';
+  });
+
+  document.addEventListener('click', function (event) {
+    if (!mock.contains(event.target)) return;
+    if (event.target.closest('#accountPop') || event.target.closest('#userCard')) return;
+    state.menuOpen = false;
+    applyStage();
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && state.menuOpen) {
+      state.menuOpen = false;
+      applyStage();
+    }
+  });
+
+  applyStage();
+</script>
+</body>
+</html>

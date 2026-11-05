@@ -13,6 +13,7 @@ import { useAppTheme } from "./useAppTheme"
 export type UiMode = "user" | "pro"
 
 const CACHE_PREFIX = "nanzi_ui_mode"
+const THEME_CACHE_PREFIX = "nanzi_ui_mode_theme"
 const VALID_MODES: readonly UiMode[] = ["user", "pro"]
 
 function readCurrentUser(): { id: string; role: string } {
@@ -57,15 +58,51 @@ function persistCachedMode(mode: UiMode): void {
  * - 专业模式 → 深色：这是平台原本的视觉，信息密度高、以深色侧栏为主。
  *
  * 只在**进入**对应模式时应用一次；用户之后手动切主题不会被反复拽回来。
+ * 每个模式还会记住自己上一次的主题：在用户模式里手动切了深色，去专业模式再切回来
+ * 仍然是深色，而不是被「默认亮色」覆盖。
  */
-export function applyUserModeDefaultTheme(): void {
+function themeCacheKey(mode: UiMode, userId: string): string {
+  return `${THEME_CACHE_PREFIX}:${userId || "anon"}:${mode}`
+}
+
+function readModeTheme(mode: UiMode): "light" | "dark" | null {
+  try {
+    const raw = localStorage.getItem(themeCacheKey(mode, readCurrentUser().id))
+    return raw === "light" || raw === "dark" ? raw : null
+  } catch {
+    return null
+  }
+}
+
+function persistModeTheme(mode: UiMode, theme: "light" | "dark"): void {
+  try {
+    localStorage.setItem(themeCacheKey(mode, readCurrentUser().id), theme)
+  } catch {
+    /* 隐私模式等写不进去，忽略：只是少一层「记住上次主题」 */
+  }
+}
+
+/** 把当前主题记到「即将离开的模式」名下，供下次切回来时恢复。 */
+export function rememberThemeForMode(mode: UiMode): void {
+  persistModeTheme(mode, useAppTheme().theme.value)
+}
+
+/** 进入某个模式时该用的主题：优先用该模式上一次记住的，其次用该模式的默认值。 */
+export function resolveModeTheme(mode: UiMode): "light" | "dark" {
+  return readModeTheme(mode) ?? (mode === "user" ? "light" : "dark")
+}
+
+export function applyModeTheme(mode: UiMode): void {
   const { setTheme } = useAppTheme()
-  setTheme("light")
+  setTheme(resolveModeTheme(mode))
+}
+
+export function applyUserModeDefaultTheme(): void {
+  applyModeTheme("user")
 }
 
 export function applyProModeDefaultTheme(): void {
-  const { setTheme } = useAppTheme()
-  setTheme("dark")
+  applyModeTheme("pro")
 }
 
 /** 角色默认值，与后端 `_resolve_ui_mode` 保持一致 */
@@ -133,10 +170,14 @@ export function ensureUiMode(): Promise<void> {
 export async function setUiMode(mode: UiMode): Promise<boolean> {
   if (!VALID_MODES.includes(mode)) return false
   const previous = uiMode.value
+  // 已经是这个模式：不重复写接口，也不要把当前主题重置成该模式的默认值
+  if (previous === mode) return true
   uiMode.value = mode
   persistCachedMode(mode)
   try {
     await axios.put("/api/portal/portal-prefs/ui-mode", { ui_mode: mode })
+    // 先记住离开的那个模式当前用的主题，再进入新模式的「上次主题 / 默认主题」
+    rememberThemeForMode(previous)
     if (mode === "user") applyUserModeDefaultTheme()
     else applyProModeDefaultTheme()
     ready.value = true

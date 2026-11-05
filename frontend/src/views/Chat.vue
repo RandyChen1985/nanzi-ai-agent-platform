@@ -206,6 +206,28 @@ const openEmbeddedAccount = () => {
     frame.postMessage({ type: 'OPEN_ACCOUNT' }, window.location.origin);
 };
 
+/**
+ * 把挂件正在使用的会话写回宿主 URL。
+ *
+ * 用户模式把「任务」当成主入口：侧栏要靠 URL 上的 conversation_id 才知道当前停在
+ * 哪条会话。挂件里新建会话时 ID 只存在于 iframe 内，之前宿主完全感知不到——
+ * 表现为「刚发的任务不出现在侧栏」「新建任务和历史任务同时高亮」。
+ *
+ * 写回时置 `skipNextQueryInit`：这次 URL 变化是我们自己同步的，不能再向挂件重推
+ * INIT_CONFIG，否则会把刚建好的会话重新初始化一遍（流式内容会丢）。
+ */
+const syncActiveConversationToUrl = (conversationId: unknown) => {
+  const id = String(conversationId || '').trim();
+  if (!id) return;
+  // 预览对话是临时会话（不落盘）：把它写进 URL 会让刷新后的「预览」变成一条真实会话
+  if (String(route.query.preview || '') === '1') return;
+  if (String(route.query.conversation_id || '') === id) return;
+  const nextQuery: Record<string, any> = { ...route.query, conversation_id: id };
+  delete nextQuery.new;
+  skipNextQueryInit = true;
+  void router.replace({ path: route.path, query: nextQuery });
+};
+
 const clearHostConversationPin = () => {
     if (!route.query.conversation_id) return;
     const nextQuery = { ...route.query };
@@ -233,6 +255,18 @@ const handleMessage = (event: MessageEvent) => {
         data.clear_host_conversation_pin
     ) {
         clearHostConversationPin();
+        return;
+    }
+
+    // 挂件上报「当前会话」：用户模式的侧栏靠它高亮当前任务、把新建的会话插进列表。
+    // 只在宿主 URL 还没有这个 ID 时写回，避免与 INIT 参数来回打架。
+    if (data.source === 'nanzi-agent-embed' && data.type === 'CONVERSATION_ACTIVE') {
+        syncActiveConversationToUrl(data.conversation_id);
+        // 同一会话在每轮结束后会再报一次：URL 没变，但用户模式侧栏的「任务」列表
+        // 需要据此把刚落库的新会话补进来（新建会话时 URL 在首条消息之前就写好了）。
+        window.dispatchEvent(new CustomEvent('nanzi:conversation-active', {
+            detail: { conversationId: String(data.conversation_id || '') },
+        }));
         return;
     }
     

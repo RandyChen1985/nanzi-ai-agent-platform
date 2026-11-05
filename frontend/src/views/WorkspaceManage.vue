@@ -5,6 +5,7 @@
   （`utils/workspaceFilePreview`、`useWorkspaceUploadQueue`）。能力对齐清单：
 
   - 浏览：面包屑 / 返回上级 / 快捷导航 / 最近文件 / 列表-卡片切换 / 排序 / 类型筛选
+  - 落点：默认直接进入本人的「我的目录」（后端 `prefer=user_root`），公共目录走「公共资源」入口
   - 搜索：默认过滤当前目录，输入 ≥2 字可切「全目录」走服务端 `/fs/search`
   - 文件：预览 / 下载 / 重命名 / 复制路径 / 解压 / 删除（移入回收站）
   - 目录：打开 / 新建文件夹 / 新建文件 / 上传（点选 + 拖拽）
@@ -191,7 +192,7 @@
         @click="askEmptyTrash"
       >清空回收站</button>
 
-      <span v-if="scope === 'admin_all'" class="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+      <span v-if="scope === 'admin_all' && !isInsideOwnWorkspace" class="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
         管理员视图 · 全部用户
       </span>
 
@@ -312,6 +313,7 @@
             <td class="px-3 py-2">
               <div class="flex justify-end">
                 <WorkspaceRowActions
+                  v-if="!isVirtualRoot"
                   :item="item"
                   :in-trash="inTrash"
                   @preview="handlePreview"
@@ -365,6 +367,7 @@
           </div>
           <div class="flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
             <WorkspaceRowActions
+              v-if="!isVirtualRoot"
               :item="item"
               :in-trash="inTrash"
               @preview="handlePreview"
@@ -477,6 +480,8 @@ const currentPath = ref("")
 const parentPath = ref("")
 const userWorkspaceRoot = ref("")
 const isRoot = ref(true)
+const isVirtualRoot = ref(false)
+const writable = ref(false)
 const scope = ref<"user_scoped" | "admin_all">("user_scoped")
 const loading = ref(false)
 const keyword = ref("")
@@ -499,7 +504,17 @@ const SYSTEM_PROTECTED = new Set(["docs", "skills", "branding", "agent_workspace
 const uploading = computed(() => snapshot.value.aggregate.active)
 const showUploadPanel = computed(() => snapshot.value.tasks.length > 0 && (uploading.value || snapshot.value.aggregate.failed > 0))
 const inTrash = computed(() => Boolean(userWorkspaceRoot.value) && currentPath.value === `${userWorkspaceRoot.value}/.trash`)
-const canCreateHere = computed(() => !inTrash.value && !loading.value && Boolean(currentPath.value) && !searchAll.value)
+// 管理员默认落在自己的私有工作区：那里不是「全部用户」视图，别让徽标误导。
+const isInsideOwnWorkspace = computed(() => {
+  const root = userWorkspaceRoot.value
+  if (!root || !currentPath.value) return false
+  return currentPath.value === root || currentPath.value.startsWith(`${root}/`)
+})
+// 虚拟根（「公共资源」）是授权根汇总，不是真实可写目录：新建/上传/勾选都必须关掉，
+// 否则按钮点下去只会吃后端 403。
+const canCreateHere = computed(
+  () => !inTrash.value && !loading.value && Boolean(currentPath.value) && !searchAll.value && writable.value,
+)
 
 const searchMode = computed(() => (searchAll.value && keyword.value.trim().length >= 2 ? "all" : "current"))
 const sourceItems = computed(() => (searchMode.value === "all" ? recursiveItems.value : items.value))
@@ -542,6 +557,8 @@ const allSelected = computed(
 const pathSegments = computed(() => {
   const root = userWorkspaceRoot.value
   if (searchMode.value === "all") return [{ label: `全目录搜索：${keyword.value.trim()}`, path: currentPath.value }]
+  // 虚拟根不是真实目录，面包屑只留一级「公共资源」（空 path 即回到汇总）。
+  if (isVirtualRoot.value) return [{ label: "公共资源", path: "" }]
   if (!currentPath.value) return []
   const relative = root && currentPath.value.startsWith(root)
     ? currentPath.value.slice(root.length).replace(/^\/+/, "")
@@ -566,7 +583,13 @@ const quickNavLinks = computed(() => {
     { key: "docs", label: "我的文档", path: `${root}/docs` },
     { key: "uploads", label: "上传目录", path: `${root}/uploads` },
     { key: "trash", label: "回收站", path: `${root}/.trash` },
-  ].map((link) => ({ ...link, active: currentPath.value === link.path && !searchAll.value }))
+    { key: "public", label: "公共资源", path: "" },
+  ].map((link) => ({
+    ...link,
+    active: link.key === "public"
+      ? isVirtualRoot.value
+      : !isVirtualRoot.value && currentPath.value === link.path && !searchAll.value,
+  }))
 })
 
 const formatSize = (bytes: number) => {
@@ -597,7 +620,7 @@ const fileEmoji = (name: string) => {
   return "📄"
 }
 
-const canSelect = (item: FsItem) => !inTrash.value && !SYSTEM_PROTECTED.has(item.name)
+const canSelect = (item: FsItem) => !inTrash.value && !isVirtualRoot.value && !SYSTEM_PROTECTED.has(item.name)
 
 const canManageItem = (item: FsItem) => {
   if (SYSTEM_PROTECTED.has(item.name)) return false
@@ -605,16 +628,27 @@ const canManageItem = (item: FsItem) => {
   return currentPath.value !== userWorkspaceRoot.value || !item.is_user_workspace
 }
 
-const load = async (path = "") => {
+/**
+ * 读取目录。
+ *
+ * `preferUserRoot` 只用于首屏：把空 path 交给后端解析成「本人私有工作区」
+ * （`GET /chat/fs/list?prefer=user_root`），不必先拿虚拟根再二次跳转。
+ * 「公共资源」入口走默认空 path，拿到的就是授权根汇总。
+ */
+const load = async (path = "", options: { preferUserRoot?: boolean } = {}) => {
   loading.value = true
   clearSelection()
   try {
-    const res = await axios.get("/api/v1/chat/fs/list", { params: { path } })
+    const params: Record<string, string> = { path }
+    if (options.preferUserRoot) params.prefer = "user_root"
+    const res = await axios.get("/api/v1/chat/fs/list", { params })
     const data = res.data?.data
     if (!data) return
     currentPath.value = data.current_path || ""
     parentPath.value = data.parent_path || ""
     isRoot.value = Boolean(data.is_root)
+    isVirtualRoot.value = Boolean(data.is_virtual_root)
+    writable.value = Boolean(data.writable)
     scope.value = data.scope === "admin_all" ? "admin_all" : "user_scoped"
     items.value = Array.isArray(data.items) ? data.items : []
     if (data.user_workspace_root) userWorkspaceRoot.value = data.user_workspace_root
@@ -629,8 +663,9 @@ const load = async (path = "") => {
   }
 }
 
-const navigate = (path: string) => {
-  if (!path) return
+const navigate = (path: string | null | undefined) => {
+  // 空字符串是「公共资源」虚拟根的合法目标，只有 null/undefined 才忽略。
+  if (path === null || path === undefined) return
   void load(path)
 }
 
@@ -973,7 +1008,9 @@ const handleRestore = async (item: FsItem) => {
 
 onMounted(() => {
   document.addEventListener("click", onDocumentClick)
-  void load("")
+  // 首屏直接落「我的目录」（后端 prefer=user_root 解析到本人私有工作区），
+  // 公共目录走侧栏「公共资源」入口。
+  void load("", { preferUserRoot: true })
 })
 
 onBeforeUnmount(() => {

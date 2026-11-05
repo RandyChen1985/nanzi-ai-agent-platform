@@ -9501,6 +9501,22 @@ const postMessageToHost = (payload: any) => {
     }),
   );
 };
+/**
+ * 会话建立 / 切换时把会话 ID 同步给宿主。
+ *
+ * 用户模式把「任务」做成主入口：侧栏需要知道「当前停在哪条会话」才能高亮，也需要
+ * 在新建会话后把新任务插进列表。挂件里的 conversationId 变化但宿主 URL 不会自动
+ * 更新，所以这里主动上报一次；宿主只在 URL 里还没有这个 ID 时写回，避免回环。
+ */
+watch(
+  conversationId,
+  (id) => {
+    const target = String(id || "").trim();
+    if (!target) return;
+    postMessageToHost({ type: "CONVERSATION_ACTIVE", conversation_id: target });
+  },
+  { immediate: true },
+);
 const savedReportFocusRequest = ref<{
   report_id: string;
   run_id: string;
@@ -13120,6 +13136,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   } finally {
     stopStreamLivenessWatch();
     streamInFlight = false;
+    // 本轮结束：把当前会话再报一次给宿主。新建会话的 URL 早在首条消息之前就有了，
+    // 宿主侧栏要靠这条消息（而不只是 URL 变化）把刚落库的任务刷进列表。
+    postMessageToHost({ type: "CONVERSATION_ACTIVE", conversation_id: conversationId.value });
     // SSE 已收流结束，此时才谈得上完成态：放在 streamInFlight 归零之后刷新，
     // 否则「本端仍在收流」的判据会把完成提示压掉。
     refreshRecoveryCard();

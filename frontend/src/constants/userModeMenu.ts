@@ -3,7 +3,8 @@
  *
  * 设计背景：动态菜单有 6 个分组、26 个入口，把「智能体调试 / 接口调试台 / 组件调试台」
  * 这类开发者入口也混在里面，普通用户很难一眼找到「新建任务」。
- * 用户模式只保留 4 个入口 + 「更多」，页面本身全部复用现有路由。
+ * 用户模式只保留 5 个一级入口（新建任务 / 专家·技能·连接器 / 定时任务 / 知识库 /
+ * 工作空间）+ 「更多」，页面本身全部复用现有路由。
  *
  * 权限策略（和动态菜单不同，刻意做了区分）：
  * - `onDenied: 'lock'`：没权限也保留位置、置灰、点击提示联系管理员。
@@ -23,6 +24,7 @@ export type UserModeIconKey =
   | "knowledge_base"
   | "folder"
   | "widget"
+  | "rectangle_stack"
   | "dashboard"
   | "memory"
   | "token_stats"
@@ -129,7 +131,7 @@ export const USER_MODE_MENU: readonly UserModeMenuItem[] = [
     icon: "widget",
     kind: "group",
     children: [
-      { key: "workbench", label: "我的工作台", icon: "widget", path: "/dashboard/workbench" },
+      { key: "workbench", label: "我的工作台", icon: "rectangle_stack", path: "/dashboard/workbench" },
       {
         key: "token",
         label: "Token 消耗",
@@ -206,6 +208,32 @@ export function resolveUserModeMenu(
 
 /** 侧栏「任务（n）」每页条数：首屏 8 条，滚到底部自动再拉一页 */
 export const USER_MODE_TASK_PAGE_SIZE = 8
+/** 按视口高度自适应时的上限：再高也没必要一次拉满 */
+export const USER_MODE_TASK_PAGE_SIZE_MAX = 20
+
+/** 单条任务行高度（模板里是 h-9 = 36px） */
+const TASK_ROW_HEIGHT = 36
+/**
+ * 侧栏里菜单 / 品牌行 / 用户卡 / 分页提示大约占掉的高度。
+ * 只用于把「任务区剩余高度」换算成条数，宁可少算几条也不要多到撑出滚动条。
+ */
+const SIDEBAR_CHROME_HEIGHT = 520
+
+/**
+ * 任务列表每页条数：默认 8 条，高屏按剩余高度多拉几条。
+ *
+ * 写死 8 条在 1080p / 2K 上会留下大半屏空白，用户得先滚一次才知道还有更多；
+ * 这里按视口高度估算可见行数，并夹在 [8, 20] 之间。视口高度拿不到时退回默认值。
+ */
+export function computeUserModeTaskPageSize(viewportHeight: number): number {
+  const height = Number(viewportHeight)
+  if (!Number.isFinite(height) || height <= 0) return USER_MODE_TASK_PAGE_SIZE
+  const rows = Math.floor((height - SIDEBAR_CHROME_HEIGHT) / TASK_ROW_HEIGHT)
+  return Math.min(
+    USER_MODE_TASK_PAGE_SIZE_MAX,
+    Math.max(USER_MODE_TASK_PAGE_SIZE, rows),
+  )
+}
 
 /** 「更多 → 切换到专业模式」的固定 key，供组件 emit */
 export const USER_MODE_SWITCH_MODE_KEY = "switch-mode"

@@ -411,12 +411,13 @@ def test_professional_mode_defaults_to_dark_theme() -> None:
 
     这是平台原本的视觉；用户模式的亮色是简化布局的配套。
     两条路（切换 + 登录落地）都要覆盖，否则从用户模式切过去会停在亮色。
+    每个模式还会记住自己上一次的主题：用户模式里手动切过深色，切回来仍是深色。
     """
     ui_mode = _read("frontend/src/composables/useUiMode.ts")
     login = _read("frontend/src/views/Login.vue")
 
     assert "export function applyProModeDefaultTheme" in ui_mode
-    assert 'setTheme("dark")' in ui_mode
+    assert 'return readModeTheme(mode) ?? (mode === "user" ? "light" : "dark")' in ui_mode
     assert "else applyProModeDefaultTheme()" in ui_mode
     assert "applyProModeDefaultTheme()" in login
 
@@ -558,3 +559,216 @@ def test_submenu_items_carry_icons() -> None:
     assert 'v-if="child.icon"' in sidebar
     assert 'class="h-[15px] w-[15px] flex-shrink-0 opacity-85"' in sidebar
     assert "pb-1 pl-[30px]" in sidebar
+
+
+# ---------------------------------------------------------------------------
+# 第二轮打磨：会话同步、置顶/分享/删除、失败态、竞态、分组与主题记忆
+# ---------------------------------------------------------------------------
+
+
+def test_locked_entry_stays_clickable_for_hint() -> None:
+    """置灰入口不能用 `disabled`。
+
+    disabled 的 button 在浏览器里不派发 click，`onItemClick` 里的 toast 分支
+    就永远不可达——「点击提示联系管理员」只是写了代码，用户点了没反应。
+    """
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert ':disabled="item.locked"' not in sidebar
+    assert ':disabled="child.locked"' not in sidebar
+    assert ':aria-disabled="item.locked ? \'true\' : undefined"' in sidebar
+    assert 'emit("toast", lockedHint(item.label), "warning")' in sidebar
+
+
+def test_task_list_survives_load_failure() -> None:
+    """接口失败不能伪装成「还没有任务」。"""
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert "const loadError = ref(false)" in sidebar
+    assert "loadError.value = true" in sidebar
+    assert "任务列表加载失败。" in sidebar
+    assert "点此重试" in sidebar
+    # 失败时保留旧列表，不能清空
+    failed_branch = sidebar.split("} catch {", 2)[1]
+    assert "tasks.value = []" not in failed_branch
+
+
+def test_task_requests_are_serialized() -> None:
+    """搜索 / 分页要有请求序号：慢响应不能覆盖新关键词的结果。"""
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert "let loadSerial = 0" in sidebar
+    assert "const serial = ++loadSerial" in sidebar
+    assert "if (serial !== loadSerial) return" in sidebar
+
+
+def test_task_list_is_grouped_and_uses_relative_time() -> None:
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert '["today", "今天"]' in sidebar
+    assert '["yesterday", "昨天"]' in sidebar
+    assert '["earlier", "更早"]' in sidebar
+    assert "const formatTaskTime = (value?: string): string =>" in sidebar
+    assert 'return "昨天"' in sidebar
+    assert "getFullYear() === now.getFullYear()" in sidebar
+
+
+def test_task_row_offers_pin_share_delete() -> None:
+    """任务行要能管理会话：置顶 / 分享 / 删除（重命名暂无接口）。"""
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert "usePinnedConversations({ client: axios })" in sidebar
+    assert "ShareConversationDialog" in sidebar
+    assert "ConfirmModal" in sidebar
+    assert "/api/v1/chat/history/batch-delete" in sidebar
+    assert "取消置顶" in sidebar
+    assert "分享" in sidebar
+    assert "删除" in sidebar
+
+
+def test_pinned_sessions_are_loaded_and_merged() -> None:
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert "pinnedApi.load()" in sidebar
+    assert 'key: "pinned"' in sidebar
+    assert 'title: "置顶"' in sidebar
+    # 置顶项优先用当前列表里的实时数据，列表没有时退回快照
+    assert "entry.title || \"未命名对话\"" in sidebar
+
+
+def test_menu_and_task_list_scroll_independently() -> None:
+    """菜单固定、任务区独立滚动：任务多时菜单不能被一起滚走。"""
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    menu_index = sidebar.index("max-h-[52vh] overflow-y-auto custom-scrollbar")
+    task_index = sidebar.index('ref="scrollRef"')
+    assert menu_index < task_index
+    assert 'class="min-h-0 flex-1 overflow-y-auto px-2.5 pb-3 custom-scrollbar"' in sidebar
+
+
+def test_new_chat_highlight_requires_no_active_conversation() -> None:
+    """「新建任务」只在聊天页且没有打开会话时高亮。
+
+    否则点开历史会话后它和当前任务同时亮，用户分不清自己在哪个会话里。
+    """
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert "const isNewChatActive = computed(" in sidebar
+    assert '!String(props.activeConversationId || "")' in sidebar
+    assert "isItemActive(item)" in sidebar
+
+
+def test_collapsed_sidebar_keeps_actions() -> None:
+    """收起成 68px 后仍要能看通知、切主题、退出登录。"""
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    collapsed_block = sidebar.split('<template v-if="collapsed">', 1)[1].split("</template>", 1)[0]
+    assert "PortalNotificationBell" in collapsed_block
+    assert 'emit(\'toggle-theme\')' in collapsed_block
+    assert 'emit(\'logout\')' in collapsed_block
+
+
+def test_user_card_shows_role_instead_of_handle() -> None:
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert "const roleLabel = computed(" in sidebar
+    assert '"管理员" : "普通用户"' in sidebar
+    assert "{{ roleLabel }}" in sidebar
+
+
+def test_task_page_size_adapts_to_viewport() -> None:
+    menu = _read("frontend/src/constants/userModeMenu.ts")
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert "export function computeUserModeTaskPageSize" in menu
+    assert "USER_MODE_TASK_PAGE_SIZE_MAX = 20" in menu
+    assert "computeUserModeTaskPageSize(window.innerHeight)" in sidebar
+    assert 'window.addEventListener("resize", handleResize)' in sidebar
+
+
+def test_mobile_drawer_hides_collapse_button() -> None:
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert 'v-if="!mobile"' in sidebar
+    assert "mobile?: boolean" in sidebar
+
+
+def test_empty_state_offers_new_chat_button() -> None:
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert 'v-if="taskKeyword.trim()">没有匹配的任务。' in sidebar
+    assert ">新建任务</button>" in sidebar
+
+
+def test_search_also_matches_agent_name() -> None:
+    """搜「周报助手」也要能找到会话，而不是只能搜提问正文。"""
+    service = _read("app/services/ai/history_query.py")
+
+    assert "def agent_name_matching_clause" in service
+    assert "AIAgent.name.like(pattern)" in service
+    assert "AIAgent.display_name.like(pattern)" in service
+    assert "agent_name_matching_clause(pattern, turn)" in service
+    assert "agent_name_matching_clause(pattern)," in service
+
+
+def test_theme_is_remembered_per_mode() -> None:
+    """每个模式记住自己上次的主题，切回来不再被默认值覆盖。"""
+    ui_mode = _read("frontend/src/composables/useUiMode.ts")
+
+    assert "const THEME_CACHE_PREFIX" in ui_mode
+    assert "export function rememberThemeForMode" in ui_mode
+    assert "rememberThemeForMode(previous)" in ui_mode
+    assert 'return readModeTheme(mode) ?? (mode === "user" ? "light" : "dark")' in ui_mode
+    # 同值切换直接返回：不要因为「再点一次当前模式」把主题重置
+    assert "if (previous === mode) return true" in ui_mode
+
+
+def test_widget_reports_active_conversation_to_host() -> None:
+    """挂件 → 宿主：会话建立/切换后把 conversation_id 同步出去。"""
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    chat = _read("frontend/src/views/Chat.vue")
+
+    assert 'postMessageToHost({ type: "CONVERSATION_ACTIVE", conversation_id: target })' in embed
+    assert "CONVERSATION_ACTIVE" in chat
+    assert "const syncActiveConversationToUrl = (conversationId: unknown) =>" in chat
+    assert "skipNextQueryInit = true" in chat
+    assert "delete nextQuery.new" in chat
+
+
+def test_sidebar_refreshes_when_host_conversation_changes() -> None:
+    """宿主 URL 换了会话：新会话要自动进列表，但自己点开的那条不重复拉取。"""
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    assert 'String(route.query.conversation_id || "")' in sidebar
+    assert "selfOpenedConversationId" in sidebar
+    assert "void loadTasks()" in sidebar
+
+
+def test_workbench_icon_is_not_the_more_group_icon(menu: str) -> None:
+    """「更多」和「我的工作台」不能共用同一个图标，否则看着像同一个分组。"""
+    more_icon = "widget"
+    assert f'key: "more",\n    label: "更多",\n    icon: "{more_icon}"' in menu
+    assert '{ key: "workbench", label: "我的工作台", icon: "rectangle_stack"' in menu
+    assert '"rectangle_stack"' in menu
+    # 图标 key 必须在 UserModeIconKey 的白名单里，否则类型/渲染都会回落
+    assert '| "rectangle_stack"' in menu
+
+
+def test_new_conversation_refreshes_task_list_on_stream_end() -> None:
+    """新建会话后任务列表要自己出现：挂件流结束重报会话 → 宿主转发 → 侧栏补刷。"""
+    chat = _read("frontend/src/views/Chat.vue")
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    sidebar = _read("frontend/src/components/layout/UserModeSidebar.vue")
+
+    # 挂件：本轮结束再报一次（URL 不变时也要让宿主知道）
+    assert "本轮结束：把当前会话再报一次给宿主" in embed
+    assert 'postMessageToHost({ type: "CONVERSATION_ACTIVE", conversation_id: conversationId.value });' in embed
+
+    # 宿主：把会话活跃事件转成窗口事件（同源页面内可订阅）
+    assert "nanzi:conversation-active" in chat
+    assert "new CustomEvent('nanzi:conversation-active'" in chat
+
+    # 侧栏：监听 + 按 id 补刷，找到就停
+    assert 'window.addEventListener("nanzi:conversation-active", onConversationActive)' in sidebar
+    assert "refreshTasksForConversation" in sidebar
+    assert "attempt >= 3" in sidebar

@@ -13,13 +13,14 @@ import ConfirmModal from "../components/ConfirmModal.vue";
 import SidebarMenuLink from "../components/menu/SidebarMenuLink.vue";
 import { useNavigation, type NavNode } from "../composables/useNavigation";
 import UserModeSidebar from "../components/layout/UserModeSidebar.vue";
+import AccountMenu from "../components/layout/AccountMenu.vue";
 import { useUiMode } from "../composables/useUiMode";
 import { collectUserModePaths } from "../constants/userModeMenu";
 
 const router = useRouter();
 const route = useRoute();
 const { branding, loadBranding, applyDocumentTitle, resolveRepoUrl } = useBranding();
-const { theme, toggleTheme } = useAppTheme();
+const { theme, toggleTheme, setTheme } = useAppTheme();
 const repoUrl = computed(() => (branding.value.hide_version_link ? "" : resolveRepoUrl()));
 const LEFT_SIDEBAR_COLLAPSED_KEY = "embed_left_sidebar_collapsed";
 const isDesktopSidebar = () => window.matchMedia("(min-width: 1024px)").matches;
@@ -438,9 +439,38 @@ const cancelLogout = () => {
   showLogoutDialog.value = false;
 };
 
-const openUserInfo = () => {
-  router.push("/dashboard/personal");
+/* ---------------- 账户菜单（专业模式 / 用户模式共用同一份） ---------------- */
+const accountMenuOpen = ref(false);
+const toggleAccountMenu = () => {
+  accountMenuOpen.value = !accountMenuOpen.value;
 };
+const closeAccountMenu = () => {
+  accountMenuOpen.value = false;
+};
+
+const handleAccountNavigate = (path: string) => {
+  closeAccountMenu();
+  router.push(path);
+};
+
+const handleAccountSetTheme = (value: "light" | "dark") => {
+  setTheme(value);
+};
+
+const handleAccountSwitchMode = (mode: "user" | "pro") => {
+  closeAccountMenu();
+  void handleUserModeSwitchMode(mode);
+};
+
+const handleAccountLogout = () => {
+  closeAccountMenu();
+  logout();
+};
+
+// 换页就收掉弹层：菜单里的每一项都会跳转，留着会盖在新页面上
+watch(() => route.fullPath, () => {
+  if (accountMenuOpen.value) accountMenuOpen.value = false;
+});
 
 const handleEscape = (e: KeyboardEvent) => {
   if (e.key !== "Escape") return;
@@ -644,11 +674,6 @@ const handleUserModeOpenConversation = (item: { conversation_id?: string | null 
   router.push({ path: "/dashboard/chat", query: { conversation_id: String(item.conversation_id) } });
 };
 
-const handleUserModeOpenPersonal = () => {
-  closeMobileSidebarIfNeeded();
-  router.push("/dashboard/personal");
-};
-
 /**
  * 切到用户模式后，如果当前页面不在用户模式菜单里（多半是从专业模式的
  * 「用户管理 / 系统配置」这类页面切过来的），回落到新建任务页。
@@ -679,6 +704,9 @@ const handleUserModeSwitchMode = async (mode: "user" | "pro") => {
     ok ? (mode === "pro" ? "已切换到专业模式" : "已切换到用户模式") : "切换失败，请稍后重试",
     ok ? "success" : "error",
   );
+  if (!ok) return;
+  // 切完直接落到该模式的主入口：用户模式 → 任务页；专业模式 → 落地页（管理员概览 / 普通用户工作台）
+  router.push(mode === "user" ? "/dashboard/chat" : homeRoute.value);
 };
 
 onMounted(() => {
@@ -730,12 +758,12 @@ onMounted(() => {
         @navigate="handleUserModeNavigate"
         @new-chat="handleUserModeNewChat"
         @open-conversation="handleUserModeOpenConversation"
-        @open-personal="handleUserModeOpenPersonal"
+        @open-account-menu="toggleAccountMenu"
         @switch-mode="handleUserModeSwitchMode"
         @toggle-theme="handleUserModeToggleTheme"
         @logout="handleUserModeLogout"
         @toggle-collapse="toggleSidebar"
-        @toast="(message: string) => showToast(message, 'warning')"
+        @toast="(message: string, type?: 'success' | 'warning' | 'error') => showToast(message, type || 'warning')"
       />
 
       <template v-else>
@@ -879,13 +907,16 @@ onMounted(() => {
         ]"
       >
         <button
-          @click="openUserInfo"
+          data-account-trigger
+          aria-haspopup="menu"
+          :aria-expanded="accountMenuOpen"
+          @click="toggleAccountMenu"
           class="w-full flex items-center overflow-hidden whitespace-nowrap transition-all rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-primary/40 group/user"
           :class="[
             isCollapsed ? 'justify-center p-1.5' : (isMobile ? 'p-2.5' : 'p-2'),
             theme === 'light' ? 'hover:bg-gray-100/80' : 'hover:bg-white/[0.06]',
           ]"
-          title="查看个人信息"
+          title="账户与界面模式"
         >
           <!-- 已上传自定义头像时优先渲染图片（圆形、object-cover）；否则维持姓名首字 -->
           <img
@@ -1005,6 +1036,26 @@ onMounted(() => {
         </transition>
       </div>
       </template>
+
+      <!-- 账户菜单：两种模式共用同一个弹层，内容一致，只有当前模式的高亮不同 -->
+      <AccountMenu
+        :visible="accountMenuOpen"
+        :light-theme="theme === 'light'"
+        :theme="theme"
+        :mode="isUserMode ? 'user' : 'pro'"
+        :user-name="userInfo.user_name"
+        :real-name="userInfo.real_name || userInfo.user_name"
+        :avatar-url="userInfo.avatar_url || ''"
+        :role="String(userInfo.role || '')"
+        :version="displayVersion"
+        :repo-url="repoUrl"
+        :mobile="isMobile"
+        @close="closeAccountMenu"
+        @navigate="handleAccountNavigate"
+        @switch-mode="handleAccountSwitchMode"
+        @set-theme="handleAccountSetTheme"
+        @logout="handleAccountLogout"
+      />
     </aside>
 
     <!-- Main Content Area -->
