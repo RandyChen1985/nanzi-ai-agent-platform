@@ -335,8 +335,16 @@ def _apply_knowledge_permission_flags(
         ds_id = str(item.get("ragflow_dataset_id") or item.get("id") or "")
         # 编辑策略随列表一起返回：前端不必为每个库单独请求一次，也能直接显示
         # 「这个库谁能改文档」。缺失/非法值由 resolve_edit_policy_from_config 兜底。
+        #
+        # 注意取值路径：merge_with_ragflow 把本地元数据整体挂在 local_metadata 下
+        # （不平铺 extra_config）。早先这里直接读 item["extra_config"] 永远是 None，
+        # 于是列表永远显示默认策略 —— 表现为「保存成功了，刷新又还原」。
+        local_meta = item.get("local_metadata")
+        extra_config = item.get("extra_config")
+        if extra_config is None and isinstance(local_meta, dict):
+            extra_config = local_meta.get("extra_config")
         item["edit_policy"] = resolve_edit_policy_from_config(
-            item.get("extra_config"), item.get("visibility")
+            extra_config, item.get("visibility")
         )
         if access.get("is_admin"):
             item["can_write"] = True

@@ -56,3 +56,21 @@ def test_backend_content_write_uses_policy_aware_set() -> None:
     """文档写操作走内容级集合，策略才会真的生效。"""
     assert 'access.get("content_writable_ids")' in API
     assert "async def require_dataset_content_write_access" in API
+
+
+def test_list_grant_column_opens_references_drawer() -> None:
+    """列表「授权」列可直接打开抽屉的「引用与授权」页，省掉先进详情再切 Tab。"""
+    assert "const openDatasetReferencesFor" in VIEW
+    assert "openLibDrawer('references')" in VIEW
+    assert '@click.stop="openDatasetReferencesFor(ds)"' in VIEW
+    # 没有管理权限时保持纯文本，避免「能点但被后端 403」
+    assert "canManageDataset(ds) ? 'cursor-pointer" in VIEW
+
+
+def test_detail_header_shows_my_edit_permission_badge() -> None:
+    """详情页头部显示「可编辑 / 只读」，并区分只读的两种原因。"""
+    assert "selectedDatasetContentWritable" in VIEW
+    assert "{{ selectedDatasetContentWritable ? '可编辑' : '只读' }}" in VIEW
+    # 只读原因：功能权限缺失 vs 策略没覆盖
+    assert "当前角色没有知识库的上传/删除/解析功能权限" in VIEW
+    assert "本库的编辑权限范围没有覆盖到你" in VIEW

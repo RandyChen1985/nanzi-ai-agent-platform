@@ -2955,6 +2955,29 @@ const bulkDeleteDocuments = async () => {
 /** 当前详情页的库是否可写：只读成员只能看内容，不能改元数据/上传/授权 */
 const selectedDatasetWritable = computed(() => canManageDataset(selectedDataset.value))
 
+/** 我能不能改这个库的文档（数据层）：与「编辑权限范围」策略无关，是策略算到我头上的结果 */
+const selectedDatasetContentWritable = computed(
+  () => Boolean(selectedDataset.value) && !isReadOnlyDataset(selectedDataset.value),
+)
+
+/**
+ * 头部「可编辑 / 只读」标签的悬浮说明。
+ *
+ * 只读有两种完全不同的原因，混成一句「无权限」会让人排查错方向：
+ * ① 数据层没给我写权限（编辑策略/授权没覆盖到我）；
+ * ② 数据层给了，但我的角色没有上传/删除/解析这些功能权限。
+ */
+const contentWritableHint = computed(() => {
+  if (!selectedDataset.value) return ''
+  if (selectedDatasetContentWritable.value) {
+    return `你可以编辑「${selectedDataset.value.platform_name || selectedDataset.value.name || ''}」的文档（上传 / 删除 / 解析）`
+  }
+  if (!canUpload.value && !canDeleteDocument.value && !canParse.value) {
+    return '只读：当前角色没有知识库的上传/删除/解析功能权限，即使库允许编辑也无法操作'
+  }
+  return '只读：本库的编辑权限范围没有覆盖到你，请联系库的归属人或管理员'
+})
+
 /* ---------------- 编辑权限范围（谁能改库里的文档） ---------------- */
 const showEditPolicyDialog = ref(false)
 const editPolicyTarget = ref<any>(null)
@@ -3050,6 +3073,17 @@ const loadDatasetReferences = async () => {
 /** 「更多」菜单里的「引用与授权」：直接打开库信息抽屉并落到授权页 */
 const openDatasetReferences = () => {
   if (!selectedDataset.value) return
+  openLibDrawer('references')
+  void loadDatasetReferences()
+}
+
+/**
+ * 列表里点「授权」列：选中该库并直接打开抽屉的「引用与授权」页。
+ * 原来要先点进详情、再切 Tab 才能分配授权，列表上多这一步没有意义。
+ */
+const openDatasetReferencesFor = (dataset: any) => {
+  if (!canManageDataset(dataset)) return
+  selectDatasetNode(dataset)
   openLibDrawer('references')
   void loadDatasetReferences()
 }
@@ -4328,6 +4362,14 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   :class="visibilityBadgeClass(selectedDataset)"
                   :title="visibilityHint(selectedDataset)"
                 >{{ visibilityLabel(selectedDataset) }}</span>
+                <!-- 我的编辑权限：用户最关心的其实是「我能不能改」，不是策略本身 -->
+                <span
+                  class="shrink-0 cursor-default rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-normal"
+                  :class="selectedDatasetContentWritable
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                    : 'border-gray-200 bg-gray-50 text-gray-500'"
+                  :title="contentWritableHint"
+                >{{ selectedDatasetContentWritable ? '可编辑' : '只读' }}</span>
                 <HoverTip
                   v-if="selectedDataset.is_missing_in_ragflow"
                   :text="MISSING_DATASET_HINT"
@@ -4654,9 +4696,27 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <span class="text-[11px] tabular-nums" :class="(ds.agent_ref_count ?? 0) ? 'text-gray-500' : 'text-gray-300'" :title="libraryRefHint(ds)">
                 {{ (ds.agent_ref_count ?? 0) || '—' }}
               </span>
-              <span class="truncate text-[11px] tabular-nums" :class="(ds.grant_user_count ?? 0) || (ds.grant_role_count ?? 0) ? 'text-gray-500' : 'text-gray-300'" :title="libraryGrantHint(ds)">
-                {{ libraryGrantText(ds) }}
-              </span>
+              <button
+                v-if="canManageDataset(ds)"
+                type="button"
+                class="group/auth inline-flex max-w-full items-center gap-0.5 rounded px-1 py-0.5 text-[11px] tabular-nums transition-colors hover:bg-primary/5 hover:text-primary"
+                :class="(ds.grant_user_count ?? 0) || (ds.grant_role_count ?? 0) ? 'text-gray-500' : 'text-gray-300'"
+                :title="`${libraryGrantHint(ds)}；点击分配授权成员`"
+                @click.stop="openDatasetReferencesFor(ds)"
+              >
+                <span class="truncate">{{ libraryGrantText(ds) }}</span>
+                <svg class="h-2.5 w-2.5 shrink-0 opacity-0 transition-opacity group-hover/auth:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" stroke-linecap="round" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M19 8v6M22 11h-6" stroke-linecap="round" />
+                </svg>
+              </button>
+              <span
+                v-else
+                class="truncate text-[11px] tabular-nums"
+                :class="(ds.grant_user_count ?? 0) || (ds.grant_role_count ?? 0) ? 'text-gray-500' : 'text-gray-300'"
+                :title="libraryGrantHint(ds)"
+              >{{ libraryGrantText(ds) }}</span>
               <button
                 type="button"
                 class="group/edit inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:cursor-default"
@@ -4722,7 +4782,14 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400">
                 <span><b class="font-semibold text-gray-600 tabular-nums">{{ docCountOf(ds) }}</b> 文档</span>
                 <span :title="libraryRefHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ (ds.agent_ref_count ?? 0) || '—' }}</b> 引用</span>
-                <span :title="libraryGrantHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ libraryGrantText(ds) }}</b> 授权</span>
+                <span
+                  :title="canManageDataset(ds) ? `${libraryGrantHint(ds)}；点击分配授权成员` : libraryGrantHint(ds)"
+                  :class="canManageDataset(ds) ? 'cursor-pointer underline decoration-dotted underline-offset-2 hover:text-primary' : ''"
+                  :role="canManageDataset(ds) ? 'button' : undefined"
+                  :tabindex="canManageDataset(ds) ? 0 : undefined"
+                  @click.stop="openDatasetReferencesFor(ds)"
+                  @keydown.enter.stop="openDatasetReferencesFor(ds)"
+                ><b class="font-semibold text-gray-600 tabular-nums">{{ libraryGrantText(ds) }}</b> 授权</span>
                 <!-- 卡片本身是 <button>，这里只能用 span：HTML 不允许 button 套 button。
                      有权限时给下划线 + hover 变蓝，和行视图的笔图标表达同一件事 -->
                 <span

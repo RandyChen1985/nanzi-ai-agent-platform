@@ -152,3 +152,34 @@ async def test_team_dataset_accepts_team_members(app_client):
         )
     assert res.status_code == 200, res.text
     assert res.json()["data"]["edit_policy"]["mode"] == "team_members"
+
+
+def test_list_items_read_policy_from_local_metadata():
+    """列表项的策略在 local_metadata.extra_config 里，不在顶层。
+
+    merge_with_ragflow 把本地元数据整体挂在 local_metadata 下，早先后端直接读
+    item["extra_config"] 永远是 None，列表就永远显示默认策略 —— 表现为
+    「保存成功了，刷新又还原」。这条测试锁住取值路径。
+    """
+    items = [
+        {
+            "ragflow_dataset_id": "d1",
+            "visibility": "public",
+            "local_metadata": {
+                "extra_config": {"edit_policy": {"mode": "granted", "editors": []}}
+            },
+        }
+    ]
+    ragflow._apply_knowledge_permission_flags(items, {"is_admin": True})
+    assert items[0]["edit_policy"]["mode"] == "granted"
+
+
+def test_list_items_fall_back_to_default_policy():
+    """没有策略 / 元数据缺失时按可见范围默认值兜底，不能抛错。"""
+    items = [
+        {"ragflow_dataset_id": "d1", "visibility": "team", "local_metadata": None},
+        {"ragflow_dataset_id": "d2", "visibility": "public"},
+    ]
+    ragflow._apply_knowledge_permission_flags(items, {"is_admin": True})
+    assert items[0]["edit_policy"]["mode"] == "team_members"
+    assert items[1]["edit_policy"]["mode"] == "readonly"
