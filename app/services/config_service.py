@@ -40,6 +40,12 @@ logger = logging.getLogger(__name__)
 CACHE_PREFIX = "sys_config:"
 CACHE_TTL = 300  # 5 minutes
 SANDBOX_POLICY_KEY = "sandbox_policy"
+
+#: 委派上限配置键。键名与 ``app/services/ai/tools/agent_delegate_tool.py`` 保持一致；
+#: 校验与热更新函数留在该模块，分支内延迟导入——config_service 被几乎每个端点导入，
+#: 顶部拉起重型的委派/工具注册表既拖慢启动，也容易绕成循环导入。
+DELEGATION_MAX_BATCH_CALLS_KEY = "delegation_max_batch_calls"
+DELEGATION_MAX_CALLS_PER_AGENT_KEY = "delegation_max_calls_per_agent"
 SANDBOX_POLICY_DOCKER = "docker"
 SANDBOX_POLICY_K8S = "k8s"
 
@@ -102,6 +108,21 @@ def validate_config_update(key: str, value: str) -> None:
     elif key == AGENTSCOPE_MAX_CONCURRENT_TOOLS_KEY:
         limit = validate_agentscope_max_concurrent_tools(value)
         set_max_concurrency_limit(limit)
+    elif key == DELEGATION_MAX_BATCH_CALLS_KEY:
+        # 委派上限：校验 + 立即热更新模块内上限与工具描述（模型下一轮就能看到新约束）
+        from app.services.ai.tools.agent_delegate_tool import (
+            set_max_batch_delegation_calls,
+            validate_max_batch_delegation_calls,
+        )
+
+        set_max_batch_delegation_calls(validate_max_batch_delegation_calls(value))
+    elif key == DELEGATION_MAX_CALLS_PER_AGENT_KEY:
+        from app.services.ai.tools.agent_delegate_tool import (
+            set_max_delegation_calls_per_agent,
+            validate_max_delegation_calls_per_agent,
+        )
+
+        set_max_delegation_calls_per_agent(validate_max_delegation_calls_per_agent(value))
     elif key in (
         "knowledge_quota_max_datasets_per_user",
         "knowledge_quota_max_documents_per_dataset",

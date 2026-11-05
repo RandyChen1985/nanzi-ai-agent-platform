@@ -178,5 +178,8 @@ def test_personal_center_drops_the_dashboard_gutter_without_remounting_tabs():
     assert 'route.name === "PersonalCenter"' in dashboard
     # 外层 gutter 已移除：内容宽度不再被 Dashboard 再吃一层（内边距由组件自身按 Tab 负责）
     assert 'if (route.name === "PersonalCenter") return "p-0";' in dashboard
-    assert ':key="$route.path"' in dashboard
+    # key 允许附加「用户模式新建任务」的重挂载计数，但必须仍然以 $route.path 为基：
+    # 换成 fullPath 会让 query 变化（切会话、改筛选）也重挂载整页，聊天 iframe 会被重建。
+    assert ':key="$route.path + \'#\' + pageReloadToken"' in dashboard
+    assert ':key="$route.path"' not in dashboard
     assert ':key="$route.fullPath"' not in dashboard

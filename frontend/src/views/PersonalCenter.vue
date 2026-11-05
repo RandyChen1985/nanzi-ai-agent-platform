@@ -16,6 +16,7 @@ import AvatarCropperModal from '../components/common/AvatarCropperModal.vue'
 import PermissionSectionCard from '../components/personal/PermissionSectionCard.vue'
 import type { PermissionNode } from '../constants/permissions'
 import PersonalPermissionTree from '../components/personal/PersonalPermissionTree.vue'
+import { useUiMode } from '../composables/useUiMode'
 
 const { branding, loadBranding } = useBranding()
 
@@ -26,7 +27,7 @@ const apiKeyRevealed = ref(false)
 const newPassword = ref('')
 const confirmPassword = ref('')
 const loadingPassword = ref(false)
-const infoSubTab = ref<'profile' | 'security' | 'browser'>('profile')
+const infoSubTab = ref<'profile' | 'security' | 'browser' | 'preferences'>('profile')
 
 const passwordPolicyResult = computed(() => checkPasswordPolicy(newPassword.value, userInfo.value?.user_name))
 
@@ -201,6 +202,42 @@ const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'inf
 
 const closeToast = () => {
   toast.value.show = false
+}
+
+/**
+ * 界面模式（用户模式 / 专业模式）。
+ *
+ * 偏好存在账号级 Redis，切换后侧栏立即换排布；不做系统配置项，
+ * 默认值由后端按角色给（管理员 pro、其他 user）。
+ */
+const { uiMode, setUiMode } = useUiMode()
+const switchingUiMode = ref(false)
+
+const uiModeOptions: Array<{ value: 'user' | 'pro'; label: string; desc: string }> = [
+  {
+    value: 'user',
+    label: '用户模式',
+    desc: '只保留最常用的入口：新建任务、专家·技能·连接器、定时任务、知识库、工作空间，下面是历史任务。',
+  },
+  {
+    value: 'pro',
+    label: '专业模式',
+    desc: '沿用现有完整菜单：智能体开发平台、ChatBI、知识库、日志与 Token 分析、系统管理。',
+  },
+]
+
+const handleSwitchUiMode = async (mode: 'user' | 'pro') => {
+  if (switchingUiMode.value || uiMode.value === mode) return
+  switchingUiMode.value = true
+  try {
+    const ok = await setUiMode(mode)
+    showToast(
+      ok ? (mode === 'pro' ? '已切换到专业模式' : '已切换到用户模式') : '切换失败，请稍后重试',
+      ok ? 'success' : 'error'
+    )
+  } finally {
+    switchingUiMode.value = false
+  }
 }
 
 const fetchUserInfo = async () => {
@@ -1181,6 +1218,21 @@ onMounted(() => {
                         </svg>
                         <span>云端浏览器缓存</span>
                     </button>
+                    <!-- 界面偏好（方案 B）：切换用户模式 / 专业模式 -->
+                    <button
+                        type="button"
+                        data-user-sub-tab="preferences"
+                        @click="infoSubTab = 'preferences'"
+                        class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs sm:text-sm transition-all cursor-pointer whitespace-nowrap"
+                        :class="infoSubTab === 'preferences' ? 'bg-blue-600 font-semibold text-white shadow-sm shadow-blue-500/20' : 'text-gray-600 hover:bg-white hover:text-gray-900'"
+                    >
+                        <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 9.5h16M9.5 9.5V20" />
+                        </svg>
+                        <span>界面偏好</span>
+                        <span class="ml-auto rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">新</span>
+                    </button>
                 </nav>
             </aside>
 
@@ -1663,6 +1715,41 @@ onMounted(() => {
                 </div>
 
                 <!-- 3. 云端浏览器环境 -->
+                <!-- 界面偏好（方案 B）：用户模式 / 专业模式，写账号级偏好 -->
+                <div v-else-if="infoSubTab === 'preferences'" class="max-w-2xl space-y-6" data-user-panel="preferences">
+                    <div>
+                        <h2 class="text-lg font-bold text-gray-900">界面偏好</h2>
+                        <p class="mt-1 text-xs text-gray-500">选择你习惯的界面。切换只影响你自己，随时可以改回来。</p>
+                    </div>
+
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <button
+                            v-for="option in uiModeOptions"
+                            :key="option.value"
+                            type="button"
+                            class="rounded-xl border p-4 text-left transition-all"
+                            :class="uiMode === option.value
+                                ? 'border-blue-500 bg-blue-50/40 shadow-[0_0_0_3px_rgba(22,119,255,0.09)]'
+                                : 'border-gray-200 bg-white hover:border-gray-300'"
+                            :disabled="switchingUiMode"
+                            @click="handleSwitchUiMode(option.value)"
+                        >
+                            <div class="flex items-center gap-2">
+                                <span class="text-sm font-semibold text-gray-900">{{ option.label }}</span>
+                                <span
+                                    v-if="uiMode === option.value"
+                                    class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700"
+                                >当前</span>
+                            </div>
+                            <p class="mt-1.5 text-xs leading-relaxed text-gray-500">{{ option.desc }}</p>
+                        </button>
+                    </div>
+
+                    <p class="rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3 text-xs leading-relaxed text-gray-500">
+                        小提示：不管选哪种模式，页面本身的权限校验不变——没有权限的入口不会出现，也不会出现「点了提示无权限」的情况。
+                    </p>
+                </div>
+
                 <div v-else-if="infoSubTab === 'browser'" class="max-w-2xl space-y-6">
                     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3">
                         <div>

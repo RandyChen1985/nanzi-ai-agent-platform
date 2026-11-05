@@ -10,7 +10,7 @@
     </svg>
     <span class="min-w-0">
       <slot>
-        今日 <strong class="font-bold tabular-nums">{{ count }}</strong> 次调用失败<span v-if="subjects">，集中在 <strong>{{ subjects }}</strong></span>
+        {{ periodLabel }} <strong class="font-bold tabular-nums">{{ count }}</strong> 次调用失败<span v-if="subjects">，集中在 <strong>{{ subjects }}</strong></span>
       </slot>
     </span>
     <button
@@ -50,8 +50,10 @@ const props = withDefaults(
     subjects?: string
     /** 统计周期（today / 7d …），参与关闭状态的记忆范围 */
     scope?: string
+    /** 文案里的周期名（今日 / 本周 / 自定义区间），跟页面上的筛选保持一致 */
+    periodLabel?: string
   }>(),
-  { count: 0, scope: 'today' },
+  { count: 0, scope: 'today', periodLabel: '今日' },
 )
 
 const dismissed = ref(false)

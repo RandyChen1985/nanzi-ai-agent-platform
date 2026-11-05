@@ -65,8 +65,11 @@ class SkillInjector:
             "enabled": cls._parse_bool_config(enabled_raw, True),
             "min_score": cls._parse_float_config(min_score_raw, 0.75),
             "max_count": cls._parse_int_config(max_count_raw, 1, min_value=0, max_value=3),
+            # 上限与上下文侧 ``DEFAULT_TOOL_OUTPUT_MAX_LEN``（64Ki 字符）对齐：预载进
+            # system prompt 的全文不经过工具结果裁剪，配置成 262144 只会把超长正文
+            # 塞满上下文，而模型对它的可见度并不比 64Ki 更多。
             "max_bytes": cls._parse_int_config(
-                max_bytes_raw, 65536, min_value=1024, max_value=262144
+                max_bytes_raw, 65536, min_value=1024, max_value=65536
             ),
         }
 

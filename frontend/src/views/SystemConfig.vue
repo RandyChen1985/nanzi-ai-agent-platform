@@ -1040,6 +1040,52 @@ const normalizeAgentToolLoopGlobalLimitInput = (item: ConfigItem) => {
     ? String(Math.min(3600, value))
     : '50'
 }
+// 委派上限（delegation_max_batch_calls / delegation_max_calls_per_agent）：
+// 与工具超时/循环上限同样用 −/+ 步进控件，范围与后端校验保持一致。
+// 后端仍是最终裁判（保存时 validate_config_update 会再校验一次）。
+const DELEGATION_LIMIT_RANGES: Record<string, { min: number; max: number; fallback: number; unit: string }> = {
+  delegation_max_batch_calls: { min: 1, max: 20, fallback: 4, unit: '个' },
+  delegation_max_calls_per_agent: { min: 1, max: 10, fallback: 2, unit: '次' },
+}
+const DELEGATION_LIMIT_LABELS: Record<string, string> = {
+  delegation_max_batch_calls: '批量委派任务上限',
+  delegation_max_calls_per_agent: '同一子智能体调用次数上限',
+}
+const getDelegationLimitRange = (item: ConfigItem) =>
+  DELEGATION_LIMIT_RANGES[item.key] ?? { min: 1, max: 20, fallback: 4, unit: '个' }
+const getDelegationLimitMin = (item: ConfigItem) => getDelegationLimitRange(item).min
+const getDelegationLimitMax = (item: ConfigItem) => getDelegationLimitRange(item).max
+const getDelegationLimitValue = (item: ConfigItem) => {
+  const { min, max, fallback } = getDelegationLimitRange(item)
+  const value = Number(item.value)
+  if (Number.isInteger(value) && value >= min && value <= max) return value
+  return fallback
+}
+const adjustDelegationLimit = (item: ConfigItem, delta: number) => {
+  if (isConfigItemDisabled('agent', item)) return
+  const { min, max } = getDelegationLimitRange(item)
+  item.value = String(Math.min(max, Math.max(min, getDelegationLimitValue(item) + delta)))
+}
+const handleDelegationLimitKeydown = (event: KeyboardEvent) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return
+  if (['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab', 'Enter', 'Escape'].includes(event.key)) return
+  if (!/^\d$/.test(event.key)) event.preventDefault()
+}
+const handleDelegationLimitInput = (item: ConfigItem, event: Event) => {
+  if (isConfigItemDisabled('agent', item)) return
+  const target = event.target as HTMLInputElement
+  const digits = target.value.replace(/\D/g, '')
+  item.value = digits
+  target.value = digits
+}
+const normalizeDelegationLimitInput = (item: ConfigItem) => {
+  const { min, max, fallback } = getDelegationLimitRange(item)
+  const digits = String(item.value ?? '').replace(/\D/g, '')
+  const value = Number(digits)
+  item.value = Number.isFinite(value) && Number.isInteger(value) && value >= min
+    ? String(Math.min(max, value))
+    : String(fallback)
+}
 const adjustAgentToolcallTimeout = (item: ConfigItem, delta: number) => {
   if (isConfigItemDisabled('agent', item)) return
   const current = getAgentToolcallTimeoutValue(item)
@@ -1384,6 +1430,10 @@ const fetchConfigs = async () => {
             }
             if (item.key === 'agent_chat_producer_hard_timeout_seconds') {
               item.value = String(getProducerHardTimeoutValue(item))
+            }
+            if (DELEGATION_LIMIT_RANGES[item.key]) {
+              // 库里可能是空值/历史非法值：显示前先收敛到合法范围，避免 −/+ 按钮从 NaN 起步
+              item.value = String(getDelegationLimitValue(item))
             }
             originalConfigs.value[item.key] = item.value
             if (item.key === 'third_party_user_sync_config' && !item.description) {
@@ -2633,6 +2683,8 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'agent_tool_loop_global_limit',
       'agent_max_toolcall_timeout',
       'agent_chat_producer_hard_timeout_seconds',
+      'delegation_max_batch_calls',
+      'delegation_max_calls_per_agent',
       'llm_model_name',
       'multimodal_model_name',
       'llm_temperature',
@@ -5970,6 +6022,38 @@ onUnmounted(() => {
                                class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                              >+</button>
                              <span class="text-xs text-gray-500">次</span>
+                          </div>
+                          <div v-else-if="DELEGATION_LIMIT_RANGES[item.key]" class="flex items-center gap-2 max-w-xs">
+                             <button
+                               type="button"
+                               :aria-label="`减少${DELEGATION_LIMIT_LABELS[item.key]}`"
+                               :disabled="isConfigItemDisabled(String(category), item) || getDelegationLimitValue(item) <= getDelegationLimitMin(item)"
+                               @click="adjustDelegationLimit(item, -1)"
+                               class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                             >−</button>
+                             <input
+                               type="number"
+                               inputmode="numeric"
+                               :min="getDelegationLimitMin(item)"
+                               :max="getDelegationLimitMax(item)"
+                               step="1"
+                               :value="item.value"
+                               :disabled="isConfigItemDisabled(String(category), item)"
+                               @keydown="handleDelegationLimitKeydown"
+                               @input="handleDelegationLimitInput(item, $event)"
+                               @blur="normalizeDelegationLimitInput(item)"
+                               :aria-label="`${DELEGATION_LIMIT_LABELS[item.key]}（${DELEGATION_LIMIT_RANGES[item.key].min}-${DELEGATION_LIMIT_RANGES[item.key].max}）`"
+                               class="min-w-[5rem] rounded-md border border-gray-300 bg-white disabled:bg-gray-100 px-3 py-2 text-center font-mono text-sm text-gray-700 shadow-sm focus:border-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
+                             />
+                             <button
+                               type="button"
+                               :aria-label="`增加${DELEGATION_LIMIT_LABELS[item.key]}`"
+                               :disabled="isConfigItemDisabled(String(category), item) || getDelegationLimitValue(item) >= getDelegationLimitMax(item)"
+                               @click="adjustDelegationLimit(item, 1)"
+                               class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                             >+</button>
+                             <span class="text-xs text-gray-500">{{ DELEGATION_LIMIT_RANGES[item.key].unit }}</span>
+                             <span class="text-xs text-gray-400">范围 {{ DELEGATION_LIMIT_RANGES[item.key].min }}-{{ DELEGATION_LIMIT_RANGES[item.key].max }}</span>
                           </div>
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'chatbi_sample_top_k', 'knowledge_scope_gate_threshold', 'knowledge_scope_gate_ranked_limit'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />

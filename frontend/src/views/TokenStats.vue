@@ -7,19 +7,12 @@
         <p class="text-sm text-gray-500 mt-1">系统大模型算力消耗量、交互频次及智能体分布审计</p>
       </div>
       <div class="flex items-center gap-3">
-        <select
-          v-model="period"
-          @change="onPeriodChange"
-          class="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 shadow-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary cursor-pointer active:scale-95 transition-all"
-        >
-          <option value="today">今日</option>
-          <option value="week">最近 7 天</option>
-          <option value="month">最近 30 天</option>
-        </select>
+        <!-- 时间范围：日历面板（任意区间 + 快捷项），选中即刷新三份数据 -->
+        <DateRangePicker v-model="dateRange" :max-days="90" @change="onRangeChange" />
         <button
           @click="refreshAll"
           :disabled="loading"
-          class="inline-flex items-center justify-center p-2 sm:px-4 sm:py-2 border border-gray-200 rounded-xl shadow-sm text-sm font-bold text-gray-700 bg-white hover:bg-gray-50 active:scale-95 transition-all disabled:opacity-50"
+          class="inline-flex h-9 items-center justify-center px-2.5 sm:px-4 border border-gray-200 rounded-xl shadow-sm text-sm font-bold text-gray-700 bg-white hover:bg-gray-50 active:scale-95 transition-all disabled:opacity-50"
         >
           <svg
             class="h-5 w-5 text-primary"
@@ -135,6 +128,10 @@
           <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
           趋势分析 · 输入/输出 Token 与交互频次
         </h2>
+        <!-- 表格与图表都跟着筛选走，把生效区间摆出来，避免「数字对不上选中的日期」 -->
+        <span class="hidden sm:inline-flex rounded-full bg-gray-50 px-2.5 py-1 text-[11px] font-semibold text-gray-500 tabular-nums">
+          {{ rangeLabel }}
+        </span>
       </div>
       <div class="h-72 sm:h-96 w-full relative flex items-center justify-center">
         <!-- 加载中不能复用"暂无数据"：首屏会把"还在请求"显示成"确实没有数据" -->
@@ -269,6 +266,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import axios from "../utils/axios";
+import DateRangePicker from "@/components/common/DateRangePicker.vue";
+import { addDays, formatDayKey } from "@/utils/dateRange";
 import { useToast } from "@/composables/useToast";
 import {
   formatTokenCompact,
@@ -301,7 +300,17 @@ const { showToast } = useToast();
 const API_BASE = "";
 const userInfo = ref<any>(null);
 const loading = ref(false);
-const period = ref("week");
+
+/** 统计区间：默认最近 7 天（含今天），由日历面板改写 */
+const dateRange = ref({
+  start: formatDayKey(addDays(new Date(), -6)),
+  end: formatDayKey(new Date()),
+});
+
+const rangeLabel = computed(() => {
+  const { start, end } = dateRange.value;
+  return start === end ? start : `${start} ~ ${end}`;
+});
 
 // 数据源
 const trendData = ref<any[]>([]);
@@ -358,8 +367,8 @@ const formatNumber = (num: number) => {
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 };
 
-// 时段切换
-const onPeriodChange = () => {
+// 区间切换（日历选完即触发）
+const onRangeChange = () => {
   refreshAll();
 };
 
@@ -369,22 +378,23 @@ const refreshAll = async () => {
   const requestVersion = ++statsRequestVersion;
   loading.value = true;
   try {
-    let daysVal = 7;
-    if (period.value === "today") daysVal = 1;
-    else if (period.value === "month") daysVal = 30;
+    // 三个接口共用同一个区间：以前趋势传 days、分布传 period，两套口径天然差半天，
+    // 选了自定义日期更是对不上。
+    const { start, end } = dateRange.value;
+    const rangeParams = { start_date: start, end_date: end };
 
     // 三个接口互不依赖，原先却逐个 await，总耗时是三段之和；并行后取决于最慢的那个。
     const isAdmin = userInfo.value?.role === "admin";
     const [trendRes, agentRes, userRes] = await Promise.all([
       axios.get(`${API_BASE}/api/portal/dashboard/token-stats/trends`, {
-        params: { days: daysVal },
+        params: rangeParams,
       }),
       axios.get(`${API_BASE}/api/portal/dashboard/token-stats/agents`, {
-        params: { period: period.value },
+        params: rangeParams,
       }),
       isAdmin
         ? axios.get(`${API_BASE}/api/portal/dashboard/token-stats/users`, {
-            params: { period: period.value },
+            params: rangeParams,
           })
         : Promise.resolve(null),
     ]);

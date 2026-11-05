@@ -83,9 +83,10 @@ def test_composable_only_talks_to_the_dedicated_pin_endpoint():
 
     assert f'const PREFS_ENDPOINT = "{PREFS_ENDPOINT}";' in source
     assert f'const PIN_ENDPOINT = "{PIN_ENDPOINT}";' in source
-    assert 'axios.put(\n      PIN_ENDPOINT,' in source or "axios.put(" in source
-    # 全量偏好端点只能用于 GET，不能出现在任何 axios.put 调用里
-    assert 'axios.put(\n      PREFS_ENDPOINT' not in source
+    # 客户端可以是裸 axios，也可以由宿主注入 @/utils/axios：这里只钉端点，不钉变量名
+    assert ".put(\n      PIN_ENDPOINT," in source
+    # 全量偏好端点只能用于 GET，不能出现在任何 PUT 调用里
+    assert ".put(\n      PREFS_ENDPOINT" not in source
     assert "MAX_PINNED_CONVERSATIONS = 20" in source
     # 乐观更新必须有回滚
     assert "pinned.value = previous" in source

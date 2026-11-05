@@ -2012,9 +2012,9 @@ onUnmounted(() => {
       />
     </div>
 
-    <!-- Scope Tab 切换 -->
+    <!-- Scope Tab 切换：只有平台管理员才有多个一级视图，普通用户直接看下面的二级 tab -->
     <div
-      v-if="!personalOnly"
+      v-if="!personalOnly && canManagePlatformSkills"
       class="flex items-center overflow-x-auto border-b border-gray-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       <button
@@ -2071,6 +2071,17 @@ onUnmounted(() => {
         <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full font-semibold" :class="activeWorkspaceTab === 'publications' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-500'">{{ publications.length }}</span>
       </button>
     </div>
+
+    <!-- 普通用户只有一个「我的技能」：把二级视图提到顶部，内容区全宽 -->
+    <SkillPersonalMenu
+      v-if="!personalOnly && !canManagePlatformSkills && activeWorkspaceTab === 'personal'"
+      variant="tabs"
+      class="mb-3"
+      :active="personalMenu"
+      :received-count="shareMenuCounts.received_pending"
+      :sent-pending-count="shareMenuCounts.sent_pending"
+      @select="personalMenu = $event"
+    />
 
     <!-- 已发布 / 下架管理面板：一条记录 = 一个已上线的版本，下架即回收其可见性 -->
     <div v-if="activeWorkspaceTab === 'publications' && canAccessPlatformWorkspace" class="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
@@ -2228,7 +2239,7 @@ onUnmounted(() => {
     </div>
 
     <!-- 我的技能：左侧二级菜单 + 右侧内容（窄屏折叠为顶部胶囊 Tab） -->
-    <div v-if="activeWorkspaceTab === 'personal'" class="mb-3 md:hidden">
+    <div v-if="activeWorkspaceTab === 'personal' && canManagePlatformSkills" class="mb-3 md:hidden">
       <SkillPersonalMenu
         variant="chips"
         :active="personalMenu"
@@ -2240,7 +2251,7 @@ onUnmounted(() => {
 
     <div class="flex flex-col gap-4 md:flex-row md:items-start">
       <SkillPersonalMenu
-        v-if="activeWorkspaceTab === 'personal'"
+        v-if="activeWorkspaceTab === 'personal' && canManagePlatformSkills"
         variant="aside"
         :active="personalMenu"
         :received-count="shareMenuCounts.received_pending"

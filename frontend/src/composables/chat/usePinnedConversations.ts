@@ -4,7 +4,7 @@
  * 只负责「状态 + 读写 + 失败回滚」，不碰 UI 与 toast 文案（由页面决定），
  * 这样 EmbedChat 与 AgentDebug 能共用同一份逻辑。
  */
-import axios from "axios";
+import axiosDefault from "axios";
 import { ref } from "vue";
 
 import type { PinnedConversationSnapshot } from "./useChatHistoryGroups";
@@ -24,7 +24,13 @@ export interface TogglePinResult {
 
 export function usePinnedConversations(options: {
   headers?: () => Record<string, string> | undefined;
+  /**
+   * HTTP 客户端。宿主页面传 `@/utils/axios`（带超时与统一错误处理）；
+   * 挂件不传，保持原来直接走裸 axios 的行为。
+   */
+  client?: typeof axiosDefault;
 } = {}) {
+  const client = options.client ?? axiosDefault;
   const pinned = ref<PinnedConversationSnapshot[]>([]);
 
   const isPinned = (conversationId: string) =>
@@ -33,7 +39,7 @@ export function usePinnedConversations(options: {
   /** 读取偏好。置顶是增强能力：失败只降级为空列表，不能拖垮聊天与历史列表。 */
   const load = async () => {
     try {
-      const res = await axios.get(PREFS_ENDPOINT, { headers: options.headers?.() });
+      const res = await client.get(PREFS_ENDPOINT, { headers: options.headers?.() });
       const list = res.data?.data?.pinned_conversations;
       pinned.value = Array.isArray(list) ? list : [];
     } catch (e) {
@@ -42,7 +48,7 @@ export function usePinnedConversations(options: {
   };
 
   const persist = async (next: PinnedConversationSnapshot[]) => {
-    await axios.put(
+    await client.put(
       PIN_ENDPOINT,
       { conversations: next },
       { headers: options.headers?.() },

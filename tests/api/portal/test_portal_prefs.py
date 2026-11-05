@@ -548,6 +548,102 @@ async def test_upload_agent_avatar_admin_saves_to_branding_dir(monkeypatch, tmp_
 
 
 
+@pytest.mark.asyncio
+async def test_get_ui_mode_defaults_by_role(monkeypatch):
+    """没选过界面模式时按角色给默认值：管理员 pro，其他 user。"""
+    redis = FakeRedis(None)
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    admin_result = await portal_prefs.get_portal_prefs(user_info(role="admin"))
+    user_result = await portal_prefs.get_portal_prefs(user_info(role="user"))
+
+    assert admin_result["data"]["ui_mode"] == "pro"
+    assert user_result["data"]["ui_mode"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_get_ui_mode_returns_saved_value(monkeypatch):
+    redis = FakeRedis(json.dumps({"ui_mode": "pro"}))
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    # 普通用户明确切到专业模式后，也要按存储值返回，而不是回落角色默认
+    result = await portal_prefs.get_portal_prefs(user_info(role="user"))
+
+    assert result["data"]["ui_mode"] == "pro"
+
+
+@pytest.mark.asyncio
+async def test_get_ui_mode_redis_down_falls_back_by_role(monkeypatch):
+    """Redis 不可用时也不能返回空串，否则前端会当成未知模式。"""
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(None))
+
+    result = await portal_prefs.get_portal_prefs(user_info(role="admin"))
+
+    assert result["data"]["ui_mode"] == "pro"
+
+
+@pytest.mark.asyncio
+async def test_update_ui_mode_preserves_other_fields(monkeypatch):
+    redis = FakeRedis(
+        json.dumps(
+            {
+                "pinned_group_ids": ["group-1"],
+                "markdown_theme": "academic",
+                "ui_mode": "user",
+            }
+        )
+    )
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    result = await portal_prefs.update_ui_mode(
+        portal_prefs.UiModeUpdate(ui_mode="pro"),
+        user_info(),
+    )
+
+    saved = json.loads(redis.saved)
+    assert result["data"]["ui_mode"] == "pro"
+    assert saved["ui_mode"] == "pro"
+    # 切模式不能顺手清掉别的偏好
+    assert saved["pinned_group_ids"] == ["group-1"]
+    assert saved["markdown_theme"] == "academic"
+
+
+@pytest.mark.asyncio
+async def test_update_ui_mode_keeps_unset_fields_at_default(monkeypatch):
+    redis = FakeRedis(None)
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    await portal_prefs.update_ui_mode(
+        portal_prefs.UiModeUpdate(ui_mode="pro"),
+        user_info(),
+    )
+
+    saved = json.loads(redis.saved)
+    assert saved["ui_mode"] == "pro"
+    assert saved["routing_mode"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_legacy_full_preference_update_does_not_wipe_ui_mode(monkeypatch):
+    """旧页面全量回写偏好时，界面模式必须原样保留。"""
+    redis = FakeRedis(json.dumps({"ui_mode": "pro", "markdown_theme": "academic"}))
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    await portal_prefs.update_portal_prefs(
+        portal_prefs.PortalPrefsUpdate(markdown_theme="minimal"),
+        user_info(),
+    )
+
+    saved = json.loads(redis.saved)
+    assert saved["ui_mode"] == "pro"
+    assert saved["markdown_theme"] == "minimal"
+
+
+def test_ui_mode_model_rejects_unknown_value():
+    with pytest.raises(ValidationError):
+        portal_prefs.UiModeUpdate(ui_mode="developer")
+
+
 async def _resolved(value):
     return value
 

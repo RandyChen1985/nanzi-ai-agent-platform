@@ -289,6 +289,10 @@ def _validate_new_entry_basename(name: str) -> str:
 )
 async def list_files(
     path: Optional[str] = Query(None, description="要浏览的绝对路径，如果不传默认返回授权根目录"),
+    prefer: Optional[Literal["user_root"]] = Query(
+        None,
+        description="默认落点偏好：user_root 表示 path 为空时直接解析到本人私有工作区（工作空间页首屏用）。",
+    ),
     user_info: Dict[str, Any] = Depends(require_api_key)
 ):
     base_dir = get_base_dir()
@@ -298,6 +302,24 @@ async def list_files(
             status_code=403,
             detail="安全越权拦截：禁止访问安全根目录以外的文件系统空间。",
         )
+
+    # 工作空间页首屏：带 prefer=user_root 且未指定 path 时，直接落本人私有工作区，
+    # 不再返回「授权根汇总」。文件选择器 / 保存对话框 / 聊天抽屉都不传这个参数，
+    # 所以空 path 的既有语义（虚拟根）保持不变。
+    if prefer == "user_root" and is_fs_virtual_root(path, base_dir):
+        preferred_root = get_user_private_workspace_root(user_info)
+        if preferred_root:
+            try:
+                os.makedirs(preferred_root, mode=0o700, exist_ok=True)
+            except OSError:
+                # 建不出来就退回原有默认（管理员落 data 根，普通用户落虚拟根），不打断浏览。
+                logger.warning(
+                    "[fs] 无法创建用户工作区目录 %s，prefer=user_root 降级",
+                    preferred_root,
+                    exc_info=True,
+                )
+            else:
+                path = preferred_root
 
     if is_fs_virtual_root(path, base_dir) and not is_fs_admin(user_info):
         return StandardResponse(data=FileListResponse(

@@ -1,0 +1,2117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>侧栏 · 用户模式简化菜单与视图切换原型</title>
+<meta name="prototype-kind" content="方案对比" />
+<style>
+:root{
+  --brand:#1677ff;
+  --brand-soft:#eaf2ff;
+  --ink:#17181a;
+  --ink-2:#5f6368;
+  --ink-3:#9aa0a6;
+  --line:#ececee;
+  --line-2:#e1e3e8;
+  --hover:#f4f4f5;
+  --sel:#ededef;
+  --canvas:#f7f7f8;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  color:var(--ink);background:#fff;-webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+
+/* ---------------- 原型工具条 ---------------- */
+.proto-bar{
+  position:sticky;top:0;z-index:80;height:56px;background:#0f141b;color:#e6edf6;
+  display:flex;align-items:center;gap:18px;padding:0 18px;font-size:13px;
+  border-bottom:1px solid #1e2733;
+}
+.pb-left{display:flex;align-items:center;gap:9px;min-width:0}
+.pb-dot{width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.15)}
+.pb-title{font-weight:650;letter-spacing:.2px;white-space:nowrap}
+.pb-sub{color:#7d8b9e;font-size:11.5px;white-space:nowrap}
+.proto-tabs{display:flex;gap:4px;margin-left:8px;flex-wrap:wrap}
+.proto-tab{
+  border:0;background:transparent;color:#9fb0c4;font-size:12.5px;padding:7px 12px;border-radius:8px;
+  cursor:pointer;white-space:nowrap;transition:.15s;
+}
+.proto-tab:hover{background:#ffffff12;color:#e6edf6}
+.proto-tab.active{background:#ffffff1f;color:#fff;font-weight:600}
+.pb-right{margin-left:auto;color:#7d8b9e;font-size:11.5px;white-space:nowrap}
+
+/* ---------------- 通用 ---------------- */
+.stage{display:none}
+.stage.active{display:block}
+.app{display:flex;height:calc(100vh - 56px);background:#fff}
+
+.ic{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+.ic-sm{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+
+/* ---------------- 侧栏（用户模式） ---------------- */
+.sidebar{
+  width:252px;flex:0 0 252px;border-right:1px solid var(--line);display:flex;flex-direction:column;
+  background:#fff;min-height:0;
+}
+.sb-brand{height:52px;display:flex;align-items:center;gap:10px;padding:0 8px 0 14px;flex:0 0 auto}
+.brand-mark{
+  width:26px;height:26px;border-radius:8px;color:#fff;font-size:13px;font-weight:700;
+  background:linear-gradient(140deg,#1677ff,#57a6ff);display:grid;place-items:center;flex:0 0 auto;
+}
+.brand-text{font-size:13px;font-weight:650;letter-spacing:.2px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.ghost-icon{
+  width:28px;height:28px;border-radius:8px;border:0;background:transparent;color:var(--ink-3);
+  display:grid;place-items:center;cursor:pointer;flex:0 0 auto;
+}
+.ghost-icon:hover{background:var(--hover);color:var(--ink)}
+
+.sb-nav{padding:2px 10px 4px;display:flex;flex-direction:column;gap:1px;flex:0 0 auto}
+.nav-item{
+  display:flex;align-items:center;gap:11px;height:40px;padding:0 10px;border-radius:11px;border:0;
+  background:transparent;color:var(--ink);font-size:15px;cursor:pointer;text-align:left;width:100%;
+  letter-spacing:.1px;
+}
+.nav-item:hover{background:var(--hover)}
+.nav-item.active{background:var(--sel);font-weight:650}
+.nav-label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge-beta{
+  font-size:10px;font-weight:600;color:var(--ink-3);border:1px solid var(--line-2);
+  border-radius:6px;padding:1px 5px;letter-spacing:.8px;
+}
+.nav-chevron{margin-left:auto;transition:transform .18s;color:var(--ink-3)}
+.nav-item.open .nav-chevron{transform:rotate(180deg)}
+
+.sub-nav{padding:2px 0 5px 30px;display:flex;flex-direction:column;gap:1px}
+.sub-nav[hidden]{display:none}
+.nav-sub{
+  height:34px;border:0;background:transparent;border-radius:9px;text-align:left;padding:0 8px;
+  font-size:14px;color:var(--ink-2);cursor:pointer;display:flex;align-items:center;gap:8px;width:100%;
+}
+.ic-sub{width:15px;height:15px;flex:0 0 15px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.nav-sub:hover{background:var(--hover);color:var(--ink)}
+.nav-sub.active{background:var(--sel);color:var(--ink);font-weight:650;box-shadow:inset 2px 0 0 var(--brand)}
+.sub-sep{height:1px;background:var(--line);margin:6px 8px}
+.nav-sub.mode-jump{color:var(--brand)}
+.nav-sub.mode-jump:hover{background:var(--brand-soft);color:var(--brand)}
+
+/* 菜单与任务列表同一个滚动区：展开子菜单时不把任务区挤没 */
+.sb-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column}
+.sb-scroll::-webkit-scrollbar{width:6px}
+.sb-scroll::-webkit-scrollbar-thumb{background:#d9dce2;border-radius:3px}
+.sb-scroll::-webkit-scrollbar-track{background:transparent}
+
+/* ---------------- 任务区 ---------------- */
+.task-block{margin-top:8px;padding:0 10px 8px;display:flex;flex-direction:column;flex:1 0 auto}
+.task-head{
+  display:flex;align-items:center;justify-content:space-between;padding:6px 10px 6px;font-size:12px;
+  color:var(--ink-3);letter-spacing:.3px;
+}
+.task-list{list-style:none;margin:0;padding:0;overflow:visible;flex:0 0 auto}
+.task-item{
+  display:flex;align-items:center;gap:8px;height:36px;padding:0 10px;border-radius:9px;cursor:pointer;
+  font-size:14px;color:var(--ink);user-select:none;
+}
+.task-item:hover{background:var(--hover)}
+.task-item.active{background:var(--sel);font-weight:650}
+.task-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-date{font-size:12.5px;color:var(--ink-3);flex:0 0 auto}
+.task-menu{
+  opacity:0;border:0;background:transparent;color:var(--ink-3);border-radius:6px;width:20px;height:20px;
+  display:grid;place-items:center;cursor:pointer;flex:0 0 auto;
+}
+.task-item:hover .task-menu{opacity:1}
+.task-menu:hover{background:#e6e7ea;color:var(--ink)}
+.task-head .sb-icon-btn{width:22px;height:22px;margin-left:auto}
+.task-search{
+  display:flex;align-items:center;gap:6px;flex:1;min-width:0;border:1px solid var(--line-2);
+  border-radius:8px;padding:3px 8px;background:#fff;color:var(--ink-3);
+}
+.task-search[hidden]{display:none}
+.task-search input{
+  flex:1;min-width:0;border:0;outline:none;background:transparent;font-size:12.5px;
+  font-family:inherit;color:var(--ink);padding:0;
+}
+.task-search input::placeholder{color:#b3b8c0}
+/* type=search 自带一个原生清除按钮，会和右侧的关闭按钮并排出现两个 × */
+.task-search input::-webkit-search-cancel-button,
+.task-search input::-webkit-search-decoration{-webkit-appearance:none;appearance:none}
+.ic-sm{width:14px;height:14px;flex:0 0 auto;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+.task-more{
+  padding:8px 10px 4px;font-size:12.5px;color:var(--ink-3);cursor:pointer;border:0;background:none;
+  text-align:left;border-radius:8px;
+}
+.task-more:hover{color:var(--ink);background:var(--hover)}
+.task-more:disabled{opacity:.55;cursor:default}
+.task-list::-webkit-scrollbar,.pro .sb-nav::-webkit-scrollbar{width:6px}
+.task-list::-webkit-scrollbar-thumb,.pro .sb-nav::-webkit-scrollbar-thumb{background:#d9dce2;border-radius:3px}
+.task-list::-webkit-scrollbar-track,.pro .sb-nav::-webkit-scrollbar-track{background:transparent}
+
+/* ---------------- 侧栏用户卡 ---------------- */
+.sb-user{
+  border-top:1px solid var(--line);padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;
+  flex:0 0 auto;background:#fff;
+}
+.sb-user:hover{background:var(--hover)}
+.avatar{
+  width:32px;height:32px;border-radius:50%;background:linear-gradient(140deg,#4f8dff,#1b4fd8);color:#fff;
+  display:grid;place-items:center;font-size:11.5px;font-weight:600;flex:0 0 auto;letter-spacing:.5px;
+}
+.sb-user-meta{flex:1;min-width:0}
+.sb-user-name{font-size:13px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-user-id{font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.sb-user{gap:6px}
+.sb-user .avatar{margin-right:2px}
+.sb-user-meta{min-width:0}
+.sb-icon-btn{
+  position:relative;width:24px;height:24px;border-radius:7px;border:0;background:transparent;
+  color:var(--ink-2);display:grid;place-items:center;cursor:pointer;flex:0 0 auto;
+}
+.sb-icon-btn:hover{background:var(--hover);color:var(--ink)}
+.sb-icon-btn .dot-badge{
+  position:absolute;top:-3px;right:-3px;min-width:13px;height:13px;padding:0 3px;border-radius:7px;
+  background:#ef4444;color:#fff;font-size:8px;font-weight:700;line-height:1;display:grid;place-items:center;
+  border:1.2px solid #fff;
+}
+.pb-demo{
+  border:1px dashed #3b4757;background:transparent;color:#9fb0c4;font-size:11.5px;padding:4px 10px;
+  border-radius:999px;cursor:pointer;white-space:nowrap;
+}
+.pb-demo:hover{border-color:#56657a;color:#dbe6f3}
+.pb-demo.on{border-color:#f59e0b;background:rgba(245,158,11,.12);color:#fbbf24;font-weight:600}
+
+/* ---------------- 主区 ---------------- */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;background:#fff}
+.topline{
+  height:52px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;
+  padding:0 22px;font-size:12.5px;color:var(--ink-3);flex:0 0 auto;background:#fff;
+}
+.crumb{display:flex;align-items:center;gap:7px;min-width:0}
+.crumb .sep{color:#d3d6db}
+.crumb .cur{color:var(--ink);font-weight:600}
+.topline-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.mode-pill{
+  font-size:11.5px;color:var(--brand);background:var(--brand-soft);border-radius:999px;
+  padding:4px 11px;font-weight:600;white-space:nowrap;
+}
+.demo-toggle{
+  border:1px dashed #d3d7de;background:#fff;border-radius:999px;padding:4px 10px;
+  font-size:11.5px;color:#6b7280;cursor:pointer;white-space:nowrap;
+}
+.demo-toggle:hover{border-color:#b9bfc9;color:var(--ink)}
+.demo-toggle.on{border-color:#f59e0b;background:#fffbf0;color:#b45309;font-weight:600}
+
+/* 无权限的入口：保留位置、置灰、点击给提示，而不是直接消失让用户以为坏了 */
+.nav-item.locked{color:#bcc0c7;cursor:not-allowed}
+.nav-item.locked:hover{background:transparent}
+.nav-item.locked .ic{opacity:.45}
+.nav-item.locked .badge-beta{opacity:.5}
+.main-scroll{flex:1;overflow:auto;position:relative}
+.page{display:none;min-height:100%;padding:26px 28px 34px}
+.page.active{display:block}
+.page.page-chat{padding:0;height:100%;min-height:0}
+.page.page-chat.active{display:flex;flex-direction:column}
+
+.page-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:20px}
+.page-head h1{font-size:21px;font-weight:650;margin:0;letter-spacing:-.3px}
+.page-sub{margin:6px 0 0;font-size:13px;color:var(--ink-2);line-height:1.6}
+.page-actions{margin-left:auto;display:flex;gap:8px;flex:0 0 auto}
+.btn{
+  border:1px solid var(--line-2);background:#fff;color:var(--ink);border-radius:10px;padding:8px 14px;
+  font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+}
+.btn:hover{border-color:#cfd3da;background:#fafafa}
+.btn-primary{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn-primary:hover{background:#2b2d31;border-color:#2b2d31}
+.btn-blue{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn-blue:hover{background:#0f66e0;border-color:#0f66e0}
+.btn-sm{padding:6px 11px;font-size:12.5px;border-radius:9px}
+.btn-ghost{border-color:transparent;background:transparent;color:var(--ink-2)}
+.btn-ghost:hover{background:var(--hover);border-color:transparent}
+
+/* 搜索 / chips */
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.search{
+  flex:1;min-width:220px;max-width:360px;display:flex;align-items:center;gap:8px;border:1px solid var(--line-2);
+  border-radius:10px;padding:8px 12px;color:var(--ink-3);font-size:13px;background:#fff;
+}
+.search input{border:0;outline:none;flex:1;font-size:13px;font-family:inherit;color:var(--ink);background:transparent}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{
+  border:1px solid var(--line-2);background:#fff;border-radius:999px;padding:6px 13px;font-size:12.5px;
+  color:var(--ink-2);cursor:pointer;
+}
+.chip:hover{border-color:#cfd3da;color:var(--ink)}
+.chip.on{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600}
+
+/* 卡片网格 */
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(272px,1fr))}
+.card{
+  border:1px solid var(--line);border-radius:14px;padding:16px;background:#fff;display:flex;
+  flex-direction:column;gap:10px;transition:.16s;
+}
+.card:hover{border-color:#d7dae0;box-shadow:0 8px 22px rgba(15,23,42,.055);transform:translateY(-1px)}
+.card-top{display:flex;gap:11px;align-items:flex-start}
+.card-ico{
+  width:36px;height:36px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;font-size:15px;
+}
+.card-title{font-size:14px;font-weight:650;line-height:1.35}
+.card-desc{font-size:12.5px;color:var(--ink-2);line-height:1.65;margin:0}
+.card-meta{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-3);margin-top:auto;padding-top:2px}
+.tag{font-size:11px;color:var(--ink-2);background:#f4f5f7;border-radius:6px;padding:2px 7px}
+.tag-blue{background:var(--brand-soft);color:var(--brand)}
+.tag-green{background:#ecfdf3;color:#067647}
+.tag-amber{background:#fffaeb;color:#b54708}
+.tag-red{background:#fef3f2;color:#b42318}
+.dot{width:3px;height:3px;border-radius:50%;background:#c9ccd2}
+.card-actions{display:flex;gap:8px;margin-top:4px}
+
+/* 表格 */
+.table-wrap{border:1px solid var(--line);border-radius:14px;overflow:hidden}
+table.table{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff}
+.table th{
+  text-align:left;font-weight:500;color:var(--ink-3);font-size:12px;padding:11px 16px;background:#fafafa;
+  border-bottom:1px solid var(--line);white-space:nowrap;
+}
+.table td{padding:14px 16px;border-bottom:1px solid #f4f4f5;vertical-align:middle}
+.table tr:last-child td{border-bottom:0}
+.table tr:hover td{background:#fafbfc}
+.t-name{font-weight:600;font-size:13.5px}
+.t-sub{font-size:11.5px;color:var(--ink-3);margin-top:3px}
+.state{display:inline-flex;align-items:center;gap:5px;font-size:12px}
+.state::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.state.ok{color:#067647}
+.state.pause{color:var(--ink-3)}
+.state.err{color:#b42318}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--ink-2)}
+
+/* 聊天 */
+.chat-head{
+  height:56px;display:flex;align-items:center;gap:10px;padding:0 22px;border-bottom:1px solid var(--line);
+  flex:0 0 auto;
+}
+.chat-title{font-size:14px;font-weight:650;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-head-right{margin-left:auto;display:flex;gap:4px;align-items:center}
+.chat-body{flex:1;overflow:auto;padding:26px 24px 8px}
+.chat-inner{max-width:768px;margin:0 auto}
+.empty-state{text-align:center;padding:7vh 0 0}
+.orb{
+  width:56px;height:56px;border-radius:50%;margin:0 auto 18px;
+  background:radial-gradient(circle at 32% 28%,#8cc0ff,#1677ff 70%);
+  box-shadow:0 14px 34px rgba(22,119,255,.22);
+}
+.empty-title{font-size:23px;font-weight:650;letter-spacing:-.4px}
+.empty-sub{color:var(--ink-2);font-size:13.5px;margin-top:10px;line-height:1.7}
+.suggest{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:22px}
+.suggest .chip{background:#fff}
+
+.msg{display:flex;gap:12px;margin-bottom:24px}
+.msg-av{
+  width:30px;height:30px;border-radius:9px;background:var(--brand-soft);color:var(--brand);
+  display:grid;place-items:center;font-size:11.5px;font-weight:700;flex:0 0 30px;
+}
+.msg.user .msg-av{background:#1f2125;color:#fff}
+.msg-body{flex:1;min-width:0;font-size:14px;line-height:1.78;padding-top:3px}
+.msg-body p{margin:0 0 10px}
+.msg-body p:last-child{margin-bottom:0}
+.msg-body ul{margin:0 0 10px;padding-left:20px}
+.msg-body li{margin:3px 0}
+.msg-card{
+  border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:#fcfcfd;margin:12px 0;
+}
+.msg-card h4{margin:0 0 8px;font-size:13px;font-weight:650}
+.kv{display:flex;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px dashed #eef0f3}
+.kv:last-child{border-bottom:0}
+.kv b{font-weight:600;color:var(--ink-2);width:76px;flex:0 0 auto}
+
+.composer{padding:8px 24px 24px;flex:0 0 auto;background:#fff}
+.composer-box{
+  max-width:768px;margin:0 auto;border:1px solid var(--line-2);border-radius:16px;padding:12px 14px 9px;
+  box-shadow:0 10px 28px rgba(15,23,42,.06);background:#fff;transition:.16s;
+}
+.composer-box:focus-within{border-color:#bcd6ff;box-shadow:0 10px 28px rgba(22,119,255,.10)}
+.composer textarea{
+  width:100%;border:0;resize:none;font-size:14.5px;font-family:inherit;outline:none;background:transparent;
+  line-height:1.62;color:var(--ink);height:44px;
+}
+.composer textarea::placeholder{color:#b3b8c0}
+.composer-tools{display:flex;align-items:center;gap:6px;margin-top:4px}
+.pill-btn{
+  border:1px solid var(--line-2);background:#fff;border-radius:999px;padding:5px 10px;font-size:12px;
+  color:var(--ink-2);cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+}
+.pill-btn:hover{background:#fafafa;border-color:#d5d9e0}
+.send{
+  margin-left:auto;width:32px;height:32px;border-radius:10px;background:var(--brand);color:#fff;border:0;
+  display:grid;place-items:center;cursor:pointer;flex:0 0 auto;
+}
+.send:hover{background:#0f66e0}
+
+/* 占位页 */
+.placeholder{
+  border:1px dashed var(--line-2);border-radius:16px;padding:46px 20px;text-align:center;color:var(--ink-3);
+  background:#fcfcfd;
+}
+.placeholder .ph-ico{
+  width:44px;height:44px;border-radius:13px;background:#f1f3f6;color:#9aa0a6;display:grid;place-items:center;
+  margin:0 auto 12px;
+}
+.placeholder p{margin:0 0 6px;font-size:13px}
+.placeholder .muted{color:var(--ink-3);font-size:12px}
+
+/* ---------------- 专业模式 ---------------- */
+.sidebar.pro{width:212px;flex:0 0 212px;background:#fbfbfc}
+.pro .sb-brand{height:48px}
+.pro .sb-nav{padding-top:6px;gap:0;flex:1;overflow-y:auto;min-height:0;padding-bottom:14px}
+.pro-group{margin-top:10px;padding:0 10px 4px;font-size:11px;font-weight:600;color:var(--ink-3);letter-spacing:.6px}
+.pro-item{
+  display:flex;align-items:center;gap:9px;height:34px;padding:0 10px;border-radius:8px;border:0;
+  background:transparent;color:#3c4149;font-size:13px;cursor:pointer;text-align:left;width:100%;
+}
+.pro-item:hover{background:#eff1f4;color:var(--ink)}
+.pro-item.active{background:#e8ecf3;color:var(--ink);font-weight:600}
+.pro-note{
+  margin:10px 10px 0;padding:9px 11px;border-radius:10px;background:#f1f4f8;color:#5b6675;
+  font-size:11.5px;line-height:1.65;
+}
+.pro-note b{color:#33404f}
+.pro-banner{
+  display:flex;gap:10px;align-items:flex-start;border:1px solid #fde7b0;background:#fffbf0;color:#8a5a00;
+  border-radius:12px;padding:11px 14px;font-size:12.5px;line-height:1.65;margin-bottom:20px;
+}
+
+/* ---------------- 个人中心 ---------------- */
+.pc{background:var(--canvas);min-height:calc(100vh - 56px);padding:22px 20px 46px}
+.pc-wrap{max-width:1000px;margin:0 auto}
+.pc-panel{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.pc-topbar{display:flex;align-items:center;gap:8px;padding:14px 20px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
+.pc-tabs{display:flex;gap:28px;padding:0 20px;border-bottom:1px solid var(--line);position:relative}
+.pc-tab{
+  padding:15px 1px 13px;font-size:14px;color:var(--ink-2);border-bottom:2px solid transparent;cursor:pointer;
+  background:none;border-top:0;border-left:0;border-right:0;
+}
+.pc-tab:hover{color:var(--ink)}
+.pc-tab.active{color:var(--brand);border-bottom-color:var(--brand);font-weight:650}
+.pc-body{display:flex;min-height:440px}
+.pc-side{width:214px;flex:0 0 214px;border-right:1px solid var(--line);padding:14px 12px;background:#fcfcfd}
+.pc-side-item{
+  display:flex;align-items:center;gap:9px;height:38px;padding:0 11px;border-radius:10px;font-size:13.5px;
+  color:var(--ink-2);cursor:pointer;border:0;background:transparent;width:100%;text-align:left;
+}
+.pc-side-item:hover{background:#f2f3f5;color:var(--ink)}
+.pc-side-item.active{background:#e9edf5;color:var(--ink);font-weight:600}
+.pc-main{flex:1;padding:22px 24px 28px;min-width:0}
+.pc-main h2{font-size:16.5px;font-weight:650;margin:0 0 6px}
+.pc-main .hint{font-size:12.5px;color:var(--ink-3);margin:0 0 16px;line-height:1.6}
+.profile-card{
+  display:flex;align-items:center;gap:16px;border:1px solid var(--line);border-radius:14px;padding:18px;
+  background:#fff;
+}
+.profile-av{
+  width:56px;height:56px;border-radius:50%;background:linear-gradient(140deg,#4f8dff,#1b4fd8);color:#fff;
+  display:grid;place-items:center;font-size:15px;font-weight:650;flex:0 0 auto;letter-spacing:1px;
+}
+.profile-name{font-size:16px;font-weight:650}
+.profile-id{font-size:12.5px;color:var(--ink-3);margin-top:3px}
+.field{border:1px solid var(--line);border-radius:12px;padding:13px 15px;margin-top:12px;background:#fff}
+.field-label{font-size:12px;color:var(--ink-3);margin-bottom:5px}
+.field-value{font-size:13.5px}
+
+.seg{display:inline-flex;background:#f1f2f4;border-radius:10px;padding:3px;gap:2px}
+.seg button{
+  border:0;background:transparent;padding:6px 13px;border-radius:8px;font-size:12.5px;color:var(--ink-2);
+  cursor:pointer;white-space:nowrap;
+}
+.seg button:hover{color:var(--ink)}
+.seg button.on{background:#fff;color:var(--ink);font-weight:650;box-shadow:0 1px 3px rgba(15,23,42,.12)}
+
+.seg-label{font-size:11.5px;color:var(--ink-3);margin-right:8px;white-space:nowrap}
+
+/* 方案高亮 */
+.hotspot{position:relative;border-radius:12px}
+.hotspot.on{outline:2px dashed #f59e0b;outline-offset:5px}
+.hotspot.dim{opacity:.42}
+.hn{
+  position:absolute;top:-12px;left:-12px;width:22px;height:22px;border-radius:50%;background:#f59e0b;color:#fff;
+  font-size:12px;font-weight:700;display:none;place-items:center;z-index:5;box-shadow:0 2px 6px rgba(245,158,11,.4);
+}
+.hotspot.on > .hn{display:grid}
+
+.plan-bar{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.plan-note{
+  margin-top:18px;border:1px solid var(--line);border-radius:14px;background:#fff;padding:16px 18px;
+  font-size:13px;line-height:1.75;color:var(--ink-2);
+}
+.plan-note h3{margin:0 0 8px;font-size:13.5px;color:var(--ink);font-weight:650}
+.plan-note ul{margin:0;padding-left:19px}
+.plan-note li{margin:4px 0}
+.kbd{
+  border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;padding:0 5px;font-size:11px;
+  color:var(--ink-2);background:#fafafa;
+}
+
+/* 方案 C 的迷你示意 */
+.mini-sidebar{
+  width:236px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 8px 20px rgba(15,23,42,.06);
+}
+.mini-sidebar .ms-nav{padding:10px;display:flex;flex-direction:column;gap:1px}
+.ms-item{display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border-radius:8px;font-size:12.5px;color:var(--ink-2)}
+.ms-item.on{background:var(--sel);color:var(--ink);font-weight:600}
+.ms-user{border-top:1px solid var(--line);padding:9px 10px;display:flex;align-items:center;gap:8px;font-size:12px}
+.ms-toggle{
+  margin-left:auto;border:1px solid var(--line-2);border-radius:8px;background:#fff;padding:3px 6px;
+  font-size:10.5px;color:var(--ink-2);
+}
+
+/* ---------------- 说明页 ---------------- */
+.notes-wrap{max-width:1040px;margin:0 auto;padding:28px 24px 60px}
+.notes-wrap h1{font-size:22px;margin:0 0 6px;letter-spacing:-.3px}
+.notes-wrap .lead{color:var(--ink-2);font-size:13.5px;line-height:1.8;margin:0 0 22px}
+.note-grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));margin-bottom:22px}
+.note-card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;background:#fff}
+.note-card h3{margin:0 0 8px;font-size:13.5px}
+.note-card p{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.75}
+.map-table{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff;margin-bottom:22px}
+.map-table table{width:100%;border-collapse:collapse;font-size:13px}
+.map-table th{
+  text-align:left;background:#fafafa;font-size:12px;color:var(--ink-3);font-weight:500;padding:11px 16px;
+  border-bottom:1px solid var(--line);white-space:nowrap;
+}
+.map-table td{padding:12px 16px;border-bottom:1px solid #f4f4f5;vertical-align:top;line-height:1.6}
+.map-table tr:last-child td{border-bottom:0}
+.map-table .nav-name{font-weight:600;white-space:nowrap}
+.notes-wrap ul{padding-left:20px;font-size:13px;color:var(--ink-2);line-height:1.85;margin:0}
+.notes-wrap h2{font-size:15px;margin:26px 0 10px}
+
+/* 工作空间标题卡：与知识库页同一套 hero 配方 */
+.hero-card{
+  position:relative;overflow:hidden;border:1px solid var(--line);border-radius:16px;padding:16px 18px;
+  background-color:#fff;
+  background-image:
+    radial-gradient(120% 160% at 88% -30%, rgba(22,119,255,.07) 0%, rgba(22,119,255,0) 58%),
+    linear-gradient(105deg,#fff 0%,#fdfeff 46%,#f7faff 100%);
+}
+.hero-silhouette{
+  position:absolute;left:0;right:0;bottom:0;height:44px;display:flex;align-items:flex-end;gap:10px;
+  padding:0 18px;opacity:.11;color:var(--brand);
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+  mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+}
+.hero-silhouette i{display:block;width:52px;height:34px;border-radius:4px;background:currentColor;flex:0 0 auto}
+.hero-silhouette i:nth-child(3n){height:28px}
+.hero-silhouette i:nth-child(4n){height:38px}
+.hero-body{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.hero-copy h1{font-size:21px;font-weight:700;margin:0;letter-spacing:-.3px}
+.hero-copy p{margin:5px 0 0;font-size:13px;color:var(--ink-2);line-height:1.6}
+.hero-actions{display:flex;gap:8px;flex:0 0 auto}
+
+/* toast */
+.toast{
+  position:fixed;left:50%;transform:translateX(-50%) translateY(10px);bottom:28px;background:#17181a;color:#fff;
+  font-size:13px;padding:10px 16px;border-radius:10px;opacity:0;pointer-events:none;transition:.22s;z-index:200;
+  box-shadow:0 10px 30px rgba(0,0,0,.24);max-width:80vw;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <div class="pb-left">
+    <span class="pb-dot"></span>
+    <span class="pb-title">原型 · 侧栏用户模式</span>
+    <span class="pb-sub">2026-11-05</span>
+  </div>
+  <div class="proto-tabs" id="protoTabs">
+    <button class="proto-tab active" data-stage="user">① 用户模式</button>
+    <button class="proto-tab" data-stage="pro">② 专业模式（现状）</button>
+    <button class="proto-tab" data-stage="pref">③ 个人中心 · 视图切换</button>
+    <button class="proto-tab" data-stage="notes">④ 设计说明</button>
+  </div>
+  <div class="pb-right">
+    <button class="pb-demo" id="demoPerm" type="button" title="原型演示：切换无知识库权限">演示：无知识库权限</button>
+  </div>
+</div>
+
+<!-- ==================== ① 用户模式 ==================== -->
+<section class="stage active" id="stage-user">
+  <div class="app">
+    <aside class="sidebar" aria-label="用户模式导航">
+      <div class="sb-brand">
+        <div class="brand-mark">N</div>
+        <div class="brand-text">NanZi AI Agent</div>
+        <button class="ghost-icon" title="收起侧栏" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+      </div>
+
+      <div class="sb-scroll">
+      <nav class="sb-nav" id="userNav">
+        <button class="nav-item" data-nav="new" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8.6v6.8M8.6 12h6.8"/></svg>
+          <span class="nav-label">新建任务</span>
+        </button>
+
+        <button class="nav-item" data-nav="experts" data-toggle="sub-experts" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M7.5 7h9v3.5a4.5 4.5 0 0 1-9 0z"/><path d="M12 15v5"/><path d="M7.5 20.4h9"/></svg>
+          <span class="nav-label">专家 · 技能 · 连接器</span>
+          <svg class="ic-sm nav-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="sub-nav" id="sub-experts" hidden>
+          <button class="nav-sub" data-nav="expert" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M12 3.4l1.9 4.9 4.9 1.9-4.9 1.9L12 17l-1.9-4.9L5.2 10.2l4.9-1.9z"/></svg>
+            <span>专家</span>
+          </button>
+          <button class="nav-sub" data-nav="skill" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M9.5 4.5h5v2.6a1.9 1.9 0 1 0 0 3.8v2.6h-2.6a1.9 1.9 0 1 0-3.8 0H5.5v-5h2.6a1.9 1.9 0 1 0 1.4-3.2z"/><path d="M14.5 13.5h2.6a1.9 1.9 0 1 1 1.4 3.2v2.8h-4"/></svg>
+            <span>技能</span>
+          </button>
+          <button class="nav-sub" data-nav="connector" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M10 13.5a4 4 0 0 0 5.7 0l2.6-2.6a4 4 0 0 0-5.7-5.7l-1.5 1.5"/><path d="M14 10.5a4 4 0 0 0-5.7 0l-2.6 2.6a4 4 0 0 0 5.7 5.7l1.5-1.5"/></svg>
+            <span>连接器</span>
+          </button>
+        </div>
+
+        <button class="nav-item" data-nav="tasks" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.4V12l3.1 1.9"/></svg>
+          <span class="nav-label">定时任务</span>
+        </button>
+
+        <button class="nav-item" data-nav="library" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M4.6 5.6A2.6 2.6 0 0 1 7.2 3H19v18H7.2a2.6 2.6 0 0 1-2.6-2.6z"/><path d="M8.2 3v18"/></svg>
+          <span class="nav-label">知识库</span>
+        </button>
+
+        <button class="nav-item" data-nav="workspace" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.6l1.6 2H18a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"/></svg>
+          <span class="nav-label">工作空间</span>
+        </button>
+
+        <button class="nav-item" data-nav="more" data-toggle="sub-more" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><rect x="3.6" y="3.6" width="7" height="7" rx="2"/><rect x="13.4" y="3.6" width="7" height="7" rx="2"/><rect x="3.6" y="13.4" width="7" height="7" rx="2"/><rect x="13.4" y="13.4" width="7" height="7" rx="2"/></svg>
+          <span class="nav-label">更多</span>
+          <svg class="ic-sm nav-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="sub-nav" id="sub-more" hidden>
+          <button class="nav-sub" data-nav="workbench" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17"/><path d="M9.5 9.5V19.5"/></svg>
+            <span>我的工作台</span>
+          </button>
+          <button class="nav-sub" data-nav="token" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15l4-4 3 3 4-5"/></svg>
+            <span>Token 消耗</span>
+          </button>
+          <button class="nav-sub" data-nav="overview" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 12l3.5-2"/><path d="M7.5 16.5h9"/></svg>
+            <span>系统概览</span>
+          </button>
+          <button class="nav-sub" data-nav="personal" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.4"/><path d="M5.2 20a6.8 6.8 0 0 1 13.6 0"/></svg>
+            <span>个人中心</span>
+          </button>
+          <div class="sub-sep"></div>
+          <button class="nav-sub mode-jump" data-nav="to-pro" type="button">
+            <svg class="ic-sub" viewBox="0 0 24 24"><path d="M8 7h8l-3-3M16 17H8l3 3"/></svg>
+            <span>切换到专业模式</span>
+          </button>
+        </div>
+      </nav>
+
+      <div class="task-block">
+        <div class="task-head">
+          <span id="taskTitle">任务（<span id="taskCount">839</span>）</span>
+          <label class="task-search" id="taskSearchWrap" hidden>
+            <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+            <input id="taskSearchInput" type="search" placeholder="搜索任务" autocomplete="off" />
+          </label>
+          <button class="sb-icon-btn" id="taskSearchToggle" type="button" title="搜索任务" aria-label="搜索任务">
+            <svg class="ic-sm" id="taskSearchIcon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+          </button>
+        </div>
+        <ul class="task-list" id="taskList">
+          <li class="task-item" data-conv="c1">
+            <span class="task-title">打招呼问候</span>
+            <span class="task-date">8月31日</span>
+            <button class="task-menu" title="更多操作" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24" style="stroke-width:2.4"><circle cx="5.5" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="18.5" cy="12" r=".9" fill="currentColor"/></svg>
+            </button>
+          </li>
+          <li class="task-item" data-conv="c2">
+            <span class="task-title">晋景新能公告与舆情分析报告</span>
+            <span class="task-date">8月13日</span>
+            <button class="task-menu" title="更多操作" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24" style="stroke-width:2.4"><circle cx="5.5" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="18.5" cy="12" r=".9" fill="currentColor"/></svg>
+            </button>
+          </li>
+          <li class="task-item" data-conv="c3">
+            <span class="task-title">询问提示词内容</span>
+            <span class="task-date">8月13日</span>
+            <button class="task-menu" title="更多操作" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24" style="stroke-width:2.4"><circle cx="5.5" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="18.5" cy="12" r=".9" fill="currentColor"/></svg>
+            </button>
+          </li>
+          <li class="task-item" data-conv="c4">
+            <span class="task-title">搜索晋景新能最新公告</span>
+            <span class="task-date">8月5日</span>
+            <button class="task-menu" title="更多操作" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24" style="stroke-width:2.4"><circle cx="5.5" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="18.5" cy="12" r=".9" fill="currentColor"/></svg>
+            </button>
+          </li>
+          <li class="task-item" data-conv="c5">
+            <span class="task-title">查询上海天气并发送邮件</span>
+            <span class="task-date">8月1日</span>
+            <button class="task-menu" title="更多操作" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24" style="stroke-width:2.4"><circle cx="5.5" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="18.5" cy="12" r=".9" fill="currentColor"/></svg>
+            </button>
+          </li>
+          <li class="task-item" data-conv="c6">
+            <span class="task-title">双十一活动物料文案</span>
+            <span class="task-date">7月29日</span>
+            <button class="task-menu" title="更多操作" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24" style="stroke-width:2.4"><circle cx="5.5" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="18.5" cy="12" r=".9" fill="currentColor"/></svg>
+            </button>
+          </li>
+        </ul>
+        <button class="task-more" id="taskMore" type="button">滚到底部自动加载更多…</button>
+      </div>
+      </div>
+
+      <div class="sb-user" id="sbUser" role="button" tabindex="0" title="查看个人信息">
+        <div class="avatar">小龙</div>
+        <div class="sb-user-meta">
+          <div class="sb-user-name">陈小龙</div>
+          <div class="sb-user-id">@chenxiaolong</div>
+        </div>
+        <!-- 原来在右侧顶栏的四个动作收进这里：通知 / 主题 / 退出 -->
+        <button class="sb-icon-btn" type="button" title="消息通知" data-user-action="notice">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 5-2 6-2 6h16s-2-1-2-6"/><path d="M10.3 20a2 2 0 0 0 3.4 0"/></svg>
+          <span class="dot-badge">13</span>
+        </button>
+        <button class="sb-icon-btn" type="button" title="切换深色 / 浅色" data-user-action="theme">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M20.5 14.3A8.5 8.5 0 0 1 9.7 3.5a8.5 8.5 0 1 0 10.8 10.8z"/></svg>
+        </button>
+        <button class="sb-icon-btn" type="button" title="退出登录" data-user-action="logout">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M15 4h3.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H15"/><path d="M10 8l4 4-4 4M14 12H3.5"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="main-scroll">
+
+        <!-- 聊天 -->
+        <section class="page page-chat active" data-page="chat">
+          <div class="chat-head">
+            <span class="chat-title" id="chatTitle">新任务</span>
+            <span class="tag" id="chatAgentTag" style="display:none"></span>
+            <div class="chat-head-right">
+              <button class="ghost-icon" title="分享" type="button">
+                <svg class="ic-sm" viewBox="0 0 24 24"><path d="M8.6 13.4l6.8 3.6M15.4 7 8.6 10.6"/><circle cx="18" cy="5.6" r="2.4"/><circle cx="6" cy="12" r="2.4"/><circle cx="18" cy="18.4" r="2.4"/></svg>
+              </button>
+              <button class="ghost-icon" title="更多" type="button">
+                <svg class="ic-sm" viewBox="0 0 24 24" style="stroke-width:2.4"><circle cx="5.5" cy="12" r=".9" fill="currentColor"/><circle cx="12" cy="12" r=".9" fill="currentColor"/><circle cx="18.5" cy="12" r=".9" fill="currentColor"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="chat-body" id="chatBody">
+            <div class="chat-inner">
+              <div class="empty-state">
+                <div class="orb"></div>
+                <div class="empty-title" id="emptyTitle">下午好，陈小龙</div>
+                <div class="empty-sub" id="emptySub">有什么可以帮你？说一句话就能开始。</div>
+                <div class="suggest">
+                  <button class="chip" type="button">帮我梳理本周待办</button>
+                  <button class="chip" type="button">分析这份公告</button>
+                  <button class="chip" type="button">把会议记录整理成纪要</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="composer-box">
+              <textarea placeholder="给 AI 发送任务，或按 / 选择技能…"></textarea>
+              <div class="composer-tools">
+                <button class="ghost-icon" title="上传附件" type="button">
+                  <svg class="ic-sm" viewBox="0 0 24 24"><path d="M20 11.6l-8.2 8.2a5 5 0 0 1-7-7l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.8 1.8 0 0 1-2.5-2.5l7.9-7.9"/></svg>
+                </button>
+                <button class="pill-btn" id="agentPicker" type="button">
+                  <svg class="ic-sm" viewBox="0 0 24 24"><path d="M12 3.4l1.9 4.9 4.9 1.9-4.9 1.9L12 17l-1.9-4.9L5.2 10.2l4.9-1.9z"/></svg>
+                  <span id="agentPickerText">默认助手</span>
+                </button>
+                <button class="send" title="发送" type="button">
+                  <svg class="ic-sm" viewBox="0 0 24 24" style="stroke-width:2"><path d="M5 12h13M12.5 5.5 19 12l-6.5 6.5"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 专家 -->
+        <section class="page" data-page="expert">
+          <div class="page-head">
+            <div>
+              <h1>专家</h1>
+              <p class="page-sub">选一个专家，它会按自己的专长和资料帮你完成这类任务。</p>
+            </div>
+            <div class="page-actions">
+              <button class="btn" type="button">我收藏的</button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <label class="search">
+              <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+              <input placeholder="搜索专家，例如「公告分析」" />
+            </label>
+            <div class="chips">
+              <button class="chip on" type="button">全部</button>
+              <button class="chip" type="button">办公效率</button>
+              <button class="chip" type="button">数据分析</button>
+              <button class="chip" type="button">内容创作</button>
+              <button class="chip" type="button">技术支持</button>
+            </div>
+          </div>
+          <div class="grid" id="expertGrid"></div>
+        </section>
+
+        <!-- 技能 -->
+        <section class="page" data-page="skill">
+          <div class="page-head">
+            <div>
+              <h1>技能</h1>
+              <p class="page-sub">技能是可复用的做事方法，装好之后随时让 AI 调用。</p>
+            </div>
+            <div class="page-actions">
+              <button class="btn" type="button">我的技能</button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <label class="search">
+              <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+              <input placeholder="搜索技能" />
+            </label>
+            <div class="chips">
+              <button class="chip on" type="button">全部</button>
+              <button class="chip" type="button">已安装</button>
+              <button class="chip" type="button">官方</button>
+              <button class="chip" type="button">我的</button>
+            </div>
+          </div>
+          <div class="grid" id="skillGrid"></div>
+        </section>
+
+        <!-- 连接器 -->
+        <section class="page" data-page="connector">
+          <div class="page-head">
+            <div>
+              <h1>连接器</h1>
+              <p class="page-sub">把 AI 接到你在用的系统上，它就能直接查数据、发消息、传文件。</p>
+            </div>
+            <div class="page-actions">
+              <button class="btn" type="button">申请新连接器</button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <label class="search">
+              <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+              <input placeholder="搜索连接器" />
+            </label>
+            <div class="chips">
+              <button class="chip on" type="button">全部</button>
+              <button class="chip" type="button">已连接</button>
+              <button class="chip" type="button">未连接</button>
+            </div>
+          </div>
+          <div class="grid" id="connectorGrid"></div>
+        </section>
+
+        <!-- 定时任务 -->
+        <section class="page" data-page="tasks">
+          <div class="page-head">
+            <div>
+              <h1>定时任务</h1>
+              <p class="page-sub">这里只显示你创建的定时任务（不需要额外权限），按时间自动跑，结果送到你的消息或邮箱。</p>
+            </div>
+            <div class="page-actions">
+              <button class="btn btn-primary" type="button">新建定时任务</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th style="width:34%">任务</th>
+                  <th>执行计划</th>
+                  <th>上次运行</th>
+                  <th>下次运行</th>
+                  <th>状态</th>
+                  <th style="text-align:right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><div class="t-name">舆情早报</div><div class="t-sub">每天汇总前一日负面与重点信息</div></td>
+                  <td class="mono">每天 09:00</td>
+                  <td>今天 09:00 · 成功</td>
+                  <td>明天 09:00</td>
+                  <td><span class="state ok">运行中</span></td>
+                  <td style="text-align:right"><button class="btn btn-sm btn-ghost" type="button">查看</button></td>
+                </tr>
+                <tr>
+                  <td><div class="t-name">经营周报</div><div class="t-sub">周一汇总上周经营数据，生成周报</div></td>
+                  <td class="mono">每周一 10:00</td>
+                  <td>11月03日 10:00 · 成功</td>
+                  <td>11月10日 10:00</td>
+                  <td><span class="state ok">运行中</span></td>
+                  <td style="text-align:right"><button class="btn btn-sm btn-ghost" type="button">查看</button></td>
+                </tr>
+                <tr>
+                  <td><div class="t-name">对账单汇总</div><div class="t-sub">每月 1 日汇总上月对账差异</div></td>
+                  <td class="mono">每月 1 日 08:30</td>
+                  <td>11月01日 08:30 · 成功</td>
+                  <td>12月01日 08:30</td>
+                  <td><span class="state pause">已暂停</span></td>
+                  <td style="text-align:right"><button class="btn btn-sm btn-ghost" type="button">启用</button></td>
+                </tr>
+                <tr>
+                  <td><div class="t-name">公告监控</div><div class="t-sub">每小时抓取指定公司公告</div></td>
+                  <td class="mono">每小时整点</td>
+                  <td>今天 09:00 · 失败</td>
+                  <td>今天 10:00</td>
+                  <td><span class="state err">异常</span></td>
+                  <td style="text-align:right"><button class="btn btn-sm btn-ghost" type="button">重试</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="page-sub" style="margin-top:12px">提示：定时任务用的是和「新建任务」一样的对话能力，只是不用自己盯着。</p>        </section>
+
+        <!-- 知识库 -->
+        <section class="page" data-page="library">
+          <div class="page-head">
+            <div>
+              <h1>知识库</h1>
+              <p class="page-sub">把公司的制度、手册、项目资料放进来，AI 回答时就会引用它们。</p>
+            </div>
+            <div class="page-actions">
+              <button class="btn btn-primary" type="button">新建知识库</button>
+            </div>
+          </div>
+          <div class="grid">
+            <div class="card">
+              <div class="card-top">
+                <div class="card-ico" style="background:#eef4ff;color:#1677ff">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M4.6 5.6A2.6 2.6 0 0 1 7.2 3H19v18H7.2a2.6 2.6 0 0 1-2.6-2.6z"/><path d="M8.2 3v18"/></svg>
+                </div>
+                <div>
+                  <div class="card-title">公司制度汇编</div>
+                  <p class="card-desc" style="margin-top:5px">人力、财务、行政现行制度，含历年修订版本。</p>
+                </div>
+              </div>
+              <div class="card-meta"><span>128 篇文档</span><span class="dot"></span><span>10月28日更新</span></div>
+              <div class="card-actions"><button class="btn btn-sm" type="button">打开</button></div>
+            </div>
+            <div class="card">
+              <div class="card-top">
+                <div class="card-ico" style="background:#f0fdf4;color:#16a34a">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M4.6 5.6A2.6 2.6 0 0 1 7.2 3H19v18H7.2a2.6 2.6 0 0 1-2.6-2.6z"/><path d="M8.2 3v18"/></svg>
+                </div>
+                <div>
+                  <div class="card-title">产品手册</div>
+                  <p class="card-desc" style="margin-top:5px">对外版本产品说明、定价与常见问题。</p>
+                </div>
+              </div>
+              <div class="card-meta"><span>46 篇文档</span><span class="dot"></span><span>11月02日更新</span></div>
+              <div class="card-actions"><button class="btn btn-sm" type="button">打开</button></div>
+            </div>
+            <div class="card">
+              <div class="card-top">
+                <div class="card-ico" style="background:#fff7ed;color:#ea580c">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M4.6 5.6A2.6 2.6 0 0 1 7.2 3H19v18H7.2a2.6 2.6 0 0 1-2.6-2.6z"/><path d="M8.2 3v18"/></svg>
+                </div>
+                <div>
+                  <div class="card-title">项目交付资料</div>
+                  <p class="card-desc" style="margin-top:5px">各项目验收文档、实施方案与会议记录。</p>
+                </div>
+              </div>
+              <div class="card-meta"><span>312 篇文档</span><span class="dot"></span><span>11月04日更新</span></div>
+              <div class="card-actions"><button class="btn btn-sm" type="button">打开</button></div>
+            </div>
+            <div class="card">
+              <div class="card-top">
+                <div class="card-ico" style="background:#fdf2f8;color:#db2777">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M4.6 5.6A2.6 2.6 0 0 1 7.2 3H19v18H7.2a2.6 2.6 0 0 1-2.6-2.6z"/><path d="M8.2 3v18"/></svg>
+                </div>
+                <div>
+                  <div class="card-title">客服话术库</div>
+                  <p class="card-desc" style="margin-top:5px">高频问题标准答复与升级口径。</p>
+                </div>
+              </div>
+              <div class="card-meta"><span>89 篇文档</span><span class="dot"></span><span>10月15日更新</span></div>
+              <div class="card-actions"><button class="btn btn-sm" type="button">打开</button></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 工作空间 -->
+        <section class="page" data-page="workspace">
+          <div class="hero-card">
+            <div class="hero-silhouette" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <div class="hero-body">
+              <div class="hero-copy">
+                <h1>工作空间</h1>
+                <p>AI 干活时的文件都放这里：上传的资料、生成的报告、会话中间产物，都能直接打开看。</p>
+              </div>
+              <div class="hero-actions">
+                <button class="btn" type="button">最近</button>
+                <button class="btn" type="button">新建</button>
+                <button class="btn btn-primary" type="button">上传文件</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <div class="search" style="max-width:320px">
+              <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+              <input placeholder="搜索文件名" />
+            </div>
+            <div class="chips">
+              <button class="chip on" type="button">我的目录</button>
+              <button class="chip" type="button">我的文档</button>
+              <button class="chip" type="button">上传目录</button>
+              <button class="chip" type="button">回收站</button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th style="width:46%">名称</th>
+                  <th>大小</th>
+                  <th>修改时间</th>
+                  <th style="text-align:right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><div class="t-name">📁 报告输出</div><div class="t-sub">文件夹 · 12 个文件</div></td>
+                  <td class="mono">—</td>
+                  <td>今天 09:42</td>
+                  <td style="text-align:right"><button class="btn btn-sm btn-ghost" type="button">打开</button></td>
+                </tr>
+                <tr>
+                  <td><div class="t-name">📄 晋景新能-舆情分析报告.md</div><div class="t-sub">Markdown · 来自会话「晋景新能公告与舆情分析报告」</div></td>
+                  <td class="mono">86 KB</td>
+                  <td>今天 09:41</td>
+                  <td style="text-align:right"><button class="btn btn-sm btn-ghost" type="button">预览</button></td>
+                </tr>
+                <tr>
+                  <td><div class="t-name">📊 经营数据周报.xlsx</div><div class="t-sub">Excel · 上传</div></td>
+                  <td class="mono">1.2 MB</td>
+                  <td>11月04日 16:20</td>
+                  <td style="text-align:right"><button class="btn btn-sm btn-ghost" type="button">下载</button></td>
+                </tr>
+                <tr>
+                  <td><div class="t-name">📁 上传目录</div><div class="t-sub">文件夹 · 31 个文件</div></td>
+                  <td class="mono">—</td>
+                  <td>11月03日 10:08</td>
+                  <td style="text-align:right"><button class="btn btn-sm btn-ghost" type="button">打开</button></td>
+                </tr>
+                <tr>
+                  <td><div class="t-name">📄 产品手册-v2.4.pdf</div><div class="t-sub">PDF · 3.4 MB</div></td>
+                  <td class="mono">3.4 MB</td>
+                  <td>10月28日 15:02</td>
+                  <td style="text-align:right"><button class="btn btn-sm btn-ghost" type="button">预览</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="page-sub" style="margin-top:12px">提示：这里就是聊天页右侧「浏览工作空间」的内容，独立成一页后不用先开会话也能整理文件；能力与抽屉对齐（仅去掉「挂载到会话」与「本会话目录」）。</p>
+        </section>
+
+        <!-- 占位页（更多里的入口） -->
+        <section class="page" data-page="simple">
+          <div class="page-head">
+            <div>
+              <h1 id="simpleTitle">我的工作台</h1>
+              <p class="page-sub" id="simpleSub">这一页沿用现有产品页面，本次只重排侧栏入口，不改页面内容。</p>
+            </div>
+          </div>
+          <div class="placeholder">
+            <div class="ph-ico">
+              <svg class="ic" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17"/><path d="M8 14h8"/></svg>
+            </div>
+            <p>页面内容保持现有实现</p>
+            <p class="muted">路由：<code id="simpleRoute">/dashboard/workbench</code></p>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ==================== ② 专业模式（现状） ==================== -->
+<section class="stage" id="stage-pro">
+  <div class="app">
+    <aside class="sidebar pro" aria-label="专业模式导航">
+      <div class="sb-brand">
+        <div class="brand-mark">N</div>
+        <div class="brand-text">NanZi AI Agent</div>
+      </div>
+      <nav class="sb-nav">
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17"/></svg>
+          概览
+        </button>
+        <div class="pro-group">智能助手</div>
+        <button class="pro-item active" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17"/></svg>
+          我的工作台
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M20 11.6a8 8 0 1 0-3.2 6.4L21 19l-1-4.2z"/></svg>
+          智能助手
+        </button>
+        <div class="pro-group">智能体开发平台</div>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M12 3.4l1.9 4.9 4.9 1.9-4.9 1.9L12 17l-1.9-4.9L5.2 10.2l4.9-1.9z"/></svg>
+          智能体中心
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M4 12h3l2.5-6 4 12L16 12h4"/></svg>
+          技能工作台
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M7.5 7h9v3.5a4.5 4.5 0 0 1-9 0z"/><path d="M12 15v5"/></svg>
+          MCP 工具集
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M7.5 7h9v3.5a4.5 4.5 0 0 1-9 0z"/><path d="M12 15v5"/></svg>
+          MCP 服务台
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M12 3.4l1.9 4.9 4.9 1.9-4.9 1.9L12 17l-1.9-4.9L5.2 10.2l4.9-1.9z"/></svg>
+          记忆工作台
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M4.5 19.5l4.2-1 9.6-9.6a2.3 2.3 0 0 0-3.2-3.2L5.5 15.3z"/></svg>
+          提示词工坊
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.4V12l3.1 1.9"/></svg>
+          任务调度台
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M9 6l-4 6 4 6M15 6l4 6-4 6"/></svg>
+          智能体调试
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M9 6l-4 6 4 6M15 6l4 6-4 6"/></svg>
+          接口调试台
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/></svg>
+          组件调试台
+        </button>
+        <div class="pro-group">ChatBI 开发平台</div>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/></svg>
+          数据源管理
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/></svg>
+          元数据管理
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+          案例集管理
+        </button>
+        <div class="pro-group">知识库开发平台</div>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M4.6 5.6A2.6 2.6 0 0 1 7.2 3H19v18H7.2a2.6 2.6 0 0 1-2.6-2.6z"/></svg>
+          知识库管理
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
+          检索测试
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15l4-4 3 3 4-5"/></svg>
+          运营分析
+        </button>
+        <div class="pro-group">日志&TOKEN分析</div>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 9h8M8 13h5"/></svg>
+          审计日志
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M20 11.6a8 8 0 1 0-3.2 6.4L21 19l-1-4.2z"/></svg>
+          聊天日志
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15l4-4 3 3 4-5"/></svg>
+          Token 统计
+        </button>
+        <div class="pro-group">系统管理</div>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+          用户管理
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/></svg>
+          角色管理
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/></svg>
+          部门管理
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 14.6a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.2a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.2a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.2a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.6 1.6 0 0 0-1.4 1z"/></svg>
+          系统配置
+        </button>
+        <button class="pro-item" type="button">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          菜单管理
+        </button>
+        <div class="pro-note">
+          <b>动态菜单</b><br />
+          由 <code>GET /api/portal/menus/nav</code> 下发，按当前账号权限过滤。这里只是现状对照，本次不改。
+        </div>
+      </nav>
+      <div class="sb-user" role="button" tabindex="0" title="查看个人信息">
+        <div class="avatar">小龙</div>
+        <div class="sb-user-meta">
+          <div class="sb-user-name">陈小龙</div>
+          <div class="sb-user-id">@chenxiaolong</div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topline">
+        <div class="crumb">
+          <span>智能助手</span><span class="sep">/</span><span class="cur">我的工作台</span>
+        </div>
+        <span class="mode-pill" style="color:#5f6368;background:#f1f2f4">专业模式</span>
+      </header>
+      <div class="main-scroll">
+        <div class="page active">
+          <div class="page-head">
+            <div>
+              <h1>我的工作台</h1>
+              <p class="page-sub">先处理今天值得关注的事情，再继续最近的工作。</p>
+            </div>
+            <div class="page-actions">
+              <button class="btn" type="button">刷新</button>
+            </div>
+          </div>
+          <div class="pro-banner">
+            <svg class="ic-sm" viewBox="0 0 24 24" style="margin-top:2px"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v5M12 16h.01"/></svg>
+            <div>这是现状对照：左侧菜单来自后端动态下发，共 6 个分组、26 个业务入口（另有顶层「概览」），普通用户很难一眼找到「新建任务」。<br />下面页面内容与现有产品一致，本次不改。</div>
+          </div>
+          <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))">
+            <div class="card">
+              <div class="card-title">待处理事项 · 2</div>
+              <p class="card-desc">「经营周报」等你确认发布；「公告监控」运行失败待重试。</p>
+              <div class="card-actions"><button class="btn btn-sm" type="button">去处理</button></div>
+            </div>
+            <div class="card">
+              <div class="card-title">最近会话</div>
+              <p class="card-desc">晋景新能公告与舆情分析报告 · 8月13日</p>
+              <div class="card-actions"><button class="btn btn-sm" type="button">继续</button></div>
+            </div>
+            <div class="card">
+              <div class="card-title">常用助手</div>
+              <p class="card-desc">公告分析专家、周报生成助手</p>
+              <div class="card-actions"><button class="btn btn-sm" type="button">打开</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ==================== ③ 个人中心 · 视图切换 ==================== -->
+<section class="stage" id="stage-pref">
+  <div class="pc">
+    <div class="pc-wrap">
+      <div class="plan-bar">
+        <span class="seg-label">切换入口位置</span>
+        <div class="chips">
+          <button class="chip on" data-plan="a" type="button">方案 A · 顶部右侧分段控件</button>
+          <button class="chip" data-plan="b" type="button">方案 B · 左侧新增「界面偏好」</button>
+          <button class="chip" data-plan="c" type="button">方案 C · 「更多」里的快捷切换</button>
+        </div>
+      </div>
+
+      <div class="pc-panel">
+        <div class="pc-topbar">
+          <svg class="ic-sm" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></svg>
+          <span>个人中心</span>
+        </div>
+
+        <div class="pc-tabs">
+          <button class="pc-tab active" type="button">基本信息</button>
+          <button class="pc-tab" type="button">我的权限</button>
+          <button class="pc-tab" type="button">我的记忆</button>
+          <button class="pc-tab" type="button">我的 Token 消耗</button>
+
+          <div class="hotspot" id="hotA" style="margin-left:auto;align-self:center">
+            <span class="hn">A</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="seg-label">界面模式</span>
+              <div class="seg" id="modeSeg">
+                <button class="on" data-mode="user" type="button">用户模式</button>
+                <button data-mode="pro" type="button">专业模式</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pc-body">
+          <div class="pc-side">
+            <button class="pc-side-item" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+              个人基础信息
+            </button>
+            <button class="pc-side-item active" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 10h17"/></svg>
+              账号信息
+            </button>
+            <button class="pc-side-item" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>
+              安全设置
+            </button>
+            <button class="pc-side-item" type="button">
+              <svg class="ic-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c4.5 4.6 4.5 12.4 0 17-4.5-4.6-4.5-12.4 0-17z"/></svg>
+              云端浏览器缓存
+            </button>
+
+            <div class="hotspot" id="hotB" style="margin-top:10px">
+              <span class="hn">B</span>
+              <button class="pc-side-item" type="button" id="prefItem">
+                <svg class="ic-sm" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M9 9.5V19.5"/></svg>
+                界面偏好
+                <span class="tag tag-blue" style="margin-left:auto;font-size:10px">新</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="pc-main" id="pcMain">
+            <!-- A / C 时显示账号信息 -->
+            <div id="pcAccount">
+              <h2>账号基本信息</h2>
+              <p class="hint">查看您的平台个人身份资料与访问凭证。</p>
+              <div class="profile-card">
+                <div class="profile-av">小龙</div>
+                <div>
+                  <div class="profile-name">陈小龙</div>
+                  <div class="profile-id">@chenxiaolong</div>
+                </div>
+                <button class="btn btn-sm" style="margin-left:auto" type="button">更换头像</button>
+              </div>
+              <div class="field">
+                <div class="field-label">备注说明</div>
+                <div class="field-value">第三方同步：13564342272</div>
+              </div>
+              <div class="field">
+                <div class="field-label">邮箱</div>
+                <div class="field-value">chenxiaolong@nanzi-ai.com</div>
+              </div>
+              <div class="field">
+                <div class="field-label">最近登录</div>
+                <div class="field-value">2026-11-05 09:18 · 上海（Chrome / macOS）</div>
+              </div>
+            </div>
+
+            <!-- B 时显示界面偏好 -->
+            <div id="pcPref" style="display:none">
+              <h2>界面偏好</h2>
+              <p class="hint">选择你习惯的界面。切换只影响你自己，随时可以改回来。</p>
+              <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))">
+                <div class="card" style="border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,.09)">
+                  <div class="card-title">用户模式 <span class="tag tag-blue">当前</span></div>
+                  <p class="card-desc">只保留最常用的 5 个入口：新建任务、专家·技能·连接器、定时任务、知识库、工作空间，下面是历史任务。</p>
+                  <div class="card-actions"><button class="btn btn-sm btn-ghost" type="button">已选择</button></div>
+                </div>
+                <div class="card">
+                  <div class="card-title">专业模式</div>
+                  <p class="card-desc">沿用现有完整菜单：智能体开发平台、ChatBI、知识库、日志与 Token 分析、系统管理。</p>
+                  <div class="card-actions"><button class="btn btn-sm" type="button" data-mode="pro">切换</button></div>
+                </div>
+              </div>
+              <div class="plan-note" style="margin-top:16px">
+                小提示：不管选哪种模式，页面本身的权限校验不变——没权限的入口不会出现，也不会出现「点了提示无权限」的情况。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="plan-note" id="planNote">
+        <h3>方案 A · 顶部右侧分段控件（推荐）</h3>
+        <ul>
+          <li><b>位置</b>：个人中心 tab 行右侧，和「基本信息 / 我的权限」同一行，一眼能看到。</li>
+          <li><b>优点</b>：不新增页面、不新增菜单；两个模式并列，切换前后状态可见，符合「个人中心改我自己的设置」的心智。</li>
+          <li><b>代价</b>：要在 tab 行留出宽度，窄屏时需改为下拉。</li>
+          <li><b>建议</b>：首次登录的普通用户默认「用户模式」，管理员默认「专业模式」，切换结果写进 Redis 用户偏好（跟账号走，不跟浏览器走）。</li>
+        </ul>
+      </div>
+
+      <!-- 方案 C 示意 -->
+      <div id="planC" style="display:none;margin-top:16px">
+        <div class="note-card" style="display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap">
+          <div class="mini-sidebar">
+            <div class="ms-nav">
+              <div class="ms-item">＋ 新建任务</div>
+              <div class="ms-item on">⧉ 专家 · 技能 · 连接器</div>
+              <div class="ms-item">⏱ 定时任务</div>
+              <div class="ms-item">▤ 知识库</div>
+              <div class="ms-item">▨ 工作空间</div>
+              <div class="ms-item">⊞ 更多</div>
+            </div>
+            <div class="ms-user">
+              <div class="avatar" style="width:24px;height:24px;font-size:9px">小龙</div>
+              <span>陈小龙</span>
+              <span class="ms-toggle">⚙</span>
+            </div>
+          </div>
+          <div style="flex:1;min-width:260px">
+            <h3 style="margin:0 0 8px;font-size:13.5px">方案 C · 侧栏「更多」里的快捷切换</h3>
+            <p style="margin:0 0 12px;font-size:12.5px;color:var(--ink-2);line-height:1.8">
+              在「更多」子菜单底部放一条「切换到专业模式」，不用绕去个人中心。<br />
+              个人中心（方案 A）仍是正式入口，这里只做快捷方式；EmbedChat 不做切换。
+            </p>
+            <button class="btn btn-sm" type="button" id="openEmbedSheet">在用户模式里看这个入口 →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="stage" id="stage-notes">
+  <div class="notes-wrap">
+    <h1>用户模式 · 菜单设计与落地说明</h1>
+    <p class="lead">
+      现状：左栏由 <code>GET /api/portal/menus/nav</code> 动态下发，共 6 个分组、26 个业务入口（另有顶层「概览」），连「智能体调试 / 接口调试台 / 组件调试台」都在里面，偏开发者。
+      用户模式改成前端写死的 5 个主入口（新建任务 / 专家·技能·连接器 / 定时任务 / 知识库 / 工作空间，外加「更多」），不读导航接口；页面本身复用现有实现，只换入口（「工作空间」新增独立页，见下）。
+    </p>
+
+    <h2>一、入口映射</h2>
+    <div class="map-table">
+      <table>
+        <thead>
+          <tr><th style="width:22%">用户模式菜单</th><th style="width:30%">打开什么</th><th>复用路由</th><th style="width:16%">权限码</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="nav-name">新建任务</td><td>空白会话，直接开始聊</td><td><code>/dashboard/chat</code>（不带 conversation_id）</td><td><code>menu:ai_chat</code></td></tr>
+          <tr><td class="nav-name">专家 · 技能 · 连接器</td><td>展开三个子项，默认落在「专家」</td><td>专家 <code>/dashboard/agent-management</code>；技能 <code>/dashboard/skills</code>；连接器 <code>/dashboard/mcp</code></td><td>各自菜单码</td></tr>
+          <tr><td class="nav-name">定时任务</td><td>只列出我自己的定时任务（不需要额外权限）</td><td><code>/dashboard/tasks</code>（按当前用户过滤）</td><td>无需权限</td></tr>
+          <tr><td class="nav-name">知识库</td><td>知识库列表；无权限时置灰，点击提示「联系管理员开通」</td><td><code>/dashboard/knowledge-bases</code></td><td><code>menu:knowledge_management</code></td></tr>
+          <tr><td class="nav-name">工作空间</td><td>AI 工作目录；独立页，能力与聊天抽屉对齐（浏览/搜索/上传/下载/预览/新建/重命名/复制路径/解压/回收站/批量），仅去掉「挂载到会话」与「本会话目录」</td><td><code>/dashboard/workspace</code>（新增）</td><td>无需权限</td></tr>
+          <tr><td class="nav-name">任务（n）</td><td>历史会话，点开即恢复对话</td><td><code>/dashboard/chat?conversation_id=…</code></td><td><code>menu:ai_chat</code></td></tr>
+          <tr><td class="nav-name">更多</td><td>我的工作台、Token 消耗、系统概览（/dashboard）、个人中心</td><td>原有路由不变；系统概览直接进专业模式的概览页</td><td>各自菜单码</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>二、实现要点</h2>
+    <div class="note-grid">
+      <div class="note-card">
+        <h3>1. 菜单写死，权限决定「置灰」还是「隐藏」</h3>
+        <p>新增 <code>userModeMenu.ts</code> 常量数组（不请求 nav 接口）。<b>知识库</b>没权限时保留位置并置灰，点击提示联系管理员（用户能知道有这么个能力）；其余入口没权限直接不渲染。<b>工作空间</b>按用户自己的目录，不需要权限。<b>专家 / 技能 / 连接器</b>在用户模式下不挂菜单权限（浏览性质，数据边界在页面内），专业模式仍按 menu:* 控制。</p>
+      </div>
+      <div class="note-card">
+        <h3>2. 模式存 Redis，默认值写死</h3>
+        <p>用户偏好写 Redis（<code>portal:ui_mode:{user_id}</code>），登录后随 <code>/me</code> 下发；本机 <code>localStorage</code> 只做加载前的乐观值。默认值不做系统配置项：管理员 = 专业模式，其他 = 用户模式。</p>
+      </div>
+      <div class="note-card">
+        <h3>3. 切换入口：个人中心（正式）+「更多」快捷</h3>
+        <p>EmbedChat 不做模式切换（嵌入场景没有门户侧栏，切了也看不到变化）。侧栏「更多」里的快捷切换只是同一入口的快捷方式。</p>
+      </div>
+      <div class="note-card">
+        <h3>4. 路由和守卫不动</h3>
+        <p>用户模式只是「另一种侧栏」，页面、<code>meta.perm</code>、落地页逻辑全部保持原样。切模式不触发重新登录，也不改 URL。</p>
+      </div>
+      <div class="note-card">
+        <h3>5. 「任务（n）」就是历史会话</h3>
+        <p>沿用 <code>/api/chat/history</code>：计数取会话总数，列表显示最近 6 条，底部「查看全部会话」进完整历史。点开走 <code>conversation_id</code>；hover 的「⋯」保留重命名 / 置顶 / 分享 / 删除。</p>
+      </div>
+      <div class="note-card">
+        <h3>6. 专业模式回到动态菜单</h3>
+        <p>专业模式继续走 <code>useNavigation()</code> 的动态渲染，一份代码两个视图，可以按角色灰度。</p>
+      </div>
+      <div class="note-card">
+        <h3>7. 顶栏去掉，动作下移，默认亮色</h3>
+        <p>用户模式不再渲染右侧顶栏（面包屑 + 在线人数 + 通知 + 主题 + 退出），页面直接从标题开始；通知角标、深浅色、退出收进侧栏底部用户卡，省下的高度与宽度都还给内容。主题默认亮色——简化布局是白底 + 灰底的层级，深色下反而糊在一起；切回专业模式时再回到深色。</p>
+      </div>
+      <div class="note-card">
+        <h3>8. 旧链接不破</h3>
+        <p>老菜单里的「技能工作台 / 知识库管理」等深链仍可直接打开；用户模式只是少入口，不做重定向。</p>
+      </div>
+    </div>
+
+    <h2>三、已定方案</h2>
+    <div class="note-grid" style="grid-template-columns:1fr 1fr">
+      <div class="note-card">
+        <h3>设计上已确认</h3>
+        <ul style="margin:0;padding-left:18px">
+          <li>不做「助理」入口</li>
+          <li>EmbedChat 不做模式切换</li>
+          <li>模式存 Redis，下次进入生效</li>
+          <li>默认值写死：普通用户 = 用户模式，管理员 = 专业模式</li>
+          <li>知识库无权限 → 置灰 + 提示联系管理员</li>
+          <li>定时任务只显示自己的任务，不需要权限</li>
+          <li>「更多」去掉我的记忆与系统管理，新增系统概览（跳 /dashboard）</li>
+          <li>移动端默认用户模式，用户可自行切换</li>
+          <li>个人中心入口用<b>方案 B</b>（左侧「界面偏好」），不占用 tab 行</li>
+          <li>子菜单展开时<b>父项不加高亮</b>，只高亮子项</li>
+          <li>方案 C（「更多」里的快捷切换）<b>一起做</b>，作为补充入口</li>
+          <li>「专家 / 技能 / 连接器」措辞不变</li>
+          <li>用户模式隐藏右侧顶栏（面包屑那一行）</li>
+          <li>通知 / 主题切换 / 退出收进左下角用户卡</li>
+          <li>进入用户模式默认亮色、切回专业模式默认深色（之后手动切主题不会被覆盖）</li>
+        </ul>
+      </div>
+      <div class="note-card">
+        <h3>建议实现顺序</h3>
+        <ul style="margin:0;padding-left:18px">
+          <li><b>1. 侧栏视图</b>：<code>userModeMenu.ts</code> 常量 + 用户模式侧栏组件（含任务列表）</li>
+          <li><b>2. 模式存取</b>：Redis 读写 + <code>/me</code> 下发 + 前端切换</li>
+          <li><b>3. 个人中心入口</b>：方案 A 分段控件</li>
+          <li><b>4. 快捷入口</b>：侧栏「更多 → 切换到专业模式」</li>
+          <li><b>5. 权限态</b>：知识库置灰、定时任务按本人过滤、工作空间按本人目录</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="lead" style="margin-top:24px">
+      说明：本页是静态原型，所有数据为演示用；点了不会真的请求接口。
+    </p>
+  </div>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------------- 工具 ---------------- */
+  var toastEl = document.getElementById('toast');
+  var toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 1900);
+  }
+
+  /* ---------------- 原型视图切换 ---------------- */
+  var stages = ['user', 'pro', 'pref', 'notes'];
+  function showStage(key) {
+    stages.forEach(function (k) {
+      var el = document.getElementById('stage-' + k);
+      if (el) el.classList.toggle('active', k === key);
+    });
+    document.querySelectorAll('.proto-tab').forEach(function (b) {
+      b.classList.toggle('active', b.dataset.stage === key);
+    });
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll('.proto-tab').forEach(function (btn) {
+    btn.addEventListener('click', function () { showStage(btn.dataset.stage); });
+  });
+
+  /* ---------------- 用户模式：页面数据 ---------------- */
+  var experts = [
+    { ico: '📈', bg: '#eef4ff', fg: '#1677ff', name: '公告分析专家', desc: '解析上市公司公告，提炼要点、影响与风险提示，输出一页结论。', tags: ['金融', '文档'], meta: '平台内置 · 2.3 万人使用', cat: '数据分析' },
+    { ico: '🗂', bg: '#f5f3ff', fg: '#7c3aed', name: '周报生成助手', desc: '把零散的进展、会议记录整理成结构化周报，按公司模板排版。', tags: ['办公'], meta: '平台内置 · 1.8 万人使用', cat: '办公效率' },
+    { ico: '⚖️', bg: '#fef2f2', fg: '#dc2626', name: '合同条款审阅', desc: '标出付款、违约、知识产权等风险条款，并给出修改建议。', tags: ['法务', '文档'], meta: '法务部 · 内部', cat: '办公效率' },
+    { ico: '🧮', bg: '#ecfdf5', fg: '#059669', name: 'SQL 取数助手', desc: '用中文描述想看的指标，自动写成可执行的查询并解释口径。', tags: ['数据'], meta: '数据平台 · 内部', cat: '数据分析' },
+    { ico: '🛰', bg: '#eff6ff', fg: '#2563eb', name: '舆情监测', desc: '跟踪品牌与竞品的公开信息，按天汇总成简报。', tags: ['市场'], meta: '平台内置 · 9 千人使用', cat: '内容创作' },
+    { ico: '🌐', bg: '#fff7ed', fg: '#ea580c', name: '文档翻译', desc: '中英互译，保留表格与排版，专有名词按术语表统一。', tags: ['翻译'], meta: '平台内置 · 6 千人使用', cat: '内容创作' }
+  ];
+
+  var skills = [
+    { ico: '🕸', bg: '#eef4ff', fg: '#1677ff', name: '网页抓取', desc: '读取指定网页正文，跳过广告和导航。', tag: '官方', uses: '1.2 万次调用' },
+    { ico: '📊', bg: '#ecfdf5', fg: '#059669', name: '表格处理', desc: '清洗、合并、透视，支持 Excel 公式生成。', tag: '官方', uses: '8.6 千次调用' },
+    { ico: '✉️', bg: '#f5f3ff', fg: '#7c3aed', name: '邮件发送', desc: '按模板生成邮件正文并发送给指定收件人。', tag: '官方', uses: '5.4 千次调用' },
+    { ico: '📝', bg: '#fff7ed', fg: '#ea580c', name: '会议纪要整理', desc: '把录音转写稿压缩成决议 + 待办清单。', tag: '我的', uses: '上周使用 12 次' },
+    { ico: '📑', bg: '#fdf2f8', fg: '#db2777', name: 'PPT 生成', desc: '根据大纲生成 10 页以内的汇报稿。', tag: '团队', uses: '3.1 千次调用' },
+    { ico: '🔍', bg: '#f0f9ff', fg: '#0284c7', name: 'PDF 解析', desc: '提取表格、章节与批注，保留版面结构。', tag: '官方', uses: '7.2 千次调用' }
+  ];
+
+  var connectors = [
+    { ico: '💬', bg: '#eef4ff', fg: '#1677ff', name: '企业微信', desc: '发消息、查通讯录、建群与推送应用消息。', on: true, tools: 12 },
+    { ico: '📄', bg: '#f0f9ff', fg: '#0284c7', name: '飞书文档', desc: '读取与写入云文档，支持协作空间。', on: false, tools: 8 },
+    { ico: '🗄', bg: '#ecfdf5', fg: '#059669', name: 'MySQL 只读库', desc: '只读账号连接业务库，查询前自动校验 SQL。', on: true, tools: 5 },
+    { ico: '🗺', bg: '#fff7ed', fg: '#ea580c', name: '高德地图', desc: '地址解析、路线规划与周边查询。', on: false, tools: 4 },
+    { ico: '☁️', bg: '#f5f3ff', fg: '#7c3aed', name: '阿里云 OSS', desc: '上传、下载与列举对象存储文件。', on: true, tools: 6 }
+  ];
+
+  function renderExperts() {
+    var grid = document.getElementById('expertGrid');
+    grid.innerHTML = experts.map(function (e) {
+      return '<div class="card">' +
+        '<div class="card-top">' +
+          '<div class="card-ico" style="background:' + e.bg + ';color:' + e.fg + ';font-size:17px">' + e.ico + '</div>' +
+          '<div><div class="card-title">' + e.name + '</div>' +
+          '<p class="card-desc" style="margin-top:5px">' + e.desc + '</p></div>' +
+        '</div>' +
+        '<div class="card-meta">' + e.tags.map(function (t, i) { return '<span class="tag' + (i === 0 ? ' tag-blue' : '') + '">' + t + '</span>'; }).join('') + '<span class="dot"></span><span>' + e.meta + '</span></div>' +
+        '<div class="card-actions">' +
+          '<button class="btn btn-sm btn-blue" data-use-expert="' + e.name + '" type="button">使用</button>' +
+          '<button class="btn btn-sm btn-ghost" type="button">详情</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function renderSkills() {
+    var grid = document.getElementById('skillGrid');
+    grid.innerHTML = skills.map(function (s) {
+      return '<div class="card">' +
+        '<div class="card-top">' +
+          '<div class="card-ico" style="background:' + s.bg + ';color:' + s.fg + ';font-size:17px">' + s.ico + '</div>' +
+          '<div><div class="card-title">' + s.name + '</div>' +
+          '<p class="card-desc" style="margin-top:5px">' + s.desc + '</p></div>' +
+        '</div>' +
+        '<div class="card-meta"><span class="tag">' + s.tag + '</span><span class="dot"></span><span>' + s.uses + '</span></div>' +
+        '<div class="card-actions"><button class="btn btn-sm" type="button">' + (s.tag === '我的' ? '编辑' : '安装') + '</button></div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function renderConnectors() {
+    var grid = document.getElementById('connectorGrid');
+    grid.innerHTML = connectors.map(function (c, i) {
+      return '<div class="card">' +
+        '<div class="card-top">' +
+          '<div class="card-ico" style="background:' + c.bg + ';color:' + c.fg + ';font-size:17px">' + c.ico + '</div>' +
+          '<div><div class="card-title">' + c.name + '</div>' +
+          '<p class="card-desc" style="margin-top:5px">' + c.desc + '</p></div>' +
+        '</div>' +
+        '<div class="card-meta">' +
+          (c.on ? '<span class="tag tag-green">已连接</span>' : '<span class="tag">未连接</span>') +
+          '<span class="dot"></span><span>' + c.tools + ' 个工具</span></div>' +
+        '<div class="card-actions">' +
+          '<button class="btn btn-sm" data-connect="' + i + '" type="button">' + (c.on ? '管理' : '连接') + '</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  renderExperts();
+  renderSkills();
+  renderConnectors();
+
+  /* ---------------- 用户模式：切换页面 ---------------- */
+  var pageMeta = {
+    chat: { crumb: ['工作台', '新建任务'] },
+    expert: { crumb: ['智能体中心', '专家'] },
+    skill: { crumb: ['智能体中心', '技能'] },
+    connector: { crumb: ['智能体中心', '连接器'] },
+    tasks: { crumb: ['工作台', '定时任务'] },
+    library: { crumb: ['工作台', '知识库'] },
+    workspace: { crumb: ['工作台', '工作空间'] },
+    simple: { crumb: ['工作台', '更多'] }
+  };
+
+  var simpleMeta = {
+    workbench: { title: '我的工作台', sub: '这一页沿用现有产品页面，本次只重排侧栏入口，不改页面内容。', route: '/dashboard/workbench' },
+    token: { title: 'Token 消耗', sub: '查看自己的用量与趋势，沿用现有页面。', route: '/dashboard/token-stats' }
+  };
+
+  function setCrumb(parts) {
+    // 用户模式没有顶部面包屑（入口已经足够清楚），这里只做容错
+    var crumb = document.getElementById('crumb');
+    if (!crumb) return;
+    crumb.innerHTML = parts.map(function (p, i) {
+      var last = i === parts.length - 1;
+      return last
+        ? '<span class="cur">' + p + '</span>'
+        : '<span>' + p + '</span><span class="sep">/</span>';
+    }).join('');
+  }
+
+  var activeNavKey = 'new';
+
+  function openPage(key, opts) {
+    opts = opts || {};
+    var stage = document.getElementById('stage-user');
+    var pageKey = key;
+    if (key === 'new') pageKey = 'chat';
+
+    if (key === 'workbench' || key === 'token') {
+      var m = simpleMeta[key];
+      document.getElementById('simpleTitle').textContent = m.title;
+      document.getElementById('simpleSub').textContent = m.sub;
+      document.getElementById('simpleRoute').textContent = m.route;
+      // 这几个入口共用同一个「沿用现有页面」占位块，避免每页单独写一份
+      pageKey = 'simple';
+    }
+
+    stage.querySelectorAll('.page').forEach(function (p) {
+      p.classList.toggle('active', p.dataset.page === pageKey);
+    });
+
+    // 面包屑
+    var crumbParts;
+    if (key === 'new') crumbParts = ['工作台', '新建任务'];
+    else if (key === 'expert' || key === 'skill' || key === 'connector') crumbParts = ['智能体中心', { expert: '专家', skill: '技能', connector: '连接器' }[key]];
+    else if (key === 'workbench' || key === 'token') crumbParts = ['工作台', simpleMeta[key].title];
+    else crumbParts = pageMeta[pageKey] ? pageMeta[pageKey].crumb : ['工作台', ''];
+
+    setCrumb(crumbParts);
+
+    // 侧栏高亮
+    stage.querySelectorAll('.nav-item').forEach(function (b) { b.classList.remove('active'); });
+    stage.querySelectorAll('.nav-sub').forEach(function (b) { b.classList.remove('active'); });
+
+    // 进入任意页面时先收起所有分组：否则点开过「更多」之后，再去点定时任务、知识库，
+    // 那一组会一直挂在下面，看起来像「点别的菜单把更多也展开了」。
+    stage.querySelectorAll('.sub-nav').forEach(function (panel) { panel.hidden = true; });
+    stage.querySelectorAll('.nav-item[data-toggle]').forEach(function (btn) { btn.classList.remove('open'); });
+
+    var subKeys = { expert: 'experts', skill: 'experts', connector: 'experts', workbench: 'more', token: 'more' };
+    if (subKeys[key]) {
+      // 父项只负责展开，不加灰底：选中态落在具体子项上，避免"两个都像被选中"
+      var subBtn = stage.querySelector('.nav-sub[data-nav="' + key + '"]');
+      if (subBtn) subBtn.classList.add('active');
+      // 保持展开
+      var subPanel = document.getElementById(subKeys[key] === 'experts' ? 'sub-experts' : 'sub-more');
+      if (subPanel) subPanel.hidden = false;
+      var chevronOwner = stage.querySelector('.nav-item[data-nav="' + subKeys[key] + '"]');
+      if (chevronOwner) chevronOwner.classList.add('open');
+    } else {
+      var itemBtn = stage.querySelector('.nav-item[data-nav="' + (key === 'new' ? 'new' : key) + '"]');
+      if (itemBtn) itemBtn.classList.add('active');
+    }
+
+    // 任务列表高亮清理
+    if (key !== 'chat' && !opts.keepTask) {
+      stage.querySelectorAll('.task-item').forEach(function (li) { li.classList.remove('active'); });
+    }
+
+    activeNavKey = key;
+    document.querySelector('.main-scroll', stage).scrollTop = 0;
+  }
+
+  /* ---------------- 用户模式：导航点击 ---------------- */
+  var userStage = document.getElementById('stage-user');
+
+  userStage.querySelectorAll('.nav-item[data-toggle]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var panel = document.getElementById(btn.dataset.toggle);
+      var willOpen = panel.hidden;
+      panel.hidden = !willOpen;
+      btn.classList.toggle('open', willOpen);
+      if (btn.dataset.nav === 'experts') {
+        openPage('expert');
+      }
+      // 「更多」只展开，不跳页
+    });
+  });
+
+  userStage.querySelectorAll('.nav-item[data-nav]:not([data-toggle])').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var key = btn.dataset.nav;
+      if (btn.classList.contains('locked')) {
+        toast('当前账号没有「知识库」权限，请联系管理员开通');
+        return;
+      }
+      if (key === 'new') {
+        startNewChat();
+        return;
+      }
+      openPage(key);
+    });
+  });
+
+  userStage.querySelectorAll('.nav-sub').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var key = btn.dataset.nav;
+      if (key === 'to-pro') {
+        showStage('pro');
+        toast('已切到专业模式：沿用现有动态菜单（演示）');
+        return;
+      }
+      if (key === 'overview') {
+        showStage('pro');
+        toast('打开系统概览（专业模式里的 /dashboard）');
+        return;
+      }
+      if (key === 'personal') {
+        showStage('pref');
+        return;
+      }
+      openPage(key);
+    });
+  });
+
+  /* ---------------- 聊天 ---------------- */
+  var chatTitle = document.getElementById('chatTitle');
+  var chatBody = document.getElementById('chatBody');
+  var agentTag = document.getElementById('chatAgentTag');
+  var agentPickerText = document.getElementById('agentPickerText');
+
+  function emptyStateHtml() {
+    return '<div class="chat-inner"><div class="empty-state">' +
+      '<div class="orb"></div>' +
+      '<div class="empty-title">下午好，陈小龙</div>' +
+      '<div class="empty-sub">有什么可以帮你？说一句话就能开始。</div>' +
+      '<div class="suggest">' +
+        '<button class="chip" type="button">帮我梳理本周待办</button>' +
+        '<button class="chip" type="button">分析这份公告</button>' +
+        '<button class="chip" type="button">把会议记录整理成纪要</button>' +
+      '</div></div></div>';
+  }
+
+  var conversations = {
+    c1: {
+      title: '打招呼问候',
+      agent: '',
+      msgs: [
+        { role: 'user', text: '你好，帮我把这周的待办梳理一下。' },
+        { role: 'ai', text: '好的。我看了下你上周的会话和定时任务，这周主要有三件事：<ul><li>周三前确认「经营周报」的数据口径</li><li>「公告监控」上次运行失败，需要重试一次</li><li>周五前把产品手册更新到 v2.4</li></ul>要我把它们拆成可勾选的任务吗？' },
+        { role: 'user', text: '拆一下吧，顺便提醒我周三下午三点。' },
+        { role: 'ai', text: '已经拆好并加了两条提醒：<ul><li>周三 15:00 · 确认周报数据口径</li><li>周四 10:00 · 重试公告监控</li></ul>到时候我会在「定时任务」里提醒你。' }
+      ]
+    },
+    c2: {
+      title: '晋景新能公告与舆情分析报告',
+      agent: '公告分析专家',
+      msgs: [
+        { role: 'user', text: '帮我分析一下晋景新能最近的公告和舆情，出一页结论。' },
+        { role: 'ai', text: '已抓取 8 月 1 日至 8 月 13 日的 6 份公告与 214 条公开舆情，先给结论：' +
+          '<div class="msg-card"><h4>核心结论</h4>' +
+          '<div class="kv"><b>公告面</b><span>近两周以「项目中标 + 股东减持」为主，中标金额合计 3.2 亿元。</span></div>' +
+          '<div class="kv"><b>舆情面</b><span>中性偏正面，正面占比 62%，负面集中在减持解读。</span></div>' +
+          '<div class="kv"><b>风险点</b><span>减持窗口与中标披露时间接近，需关注市场对「先利好后减持」的解读。</span></div>' +
+          '</div>' +
+          '<p>完整报告（含股价对比图与舆情词云）已生成，需要我发到你的邮箱吗？</p>' },
+        { role: 'user', text: '发我邮箱，再顺手在企微群里同步一句。' },
+        { role: 'ai', text: '邮件已发送至 chenxiaolong@nanzi-ai.com；企微群「投研-新能源」的消息也发出去了（附报告摘要 3 条）。' }
+      ]
+    },
+    c3: {
+      title: '询问提示词内容',
+      agent: '',
+      msgs: [
+        { role: 'user', text: '我们给公告分析用的提示词，现在包含哪些约束？' },
+        { role: 'ai', text: '当前提示词包含四类约束：<ul><li>只引用公告原文与指定信源，不补充外部观点</li><li>输出固定三段：结论 / 依据 / 风险</li><li>金额必须带单位，且保留原文四舍五入口径</li><li>不确定的信息标注「待核实」，不允许推测</li></ul>需要我把这版提示词复制出来吗？' }
+      ]
+    },
+    c4: {
+      title: '搜索晋景新能最新公告',
+      agent: '',
+      msgs: [
+        { role: 'user', text: '搜一下晋景新能 8 月 5 日之后的最新公告。' },
+        { role: 'ai', text: '找到 3 条：<ul><li>8月12日 · 关于项目中标的公告</li><li>8月9日 · 持股 5% 以上股东减持进展</li><li>8月6日 · 2026 年半年度业绩说明会召开情况</li></ul>需要我逐条提炼要点吗？' }
+      ]
+    },
+    c5: {
+      title: '查询上海天气并发送邮件',
+      agent: '',
+      msgs: [
+        { role: 'user', text: '查一下上海明天的天气，发邮件给项目组。' },
+        { role: 'ai', text: '上海明天 26~33℃，多云转阵雨，东南风 3 级，建议带伞。邮件已发送给「项目组」共 6 人，抄送你本人。' }
+      ]
+    },
+    c6: {
+      title: '双十一活动物料文案',
+      agent: '',
+      msgs: [
+        { role: 'user', text: '帮我写三版双十一活动的主图文案，走 B 端客户。' },
+        { role: 'ai', text: '三版方向：<ul><li>价值型：强调降本与交付确定性</li><li>案例型：用客户结果说话</li><li>紧迫型：限时权益 + 名额</li></ul>已按每版 20 字主标题 + 40 字副标题输出。' }
+      ]
+    }
+  };
+
+  function renderConversation(conv) {
+    chatTitle.textContent = conv.title;
+    if (conv.agent) {
+      agentTag.textContent = conv.agent;
+      agentTag.style.display = '';
+      agentPickerText.textContent = conv.agent;
+    } else {
+      agentTag.style.display = 'none';
+      agentPickerText.textContent = '默认助手';
+    }
+    chatBody.innerHTML = '<div class="chat-inner">' + conv.msgs.map(function (m) {
+      var isUser = m.role === 'user';
+      return '<div class="msg ' + (isUser ? 'user' : 'ai') + '">' +
+        '<div class="msg-av">' + (isUser ? '陈' : 'AI') + '</div>' +
+        '<div class="msg-body">' + m.text + '</div>' +
+      '</div>';
+    }).join('') + '</div>';
+    chatBody.scrollTop = 0;
+  }
+
+  function startNewChat(agentName) {
+    openPage('new');
+    chatTitle.textContent = '新任务';
+    agentTag.style.display = 'none';
+    agentPickerText.textContent = agentName || '默认助手';
+    chatBody.innerHTML = emptyStateHtml();
+    var sub = chatBody.querySelector('.empty-sub');
+    if (agentName) {
+      sub.textContent = '已选择「' + agentName + '」，直接说你的需求就行。';
+    }
+    userStage.querySelectorAll('.task-item').forEach(function (li) { li.classList.remove('active'); });
+    toast(agentName ? '已用「' + agentName + '」开始新任务' : '已开始新任务');
+  }
+
+  userStage.querySelectorAll('.task-item').forEach(function (li) {
+    li.addEventListener('click', function (ev) {
+      if (ev.target.closest('.task-menu')) {
+        toast('重命名 / 置顶 / 分享 / 删除（原型占位）');
+        return;
+      }
+      var conv = conversations[li.dataset.conv];
+      if (!conv) return;
+      userStage.querySelectorAll('.task-item').forEach(function (x) { x.classList.remove('active'); });
+      li.classList.add('active');
+      openPage('chat', { keepTask: true });
+      setCrumb(['工作台', '任务', conv.title]);
+      renderConversation(conv);
+    });
+  });
+
+  document.getElementById('taskMore').addEventListener('click', function () {
+    toast('滚到底部自动加载更多（原型占位）');
+  });
+
+  // 任务搜索：标题与输入框互斥，输入即过滤当前列表
+  var taskTitleEl = document.getElementById('taskTitle');
+  var taskSearchWrap = document.getElementById('taskSearchWrap');
+  var taskSearchInput = document.getElementById('taskSearchInput');
+  var taskSearchToggle = document.getElementById('taskSearchToggle');
+  var taskSearchIcon = document.getElementById('taskSearchIcon');
+  var taskMoreBtn = document.getElementById('taskMore');
+
+  function applyTaskFilter() {
+    var kw = (taskSearchInput.value || '').trim().toLowerCase();
+    var shown = 0;
+    document.querySelectorAll('#taskList .task-item').forEach(function (li) {
+      var title = li.querySelector('.task-title');
+      var text = title ? title.textContent.toLowerCase() : '';
+      var hit = !kw || text.indexOf(kw) >= 0;
+      li.style.display = hit ? '' : 'none';
+      if (hit) shown += 1;
+    });
+    // 搜索是本地过滤、不是分页，所以这时不显示"加载更多"
+    if (taskMoreBtn) taskMoreBtn.style.display = kw ? 'none' : '';
+    taskSearchInput.title = kw ? '匹配 ' + shown + ' 条' : '';
+  }
+
+  function closeTaskSearch() {
+    taskSearchWrap.hidden = true;
+    taskSearchInput.value = '';
+    taskTitleEl.hidden = false;
+    document.querySelectorAll('#taskList .task-item').forEach(function (li) { li.style.display = ''; });
+    if (taskMoreBtn) taskMoreBtn.style.display = '';
+    taskSearchIcon.innerHTML = '<circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/>';
+  }
+
+  taskSearchToggle.addEventListener('click', function () {
+    if (!taskSearchWrap.hidden) {
+      closeTaskSearch();
+      return;
+    }
+    taskSearchWrap.hidden = false;
+    taskTitleEl.hidden = true;
+    taskSearchIcon.innerHTML = '<path d="M6 6l12 12M18 6L6 18"/>';
+    taskSearchInput.focus();
+  });
+
+  taskSearchInput.addEventListener('input', applyTaskFilter);
+  taskSearchInput.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') closeTaskSearch();
+  });
+
+  userStage.addEventListener('click', function (ev) {
+    var userBtn = ev.target.closest('[data-use-expert]');
+    if (userBtn) {
+      startNewChat(userBtn.dataset.useExpert);
+      return;
+    }
+    var connectBtn = ev.target.closest('[data-connect]');
+    if (connectBtn) {
+      var idx = Number(connectBtn.dataset.connect);
+      connectors[idx].on = !connectors[idx].on;
+      renderConnectors();
+      toast(connectors[idx].on ? '已连接「' + connectors[idx].name + '」' : '已断开「' + connectors[idx].name + '」');
+      return;
+    }
+    var chip = ev.target.closest('.chips .chip');
+    if (chip && chip.parentElement) {
+      chip.parentElement.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('on'); });
+      chip.classList.add('on');
+    }
+    var sug = ev.target.closest('.suggest .chip');
+    if (sug) {
+      toast('已把「' + sug.textContent + '」填进输入框（原型占位）');
+    }
+  });
+
+  document.getElementById('sbUser').addEventListener('click', function () {
+    showStage('pref');
+  });
+
+  // 底部用户卡右侧的三个动作（原来在顶栏右上角）
+  document.querySelectorAll('#stage-user [data-user-action]').forEach(function (btn) {
+    btn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var action = btn.dataset.userAction;
+      if (action === 'notice') toast('打开消息中心（原型占位）');
+      else if (action === 'theme') toast('切换深色 / 浅色主题（原型占位）');
+      else if (action === 'logout') toast('退出登录（原型占位）');
+    });
+  });
+
+  /* ---------------- 专业模式：点击只切高亮 ---------------- */
+  document.querySelectorAll('#stage-pro .pro-item').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('#stage-pro .pro-item').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      toast('专业模式沿用现有页面（原型只做菜单对照）');
+    });
+  });
+
+  /* ---------------- 个人中心：方案切换 ---------------- */
+  var planNotes = {
+    a: {
+      title: '方案 A · 顶部右侧分段控件（备选）',
+      html: '<ul>' +
+        '<li><b>位置</b>：个人中心 tab 行右侧，和「基本信息 / 我的权限」同一行，一眼能看到。</li>' +
+        '<li><b>优点</b>：不新增页面、不新增菜单；两个模式并列，切换前后状态可见，符合「个人中心改我自己的设置」的心智。</li>' +
+        '<li><b>代价</b>：要在 tab 行留出宽度，窄屏时需改为下拉。</li>' +
+        '<li><b>建议</b>：首次登录的普通用户默认「用户模式」，管理员默认「专业模式」，切换结果写进 Redis 用户偏好（跟账号走，不跟浏览器走）。</li>' +
+        '</ul>'
+    },
+    b: {
+      title: '方案 B · 左侧新增「界面偏好」（已采用）',
+      html: '<ul>' +
+        '<li><b>位置</b>：个人中心左侧子菜单底部，与「安全设置」同级。</li>' +
+        '<li><b>优点</b>：可扩展——以后字号、主题、默认助手都能放这一页；tab 行不用改布局。</li>' +
+        '<li><b>代价</b>：多一层导航，用户得先想到「界面偏好」这四个字；切换成本比 A 高。</li>' +
+        '<li><b>建议</b>：如果确定以后还要加外观类设置，用 B；否则 A 更直接。右侧已按 B 的样子渲染。</li>' +
+        '</ul>'
+    },
+    c: {
+      title: '方案 C · 侧栏「更多」里的快捷切换（已采用，作为补充）',
+      html: '<ul>' +
+        '<li><b>位置</b>：用户模式「更多」子菜单底部，一条「切换到专业模式」。</li>' +
+        '<li><b>优点</b>：不用绕去个人中心，切完立刻能看到侧栏变化。</li>' +
+        '<li><b>代价</b>：多一个入口，需要保证和个人中心里的状态永远一致（同一份 Redis 字段即可）。</li>' +
+        '<li><b>建议</b>：个人中心（方案 A）做正式入口，这里只做快捷方式；EmbedChat 不做切换入口。</li>' +
+        '</ul>'
+    }
+  };
+
+  var planNoteEl = document.getElementById('planNote');
+  var planCEl = document.getElementById('planC');
+  var pcAccount = document.getElementById('pcAccount');
+  var pcPref = document.getElementById('pcPref');
+
+  function setPlan(plan) {
+    document.querySelectorAll('[data-plan]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.plan === plan);
+    });
+    // 方案 A 已否决：只有看 A 的对比图时才显示顶部控件，其余方案直接隐藏，
+    // 这样 B 视图就是最终形态（与实现一致）。
+    document.getElementById('hotA').style.display = plan === 'a' ? '' : 'none';
+    document.getElementById('hotA').classList.toggle('on', plan === 'a');
+    document.getElementById('hotB').classList.toggle('on', plan === 'b');
+    document.getElementById('hotA').classList.toggle('dim', plan !== 'a');
+    document.getElementById('hotB').classList.toggle('dim', plan !== 'b');
+    planNoteEl.innerHTML = '<h3>' + planNotes[plan].title + '</h3>' + planNotes[plan].html;
+    planCEl.style.display = plan === 'c' ? 'block' : 'none';
+    if (plan === 'b') {
+      pcAccount.style.display = 'none';
+      pcPref.style.display = 'block';
+    } else {
+      pcAccount.style.display = 'block';
+      pcPref.style.display = 'none';
+    }
+    window.scrollTo(0, 0);
+  }
+
+  document.querySelectorAll('[data-plan]').forEach(function (btn) {
+    btn.addEventListener('click', function () { setPlan(btn.dataset.plan); });
+  });
+
+  document.getElementById('pcPrefItem') && document.getElementById('pcPrefItem').addEventListener('click', function () {
+    setPlan('b');
+  });
+
+  document.getElementById('hotA').addEventListener('click', function (ev) {
+    var segBtn = ev.target.closest('#modeSeg button');
+    if (!segBtn) return;
+    var mode = segBtn.dataset.mode;
+    document.querySelectorAll('#modeSeg button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === mode); });
+    setPlan('b');
+    setTimeout(function () {
+      showStage(mode === 'user' ? 'user' : 'pro');
+      toast(mode === 'user' ? '已切换到用户模式' : '已切换到专业模式');
+    }, 160);
+  });
+
+  // 方案 B 卡片里的「切换」按钮
+  document.getElementById('pcPref').addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-mode]');
+    if (!b) return;
+    showStage(b.dataset.mode === 'pro' ? 'pro' : 'user');
+    toast(b.dataset.mode === 'pro' ? '已切换到专业模式' : '已切换到用户模式');
+  });
+
+  /* ---------------- 初始化 ---------------- */
+  var collapseBtn = document.querySelector('#stage-user .sb-brand .ghost-icon');
+  if (collapseBtn) {
+    collapseBtn.addEventListener('click', function () {
+      toast('收起侧栏后只留图标（原型占位）');
+    });
+  }
+
+  // 「无权限」演示：知识库保留位置但置灰，点击提示联系管理员
+  var demoPermBtn = document.getElementById('demoPerm');
+  var libraryItem = document.querySelector('#stage-user .nav-item[data-nav="library"]');
+  if (demoPermBtn && libraryItem) {
+    demoPermBtn.addEventListener('click', function () {
+      var on = demoPermBtn.classList.toggle('on');
+      libraryItem.classList.toggle('locked', on);
+      demoPermBtn.textContent = on ? '演示中：无知识库权限' : '演示：无知识库权限';
+      if (on) toast('知识库已置灰：无权限时保留位置，点击提示联系管理员');
+    });
+  }
+
+  // 方案 C 的按钮：回到用户模式并展开「更多」
+  var openMoreBtn = document.getElementById('openEmbedSheet');
+  if (openMoreBtn) {
+    openMoreBtn.addEventListener('click', function () {
+      showStage('user');
+      var moreBtn = document.querySelector('#stage-user .nav-item[data-nav="more"]');
+      if (moreBtn) moreBtn.click();
+    });
+  }
+
+  setPlan('b');
+  openPage('new');
+})();
+</script>
+</body>
+</html>

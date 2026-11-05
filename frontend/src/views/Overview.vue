@@ -17,49 +17,91 @@
         <h1 class="min-w-0 text-2xl font-bold tracking-normal text-gray-900">
           {{ userInfo?.role === "admin" ? "系统概览" : "我的概览" }}
         </h1>
-        <div class="overview-toolbar flex shrink-0 items-center gap-1">
-          <label class="sr-only" for="overview-period">统计周期</label>
-          <select
-            id="overview-period"
-            v-model="period"
-            class="overview-period-select cursor-pointer appearance-none rounded-lg border-0 bg-transparent py-1.5 pl-2.5 pr-7 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200"
-            @change="onPeriodChange"
-          >
-            <option value="today">今日</option>
-            <option value="week">本周</option>
-            <option value="month">本月</option>
-          </select>
-          <button
-            type="button"
-            class="overview-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="loading"
-            :aria-busy="loading"
-            :aria-label="loading ? '刷新中' : '刷新概览数据'"
-            @click="refreshData"
-          >
-            <svg
-              class="h-3.5 w-3.5"
-              :class="{ 'animate-spin': loading }"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
+        <div class="overview-toolbar flex shrink-0 items-center gap-1.5">
+          <!-- 统计区间：默认今日，快捷项偏自然周期（本周/上周/本月/上月），也可翻日历任选 -->
+          <DateRangePicker
+            v-model="dateRange"
+            :max-days="90"
+            :preset-keys="OVERVIEW_PRESET_KEYS"
+            @change="onRangeChange"
+          />
+
+          <!--
+            刷新 + 更多：与日期卡片同一套描边、圆角与高度（h-9 / rounded-xl / border-gray-200），
+            放在一起才像一组工具。「部署检查」原来是独立按钮，收进这个下拉里，
+            管理员之外不显示下拉箭头。
+          -->
+          <div ref="refreshMenuRef" class="relative flex">
+            <div class="flex h-9 items-stretch overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition-colors hover:border-primary/40">
+              <button
+                type="button"
+                class="overview-refresh-btn flex items-center gap-1.5 px-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="loading"
+                :aria-busy="loading"
+                :aria-label="loading ? '刷新中' : '刷新概览数据'"
+                @click="refreshData"
+              >
+                <svg
+                  class="h-3.5 w-3.5"
+                  :class="{ 'animate-spin': loading }"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                <!-- 窄屏只留图标：和日期卡片并排时，中文会把工具栏挤出去 -->
+                <span class="hidden sm:inline">{{ loading ? '刷新中' : '刷新' }}</span>
+              </button>
+
+              <template v-if="userInfo?.role === 'admin'">
+                <span class="w-px bg-gray-200" aria-hidden="true"></span>
+                <button
+                  type="button"
+                  class="flex w-8 items-center justify-center text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700"
+                  :aria-expanded="refreshMenuOpen"
+                  aria-haspopup="menu"
+                  aria-label="更多操作"
+                  title="更多操作"
+                  @click="refreshMenuOpen = !refreshMenuOpen"
+                >
+                  <svg
+                    class="h-3.5 w-3.5 transition-transform"
+                    :class="{ 'rotate-180': refreshMenuOpen }"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+              </template>
+            </div>
+
+            <div
+              v-if="refreshMenuOpen && userInfo?.role === 'admin'"
+              class="absolute right-0 top-full z-30 mt-1 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl"
+              role="menu"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-            <span>{{ loading ? '刷新中' : '刷新' }}</span>
-          </button>
-          <DeploymentChecklist v-if="userInfo?.role === 'admin'" compact />
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+                role="menuitem"
+                @click="runDeploymentCheck"
+              >部署检查</button>
+            </div>
+          </div>
         </div>
       </div>
-      <p class="mt-0.5 truncate text-sm text-gray-500">
-        {{ userInfo?.role === "admin" ? "平台运行状态与智能体健康度" : "我的调用概况与智能体表现" }}
-      </p>
     </header>
 
     <DeploymentChecklist v-if="userInfo?.role === 'admin'" hide-when-complete />
@@ -103,7 +145,7 @@
           :success="apiSuccess"
           :failed="apiFailed"
         />
-        <MetricMiniCard label="API 调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" foot="今日累计">
+        <MetricMiniCard label="API 调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" :foot="rangeFoot">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
           </template>
@@ -134,14 +176,15 @@
         v-if="apiFailed > 0"
         :count="apiFailed"
         :subjects="failureSubjects"
-        :scope="period"
+        :scope="rangeScope"
+        :period-label="rangeName"
       />
 
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1.32fr_1fr]">
         <div class="ov-card">
           <div class="ov-card-head">
             <h3 class="ov-card-title"><span class="ov-dot"></span>工具调用分布</h3>
-            <span class="text-xs text-gray-400">今日 · 共 {{ toolCallsTotal }} 次</span>
+            <span class="text-xs text-gray-400">{{ rangeName }} · 共 {{ toolCallsTotal }} 次</span>
           </div>
           <div class="ov-card-body">
             <ToolUsageRanking :items="toolRankingItems" :total="toolCallsTotal">
@@ -206,7 +249,7 @@
         <div class="ov-card">
           <div class="ov-card-head">
             <h3 class="ov-card-title"><span class="ov-dot"></span>Token 消耗分布</h3>
-            <span class="text-xs text-gray-400">今日 · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
+            <span class="text-xs text-gray-400">{{ rangeName }} · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
           </div>
           <div class="ov-card-body pt-4">
             <AgentTokenBars :items="tokenBarItems" />
@@ -234,7 +277,7 @@
           :success="apiSuccess"
           :failed="apiFailed"
         />
-        <MetricMiniCard label="我的调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" foot="今日累计">
+        <MetricMiniCard label="我的调用" icon-color="#7c3aed" :value="apiTotal.toLocaleString()" :foot="rangeFoot">
           <template #icon>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-full w-full"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
           </template>
@@ -266,14 +309,15 @@
         v-if="apiFailed > 0"
         :count="apiFailed"
         :subjects="failureSubjects"
-        :scope="period"
+        :scope="rangeScope"
+        :period-label="rangeName"
       />
 
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1.32fr_1fr]">
         <div class="ov-card">
           <div class="ov-card-head">
             <h3 class="ov-card-title"><span class="ov-dot"></span>我的工具使用</h3>
-            <span class="text-xs text-gray-400">今日 · 共 {{ toolCallsTotal }} 次</span>
+            <span class="text-xs text-gray-400">{{ rangeName }} · 共 {{ toolCallsTotal }} 次</span>
           </div>
           <div class="ov-card-body">
             <ToolUsageRanking :items="toolRankingItems" :total="toolCallsTotal">
@@ -338,7 +382,7 @@
         <div class="ov-card">
           <div class="ov-card-head">
             <h3 class="ov-card-title"><span class="ov-dot"></span>我的 Token 分布</h3>
-            <span class="text-xs text-gray-400">今日 · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
+            <span class="text-xs text-gray-400">{{ rangeName }} · 共 {{ formatTokenCompact(stats?.total_tokens || 0) }}</span>
           </div>
           <div class="ov-card-body pt-4">
             <AgentTokenBars :items="tokenBarItems" />
@@ -420,7 +464,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import axios from "../utils/axios";
 import Toast from "../components/Toast.vue";
@@ -436,20 +480,77 @@ import RecentUsersCard from "../components/dashboard/RecentUsersCard.vue";
 import RecentCallsCard from "../components/dashboard/RecentCallsCard.vue";
 import RequestTrendChart from "../components/dashboard/RequestTrendChart.vue";
 import DeploymentChecklist from "../components/system/DeploymentChecklist.vue";
+import DateRangePicker from "@/components/common/DateRangePicker.vue";
 import { formatTokenCompact } from "@/utils/tokenFormat";
+import { buildRangePresets, formatDayKey, startOfDay } from "@/utils/dateRange";
 
 const router = useRouter();
 const API_BASE = "";
 
 const userInfo = ref<any>(null);
 const loading = ref(false);
-const period = ref("today");
+
+/**
+ * 统计区间：默认今天。
+ *
+ * 原来只有「今日/本周/本月」三选一，且后端 `week` 其实是滚动 7 天——标签和
+ * 口径对不上。改成日历后口径由用户选的日期决定，快捷项里的「本周」是自然周
+ * （周一至今），「上周」是上周一至上周日。
+ */
+const dateRange = ref({ start: formatDayKey(new Date()), end: formatDayKey(new Date()) });
+
+const OVERVIEW_PRESET_KEYS = ["today", "yesterday", "thisWeek", "lastWeek", "thisMonth", "lastMonth"];
+
+const rangeParams = computed(() => ({
+  start_date: dateRange.value.start,
+  end_date: dateRange.value.end,
+}));
+
+const rangePreset = computed(
+  () =>
+    buildRangePresets(startOfDay(new Date())).find(
+      (preset) => preset.start === dateRange.value.start && preset.end === dateRange.value.end,
+    ) ?? null,
+);
+
+/** 命中快捷项就用它的名字，否则说明是手选区间 */
+const rangeName = computed(() => rangePreset.value?.label ?? "自定义区间");
+const rangeFoot = computed(() => (rangePreset.value ? `${rangePreset.value.label}累计` : "区间累计"));
+const rangeScope = computed(() =>
+  rangePreset.value ? rangePreset.value.key : `${dateRange.value.start}~${dateRange.value.end}`,
+);
 
 const stats = ref<any>(null);
 const agentStats = ref<any>(null);
 const activities = ref<any>(null);
 const trends24h = ref<any[]>([]);
 const agentTokens = ref<any[]>([]);
+
+/** 刷新按钮右侧的下拉：目前只有「部署检查」，管理员可见 */
+const refreshMenuOpen = ref(false);
+const refreshMenuRef = ref<HTMLElement | null>(null);
+
+/**
+ * 部署检查展开。
+ *
+ * 复用 DeploymentChecklist 已有的全局事件：详情区那个实例监听
+ * `deployment-checklist:open` 后会强制展开并滚动过去，这里只需要发事件，
+ * 不用把组件的内部状态暴露出来。
+ */
+const runDeploymentCheck = () => {
+  refreshMenuOpen.value = false;
+  window.dispatchEvent(new CustomEvent("deployment-checklist:open"));
+};
+
+const onDocumentClick = (event: MouseEvent) => {
+  if (!refreshMenuOpen.value) return;
+  const target = event.target as Node;
+  if (refreshMenuRef.value && refreshMenuRef.value.contains(target)) return;
+  refreshMenuOpen.value = false;
+};
+
+onMounted(() => document.addEventListener("click", onDocumentClick));
+onUnmounted(() => document.removeEventListener("click", onDocumentClick));
 
 /** 请求序号：周期切换或并发刷新时丢弃过期响应，避免数据与所选周期不一致 */
 let dataSeq = 0;
@@ -504,7 +605,7 @@ const fetchAgentStats = async () => {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/agent-stats`,
       {
-        params: { period: period.value },
+        params: rangeParams.value,
       }
     );
     if (seq !== dataSeq) return; // 已有更新的请求，丢弃过期响应
@@ -537,7 +638,7 @@ const fetchAdminStats = async () => {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/admin-stats`,
       {
-        params: { period: period.value },
+        params: rangeParams.value,
       }
     );
     if (seq !== dataSeq) return;
@@ -555,7 +656,7 @@ const fetchUserStats = async () => {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/user-stats`,
       {
-        params: { period: period.value },
+        params: rangeParams.value,
       }
     );
     if (seq !== dataSeq) return;
@@ -591,7 +692,7 @@ const fetchAgentTokens = async () => {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/token-stats/agents`,
       {
-        params: { period: period.value },
+        params: rangeParams.value,
       }
     );
     if (seq !== dataSeq) return;
@@ -614,7 +715,7 @@ const refreshPeriodBoundData = async () => {
   await Promise.all([fetchAgentStats(), fetchAgentTokens()]);
 };
 
-const onPeriodChange = async () => {
+const onRangeChange = async () => {
   sectionErrors.value = [];
   loading.value = true;
   try {
@@ -785,10 +886,4 @@ onMounted(async () => {
   @apply mr-2 h-1.5 w-1.5 rounded-full bg-primary;
 }
 
-.overview-period-select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
-  background-position: right 0.35rem center;
-  background-repeat: no-repeat;
-  background-size: 0.9rem;
-}
 </style>

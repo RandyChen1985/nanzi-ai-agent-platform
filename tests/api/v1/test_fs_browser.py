@@ -1063,3 +1063,88 @@ async def test_upload_into_other_users_workspace_is_rejected(db_session, valid_a
 
     assert resp.status_code in (403, 404), resp.text
     assert not os.path.exists(os.path.join(other_dir, "evil.txt"))
+
+
+@pytest.mark.asyncio
+async def test_list_prefer_user_root_lands_on_private_workspace(db_session, valid_api_key):
+    """工作空间页首屏：prefer=user_root + 空 path 直接落本人私有工作区，不返回虚拟根。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        me_resp = await client.get(
+            "/api/portal/auth/me",
+            headers={"X-API-Key": valid_api_key},
+        )
+        workspace_root = os.path.normpath(get_user_private_workspace_root(me_resp.json()["data"]))
+        assert workspace_root
+
+        resp = await client.get(
+            "/api/v1/chat/fs/list",
+            params={"prefer": "user_root"},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["is_virtual_root"] is False
+        assert data["current_path"] == workspace_root
+        assert data["user_workspace_root"] == workspace_root
+        assert data["scope"] == "user_scoped"
+        assert data["writable"] is True
+        assert os.path.isdir(workspace_root), "首屏默认落点必须自动建好私有工作区"
+
+        # 不传 prefer 时空 path 的语义保持不变（文件选择器 / 保存对话框仍依赖虚拟根）
+        legacy_resp = await client.get(
+            "/api/v1/chat/fs/list",
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert legacy_resp.status_code == 200, legacy_resp.text
+        assert legacy_resp.json()["data"]["is_virtual_root"] is True
+
+        # 显式给 path 时 prefer 不生效
+        explicit_resp = await client.get(
+            "/api/v1/chat/fs/list",
+            params={"path": workspace_root, "prefer": "user_root"},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert explicit_resp.json()["data"]["current_path"] == workspace_root
+
+        # 非法取值被参数校验拦下（平台统一把校验错误映射成 400）
+        bad_resp = await client.get(
+            "/api/v1/chat/fs/list",
+            params={"prefer": "root"},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert bad_resp.status_code in (400, 422)
+
+
+@pytest.mark.asyncio
+async def test_list_prefer_user_root_applies_to_admin(db_session, admin_api_key):
+    """管理员也默认落自己的「我的目录」，而不是 data 根；权限范围仍是 admin_all。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        me_resp = await client.get(
+            "/api/portal/auth/me",
+            headers={"X-API-Key": admin_api_key},
+        )
+        workspace_root = os.path.normpath(get_user_private_workspace_root(me_resp.json()["data"]))
+        assert workspace_root
+
+        resp = await client.get(
+            "/api/v1/chat/fs/list",
+            params={"prefer": "user_root"},
+            headers={"X-API-Key": admin_api_key},
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["is_virtual_root"] is False
+        assert data["current_path"] == workspace_root
+        assert data["scope"] == "admin_all"
+        assert data["writable"] is True
+
+        # 管理员仍可显式浏览 data 根（首屏默认值不影响越权范围）
+        base = get_data_base_dir()
+        base_resp = await client.get(
+            "/api/v1/chat/fs/list",
+            params={"path": base},
+            headers={"X-API-Key": admin_api_key},
+        )
+        assert base_resp.status_code == 200, base_resp.text
+        assert base_resp.json()["data"]["current_path"] == os.path.normpath(base)
+

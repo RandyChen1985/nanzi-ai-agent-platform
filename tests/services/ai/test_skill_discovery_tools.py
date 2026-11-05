@@ -189,7 +189,8 @@ def test_read_skill_instruction_without_resources_keeps_old_shape(tmp_path):
     with _patch_skills_dir(tmp_path) as mock_skills_dir:
         mock_skills_dir.return_value = str(tmp_path)
         instruction = read_skill_instruction.invoke({"skill_id": "bare"})
-        assert instruction.startswith("[技能读取成功: bare/SKILL.md · scope=global]\n")
+        # 头部新增「共 N 字符」总量标注（截断可见性契约），其余旧形状不变
+        assert instruction.startswith("[技能读取成功: bare/SKILL.md · scope=global · 共 ")
         assert "技能自带资源" not in instruction
         assert "只有正文" in instruction
 
@@ -297,7 +298,8 @@ def test_read_skill_instruction_reports_binary_and_truncates_large(tmp_path):
         huge = read_skill_instruction.invoke(
             {"skill_id": "ops-helper", "path": "references/huge.md"}
         )
-        assert "[已截断至" in huge
+        # 截断必须可见，且返回长度对齐上下文侧上限（不再只截到 262144 字符）
+        assert "已截断" in huge
         assert len(huge) < SKILL_RESOURCE_MAX_BYTES + 2000
 
 

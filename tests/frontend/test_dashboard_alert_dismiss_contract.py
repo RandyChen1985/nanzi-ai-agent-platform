@@ -48,8 +48,12 @@ def test_dismiss_scope_is_day_and_period(component: str) -> None:
 
 
 def test_period_is_passed_from_the_page(page: str) -> None:
-    """不传 scope 的话，切周期仍共用同一个 key，等于关一次全关。"""
-    assert page.count(':scope="period"') == 2  # 系统概览 + 我的概览
+    """不传 scope 的话，切周期仍共用同一个 key，等于关一次全关。
+
+    时间筛选改成日历后，scope 由 `period` 变成当前区间（预设 key 或 A~B），
+    粒度更细：换到另一段区间就该重新提示。
+    """
+    assert page.count(':scope="rangeScope"') == 2  # 系统概览 + 我的概览
 
 
 def test_storage_failure_does_not_break_page(component: str) -> None:

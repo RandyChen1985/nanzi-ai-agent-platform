@@ -71,6 +71,9 @@ class PortalPrefs(BaseModel):
     pinned_kb_dataset_ids: List[str] = Field(default_factory=list, description="已置顶的知识库数据集 ID 列表")
     pinned_conversations: List[PinnedConversation] = Field(default_factory=list, description="已置顶的会话快照列表，首位为最近置顶")
     markdown_theme: str = Field(default="", description="用户自定义的 AI 消息排版样式偏好")
+    # 空字符串 = 用户从未选过，读取时按角色给默认值（管理员 pro / 其他 user）。
+    # 不用 Literal 是为了兼容历史 JSON 里可能出现的空值。
+    ui_mode: str = Field(default="", description="界面模式：user（用户模式）/ pro（专业模式）")
     agent_avatar: str = Field(default="", description="[历史保留] 旧版个人头像偏好；读取时一律以全局键 agent:branding:default_agent_avatar 为准，写入时恒为空")
     routing_mode: Literal["auto", "expert"] = Field(default="auto", description="Embed 路由模式")
     expert_agent_id: str = Field(default="", description="Embed 默认智能体 ID")
@@ -112,6 +115,16 @@ class RoutingPreferenceUpdate(BaseModel):
     expert_agent_id: str = ""
 
 
+class UiModeUpdate(BaseModel):
+    """界面模式（用户模式 / 专业模式）。
+
+    单独一个端点而不是走全量 PUT：全量 PUT 会用请求体里的空列表覆盖
+    pinned_group_ids / card_order 等字段，只想切个模式就会清掉用户的置顶。
+    """
+
+    ui_mode: Literal["user", "pro"]
+
+
 class EmbedTourUpdate(BaseModel):
     """功能引导进度（账号级，跨设备）。
 
@@ -138,6 +151,17 @@ class HistorySidebarPreferenceUpdate(BaseModel):
 
 class LeftSidebarPreferenceUpdate(BaseModel):
     collapsed: bool
+
+
+def _resolve_ui_mode(value: Any, role: Any) -> str:
+    """界面模式兜底：用户没选过时按角色给默认值。
+
+    管理员默认专业模式（要用完整菜单做配置），其他账号默认用户模式。
+    只认 user / pro 两个值，脏数据一律回落默认，避免前端拿到未知值。
+    """
+    if value in ("user", "pro"):
+        return str(value)
+    return "pro" if str(role or "").strip().lower() == "admin" else "user"
 
 
 def _parse_portal_prefs(raw: Any) -> PortalPrefs:
@@ -197,7 +221,9 @@ async def get_portal_prefs(
 ):
     redis = await get_redis()
     if not redis:
-        return {"code": 0, "data": PortalPrefs().model_dump()}
+        fallback = PortalPrefs().model_dump()
+        fallback["ui_mode"] = _resolve_ui_mode("", user_info.get("role"))
+        return {"code": 0, "data": fallback}
 
     user_id = int(user_info["user_id"])
     key = _redis_key(user_id)
@@ -205,7 +231,9 @@ async def get_portal_prefs(
         raw = await redis.get(key)
     except Exception as e:
         logger.error("Failed to get portal prefs from Redis: %s", e)
-        return {"code": 0, "data": PortalPrefs().model_dump()}
+        fallback = PortalPrefs().model_dump()
+        fallback["ui_mode"] = _resolve_ui_mode("", user_info.get("role"))
+        return {"code": 0, "data": fallback}
 
     prefs = PortalPrefs()
     if raw:
@@ -216,6 +244,9 @@ async def get_portal_prefs(
             logger.warning("Failed to parse portal prefs JSON: %s", e)
 
     data = prefs.model_dump()
+    # 用户没选过界面模式时按角色给默认值：前端拿到的一定是 user / pro，
+    # 不需要再自己判断角色，避免多端默认值判断不一致。
+    data["ui_mode"] = _resolve_ui_mode(prefs.ui_mode, user_info.get("role"))
     try:
         # 全局键是 AI 头像的唯一权威源：命中则以它为准，未配置则强制置空为默认形象，
         # 杜绝用户个人偏好里的历史头像（或旧页面写回的陈旧副本）倒灌。
@@ -339,6 +370,9 @@ async def update_portal_prefs(
         embed_tour_step=existing.embed_tour_step,
         embed_tour_completed_at=existing.embed_tour_completed_at,
         embed_tour_skipped_at=existing.embed_tour_skipped_at,
+        # 界面模式只允许通过 /ui-mode 更新；旧页面全量回写必须保留现值，
+        # 否则用户切好的模式会被一次无关的偏好保存冲回默认。
+        ui_mode=existing.ui_mode,
     )
 
     try:
@@ -659,9 +693,57 @@ async def update_routing_prefs(
     }
 
 
+@router.put(
+    "/ui-mode",
+    response_model=Dict[str, Any],
+    summary="更新当前用户的界面模式（用户模式 / 专业模式）",
+)
+async def update_ui_mode(
+    body: UiModeUpdate,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """只改 ui_mode，其余偏好原样保留。
+
+    不做权限校验：两种模式都只是侧栏的两种排布，能看到的页面仍由各自的
+    menu:* 权限决定，切换本身不会放大权限。
+    """
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis 服务不可用",
+        )
+
+    user_id = int(user_info["user_id"])
+    key = _redis_key(user_id)
+    prefs = PortalPrefs()
+    try:
+        raw = await redis.get(key)
+        if raw:
+            prefs = _parse_portal_prefs(raw)
+    except Exception as e:
+        logger.warning("Failed to read existing portal prefs before ui mode update: %s", e)
+
+    prefs.ui_mode = body.ui_mode
+
+    try:
+        await redis.set(key, prefs.model_dump_json())
+    except Exception as e:
+        logger.error("Failed to save ui mode to Redis: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="保存界面模式失败",
+        ) from e
+
+    return {
+        "code": 0,
+        "data": {"ui_mode": prefs.ui_mode},
+        "message": "界面模式已保存",
+    }
+
+
 class MarkdownThemeUpdate(BaseModel):
     theme: str
-
 
 @router.put(
     "/markdown-theme",

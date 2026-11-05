@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { getSnapshotLandingPath } from '../composables/useNavigation'
+import { getCachedUiMode, resolveInitialUiMode } from '../composables/useUiMode'
 
 // 这四个页面此前是**静态** import，等于把整套管理后台（Dashboard 及其依赖）打进
 // 首屏主包——第三方站点嵌入的 `/embed/*` 挂件也得先下载它。改成路由级懒加载后，
@@ -195,7 +196,9 @@ const router = createRouter({
           path: 'agent-management',
           name: 'AgentManagement',
           component: () => import('../views/AgentManagement.vue'),
-          meta: { perm: 'menu:agent_management', title: '智能体中心' }
+          // userModeAllowed：用户模式下跳过这个 perm（三项是浏览性质，数据边界在页面内）；
+          // 专业模式仍按 menu:* 控制。见守卫里的注释。
+          meta: { perm: 'menu:agent_management', userModeAllowed: true, title: '智能体中心' }
         },
         {
           path: 'scenario-templates',
@@ -228,6 +231,14 @@ const router = createRouter({
           meta: { perm: 'menu:knowledge_management', title: '知识库管理' }
         },
         {
+          // 用户模式「工作空间」：读写的是当前用户自己的 AI 工作目录，
+          // 不需要知识库或任务中心的菜单权限。挂载到会话的能力只在聊天抽屉里，这里没有。
+          path: 'workspace',
+          name: 'WorkspaceManage',
+          component: () => import('../views/WorkspaceManage.vue'),
+          meta: { title: '工作空间' }
+        },
+        {
           path: 'knowledge-retrieval-test',
           name: 'KnowledgeRetrievalTest',
           component: () => import('../views/KnowledgeRetrievalTest.vue'),
@@ -249,13 +260,13 @@ const router = createRouter({
           path: 'skills',
           name: 'SkillsManagement',
           component: () => import('../views/SkillsManagement.vue'),
-          meta: { perm: 'menu:skills_management', title: '技能工作台' }
+          meta: { perm: 'menu:skills_management', userModeAllowed: true, title: '技能工作台' }
         },
         {
           path: 'mcp',
           name: 'McpManagement',
           component: () => import('../views/McpManagement.vue'),
-          meta: { perm: 'menu:mcp_management', title: 'MCP 工具集' }
+          meta: { perm: 'menu:mcp_management', userModeAllowed: true, title: 'MCP 工具集' }
         },
         {
           path: 'mcp-service',
@@ -277,6 +288,14 @@ const router = createRouter({
           meta: { perm: 'menu:task_center', title: '任务调度台' }
         },
         {
+          // 用户模式「定时任务」入口：只列自己的任务，所以刻意不挂 perm。
+          // 后端 /api/v1/tasks/ 对非管理员已按 user_id 过滤，切这个入口不会放大可见范围。
+          path: 'my-tasks',
+          name: 'MyTasks',
+          component: () => import('../views/MyTasks.vue'),
+          meta: { title: '我的定时任务' }
+        },
+        {
           path: 'chat',
           name: 'AIChat',
           component: () => import('../views/Chat.vue'),
@@ -286,7 +305,9 @@ const router = createRouter({
     },
     {
       path: '/',
-      redirect: '/dashboard'
+      // 用户模式的落地就是「新建任务」：直接进可以开聊的页面，
+      // 不绕一层概览再找入口。专业模式保持原有的 /dashboard。
+      redirect: () => (getCachedUiMode() === 'user' ? '/dashboard/chat' : '/dashboard')
     }
   ]
 })
@@ -332,7 +353,11 @@ router.beforeEach((to: any, _from: any, next: any) => {
 
       // 2. 缺目标页权限时落到当前用户实际可见的落地页，避免误送无权限页
       const requiredPerm = to.meta.perm
-      if (requiredPerm && !userMenus.includes(requiredPerm)) {
+      // 用户模式下，标注 userModeAllowed 的页面（专家 / 技能 / 连接器）不再要求菜单权限：
+      // 这三个入口是浏览性质，能列哪些数据由各自接口的资源级过滤决定。
+      // 专业模式维持原有口径——没权限就是进不去。
+      const userModePass = Boolean(to.meta.userModeAllowed) && resolveInitialUiMode() === 'user'
+      if (requiredPerm && !userMenus.includes(requiredPerm) && !userModePass) {
         console.warn(`[Guard] Access denied to ${to.path}. Missing ${requiredPerm}`)
         const fallbackPath = resolveFallbackPath()
         if (fallbackPath === to.path) {
@@ -358,6 +383,9 @@ router.beforeEach((to: any, _from: any, next: any) => {
  * 快照还没有时退回「我的工作台」——它不带权限码，任何登录用户都可进入。
  */
 const resolveFallbackPath = (): string => {
+  // 用户模式优先：菜单快照里的 landing 是给专业模式配的（通常是概览或工作台），
+  // 普通用户被弹到那一页再自己找入口，等于白绕一圈。
+  if (getCachedUiMode() === 'user') return '/dashboard/chat'
   const landing = getSnapshotLandingPath()
   if (landing) return landing
   return '/dashboard/workbench'

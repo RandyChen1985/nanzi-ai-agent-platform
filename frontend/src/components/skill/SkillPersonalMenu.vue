@@ -14,7 +14,7 @@ const props = withDefaults(defineProps<{
   active: PersonalMenuKey
   receivedCount?: number
   sentPendingCount?: number
-  variant?: 'aside' | 'chips'
+  variant?: 'aside' | 'chips' | 'tabs'
 }>(), {
   receivedCount: 0,
   sentPendingCount: 0,
@@ -101,6 +101,35 @@ function select(key: PersonalMenuKey) {
       </button>
     </nav>
   </aside>
+
+  <!-- 只有一个一级 Tab：二级视图直接作为顶部 tab（与「智能体中心」同款） -->
+  <div
+    v-else-if="variant === 'tabs'"
+    class="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-2"
+    role="tablist"
+    aria-label="技能视图"
+  >
+    <button
+      v-for="item in items"
+      :key="item.key"
+      type="button"
+      role="tab"
+      :aria-selected="active === item.key"
+      class="cursor-pointer rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+      :class="active === item.key ? 'bg-primary/10 text-primary' : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/5'"
+      @click="select(item.key)"
+    >
+      <svg class="mr-1 inline-block h-3.5 w-3.5 shrink-0 align-text-bottom" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="item.path" />
+      </svg>
+      <span>{{ item.label }}</span>
+      <span
+        v-if="badgeText(item.badge)"
+        class="ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+        :class="active === item.key ? 'bg-primary/15 text-primary' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'"
+      >{{ badgeText(item.badge) }}</span>
+    </button>
+  </div>
 
   <!-- 窄屏：横向胶囊 -->
   <div v-else class="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

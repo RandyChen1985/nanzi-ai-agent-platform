@@ -82,6 +82,10 @@ def _parse_skill_frontmatter(skill_id: str, skill_md_path: str) -> dict:
 
 #: 技能文件单次读取上限（SKILL.md 与技能包内资源同一口径）
 SKILL_RESOURCE_MAX_BYTES = 262144
+#: 单次返回给模型的技能正文上限（字符）。必须明显低于上下文侧
+#: ``DEFAULT_TOOL_OUTPUT_MAX_LEN``（64Ki 字符），并给返回头与资源清单留出余量：
+#: 否则工具内部读到的内容会在下一层被静默砍掉，而模型以为拿到的是全文。
+SKILL_READ_MAX_CHARS = 56_000
 #: 技能资源清单的条目 / 深度上限：技能包导入上限是 2000 个文件，清单无上限会写爆上下文
 _SKILL_RESOURCE_LIST_MAX_ENTRIES = 200
 _SKILL_RESOURCE_LIST_MAX_DEPTH = 4
@@ -181,6 +185,28 @@ def _format_skill_resource_tree(skill_dir: str) -> str:
     return "\n".join(lines)
 
 
+def _clip_skill_text(text: str, *, max_chars: int = SKILL_READ_MAX_CHARS) -> tuple[str, int]:
+    """把过长的技能正文裁成「头 + 尾」，中间显式标注省略量。
+
+    技能尾部的「禁止事项 / 输出格式 / 异常处理」最容易被整段丢掉，又最容易导致
+    越权或格式错，所以超限时保留结尾而不是简单砍尾。
+
+    Args:
+        text: 已解码的技能正文。
+        max_chars: 单次返回的字符上限。
+
+    Returns:
+        ``(裁剪后的正文, 被省略的字符数)``；未超限时省略量为 0，正文原样返回。
+    """
+    if len(text) <= max_chars:
+        return text, 0
+    head_chars = int(max_chars * 0.7)
+    tail_chars = max_chars - head_chars
+    omitted = len(text) - max_chars
+    marker = f"\n… [中间省略 {omitted} 字符；共 {len(text)} 字符] …\n"
+    return f"{text[:head_chars]}{marker}{text[-tail_chars:]}", omitted
+
+
 def _read_skill_resource_file(
     *,
     skill_id: str,
@@ -230,17 +256,26 @@ def _read_skill_resource_file(
     except OSError as exc:
         return f"错误：读取技能资源失败，原因: {exc}"
 
-    truncated = len(blob) > SKILL_RESOURCE_MAX_BYTES
+    read_truncated = len(blob) > SKILL_RESOURCE_MAX_BYTES
     text = _decode_skill_resource(blob[:SKILL_RESOURCE_MAX_BYTES])
     if text is None:
         return (
             f"错误：技能资源 {raw} 不是文本文件（二进制或非 UTF-8），本工具只读文本资源；"
             "如需在技能目录内处理二进制，请使用 Bash 或代码执行类工具。"
         )
-    header = f"[技能读取成功: {skill_id}/{raw} · scope={scope}]"
-    if truncated:
-        header += f"\n[已截断至 {SKILL_RESOURCE_MAX_BYTES} 字节]"
-    return f"{header}\n{text}"
+    clipped, omitted = _clip_skill_text(text)
+    header = f"[技能读取成功: {skill_id}/{raw} · scope={scope} · 共 {len(text)} 字符]"
+    if omitted:
+        header += (
+            f"\n[已截断：仅显示开头与结尾，省略 {omitted} 字符；"
+            "需要完整内容请改读更小的 references 分片]"
+        )
+    if read_truncated:
+        header += (
+            f"\n[文件超过 {SKILL_RESOURCE_MAX_BYTES} 字节，仅读取前 "
+            f"{SKILL_RESOURCE_MAX_BYTES} 字节]"
+        )
+    return f"{header}\n{clipped}"
 
 
 def _is_forbidden_shell_command(command: str) -> str | None:
@@ -412,9 +447,25 @@ async def read_skill_instruction(skill_id: str, path: Optional[str] = None) -> s
             )
 
         with open(abs_md, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read(SKILL_RESOURCE_MAX_BYTES)
+            raw_content = f.read(SKILL_RESOURCE_MAX_BYTES + 1)
+        read_truncated = len(raw_content) > SKILL_RESOURCE_MAX_BYTES
+        raw_content = raw_content[:SKILL_RESOURCE_MAX_BYTES]
+        content, omitted = _clip_skill_text(raw_content)
 
-        header = f"[技能读取成功: {safe_skill_id}/SKILL.md · scope={scope}]"
+        header = (
+            f"[技能读取成功: {safe_skill_id}/SKILL.md · scope={scope} · "
+            f"共 {len(raw_content)} 字符]"
+        )
+        if omitted:
+            header += (
+                f"\n[已截断：仅显示开头与结尾，省略 {omitted} 字符；"
+                "需要完整内容请改用 path 读取技能内的 references/ 分片]"
+            )
+        if read_truncated:
+            header += (
+                f"\n[文件超过 {SKILL_RESOURCE_MAX_BYTES} 字符，仅读取前 "
+                f"{SKILL_RESOURCE_MAX_BYTES} 字符]"
+            )
         resource_tree = _format_skill_resource_tree(skill_dir)
         if resource_tree:
             header += (

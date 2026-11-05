@@ -224,9 +224,9 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
       />
     </div>
 
-    <!-- Scope Tab：个人中心模式下隐藏平台/个人切换 -->
+    <!-- Scope Tab：个人中心模式下隐藏平台/个人切换；普通用户只有一个「我的 MCP」，那行没有意义 -->
     <div
-      v-if="!personalOnly"
+      v-if="!personalOnly && isAdmin"
       class="flex flex-shrink-0 items-center overflow-x-auto border-b border-gray-200 [scrollbar-width:none] dark:border-gray-800 [&::-webkit-scrollbar]:hidden"
     >
       <button
@@ -281,6 +281,16 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
       </button>
     </div>
 
+    <!-- 普通用户只有一个「我的 MCP」：把二级视图提到顶部，内容区全宽 -->
+    <McpPersonalMenu
+      v-if="!personalOnly && !isAdmin && activeScope === 'personal'"
+      variant="tabs"
+      class="mb-2"
+      :active="mcpMenu"
+      :counts="mcpShareCounts"
+      @select="mcpMenu = $event"
+    />
+
     <!-- 主体区域：个人中心随页面滚动；控制台保留定高裁剪 -->
     <div
       class="flex flex-col"
@@ -291,6 +301,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
       <!-- 我的 MCP：与「我的技能」同构，左侧二级菜单 + 三块内容 -->
       <div v-else-if="activeScope === 'personal'" class="flex min-h-0 flex-1 flex-col gap-2 md:flex-row md:gap-4">
         <McpPersonalMenu
+          v-if="isAdmin"
           variant="aside"
           :active="mcpMenu"
           :counts="mcpShareCounts"
@@ -298,6 +309,7 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         />
         <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
           <McpPersonalMenu
+            v-if="isAdmin"
             variant="chips"
             :active="mcpMenu"
             :counts="mcpShareCounts"

@@ -15,40 +15,15 @@
         </div>
 
         <div class="flex items-center gap-3 flex-wrap">
-          <!-- 区间快捷选择 -->
-          <div
-            role="group"
-            aria-label="统计区间"
-            class="inline-flex rounded-xl border border-gray-200 bg-white p-0.5 shadow-sm"
-          >
-            <button
-              v-for="option in PERIOD_OPTIONS"
-              :key="option.value"
-              type="button"
-              :aria-pressed="period === option.value"
-              class="px-3 py-1.5 text-sm font-bold rounded-[10px] transition-all active:scale-95"
-              :class="period === option.value ? 'bg-primary text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
-              @click="selectPeriod(option.value)"
-            >
-              {{ option.label }}
-            </button>
-            <button
-              type="button"
-              :aria-pressed="period === 'custom'"
-              class="px-3 py-1.5 text-sm font-bold rounded-[10px] transition-all active:scale-95"
-              :class="period === 'custom' ? 'bg-primary text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
-              @click="openCustomRange"
-            >
-              自定义
-            </button>
-          </div>
+          <!-- 统计区间：快捷项 + 日历任选，选完即生效（与 Token 统计、概览同一套控件） -->
+          <DateRangePicker v-model="dateRange" :max-days="MAX_RANGE_DAYS" @change="onRangeChange" />
 
           <button
             type="button"
             aria-label="刷新数据"
             :aria-busy="loading"
             :disabled="loading"
-            class="inline-flex items-center justify-center min-h-[38px] min-w-[38px] p-2 sm:px-4 sm:py-2 border border-gray-200 rounded-xl shadow-sm text-sm font-bold text-gray-700 bg-white hover:bg-gray-50 active:scale-95 transition-all disabled:opacity-50"
+            class="inline-flex h-9 min-w-[38px] items-center justify-center px-2.5 sm:px-4 border border-gray-200 rounded-xl shadow-sm text-sm font-bold text-gray-700 bg-white hover:bg-gray-50 active:scale-95 transition-all disabled:opacity-50"
             @click="fetchMetrics({ notify: true })"
           >
             <svg
@@ -69,43 +44,6 @@
             <span class="hidden sm:inline">刷新</span>
           </button>
         </div>
-      </div>
-
-      <!-- 自定义区间 -->
-      <div
-        v-if="period === 'custom'"
-        class="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm"
-      >
-        <div class="flex flex-col gap-1">
-          <label for="metrics-start-date" class="text-xs font-medium text-gray-500">开始日期</label>
-          <input
-            id="metrics-start-date"
-            v-model="customStart"
-            type="date"
-            :max="customEnd || today"
-            class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-          />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label for="metrics-end-date" class="text-xs font-medium text-gray-500">结束日期</label>
-          <input
-            id="metrics-end-date"
-            v-model="customEnd"
-            type="date"
-            :min="customStart"
-            :max="today"
-            class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-          />
-        </div>
-        <button
-          type="button"
-          class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-bold hover:bg-primary-hover active:scale-95 transition-all disabled:opacity-50"
-          :disabled="!canApplyCustomRange || loading"
-          @click="applyCustomRange"
-        >
-          应用
-        </button>
-        <p v-if="customRangeError" class="text-xs text-amber-600">{{ customRangeError }}</p>
       </div>
 
       <!-- 口径与新鲜度 -->
@@ -143,7 +81,7 @@
     <div v-if="retrievalStats || healthSummary" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div v-if="retrievalStats" class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         <div class="mb-3 flex items-center justify-between">
-          <h2 class="text-sm font-bold text-gray-900">检索质量（近 {{ retrievalStats.days }} 天）</h2>
+          <h2 class="text-sm font-bold text-gray-900">检索质量（{{ retrievalStats.days }} 天）</h2>
           <button type="button" class="text-xs text-primary hover:underline" @click="loadRetrievalStats">刷新</button>
         </div>
         <div class="grid grid-cols-3 gap-3">
@@ -414,6 +352,8 @@ import {
   LegendComponent,
   TooltipComponent,
 } from 'echarts/components'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
+import { addDays, formatDayKey, inclusiveDaySpan } from '@/utils/dateRange'
 import KnowledgeMetricStatCard from '@/components/knowledge/KnowledgeMetricStatCard.vue'
 import KnowledgeMetricsEmptyState from '@/components/knowledge/KnowledgeMetricsEmptyState.vue'
 import {
@@ -442,12 +382,12 @@ use([
   TooltipComponent,
 ])
 
-/** 快捷区间选项：`days` 按「含今天在内的 N 天」解释。 */
-const PERIOD_OPTIONS = [
-  { value: 'week', label: '近 7 天', days: 7 },
-  { value: 'month', label: '近 30 天', days: 30 },
-  { value: 'quarter', label: '近 90 天', days: 90 },
-] as const
+/**
+ * 查询区间上限：与后端 `knowledge_metrics_service.MAX_RANGE_DAYS` 一致。
+ * 两个接口（/metrics/summary 与 /retrieval-stats）都按这个值拒绝超长区间，
+ * 前端提前拦住，避免翻完日历再吃一个 400。
+ */
+const MAX_RANGE_DAYS = 366
 
 const ORDER_OPTIONS: Array<{ value: MetricsOrderBy; label: string }> = [
   { value: 'citation', label: '按引用量' },
@@ -460,56 +400,22 @@ const { showToast } = useToast()
 const loading = ref(false)
 const hasLoaded = ref(false)
 const errorMessage = ref('')
-const period = ref<(typeof PERIOD_OPTIONS)[number]['value'] | 'custom'>('week')
 const orderBy = ref<MetricsOrderBy>('citation')
 
-const customStart = ref('')
-const customEnd = ref('')
-const appliedCustomRange = ref<{ startDate: string; endDate: string } | null>(null)
+/** 统计区间：默认近 7 天（含今天），由日历面板改写 */
+const dateRange = ref({
+  start: formatDayKey(addDays(new Date(), -6)),
+  end: formatDayKey(new Date()),
+})
 
 const summary = ref<KnowledgeMetricsSummary | null>(null)
 
-const today = (() => {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-})()
+const activeRange = computed(() => ({
+  startDate: dateRange.value.start,
+  endDate: dateRange.value.end,
+}))
 
-const formatDateValue = (date: Date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-
-/**
- * 计算快捷区间。此前用 `getDate() - 7` 会把首尾都算进去，实际是 8 天，
- * 这里按「含今天在内的 N 天」计算，与界面文案一致。
- */
-const getQuickRange = (days: number) => {
-  const end = new Date()
-  const start = new Date()
-  start.setDate(end.getDate() - (days - 1))
-  return { startDate: formatDateValue(start), endDate: formatDateValue(end) }
-}
-
-const activeRange = computed(() => {
-  if (period.value === 'custom' && appliedCustomRange.value) {
-    return appliedCustomRange.value
-  }
-  const option = PERIOD_OPTIONS.find((item) => item.value === period.value)
-  return getQuickRange(option?.days ?? 7)
-})
-
-const activeRangeDays = computed(() => {
-  const start = new Date(`${activeRange.value.startDate}T00:00:00`)
-  const end = new Date(`${activeRange.value.endDate}T00:00:00`)
-  return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1)
-})
-
-const customRangeError = computed(() => {
-  if (period.value !== 'custom') return ''
-  if (!customStart.value || !customEnd.value) return '请选择完整的起止日期'
-  if (customStart.value > customEnd.value) return '开始日期不能晚于结束日期'
-  return ''
-})
-
-const canApplyCustomRange = computed(() => period.value === 'custom' && !customRangeError.value)
+const activeRangeDays = computed(() => inclusiveDaySpan(dateRange.value.start, dateRange.value.end))
 
 /** 首屏（尚无任何数据）显示骨架；后续刷新只转圈，不闪空态。 */
 const showSkeleton = computed(() => loading.value && !hasLoaded.value)
@@ -675,35 +581,15 @@ const fetchMetrics = async (options: { notify?: boolean } = {}) => {
   }
 }
 
-const selectPeriod = (value: (typeof PERIOD_OPTIONS)[number]['value']) => {
-  if (period.value === value) return
-  period.value = value
+/** 区间一变，主报表和检索质量都要重取：两块卡片必须同一个时间口径 */
+const onRangeChange = () => {
   fetchMetrics()
-}
-
-/**
- * 进入自定义模式时先沿用当前生效区间预填输入框，
- * 否则「统计区间」文案会退回默认 7 天，与页面上仍是旧区间的数据错位。
- */
-const openCustomRange = () => {
-  if (!appliedCustomRange.value) {
-    const current = activeRange.value
-    appliedCustomRange.value = { ...current }
-    customStart.value = current.startDate
-    customEnd.value = current.endDate
-  }
-  period.value = 'custom'
+  void loadRetrievalStats()
 }
 
 const selectOrderBy = (value: MetricsOrderBy) => {
   if (orderBy.value === value) return
   orderBy.value = value
-  fetchMetrics()
-}
-
-const applyCustomRange = () => {
-  if (!canApplyCustomRange.value) return
-  appliedCustomRange.value = { startDate: customStart.value, endDate: customEnd.value }
   fetchMetrics()
 }
 
@@ -748,7 +634,10 @@ const healthScanning = ref(false)
 const loadRetrievalStats = async () => {
   try {
     const response = await axios.get('/api/portal/ragflow/retrieval-stats', {
-      params: { days: period.value === 'custom' ? 7 : (PERIOD_OPTIONS.find(o => o.value === period.value)?.days ?? 7) },
+      params: {
+        start_date: activeRange.value.startDate,
+        end_date: activeRange.value.endDate,
+      },
     })
     retrievalStats.value = response.data?.data || null
   } catch {
@@ -786,9 +675,6 @@ const runHealthScan = async () => {
 onMounted(() => {
   void loadRetrievalStats()
   void loadHealthSummary()
-  const initial = getQuickRange(7)
-  customStart.value = initial.startDate
-  customEnd.value = initial.endDate
   fetchMetrics()
 })
 

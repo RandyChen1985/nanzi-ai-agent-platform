@@ -12,11 +12,26 @@ from sqlalchemy import Select, func, not_, or_, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.models.agent import AIAgent
 from app.models.audit import AgentExecutionHistory as History
 
 
 TASK_CONVERSATION_PREFIX = "task_conv_"
 VALID_SCOPES = ("all", "task", "chat")
+
+
+def agent_name_matching_clause(pattern: str, model=History) -> ColumnElement:
+    """关键词命中智能体名称的会话：``agent_id IN (SELECT ...)``。
+
+    历史列表里每行只展示首条提问与时间，用户经常按「哪个专家跑的」来回忆会话
+    （例如搜「周报助手」），而提问正文里未必出现智能体名。因此关键词同时匹配
+    ``ai_agents.name`` / ``display_name``，仍然走子查询，不改变分组语义。
+    """
+    return model.agent_id.in_(
+        select(AIAgent.id).where(
+            or_(AIAgent.name.like(pattern), AIAgent.display_name.like(pattern))
+        )
+    )
 
 
 def normalize_scope(scope: Optional[str]) -> str:
@@ -72,7 +87,13 @@ def turn_level_conversation_keys(
         conditions.append(turn.username == username)
     if keyword:
         pattern = f"%{keyword}%"
-        conditions.append(or_(turn.query.like(pattern), turn.summary.like(pattern)))
+        conditions.append(
+            or_(
+                turn.query.like(pattern),
+                turn.summary.like(pattern),
+                agent_name_matching_clause(pattern, turn),
+            )
+        )
     if status:
         conditions.append(turn.status == status)
     return select(conversation_key(turn)).where(*conditions).distinct()
@@ -155,7 +176,11 @@ def build_history_query(
         if keyword:
             pattern = f"%{keyword}%"
             query = query.where(
-                or_(History.query.like(pattern), History.summary.like(pattern))
+                or_(
+                    History.query.like(pattern),
+                    History.summary.like(pattern),
+                    agent_name_matching_clause(pattern),
+                )
             )
         if status:
             query = query.where(History.status == status)

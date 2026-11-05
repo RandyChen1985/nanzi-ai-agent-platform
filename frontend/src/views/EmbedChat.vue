@@ -5550,6 +5550,17 @@ let requestedConversationId = "";
  */
 let isPreviewSession = false;
 /**
+ * 强制新会话（URL 携带 `new=1`）。
+ *
+ * 和预览模式的区别：预览是「看一眼就走」的临时会话（不落盘、不顶掉用户的续接指针），
+ * 而这里要的是**正式的新会话**——跳过所有续接来源（宿主 resume id、本地指针、
+ * 服务端活跃会话），生成一个新 cid 并正常持久化，之后刷新还能接回这一条。
+ *
+ * 用户模式的「新建任务」走这条路：门户侧的 iframe 重新挂载并不等于挂件里开了新会话，
+ * 只重挂载的话挂件仍会按指针续接上一次对话，用户点完看到的还是老内容。
+ */
+let isForceNewSession = false;
+/**
  * 当前界面上的会话所属身份。身份与它不一致时（同一 tab 换用户登录、宿主换票），
  * 必须把上一位用户的会话现场整个丢掉，而不能只是换个存储键。
  */
@@ -9490,6 +9501,22 @@ const postMessageToHost = (payload: any) => {
     }),
   );
 };
+/**
+ * 会话建立 / 切换时把会话 ID 同步给宿主。
+ *
+ * 用户模式把「任务」做成主入口：侧栏需要知道「当前停在哪条会话」才能高亮，也需要
+ * 在新建会话后把新任务插进列表。挂件里的 conversationId 变化但宿主 URL 不会自动
+ * 更新，所以这里主动上报一次；宿主只在 URL 里还没有这个 ID 时写回，避免回环。
+ */
+watch(
+  conversationId,
+  (id) => {
+    const target = String(id || "").trim();
+    if (!target) return;
+    postMessageToHost({ type: "CONVERSATION_ACTIVE", conversation_id: target });
+  },
+  { immediate: true },
+);
 const savedReportFocusRequest = ref<{
   report_id: string;
   run_id: string;
@@ -10478,8 +10505,26 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
         generateNewConversation({ persist: false });
       }
       loadedCid = true;
+    } else if (isForceNewSession) {
+      // 强制新会话：同样跳过所有续接来源，但**正常落盘**——这是一条正式的空白会话，
+      // 刷新后应当还能接回来，所以不能沿用预览的 `persist: false`。
+      //
+      // 两个边界：
+      // 1. 宿主已经下发了会话 ID（点历史会话进来）时必须让位——否则点历史还是开新会话；
+      // 2. `new=1` 是一次性指令，首次建立会话后立刻消费掉。它是 iframe URL 上的参数，
+      //    会一直留在挂件实例里；不清掉的话，此后每次 INIT_CONFIG 都会把宿主刚下发的
+      //    会话 ID 抹掉，表现为「无论点哪条历史都停在新会话」。
+      if (!requestedConversationId) {
+        if (!conversationId.value) {
+          generateNewConversation();
+        }
+        isForceNewSession = false;
+        loadedCid = true;
+      }
     }
     if (requestedConversationId) {
+      // 宿主明确要某个会话时，「新建」这条一次性指令直接作废
+      isForceNewSession = false;
       const requested = String(requestedConversationId);
       const requestedAdoption = await checkConversationAdoption(requested);
       // await 期间可能已经开始了新一次初始化（宿主重发 INIT_CONFIG / 重新校验身份）：
@@ -13091,6 +13136,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   } finally {
     stopStreamLivenessWatch();
     streamInFlight = false;
+    // 本轮结束：把当前会话再报一次给宿主。新建会话的 URL 早在首条消息之前就有了，
+    // 宿主侧栏要靠这条消息（而不只是 URL 变化）把刚落库的任务刷进列表。
+    postMessageToHost({ type: "CONVERSATION_ACTIVE", conversation_id: conversationId.value });
     // SSE 已收流结束，此时才谈得上完成态：放在 streamInFlight 归零之后刷新，
     // 否则「本端仍在收流」的判据会把完成提示压掉。
     refreshRecoveryCard();
@@ -13443,6 +13491,12 @@ onMounted(() => {
   if (query.get("preview") === "1") {
     isPreviewSession = true;
     console.log("[LifeCycle] Preview mode: clean temporary conversation, no resume.");
+  }
+  // 用户模式「新建任务」：`new=1` = 跳过续接、开一条正式的空白会话。
+  // 与 preview 同时出现时以 preview 为准（预览不落盘，优先级更高）。
+  if (!isPreviewSession && query.get("new") === "1") {
+    isForceNewSession = true;
+    console.log("[LifeCycle] Force new session: skip resume and start a blank conversation.");
   }
   const queryInstanceId = normalizeEmbedInstanceId(query.get("instance_id"));
   if (queryInstanceId) config.instanceId = queryInstanceId;

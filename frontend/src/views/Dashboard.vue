@@ -12,11 +12,15 @@ import PortalNotificationBell from "../components/PortalNotificationBell.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import SidebarMenuLink from "../components/menu/SidebarMenuLink.vue";
 import { useNavigation, type NavNode } from "../composables/useNavigation";
+import UserModeSidebar from "../components/layout/UserModeSidebar.vue";
+import AccountMenu from "../components/layout/AccountMenu.vue";
+import { useUiMode } from "../composables/useUiMode";
+import { collectUserModePaths } from "../constants/userModeMenu";
 
 const router = useRouter();
 const route = useRoute();
 const { branding, loadBranding, applyDocumentTitle, resolveRepoUrl } = useBranding();
-const { theme, toggleTheme } = useAppTheme();
+const { theme, toggleTheme, setTheme } = useAppTheme();
 const repoUrl = computed(() => (branding.value.hide_version_link ? "" : resolveRepoUrl()));
 const LEFT_SIDEBAR_COLLAPSED_KEY = "embed_left_sidebar_collapsed";
 const isDesktopSidebar = () => window.matchMedia("(min-width: 1024px)").matches;
@@ -138,9 +142,12 @@ const sidebarInitialClass = computed(() => {
 });
 // 落地页已可在「菜单管理」里配置（is_landing），点 Logo 就该回那里；
 // 菜单数据还没到位时退回原有口径，避免首屏跳到一个空路由。
-const homeRoute = computed(
-  () => landingPath.value || (userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench'),
-);
+const homeRoute = computed(() => {
+  // 用户模式的「首页」就是新建任务页：点 logo 回到可以立刻开聊的地方，
+  // 而不是绕回工作台再找入口。
+  if (isUserMode.value) return "/dashboard/chat";
+  return landingPath.value || (userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench');
+});
 
 // 刷新时的会话校验策略：服务重启窗口期（超时/5xx/断网）保留本地会话并退避重试，
 // 只有确认是认证类失败（401/403）才清理凭据并回到登录页。
@@ -167,6 +174,8 @@ const fetchUserInfo = async () => {
     const cachedUserInfo = localStorage.getItem("user_info");
     if (cachedUserInfo) {
       try {
+        // 缓存里的 password_info 保留：/auth/me 失败时靠它兜底，别让快到期的人
+        // 因为一次接口抖动就完全看不到提醒（闪烁由下面的 passwordNoticeReady 门控解决）
         userInfo.value = JSON.parse(cachedUserInfo);
       } catch {
         localStorage.removeItem("user_info");
@@ -432,9 +441,38 @@ const cancelLogout = () => {
   showLogoutDialog.value = false;
 };
 
-const openUserInfo = () => {
-  router.push("/dashboard/personal");
+/* ---------------- 账户菜单（专业模式 / 用户模式共用同一份） ---------------- */
+const accountMenuOpen = ref(false);
+const toggleAccountMenu = () => {
+  accountMenuOpen.value = !accountMenuOpen.value;
 };
+const closeAccountMenu = () => {
+  accountMenuOpen.value = false;
+};
+
+const handleAccountNavigate = (path: string) => {
+  closeAccountMenu();
+  router.push(path);
+};
+
+const handleAccountSetTheme = (value: "light" | "dark") => {
+  setTheme(value);
+};
+
+const handleAccountSwitchMode = (mode: "user" | "pro") => {
+  closeAccountMenu();
+  void handleUserModeSwitchMode(mode);
+};
+
+const handleAccountLogout = () => {
+  closeAccountMenu();
+  logout();
+};
+
+// 换页就收掉弹层：菜单里的每一项都会跳转，留着会盖在新页面上
+watch(() => route.fullPath, () => {
+  if (accountMenuOpen.value) accountMenuOpen.value = false;
+});
 
 const handleEscape = (e: KeyboardEvent) => {
   if (e.key !== "Escape") return;
@@ -581,8 +619,101 @@ const retryNavigation = () => {
   void ensureNavigation(true);
 };
 
+// ---------------- 界面模式：用户模式 / 专业模式 ----------------
+// 偏好存 Redis（账号级），这里只负责渲染分支与切换。
+const { isUserMode, setUiMode, ensureUiMode } = useUiMode();
+/** 用户模式「新建任务」时自增，用来强制重挂载聊天页（换掉 key 即丢掉当前 iframe 会话） */
+const pageReloadToken = ref(0);
+
+/** 侧栏宽度：用户模式固定 252（菜单文案更长），专业模式维持原有折叠宽度 */
+const sidebarWidthClass = computed(() => {
+  if (isMobile.value) {
+    return showMobileSidebar.value ? "translate-x-0 w-64" : "-translate-x-full w-64";
+  }
+  // 用户模式：展开 252（菜单文案更长），收起 68（只剩图标）
+  if (isUserMode.value) return isCollapsed.value ? "w-[68px]" : "w-[252px]";
+  return isCollapsed.value ? "w-20" : "w-[208px]";
+});
+
+const userModeMenus = computed<string[]>(() => {
+  const perms = (userInfo.value as any)?.permissions;
+  return Array.isArray(perms?.menus) ? perms.menus : [];
+});
+
+const closeMobileSidebarIfNeeded = () => {
+  if (isMobile.value) showMobileSidebar.value = false;
+};
+
+const handleUserModeNavigate = (path: string) => {
+  closeMobileSidebarIfNeeded();
+  router.push(path);
+};
+
+/**
+ * 用户模式「新建任务」。
+ *
+ * 已经在聊天页时不能再 push 同一个地址——路由不变、组件不重挂载，看起来像「点了没反应」。
+ * 这里清掉会话参数并换一个渲染 key，让 Chat.vue 重新初始化，等价于挂件里的「新会话」。
+ */
+const handleUserModeNewChat = () => {
+  closeMobileSidebarIfNeeded();
+  // `new=1` 会透传到挂件的 iframe URL：只换 key 重挂载是不够的——挂件仍会按会话指针
+  // 续接上一次对话，用户点完看到的还是老内容。带上 new 才能开一条真正的空白会话。
+  if (route.name === "AIChat") {
+    const nextQuery: Record<string, any> = { ...route.query, new: "1" };
+    delete nextQuery.conversation_id;
+    delete nextQuery.agent_id;
+    pageReloadToken.value += 1;
+    router.replace({ path: "/dashboard/chat", query: nextQuery });
+    return;
+  }
+  router.push({ path: "/dashboard/chat", query: { new: "1" } });
+};
+
+const handleUserModeOpenConversation = (item: { conversation_id?: string | null }) => {
+  closeMobileSidebarIfNeeded();
+  if (!item?.conversation_id) return;
+  router.push({ path: "/dashboard/chat", query: { conversation_id: String(item.conversation_id) } });
+};
+
+/**
+ * 切到用户模式后，如果当前页面不在用户模式菜单里（多半是从专业模式的
+ * 「用户管理 / 系统配置」这类页面切过来的），回落到新建任务页。
+ * 否则用户会停在一个侧栏里根本没有入口的页面上，不知道该往哪走。
+ */
+watch(isUserMode, (userMode) => {
+  if (!userMode) return;
+  const paths = collectUserModePaths();
+  const stillReachable = paths.some((path) =>
+    path === "/dashboard"
+      ? route.path === "/dashboard"
+      : route.path === path || route.path.startsWith(`${path}/`),
+  );
+  if (!stillReachable) router.replace("/dashboard/chat");
+});
+
+const handleUserModeToggleTheme = () => {
+  toggleTheme();
+};
+
+const handleUserModeLogout = () => {
+  logout();
+};
+
+const handleUserModeSwitchMode = async (mode: "user" | "pro") => {
+  const ok = await setUiMode(mode);
+  showToast(
+    ok ? (mode === "pro" ? "已切换到专业模式" : "已切换到用户模式") : "切换失败，请稍后重试",
+    ok ? "success" : "error",
+  );
+  if (!ok) return;
+  // 切完直接落到该模式的主入口：用户模式 → 任务页；专业模式 → 落地页（管理员概览 / 普通用户工作台）
+  router.push(mode === "user" ? "/dashboard/chat" : homeRoute.value);
+};
+
 onMounted(() => {
   void ensureNavigation();
+  void ensureUiMode();
 });
 </script>
 
@@ -610,11 +741,34 @@ onMounted(() => {
           ? '!bg-white !text-gray-700 !border-gray-200/80' 
           : 'border-white/[0.06]',
         isMobile ? 'fixed inset-y-0 left-0 h-full' : 'relative',
-        isMobile 
-            ? (showMobileSidebar ? 'translate-x-0 w-64' : '-translate-x-full w-64') 
-            : (isCollapsed ? 'w-20' : 'w-[208px]')
+        sidebarWidthClass
       ]"
     >
+      <!-- 用户模式：独立侧栏（菜单写死，不读 /menus/nav） -->
+      <UserModeSidebar
+        v-if="isUserMode"
+        :light-theme="theme === 'light'"
+        :mobile="isMobile"
+        :collapsed="isCollapsed && !isMobile"
+        :user-id="String(userInfo.id || '')"
+        :user-name="userInfo.user_name"
+        :real-name="userInfo.real_name || userInfo.user_name"
+        :avatar-url="userInfo.avatar_url || ''"
+        :role="String(userInfo.role || '')"
+        :menus="userModeMenus"
+        :active-conversation-id="String(route.query.conversation_id || '')"
+        @navigate="handleUserModeNavigate"
+        @new-chat="handleUserModeNewChat"
+        @open-conversation="handleUserModeOpenConversation"
+        @open-account-menu="toggleAccountMenu"
+        @switch-mode="handleUserModeSwitchMode"
+        @toggle-theme="handleUserModeToggleTheme"
+        @logout="handleUserModeLogout"
+        @toggle-collapse="toggleSidebar"
+        @toast="(message: string, type?: 'success' | 'warning' | 'error') => showToast(message, type || 'warning')"
+      />
+
+      <template v-else>
       <!-- Brand Header -->
       <div
         class="h-12 flex items-center border-b transition-colors overflow-hidden whitespace-nowrap"
@@ -755,13 +909,16 @@ onMounted(() => {
         ]"
       >
         <button
-          @click="openUserInfo"
+          data-account-trigger
+          aria-haspopup="menu"
+          :aria-expanded="accountMenuOpen"
+          @click="toggleAccountMenu"
           class="w-full flex items-center overflow-hidden whitespace-nowrap transition-all rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-primary/40 group/user"
           :class="[
             isCollapsed ? 'justify-center p-1.5' : (isMobile ? 'p-2.5' : 'p-2'),
             theme === 'light' ? 'hover:bg-gray-100/80' : 'hover:bg-white/[0.06]',
           ]"
-          title="查看个人信息"
+          title="账户与界面模式"
         >
           <!-- 已上传自定义头像时优先渲染图片（圆形、object-cover）；否则维持姓名首字 -->
           <img
@@ -880,18 +1037,40 @@ onMounted(() => {
           </div>
         </transition>
       </div>
+      </template>
+
+      <!-- 账户菜单：两种模式共用同一个弹层，内容一致，只有当前模式的高亮不同 -->
+      <AccountMenu
+        :visible="accountMenuOpen"
+        :light-theme="theme === 'light'"
+        :theme="theme"
+        :mode="isUserMode ? 'user' : 'pro'"
+        :user-name="userInfo.user_name"
+        :real-name="userInfo.real_name || userInfo.user_name"
+        :avatar-url="userInfo.avatar_url || ''"
+        :role="String(userInfo.role || '')"
+        :version="displayVersion"
+        :repo-url="repoUrl"
+        :mobile="isMobile"
+        @close="closeAccountMenu"
+        @navigate="handleAccountNavigate"
+        @switch-mode="handleAccountSwitchMode"
+        @set-theme="handleAccountSetTheme"
+        @logout="handleAccountLogout"
+      />
     </aside>
 
     <!-- Main Content Area -->
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
       <!-- Top Header -->
       <header
-        v-if="showDashboardHeader"
+        v-if="showDashboardHeader && (!isUserMode || isMobile)"
         class="relative bg-white shadow-sm h-12 flex justify-between items-center px-4 z-30 border-b border-gray-200 flex-shrink-0"
       >
         <div class="flex items-center">
-          <!-- Sidebar Toggle Button -->
+          <!-- Sidebar Toggle Button：用户模式是固定 252 宽、没有折叠态，按钮隐藏 -->
           <button
+            v-if="!isUserMode || isMobile"
             type="button"
             :aria-label="isCollapsed ? '展开侧边栏' : '收起侧边栏'"
             :aria-expanded="!isCollapsed"
@@ -980,7 +1159,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 flex-nowrap">
+        <div v-if="!isUserMode" class="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 flex-nowrap">
           <!-- Online Users Widget：仅管理员可见 -->
           <template v-if="userInfo.role === 'admin'">
             <button
@@ -1134,7 +1313,8 @@ onMounted(() => {
           <transition name="page">
             <Suspense>
               <template #default>
-                <component :is="Component" :key="$route.path" />
+                <!-- pageReloadToken：用户模式点「新建任务」时 +1，强制重挂载聊天页拿到干净会话 -->
+                <component :is="Component" :key="$route.path + '#' + pageReloadToken" />
               </template>
               <template #fallback>
                 <div class="flex items-center justify-center h-64">
