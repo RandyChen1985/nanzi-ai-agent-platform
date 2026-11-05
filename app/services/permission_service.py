@@ -12,7 +12,7 @@ from app.models.tool import SysApiTool
 from app.schemas.permission import PermissionUpdate, UserPermissionsResponse, PermissionSet, PermissionSetDetail, ResourceDetail
 from app.core.redis import get_redis
 from collections.abc import Iterable
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import json
 import logging
 import time
@@ -124,6 +124,113 @@ def normalize_knowledge_visibility(value: object) -> str:
     return VISIBILITY_PUBLIC
 
 
+# ---------------------------------------------------------------------------
+# 知识库「编辑权限范围」（谁能改库里的文档，不含库设置）
+#
+# 现状基线：public 库的授权成员恒只读；team 库的归属部门成员（含下级）本来就能
+# 改文档。策略化之后**默认值必须与现状逐条对齐**，否则上线当天就有库凭空多出或
+# 丢掉写权限：
+#   · public → readonly（授权成员仍只读）
+#   · team   → team_members（部门成员仍可编辑）
+# 策略存在 knowledge_base_metadata.extra_config["edit_policy"]，缺失/非法一律按
+# 上面的默认值兜底，老库不需要数据回填。
+# ---------------------------------------------------------------------------
+EDIT_POLICY_READONLY = "readonly"
+EDIT_POLICY_TEAM_MEMBERS = "team_members"
+EDIT_POLICY_GRANTED = "granted"
+EDIT_POLICY_ALL_VIEWERS = "all_viewers"
+EDIT_POLICY_SELECTED = "selected"
+
+DEFAULT_EDIT_POLICY_MODE = {
+    VISIBILITY_PUBLIC: EDIT_POLICY_READONLY,
+    VISIBILITY_TEAM: EDIT_POLICY_TEAM_MEMBERS,
+}
+
+#: 每种可见范围允许的策略值。TEAM 库刻意不提供 granted/all_viewers：
+#: 部门库的可见人群已经由部门树定义，再加「被额外授权的人也能编辑」会让
+#: 「这个库到底谁能改」变得没人说得清。
+ALLOWED_EDIT_POLICY_MODES = {
+    VISIBILITY_PUBLIC: (
+        EDIT_POLICY_READONLY,
+        EDIT_POLICY_GRANTED,
+        EDIT_POLICY_ALL_VIEWERS,
+        EDIT_POLICY_SELECTED,
+    ),
+    VISIBILITY_TEAM: (
+        EDIT_POLICY_READONLY,
+        EDIT_POLICY_TEAM_MEMBERS,
+        EDIT_POLICY_SELECTED,
+    ),
+}
+
+
+def normalize_edit_policy_mode(raw_mode: object, visibility: object) -> str:
+    """把库上的策略值归一成该可见范围下的合法值；非法/缺失回落默认。"""
+    visibility_token = normalize_knowledge_visibility(visibility)
+    allowed = ALLOWED_EDIT_POLICY_MODES.get(visibility_token, ())
+    token = str(raw_mode or "").strip().lower()
+    if token in allowed:
+        return token
+    return DEFAULT_EDIT_POLICY_MODE.get(visibility_token, EDIT_POLICY_READONLY)
+
+
+def extract_edit_policy_editors(policy: object) -> set[int]:
+    """取出策略里被点名可编辑的用户 ID。
+
+    只认具体的用户：角色不在编辑权链路上，否则角色成员一变，编辑权就悄悄扩散。
+    """
+    if not isinstance(policy, dict):
+        return set()
+    editors = policy.get("editors")
+    if not isinstance(editors, list):
+        return set()
+    result: set[int] = set()
+    for item in editors:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "user").strip().lower() != "user":
+            continue
+        try:
+            result.add(int(item.get("user_id")))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def resolve_edit_policy_from_config(
+    extra_config: object, visibility: object
+) -> Dict[str, Any]:
+    """从 extra_config 里读出归一后的 edit_policy，供接口返回给前端。"""
+    raw = extra_config.get("edit_policy") if isinstance(extra_config, dict) else None
+    raw = raw if isinstance(raw, dict) else {}
+    mode = normalize_edit_policy_mode(raw.get("mode"), visibility)
+    editors: List[Dict[str, Any]] = []
+    if mode == EDIT_POLICY_SELECTED:
+        for item in raw.get("editors") or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "user").strip().lower() != "user":
+                continue
+            try:
+                user_id = int(item.get("user_id"))
+            except (TypeError, ValueError):
+                continue
+            editors.append(
+                {
+                    "type": "user",
+                    "user_id": user_id,
+                    "user_name": str(item.get("user_name") or ""),
+                    "real_name": str(item.get("real_name") or ""),
+                }
+            )
+    return {
+        "mode": mode,
+        "editors": editors,
+        "updated_by": str(raw.get("updated_by") or ""),
+        "updated_at": str(raw.get("updated_at") or ""),
+    }
+
+
 def resolve_knowledge_dataset_access(
     *,
     dataset_rows: Iterable[tuple],
@@ -133,6 +240,7 @@ def resolve_knowledge_dataset_access(
     default_ids: Iterable[str],
     user_name: Optional[str],
     user_id: Optional[int] = None,
+    edit_policies: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> dict:
     """按三档可见范围计算可读/可写集合（纯函数，便于穷举边界）。
 
@@ -163,6 +271,8 @@ def resolve_knowledge_dataset_access(
 
     授权成员（被显式分配给某人/角色）恒为只读，两级都不含他们。
     """
+    policies = edit_policies or {}
+    visibility_by_id: Dict[str, str] = {}
     granted = {str(token).strip() for token in granted_ids or [] if str(token).strip()}
     defaults = {str(token).strip() for token in default_ids or [] if str(token).strip()}
     paths = [str(path) for path in my_dept_paths or [] if str(path or "").strip()]
@@ -200,28 +310,72 @@ def resolve_knowledge_dataset_access(
             continue
 
         visibility = normalize_knowledge_visibility(raw_visibility)
+        visibility_by_id[dataset_id] = visibility
         if visibility == VISIBILITY_PRIVATE:
             # 个人私有：即使历史上有授权记录也不生效；
             # 记下来是因为下面的「系统默认库」合并也必须跳过它
             private_ids.add(dataset_id)
             continue
 
+        policy_mode = normalize_edit_policy_mode((policies.get(dataset_id) or {}).get("mode"), visibility)
+
         if dataset_id in granted:
             accessible.add(dataset_id)
             # 刻意不 continue：同一个人可能既是授权成员又是归属部门成员，
             # 后者应该拿到内容级写权限，不能被「已授权」提前短路掉。
+            #
+            # 编辑策略：public 库把授权成员放行到内容级（granted / all_viewers，
+            # 后者对授权成员的效果相同，差别只体现在「系统默认库」那批人身上）。
+            # team 库的授权成员仍然是只读 —— 部门库的编辑权只认部门成员与本策略的
+            # selected，不认额外授权。
+            if visibility == VISIBILITY_PUBLIC and policy_mode in (
+                EDIT_POLICY_GRANTED,
+                EDIT_POLICY_ALL_VIEWERS,
+            ):
+                content_writable.add(dataset_id)
 
         if visibility == VISIBILITY_TEAM and raw_owner_dept_id:
             owner_path = (owner_dept_paths or {}).get(int(raw_owner_dept_id))
             if owner_path and any(path.startswith(str(owner_path)) for path in paths):
                 accessible.add(dataset_id)
-                # 部门（含下级部门）成员可以维护文档内容，但不能改库的设置
-                content_writable.add(dataset_id)
+                # 部门（含下级部门）成员默认可以维护文档内容（team_members，与策略化
+                # 之前的行为一致），但不能改库的设置；管理者可以按库改成只读。
+                if policy_mode == EDIT_POLICY_TEAM_MEMBERS:
+                    content_writable.add(dataset_id)
 
     # 未同步到元数据表的库：沿用旧口径（有授权即可见），避免刚建/刚同步的库突然不可见
     accessible |= {dataset_id for dataset_id in granted if dataset_id not in known_ids}
     # 默认库对全员可读，但私有库不能借此"被公开"：private 的语义是有且仅有创建人
-    accessible |= {dataset_id for dataset_id in defaults if dataset_id not in private_ids}
+    defaulted_ids = {dataset_id for dataset_id in defaults if dataset_id not in private_ids}
+    accessible |= defaulted_ids
+
+    # 「所有可见者都可编辑」：连「因为进了系统默认库而可见」的人也包含在内。
+    # 这正是它与 granted 的唯一差别 —— 没有这个差别，两档就是同一个东西。
+    for dataset_id in accessible:
+        if dataset_id in private_ids:
+            continue
+        row_visibility = visibility_by_id.get(dataset_id)
+        if row_visibility is None:
+            continue
+        if (
+            row_visibility == VISIBILITY_PUBLIC
+            and normalize_edit_policy_mode((policies.get(dataset_id) or {}).get("mode"), row_visibility)
+            == EDIT_POLICY_ALL_VIEWERS
+        ):
+            content_writable.add(dataset_id)
+
+    # 「指定成员可编辑」：只点名的人能改，且必须是本来就能看见这个库的人
+    # （编辑权不新增可见性，避免把 private 库或未授权库变成可写）。
+    if current_user_id is not None:
+        for dataset_id in accessible:
+            policy = policies.get(dataset_id) or {}
+            row_visibility = visibility_by_id.get(dataset_id)
+            if row_visibility is None:
+                continue
+            if normalize_edit_policy_mode(policy.get("mode"), row_visibility) != EDIT_POLICY_SELECTED:
+                continue
+            if current_user_id in extract_edit_policy_editors(policy):
+                content_writable.add(dataset_id)
 
     return {
         "accessible_ids": accessible,
@@ -760,6 +914,7 @@ class PermissionService:
                     KnowledgeBaseMetadata.owner_dept_id,
                     KnowledgeBaseMetadata.created_by,
                     KnowledgeBaseMetadata.owner_user_id,
+                    KnowledgeBaseMetadata.extra_config,
                 ).where(KnowledgeBaseMetadata.status != "deleted")
             )
         ).all()
@@ -767,7 +922,7 @@ class PermissionService:
         # 只有存在 team 库时才去查部门，普通用户的常规路径不额外付一次查询
         team_owner_ids = {
             int(owner_dept_id)
-            for _, visibility, owner_dept_id, _, _ in rows
+            for _, visibility, owner_dept_id, _, _, _ in rows
             if owner_dept_id and normalize_knowledge_visibility(visibility) == VISIBILITY_TEAM
         }
         owner_dept_paths: dict[int, str] = {}
@@ -812,14 +967,23 @@ class PermissionService:
         default_ids_str = await ConfigService.get("knowledge_ragflow_dataset_ids")
         default_ids = [item.strip() for item in (default_ids_str or "").split(",") if item.strip()]
 
+        # 编辑策略随行取出：判定函数保持纯函数，只多收一份 dataset_id → policy 映射
+        edit_policies: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            raw_config = row[5] if len(row) > 5 else None
+            raw_policy = raw_config.get("edit_policy") if isinstance(raw_config, dict) else None
+            if isinstance(raw_policy, dict):
+                edit_policies[str(row[0])] = raw_policy
+
         access = resolve_knowledge_dataset_access(
-            dataset_rows=[tuple(row) for row in rows],
+            dataset_rows=[tuple(row[:5]) for row in rows],
             granted_ids=perms.permissions.datasets or [],
             my_dept_paths=my_dept_paths,
             owner_dept_paths=owner_dept_paths,
             default_ids=default_ids,
             user_name=user_name,
             user_id=user_id,
+            edit_policies=edit_policies,
         )
         return {"is_admin": False, **access}
 

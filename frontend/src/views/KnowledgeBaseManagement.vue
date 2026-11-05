@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import axios from '../utils/axios'
 import Modal from '../components/Modal.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import KnowledgeEditPolicyDialog from '../components/knowledge/KnowledgeEditPolicyDialog.vue'
 import KnowledgeFlowGuideBanner from '../components/knowledge/KnowledgeFlowGuideBanner.vue'
 import DocWorkspace from '../components/knowledge/DocWorkspace.vue'
 import ImageToMarkdownUploader from '../components/knowledge/ImageToMarkdownUploader.vue'
@@ -2954,6 +2955,65 @@ const bulkDeleteDocuments = async () => {
 /** 当前详情页的库是否可写：只读成员只能看内容，不能改元数据/上传/授权 */
 const selectedDatasetWritable = computed(() => canManageDataset(selectedDataset.value))
 
+/* ---------------- 编辑权限范围（谁能改库里的文档） ---------------- */
+const showEditPolicyDialog = ref(false)
+const editPolicyTarget = ref<any>(null)
+
+/**
+ * 入口可见性：全局 element:knowledge:edit 是前置，再叠加管理级权限
+ * （管理员或归属人）。两者缺一，入口整个不渲染 —— 置灰会让人以为「再找找就能点」。
+ */
+const canConfigureEditPolicy = (dataset: any) => canEdit.value && canManageDataset(dataset)
+
+const EDIT_POLICY_LABELS: Record<string, string> = {
+  readonly: '只读',
+  granted: '被授权者可编辑',
+  all_viewers: '所有可见者可编辑',
+  team_members: '部门成员可编辑',
+  selected: '指定成员可编辑',
+}
+
+/** 当前库的编辑策略；老库没有这个字段时按可见范围的默认值显示 */
+const editPolicyOf = (dataset: any) => {
+  const policy = dataset?.edit_policy || {}
+  const visibility = visibilityOf(dataset)
+  if (visibility === 'private') return { mode: '', editors: [] as any[] }
+  const fallback = visibility === 'team' ? 'team_members' : 'readonly'
+  return {
+    mode: String(policy.mode || fallback),
+    editors: Array.isArray(policy.editors) ? policy.editors : [],
+  }
+}
+
+const editPolicyLabel = (dataset: any) => {
+  const mode = editPolicyOf(dataset).mode
+  return mode ? EDIT_POLICY_LABELS[mode] || mode : '—'
+}
+
+const editPolicyHint = (dataset: any) => {
+  const policy = editPolicyOf(dataset)
+  if (!policy.mode) return '个人私有库不支持设置编辑权限范围'
+  if (policy.mode === 'selected') {
+    const names = policy.editors.map((item: any) => item.real_name || item.user_name).filter(Boolean)
+    return names.length ? `可编辑：${names.join('、')}` : '可编辑：指定成员'
+  }
+  return `编辑权限：${EDIT_POLICY_LABELS[policy.mode] || policy.mode}（管理权不受影响）`
+}
+
+const openEditPolicyDialog = (dataset: any) => {
+  if (!canConfigureEditPolicy(dataset)) return
+  editPolicyTarget.value = dataset
+  showEditPolicyDialog.value = true
+  // 候选用户由弹窗自己按「知识库编辑权限」口径拉取，不依赖元数据管理的接口
+}
+
+/** 保存后先就地更新，再拉一次列表：徽标要立刻变，不能等下次进详情 */
+const onEditPolicySaved = (policy: any) => {
+  const target = editPolicyTarget.value
+  if (target) target.edit_policy = policy
+  void fetchDatasets(true)
+}
+
 // ==================== 引用与授权（影响面） ====================
 // 两件事必须分开看：
 // - 智能体引用 = 智能体 engine_config.dataset_ids 里选中了本库，删库会让它检索不到内容；
@@ -4534,7 +4594,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
 
           <div v-else-if="libraryView === 'list'" class="mt-3 flex-1 overflow-y-auto">
-            <div class="grid h-8 grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_72px_88px_16px] items-center gap-x-2.5 rounded-lg bg-gray-50 px-3 text-[11px] font-semibold text-gray-400">
+            <div class="grid h-8 grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_78px_72px_88px_16px] items-center gap-x-2.5 rounded-lg bg-gray-50 px-3 text-[11px] font-semibold text-gray-400">
               <input
                 type="checkbox"
                 class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary/30"
@@ -4549,13 +4609,14 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <span>文档</span>
               <span>引用</span>
               <span>授权</span>
+              <span>编辑权限</span>
               <span>负责人</span>
               <span>更新时间</span>
             </div>
             <div
               v-for="ds in libraryListRows"
               :key="ds.ragflow_dataset_id || ds.id"
-              class="grid w-full cursor-pointer grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_72px_88px_16px] items-center gap-x-2.5 border-b border-gray-100 px-3 h-11 text-left transition-colors hover:bg-gray-50"
+              class="grid w-full cursor-pointer grid-cols-[18px_24px_minmax(0,1fr)_88px_48px_52px_62px_78px_72px_88px_16px] items-center gap-x-2.5 border-b border-gray-100 px-3 h-11 text-left transition-colors hover:bg-gray-50"
               @click="selectDatasetNode(ds)"
             >
               <input
@@ -4596,6 +4657,13 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <span class="truncate text-[11px] tabular-nums" :class="(ds.grant_user_count ?? 0) || (ds.grant_role_count ?? 0) ? 'text-gray-500' : 'text-gray-300'" :title="libraryGrantHint(ds)">
                 {{ libraryGrantText(ds) }}
               </span>
+              <button
+                type="button"
+                class="truncate text-left text-[11px]"
+                :class="editPolicyOf(ds).mode === 'readonly' ? 'text-gray-400' : 'text-primary font-semibold'"
+                :title="editPolicyHint(ds)"
+                @click.stop="canConfigureEditPolicy(ds) ? openEditPolicyDialog(ds) : undefined"
+              >{{ editPolicyLabel(ds) }}</button>
               <span class="truncate text-[11px] text-gray-500">{{ libraryOwnerOf(ds) }}</span>
               <span class="text-[11px] text-gray-500 tabular-nums">{{ libraryUpdatedAtOf(ds) }}</span>
               <svg class="h-3 w-3 text-gray-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -4638,6 +4706,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <span><b class="font-semibold text-gray-600 tabular-nums">{{ docCountOf(ds) }}</b> 文档</span>
                 <span :title="libraryRefHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ (ds.agent_ref_count ?? 0) || '—' }}</b> 引用</span>
                 <span :title="libraryGrantHint(ds)"><b class="font-semibold text-gray-600 tabular-nums">{{ libraryGrantText(ds) }}</b> 授权</span>
+                <span :title="editPolicyHint(ds)" :class="editPolicyOf(ds).mode === 'readonly' ? '' : 'text-primary font-semibold'">{{ editPolicyLabel(ds) }}</span>
               </div>
               <div class="mt-2 flex items-center gap-1.5 border-t border-dashed border-gray-100 pt-2 text-[10.5px] text-gray-400">
                 <span class="truncate">{{ libraryOwnerOf(ds) }}</span>
@@ -5569,6 +5638,38 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
             <!-- 引用与授权：智能体绑定了本库 / 谁被授权访问本库 -->
             <div v-if="detailTab === 'references'" class="flex-1 space-y-4 pt-2 min-h-0 overflow-y-auto">
+              <!-- 编辑权限范围：谁能改这个库里的文档（不含库设置） -->
+              <section
+                v-if="visibilityOf(selectedDataset) !== 'private'"
+                class="rounded-xl border p-4"
+                :class="canConfigureEditPolicy(selectedDataset) ? 'border-primary/30 bg-primary/[0.03]' : 'border-gray-200 bg-white'"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <h3 class="text-sm font-semibold text-gray-800">
+                    编辑权限范围
+                    <span class="ml-1 text-xs font-normal text-gray-400">谁能改这个库的文档</span>
+                  </h3>
+                  <button
+                    v-if="canConfigureEditPolicy(selectedDataset)"
+                    type="button"
+                    class="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-bold text-white shadow-sm transition-colors hover:bg-primary/90"
+                    @click="openEditPolicyDialog(selectedDataset)"
+                  >设置编辑范围</button>
+                </div>
+                <p class="mt-1 text-[11px] leading-relaxed text-gray-500">
+                  当前策略：
+                  <span class="ml-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold"
+                    :class="editPolicyOf(selectedDataset).mode === 'readonly' ? 'bg-gray-100 text-gray-500' : 'bg-primary/10 text-primary'"
+                  >{{ editPolicyLabel(selectedDataset) }}</span>
+                  <span v-if="editPolicyOf(selectedDataset).mode === 'selected'" class="ml-1">
+                    {{ editPolicyHint(selectedDataset) }}
+                  </span>
+                </p>
+                <p class="mt-1 text-[11px] leading-relaxed text-gray-400">
+                  编辑权 ≠ 管理权：能改文档的人改不了可见范围、授权名单，也删不了库。收窄策略立即生效。
+                </p>
+              </section>
+
               <section class="rounded-xl border border-gray-200 bg-white p-4">
                 <div class="flex items-center justify-between gap-2">
                   <h3 class="text-sm font-semibold text-gray-800">
@@ -7170,8 +7271,17 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
              </div>
           </div>
         </div>
-      </div>
+</div>
     </Teleport>
+
+  <!-- 编辑权限范围设置：详情页与列表页共用同一个弹窗。
+       必须挂在根级：放进帮助面板/抽屉的分支里，分支不渲染时点按钮就没反应。 -->
+  <KnowledgeEditPolicyDialog
+    :show="showEditPolicyDialog"
+    :dataset="editPolicyTarget"
+    @close="showEditPolicyDialog = false"
+    @saved="onEditPolicySaved"
+  />
 </template>
 
 <style scoped>
