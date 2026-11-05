@@ -138,3 +138,11 @@ def test_menu_rows_define_their_own_layout(menu: str) -> None:
     assert "display: flex;" in menu
     assert "align-items: center;" in menu
     assert 'class="account-menu-item"' in menu
+
+
+def test_desktop_menu_closes_on_any_outside_click(menu: str) -> None:
+    """聊天区是 iframe，点它不冒泡到父文档；桌面端要铺一层透明捕获层才能点哪都关。"""
+    assert 'class="fixed inset-0 -z-10 bg-transparent"' in menu
+    # 遮罩必须在菜单卡片之下、页面其他内容之上：靠父层的 z-60/z-70 与 -z-10 实现
+    assert "fixed inset-0 -z-10 bg-transparent" in menu
+    assert "@click=\"close\"" in menu

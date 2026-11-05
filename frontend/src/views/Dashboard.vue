@@ -663,8 +663,11 @@ const handleUserModeNewChat = () => {
     const nextQuery: Record<string, any> = { ...route.query, new: "1" };
     delete nextQuery.conversation_id;
     delete nextQuery.agent_id;
-    pageReloadToken.value += 1;
-    router.replace({ path: "/dashboard/chat", query: nextQuery });
+    // 顺序不能反：先重挂载再改地址栏，新挂载的聊天页读到的仍是上一条会话的
+    // conversation_id，挂件会把「新建任务」当成「打开历史会话」续接回去。
+    void router.replace({ path: "/dashboard/chat", query: nextQuery }).then(() => {
+      pageReloadToken.value += 1;
+    });
     return;
   }
   router.push({ path: "/dashboard/chat", query: { new: "1" } });

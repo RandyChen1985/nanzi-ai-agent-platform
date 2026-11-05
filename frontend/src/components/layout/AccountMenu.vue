@@ -11,6 +11,15 @@
         class="fixed inset-0 -z-10 bg-black/40 backdrop-blur-[1px]"
         @click="close"
       />
+      <!-- 桌面：透明捕获层。聊天区是 iframe，点它时 click 落在 iframe 自己的文档里，
+           不会冒泡到父文档，只靠 document 监听在聊天区点不出来；铺一层透明层把菜单外
+           任意一点（含 iframe 区域）都变成「关闭」，视觉上无变化。 -->
+      <div
+        v-else
+        class="fixed inset-0 -z-10 bg-transparent"
+        aria-hidden="true"
+        @click="close"
+      />
 
       <div
         ref="rootRef"

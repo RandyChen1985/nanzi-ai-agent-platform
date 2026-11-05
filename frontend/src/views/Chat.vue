@@ -6,6 +6,7 @@
         <iframe 
             v-if="iframeUrl"
             ref="chatFrame"
+            :key="iframeKey"
             :src="iframeUrl"
             frameborder="0"
             class="w-full h-full min-w-full block"
@@ -74,6 +75,8 @@ const router = useRouter();
 
 const chatFrame = ref<HTMLIFrameElement | null>(null);
 const iframeUrl = ref('');
+/** 每次 initChat 递增：`new=1` 等「换一条会话」的指令必须让挂件整页重载，改 src 不够。 */
+const iframeKey = ref(0);
 const loading = ref(true);
 const isInitTimedOut = ref(false);
 const widgetReady = ref(false);
@@ -120,6 +123,7 @@ const initChat = () => {
     if (String(route.query.new || '') === '1') embedQuery.set('new', '1');
     const embedSearch = embedQuery.toString();
     iframeUrl.value = `/embed/chat${embedSearch ? `?${embedSearch}` : ''}`;
+    iframeKey.value += 1;
 
     // `new=1` 已经交给挂件了，立刻从地址栏摘掉：否则这一页刷新会再开一条新的空会话，
     // 刚建的那条就"丢"了。摘掉之后刷新走正常续接，接回刚开的会话。
@@ -150,7 +154,11 @@ const sendInitConfig = () => {
             type: 'INIT_CONFIG',
             // 凭据由同源 HttpOnly Cookie 承载（iframe 指向同源 /embed/chat），
             // 不再从本地存储读取令牌；初始化配置必须照常下发，否则会话/报告等参数会一起丢失。
-            conversation_id: route.query.conversation_id ? String(route.query.conversation_id) : null,
+            // `new=1` 表示这次挂载就是要一条空白会话：即使地址栏里还留着上一条的
+            // conversation_id（摘除 query 与重挂载之间存在微任务窗口），也不能下发。
+            conversation_id: String(route.query.new || '') === '1'
+                ? null
+                : (route.query.conversation_id ? String(route.query.conversation_id) : null),
             agent_id: route.query.agent_id ? String(route.query.agent_id) : null,
             open_saved_report: route.query.report_id ? {
                 report_id: String(route.query.report_id),
@@ -308,6 +316,16 @@ watch(
         if (widgetReady.value) {
             sendInitConfig();
         }
+    },
+);
+
+// 兜底：用户模式「新建任务」在聊天页内触发时只改 query 并重挂载，若重挂载早于地址栏
+// 更新（微任务窗口），挂载瞬间读不到 `new=1`。这里补一次监听，确保指令最终生效。
+watch(
+    () => route.query.new,
+    (value) => {
+        if (String(value || '') !== '1') return;
+        initChat();
     },
 );
 
